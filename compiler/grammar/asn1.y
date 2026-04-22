@@ -101,7 +101,7 @@
 %type <ModulePtr>               ModuleDefinition
 %type <ModulePtr>               ModuleBody optModuleBody AssignmentList Assignment
 %type <TagDefault>              optModuleDefinitionFlags ModuleDefinitionFlags ModuleDefinitionFlag
-%type <TypeDefPtr>              TypeAssignment TaggedTypeDef TypeDef BuiltinType ConstrainedType
+%type <TypeDefPtr>              TypeAssignment TaggedTypeDef TypeDef BuiltinType ConstrainedType ObjectClass
 %type <std::vector<TypeDefPtr>> ComponentTypeLists ComponentTypeList
 %type <TypeDefPtr>              ComponentType NamedType
 %type <std::string>             ModuleReference TypeRefName
@@ -113,13 +113,19 @@
 %type <TagMode>                 TagDefault
 %type <OidValue>                OIDValue ObjectIdentifierValue AssignedIdentifier
 %type <OidValue::Arc>           OIDArc
-%type <ConstraintPtr>           Constraint ConstraintSpec SubtypeConstraint
-%type <ConstraintPtr>           SubtypeElement ElementSetSpec ElementSetSpecs
-%type <ConstraintPtr>           ValueRange
+%type <ConstraintPtr>           Constraint optConstraint optSizeOrConstraint
+%type <ConstraintPtr>           ConstraintSpec SubtypeConstraint GeneralConstraint
+%type <ConstraintPtr>           ElementSetSpecs ElementSetSpec Unions Intersections
+%type <ConstraintPtr>           IntersectionElements Elements SubtypeElements
+%type <ConstraintPtr>           SingleValue ValueRange SizeConstraint PermittedAlphabet
+%type <ConstraintPtr>           PatternConstraint InnerTypeConstraints
+%type <ConstraintPtr>           TableConstraint SimpleTableConstraint ComponentRelationConstraint
+%type <ConstraintPtr>           UserDefinedConstraint ContentsConstraint
+%type <ConstraintPtr>           ManyConstraints
 %type <Value>                   Value BuiltinValue DefinedValue
 %type <Value>                   SignedNumber
-%type <RangeEndpoint>           LowerEndpoint UpperEndpoint EndpointValue
-%type <std::monostate>          RangeSpec
+%type <RangeEndpoint>           LowerEndValue UpperEndValue
+%type <std::monostate>          ConstraintRangeSpec
 %type <std::vector<EnumValue>>  Enumerations EnumerationList
 %type <EnumValue>               EnumerationItem
 %type <std::string>             FieldName
@@ -258,8 +264,26 @@ Assignment:
       }
     | ValueAssignment            { $$ = std::make_shared<Module>(); }
     | EncodingControlSection     { $$ = std::make_shared<Module>(); }
+    /* Object/value-set assignments: Name ClassRef ::= { ... } */
+    | TypeRefName TypeRefName TOK_PPEQ OpaqueBlock
+        { $$ = std::make_shared<Module>(); }
+    | TypeRefName '{' TypeParamList '}' TypeRefName TOK_PPEQ OpaqueBlock
+        { $$ = std::make_shared<Module>(); }
     | error ';'                  { $$ = std::make_shared<Module>(); yyerrok; }
     | error TOK_END              { $$ = std::make_shared<Module>(); yyerrok; }
+    ;
+
+/* OpaqueBlock captures everything between { } using the opaque lexer state.
+ * The closing } is returned as TOK_opaque (not '}') when the opaque state pops.
+ * So we do NOT include a closing '}' in this rule. */
+OpaqueBlock:
+    '{' { lexer.push_opaque_state(); } OpaqueTokens
+    ;
+
+OpaqueTokens:
+      /* empty */
+    | OpaqueTokens TOK_opaque
+    | OpaqueTokens TOK_PPEQ
     ;
 
 TypeAssignment:
@@ -339,6 +363,7 @@ TypeDef:
         auto t = std::make_shared<TypeDef>();
         $$ = t;
       }
+    | ObjectClass          { $$ = $1; }
     ;
 
 BuiltinType:
@@ -476,14 +501,28 @@ StringType:
 ReferencedType:
       TypeRefName
     | TypeRefName '.' TypeRefName
+    | TypeRefName '.' TOK_typefieldreference          /* CLASS field ref: MYID.&id */
+    | TypeRefName '.' TOK_valuefieldreference          /* CLASS field ref: MYID.&val */
     | TypeRefName '{' TypeActualParamList '}'
+    | TypeRefName '.' TOK_typefieldreference  '{' TypeActualParamList '}'
+    | TypeRefName '.' TOK_valuefieldreference '{' TypeActualParamList '}'
+    | TypeRefName '.' TOK_typefieldreference  '{' TypeActualParamList '}' '{' TypeActualParamList '}'
+    | TypeRefName '.' TOK_valuefieldreference '{' TypeActualParamList '}' '{' TypeActualParamList '}'
     ;
 
 TypeActualParamList:
       TypeDef
     | Value
+    | ComponentRelation                           /* {Set} or {@id} */
     | TypeActualParamList ',' TypeDef
     | TypeActualParamList ',' Value
+    | TypeActualParamList ',' ComponentRelation
+    ;
+
+ComponentRelation:
+      '{' TypeRefName '}'                         /* {Set} — object set reference */
+    | '{' '@' TOK_identifier '}'                  /* {@id} — component reference */
+    | '{' '@' '.' TOK_identifier '}'              /* {@.id} */
     ;
 
 ConstrainedType:
@@ -611,125 +650,241 @@ EnumerationItem:
 
 /* ===== Constraints ========================================================= */
 
+UnionMark:		'|' | TOK_UNION;
+IntersectionMark:	'^' | TOK_INTERSECTION;
+
+/* empty | Constraint */
+optConstraint:
+	  /* empty */   { $$ = std::make_shared<ast::Constraint>(); }
+	| Constraint    { $$ = $1; }
+	;
+
+/* empty | Constraint | SIZE(...) */
+optSizeOrConstraint:
+	  /* empty */   { $$ = std::make_shared<ast::Constraint>(); }
+	| Constraint    { $$ = $1; }
+	| SizeConstraint { $$ = $1; }
+	;
+
 Constraint:
-    '(' ConstraintSpec optExtensionMarker ')'
-    {
-        $$ = $2;
-    }
-    ;
+	'(' ConstraintSpec ')' { $$ = $2; }
+	;
 
-optExtensionMarker:
-      /* empty */
-    | ',' TOK_ThreeDots
-    ;
+ManyConstraints:
+	  Constraint               { $$ = $1; }
+	| ManyConstraints Constraint { $$ = $1; }
+	;
 
-ConstraintSpec:
-      SubtypeConstraint  { $$ = $1; }
-    | /* empty */        { $$ = std::make_shared<ast::Constraint>(); }
-    ;
+ConstraintSpec: SubtypeConstraint | GeneralConstraint;
 
-SubtypeConstraint:
-      ElementSetSpecs    { $$ = $1; }
-    ;
+SubtypeConstraint: ElementSetSpecs;
 
 ElementSetSpecs:
-      ElementSetSpec                         { $$ = $1; }
-    | ElementSetSpec '|' ElementSetSpec      {
-        auto u = std::make_shared<ast::Constraint>();
-        u->body = UnionConstraint{{$1, $3}};
-        $$ = u;
-      }
-    | ElementSetSpec TOK_UNION ElementSetSpec {
-        auto u = std::make_shared<ast::Constraint>();
-        u->body = UnionConstraint{{$1, $3}};
-        $$ = u;
-      }
-    | ElementSetSpec '^' ElementSetSpec      {
-        auto c = std::make_shared<ast::Constraint>();
-        c->body = IntersectionConstraint{{$1, $3}};
-        $$ = c;
-      }
-    | ElementSetSpec TOK_INTERSECTION ElementSetSpec {
-        auto c = std::make_shared<ast::Constraint>();
-        c->body = IntersectionConstraint{{$1, $3}};
-        $$ = c;
-      }
-    ;
+	  TOK_ThreeDots                               { $$ = std::make_shared<ast::Constraint>(); }
+	| ElementSetSpec                              { $$ = $1; }
+	| ElementSetSpec ',' TOK_ThreeDots            { $$ = $1; }
+	| ElementSetSpec ',' TOK_ThreeDots ',' ElementSetSpec { $$ = $1; }
+	;
 
 ElementSetSpec:
-      ValueRange                             { $$ = $1; }
-    | TOK_SIZE Constraint                    {
-        auto s = std::make_shared<ast::Constraint>();
-        s->body = SizeConstraint{$2};
-        $$ = s;
-      }
-    | TOK_FROM Constraint                    {
-        auto f = std::make_shared<ast::Constraint>();
-        f->body = FromConstraint{$2};
-        $$ = f;
-      }
-    | TOK_PATTERN Value                      {
-        auto p = std::make_shared<ast::Constraint>();
-        p->body = PatternConstraint{std::get<std::string>($2)};
-        $$ = p;
-      }
-    | TOK_CONTAINING TypeDef                 {
-        auto c = std::make_shared<ast::Constraint>();
-        $$ = c;
-      }
-    | TOK_WITH TOK_COMPONENT Constraint      {
-        auto w = std::make_shared<ast::Constraint>();
-        w->body = WithComponent{$3};
-        $$ = w;
-      }
-    | '(' ElementSetSpecs ')'                { $$ = $2; }
-    | TOK_EXCEPT ElementSetSpec              {
-        auto e = std::make_shared<ast::Constraint>();
-        e->body = ExceptionConstraint{};
-        $$ = e;
-      }
-    | TOK_ALL TOK_EXCEPT ElementSetSpec      {
-        $$ = std::make_shared<ast::Constraint>();
-      }
-    ;
+	  Unions                      { $$ = $1; }
+	| TOK_ALL TOK_EXCEPT Elements {
+		auto c = std::make_shared<ast::Constraint>();
+		$$ = c;
+	  }
+	;
+
+Unions:
+	  Intersections               { $$ = $1; }
+	| Unions UnionMark Intersections {
+		auto u = std::make_shared<ast::Constraint>();
+		u->body = UnionConstraint{{$1, $3}};
+		$$ = u;
+	  }
+	;
+
+Intersections:
+	  IntersectionElements        { $$ = $1; }
+	| Intersections IntersectionMark IntersectionElements {
+		auto c = std::make_shared<ast::Constraint>();
+		c->body = IntersectionConstraint{{$1, $3}};
+		$$ = c;
+	  }
+	;
+
+IntersectionElements:
+	  Elements                    { $$ = $1; }
+	| Elements TOK_EXCEPT Elements {
+		auto c = std::make_shared<ast::Constraint>();
+		$$ = c;
+	  }
+	;
+
+Elements:
+	  SubtypeElements             { $$ = $1; }
+	| '(' ElementSetSpec ')'      { $$ = $2; }
+	;
+
+SubtypeElements:
+	  SingleValue                 { $$ = $1; }
+	| ContainedSubtype            { $$ = std::make_shared<ast::Constraint>(); }
+	| PermittedAlphabet           { $$ = $1; }
+	| SizeConstraint              { $$ = $1; }
+	| InnerTypeConstraints        { $$ = $1; }
+	| PatternConstraint           { $$ = $1; }
+	| ValueRange                  { $$ = $1; }
+	;
+
+PermittedAlphabet:
+	TOK_FROM Constraint {
+		auto f = std::make_shared<ast::Constraint>();
+		f->body = FromConstraint{$2};
+		$$ = f;
+	}
+	;
+
+SizeConstraint:
+	TOK_SIZE Constraint {
+		auto s = std::make_shared<ast::Constraint>();
+		s->body = SizeConstraint{$2};
+		$$ = s;
+	}
+	;
+
+PatternConstraint:
+	  TOK_PATTERN TOK_cstring {
+		auto p = std::make_shared<ast::Constraint>();
+		p->body = PatternConstraint{$2};
+		$$ = p;
+	  }
+	| TOK_PATTERN TOK_identifier {
+		auto p = std::make_shared<ast::Constraint>();
+		p->body = PatternConstraint{$2};
+		$$ = p;
+	  }
+	;
 
 ValueRange:
-      LowerEndpoint RangeSpec UpperEndpoint
-    {
-        auto c = std::make_shared<ast::Constraint>();
-        c->body = ast::ValueRange{$1, $3};
-        $$ = c;
-    }
-    | Value
-    {
-        auto c = std::make_shared<ast::Constraint>();
-        c->body = $1;
-        $$ = c;
-    }
-    ;
+	LowerEndValue ConstraintRangeSpec UpperEndValue {
+		auto c = std::make_shared<ast::Constraint>();
+		c->body = ast::ValueRange{$1, $3};
+		$$ = c;
+	}
+	;
 
-LowerEndpoint:
-      EndpointValue              { $$ = $1; }
-    | '<' EndpointValue          { $$ = $2; /* exclusive lower */ }
-    ;
+LowerEndValue:
+	  SingleValue  { $$ = $1->body.index() == 0
+	                     ? RangeEndpoint{RangeEndpoint::Kind::Value, std::get<Value>($1->body)}
+	                     : RangeEndpoint{RangeEndpoint::Kind::Value, Value{}}; }
+	| TOK_MIN      { $$.kind = RangeEndpoint::Kind::Min; }
+	;
 
-UpperEndpoint:
-      EndpointValue              { $$ = $1; }
-    | '<' EndpointValue          { $$ = $2; /* exclusive upper */ }
-    ;
+UpperEndValue:
+	  SingleValue  { $$ = $1->body.index() == 0
+	                     ? RangeEndpoint{RangeEndpoint::Kind::Value, std::get<Value>($1->body)}
+	                     : RangeEndpoint{RangeEndpoint::Kind::Value, Value{}}; }
+	| TOK_MAX      { $$.kind = RangeEndpoint::Kind::Max; }
+	;
 
-EndpointValue:
-      Value                      { $$.kind = RangeEndpoint::Kind::Value; $$.value = $1; }
-    | TOK_MIN                    { $$.kind = RangeEndpoint::Kind::Min; }
-    | TOK_MAX                    { $$.kind = RangeEndpoint::Kind::Max; }
-    ;
+SingleValue: Value {
+		auto c = std::make_shared<ast::Constraint>();
+		c->body = $1;
+		$$ = c;
+	}
+	;
 
-RangeSpec:
-      TOK_TwoDots                { /* standard range */ }
-    | '<' TOK_TwoDots            { /* exclusive lower */ }
-    | TOK_TwoDots '<'            { /* exclusive upper */ }
-    | '<' TOK_TwoDots '<'        { /* both exclusive */ }
-    ;
+ConstraintRangeSpec:
+	  TOK_TwoDots        { }
+	| TOK_TwoDots '<'    { }
+	| '<' TOK_TwoDots    { }
+	| '<' TOK_TwoDots '<' { }
+	;
+
+ContainedSubtype:
+	  TOK_INCLUDES TypeDef { }
+	| ReferencedType       { }
+	;
+
+InnerTypeConstraints:
+	  TOK_WITH TOK_COMPONENT Constraint {
+		auto w = std::make_shared<ast::Constraint>();
+		w->body = WithComponent{$3};
+		$$ = w;
+	  }
+	| TOK_WITH TOK_COMPONENTS '{' TypeConstraints '}' {
+		$$ = std::make_shared<ast::Constraint>();
+	  }
+	| TOK_WITH TOK_COMPONENTS '{' TOK_ThreeDots ',' TypeConstraints '}' {
+		$$ = std::make_shared<ast::Constraint>();
+	  }
+	;
+
+TypeConstraints:
+	  NamedConstraint                     { }
+	| TypeConstraints ',' NamedConstraint { }
+	;
+
+NamedConstraint:
+	TOK_identifier optConstraint optPresenceConstraint { }
+	;
+
+optPresenceConstraint:
+	  /* empty */   { }
+	| TOK_PRESENT   { }
+	| TOK_ABSENT    { }
+	| TOK_OPTIONAL  { }
+	;
+
+/* X.682 */
+GeneralConstraint:
+	  UserDefinedConstraint { $$ = $1; }
+	| TableConstraint       { $$ = $1; }
+	| ContentsConstraint    { $$ = $1; }
+	;
+
+UserDefinedConstraint:
+	TOK_CONSTRAINED TOK_BY '{' { lexer.push_opaque_state(); } OpaqueTokens {
+		$$ = std::make_shared<ast::Constraint>();
+	}
+	;
+
+ContentsConstraint:
+	TOK_CONTAINING TypeDef {
+		$$ = std::make_shared<ast::Constraint>();
+	}
+	;
+
+TableConstraint:
+	  SimpleTableConstraint       { $$ = $1; }
+	| ComponentRelationConstraint { $$ = $1; }
+	;
+
+SimpleTableConstraint:
+	'{' TypeRefName '}' {
+		$$ = std::make_shared<ast::Constraint>();
+	}
+	;
+
+ComponentRelationConstraint:
+	SimpleTableConstraint '{' AtNotationList '}' {
+		$$ = std::make_shared<ast::Constraint>();
+	}
+	;
+
+AtNotationList:
+	  AtNotationElement                    { }
+	| AtNotationList ',' AtNotationElement { }
+	;
+
+AtNotationElement:
+	  '@' ComponentIdList     { }
+	| '@' '.' ComponentIdList { }
+	;
+
+ComponentIdList:
+	  TOK_identifier                       { }
+	| ComponentIdList '.' TOK_identifier   { }
+	;
 
 /* ===== Values ============================================================== */
 
@@ -793,6 +948,54 @@ OIDArc:
     | TOK_identifier             { $$.name = $1; }
     | TOK_identifier '(' TOK_number ')'  { $$.name = $1; $$.number = $3; }
     | TypeRefName                { $$.name = $1; }
+    ;
+
+/* ===== Information Object Class (X.681) ==================================== */
+
+ObjectClass:
+    TOK_CLASS '{' FieldSpec '}' optWithSyntax
+    {
+        auto t = std::make_shared<TypeDef>();
+        t->body = BuiltinType::Null; /* CLASS treated as opaque placeholder */
+        $$ = t;
+    }
+    ;
+
+optWithSyntax:
+      /* empty */
+    | TOK_WITH TOK_SYNTAX '{' { lexer.push_with_syntax_state(); } WithSyntaxList '}'
+    ;
+
+WithSyntaxList:
+      WithSyntaxToken
+    | WithSyntaxList WithSyntaxToken
+    ;
+
+WithSyntaxToken:
+      TOK_Literal
+    | TOK_whitespace
+    | TOK_typefieldreference
+    | TOK_valuefieldreference
+    | '[' WithSyntaxList ']'
+    ;
+
+FieldSpec:
+      ClassField
+    | FieldSpec ',' ClassField
+    ;
+
+ClassField:
+      TOK_typefieldreference optMarker
+    | TOK_typefieldreference TypeDef optMarker
+    | TOK_valuefieldreference TypeDef optUNIQUE optMarker
+    | TOK_valuefieldreference FieldName optMarker
+    | TOK_typefieldreference  FieldName optMarker
+    | TOK_IDENTIFIED TOK_BY TOK_valuefieldreference
+    ;
+
+optUNIQUE:
+      /* empty */
+    | TOK_UNIQUE
     ;
 
 FieldName:
