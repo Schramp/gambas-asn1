@@ -72,4 +72,12 @@ struct TypeDescriptor {
     const void*          per_constraints; // cast to PerConstraints* in PerCodec; nullptr if unconstrained
 };
 
+// Built-in type descriptors — used by generated SEQUENCE/CHOICE member tables
+// to fill type_descriptor pointers for plain primitive members.
+inline constexpr TypeDescriptor asn_DEF_Integer      = { "INTEGER",   Tag::universal( 2, false), nullptr, nullptr, nullptr, nullptr };
+inline constexpr TypeDescriptor asn_DEF_Boolean      = { "BOOLEAN",   Tag::universal( 1, false), nullptr, nullptr, nullptr, nullptr };
+inline constexpr TypeDescriptor asn_DEF_OctetString  = { "OCTET STRING", Tag::universal( 4, false), nullptr, nullptr, nullptr, nullptr };
+inline constexpr TypeDescriptor asn_DEF_Utf8String   = { "UTF8String",   Tag::universal(12, false), nullptr, nullptr, nullptr, nullptr };
+inline constexpr TypeDescriptor asn_DEF_Ia5String    = { "IA5String",    Tag::universal(22, false), nullptr, nullptr, nullptr, nullptr };
+
 } // namespace asn1

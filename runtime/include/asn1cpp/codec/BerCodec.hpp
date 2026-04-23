@@ -128,18 +128,12 @@ private:
         w.write_constructed(def.tag, [&](BerWriter& inner) {
             for (int i = 0; i < spec.count; ++i) {
                 const auto& mbr = spec.members[i];
+                if (!mbr.type_descriptor) continue;
+                if (mbr.optional) continue;  // TODO: optional member encode
                 const void* mptr = static_cast<const char*>(src) + mbr.offset;
-                if (mbr.optional) {
-                    // optional members stored as std::optional<T> — check engaged flag
-                    // The has_value bool is the first byte of std::optional<T>
-                    // We rely on the member's type_descriptor to encode it
-                    // For now: delegate back through the member's own TypeDescriptor
-                }
-                if (mbr.type_descriptor) {
-                    const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
-                    BerEncodeStream ms{inner};
-                    encode(ms, mdef, mptr);
-                }
+                const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
+                BerEncodeStream ms{inner};
+                encode(ms, mdef, mptr);
             }
         });
     }
@@ -154,13 +148,13 @@ private:
         const auto& spec = *def.sequence_spec;
         for (int i = 0; i < spec.count; ++i) {
             const auto& mbr = spec.members[i];
+            if (!mbr.type_descriptor) continue;
+            if (mbr.optional) continue;  // TODO: optional member decode
             void* mptr = static_cast<char*>(dest) + mbr.offset;
-            if (mbr.type_descriptor) {
-                const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
-                BerDecodeStream ms{inner};
-                auto ok = decode(ms, mdef, mptr);
-                if (!ok && !mbr.optional) return ok;
-            }
+            const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
+            BerDecodeStream ms{inner};
+            auto ok = decode(ms, mdef, mptr);
+            if (!ok) return ok;
         }
         return decode_ok();
     }

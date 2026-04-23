@@ -280,21 +280,41 @@ private:
         }
     }
 
-    // ---- SEQUENCE / SET (stub) -----------------------------------------
+    // ---- SEQUENCE / SET -------------------------------------------------
+    //
+    // Non-extensible, no-optional case: concatenate member encodings.
+    // OPTIONAL members and extension bitmap (X.691 §18) deferred to later step.
 
     void encode_sequence(PerEncodeStream& s,
                          const TypeDescriptor& def,
                          const void* src) const
     {
-        (void)s; (void)def; (void)src;
+        const auto& spec = *def.sequence_spec;
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& mbr = spec.members[i];
+            if (!mbr.type_descriptor) continue;
+            if (mbr.optional) continue;  // TODO: optional member PER encode
+            const void* mptr = static_cast<const char*>(src) + mbr.offset;
+            const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
+            encode(s, mdef, mptr);
+        }
     }
 
     DecodeResult decode_sequence(PerDecodeStream& s,
                                  const TypeDescriptor& def,
                                  void* dest) const
     {
-        (void)s; (void)def; (void)dest;
-        return decode_err(DecodeError("PerCodec: SEQUENCE not yet implemented"));
+        const auto& spec = *def.sequence_spec;
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& mbr = spec.members[i];
+            if (!mbr.type_descriptor) continue;
+            if (mbr.optional) continue;  // TODO: optional member PER decode
+            void* mptr = static_cast<char*>(dest) + mbr.offset;
+            const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
+            auto r = decode(s, mdef, mptr);
+            if (!r) return r;
+        }
+        return decode_ok();
     }
 
     // ---- CHOICE (stub) -------------------------------------------------

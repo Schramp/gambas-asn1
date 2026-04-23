@@ -10,6 +10,11 @@ add_executable(test_ber_sequence ber/test_sequence.cpp)
 target_link_libraries(test_ber_sequence PRIVATE asn1cpp_runtime)
 add_test(NAME ber_sequence COMMAND test_ber_sequence)
 
+# ---- SEQUENCE BER / XER / PER tests (no tagging, no OPTIONAL) -------------
+add_executable(test_seq_simple seq/test_seq_simple.cpp)
+target_link_libraries(test_seq_simple PRIVATE asn1cpp_runtime)
+add_test(NAME seq_simple COMMAND test_seq_simple)
+
 # ---- PER integer encoding tests --------------------------------------------
 # Validates constrained INTEGER UPER encoding.
 # ASN.1 schemas under tests/asn1/ document the intent; TypeDescriptors are

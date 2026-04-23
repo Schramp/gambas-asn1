@@ -1,0 +1,17 @@
+-- Step 3: minimal SEQUENCE — no tagging, no OPTIONAL, no DEFAULT.
+-- Exercises: struct generation, MemberDescriptor tables, BER/XER/PER encode+decode.
+
+SimpleSeqTest DEFINITIONS ::= BEGIN
+
+    Point ::= SEQUENCE {
+        x   INTEGER,
+        y   INTEGER
+    }
+
+    ColoredPoint ::= SEQUENCE {
+        x       INTEGER,
+        y       INTEGER,
+        color   INTEGER
+    }
+
+END

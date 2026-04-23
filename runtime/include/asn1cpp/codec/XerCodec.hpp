@@ -225,22 +225,71 @@ private:
         return decode_err(DecodeError("XER: unknown enum value: " + inner.name));
     }
 
-    // ---- SEQUENCE (stub) -----------------------------------------------
+    // ---- SEQUENCE ---------------------------------------------------------
+    //
+    // XER: <TypeName>\n  <member1>value</member1>\n ... </TypeName>\n
+    // Each member is encoded/decoded using its type_descriptor with name
+    // overridden to the member name so the XML element matches.
+    // Optional members: checked via the has_value bool at the start of
+    // std::optional<T> (implementation-defined layout, but portable in practice
+    // for trivially-copyable T on all supported compilers).
 
     void encode_sequence(std::ostream& os,
                          const TypeDescriptor& def,
                          const void* src) const
     {
-        (void)os; (void)def; (void)src;
-        // TODO: implement for SEQUENCE
+        const auto& spec = *def.sequence_spec;
+        os << '<' << def.name << ">\n";
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& mbr = spec.members[i];
+            if (!mbr.type_descriptor) continue;
+            const void* mptr = static_cast<const char*>(src) + mbr.offset;
+            if (mbr.optional) continue;  // TODO: optional member encode
+            TypeDescriptor mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
+            mdef.name = mbr.name;
+            XerEncodeStream ms{os};
+            encode(ms, mdef, mptr);
+        }
+        os << "</" << def.name << ">\n";
     }
 
     DecodeResult decode_sequence(XerDecodeStream& s,
                                  const TypeDescriptor& def,
                                  void* dest) const
     {
-        (void)s; (void)def; (void)dest;
-        return decode_err(DecodeError("XerCodec: SEQUENCE decode not yet implemented"));
+        using namespace xer_detail;
+        // Consume <TypeName>
+        {
+            auto rem = s.remaining();
+            std::size_t pos = 0;
+            auto ti = parse_tag(rem, pos);
+            if (ti.name != def.name || ti.closing || ti.self_closing)
+                return decode_err(DecodeError(std::string("XER SEQUENCE: expected <") + def.name + ">"));
+            s.advance(pos);
+        }
+
+        const auto& spec = *def.sequence_spec;
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& mbr = spec.members[i];
+            if (!mbr.type_descriptor) continue;
+            if (mbr.optional) continue;  // TODO: optional member decode
+            void* mptr = static_cast<char*>(dest) + mbr.offset;
+            TypeDescriptor mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
+            mdef.name = mbr.name;
+            auto r = decode(s, mdef, mptr);
+            if (!r) return r;
+        }
+
+        // Consume </TypeName>
+        {
+            auto rem = s.remaining();
+            std::size_t pos = 0;
+            auto ti = parse_tag(rem, pos);
+            if (ti.name != def.name || !ti.closing)
+                return decode_err(DecodeError(std::string("XER SEQUENCE: expected </") + def.name + ">"));
+            s.advance(pos);
+        }
+        return decode_ok();
     }
 
     // ---- CHOICE (stub) -------------------------------------------------

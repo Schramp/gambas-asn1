@@ -107,6 +107,28 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) {
     return "asn1::Tag::universal(4, false)";  // fallback: OCTET STRING
 }
 
+// Returns the &asn_DEF_* expression for a member's type_descriptor field.
+// Returns "nullptr" for types where the runtime can infer encoding from the tag alone,
+// and "&asn_DEF_<Name>" for generated or named types.
+static std::string type_descriptor_ref_for(const ast::TypeDef& def) {
+    using BT = ast::BuiltinType;
+    if (auto* bt = std::get_if<BT>(&def.body)) {
+        switch (*bt) {
+        case BT::Integer:           return "&asn1::asn_DEF_Integer";
+        case BT::Boolean:           return "&asn1::asn_DEF_Boolean";
+        case BT::OctetString:       return "&asn1::asn_DEF_OctetString";
+        case BT::Utf8String:        return "&asn1::asn_DEF_Utf8String";
+        case BT::Ia5String:         return "&asn1::asn_DEF_Ia5String";
+        default:                    return "nullptr";
+        }
+    }
+    if (auto* tr = std::get_if<ast::TypeRef>(&def.body))
+        return std::format("&asn_DEF_{}", to_cpp_name(tr->type_name));
+    if (def.is_sequence() || def.is_choice() || def.is_seq_of() || def.is_set_of() || def.is_set())
+        return std::format("&asn_DEF_{}", to_cpp_name(def.name.empty() ? "Anon" : def.name));
+    return "nullptr";
+}
+
 // Returns true if this is a type assignment (not a value or class assignment).
 // Value assignments have a non-monostate default_value (the assigned value).
 static bool is_type_assignment(const ast::TypeDef& def) {
@@ -402,10 +424,11 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 eff_tag = natural_tag_for(*m);
             }
 
-            os << std::format("    {{ \"{}\", {}, {}, false, offsetof({}, {}), nullptr }},\n",
+            os << std::format("    {{ \"{}\", {}, {}, false, offsetof({}, {}), {} }},\n",
                 m->name, eff_tag,
                 optional ? "true" : "false",
-                cname, mname);
+                cname, mname,
+                type_descriptor_ref_for(*m));
         }
         os << "};\n\n";
     }
@@ -545,8 +568,9 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             } else {
                 eff_tag = natural_tag_for(*m);
             }
-            os << std::format("    {{ \"{}\", {}, false, false, 0, nullptr }},\n",
-                m->name, eff_tag);
+            os << std::format("    {{ \"{}\", {}, false, false, 0, {} }},\n",
+                m->name, eff_tag,
+                type_descriptor_ref_for(*m));
         }
         os << "};\n\n";
     }
