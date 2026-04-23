@@ -439,7 +439,11 @@ Assignment:
 	    m->assignments.push_back($1);
 	    $$ = m;
 	  }
-	| ValueAssignment { $$ = std::make_shared<Module>(); }
+	| ValueAssignment {
+	    auto m = std::make_shared<Module>();
+	    m->assignments.push_back($1);
+	    $$ = m;
+	  }
 	| ValueSetTypeAssignment {
 	    auto m = std::make_shared<Module>();
 	    m->assignments.push_back($1);
@@ -540,7 +544,12 @@ ActualParameter:
 
 ValueAssignment:
 	Identifier Type TOK_PPEQ Value
-	{ /* parsed but not stored */ }
+	{
+	    // Store value assignment so constraints can resolve named values.
+	    $2->name = $1;
+	    $2->default_value = $4;
+	    $$ = $2;
+	}
 	;
 
 /* ===== Type hierarchy ====================================================== */

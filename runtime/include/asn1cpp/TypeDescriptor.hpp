@@ -66,9 +66,10 @@ struct ChoiceSpec {
 struct TypeDescriptor {
     const char*          name;
     Tag                  tag;
-    const EnumSpec*      enum_spec;     // non-null for ENUMERATED
-    const SequenceSpec*  sequence_spec; // non-null for SEQUENCE/SET
-    const ChoiceSpec*    choice_spec;   // non-null for CHOICE
+    const EnumSpec*      enum_spec;      // non-null for ENUMERATED
+    const SequenceSpec*  sequence_spec;  // non-null for SEQUENCE/SET
+    const ChoiceSpec*    choice_spec;    // non-null for CHOICE
+    const void*          per_constraints; // cast to PerConstraints* in PerCodec; nullptr if unconstrained
 };
 
 } // namespace asn1

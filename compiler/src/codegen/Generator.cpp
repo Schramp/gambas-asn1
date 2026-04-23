@@ -3,6 +3,7 @@
 #include <limits>
 #include "asn1cpp/Tag.hpp"
 #include "asn1cpp/TypeDescriptor.hpp"
+#include "asn1cpp/codec/PerConstraints.hpp"
 
 namespace asn1::codegen {
 
@@ -106,10 +107,14 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) {
     return "asn1::Tag::universal(4, false)";  // fallback: OCTET STRING
 }
 
-// Returns true if this assignment has a type body (not a value/class assignment).
+// Returns true if this is a type assignment (not a value or class assignment).
+// Value assignments have a non-monostate default_value (the assigned value).
 static bool is_type_assignment(const ast::TypeDef& def) {
-    return !std::holds_alternative<std::monostate>(def.body)
-        && !def.is_extension_marker;
+    if (std::holds_alternative<std::monostate>(def.body)) return false;
+    if (def.is_extension_marker) return false;
+    // Value assignments (lowercase names) have default_value set by the grammar.
+    if (!std::holds_alternative<std::monostate>(def.default_value)) return false;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +215,7 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    \"{}\",\n", cname);
     os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Enumerated);
     os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr, nullptr\n";
+    os << "    nullptr, nullptr, nullptr /* per_constraints */\n";
     os << "};\n\n";
 
     // BerTraits bodies — thin wrappers; all logic lives in BerCodec
@@ -251,13 +256,68 @@ void Generator::emit_integer_hpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
 }
 
+// Try to extract a concrete int64_t from a Value, resolving NamedValueRef via resolver.
+std::optional<int64_t> Generator::resolve_int_value(const ast::Value& v) const {
+    if (auto* i = std::get_if<int64_t>(&v)) return *i;
+    if (auto* ref = std::get_if<ast::NamedValueRef>(&v)) {
+        auto def = resolver_.lookup(ref->name);
+        if (def) {
+            if (auto* i = std::get_if<int64_t>(&def->default_value)) return *i;
+        }
+    }
+    return std::nullopt;
+}
+
+// Extract integer value range from constraints, if determinable.
+std::optional<std::pair<int64_t,int64_t>>
+Generator::extract_integer_range(const ast::TypeDef& def) const {
+    for (const auto& cptr : def.constraints) {
+        if (!cptr) continue;
+        auto* vr = std::get_if<ast::ValueRange>(&cptr->body);
+        if (!vr) continue;
+        std::optional<int64_t> lo, hi;
+        if (vr->lower.kind == ast::RangeEndpoint::Kind::Min)
+            lo = std::numeric_limits<int64_t>::min();
+        else
+            lo = resolve_int_value(vr->lower.value);
+        if (vr->upper.kind == ast::RangeEndpoint::Kind::Max)
+            hi = std::numeric_limits<int64_t>::max();
+        else
+            hi = resolve_int_value(vr->upper.value);
+        if (lo && hi) return std::make_pair(*lo, *hi);
+    }
+    return std::nullopt;
+}
+
 void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = to_cpp_name(def.name);
+
+    auto range = extract_integer_range(def);
+    std::string per_ptr = "nullptr /* unconstrained */";
+
+    if (range) {
+        int64_t lo = range->first, hi = range->second;
+        int64_t range_count = hi - lo + 1;  // may overflow for very wide ranges; acceptable
+        // ceil(log2(range_count))
+        int rb = 0;
+        if (range_count > 1) {
+            for (int64_t r = range_count - 1; r > 0; r >>= 1) ++rb;
+        }
+        os << std::format("static const asn1::PerConstraints asn_PER_{}_constr = {{\n", cname);
+        os << std::format("    asn1::PerConstraints::CONSTRAINED,\n");
+        os << std::format("    {}, /* range_bits */\n", rb);
+        os << std::format("    {}, /* lower_bound */\n", lo);
+        os << std::format("    {}, /* upper_bound */\n", hi);
+        os << "    0, 0, 0 /* size constraints unused */\n";
+        os << "};\n\n";
+        per_ptr = std::format("&asn_PER_{}_constr", cname);
+    }
 
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", cname);
     os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Integer);
-    os << "    nullptr, nullptr, nullptr\n";
+    os << "    nullptr, nullptr, nullptr,\n";
+    os << std::format("    {} /* per_constraints */\n", per_ptr);
     os << "};\n";
 }
 
@@ -367,7 +427,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    asn1::Tag::universal({}, true),\n", tag_num);
     os << "    nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr\n";
+    os << "    nullptr, nullptr /* per_constraints */\n";
     os << "};\n\n";
 
     // BerTraits encode
@@ -507,7 +567,8 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    \"{}\",\n", cname);
     os << "    asn1::Tag{asn1::TagClass::Context, 0, false}, /* placeholder — CHOICE tag is transparent */\n";
     os << "    nullptr, nullptr,\n";
-    os << std::format("    &asn_SPC_{}\n", cname);
+    os << std::format("    &asn_SPC_{},\n", cname);
+    os << "    nullptr /* per_constraints */\n";
     os << "};\n\n";
 
     // BerTraits encode — std::visit over variant

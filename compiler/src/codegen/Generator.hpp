@@ -8,6 +8,8 @@
 #include "../ast/Module.hpp"
 #include "../ast/TypeDef.hpp"
 #include "../sema/Resolver.hpp"
+#include <optional>
+#include <limits>
 
 namespace asn1::codegen {
 
@@ -66,6 +68,8 @@ private:
     std::string cpp_type_for(const ast::TypeDef& def);
     std::string tag_literal(const ast::Tag& tag, bool constructed);
     std::string natural_tag_for(const ast::TypeDef& def);
+    std::optional<int64_t> resolve_int_value(const ast::Value& v) const;
+    std::optional<std::pair<int64_t,int64_t>> extract_integer_range(const ast::TypeDef& def) const;
 };
 
 } // namespace asn1::codegen

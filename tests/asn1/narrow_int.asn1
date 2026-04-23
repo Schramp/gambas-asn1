@@ -1,0 +1,6 @@
+-- PER: NarrowInterval has range 2 → encodes in exactly 1 bit (UPER).
+-- value=123456 → bit 0 → 0x00; value=123457 → bit 1 → 0x80.
+
+NarrowIntTest DEFINITIONS ::= BEGIN
+    NarrowInterval ::= INTEGER (123456..123457)
+END
