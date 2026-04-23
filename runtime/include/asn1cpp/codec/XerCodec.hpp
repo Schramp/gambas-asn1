@@ -6,7 +6,9 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include "ICodec.hpp"
+#include "../Tag.hpp"
 
 namespace asn1 {
 
@@ -90,6 +92,7 @@ public:
         if (def.enum_spec)     { encode_enumerated(s.os(), def, src); return; }
         if (def.sequence_spec) { encode_sequence   (s.os(), def, src); return; }
         if (def.choice_spec)   { encode_choice     (s.os(), def, src); return; }
+        if (is_integer_tag(def.tag)) { encode_integer(s.os(), def, src); return; }
     }
 
     // ------------------------------------------------------------------
@@ -101,10 +104,63 @@ public:
         if (def.enum_spec)     return decode_enumerated(s, def, dest);
         if (def.sequence_spec) return decode_sequence   (s, def, dest);
         if (def.choice_spec)   return decode_choice     (s, def, dest);
+        if (is_integer_tag(def.tag)) return decode_integer(s, def, dest);
         return decode_err(DecodeError(std::string("XerCodec: no spec for type ") + def.name));
     }
 
 private:
+    static bool is_integer_tag(const Tag& t) {
+        return t.cls == TagClass::Universal && t.number == UniversalTag::Integer;
+    }
+
+    // ---- INTEGER -------------------------------------------------------
+
+    void encode_integer(std::ostream& os,
+                        const TypeDescriptor& def,
+                        const void* src) const
+    {
+        int64_t v = *static_cast<const int64_t*>(src);
+        os << '<' << def.name << '>' << v << "</" << def.name << ">\n";
+    }
+
+    DecodeResult decode_integer(XerDecodeStream& s,
+                                const TypeDescriptor& def,
+                                void* dest) const
+    {
+        using namespace xer_detail;
+        std::string_view rem = s.remaining();
+        std::size_t pos = 0;
+
+        // Expect <TypeName>
+        auto outer = parse_tag(rem, pos);
+        if (outer.name != def.name || outer.closing || outer.self_closing)
+            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
+
+        // Read text content up to '<'
+        pos = skip_ws(rem, pos);
+        std::size_t text_start = pos;
+        while (pos < rem.size() && rem[pos] != '<') ++pos;
+        std::string_view text = rem.substr(text_start, pos - text_start);
+
+        // Parse decimal integer
+        // Trim whitespace
+        while (!text.empty() && std::isspace((unsigned char)text.front())) text.remove_prefix(1);
+        while (!text.empty() && std::isspace((unsigned char)text.back()))  text.remove_suffix(1);
+        int64_t value = 0;
+        auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
+        if (ec != std::errc{})
+            return decode_err(DecodeError("XER: invalid INTEGER value: " + std::string(text)));
+
+        // Expect </TypeName>
+        auto close = parse_tag(rem, pos);
+        if (!close.closing || close.name != def.name)
+            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
+
+        s.advance(pos);
+        *static_cast<int64_t*>(dest) = value;
+        return decode_ok();
+    }
+
     // ---- ENUMERATED ----------------------------------------------------
 
     void encode_enumerated(std::ostream& os,

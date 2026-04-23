@@ -234,6 +234,34 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
 }
 
 // ---------------------------------------------------------------------------
+// Emit INTEGER
+// ---------------------------------------------------------------------------
+
+void Generator::emit_integer_hpp(const ast::TypeDef& def, std::ostream& os) {
+    std::string cname = to_cpp_name(def.name);
+
+    os << std::format("using {} = int64_t;\n\n", cname);
+
+    // Named integer constants (INTEGER { foo(0), bar(1) } style)
+    for (const auto& ev : def.enum_values)
+        os << std::format("inline constexpr int64_t {}_{} = {};\n",
+            cname, to_cpp_name(ev.name), ev.number.value_or(0));
+    if (!def.enum_values.empty()) os << "\n";
+
+    os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
+}
+
+void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
+    std::string cname = to_cpp_name(def.name);
+
+    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
+    os << std::format("    \"{}\",\n", cname);
+    os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Integer);
+    os << "    nullptr, nullptr, nullptr\n";
+    os << "};\n";
+}
+
+// ---------------------------------------------------------------------------
 // Emit SEQUENCE / SET
 // ---------------------------------------------------------------------------
 
@@ -553,11 +581,8 @@ void Generator::emit_hpp(const ast::TypeDef& def, std::ostream& os) {
     } else if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
         if (*bt == ast::BuiltinType::Enumerated) {
             emit_enumerated_hpp(def, os);
-        } else if (*bt == ast::BuiltinType::Integer && !def.enum_values.empty()) {
-            os << std::format("using {} = asn1::Integer;\n", cname);
-            for (const auto& ev : def.enum_values)
-                os << std::format("inline constexpr int64_t {}_{} = {};\n",
-                    cname, to_cpp_name(ev.name), ev.number.value_or(-1));
+        } else if (*bt == ast::BuiltinType::Integer) {
+            emit_integer_hpp(def, os);
         } else {
             os << std::format("using {} = {};\n", cname, cpp_type_for(def));
         }
@@ -585,6 +610,8 @@ void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
     } else if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
         if (*bt == ast::BuiltinType::Enumerated)
             emit_enumerated_cpp(def, os);
+        else if (*bt == ast::BuiltinType::Integer)
+            emit_integer_cpp(def, os);
     }
 }
 
@@ -602,9 +629,13 @@ void Generator::generate_type(const ast::TypeDef& def, const std::string& /*modu
         emit_hpp(def, hpp);
     }
 
+    auto bt_is = [&](ast::BuiltinType t) {
+        auto* bt = std::get_if<ast::BuiltinType>(&def.body);
+        return bt && *bt == t;
+    };
     bool needs_cpp = def.is_sequence() || def.is_set() || def.is_choice()
-        || (std::holds_alternative<ast::BuiltinType>(def.body)
-            && std::get<ast::BuiltinType>(def.body) == ast::BuiltinType::Enumerated);
+        || bt_is(ast::BuiltinType::Enumerated)
+        || bt_is(ast::BuiltinType::Integer);
     if (needs_cpp) {
         std::ofstream cpp(out_dir_ / (cname + ".cpp"));
         emit_cpp(def, cpp);

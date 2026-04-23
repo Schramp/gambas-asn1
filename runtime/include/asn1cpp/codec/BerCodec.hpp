@@ -46,6 +46,7 @@ public:
         if (def.enum_spec)     { encode_enumerated(s.writer(), def, src); return; }
         if (def.sequence_spec) { encode_sequence   (s.writer(), def, src); return; }
         if (def.choice_spec)   { encode_choice     (s.writer(), def, src); return; }
+        if (is_integer_tag(def.tag)) { encode_integer(s.writer(), def, src); return; }
     }
 
     // ------------------------------------------------------------------
@@ -57,10 +58,40 @@ public:
         if (def.enum_spec)     return decode_enumerated(s.reader(), def, dest);
         if (def.sequence_spec) return decode_sequence   (s.reader(), def, dest);
         if (def.choice_spec)   return decode_choice     (s.reader(), def, dest);
+        if (is_integer_tag(def.tag)) return decode_integer(s.reader(), def, dest);
         return decode_err(DecodeError(std::string("BerCodec: no spec for type ") + def.name));
     }
 
 private:
+    static bool is_integer_tag(const Tag& t) {
+        return t.cls == TagClass::Universal && t.number == UniversalTag::Integer;
+    }
+
+    // ---- INTEGER -------------------------------------------------------
+
+    void encode_integer(BerWriter& w,
+                        const TypeDescriptor& def,
+                        const void* src) const
+    {
+        int64_t v = *static_cast<const int64_t*>(src);
+        auto bytes = detail::encode_integer_bytes(v);
+        w.write_primitive(def.tag, std::span<const uint8_t>(bytes.data(), bytes.size()));
+    }
+
+    DecodeResult decode_integer(BerReader& r,
+                                const TypeDescriptor& def,
+                                void* dest) const
+    {
+        auto tlv = r.read_tlv();
+        if (!tlv) return decode_err(tlv.error());
+        if (tlv->tag != def.tag)
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
+        auto v = BerTraits<Integer>::decode_value(tlv->value);
+        if (!v) return decode_err(v.error());
+        *static_cast<int64_t*>(dest) = v->value();
+        return decode_ok();
+    }
+
     // ---- ENUMERATED ----------------------------------------------------
 
     void encode_enumerated(BerWriter& w,

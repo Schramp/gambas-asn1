@@ -56,6 +56,8 @@ private:
 
     void emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os);
     void emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os);
+    void emit_integer_hpp(const ast::TypeDef& def, std::ostream& os);
+    void emit_integer_cpp(const ast::TypeDef& def, std::ostream& os);
     void emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os);
     void emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os);
     void emit_choice_hpp(const ast::TypeDef& def, std::ostream& os);
