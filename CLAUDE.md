@@ -51,6 +51,199 @@ asn1cpp/
 3. **Sema** (`Resolver`) → resolved type references
 4. **Codegen** (`Generator`) → one `.hpp` + `.cpp` pair per type
 
+### Generated code design — tables only, no inline codec logic
+
+Generated `.hpp`/`.cpp` files contain **only static descriptor tables and thin wrapper
+functions**. They never contain encoding/decoding logic. All encode/decode is delegated to
+the runtime via the `TypeDescriptor` tables.
+
+**What goes in generated files:**
+- `asn_MAP_<T>[]`  — `EnumEntry` value↔name table (ENUMERATED)
+- `asn_MBR_<T>[]`  — `MemberDescriptor` table (SEQUENCE, SET, CHOICE)
+- `asn_SPC_<T>`    — type-specific spec struct (`EnumSpec`, `SequenceSpec`, `ChoiceSpec`)
+- `asn_DEF_<T>`    — top-level `TypeDescriptor` (name, tag, pointer to spec)
+- Thin `encode()`/`decode()` wrappers that call into the runtime, passing `asn_DEF_<T>`
+
+**What stays in the runtime (never in generated files):**
+- All TLV read/write logic
+- All XML read/write logic
+- Generic SEQUENCE/CHOICE/ENUMERATED encode+decode driven by `TypeDescriptor` tables
+
+### Codec interface — `ICodec` virtual interface, not templates
+
+All encodings share a single abstract interface. The codec is an object, not a compile-time
+parameter, so it can be passed around, swapped, and stubbed without template explosion.
+
+```cpp
+// runtime/include/asn1cpp/codec/ICodec.hpp
+
+class IEncodeStream;   // abstract output sink (binary buffer, XML writer, etc.)
+class IDecodeStream;   // abstract input source
+
+class ICodec {
+public:
+    virtual ~ICodec() = default;
+    virtual const char* name() const = 0;
+
+    // Encode a value (described by def) from src into dst.
+    virtual void encode(IEncodeStream& dst,
+                        const TypeDescriptor& def,
+                        const void* src) const = 0;
+
+    // Decode a value (described by def) from src into dest.
+    virtual Expected<void, DecodeError> decode(IDecodeStream& src,
+                                               const TypeDescriptor& def,
+                                               void* dest) const = 0;
+};
+```
+
+Concrete implementations:
+
+| Class | Encoding | Status | Files |
+|-------|----------|--------|-------|
+| `BerCodec` | BER / DER | implemented | `codec/BerCodec.{hpp,cpp}` |
+| `XerCodec` | XER (XML) | implemented | `codec/XerCodec.{hpp,cpp}` |
+| `JerCodec` | JER (JSON) | stub — returns `not_implemented` | `codec/JerCodec.hpp` |
+| `PerCodec` | PER / UPER | empty stub — see PER architecture section | `codec/PerCodec.hpp` |
+
+`BerCodec` and `XerCodec` use `IEncodeStream`/`IDecodeStream` subclasses that wrap
+`BerWriter`/`BerReader` and a simple XML writer/reader respectively. The generic logic
+in `BerCodec::encode()` inspects `def.sequence_spec`, `def.enum_spec`, etc. to iterate
+members — **no generated switch/if chains**.
+
+Thin generated wrappers look like:
+
+```cpp
+// generated — Enum1.cpp
+void asn1::BerTraits<Enum1>::encode(BerWriter& w, const Enum1& v) {
+    BerEncodeStream s{w};
+    BerCodec::instance().encode(s, asn_DEF_Enum1, &v);
+}
+Expected<Enum1, DecodeError> asn1::BerTraits<Enum1>::decode(BerReader& r) {
+    Enum1 result{};
+    BerDecodeStream s{r};
+    auto ok = BerCodec::instance().decode(s, asn_DEF_Enum1, &result);
+    if (!ok) return make_unexpected<Enum1, DecodeError>(ok.error());
+    return result;
+}
+```
+
+### PER architecture
+
+PER has its own codec class — `PerCodec` in `codec/PerCodec.hpp` (currently a stub).
+It is completely separate from `BerCodec`. The `BerCodec` neither includes nor references
+PER logic; it ignores all PER-specific fields in the descriptor tables.
+
+The descriptor structs in `TypeDescriptor.hpp` carry PER *metadata* as nullable/zero
+fields so that generated tables don't need to be regenerated when `PerCodec` is
+eventually implemented. `BerCodec` and `XerCodec` skip these fields entirely.
+
+PER is fundamentally different from BER/XER and forces richer descriptor tables.
+This was validated by reading `constr_SEQUENCE_aper.c`, `constr_CHOICE_aper.c`, and
+`asn1c_C.c` in the reference asn1c implementation.
+
+#### BER vs PER iteration strategy
+
+| Aspect | BER | PER |
+|--------|-----|-----|
+| Member identification | Tag on each TLV; out-of-order capable | Strictly positional; no tags |
+| OPTIONAL detection | Tag present/absent in stream | Packed bitmap before any values (`roms_count` bits) |
+| CHOICE index | Not applicable (decode recursively) | `range_bits`-wide integer (constrained) or unbounded int (extended) |
+| Extension members | Tagged, skip unknown by tag | Bitmap + open-type (length-prefixed) wrapping; skip unknown by length |
+| Stream granularity | Byte-aligned | Bit-aligned; needs `get_bits(n)`, `get_bitmap(n)`, alignment primitives |
+| Per-member constraints | Ignored | Mandatory: value range, SIZE, alphabet, extensibility flag |
+
+#### IDecodeStream / IEncodeStream
+
+Both BER and PER subclass `IDecodeStream` / `IEncodeStream`. PER subclasses need
+bit-level operations that BER subclasses expose but never call:
+
+```cpp
+class IDecodeStream {
+public:
+    virtual Expected<uint64_t, DecodeError> get_bits(int n) = 0;  // PER: read n bits
+    virtual Expected<void, DecodeError>     align() = 0;           // PER: byte-align
+    // BER uses read_tlv() via dynamic_cast or a separate byte-stream method
+};
+```
+
+#### Descriptor table fields required for PER — add now, not later
+
+Changing table structure after code generation requires regenerating every file.
+Add PER fields as nullable pointers / zeros from the start:
+
+**`SequenceSpec` additions:**
+```cpp
+struct SequenceSpec {
+    const MemberDescriptor* members;
+    int count;
+    int ext_at;          // index of first extension member; -1 = none
+
+    // PER-specific (nullptr / 0 until PER codegen is implemented)
+    int roms_count;      // root optional member count (width of preamble bitmap)
+    int aoms_count;      // extension optional member count
+    const int* oms;      // array of optional-member indices (length = roms_count + aoms_count)
+};
+```
+
+**`MemberDescriptor` additions:**
+```cpp
+struct MemberDescriptor {
+    const char*  name;
+    Tag          tag;
+    bool         optional;
+    bool         has_default;
+    std::size_t  offset;
+    const void*  type_descriptor;
+
+    // PER-specific (nullptr / false until PER codegen is implemented)
+    const PerConstraints* per_constraints;  // value range, size, alphabet, flags
+    bool is_extension;                      // needs open-type wrapping in PER
+    int  (*default_value_cmp)(const void*); // suppress DEFAULT-valued fields in PER
+};
+```
+
+**`ChoiceSpec` addition:**
+```cpp
+struct ChoiceSpec {
+    const MemberDescriptor* alternatives;
+    int count;
+    int ext_at;
+
+    // PER-specific
+    const PerConstraints* per_constraints;  // range_bits for constrained CHOICE index
+};
+```
+
+**`PerConstraints` struct** (separate header `codec/PerConstraints.hpp`):
+```cpp
+struct PerConstraints {
+    enum Flags { CONSTRAINED = 1, SEMI_CONSTRAINED = 2, EXTENSIBLE = 4 };
+    int      flags;
+    int      range_bits;   // bits needed to encode (upper - lower + 1) values
+    int64_t  lower_bound;
+    int64_t  upper_bound;
+    // Size constraint (for OCTET STRING, BIT STRING, strings)
+    int      size_range_bits;
+    int64_t  size_lower;
+    int64_t  size_upper;
+};
+```
+
+#### PER codec implementation complexity
+
+`PerCodec` (stub for now) will eventually need:
+1. Read/write `roms_count`-bit preamble bitmap before any SEQUENCE member
+2. For each optional root member: check bitmap bit, skip if absent
+3. If extension flag set: read extension bitmap (length-prefixed), then per-present
+   extension member as open-type (length-prefixed octet string)
+4. CHOICE: read `range_bits` bits → member index; handle extension path
+5. INTEGER/ENUMERATED/strings: use `per_constraints` for minimal-bit encoding
+
+This is significantly more complex than BER but is **fully hideable behind `ICodec`**.
+The generated tables carry the metadata; the codec interprets it. Generated files stay
+table-only with no PER-specific logic.
+
 ### RE/flex quirks (6.1.0)
 - Use `%option bison-complete` (not `bison-cc`). `bison-cc-parser` causes double-namespace `yy::yy`.
 - Grouped state blocks `<s>{ ... }` generate broken C++ — expand to individual `<s>rule` lines.

@@ -1,0 +1,208 @@
+#pragma once
+#include <string>
+#include <string_view>
+#include <ostream>
+#include <istream>
+#include <sstream>
+#include <algorithm>
+#include <cctype>
+#include "ICodec.hpp"
+
+namespace asn1 {
+
+// ---------------------------------------------------------------------------
+// XER stream wrappers
+
+class XerEncodeStream : public IEncodeStream {
+    std::ostream& os_;
+public:
+    explicit XerEncodeStream(std::ostream& os) : os_(os) {}
+    std::ostream& os() { return os_; }
+};
+
+class XerDecodeStream : public IDecodeStream {
+    std::string buf_;
+    std::size_t pos_{0};
+public:
+    explicit XerDecodeStream(std::string text) : buf_(std::move(text)) {}
+    bool at_end() const override { return pos_ >= buf_.size(); }
+    std::string_view remaining() const { return std::string_view(buf_).substr(pos_); }
+    void advance(std::size_t n) { pos_ += n; }
+};
+
+// ---------------------------------------------------------------------------
+// Simple XER helpers
+
+namespace xer_detail {
+
+// Skip whitespace in sv from pos.
+inline std::size_t skip_ws(std::string_view sv, std::size_t pos) {
+    while (pos < sv.size() && std::isspace((unsigned char)sv[pos])) ++pos;
+    return pos;
+}
+
+// Consume expected literal; return new pos or npos on mismatch.
+inline std::size_t expect(std::string_view sv, std::size_t pos, std::string_view tok) {
+    pos = skip_ws(sv, pos);
+    if (sv.substr(pos, tok.size()) != tok) return std::string_view::npos;
+    return pos + tok.size();
+}
+
+// Parse <tag> or </tag> or <tag/>.  Returns tag name and whether it's closing/self-closing.
+struct TagInfo { std::string name; bool closing; bool self_closing; };
+inline TagInfo parse_tag(std::string_view sv, std::size_t& pos) {
+    pos = skip_ws(sv, pos);
+    if (pos >= sv.size() || sv[pos] != '<') return {"", false, false};
+    ++pos;
+    bool closing = pos < sv.size() && sv[pos] == '/';
+    if (closing) ++pos;
+    std::size_t name_start = pos;
+    while (pos < sv.size() && sv[pos] != '>' && sv[pos] != '/' && !std::isspace((unsigned char)sv[pos]))
+        ++pos;
+    std::string name(sv.substr(name_start, pos - name_start));
+    pos = skip_ws(sv, pos);
+    bool self_closing = pos < sv.size() && sv[pos] == '/';
+    if (self_closing) ++pos;
+    if (pos < sv.size() && sv[pos] == '>') ++pos;
+    return {name, closing, self_closing};
+}
+
+} // namespace xer_detail
+
+// ---------------------------------------------------------------------------
+// XerCodec
+
+class XerCodec : public ICodec {
+public:
+    static XerCodec& instance() {
+        static XerCodec inst;
+        return inst;
+    }
+
+    const char* name() const override { return "XER"; }
+
+    // ------------------------------------------------------------------
+    void encode(IEncodeStream& dst,
+                const TypeDescriptor& def,
+                const void* src) const override
+    {
+        auto& s = static_cast<XerEncodeStream&>(dst);
+        if (def.enum_spec)     { encode_enumerated(s.os(), def, src); return; }
+        if (def.sequence_spec) { encode_sequence   (s.os(), def, src); return; }
+        if (def.choice_spec)   { encode_choice     (s.os(), def, src); return; }
+    }
+
+    // ------------------------------------------------------------------
+    DecodeResult decode(IDecodeStream& src,
+                        const TypeDescriptor& def,
+                        void* dest) const override
+    {
+        auto& s = static_cast<XerDecodeStream&>(src);
+        if (def.enum_spec)     return decode_enumerated(s, def, dest);
+        if (def.sequence_spec) return decode_sequence   (s, def, dest);
+        if (def.choice_spec)   return decode_choice     (s, def, dest);
+        return decode_err(DecodeError(std::string("XerCodec: no spec for type ") + def.name));
+    }
+
+private:
+    // ---- ENUMERATED ----------------------------------------------------
+
+    void encode_enumerated(std::ostream& os,
+                           const TypeDescriptor& def,
+                           const void* src) const
+    {
+        long v = *static_cast<const long*>(src);
+        const EnumSpec& spec = *def.enum_spec;
+        // Binary search by value (entries sorted by value)
+        const char* name = nullptr;
+        int lo = 0, hi = spec.count - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (spec.entries[mid].value == v) { name = spec.entries[mid].name; break; }
+            if (spec.entries[mid].value < v) lo = mid + 1; else hi = mid - 1;
+        }
+        os << '<' << def.name << '>';
+        if (name) os << '<' << name << "/>";
+        else      os << v;  // unknown extension value — emit as integer
+        os << "</" << def.name << ">\n";
+    }
+
+    DecodeResult decode_enumerated(XerDecodeStream& s,
+                                   const TypeDescriptor& def,
+                                   void* dest) const
+    {
+        using namespace xer_detail;
+        std::string_view rem = s.remaining();
+        std::size_t pos = 0;
+
+        // Expect <TypeName>
+        auto outer = parse_tag(rem, pos);
+        if (outer.name != def.name || outer.closing)
+            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
+
+        pos = skip_ws(rem, pos);
+        // Expect <valueName/>
+        auto inner = parse_tag(rem, pos);
+        if (inner.name.empty() || inner.closing)
+            return decode_err(DecodeError("XER: expected enum value tag"));
+
+        // Expect </TypeName>
+        if (!inner.self_closing) {
+            auto close = parse_tag(rem, pos);
+            if (!close.closing || close.name != inner.name)
+                return decode_err(DecodeError("XER: malformed enum value tag"));
+        }
+        auto close_outer = parse_tag(rem, pos);
+        if (!close_outer.closing || close_outer.name != def.name)
+            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
+
+        s.advance(pos);
+
+        // Look up name in enum spec
+        const EnumSpec& spec = *def.enum_spec;
+        for (int i = 0; i < spec.count; ++i) {
+            if (inner.name == spec.entries[i].name) {
+                *static_cast<long*>(dest) = spec.entries[i].value;
+                return decode_ok();
+            }
+        }
+        return decode_err(DecodeError("XER: unknown enum value: " + inner.name));
+    }
+
+    // ---- SEQUENCE (stub) -----------------------------------------------
+
+    void encode_sequence(std::ostream& os,
+                         const TypeDescriptor& def,
+                         const void* src) const
+    {
+        (void)os; (void)def; (void)src;
+        // TODO: implement for SEQUENCE
+    }
+
+    DecodeResult decode_sequence(XerDecodeStream& s,
+                                 const TypeDescriptor& def,
+                                 void* dest) const
+    {
+        (void)s; (void)def; (void)dest;
+        return decode_err(DecodeError("XerCodec: SEQUENCE decode not yet implemented"));
+    }
+
+    // ---- CHOICE (stub) -------------------------------------------------
+
+    void encode_choice(std::ostream& os,
+                       const TypeDescriptor& def,
+                       const void* src) const
+    {
+        (void)os; (void)def; (void)src;
+    }
+
+    DecodeResult decode_choice(XerDecodeStream& s,
+                               const TypeDescriptor& def,
+                               void* dest) const
+    {
+        (void)s; (void)def; (void)dest;
+        return decode_err(DecodeError("XerCodec: CHOICE decode not yet implemented"));
+    }
+};
+
+} // namespace asn1

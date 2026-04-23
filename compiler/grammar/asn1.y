@@ -211,7 +211,7 @@
 %type <TypeDefPtr>                  ComponentType AlternativeType ExtensionAndException
 
 /* Enumerations / Named values */
-%type <std::monostate>              Enumerations
+%type <std::vector<EnumValue>>      Enumerations
 %type <std::vector<EnumValue>>      UniverationList NamedBitList NamedNumberList
 %type <EnumValue>                   UniverationElement NamedBit NamedNumber
 %type <std::monostate>              IdentifierList IdentifierElement
@@ -676,9 +676,9 @@ BuiltinType:
 	}
 	| TOK_ENUMERATED '{' Enumerations '}'
 	{
-	    /* Enumerations is std::monostate; enum_values filled in UniverationList actions */
 	    auto t = std::make_shared<TypeDef>();
 	    t->body = BuiltinType::Enumerated;
+	    t->enum_values = $3;
 	    $$ = t;
 	}
 	| TOK_BIT TOK_STRING '{' NamedBitList '}'
@@ -797,7 +797,7 @@ DefinedObjectClass:
 /* ===== ENUMERATED / INTEGER / BIT STRING named values ===================== */
 
 Enumerations:
-	UniverationList { /* semantic check: cannot start with ... — omitted */ }
+	UniverationList { $$ = $1; }
 	;
 
 UniverationList:

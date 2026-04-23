@@ -98,6 +98,7 @@ struct TypeDef : Node {
     bool is_optional()  const { return marker == Marker::Optional || marker == Marker::Default; }
     bool has_default()  const { return marker == Marker::Default; }
     bool is_sequence()  const { return std::holds_alternative<SequenceType>(body); }
+    bool is_set()       const { return std::holds_alternative<SetType>(body); }
     bool is_choice()    const { return std::holds_alternative<ChoiceType>(body); }
     bool is_seq_of()    const { return std::holds_alternative<SequenceOfType>(body); }
     bool is_set_of()    const { return std::holds_alternative<SetOfType>(body); }

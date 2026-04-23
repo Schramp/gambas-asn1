@@ -26,6 +26,17 @@ public:
         return data_.subspan(pos_, avail);
     }
 
+    // Peek at the next TLV tag without advancing pos_.
+    // Returns nullopt (as a Tag with number=~0u) on failure.
+    Tag peek_tag() const {
+        std::size_t save = pos_;
+        // We need mutable access to call read_tag, so use a temp reader.
+        BerReader tmp{data_.subspan(save)};
+        auto r = tmp.read_tag();
+        if (!r) return Tag{TagClass::Context, ~0u, false};
+        return *r;
+    }
+
     Expected<Tag, DecodeError> read_tag() {
         if (at_end())
             return make_unexpected<Tag, DecodeError>(DecodeError("unexpected end of data reading tag", pos_));

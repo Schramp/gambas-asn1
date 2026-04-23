@@ -53,11 +53,17 @@ private:
     void generate_type(const ast::TypeDef& def, const std::string& module_name);
     void emit_hpp(const ast::TypeDef& def, std::ostream& os);
     void emit_cpp(const ast::TypeDef& def, std::ostream& os);
-    void emit_struct_members(const ast::TypeDef& def, std::ostream& os);
-    void emit_ber_encode(const ast::TypeDef& def, std::ostream& os);
-    void emit_ber_decode(const ast::TypeDef& def, std::ostream& os);
+
+    void emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os);
+    void emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os);
+    void emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os);
+    void emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os);
+    void emit_choice_hpp(const ast::TypeDef& def, std::ostream& os);
+    void emit_choice_cpp(const ast::TypeDef& def, std::ostream& os);
+
     std::string cpp_type_for(const ast::TypeDef& def);
-    std::string ber_tag_for(const ast::TypeDef& def);
+    std::string tag_literal(const ast::Tag& tag, bool constructed);
+    std::string natural_tag_for(const ast::TypeDef& def);
 };
 
 } // namespace asn1::codegen

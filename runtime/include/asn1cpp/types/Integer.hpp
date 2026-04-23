@@ -13,6 +13,27 @@
 
 namespace asn1 {
 
+namespace detail {
+// Returns minimal two's-complement big-endian encoding of n (used by ENUMERATED codegen).
+inline std::vector<uint8_t> encode_integer_bytes(int64_t n) {
+    uint8_t buf[8];
+    int len = 0;
+    if (n == 0) {
+        return {0x00};
+    }
+    uint64_t u = static_cast<uint64_t>(n);
+    for (int i = 7; i >= 0; --i) { buf[i] = u & 0xFF; u >>= 8; }
+    int start = 0;
+    if (n > 0) {
+        while (start < 7 && buf[start] == 0x00 && (buf[start+1] & 0x80) == 0) ++start;
+    } else {
+        while (start < 7 && buf[start] == 0xFF && (buf[start+1] & 0x80) != 0) ++start;
+    }
+    len = 8 - start;
+    return std::vector<uint8_t>(buf + start, buf + start + len);
+}
+} // namespace detail
+
 // Integer wraps int64_t (sufficient for all ETSI LI integers in practice).
 // The compiler can specialise this for constrained ranges.
 class Integer {
