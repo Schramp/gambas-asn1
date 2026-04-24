@@ -1,0 +1,14 @@
+-- Minimal UTCTime and GeneralizedTime member test.
+-- Exercises: asn_DEF_UtcTime (tag 23), asn_DEF_GeneralizedTime (tag 24).
+
+TimeTest DEFINITIONS ::= BEGIN
+
+    HasUtcTime ::= SEQUENCE {
+        ts  UTCTime
+    }
+
+    HasGeneralizedTime ::= SEQUENCE {
+        ts  GeneralizedTime
+    }
+
+END

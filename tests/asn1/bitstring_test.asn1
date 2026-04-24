@@ -1,0 +1,10 @@
+-- Minimal BIT STRING member test.
+-- Exercises: asn_DEF_BitString descriptor ref, BER tag 0x03, unused-bits byte.
+
+BitStringTest DEFINITIONS ::= BEGIN
+
+    HasBitString ::= SEQUENCE {
+        flags  BIT STRING
+    }
+
+END

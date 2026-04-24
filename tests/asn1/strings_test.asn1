@@ -1,0 +1,17 @@
+-- Minimal string type member tests.
+-- Covers all ten new string types: NumericString through BmpString.
+
+StringsTest DEFINITIONS ::= BEGIN
+
+    HasNumericString   ::= SEQUENCE { value  NumericString }
+    HasPrintableString ::= SEQUENCE { value  PrintableString }
+    HasT61String       ::= SEQUENCE { value  T61String }
+    HasVisibleString   ::= SEQUENCE { value  VisibleString }
+    HasGeneralString   ::= SEQUENCE { value  GeneralString }
+    HasGraphicString   ::= SEQUENCE { value  GraphicString }
+    HasUniversalString ::= SEQUENCE { value  UniversalString }
+    HasBmpString       ::= SEQUENCE { value  BMPString }
+    HasVideotexString  ::= SEQUENCE { value  VideotexString }
+    HasObjectDescriptor::= SEQUENCE { value  ObjectDescriptor }
+
+END

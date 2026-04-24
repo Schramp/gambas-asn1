@@ -1,0 +1,14 @@
+-- Minimal OID and RELATIVE-OID member test.
+-- Exercises: asn_DEF_Oid (tag 6), asn_DEF_RelativeOid (tag 13), base-128 encoding.
+
+OidTest DEFINITIONS ::= BEGIN
+
+    HasOid ::= SEQUENCE {
+        id  OBJECT IDENTIFIER
+    }
+
+    HasRelOid ::= SEQUENCE {
+        id  RELATIVE-OID
+    }
+
+END

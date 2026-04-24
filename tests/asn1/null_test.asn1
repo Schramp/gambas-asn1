@@ -1,0 +1,10 @@
+-- Minimal NULL member test.
+-- Exercises: asn_DEF_Null descriptor ref, BER tag 0x05, zero-length encoding.
+
+NullTest DEFINITIONS ::= BEGIN
+
+    HasNull ::= SEQUENCE {
+        present  NULL
+    }
+
+END

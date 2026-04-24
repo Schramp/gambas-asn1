@@ -1,0 +1,10 @@
+-- Minimal REAL member test.
+-- Exercises: asn_DEF_Real descriptor ref, BER tag 0x09, binary encoding.
+
+RealTest DEFINITIONS ::= BEGIN
+
+    HasReal ::= SEQUENCE {
+        value  REAL
+    }
+
+END

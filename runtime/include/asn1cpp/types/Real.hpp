@@ -27,7 +27,6 @@ struct BerTraits<Real> {
     static void encode(BerWriter& w, const Real& v) {
         double d = v.value();
         if (d == 0.0) {
-            // Zero: zero-length content
             w.write_primitive(tag(), {});
             return;
         }
@@ -41,51 +40,42 @@ struct BerTraits<Real> {
             w.write_primitive(tag(), std::span<const uint8_t>(&b, 1));
             return;
         }
-        // ISO 6093 NR3 decimal form — simplest portable encoding
-        // Use base-2 binary encoding (X.690 §8.5.7)
-        uint8_t info = 0x80;  // binary, base 2, sign positive
-        if (d < 0) { info |= 0x40; d = -d; }
 
-        int exp2;
-        double mant = std::frexp(d, &exp2);
-        // mant in [0.5, 1.0), shift to get integer mantissa
-        uint64_t M = 0;
-        for (int i = 0; i < 52; ++i) {
-            mant *= 2.0;
-            M = (M << 1) | (mant >= 1.0 ? 1 : 0);
-            if (mant >= 1.0) mant -= 1.0;
-        }
-        exp2 -= 52;
+        // Extract mantissa/exponent directly from IEEE 754 bits (X.690 §8.5.7 binary).
+        uint64_t bits;
+        std::memcpy(&bits, &d, 8);
 
-        // Remove trailing zero bits from mantissa
-        while (M && (M & 1) == 0) { M >>= 1; ++exp2; }
+        uint8_t info = 0x80;               // binary encoding, base-2, scaling-factor 0
+        if (bits >> 63) info |= 0x40;      // negative
 
-        // Encode mantissa (big-endian, minimal)
+        int32_t e = static_cast<int32_t>((bits >> 52) & 0x7FF) - 1023 - 52;
+        uint64_t M = (bits & 0x000FFFFFFFFFFFFFULL) | (1ULL << 52);  // implicit leading 1
+
+        // Remove trailing zero bits for minimal encoding
+        while (M && (M & 1) == 0) { M >>= 1; ++e; }
+
+        // Encode mantissa big-endian, minimal bytes
         uint8_t mbuf[8];
         int mlen = 0;
         uint64_t tmp = M;
-        while (tmp) { mbuf[mlen++] = tmp & 0xFF; tmp >>= 8; }
+        while (tmp) { mbuf[mlen++] = static_cast<uint8_t>(tmp & 0xFF); tmp >>= 8; }
         std::reverse(mbuf, mbuf + mlen);
 
-        // Encode exponent
+        // Encode exponent signed big-endian, minimal bytes
         uint8_t ebuf[3];
-        int elen = 0;
-        int32_t e = exp2;
+        int elen;
         {
             uint32_t u = static_cast<uint32_t>(e);
-            for (int i = 2; i >= 0; --i) { ebuf[i] = u & 0xFF; u >>= 8; }
-            // Minimal: drop leading sign-extension bytes
+            for (int i = 2; i >= 0; --i) { ebuf[i] = static_cast<uint8_t>(u & 0xFF); u >>= 8; }
             int start = 0;
             while (start < 2 && ebuf[start] == (e < 0 ? 0xFF : 0x00)
-                   && (ebuf[start+1] & 0x80) == (e < 0 ? 0x80 : 0x00))
+                   && (ebuf[start + 1] & 0x80) == (e < 0 ? 0x80 : 0x00))
                 ++start;
             elen = 3 - start;
             std::memmove(ebuf, ebuf + start, elen);
         }
-
-        // info byte: exponent length encoded as 0=1byte, 1=2bytes, 2=3bytes
         if (elen > 3) elen = 3;
-        info |= (elen - 1) & 0x03;
+        info |= static_cast<uint8_t>((elen - 1) & 0x03);
 
         std::vector<uint8_t> val;
         val.push_back(info);

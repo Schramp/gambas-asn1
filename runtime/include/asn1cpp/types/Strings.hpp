@@ -59,4 +59,15 @@ using UniversalString  = AsnString<UniversalTag::UniversalString>;
 using BmpString        = AsnString<UniversalTag::BmpString>;
 using ObjectDescriptor = AsnString<UniversalTag::ObjectDescriptor>;
 
+namespace detail {
+// Type-erased accessors for AsnString<N> — valid because AsnString<N> has
+// std::string as its sole data member at offset 0.
+inline std::string_view asnstring_view(const void* p) {
+    return *reinterpret_cast<const std::string*>(p);
+}
+inline void asnstring_assign(void* p, std::string_view sv) {
+    *reinterpret_cast<std::string*>(p) = std::string(sv);
+}
+} // namespace detail
+
 } // namespace asn1

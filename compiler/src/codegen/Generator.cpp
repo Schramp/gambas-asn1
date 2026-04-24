@@ -81,6 +81,7 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) {
         case BT::OctetString:       return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::OctetString);
         case BT::Null:              return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Null);
         case BT::ObjectIdentifier:  return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Oid);
+        case BT::RelativeOid:       return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::RelativeOid);
         case BT::Real:              return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Real);
         case BT::Enumerated:        return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Enumerated);
         case BT::Utf8String:        return "asn1::Tag::universal(12, false)";
@@ -93,6 +94,8 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) {
         case BT::GraphicString:     return "asn1::Tag::universal(25, false)";
         case BT::UniversalString:   return "asn1::Tag::universal(28, false)";
         case BT::BmpString:         return "asn1::Tag::universal(30, false)";
+        case BT::VideotexString:    return "asn1::Tag::universal(21, false)";
+        case BT::ObjectDescriptor:  return "asn1::Tag::universal(7, false)";
         case BT::UtcTime:           return "asn1::Tag::universal(23, false)";
         case BT::GeneralizedTime:   return "asn1::Tag::universal(24, false)";
         default: break;
@@ -116,9 +119,26 @@ static std::string type_descriptor_ref_for(const ast::TypeDef& def) {
         switch (*bt) {
         case BT::Integer:           return "&asn1::asn_DEF_Integer";
         case BT::Boolean:           return "&asn1::asn_DEF_Boolean";
+        case BT::Null:              return "&asn1::asn_DEF_Null";
+        case BT::Real:              return "&asn1::asn_DEF_Real";
+        case BT::BitString:         return "&asn1::asn_DEF_BitString";
+        case BT::ObjectIdentifier:  return "&asn1::asn_DEF_Oid";
+        case BT::RelativeOid:       return "&asn1::asn_DEF_RelativeOid";
+        case BT::UtcTime:           return "&asn1::asn_DEF_UtcTime";
+        case BT::GeneralizedTime:   return "&asn1::asn_DEF_GeneralizedTime";
         case BT::OctetString:       return "&asn1::asn_DEF_OctetString";
         case BT::Utf8String:        return "&asn1::asn_DEF_Utf8String";
         case BT::Ia5String:         return "&asn1::asn_DEF_Ia5String";
+        case BT::NumericString:     return "&asn1::asn_DEF_NumericString";
+        case BT::PrintableString:   return "&asn1::asn_DEF_PrintableString";
+        case BT::T61String:         return "&asn1::asn_DEF_T61String";
+        case BT::VisibleString:     return "&asn1::asn_DEF_VisibleString";
+        case BT::GeneralString:     return "&asn1::asn_DEF_GeneralString";
+        case BT::GraphicString:     return "&asn1::asn_DEF_GraphicString";
+        case BT::UniversalString:   return "&asn1::asn_DEF_UniversalString";
+        case BT::BmpString:         return "&asn1::asn_DEF_BmpString";
+        case BT::VideotexString:    return "&asn1::asn_DEF_VideotexString";
+        case BT::ObjectDescriptor:  return "&asn1::asn_DEF_ObjectDescriptor";
         default:                    return "nullptr";
         }
     }

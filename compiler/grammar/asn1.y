@@ -735,7 +735,7 @@ BasicTypeId_UniverationCompatible:
 BasicString:
 	  TOK_BMPString            { $$ = BuiltinType::BmpString; }
 	| TOK_GeneralString        { $$ = BuiltinType::GeneralString; }
-	| TOK_GraphicString        { $$ = BuiltinType::GeneralString; }
+	| TOK_GraphicString        { $$ = BuiltinType::GraphicString; }
 	| TOK_IA5String            { $$ = BuiltinType::Ia5String; }
 	| TOK_ISO646String         { $$ = BuiltinType::Ia5String; }
 	| TOK_NumericString        { $$ = BuiltinType::NumericString; }
