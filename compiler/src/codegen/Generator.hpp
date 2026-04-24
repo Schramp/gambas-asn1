@@ -35,6 +35,14 @@ inline std::string to_member_name(std::string_view s) {
     return n;
 }
 
+// Converts a named-value (INTEGER constant) name: hyphens → underscores, matching asn1c.
+inline std::string to_value_name(std::string_view s) {
+    std::string out;
+    for (char c : s)
+        out += (c == '-') ? '_' : c;
+    return out;
+}
+
 class Generator {
     fs::path          out_dir_;
     sema::Resolver&   resolver_;

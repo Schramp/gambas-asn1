@@ -1,6 +1,5 @@
 // BER / XER / PER round-trip tests for plain SEQUENCE (no tagging, no OPTIONAL).
-// Schema: tests/asn1/simple_seq.asn1
-// TypeDescriptors are constructed manually; cross-validated against asn1c.
+// Schema: tests/asn1/simple_seq.asn1  —  types from generated Point.hpp / Point.cpp.
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -10,6 +9,8 @@
 #include <asn1cpp/asn1cpp.hpp>
 #include <asn1cpp/codec/PerCodec.hpp>
 #include <asn1cpp/codec/PerConstraints.hpp>
+#include "Point.hpp"
+#include "ColoredPoint.hpp"
 
 using namespace asn1;
 
@@ -23,34 +24,20 @@ static void check(const char* name, bool cond, const char* detail = "") {
     }
 }
 
-// ---- Inline TypeDescriptors matching what the generator emits ---------------
-
-struct Point { Integer x{}; Integer y{}; };
-
-static const MemberDescriptor Point_mbr[] = {
-    { "x", Tag::universal(2, false), false, false, offsetof(Point, x), &asn_DEF_Integer },
-    { "y", Tag::universal(2, false), false, false, offsetof(Point, y), &asn_DEF_Integer },
-};
-static const SequenceSpec Point_spc = { Point_mbr, 2, -1, 0, 0, nullptr };
-static const TypeDescriptor Point_def = {
-    "Point", Tag::universal(16, true),
-    nullptr, &Point_spc, nullptr, nullptr
-};
-
 // ---- BER helpers -----------------------------------------------------------
 
 static std::vector<uint8_t> ber_encode(const Point& p) {
     std::vector<uint8_t> buf;
     BerWriter w{buf};
     BerEncodeStream s{w};
-    BerCodec::instance().encode(s, Point_def, &p);
+    BerCodec::instance().encode(s, asn_DEF_Point, &p);
     return buf;
 }
 
 static bool ber_decode(std::span<const uint8_t> bytes, Point& out) {
     BerReader r{bytes};
     BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, Point_def, &out).has_value();
+    return BerCodec::instance().decode(s, asn_DEF_Point, &out).has_value();
 }
 
 // ---- XER helpers -----------------------------------------------------------
@@ -58,13 +45,13 @@ static bool ber_decode(std::span<const uint8_t> bytes, Point& out) {
 static std::string xer_encode(const Point& p) {
     std::ostringstream oss;
     XerEncodeStream s{oss};
-    XerCodec::instance().encode(s, Point_def, &p);
+    XerCodec::instance().encode(s, asn_DEF_Point, &p);
     return oss.str();
 }
 
 static bool xer_decode(const std::string& xml, Point& out) {
     XerDecodeStream s{xml};
-    return XerCodec::instance().decode(s, Point_def, &out).has_value();
+    return XerCodec::instance().decode(s, asn_DEF_Point, &out).has_value();
 }
 
 // ---- PER helpers -----------------------------------------------------------
@@ -72,14 +59,14 @@ static bool xer_decode(const std::string& xml, Point& out) {
 static std::vector<uint8_t> per_encode(const Point& p) {
     std::vector<uint8_t> buf;
     PerEncodeStream s{buf};
-    PerCodec::instance().encode(s, Point_def, &p);
+    PerCodec::instance().encode(s, asn_DEF_Point, &p);
     s.flush();
     return buf;
 }
 
 static bool per_decode(std::span<const uint8_t> bytes, Point& out) {
     PerDecodeStream s{bytes};
-    return PerCodec::instance().decode(s, Point_def, &out).has_value();
+    return PerCodec::instance().decode(s, asn_DEF_Point, &out).has_value();
 }
 
 // ---- Tests -----------------------------------------------------------------

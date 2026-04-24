@@ -272,7 +272,7 @@ void Generator::emit_integer_hpp(const ast::TypeDef& def, std::ostream& os) {
     // Named integer constants (INTEGER { foo(0), bar(1) } style)
     for (const auto& ev : def.enum_values)
         os << std::format("inline constexpr int64_t {}_{} = {};\n",
-            cname, to_cpp_name(ev.name), ev.number.value_or(0));
+            cname, to_value_name(ev.name), ev.number.value_or(0));
     if (!def.enum_values.empty()) os << "\n";
 
     os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
@@ -368,8 +368,8 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     }
     if (mcount > 0) os << "\n";
 
-    // struct
-    os << std::format("struct {} {{\n", cname);
+    // class
+    os << std::format("class {} {{\npublic:\n", cname);
     for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
         std::string mtype = cpp_type_for(*m);
@@ -516,20 +516,19 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     }
     if (count > 0) os << "\n";
 
-    // struct with PR enum + variant
-    os << std::format("struct {} {{\n", cname);
-    os << "    enum class PR {";
-    os << " NOTHING";
+    // class with PR enum + one named field per alternative
+    os << std::format("class {} {{\npublic:\n", cname);
+    os << "    enum class PR : int { NOTHING = 0";
+    int pr_idx = 1;
     for (const auto& m : def.members)
         if (!m->is_extension_marker)
-            os << std::format(", {}", to_cpp_name(m->name));
+            os << std::format(", {} = {}", to_cpp_name(m->name), pr_idx++);
     os << " };\n";
     os << "    PR present{PR::NOTHING};\n";
-    os << "    std::variant<std::monostate";
-    for (const auto& m : def.members)
-        if (!m->is_extension_marker)
-            os << std::format(", {}", cpp_type_for(*m));
-    os << "> choice;\n";
+    for (const auto& m : def.members) {
+        if (m->is_extension_marker) continue;
+        os << std::format("    {} {}{{}};\n", cpp_type_for(*m), to_member_name(m->name));
+    }
     os << "};\n\n";
 
     // Extern descriptor declarations
@@ -568,8 +567,8 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             } else {
                 eff_tag = natural_tag_for(*m);
             }
-            os << std::format("    {{ \"{}\", {}, false, false, 0, {} }},\n",
-                m->name, eff_tag,
+            os << std::format("    {{ \"{}\", {}, false, false, offsetof({}, {}), {} }},\n",
+                m->name, eff_tag, cname, mname,
                 type_descriptor_ref_for(*m));
         }
         os << "};\n\n";
@@ -595,53 +594,19 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "    nullptr /* per_constraints */\n";
     os << "};\n\n";
 
-    // BerTraits encode — std::visit over variant
+    // BerTraits encode — delegate to BerCodec generic path
     os << std::format("void asn1::BerTraits<{}>::encode(asn1::BerWriter& w, const {}& v) {{\n", cname, cname);
-    os << "    std::visit([&](const auto& alt) {\n";
-    os << "        using T = std::decay_t<decltype(alt)>;\n";
-    os << "        if constexpr (!std::is_same_v<T, std::monostate>)\n";
-    os << "            asn1::BerTraits<T>::encode(w, alt);\n";
-    os << "    }, v.choice);\n";
+    os << "    asn1::BerEncodeStream s{w};\n";
+    os << std::format("    asn1::BerCodec::instance().encode(s, asn_DEF_{}, &v);\n", cname);
     os << "}\n\n";
 
-    // BerTraits decode — peek tag, dispatch to matching alternative
+    // BerTraits decode — delegate to BerCodec generic path
     os << std::format("asn1::Expected<{0}, asn1::DecodeError>\n"
                       "asn1::BerTraits<{0}>::decode(asn1::BerReader& r) {{\n", cname);
     os << std::format("    {} result{{}};\n", cname);
-
-    // Emit if-chain keyed on tag
-    int idx = 0;
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) continue;
-        std::string mtype = cpp_type_for(*m);
-        std::string pr_name = to_cpp_name(m->name);
-        std::string eff_tag;
-        if (m->tag.present()) {
-            bool constr = m->is_sequence() || m->is_choice() || m->is_seq_of() || m->is_set_of() || m->is_set();
-            eff_tag = tag_literal(m->tag, constr);
-        } else {
-            eff_tag = natural_tag_for(*m);
-        }
-
-        if (!eff_tag.empty()) {
-            os << std::format("    {} if (r.peek_tag() == {}) {{\n",
-                (idx == 0 ? "" : "} else"), eff_tag);
-        } else {
-            // CHOICE alternative is itself a CHOICE — no fixed tag; try decode
-            os << std::format("    {} {{\n", (idx == 0 ? "" : "} else"));
-        }
-        os << std::format("        auto val = asn1::BerTraits<{}>::decode(r);\n", mtype);
-        os << std::format("        if (!val) return asn1::make_unexpected<{}, asn1::DecodeError>(val.error());\n", cname);
-        os << std::format("        result.present = {}::PR::{};\n", cname, pr_name);
-        os << std::format("        result.choice  = std::move(*val);\n");
-        ++idx;
-    }
-    if (idx > 0) {
-        os << "    } else {\n";
-        os << std::format("        return asn1::make_unexpected<{}, asn1::DecodeError>(\n", cname);
-        os << std::format("            asn1::DecodeError(\"unknown CHOICE alternative for {}\"));\n", cname);
-        os << "    }\n";
-    }
+    os << "    asn1::BerDecodeStream s{r};\n";
+    os << std::format("    auto ok = asn1::BerCodec::instance().decode(s, asn_DEF_{}, &result);\n", cname);
+    os << std::format("    if (!ok) return asn1::make_unexpected<{}, asn1::DecodeError>(ok.error());\n", cname);
     os << "    return result;\n}\n";
 }
 

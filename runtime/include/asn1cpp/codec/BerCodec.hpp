@@ -165,28 +165,40 @@ private:
                        const TypeDescriptor& def,
                        const void* src) const
     {
-        // CHOICE encode: src points to struct { PR present; variant<...> choice; }
-        // PR is an int-sized enum at offset 0; the variant follows.
-        // Delegate to member's TypeDescriptor based on present index.
+        // src points to class { enum class PR : int present; T1 alt1; T2 alt2; ... }
+        // PR is at offset 0 with underlying type int.
         const auto& spec = *def.choice_spec;
-        int idx = *static_cast<const int*>(src);  // PR enum value (0 = NOTHING)
+        int idx = *static_cast<const int*>(src);  // PR value (0 = NOTHING)
         if (idx <= 0 || idx > spec.count) return;
-        // variant<monostate, T1, T2, ...> — active alternative at variant index = idx
-        // We can't introspect std::variant layout generically here.
-        // CHOICE encode is handled by the generated BerTraits (std::visit) for now;
-        // this path is reached only when called generically from a SEQUENCE member.
-        (void)w; (void)src;
+        const auto& alt = spec.alternatives[idx - 1];
+        if (!alt.type_descriptor) return;
+        const void* mptr = static_cast<const char*>(src) + alt.offset;
+        const auto& mdef = *static_cast<const TypeDescriptor*>(alt.type_descriptor);
+        BerEncodeStream ms{w};
+        encode(ms, mdef, mptr);
     }
 
     DecodeResult decode_choice(BerReader& r,
                                const TypeDescriptor& def,
                                void* dest) const
     {
-        // CHOICE decode: peek tag, find matching alternative, decode into dest.
-        // dest points to struct { PR present; variant<...> choice; }
-        // For now stub — CHOICE decode via generated BerTraits handles this.
-        (void)r; (void)def; (void)dest;
-        return decode_err(DecodeError("BerCodec: generic CHOICE decode not yet implemented"));
+        // dest points to class { enum class PR : int present; T1 alt1; T2 alt2; ... }
+        // Peek tag to find matching alternative, decode into its named field.
+        const auto& spec = *def.choice_spec;
+        Tag peek = r.peek_tag();
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& alt = spec.alternatives[i];
+            if (!alt.type_descriptor) continue;
+            if (peek != alt.tag) continue;
+            void* mptr = static_cast<char*>(dest) + alt.offset;
+            const auto& mdef = *static_cast<const TypeDescriptor*>(alt.type_descriptor);
+            BerDecodeStream ms{r};
+            auto ok = decode(ms, mdef, mptr);
+            if (!ok) return ok;
+            *static_cast<int*>(dest) = i + 1;  // set PR present
+            return decode_ok();
+        }
+        return decode_err(DecodeError(std::string("BerCodec: no matching CHOICE alternative for ") + def.name));
     }
 };
 
