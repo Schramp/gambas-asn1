@@ -14,6 +14,8 @@
 #include <limits>
 #include "ICodec.hpp"
 #include "../Tag.hpp"
+#include "../types/Boolean.hpp"
+#include "../types/OctetString.hpp"
 #include "../types/Real.hpp"
 #include "../types/BitString.hpp"
 #include "../types/Oid.hpp"
@@ -105,6 +107,7 @@ public:
         if (def.enum_spec)     { encode_enumerated(s, def, src); return; }
         if (def.sequence_spec) { encode_sequence   (s, def, src); return; }
         if (def.choice_spec)   { encode_choice     (s, def, src); return; }
+        if (is_boolean_tag(def.tag))  { encode_boolean (s, def, src); return; }
         if (is_integer_tag(def.tag)) { encode_integer(s, def, src); return; }
         if (is_null_tag(def.tag))    { encode_null   (s, def);     return; }
         if (is_real_tag(def.tag))      { encode_real     (s, def, src); return; }
@@ -113,6 +116,7 @@ public:
         if (is_relative_oid_tag(def.tag)) { encode_relative_oid(s, def, src); return; }
         if (is_utctime_tag(def.tag))       { encode_time_string  (s, def, src); return; }
         if (is_gentime_tag(def.tag))       { encode_time_string  (s, def, src); return; }
+        if (is_octetstring_tag(def.tag))      { encode_octetstring_xer (s, def, src); return; }
         if (is_hex_string_tag(def.tag))       { encode_hex_string      (s, def, src); return; }
         if (is_bmp_string_tag(def.tag))       { encode_bmp_string      (s, def, src); return; }
         if (is_universal_string_tag(def.tag)) { encode_universal_string(s, def, src); return; }
@@ -128,6 +132,7 @@ public:
         if (def.enum_spec)     return decode_enumerated(s, def, dest);
         if (def.sequence_spec) return decode_sequence   (s, def, dest);
         if (def.choice_spec)   return decode_choice     (s, def, dest);
+        if (is_boolean_tag(def.tag))  return decode_boolean (s, def, dest);
         if (is_integer_tag(def.tag)) return decode_integer(s, def, dest);
         if (is_null_tag(def.tag))    return decode_null   (s, def, dest);
         if (is_real_tag(def.tag))      return decode_real     (s, def, dest);
@@ -136,6 +141,7 @@ public:
         if (is_relative_oid_tag(def.tag)) return decode_relative_oid(s, def, dest);
         if (is_utctime_tag(def.tag))       return decode_time_string<UtcTime>      (s, def, dest);
         if (is_gentime_tag(def.tag))       return decode_time_string<GeneralizedTime>(s, def, dest);
+        if (is_octetstring_tag(def.tag))      return decode_octetstring_xer (s, def, dest);
         if (is_hex_string_tag(def.tag))       return decode_hex_string      (s, def, dest);
         if (is_bmp_string_tag(def.tag))       return decode_bmp_string      (s, def, dest);
         if (is_universal_string_tag(def.tag)) return decode_universal_string(s, def, dest);
@@ -144,6 +150,9 @@ public:
     }
 
 private:
+    static bool is_boolean_tag(const Tag& t) {
+        return t.cls == TagClass::Universal && t.number == UniversalTag::Boolean;
+    }
     static bool is_integer_tag(const Tag& t) {
         return t.cls == TagClass::Universal && t.number == UniversalTag::Integer;
     }
@@ -168,10 +177,13 @@ private:
     static bool is_gentime_tag(const Tag& t) {
         return t.cls == TagClass::Universal && t.number == 24;
     }
+    static bool is_octetstring_tag(const Tag& t) {
+        return t.cls == TagClass::Universal && t.number == 4;
+    }
     static bool is_primitive_string_tag(const Tag& t) {
         if (t.cls != TagClass::Universal) return false;
         switch (t.number) {
-        case 4: case 7: case 12: case 18: case 19: case 20:
+        case 7: case 12: case 18: case 19: case 20:
         case 21: case 22: case 25: case 26: case 27: case 28: case 30:
             return true;
         default: return false;
@@ -211,6 +223,40 @@ private:
         }
         s.advance(pos);
         (void)dest;
+        return decode_ok();
+    }
+
+    // ---- BOOLEAN -------------------------------------------------------
+    // X.693 §17.1: encoded as <true/> or <false/> (lowercase)
+
+    void encode_boolean(XerEncodeStream& s,
+                        const TypeDescriptor& def,
+                        const void* src) const
+    {
+        bool v = static_cast<const Boolean*>(src)->value();
+        s.os() << '<' << def.name << '>' << (v ? "<true/>" : "<false/>") << "</" << def.name << ">\n";
+    }
+
+    DecodeResult decode_boolean(XerDecodeStream& s,
+                                const TypeDescriptor& def,
+                                void* dest) const
+    {
+        using namespace xer_detail;
+        std::string_view rem = s.remaining();
+        std::size_t pos = 0;
+        auto outer = parse_tag(rem, pos);
+        if (outer.name != def.name || outer.closing || outer.self_closing)
+            return decode_err(DecodeError(std::string("XER BOOLEAN: expected <") + def.name + ">"));
+        auto inner = parse_tag(rem, pos);
+        bool value;
+        if (inner.name == "true"  && inner.self_closing) { value = true; }
+        else if (inner.name == "false" && inner.self_closing) { value = false; }
+        else return decode_err(DecodeError("XER BOOLEAN: expected <true/> or <false/>"));
+        auto close = parse_tag(rem, pos);
+        if (!close.closing || close.name != def.name)
+            return decode_err(DecodeError(std::string("XER BOOLEAN: expected </") + def.name + ">"));
+        s.advance(pos);
+        *static_cast<Boolean*>(dest) = Boolean{value};
         return decode_ok();
     }
 
@@ -294,6 +340,80 @@ private:
             sv.remove_prefix(ptr - sv.data());
         }
         return out;
+    }
+
+    // ---- OCTET STRING --------------------------------------------------
+    // X.693: OCTET STRING in XER uses Base64 encoding (RFC 4648).
+
+    static std::string base64_encode(std::span<const uint8_t> in) {
+        static const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string out;
+        out.reserve(((in.size() + 2) / 3) * 4);
+        for (std::size_t i = 0; i < in.size(); i += 3) {
+            uint32_t v = (uint32_t)in[i] << 16;
+            if (i + 1 < in.size()) v |= (uint32_t)in[i+1] << 8;
+            if (i + 2 < in.size()) v |= in[i+2];
+            out += t[(v >> 18) & 0x3F];
+            out += t[(v >> 12) & 0x3F];
+            out += (i + 1 < in.size()) ? t[(v >> 6) & 0x3F] : '=';
+            out += (i + 2 < in.size()) ? t[v & 0x3F]        : '=';
+        }
+        return out;
+    }
+
+    static std::vector<uint8_t> base64_decode(std::string_view in) {
+        auto val = [](char c) -> int {
+            if (c >= 'A' && c <= 'Z') return c - 'A';
+            if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+            if (c >= '0' && c <= '9') return c - '0' + 52;
+            if (c == '+') return 62;
+            if (c == '/') return 63;
+            return -1;
+        };
+        std::vector<uint8_t> out;
+        int buf = 0, bits = 0;
+        for (char c : in) {
+            int v = val(c);
+            if (v < 0) continue;
+            buf = (buf << 6) | v;
+            bits += 6;
+            if (bits >= 8) { bits -= 8; out.push_back((buf >> bits) & 0xFF); }
+        }
+        return out;
+    }
+
+    void encode_octetstring_xer(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const {
+        const OctetString& v = *static_cast<const OctetString*>(src);
+        auto& os = s.os();
+        std::string b64 = base64_encode(v.bytes());
+        std::string cont_indent(4 * (s.depth() + 1), ' ');
+        os << '<' << def.name << '>';
+        for (std::size_t i = 0; i < b64.size(); ) {
+            if (i > 0) os << cont_indent;
+            std::size_t end = std::min(i + 76, b64.size());
+            os << b64.substr(i, end - i);
+            i = end;
+            if (i < b64.size()) os << "\n";
+        }
+        os << "</" << def.name << ">\n";
+    }
+
+    DecodeResult decode_octetstring_xer(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
+        using namespace xer_detail;
+        std::string_view rem = s.remaining();
+        std::size_t pos = 0;
+        auto open = parse_tag(rem, pos);
+        if (open.name != def.name || open.closing || open.self_closing)
+            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
+        std::size_t text_start = pos;
+        while (pos < rem.size() && rem[pos] != '<') ++pos;
+        auto text = rem.substr(text_start, pos - text_start);
+        auto close = parse_tag(rem, pos);
+        if (!close.closing || close.name != def.name)
+            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
+        s.advance(pos);
+        *static_cast<OctetString*>(dest) = OctetString{base64_decode(text)};
+        return decode_ok();
     }
 
     void encode_hex_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const {
@@ -513,14 +633,21 @@ private:
         std::string content_indent(4 * (depth + 1), ' ');
         std::string close_indent(4 * depth, ' ');
         os << '<' << def.name << ">\n";
-        os << content_indent;
         std::size_t total = bs.bit_count();
         auto bytes = bs.bytes();
-        for (std::size_t i = 0; i < total; ++i) {
-            int bit = (bytes[i / 8] >> (7 - (i % 8))) & 1;
-            os << (char)('0' + bit);
+        if (total == 0) {
+            os << content_indent << "\n";
+        } else {
+            for (std::size_t i = 0; i < total; ) {
+                os << content_indent;
+                std::size_t line_end = std::min(i + 64, total);
+                for (; i < line_end; ++i) {
+                    int bit = (bytes[i / 8] >> (7 - (i % 8))) & 1;
+                    os << (char)('0' + bit);
+                }
+                os << "\n";
+            }
         }
-        os << "\n";
         os << close_indent << "</" << def.name << ">\n";
     }
 
@@ -577,14 +704,16 @@ private:
         } else if (d == 0.0) {
             os << '0';
         } else {
-            char buf[64];
-            std::snprintf(buf, sizeof(buf), "%.15f", d);
+            int n = std::snprintf(nullptr, 0, "%.15f", d);
+            std::string buf(n + 1, '\0');
+            std::snprintf(buf.data(), n + 1, "%.15f", d);
+            buf.resize(n);
             // Strip trailing zeros; keep at least one decimal place (match asn1c behaviour).
-            char* dot = std::strchr(buf, '.');
-            if (dot) {
-                char* p = buf + std::strlen(buf) - 1;
-                while (p > dot + 1 && *p == '0') --p;
-                *(p + 1) = '\0';
+            auto dot = buf.find('.');
+            if (dot != std::string::npos) {
+                std::size_t last = buf.size() - 1;
+                while (last > dot + 1 && buf[last] == '0') --last;
+                buf.resize(last + 1);
             }
             os << buf;
         }
@@ -622,15 +751,11 @@ private:
             std::string_view text = rem.substr(text_start, pos - text_start);
             while (!text.empty() && std::isspace((unsigned char)text.front())) text.remove_prefix(1);
             while (!text.empty() && std::isspace((unsigned char)text.back()))  text.remove_suffix(1);
-            char buf[64];
-            if (text.size() >= sizeof(buf))
-                return decode_err(DecodeError("XER: REAL value too long"));
-            std::copy(text.begin(), text.end(), buf);
-            buf[text.size()] = '\0';
+            std::string buf(text);
             char* endp;
-            d = std::strtod(buf, &endp);
-            if (endp != buf + text.size())
-                return decode_err(DecodeError("XER: invalid REAL value: " + std::string(text)));
+            d = std::strtod(buf.c_str(), &endp);
+            if (endp != buf.c_str() + buf.size())
+                return decode_err(DecodeError("XER: invalid REAL value: " + buf));
         }
 
         auto close = parse_tag(rem, pos);

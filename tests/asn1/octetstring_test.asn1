@@ -1,0 +1,9 @@
+-- OCTET STRING member test.
+
+OctetStringTest DEFINITIONS ::= BEGIN
+
+    HasOctetString ::= SEQUENCE {
+        value  OCTET STRING
+    }
+
+END

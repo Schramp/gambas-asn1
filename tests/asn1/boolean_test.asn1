@@ -1,0 +1,10 @@
+-- Boolean member test.
+-- Exercises: asn_DEF_Boolean descriptor ref, BER tag 0x01, UPER 1-bit encoding.
+
+BooleanTest DEFINITIONS ::= BEGIN
+
+    HasBoolean ::= SEQUENCE {
+        value  BOOLEAN
+    }
+
+END

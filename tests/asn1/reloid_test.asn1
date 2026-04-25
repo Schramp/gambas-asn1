@@ -1,0 +1,9 @@
+-- RELATIVE-OID member test.
+
+ReloidTest DEFINITIONS ::= BEGIN
+
+    HasReloid ::= SEQUENCE {
+        value  RELATIVE-OID
+    }
+
+END
