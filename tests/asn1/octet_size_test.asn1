@@ -1,0 +1,9 @@
+OctetSizeTest DEFINITIONS ::= BEGIN
+    HasFixed4  ::= SEQUENCE { value MyFixed4 }
+    HasRange18 ::= SEQUENCE { value MyRange1-8 }
+    HasRange0b ::= SEQUENCE { value MyRange0-180 }
+
+    MyFixed4    ::= OCTET STRING (SIZE (4))
+    MyRange1-8  ::= OCTET STRING (SIZE (1..8))
+    MyRange0-180 ::= OCTET STRING (SIZE (0..180))
+END

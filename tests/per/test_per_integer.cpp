@@ -57,35 +57,21 @@ static bool roundtrips(const TypeDescriptor& def, int64_t v) {
 // ---- NarrowInterval: INTEGER (123456..123457) --------------------------------
 // range=2, range_bits=1; encoded = value - 123456 (0 or 1), 1 bit.
 
-static const PerConstraints NarrowInterval_pc = {
-    PerConstraints::CONSTRAINED,
-    1,       /* range_bits */
-    123456,  /* lower_bound */
-    123457,  /* upper_bound */
-    0, 0, 0
-};
 static const TypeDescriptor DEF_NarrowInterval = {
     "NarrowInterval",
     Tag::universal(2, false),
     nullptr, nullptr, nullptr,
-    &NarrowInterval_pc
+    {PerConstraints::CONSTRAINED, 1, 123456, 123457}
 };
 
 // ---- Interval: INTEGER (1..123456) ------------------------------------------
 // range=123456, range_bits=17.
 
-static const PerConstraints Interval_pc = {
-    PerConstraints::CONSTRAINED,
-    17,
-    1,
-    123456,
-    0, 0, 0
-};
 static const TypeDescriptor DEF_Interval = {
     "Interval",
     Tag::universal(2, false),
     nullptr, nullptr, nullptr,
-    &Interval_pc
+    {PerConstraints::CONSTRAINED, 17, 1, 123456}
 };
 
 int main() {

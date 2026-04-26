@@ -99,8 +99,8 @@ public:
         if (is_integer_tag(def.tag))  { encode_integer(s, def, src); return; }
         if (is_boolean_tag(def.tag))  { encode_boolean(s, src); return; }
         if (is_real_tag(def.tag))      { encode_real     (s, src); return; }
-        if (is_bitstring_tag(def.tag))   { encode_bitstring  (s, src); return; }
-        if (is_octetstring_tag(def.tag)) { encode_octetstring(s, src); return; }
+        if (is_bitstring_tag(def.tag))   { encode_bitstring  (s, def, src); return; }
+        if (is_octetstring_tag(def.tag)) { encode_octetstring(s, def, src); return; }
         if (is_oid_tag(def.tag))         { encode_oid       (s, src); return; }
         if (is_reloid_tag(def.tag))      { encode_reloid    (s, src); return; }
         if (is_null_tag(def.tag))        { return; }  // NULL: zero bits (X.691 §18.1)
@@ -119,8 +119,8 @@ public:
         if (is_integer_tag(def.tag))  return decode_integer(s, def, dest);
         if (is_boolean_tag(def.tag))  return decode_boolean(s, dest);
         if (is_real_tag(def.tag))      return decode_real     (s, dest);
-        if (is_bitstring_tag(def.tag))   return decode_bitstring  (s, dest);
-        if (is_octetstring_tag(def.tag)) return decode_octetstring(s, dest);
+        if (is_bitstring_tag(def.tag))   return decode_bitstring  (s, def, dest);
+        if (is_octetstring_tag(def.tag)) return decode_octetstring(s, def, dest);
         if (is_oid_tag(def.tag))         return decode_oid   (s, dest);
         if (is_reloid_tag(def.tag))      return decode_reloid(s, dest);
         if (is_null_tag(def.tag))        return decode_ok();  // NULL: zero bits
@@ -230,51 +230,99 @@ private:
     // ---- BIT STRING ----------------------------------------------------
     // X.691 §15.6 unconstrained: 8-bit bit-count + raw bytes MSB-first.
 
-    static void encode_bitstring(PerEncodeStream& s, const void* src) {
-        const BitString& v = *static_cast<const BitString*>(src);
-        put_length(s, v.bit_count());
-        for (uint8_t b : v.bytes()) s.put_bits(b, 8);
+    // ---- Byte-read helper -------------------------------------------------
+
+    static Expected<std::vector<uint8_t>, DecodeError> read_bytes(PerDecodeStream& s, std::size_t n) {
+        std::vector<uint8_t> out;
+        out.reserve(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            auto b = s.get_bits(8);
+            if (!b) return make_unexpected<std::vector<uint8_t>, DecodeError>(b.error());
+            out.push_back(static_cast<uint8_t>(*b));
+        }
+        return out;
     }
 
-    static DecodeResult decode_bitstring(PerDecodeStream& s, void* dest) {
-        auto len_r = get_length(s);
-        if (!len_r) return decode_err(len_r.error());
-        int bit_count = static_cast<int>(*len_r);
-        if (bit_count == 0) { *static_cast<BitString*>(dest) = BitString{}; return decode_ok(); }
-        int byte_count = (bit_count + 7) / 8;
-        uint8_t unused  = static_cast<uint8_t>(byte_count * 8 - bit_count);
-        std::vector<uint8_t> bytes;
-        bytes.reserve(byte_count);
-        for (int i = 0; i < byte_count; ++i) {
-            auto b = s.get_bits(8);
-            if (!b) return decode_err(b.error());
-            bytes.push_back(static_cast<uint8_t>(*b));
+    // ---- SIZE field helpers (shared by BIT STRING and OCTET STRING) ------
+
+    static void encode_size_field(PerEncodeStream& s, const TypeDescriptor& def, std::size_t len) {
+        const PerConstraints& pc = def.per_constraints;
+        bool size_constrained = pc.flags & PerConstraints::SIZE_CONSTRAINED;
+        if (size_constrained && pc.size_range_bits == 0) {
+            // Fixed SIZE(n): no length field
+        } else if (size_constrained) {
+            s.put_bits(len - static_cast<std::size_t>(pc.size_lower), pc.size_range_bits);
+        } else {
+            put_length(s, len);
         }
+    }
+
+    static Expected<std::size_t, DecodeError> decode_size_field(
+            PerDecodeStream& s, const TypeDescriptor& def) {
+        const PerConstraints& pc = def.per_constraints;
+        bool size_constrained = pc.flags & PerConstraints::SIZE_CONSTRAINED;
+        if (size_constrained && pc.size_range_bits == 0) {
+            return static_cast<std::size_t>(pc.size_lower);
+        } else if (size_constrained) {
+            auto v = s.get_bits(pc.size_range_bits);
+            if (!v) return make_unexpected<std::size_t, DecodeError>(v.error());
+            return static_cast<std::size_t>(*v) + static_cast<std::size_t>(pc.size_lower);
+        } else {
+            return get_length(s);
+        }
+    }
+
+    // ---- BIT STRING ----------------------------------------------------
+    // X.691 §15: length = bit count; payload = top bit_count bits, packed MSB-first.
+
+    static void encode_bitstring(PerEncodeStream& s, const TypeDescriptor& def, const void* src) {
+        const BitString& v = *static_cast<const BitString*>(src);
+        std::size_t bit_count = v.bit_count();
+        encode_size_field(s, def, bit_count);
+        std::size_t remaining = bit_count;
+        for (uint8_t b : v.bytes()) {
+            int n = static_cast<int>(std::min(remaining, std::size_t{8}));
+            s.put_bits(static_cast<uint64_t>(b) >> (8 - n), n);
+            remaining -= n;
+            if (remaining == 0) break;
+        }
+    }
+
+    static DecodeResult decode_bitstring(PerDecodeStream& s, const TypeDescriptor& def, void* dest) {
+        auto len_r = decode_size_field(s, def);
+        if (!len_r) return decode_err(len_r.error());
+        std::size_t bit_count = *len_r;
+        if (bit_count == 0) { *static_cast<BitString*>(dest) = BitString{}; return decode_ok(); }
+        std::vector<uint8_t> bytes;
+        bytes.reserve((bit_count + 7) / 8);
+        std::size_t remaining = bit_count;
+        while (remaining > 0) {
+            int n = static_cast<int>(std::min(remaining, std::size_t{8}));
+            auto b = s.get_bits(n);
+            if (!b) return decode_err(b.error());
+            bytes.push_back(static_cast<uint8_t>(*b << (8 - n)));
+            remaining -= n;
+        }
+        uint8_t unused = static_cast<uint8_t>((8 - bit_count % 8) % 8);
         *static_cast<BitString*>(dest) = BitString{std::move(bytes), unused};
         return decode_ok();
     }
 
     // ---- OCTET STRING --------------------------------------------------
-    // X.691 §16: 8-bit byte-count + raw bytes.
+    // X.691 §16: length = byte count; payload = raw bytes.
 
-    static void encode_octetstring(PerEncodeStream& s, const void* src) {
+    static void encode_octetstring(PerEncodeStream& s, const TypeDescriptor& def, const void* src) {
         const OctetString& v = *static_cast<const OctetString*>(src);
-        put_length(s, v.size());
+        encode_size_field(s, def, v.size());
         for (uint8_t b : v.bytes()) s.put_bits(b, 8);
     }
 
-    static DecodeResult decode_octetstring(PerDecodeStream& s, void* dest) {
-        auto len_r = get_length(s);
+    static DecodeResult decode_octetstring(PerDecodeStream& s, const TypeDescriptor& def, void* dest) {
+        auto len_r = decode_size_field(s, def);
         if (!len_r) return decode_err(len_r.error());
-        int len = static_cast<int>(*len_r);
-        std::vector<uint8_t> bytes;
-        bytes.reserve(len);
-        for (int i = 0; i < len; ++i) {
-            auto b = s.get_bits(8);
-            if (!b) return decode_err(b.error());
-            bytes.push_back(static_cast<uint8_t>(*b));
-        }
-        *static_cast<OctetString*>(dest) = OctetString{std::move(bytes)};
+        auto bytes = read_bytes(s, *len_r);
+        if (!bytes) return decode_err(bytes.error());
+        *static_cast<OctetString*>(dest) = OctetString{std::move(*bytes)};
         return decode_ok();
     }
 
@@ -282,63 +330,40 @@ private:
     // X.691 §14: length + BER content bytes (no TLV header).
     // Reuse BerTraits<Oid> to produce BER; strip the 2-byte TLV header.
 
-    static void encode_oid(PerEncodeStream& s, const void* src) {
-        const Oid& v = *static_cast<const Oid*>(src);
+    // ---- BER-content round-trip helpers (OID, RELATIVE-OID) ---------------
+    // X.691 §14: PER = unconstrained length + BER content bytes (no TLV header).
+
+    template<typename T>
+    static void encode_ber_content(PerEncodeStream& s, const void* src) {
         std::vector<uint8_t> ber;
-        { BerWriter w{ber}; BerTraits<Oid>::encode(w, v); }
+        { BerWriter w{ber}; BerTraits<T>::encode(w, *static_cast<const T*>(src)); }
         uint8_t content_len = ber[1];
         put_length(s, content_len);
         for (int i = 0; i < content_len; ++i) s.put_bits(ber[2 + i], 8);
     }
 
-    static DecodeResult decode_oid(PerDecodeStream& s, void* dest) {
+    template<typename T>
+    static DecodeResult decode_ber_content(PerDecodeStream& s, void* dest) {
         auto len_r = get_length(s);
         if (!len_r) return decode_err(len_r.error());
-        int len = static_cast<int>(*len_r);
-        // Reconstruct BER TLV: [0x06, len, content...]
+        auto content = read_bytes(s, *len_r);
+        if (!content) return decode_err(content.error());
         std::vector<uint8_t> ber;
-        ber.push_back(0x06);
-        ber.push_back(static_cast<uint8_t>(len));
-        for (int i = 0; i < len; ++i) {
-            auto b = s.get_bits(8);
-            if (!b) return decode_err(b.error());
-            ber.push_back(static_cast<uint8_t>(*b));
-        }
+        const auto tag = BerTraits<T>::tag();
+        ber.push_back(static_cast<uint8_t>(tag.number));
+        ber.push_back(static_cast<uint8_t>(*len_r));
+        ber.insert(ber.end(), content->begin(), content->end());
         BerReader r{ber};
-        auto v = BerTraits<Oid>::decode(r);
+        auto v = BerTraits<T>::decode(r);
         if (!v) return decode_err(v.error());
-        *static_cast<Oid*>(dest) = *v;
+        *static_cast<T*>(dest) = *v;
         return decode_ok();
     }
 
-    static void encode_reloid(PerEncodeStream& s, const void* src) {
-        const RelativeOid& v = *static_cast<const RelativeOid*>(src);
-        std::vector<uint8_t> ber;
-        { BerWriter w{ber}; BerTraits<RelativeOid>::encode(w, v); }
-        uint8_t content_len = ber[1];
-        put_length(s, content_len);
-        for (int i = 0; i < content_len; ++i) s.put_bits(ber[2 + i], 8);
-    }
-
-    static DecodeResult decode_reloid(PerDecodeStream& s, void* dest) {
-        auto len_r = get_length(s);
-        if (!len_r) return decode_err(len_r.error());
-        int len = static_cast<int>(*len_r);
-        // Reconstruct BER TLV: [0x0d, len, content...]
-        std::vector<uint8_t> ber;
-        ber.push_back(0x0d);
-        ber.push_back(static_cast<uint8_t>(len));
-        for (int i = 0; i < len; ++i) {
-            auto b = s.get_bits(8);
-            if (!b) return decode_err(b.error());
-            ber.push_back(static_cast<uint8_t>(*b));
-        }
-        BerReader r{ber};
-        auto v = BerTraits<RelativeOid>::decode(r);
-        if (!v) return decode_err(v.error());
-        *static_cast<RelativeOid*>(dest) = *v;
-        return decode_ok();
-    }
+    static void encode_oid   (PerEncodeStream& s, const void* src) { encode_ber_content<Oid>        (s, src); }
+    static void encode_reloid(PerEncodeStream& s, const void* src) { encode_ber_content<RelativeOid>(s, src); }
+    static DecodeResult decode_oid   (PerDecodeStream& s, void* dest) { return decode_ber_content<Oid>        (s, dest); }
+    static DecodeResult decode_reloid(PerDecodeStream& s, void* dest) { return decode_ber_content<RelativeOid>(s, dest); }
 
     // ---- STRING TYPES --------------------------------------------------
     // Encoding per type (X.691 §27, unconstrained):
@@ -393,11 +418,23 @@ private:
 
     static void encode_string(PerEncodeStream& s, const TypeDescriptor& def, const void* src) {
         const std::string& str = *reinterpret_cast<const std::string*>(src);
+        const PerConstraints& pc = def.per_constraints;
+
         auto [bits, bpc] = string_params(def.tag.number);
-        std::size_t char_count = str.size() / bpc;
-        put_length(s, char_count);
-        if (bpc > 1) {
-            // BmpString / UniversalString: write raw bytes directly
+        bool has_alpha = pc.alphabet_bits > 0 && !pc.alphabet.empty();
+        std::size_t char_count = has_alpha ? str.size() : str.size() / bpc;
+
+        encode_size_field(s, def, char_count);
+
+        // Character values
+        if (has_alpha) {
+            for (unsigned char c : str) {
+                int code = 0;
+                for (int i = 0; i < static_cast<int>(pc.alphabet.size()); ++i)
+                    if (pc.alphabet[i] == c) { code = i; break; }
+                s.put_bits(static_cast<uint64_t>(code), pc.alphabet_bits);
+            }
+        } else if (bpc > 1) {
             for (unsigned char c : str) s.put_bits(c, 8);
         } else if (bits == 4) {
             for (char c : str) s.put_bits(encode_numeric_char(c), 4);
@@ -409,38 +446,54 @@ private:
     }
 
     static DecodeResult decode_string(PerDecodeStream& s, const TypeDescriptor& def, void* dest) {
-        auto len_r = get_length(s);
+        auto len_r = decode_size_field(s, def);
         if (!len_r) return decode_err(len_r.error());
         std::size_t char_count = *len_r;
+
+        const PerConstraints& pc = def.per_constraints;
         auto [bits, bpc] = string_params(def.tag.number);
-        std::size_t byte_count = char_count * bpc;
         std::string result;
-        result.reserve(byte_count);
-        if (bpc > 1) {
-            for (std::size_t i = 0; i < byte_count; ++i) {
-                auto b = s.get_bits(8);
-                if (!b) return decode_err(b.error());
-                result.push_back(static_cast<char>(*b));
-            }
-        } else if (bits == 4) {
+
+        if (pc.alphabet_bits > 0 && !pc.alphabet.empty()) {
+            result.reserve(char_count);
             for (std::size_t i = 0; i < char_count; ++i) {
-                auto v = s.get_bits(4);
+                auto v = s.get_bits(pc.alphabet_bits);
                 if (!v) return decode_err(v.error());
-                result.push_back(decode_numeric_char(static_cast<uint8_t>(*v)));
-            }
-        } else if (bits == 7) {
-            for (std::size_t i = 0; i < char_count; ++i) {
-                auto v = s.get_bits(7);
-                if (!v) return decode_err(v.error());
-                result.push_back(static_cast<char>(*v));
+                if (*v < pc.alphabet.size())
+                    result.push_back(static_cast<char>(pc.alphabet[*v]));
+                else
+                    result.push_back('?');
             }
         } else {
-            for (std::size_t i = 0; i < char_count; ++i) {
-                auto v = s.get_bits(8);
-                if (!v) return decode_err(v.error());
-                result.push_back(static_cast<char>(*v));
+            std::size_t byte_count = char_count * bpc;
+            result.reserve(byte_count);
+            if (bpc > 1) {
+                for (std::size_t i = 0; i < byte_count; ++i) {
+                    auto b = s.get_bits(8);
+                    if (!b) return decode_err(b.error());
+                    result.push_back(static_cast<char>(*b));
+                }
+            } else if (bits == 4) {
+                for (std::size_t i = 0; i < char_count; ++i) {
+                    auto v = s.get_bits(4);
+                    if (!v) return decode_err(v.error());
+                    result.push_back(decode_numeric_char(static_cast<uint8_t>(*v)));
+                }
+            } else if (bits == 7) {
+                for (std::size_t i = 0; i < char_count; ++i) {
+                    auto v = s.get_bits(7);
+                    if (!v) return decode_err(v.error());
+                    result.push_back(static_cast<char>(*v));
+                }
+            } else {
+                for (std::size_t i = 0; i < char_count; ++i) {
+                    auto v = s.get_bits(8);
+                    if (!v) return decode_err(v.error());
+                    result.push_back(static_cast<char>(*v));
+                }
             }
         }
+
         *reinterpret_cast<std::string*>(dest) = std::move(result);
         return decode_ok();
     }
@@ -461,30 +514,14 @@ private:
     }
 
     DecodeResult decode_real(PerDecodeStream& s, void* dest) const {
-        auto len_r = get_length(s);
-        if (!len_r) return decode_err(len_r.error());
-        int len = static_cast<int>(*len_r);
-        if (len == 0) { *static_cast<Real*>(dest) = Real{0.0}; return decode_ok(); }
-        std::vector<uint8_t> ber;
-        ber.push_back(0x09);  // REAL universal tag
-        ber.push_back(static_cast<uint8_t>(len));
-        for (int i = 0; i < len; ++i) {
-            auto b = s.get_bits(8);
-            if (!b) return decode_err(b.error());
-            ber.push_back(static_cast<uint8_t>(*b));
-        }
-        BerReader r{std::span<const uint8_t>(ber)};
-        auto v = BerTraits<Real>::decode(r);
-        if (!v) return decode_err(v.error());
-        *static_cast<Real*>(dest) = *v;
-        return decode_ok();
+        return decode_ber_content<Real>(s, dest);
     }
 
     // ---- INTEGER -------------------------------------------------------
     //
-    // Constrained (per_constraints != nullptr):
+    // Constrained (flags & CONSTRAINED):
     //   encoded = value - lower; write range_bits bits MSB-first (UPER).
-    // Unconstrained (per_constraints == nullptr):
+    // Unconstrained (flags == 0):
     //   length (1 byte, value in bytes) + big-endian minimal two's-complement.
 
     void encode_integer(PerEncodeStream& s,
@@ -492,10 +529,10 @@ private:
                         const void* src) const
     {
         int64_t value = *static_cast<const int64_t*>(src);
-        const auto* pc = static_cast<const PerConstraints*>(def.per_constraints);
-        if (pc && (pc->flags & PerConstraints::CONSTRAINED)) {
-            int64_t encoded = value - pc->lower_bound;
-            int64_t rcount  = pc->upper_bound - pc->lower_bound + 1;
+        const PerConstraints& pc = def.per_constraints;
+        if (pc.flags & PerConstraints::CONSTRAINED) {
+            int64_t encoded = value - pc.lower_bound;
+            int64_t rcount  = pc.upper_bound - pc.lower_bound + 1;
             s.put_bits(static_cast<uint64_t>(encoded), range_bits(rcount));
         } else {
             // Unconstrained: minimal big-endian bytes, preceded by byte count.
@@ -522,12 +559,12 @@ private:
                                 const TypeDescriptor& def,
                                 void* dest) const
     {
-        const auto* pc = static_cast<const PerConstraints*>(def.per_constraints);
-        if (pc && (pc->flags & PerConstraints::CONSTRAINED)) {
-            int64_t rcount = pc->upper_bound - pc->lower_bound + 1;
+        const PerConstraints& pc = def.per_constraints;
+        if (pc.flags & PerConstraints::CONSTRAINED) {
+            int64_t rcount = pc.upper_bound - pc.lower_bound + 1;
             auto bits = s.get_bits(range_bits(rcount));
             if (!bits) return decode_err(bits.error());
-            *static_cast<int64_t*>(dest) = pc->lower_bound + static_cast<int64_t>(*bits);
+            *static_cast<int64_t*>(dest) = pc.lower_bound + static_cast<int64_t>(*bits);
             return decode_ok();
         } else {
             // Unconstrained: read length byte, then that many bytes.

@@ -1,0 +1,4 @@
+RestrictedTest DEFINITIONS ::= BEGIN
+    HasRestricted ::= SEQUENCE { value MyRestrictedString }
+    MyRestrictedString ::= VisibleString (FROM ("A" | "D"))
+END

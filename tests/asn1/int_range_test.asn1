@@ -1,0 +1,13 @@
+IntRangeTest DEFINITIONS ::= BEGIN
+    HasBit1   ::= SEQUENCE { value MyBit1 }
+    HasByte   ::= SEQUENCE { value MyByte }
+    HasSigned ::= SEQUENCE { value MySigned }
+    HasNarrow ::= SEQUENCE { value MyNarrow }
+    HasWord   ::= SEQUENCE { value MyWord }
+
+    MyBit1   ::= INTEGER (0..1)
+    MyByte   ::= INTEGER (0..255)
+    MySigned ::= INTEGER (-128..127)
+    MyNarrow ::= INTEGER (123456..123457)
+    MyWord   ::= INTEGER (0..65535)
+END

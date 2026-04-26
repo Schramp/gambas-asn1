@@ -1,0 +1,9 @@
+BitstringSize DEFINITIONS ::= BEGIN
+    HasFixed8  ::= SEQUENCE { value MyFixed8 }
+    HasRange18 ::= SEQUENCE { value MyRange1-8 }
+    HasRange0b ::= SEQUENCE { value MyRange0-16 }
+
+    MyFixed8    ::= BIT STRING (SIZE (8))
+    MyRange1-8  ::= BIT STRING (SIZE (1..8))
+    MyRange0-16 ::= BIT STRING (SIZE (0..16))
+END

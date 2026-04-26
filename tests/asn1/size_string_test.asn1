@@ -1,0 +1,13 @@
+SizeStringTest DEFINITIONS ::= BEGIN
+    HasFixed     ::= SEQUENCE { value MyFixed3 }
+    HasRange14   ::= SEQUENCE { value MyRange14 }
+    HasRange8b   ::= SEQUENCE { value MyRange0-180 }
+    HasRange1b   ::= SEQUENCE { value MyRange180-181 }
+    HasFromSize  ::= SEQUENCE { value MyFromSize }
+
+    MyFixed3       ::= VisibleString (SIZE (3))
+    MyRange14      ::= VisibleString (SIZE (1..4))
+    MyRange0-180   ::= VisibleString (SIZE (0..180))
+    MyRange180-181 ::= VisibleString (SIZE (180..181))
+    MyFromSize     ::= VisibleString (FROM ("A" | "D")) (SIZE (1..4))
+END

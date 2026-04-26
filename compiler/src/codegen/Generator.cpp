@@ -107,6 +107,10 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) {
         return "";  // CHOICE has no universal tag
     if (def.is_seq_of() || def.is_set_of())
         return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Sequence);
+    if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
+        auto base = resolver_.resolve_ref(*tr);
+        if (base) return natural_tag_for(*base);
+    }
     return "asn1::Tag::universal(4, false)";  // fallback: OCTET STRING
 }
 
@@ -257,7 +261,7 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    \"{}\",\n", cname);
     os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Enumerated);
     os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr, nullptr, nullptr /* per_constraints */\n";
+    os << "    nullptr, nullptr, {} /* per_constraints */\n";
     os << "};\n\n";
 
     // BerTraits bodies — thin wrappers; all logic lives in BerCodec
@@ -335,31 +339,22 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = to_cpp_name(def.name);
 
     auto range = extract_integer_range(def);
-    std::string per_ptr = "nullptr /* unconstrained */";
-
-    if (range) {
-        int64_t lo = range->first, hi = range->second;
-        int64_t range_count = hi - lo + 1;  // may overflow for very wide ranges; acceptable
-        // ceil(log2(range_count))
-        int rb = 0;
-        if (range_count > 1) {
-            for (int64_t r = range_count - 1; r > 0; r >>= 1) ++rb;
-        }
-        os << std::format("static const asn1::PerConstraints asn_PER_{}_constr = {{\n", cname);
-        os << std::format("    asn1::PerConstraints::CONSTRAINED,\n");
-        os << std::format("    {}, /* range_bits */\n", rb);
-        os << std::format("    {}, /* lower_bound */\n", lo);
-        os << std::format("    {}, /* upper_bound */\n", hi);
-        os << "    0, 0, 0 /* size constraints unused */\n";
-        os << "};\n\n";
-        per_ptr = std::format("&asn_PER_{}_constr", cname);
-    }
 
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", cname);
     os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Integer);
     os << "    nullptr, nullptr, nullptr,\n";
-    os << std::format("    {} /* per_constraints */\n", per_ptr);
+    if (range) {
+        int64_t lo = range->first, hi = range->second;
+        int64_t range_count = hi - lo + 1;
+        int rb = 0;
+        if (range_count > 1) {
+            for (int64_t r = range_count - 1; r > 0; r >>= 1) ++rb;
+        }
+        os << std::format("    {{ asn1::PerConstraints::CONSTRAINED, {}, {}, {} }} /* per_constraints */\n", rb, lo, hi);
+    } else {
+        os << "    {} /* per_constraints — unconstrained */\n";
+    }
     os << "};\n";
 }
 
@@ -470,7 +465,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    asn1::Tag::universal({}, true),\n", tag_num);
     os << "    nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr, nullptr /* per_constraints */\n";
+    os << "    nullptr, {} /* per_constraints */\n";
     os << "};\n\n";
 
     // BerTraits encode
@@ -602,7 +597,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         os << "    nullptr,\n";
     os << std::format("    {},\n", count);
     os << std::format("    {}, /* ext_at */\n", ext_at);
-    os << "    nullptr /* PER: per_constraints */\n";
+    os << "    {} /* PER: per_constraints */\n";
     os << "};\n\n";
 
     // TypeDescriptor (CHOICE has no fixed universal tag)
@@ -611,7 +606,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "    asn1::Tag{asn1::TagClass::Context, 0, false}, /* placeholder — CHOICE tag is transparent */\n";
     os << "    nullptr, nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr /* per_constraints */\n";
+    os << "    {} /* per_constraints */\n";
     os << "};\n\n";
 
     // BerTraits encode — delegate to BerCodec generic path
@@ -654,7 +649,8 @@ void Generator::emit_hpp(const ast::TypeDef& def, std::ostream& os) {
         } else if (*bt == ast::BuiltinType::Integer) {
             emit_integer_hpp(def, os);
         } else {
-            os << std::format("using {} = {};\n", cname, cpp_type_for(def));
+            os << std::format("using {} = {};\n\n", cname, cpp_type_for(def));
+            os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
         }
     } else if (def.is_seq_of() || def.is_set_of()) {
         const auto& elem = def.is_seq_of()
@@ -667,6 +663,129 @@ void Generator::emit_hpp(const ast::TypeDef& def, std::ostream& os) {
         os << std::format("#include \"{}.hpp\"\n", to_cpp_name(tr->type_name));
         os << std::format("using {} = {};\n", cname, to_cpp_name(tr->type_name));
     }
+}
+
+// Walk a constraint, including IntersectionConstraint operands, and call f on each body.
+template<typename F>
+static void walk_constraints(const ast::Constraint& c, F&& f) {
+    f(c.body);
+    if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c.body))
+        for (const auto& op : ic->operands)
+            if (op) walk_constraints(*op, f);
+}
+
+// Walk all top-level constraints of def (and their IntersectionConstraint subtrees).
+template<typename F>
+static void walk_type_constraints(const ast::TypeDef& def, F&& f) {
+    for (const auto& cptr : def.constraints)
+        if (cptr) walk_constraints(*cptr, f);
+}
+
+// Extract SIZE (lb..ub) constraint. Returns {lb, ub} or nullopt if none.
+// lb==ub → fixed size; ub==INT64_MAX → semi-constrained (SIZE lb..MAX).
+static std::optional<std::pair<int64_t,int64_t>> extract_size_range(const ast::TypeDef& def) {
+    std::optional<std::pair<int64_t,int64_t>> result;
+    walk_type_constraints(def, [&](const ast::ConstraintBody& body) {
+        if (result) return;
+        auto* sc = std::get_if<ast::SizeConstraint>(&body);
+        if (!sc || !sc->inner) return;
+        if (auto* vr = std::get_if<ast::ValueRange>(&sc->inner->body)) {
+            int64_t lb = 0, ub = std::numeric_limits<int64_t>::max();
+            if (vr->lower.kind != ast::RangeEndpoint::Kind::Min)
+                if (auto* n = std::get_if<int64_t>(&vr->lower.value)) lb = *n;
+            if (vr->upper.kind == ast::RangeEndpoint::Kind::Max)
+                ub = std::numeric_limits<int64_t>::max();
+            else if (auto* n = std::get_if<int64_t>(&vr->upper.value)) ub = *n;
+            result = {lb, ub};
+        } else if (auto* sv = std::get_if<ast::Value>(&sc->inner->body)) {
+            if (auto* n = std::get_if<int64_t>(sv)) result = {*n, *n};
+        }
+    });
+    return result;
+}
+
+// Extract sorted char values from a FROM alphabet constraint.
+// Returns empty vector if no FROM constraint or if chars can't be resolved.
+static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
+    std::vector<uint8_t> chars;
+    auto collect = [&](const ast::ConstraintBody& body) {
+        if (auto* v = std::get_if<ast::Value>(&body))
+            if (auto* s = std::get_if<std::string>(v))
+                if (s->size() == 1)
+                    chars.push_back(static_cast<uint8_t>((*s)[0]));
+    };
+
+    walk_type_constraints(def, [&](const ast::ConstraintBody& body) {
+        auto* fc = std::get_if<ast::FromConstraint>(&body);
+        if (!fc || !fc->inner) return;
+        if (auto* uc = std::get_if<ast::UnionConstraint>(&fc->inner->body)) {
+            for (const auto& op : uc->operands)
+                if (op) collect(op->body);
+        } else {
+            collect(fc->inner->body);
+        }
+    });
+
+    if (!chars.empty()) std::sort(chars.begin(), chars.end());
+    return chars;
+}
+
+void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os) {
+    std::string cname = to_cpp_name(def.name);
+
+    auto alphabet   = extract_from_alphabet(def);
+    auto size_range = extract_size_range(def);
+
+    bool needs_per = !alphabet.empty() || size_range.has_value();
+
+    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
+    os << std::format("    \"{}\",\n", def.name);
+    os << std::format("    {},\n", natural_tag_for(def));
+    os << "    nullptr, nullptr, nullptr,\n";
+
+    if (needs_per) {
+        // SIZE constraint metadata
+        int     size_flags = 0;
+        int     size_rb    = 0;
+        int64_t size_lb    = 0, size_ub = 0;
+        if (size_range) {
+            size_lb = size_range->first;
+            size_ub = size_range->second;
+            if (size_ub != std::numeric_limits<int64_t>::max()) {
+                size_flags = asn1::PerConstraints::SIZE_CONSTRAINED;
+                int64_t range = size_ub - size_lb + 1;
+                if (range > 1)
+                    for (int64_t r = range - 1; r > 0; r >>= 1) ++size_rb;
+            }
+        }
+
+        // FROM alphabet metadata
+        int alphabet_bits = 0;
+        if (!alphabet.empty()) {
+            int alphabet_size = static_cast<int>(alphabet.size());
+            for (int r = alphabet_size - 1; r > 0; r >>= 1) ++alphabet_bits;
+            if (alphabet_bits == 0) alphabet_bits = 1;
+        }
+
+        int flags = asn1::PerConstraints::CONSTRAINED | size_flags;
+        int val_lb = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
+        int val_ub = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
+
+        os << std::format("    {{ {}, 0, {}, {}, {}, {}, {}, {}",
+                          flags, val_lb, val_ub, size_rb, size_lb, size_ub, alphabet_bits);
+        if (!alphabet.empty()) {
+            os << ", std::vector<uint8_t>{";
+            for (int i = 0; i < static_cast<int>(alphabet.size()); ++i) {
+                if (i) os << ", ";
+                os << static_cast<int>(alphabet[i]);
+            }
+            os << "}";
+        }
+        os << " } /* per_constraints */\n";
+    } else {
+        os << "    {} /* per_constraints — unconstrained */\n";
+    }
+    os << "};\n";
 }
 
 void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
@@ -682,6 +801,8 @@ void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
             emit_enumerated_cpp(def, os);
         else if (*bt == ast::BuiltinType::Integer)
             emit_integer_cpp(def, os);
+        else
+            emit_builtin_alias_cpp(def, os);
     }
 }
 
@@ -703,9 +824,15 @@ void Generator::generate_type(const ast::TypeDef& def, const std::string& /*modu
         auto* bt = std::get_if<ast::BuiltinType>(&def.body);
         return bt && *bt == t;
     };
+    auto is_named_builtin_alias = [&]() {
+        auto* bt = std::get_if<ast::BuiltinType>(&def.body);
+        if (!bt) return false;
+        return *bt != ast::BuiltinType::Enumerated && *bt != ast::BuiltinType::Integer;
+    };
     bool needs_cpp = def.is_sequence() || def.is_set() || def.is_choice()
         || bt_is(ast::BuiltinType::Enumerated)
-        || bt_is(ast::BuiltinType::Integer);
+        || bt_is(ast::BuiltinType::Integer)
+        || is_named_builtin_alias();
     if (needs_cpp) {
         std::ofstream cpp(out_dir_ / (cname + ".cpp"));
         emit_cpp(def, cpp);
