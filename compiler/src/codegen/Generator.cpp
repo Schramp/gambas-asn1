@@ -1,5 +1,6 @@
 #include "Generator.hpp"
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include "asn1cpp/Tag.hpp"
 #include "asn1cpp/TypeDescriptor.hpp"
@@ -715,15 +716,22 @@ static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
                     chars.push_back(static_cast<uint8_t>((*s)[0]));
     };
 
+    // Grammar builds left-recursive Union pairs: A|B|C → Union(Union(A,B),C).
+    // Recurse into nested UnionConstraints to reach all leaf Values.
+    std::function<void(const ast::ConstraintBody&)> recurse_union;
+    recurse_union = [&](const ast::ConstraintBody& b) {
+        if (auto* uc = std::get_if<ast::UnionConstraint>(&b)) {
+            for (const auto& op : uc->operands)
+                if (op) recurse_union(op->body);
+        } else {
+            collect(b);
+        }
+    };
+
     walk_type_constraints(def, [&](const ast::ConstraintBody& body) {
         auto* fc = std::get_if<ast::FromConstraint>(&body);
         if (!fc || !fc->inner) return;
-        if (auto* uc = std::get_if<ast::UnionConstraint>(&fc->inner->body)) {
-            for (const auto& op : uc->operands)
-                if (op) collect(op->body);
-        } else {
-            collect(fc->inner->body);
-        }
+        recurse_union(fc->inner->body);
     });
 
     if (!chars.empty()) std::sort(chars.begin(), chars.end());

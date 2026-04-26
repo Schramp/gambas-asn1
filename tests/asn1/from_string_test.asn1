@@ -1,0 +1,9 @@
+FromStringTest DEFINITIONS ::= BEGIN
+    HasBit2  ::= SEQUENCE { value MyFrom2bit }
+    HasBit4  ::= SEQUENCE { value MyFrom4bit }
+    HasNum   ::= SEQUENCE { value MyFromNum }
+
+    MyFrom2bit ::= NumericString (FROM ("0"|"1"))
+    MyFrom4bit ::= NumericString (FROM ("0"|"1"|"2"|"3"))
+    MyFromNum  ::= NumericString (FROM ("0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"|" "))
+END
