@@ -45,6 +45,9 @@ public:
     bool at_end() const override { return pos_ >= buf_.size(); }
     std::string_view remaining() const { return std::string_view(buf_).substr(pos_); }
     void advance(std::size_t n) { pos_ += n; }
+    void skip_whitespace() {
+        while (pos_ < buf_.size() && std::isspace((unsigned char)buf_[pos_])) ++pos_;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -56,6 +59,13 @@ namespace xer_detail {
 inline std::size_t skip_ws(std::string_view sv, std::size_t pos) {
     while (pos < sv.size() && std::isspace((unsigned char)sv[pos])) ++pos;
     return pos;
+}
+
+// Trim leading and trailing whitespace from sv.
+inline std::string_view trim(std::string_view sv) {
+    while (!sv.empty() && std::isspace((unsigned char)sv.front())) sv.remove_prefix(1);
+    while (!sv.empty() && std::isspace((unsigned char)sv.back()))  sv.remove_suffix(1);
+    return sv;
 }
 
 // Consume expected literal; return new pos or npos on mismatch.
@@ -82,6 +92,36 @@ inline TagInfo parse_tag(std::string_view sv, std::size_t& pos) {
     if (self_closing) ++pos;
     if (pos < sv.size() && sv[pos] == '>') ++pos;
     return {name, closing, self_closing};
+}
+
+// Read raw text up to the next '<', advance stream past it, return the view.
+inline std::string_view read_text_content(XerDecodeStream& s) {
+    std::string_view rem = s.remaining();
+    std::size_t pos = 0;
+    while (pos < rem.size() && rem[pos] != '<') ++pos;
+    std::string_view text = rem.substr(0, pos);
+    s.advance(pos);
+    return text;
+}
+
+inline DecodeResult consume_open_tag(XerDecodeStream& s, std::string_view name) {
+    std::string_view rem = s.remaining();
+    std::size_t pos = 0;
+    auto ti = parse_tag(rem, pos);
+    if (ti.name != name || ti.closing || ti.self_closing)
+        return decode_err(DecodeError(std::string("XER: expected <") + std::string(name) + ">"));
+    s.advance(pos);
+    return decode_ok();
+}
+
+inline DecodeResult consume_close_tag(XerDecodeStream& s, std::string_view name) {
+    std::string_view rem = s.remaining();
+    std::size_t pos = 0;
+    auto ti = parse_tag(rem, pos);
+    if (!ti.closing || ti.name != name)
+        return decode_err(DecodeError(std::string("XER: expected </") + std::string(name) + ">"));
+    s.advance(pos);
+    return decode_ok();
 }
 
 } // namespace xer_detail
@@ -202,6 +242,15 @@ private:
         return t.cls == TagClass::Universal && t.number == 28;
     }
 
+    // open tag, optional ws-skip, read text, close tag, call fn(text)
+    template<typename F>
+    DecodeResult decode_simple_text_element(XerDecodeStream& s, const char* name, F&& fn) const {
+        if (auto r = xer_detail::consume_open_tag(s, name); !r) return r;
+        auto text = xer_detail::read_text_content(s);
+        if (auto r = xer_detail::consume_close_tag(s, name); !r) return r;
+        return fn(text);
+    }
+
     // ---- NULL ----------------------------------------------------------
 
     void encode_null(XerEncodeStream& s, const TypeDescriptor& def) const {
@@ -212,14 +261,13 @@ private:
                              const TypeDescriptor& def,
                              void* dest) const
     {
-        using namespace xer_detail;
         std::string_view rem = s.remaining();
         std::size_t pos = 0;
-        auto ti = parse_tag(rem, pos);
+        auto ti = xer_detail::parse_tag(rem, pos);
         if (ti.name != def.name || ti.closing)
             return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
         if (!ti.self_closing) {
-            auto close = parse_tag(rem, pos);
+            auto close = xer_detail::parse_tag(rem, pos);
             if (!close.closing || close.name != def.name)
                 return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
         }
@@ -243,21 +291,16 @@ private:
                                 const TypeDescriptor& def,
                                 void* dest) const
     {
-        using namespace xer_detail;
+        if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
         std::string_view rem = s.remaining();
         std::size_t pos = 0;
-        auto outer = parse_tag(rem, pos);
-        if (outer.name != def.name || outer.closing || outer.self_closing)
-            return decode_err(DecodeError(std::string("XER BOOLEAN: expected <") + def.name + ">"));
-        auto inner = parse_tag(rem, pos);
+        auto inner = xer_detail::parse_tag(rem, pos);
         bool value;
         if (inner.name == "true"  && inner.self_closing) { value = true; }
         else if (inner.name == "false" && inner.self_closing) { value = false; }
         else return decode_err(DecodeError("XER BOOLEAN: expected <true/> or <false/>"));
-        auto close = parse_tag(rem, pos);
-        if (!close.closing || close.name != def.name)
-            return decode_err(DecodeError(std::string("XER BOOLEAN: expected </") + def.name + ">"));
         s.advance(pos);
+        if (auto r = xer_detail::consume_close_tag(s, def.name); !r) return r;
         *static_cast<Boolean*>(dest) = Boolean{value};
         return decode_ok();
     }
@@ -266,54 +309,33 @@ private:
 
     // ---- UTCTime / GeneralizedTime (raw string pass-through) -----------
 
+    static void encode_text_element(XerEncodeStream& s, const TypeDescriptor& def, const void* src) {
+        s.os() << '<' << def.name << '>' << detail::asnstring_view(src) << "</" << def.name << ">\n";
+    }
+
     void encode_time_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const {
-        // UtcTime and GeneralizedTime both have std::string as sole member.
-        std::string_view sv = detail::asnstring_view(src);
-        s.os() << '<' << def.name << '>' << sv << "</" << def.name << ">\n";
+        encode_text_element(s, def, src);
     }
 
     template<typename T>
     DecodeResult decode_time_string(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
-        using namespace xer_detail;
-        std::string_view rem = s.remaining();
-        std::size_t pos = 0;
-        auto open = parse_tag(rem, pos);
-        if (open.name != def.name || open.closing || open.self_closing)
-            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
-        std::size_t text_start = pos;
-        while (pos < rem.size() && rem[pos] != '<') ++pos;
-        std::string_view text = rem.substr(text_start, pos - text_start);
-        auto close = parse_tag(rem, pos);
-        if (!close.closing || close.name != def.name)
-            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
-        s.advance(pos);
-        *static_cast<T*>(dest) = T{std::string(text)};
-        return decode_ok();
+        return decode_simple_text_element(s, def.name, [dest](std::string_view text) -> DecodeResult {
+            *static_cast<T*>(dest) = T{std::string(text)};
+            return decode_ok();
+        });
     }
 
     // ---- Generic primitive string (AsnString<N>) XER -------------------
 
     void encode_xer_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const {
-        std::string_view sv = detail::asnstring_view(src);
-        s.os() << '<' << def.name << '>' << sv << "</" << def.name << ">\n";
+        encode_text_element(s, def, src);
     }
 
     DecodeResult decode_xer_string(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
-        using namespace xer_detail;
-        std::string_view rem = s.remaining();
-        std::size_t pos = 0;
-        auto open = parse_tag(rem, pos);
-        if (open.name != def.name || open.closing || open.self_closing)
-            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
-        std::size_t text_start = pos;
-        while (pos < rem.size() && rem[pos] != '<') ++pos;
-        std::string_view text = rem.substr(text_start, pos - text_start);
-        auto close = parse_tag(rem, pos);
-        if (!close.closing || close.name != def.name)
-            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
-        s.advance(pos);
-        detail::asnstring_assign(dest, text);
-        return decode_ok();
+        return decode_simple_text_element(s, def.name, [dest](std::string_view text) -> DecodeResult {
+            detail::asnstring_assign(dest, text);
+            return decode_ok();
+        });
     }
 
     // ---- Hex-byte string types (T61, Videotex, Graphic, General) -------
@@ -401,21 +423,10 @@ private:
     }
 
     DecodeResult decode_octetstring_xer(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
-        using namespace xer_detail;
-        std::string_view rem = s.remaining();
-        std::size_t pos = 0;
-        auto open = parse_tag(rem, pos);
-        if (open.name != def.name || open.closing || open.self_closing)
-            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
-        std::size_t text_start = pos;
-        while (pos < rem.size() && rem[pos] != '<') ++pos;
-        auto text = rem.substr(text_start, pos - text_start);
-        auto close = parse_tag(rem, pos);
-        if (!close.closing || close.name != def.name)
-            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
-        s.advance(pos);
-        *static_cast<OctetString*>(dest) = OctetString{base64_decode(text)};
-        return decode_ok();
+        return decode_simple_text_element(s, def.name, [this, dest](std::string_view text) -> DecodeResult {
+            *static_cast<OctetString*>(dest) = OctetString{base64_decode(text)};
+            return decode_ok();
+        });
     }
 
     void encode_hex_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const {
@@ -424,21 +435,10 @@ private:
     }
 
     DecodeResult decode_hex_string(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
-        using namespace xer_detail;
-        std::string_view rem = s.remaining();
-        std::size_t pos = 0;
-        auto open = parse_tag(rem, pos);
-        if (open.name != def.name || open.closing || open.self_closing)
-            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
-        std::size_t text_start = pos;
-        while (pos < rem.size() && rem[pos] != '<') ++pos;
-        auto text = rem.substr(text_start, pos - text_start);
-        auto close = parse_tag(rem, pos);
-        if (!close.closing || close.name != def.name)
-            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
-        s.advance(pos);
-        detail::asnstring_assign(dest, parse_hex_bytes(text));
-        return decode_ok();
+        return decode_simple_text_element(s, def.name, [this, dest](std::string_view text) -> DecodeResult {
+            detail::asnstring_assign(dest, parse_hex_bytes(text));
+            return decode_ok();
+        });
     }
 
     // ---- UTF-8 codepoint helpers ----------------------------------------
@@ -486,28 +486,17 @@ private:
     }
 
     DecodeResult decode_bmp_string(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
-        using namespace xer_detail;
-        std::string_view rem = s.remaining();
-        std::size_t pos = 0;
-        auto open = parse_tag(rem, pos);
-        if (open.name != def.name || open.closing || open.self_closing)
-            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
-        std::size_t text_start = pos;
-        while (pos < rem.size() && rem[pos] != '<') ++pos;
-        auto text = rem.substr(text_start, pos - text_start);
-        auto close = parse_tag(rem, pos);
-        if (!close.closing || close.name != def.name)
-            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
-        s.advance(pos);
-        std::string out;
-        std::size_t i = 0;
-        while (i < text.size()) {
-            uint32_t cp = utf8_decode_cp(text.data(), text.size(), i);
-            out += (char)(uint8_t)(cp >> 8);
-            out += (char)(uint8_t)(cp & 0xFF);
-        }
-        detail::asnstring_assign(dest, out);
-        return decode_ok();
+        return decode_simple_text_element(s, def.name, [dest](std::string_view text) -> DecodeResult {
+            std::string out;
+            std::size_t i = 0;
+            while (i < text.size()) {
+                uint32_t cp = utf8_decode_cp(text.data(), text.size(), i);
+                out += (char)(uint8_t)(cp >> 8);
+                out += (char)(uint8_t)(cp & 0xFF);
+            }
+            detail::asnstring_assign(dest, out);
+            return decode_ok();
+        });
     }
 
     // ---- UniversalString (stored as UTF-32BE bytes) ---------------------
@@ -524,30 +513,19 @@ private:
     }
 
     DecodeResult decode_universal_string(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
-        using namespace xer_detail;
-        std::string_view rem = s.remaining();
-        std::size_t pos = 0;
-        auto open = parse_tag(rem, pos);
-        if (open.name != def.name || open.closing || open.self_closing)
-            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
-        std::size_t text_start = pos;
-        while (pos < rem.size() && rem[pos] != '<') ++pos;
-        auto text = rem.substr(text_start, pos - text_start);
-        auto close = parse_tag(rem, pos);
-        if (!close.closing || close.name != def.name)
-            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
-        s.advance(pos);
-        std::string out;
-        std::size_t i = 0;
-        while (i < text.size()) {
-            uint32_t cp = utf8_decode_cp(text.data(), text.size(), i);
-            out += (char)(uint8_t)(cp >> 24);
-            out += (char)(uint8_t)((cp >> 16) & 0xFF);
-            out += (char)(uint8_t)((cp >> 8) & 0xFF);
-            out += (char)(uint8_t)(cp & 0xFF);
-        }
-        detail::asnstring_assign(dest, out);
-        return decode_ok();
+        return decode_simple_text_element(s, def.name, [dest](std::string_view text) -> DecodeResult {
+            std::string out;
+            std::size_t i = 0;
+            while (i < text.size()) {
+                uint32_t cp = utf8_decode_cp(text.data(), text.size(), i);
+                out += (char)(uint8_t)(cp >> 24);
+                out += (char)(uint8_t)((cp >> 16) & 0xFF);
+                out += (char)(uint8_t)((cp >> 8) & 0xFF);
+                out += (char)(uint8_t)(cp & 0xFF);
+            }
+            detail::asnstring_assign(dest, out);
+            return decode_ok();
+        });
     }
 
     // ---- OID / RELATIVE-OID --------------------------------------------
@@ -574,54 +552,31 @@ private:
         return arcs;
     }
 
-    void encode_oid(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const {
-        const Oid& v = *static_cast<const Oid*>(src);
-        s.os() << '<' << def.name << '>' << format_arcs(v.arcs()) << "</" << def.name << ">\n";
+    template<typename T>
+    static void encode_oid_impl(XerEncodeStream& s, const TypeDescriptor& def, const void* src) {
+        s.os() << '<' << def.name << '>' << format_arcs(static_cast<const T*>(src)->arcs()) << "</" << def.name << ">\n";
     }
 
+    template<typename T>
+    DecodeResult decode_oid_impl(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
+        return decode_simple_text_element(s, def.name, [dest](std::string_view text) -> DecodeResult {
+            *static_cast<T*>(dest) = T{parse_arcs(xer_detail::trim(text))};
+            return decode_ok();
+        });
+    }
+
+    void encode_oid(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const {
+        encode_oid_impl<Oid>(s, def, src);
+    }
     DecodeResult decode_oid(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
-        using namespace xer_detail;
-        std::string_view rem = s.remaining();
-        std::size_t pos = 0;
-        auto open = parse_tag(rem, pos);
-        if (open.name != def.name || open.closing || open.self_closing)
-            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
-        pos = skip_ws(rem, pos);
-        std::size_t text_start = pos;
-        while (pos < rem.size() && rem[pos] != '<') ++pos;
-        auto text = rem.substr(text_start, pos - text_start);
-        while (!text.empty() && std::isspace((unsigned char)text.back())) text.remove_suffix(1);
-        auto close = parse_tag(rem, pos);
-        if (!close.closing || close.name != def.name)
-            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
-        s.advance(pos);
-        *static_cast<Oid*>(dest) = Oid{parse_arcs(text)};
-        return decode_ok();
+        return decode_oid_impl<Oid>(s, def, dest);
     }
 
     void encode_relative_oid(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const {
-        const RelativeOid& v = *static_cast<const RelativeOid*>(src);
-        s.os() << '<' << def.name << '>' << format_arcs(v.arcs()) << "</" << def.name << ">\n";
+        encode_oid_impl<RelativeOid>(s, def, src);
     }
-
     DecodeResult decode_relative_oid(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
-        using namespace xer_detail;
-        std::string_view rem = s.remaining();
-        std::size_t pos = 0;
-        auto open = parse_tag(rem, pos);
-        if (open.name != def.name || open.closing || open.self_closing)
-            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
-        pos = skip_ws(rem, pos);
-        std::size_t text_start = pos;
-        while (pos < rem.size() && rem[pos] != '<') ++pos;
-        auto text = rem.substr(text_start, pos - text_start);
-        while (!text.empty() && std::isspace((unsigned char)text.back())) text.remove_suffix(1);
-        auto close = parse_tag(rem, pos);
-        if (!close.closing || close.name != def.name)
-            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
-        s.advance(pos);
-        *static_cast<RelativeOid*>(dest) = RelativeOid{parse_arcs(text)};
-        return decode_ok();
+        return decode_oid_impl<RelativeOid>(s, def, dest);
     }
 
     // ---- BIT STRING ----------------------------------------------------
@@ -657,16 +612,12 @@ private:
                                   const TypeDescriptor& def,
                                   void* dest) const
     {
-        using namespace xer_detail;
-        std::string_view rem = s.remaining();
-        std::size_t pos = 0;
-
-        auto open = parse_tag(rem, pos);
-        if (open.name != def.name || open.closing || open.self_closing)
-            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
+        if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
+        s.skip_whitespace();
 
         // Collect bit characters, skipping whitespace
-        pos = skip_ws(rem, pos);
+        std::string_view rem = s.remaining();
+        std::size_t pos = 0;
         std::string bits;
         while (pos < rem.size() && rem[pos] != '<') {
             char c = rem[pos++];
@@ -674,12 +625,8 @@ private:
             else if (!std::isspace((unsigned char)c))
                 return decode_err(DecodeError("XER: invalid BIT STRING character"));
         }
-
-        auto close = parse_tag(rem, pos);
-        if (!close.closing || close.name != def.name)
-            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
-
         s.advance(pos);
+        if (auto r = xer_detail::consume_close_tag(s, def.name); !r) return r;
 
         // Pack bits into bytes
         std::vector<uint8_t> bytes;
@@ -726,45 +673,34 @@ private:
                              const TypeDescriptor& def,
                              void* dest) const
     {
-        using namespace xer_detail;
-        std::string_view rem = s.remaining();
-        std::size_t pos = 0;
+        if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
+        s.skip_whitespace();
 
-        auto open = parse_tag(rem, pos);
-        if (open.name != def.name || open.closing || open.self_closing)
-            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
-
-        pos = skip_ws(rem, pos);
         double d;
-        if (pos < rem.size() && rem[pos] == '<') {
-            auto inner = parse_tag(rem, pos);
+        if (!s.remaining().empty() && s.remaining()[0] == '<') {
+            std::string_view rem = s.remaining();
+            std::size_t pos = 0;
+            auto inner = xer_detail::parse_tag(rem, pos);
             if      (inner.name == "PLUS-INFINITY")  d = std::numeric_limits<double>::infinity();
             else if (inner.name == "MINUS-INFINITY") d = -std::numeric_limits<double>::infinity();
             else if (inner.name == "NOT-A-NUMBER")   d = std::numeric_limits<double>::quiet_NaN();
             else return decode_err(DecodeError("XER: unknown REAL special value: " + inner.name));
             if (!inner.self_closing) {
-                auto close_inner = parse_tag(rem, pos);
+                auto close_inner = xer_detail::parse_tag(rem, pos);
                 if (!close_inner.closing || close_inner.name != inner.name)
                     return decode_err(DecodeError("XER: malformed REAL special value"));
             }
+            s.advance(pos);
         } else {
-            std::size_t text_start = pos;
-            while (pos < rem.size() && rem[pos] != '<') ++pos;
-            std::string_view text = rem.substr(text_start, pos - text_start);
-            while (!text.empty() && std::isspace((unsigned char)text.front())) text.remove_prefix(1);
-            while (!text.empty() && std::isspace((unsigned char)text.back()))  text.remove_suffix(1);
+            auto text = xer_detail::read_text_content(s);
+            text = xer_detail::trim(text);
             std::string buf(text);
             char* endp;
             d = std::strtod(buf.c_str(), &endp);
             if (endp != buf.c_str() + buf.size())
                 return decode_err(DecodeError("XER: invalid REAL value: " + buf));
         }
-
-        auto close = parse_tag(rem, pos);
-        if (!close.closing || close.name != def.name)
-            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
-
-        s.advance(pos);
+        if (auto r = xer_detail::consume_close_tag(s, def.name); !r) return r;
         *static_cast<Real*>(dest) = Real{d};
         return decode_ok();
     }
@@ -783,38 +719,15 @@ private:
                                 const TypeDescriptor& def,
                                 void* dest) const
     {
-        using namespace xer_detail;
-        std::string_view rem = s.remaining();
-        std::size_t pos = 0;
-
-        // Expect <TypeName>
-        auto outer = parse_tag(rem, pos);
-        if (outer.name != def.name || outer.closing || outer.self_closing)
-            return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
-
-        // Read text content up to '<'
-        pos = skip_ws(rem, pos);
-        std::size_t text_start = pos;
-        while (pos < rem.size() && rem[pos] != '<') ++pos;
-        std::string_view text = rem.substr(text_start, pos - text_start);
-
-        // Parse decimal integer
-        // Trim whitespace
-        while (!text.empty() && std::isspace((unsigned char)text.front())) text.remove_prefix(1);
-        while (!text.empty() && std::isspace((unsigned char)text.back()))  text.remove_suffix(1);
-        int64_t value = 0;
-        auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
-        if (ec != std::errc{})
-            return decode_err(DecodeError("XER: invalid INTEGER value: " + std::string(text)));
-
-        // Expect </TypeName>
-        auto close = parse_tag(rem, pos);
-        if (!close.closing || close.name != def.name)
-            return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
-
-        s.advance(pos);
-        *static_cast<int64_t*>(dest) = value;
-        return decode_ok();
+        return decode_simple_text_element(s, def.name, [dest](std::string_view text) -> DecodeResult {
+            text = xer_detail::trim(text);
+            int64_t value = 0;
+            auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
+            if (ec != std::errc{})
+                return decode_err(DecodeError("XER: invalid INTEGER value: " + std::string(text)));
+            *static_cast<int64_t*>(dest) = value;
+            return decode_ok();
+        });
     }
 
     // ---- ENUMERATED ----------------------------------------------------
@@ -843,28 +756,27 @@ private:
                                    const TypeDescriptor& def,
                                    void* dest) const
     {
-        using namespace xer_detail;
         std::string_view rem = s.remaining();
         std::size_t pos = 0;
 
         // Expect <TypeName>
-        auto outer = parse_tag(rem, pos);
+        auto outer = xer_detail::parse_tag(rem, pos);
         if (outer.name != def.name || outer.closing)
             return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
 
-        pos = skip_ws(rem, pos);
+        pos = xer_detail::skip_ws(rem, pos);
         // Expect <valueName/>
-        auto inner = parse_tag(rem, pos);
+        auto inner = xer_detail::parse_tag(rem, pos);
         if (inner.name.empty() || inner.closing)
             return decode_err(DecodeError("XER: expected enum value tag"));
 
         // Expect </TypeName>
         if (!inner.self_closing) {
-            auto close = parse_tag(rem, pos);
+            auto close = xer_detail::parse_tag(rem, pos);
             if (!close.closing || close.name != inner.name)
                 return decode_err(DecodeError("XER: malformed enum value tag"));
         }
-        auto close_outer = parse_tag(rem, pos);
+        auto close_outer = xer_detail::parse_tag(rem, pos);
         if (!close_outer.closing || close_outer.name != def.name)
             return decode_err(DecodeError(std::string("XER: expected </") + def.name + ">"));
 
@@ -914,12 +826,11 @@ private:
                                const TypeDescriptor& def,
                                void* dest) const
     {
-        using namespace xer_detail;
         // Consume <TypeName>
         {
             auto rem = s.remaining();
             std::size_t pos = 0;
-            auto ti = parse_tag(rem, pos);
+            auto ti = xer_detail::parse_tag(rem, pos);
             if (ti.name != def.name || ti.closing || ti.self_closing)
                 return decode_err(DecodeError(std::string("XER SEQUENCE OF: expected <") + def.name + ">"));
             s.advance(pos);
@@ -931,7 +842,7 @@ private:
             // Peek at next tag
             auto rem = s.remaining();
             std::size_t pos = 0;
-            auto ti = parse_tag(rem, pos);
+            auto ti = xer_detail::parse_tag(rem, pos);
             if (ti.closing && ti.name == def.name) { s.advance(pos); break; }
             if (ti.name.empty())
                 return decode_err(DecodeError(std::string("XER SEQUENCE OF: unexpected end in <") + def.name + ">"));
@@ -981,12 +892,11 @@ private:
                                  const TypeDescriptor& def,
                                  void* dest) const
     {
-        using namespace xer_detail;
         // Consume <TypeName>
         {
             auto rem = s.remaining();
             std::size_t pos = 0;
-            auto ti = parse_tag(rem, pos);
+            auto ti = xer_detail::parse_tag(rem, pos);
             if (ti.name != def.name || ti.closing || ti.self_closing)
                 return decode_err(DecodeError(std::string("XER SEQUENCE: expected <") + def.name + ">"));
             s.advance(pos);
@@ -1015,7 +925,7 @@ private:
         {
             auto rem = s.remaining();
             std::size_t pos = 0;
-            auto ti = parse_tag(rem, pos);
+            auto ti = xer_detail::parse_tag(rem, pos);
             if (ti.name != def.name || !ti.closing)
                 return decode_err(DecodeError(std::string("XER SEQUENCE: expected </") + def.name + ">"));
             s.advance(pos);
@@ -1054,23 +964,14 @@ private:
                                const TypeDescriptor& def,
                                void* dest) const
     {
-        using namespace xer_detail;
-        // Consume outer <def.name>
-        {
-            auto rem = s.remaining();
-            std::size_t pos = 0;
-            auto ti = parse_tag(rem, pos);
-            if (ti.name != def.name || ti.closing || ti.self_closing)
-                return decode_err(DecodeError(std::string("XER CHOICE: expected <") + def.name + ">"));
-            s.advance(pos);
-        }
-        { auto rem = s.remaining(); std::size_t wp = xer_detail::skip_ws(rem, 0); s.advance(wp); }
+        if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
+        s.skip_whitespace();
 
         // Peek at alternative name
         {
             auto rem = s.remaining();
             std::size_t pos = 0;
-            auto ti = parse_tag(rem, pos);
+            auto ti = xer_detail::parse_tag(rem, pos);
             const auto& spec = *def.choice_spec;
             bool found = false;
             for (int i = 0; i < spec.count; ++i) {
@@ -1090,18 +991,9 @@ private:
             if (!found)
                 return decode_err(DecodeError(std::string("XER CHOICE: unknown alternative <") + std::string(ti.name) + ">"));
         }
-        { auto rem = s.remaining(); std::size_t wp = xer_detail::skip_ws(rem, 0); s.advance(wp); }
-
-        // Consume </def.name>
-        {
-            auto rem = s.remaining();
-            std::size_t pos = 0;
-            auto ti = parse_tag(rem, pos);
-            if (!ti.closing || ti.name != def.name)
-                return decode_err(DecodeError(std::string("XER CHOICE: expected </") + def.name + ">"));
-            s.advance(pos);
-        }
-        { auto rem = s.remaining(); std::size_t wp = xer_detail::skip_ws(rem, 0); s.advance(wp); }
+        s.skip_whitespace();
+        if (auto r = xer_detail::consume_close_tag(s, def.name); !r) return r;
+        s.skip_whitespace();
         return decode_ok();
     }
 };
