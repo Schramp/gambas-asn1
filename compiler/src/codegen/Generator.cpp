@@ -354,14 +354,22 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "    nullptr, nullptr, nullptr, nullptr,\n";
     if (range) {
         int64_t lo = range->first, hi = range->second;
-        int64_t range_count = hi - lo + 1;
-        int rb = 0;
-        if (range_count > 1) {
-            for (int64_t r = range_count - 1; r > 0; r >>= 1) ++rb;
+        bool ext = is_constraint_extensible(def);
+        if (hi == std::numeric_limits<int64_t>::max()) {
+            // semi-constrained: lb..MAX
+            int flags = asn1::PerConstraints::SEMI_CONSTRAINED
+                      | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
+            os << std::format("    {{ {}, -1, {}, 0 }} /* per_constraints — semi-constrained */\n", flags, lo);
+        } else {
+            int64_t range_count = hi - lo + 1;
+            int rb = 0;
+            if (range_count > 1) {
+                for (int64_t r = range_count - 1; r > 0; r >>= 1) ++rb;
+            }
+            int flags = asn1::PerConstraints::CONSTRAINED
+                      | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
+            os << std::format("    {{ {}, {}, {}, {} }} /* per_constraints */\n", flags, rb, lo, hi);
         }
-        int flags = asn1::PerConstraints::CONSTRAINED
-                  | (is_constraint_extensible(def) ? asn1::PerConstraints::EXTENSIBLE : 0);
-        os << std::format("    {{ {}, {}, {}, {} }} /* per_constraints */\n", flags, rb, lo, hi);
     } else {
         os << "    {} /* per_constraints — unconstrained */\n";
     }

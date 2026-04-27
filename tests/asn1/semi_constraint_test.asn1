@@ -1,0 +1,4 @@
+SemiConstraintTest DEFINITIONS ::= BEGIN
+    MyNat  ::= INTEGER (0..MAX)
+    MyBase ::= INTEGER (100..MAX)
+END

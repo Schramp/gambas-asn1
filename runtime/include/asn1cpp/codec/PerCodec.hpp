@@ -675,6 +675,13 @@ private:
             int64_t encoded = value - pc.lower_bound;
             int64_t rcount  = pc.upper_bound - pc.lower_bound + 1;
             s.put_bits(static_cast<uint64_t>(encoded), range_bits(rcount));
+        } else if (pc.flags & PerConstraints::SEMI_CONSTRAINED) {
+            if (pc.flags & PerConstraints::EXTENSIBLE) {
+                bool in_root = (value >= pc.lower_bound);
+                s.put_bits(in_root ? 0 : 1, 1);
+                if (!in_root) { encode_unconstrained_int(s, value); return; }
+            }
+            encode_unconstrained_int(s, value - pc.lower_bound);
         } else {
             encode_unconstrained_int(s, value);
         }
@@ -695,6 +702,17 @@ private:
             auto bits = s.get_bits(range_bits(rcount));
             if (!bits) return decode_err(bits.error());
             *static_cast<int64_t*>(dest) = pc.lower_bound + static_cast<int64_t>(*bits);
+            return decode_ok();
+        } else if (pc.flags & PerConstraints::SEMI_CONSTRAINED) {
+            if (pc.flags & PerConstraints::EXTENSIBLE) {
+                auto ext = s.get_bits(1);
+                if (!ext) return decode_err(ext.error());
+                if (*ext) return decode_unconstrained_int(s, dest);
+            }
+            int64_t adjusted = 0;
+            auto r = decode_unconstrained_int(s, &adjusted);
+            if (!r) return r;
+            *static_cast<int64_t*>(dest) = adjusted + pc.lower_bound;
             return decode_ok();
         } else {
             return decode_unconstrained_int(s, dest);
