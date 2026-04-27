@@ -262,7 +262,7 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    \"{}\",\n", cname);
     os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Enumerated);
     os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr, nullptr, {} /* per_constraints */\n";
+    os << "    nullptr, nullptr, nullptr, {} /* per_constraints */\n";
     os << "};\n\n";
 
     // BerTraits bodies — thin wrappers; all logic lives in BerCodec
@@ -344,7 +344,7 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", cname);
     os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Integer);
-    os << "    nullptr, nullptr, nullptr,\n";
+    os << "    nullptr, nullptr, nullptr, nullptr,\n";
     if (range) {
         int64_t lo = range->first, hi = range->second;
         int64_t range_count = hi - lo + 1;
@@ -386,11 +386,12 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
 
     // class
     os << std::format("class {} {{\npublic:\n", cname);
+    bool past_ext_hpp = false;
     for (const auto& m : def.members) {
-        if (m->is_extension_marker) continue;
+        if (m->is_extension_marker) { past_ext_hpp = true; continue; }
         std::string mtype = cpp_type_for(*m);
         std::string mname = to_member_name(m->name);
-        if (m->is_optional())
+        if (m->is_optional() || past_ext_hpp)
             os << std::format("    std::optional<{}> {};\n", mtype, mname);
         else
             os << std::format("    {} {}{{}};\n", mtype, mname);
@@ -423,13 +424,44 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         ++mcount;
     }
 
+    // Count root-only optional members (for PER preamble bitmap width)
+    int roms_count = 0;
+    {
+        bool past = false;
+        for (const auto& m : def.members) {
+            if (m->is_extension_marker) { past = true; continue; }
+            if (!past && m->is_optional()) ++roms_count;
+        }
+    }
+
+    // Static presence helpers for all optional members (root and extension)
+    // Extension members are always treated as optional (open-type wrapped in UPER).
+    if (roms_count > 0 || ext_at >= 0) {
+        bool past = false;
+        for (const auto& m : def.members) {
+            if (m->is_extension_marker) { past = true; continue; }
+            if (!m->is_optional() && !past) continue;
+            std::string mname = to_member_name(m->name);
+            std::string mtype = cpp_type_for(*m);
+            os << std::format(
+                "static bool _isp_{0}_{1}(const void* p) {{\n"
+                "    return static_cast<const {0}*>(p)->{1}.has_value(); }}\n"
+                "static void _ssp_{0}_{1}(void* p, bool v) {{\n"
+                "    auto& o = static_cast<{0}*>(p)->{1};\n"
+                "    if (v) {{ if (!o) o.emplace(); }} else o.reset(); }}\n",
+                cname, mname);
+        }
+        os << "\n";
+    }
+
     // Member descriptor table
     if (mcount > 0) {
         os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
+        bool past_ext_mbr = false;
         for (const auto& m : def.members) {
-            if (m->is_extension_marker) continue;
+            if (m->is_extension_marker) { past_ext_mbr = true; continue; }
             std::string mname = to_member_name(m->name);
-            bool optional = m->is_optional();
+            bool optional = m->is_optional() || past_ext_mbr;
 
             // Effective tag
             std::string eff_tag;
@@ -438,13 +470,17 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 eff_tag = tag_literal(m->tag, constr);
             } else {
                 eff_tag = natural_tag_for(*m);
+                if (eff_tag.empty()) eff_tag = "asn1::Tag{}";  // CHOICE has no universal tag
             }
 
-            os << std::format("    {{ \"{}\", {}, {}, false, offsetof({}, {}), {} }},\n",
+            std::string isp = optional ? std::format("&_isp_{0}_{1}", cname, mname) : "nullptr";
+            std::string ssp = optional ? std::format("&_ssp_{0}_{1}", cname, mname) : "nullptr";
+            os << std::format("    {{ \"{}\", {}, {}, false, offsetof({}, {}), {}, {}, {} }},\n",
                 m->name, eff_tag,
                 optional ? "true" : "false",
                 cname, mname,
-                type_descriptor_ref_for(*m));
+                type_descriptor_ref_for(*m),
+                isp, ssp);
         }
         os << "};\n\n";
     }
@@ -457,7 +493,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         os << "    nullptr,\n";
     os << std::format("    {},\n", mcount);
     os << std::format("    {}, /* ext_at */\n", ext_at);
-    os << "    0, 0, nullptr /* PER: roms_count, aoms_count, oms */\n";
+    os << std::format("    {}, 0, nullptr /* PER: roms_count, aoms_count, oms */\n", roms_count);
     os << "};\n\n";
 
     // TypeDescriptor
@@ -466,7 +502,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    asn1::Tag::universal({}, true),\n", tag_num);
     os << "    nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr, {} /* per_constraints */\n";
+    os << "    nullptr, nullptr, {} /* per_constraints */\n";
     os << "};\n\n";
 
     // BerTraits encode
@@ -582,6 +618,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
                 eff_tag = tag_literal(m->tag, constr);
             } else {
                 eff_tag = natural_tag_for(*m);
+                if (eff_tag.empty()) eff_tag = "asn1::Tag{}";  // nested CHOICE has no universal tag
             }
             os << std::format("    {{ \"{}\", {}, false, false, offsetof({}, {}), {} }},\n",
                 m->name, eff_tag, cname, mname,
@@ -607,7 +644,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "    asn1::Tag{asn1::TagClass::Context, 0, false}, /* placeholder — CHOICE tag is transparent */\n";
     os << "    nullptr, nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    {} /* per_constraints */\n";
+    os << "    nullptr, {} /* per_constraints */\n";
     os << "};\n\n";
 
     // BerTraits encode — delegate to BerCodec generic path
@@ -659,7 +696,9 @@ void Generator::emit_hpp(const ast::TypeDef& def, std::ostream& os) {
             : std::get<ast::SetOfType>(def.body).element;
         if (auto* tr = std::get_if<ast::TypeRef>(&elem->body))
             os << std::format("#include \"{}.hpp\"\n\n", to_cpp_name(tr->type_name));
-        os << std::format("using {} = std::vector<{}>;\n", cname, cpp_type_for(*elem));
+        os << std::format("using {} = std::vector<{}>;\n\n", cname, cpp_type_for(*elem));
+        os << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", cname);
+        os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         os << std::format("#include \"{}.hpp\"\n", to_cpp_name(tr->type_name));
         os << std::format("using {} = {};\n", cname, to_cpp_name(tr->type_name));
@@ -749,7 +788,7 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", def.name);
     os << std::format("    {},\n", natural_tag_for(def));
-    os << "    nullptr, nullptr, nullptr,\n";
+    os << "    nullptr, nullptr, nullptr, nullptr,\n";
 
     if (needs_per) {
         // SIZE constraint metadata
@@ -796,6 +835,61 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
     os << "};\n";
 }
 
+// ---------------------------------------------------------------------------
+// Emit SEQUENCE OF / SET OF
+// ---------------------------------------------------------------------------
+
+void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
+    std::string cname = to_cpp_name(def.name);
+    const auto& elem_node = def.is_seq_of()
+        ? *std::get<ast::SequenceOfType>(def.body).element
+        : *std::get<ast::SetOfType>(def.body).element;
+
+    // Type-erased collection callbacks
+    os << std::format(
+        "static std::size_t _cnt_{0}(const void* p) {{\n"
+        "    return static_cast<const {0}*>(p)->size(); }}\n"
+        "static const void* _getc_{0}(const void* p, std::size_t i) {{\n"
+        "    return static_cast<const {0}*>(p)->data() + i; }}\n"
+        "static void* _get_{0}(void* p, std::size_t i) {{\n"
+        "    return static_cast<{0}*>(p)->data() + i; }}\n"
+        "static void _rsz_{0}(void* p, std::size_t n) {{\n"
+        "    static_cast<{0}*>(p)->resize(n); }}\n\n",
+        cname);
+
+    // SIZE constraint on collection length
+    auto size_range = extract_size_range(def);
+    int     size_flags = 0, size_rb = 0;
+    int64_t size_lb = 0, size_ub = 0;
+    if (size_range) {
+        size_lb = size_range->first;
+        size_ub = size_range->second;
+        if (size_ub != std::numeric_limits<int64_t>::max()) {
+            size_flags = asn1::PerConstraints::SIZE_CONSTRAINED;
+            int64_t range = size_ub - size_lb + 1;
+            if (range > 1)
+                for (int64_t r = range - 1; r > 0; r >>= 1) ++size_rb;
+        }
+    }
+
+    // SeqOfSpec
+    os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", cname);
+    os << std::format("    {},\n", type_descriptor_ref_for(elem_node));
+    os << std::format("    {{ {}, 0, 0, 0, {}, {}, {} }},\n",
+                      size_flags, size_rb, size_lb, size_ub);
+    os << std::format("    _cnt_{0}, _getc_{0}, _get_{0}, _rsz_{0}\n", cname);
+    os << "};\n\n";
+
+    // TypeDescriptor
+    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
+    os << std::format("    \"{}\",\n", cname);
+    os << std::format("    asn1::Tag::universal({}, true),\n", asn1::UniversalTag::Sequence);
+    os << "    nullptr, nullptr, nullptr,\n";
+    os << std::format("    &asn_SPC_{},\n", cname);
+    os << "    {} /* per_constraints */\n";
+    os << "};\n";
+}
+
 void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = to_cpp_name(def.name);
     os << std::format("#include \"{}.hpp\"\n\n", cname);
@@ -804,6 +898,8 @@ void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
         emit_sequence_cpp(def, os);
     } else if (def.is_choice()) {
         emit_choice_cpp(def, os);
+    } else if (def.is_seq_of() || def.is_set_of()) {
+        emit_seq_of_cpp(def, os);
     } else if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
         if (*bt == ast::BuiltinType::Enumerated)
             emit_enumerated_cpp(def, os);
@@ -838,6 +934,7 @@ void Generator::generate_type(const ast::TypeDef& def, const std::string& /*modu
         return *bt != ast::BuiltinType::Enumerated && *bt != ast::BuiltinType::Integer;
     };
     bool needs_cpp = def.is_sequence() || def.is_set() || def.is_choice()
+        || def.is_seq_of() || def.is_set_of()
         || bt_is(ast::BuiltinType::Enumerated)
         || bt_is(ast::BuiltinType::Integer)
         || is_named_builtin_alias();

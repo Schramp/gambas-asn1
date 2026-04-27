@@ -1,6 +1,8 @@
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <numeric>
 #include <vector>
 #include <span>
 #include "ICodec.hpp"
@@ -96,6 +98,7 @@ public:
         if (def.enum_spec)     { encode_enumerated(s, def, src); return; }
         if (def.sequence_spec) { encode_sequence   (s, def, src); return; }
         if (def.choice_spec)   { encode_choice     (s, def, src); return; }
+        if (def.seq_of_spec)   { encode_seq_of     (s, def, src); return; }
         if (is_integer_tag(def.tag))  { encode_integer(s, def, src); return; }
         if (is_boolean_tag(def.tag))  { encode_boolean(s, src); return; }
         if (is_real_tag(def.tag))      { encode_real     (s, src); return; }
@@ -116,6 +119,7 @@ public:
         if (def.enum_spec)     return decode_enumerated(s, def, dest);
         if (def.sequence_spec) return decode_sequence   (s, def, dest);
         if (def.choice_spec)   return decode_choice     (s, def, dest);
+        if (def.seq_of_spec)   return decode_seq_of     (s, def, dest);
         if (is_integer_tag(def.tag))  return decode_integer(s, def, dest);
         if (is_boolean_tag(def.tag))  return decode_boolean(s, dest);
         if (is_real_tag(def.tag))      return decode_real     (s, dest);
@@ -157,6 +161,61 @@ private:
         return make_unexpected<std::size_t, DecodeError>(
             DecodeError("PER: fragmented length not implemented"));
     }
+
+    // ---- Normally-small length (X.691 §11.9.3.4) — extension bitmap count --
+    // 0 + 6 bits: count 1..64 (7 bits total)
+    // 1 + standard length: count > 64
+
+    static void put_nslength(PerEncodeStream& s, std::size_t n) {
+        if (n >= 1 && n <= 64) { s.put_bits(0, 1); s.put_bits(n - 1, 6); }
+        else { s.put_bits(1, 1); put_length(s, n); }
+    }
+
+    static Expected<std::size_t, DecodeError> get_nslength(PerDecodeStream& s) {
+        auto b = s.get_bits(1);
+        if (!b) return make_unexpected<std::size_t, DecodeError>(b.error());
+        if (*b == 0) {
+            auto v = s.get_bits(6);
+            if (!v) return make_unexpected<std::size_t, DecodeError>(v.error());
+            return *v + 1;
+        }
+        return get_length(s);
+    }
+
+    // ---- Open-type helpers (X.691 §11.2) — extension member wrapping --------
+
+    void encode_open_type(PerEncodeStream& s,
+                          const TypeDescriptor& mdef,
+                          const void* mptr) const {
+        std::vector<uint8_t> tmp;
+        PerEncodeStream tmp_s{tmp};
+        encode(tmp_s, mdef, mptr);
+        tmp_s.flush();
+        put_length(s, tmp.size());
+        for (auto b : tmp) s.put_bits(b, 8);
+    }
+
+    DecodeResult decode_open_type(PerDecodeStream& s,
+                                  const TypeDescriptor& mdef,
+                                  void* mptr) const {
+        auto len_r = get_length(s);
+        if (!len_r) return decode_err(len_r.error());
+        auto bytes_r = read_bytes(s, *len_r);
+        if (!bytes_r) return decode_err(bytes_r.error());
+        PerDecodeStream tmp_s{std::span<const uint8_t>{bytes_r->data(), bytes_r->size()}};
+        return decode(tmp_s, mdef, mptr);
+    }
+
+    static DecodeResult skip_open_type(PerDecodeStream& s) {
+        auto len_r = get_length(s);
+        if (!len_r) return decode_err(len_r.error());
+        for (std::size_t i = 0; i < *len_r; ++i) {
+            auto b = s.get_bits(8);
+            if (!b) return decode_err(b.error());
+        }
+        return decode_ok();
+    }
+
 
     // ---- bit helpers ---------------------------------------------------
 
@@ -678,23 +737,118 @@ private:
         }
     }
 
+    // ---- SEQUENCE OF / SET OF -------------------------------------------
+    //
+    // X.691 §19: unconstrained length via put_length, or SIZE-constrained range bits.
+
+    void encode_seq_of(PerEncodeStream& s,
+                       const TypeDescriptor& def,
+                       const void* src) const
+    {
+        const auto& spec = *def.seq_of_spec;
+        std::size_t count = spec.count_fn(src);
+        const auto& sc = spec.size_constraints;
+        // Encode count
+        if (sc.flags & PerConstraints::SIZE_CONSTRAINED) {
+            if (sc.size_lower == sc.size_upper) {
+                // Fixed size: count implicit, no bits emitted
+            } else {
+                s.put_bits(count - static_cast<std::size_t>(sc.size_lower), sc.size_range_bits);
+            }
+        } else {
+            put_length(s, count);
+        }
+        // Encode elements
+        const auto& edef = *spec.element;
+        for (std::size_t i = 0; i < count; ++i)
+            encode(s, edef, spec.get_const_fn(src, i));
+    }
+
+    DecodeResult decode_seq_of(PerDecodeStream& s,
+                               const TypeDescriptor& def,
+                               void* dest) const
+    {
+        const auto& spec = *def.seq_of_spec;
+        const auto& sc = spec.size_constraints;
+        // Decode count
+        std::size_t count = 0;
+        if (sc.flags & PerConstraints::SIZE_CONSTRAINED) {
+            if (sc.size_lower == sc.size_upper) {
+                count = static_cast<std::size_t>(sc.size_lower);
+            } else {
+                auto v = s.get_bits(sc.size_range_bits);
+                if (!v) return decode_err(v.error());
+                count = *v + static_cast<std::size_t>(sc.size_lower);
+            }
+        } else {
+            auto v = get_length(s);
+            if (!v) return decode_err(v.error());
+            count = *v;
+        }
+        // Decode elements
+        spec.resize_fn(dest, count);
+        const auto& edef = *spec.element;
+        for (std::size_t i = 0; i < count; ++i) {
+            auto r = decode(s, edef, spec.get_fn(dest, i));
+            if (!r) return r;
+        }
+        return decode_ok();
+    }
+
     // ---- SEQUENCE / SET -------------------------------------------------
     //
-    // Non-extensible, no-optional case: concatenate member encodings.
-    // OPTIONAL members and extension bitmap (X.691 §18) deferred to later step.
+    // X.691 §18: preamble bitmap (roms_count bits, one per root OPTIONAL/DEFAULT
+    // member in definition order), then member values in order.
 
     void encode_sequence(PerEncodeStream& s,
                          const TypeDescriptor& def,
                          const void* src) const
     {
         const auto& spec = *def.sequence_spec;
-        for (int i = 0; i < spec.count; ++i) {
+        int root_end = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
+
+        // X.691 §18.1: extension bit — 1 if any extension member present
+        bool has_ext = false;
+        if (spec.ext_at >= 0) {
+            for (int i = root_end; i < spec.count; ++i) {
+                const auto& mbr = spec.members[i];
+                if (mbr.is_present && mbr.is_present(src)) { has_ext = true; break; }
+            }
+            s.put_bits(has_ext ? 1 : 0, 1);
+        }
+
+        // Root preamble: 1 bit per root optional member
+        for (int i = 0; i < root_end; ++i) {
+            const auto& mbr = spec.members[i];
+            if (!mbr.optional) continue;
+            bool present = mbr.is_present ? mbr.is_present(src) : false;
+            s.put_bits(present ? 1 : 0, 1);
+        }
+
+        // Root member values
+        for (int i = 0; i < root_end; ++i) {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
-            if (mbr.optional) continue;  // TODO: optional member PER encode
+            if (mbr.optional && (!mbr.is_present || !mbr.is_present(src))) continue;
             const void* mptr = static_cast<const char*>(src) + mbr.offset;
-            const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
-            encode(s, mdef, mptr);
+            encode(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
+        }
+
+        // Extension encoding (X.691 §18.7-18.9)
+        if (has_ext) {
+            int n_ext = spec.count - root_end;
+            put_nslength(s, static_cast<std::size_t>(n_ext));   // §18.8 bitmap length
+            for (int i = root_end; i < spec.count; ++i) {       // §18.7 presence bitmap
+                const auto& mbr = spec.members[i];
+                bool present = mbr.is_present && mbr.is_present(src);
+                s.put_bits(present ? 1 : 0, 1);
+            }
+            for (int i = root_end; i < spec.count; ++i) {       // §18.9 open-type values
+                const auto& mbr = spec.members[i];
+                if (!mbr.type_descriptor || !mbr.is_present || !mbr.is_present(src)) continue;
+                const void* mptr = static_cast<const char*>(src) + mbr.offset;
+                encode_open_type(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
+            }
         }
     }
 
@@ -703,33 +857,221 @@ private:
                                  void* dest) const
     {
         const auto& spec = *def.sequence_spec;
-        for (int i = 0; i < spec.count; ++i) {
+        int root_end = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
+
+        // Extension bit (X.691 §18.1)
+        bool ext_flag = false;
+        if (spec.ext_at >= 0) {
+            auto b = s.get_bits(1);
+            if (!b) return decode_err(b.error());
+            ext_flag = (*b != 0);
+        }
+
+        // Root preamble bitmap
+        int roms = 0;
+        for (int i = 0; i < root_end; ++i)
+            if (spec.members[i].optional) ++roms;
+        bool bitmap[64] = {};
+        for (int i = 0; i < roms && i < 64; ++i) {
+            auto bit = s.get_bits(1);
+            if (!bit) return decode_err(bit.error());
+            bitmap[i] = (*bit != 0);
+        }
+
+        // Root member values
+        int opt_idx = 0;
+        for (int i = 0; i < root_end; ++i) {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
-            if (mbr.optional) continue;  // TODO: optional member PER decode
+            if (mbr.optional) {
+                bool present = bitmap[opt_idx++];
+                if (mbr.set_present) mbr.set_present(dest, present);
+                if (!present) continue;
+            }
             void* mptr = static_cast<char*>(dest) + mbr.offset;
-            const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
-            auto r = decode(s, mdef, mptr);
+            auto r = decode(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
             if (!r) return r;
+        }
+
+        // Extension decoding
+        if (spec.ext_at >= 0) {
+            int known_ext = spec.count - root_end;
+            if (!ext_flag) {
+                for (int i = root_end; i < spec.count; ++i) {
+                    const auto& mbr = spec.members[i];
+                    if (mbr.set_present) mbr.set_present(dest, false);
+                }
+            } else {
+                auto n_ext_r = get_nslength(s);
+                if (!n_ext_r) return decode_err(n_ext_r.error());
+                int n_ext = static_cast<int>(*n_ext_r);
+                bool ext_bitmap[64] = {};
+                for (int i = 0; i < n_ext && i < 64; ++i) {
+                    auto b = s.get_bits(1);
+                    if (!b) return decode_err(b.error());
+                    ext_bitmap[i] = (*b != 0);
+                }
+                for (int i = 0; i < n_ext; ++i) {
+                    if (!ext_bitmap[i]) {
+                        if (i < known_ext) {
+                            const auto& mbr = spec.members[root_end + i];
+                            if (mbr.set_present) mbr.set_present(dest, false);
+                        }
+                        continue;
+                    }
+                    if (i < known_ext) {
+                        const auto& mbr = spec.members[root_end + i];
+                        if (mbr.set_present) mbr.set_present(dest, true);
+                        void* mptr = static_cast<char*>(dest) + mbr.offset;
+                        auto r = decode_open_type(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
+                        if (!r) return r;
+                    } else {
+                        if (auto r = skip_open_type(s); !r) return r;
+                    }
+                }
+            }
         }
         return decode_ok();
     }
 
-    // ---- CHOICE (stub) -------------------------------------------------
+    // ---- CHOICE ---------------------------------------------------------
+
+    static int choice_index_bits(int n) {
+        if (n <= 1) return 0;
+        int bits = 0, m = 1;
+        while (m < n) { ++bits; m <<= 1; }
+        return bits;
+    }
+
+    // X.691 §22.2: build to_canonical[i] = def_idx at canonical position i
+    // (sorted by ascending tag_class then tag_number).
+    // The UPER encoded value for def_idx d is to_canonical[d].
+    // from_canonical[encoded] = def_idx (inverse map, used for decode).
+    static void build_canonical_maps(const ChoiceSpec& spec, int root_count,
+                                     std::vector<int>& to_canonical,
+                                     std::vector<int>& from_canonical)
+    {
+        to_canonical.resize(root_count);
+        std::iota(to_canonical.begin(), to_canonical.end(), 0);
+        std::stable_sort(to_canonical.begin(), to_canonical.end(),
+            [&](int a, int b) {
+                const auto& ta = spec.alternatives[a].tag;
+                const auto& tb = spec.alternatives[b].tag;
+                if (ta.cls != tb.cls) return (int)ta.cls < (int)tb.cls;
+                return ta.number < tb.number;
+            });
+        from_canonical.resize(root_count);
+        for (int i = 0; i < root_count; ++i)
+            from_canonical[to_canonical[i]] = i;
+    }
 
     void encode_choice(PerEncodeStream& s,
                        const TypeDescriptor& def,
                        const void* src) const
     {
-        (void)s; (void)def; (void)src;
+        const auto& spec = *def.choice_spec;
+        int pr = *static_cast<const int*>(src);
+        if (pr <= 0 || pr > spec.count) return;
+        int def_idx = pr - 1;
+
+        int root_count = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
+        bool in_ext = (spec.ext_at >= 0) && (def_idx >= root_count);
+
+        if (spec.ext_at >= 0)
+            s.put_bits(in_ext ? 1 : 0, 1);
+
+        if (!in_ext) {
+            std::vector<int> to_can, from_can;
+            build_canonical_maps(spec, root_count, to_can, from_can);
+            int canonical_idx = to_can[def_idx];
+            int bits = choice_index_bits(root_count);
+            if (bits > 0) s.put_bits(static_cast<uint64_t>(canonical_idx), bits);
+            const auto& alt = spec.alternatives[def_idx];
+            if (!alt.type_descriptor) return;
+            const void* mptr = static_cast<const char*>(src) + alt.offset;
+            encode(s, *static_cast<const TypeDescriptor*>(alt.type_descriptor), mptr);
+        } else {
+            // X.691 §22.8: normally-small non-negative whole number for ext index
+            int ext_idx = def_idx - root_count;
+            if (ext_idx < 64) {
+                s.put_bits(0, 1);
+                s.put_bits(static_cast<uint64_t>(ext_idx), 6);
+            } else {
+                s.put_bits(1, 1);
+                put_length(s, static_cast<std::size_t>(ext_idx));
+            }
+            const auto& alt = spec.alternatives[def_idx];
+            if (!alt.type_descriptor) return;
+            const void* mptr = static_cast<const char*>(src) + alt.offset;
+            encode_open_type(s, *static_cast<const TypeDescriptor*>(alt.type_descriptor), mptr);
+        }
     }
 
     DecodeResult decode_choice(PerDecodeStream& s,
                                const TypeDescriptor& def,
                                void* dest) const
     {
-        (void)s; (void)def; (void)dest;
-        return decode_err(DecodeError("PerCodec: CHOICE not yet implemented"));
+        const auto& spec = *def.choice_spec;
+        int root_count = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
+
+        bool in_ext = false;
+        if (spec.ext_at >= 0) {
+            auto b = s.get_bits(1);
+            if (!b) return decode_err(b.error());
+            in_ext = (*b != 0);
+        }
+
+        if (!in_ext) {
+            std::vector<int> to_can, from_can;
+            build_canonical_maps(spec, root_count, to_can, from_can);
+            int bits = choice_index_bits(root_count);
+            int canonical_idx = 0;
+            if (bits > 0) {
+                auto v = s.get_bits(bits);
+                if (!v) return decode_err(v.error());
+                canonical_idx = static_cast<int>(*v);
+            }
+            if (canonical_idx < 0 || canonical_idx >= root_count)
+                return decode_err(DecodeError("CHOICE index out of range"));
+            int def_idx = from_can[canonical_idx];
+            const auto& alt = spec.alternatives[def_idx];
+            if (!alt.type_descriptor)
+                return decode_err(DecodeError("CHOICE alternative has no type descriptor"));
+            void* mptr = static_cast<char*>(dest) + alt.offset;
+            auto r = decode(s, *static_cast<const TypeDescriptor*>(alt.type_descriptor), mptr);
+            if (!r) return r;
+            *static_cast<int*>(dest) = def_idx + 1;
+            return decode_ok();
+        } else {
+            // X.691 §22.8: read normally-small non-negative whole number
+            auto b = s.get_bits(1);
+            if (!b) return decode_err(b.error());
+            int ext_idx;
+            if (*b == 0) {
+                auto v = s.get_bits(6);
+                if (!v) return decode_err(v.error());
+                ext_idx = static_cast<int>(*v);
+            } else {
+                auto v = get_length(s);
+                if (!v) return decode_err(v.error());
+                ext_idx = static_cast<int>(*v);
+            }
+            int def_idx = root_count + ext_idx;
+            if (def_idx < spec.count) {
+                const auto& alt = spec.alternatives[def_idx];
+                if (alt.type_descriptor) {
+                    void* mptr = static_cast<char*>(dest) + alt.offset;
+                    auto r = decode_open_type(s, *static_cast<const TypeDescriptor*>(alt.type_descriptor), mptr);
+                    if (!r) return r;
+                    *static_cast<int*>(dest) = def_idx + 1;
+                } else {
+                    if (auto r = skip_open_type(s); !r) return r;
+                }
+            } else {
+                if (auto r = skip_open_type(s); !r) return r;
+            }
+            return decode_ok();
+        }
     }
 };
 

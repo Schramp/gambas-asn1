@@ -34,7 +34,29 @@ struct MemberDescriptor {
     bool         optional;
     bool         has_default;
     std::size_t  offset;          // offsetof into the containing struct
+                                  // for optional members: offset to std::optional<T>;
+                                  // value is at offset 0 within optional (libstdc++/libc++ guarantee)
     const void*  type_descriptor; // cast to TypeDescriptor* in codec
+    // PER optional-member callbacks (nullptr for required members).
+    // is_present: returns true if the optional<T> at struct_ptr is engaged.
+    // set_present: engages (emplace) or disengages (reset) the optional<T>.
+    bool (*is_present)(const void* struct_ptr);
+    void (*set_present)(void* struct_ptr, bool);
+};
+
+// Forward declaration for SeqOfSpec::element pointer.
+struct TypeDescriptor;
+
+// SEQUENCE OF / SET OF specifics.
+struct SeqOfSpec {
+    const TypeDescriptor* element;         // element type descriptor
+    PerConstraints        size_constraints; // SIZE constraint on collection length
+
+    // Type-erased collection operations (generated per concrete vector type).
+    std::size_t (*count_fn)(const void* vec);
+    const void* (*get_const_fn)(const void* vec, std::size_t i);
+    void*       (*get_fn)(void* vec, std::size_t i);
+    void        (*resize_fn)(void* vec, std::size_t n);
 };
 
 // SEQUENCE / SET specifics (mirrors asn_SEQUENCE_specifics_t).
@@ -70,6 +92,7 @@ struct TypeDescriptor {
     const EnumSpec*      enum_spec;      // non-null for ENUMERATED
     const SequenceSpec*  sequence_spec;  // non-null for SEQUENCE/SET
     const ChoiceSpec*    choice_spec;    // non-null for CHOICE
+    const SeqOfSpec*     seq_of_spec;    // non-null for SEQUENCE OF / SET OF
     PerConstraints per_constraints; // flags==0 means unconstrained
 };
 

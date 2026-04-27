@@ -53,6 +53,7 @@ public:
         if (def.enum_spec)     { encode_enumerated(s.writer(), def, src); return; }
         if (def.sequence_spec) { encode_sequence   (s.writer(), def, src); return; }
         if (def.choice_spec)   { encode_choice     (s.writer(), def, src); return; }
+        if (def.seq_of_spec)   { encode_seq_of     (s.writer(), def, src); return; }
         if (is_boolean_tag(def.tag))  { encode_boolean (s.writer(), src); return; }
         if (is_integer_tag(def.tag)) { encode_integer(s.writer(), def, src); return; }
         if (is_null_tag(def.tag))    { encode_null   (s.writer(), def);     return; }
@@ -75,6 +76,7 @@ public:
         if (def.enum_spec)     return decode_enumerated(s.reader(), def, dest);
         if (def.sequence_spec) return decode_sequence   (s.reader(), def, dest);
         if (def.choice_spec)   return decode_choice     (s.reader(), def, dest);
+        if (def.seq_of_spec)   return decode_seq_of     (s.reader(), def, dest);
         if (is_boolean_tag(def.tag))  return decode_boolean (s.reader(), dest);
         if (is_integer_tag(def.tag)) return decode_integer(s.reader(), def, dest);
         if (is_null_tag(def.tag))    return decode_null  (s.reader(), def, dest);
@@ -332,6 +334,44 @@ private:
         return decode_ok();
     }
 
+    // ---- SEQUENCE OF / SET OF ------------------------------------------
+
+    void encode_seq_of(BerWriter& w,
+                       const TypeDescriptor& def,
+                       const void* src) const
+    {
+        const auto& spec = *def.seq_of_spec;
+        std::size_t count = spec.count_fn(src);
+        const auto& edef = *spec.element;
+        w.write_constructed(def.tag, [&](BerWriter& inner) {
+            for (std::size_t i = 0; i < count; ++i) {
+                const void* eptr = spec.get_const_fn(src, i);
+                BerEncodeStream es{inner};
+                encode(es, edef, eptr);
+            }
+        });
+    }
+
+    DecodeResult decode_seq_of(BerReader& r,
+                               const TypeDescriptor& def,
+                               void* dest) const
+    {
+        auto tlv = r.read_tlv();
+        if (!tlv) return decode_err(tlv.error());
+        BerReader inner = r.sub(tlv->value);
+        const auto& spec = *def.seq_of_spec;
+        const auto& edef = *spec.element;
+        std::size_t count = 0;
+        while (!inner.at_end()) {
+            spec.resize_fn(dest, ++count);
+            void* eptr = spec.get_fn(dest, count - 1);
+            BerDecodeStream es{inner};
+            auto res = decode(es, edef, eptr);
+            if (!res) return res;
+        }
+        return decode_ok();
+    }
+
     // ---- SEQUENCE / SET ------------------------------------------------
 
     void encode_sequence(BerWriter& w,
@@ -343,7 +383,7 @@ private:
             for (int i = 0; i < spec.count; ++i) {
                 const auto& mbr = spec.members[i];
                 if (!mbr.type_descriptor) continue;
-                if (mbr.optional) continue;  // TODO: optional member encode
+                if (mbr.optional && mbr.is_present && !mbr.is_present(src)) continue;
                 const void* mptr = static_cast<const char*>(src) + mbr.offset;
                 const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
                 BerEncodeStream ms{inner};
@@ -363,7 +403,11 @@ private:
         for (int i = 0; i < spec.count; ++i) {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
-            if (mbr.optional) continue;  // TODO: optional member decode
+            if (mbr.optional) {
+                bool present = !inner.at_end() && (inner.peek_tag() == mbr.tag);
+                if (mbr.set_present) mbr.set_present(dest, present);
+                if (!present) continue;
+            }
             void* mptr = static_cast<char*>(dest) + mbr.offset;
             const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
             BerDecodeStream ms{inner};

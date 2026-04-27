@@ -1,0 +1,6 @@
+SeqOfTest DEFINITIONS ::= BEGIN
+    ByteList ::= SEQUENCE OF MyByte
+    StrList  ::= SEQUENCE OF MyStr
+    MyByte ::= INTEGER (0..255)
+    MyStr  ::= VisibleString (SIZE (1..8))
+END

@@ -71,6 +71,7 @@ private:
     void emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os);
     void emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os);
     void emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os);
+    void emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os);
     void emit_choice_hpp(const ast::TypeDef& def, std::ostream& os);
     void emit_choice_cpp(const ast::TypeDef& def, std::ostream& os);
 

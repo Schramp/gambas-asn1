@@ -1,0 +1,8 @@
+ChoiceTest DEFINITIONS ::= BEGIN
+    HasAlt2 ::= SEQUENCE { val Alt2 }
+    HasAlt4 ::= SEQUENCE { val Alt4 }
+    Alt2 ::= CHOICE { num MyByte, flag BOOLEAN }
+    Alt4 ::= CHOICE { num MyByte, str MyStr, flag BOOLEAN, raw OCTET STRING }
+    MyByte ::= INTEGER (0..255)
+    MyStr  ::= VisibleString (SIZE (1..8))
+END

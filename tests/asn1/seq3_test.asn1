@@ -1,0 +1,5 @@
+Seq3Test DEFINITIONS ::= BEGIN
+    Rec3 ::= SEQUENCE { id MyByte, flag BOOLEAN, label MyStr }
+    MyByte ::= INTEGER (0..255)
+    MyStr  ::= VisibleString (SIZE (1..8))
+END

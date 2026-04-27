@@ -1,0 +1,11 @@
+SeqExtTest DEFINITIONS ::= BEGIN
+    RecExt ::= SEQUENCE {
+        id     MyByte,
+        flag   BOOLEAN,
+        ...,
+        note   MyStr OPTIONAL,
+        extra  MyByte OPTIONAL
+    }
+    MyByte ::= INTEGER (0..255)
+    MyStr  ::= VisibleString (SIZE (1..8))
+END

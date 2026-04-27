@@ -60,7 +60,7 @@ static bool roundtrips(const TypeDescriptor& def, int64_t v) {
 static const TypeDescriptor DEF_NarrowInterval = {
     "NarrowInterval",
     Tag::universal(2, false),
-    nullptr, nullptr, nullptr,
+    nullptr, nullptr, nullptr, nullptr,
     {PerConstraints::CONSTRAINED, 1, 123456, 123457}
 };
 
@@ -70,7 +70,7 @@ static const TypeDescriptor DEF_NarrowInterval = {
 static const TypeDescriptor DEF_Interval = {
     "Interval",
     Tag::universal(2, false),
-    nullptr, nullptr, nullptr,
+    nullptr, nullptr, nullptr, nullptr,
     {PerConstraints::CONSTRAINED, 17, 1, 123456}
 };
 

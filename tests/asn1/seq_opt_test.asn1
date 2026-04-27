@@ -1,0 +1,11 @@
+SeqOptTest DEFINITIONS ::= BEGIN
+    -- SEQUENCE with 2 required + 2 OPTIONAL members
+    Rec5 ::= SEQUENCE {
+        id     MyByte,
+        note   MyStr OPTIONAL,
+        flag   BOOLEAN,
+        extra  MyByte OPTIONAL
+    }
+    MyByte ::= INTEGER (0..255)
+    MyStr  ::= VisibleString (SIZE (1..8))
+END

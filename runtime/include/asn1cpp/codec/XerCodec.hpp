@@ -107,6 +107,7 @@ public:
         if (def.enum_spec)     { encode_enumerated(s, def, src); return; }
         if (def.sequence_spec) { encode_sequence   (s, def, src); return; }
         if (def.choice_spec)   { encode_choice     (s, def, src); return; }
+        if (def.seq_of_spec)   { encode_seq_of     (s, def, src); return; }
         if (is_boolean_tag(def.tag))  { encode_boolean (s, def, src); return; }
         if (is_integer_tag(def.tag)) { encode_integer(s, def, src); return; }
         if (is_null_tag(def.tag))    { encode_null   (s, def);     return; }
@@ -132,6 +133,7 @@ public:
         if (def.enum_spec)     return decode_enumerated(s, def, dest);
         if (def.sequence_spec) return decode_sequence   (s, def, dest);
         if (def.choice_spec)   return decode_choice     (s, def, dest);
+        if (def.seq_of_spec)   return decode_seq_of     (s, def, dest);
         if (is_boolean_tag(def.tag))  return decode_boolean (s, def, dest);
         if (is_integer_tag(def.tag)) return decode_integer(s, def, dest);
         if (is_null_tag(def.tag))    return decode_null   (s, def, dest);
@@ -879,6 +881,69 @@ private:
         return decode_err(DecodeError("XER: unknown enum value: " + inner.name));
     }
 
+    // ---- SEQUENCE OF / SET OF -------------------------------------------
+    //
+    // XER: <TypeName>\n  <ElemName>v</ElemName>\n ... </TypeName>\n
+
+    void encode_seq_of(XerEncodeStream& s,
+                       const TypeDescriptor& def,
+                       const void* src) const
+    {
+        auto& os = s.os();
+        int depth = s.depth();
+        std::string elem_indent(4 * (depth + 1), ' ');
+        std::string close_indent(4 * depth, ' ');
+        const auto& spec = *def.seq_of_spec;
+        std::size_t count = spec.count_fn(src);
+        const TypeDescriptor& edef = *spec.element;
+        if (count == 0) {
+            os << '<' << def.name << "></" << def.name << ">\n";
+        } else {
+            os << '<' << def.name << ">\n";
+            for (std::size_t i = 0; i < count; ++i) {
+                const void* eptr = spec.get_const_fn(src, i);
+                os << elem_indent;
+                XerEncodeStream es{os, depth + 1};
+                encode(es, edef, eptr);
+            }
+            os << close_indent << "</" << def.name << ">\n";
+        }
+    }
+
+    DecodeResult decode_seq_of(XerDecodeStream& s,
+                               const TypeDescriptor& def,
+                               void* dest) const
+    {
+        using namespace xer_detail;
+        // Consume <TypeName>
+        {
+            auto rem = s.remaining();
+            std::size_t pos = 0;
+            auto ti = parse_tag(rem, pos);
+            if (ti.name != def.name || ti.closing || ti.self_closing)
+                return decode_err(DecodeError(std::string("XER SEQUENCE OF: expected <") + def.name + ">"));
+            s.advance(pos);
+        }
+        const auto& spec = *def.seq_of_spec;
+        const TypeDescriptor& edef = *spec.element;
+        std::size_t count = 0;
+        for (;;) {
+            // Peek at next tag
+            auto rem = s.remaining();
+            std::size_t pos = 0;
+            auto ti = parse_tag(rem, pos);
+            if (ti.closing && ti.name == def.name) { s.advance(pos); break; }
+            if (ti.name.empty())
+                return decode_err(DecodeError(std::string("XER SEQUENCE OF: unexpected end in <") + def.name + ">"));
+            // Decode next element
+            spec.resize_fn(dest, ++count);
+            void* eptr = spec.get_fn(dest, count - 1);
+            auto r = decode(s, edef, eptr);
+            if (!r) return r;
+        }
+        return decode_ok();
+    }
+
     // ---- SEQUENCE ---------------------------------------------------------
     //
     // XER: <TypeName>\n  <member1>value</member1>\n ... </TypeName>\n
@@ -901,7 +966,7 @@ private:
         for (int i = 0; i < spec.count; ++i) {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
-            if (mbr.optional) continue;  // TODO: optional member encode
+            if (mbr.optional && mbr.is_present && !mbr.is_present(src)) continue;
             const void* mptr = static_cast<const char*>(src) + mbr.offset;
             TypeDescriptor mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
             mdef.name = mbr.name;
@@ -931,7 +996,14 @@ private:
         for (int i = 0; i < spec.count; ++i) {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
-            if (mbr.optional) continue;  // TODO: optional member decode
+            if (mbr.optional) {
+                auto rem = s.remaining();
+                std::size_t peek_pos = 0;
+                auto ti = xer_detail::parse_tag(rem, peek_pos);
+                bool present = (ti.name == mbr.name);
+                if (mbr.set_present) mbr.set_present(dest, present);
+                if (!present) continue;
+            }
             void* mptr = static_cast<char*>(dest) + mbr.offset;
             TypeDescriptor mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
             mdef.name = mbr.name;
@@ -951,21 +1023,86 @@ private:
         return decode_ok();
     }
 
-    // ---- CHOICE (stub) -------------------------------------------------
+    // ---- CHOICE ---------------------------------------------------------
 
     void encode_choice(XerEncodeStream& s,
                        const TypeDescriptor& def,
                        const void* src) const
     {
-        (void)s; (void)def; (void)src;
+        auto& os = s.os();
+        int depth = s.depth();
+        const auto& spec = *def.choice_spec;
+        int pr = *static_cast<const int*>(src);
+        if (pr <= 0 || pr > spec.count) return;
+        int idx = pr - 1;
+        const auto& alt = spec.alternatives[idx];
+        if (!alt.type_descriptor) return;
+
+        std::string child_indent(4 * (depth + 1), ' ');
+        std::string close_indent(4 * depth, ' ');
+
+        os << '<' << def.name << ">\n";
+        os << child_indent;
+        TypeDescriptor adef = *static_cast<const TypeDescriptor*>(alt.type_descriptor);
+        adef.name = alt.name;
+        XerEncodeStream as{os, depth + 1};
+        encode(as, adef, static_cast<const char*>(src) + alt.offset);
+        os << close_indent << "</" << def.name << ">\n";
     }
 
     DecodeResult decode_choice(XerDecodeStream& s,
                                const TypeDescriptor& def,
                                void* dest) const
     {
-        (void)s; (void)def; (void)dest;
-        return decode_err(DecodeError("XerCodec: CHOICE decode not yet implemented"));
+        using namespace xer_detail;
+        // Consume outer <def.name>
+        {
+            auto rem = s.remaining();
+            std::size_t pos = 0;
+            auto ti = parse_tag(rem, pos);
+            if (ti.name != def.name || ti.closing || ti.self_closing)
+                return decode_err(DecodeError(std::string("XER CHOICE: expected <") + def.name + ">"));
+            s.advance(pos);
+        }
+        { auto rem = s.remaining(); std::size_t wp = xer_detail::skip_ws(rem, 0); s.advance(wp); }
+
+        // Peek at alternative name
+        {
+            auto rem = s.remaining();
+            std::size_t pos = 0;
+            auto ti = parse_tag(rem, pos);
+            const auto& spec = *def.choice_spec;
+            bool found = false;
+            for (int i = 0; i < spec.count; ++i) {
+                const auto& alt = spec.alternatives[i];
+                if (ti.name != alt.name) continue;
+                if (!alt.type_descriptor)
+                    return decode_err(DecodeError(std::string("XER CHOICE: no descriptor for ") + alt.name));
+                TypeDescriptor adef = *static_cast<const TypeDescriptor*>(alt.type_descriptor);
+                adef.name = alt.name;
+                void* mptr = static_cast<char*>(dest) + alt.offset;
+                auto r = decode(s, adef, mptr);
+                if (!r) return r;
+                *static_cast<int*>(dest) = i + 1;
+                found = true;
+                break;
+            }
+            if (!found)
+                return decode_err(DecodeError(std::string("XER CHOICE: unknown alternative <") + std::string(ti.name) + ">"));
+        }
+        { auto rem = s.remaining(); std::size_t wp = xer_detail::skip_ws(rem, 0); s.advance(wp); }
+
+        // Consume </def.name>
+        {
+            auto rem = s.remaining();
+            std::size_t pos = 0;
+            auto ti = parse_tag(rem, pos);
+            if (!ti.closing || ti.name != def.name)
+                return decode_err(DecodeError(std::string("XER CHOICE: expected </") + def.name + ">"));
+            s.advance(pos);
+        }
+        { auto rem = s.remaining(); std::size_t wp = xer_detail::skip_ws(rem, 0); s.advance(wp); }
+        return decode_ok();
     }
 };
 
