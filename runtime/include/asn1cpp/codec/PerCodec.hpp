@@ -483,6 +483,27 @@ private:
         bool has_alpha = pc.alphabet_bits > 0 && !pc.alphabet.empty();
         std::size_t char_count = has_alpha ? str.size() : str.size() / bpc;
 
+        if (pc.flags & PerConstraints::EXTENSIBLE) {
+            bool in_root;
+            if (pc.flags & PerConstraints::SIZE_CONSTRAINED) {
+                in_root = (char_count >= static_cast<std::size_t>(pc.size_lower) &&
+                           char_count <= static_cast<std::size_t>(pc.size_upper));
+            } else if (has_alpha) {
+                in_root = true;
+                for (unsigned char c : str)
+                    if (std::find(pc.alphabet.begin(), pc.alphabet.end(), c) == pc.alphabet.end())
+                        { in_root = false; break; }
+            } else {
+                in_root = true;
+            }
+            s.put_bits(in_root ? 0 : 1, 1);
+            if (!in_root) {
+                put_length(s, char_count);
+                for (unsigned char c : str) s.put_bits(c, 8);
+                return;
+            }
+        }
+
         encode_size_field(s, def, char_count);
 
         // Character values
@@ -505,11 +526,30 @@ private:
     }
 
     static DecodeResult decode_string(PerDecodeStream& s, const TypeDescriptor& def, void* dest) {
+        const PerConstraints& pc = def.per_constraints;
+
+        if (pc.flags & PerConstraints::EXTENSIBLE) {
+            auto ext = s.get_bits(1);
+            if (!ext) return decode_err(ext.error());
+            if (*ext) {
+                auto len_r = get_length(s);
+                if (!len_r) return decode_err(len_r.error());
+                std::string result;
+                result.reserve(*len_r);
+                for (std::size_t i = 0; i < *len_r; ++i) {
+                    auto b = s.get_bits(8);
+                    if (!b) return decode_err(b.error());
+                    result.push_back(static_cast<char>(*b));
+                }
+                *reinterpret_cast<std::string*>(dest) = std::move(result);
+                return decode_ok();
+            }
+        }
+
         auto len_r = decode_size_field(s, def);
         if (!len_r) return decode_err(len_r.error());
         std::size_t char_count = *len_r;
 
-        const PerConstraints& pc = def.per_constraints;
         auto [bits, bpc] = string_params(def.tag.number);
         std::string result;
 
@@ -583,6 +623,43 @@ private:
     // Unconstrained (flags == 0):
     //   length (1 byte, value in bytes) + big-endian minimal two's-complement.
 
+    // Unconstrained integer: 1-byte length + minimal 2's-complement bytes.
+    static void encode_unconstrained_int(PerEncodeStream& s, int64_t value) {
+        uint8_t buf[8]; int len = 0;
+        if (value == 0) { buf[0] = 0; len = 1; }
+        else {
+            uint64_t u = static_cast<uint64_t>(value);
+            for (int i = 7; i >= 0; --i) { buf[i] = u & 0xFF; u >>= 8; }
+            int start = 0;
+            if (value > 0) {
+                while (start < 7 && buf[start] == 0x00 && !(buf[start+1] & 0x80)) ++start;
+            } else {
+                while (start < 7 && buf[start] == 0xFF && (buf[start+1] & 0x80)) ++start;
+            }
+            len = 8 - start;
+            std::memmove(buf, buf + start, len);
+        }
+        s.put_bits(static_cast<uint64_t>(len), 8);
+        for (int i = 0; i < len; ++i) s.put_bits(buf[i], 8);
+    }
+
+    static DecodeResult decode_unconstrained_int(PerDecodeStream& s, void* dest) {
+        auto len_bits = s.get_bits(8);
+        if (!len_bits) return decode_err(len_bits.error());
+        int len = static_cast<int>(*len_bits);
+        if (len == 0 || len > 8)
+            return decode_err(DecodeError("PER: INTEGER length out of range"));
+        int64_t value = 0;
+        for (int i = 0; i < len; ++i) {
+            auto b = s.get_bits(8);
+            if (!b) return decode_err(b.error());
+            if (i == 0 && (*b & 0x80)) value = -1;
+            value = (value << 8) | static_cast<int64_t>(*b);
+        }
+        *static_cast<int64_t*>(dest) = value;
+        return decode_ok();
+    }
+
     void encode_integer(PerEncodeStream& s,
                         const TypeDescriptor& def,
                         const void* src) const
@@ -590,27 +667,16 @@ private:
         int64_t value = *static_cast<const int64_t*>(src);
         const PerConstraints& pc = def.per_constraints;
         if (pc.flags & PerConstraints::CONSTRAINED) {
+            if (pc.flags & PerConstraints::EXTENSIBLE) {
+                bool in_root = (value >= pc.lower_bound && value <= pc.upper_bound);
+                s.put_bits(in_root ? 0 : 1, 1);
+                if (!in_root) { encode_unconstrained_int(s, value); return; }
+            }
             int64_t encoded = value - pc.lower_bound;
             int64_t rcount  = pc.upper_bound - pc.lower_bound + 1;
             s.put_bits(static_cast<uint64_t>(encoded), range_bits(rcount));
         } else {
-            // Unconstrained: minimal big-endian bytes, preceded by byte count.
-            uint8_t buf[8]; int len = 0;
-            if (value == 0) { buf[0] = 0; len = 1; }
-            else {
-                uint64_t u = static_cast<uint64_t>(value);
-                for (int i = 7; i >= 0; --i) { buf[i] = u & 0xFF; u >>= 8; }
-                int start = (value > 0) ? 0 : 0;
-                if (value > 0) {
-                    while (start < 7 && buf[start] == 0x00 && !(buf[start+1] & 0x80)) ++start;
-                } else {
-                    while (start < 7 && buf[start] == 0xFF && (buf[start+1] & 0x80)) ++start;
-                }
-                len = 8 - start;
-                std::memmove(buf, buf + start, len);
-            }
-            s.put_bits(static_cast<uint64_t>(len), 8);  // length byte
-            for (int i = 0; i < len; ++i) s.put_bits(buf[i], 8);
+            encode_unconstrained_int(s, value);
         }
     }
 
@@ -620,27 +686,18 @@ private:
     {
         const PerConstraints& pc = def.per_constraints;
         if (pc.flags & PerConstraints::CONSTRAINED) {
+            if (pc.flags & PerConstraints::EXTENSIBLE) {
+                auto ext = s.get_bits(1);
+                if (!ext) return decode_err(ext.error());
+                if (*ext) return decode_unconstrained_int(s, dest);
+            }
             int64_t rcount = pc.upper_bound - pc.lower_bound + 1;
             auto bits = s.get_bits(range_bits(rcount));
             if (!bits) return decode_err(bits.error());
             *static_cast<int64_t*>(dest) = pc.lower_bound + static_cast<int64_t>(*bits);
             return decode_ok();
         } else {
-            // Unconstrained: read length byte, then that many bytes.
-            auto len_bits = s.get_bits(8);
-            if (!len_bits) return decode_err(len_bits.error());
-            int len = static_cast<int>(*len_bits);
-            if (len == 0 || len > 8)
-                return decode_err(DecodeError("PER: INTEGER length out of range"));
-            int64_t value = 0;
-            for (int i = 0; i < len; ++i) {
-                auto b = s.get_bits(8);
-                if (!b) return decode_err(b.error());
-                if (i == 0 && (*b & 0x80)) value = -1;  // sign-extend
-                value = (value << 8) | static_cast<int64_t>(*b);
-            }
-            *static_cast<int64_t*>(dest) = value;
-            return decode_ok();
+            return decode_unconstrained_int(s, dest);
         }
     }
 

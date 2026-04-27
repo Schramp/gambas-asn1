@@ -315,6 +315,13 @@ std::optional<int64_t> Generator::resolve_int_value(const ast::Value& v) const {
     return std::nullopt;
 }
 
+// True if any top-level constraint carries a trailing '...'.
+static bool is_constraint_extensible(const ast::TypeDef& def) {
+    for (const auto& cptr : def.constraints)
+        if (cptr && cptr->extensible) return true;
+    return false;
+}
+
 // Extract integer value range from constraints, if determinable.
 std::optional<std::pair<int64_t,int64_t>>
 Generator::extract_integer_range(const ast::TypeDef& def) const {
@@ -352,7 +359,9 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
         if (range_count > 1) {
             for (int64_t r = range_count - 1; r > 0; r >>= 1) ++rb;
         }
-        os << std::format("    {{ asn1::PerConstraints::CONSTRAINED, {}, {}, {} }} /* per_constraints */\n", rb, lo, hi);
+        int flags = asn1::PerConstraints::CONSTRAINED
+                  | (is_constraint_extensible(def) ? asn1::PerConstraints::EXTENSIBLE : 0);
+        os << std::format("    {{ {}, {}, {}, {} }} /* per_constraints */\n", flags, rb, lo, hi);
     } else {
         os << "    {} /* per_constraints — unconstrained */\n";
     }
@@ -814,7 +823,8 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
             if (alphabet_bits == 0) alphabet_bits = 1;
         }
 
-        int flags = asn1::PerConstraints::CONSTRAINED | size_flags;
+        int flags = asn1::PerConstraints::CONSTRAINED | size_flags
+                  | (is_constraint_extensible(def) ? asn1::PerConstraints::EXTENSIBLE : 0);
         int val_lb = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
         int val_ub = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
 

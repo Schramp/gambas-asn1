@@ -1,0 +1,13 @@
+ExtConstraintTest DEFINITIONS ::= BEGIN
+    -- INTEGER with extensible range
+    MyInt  ::= INTEGER (0..255, ...)
+
+    -- VisibleString with extensible SIZE
+    MyStr  ::= VisibleString (SIZE (1..4), ...)
+
+    -- SEQUENCE using both so extension path is exercised inside a struct
+    Rec ::= SEQUENCE {
+        id    MyInt,
+        label MyStr
+    }
+END
