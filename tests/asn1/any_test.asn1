@@ -1,0 +1,7 @@
+AnyTest DEFINITIONS ::= BEGIN
+    HasAny ::= SEQUENCE {
+        id    MyByte,
+        value ANY
+    }
+    MyByte ::= INTEGER (0..255)
+END

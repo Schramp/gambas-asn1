@@ -286,6 +286,9 @@ private:
     void encode_hex_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
     DecodeResult decode_hex_string(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
 
+    void encode_any_xer(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
+    DecodeResult decode_any_xer(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
+
     void encode_octetstring_xer(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
     DecodeResult decode_octetstring_xer(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
 

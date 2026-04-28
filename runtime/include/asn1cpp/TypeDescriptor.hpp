@@ -100,10 +100,12 @@ struct TypeDescriptor {
     const ChoiceSpec*    choice_spec;    // non-null for CHOICE
     const SeqOfSpec*     seq_of_spec;    // non-null for SEQUENCE OF / SET OF
     PerConstraints per_constraints; // flags==0 means unconstrained
+    bool is_any = false;            // true for ANY — raw BER bytes, open-type in PER
 };
 
 // Built-in type descriptors — used by generated SEQUENCE/CHOICE member tables
 // to fill type_descriptor pointers for plain primitive members.
+inline const TypeDescriptor asn_DEF_Any          = { "ANY",          Tag::universal( 4, false), nullptr, nullptr, nullptr, nullptr, {}, true };
 inline const TypeDescriptor asn_DEF_Integer      = { "INTEGER",      Tag::universal( 2, false), nullptr, nullptr, nullptr };
 inline const TypeDescriptor asn_DEF_Boolean      = { "BOOLEAN",      Tag::universal( 1, false), nullptr, nullptr, nullptr };
 inline const TypeDescriptor asn_DEF_Null         = { "NULL",         Tag::universal( 5, false), nullptr, nullptr, nullptr };

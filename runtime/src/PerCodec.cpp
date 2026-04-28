@@ -10,6 +10,7 @@ void PerCodec::encode(IEncodeStream& dst,
             const void* src) const
 {
     auto& s = static_cast<PerEncodeStream&>(dst);
+    if (def.is_any)        { encode_any        (s, src);       return; }
     if (def.enum_spec)     { encode_enumerated(s, def, src); return; }
     if (def.sequence_spec) { encode_sequence   (s, def, src); return; }
     if (def.choice_spec)   { encode_choice     (s, def, src); return; }
@@ -31,6 +32,7 @@ DecodeResult PerCodec::decode(IDecodeStream& src,
                     void* dest) const
 {
     auto& s = static_cast<PerDecodeStream&>(src);
+    if (def.is_any)        return decode_any        (s, dest);
     if (def.enum_spec)     return decode_enumerated(s, def, dest);
     if (def.sequence_spec) return decode_sequence   (s, def, dest);
     if (def.choice_spec)   return decode_choice     (s, def, dest);
@@ -82,6 +84,24 @@ Expected<int, DecodeError> PerCodec::get_nsnnwn(PerDecodeStream& s) {
     auto len = PerCodec::get_length(s);
     if (!len) return make_unexpected<int, DecodeError>(len.error());
     return static_cast<int>(*len);
+}
+
+// ---- ANY — open-type encoded raw BER bytes --------------------------------
+
+void PerCodec::encode_any(PerEncodeStream& s, const void* src) {
+    const OctetString& v = *static_cast<const OctetString*>(src);
+    auto bytes = v.bytes();
+    put_length(s, bytes.size());
+    for (auto b : bytes) s.put_bits(b, 8);
+}
+
+DecodeResult PerCodec::decode_any(PerDecodeStream& s, void* dest) {
+    auto len_r = get_length(s);
+    if (!len_r) return decode_err(len_r.error());
+    auto bytes_r = read_bytes(s, *len_r);
+    if (!bytes_r) return decode_err(bytes_r.error());
+    *static_cast<OctetString*>(dest) = OctetString(*bytes_r);
+    return decode_ok();
 }
 
 // ---- Open-type helpers (X.691 §11.2) — extension member wrapping --------

@@ -99,6 +99,7 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) {
         case BT::ObjectDescriptor:  return "asn1::Tag::universal(7, false)";
         case BT::UtcTime:           return "asn1::Tag::universal(23, false)";
         case BT::GeneralizedTime:   return "asn1::Tag::universal(24, false)";
+        case BT::Any:               return "asn1::Tag::universal( 4, false)";
         default: break;
         }
     }
@@ -144,6 +145,7 @@ static std::string type_descriptor_ref_for(const ast::TypeDef& def) {
         case BT::BmpString:         return "&asn1::asn_DEF_BmpString";
         case BT::VideotexString:    return "&asn1::asn_DEF_VideotexString";
         case BT::ObjectDescriptor:  return "&asn1::asn_DEF_ObjectDescriptor";
+        case BT::Any:               return "&asn1::asn_DEF_Any";
         default:                    return "nullptr";
         }
     }

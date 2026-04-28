@@ -162,6 +162,14 @@ public:
         return TLV{tag, *val_r, false};
     }
 
+    // Read a complete TLV and return the full byte span (tag + length + value).
+    Expected<std::span<const uint8_t>, DecodeError> read_raw_tlv() {
+        std::size_t start = pos_;
+        auto tlv = read_tlv();
+        if (!tlv) return make_unexpected<std::span<const uint8_t>, DecodeError>(tlv.error());
+        return data_.subspan(start, pos_ - start);
+    }
+
     // Create a sub-reader over a slice of the current data (for recursing into value bytes)
     BerReader sub(std::span<const uint8_t> slice) const {
         return BerReader{slice};

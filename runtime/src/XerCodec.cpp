@@ -10,6 +10,7 @@ void XerCodec::encode(IEncodeStream& dst,
                       const void* src) const
 {
     auto& s = static_cast<XerEncodeStream&>(dst);
+    if (def.is_any)        { encode_any_xer        (s, def, src); return; }
     if (def.enum_spec)     { encode_enumerated(s, def, src); return; }
     if (def.sequence_spec) { encode_sequence   (s, def, src); return; }
     if (def.choice_spec)   { encode_choice     (s, def, src); return; }
@@ -35,6 +36,7 @@ DecodeResult XerCodec::decode(IDecodeStream& src,
                                void* dest) const
 {
     auto& s = static_cast<XerDecodeStream&>(src);
+    if (def.is_any)        return decode_any_xer        (s, def, dest);
     if (def.enum_spec)     return decode_enumerated(s, def, dest);
     if (def.sequence_spec) return decode_sequence   (s, def, dest);
     if (def.choice_spec)   return decode_choice     (s, def, dest);
@@ -230,6 +232,25 @@ DecodeResult XerCodec::decode_hex_string(XerDecodeStream& s,
 {
     return decode_simple_text_element(s, def.name, [this, dest](std::string_view text) -> DecodeResult {
         detail::asnstring_assign(dest, parse_hex_bytes(text));
+        return decode_ok();
+    });
+}
+
+// ---------------------------------------------------------------------------
+// ANY — hex-encoded raw BER bytes (same format as asn1c's ANY_encode_xer)
+
+void XerCodec::encode_any_xer(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const {
+    const OctetString& v = *static_cast<const OctetString*>(src);
+    auto bytes = v.bytes();
+    std::string_view sv(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    s.os() << '<' << def.name << '>' << format_hex_bytes(sv) << "</" << def.name << ">\n";
+}
+
+DecodeResult XerCodec::decode_any_xer(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
+    return decode_simple_text_element(s, def.name, [dest](std::string_view text) -> DecodeResult {
+        std::string bytes = parse_hex_bytes(text);
+        *static_cast<OctetString*>(dest) = OctetString(
+            std::vector<uint8_t>(bytes.begin(), bytes.end()));
         return decode_ok();
     });
 }

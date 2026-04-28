@@ -15,6 +15,7 @@ void BerCodec::encode(IEncodeStream& dst,
                       const void* src) const
 {
     auto& s = static_cast<BerEncodeStream&>(dst);
+    if (def.is_any)        { encode_any        (s.writer(), src);       return; }
     if (def.enum_spec)     { encode_enumerated(s.writer(), def, src); return; }
     if (def.sequence_spec) { encode_sequence   (s.writer(), def, src); return; }
     if (def.choice_spec)   { encode_choice     (s.writer(), def, src); return; }
@@ -37,6 +38,7 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
                               void* dest) const
 {
     auto& s = static_cast<BerDecodeStream&>(src);
+    if (def.is_any)        return decode_any        (s.reader(), dest);
     if (def.enum_spec)     return decode_enumerated(s.reader(), def, dest);
     if (def.sequence_spec) return decode_sequence   (s.reader(), def, dest);
     if (def.choice_spec)   return decode_choice     (s.reader(), def, dest);
@@ -118,6 +120,17 @@ DecodeResult BerCodec::decode_integer(BerReader& r, const TypeDescriptor& def, v
     auto v = BerTraits<Integer>::decode_value(tlv->value);
     if (!v) return decode_err(v.error());
     *static_cast<int64_t*>(dest) = v->value();
+    return decode_ok();
+}
+
+void BerCodec::encode_any(BerWriter& w, const void* src) const {
+    const OctetString& v = *static_cast<const OctetString*>(src);
+    w.append(v.bytes());
+}
+DecodeResult BerCodec::decode_any(BerReader& r, void* dest) const {
+    auto raw = r.read_raw_tlv();
+    if (!raw) return decode_err(raw.error());
+    *static_cast<OctetString*>(dest) = OctetString(*raw);
     return decode_ok();
 }
 

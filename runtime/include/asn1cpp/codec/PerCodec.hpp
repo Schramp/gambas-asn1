@@ -146,6 +146,9 @@ private:
 
     static int range_bits(int64_t range);
 
+    static void encode_any(PerEncodeStream& s, const void* src);
+    static DecodeResult decode_any(PerDecodeStream& s, void* dest);
+
     static void encode_boolean(PerEncodeStream& s, const void* src);
     static DecodeResult decode_boolean(PerDecodeStream& s, void* dest);
 

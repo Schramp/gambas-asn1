@@ -60,6 +60,9 @@ private:
     void encode_integer(BerWriter& w, const TypeDescriptor& def, const void* src) const;
     DecodeResult decode_integer(BerReader& r, const TypeDescriptor& def, void* dest) const;
 
+    void encode_any(BerWriter& w, const void* src) const;
+    DecodeResult decode_any(BerReader& r, void* dest) const;
+
     void encode_octetstring(BerWriter& w, const void* src) const;
     DecodeResult decode_octetstring(BerReader& r, void* dest) const;
 
