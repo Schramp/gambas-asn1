@@ -321,24 +321,41 @@ static bool is_constraint_extensible(const ast::TypeDef& def) {
     return false;
 }
 
+// Walk a constraint, including IntersectionConstraint operands, and call f on each body.
+template<typename F>
+static void walk_constraints(const ast::Constraint& c, F&& f) {
+    f(c.body);
+    if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c.body))
+        for (const auto& op : ic->operands)
+            if (op) walk_constraints(*op, f);
+}
+
+// Walk all top-level constraints of def (and their IntersectionConstraint subtrees).
+template<typename F>
+static void walk_type_constraints(const ast::TypeDef& def, F&& f) {
+    for (const auto& cptr : def.constraints)
+        if (cptr) walk_constraints(*cptr, f);
+}
+
 // Extract integer value range from constraints, if determinable.
 std::optional<std::pair<int64_t,int64_t>>
 Generator::extract_integer_range(const ast::TypeDef& def) const {
-    for (const auto& cptr : def.constraints) {
-        if (!cptr) continue;
-        auto* vr = std::get_if<ast::ValueRange>(&cptr->body);
-        if (!vr) continue;
-        std::optional<int64_t> lo, hi;
-        if (vr->lower.kind == ast::RangeEndpoint::Kind::Min)
-            lo = std::numeric_limits<int64_t>::min();
-        else
-            lo = resolve_int_value(vr->lower.value);
-        if (vr->upper.kind == ast::RangeEndpoint::Kind::Max)
-            hi = std::numeric_limits<int64_t>::max();
-        else
-            hi = resolve_int_value(vr->upper.value);
-        if (lo && hi) return std::make_pair(*lo, *hi);
-    }
+    // Intersect all ValueRange constraints (including those nested inside
+    // IntersectionConstraint): take max(lowers) and min(uppers).
+    std::optional<int64_t> lo, hi;
+    walk_type_constraints(def, [&](const ast::ConstraintBody& body) {
+        auto* vr = std::get_if<ast::ValueRange>(&body);
+        if (!vr) return;
+        int64_t vlo = (vr->lower.kind == ast::RangeEndpoint::Kind::Min)
+            ? std::numeric_limits<int64_t>::min()
+            : resolve_int_value(vr->lower.value).value_or(std::numeric_limits<int64_t>::min());
+        int64_t vhi = (vr->upper.kind == ast::RangeEndpoint::Kind::Max)
+            ? std::numeric_limits<int64_t>::max()
+            : resolve_int_value(vr->upper.value).value_or(std::numeric_limits<int64_t>::max());
+        lo = lo ? std::max(*lo, vlo) : vlo;
+        hi = hi ? std::min(*hi, vhi) : vhi;
+    });
+    if (lo && hi) return std::make_pair(*lo, *hi);
     return std::nullopt;
 }
 
@@ -722,21 +739,6 @@ void Generator::emit_hpp(const ast::TypeDef& def, std::ostream& os) {
     }
 }
 
-// Walk a constraint, including IntersectionConstraint operands, and call f on each body.
-template<typename F>
-static void walk_constraints(const ast::Constraint& c, F&& f) {
-    f(c.body);
-    if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c.body))
-        for (const auto& op : ic->operands)
-            if (op) walk_constraints(*op, f);
-}
-
-// Walk all top-level constraints of def (and their IntersectionConstraint subtrees).
-template<typename F>
-static void walk_type_constraints(const ast::TypeDef& def, F&& f) {
-    for (const auto& cptr : def.constraints)
-        if (cptr) walk_constraints(*cptr, f);
-}
 
 // Extract SIZE (lb..ub) constraint. Returns {lb, ub} or nullopt if none.
 // lb==ub → fixed size; ub==INT64_MAX → semi-constrained (SIZE lb..MAX).

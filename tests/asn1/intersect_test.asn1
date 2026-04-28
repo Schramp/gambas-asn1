@@ -1,0 +1,3 @@
+IntIntersect DEFINITIONS ::= BEGIN
+    MyRange ::= INTEGER (0..255)(1..10)
+END
