@@ -1,0 +1,11 @@
+ChoiceExtTest DEFINITIONS ::= BEGIN
+    HasExtChoice ::= SEQUENCE { val ExtChoice }
+    ExtChoice ::= CHOICE {
+        num   MyByte,
+        flag  BOOLEAN,
+        ...,
+        extra MyStr
+    }
+    MyByte ::= INTEGER (0..255)
+    MyStr  ::= VisibleString (SIZE (1..8))
+END
