@@ -8,7 +8,7 @@
 
 namespace asn1::sema {
 
-// SymbolTable maps (module_name, type_name) -> TypeDefPtr
+// SymbolTable maps type_name -> TypeDefPtr
 using SymbolTable = std::unordered_map<std::string, ast::TypeDefPtr>;
 
 class Resolver {
@@ -17,7 +17,15 @@ class Resolver {
     // Flat global table after import resolution
     SymbolTable global_;
 
+    bool ignore_missing_modules_{false};
+    std::vector<std::string> errors_;
+    std::vector<std::string> warnings_;
+
 public:
+    void set_ignore_missing_modules(bool v) { ignore_missing_modules_ = v; }
+    const std::vector<std::string>& errors()   const { return errors_; }
+    const std::vector<std::string>& warnings() const { return warnings_; }
+
     // Phase 1: collect all top-level definitions from all modules
     void collect(const ast::ParseResult& pr) {
         for (const auto& mod : pr.modules) {
@@ -39,7 +47,15 @@ public:
             // Bring in imports
             for (const auto& imp : mod->imports) {
                 auto it = module_symbols_.find(imp.from_module);
-                if (it == module_symbols_.end()) continue; // ignore missing modules
+                if (it == module_symbols_.end()) {
+                    std::string msg = "module '" + imp.from_module
+                        + "' imported by '" + mod->name + "' was not found";
+                    if (ignore_missing_modules_)
+                        warnings_.push_back(msg);
+                    else
+                        errors_.push_back(msg);
+                    continue;
+                }
                 for (const auto& imported_name : imp.names) {
                     auto sym = it->second.find(imported_name);
                     if (sym != it->second.end())

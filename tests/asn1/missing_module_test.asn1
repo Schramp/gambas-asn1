@@ -1,0 +1,6 @@
+-- Imports from a module not present in the compilation unit.
+-- Should fail: error on missing module.
+MissingModuleTest DEFINITIONS ::= BEGIN
+    IMPORTS SomeType FROM NonExistentModule;
+    UseIt ::= SEQUENCE { val SomeType }
+END

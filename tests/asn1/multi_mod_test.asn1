@@ -1,0 +1,15 @@
+-- Two modules in one file: MultiB imports from MultiA.
+-- Verifies that cross-module type references codegen correctly.
+
+MultiA DEFINITIONS ::= BEGIN
+    MyByte ::= INTEGER (0..255)
+    MyStr  ::= VisibleString (SIZE (1..8))
+END
+
+MultiB DEFINITIONS ::= BEGIN
+    IMPORTS MyByte, MyStr FROM MultiA;
+    HasFromA ::= SEQUENCE {
+        id    MyByte,
+        label MyStr
+    }
+END

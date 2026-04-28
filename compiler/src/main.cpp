@@ -16,18 +16,23 @@
 namespace fs = std::filesystem;
 
 static void usage(const char* prog) {
-    std::cerr << "Usage: " << prog << " [-o outdir] file.asn1 [file2.asn1 ...]\n";
+    std::cerr << "Usage: " << prog
+              << " [-o outdir] [-fignore-missing-modules] file.asn1 [file2.asn1 ...]\n";
     std::exit(1);
 }
 
 int main(int argc, char** argv) {
     std::string out_dir = "generated";
+    bool ignore_missing_modules = false;
     std::vector<std::string> input_files;
 
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "-o" && i + 1 < argc) {
+        std::string arg = argv[i];
+        if (arg == "-o" && i + 1 < argc) {
             out_dir = argv[++i];
-        } else if (argv[i][0] == '-') {
+        } else if (arg == "-fignore-missing-modules") {
+            ignore_missing_modules = true;
+        } else if (arg[0] == '-') {
             usage(argv[0]);
         } else {
             input_files.push_back(argv[i]);
@@ -63,9 +68,18 @@ int main(int argc, char** argv) {
 
     // Semantic analysis
     asn1::sema::Resolver resolver;
+    resolver.set_ignore_missing_modules(ignore_missing_modules);
     resolver.collect(pr);
     resolver.resolve_imports(pr);
     resolver.resolve_types(pr);
+
+    for (const auto& w : resolver.warnings())
+        std::cerr << "warning: " << w << "\n";
+    if (!resolver.errors().empty()) {
+        for (const auto& e : resolver.errors())
+            std::cerr << "error: " << e << "\n";
+        return 1;
+    }
 
     // Code generation
     asn1::codegen::Generator gen(out_dir, resolver);
