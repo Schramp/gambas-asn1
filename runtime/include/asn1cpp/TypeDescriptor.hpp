@@ -27,6 +27,16 @@ struct EnumSpec {
     const long*      per_value_order;  // [root_count] values in definition order
 };
 
+// Encapsulates the two optional-member callbacks so codecs don't carry naked
+// function pointers or repeat null checks at every call site.
+struct OptionalOps {
+    bool (*check)(const void*) = nullptr;
+    void (*set)(void*, bool)   = nullptr;
+    bool is_present(const void* p) const { return check && check(p); }
+    void set_present(void* p, bool v) const { if (set) set(p, v); }
+    explicit operator bool() const { return check != nullptr; }
+};
+
 // Per-member SEQUENCE/SET/CHOICE descriptor (mirrors asn_TYPE_member_t).
 struct MemberDescriptor {
     const char*  name;
@@ -37,11 +47,7 @@ struct MemberDescriptor {
                                   // for optional members: offset to std::optional<T>;
                                   // value is at offset 0 within optional (libstdc++/libc++ guarantee)
     const void*  type_descriptor; // cast to TypeDescriptor* in codec
-    // PER optional-member callbacks (nullptr for required members).
-    // is_present: returns true if the optional<T> at struct_ptr is engaged.
-    // set_present: engages (emplace) or disengages (reset) the optional<T>.
-    bool (*is_present)(const void* struct_ptr);
-    void (*set_present)(void* struct_ptr, bool);
+    OptionalOps  optional_ops;    // non-null only for optional/extension members
 };
 
 // Forward declaration for SeqOfSpec::element pointer.

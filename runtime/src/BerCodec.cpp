@@ -278,7 +278,7 @@ void BerCodec::encode_sequence(BerWriter& w, const TypeDescriptor& def, const vo
         for (int i = 0; i < spec.count; ++i) {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
-            if (mbr.optional && mbr.is_present && !mbr.is_present(src)) continue;
+            if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
             const void* mptr = static_cast<const char*>(src) + mbr.offset;
             const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
             BerEncodeStream ms{inner};
@@ -296,7 +296,7 @@ DecodeResult BerCodec::decode_sequence(BerReader& r, const TypeDescriptor& def, 
         if (!mbr.type_descriptor) continue;
         if (mbr.optional) {
             bool present = !inner.at_end() && (inner.peek_tag() == mbr.tag);
-            if (mbr.set_present) mbr.set_present(dest, present);
+            mbr.optional_ops.set_present(dest, present);
             if (!present) continue;
         }
         void* mptr = static_cast<char*>(dest) + mbr.offset;

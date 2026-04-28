@@ -746,7 +746,7 @@ void PerCodec::encode_sequence(PerEncodeStream& s,
     if (spec.ext_at >= 0) {
         for (int i = root_end; i < spec.count; ++i) {
             const auto& mbr = spec.members[i];
-            if (mbr.is_present && mbr.is_present(src)) { has_ext = true; break; }
+            if (mbr.optional_ops.is_present(src)) { has_ext = true; break; }
         }
         s.put_bits(has_ext ? 1 : 0, 1);
     }
@@ -755,7 +755,7 @@ void PerCodec::encode_sequence(PerEncodeStream& s,
     for (int i = 0; i < root_end; ++i) {
         const auto& mbr = spec.members[i];
         if (!mbr.optional) continue;
-        bool present = mbr.is_present ? mbr.is_present(src) : false;
+        bool present = mbr.optional_ops.is_present(src);
         s.put_bits(present ? 1 : 0, 1);
     }
 
@@ -763,7 +763,7 @@ void PerCodec::encode_sequence(PerEncodeStream& s,
     for (int i = 0; i < root_end; ++i) {
         const auto& mbr = spec.members[i];
         if (!mbr.type_descriptor) continue;
-        if (mbr.optional && (!mbr.is_present || !mbr.is_present(src))) continue;
+        if (mbr.optional && (!mbr.optional_ops.is_present(src))) continue;
         const void* mptr = static_cast<const char*>(src) + mbr.offset;
         PerCodec::encode(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
     }
@@ -774,12 +774,12 @@ void PerCodec::encode_sequence(PerEncodeStream& s,
         PerCodec::put_nslength(s, static_cast<std::size_t>(n_ext));   // §18.8 bitmap length
         for (int i = root_end; i < spec.count; ++i) {       // §18.7 presence bitmap
             const auto& mbr = spec.members[i];
-            bool present = mbr.is_present && mbr.is_present(src);
+            bool present = mbr.optional_ops.is_present(src);
             s.put_bits(present ? 1 : 0, 1);
         }
         for (int i = root_end; i < spec.count; ++i) {       // §18.9 open-type values
             const auto& mbr = spec.members[i];
-            if (!mbr.type_descriptor || !mbr.is_present || !mbr.is_present(src)) continue;
+            if (!mbr.type_descriptor || !mbr.optional_ops.is_present(src)) continue;
             const void* mptr = static_cast<const char*>(src) + mbr.offset;
             PerCodec::encode_open_type(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
         }
@@ -819,7 +819,7 @@ DecodeResult PerCodec::decode_sequence(PerDecodeStream& s,
         if (!mbr.type_descriptor) continue;
         if (mbr.optional) {
             bool present = bitmap[opt_idx++];
-            if (mbr.set_present) mbr.set_present(dest, present);
+            mbr.optional_ops.set_present(dest, present);
             if (!present) continue;
         }
         void* mptr = static_cast<char*>(dest) + mbr.offset;
@@ -833,7 +833,7 @@ DecodeResult PerCodec::decode_sequence(PerDecodeStream& s,
         if (!ext_flag) {
             for (int i = root_end; i < spec.count; ++i) {
                 const auto& mbr = spec.members[i];
-                if (mbr.set_present) mbr.set_present(dest, false);
+                mbr.optional_ops.set_present(dest, false);
             }
         } else {
             auto n_ext_r = PerCodec::get_nslength(s);
@@ -849,13 +849,13 @@ DecodeResult PerCodec::decode_sequence(PerDecodeStream& s,
                 if (!ext_bitmap[i]) {
                     if (i < known_ext) {
                         const auto& mbr = spec.members[root_end + i];
-                        if (mbr.set_present) mbr.set_present(dest, false);
+                        mbr.optional_ops.set_present(dest, false);
                     }
                     continue;
                 }
                 if (i < known_ext) {
                     const auto& mbr = spec.members[root_end + i];
-                    if (mbr.set_present) mbr.set_present(dest, true);
+                    mbr.optional_ops.set_present(dest, true);
                     void* mptr = static_cast<char*>(dest) + mbr.offset;
                     auto r = PerCodec::decode_open_type(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
                     if (!r) return r;

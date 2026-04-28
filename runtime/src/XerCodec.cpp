@@ -639,7 +639,7 @@ void XerCodec::encode_sequence(XerEncodeStream& s,
     for (int i = 0; i < spec.count; ++i) {
         const auto& mbr = spec.members[i];
         if (!mbr.type_descriptor) continue;
-        if (mbr.optional && mbr.is_present && !mbr.is_present(src)) continue;
+        if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
         const void* mptr = static_cast<const char*>(src) + mbr.offset;
         TypeDescriptor mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
         mdef.name = mbr.name;
@@ -666,7 +666,7 @@ DecodeResult XerCodec::decode_sequence(XerDecodeStream& s,
         if (!mbr.type_descriptor) continue;
         if (mbr.optional) {
             bool present = (xer_detail::peek_tag(s).name == mbr.name);
-            if (mbr.set_present) mbr.set_present(dest, present);
+            mbr.optional_ops.set_present(dest, present);
             if (!present) continue;
         }
         void* mptr = static_cast<char*>(dest) + mbr.offset;

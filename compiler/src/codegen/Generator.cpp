@@ -489,14 +489,15 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 if (eff_tag.empty()) eff_tag = "asn1::Tag{}";  // CHOICE has no universal tag
             }
 
-            std::string isp = optional ? std::format("&_isp_{0}_{1}", cname, mname) : "nullptr";
-            std::string ssp = optional ? std::format("&_ssp_{0}_{1}", cname, mname) : "nullptr";
-            os << std::format("    {{ \"{}\", {}, {}, false, offsetof({}, {}), {}, {}, {} }},\n",
+            std::string ops = optional
+                ? std::format("{{ &_isp_{0}_{1}, &_ssp_{0}_{1} }}", cname, mname)
+                : "{}";
+            os << std::format("    {{ \"{}\", {}, {}, false, offsetof({}, {}), {}, {} }},\n",
                 m->name, eff_tag,
                 optional ? "true" : "false",
                 cname, mname,
                 type_descriptor_ref_for(*m),
-                isp, ssp);
+                ops);
         }
         os << "};\n\n";
     }
