@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -56,7 +57,24 @@ public:
                         errors_.push_back(msg);
                     continue;
                 }
+                // Check EXPORTS restriction of source module
+                const auto& src_mod = *std::find_if(
+                    pr.modules.begin(), pr.modules.end(),
+                    [&](const auto& m){ return m->name == imp.from_module; });
+                bool src_exports_all = src_mod->exports_all;
+                const auto& src_exports = src_mod->exports;
+
                 for (const auto& imported_name : imp.names) {
+                    // Enforce EXPORTS if source module has explicit list
+                    if (!src_exports_all) {
+                        bool exported = std::find(src_exports.begin(), src_exports.end(),
+                                                  imported_name) != src_exports.end();
+                        if (!exported) {
+                            errors_.push_back("'" + imported_name + "' is not exported by module '"
+                                + imp.from_module + "'");
+                            continue;
+                        }
+                    }
                     auto sym = it->second.find(imported_name);
                     if (sym != it->second.end())
                         global_[imported_name] = sym->second;

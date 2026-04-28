@@ -170,7 +170,9 @@
 %type <ImportList>                  ImportsBundle ImportsBundleInt ImportsList
 %type <std::string>                 ImportsElement
 %type <std::monostate>              ImportSelectionOption
-%type <std::monostate>              optExports ExportsDefinition ExportsBody ExportsElement
+%type <std::pair<bool,std::vector<std::string>>> optExports ExportsDefinition
+%type <std::vector<std::string>>    ExportsBody
+%type <std::string>                 ExportsElement
 
 /* Assignments */
 %type <TypeDefPtr>                  DataTypeReference ObjectClass
@@ -332,32 +334,36 @@ ModuleBody:
 	  optExports optImports AssignmentList
 	{
 	    $$ = $3;
-	    if ($$) $$->imports = $2;
+	    if ($$) {
+	        $$->imports = $2;
+	        $$->exports_all = $1.first;
+	        if (!$1.first) $$->exports = std::move($1.second);
+	    }
 	}
 	;
 
 /* ===== Exports ============================================================= */
 
 optExports:
-	  /* empty */      { }
-	| ExportsDefinition { }
+	  /* empty */       { $$ = {true, {}}; }
+	| ExportsDefinition { $$ = $1; }
 	;
 
 ExportsDefinition:
-	  TOK_EXPORTS ExportsBody ';' { }
-	| TOK_EXPORTS TOK_ALL ';'    { }
-	| TOK_EXPORTS ';'            { }
+	  TOK_EXPORTS ExportsBody ';' { $$ = {false, $2}; }
+	| TOK_EXPORTS TOK_ALL ';'    { $$ = {true, {}}; }
+	| TOK_EXPORTS ';'            { $$ = {false, {}}; }
 	;
 
 ExportsBody:
-	  ExportsElement                  { }
-	| ExportsBody ',' ExportsElement  { }
+	  ExportsElement                  { $$.push_back($1); }
+	| ExportsBody ',' ExportsElement  { $$ = $1; $$.push_back($3); }
 	;
 
 ExportsElement:
-	  TypeRefName          { }
-	| TypeRefName '{' '}'  { }
-	| Identifier           { }
+	  TypeRefName          { $$ = $1; }
+	| TypeRefName '{' '}'  { $$ = $1; }
+	| Identifier           { $$ = $1; }
 	;
 
 /* ===== Imports ============================================================= */
