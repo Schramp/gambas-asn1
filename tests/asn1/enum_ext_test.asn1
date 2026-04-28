@@ -1,0 +1,3 @@
+EnumExtTest DEFINITIONS ::= BEGIN
+    Color ::= ENUMERATED { red, green, blue, ..., cyan, magenta }
+END

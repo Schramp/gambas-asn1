@@ -183,7 +183,7 @@ void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("enum class {} : long {{\n", cname);
     long auto_val = 0;
     for (const auto& ev : def.enum_values) {
-        if (ev.name == "...") { auto_val = 0; continue; }  // extension root ends
+        if (ev.name == "...") { continue; }
         long v = static_cast<long>(ev.number.value_or(auto_val));
         os << std::format("    {} = {},\n", to_cpp_name(ev.name), v);
         auto_val = v + 1;
@@ -222,14 +222,13 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
         auto_val = v + 1;
         ++ext_root_count;
     }
-    // Also collect extension values
+    // Also collect extension values (auto-numbering continues from last root value)
     bool past_ext = false;
-    long auto_ext = 0;
     for (const auto& ev : def.enum_values) {
         if (!past_ext) { if (ev.name == "...") past_ext = true; continue; }
-        long v = static_cast<long>(ev.number.value_or(auto_ext));
+        long v = static_cast<long>(ev.number.value_or(auto_val));
         root_values.push_back({v, ev.name});
-        auto_ext = v + 1;
+        auto_val = v + 1;
     }
 
     // value2enum table (sorted by value for binary search)
