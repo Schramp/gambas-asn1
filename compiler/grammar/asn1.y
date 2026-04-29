@@ -761,13 +761,23 @@ DefinedType:
 	  ComplexTypeReference
 	{
 	    auto t = std::make_shared<TypeDef>();
-	    t->body = TypeRef{"", $1};
+	    auto s = $1;
+	    auto dot = s.find('.');
+	    if (dot != std::string::npos && s.find('&') == std::string::npos)
+	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1)};
+	    else
+	        t->body = TypeRef{"", s};
 	    $$ = t;
 	}
 	| ComplexTypeReference '{' ActualParameterList '}'
 	{
 	    auto t = std::make_shared<TypeDef>();
-	    t->body = TypeRef{"", $1};
+	    auto s = $1;
+	    auto dot = s.find('.');
+	    if (dot != std::string::npos && s.find('&') == std::string::npos)
+	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1)};
+	    else
+	        t->body = TypeRef{"", s};
 	    $$ = t;
 	}
 	;

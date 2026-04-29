@@ -111,6 +111,13 @@ public:
 
     // Fully resolve a TypeRef chain to the base TypeDef (follows aliases)
     ast::TypeDefPtr resolve_ref(const ast::TypeRef& ref) const {
+        // Qualified ref: look up directly in the named module's symbol table
+        if (!ref.module_name.empty()) {
+            auto mit = module_symbols_.find(ref.module_name);
+            if (mit == module_symbols_.end()) return nullptr;
+            auto sit = mit->second.find(ref.type_name);
+            return sit != mit->second.end() ? sit->second : nullptr;
+        }
         auto name = ref.type_name;
         for (int depth = 0; depth < 64; ++depth) {
             auto it = global_.find(name);
@@ -133,6 +140,14 @@ private:
                     if (vis.find(tr->type_name) == vis.end()) {
                         errors_.push_back("'" + tr->type_name + "' used in module '"
                             + mod_name + "' is not defined or imported");
+                    }
+                }
+                // Qualified ref (ModuleA.TypeFoo): verify module exists
+                if (!tr->module_name.empty()) {
+                    if (module_symbols_.find(tr->module_name) == module_symbols_.end() &&
+                        !ignore_missing_modules_) {
+                        errors_.push_back("qualified reference '" + tr->module_name + "."
+                            + tr->type_name + "': module '" + tr->module_name + "' not found");
                     }
                 }
             }
