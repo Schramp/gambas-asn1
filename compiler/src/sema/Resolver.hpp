@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <stdexcept>
 #include "../ast/Module.hpp"
@@ -13,9 +14,11 @@ namespace asn1::sema {
 using SymbolTable = std::unordered_map<std::string, ast::TypeDefPtr>;
 
 class Resolver {
-    // Per-module export tables: module_name -> set of exported names
+    // Per-module symbol tables: module_name -> all definitions in that module
     std::unordered_map<std::string, SymbolTable> module_symbols_;
-    // Flat global table after import resolution
+    // Per-module visible names: own symbols + explicitly imported names
+    std::unordered_map<std::string, std::unordered_set<std::string>> module_visible_;
+    // Flat global table for codegen lookups (all resolvable symbols)
     SymbolTable global_;
 
     bool ignore_missing_modules_{false};
@@ -38,12 +41,17 @@ public:
         }
     }
 
-    // Phase 2: resolve cross-module imports (populate global_ with everything)
+    // Phase 2: resolve cross-module imports
+    // Builds module_visible_ (scoped) and global_ (for codegen)
     void resolve_imports(const ast::ParseResult& pr) {
         for (const auto& mod : pr.modules) {
+            auto& vis = module_visible_[mod->name];
+
             // Every module can see its own symbols
-            for (auto& [name, def] : module_symbols_[mod->name])
+            for (auto& [name, def] : module_symbols_[mod->name]) {
                 global_[name] = def;
+                vis.insert(name);
+            }
 
             // Bring in imports
             for (const auto& imp : mod->imports) {
@@ -76,21 +84,26 @@ public:
                         }
                     }
                     auto sym = it->second.find(imported_name);
-                    if (sym != it->second.end())
+                    if (sym != it->second.end()) {
                         global_[imported_name] = sym->second;
+                        vis.insert(imported_name);
+                    }
                 }
             }
         }
     }
 
-    // Phase 3: walk all TypeDef trees and resolve A1TC_REFERENCE nodes
+    // Phase 3: check TypeRefs used in each module are visible there,
+    // then walk all TypeDef trees.
+    // Visibility check is skipped when ignore_missing_modules_ is set because
+    // we cannot determine which names come from unresolved imports.
     void resolve_types(const ast::ParseResult& pr) {
         for (const auto& mod : pr.modules)
             for (const auto& def : mod->assignments)
-                resolve_def(def);
+                check_and_resolve(def, mod->name);
     }
 
-    // Look up a type by name (returns nullptr if not found)
+    // Look up a type by name in global table (returns nullptr if not found)
     ast::TypeDefPtr lookup(const std::string& name) const {
         auto it = global_.find(name);
         return it != global_.end() ? it->second : nullptr;
@@ -110,16 +123,28 @@ public:
     }
 
 private:
-    void resolve_def(const ast::TypeDefPtr& def) {
+    void check_and_resolve(const ast::TypeDefPtr& def, const std::string& mod_name) {
         if (!def) return;
-        // Resolve SEQUENCE/SET/CHOICE members
+        // Check unqualified TypeRef visibility (only when all modules are available)
+        if (!ignore_missing_modules_) {
+            if (auto* tr = std::get_if<ast::TypeRef>(&def->body)) {
+                if (tr->module_name.empty() && !tr->type_name.empty()) {
+                    auto& vis = module_visible_[mod_name];
+                    if (vis.find(tr->type_name) == vis.end()) {
+                        errors_.push_back("'" + tr->type_name + "' used in module '"
+                            + mod_name + "' is not defined or imported");
+                    }
+                }
+            }
+        }
+        // Recurse into SEQUENCE/SET/CHOICE members
         for (auto& member : def->members)
-            resolve_def(member);
-        // Resolve SEQUENCE OF / SET OF element
+            check_and_resolve(member, mod_name);
+        // Recurse into SEQUENCE OF / SET OF element
         if (auto* sof = std::get_if<ast::SequenceOfType>(&def->body))
-            resolve_def(sof->element);
+            check_and_resolve(sof->element, mod_name);
         if (auto* sof = std::get_if<ast::SetOfType>(&def->body))
-            resolve_def(sof->element);
+            check_and_resolve(sof->element, mod_name);
     }
 };
 
