@@ -17,13 +17,15 @@ namespace fs = std::filesystem;
 
 static void usage(const char* prog) {
     std::cerr << "Usage: " << prog
-              << " [-o outdir] [-fignore-missing-modules] file.asn1 [file2.asn1 ...]\n";
+              << " [-o outdir] [-fignore-missing-modules] [-fallow-newer-modules]"
+                 " file.asn1 [file2.asn1 ...]\n";
     std::exit(1);
 }
 
 int main(int argc, char** argv) {
     std::string out_dir = "generated";
     bool ignore_missing_modules = false;
+    bool allow_newer_modules = false;
     std::vector<std::string> input_files;
 
     for (int i = 1; i < argc; ++i) {
@@ -32,6 +34,8 @@ int main(int argc, char** argv) {
             out_dir = argv[++i];
         } else if (arg == "-fignore-missing-modules") {
             ignore_missing_modules = true;
+        } else if (arg == "-fallow-newer-modules") {
+            allow_newer_modules = true;
         } else if (arg[0] == '-') {
             usage(argv[0]);
         } else {
@@ -69,6 +73,7 @@ int main(int argc, char** argv) {
     // Semantic analysis
     asn1::sema::Resolver resolver;
     resolver.set_ignore_missing_modules(ignore_missing_modules);
+    resolver.set_allow_newer_modules(allow_newer_modules);
     resolver.collect(pr);
     resolver.resolve_imports(pr);
     resolver.resolve_types(pr);

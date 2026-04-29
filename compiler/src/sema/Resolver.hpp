@@ -67,11 +67,13 @@ class Resolver {
     SymbolTable global_;
 
     bool ignore_missing_modules_{false};
+    bool allow_newer_modules_{false};
     std::vector<std::string> errors_;
     std::vector<std::string> warnings_;
 
 public:
     void set_ignore_missing_modules(bool v) { ignore_missing_modules_ = v; }
+    void set_allow_newer_modules(bool v)    { allow_newer_modules_ = v; }
     const std::vector<std::string>& errors()   const { return errors_; }
     const std::vector<std::string>& warnings() const { return warnings_; }
 
@@ -119,7 +121,7 @@ public:
                     bool ok = oids_match(imp.module_oid, src_mod->oid);
                     if (!ok) {
                         using VP = ast::ImportVersionPolicy;
-                        if (imp.version_policy == VP::Successors) {
+                        if (imp.version_policy == VP::Successors || allow_newer_modules_) {
                             // Accept if all arcs match except last, and last arc of
                             // actual module is >= last arc of import
                             ok = oids_match_successors(imp.module_oid, src_mod->oid);
