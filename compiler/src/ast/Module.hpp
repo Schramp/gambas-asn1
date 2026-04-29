@@ -11,9 +11,12 @@ namespace asn1::ast {
 
 enum class TagDefault { Explicit, Implicit, Automatic };
 
+enum class ImportVersionPolicy { Exact, Successors, Descendants };
+
 struct ImportList {
     std::string from_module;
     OidValue    module_oid;     // may be empty
+    ImportVersionPolicy version_policy{ImportVersionPolicy::Exact};
     std::vector<std::string> names;
 };
 

@@ -169,7 +169,7 @@
 %type <std::vector<ImportList>>     optImports ImportsDefinition optImportsBundleSet ImportsBundleSet
 %type <ImportList>                  ImportsBundle ImportsBundleInt ImportsList
 %type <std::string>                 ImportsElement
-%type <std::monostate>              ImportSelectionOption
+%type <ast::ImportVersionPolicy>    ImportSelectionOption
 %type <std::pair<bool,std::vector<std::string>>> optExports ExportsDefinition
 %type <std::vector<std::string>>    ExportsBody
 %type <std::string>                 ExportsElement
@@ -396,7 +396,7 @@ AssignedIdentifier:
 	;
 
 ImportsBundle:
-	  ImportsBundleInt ImportSelectionOption { $$ = $1; }
+	  ImportsBundleInt ImportSelectionOption { $$ = $1; $$.version_policy = $2; }
 	| ImportsBundleInt                       { $$ = $1; }
 	;
 
@@ -423,8 +423,8 @@ ImportsElement:
 	;
 
 ImportSelectionOption:
-	  TOK_WITH TOK_SUCCESSORS  { }
-	| TOK_WITH TOK_DESCENDANTS { }
+	  TOK_WITH TOK_SUCCESSORS  { $$ = ast::ImportVersionPolicy::Successors; }
+	| TOK_WITH TOK_DESCENDANTS { $$ = ast::ImportVersionPolicy::Descendants; }
 	;
 
 /* ===== Assignments ========================================================= */

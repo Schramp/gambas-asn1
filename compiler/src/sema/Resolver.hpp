@@ -13,6 +13,51 @@ namespace asn1::sema {
 // SymbolTable maps type_name -> TypeDefPtr
 using SymbolTable = std::unordered_map<std::string, ast::TypeDefPtr>;
 
+// Compare two OID arcs: match if both have numbers (compare numerically),
+// or both are name-only (compare by name). Mixed = mismatch.
+inline bool arcs_match(const ast::OidValue::Arc& a, const ast::OidValue::Arc& b) {
+    bool a_num = a.number >= 0, b_num = b.number >= 0;
+    if (a_num && b_num)   return a.number == b.number;
+    if (!a_num && !b_num) return a.name == b.name;
+    return false; // one has number, other doesn't — treat as mismatch
+}
+
+inline bool oids_match(const ast::OidValue& a, const ast::OidValue& b) {
+    if (a.arcs.size() != b.arcs.size()) return false;
+    for (std::size_t i = 0; i < a.arcs.size(); ++i)
+        if (!arcs_match(a.arcs[i], b.arcs[i])) return false;
+    return true;
+}
+
+// WITH SUCCESSORS: same length, all arcs match except last which must be >=
+inline bool oids_match_successors(const ast::OidValue& imp, const ast::OidValue& mod) {
+    if (imp.arcs.size() != mod.arcs.size() || imp.arcs.empty()) return false;
+    for (std::size_t i = 0; i + 1 < imp.arcs.size(); ++i)
+        if (!arcs_match(imp.arcs[i], mod.arcs[i])) return false;
+    const auto& ia = imp.arcs.back();
+    const auto& ma = mod.arcs.back();
+    if (ia.number >= 0 && ma.number >= 0) return ma.number >= ia.number;
+    return ia.name == ma.name;
+}
+
+// WITH DESCENDANTS: mod OID starts with imp OID prefix (mod may be longer)
+inline bool oids_match_descendants(const ast::OidValue& imp, const ast::OidValue& mod) {
+    if (imp.arcs.size() > mod.arcs.size()) return false;
+    for (std::size_t i = 0; i < imp.arcs.size(); ++i)
+        if (!arcs_match(imp.arcs[i], mod.arcs[i])) return false;
+    return true;
+}
+
+inline std::string oid_to_string(const ast::OidValue& oid) {
+    std::string s = "{";
+    for (const auto& arc : oid.arcs) {
+        s += " ";
+        if (arc.number >= 0) s += std::to_string(arc.number);
+        else s += arc.name;
+    }
+    return s + " }";
+}
+
 class Resolver {
     // Per-module symbol tables: module_name -> all definitions in that module
     std::unordered_map<std::string, SymbolTable> module_symbols_;
@@ -65,10 +110,35 @@ public:
                         errors_.push_back(msg);
                     continue;
                 }
-                // Check EXPORTS restriction of source module
+                // If import specifies an OID, verify it matches the source module's OID
                 const auto& src_mod = *std::find_if(
                     pr.modules.begin(), pr.modules.end(),
                     [&](const auto& m){ return m->name == imp.from_module; });
+
+                if (!imp.module_oid.arcs.empty() && !src_mod->oid.arcs.empty()) {
+                    bool ok = oids_match(imp.module_oid, src_mod->oid);
+                    if (!ok) {
+                        using VP = ast::ImportVersionPolicy;
+                        if (imp.version_policy == VP::Successors) {
+                            // Accept if all arcs match except last, and last arc of
+                            // actual module is >= last arc of import
+                            ok = oids_match_successors(imp.module_oid, src_mod->oid);
+                        } else if (imp.version_policy == VP::Descendants) {
+                            // Accept if actual OID starts with import OID prefix
+                            ok = oids_match_descendants(imp.module_oid, src_mod->oid);
+                        }
+                    }
+                    if (!ok) {
+                        errors_.push_back("module '" + imp.from_module
+                            + "' OID mismatch: import specifies "
+                            + oid_to_string(imp.module_oid)
+                            + " but module defines "
+                            + oid_to_string(src_mod->oid));
+                        continue;
+                    }
+                }
+
+                // Check EXPORTS restriction of source module
                 bool src_exports_all = src_mod->exports_all;
                 const auto& src_exports = src_mod->exports;
 
