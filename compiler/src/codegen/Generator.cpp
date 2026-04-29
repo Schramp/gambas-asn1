@@ -703,8 +703,21 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
 // Top-level emit_hpp / emit_cpp dispatch
 // ---------------------------------------------------------------------------
 
-void Generator::emit_hpp(const ast::TypeDef& def, std::ostream& os) {
+void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::ostream& os) {
     std::string cname = to_cpp_name(def.name);
+
+    // Module header comment with OID if present
+    os << "// Module: " << mod.name;
+    if (!mod.oid.arcs.empty()) {
+        os << " {";
+        for (const auto& arc : mod.oid.arcs) {
+            os << " ";
+            if (arc.number >= 0) os << arc.number;
+            else os << arc.name;
+        }
+        os << " }";
+    }
+    os << "\n";
 
     os << "#pragma once\n";
     os << "#include <optional>\n";
@@ -936,14 +949,14 @@ void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
 // Per-type file writer
 // ---------------------------------------------------------------------------
 
-void Generator::generate_type(const ast::TypeDef& def, const std::string& /*module_name*/) {
+void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
     if (!is_type_assignment(def)) return;
 
     std::string cname = to_cpp_name(def.name);
 
     {
         std::ofstream hpp(out_dir_ / (cname + ".hpp"));
-        emit_hpp(def, hpp);
+        emit_hpp(def, mod, hpp);
     }
 
     auto bt_is = [&](ast::BuiltinType t) {

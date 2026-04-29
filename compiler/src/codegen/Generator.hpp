@@ -56,12 +56,12 @@ public:
         for (const auto& mod : pr.modules)
             for (const auto& def : mod->assignments)
                 if (!def->name.empty() && !def->is_extension_marker)
-                    generate_type(*def, mod->name);
+                    generate_type(*def, *mod);
     }
 
 private:
-    void generate_type(const ast::TypeDef& def, const std::string& module_name);
-    void emit_hpp(const ast::TypeDef& def, std::ostream& os);
+    void generate_type(const ast::TypeDef& def, const ast::Module& mod);
+    void emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::ostream& os);
     void emit_cpp(const ast::TypeDef& def, std::ostream& os);
 
     void emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os);
