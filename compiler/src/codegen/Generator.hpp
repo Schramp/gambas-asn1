@@ -23,12 +23,8 @@ namespace fs = std::filesystem;
 // "My-Type" -> "MyType"
 inline std::string to_cpp_name(std::string_view s) {
     std::string out;
-    bool upper_next = false;
-    for (char c : s) {
-        if (c == '-') { upper_next = true; continue; }
-        if (upper_next) { out += (char)std::toupper(c); upper_next = false; }
-        else out += c;
-    }
+    for (char c : s)
+        out += (c == '-') ? '_' : c;
     return out;
 }
 
