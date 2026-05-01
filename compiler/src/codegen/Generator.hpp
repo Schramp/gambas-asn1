@@ -82,14 +82,18 @@ public:
     void generate(const ast::ParseResult& pr) {
         fs::create_directories(out_dir_);
 
-        // First pass: detect type-name collisions across modules
+        // First pass: detect type-name collisions across modules.
+        // Compare on C++ names (hyphens stripped) so that ASN.1 types that differ
+        // only in hyphenation (e.g. "Network-Identifier" vs "NetworkIdentifier")
+        // are correctly treated as collisions.
         std::unordered_map<std::string, std::string> first_module;
         for (const auto& mod : pr.modules)
             for (const auto& def : mod->assignments)
                 if (!def->name.empty() && !def->is_extension_marker) {
-                    auto [it, inserted] = first_module.emplace(def->name, mod->name);
+                    auto cpp = to_cpp_name(def->name);
+                    auto [it, inserted] = first_module.emplace(cpp, mod->name);
                     if (!inserted && it->second != mod->name)
-                        collision_types_.insert(def->name);
+                        collision_types_.insert(cpp);
                 }
 
         for (const auto& mod : pr.modules) {
@@ -107,27 +111,30 @@ public:
     // Returns the C++ name to use for a type, prefixing with module when colliding.
     std::string effective_cpp_name(const std::string& asn_name,
                                    const std::string& mod_name) const {
-        if (!collision_types_.count(asn_name))
-            return to_cpp_name(asn_name);
-        return to_cpp_name(mod_name) + to_cpp_name(asn_name);
+        auto cname = to_cpp_name(asn_name);
+        if (!collision_types_.count(cname))
+            return cname;
+        return to_cpp_name(mod_name) + cname;
     }
 
     // Returns the C++ name for a TypeRef encountered in `from_module`.
     std::string cpp_name_for_ref(const std::string& type_name,
                                  const std::string& from_module) const {
-        if (!collision_types_.count(type_name))
-            return to_cpp_name(type_name);
+        auto cname = to_cpp_name(type_name);
+        if (!collision_types_.count(cname))
+            return cname;
         std::string def_mod = resolver_.module_of(type_name, from_module);
-        if (def_mod.empty()) return to_cpp_name(type_name);
-        return to_cpp_name(def_mod) + to_cpp_name(type_name);
+        if (def_mod.empty()) return cname;
+        return to_cpp_name(def_mod) + cname;
     }
 
     // Returns the C++ name for a fully qualified TypeRef.
     // When module_name is set and the type is a collision type, uses module_name
     // directly instead of resolving through from_module imports.
     std::string cpp_name_for_typeref(const ast::TypeRef& tr) const {
-        if (!tr.module_name.empty() && collision_types_.count(tr.type_name))
-            return effective_cpp_name(tr.type_name, tr.module_name);
+        auto cname = to_cpp_name(tr.type_name);
+        if (!tr.module_name.empty() && collision_types_.count(cname))
+            return to_cpp_name(tr.module_name) + cname;
         return cpp_name_for_ref(tr.type_name, current_module_);
     }
 

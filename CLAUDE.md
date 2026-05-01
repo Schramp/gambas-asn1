@@ -2,6 +2,47 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## XER output fidelity TODO (vs asn1c reference)
+
+Cross-validated against asn1c on `anontestdata/pdu-00000001.etsi` (2850 PDUs).
+Each step: `ctest --test-dir build/tests` (10/10) must stay green.
+After codegen steps: `make regen && make lib` in `examples/sample.source.ETSI-LI-PS-PDU/`.
+After runtime steps: rebuild `libasn1cpp_runtime` + `nested-decoder`.
+Regression check: `./nested-decoder <file> 2>&1 | grep "Decoded"` must show `2850 outer PS-PDUs, 2850 with inner EncryptedPayload`.
+
+- [ ] **XER-1 — Preserve ASN.1 member names (hyphens) in XER element tags**
+  `MemberDescriptor::name` stores C++-converted name (`operatorIdentifier`) instead of
+  original ASN.1 name (`operator-Identifier`). XER spec requires original name.
+  Fix: store original ASN.1 name in `mbr.name`; introduce separate C++ field name
+  for struct member access. Codegen change only (no runtime logic change).
+  Test: XER output of `HI2OperationsIRIParameters` must have `<operator-Identifier>`.
+
+- [ ] **XER-2 — XER element name for collision types uses struct name not ASN.1 name**
+  `<LIPSPDUIRIPayload>` instead of `<IRIPayload>`, `<HI2OperationsPartyInformation>`
+  instead of `<PartyInformation>`. TypeDescriptor::name carries the C++ struct name;
+  should carry original ASN.1 type name.
+  Fix: store original ASN.1 name in `asn_DEF_<T>.name`; C++ struct name lives only
+  in generated code. Codegen + runtime (XER encoder uses `def.name` for element tag).
+  Test: XER output must have `<IRIPayload>` and `<PartyInformation>`.
+
+- [ ] **XER-3 — Rebuild library after inline ENUMERATED fix**
+  `iRIversion`, `intercepted-Call-Direct`, `nature-Of-The-intercepted-call` missing
+  from XER output. Inline ENUMERATED `type_descriptor` was `nullptr` (now fixed in
+  codegen). Needs `make lib` to take effect.
+  Test: XER output must have `<iRIversion><lastVersion/></iRIversion>`.
+
+- [ ] **XER-4 — Decode optional CHOICE members nested inside SEQUENCE members**
+  `<network-Element-Identifier><e164-Format>…</e164-Format></network-Element-Identifier>`
+  decoded by C as nested CHOICE; C++ emits flat OCTET STRING.
+  Investigate `NetworkElementIdentifier` definition — likely a CHOICE that is being
+  decoded as OCTET STRING because the member descriptor points to wrong/builtin type.
+
+- [ ] **XER-5 — Decode missing optional fields in PartyInformation**
+  `<imei>`, `<imsi>`, `<msISDN>`, `<calledPartyNumber>`, `<callingPartyNumber>`,
+  `<party-Qualifier>`, `<winterSummerIndication>` decoded by C, absent in C++.
+  Likely the same issue as XER-3 (extension members after `...` not decoded) or
+  optional members with nullptr descriptors. Investigate after XER-3 is done.
+
 ## Build
 
 ```bash
