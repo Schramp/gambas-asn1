@@ -10,38 +10,32 @@ After codegen steps: `make regen && make lib` in `examples/sample.source.ETSI-LI
 After runtime steps: rebuild `libasn1cpp_runtime` + `nested-decoder`.
 Regression check: `./nested-decoder <file> 2>&1 | grep "Decoded"` must show `2850 outer PS-PDUs, 2850 with inner EncryptedPayload`.
 
-- [ ] **XER-1 — Preserve ASN.1 member names (hyphens) in XER element tags**
-  `MemberDescriptor::name` stores C++-converted name (`operatorIdentifier`) instead of
-  original ASN.1 name (`operator-Identifier`). XER spec requires original name.
-  Fix: store original ASN.1 name in `mbr.name`; introduce separate C++ field name
-  for struct member access. Codegen change only (no runtime logic change).
-  Test: XER output of `HI2OperationsIRIParameters` must have `<operator-Identifier>`.
+- [x] **XER-1 — Preserve ASN.1 member names (hyphens) in XER element tags**
+  `MemberDescriptor::name` already stores original ASN.1 name via `m->name` in codegen.
+  `Network_Identifier` members emit `"operator-Identifier"` correctly. No fix needed.
 
-- [ ] **XER-2 — XER element name for collision types uses struct name not ASN.1 name**
-  `<LIPSPDUIRIPayload>` instead of `<IRIPayload>`, `<HI2OperationsPartyInformation>`
-  instead of `<PartyInformation>`. TypeDescriptor::name carries the C++ struct name;
-  should carry original ASN.1 type name.
-  Fix: store original ASN.1 name in `asn_DEF_<T>.name`; C++ struct name lives only
-  in generated code. Codegen + runtime (XER encoder uses `def.name` for element tag).
-  Test: XER output must have `<IRIPayload>` and `<PartyInformation>`.
+- [x] **XER-2 — XER element name for collision types uses struct name not ASN.1 name**
+  Fixed: all `TypeDescriptor::name` emitters changed to use `def.name` (original ASN.1
+  name) instead of `cname` (C++ struct name). `asn_DEF_LI_PS_PDUIRIPayload.name` now
+  `"IRIPayload"`, `asn_DEF_HI2OperationsPartyInformation.name` now `"PartyInformation"`.
+  Also: `to_cpp_name` changed from camelCase to underscore substitution; `collision_types_`
+  keyed on post-conversion names; `PSPDU` stale files removed by `make clean && make regen`.
 
-- [ ] **XER-3 — Rebuild library after inline ENUMERATED fix**
-  `iRIversion`, `intercepted-Call-Direct`, `nature-Of-The-intercepted-call` missing
-  from XER output. Inline ENUMERATED `type_descriptor` was `nullptr` (now fixed in
-  codegen). Needs `make lib` to take effect.
-  Test: XER output must have `<iRIversion><lastVersion/></iRIversion>`.
+- [x] **XER-3 — Inline ENUMERATED type_descriptor was nullptr**
+  Fixed: `BT::Enumerated` case in `type_descriptor_ref_for` now falls through to
+  synthetic-name path instead of returning `"nullptr"`. Library rebuilt.
 
-- [ ] **XER-4 — Decode optional CHOICE members nested inside SEQUENCE members**
-  `<network-Element-Identifier><e164-Format>…</e164-Format></network-Element-Identifier>`
-  decoded by C as nested CHOICE; C++ emits flat OCTET STRING.
-  Investigate `NetworkElementIdentifier` definition — likely a CHOICE that is being
-  decoded as OCTET STRING because the member descriptor points to wrong/builtin type.
+- [x] **XER-4 — Decode optional CHOICE members nested inside SEQUENCE members**
+  Fixed (was already resolved): `Network_Element_Identifier` CHOICE descriptor correctly
+  referenced after collision-resolution + alias-chain fixes; `<e164-Format>` decodes.
 
-- [ ] **XER-5 — Decode missing optional fields in PartyInformation**
-  `<imei>`, `<imsi>`, `<msISDN>`, `<calledPartyNumber>`, `<callingPartyNumber>`,
-  `<party-Qualifier>`, `<winterSummerIndication>` decoded by C, absent in C++.
-  Likely the same issue as XER-3 (extension members after `...` not decoded) or
-  optional members with nullptr descriptors. Investigate after XER-3 is done.
+- [x] **XER-5 — Decode missing optional fields in PartyInformation**
+  Fixed: null-descriptor optional members in `decode_sequence` now peek+skip TLV instead
+  of leaving bytes in stream. All fields (`<imei>`, `<imsi>`, etc.) now present.
+
+**Status: C++ XER output matches asn1c reference (2850/2850 PDUs, content identical).**
+Remaining cosmetic diffs: extra blank lines after XER blocks; separator shows block size
+instead of payload size + zero-padding count. These are not XER spec issues.
 
 ## Build
 

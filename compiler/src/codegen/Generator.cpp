@@ -354,7 +354,7 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // TypeDescriptor
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", cname);
+    os << std::format("    \"{}\",\n", def.name);
     os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Enumerated);
     os << std::format("    &asn_SPC_{},\n", cname);
     os << "    nullptr, nullptr, nullptr, {} /* per_constraints */\n";
@@ -461,7 +461,7 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
     auto range = extract_integer_range(def);
 
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", cname);
+    os << std::format("    \"{}\",\n", def.name);
     os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Integer);
     os << "    nullptr, nullptr, nullptr, nullptr,\n";
     if (range) {
@@ -756,7 +756,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // TypeDescriptor
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", cname);
+    os << std::format("    \"{}\",\n", def.name);
     os << std::format("    asn1::Tag::universal({}, true),\n", tag_num);
     os << "    nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
@@ -900,7 +900,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // TypeDescriptor (CHOICE has no fixed universal tag)
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", cname);
+    os << std::format("    \"{}\",\n", def.name);
     os << "    asn1::Tag{asn1::TagClass::Context, 0, false}, /* placeholder — CHOICE tag is transparent */\n";
     os << "    nullptr, nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
@@ -1157,7 +1157,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // TypeDescriptor
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", cname);
+    os << std::format("    \"{}\",\n", def.name);
     os << std::format("    asn1::Tag::universal({}, true),\n", asn1::UniversalTag::Sequence);
     os << "    nullptr, nullptr, nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
