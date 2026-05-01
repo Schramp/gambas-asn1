@@ -1,5 +1,7 @@
+#include <cstdio>
 #include <vector>
 #include <asn1cpp/codec/BerCodec.hpp>
+#include <asn1cpp/codec/Debug.hpp>
 #include <asn1cpp/types/Boolean.hpp>
 #include <asn1cpp/types/OctetString.hpp>
 #include <asn1cpp/types/Integer.hpp>
@@ -335,9 +337,20 @@ DecodeResult BerCodec::decode_sequence(BerReader& r, const TypeDescriptor& def, 
     const auto& spec = *def.sequence_spec;
     for (int i = 0; i < spec.count; ++i) {
         const auto& mbr = spec.members[i];
-        if (!mbr.type_descriptor) continue;
+        if (!mbr.type_descriptor) {
+            // No type descriptor — skip TLV in stream if optional member is present.
+            if (mbr.optional && mbr.tag.cls == TagClass::Context) {
+                Tag pt = inner.peek_tag();
+                if (!inner.at_end() && pt.cls == mbr.tag.cls && pt.number == mbr.tag.number) {
+                    auto skip = inner.read_tlv();
+                    if (!skip) return decode_err(skip.error());
+                }
+            }
+            continue;
+        }
         if (mbr.optional) {
-            bool present = !inner.at_end() && (inner.peek_tag() == mbr.tag);
+            Tag pt = inner.peek_tag();
+            bool present = !inner.at_end() && pt.cls == mbr.tag.cls && pt.number == mbr.tag.number;
             mbr.optional_ops.set_present(dest, present);
             if (!present) continue;
         }
@@ -354,6 +367,10 @@ DecodeResult BerCodec::decode_sequence(BerReader& r, const TypeDescriptor& def, 
             bool is_explicit = mdef.choice_spec != nullptr;
             if (is_explicit) {
                 // EXPLICIT: inner bytes contain the full member encoding (with its own tag).
+                if (debug_flags() & DBG_BER_SEQ)
+                    std::fprintf(stderr, "[SEQ-EXPL] %s.%s outer_tag=cls%d.num%u outer_val[0]=%02x\n",
+                        def.name, mbr.name, (int)outer->tag.cls, outer->tag.number,
+                        outer->value.empty() ? 0xff : (unsigned)outer->value[0]);
                 BerReader inner2 = inner.sub(outer->value);
                 BerDecodeStream ms{inner2};
                 auto ok = decode(ms, mdef, mptr);
@@ -394,14 +411,52 @@ DecodeResult BerCodec::decode_choice(BerReader& r, const TypeDescriptor& def, vo
     for (int i = 0; i < spec.count; ++i) {
         const auto& alt = spec.alternatives[i];
         if (!alt.type_descriptor) continue;
-        if (peek != alt.tag) continue;
+        if (peek.cls != alt.tag.cls || peek.number != alt.tag.number) continue;
         void* mptr = static_cast<char*>(dest) + alt.offset;
         const auto& mdef = *static_cast<const TypeDescriptor*>(alt.type_descriptor);
-        BerDecodeStream ms{r};
-        auto ok = decode(ms, mdef, mptr);
+        DecodeResult ok = decode_ok();
+        if (alt.tag.cls == TagClass::Context) {
+            // Context-tagged alternative: read the context TLV first.
+            auto outer = r.read_tlv();
+            if (!outer) return decode_err(outer.error());
+            bool is_explicit = mdef.choice_spec != nullptr;
+            if (is_explicit) {
+                // EXPLICIT: outer value bytes contain the full alternative encoding.
+                BerReader inner2 = r.sub(outer->value);
+                BerDecodeStream ms{inner2};
+                ok = decode(ms, mdef, mptr);
+            } else {
+                // IMPLICIT: prepend natural type tag so leaf decoders see the right tag.
+                std::vector<uint8_t> retagged;
+                { BerWriter bw{retagged}; bw.write_tag(mdef.tag); bw.write_length(outer->value.size()); }
+                retagged.insert(retagged.end(), outer->value.begin(), outer->value.end());
+                BerReader retag_reader{retagged};
+                BerDecodeStream ms{retag_reader};
+                ok = decode(ms, mdef, mptr);
+            }
+        } else {
+            BerDecodeStream ms{r};
+            ok = decode(ms, mdef, mptr);
+        }
         if (!ok) return ok;
         *static_cast<int*>(dest) = i + 1;
         return decode_ok();
+    }
+    // Extensible CHOICE: unknown extension alternative — skip TLV, leave present=NOTHING.
+    if (spec.ext_at >= 0) {
+        if (debug_flags() & DBG_BER_CHOICE)
+            std::fprintf(stderr, "[CHOICE-EXT-SKIP] %s: unknown extension cls=%d num=%u — skipping\n",
+                def.name, (int)peek.cls, peek.number);
+        auto skipped = r.read_tlv();
+        if (!skipped) return decode_err(skipped.error());
+        return decode_ok();
+    }
+    if (debug_flags() & DBG_BER_CHOICE) {
+        std::fprintf(stderr, "[CHOICE-MISS] %s: peek cls=%d num=%u; alternatives:",
+            def.name, (int)peek.cls, peek.number);
+        for (int i = 0; i < spec.count; ++i)
+            std::fprintf(stderr, " [%d]%u", (int)spec.alternatives[i].tag.cls, spec.alternatives[i].tag.number);
+        std::fprintf(stderr, "\n");
     }
     return decode_err(DecodeError(std::string("BerCodec: no matching CHOICE alternative for ") + def.name));
 }
