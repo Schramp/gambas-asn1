@@ -293,12 +293,6 @@ void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("extern const asn1::EnumSpec     asn_SPC_{};\n", cname);
     os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n\n", cname);
 
-    // BerTraits declaration
-    os << std::format("template<> struct asn1::BerTraits<{}> {{\n", cname);
-    os << "    static asn1::Tag tag();\n";
-    os << std::format("    static void encode(asn1::BerWriter&, const {}&);\n", cname);
-    os << std::format("    static asn1::Expected<{}, asn1::DecodeError> decode(asn1::BerReader&);\n", cname);
-    os << "};\n";
 }
 
 void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
@@ -360,24 +354,6 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "    nullptr, nullptr, nullptr, {} /* per_constraints */\n";
     os << "};\n\n";
 
-    // BerTraits bodies — thin wrappers; all logic lives in BerCodec
-    os << std::format("asn1::Tag asn1::BerTraits<{}>::tag() {{\n", cname);
-    os << std::format("    return asn_DEF_{}.tag;\n", cname);
-    os << "}\n\n";
-
-    os << std::format("void asn1::BerTraits<{}>::encode(asn1::BerWriter& w, const {}& v) {{\n", cname, cname);
-    os << "    asn1::BerEncodeStream s{w};\n";
-    os << std::format("    asn1::BerCodec::instance().encode(s, asn_DEF_{}, &v);\n", cname);
-    os << "}\n\n";
-
-    os << std::format("asn1::Expected<{0}, asn1::DecodeError>\n"
-                      "asn1::BerTraits<{0}>::decode(asn1::BerReader& r) {{\n", cname);
-    os << std::format("    {} result{{}};\n", cname);
-    os << "    asn1::BerDecodeStream s{r};\n";
-    os << std::format("    auto ok = asn1::BerCodec::instance().decode(s, asn_DEF_{}, &result);\n", cname);
-    os << std::format("    if (!ok) return asn1::make_unexpected<{}, asn1::DecodeError>(ok.error());\n", cname);
-    os << "    return result;\n";
-    os << "}\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -610,12 +586,6 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("extern const asn1::SequenceSpec     asn_SPC_{};\n", cname);
     os << std::format("extern const asn1::TypeDescriptor   asn_DEF_{};\n\n", cname);
 
-    // BerTraits declaration
-    os << std::format("template<> struct asn1::BerTraits<{}> {{\n", cname);
-    os << std::format("    static asn1::Tag tag() {{ return asn1::Tag::universal({}, true); }}\n", tag_num);
-    os << std::format("    static void encode(asn1::BerWriter&, const {}&);\n", cname);
-    os << std::format("    static asn1::Expected<{}, asn1::DecodeError> decode(asn1::BerReader&);\n", cname);
-    os << "};\n";
 }
 
 void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
@@ -763,20 +733,6 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "    nullptr, nullptr, {} /* per_constraints */\n";
     os << "};\n\n";
 
-    // BerTraits encode — thin wrapper; BerCodec::encode_sequence handles all members.
-    os << std::format("void asn1::BerTraits<{}>::encode(asn1::BerWriter& w, const {}& v) {{\n", cname, cname);
-    os << "    asn1::BerEncodeStream s{w};\n";
-    os << std::format("    asn1::BerCodec::instance().encode(s, asn_DEF_{}, &v);\n", cname);
-    os << "}\n\n";
-
-    // BerTraits decode — thin wrapper; BerCodec::decode_sequence handles all members.
-    os << std::format("asn1::Expected<{0}, asn1::DecodeError>\n"
-                      "asn1::BerTraits<{0}>::decode(asn1::BerReader& r) {{\n", cname);
-    os << std::format("    {} result{{}};\n", cname);
-    os << "    asn1::BerDecodeStream s{r};\n";
-    os << std::format("    auto ok = asn1::BerCodec::instance().decode(s, asn_DEF_{}, &result);\n", cname);
-    os << std::format("    if (!ok) return asn1::make_unexpected<{}, asn1::DecodeError>(ok.error());\n", cname);
-    os << "    return result;\n}\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -849,11 +805,6 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("extern const asn1::ChoiceSpec       asn_SPC_{};\n", cname);
     os << std::format("extern const asn1::TypeDescriptor   asn_DEF_{};\n\n", cname);
 
-    // BerTraits declaration (CHOICE has no universal tag — it's transparent)
-    os << std::format("template<> struct asn1::BerTraits<{}> {{\n", cname);
-    os << std::format("    static void encode(asn1::BerWriter&, const {}&);\n", cname);
-    os << std::format("    static asn1::Expected<{}, asn1::DecodeError> decode(asn1::BerReader&);\n", cname);
-    os << "};\n";
 }
 
 void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
@@ -907,20 +858,6 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "    nullptr, {} /* per_constraints */\n";
     os << "};\n\n";
 
-    // BerTraits encode — delegate to BerCodec generic path
-    os << std::format("void asn1::BerTraits<{}>::encode(asn1::BerWriter& w, const {}& v) {{\n", cname, cname);
-    os << "    asn1::BerEncodeStream s{w};\n";
-    os << std::format("    asn1::BerCodec::instance().encode(s, asn_DEF_{}, &v);\n", cname);
-    os << "}\n\n";
-
-    // BerTraits decode — delegate to BerCodec generic path
-    os << std::format("asn1::Expected<{0}, asn1::DecodeError>\n"
-                      "asn1::BerTraits<{0}>::decode(asn1::BerReader& r) {{\n", cname);
-    os << std::format("    {} result{{}};\n", cname);
-    os << "    asn1::BerDecodeStream s{r};\n";
-    os << std::format("    auto ok = asn1::BerCodec::instance().decode(s, asn_DEF_{}, &result);\n", cname);
-    os << std::format("    if (!ok) return asn1::make_unexpected<{}, asn1::DecodeError>(ok.error());\n", cname);
-    os << "    return result;\n}\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -1350,11 +1287,6 @@ void Generator::emit_stubs_for_unresolved() {
         os << "    asn1::Tag{},\n";
         os << "    nullptr, nullptr, nullptr, nullptr, {}\n";
         os << "};\n\n";
-        os << std::format("template<> struct asn1::BerTraits<{}> {{\n", name);
-        os << std::format("    static asn1::Tag tag() {{ return asn1::Tag{{}}; }}\n");
-        os << std::format("    static void encode(asn1::BerWriter&, const {}&) {{}}\n", name);
-        os << std::format("    static asn1::Expected<{0}, asn1::DecodeError> decode(asn1::BerReader&) {{ return {0}{{}}; }}\n", name);
-        os << "};\n";
     }
 }
 
