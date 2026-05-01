@@ -19,6 +19,28 @@ Run compiler:
 ./build/compiler/asn1cpp <file.asn1> -o <outdir>
 ```
 
+## Runtime debug logging
+
+Set `ASN1CPP_DEBUG` to a hex bitmask before running any binary that links `libasn1cpp_runtime`.
+The value is read once on first call to `asn1::debug_flags()`; no rebuild needed.
+
+| Bit | Flag constant | What it traces |
+|-----|---------------|----------------|
+| `0x01` | `DBG_BER_CHOICE` | CHOICE tag misses — prints type name, peek tag, all alternative tags |
+| `0x02` | `DBG_BER_SEQ` | SEQUENCE EXPLICIT wrap/unwrap — outer tag + first value byte |
+| `0x04` | `DBG_XER` | XER parse / emit (reserved, not yet wired) |
+| `0x08` | `DBG_PER` | PER bit-level ops (reserved, not yet wired) |
+
+```bash
+# Enable CHOICE + SEQUENCE traces:
+ASN1CPP_DEBUG=0x03 ./nested-decoder input.ber
+
+# Enable all:
+ASN1CPP_DEBUG=0xff ./nested-decoder input.ber
+```
+
+Flag definitions and `debug_flags()` live in `runtime/include/asn1cpp/codec/Debug.hpp`.
+
 ## Architecture
 
 ```
