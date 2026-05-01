@@ -1,0 +1,151 @@
+{
+  "$id": "ts_103120_Config_2024_06",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "TargetFormatTypeDefinitions": {
+      "type": "object",
+      "properties": {
+        "config:FormatOwner": {
+          "$ref": "ts_103280_2017_07#/$defs/ShortString"
+        },
+        "config:TargetFormatTypeDefinitionEntries": {
+          "$ref": "#/$defs/TargetFormatTypeDefinitionEntries"
+        }
+      },
+      "required": [
+        "config:FormatOwner",
+        "config:TargetFormatTypeDefinitionEntries"
+      ]
+    },
+    "TargetFormatTypeDefinitionEntries": {
+      "type": "object",
+      "properties": {
+        "config:TargetFormatTypeDefinitionEntry": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TargetFormatTypeDefinitionEntry"
+          }
+        }
+      },
+      "required": []
+    },
+    "TargetFormatTypeDefinitionEntry": {
+      "type": "object",
+      "properties": {
+        "config:FormatName": {
+          "$ref": "ts_103280_2017_07#/$defs/ShortString"
+        },
+        "config:Description": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        },
+        "config:FormatRegex": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        }
+      },
+      "required": [
+        "config:FormatName",
+        "config:Description",
+        "config:FormatRegex"
+      ]
+    },
+    "TargetingConfigurations": {
+      "type": "object",
+      "properties": {
+        "config:TargetingConfiguration": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TargetingConfiguration"
+          }
+        }
+      },
+      "required": []
+    },
+    "TargetingConfiguration": {
+      "type": "object",
+      "properties": {
+        "config:FormatName": {
+          "$ref": "ts_103280_2017_07#/$defs/ShortString"
+        },
+        "config:FormatOwner": {
+          "$ref": "ts_103280_2017_07#/$defs/ShortString"
+        },
+        "config:Guidance": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        },
+        "config:AssociatedLIServiceTypes": {
+          "$ref": "ts_103120_Common_2016_02#/$defs/DictionaryEntries"
+        },
+        "config:AssociatedLDRequestSubtypes": {
+          "$ref": "ts_103120_Common_2016_02#/$defs/DictionaryEntries"
+        },
+        "config:AssociatedLPRequestSubtypes": {
+          "$ref": "ts_103120_Common_2016_02#/$defs/DictionaryEntries"
+        }
+      },
+      "required": [
+        "config:FormatName",
+        "config:FormatOwner"
+      ]
+    },
+    "SupportedLIWorkflowEndpoints": {
+      "type": "object",
+      "properties": {
+        "config:SupportedLIWorkflowEndpoint": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SupportedLIWorkflowEndpoint"
+          }
+        }
+      },
+      "required": []
+    },
+    "SupportedLIWorkflowEndpoint": {
+      "type": "object",
+      "properties": {
+        "config:LIWorkflowEndpoint": {
+          "$ref": "ts_103120_Common_2016_02#/$defs/DictionaryEntry"
+        },
+        "config:Guidance": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        },
+        "config:URL": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        }
+      },
+      "required": [
+        "config:LIWorkflowEndpoint",
+        "config:URL"
+      ]
+    },
+    "SupportedLPWorkflowEndpoints": {
+      "type": "object",
+      "properties": {
+        "config:SupportedLPWorkflowEndpoint": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SupportedLPWorkflowEndpoint"
+          }
+        }
+      },
+      "required": []
+    },
+    "SupportedLPWorkflowEndpoint": {
+      "type": "object",
+      "properties": {
+        "config:LIWorkflowEndpoint": {
+          "$ref": "ts_103120_Common_2016_02#/$defs/DictionaryEntry"
+        },
+        "config:Guidance": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        },
+        "config:URL": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        }
+      },
+      "required": [
+        "config:LIWorkflowEndpoint",
+        "config:URL"
+      ]
+    }
+  }
+}

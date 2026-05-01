@@ -1,0 +1,14 @@
+{
+    "$id": "csp_example_types",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ETSI TS 103 705 Types schema",
+    "description": "JSON schema for ETSI-defined types (see clause 6.1 and Annex A)",
+    "$defs": {
+        "CSPMessagingRecord" : {
+            "allOf" : [{ "$ref" : "urn:etsi:li:103705:type-schema-id:v1.1.1#/$defs/MessagingRecord"}],
+            "properties" : {
+                "CSPMessagingReference" : { "$ref" : "ts_103280_2017_07#/$defs/UUID"}
+            }
+        }
+    }
+}

@@ -1,0 +1,3618 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://uri.etsi.org/02657/v2.4.1#/RetainedData" targetNamespace="http://uri.etsi.org/02657/v2.4.1#/RetainedData" elementFormDefault="qualified">
+    <xsd:annotation>
+        <xsd:documentation xml:lang="en">
+            XSD translated from ASN.1 derived from outcome of TS 102 657 v2.4.1
+        </xsd:documentation>
+    </xsd:annotation>
+    <xsd:simpleType name="GeneralizedTime">
+        <xsd:restriction base="xsd:string">
+            <xsd:pattern value="\d{4}(0[1-9]|1[012])(0[1-9]|[12][0-9]|3[01])([01][0-9]|2[0-3])([0-5][0-9])([0-5][0-9])(.[0-9][0-9]*)?(Z|[\+|\-][0-9]{4})"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="ObjectIdentifier">
+        <xsd:restriction base="xsd:token">
+            <xsd:pattern value="[0-2](\.[1-3]?[0-9](\.\d+)*)?"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:element name="retainedDataMessage" type="RetainedDataMessage"/>
+    <xsd:complexType name="RetainedDataMessage">
+        <xsd:sequence>
+            <xsd:element name="rdHeaderId" type="ObjectIdentifier"/>
+            <xsd:element name="retainedDataHeader" type="RetainedDataHeader"/>
+            <xsd:element name="retainedDataPayload" type="RetainedDataPayload"/>
+            <xsd:element name="retainedDataDigest" type="xsd:hexBinary" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="CSPID">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="RequestType">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="CountryCode">
+        <xsd:annotation>
+            <xsd:documentation xml:lang="en">
+                A country code as per ISO 3166-1 [4]
+            </xsd:documentation>
+        </xsd:annotation>
+        <xsd:restriction base="xsd:string">
+            <xsd:length value="2"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="AuthorisedOrganisationID">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="RequestNumber">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="DeliveryPointHIB">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="RequestPriority">
+        <xsd:restriction base="xsd:hexBinary"/>
+    </xsd:simpleType>
+    <xsd:complexType name="ResponseAcknowledgement">
+        <xsd:choice>
+            <xsd:element name="acknowledgeCompleteResults" type="NULL"/>
+            <xsd:element name="acknowledgePartialResults" type="NULL"/>
+            <xsd:element name="acknowledgePartialResultsNumber" type="xsd:integer"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="CancelMessage" final="#all"/>
+    <xsd:complexType name="CancelAcknowledgement" final="#all"/>
+    <xsd:complexType name="GetResultsMessage" final="#all"/>
+    <xsd:simpleType name="TelephonySubscriberId">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:complexType name="TelephonySubscriberInfo" final="#all"/>
+    <xsd:simpleType name="BillingIdentifier">
+        <xsd:restriction base="xsd:hexBinary"/>
+    </xsd:simpleType>
+    <xsd:complexType name="TelephonyServiceType">
+        <xsd:choice>
+            <xsd:element name="private" type="NULL"/>
+            <xsd:element name="privatePABX" type="NULL"/>
+            <xsd:element name="publicPayphone" type="NULL"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyCommunicationType">
+        <xsd:choice>
+            <xsd:element name="telephonyFixedCS" type="NULL"/>
+            <xsd:element name="telephonyWirelessCS" type="NULL"/>
+            <xsd:element name="sMS" type="NULL"/>
+            <xsd:element name="mMS" type="NULL"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyBearerService">
+        <xsd:choice>
+            <xsd:element name="speech" type="NULL"/>
+            <xsd:element name="data" type="NULL"/>
+            <xsd:element name="fax" type="NULL"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyEventType">
+        <xsd:choice>
+            <xsd:element name="basicEventType" type="BasicEventType"/>
+            <xsd:element name="callConferenceEventType" type="CallConferenceEventType"/>
+            <xsd:element name="callForwardingEventType" type="CallForwardingEventType"/>
+            <xsd:element name="messagingEventType" type="MessagingEventType"/>
+            <xsd:element name="prepayServiceEventType" type="PrepayServiceEventType"/>
+            <xsd:element name="nationalTelephonyEventType" type="NationalTelephonyEventType"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="BasicEventType">
+        <xsd:choice>
+            <xsd:element name="handover" type="NULL"/>
+            <xsd:element name="hold" type="NULL"/>
+            <xsd:element name="retrieve" type="NULL"/>
+            <xsd:element name="suspend" type="NULL"/>
+            <xsd:element name="resume" type="NULL"/>
+            <xsd:element name="ect" type="NULL"/>
+            <xsd:element name="mpty" type="NULL"/>
+            <xsd:element name="mptyHold" type="NULL"/>
+            <xsd:element name="mptyRetrieve" type="NULL"/>
+            <xsd:element name="mptySplit" type="NULL"/>
+            <xsd:element name="uus1" type="NULL"/>
+            <xsd:element name="uus2" type="NULL"/>
+            <xsd:element name="uus3" type="NULL"/>
+            <xsd:element name="serviceSpeech" type="NULL"/>
+            <xsd:element name="serviceFax" type="NULL"/>
+            <xsd:element name="tpyInvoke" type="NULL"/>
+            <xsd:element name="tpyPrivateComm" type="NULL"/>
+            <xsd:element name="serviceActivation" type="NULL"/>
+            <xsd:element name="transit" type="NULL"/>
+            <xsd:element name="mSOriginating" type="NULL"/>
+            <xsd:element name="callForwarding" type="NULL"/>
+            <xsd:element name="mSTerminating" type="NULL"/>
+            <xsd:element name="callAttempt" type="NULL"/>
+            <xsd:element name="callStart" type="NULL"/>
+            <xsd:element name="callEnd" type="NULL"/>
+            <xsd:element name="cliWithheld" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="CallForwardingEventType">
+        <xsd:choice>
+            <xsd:element name="cfuActivation" type="NULL"/>
+            <xsd:element name="cfuModification" type="NULL"/>
+            <xsd:element name="cfuDe-activation" type="NULL"/>
+            <xsd:element name="cfcNoReplyActivation" type="NULL"/>
+            <xsd:element name="cfcNoReplyModification" type="NULL"/>
+            <xsd:element name="cfcNoReplyDe-activation" type="NULL"/>
+            <xsd:element name="cfcBusyActivation" type="NULL"/>
+            <xsd:element name="cfcBusyModification" type="NULL"/>
+            <xsd:element name="cfcBusyDe-activation" type="NULL"/>
+            <xsd:element name="cfcOutOfRangeActivation" type="NULL"/>
+            <xsd:element name="cfcOutOfRangeModification" type="NULL"/>
+            <xsd:element name="cfcOutOfRangeDe-activation" type="NULL"/>
+            <xsd:element name="cfcUnavailableActivation" type="NULL"/>
+            <xsd:element name="cfcUnavailableModification" type="NULL"/>
+            <xsd:element name="cfcUnavailableDe-activation" type="NULL"/>
+            <xsd:element name="cfuFaxActivation" type="NULL"/>
+            <xsd:element name="cfuFaxModification" type="NULL"/>
+            <xsd:element name="cfuFaxDe-activation" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="CallConferenceEventType">
+        <xsd:choice>
+            <xsd:element name="confBeginSeizure" type="NULL"/>
+            <xsd:element name="confAdd" type="NULL"/>
+            <xsd:element name="confSplit" type="NULL"/>
+            <xsd:element name="confIsolate" type="NULL"/>
+            <xsd:element name="confReattach" type="NULL"/>
+            <xsd:element name="confDrop" type="NULL"/>
+            <xsd:element name="confBeginActive" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="MessagingEventType">
+        <xsd:choice>
+            <xsd:element name="mSOriginatingSMSinMSC" type="NULL"/>
+            <xsd:element name="mSTerminatingSMSinMSC" type="NULL"/>
+            <xsd:element name="shortMessageDelivery" type="NULL"/>
+            <xsd:element name="mMMessage" type="NULL"/>
+            <xsd:element name="mMNotification" type="NULL"/>
+            <xsd:element name="mMDeliveryReport" type="NULL"/>
+            <xsd:element name="mMReadReply" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="PrepayServiceEventType">
+        <xsd:choice>
+            <xsd:element name="serviceActivation" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="NationalTelephonyEventType">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyPartyRole">
+        <xsd:choice>
+            <xsd:element name="originating-Party" type="NULL"/>
+            <xsd:element name="terminating-Party" type="NULL"/>
+            <xsd:element name="forwarded-to-Party" type="NULL"/>
+            <xsd:element name="originalCalled" type="NULL"/>
+            <xsd:element name="redirecting" type="NULL"/>
+            <xsd:element name="connected" type="NULL"/>
+            <xsd:element name="userProvidedCalling" type="NULL"/>
+            <xsd:element name="roaming" type="NULL"/>
+            <xsd:element name="translated" type="NULL"/>
+            <xsd:element name="singlePersonalNumber" type="NULL"/>
+            <xsd:element name="smsOriginator" type="NULL"/>
+            <xsd:element name="smsRecipient" type="NULL"/>
+            <xsd:element name="smsOriginatorTrn" type="NULL"/>
+            <xsd:element name="smsRecipientTrn" type="NULL"/>
+            <xsd:element name="mmsOriginator" type="NULL"/>
+            <xsd:element name="mmsRecipient" type="NULL"/>
+            <xsd:element name="mmsOriginatorTrn" type="NULL"/>
+            <xsd:element name="mmsRecipientTrn" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="TrunkGroupIDs">
+        <xsd:sequence>
+            <xsd:element name="incomingTrunkGroupID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="outgoingTrunkGroupID" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="InterOperatorIDs">
+        <xsd:sequence>
+            <xsd:element name="originatingInterOperatorID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="terminatingInterOperatorID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="transitInterOperatorIDList" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="TelephonyDeviceID">
+        <xsd:restriction base="xsd:hexBinary"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="TelephonyNetworkID">
+        <xsd:restriction base="xsd:hexBinary"/>
+    </xsd:simpleType>
+    <xsd:complexType name="MapDatum">
+        <xsd:choice>
+            <xsd:element name="wGS84" type="NULL"/>
+            <xsd:element name="wGS72" type="NULL"/>
+            <xsd:element name="eD50" type="NULL"/>
+            <xsd:element name="rD" type="NULL"/>
+            <xsd:element name="potsdamDatum" type="NULL"/>
+            <xsd:element name="datumAustria" type="NULL"/>
+            <xsd:element name="eTRS89" type="NULL"/>
+            <xsd:element name="nAD27" type="NULL"/>
+            <xsd:element name="oSGB36" type="NULL"/>
+            <xsd:element name="oSNI52" type="NULL"/>
+            <xsd:element name="tM65" type="NULL"/>
+            <xsd:element name="iTM" type="NULL"/>
+            <xsd:element name="cH1903" type="NULL"/>
+            <xsd:element name="cH1903Plus" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:simpleType name="PartyNumber">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="MsgSubscriberID">
+        <xsd:restriction base="xsd:hexBinary"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="MsgStoreID">
+        <xsd:restriction base="xsd:hexBinary"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="MsgAddress">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="MsgProviderID">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="NAProviderID">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="NAAuthID">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="NaSubscriberID">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:complexType name="NwAccessType">
+        <xsd:choice>
+            <xsd:element name="undefined" type="NULL"/>
+            <xsd:element name="dialUp" type="NULL"/>
+            <xsd:element name="xDSL" type="NULL"/>
+            <xsd:element name="cableModem" type="NULL"/>
+            <xsd:element name="lAN" type="NULL"/>
+            <xsd:element name="wirelessLAN" type="NULL"/>
+            <xsd:element name="wimax" type="NULL"/>
+            <xsd:element name="mobilePacketData" type="NULL"/>
+            <xsd:element name="gPON" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="NationalRequestParameters">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalResponsePayload">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalRecordPayload">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="IPAddress">
+        <xsd:choice>
+            <xsd:element name="iPv4BinaryAddress">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="4"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="iPv6BinaryAddress">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="16"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="iPTextAddress">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:minLength value="7"/>
+                        <xsd:maxLength value="45"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="PortNumber">
+        <xsd:choice>
+            <xsd:element name="TCPPort" type="TCPPort"/>
+            <xsd:element name="UDPPort" type="UDPPort"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:simpleType name="TCPPort">
+        <xsd:restriction base="xsd:integer">
+            <xsd:minExclusive value="1"/>
+            <xsd:maxInclusive value="65535"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="UDPPort">
+        <xsd:restriction base="xsd:integer">
+            <xsd:minInclusive value="0"/>
+            <xsd:maxInclusive value="65535"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:complexType name="IPRange">
+        <xsd:sequence>
+            <xsd:element name="prefix" type="IPAddress"/>
+            <xsd:element name="subnetlength">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:unsignedShort">
+                        <xsd:minInclusive value="1"/>
+                        <xsd:maxInclusive value="128"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="IPMask">
+        <xsd:sequence>
+            <xsd:element name="base" type="IPAddress"/>
+            <xsd:element name="mask" type="IPAddress"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="IPAddressSetOrRangeOrMask">
+        <xsd:choice>
+            <xsd:element name="set">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="IPAddress" type="IPAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="range" type="IPRange"/>
+            <xsd:element name="mask" type="IPMask"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="TimedIPAddress">
+        <xsd:sequence>
+            <xsd:element name="iPAddressSetOrRangeOrMask" type="IPAddressSetOrRangeOrMask"/>
+            <xsd:element name="validity" type="TimeSpan"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="NADeviceId">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="IMEI">
+        <xsd:restriction base="xsd:hexBinary">
+            <xsd:length value="8"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="IMEISV">
+        <xsd:restriction base="xsd:token">
+            <xsd:pattern value="[0-9]{16}"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="MACAddress">
+        <xsd:restriction base="xsd:token">
+            <xsd:pattern value="([a-f0-9]{2}:){5}[a-f0-9]{2}"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="EUI64">
+        <xsd:restriction base="xsd:token">
+            <xsd:pattern value="([a-f0-9]{2}:){7}[a-f0-9]{2}"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="IMSI">
+        <xsd:restriction base="xsd:hexBinary">
+            <xsd:minLength value="3"/>
+            <xsd:maxLength value="8"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="NANwElementID">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:complexType name="RequestID">
+        <xsd:sequence>
+            <xsd:element name="countryCode" type="CountryCode"/>
+            <xsd:element name="authorisedOrganisationID" type="AuthorisedOrganisationID"/>
+            <xsd:element name="requestNumber" type="RequestNumber" minOccurs="0"/>
+            <xsd:element name="externalIdentifier" type="ExternalIdentifier" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="RetainedDataHeader">
+        <xsd:sequence>
+            <xsd:element name="requestID" type="RequestID"/>
+            <xsd:element name="cSPID" type="CSPID"/>
+            <xsd:element name="timeStamp" type="GeneralizedTime"/>
+            <xsd:element name="thirdPartyCSPID" type="CSPID" minOccurs="0"/>
+            <xsd:element name="requestType" type="RequestType" minOccurs="0"/>
+            <xsd:element name="requestFlag" type="RequestFlag" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TimeSpan">
+        <xsd:sequence>
+            <xsd:element name="startTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="endTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="durationTime" type="xsd:integer" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="File">
+        <xsd:sequence>
+            <xsd:element name="mediaType" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="content" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary"/>
+                </xsd:simpleType>
+            </xsd:element>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="AddressInformation">
+        <xsd:sequence>
+            <xsd:element name="flatNumber" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="buildingName" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="buildingNumber" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="streetName" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="poBox" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="postalCode" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="region" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="province" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="language" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="city" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="country" type="CountryCode" minOccurs="0"/>
+            <xsd:element name="validity" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="relatedOrganizationInfo" type="OrganizationInfo" minOccurs="0"/>
+            <xsd:element name="relatedPersonName" type="PersonName" minOccurs="0"/>
+            <xsd:element name="otherInformation" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="OtherAddress">
+        <xsd:sequence>
+            <xsd:element name="address" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="addressType" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="addressComments" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="ContactDetails">
+        <xsd:sequence>
+            <xsd:element name="address" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="emailAddress" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="contactNumber" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="PartyNumber" type="PartyNumber"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="additionalEmailAddresses" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="AdditionalEmailAddresses" type="xsd:string"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="OrganizationInfo">
+        <xsd:sequence>
+            <xsd:element name="name" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="contactDetails" type="ContactDetails" minOccurs="0"/>
+            <xsd:element name="nationalRegistrationID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="registeredAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="tradingAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="otherAddresses" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="OtherAddress" type="OtherAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="groupID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="groupAdministrator" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="companyType" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="vatEnabled" type="xsd:boolean" minOccurs="0"/>
+            <xsd:element name="vatNumber" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="createIP" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="createTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="modifiedDate" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="PersonName">
+        <xsd:sequence>
+            <xsd:element name="salutation" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="surname" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="surnamePrefix" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="surnameSuffix" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="middleNames" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="firstname" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="secondsurname" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="secondsurnamePrefix" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="secondsurnameSuffix" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="AuthenticationInfo">
+        <xsd:sequence>
+            <xsd:element name="authenticationType" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="authenticationNumber" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="issuingCountry" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="issuingOrganization" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="nationality" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="authenticationDocument" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="File" type="File"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="PaymentDetails">
+        <xsd:sequence>
+            <xsd:element name="billingMethod" type="BillingMethod" minOccurs="0"/>
+            <xsd:element name="bankAccount" type="BankAccount" minOccurs="0"/>
+            <xsd:element name="billingAddress" type="ContactDetails" minOccurs="0"/>
+            <xsd:element name="billingIdentifier" type="BillingIdentifier" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="BankAccount">
+        <xsd:sequence>
+            <xsd:element name="iBAN" type="IBAN" minOccurs="0"/>
+            <xsd:element name="bIC" type="BIC" minOccurs="0"/>
+            <xsd:element name="accountHolder" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="nationalAccountNumber" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="nationalBankNumber" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="bankName" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="sepaRefNumber" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="IBAN">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="BIC">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:complexType name="BillingMethod">
+        <xsd:choice>
+            <xsd:element name="debit" type="NULL"/>
+            <xsd:element name="transfer" type="NULL"/>
+            <xsd:element name="prepaid" type="NULL"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="IndividualInfo">
+        <xsd:sequence>
+            <xsd:element name="name" type="PersonName" minOccurs="0"/>
+            <xsd:element name="contactAddress" type="ContactDetails" minOccurs="0"/>
+            <xsd:element name="dateOfBirth" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="gender" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="male" type="NULL"/>
+                        <xsd:element name="female" type="NULL"/>
+                        <xsd:element name="other" type="NULL"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="identificationNumber" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="authenticationInfo" type="AuthenticationInfo" minOccurs="0"/>
+            <xsd:element name="profession" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="otherAddresses" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="OtherAddress" type="OtherAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="createTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="ContractInformation">
+        <xsd:sequence>
+            <xsd:element name="contractDesignation" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="contractNumber" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="otherInformation" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="timeSpan" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="contractDocuments" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="File" type="File"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="GenericSubscriberInfo">
+        <xsd:sequence>
+            <xsd:element name="organizationInfo" type="OrganizationInfo" minOccurs="0"/>
+            <xsd:element name="individualInfo" type="IndividualInfo" minOccurs="0"/>
+            <xsd:element name="contracts" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="ContractInformation" type="ContractInformation"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="PartyNumberInfo">
+        <xsd:sequence>
+            <xsd:element name="partyNumber" type="PartyNumber" minOccurs="0"/>
+            <xsd:element name="timeSpan" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="disableReason" type="xsd:string" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="ICCIDInfo">
+        <xsd:sequence>
+            <xsd:element name="iCCID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="timeSpan" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="pUK" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="pUK2" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="iMSI" type="IMSI" minOccurs="0"/>
+            <xsd:element name="sUPI" type="SUPI" minOccurs="0"/>
+            <xsd:element name="gPSI" type="GPSI" minOccurs="0"/>
+            <xsd:element name="eID" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:token">
+                        <xsd:pattern value="[0-9]{32}"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="LoginInfo">
+        <xsd:sequence>
+            <xsd:element name="login" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="password" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="serviceName" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="needsAdditionalAuthentication" type="xsd:boolean" minOccurs="0"/>
+            <xsd:element name="timeSpan" type="TimeSpan" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="SubscribedTelephonyServices">
+        <xsd:sequence>
+            <xsd:element name="serviceID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="providerID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="timeSpan" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="registeredNumbers" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="PartyNumber" type="PartyNumber"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="registeredICCID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="serviceType" type="TelephonyServiceType" minOccurs="0"/>
+            <xsd:element name="installationAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="connectionDate" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="iMSI" type="IMSI" minOccurs="0"/>
+            <xsd:element name="carrierPreselect" type="xsd:boolean" minOccurs="0"/>
+            <xsd:element name="lineStatus" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="allocatedDeviceIDs" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="TelephonyDeviceID" type="TelephonyDeviceID"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="pUKCode" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="pUK2Code" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="iMEI" type="IMEI" minOccurs="0"/>
+            <xsd:element name="nationalTelephonySubscriptionInfo" type="NationalTelephonySubscriptionInfo" minOccurs="0"/>
+            <xsd:element name="paymentDetails" type="PaymentDetails" minOccurs="0"/>
+            <xsd:element name="subscriptionType" type="SubscriptionType" minOccurs="0"/>
+            <xsd:element name="deliveryAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="resellerAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="otherAddresses" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="OtherAddress" type="OtherAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="registeredNumbersInfo" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="PartyNumberInfo" type="PartyNumberInfo"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="registeredICCIDs" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="ICCIDInfo" type="ICCIDInfo"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="loginInfos" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="LoginInfo" type="LoginInfo"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="paymentTransactions" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="BillingRecords" type="BillingRecords"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="iMEIs" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="IMEI" type="IMEI"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalTelephonySubscriptionInfo">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonySubscriber">
+        <xsd:sequence>
+            <xsd:element name="subscriberID" type="TelephonySubscriberId" minOccurs="0"/>
+            <xsd:element name="genericSubscriberInfo" type="GenericSubscriberInfo" minOccurs="0"/>
+            <xsd:element name="telephonySubscriberInfo" type="TelephonySubscriberInfo" minOccurs="0"/>
+            <xsd:element name="subscribedTelephonyServices" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="SubscribedTelephonyServices" type="SubscribedTelephonyServices"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="nationalTelephonySubscriberInfo" type="NationalTelephonySubscriberInfo" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalTelephonySubscriberInfo">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="BillingRecords">
+        <xsd:sequence>
+            <xsd:element name="time" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="place" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="amount" type="xsd:double" minOccurs="0"/>
+            <xsd:element name="currency" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="3"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="method" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="nationalTelephonyBillingRecords" type="NationalTelephonyBillingRecords" minOccurs="0"/>
+            <xsd:element name="transactionID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="transactionStatus" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="copyOfBill" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="File" type="File"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalTelephonyBillingRecords">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="SubscriptionType">
+        <xsd:choice>
+            <xsd:element name="unknown" type="NULL"/>
+            <xsd:element name="postpay" type="NULL"/>
+            <xsd:element name="prepay" type="NULL"/>
+            <xsd:element name="other" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyBillingDetails">
+        <xsd:sequence>
+            <xsd:element name="subscriberID" type="TelephonySubscriberId" minOccurs="0"/>
+            <xsd:element name="serviceID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="billingAddress" type="ContactDetails" minOccurs="0"/>
+            <xsd:element name="billingIdentifier" type="BillingIdentifier" minOccurs="0"/>
+            <xsd:element name="billingRecords" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="BillingRecords" type="BillingRecords"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="nationalTelephonyBillingDetails" type="NationalTelephonyBillingDetails" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalTelephonyBillingDetails">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyLocation">
+        <xsd:sequence>
+            <xsd:element name="telephonyNetworkID" type="TelephonyNetworkID" minOccurs="0"/>
+            <xsd:element name="timeSpan" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="nationalTelephonyLocation" type="NationalTelephonyLocation" minOccurs="0"/>
+            <xsd:element name="detailedLocation" type="TelephonyNetworkElement" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalTelephonyLocation">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyPartyInformation">
+        <xsd:sequence>
+            <xsd:element name="partyRole" type="TelephonyPartyRole" minOccurs="0"/>
+            <xsd:element name="partyNumber" type="PartyNumber" minOccurs="0"/>
+            <xsd:element name="subscriberID" type="TelephonySubscriberId" minOccurs="0"/>
+            <xsd:element name="deviceID" type="TelephonyDeviceID" minOccurs="0"/>
+            <xsd:element name="locations" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="TelephonyLocation" type="TelephonyLocation"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="communicationTime" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="iMSI" type="IMSI" minOccurs="0"/>
+            <xsd:element name="natureOfAddress" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="forwardedTransferredNumber" type="PartyNumber" minOccurs="0"/>
+            <xsd:element name="terminatingTransferredNumber" type="PartyNumber" minOccurs="0"/>
+            <xsd:element name="emailAddress" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="iMEI" type="IMEI" minOccurs="0"/>
+            <xsd:element name="detailedLocation" type="TelephonyNetworkElement" minOccurs="0"/>
+            <xsd:element name="nationalTelephonyPartyInformation" type="NationalTelephonyPartyInformation" minOccurs="0"/>
+            <xsd:element name="partyType" type="TelephonyPartyType" minOccurs="0"/>
+            <xsd:element name="dialledDigits" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalTelephonyPartyInformation">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyPartyType">
+        <xsd:choice>
+            <xsd:element name="voicemail" type="NULL"/>
+            <xsd:element name="smsServer" type="NULL"/>
+            <xsd:element name="other" type="xsd:string"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyEventInformation">
+        <xsd:sequence>
+            <xsd:element name="time" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="type" type="TelephonyEventType" minOccurs="0"/>
+            <xsd:element name="party" type="TelephonyPartyRole" minOccurs="0"/>
+            <xsd:element name="location" type="TelephonyLocation" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="SmsInformation">
+        <xsd:sequence>
+            <xsd:element name="smsEvent" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="shortMessage" type="NULL"/>
+                        <xsd:element name="shortPartMessage" type="NULL"/>
+                        <xsd:element name="compositeMessage" type="NULL"/>
+                        <xsd:element name="notificationMessage" type="NULL"/>
+                        <xsd:any namespace="##other" processContents="lax"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="smsType" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="deliverSCtoMS" type="NULL"/>
+                        <xsd:element name="deliverReportMStoSC" type="NULL"/>
+                        <xsd:element name="statusReportSCtoMS" type="NULL"/>
+                        <xsd:element name="commandMStoSC" type="NULL"/>
+                        <xsd:element name="submitMStoSC" type="NULL"/>
+                        <xsd:element name="submitReportSCtoMS" type="NULL"/>
+                        <xsd:element name="reservedMTIValue" type="NULL"/>
+                        <xsd:any namespace="##other" processContents="lax"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="smsStatus" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="delivered" type="NULL"/>
+                        <xsd:element name="expired" type="NULL"/>
+                        <xsd:element name="deleted" type="NULL"/>
+                        <xsd:element name="replaced" type="NULL"/>
+                        <xsd:element name="submitted" type="NULL"/>
+                        <xsd:element name="incomplete-submission" type="NULL"/>
+                        <xsd:element name="incomplete-delivery" type="NULL"/>
+                        <xsd:element name="undeliverable" type="NULL"/>
+                        <xsd:element name="passed-on" type="NULL"/>
+                        <xsd:any namespace="##other" processContents="lax"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="smsCmRefNr" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:minLength value="1"/>
+                        <xsd:maxLength value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="smsNumOfSM" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:unsignedShort"/>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="smsNotifyInd" type="xsd:boolean" minOccurs="0"/>
+            <xsd:element name="smsProtocolId" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="1"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MmsInformation">
+        <xsd:sequence>
+            <xsd:element name="mmsEvent" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="message" type="NULL"/>
+                        <xsd:element name="notificationMessage" type="NULL"/>
+                        <xsd:element name="deliveryReportMessage" type="NULL"/>
+                        <xsd:element name="readReplyMessage" type="NULL"/>
+                        <xsd:any namespace="##other" processContents="lax"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="mmsStatus" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="delivered" type="NULL"/>
+                        <xsd:element name="expired" type="NULL"/>
+                        <xsd:element name="deleted" type="NULL"/>
+                        <xsd:element name="replaced" type="NULL"/>
+                        <xsd:element name="submitted" type="NULL"/>
+                        <xsd:element name="undeliverable" type="NULL"/>
+                        <xsd:element name="passed-on" type="NULL"/>
+                        <xsd:element name="delivery-rejection" type="NULL"/>
+                        <xsd:element name="delivery-forward" type="NULL"/>
+                        <xsd:element name="delivery-copy" type="NULL"/>
+                        <xsd:element name="submission-rejection" type="NULL"/>
+                        <xsd:element name="submission-failure" type="NULL"/>
+                        <xsd:element name="delivered-application" type="NULL"/>
+                        <xsd:any namespace="##other" processContents="lax"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="mmsNotifInd" type="xsd:boolean" minOccurs="0"/>
+            <xsd:element name="mmsMsgMod" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="none" type="NULL"/>
+                        <xsd:element name="modified" type="NULL"/>
+                        <xsd:element name="stripped" type="NULL"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyServiceUsage">
+        <xsd:sequence>
+            <xsd:element name="partyInformation" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="TelephonyPartyInformation" type="TelephonyPartyInformation"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="communicationTime" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="eventInformation" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="TelephonyEventInformation" type="TelephonyEventInformation"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="endReason" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="communicationType" type="TelephonyCommunicationType" minOccurs="0"/>
+            <xsd:element name="bearerService" type="TelephonyBearerService" minOccurs="0"/>
+            <xsd:element name="smsInformation" type="SmsInformation" minOccurs="0"/>
+            <xsd:element name="ringDuration" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="mmsInformation" type="MmsInformation" minOccurs="0"/>
+            <xsd:element name="nationalTelephonyServiceUsage" type="NationalTelephonyServiceUsage" minOccurs="0"/>
+            <xsd:element name="operatorSpecificCallDetails" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="trunkGroupIDs" type="TrunkGroupIDs" minOccurs="0"/>
+            <xsd:element name="interOperatorIDs" type="InterOperatorIDs" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalTelephonyServiceUsage">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyDevice">
+        <xsd:sequence>
+            <xsd:element name="deviceIDType" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="unknown" type="NULL"/>
+                        <xsd:element name="imei" type="NULL"/>
+                        <xsd:element name="macAddress" type="NULL"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="telephonyDeviceID" type="TelephonyDeviceID" minOccurs="0"/>
+            <xsd:element name="subscriberID" type="TelephonySubscriberId" minOccurs="0"/>
+            <xsd:element name="nationalTelephonyDevice" type="NationalTelephonyDevice" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MultimediaDevice">
+        <xsd:sequence>
+            <xsd:element name="deviceIDType" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="unknown" type="NULL"/>
+                        <xsd:element name="imei" type="NULL"/>
+                        <xsd:element name="macAddress" type="NULL"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="multimediaDeviceID" type="MultimediaDeviceID" minOccurs="0"/>
+            <xsd:element name="subscriberID" type="MultimediaSubscriberID" minOccurs="0"/>
+            <xsd:element name="nationalMultimediaDevice" type="NationalMultimediaDevice" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalTelephonyDevice">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="GSMLocation">
+        <xsd:choice>
+            <xsd:element name="geoCoordinates">
+                <xsd:complexType>
+                    <xsd:sequence>
+                        <xsd:element name="latitude" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:string">
+                                    <xsd:minLength value="7"/>
+                                    <xsd:maxLength value="10"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:element name="longitude" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:string">
+                                    <xsd:minLength value="8"/>
+                                    <xsd:maxLength value="11"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:element name="mapDatum" type="MapDatum" minOccurs="0"/>
+                        <xsd:element name="azimuth" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:int">
+                                    <xsd:minInclusive value="0"/>
+                                    <xsd:maxInclusive value="359"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="utmCoordinates">
+                <xsd:complexType>
+                    <xsd:sequence>
+                        <xsd:element name="utm_Zone" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:string">
+                                    <xsd:length value="3"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:element name="utm_East" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:string">
+                                    <xsd:length value="6"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:element name="utm_North" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:string">
+                                    <xsd:length value="7"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:element name="mapDatum" type="MapDatum" minOccurs="0"/>
+                        <xsd:element name="azimuth" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:int">
+                                    <xsd:minInclusive value="0"/>
+                                    <xsd:maxInclusive value="359"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="utmRefCoordinates">
+                <xsd:complexType>
+                    <xsd:sequence>
+                        <xsd:element name="utm_GridZone" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:unsignedShort">
+                                    <xsd:minInclusive value="1"/>
+                                    <xsd:maxInclusive value="60"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:element name="utm_GridBand" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:string">
+                                    <xsd:pattern value="([C-Z])"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:element name="squareID" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:string">
+                                    <xsd:pattern value="([A-Z][A-Z])"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:element name="numericalLocationEasting" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:string">
+                                    <xsd:length value="5"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:element name="numericalLocationNorthing" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:string">
+                                    <xsd:length value="5"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:element name="mapDatum" type="MapDatum" minOccurs="0"/>
+                        <xsd:element name="azimuth" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:int">
+                                    <xsd:minInclusive value="0"/>
+                                    <xsd:maxInclusive value="359"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="wGS84Coordinates" type="xsd:hexBinary"/>
+            <xsd:element name="geoCoordinatesDec">
+                <xsd:complexType>
+                    <xsd:sequence>
+                        <xsd:element name="latitudeDec" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:string">
+                                    <xsd:minLength value="3"/>
+                                    <xsd:maxLength value="12"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:element name="longitudeDec" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:string">
+                                    <xsd:minLength value="4"/>
+                                    <xsd:maxLength value="13"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:element name="mapDatum" type="MapDatum" minOccurs="0"/>
+                        <xsd:element name="azimuth" minOccurs="0">
+                            <xsd:simpleType>
+                                <xsd:restriction base="xsd:int">
+                                    <xsd:minInclusive value="0"/>
+                                    <xsd:maxInclusive value="359"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="GeographicalCoordinates">
+        <xsd:sequence>
+            <xsd:element name="latitudeSign" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="north" type="NULL"/>
+                        <xsd:element name="south" type="NULL"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="latitude" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:unsignedInt">
+                        <xsd:minInclusive value="0"/>
+                        <xsd:maxInclusive value="8388607"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="longitude" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:int">
+                        <xsd:minInclusive value="-8388608"/>
+                        <xsd:maxInclusive value="8388607"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="mapDatum" type="MapDatum" minOccurs="0"/>
+            <xsd:element name="azimuth" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:int">
+                        <xsd:minInclusive value="0"/>
+                        <xsd:maxInclusive value="359"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="GA_Point">
+        <xsd:sequence>
+            <xsd:element name="geographicalCoordinates" type="GeographicalCoordinates"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="GA_PointWithUnCertainty">
+        <xsd:sequence>
+            <xsd:element name="geographicalCoordinates" type="GeographicalCoordinates"/>
+            <xsd:element name="uncertaintyCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:unsignedByte">
+                        <xsd:minInclusive value="0"/>
+                        <xsd:maxInclusive value="127"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="GA_Polygon_Elements">
+        <xsd:sequence>
+            <xsd:element name="geographicalCoordinates" type="GeographicalCoordinates"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="GA_Polygon">
+        <xsd:sequence minOccurs="1" maxOccurs="15">
+            <xsd:element name="GA_Polygon_Elements" type="GA_Polygon_Elements"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="UMTSLocation">
+        <xsd:choice>
+            <xsd:element name="point" type="GA_Point"/>
+            <xsd:element name="pointWithUnCertainty" type="GA_PointWithUnCertainty"/>
+            <xsd:element name="polygon" type="GA_Polygon"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="Location">
+        <xsd:sequence>
+            <xsd:element name="e164_Number" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:minLength value="1"/>
+                        <xsd:maxLength value="25"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="globalCellID" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:minLength value="5"/>
+                        <xsd:maxLength value="7"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="rAI" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="6"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="gsmLocation" type="GSMLocation" minOccurs="0"/>
+            <xsd:element name="umtsLocation" type="UMTSLocation" minOccurs="0"/>
+            <xsd:element name="sAI" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="7"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="oldRAI" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="6"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="postalLocation" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="extendedLocation" type="ExtendedLocation" minOccurs="0"/>
+            <xsd:element name="userLocationInformation" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:minLength value="1"/>
+                        <xsd:maxLength value="35"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="tAI" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="6"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="eCGI" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="8"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="maritimeTransport" type="MaritimeTransport" minOccurs="0"/>
+            <xsd:element name="airTransport" type="AirTransport" minOccurs="0"/>
+            <xsd:element name="bSSID" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="6"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="nCGI" type="NCGI" minOccurs="0"/>
+            <xsd:element name="n3gaLocation" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="4"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="trackingAreaIdentifier" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:minLength value="5"/>
+                        <xsd:maxLength value="6"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="locationInformationSource" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="n3gppaLocation" type="N3gppaLocation" minOccurs="0"/>
+            <xsd:element name="transmitterDetails" type="TransmitterDetails" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="N3gppaLocation">
+        <xsd:sequence>
+            <xsd:element name="n3gppTai" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:minLength value="5"/>
+                        <xsd:maxLength value="6"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="n3IwfId" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="5"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="ueIpv4Addr" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="ueIpv6Addr" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="portNumber" type="xsd:integer" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NCGI">
+        <xsd:sequence>
+            <xsd:element name="pLMNID" type="PLMNID"/>
+            <xsd:element name="nRCellID" type="NRCellID"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="ExtendedLocation">
+        <xsd:choice>
+            <xsd:element name="spot" type="Spot"/>
+            <xsd:element name="circle" type="Circle"/>
+            <xsd:element name="region" type="Region"/>
+            <xsd:element name="route" type="Route"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="Spot">
+        <xsd:choice>
+            <xsd:element name="gsmLocation" type="GSMLocation"/>
+            <xsd:element name="postalLocation" type="AddressInformation"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="Circle">
+        <xsd:sequence>
+            <xsd:element name="centre" type="Spot" minOccurs="0"/>
+            <xsd:element name="radius" type="xsd:int" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="Region">
+        <xsd:sequence>
+            <xsd:element name="cornerMarks" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="Spot" type="Spot"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="Route">
+        <xsd:sequence>
+            <xsd:element name="routeMarks" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="Spot" type="Spot"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="width" type="xsd:int" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MaritimeTransport">
+        <xsd:sequence>
+            <xsd:element name="shipName" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="imoNumber" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="10"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="AirTransport">
+        <xsd:sequence>
+            <xsd:element name="iATAAirlineCode" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="iCAOOperatorCode" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="3"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="aircraftRegistration" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="flightNumber" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyNetworkElement">
+        <xsd:sequence>
+            <xsd:element name="telephonyNetworkID" type="TelephonyNetworkID" minOccurs="0"/>
+            <xsd:element name="cellInformation" type="Location" minOccurs="0"/>
+            <xsd:element name="validity" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="nationalTelephonyNetworkElement" type="NationalTelephonyNetworkElement" minOccurs="0"/>
+            <xsd:element name="transmitterDetails" type="TransmitterDetails" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TransmitterDetails">
+        <xsd:sequence>
+            <xsd:element name="alternativeID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="beamWidth" type="xsd:int" minOccurs="0"/>
+            <xsd:element name="radiatedPower" type="xsd:int" minOccurs="0"/>
+            <xsd:element name="antennaHeight" type="xsd:int" minOccurs="0"/>
+            <xsd:element name="range" type="xsd:int" minOccurs="0"/>
+            <xsd:element name="frequency" type="xsd:int" minOccurs="0"/>
+            <xsd:element name="technology" type="TransmitterTechnology" minOccurs="0"/>
+            <xsd:element name="nationalTransmitterDetails" type="NationalTransmitterDetails" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TransmitterTechnology">
+        <xsd:choice>
+            <xsd:element name="gen2G" type="NULL"/>
+            <xsd:element name="gen3G" type="NULL"/>
+            <xsd:element name="eUTRAN" type="NULL"/>
+            <xsd:element name="wLAN" type="NULL"/>
+            <xsd:element name="hSPAEvolution" type="NULL"/>
+            <xsd:element name="gAN" type="NULL"/>
+            <xsd:element name="vIRTUAL" type="NULL"/>
+            <xsd:element name="eUTRANNBIoT" type="NULL"/>
+            <xsd:element name="lTEM" type="NULL"/>
+            <xsd:element name="nR" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="NationalTransmitterDetails">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalTelephonyNetworkElement">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TelephonyRecord">
+        <xsd:choice>
+            <xsd:element name="telephonySubscriber" type="TelephonySubscriber"/>
+            <xsd:element name="telephonyBillingDetails" type="TelephonyBillingDetails"/>
+            <xsd:element name="telephonyServiceUsage" type="TelephonyServiceUsage"/>
+            <xsd:element name="telephonyDevice" type="TelephonyDevice"/>
+            <xsd:element name="telephonyNetworkElement" type="TelephonyNetworkElement"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="MsgStore">
+        <xsd:sequence>
+            <xsd:element name="validity" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="msgStoreID" type="MsgStoreID" minOccurs="0"/>
+            <xsd:element name="aliases" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="MsgAddress" type="MsgAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="providerID" type="MsgProviderID" minOccurs="0"/>
+            <xsd:element name="msgForwardingAddresses" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="MsgAddress" type="MsgAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="msgStoreSubscriberRelatedIDs" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="ContactDetails" type="ContactDetails"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MsgSubscriber">
+        <xsd:sequence>
+            <xsd:element name="validity" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="subscriberID" type="MsgSubscriberID" minOccurs="0"/>
+            <xsd:element name="msgStores" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="MsgStore" type="MsgStore"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="subscriber" type="GenericSubscriberInfo" minOccurs="0"/>
+            <xsd:element name="paymentDetails" type="PaymentDetails" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="MessageID">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:complexType name="MsgTransmission">
+        <xsd:sequence>
+            <xsd:element name="dateTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="subscriberID" type="MsgSubscriberID" minOccurs="0"/>
+            <xsd:element name="senderAddress" type="MsgAddress" minOccurs="0"/>
+            <xsd:element name="recipients" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="MsgAddress" type="MsgAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="msgStores" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="MsgStoreID" type="MsgStoreID"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="deliveryStatus" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="unknown" type="NULL"/>
+                        <xsd:element name="succeeded" type="NULL"/>
+                        <xsd:element name="failed" type="NULL"/>
+                        <xsd:element name="retried" type="NULL"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="protocol" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="smtp" type="NULL"/>
+                        <xsd:element name="x400" type="NULL"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="clientID" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="serverID" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="messageID" type="MessageID" minOccurs="0"/>
+            <xsd:element name="sourceServerName" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="destinationServerName" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="clientPort" type="PortNumber" minOccurs="0"/>
+            <xsd:element name="serverPort" type="PortNumber" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MsgStoreOperation">
+        <xsd:sequence>
+            <xsd:element name="dateTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="subscriberID" type="MsgSubscriberID" minOccurs="0"/>
+            <xsd:element name="msgStore" type="MsgStoreID" minOccurs="0"/>
+            <xsd:element name="operation" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="connect" type="NULL"/>
+                        <xsd:element name="disconnect" type="NULL"/>
+                        <xsd:element name="retrieveMsg" type="NULL"/>
+                        <xsd:element name="partialretrieveMsg" type="NULL"/>
+                        <xsd:element name="deleteMsg" type="NULL"/>
+                        <xsd:element name="addMsg" type="NULL"/>
+                        <xsd:element name="editMsg" type="NULL"/>
+                        <xsd:element name="sendMsg" type="NULL"/>
+                        <xsd:element name="forwardMsg" type="NULL"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="senderAddress" type="MsgAddress" minOccurs="0"/>
+            <xsd:element name="recipients" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="MsgAddress" type="MsgAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="protocol" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="pop" type="NULL"/>
+                        <xsd:element name="imap" type="NULL"/>
+                        <xsd:element name="webmail" type="NULL"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="clientID" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="serverID" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="messageID" type="MessageID" minOccurs="0"/>
+            <xsd:element name="clientPort" type="PortNumber" minOccurs="0"/>
+            <xsd:element name="serverPort" type="PortNumber" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MsgServiceUsage">
+        <xsd:choice>
+            <xsd:element name="msgTransmission" type="MsgTransmission"/>
+            <xsd:element name="msgStoreOperation" type="MsgStoreOperation"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="MsgBillingRecords">
+        <xsd:sequence>
+            <xsd:element name="time" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="place" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="amount" type="xsd:double" minOccurs="0"/>
+            <xsd:element name="currency" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="3"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="method" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="nationalMsgBillingRecords" type="NationalMsgBillingRecords" minOccurs="0"/>
+            <xsd:element name="msgTransactionID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="msgTransactionStatus" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalMsgBillingRecords">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="MsgBillingIdentifier">
+        <xsd:restriction base="xsd:hexBinary"/>
+    </xsd:simpleType>
+    <xsd:complexType name="MsgBillingDetails">
+        <xsd:sequence>
+            <xsd:element name="subscriberID" type="MsgSubscriberID" minOccurs="0"/>
+            <xsd:element name="serviceID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="billingAddress" type="ContactDetails" minOccurs="0"/>
+            <xsd:element name="billingIdentifier" type="MsgBillingIdentifier" minOccurs="0"/>
+            <xsd:element name="billingRecords" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="MsgBillingRecords" type="MsgBillingRecords"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="nationalMsgBillingDetails" type="NationalMsgBillingDetails" minOccurs="0"/>
+            <xsd:element name="copyOfBill" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="File" type="File"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalMsgBillingDetails">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MessageRecord">
+        <xsd:choice>
+            <xsd:element name="msgSubscriber" type="MsgSubscriber"/>
+            <xsd:element name="msgServiceUsage" type="MsgServiceUsage"/>
+            <xsd:element name="msgBillingDetails" type="MsgBillingDetails"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="NAServiceSubscription">
+        <xsd:sequence>
+            <xsd:element name="validity" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="naServiceID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="naProviderID" type="NAProviderID" minOccurs="0"/>
+            <xsd:element name="naAuthID" type="NAAuthID" minOccurs="0"/>
+            <xsd:element name="options" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="installationAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="fixIpAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="imsi" type="IMSI" minOccurs="0"/>
+            <xsd:element name="allocatedDeviceIDs" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="NADeviceID" type="NADeviceId"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="naServiceStatus" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="registeredICCID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="nationalNASubscription" type="NationalNASubscription" minOccurs="0"/>
+            <xsd:element name="paymentDetails" type="PaymentDetails" minOccurs="0"/>
+            <xsd:element name="additionalIPAddresses" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="IPAddressSetOrRangeOrMask" type="IPAddressSetOrRangeOrMask"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="subscriptionType" type="SubscriptionType" minOccurs="0"/>
+            <xsd:element name="deliveryAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="resellerAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="otherAddresses" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="OtherAddress" type="OtherAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="allocatedDevices" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="NADevice" type="NADevice"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="mSISDNs" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="PartyNumber" type="PartyNumber"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="registeredICCIDs" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="ICCIDInfo" type="ICCIDInfo"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="paymentTransactions" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="BillingRecords" type="BillingRecords"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="sUPI" type="SUPI" minOccurs="0"/>
+            <xsd:element name="gPSI" type="GPSI" minOccurs="0"/>
+            <xsd:element name="timedIPAddresses" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="TimedIPAddress" type="TimedIPAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalNASubscription">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NASubscriber">
+        <xsd:sequence>
+            <xsd:element name="validity" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="subscriberID" type="NaSubscriberID" minOccurs="0"/>
+            <xsd:element name="naSubscriptions" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="NAServiceSubscription" type="NAServiceSubscription"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="allocatedDeviceIDs" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="NADeviceId" type="NADeviceId"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="subscriber" type="GenericSubscriberInfo" minOccurs="0"/>
+            <xsd:element name="allocatedDevices" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="NADevice" type="NADevice"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NAAssignedAddress">
+        <xsd:sequence>
+            <xsd:element name="addressSetOrRangeOrMask" type="IPAddressSetOrRangeOrMask" minOccurs="0"/>
+            <xsd:element name="portNumber" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="addressType" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="unknown" type="NULL"/>
+                        <xsd:element name="internal" type="NULL"/>
+                        <xsd:element name="external" type="NULL"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="assignedTime" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="destinationAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="destinationPort" type="xsd:integer" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="DialUpInformation">
+        <xsd:sequence>
+            <xsd:element name="diallingNumber" type="PartyNumber" minOccurs="0"/>
+            <xsd:element name="dialledNumber" type="PartyNumber" minOccurs="0"/>
+            <xsd:element name="callback" type="PartyNumber" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="GPRSEvent">
+        <xsd:choice>
+            <xsd:element name="pDPContextActivation" type="NULL"/>
+            <xsd:element name="pDPContextDeactivation" type="NULL"/>
+            <xsd:element name="gPRSAttach" type="NULL"/>
+            <xsd:element name="gPRSDetach" type="NULL"/>
+            <xsd:element name="locationInfoUpdate" type="NULL"/>
+            <xsd:element name="pDPContextModification" type="NULL"/>
+            <xsd:element name="servingSystem" type="NULL"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="GprsInformation">
+        <xsd:sequence>
+            <xsd:element name="iMSI" type="IMSI" minOccurs="0"/>
+            <xsd:element name="mSISDN" type="PartyNumber" minOccurs="0"/>
+            <xsd:element name="sgsnAddress" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="IPAddress" type="IPAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="ggsnAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="pDP_address_allocated" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="aPN" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="pDP_type" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="gPRSEvent" type="GPRSEvent" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NAServiceUsage">
+        <xsd:sequence>
+            <xsd:element name="naAccessTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="naAuthID" type="NAAuthID" minOccurs="0"/>
+            <xsd:element name="nwAccessType" type="NwAccessType" minOccurs="0"/>
+            <xsd:element name="naStatus" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="unknown" type="NULL"/>
+                        <xsd:element name="succeeded" type="NULL"/>
+                        <xsd:element name="failed" type="NULL"/>
+                        <xsd:element name="rejected" type="NULL"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="interval" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="naDeviceId" type="NADeviceId" minOccurs="0"/>
+            <xsd:element name="naNwElementID" type="NANwElementID" minOccurs="0"/>
+            <xsd:element name="naAssignedAddress" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="NAAssignedAddress" type="NAAssignedAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="location" type="Location" minOccurs="0"/>
+            <xsd:element name="dialUpInformation" type="DialUpInformation" minOccurs="0"/>
+            <xsd:element name="gprsInformation" type="GprsInformation" minOccurs="0"/>
+            <xsd:element name="octetsDownloaded" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="octetsUploaded" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="endReason" type="NAEndReason" minOccurs="0"/>
+            <xsd:element name="subscriberID" type="NaSubscriberID" minOccurs="0"/>
+            <xsd:element name="ePSInformation" type="EPSInformation" minOccurs="0"/>
+            <xsd:element name="wifiInformation" type="WifiInformation" minOccurs="0"/>
+            <xsd:element name="addressTranslationRecords" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="AddressTranslationRecord" type="AddressTranslationRecord"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="naDevice" type="NADevice" minOccurs="0"/>
+            <xsd:element name="additionalLocations" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="TimedLocation" type="TimedLocation"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="sNSSAI" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="4"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="notifyUri" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:minLength value="3"/>
+                        <xsd:maxLength value="8"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="fiveGSInformation" type="FIVEGSInformation" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TimedLocation">
+        <xsd:sequence>
+            <xsd:element name="location" type="Location" minOccurs="0"/>
+            <xsd:element name="naAccessTime" type="GeneralizedTime" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="WifiInformation">
+        <xsd:sequence>
+            <xsd:element name="bSSID" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="6"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="sSID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="username" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="locationOfAccessPoint" type="Location" minOccurs="0"/>
+            <xsd:element name="authenticationType" type="AuthenticationType" minOccurs="0"/>
+            <xsd:element name="additionalAuthenticationInformation" type="AdditionalAuthenticationInformation" minOccurs="0"/>
+            <xsd:element name="accessPointIPAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="accessPointAdditionalDescriptions" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="accessPointAdditionalProviders" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="cSPDefinedName" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="AuthenticationType">
+        <xsd:choice>
+            <xsd:element name="authenticationBySMS" type="NULL"/>
+            <xsd:element name="authenticationByCookie" type="NULL"/>
+            <xsd:element name="authenticationByMACAddress" type="NULL"/>
+            <xsd:element name="authenticationByEAPSIM" type="NULL"/>
+            <xsd:element name="authenticationByUsernameAndPassword" type="NULL"/>
+            <xsd:element name="authenticationByPaymentOrVoucher" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="AdditionalAuthenticationInformation">
+        <xsd:sequence>
+            <xsd:element name="phoneNumber" type="PartyNumber" minOccurs="0"/>
+            <xsd:element name="mACAddress" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="6"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="iMSI" type="IMSI" minOccurs="0"/>
+            <xsd:element name="username" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="password" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="paymentReference" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="AddressTranslationRecord">
+        <xsd:sequence>
+            <xsd:element name="validity" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="privateIPAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="privatePort" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="publicIPAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="publicPort" type="AddressTranslationPortAssignment" minOccurs="0"/>
+            <xsd:element name="destinationIPAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="destinationPort" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="connectionType" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="udp" type="NULL"/>
+                        <xsd:element name="tcp" type="NULL"/>
+                        <xsd:element name="sctp" type="NULL"/>
+                        <xsd:element name="other" type="NULL"/>
+                        <xsd:any namespace="##other" processContents="lax"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="AddressTranslationPortAssignment">
+        <xsd:choice>
+            <xsd:element name="singlePort" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="portRange" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="PortRange" type="PortRange"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="PortRange">
+        <xsd:sequence>
+            <xsd:element name="lowerBound" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="upperBound" type="xsd:integer" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="EPSInformation">
+        <xsd:sequence>
+            <xsd:element name="iMSI" type="IMSI" minOccurs="0"/>
+            <xsd:element name="iMSIUnauthenticatedFlag" type="IMSIUnauthenticatedFlag" minOccurs="0"/>
+            <xsd:element name="mSISDN" type="PartyNumber" minOccurs="0"/>
+            <xsd:element name="iMEISV" type="IMEI" minOccurs="0"/>
+            <xsd:element name="s-GWAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="p-GWAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="p-GWPLMNIdentifier" type="P-GWPLMN-ID" minOccurs="0"/>
+            <xsd:element name="aPNNetworkID" type="AccessPointNameNI" minOccurs="0"/>
+            <xsd:element name="pDP_PDNType" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="1"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="pDP-PDNAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="pDP-PDNAddressExtension" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="dynamicAddressFlag" type="DynamicAddressFlag" minOccurs="0"/>
+            <xsd:element name="dynamicAddressFlagExt" type="DynamicAddressFlagExt" minOccurs="0"/>
+            <xsd:element name="rATType" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:unsignedShort">
+                        <xsd:minInclusive value="0"/>
+                        <xsd:maxInclusive value="255"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="ePSEvent" type="EPSEvent" minOccurs="0"/>
+            <xsd:element name="uERadioCapID" type="UERadioCapID" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="IMSIUnauthenticatedFlag">
+        <xsd:restriction base="xsd:boolean"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="P-GWPLMN-ID">
+        <xsd:restriction base="xsd:hexBinary">
+            <xsd:length value="3"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="AccessPointNameNI">
+        <xsd:restriction base="xsd:string">
+            <xsd:minLength value="1"/>
+            <xsd:maxLength value="63"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="DynamicAddressFlag">
+        <xsd:restriction base="xsd:boolean"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="DynamicAddressFlagExt">
+        <xsd:restriction base="xsd:boolean"/>
+    </xsd:simpleType>
+    <xsd:complexType name="EPSEvent">
+        <xsd:choice>
+            <xsd:element name="e-UTRANAttach" type="NULL"/>
+            <xsd:element name="e-UTRANDetach" type="NULL"/>
+            <xsd:element name="bearerActivation" type="NULL"/>
+            <xsd:element name="bearerDeactivation" type="NULL"/>
+            <xsd:element name="trackingAreaUpdate" type="NULL"/>
+            <xsd:element name="servingEvolvedPacketSystem" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="FIVEGSInformation">
+        <xsd:sequence>
+            <xsd:element name="sUPI" type="SUPI" minOccurs="0"/>
+            <xsd:element name="dNN" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="gPSI" type="GPSI" minOccurs="0"/>
+            <xsd:element name="pEI" type="PEI" minOccurs="0"/>
+            <xsd:element name="pDUSessionID" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:unsignedShort">
+                        <xsd:minInclusive value="0"/>
+                        <xsd:maxInclusive value="255"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="sNSSAI" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="4"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="pDUIpv4Address" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="pDUIpv6Address" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="pDUAddressPrefixLength" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:unsignedShort">
+                        <xsd:minInclusive value="0"/>
+                        <xsd:maxInclusive value="128"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="rFSPIndex" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:unsignedShort">
+                        <xsd:minInclusive value="0"/>
+                        <xsd:maxInclusive value="255"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="applicationId" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="applicationServiceProviderIdentity" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="serviceId" type="xsd:unsignedShort" minOccurs="0"/>
+            <xsd:element name="chargingId" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="pDUType" type="PDUSessionType" minOccurs="0"/>
+            <xsd:element name="sSCMode" type="SSCMode" minOccurs="0"/>
+            <xsd:element name="vPLMNId" type="PLMNID" minOccurs="0"/>
+            <xsd:element name="hPLMNId" type="PLMNID" minOccurs="0"/>
+            <xsd:element name="chargingCharacteristics" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="chargingCharacteristicsSelectionMode" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="pDUSessionStartTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="pDUSessionStopTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="lowPriorityIndicator" type="xsd:boolean" minOccurs="0"/>
+            <xsd:element name="dataOffStatus" type="xsd:boolean" minOccurs="0"/>
+            <xsd:element name="diagnostics" type="xsd:unsignedShort" minOccurs="0"/>
+            <xsd:element name="uETimeZone" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="uPFAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="aMFAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="uDMAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="sMFAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="uPFId" type="UUID" minOccurs="0"/>
+            <xsd:element name="aMFIdentifier" type="AMFID" minOccurs="0"/>
+            <xsd:element name="uDMIdentifier" type="UUID" minOccurs="0"/>
+            <xsd:element name="sMFIdentifier" type="UUID" minOccurs="0"/>
+            <xsd:element name="uPFPDNAddress" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="uPFPDNAddressExtension" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="dynamicAddressFlag" type="xsd:boolean" minOccurs="0"/>
+            <xsd:element name="dynamicAddressFlagExtension" type="xsd:boolean" minOccurs="0"/>
+            <xsd:element name="rAT5Type" type="RAT5Type" minOccurs="0"/>
+            <xsd:element name="flowQoSInfo" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="uERadioCapID" type="UERadioCapID" minOccurs="0"/>
+            <xsd:element name="rANSecondaryRATType" type="RAT5Type" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="PDUSessionType">
+        <xsd:choice>
+            <xsd:element name="iPv4" type="NULL"/>
+            <xsd:element name="iPv6" type="NULL"/>
+            <xsd:element name="iPv4v6" type="NULL"/>
+            <xsd:element name="unstructured" type="NULL"/>
+            <xsd:element name="ethernet" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="SSCMode">
+        <xsd:choice>
+            <xsd:element name="sSCMode1" type="NULL"/>
+            <xsd:element name="sSCMode2" type="NULL"/>
+            <xsd:element name="sSCMode3MultiPDUSession" type="NULL"/>
+            <xsd:element name="sSCMode3Multihome" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="RAT5Type">
+        <xsd:choice>
+            <xsd:element name="nr" type="NULL"/>
+            <xsd:element name="eutra" type="NULL"/>
+            <xsd:element name="wlan" type="NULL"/>
+            <xsd:element name="virtual" type="NULL"/>
+            <xsd:element name="nBIoT" type="NULL"/>
+            <xsd:element name="wireline" type="NULL"/>
+            <xsd:element name="wirelineCable" type="NULL"/>
+            <xsd:element name="wirelineDSL" type="NULL"/>
+            <xsd:element name="wirelinePON" type="NULL"/>
+            <xsd:element name="lTEM" type="NULL"/>
+            <xsd:element name="nRU" type="NULL"/>
+            <xsd:element name="eUTRAU" type="NULL"/>
+            <xsd:element name="trustedN3GA" type="NULL"/>
+            <xsd:element name="trustedWLAN" type="NULL"/>
+            <xsd:element name="uTRA" type="NULL"/>
+            <xsd:element name="gERA" type="NULL"/>
+            <xsd:element name="nRLEO" type="NULL"/>
+            <xsd:element name="nRMEO" type="NULL"/>
+            <xsd:element name="nRGEO" type="NULL"/>
+            <xsd:element name="nROTHERSAT" type="NULL"/>
+            <xsd:element name="nRREDCAP" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="AMFID">
+        <xsd:sequence>
+            <xsd:element name="aMFRegionID" type="AMFRegionID"/>
+            <xsd:element name="aMFSetID" type="AMFSetID"/>
+            <xsd:element name="aMFPointer" type="AMFPointer"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="AMFRegionID">
+        <xsd:restriction base="xsd:unsignedShort">
+            <xsd:minInclusive value="0"/>
+            <xsd:maxInclusive value="255"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="AMFSetID">
+        <xsd:restriction base="xsd:unsignedShort">
+            <xsd:minInclusive value="0"/>
+            <xsd:maxInclusive value="1023"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="AMFPointer">
+        <xsd:restriction base="xsd:unsignedShort">
+            <xsd:minInclusive value="0"/>
+            <xsd:maxInclusive value="63"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:complexType name="NAEndReason">
+        <xsd:choice>
+            <xsd:element name="unknownReason" type="NULL"/>
+            <xsd:element name="timeout" type="NULL"/>
+            <xsd:element name="userDisconnect" type="NULL"/>
+            <xsd:element name="networkDisconnect" type="NULL"/>
+            <xsd:element name="networkError" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="NADevice">
+        <xsd:sequence>
+            <xsd:element name="naDeviceId" type="NADeviceId" minOccurs="0"/>
+            <xsd:element name="description" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="location" type="Location" minOccurs="0"/>
+            <xsd:element name="macAddress" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:hexBinary">
+                        <xsd:length value="6"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="dslID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="imei" type="IMEI" minOccurs="0"/>
+            <xsd:element name="subscriberID" type="NaSubscriberID" minOccurs="0"/>
+            <xsd:element name="uERadioCapID" type="UERadioCapID" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NANwElement">
+        <xsd:sequence>
+            <xsd:element name="validity" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="naNwElementID" type="NANwElementID" minOccurs="0"/>
+            <xsd:element name="naProviderID" type="NAProviderID" minOccurs="0"/>
+            <xsd:element name="supportedAccessTypes" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="NwAccessType" type="NwAccessType"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="location" type="Location" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NABillingDetails">
+        <xsd:sequence>
+            <xsd:element name="subscriberID" type="NaSubscriberID" minOccurs="0"/>
+            <xsd:element name="serviceID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="billingAddress" type="ContactDetails" minOccurs="0"/>
+            <xsd:element name="billingIdentifier" type="BillingIdentifier" minOccurs="0"/>
+            <xsd:element name="billingRecords" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="BillingRecords" type="BillingRecords"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="naTransactionID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="naTransactionStatus" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NetworkAccessRecord">
+        <xsd:choice>
+            <xsd:element name="naSubscriber" type="NASubscriber"/>
+            <xsd:element name="naServiceUsage" type="NAServiceUsage"/>
+            <xsd:element name="naDevice" type="NADevice"/>
+            <xsd:element name="naNetworkElement" type="NANwElement"/>
+            <xsd:element name="naBillingDetails" type="NABillingDetails"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="RetainedDataRecord">
+        <xsd:choice>
+            <xsd:element name="telephonyRecord" type="TelephonyRecord"/>
+            <xsd:element name="messageRecord" type="MessageRecord"/>
+            <xsd:element name="networkAccess" type="NetworkAccessRecord"/>
+            <xsd:element name="multimediaRecord" type="MultimediaRecord"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="RequestConstraints">
+        <xsd:sequence>
+            <xsd:element name="equals" type="RetainedDataRecord" minOccurs="0"/>
+            <xsd:element name="notEqualTo" type="RetainedDataRecord" minOccurs="0"/>
+            <xsd:element name="lessThan" type="RetainedDataRecord" minOccurs="0"/>
+            <xsd:element name="lessThanOrEqualTo" type="RetainedDataRecord" minOccurs="0"/>
+            <xsd:element name="greaterThan" type="RetainedDataRecord" minOccurs="0"/>
+            <xsd:element name="greaterThanOrEqualTo" type="RetainedDataRecord" minOccurs="0"/>
+            <xsd:element name="startsWith" type="RetainedDataRecord" minOccurs="0"/>
+            <xsd:element name="endsWith" type="RetainedDataRecord" minOccurs="0"/>
+            <xsd:element name="isAMemberOf" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="RetainedDataRecord" type="RetainedDataRecord"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="RequestMessage">
+        <xsd:sequence>
+            <xsd:element name="requestPriority" type="RequestPriority" minOccurs="0"/>
+            <xsd:element name="requestParameters" type="RequestConstraints" minOccurs="0"/>
+            <xsd:element name="deliveryPointHIB" type="DeliveryPointHIB" minOccurs="0"/>
+            <xsd:element name="maxHits" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="nationalRequestParameters" type="NationalRequestParameters" minOccurs="0"/>
+            <xsd:element name="maxRecordsPerBatch" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="requestedData" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="requestedData" type="xsd:string"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="numberOfRecordsLimit" type="xsd:integer" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="RequestAcknowledgement">
+        <xsd:sequence>
+            <xsd:element name="suggestedCompletionTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="FurtherInformation">
+        <xsd:sequence>
+            <xsd:element name="information" type="xsd:string"/>
+            <xsd:element name="contactInformation" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="categorisedErrorDescription" type="CategorisedErrorDescription" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="CategorisedErrorDescription">
+        <xsd:sequence>
+            <xsd:element name="value" type="xsd:integer"/>
+            <xsd:element name="description" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NULL" final="#all"/>
+    <xsd:complexType name="ResponseStatus">
+        <xsd:choice>
+            <xsd:element name="responseComplete" type="NULL"/>
+            <xsd:element name="responseIncomplete" type="NULL"/>
+            <xsd:element name="responseUnavailable" type="NULL"/>
+            <xsd:element name="responseFailed" type="FurtherInformation"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="AdditionalInformation">
+        <xsd:sequence>
+            <xsd:element name="contactInformation" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="otherInformation" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="ResponseRecord">
+        <xsd:sequence>
+            <xsd:element name="recordNumber" type="xsd:integer"/>
+            <xsd:element name="recordPayload" type="RetainedDataRecord"/>
+            <xsd:element name="additionalInformation" type="AdditionalInformation" minOccurs="0"/>
+            <xsd:element name="nationalRecordPayload" type="NationalRecordPayload" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="ResponseMessage">
+        <xsd:sequence>
+            <xsd:element name="responseStatus" type="ResponseStatus"/>
+            <xsd:element name="responsePayload" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="ResponseRecord" type="ResponseRecord"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="nationalResponsePayload" type="NationalResponsePayload" minOccurs="0"/>
+            <xsd:element name="responseNumber" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="numberOfRecordsFound" type="xsd:integer" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="GetStatusMessage">
+        <xsd:sequence>
+            <xsd:element name="requestNumbers">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="RequestNumber" type="RequestNumber"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="RequestStatus">
+        <xsd:choice>
+            <xsd:element name="ready" type="NULL"/>
+            <xsd:element name="incompleteResultsReady" type="NULL"/>
+            <xsd:element name="failureResponseReady" type="NULL"/>
+            <xsd:element name="notReady" type="NULL"/>
+            <xsd:element name="error" type="FurtherInformation"/>
+            <xsd:element name="inDelivery" type="NULL"/>
+            <xsd:element name="invalidRequestID" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="StatusResponse">
+        <xsd:sequence>
+            <xsd:element name="requestNumber" type="RequestNumber"/>
+            <xsd:element name="requestStatus" type="RequestStatus"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="StatusMessage">
+        <xsd:sequence>
+            <xsd:element name="statusResponse">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="StatusResponse" type="StatusResponse"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="RetainedDataPayload">
+        <xsd:choice>
+            <xsd:element name="requestMessage" type="RequestMessage"/>
+            <xsd:element name="requestAcknowledgement" type="RequestAcknowledgement"/>
+            <xsd:element name="responseMessage" type="ResponseMessage"/>
+            <xsd:element name="responseAcknowledgement" type="ResponseAcknowledgement"/>
+            <xsd:element name="errorMessage" type="FurtherInformation"/>
+            <xsd:element name="cancelMessage" type="CancelMessage"/>
+            <xsd:element name="cancelAcknowledgement" type="CancelAcknowledgement"/>
+            <xsd:element name="getstatusMessage" type="GetStatusMessage"/>
+            <xsd:element name="statusMessage" type="StatusMessage"/>
+            <xsd:element name="getResultsMessage" type="GetResultsMessage"/>
+            <xsd:element name="supplementaryRequest" type="SupplementaryRequest"/>
+            <xsd:element name="supplementaryResponse" type="SupplementaryResponse"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="MultimediaRecord">
+        <xsd:choice>
+            <xsd:element name="multimediaSubscriber" type="MultimediaSubscriber"/>
+            <xsd:element name="multimediaBillingDetails" type="MultimediaBillingDetails"/>
+            <xsd:element name="multimediaServiceUsage" type="MultimediaServiceUsage"/>
+            <xsd:element name="multimediaDevice" type="MultimediaDevice"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="MultimediaSubscriber">
+        <xsd:sequence>
+            <xsd:element name="subscriberID" type="MultimediaSubscriberID" minOccurs="0"/>
+            <xsd:element name="genericSubscriberInfo" type="GenericSubscriberInfo" minOccurs="0"/>
+            <xsd:element name="multimediaSubscriberInfo" type="MultimediaSubscriberInfo" minOccurs="0"/>
+            <xsd:element name="subscribedMultimediaServices" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="SubscribedMultimediaServices" type="SubscribedMultimediaServices"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="multimediaServiceRegistrationInfo" type="MultimediaServiceRegistrationInfo" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="MultimediaSubscriberID">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:complexType name="MultimediaSubscriberInfo">
+        <xsd:sequence>
+            <xsd:element name="nationalMultimediaSubscriberInfo" type="NationalMultimediaSubscriberInfo" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MultimediaServiceRegistrationInfo">
+        <xsd:sequence>
+            <xsd:element name="emailAddress" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="languageAtRegistration" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="accountCreationTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="accountCreationIP" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="accountCreationCountry" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="clientPlatformType" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="clientVersion" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="SubscribedMultimediaServices">
+        <xsd:sequence>
+            <xsd:element name="serviceID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="providerID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="timeSpan" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="registeredIdentifier" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="PartyIdentity" type="PartyIdentity"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="registeredICCID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="serviceType" type="MultimediaServiceType" minOccurs="0"/>
+            <xsd:element name="installationAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="connectionDate" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="iMSI" type="IMSI" minOccurs="0"/>
+            <xsd:element name="carrierPreselect" type="xsd:boolean" minOccurs="0"/>
+            <xsd:element name="lineStatus" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="nationalMultimediaServices" type="NationalMultimediaServices" minOccurs="0"/>
+            <xsd:element name="paymentDetails" type="PaymentDetails" minOccurs="0"/>
+            <xsd:element name="subscriptionType" type="SubscriptionType" minOccurs="0"/>
+            <xsd:element name="deliveryAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="resellerAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="otherAddresses" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="OtherAddress" type="OtherAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="multimediaServiceType" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="orderTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="iMEIs" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="IMEI" type="IMEI"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="registeredICCIDs" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="ICCIDInfo" type="ICCIDInfo"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="privateUserIdentities" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence maxOccurs="unbounded">
+                        <xsd:element name="IMPI" type="IMPI"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="allocatedDeviceIDs" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="MultimediaDeviceID" type="MultimediaDeviceID"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="paymentTransactions" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="MultimediaBillingRecords" type="MultimediaBillingRecords"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="sUPI" type="SUPI" minOccurs="0"/>
+            <xsd:element name="gPSI" type="GPSI" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MultimediaServiceType">
+        <xsd:choice>
+            <xsd:element name="private" type="NULL"/>
+            <xsd:element name="privatePABX" type="NULL"/>
+            <xsd:element name="publicPayphone" type="NULL"/>
+            <xsd:element name="geographicalfixed" type="NULL"/>
+            <xsd:element name="geographicalindependent" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="MultimediaServiceUsage">
+        <xsd:sequence>
+            <xsd:element name="partyInformation" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="MultimediaPartyInformation" type="MultimediaPartyInformation"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="communicationTime" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="reasonCause" type="xsd:int" minOccurs="0"/>
+            <xsd:element name="communicationType" type="MultimediaCommunicationType" minOccurs="0"/>
+            <xsd:element name="bearerService" type="MultimediaBearerService" minOccurs="0"/>
+            <xsd:element name="qualityOfService" type="QualityOfService" minOccurs="0"/>
+            <xsd:element name="ringDuration" type="xsd:int" minOccurs="0"/>
+            <xsd:element name="callID" type="MultimediaCallID" minOccurs="0"/>
+            <xsd:element name="originalCallID" type="MultimediaCallID" minOccurs="0"/>
+            <xsd:element name="callState" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="bNotReached" type="NULL"/>
+                        <xsd:element name="bAlert" type="NULL"/>
+                        <xsd:element name="bAnswered" type="NULL"/>
+                        <xsd:any namespace="##other" processContents="lax"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="answerTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="contentType" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="ContentType" type="xsd:string"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="mediaComponents" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="MediaComponent" type="MediaComponent"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="imsInformation" type="ImsInformation" minOccurs="0"/>
+            <xsd:element name="nationalMultimediaServiceUsage" type="NationalMultimediaServiceUsage" minOccurs="0"/>
+            <xsd:element name="serviceID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="providerID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="cdrNumber" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="clientIP" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="relayIP" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="vmLength" type="xsd:integer" minOccurs="0"/>
+            <xsd:element name="reason" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="smsInformation" type="SmsInformation" minOccurs="0"/>
+            <xsd:element name="mmsInformation" type="MmsInformation" minOccurs="0"/>
+            <xsd:element name="trunkGroupIDs" type="TrunkGroupIDs" minOccurs="0"/>
+            <xsd:element name="interOperatorIDs" type="InterOperatorIDs" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MultimediaPartyInformation">
+        <xsd:sequence>
+            <xsd:element name="partyRole" type="MultimediaPartyRole" minOccurs="0"/>
+            <xsd:element name="partyIdentity" type="PartyIdentity" minOccurs="0"/>
+            <xsd:element name="subscriberID" type="MultimediaSubscriberID" minOccurs="0"/>
+            <xsd:element name="communicationTime" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="iMSI" type="IMSI" minOccurs="0"/>
+            <xsd:element name="natureOfAddress" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="uRI" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="partyNumber" type="PartyNumber" minOccurs="0"/>
+            <xsd:element name="naAssignedAddress" type="NAAssignedAddress" minOccurs="0"/>
+            <xsd:element name="forwardedTransferredIdentifier" type="PartyIdentity" minOccurs="0"/>
+            <xsd:element name="terminatingTransferredIdentifier" type="PartyIdentity" minOccurs="0"/>
+            <xsd:element name="nationalMultimediaPartyInformation" type="NationalMultimediaPartyInformation" minOccurs="0"/>
+            <xsd:element name="userAgent" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="octetsUploaded" type="xsd:int" minOccurs="0"/>
+            <xsd:element name="octetsDownloaded" type="xsd:int" minOccurs="0"/>
+            <xsd:element name="accessNetworkInformation" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="AccessNetworkInfo" type="AccessNetworkInfo"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="cellularNetworkInfo" type="CellularNetworkInfo" minOccurs="0"/>
+            <xsd:element name="privateUserIdentity" type="IMPI" minOccurs="0"/>
+            <xsd:element name="iMEI" type="IMEI" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="MultimediaCallID">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:complexType name="MultimediaCommunicationType">
+        <xsd:choice>
+            <xsd:element name="multimediaFixed" type="NULL"/>
+            <xsd:element name="multimediaWireless" type="NULL"/>
+            <xsd:element name="multimediaNetworkIndependent" type="NULL"/>
+            <xsd:element name="telephonyFixed" type="NULL"/>
+            <xsd:element name="telephonyWireless" type="NULL"/>
+            <xsd:element name="sMS" type="NULL"/>
+            <xsd:element name="mMS" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="MultimediaPartyRole">
+        <xsd:choice>
+            <xsd:element name="calling" type="NULL"/>
+            <xsd:element name="called" type="NULL"/>
+            <xsd:element name="calledAssertedIdentity" type="NULL"/>
+            <xsd:element name="calledApplicationServer" type="NULL"/>
+            <xsd:element name="originalCalled" type="NULL"/>
+            <xsd:element name="redirecting" type="NULL"/>
+            <xsd:element name="multimediaNetworkIndependent" type="NULL"/>
+            <xsd:element name="directory" type="NULL"/>
+            <xsd:element name="broadcastReceiver" type="NULL"/>
+            <xsd:element name="broadcastSender" type="NULL"/>
+            <xsd:element name="originalCalling" type="NULL"/>
+            <xsd:element name="forwarded-to-Party" type="NULL"/>
+            <xsd:element name="connected" type="NULL"/>
+            <xsd:element name="userProvidedCalling" type="NULL"/>
+            <xsd:element name="roaming" type="NULL"/>
+            <xsd:element name="translated" type="NULL"/>
+            <xsd:element name="singlePersonalNumber" type="NULL"/>
+            <xsd:element name="smsOriginator" type="NULL"/>
+            <xsd:element name="smsRecipient" type="NULL"/>
+            <xsd:element name="smsOriginatorTrn" type="NULL"/>
+            <xsd:element name="smsRecipientTrn" type="NULL"/>
+            <xsd:element name="mmsOriginator" type="NULL"/>
+            <xsd:element name="mmsRecipient" type="NULL"/>
+            <xsd:element name="mmsOriginatorTrn" type="NULL"/>
+            <xsd:element name="mmsRecipientTrn" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="MultimediaBearerService">
+        <xsd:choice>
+            <xsd:element name="speech" type="NULL"/>
+            <xsd:element name="data" type="NULL"/>
+            <xsd:element name="fax" type="NULL"/>
+            <xsd:element name="video" type="NULL"/>
+            <xsd:element name="emergencyCall" type="NULL"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="ImsInformation">
+        <xsd:sequence>
+            <xsd:element name="service" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="session" type="NULL"/>
+                        <xsd:element name="message" type="NULL"/>
+                        <xsd:element name="refer" type="NULL"/>
+                        <xsd:any namespace="##other" processContents="lax"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="roleOfNode" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="originating" type="NULL"/>
+                        <xsd:element name="terminating" type="NULL"/>
+                        <xsd:element name="proxy" type="NULL"/>
+                        <xsd:element name="b2bua" type="NULL"/>
+                        <xsd:any namespace="##other" processContents="lax"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="serviceInfo" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="ImsServiceInfo" type="ImsServiceInfo"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="ImsServiceInfo">
+        <xsd:sequence>
+            <xsd:element name="serviceData" type="xsd:hexBinary" minOccurs="0"/>
+            <xsd:element name="serviceType" type="xsd:int" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MediaComponent">
+        <xsd:sequence>
+            <xsd:element name="time" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="mediaName" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="mediaDescription" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="mediaInitiator" type="PartyIdentity" minOccurs="0"/>
+            <xsd:element name="accessCorrelationID" type="xsd:hexBinary" minOccurs="0"/>
+            <xsd:element name="nationalMultimediaMediaComponent" type="NationalMultimediaMediaComponent" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MultimediaBillingDetails">
+        <xsd:sequence>
+            <xsd:element name="subscriberID" type="MultimediaSubscriberID" minOccurs="0"/>
+            <xsd:element name="serviceID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="billingAddress" type="ContactDetails" minOccurs="0"/>
+            <xsd:element name="billingIdentifier" type="MultimediaBillingIdentifier" minOccurs="0"/>
+            <xsd:element name="billingRecords" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="MultimediaBillingRecords" type="MultimediaBillingRecords"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="nationalMultimediaBillingDetails" type="NationalMultimediaBillingDetails" minOccurs="0"/>
+            <xsd:element name="multimediaBillingAddress" type="MultimediaBillingAddress" minOccurs="0"/>
+            <xsd:element name="copyOfBill" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="File" type="File"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="MultimediaBillingAddress">
+        <xsd:sequence>
+            <xsd:element name="addressSuppliedTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="name" type="PersonName" minOccurs="0"/>
+            <xsd:element name="address" type="AddressInformation" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalMultimediaBillingDetails">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="MultimediaBillingIdentifier">
+        <xsd:restriction base="xsd:hexBinary"/>
+    </xsd:simpleType>
+    <xsd:complexType name="MultimediaBillingRecords">
+        <xsd:sequence>
+            <xsd:element name="time" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="place" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="amount" type="xsd:double" minOccurs="0"/>
+            <xsd:element name="currency" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="3"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="method" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="nationalMultimediaBillingRecords" type="NationalMultimediaBillingRecords" minOccurs="0"/>
+            <xsd:element name="multimediaTransactionID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="multimediaTransactionStatus" type="xsd:string" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalMultimediaBillingRecords">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="PartyIdentity">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="QualityOfService">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:complexType name="NationalMultimediaSubscriberInfo">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalMultimediaServices">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalMultimediaServiceUsage">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalMultimediaPartyInformation">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="NationalMultimediaMediaComponent">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="SupplementaryRequest">
+        <xsd:choice>
+            <xsd:element name="nationalSupplementaryRequest" type="NationalSupplementaryRequest"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="NationalSupplementaryRequest">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="SupplementaryResponse">
+        <xsd:choice>
+            <xsd:element name="nationalSupplementaryRequest" type="NationalSupplementaryResponse"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="NationalSupplementaryResponse">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="PaniHeaderInfo">
+        <xsd:sequence>
+            <xsd:element name="accessType" type="xsd:hexBinary" minOccurs="0"/>
+            <xsd:element name="accessClass" type="xsd:hexBinary" minOccurs="0"/>
+            <xsd:element name="networkProvided" type="NULL" minOccurs="0"/>
+            <xsd:element name="paniLocation" type="Location" minOccurs="0"/>
+            <xsd:element name="paniTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="paniHeaderContent" type="xsd:hexBinary" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="AccessNetworkInfo">
+        <xsd:choice>
+            <xsd:element name="paniHeaderInfo" type="PaniHeaderInfo"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="CellularNetworkInfo">
+        <xsd:sequence>
+            <xsd:element name="accessType" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="cellularAccessInfo" type="CellularAccessInfo" minOccurs="0"/>
+            <xsd:element name="cinHeaderContent" type="xsd:hexBinary" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="CellularAccessInfo">
+        <xsd:sequence>
+            <xsd:element name="cgi3gpp" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="utranCellId3gpp" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="ci3gpp2" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="ci3gpp2femto" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="cellInfoAge" type="xsd:integer" minOccurs="0"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="MultimediaDeviceID">
+        <xsd:restriction base="xsd:hexBinary"/>
+    </xsd:simpleType>
+    <xsd:complexType name="NationalMultimediaDevice">
+        <xsd:sequence>
+            <xsd:element name="countryCode">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="2"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="ExternalIdentifier">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="IMPI">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="RequestFlag">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:complexType name="SUPI">
+        <xsd:choice>
+            <xsd:element name="iMSI" type="IMSI"/>
+            <xsd:element name="nAI" type="NAI"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="GPSI">
+        <xsd:choice>
+            <xsd:element name="mSISDN" type="PartyNumber"/>
+            <xsd:element name="nAI" type="NAI"/>
+            <xsd:any namespace="##other" processContents="lax" minOccurs="0"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:simpleType name="NAI">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="PLMNID">
+        <xsd:restriction base="xsd:hexBinary">
+            <xsd:length value="3"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="NRCellID">
+        <xsd:restriction base="xsd:hexBinary">
+            <xsd:length value="5"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:simpleType name="UUID">
+        <xsd:restriction base="xsd:hexBinary">
+            <xsd:length value="16"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:complexType name="PEI">
+        <xsd:choice>
+            <xsd:element name="iMEI" type="IMEI"/>
+            <xsd:element name="iMEISV" type="IMEISV"/>
+            <xsd:element name="mACAddress" type="MACAddress"/>
+            <xsd:element name="eUI64" type="EUI64"/>
+            <xsd:any namespace="##other" processContents="lax"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:simpleType name="UERadioCapID">
+        <xsd:restriction base="xsd:string">
+            <xsd:minLength value="12"/>
+            <xsd:maxLength value="22"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+    <xsd:complexType name="EdgeComputingRecord">
+        <xsd:choice>
+            <xsd:element name="edgeComputingSubscriber" type="EdgeComputingSubscriber"/>
+            <xsd:element name="edgeComputingApplicationBillingDetails" type="EdgeComputingApplicationBillingDetails"/>
+            <xsd:element name="edgeComputingApplicationUsage" type="EdgeComputingApplicationUsage"/>
+            <xsd:element name="edgeComputingDevice" type="EdgeComputingDevice"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="EdgeComputingSubscriber">
+        <xsd:sequence>
+            <xsd:element name="subscriberID" type="EdgeComputingSubscriberID" minOccurs="0"/>
+            <xsd:element name="genericSubscriberInfo" type="GenericSubscriberInfo" minOccurs="0"/>
+            <xsd:element name="edgeComputingSubscriberInfo" type="EdgeComputingSubscriberInfo" minOccurs="0"/>
+            <xsd:element name="subscribedEdgeComputingApplications" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="SubscribedEdgeComputingApplications" type="SubscribedEdgeComputingApplications"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="EdgeComputingSubscriberID">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="EdgeComputingSubscriberInfo">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:complexType name="SubscribedEdgeComputingApplications">
+        <xsd:sequence>
+            <xsd:element name="edgeComputingApplicationID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="providerID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="timeSpan" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="registeredIdentifiers" type="xsd:string" minOccurs="0" maxOccurs="unbounded"/>
+            <xsd:element name="edgeComputingApplicationType" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="installationAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="connectionDate" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="iMSI" type="IMSI" minOccurs="0"/>
+            <xsd:element name="sUPI" type="SUPI" minOccurs="0"/>
+            <xsd:element name="gPSI" type="GPSI" minOccurs="0"/>
+            <xsd:element name="lineStatus" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="paymentDetails" type="PaymentDetails" minOccurs="0"/>
+            <xsd:element name="subscriptionType" type="SubscriptionType" minOccurs="0"/>
+            <xsd:element name="deliveryAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="resellerAddress" type="AddressInformation" minOccurs="0"/>
+            <xsd:element name="otherAddresses" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="OtherAddress" type="OtherAddress"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="orderTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="allocatedDeviceIDs" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="EdgeComputingDeviceID" type="EdgeComputingDeviceID"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="paymentTransactions" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="EdgeComputingApplicationBillingRecords" type="EdgeComputingApplicationBillingRecords"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="EdgeComputingApplicationUsage">
+        <xsd:sequence>
+            <xsd:element name="subscriberID" type="EdgeComputingSubscriberID" minOccurs="0"/>
+            <xsd:element name="communicationTime" type="TimeSpan" minOccurs="0"/>
+            <xsd:element name="octetsSent" type="xsd:int" minOccurs="0"/>
+            <xsd:element name="octetsReceived" type="xsd:int" minOccurs="0"/>
+            <xsd:element name="reasonCause" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="qualityOfService" type="QualityOfService" minOccurs="0"/>
+            <xsd:element name="edgeComputingApplicationID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="providerID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="cdrNumber" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="clientIP" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="edgeApplicationServersInfo" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="EdgeApplicationServerInfo" type="EdgeApplicationServerInfo"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="EdgeApplicationServerInfo">
+        <xsd:sequence>
+            <xsd:element name="edgeApplicationServerID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="edgeApplicationServerIP" type="IPAddress" minOccurs="0"/>
+            <xsd:element name="edgeApplicationServerLocation" type="Location" minOccurs="0"/>
+            <xsd:element name="edgeApplicationServerVirtualResources" type="EdgeApplicationServerVirtualResources" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="EdgeApplicationServerVirtualResources">
+        <xsd:sequence>
+            <xsd:element name="meanVirtualCPUUsage" type="xsd:float" minOccurs="0"/>
+            <xsd:element name="meanVirtualMemoryUsage" type="xsd:float" minOccurs="0"/>
+            <xsd:element name="meanVirtualDiskUsage" type="xsd:float" minOccurs="0"/>
+            <xsd:element name="durationStartTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="durationEndTime" type="GeneralizedTime" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="EdgeComputingApplicationBillingDetails">
+        <xsd:sequence>
+            <xsd:element name="subscriberID" type="EdgeComputingSubscriberID" minOccurs="0"/>
+            <xsd:element name="edgeComputingApplicationID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="billingAddress" type="ContactDetails" minOccurs="0"/>
+            <xsd:element name="billingIdentifier" type="EdgeComputingBillingIdentifier" minOccurs="0"/>
+            <xsd:element name="billingRecords" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="EdgeComputingApplicationBillingRecords" type="EdgeComputingApplicationBillingRecords"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="edgeComputingBillingAddress" type="EdgeComputingBillingAddress" minOccurs="0"/>
+            <xsd:element name="copyOfBill" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+                        <xsd:element name="File" type="File"/>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="EdgeComputingBillingAddress">
+        <xsd:sequence>
+            <xsd:element name="addressSuppliedTime" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="name" type="PersonName" minOccurs="0"/>
+            <xsd:element name="address" type="AddressInformation" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="EdgeComputingBillingIdentifier">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:complexType name="EdgeComputingApplicationBillingRecords">
+        <xsd:sequence>
+            <xsd:element name="time" type="GeneralizedTime" minOccurs="0"/>
+            <xsd:element name="place" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="amount" type="xsd:double" minOccurs="0"/>
+            <xsd:element name="currency" minOccurs="0">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:length value="3"/>
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="method" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="edgeComputingTransactionID" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="edgeComputingTransactionStatus" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="cryptocurrency" type="DigitalTokenIdentifier" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="EdgeComputingDevice">
+        <xsd:sequence>
+            <xsd:element name="deviceIDType" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:choice>
+                        <xsd:element name="unknown" type="NULL"/>
+                        <xsd:element name="imei" type="NULL"/>
+                        <xsd:element name="macAddress" type="NULL"/>
+                    </xsd:choice>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="edgeComputingDeviceID" type="EdgeComputingDeviceID" minOccurs="0"/>
+            <xsd:element name="subscriberID" type="EdgeComputingSubscriberID" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="EdgeComputingDeviceID">
+        <xsd:restriction base="xsd:hexBinary"/>
+    </xsd:simpleType>
+    <xsd:complexType name="DigitalTokenIdentifier">
+        <xsd:sequence>
+            <xsd:element name="baseRecord" type="BaseRecord"/>
+            <xsd:element name="forkRecord" type="ForkRecord"/>
+            <xsd:element name="informativeDataElements" type="InformativeDataElements"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:simpleType name="BaseRecord">
+        <xsd:restriction base="xsd:hexBinary"/>
+    </xsd:simpleType>
+    <xsd:simpleType name="ForkRecord">
+        <xsd:restriction base="xsd:hexBinary"/>
+    </xsd:simpleType>
+    <xsd:complexType name="InformativeDataElements">
+        <xsd:sequence>
+            <xsd:element name="digitalTokenName" type="DigitalTokenName"/>
+            <xsd:element name="tokenIdentifierType" type="TokenIdentifierType"/>
+            <xsd:element name="dTIRegistrationAuthorityIdentifier" type="DTIRegistrationAuthorityIdentifier"/>
+            <xsd:element name="otherDataElements" type="OtherDataElements"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="DigitalTokenName">
+        <xsd:sequence>
+            <xsd:element name="digitalTokenLongName" type="DigitalTokenLongName"/>
+            <xsd:element name="digitalTokenShortName" type="DigitalTokenShortName"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="DigitalTokenLongName">
+        <xsd:sequence>
+            <xsd:element name="digitalTokenLongName" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="originalLanguageDigitalTokenLongName" type="xsd:string" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="DigitalTokenShortName">
+        <xsd:sequence>
+            <xsd:element name="digitalTokenShortName" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="originalLanguageDigitalTokenShortName" type="xsd:string" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="TokenIdentifierType">
+        <xsd:sequence>
+            <xsd:element name="digitalTokenIdentifierType" type="DigitalTokenIdentifierType"/>
+            <xsd:element name="digitalLedgerTechnologyType" type="DigitalLedgerTechnologyType"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="DigitalTokenIdentifierType">
+        <xsd:choice>
+            <xsd:element name="auxiliaryDigitalToken" type="NULL"/>
+            <xsd:element name="nativeDigitalToken" type="NULL"/>
+            <xsd:element name="distributedLedgerWithoutANativeDigitalToken" type="NULL"/>
+            <xsd:element name="functionallyFungibleGroupOfDigitalTokens" type="NULL"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:complexType name="DigitalLedgerTechnologyType">
+        <xsd:choice>
+            <xsd:element name="blockchain" type="NULL"/>
+            <xsd:element name="other" type="NULL"/>
+        </xsd:choice>
+    </xsd:complexType>
+    <xsd:simpleType name="DTIRegistrationAuthorityIdentifier">
+        <xsd:restriction base="xsd:string"/>
+    </xsd:simpleType>
+    <xsd:complexType name="OtherDataElements">
+        <xsd:sequence>
+            <xsd:element name="underlyingAssetExternalIdentifierType" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="underlyingAssetExternalIdentifierValue" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="digitalTokenExternalIdentifierType" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="digitalTokenExternalIdentifierValue" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="digitalTokenReferenceImplementationURL" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="digitalTokenUnitMultiplier" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="auxiliaryDigitaltoken" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="publicDistributedLedgerIndicator" type="PublicDistributedLedgerIndicator" minOccurs="0"/>
+        </xsd:sequence>
+    </xsd:complexType>
+    <xsd:complexType name="PublicDistributedLedgerIndicator">
+        <xsd:choice>
+            <xsd:element name="public" type="NULL"/>
+            <xsd:element name="private" type="NULL"/>
+        </xsd:choice>
+    </xsd:complexType>
+</xsd:schema>

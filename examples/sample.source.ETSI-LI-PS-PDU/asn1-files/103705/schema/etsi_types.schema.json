@@ -1,0 +1,411 @@
+{
+  "$id": "urn:etsi:li:103705:type-schema-id:v1.1.1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ETSI TS 103 705 Types schema",
+  "description": "JSON schema for ETSI-defined types (see clause 6.1 and Annex A)",
+  "$defs": {
+    "Pointer": {
+      "type": "object",
+      "title": "Pointer",
+      "description": "Allows one Record in a RecordSet to point to data in another Record in the same Recordset. See clause 5.4 and Annex A.2.2",
+      "properties": {
+        "destination": {
+          "type": "string",
+          "title": "Pointer Destination",
+          "description": "Identifies the Record in the RecordSet containined the referred-to data (see clause 5.3.2 and A.2.2)"
+        },
+        "relationship": {
+          "type": "string",
+          "title": "Relationship",
+          "description": "Indicates the nature of the relationship. Valid values and their meaning should be provided by the CSP"
+        }
+      }, 
+      "required": [
+        "destination"
+      ]
+    },
+    "CallRecord": {
+      "type": "object",
+      "title": "Information about call details",
+      "description": "Details about a record or event related to a call",
+      "required": [
+        "timeBegin", "parties"
+      ],
+      "properties": {
+        "sessionRefId": {
+          "type": "string",
+          "description": "A reference identifier to uniquely identify the telephony call"
+        },
+        "timeBegin": {
+          "$ref": "ts_103280_2017_07#/$defs/QualifiedMicrosecondDateTime",
+          "description": "Time at which the call began"
+        },
+        "timeEnd": {
+          "$ref": "ts_103280_2017_07#/$defs/QualifiedMicrosecondDateTime",
+          "description": "Time at which the call ended"
+        },
+        "callDuration": {
+          "type": "integer",
+          "description": "Chargeable duration of the call in seconds"
+        },
+        "ringingDuration": {
+          "type": "integer",
+          "description": "Non-chargeable duration of the call in seconds"
+        },
+        "parties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CallPartyInformation"
+          }
+        },
+        "endReason": {
+          "type": "integer",
+          "description": "ITU Q.850"
+        }
+      }
+    },
+    "MessagingRecord": {
+      "type": "object",
+      "title": "Information about messaging details",
+      "description": "Details about a record or event related to a message",
+      "required": [
+        "eventTime", "parties"
+      ],
+      "properties": {
+        "sessionRefId": {
+          "type": "string",
+          "description": "A reference identifier to uniquely identify the message"
+        },
+        "eventTime": {
+          "$ref": "ts_103280_2017_07#/$defs/QualifiedMicrosecondDateTime",
+          "description": "Time at which the event happened"
+        },
+        "parties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MessagingPartyInformation"
+          }
+        }
+      }
+    },
+    "EmailRecord": {
+      "type": "object",
+      "title": "Information about email details",
+      "description": "Details about a record or event related to an email",
+      "required": [
+        "eventTime", "parties"
+      ],
+      "properties": {
+        "sessionRefId": {
+          "type": "string",
+          "description": "A reference identifier to uniquely identify the message"
+        },
+        "eventTime": {
+          "$ref": "ts_103280_2017_07#/$defs/QualifiedMicrosecondDateTime",
+          "description": "Time at which the event happened"
+        },
+        "parties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EmailPartyInformation"
+          }
+        }
+      }
+    },
+    "DataAccessRecord": {
+      "type": "object",
+      "title": "Data Record",
+      "description": "Information about a data access session (e.g. a mobile data session)",
+      "required": [
+        "timeBegin", "parties"
+      ],
+      "properties": {
+        "sessionRefId": {
+          "type": "string",
+          "description": "A reference identifier to uniquely identify the message"
+        },
+        "timeBegin": {
+          "$ref": "ts_103280_2017_07#/$defs/QualifiedMicrosecondDateTime",
+          "description": "Time at which the data access session began"
+        },
+        "timeEnd": {
+          "$ref": "ts_103280_2017_07#/$defs/QualifiedMicrosecondDateTime",
+          "description": "Time at which the data access session ended"
+        },
+        "parties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DataAccessPartyInformation"
+          }
+        },
+        "volume": {
+          "$ref": "#/$defs/DataVolume"
+        }
+      }
+    },
+    "CallPartyInformation": {
+      "type": "object",
+      "description" : "Information about the participants and technologies related to the call",
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/CallPartyId"
+        },
+        "role": {
+          "enum": [
+            "originating",
+            "terminating",
+            "forwarding",
+            "unknown"
+          ]
+        },
+        "initialAccessTechnology": {
+          "$ref": "#/$defs/AccessTechnology",
+          "description": "Access technology used at the start of the call"
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Location"
+          }
+        }
+      }
+    },
+    "MessagingPartyInformation": {
+      "type": "object",
+      "description": "Information about the participants and technologies related to the messages",
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/MessagingPartyId"
+        },
+        "role": {
+          "enum": [
+            "sender",
+            "receiver"
+          ]
+        },
+        "accessTechnology": {
+          "$ref": "#/$defs/AccessTechnology",
+          "description": "Access technology used"
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Location"
+          }
+        }
+      }
+    },
+    "EmailPartyInformation": {
+      "type": "object",
+      "description": "Information about the participants and technologies related to the messages",
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/EmailPartyId"
+        },
+        "role": {
+          "enum": [
+            "sender",
+            "receiver"
+          ]
+        },
+        "accessTechnology": {
+          "$ref": "#/$defs/AccessTechnology",
+          "description": "Access technology used"
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Location"
+          }
+        }
+      }
+    },
+    "DataAccessPartyInformation": {
+      "type": "object",
+      "description": "Information about the participants and technologies related to the data service",
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/DataAccessPartyId"
+        },
+        "aPNDNN": {
+          "description" : "APN or DNN associated with the data access",
+          "$ref": "ts_103280_2017_07#/$defs/DNN"
+        },
+        "initialAccessTechnology": {
+          "$ref": "#/$defs/AccessTechnology",
+          "description": "Access technology used at the start of the data access session"
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Location"
+          }
+        }
+      }
+    },
+    "CallPartyId": {
+      "type": "object",
+      "description": "Identifier of the party related to the call",
+      "properties": {
+        "phoneNumber": {
+          "$ref": "ts_103280_2017_07#/$defs/InternationalE164"
+        },
+        "iMSI": {
+          "$ref": "ts_103280_2017_07#/$defs/IMSI"
+        },
+        "iMEI": {
+          "$ref": "ts_103280_2017_07#/$defs/IMEI"
+        },
+        "sIPURI": {
+          "$ref": "ts_103280_2017_07#/$defs/SIPURI"
+        },
+        "tELURI": {
+          "$ref": "ts_103280_2017_07#/$defs/TELURI"
+        },
+        "unstructuredPhoneNumber": {
+          "type": "string"
+        }
+      }
+    },
+    "MessagingPartyId": {
+      "type": "object",
+      "description": "Identifier of the party related to the message",
+      "properties": {
+        "phoneNumber": {
+          "$ref": "ts_103280_2017_07#/$defs/InternationalE164"
+        },
+        "iMSI": {
+          "$ref": "ts_103280_2017_07#/$defs/IMSI"
+        },
+        "iMEI": {
+          "$ref": "ts_103280_2017_07#/$defs/IMEI"
+        },
+        "sIPURI": {
+          "$ref": "ts_103280_2017_07#/$defs/SIPURI"
+        },
+        "tELURI": {
+          "$ref": "ts_103280_2017_07#/$defs/TELURI"
+        },
+        "unstructuredPhoneNumber": {
+          "type": "string"
+        }
+      }
+    },
+    "EmailPartyId": {
+      "type": "object",
+      "description": "Identifier of the party related to the message",
+      "properties": {
+        "emailAddress": {
+          "$ref": "ts_103280_2017_07#/$defs/EmailAddress"
+        },
+        "iPv4Address": {
+          "$ref": "ts_103280_2017_07#/$defs/IPv4Address"
+        },
+        "iPv6Address": {
+          "$ref": "ts_103280_2017_07#/$defs/IPv6Address"
+        }
+      }
+    },
+    "DataAccessPartyId": {
+      "type": "object",
+      "description": "Identifier of the party related to the data service",
+      "properties": {
+        "phoneNumber": {
+          "$ref": "ts_103280_2017_07#/$defs/InternationalE164"
+        },
+        "iMSI": {
+          "$ref": "ts_103280_2017_07#/$defs/IMSI"
+        },
+        "iMEI": {
+          "$ref": "ts_103280_2017_07#/$defs/IMEI"
+        },
+        "sUPIIMSI": {
+          "$ref": "ts_103280_2017_07#/$defs/SUPIIMSI"
+        },
+        "sUPINAI": {
+          "$ref": "ts_103280_2017_07#/$defs/SUPINAI"
+        },
+        "sUCI": {
+          "$ref": "ts_103280_2017_07#/$defs/SUCI"
+        },
+        "pEIIMEI": {
+          "$ref": "ts_103280_2017_07#/$defs/PEIIMEI"
+        },
+        "iPv4Address": {
+          "$ref": "ts_103280_2017_07#/$defs/IPv4Address"
+        },
+        "iPv4CIDR": {
+          "$ref": "ts_103280_2017_07#/$defs/IPv4CIDR"
+        },
+        "iPv6Address": {
+          "$ref": "ts_103280_2017_07#/$defs/IPv6Address"
+        },
+        "iPv6CIDR": {
+          "$ref": "ts_103280_2017_07#/$defs/IPv6CIDR"
+        },
+        "mACAddress": {
+          "$ref": "ts_103280_2017_07#/$defs/MACAddress"
+        },
+        "unstructuredPhoneNumber": {
+          "type": "string"
+        }
+      }
+    },
+    "DataVolume": {
+      "type": "object",
+      "description": "quantification of the bytes exchanged",
+      "properties": {
+        "bytesUpload": {
+          "type": "integer"
+        },
+        "bytesDownload": {
+          "type": "integer"
+        },
+        "bytesTotal": {
+          "type": "integer"
+        }
+      }
+    },
+    "AccessTechnology": {
+      "description": "Access technology used",
+      "enum": [
+        "2G",
+        "3G",
+        "4G",
+        "5G",
+        "fiber",
+        "cable",
+        "wifi",
+        "xDSL",
+        "pstn"
+      ]
+    },
+    "Location": {
+      "type": "object",
+      "description": "Location information",
+      "properties": {
+        "cGI": {
+          "$ref": "ts_103280_2017_07#/$defs/CGI"
+        },
+        "eCGI": {
+          "$ref": "ts_103280_2017_07#/$defs/ECGI"
+        },
+        "nCGI": {
+          "$ref": "ts_103280_2017_07#/$defs/NCGI"
+        },
+        "modemMAC": {
+          "$ref": "ts_103280_2017_07#/$defs/MACAddress"
+        },
+        "coord": {
+          "$ref": "ts_103280_2017_07#/$defs/WGS84CoordinateDecimal"
+        },
+        "coordPolygon": {
+          "type": "array",
+          "items": {
+            "$ref": "ts_103280_2017_07#/$defs/WGS84CoordinateDecimal"
+          }
+        }
+      }
+    }
+  }
+}

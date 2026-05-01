@@ -1,0 +1,12 @@
+<X0Request xmlns="urn:etsi:li:104000:xsdns:v1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="RegistrationRequest">
+    <admfIdentifier>ADMF</admfIdentifier>
+    <eliIdentifier>X0ID</eliIdentifier>
+    <messageTimestamp>2024-06-07T08:43:17.000000Z</messageTimestamp>
+    <version>v1.1.1</version>
+    <x0TransactionId>1664ca15-12ea-4f1f-8580-abf5885ae40a</x0TransactionId>
+    <supportedEnrolmentProtocols>
+        <enrolmentProtocolType>CMP</enrolmentProtocolType>
+    </supportedEnrolmentProtocols>
+    <eLIReference>bfbd009d-1cf4-4bde-8074-886686a41ab3</eLIReference>
+    <nFIID>SMF-1234</nFIID>
+</X0Request>

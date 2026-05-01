@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<handoverItem xmlns="http://uri.etsi.org/03707/2020/02" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <header/>
+    <payload xsi:type="MessagingPayload">
+        <coreParameters>
+            <messageSender>
+                <identifiers>
+                    <identifier>target@example.com</identifier>
+                </identifiers>
+                <isTargetedParty>true</isTargetedParty>
+            </messageSender>
+            <messageReceivers>
+                <recipient>
+                    <identifiers>
+                        <identifier>someoneelse@example.com</identifier>
+                    </identifiers>
+                </recipient>
+            </messageReceivers>
+            <timestamp>2019-10-17T06:42:23.000000+01:00</timestamp>
+            <associatedBinaryData>
+                <binaryObject>
+                    <url>https://example.com/binaryData/e71d2da5-774a-4bca-8748-2a00b2e17892</url>
+                    <contentLength>1024</contentLength>
+                    <contentType>image/jpeg</contentType>
+                    <expiry>2019-10-17T06:42:53.000000+01:00</expiry>
+                    <checksum>8b7df143d91c716ecfa5fc1730022f6b421b05cedee8fd52b1fc65a96030ad52</checksum>
+                    <originalFilename>cat.jpeg</originalFilename>
+                    <cspDefinedIdentifier>e71d2da5-774a-4bca-8748-2a00b2e17892</cspDefinedIdentifier>
+                </binaryObject>
+            </associatedBinaryData>
+        </coreParameters>
+        <cspDefinedParameters>
+            <cspDefinedMetadata>
+                <schemaDetails>
+                    <schemaIdentifier>http://FooServiceSchema.example.com/schema/v1.1.1/</schemaIdentifier>
+                </schemaDetails>
+                <xmlData>
+                    <fooServiceDefinedParameters xmlns="http://FooServiceSchema.example.com/schema/v1.1.1/">
+                        <item1>Foo</item1>
+                        <item2>Bar</item2>
+                        <item3>Baz</item3>
+                    </fooServiceDefinedParameters>
+                </xmlData>
+            </cspDefinedMetadata>
+        </cspDefinedParameters>
+    </payload>
+</handoverItem>

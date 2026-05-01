@@ -1,0 +1,12 @@
+CSP wants to create a simple subsciber record structure
+(side note - at the moment we don't have that in the standard schema, but it is likely to come later)
+The subscriber can have a number of different addresses (e.g. contact, billing, delivery, installed)
+but they are often all set to the same value. To reduce the amount of repetition,
+the CSP uses the Pointer record
+
+- CSPSubscriberRecord
+- CSPAddressRecord
+
+
+Number for reply LS? from 40408 5GSAT_Ph3_Arch
+477

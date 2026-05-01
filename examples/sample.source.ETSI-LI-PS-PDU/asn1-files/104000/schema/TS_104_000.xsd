@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:etsi103280="http://uri.etsi.org/03280/common/2017/07" xmlns="urn:etsi:li:104000:xsdns:v1" targetNamespace="urn:etsi:li:104000:xsdns:v1" elementFormDefault="qualified" attributeFormDefault="unqualified">
+    <xs:import namespace="http://uri.etsi.org/03280/common/2017/07"/>
+    <xs:element name="X0Request" type="X0Request"/>
+    <xs:element name="X0Response" type="X0Response"/>
+    <!-- See section 6.2.1 -->
+    <xs:complexType name="X0Request">
+        <xs:sequence>
+            <xs:element name="admfIdentifier" type="AdmfIdentifier"/>
+            <xs:element name="eliIdentifier" type="EliIdentifier"/>
+            <xs:element name="messageTimestamp" type="etsi103280:QualifiedMicrosecondDateTime"/>
+            <xs:element name="version" type="Version"/>
+            <xs:element name="x0TransactionId" type="X0TransactionId"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="X0Response">
+        <xs:sequence>
+            <xs:element name="admfIdentifier" type="AdmfIdentifier"/>
+            <xs:element name="eliIdentifier" type="EliIdentifier"/>
+            <xs:element name="messageTimestamp" type="etsi103280:QualifiedMicrosecondDateTime"/>
+            <xs:element name="version" type="Version"/>
+            <xs:element name="x0TransactionId" type="X0TransactionId"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="AdmfIdentifier">
+        <xs:restriction base="xs:token"/>
+    </xs:simpleType>
+    <xs:simpleType name="EliIdentifier">
+        <xs:restriction base="xs:token"/>
+    </xs:simpleType>
+    <xs:simpleType name="Version">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="v1\.\d+\.\d+"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="X0TransactionId">
+        <xs:restriction base="etsi103280:UUID"/>
+    </xs:simpleType>
+    <!-- See section 6.2.2 -->
+    <xs:complexType name="ErrorResponse">
+        <xs:complexContent>
+            <xs:extension base="X0Response">
+                <xs:sequence>
+                    <xs:element name="errorCode" type="xs:integer"/>
+                    <xs:element name="errorDescription" type="xs:string"/>
+                </xs:sequence>
+            </xs:extension>
+        </xs:complexContent>
+    </xs:complexType>
+    <!-- See section 6.2.3.1 -->
+    <xs:complexType name="RegistrationRequest">
+        <xs:complexContent>
+            <xs:extension base="X0Request">
+                <xs:sequence>
+                    <xs:element name="supportedEnrolmentProtocols" type="ListOfSupportedEnrolmentProtocols"/>
+                    <xs:element name="eLIReference" type="etsi103280:UUID"/>
+                    <xs:element name="nFIID" type="etsi103280:ShortString"/>
+                </xs:sequence>
+            </xs:extension>
+        </xs:complexContent>
+    </xs:complexType>
+    <xs:complexType name="ListOfSupportedEnrolmentProtocols">
+        <xs:sequence>
+            <xs:element name="enrolmentProtocolType" type="EnrolmentProtocolType" maxOccurs="unbounded"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="EnrolmentProtocolType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="CMP"/>
+            <xs:enumeration value="ACME"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <!-- See section 6.2.3.2 -->
+    <xs:complexType name="RegistrationResponse">
+        <xs:complexContent>
+            <xs:extension base="X0Response">
+                <xs:sequence>
+                    <xs:element name="assignedELIID" type="EliIdentifier"/>
+                    <xs:element name="listOfCertificateEnrolmentDetails" type="ListOfCertificateEnrolmentDetails"/>
+                </xs:sequence>
+            </xs:extension>
+        </xs:complexContent>
+    </xs:complexType>
+    <!-- See section 6.2.4.1 -->
+    <xs:complexType name="XnCertificateEnrolmentRequest">
+        <xs:complexContent>
+            <xs:extension base="X0Request">
+                <xs:sequence>
+                    <xs:element name="listOfCertificateEnrolmentRequests" type="ListOfCertificateEnrolmentRequests"/>
+                </xs:sequence>
+            </xs:extension>
+        </xs:complexContent>
+    </xs:complexType>
+    <xs:complexType name="ListOfCertificateEnrolmentRequests">
+        <xs:sequence>
+            <xs:element name="certificateEnrolmentRequest" type="CertificateEnrolmentRequest" maxOccurs="unbounded"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="CertificateEnrolmentRequest">
+        <xs:sequence>
+            <xs:element name="interfaceReference" type="InterfaceReference"/>
+            <xs:element name="certificateProfileInterfaceType" type="CertificateProfileInterfaceType"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="CertificateProfileInterfaceType">
+        <xs:sequence>
+            <xs:element name="definingSDO" type="etsi103280:ShortString"/>
+            <xs:element name="interfaceName" type="etsi103280:ShortString"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="InterfaceReference">
+        <xs:restriction base="etsi103280:ShortString"/>
+    </xs:simpleType>
+    <!-- See section 6.2.4.2 -->
+    <xs:complexType name="XnCertificateEnrolmentResponse">
+        <xs:complexContent>
+            <xs:extension base="X0Response">
+                <xs:sequence>
+                    <xs:element name="listOfCertificateEnrolmentDetails" type="ListOfCertificateEnrolmentDetails"/>
+                </xs:sequence>
+            </xs:extension>
+        </xs:complexContent>
+    </xs:complexType>
+    <xs:complexType name="ListOfCertificateEnrolmentDetails">
+        <xs:sequence>
+            <xs:element name="certificateEnrolmentDetails" type="CertificateEnrolmentDetails" minOccurs="1" maxOccurs="unbounded"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="CertificateEnrolmentDetails">
+        <xs:sequence>
+            <xs:element name="interfaceReference" type="InterfaceReference"/>
+            <xs:element name="certificateProtocolInterfaceType" type="CertificateProfileInterfaceType"/>
+            <xs:element name="enrolmentProtocolDetails" type="EnrolmentProtocolDetails"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="EnrolmentProtocolDetails">
+        <xs:choice>
+            <xs:element name="cMPEnrolmentDetails" type="CMPEnrolmentDetails"/>
+        </xs:choice>
+    </xs:complexType>
+    <!-- See section 6.2.5.1 -->
+    <xs:complexType name="ConfigurationRequest">
+        <xs:complexContent>
+            <xs:extension base="X0Request">
+                <xs:sequence>
+                    <xs:element name="notificationURL" type="xs:anyURI" minOccurs="0"/>
+                </xs:sequence>
+            </xs:extension>
+        </xs:complexContent>
+    </xs:complexType>
+    <!-- See section 6.2.5.2 -->
+    <xs:complexType name="ConfigurationResponse">
+        <xs:complexContent>
+            <xs:extension base="X0Response">
+                <xs:sequence>
+                    <xs:element name="listOfConfigurationDetails" type="ListOfConfigurationDetails"/>
+                </xs:sequence>
+            </xs:extension>
+        </xs:complexContent>
+    </xs:complexType>
+    <xs:complexType name="ListOfConfigurationDetails">
+        <xs:sequence>
+            <xs:element name="configurationDetails" type="ConfigurationDetails" maxOccurs="unbounded"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="ConfigurationDetails" abstract="true">
+        <xs:sequence>
+            <xs:element name="interfaceReference" type="InterfaceReference"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="X0ConfigurationDetails">
+        <xs:complexContent>
+            <xs:extension base="ConfigurationDetails">
+                <xs:sequence>
+                    <xs:element name="imageKeyDetails" type="ImageKeyDetails" minOccurs="0"/>
+                </xs:sequence>
+            </xs:extension>
+        </xs:complexContent>
+    </xs:complexType>
+    <xs:complexType name="ImageKeyDetails">
+        <xs:sequence>
+            <xs:element name="iMKidentifier" type="etsi103280:UUID"/>
+            <xs:element name="iMKformat" type="IMKformat"/>
+            <xs:element name="iMKvalue" type="xs:string"/>
+            <xs:element name="instruction" type="Instruction" minOccurs="0"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="IMKformat">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="PKCS12BASE64"/>
+            <xs:enumeration value="RAWBASE64"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="Instruction">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="store"/>
+            <xs:enumeration value="delete"/>
+            <xs:enumeration value="roll-over"/>
+        </xs:restriction>
+    </xs:simpleType>
+<!-- See section 6.2.6.1 -->
+    <xs:complexType name="NotificationRequest">
+        <xs:complexContent>
+            <xs:extension base="X0Request">
+                <xs:sequence/>
+            </xs:extension>
+        </xs:complexContent>
+    </xs:complexType>
+<!-- See section 6.2.6.2 -->
+    <xs:complexType name="NotificationResponse">
+        <xs:complexContent>
+            <xs:extension base="X0Response">
+                <xs:sequence>
+                    <xs:element name="oK" type="OK"/>
+                </xs:sequence>
+            </xs:extension>
+        </xs:complexContent>
+    </xs:complexType>
+    <xs:simpleType name="OK">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="OK"/>
+        </xs:restriction>
+    </xs:simpleType>
+<!-- See section 6.2.6.2 -->
+<!-- See Annex A.2 -->
+    <xs:complexType name="CMPEnrolmentDetails">
+        <xs:sequence>
+            <xs:element name="listOfCMPServerDetails" type="ListOfCMPServerDetails"/>
+            <xs:element name="cMPCertificateOnlineEnrolment" type="CMPCertificateOnlineEnrolment"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="ListOfCMPServerDetails">
+        <xs:sequence>
+            <xs:element name="cMPServer" type="CMPServer" minOccurs="1" maxOccurs="unbounded"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="CMPServer">
+        <xs:sequence>
+            <xs:element name="name" type="etsi103280:ShortString"/>
+            <xs:element name="certificateAuthority" type="xs:string"/>
+            <xs:element name="uRL" type="xs:anyURI"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="CMPCertificateOnlineEnrolment">
+        <xs:sequence>
+            <xs:element name="algorithm" type="Algorithm"/>
+            <xs:element name="keyIdentifier" type="xs:string" minOccurs="0"/>
+            <xs:element name="password" type="xs:string"/>
+            <xs:element name="subject" type="xs:string"/>
+            <xs:element name="subjectAlternativeName" type="xs:string" minOccurs="0"/>
+            <xs:element name="renewalThreshold" type="xs:integer"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="Algorithm">
+        <xs:sequence>
+            <xs:element name="algorithmOID" type="OIDValue"/>
+            <xs:element name="curveOID" type="OIDValue" minOccurs="0"/>
+            <xs:element name="algorithmBitSize" type="xs:positiveInteger" minOccurs="0"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="OIDValue">
+        <xs:restriction base="etsi103280:ShortString">
+            <xs:pattern value="([0-9]+\.)+[0-9]+"/>
+        </xs:restriction>
+    </xs:simpleType>
+</xs:schema>

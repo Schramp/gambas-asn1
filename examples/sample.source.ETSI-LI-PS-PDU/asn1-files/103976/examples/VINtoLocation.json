@@ -1,0 +1,28 @@
+{
+    "VINtoLocationRecords" : [
+        {
+            "Location" : {
+                "WGS84CoordinateDecimal" : {
+                    "etsi280:latitude" : "N43.617003",
+                    "etsi280:longitude" : "E007.053222"
+                }
+            },
+            "TimeOfLocation" : {
+                "PointInTime" : "2022-01-16T15:57:00Z"
+            }
+        },
+        {
+            "Location" : {
+                "WGS84CoordinateDecimal" : {
+                    "etsi280:latitude" : "N43.617003",
+                    "etsi280:longitude" : "E007.053222"
+                }
+            },
+            "TimeOfLocation" : {
+                "PointInTime" : "2022-01-16T15:57:00Z"
+            },
+            "SourceOfLocation" : "GNSS",
+            "LocationRecordReason" : "Location record reason"
+        }
+    ]
+}

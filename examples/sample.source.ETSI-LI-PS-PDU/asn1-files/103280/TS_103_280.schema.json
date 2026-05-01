@@ -1,0 +1,412 @@
+{
+  "$id": "ts_103280_2017_07",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "ShortString": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "LongString": {
+      "type": "string",
+      "maxLength": 65535
+    },
+    "LIID": {
+      "type": "string",
+      "pattern": "^([!-~]{1,25})|([0-9a-f]{26,50})$"
+    },
+    "UTCDateTime": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "UTCMicrosecondDateTime": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"
+    },
+    "QualifiedDateTime": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "QualifiedMicrosecondDateTime": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "InternationalE164": {
+      "type": "string",
+      "pattern": "^[0-9]{1,15}$"
+    },
+    "IMSI": {
+      "type": "string",
+      "pattern": "^[0-9]{6,15}$"
+    },
+    "IMEI": {
+      "type": "string",
+      "pattern": "^[0-9]{14}$"
+    },
+    "IMEICheckDigit": {
+      "type": "string",
+      "pattern": "^[0-9]{15}$"
+    },
+    "IMEISV": {
+      "type": "string",
+      "pattern": "^[0-9]{16}$"
+    },
+    "IPv4Address": {
+      "type": "string",
+      "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9]?[0-9])$"
+    },
+    "IPv4CIDR": {
+      "type": "string",
+      "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9]?[0-9])/([1-2]?[0-9]|3[0-2])$"
+    },
+    "IPv6Address": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{4}:){7}([0-9a-f]{4})$"
+    },
+    "IPv6CIDR": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{4}:){7}([0-9a-f]{4})/(([1-9][0-9]?)|(1[0-1][0-9])|(12[0-8]))$"
+    },
+    "TCPPort": {
+      "type": "integer",
+      "exclusiveMinimum": 1,
+      "maximum": 65535
+    },
+    "UDPPort": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "MACAddress": {
+      "type": "string",
+      "pattern": "^([a-f0-9]{2}:){5}[a-f0-9]{2}$"
+    },
+    "EmailAddress": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ShortString"
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9\\.!#$%&'\\*\\+\\\\/=\\?\\^_`\\{\\|\\}~\\-]+@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$"
+        }
+      ]
+    },
+    "UUID": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+    },
+    "ISOCountryCode": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}$"
+    },
+    "SIPURI": {
+      "type": "string",
+      "pattern": "^sips?:[a-zA-Z0-9!#$&-;=?-\\[\\]_~%]+$"
+    },
+    "TELURI": {
+      "type": "string",
+      "pattern": "^tel:[a-zA-Z0-9!#$&-;=?-\\[\\]_~%]+$"
+    },
+    "WGS84LatitudeDecimal": {
+      "type": "string",
+      "pattern": "^[NS][0-9]{2}\\.[0-9]{6}$"
+    },
+    "WGS84LongitudeDecimal": {
+      "type": "string",
+      "pattern": "^[EW][0-9]{3}\\.[0-9]{6}$"
+    },
+    "WGS84LatitudeAngular": {
+      "type": "string",
+      "pattern": "^[NS][0-9]{6}\\.[0-9]{2}$"
+    },
+    "WGS84LongitudeAngular": {
+      "type": "string",
+      "pattern": "^[EW][0-9]{7}\\.[0-9]{2}$"
+    },
+    "SUPIIMSI": {
+      "$ref": "#/$defs/IMSI"
+    },
+    "SUPINAI": {
+      "$ref": "#/$defs/NAI"
+    },
+    "SUCI": {
+      "type": "string",
+      "pattern": "^([a-fA-F0-9]{2})*$"
+    },
+    "PEIIMEI": {
+      "$ref": "#/$defs/IMEI"
+    },
+    "PEIIMEICheckDigit": {
+      "$ref": "#/$defs/IMEICheckDigit"
+    },
+    "PEIIMEISV": {
+      "$ref": "#/$defs/IMEISV"
+    },
+    "GPSIMSISDN": {
+      "type": "string",
+      "pattern": "^[0-9]{1,15}$"
+    },
+    "GPSINAI": {
+      "$ref": "#/$defs/NAI"
+    },
+    "NAI": {
+      "type": "string"
+    },
+    "LDID": {
+      "type": "string",
+      "pattern": "^([A-Z]{2}-.+-.+)$"
+    },
+    "InternationalizedEmailAddress": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ShortString"
+        },
+        {
+          "type": "string",
+          "pattern": "^.+@.+$"
+        }
+      ]
+    },
+    "EUI64": {
+      "type": "string",
+      "pattern": "^([a-f0-9]{2}:){7}[a-f0-9]{2}$"
+    },
+    "CGI": {
+      "type": "string",
+      "pattern": "^[0-9]{3}-[0-9]{2,3}-[a-f0-9]{4}-[a-f0-9]{4}$"
+    },
+    "ECGI": {
+      "type": "string",
+      "pattern": "^[0-9]{3}-[0-9]{2,3}-[a-f0-9]{7}$"
+    },
+    "NCGI": {
+      "type": "string",
+      "pattern": "^[0-9]{3}-[0-9]{2,3}-[a-f0-9]{9}$"
+    },
+    "ICCID": {
+      "type": "string",
+      "pattern": "^[0-9]{19,20}$"
+    },
+    "IPProtocol": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "VLANID": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4095
+    },
+    "VIN": {
+      "type": "string",
+      "pattern": "^[A-HJ-NPR-Z0-9]{17}$"
+    },
+    "ServiceAccessIdentifier": {
+      "type": "string"
+    },
+    "EUICCID": {
+      "type": "string",
+      "pattern": "^[0-9]{32}$"
+    },
+    "APN": {
+      "$ref": "#/$defs/LongString"
+    },
+    "DNN": {
+      "$ref": "#/$defs/LongString"
+    },
+    "IPAddress": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "etsi280:IPv4Address": {
+              "$ref": "#/$defs/IPv4Address"
+            }
+          },
+          "required": [
+            "etsi280:IPv4Address"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "etsi280:IPv6Address": {
+              "$ref": "#/$defs/IPv6Address"
+            }
+          },
+          "required": [
+            "etsi280:IPv6Address"
+          ]
+        }
+      ]
+    },
+    "IPCIDR": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "etsi280:IPv4CIDR": {
+              "$ref": "#/$defs/IPv4CIDR"
+            }
+          },
+          "required": [
+            "etsi280:IPv4CIDR"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "etsi280:IPv6CIDR": {
+              "$ref": "#/$defs/IPv6CIDR"
+            }
+          },
+          "required": [
+            "etsi280:IPv6CIDR"
+          ]
+        }
+      ]
+    },
+    "TCPPortRange": {
+      "type": "object",
+      "properties": {
+        "etsi280:start": {
+          "$ref": "#/$defs/TCPPort"
+        },
+        "etsi280:end": {
+          "$ref": "#/$defs/TCPPort"
+        }
+      },
+      "required": [
+        "etsi280:start",
+        "etsi280:end"
+      ]
+    },
+    "UDPPortRange": {
+      "type": "object",
+      "properties": {
+        "etsi280:start": {
+          "$ref": "#/$defs/UDPPort"
+        },
+        "etsi280:end": {
+          "$ref": "#/$defs/UDPPort"
+        }
+      },
+      "required": [
+        "etsi280:start",
+        "etsi280:end"
+      ]
+    },
+    "Port": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "etsi280:TCPPort": {
+              "$ref": "#/$defs/TCPPort"
+            }
+          },
+          "required": [
+            "etsi280:TCPPort"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "etsi280:UDPPort": {
+              "$ref": "#/$defs/UDPPort"
+            }
+          },
+          "required": [
+            "etsi280:UDPPort"
+          ]
+        }
+      ]
+    },
+    "PortRange": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "etsi280:TCPPortRange": {
+              "$ref": "#/$defs/TCPPortRange"
+            }
+          },
+          "required": [
+            "etsi280:TCPPortRange"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "etsi280:UDPPortRange": {
+              "$ref": "#/$defs/UDPPortRange"
+            }
+          },
+          "required": [
+            "etsi280:UDPPortRange"
+          ]
+        }
+      ]
+    },
+    "IPAddressPort": {
+      "type": "object",
+      "properties": {
+        "etsi280:address": {
+          "$ref": "#/$defs/IPAddress"
+        },
+        "etsi280:port": {
+          "$ref": "#/$defs/Port"
+        }
+      },
+      "required": [
+        "etsi280:address",
+        "etsi280:port"
+      ]
+    },
+    "IPAddressPortRange": {
+      "type": "object",
+      "properties": {
+        "etsi280:address": {
+          "$ref": "#/$defs/IPAddress"
+        },
+        "etsi280:portRange": {
+          "$ref": "#/$defs/PortRange"
+        }
+      },
+      "required": [
+        "etsi280:address",
+        "etsi280:portRange"
+      ]
+    },
+    "WGS84CoordinateDecimal": {
+      "type": "object",
+      "properties": {
+        "etsi280:latitude": {
+          "$ref": "#/$defs/WGS84LatitudeDecimal"
+        },
+        "etsi280:longitude": {
+          "$ref": "#/$defs/WGS84LongitudeDecimal"
+        }
+      },
+      "required": [
+        "etsi280:latitude",
+        "etsi280:longitude"
+      ]
+    },
+    "WGS84CoordinateAngular": {
+      "type": "object",
+      "properties": {
+        "etsi280:latitude": {
+          "$ref": "#/$defs/WGS84LatitudeAngular"
+        },
+        "etsi280:longitude": {
+          "$ref": "#/$defs/WGS84LongitudeAngular"
+        }
+      },
+      "required": [
+        "etsi280:latitude",
+        "etsi280:longitude"
+      ]
+    }
+  }
+}

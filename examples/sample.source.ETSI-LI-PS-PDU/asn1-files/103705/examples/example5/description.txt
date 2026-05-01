@@ -1,0 +1,6 @@
+CSP elects to use only ETSI-standard types in their responses, but includes a signature
+
+CSP imports the following types in their CSP record schema
+
+- InformationCall
+- InformationMessaging

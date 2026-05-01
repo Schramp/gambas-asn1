@@ -1,0 +1,23 @@
+<X0Request xmlns="urn:etsi:li:104000:xsdns:v1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="XnCertificateEnrolmentRequest">
+    <admfIdentifier>ADMF</admfIdentifier>
+    <eliIdentifier>ELI_1234</eliIdentifier>
+    <messageTimestamp>2024-06-07T11:08:07.000000Z</messageTimestamp>
+    <version>v1.1.1</version>
+    <x0TransactionId>be165469-1024-4551-baab-84932e92abfb</x0TransactionId>
+	<listOfCertificateEnrolmentRequests>
+		<certificateEnrolmentRequest>
+			<interfaceReference>LI_X1</interfaceReference>
+			<certificateProfileInterfaceType>
+				<definingSDO>ETSI-TC-LI</definingSDO>
+				<interfaceName>X1-client</interfaceName>
+			</certificateProfileInterfaceType>
+		</certificateEnrolmentRequest>
+		<certificateEnrolmentRequest>
+			<interfaceReference>LI_T2</interfaceReference>
+			<certificateProfileInterfaceType>
+				<definingSDO>ETSI-TC-LI</definingSDO>
+				<interfaceName>X1-server</interfaceName>
+			</certificateProfileInterfaceType>
+		</certificateEnrolmentRequest>
+	</listOfCertificateEnrolmentRequests>
+</X0Request>

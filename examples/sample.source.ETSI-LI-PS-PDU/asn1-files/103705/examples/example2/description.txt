@@ -1,0 +1,8 @@
+CSP uses the standard ETSI InformationCall record.
+
+For messaging the CSP can use the ETSI standard messaging format,
+but they can also always provide a unique CSP-specific UUID for every message event.
+The CSP extends the ETSI standard Messaging record by adding a single field
+
+- InformationCall
+- CSPInformationMessaging

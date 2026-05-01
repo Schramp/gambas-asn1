@@ -1,0 +1,7 @@
+<X0Request xmlns="urn:etsi:li:104000:xsdns:v1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="NotificationRequest">
+    <admfIdentifier>ADMF</admfIdentifier>
+    <eliIdentifier>ELI_1234</eliIdentifier>
+    <messageTimestamp>2024-06-07T11:54:04.000000Z</messageTimestamp>
+    <version>v1.1.1</version>
+    <x0TransactionId>c4556686-90fd-4c6f-ab1b-721d72b954fc</x0TransactionId>
+</X0Request>

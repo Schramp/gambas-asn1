@@ -1,0 +1,46 @@
+{
+    "$id": "csp_example_types",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ETSI TS 103 705 Types schema",
+    "description": "JSON schema for ETSI-defined types (see clause 6.1 and Annex A)",
+    "$defs": {
+        "CSPSubscriberRecord" : {
+            "type" : "object",
+            "title" : "CSP Subscriber Record",
+            "description" : "A CSP's subscriber record. May contain four different addresses, which are often set to the same value",
+            "properties" : {
+                "subscriberName" : {
+                    "description" : "Name of subscriber (obviously a real definition would be more complex",
+                    "type" : "string"
+                },
+                "registeredAddress" : { 
+                    "description" : "Points to the address registered as part of the service",
+                    "$ref" : "urn:etsi:li:103705:type-schema-id:v1.1.1#/$defs/Pointer"
+                },
+                "deliveryAddress" : { 
+                    "description" : "Points to the address used for delivery",
+                    "$ref" : "urn:etsi:li:103705:type-schema-id:v1.1.1#/$defs/Pointer"
+                },
+                "billingAddress" : { 
+                    "description" : "Points to the address used for billing",
+                    "$ref" : "urn:etsi:li:103705:type-schema-id:v1.1.1#/$defs/Pointer"
+                },
+                "contactAddress" : { 
+                    "description" : "Points to the address used for mailing purposes",
+                    "$ref" : "urn:etsi:li:103705:type-schema-id:v1.1.1#/$defs/Pointer"
+                }
+            }
+        },
+        "CSPAddressRecord" : {
+            "type" : "object",
+            "title" : "CSP Address Record",
+            "description" : "A simple address structure (for example purporses - a standard ETSI one is needed, FFS)",
+            "properties" : {
+                "line1" : { "type" : "string"},
+                "line2" : { "type" : "string"},
+                "postalCode" : { "type" : "string"},
+                "country" : { "type" : "string"}
+            }
+        }
+    }   
+}

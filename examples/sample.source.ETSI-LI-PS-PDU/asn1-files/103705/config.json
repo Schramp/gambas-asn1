@@ -1,0 +1,58 @@
+[{
+    "coreSchema" : "schema/response.schema.json",
+    "supportingSchemas" : [
+        "../103280/TS_103_280.schema.json",
+        "examples/example1/csp_records.schema.json",
+        "schema/etsi_types.schema.json"
+    ],
+    "exampleFiles" : [
+        "examples/example1/csp_results.json"
+    ]
+},
+{
+    "coreSchema" : "schema/response.schema.json",
+    "supportingSchemas" : [
+        "../103280/TS_103_280.schema.json",
+        "examples/example2/csp_records.schema.json",
+        "examples/example2/csp_types.schema.json",
+        "schema/etsi_types.schema.json"
+    ],
+    "exampleFiles" : [
+        "examples/example2/csp_results.json"
+    ]
+},
+{
+    "coreSchema" : "schema/response.schema.json",
+    "supportingSchemas" : [
+        "../103280/TS_103_280.schema.json",
+        "examples/example3/csp_records.schema.json",
+        "examples/example3/csp_types.schema.json",
+        "schema/etsi_types.schema.json"
+    ],
+    "exampleFiles" : [
+        "examples/example3/csp_results.json"
+    ]
+},
+{
+    "coreSchema" : "schema/response.schema.json",
+    "supportingSchemas" : [
+        "../103280/TS_103_280.schema.json",
+        "examples/example4/csp_records.schema.json",
+        "examples/example4/csp_types.schema.json",
+        "schema/etsi_types.schema.json"
+    ],
+    "exampleFiles" : [
+        "examples/example4/csp_results.json"
+    ]
+},
+{
+    "coreSchema" : "schema/response.schema.json",
+    "supportingSchemas" : [
+        "../103280/TS_103_280.schema.json",
+        "examples/example5/csp_records.schema.json",
+        "schema/etsi_types.schema.json"
+    ],
+    "exampleFiles" : [
+        "examples/example5/csp_results.json"
+    ]
+}]

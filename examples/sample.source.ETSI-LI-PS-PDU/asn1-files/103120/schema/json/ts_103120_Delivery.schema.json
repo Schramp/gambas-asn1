@@ -1,0 +1,272 @@
+{
+  "$id": "ts_103120_Delivery_2019_10",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Checksum": {
+      "$ref": "ts_103280_2017_07#/$defs/ShortString"
+    },
+    "ChecksumType": {
+      "$ref": "ts_103280_2017_07#/$defs/ShortString"
+    },
+    "DeliveryObject": {
+      "type": "object",
+      "properties": {
+        "@xsi:type": {
+          "type": "string",
+          "enum": [
+            "{http://uri.etsi.org/03120/common/2019/10/Delivery}DeliveryObject"
+          ]
+        },
+        "ObjectIdentifier": {
+          "$ref": "ts_103120_Core_2019_10#/$defs/ObjectIdentifier"
+        },
+        "CountryCode": {
+          "$ref": "ts_103280_2017_07#/$defs/ISOCountryCode"
+        },
+        "OwnerIdentifier": {
+          "$ref": "ts_103280_2017_07#/$defs/ShortString"
+        },
+        "Generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ExternalIdentifier": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        },
+        "AssociatedObjects": {
+          "$ref": "ts_103120_Core_2019_10#/$defs/AssociatedObjects"
+        },
+        "LastChanged": {
+          "$ref": "ts_103280_2017_07#/$defs/QualifiedDateTime"
+        },
+        "NationalHandlingParameters": {
+          "$ref": "ts_103120_Core_2019_10#/$defs/NationalHandlingParameters"
+        },
+        "delivery:Reference": {
+          "$ref": "#/$defs/Reference"
+        },
+        "delivery:DeliveryID": {
+          "$ref": "ts_103280_2017_07#/$defs/UUID"
+        },
+        "delivery:SequenceNumber": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "delivery:LastSequence": {
+          "type": "boolean"
+        },
+        "delivery:Manifest": {
+          "$ref": "#/$defs/Manifest"
+        },
+        "delivery:Delivery": {
+          "$ref": "#/$defs/Delivery"
+        }
+      },
+      "required": [
+        "@xsi:type",
+        "ObjectIdentifier"
+      ]
+    },
+    "Reference": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "delivery:LDID": {
+              "$ref": "ts_103280_2017_07#/$defs/LDID"
+            }
+          },
+          "required": [
+            "delivery:LDID"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "delivery:LIID": {
+              "$ref": "ts_103280_2017_07#/$defs/LIID"
+            }
+          },
+          "required": [
+            "delivery:LIID"
+          ]
+        }
+      ]
+    },
+    "Manifest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "delivery:Specification": {
+              "$ref": "ts_103120_Common_2016_02#/$defs/DictionaryEntry"
+            }
+          },
+          "required": [
+            "delivery:Specification"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "delivery:ExternalSchema": {
+              "$ref": "#/$defs/ExternalSchema"
+            }
+          },
+          "required": [
+            "delivery:ExternalSchema"
+          ]
+        }
+      ]
+    },
+    "ExternalSchema": {
+      "type": "object",
+      "properties": {
+        "delivery:ManifestID": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        },
+        "delivery:ManifestContents": {
+          "$ref": "#/$defs/ManifestContents"
+        }
+      },
+      "required": []
+    },
+    "ManifestContents": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "delivery:BinaryData": {
+              "$ref": "#/$defs/EmbeddedBinaryData"
+            }
+          },
+          "required": [
+            "delivery:BinaryData"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "delivery:XMLSchema": {
+              "$ref": "#/$defs/SchemaContent"
+            }
+          },
+          "required": [
+            "delivery:XMLSchema"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "delivery:JSONSchema": {
+              "$ref": "#/$defs/EmbeddedJSONData"
+            }
+          },
+          "required": [
+            "delivery:JSONSchema"
+          ]
+        }
+      ]
+    },
+    "SchemaContent": {
+      "type": "object",
+      "properties": {
+        "delivery:schema": {}
+      },
+      "required": [
+        "delivery:schema"
+      ]
+    },
+    "Delivery": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "delivery:BinaryData": {
+              "$ref": "#/$defs/EmbeddedBinaryData"
+            }
+          },
+          "required": [
+            "delivery:BinaryData"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "delivery:XMLData": {
+              "$ref": "#/$defs/EmbeddedXMLData"
+            }
+          },
+          "required": [
+            "delivery:XMLData"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "delivery:JSONData": {
+              "$ref": "#/$defs/EmbeddedJSONData"
+            }
+          },
+          "required": [
+            "delivery:JSONData"
+          ]
+        }
+      ]
+    },
+    "EmbeddedBinaryData": {
+      "type": "object",
+      "properties": {
+        "delivery:Data": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+\\/]*={0,3}$"
+        },
+        "delivery:ContentType": {
+          "$ref": "ts_103280_2017_07#/$defs/ShortString"
+        },
+        "delivery:Checksum": {
+          "$ref": "#/$defs/Checksum"
+        },
+        "delivery:ChecksumType": {
+          "$ref": "#/$defs/ChecksumType"
+        },
+        "delivery:Checksums": {
+          "$ref": "#/$defs/ListOfChecksumAndType"
+        }
+      },
+      "required": [
+        "delivery:Data"
+      ]
+    },
+    "ListOfChecksumAndType": {
+      "type": "object",
+      "properties": {
+        "delivery:ChecksumAndType": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChecksumAndType"
+          },
+          "minItems": 1
+        }
+      },
+      "required": []
+    },
+    "ChecksumAndType": {
+      "type": "object",
+      "properties": {
+        "delivery:Checksum": {
+          "$ref": "#/$defs/Checksum"
+        },
+        "delivery:ChecksumType": {
+          "$ref": "#/$defs/ChecksumType"
+        }
+      },
+      "required": [
+        "delivery:Checksum",
+        "delivery:ChecksumType"
+      ]
+    },
+    "EmbeddedXMLData": {},
+    "EmbeddedJSONData": {}
+  }
+}

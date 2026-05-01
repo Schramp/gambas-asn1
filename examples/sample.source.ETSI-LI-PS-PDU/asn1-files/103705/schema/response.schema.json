@@ -1,0 +1,129 @@
+{
+  "$id": "urn:etsi:li:103705:response-schema-id:v1.1.1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ETSI TS 103 705 Response",
+  "description": "Overall Response structure, representing the results of a lawful disclosure request (see clause 5)",
+  "type": "object",
+  "properties": {
+    "recordSetDescription": {
+      "$ref": "#/$defs/recordSetDescription"
+    },
+    "recordSet": {
+      "$ref": "#/$defs/recordSet"
+    },
+    "Signature": {
+      "$ref" : "#/$defs/Signature"
+    }
+  },
+  "required": [
+    "recordSetDescription",
+    "recordSet"
+  ],
+  "$defs": {
+    "recordSetDescription": {
+      "type": "object",
+      "title": "RecordSetDescription",
+      "description": "Provides metadata about the records being delivered (see clause 5.2)",
+      "properties": {
+        "etsiSchemaId": {
+          "description" : "ID of the ETSI JSON schema used by the Response (see clause 5.2.2)",
+          "$ref": "#/$defs/schemaId"
+        },
+        "etsiSpecificationVersion": {
+          "description" : "Version of ETSI TS 103 705 used by the Response (see clause 5.2.3)",
+          "$ref": "#/$defs/version"
+        },
+        "cspName" : {
+          "description" : "Identifies the CSP generating the Response (see clause 5.2.4)",
+          "$ref": "#/$defs/schemaId"
+        },        
+        "cspSchemaId" : {
+          "description" : "ID of CSP Record Schema used by the Response (see clause 5.2.5)",
+          "$ref": "#/$defs/schemaId"
+        },
+        "cspSchemaVersion" : {
+          "description" : "Version number assigned by the CSP to the CSP Record Schema identified by the cspSchemaId (see clause 5.2.6)",
+          "$ref": "#/$defs/version"
+        },
+        "resultSetId": {
+          "description" : "Unique identifier for this result set (see clause 5.2.7)",
+          "$ref": "#/$defs/resultSetId"
+        },
+        "requestReference": {
+          "description" : "Reference to the original request (see clause 5.2.8)",
+          "$ref": "#/$defs/requestReference"
+        },
+        "created": {
+          "description" : "Timestamp showing the creation time of the Response (see clause 5.2.9)",
+          "$ref": "ts_103280_2017_07#/$defs/QualifiedMicrosecondDateTime"
+        }
+      },
+      "required": [
+        "etsiSchemaId",
+        "etsiSpecificationVersion",
+        "cspName",
+        "cspSchemaId",
+        "cspSchemaVersion",
+        "resultSetId",
+        "requestReference",
+        "created"
+      ]
+    },
+    "schemaId": {
+      "type": "string"
+    },
+    "version": {
+      "type" : "string",
+      "pattern" : "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "resultSetId": {
+      "type": "string"
+    },
+    "requestReference": {
+      "type": "string"
+    },
+    "recordSet": {
+      "type": "array",
+      "title": "RecordSet",
+      "description": "RecordSet (see clause 5.3). Contains a set of Records.",
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    },
+    "record": {
+      "allOf" : [{ "$ref" : "urn:etsi:li:103705:record-schema-id:v1.1.1#/$defs/record"}],
+      "type": "object",
+      "title": "Record",
+      "description": "Response record (see clause 5.3)",
+      "properties": {
+        "id": {
+          "title": "id",
+          "description": "Unique identifier for the Record within the RecordSet (see clause 5.3.2).",
+          "type": "string"
+        },
+        "type": {
+          "title": "type",
+          "description": "A JSON Pointer to the schema definition that defines the type (see clause 5.3.3)"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ]
+    },
+    "Signature": {
+      "properties": {
+        "protected": {
+          "type": "string"
+        },
+        "signature": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "protected",
+        "signature"
+      ]
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+    "$id": "csp_example_types",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ETSI TS 103 705 Types schema",
+    "description": "JSON schema for ETSI-defined types (see clause 6.1 and Annex A)",
+    "$defs": {
+        "CSPServiceRecord" : {
+            "type" : "object",
+            "title" : "CSP Service Record",
+            "description" : "Information about some new fictional service that this CSP provides",
+            "properties" : {
+                "timeOfService" : {
+                    "description" : "Time at which something happened (using an ETSI TS 103 280 type)",
+                    "$ref" : "ts_103280_2017_07#/$defs/QualifiedMicrosecondDateTime"
+                },
+                "dataVolumeUsed" : {
+                    "description" : "A data volume associated with this service record (using an ETSI TS 103 705 type) ",
+                    "$ref" : "urn:etsi:li:103705:type-schema-id:v1.1.1#/$defs/DataVolume"
+                },
+                "numberOfService" : {
+                    "description" : "Some number associated with this service record (using a native JSON type)",
+                    "type" : "integer"
+                },
+                "serviceEnum" : {
+                    "description" : "A field using a type defined elsewhere in this schema",
+                    "$ref" : "#/$defs/CSPDefinedEnum"
+                }
+            }
+        },
+        "CSPDefinedEnum" : {
+            "enum" : [
+                "Foo",
+                "Bar",
+                "Baz"
+            ]
+        }
+    }   
+}

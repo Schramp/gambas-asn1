@@ -1,0 +1,67 @@
+{
+    "VINtoCommsIDRecords" : [
+        {
+            "CommsID" : { "IMEI" : "00440123456789" },
+            "AssociationTime" : {
+                "PeriodInTime" : {
+                    "StartTime" : "2022-01-16T15:57:00Z",
+                    "EndTime" : "2022-01-16T15:57:00Z"
+                }
+            }        
+        },
+        {
+            "CommsID" : { "IMSI" : "999990123456789" },
+            "AssociationTime" : {
+                "PointInTime" : "2022-01-16T15:57:00Z"
+            }        
+        },
+        {
+            "CommsID" : { "ICCID" : "89999012345678901234" },
+            "AssociationTime" : {
+                "PointInTime" : "2022-01-16T15:57:00Z"
+            }        
+        },
+        {
+            "CommsID" : { "PEIIMEI" : "00440123456789" },
+            "AssociationTime" : {
+                "PointInTime" : "2022-01-16T15:57:00Z"
+            }        
+        },
+        {
+            "CommsID" : { "SUPIIMSI" : "999990123456789" },
+            "AssociationTime" : {
+                "PointInTime" : "2022-01-16T15:57:00Z"
+            }        
+        },
+        {
+            "CommsID" : { "SUPINAI" : "example@example.com" },
+            "AssociationTime" : {
+                "PointInTime" : "2022-01-16T15:57:00Z"
+            }        
+        },
+        {
+            "CommsID" : { "MSISDN" : "491713920000" },
+            "AssociationTime" : {
+                "PointInTime" : "2022-01-16T15:57:00Z"
+            }        
+        },
+        {
+            "CommsID" : { "GPSIMSISDN" : "491713920000" },
+            "AssociationTime" : {
+                "PointInTime" : "2022-01-16T15:57:00Z"
+            }        
+        },
+        {
+            "CommsID" : { "MACAddress" : "00:00:5e:00:53:00" },
+            "AssociationTime" : {
+                "PointInTime" : "2022-01-16T15:57:00Z"
+            }        
+        },
+        {
+            "CommsID" : { "EUI164" : "00:00:5e:ef:10:00:00:00" },
+            "AssociationTime" : {
+                "PointInTime" : "2022-01-16T15:57:00Z"
+            }        
+        }
+    ]
+}

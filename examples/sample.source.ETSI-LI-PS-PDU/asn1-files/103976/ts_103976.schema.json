@@ -1,0 +1,191 @@
+{
+    "$id": "ts_103976_core",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",    
+    "$defs": { 
+        "AssociationPeriod" : {
+            "type" : "object",
+            "properties" : {
+                "StartTime" : { "$ref": "ts_103280_2017_07#/$defs/QualifiedDateTime" },
+                "EndTime" : { "$ref": "ts_103280_2017_07#/$defs/QualifiedDateTime" }
+            },
+            "required" : ["StartTime"]
+        },
+        "AssociationTime" : {
+            "oneOf" : [
+                { 
+                    "type" : "object",
+                    "properties" : {
+                        "PointInTime" : { "$ref": "ts_103280_2017_07#/$defs/QualifiedDateTime" }
+                    },
+                    "required" : ["PointInTime"]
+                },
+                { 
+                    "type" : "object",
+                    "properties" : {
+                        "PeriodInTime" : { "$ref": "#/$defs/AssociationPeriod" }
+                    },
+                    "required" : ["PeriodInTime"]
+                }
+            ]
+        },
+        "CommsID" : {
+            "oneOf" : [
+                {
+                    "type" : "object",
+                    "properties" : { "IMEI" : { "$ref" : "ts_103280_2017_07#/$defs/IMEI"} },
+                    "required" : ["IMEI"]
+                },
+                {
+                    "type" : "object",
+                    "properties" : { "IMSI" : { "$ref" : "ts_103280_2017_07#/$defs/IMSI"} },
+                    "required" : ["IMSI"]                    
+                },
+                {
+                    "type" : "object",
+                    "properties" : { "ICCID" : { "$ref" : "ts_103280_2017_07#/$defs/ICCID"} },
+                    "required" : ["ICCID"]                    
+                },
+                {
+                    "type" : "object",
+                    "properties" : { "PEIIMEI" : { "$ref" : "ts_103280_2017_07#/$defs/PEIIMEI"} },
+                    "required" : ["PEIIMEI"]                    
+                },
+                {
+                    "type" : "object",
+                    "properties" : { "SUPIIMSI" : { "$ref" : "ts_103280_2017_07#/$defs/SUPIIMSI"} },
+                    "required" : ["SUPIIMSI"]                    
+                },
+                {
+                    "type" : "object",
+                    "properties" : { "SUPINAI" : { "$ref" : "ts_103280_2017_07#/$defs/SUPINAI"} },
+                    "required" : ["SUPINAI"]                    
+                },
+                {
+                    "type" : "object",
+                    "properties" : { "MSISDN" : { "$ref" : "ts_103280_2017_07#/$defs/InternationalE164"} },
+                    "required" : ["MSISDN"]                    
+                },
+                {
+                    "type" : "object",
+                    "properties" : { "GPSIMSISDN" : { "$ref" : "ts_103280_2017_07#/$defs/GPSIMSISDN"} },
+                    "required" : ["GPSIMSISDN"]                    
+                },
+                {
+                    "type" : "object",
+                    "properties" : { "GPSINAI" : { "$ref" : "ts_103280_2017_07#/$defs/GPSINAI"} },
+                    "required" : ["GPSINAI"]                    
+                },
+                {
+                    "type" : "object",
+                    "properties" : { "MACAddress" : { "$ref" : "ts_103280_2017_07#/$defs/MACAddress"} },
+                    "required" : ["MACAddress"]                    
+                },
+                {
+                    "type" : "object",
+                    "properties" : { "EUI164" : { "$ref" : "ts_103280_2017_07#/$defs/EUI64"} },
+                    "required" : ["EUI164"]
+                }
+            ]
+        },
+        "Location"  : {
+            "oneOf" : [
+                { 
+                    "type"  : "object",
+                    "properties" : {
+                        "WGS84CoordinateDecimal" : { "$ref"  : "ts_103280_2017_07#/$defs/WGS84CoordinateDecimal"}
+                    },
+                    "required" : ["WGS84CoordinateDecimal"]
+                }
+            ]
+        },
+        "SourceOfLocation" : {
+            "enum" : ["GNSS"]
+        },
+        "VINtoCommsIDRecord" : {
+            "type" : "object",
+            "properties" : {
+                "CommsID" : { "$ref" : "#/$defs/CommsID" },
+                "AssociationTime" : { "$ref" : "#/$defs/AssociationTime"}
+            },
+            "required" : ["CommsID"]
+        },
+        "CommsIDToVINRecord" : {
+            "type" : "object",
+            "properties" : {
+                "VIN" : { "$ref" : "ts_103280_2017_07#/$defs/VIN" },
+                "AssociationTime" : { "$ref" : "#/$defs/AssociationTime"}
+            },
+            "required" : ["VIN"]
+        },
+        "VINtoLocationRecord" : {
+            "type" : "object",
+            "properties" : {
+                "Location" : { "$ref" : "#/$defs/Location" },
+                "TimeOfLocation" : { "$ref" : "#/$defs/AssociationTime" },
+                "SourceOfLocation" : { "$ref" : "#/$defs/SourceOfLocation" },
+                "LocationRecordReason" : { "$ref" : "ts_103280_2017_07#/$defs/LongString" }
+            },
+            "required" : ["Location", "TimeOfLocation"]
+        },
+        "VINtoUniquePartNumberRecord" : {
+            "type" : "object",
+            "properties" : {
+                "UniquePartNumber" : { "$ref" : "ts_103280_2017_07#/$defs/ShortString" },
+                "PartType" : { "$ref" : "ts_103120_Common_2016_02#/$defs/DictionaryEntry"},
+                "PartTypeFreeText" : { "$ref" : "ts_103280_2017_07#/$defs/ShortString" }
+            },
+            "required" : ["UniquePartNumber"]
+        },
+        "UniquePartNumbertoVINRecord" : {
+            "type" : "object",
+            "properties" : {
+                "VIN" : { "$ref" : "ts_103280_2017_07#/$defs/VIN" }
+            },
+            "required" : ["VIN"]
+        },
+        "VINtoSubscribedServicesRecord" : {
+            "type" : "object",
+            "properties" : {
+                "NameOfService" : { "$ref" : "ts_103280_2017_07#/$defs/ShortString" },
+                "FirstPaymentDate" : { "$ref": "ts_103280_2017_07#/$defs/QualifiedDateTime" },
+                "MostRecentPaymentDate" : { "$ref": "ts_103280_2017_07#/$defs/QualifiedDateTime" },
+                "TerminationDate" : { "$ref": "ts_103280_2017_07#/$defs/QualifiedDateTime" },
+                "UserID" : { "$ref" : "ts_103280_2017_07#/$defs/ShortString" },
+                "CustomerName" : { "$ref" : "ts_103280_2017_07#/$defs/ShortString" },
+                "CustomerAddress": { "$ref" : "ts_103280_2017_07#/$defs/LongString" },
+                "TypeOfPaymentMethod" : { "$ref" : "ts_103120_Common_2016_02#/$defs/DictionaryEntry"} 
+            },
+            "required" : []
+        },
+        "ResultRecords" : {
+            "type" : "object",
+            "properties" : {
+                "VINtoCommsIDRecords" : {
+                    "type" : "array",
+                    "items" : { "$ref" : "#/$defs/VINtoCommsIDRecord"}
+                },
+                "CommsIDtoVINRecords" : {
+                    "type" : "array",
+                    "items" : { "$ref" : "#/$defs/CommsIDToVINRecord"}
+                },
+                "VINtoLocationRecords" : {
+                    "type" : "array",
+                    "items" : { "$ref" : "#/$defs/VINtoLocationRecord"}
+                },
+                "VINtoUniquePartNumberRecords" : {
+                    "type" : "array",
+                    "items" : { "$ref" : "#/$defs/VINtoUniquePartNumberRecord"}
+                },
+                "UniquePartNumbertoVINRecords" : {
+                    "type" : "array",
+                    "items" : { "$ref" : "#/$defs/UniquePartNumbertoVINRecord"}
+                },
+                "VINtoSubscribedServicesRecords" : {
+                    "type" : "array",
+                    "items" : { "$ref" : "#/$defs/VINtoSubscribedServicesRecord"}
+                }
+            }
+        }
+    },
+    "$ref": "#/$defs/ResultRecords"
+}

@@ -1,0 +1,128 @@
+ILHIPDU
+{itu-t(0) identified-organization(4) etsi(0) securityDomain(2) informationHandover(4) ilhi(0) ilhiPdu(0) version2(2)}
+
+DEFINITIONS IMPLICIT TAGS ::=
+BEGIN
+
+
+IMPORTS
+
+    -- from ETSI TS 102 232-1 [6]
+    TimeStampQualifier,
+    MicroSecondTimeStamp,
+    Location
+            FROM LI-PS-PDU
+        {itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulIntercept(2) li-ps(5) genHeader (1) version28(28)}
+
+    -- from ETSI TS 103 280 [2]
+    QualifiedDateTime,
+    QualifiedMicrosecondDateTime,
+    WGS84CoordinateDecimal,
+    WGS84CoordinateAngular
+            FROM Common-Parameters
+        {itu-t(0) identified-organization(4) etsi(0) common-parameters(3280) version221(221)}
+;
+
+-- end of IMPORTS
+
+-- ============================
+-- Object Identifier Definition
+-- ============================
+
+iLHIDomainId OBJECT IDENTIFIER      ::= {itu-t(0) identified-organization(4) etsi(0) securityDomain(2) informationHandover(4) ilhi(0)}
+
+iLHIObjId OBJECT IDENTIFIER         ::= { iLHIDomainId ilhiPdu(0) version2(2)}
+
+preagreedObjId OBJECT IDENTIFIER    ::= { iLHIDomainId identifiers(1) preagreed(0)}
+
+-- ============================
+-- Inter LEMF Handover Elements
+-- ============================
+
+ILHIPayload ::= SEQUENCE
+    -- This Payload sends additional ILHI specific parameters, the resPayload and
+    -- the originalPayload.
+{
+    iLHIObjId               [0] OBJECT IDENTIFIER,
+    resPayload              [1] EncapsulationPayload,
+    mappingInfo             [2] MappingInfo OPTIONAL,
+        -- output from the MapF
+    originalPayload         [3] EncapsulationPayload OPTIONAL,
+    ...
+}
+
+EncapsulationPayload ::= SEQUENCE
+{
+    identifier              [0] OBJECT IDENTIFIER,
+        -- see clause 8.1
+    contents                [1] OCTET STRING,
+    ...
+}
+
+MappingInfo ::= SEQUENCE
+{
+    timestampMapping        [0] SEQUENCE OF TimestampMapping OPTIONAL,
+    locationMapping         [1] SEQUENCE OF LocationMapping OPTIONAL,
+    ...
+}
+
+TimestampMapping ::= SEQUENCE
+{
+    originalTimestamp       [0] OriginalTimestamp,
+    normalizedTimestamp     [1] ILHITimestamp,
+    timeStampQualifier      [2] LI-PS-PDU.TimeStampQualifier OPTIONAL,
+    ...
+}
+
+ILHITimestamp ::= CHOICE
+{
+    qualifiedDateTime               [1] Common-Parameters.QualifiedDateTime,
+    qualifiedMicrosecondDateTime    [2] Common-Parameters.QualifiedMicrosecondDateTime,
+    ...,
+    unqualifiedDateTime             [3] NULL
+        -- The unqualifiedDateTime choice is used if the timestamp is not mappable with
+        -- the Mapping function because e.g. the timezone information is missing
+}
+
+OriginalTimestamp ::= CHOICE
+{
+    timeStamp               [1] GeneralizedTime,
+    microSecondTimeStamp    [2] LI-PS-PDU.MicroSecondTimeStamp,
+    ...,
+    otherTimeStamp          [3] UTF8String
+        -- The otherTimeStamp choice contains a value if for any reason the received timestamp
+        -- is not mappable into the fields timeStamp or the microSecondTimeStamp
+}
+
+LocationMapping ::= SEQUENCE
+{
+    originalLocation        [0] LI-PS-PDU.Location,
+    normalizedLocation      [1] NormalizedLocationData,
+    ...
+}
+
+NormalizedLocationData  ::= SEQUENCE
+{
+    geocodedLocationData        [0] GeocodedLocationData,
+    supplementaryLocationData   [1] SupplementaryLocationData OPTIONAL,
+        -- any additional information for an improved presentation of location
+        -- (e.g. details of the network elements like transmitter details) should
+        -- be inserted into this parameter
+    ...
+}
+
+GeocodedLocationData    ::= CHOICE
+{
+    wGS84CoordinateDecimal  [1] Common-Parameters.WGS84CoordinateDecimal,
+    wGS84CoordinateAngular  [2] Common-Parameters.WGS84CoordinateAngular,
+    ...
+}
+
+SupplementaryLocationData   ::= SEQUENCE
+{
+    azimuth     [0] INTEGER (0..359) OPTIONAL,
+        -- The azimuth is the bearing, relative to true north
+    ...
+}
+
+END  --end of ILHIPDU

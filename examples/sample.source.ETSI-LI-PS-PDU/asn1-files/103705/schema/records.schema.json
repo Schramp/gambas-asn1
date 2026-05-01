@@ -1,0 +1,23 @@
+{
+    "$id": "urn:etsi:li:103705:record-schema-id:v1.1.1",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "CSP Record Schema",
+    "description": "Defines the valid set of Records that may appear in a RecordSet (see ETSI TS 103 705 clause 6.2.4)",
+    "cspName" : "{replace with assigned CSP name - see ETSI TS 103 705 Table 6.2.4-1",
+    "cspSchemaID" : "{replace with assigned ID  - see ETSI TS 103 705 Table 6.2.4-1}",
+    "dateIssued" : "{replace with date issued - see ETSI TS 103 705 Table 6.2.4-1}",
+    "cspSchemaVersion" : "{Replace with version - see ETSI TS 103 705 Table 6.2.4-1}",
+    "$defs": {
+        "record" : {
+            "oneOf" : [
+                { 
+                    "$comment" : "This is an example",
+                    "allOf" : [
+                        { "$ref" : "urn:etsi:li:103705:type-schema-id:v1.1.1#/$defs/CallRecord" },
+                        { "properties" : { "type" : { "const" : "urn:etsi:li:103705:type-schema-id:v1.1.1#/$defs/CallRecord"}}}
+                    ]
+                }
+            ]
+        }
+    }
+}

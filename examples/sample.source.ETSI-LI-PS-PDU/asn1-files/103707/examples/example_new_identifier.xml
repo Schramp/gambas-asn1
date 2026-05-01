@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<handoverItem xmlns="http://uri.etsi.org/03707/2020/02" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:etsi103120="http://uri.etsi.org/03120/common/2020/09/Task">
+    <header/>
+    <payload xsi:type="MessagingPayload">
+        <coreParameters>
+            <messageSender>
+                <identifiers>
+                    <qualifiedIdentifier>
+                        <formatType>
+                            <etsi103120:FormatOwner>ETSI</etsi103120:FormatOwner>
+                            <etsi103120:FormatName>EmailAddress</etsi103120:FormatName>
+                        </formatType>
+                        <value>qualified@example.com</value>
+                    </qualifiedIdentifier>
+                    <identifier>old_style_unqualified@example.com</identifier>
+                </identifiers>
+                <isTargetedParty>true</isTargetedParty>
+            </messageSender>
+            <messageReceivers>
+                <recipient>
+                    <identifiers>
+                        <qualifiedIdentifier>
+                            <formatType>
+                                <etsi103120:FormatOwner>ETSI</etsi103120:FormatOwner>
+                                <etsi103120:FormatName>EmailAddress</etsi103120:FormatName>
+                            </formatType>
+                            <value>qualified@example.com</value>
+                        </qualifiedIdentifier>
+                    </identifiers>
+                </recipient>
+            </messageReceivers>
+            <timestamp>2019-10-17T06:42:23.000000+01:00</timestamp>
+        </coreParameters>
+        <cspDefinedParameters>
+            <cspDefinedMetadata>
+                <schemaDetails>
+                    <schemaIdentifier>http://FooServiceSchema.example.com/schema/v1.1.1/</schemaIdentifier>
+                </schemaDetails>
+                <xmlData>
+                    <fooServiceDefinedParameters xmlns="http://FooServiceSchema.example.com/schema/v1.1.1/">
+                        <item1>Foo</item1>
+                        <item2>Bar</item2>
+                        <item3>Baz</item3>
+                    </fooServiceDefinedParameters>
+                </xmlData>
+            </cspDefinedMetadata>
+        </cspDefinedParameters>
+    </payload>
+</handoverItem>

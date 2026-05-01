@@ -1,0 +1,177 @@
+{
+  "$id": "ts_103120_Common_2016_02",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "ETSIVersion": {
+      "allOf": [
+        {
+          "$ref": "ts_103280_2017_07#/$defs/ShortString"
+        },
+        {
+          "type": "string",
+          "pattern": "^V\\d+\\.\\d+\\.\\d+$"
+        }
+      ]
+    },
+    "DictionaryEntries": {
+      "type": "object",
+      "properties": {
+        "common:DictionaryEntry": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DictionaryEntry"
+          }
+        }
+      },
+      "required": []
+    },
+    "DictionaryEntry": {
+      "type": "object",
+      "properties": {
+        "common:Owner": {
+          "$ref": "ts_103280_2017_07#/$defs/ShortString"
+        },
+        "common:Name": {
+          "$ref": "ts_103280_2017_07#/$defs/ShortString"
+        },
+        "common:Value": {
+          "$ref": "ts_103280_2017_07#/$defs/ShortString"
+        }
+      },
+      "required": [
+        "common:Owner",
+        "common:Name",
+        "common:Value"
+      ]
+    },
+    "ApprovalDetails": {
+      "type": "object",
+      "properties": {
+        "common:ApprovalType": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        },
+        "common:ApprovalDescription": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        },
+        "common:ApprovalReference": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        },
+        "common:ApproverDetails": {
+          "$ref": "#/$defs/ApproverDetails"
+        },
+        "common:ApprovalTimestamp": {
+          "$ref": "ts_103280_2017_07#/$defs/QualifiedDateTime"
+        },
+        "common:ApprovalIsEmergency": {
+          "type": "boolean"
+        },
+        "common:ApprovalDigitalSignature": {
+          "$ref": "#/$defs/ApprovalDigitalSignature"
+        },
+        "common:ApprovalNationalDetails": {
+          "$ref": "#/$defs/ApprovalNationalDetails"
+        }
+      },
+      "required": []
+    },
+    "ApproverDetails": {
+      "type": "object",
+      "properties": {
+        "common:ApproverName": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        },
+        "common:ApproverRole": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        },
+        "common:ApproverIdentity": {
+          "$ref": "#/$defs/ApproverIdentity"
+        },
+        "common:ApproverContactDetails": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ApproverContactDetails"
+          }
+        }
+      },
+      "required": []
+    },
+    "ApproverIdentity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "common:NationalApproverIdentity": {
+              "$ref": "#/$defs/NationalApproverIdentity"
+            }
+          },
+          "required": [
+            "common:NationalApproverIdentity"
+          ]
+        }
+      ]
+    },
+    "ApproverContactDetails": {
+      "type": "object",
+      "properties": {
+        "common:ApproverAlternateName": {
+          "$ref": "ts_103280_2017_07#/$defs/LongString"
+        },
+        "common:ApproverEmailAddress": {
+          "$ref": "ts_103280_2017_07#/$defs/InternationalizedEmailAddress"
+        },
+        "common:ApproverPhoneNumber": {
+          "$ref": "ts_103280_2017_07#/$defs/InternationalE164"
+        }
+      },
+      "required": []
+    },
+    "NationalApproverIdentity": {
+      "type": "object",
+      "properties": {
+        "common:CountryCode": {
+          "$ref": "ts_103280_2017_07#/$defs/ISOCountryCode"
+        }
+      },
+      "required": [
+        "common:CountryCode"
+      ]
+    },
+    "ApprovalDigitalSignature": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "common:NationalDigitalSignature": {
+              "$ref": "#/$defs/NationalDigitalSignature"
+            }
+          },
+          "required": [
+            "common:NationalDigitalSignature"
+          ]
+        }
+      ]
+    },
+    "ApprovalNationalDetails": {
+      "type": "object",
+      "properties": {
+        "common:CountryCode": {
+          "$ref": "ts_103280_2017_07#/$defs/ISOCountryCode"
+        }
+      },
+      "required": [
+        "common:CountryCode"
+      ]
+    },
+    "NationalDigitalSignature": {
+      "type": "object",
+      "properties": {
+        "common:CountryCode": {
+          "$ref": "ts_103280_2017_07#/$defs/ISOCountryCode"
+        }
+      },
+      "required": [
+        "common:CountryCode"
+      ]
+    }
+  }
+}

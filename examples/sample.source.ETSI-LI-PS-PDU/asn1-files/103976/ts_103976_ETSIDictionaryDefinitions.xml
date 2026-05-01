@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Dictionaries xmlns="http://uri.etsi.org/03280/common/2019/10/Dictionaries">
+    <Dictionary>
+        <Owner>ETSI</Owner>
+        <Name>TS103976RequestType</Name>
+        <DictionaryEntries>
+            <DictionaryEntry>
+                <Value>VINtoCommsID</Value>
+                <Meaning>VINtoCommsID request, as defined in clause 7.2.</Meaning>
+            </DictionaryEntry>
+            <DictionaryEntry>
+                <Value>CommsIDtoVIN</Value>
+                <Meaning>CommsIDtoVIN request, as defined in clause 7.3.</Meaning>
+            </DictionaryEntry>
+            <DictionaryEntry>
+                <Value>VINtoLocation</Value>
+                <Meaning>VINtoLocation request, as defined in clause 7.4.</Meaning>
+            </DictionaryEntry>
+            <DictionaryEntry>
+                <Value>VINtoUniquePartNumber</Value>
+                <Meaning>VINtoUniquePartNumber request, as defined in clause 7.5</Meaning>
+            </DictionaryEntry>
+            <DictionaryEntry>
+                <Value>UniquePartNumbertoVIN</Value>
+                <Meaning>UniquePartNumbertoVIN request, as defined in clause 7.6</Meaning>
+            </DictionaryEntry>
+            <DictionaryEntry>
+                <Value>VINtoSubscribedServices</Value>
+                <Meaning>VINtoSubscribedServices request, as defined in clause 7.7</Meaning>
+            </DictionaryEntry>
+        </DictionaryEntries>
+    </Dictionary>
+    <Dictionary>
+        <Owner>ETSI</Owner>
+        <Name>TS103976PartType</Name>
+        <DictionaryEntries>
+            <DictionaryEntry>
+                <Value>Gearbox</Value>
+                <Meaning>Part that the RPS considers to be a gearbox</Meaning>
+            </DictionaryEntry>
+            <DictionaryEntry>
+                <Value>Engine</Value>
+                <Meaning>Part that the RPS considers to be an engine</Meaning>
+            </DictionaryEntry>
+            <DictionaryEntry>
+                <Value>Airbag</Value>
+                <Meaning>Part that the RPS considers to be an airbag</Meaning>
+            </DictionaryEntry>
+            <DictionaryEntry>
+                <Value>Multimedia</Value>
+                <Meaning>Components of the vehicle used for providing information or entertainment capabilities, including an automotive head unit.</Meaning>
+            </DictionaryEntry>
+            <DictionaryEntry>
+                <Value>Other</Value>
+                <Meaning>Component not meeting any of the other entries of this list.</Meaning>
+            </DictionaryEntry>
+        </DictionaryEntries>
+    </Dictionary>
+    <Dictionary>
+        <Owner>ETSI</Owner>
+        <Name>TS103976TypeOfPayment</Name>
+        <DictionaryEntries>
+            <DictionaryEntry>
+                <Value>CreditCard</Value>
+                <Meaning>Payment made using credit card</Meaning>
+            </DictionaryEntry>
+            <DictionaryEntry>
+                <Value>Other</Value>
+                <Meaning>Item not covered by other entries in this dictionary</Meaning>
+            </DictionaryEntry>
+        </DictionaryEntries>
+    </Dictionary>
+</Dictionaries>

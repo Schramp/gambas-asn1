@@ -1,0 +1,47 @@
+{
+    "recordSetDescription": {
+        "etsiSchemaId": "urn:etsi:li:103705:response-schema-id:v1.1.1",
+        "etsiSpecificationVersion": "0.3.0",
+        "cspName" : "csp.example.com",
+        "cspSchemaId" : "csp.example_1",
+        "cspSchemaVersion" : "1.0.0",
+        "resultSetId": "9a25db0c-d0f3-4ae5-b618-bd1a9a0056c2",
+        "requestReference": "LDID",
+        "created": "2024-04-25T09:31:56.000000Z"
+    },
+    "recordSet": [
+        {
+            "id": "3da91ade-f526-4e55-b5da-0c8178f25c24",
+            "type": "urn:etsi:li:103705:type-schema-id:v1.1.1#/$defs/CallRecord",
+            "timeBegin": "2024-04-20T10:04:00.000000Z",
+            "timeEnd": "2024-04-20T10:05:00.000000Z",
+            "endReason": 16,
+            "parties": [
+                {
+                    "identity": {"phoneNumber": "491713920067"},
+                    "role": "originating",
+                    "initialAccessTechnology" : "5G"
+                },
+                {
+                    "identity": {"phoneNumber": "441632960123"},
+                    "role": "terminating"
+                }
+            ]
+        },
+        {
+            "id": "8be3fc6b-a2dd-4104-9af1-d6b1f70081a0",
+            "type": "urn:etsi:li:103705:type-schema-id:v1.1.1#/$defs/MessagingRecord",
+            "eventTime": "2024-04-18T10:04:00.000000Z",
+            "parties": [
+                {
+                    "identity": {"phoneNumber": "441632960123"},
+                    "role": "sender"
+                },
+                {
+                    "identity": {"phoneNumber": "491713920067"},
+                    "role": "receiver"
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,8 @@
+CSP uses the standard ETSI InformationCall record.
+
+The CSP has some novel service which is not well described by any of the standard
+ETSI records; the CSP defines a completely new record, but can still re-use components
+from TS 103 705 and TS 103 280.
+
+- InformationCall
+- CSPServiceRecord

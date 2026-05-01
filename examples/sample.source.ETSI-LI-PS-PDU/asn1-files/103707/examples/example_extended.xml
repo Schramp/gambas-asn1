@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<handoverItem xmlns="http://uri.etsi.org/03707/2020/02" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <header>
+        <applicationCorrelation>
+            <applicationLevelID>123</applicationLevelID>
+            <applicationSequenceNumber>456</applicationSequenceNumber>
+        </applicationCorrelation>
+    </header>
+    <payload xsi:type="MessagingPayload">
+        <coreParameters>
+            <messageSender>
+                <identifiers>
+                    <identifier>someone@example.com</identifier>
+                </identifiers>
+            </messageSender>
+            <messageReceivers>
+                <recipient>
+                    <identifiers>
+                        <identifier>someone-else-alias1@example.com</identifier>
+                        <identifier>someone-else-alias2@example.com</identifier>
+                        <identifier>someone-else-alias3@example.com</identifier>
+                    </identifiers>
+                </recipient>
+                <recipient>
+                    <identifiers>
+                        <identifier>target@example.com</identifier>
+                    </identifiers>
+                    <isTargetedParty>true</isTargetedParty>
+                </recipient>
+            </messageReceivers>
+            <timestamp>2019-10-17T06:42:23.000000+01:00</timestamp>
+        </coreParameters>
+        <cspDefinedParameters>
+            <cspDefinedMetadata>
+                <schemaDetails>
+                    <schemaIdentifier>http://FooServiceSchema.example.com/schema/v1.1.1/</schemaIdentifier>
+                    <schemaContent>
+                        <schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="http://FooServiceSchema.example.com/schema/v1.1.1/">
+                            <xs:element name="fooServiceDefinedParameters" type="FooServiceDefinedParameters"/>
+                            <xs:complexType name="FooServiceDefinedParameters">
+                                <xs:sequence>
+                                    <xs:element name="item1" type="ItemType"/>
+                                    <xs:element name="item2" type="ItemType"/>
+                                    <xs:element name="item3" type="ItemType"/>
+                                </xs:sequence>
+                            </xs:complexType>
+                            <xs:simpleType name="ItemType">
+                                <xs:restriction base="xs:string">
+                                    <xs:enumeration value="Foo"/>
+                                    <xs:enumeration value="Bar"/>
+                                    <xs:enumeration value="Baz"/>
+                                </xs:restriction>
+                            </xs:simpleType>
+                        </schema>
+                    </schemaContent>
+                </schemaDetails>
+                <xmlData>
+                    <fooServiceDefinedParameters xmlns="http://FooServiceSchema.example.com/schema/v1.1.1/">
+                        <item1>Foo</item1>
+                        <item2>Bar</item2>
+                        <item3>Baz</item3>
+                    </fooServiceDefinedParameters>
+                </xmlData>
+            </cspDefinedMetadata>
+        </cspDefinedParameters>
+    </payload>
+</handoverItem>

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<X1Request xmlns="http://uri.etsi.org/03221/X1/2017/10" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:policy="http://uri.etsi.org/03221/X1/2023/02/TrafficPolicy" xmlns:hi1Policy="http://uri.etsi.org/03120/common/2022/07/TrafficPolicy" xmlns:ts103280="http://uri.etsi.org/03280/common/2017/07" xmlns:hi1Common="http://uri.etsi.org/03120/common/2016/02/Common">
+    <x1RequestMessage  xsi:type="CreateObjectRequest">
+        <admfIdentifier>admfID</admfIdentifier>
+        <neIdentifier>neID</neIdentifier>
+        <messageTimestamp>2023-02-14T18:46:21.247432Z</messageTimestamp>
+        <version>v1.13.1</version>
+        <x1TransactionId>2654a277-bafb-4240-9143-806ee41a3751</x1TransactionId>
+        <createObject xsi:type="policy:TrafficRuleObject">
+            <objectId>6c67de93-926a-488b-9435-b0a30c20f676</objectId>
+            <hi1Policy:Criteria>
+                <hi1Policy:Criteria>
+                    <hi1Policy:IPPolicyCriteria>
+                        <hi1Policy:SourceIPRange>
+                            <ts103280:IPv4CIDR>203.0.113.0/24</ts103280:IPv4CIDR>
+                        </hi1Policy:SourceIPRange>
+                    </hi1Policy:IPPolicyCriteria>
+                </hi1Policy:Criteria>
+            </hi1Policy:Criteria>
+            <hi1Policy:Action>
+                <hi1Common:Owner>ETSI</hi1Common:Owner>
+                <hi1Common:Name>PolicyAction</hi1Common:Name>
+                <hi1Common:Value>PDSR</hi1Common:Value>
+            </hi1Policy:Action>
+        </createObject>
+    </x1RequestMessage>
+    <x1RequestMessage xsi:type="CreateObjectRequest">
+        <admfIdentifier>admfID</admfIdentifier>
+        <neIdentifier>neID</neIdentifier>
+        <messageTimestamp>2023-02-14T18:46:21.247432Z</messageTimestamp>
+        <version>v1.13.1</version>
+        <x1TransactionId>2654a277-bafb-4240-9143-806ee41a3751</x1TransactionId>
+        <createObject xsi:type="policy:TrafficPolicyObject">
+            <objectId>b04057af-362f-4e8d-9337-416f43bfd7ec</objectId>
+            <hi1Policy:TrafficPolicyName>Template Rule 1</hi1Policy:TrafficPolicyName>
+            <hi1Policy:TrafficRules>
+                <hi1Policy:TrafficRuleReference>
+                    <hi1Policy:Order>1</hi1Policy:Order>
+                    <hi1Policy:ObjectIdentifier>6c67de93-926a-488b-9435-b0a30c20f676</hi1Policy:ObjectIdentifier>
+                </hi1Policy:TrafficRuleReference>
+            </hi1Policy:TrafficRules>
+        </createObject>
+    </x1RequestMessage>
+    <x1RequestMessage xsi:type="ActivateTaskRequest">
+        <admfIdentifier>admfID</admfIdentifier>
+        <neIdentifier>neID</neIdentifier>
+        <messageTimestamp>2023-02-14T18:46:21.247432Z</messageTimestamp>
+        <version>v1.13.1</version>
+        <x1TransactionId>211900a7-afb5-4187-b036-c85a92ab94aa</x1TransactionId>
+        <taskDetails>
+            <xId>2f5faff3-077d-4ec3-b66a-226e3a921eec</xId>
+            <targetIdentifiers>
+                <targetIdentifier>
+                    <e164Number>447700900000</e164Number>
+                </targetIdentifier>
+            </targetIdentifiers>
+            <deliveryType>X2andX3</deliveryType>
+            <listOfDIDs></listOfDIDs>
+            <listOfTrafficPolicyReferences>
+                <trafficPolicyReference>b04057af-362f-4e8d-9337-416f43bfd7ec</trafficPolicyReference>
+            </listOfTrafficPolicyReferences>
+        </taskDetails>
+    </x1RequestMessage>    
+</X1Request>

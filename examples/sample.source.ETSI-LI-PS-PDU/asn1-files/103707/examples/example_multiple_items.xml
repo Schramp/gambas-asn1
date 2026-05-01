@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<handoverItemCollection xmlns="http://uri.etsi.org/03707/2020/02" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <handoverItem>
+        <header/>
+        <payload xsi:type="MessagingPayload">
+            <coreParameters>
+                <messageSender>
+                    <identifiers>
+                        <identifier>target@example.com</identifier>
+                    </identifiers>
+                    <isTargetedParty>true</isTargetedParty>
+                </messageSender>
+                <messageReceivers>
+                    <recipient>
+                        <identifiers>
+                            <identifier>someoneelse@example.com</identifier>
+                        </identifiers>
+                    </recipient>
+                </messageReceivers>
+                <timestamp>2021-06-17T06:42:23.000000+01:00</timestamp>
+            </coreParameters>
+            <cspDefinedParameters>
+                <cspDefinedMetadata>
+                    <schemaDetails>
+                        <schemaIdentifier>http://FooServiceSchema.example.com/schema/v1.1.1/</schemaIdentifier>
+                    </schemaDetails>
+                    <xmlData>
+                        <fooServiceDefinedParameters xmlns="http://FooServiceSchema.example.com/schema/v1.1.1/">
+                            <item1>Foo</item1>
+                            <item2>Bar</item2>
+                            <item3>Baz</item3>
+                        </fooServiceDefinedParameters>
+                    </xmlData>
+                </cspDefinedMetadata>
+            </cspDefinedParameters>
+        </payload>
+    </handoverItem>
+    <handoverItem>
+        <header/>
+        <payload xsi:type="MessagingPayload">
+            <coreParameters>
+                <messageSender>
+                    <identifiers>
+                        <identifier>someoneelse@example.com</identifier>
+                    </identifiers>
+                </messageSender>
+                <messageReceivers>
+                    <recipient>
+                        <identifiers>
+                            <identifier>target@example.com</identifier>
+                        </identifiers>
+                        <isTargetedParty>true</isTargetedParty>
+                    </recipient>
+                </messageReceivers>
+                <timestamp>2021-06-18T06:42:23.000000+01:00</timestamp>
+            </coreParameters>
+            <cspDefinedParameters>
+                <cspDefinedMetadata>
+                    <schemaDetails>
+                        <schemaIdentifier>http://FooServiceSchema.example.com/schema/v1.1.1/</schemaIdentifier>
+                    </schemaDetails>
+                    <xmlData>
+                        <fooServiceDefinedParameters xmlns="http://FooServiceSchema.example.com/schema/v1.1.1/">
+                            <item1>Foo</item1>
+                            <item2>Bar</item2>
+                            <item3>Baz</item3>
+                        </fooServiceDefinedParameters>
+                    </xmlData>
+                </cspDefinedMetadata>
+            </cspDefinedParameters>
+        </payload>
+    </handoverItem>
+</handoverItemCollection>
