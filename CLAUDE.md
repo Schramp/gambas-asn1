@@ -2,40 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## XER output fidelity TODO (vs asn1c reference)
+## XER output fidelity
 
-Cross-validated against asn1c on `anontestdata/pdu-00000001.etsi` (2850 PDUs).
-Each step: `ctest --test-dir build/tests` (10/10) must stay green.
-After codegen steps: `make regen && make lib` in `examples/sample.source.ETSI-LI-PS-PDU/`.
-After runtime steps: rebuild `libasn1cpp_runtime` + `nested-decoder`.
-Regression check: `./nested-decoder <file> 2>&1 | grep "Decoded"` must show `2850 outer PS-PDUs, 2850 with inner EncryptedPayload`.
-
-- [x] **XER-1 — Preserve ASN.1 member names (hyphens) in XER element tags**
-  `MemberDescriptor::name` already stores original ASN.1 name via `m->name` in codegen.
-  `Network_Identifier` members emit `"operator-Identifier"` correctly. No fix needed.
-
-- [x] **XER-2 — XER element name for collision types uses struct name not ASN.1 name**
-  Fixed: all `TypeDescriptor::name` emitters changed to use `def.name` (original ASN.1
-  name) instead of `cname` (C++ struct name). `asn_DEF_LI_PS_PDUIRIPayload.name` now
-  `"IRIPayload"`, `asn_DEF_HI2OperationsPartyInformation.name` now `"PartyInformation"`.
-  Also: `to_cpp_name` changed from camelCase to underscore substitution; `collision_types_`
-  keyed on post-conversion names; `PSPDU` stale files removed by `make clean && make regen`.
-
-- [x] **XER-3 — Inline ENUMERATED type_descriptor was nullptr**
-  Fixed: `BT::Enumerated` case in `type_descriptor_ref_for` now falls through to
-  synthetic-name path instead of returning `"nullptr"`. Library rebuilt.
-
-- [x] **XER-4 — Decode optional CHOICE members nested inside SEQUENCE members**
-  Fixed (was already resolved): `Network_Element_Identifier` CHOICE descriptor correctly
-  referenced after collision-resolution + alias-chain fixes; `<e164-Format>` decodes.
-
-- [x] **XER-5 — Decode missing optional fields in PartyInformation**
-  Fixed: null-descriptor optional members in `decode_sequence` now peek+skip TLV instead
-  of leaving bytes in stream. All fields (`<imei>`, `<imsi>`, etc.) now present.
-
-**Status: C++ XER output matches asn1c reference (2850/2850 PDUs, content identical).**
-Remaining cosmetic diffs: extra blank lines after XER blocks; separator shows block size
-instead of payload size + zero-padding count. These are not XER spec issues.
+XER output matches asn1c reference.
 
 ## Build
 
