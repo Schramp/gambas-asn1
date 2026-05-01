@@ -202,12 +202,29 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
         if (!n.empty()) n[0] = (char)std::toupper(n[0]);
         return std::format("&asn_DEF_{}", current_type_ + n);
     }
-    // Named type reference — every top-level name has its own asn_DEF_ (with correct
-    // name and per_constraints). Use that directly instead of collapsing to the builtin.
+    // Named type reference.
+    // Pure TypeRef aliases (e.g. "LawfulInterceptionIdentifier ::= LIID") generate only a
+    // C++ `using` declaration — no asn_DEF_. Follow the chain until reaching a type that
+    // generates its own asn_DEF_ (BuiltinType with constraints, SEQUENCE, CHOICE, etc.).
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
+        // For collision types, resolve_ref uses global_ and may pick the wrong module's version.
+        // Prefer the current-module's definition (local shadows global), fall back to resolve_ref.
+        if (collision_types_.count(tr->type_name)) {
+            std::string def_mod = resolver_.module_of(tr->type_name, current_module_);
+            if (!def_mod.empty()) {
+                auto td = resolver_.resolve_in_module(tr->type_name, def_mod);
+                if (td && std::get_if<ast::TypeRef>(&td->body))
+                    return type_descriptor_ref_for(*td);  // pure alias — follow chain
+                if (td)  // concrete type — use local module's asn_DEF_
+                    return std::format("&asn_DEF_{}", effective_cpp_name(tr->type_name, def_mod));
+            }
+        }
         auto resolved = resolver_.resolve_ref(*tr);
-        if (resolved && !resolved->name.empty())
+        if (resolved && !resolved->name.empty()) {
+            if (std::get_if<ast::TypeRef>(&resolved->body))
+                return type_descriptor_ref_for(*resolved);  // pure alias — follow chain
             return std::format("&asn_DEF_{}", cpp_name_for_ref(resolved->name, current_module_));
+        }
         return std::format("&asn_DEF_{}", cpp_name_for_ref(tr->type_name, current_module_));
     }
     // Anonymous SEQUENCE OF / SET OF — delegate to element type's descriptor

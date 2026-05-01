@@ -209,6 +209,15 @@ public:
         return "";
     }
 
+    // Look up a type in a specific module's symbol table (no chain following).
+    ast::TypeDefPtr resolve_in_module(const std::string& type_name,
+                                      const std::string& mod_name) const {
+        auto mit = module_symbols_.find(mod_name);
+        if (mit == module_symbols_.end()) return nullptr;
+        auto sit = mit->second.find(type_name);
+        return sit != mit->second.end() ? sit->second : nullptr;
+    }
+
     // Fully resolve a TypeRef chain to the base TypeDef (follows aliases)
     ast::TypeDefPtr resolve_ref(const ast::TypeRef& ref) const {
         // Qualified ref: look up directly in the named module's symbol table
