@@ -137,21 +137,13 @@ Concrete implementations:
 in `BerCodec::encode()` inspects `def.sequence_spec`, `def.enum_spec`, etc. to iterate
 members — **no generated switch/if chains**.
 
-Thin generated wrappers look like:
+Generated files contain only descriptor tables (`asn_MAP_`, `asn_MBR_`, `asn_SPC_`, `asn_DEF_`). No codec wrappers. Callers use the codec directly:
 
 ```cpp
-// generated — Enum1.cpp
-void asn1::BerTraits<Enum1>::encode(BerWriter& w, const Enum1& v) {
-    BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_Enum1, &v);
-}
-Expected<Enum1, DecodeError> asn1::BerTraits<Enum1>::decode(BerReader& r) {
-    Enum1 result{};
-    BerDecodeStream s{r};
-    auto ok = BerCodec::instance().decode(s, asn_DEF_Enum1, &result);
-    if (!ok) return make_unexpected<Enum1, DecodeError>(ok.error());
-    return result;
-}
+// caller — decode a generated type
+MySeq result{};
+asn1::BerDecodeStream s{reader};
+auto ok = asn1::BerCodec::instance().decode(s, asn_DEF_MySeq, &result);
 ```
 
 ### PER architecture
