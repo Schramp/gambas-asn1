@@ -168,3 +168,181 @@ add_test(NAME strings_member COMMAND test_strings)
 add_executable(test_per_integer per/test_per_integer.cpp)
 target_link_libraries(test_per_integer PRIVATE asn1cpp_runtime)
 add_test(NAME per_integer COMMAND test_per_integer)
+
+# ---- Rec3: plain 3-field SEQUENCE ------------------------------------------
+set(SEQ3_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_seq3_test)
+add_custom_command(
+    OUTPUT  ${SEQ3_GEN_DIR}/Rec3.hpp    ${SEQ3_GEN_DIR}/Rec3.cpp
+            ${SEQ3_GEN_DIR}/MyByte.hpp  ${SEQ3_GEN_DIR}/MyByte.cpp
+            ${SEQ3_GEN_DIR}/MyStr.hpp   ${SEQ3_GEN_DIR}/MyStr.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SEQ3_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/seq3_test.asn1
+                                   -o ${SEQ3_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/seq3_test.asn1
+    COMMENT "Generating C++ from seq3_test.asn1"
+)
+add_executable(test_seq3
+    seq/test_seq3.cpp
+    ${SEQ3_GEN_DIR}/Rec3.cpp
+    ${SEQ3_GEN_DIR}/MyByte.cpp
+    ${SEQ3_GEN_DIR}/MyStr.cpp
+)
+target_include_directories(test_seq3 PRIVATE ${SEQ3_GEN_DIR})
+target_link_libraries(test_seq3 PRIVATE asn1cpp_runtime)
+add_test(NAME seq3 COMMAND test_seq3)
+
+# ---- Rec5: SEQUENCE with OPTIONAL members -----------------------------------
+set(SEQ_OPT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_seq_opt_test)
+add_custom_command(
+    OUTPUT  ${SEQ_OPT_GEN_DIR}/Rec5.hpp   ${SEQ_OPT_GEN_DIR}/Rec5.cpp
+            ${SEQ_OPT_GEN_DIR}/MyByte.hpp ${SEQ_OPT_GEN_DIR}/MyByte.cpp
+            ${SEQ_OPT_GEN_DIR}/MyStr.hpp  ${SEQ_OPT_GEN_DIR}/MyStr.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SEQ_OPT_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/seq_opt_test.asn1
+                                   -o ${SEQ_OPT_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/seq_opt_test.asn1
+    COMMENT "Generating C++ from seq_opt_test.asn1"
+)
+add_executable(test_seq_opt
+    seq/test_seq_opt.cpp
+    ${SEQ_OPT_GEN_DIR}/Rec5.cpp
+    ${SEQ_OPT_GEN_DIR}/MyByte.cpp
+    ${SEQ_OPT_GEN_DIR}/MyStr.cpp
+)
+target_include_directories(test_seq_opt PRIVATE ${SEQ_OPT_GEN_DIR})
+target_link_libraries(test_seq_opt PRIVATE asn1cpp_runtime)
+add_test(NAME seq_opt COMMAND test_seq_opt)
+
+# ---- SEQUENCE OF types ------------------------------------------------------
+set(SEQ_OF_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_seq_of_test)
+add_custom_command(
+    OUTPUT  ${SEQ_OF_GEN_DIR}/ByteList.hpp ${SEQ_OF_GEN_DIR}/ByteList.cpp
+            ${SEQ_OF_GEN_DIR}/StrList.hpp  ${SEQ_OF_GEN_DIR}/StrList.cpp
+            ${SEQ_OF_GEN_DIR}/MyByte.hpp   ${SEQ_OF_GEN_DIR}/MyByte.cpp
+            ${SEQ_OF_GEN_DIR}/MyStr.hpp    ${SEQ_OF_GEN_DIR}/MyStr.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SEQ_OF_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/seq_of_test.asn1
+                                   -o ${SEQ_OF_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/seq_of_test.asn1
+    COMMENT "Generating C++ from seq_of_test.asn1"
+)
+add_executable(test_seq_of
+    seq/test_seq_of.cpp
+    ${SEQ_OF_GEN_DIR}/ByteList.cpp
+    ${SEQ_OF_GEN_DIR}/StrList.cpp
+    ${SEQ_OF_GEN_DIR}/MyByte.cpp
+    ${SEQ_OF_GEN_DIR}/MyStr.cpp
+)
+target_include_directories(test_seq_of PRIVATE ${SEQ_OF_GEN_DIR})
+target_link_libraries(test_seq_of PRIVATE asn1cpp_runtime)
+add_test(NAME seq_of COMMAND test_seq_of)
+
+# ---- CHOICE types -----------------------------------------------------------
+set(CHOICE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_test)
+add_custom_command(
+    OUTPUT  ${CHOICE_GEN_DIR}/HasAlt2.hpp ${CHOICE_GEN_DIR}/HasAlt2.cpp
+            ${CHOICE_GEN_DIR}/HasAlt4.hpp ${CHOICE_GEN_DIR}/HasAlt4.cpp
+            ${CHOICE_GEN_DIR}/Alt2.hpp    ${CHOICE_GEN_DIR}/Alt2.cpp
+            ${CHOICE_GEN_DIR}/Alt4.hpp    ${CHOICE_GEN_DIR}/Alt4.cpp
+            ${CHOICE_GEN_DIR}/MyByte.hpp  ${CHOICE_GEN_DIR}/MyByte.cpp
+            ${CHOICE_GEN_DIR}/MyStr.hpp   ${CHOICE_GEN_DIR}/MyStr.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CHOICE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_test.asn1
+                                   -o ${CHOICE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_test.asn1
+    COMMENT "Generating C++ from choice_test.asn1"
+)
+add_executable(test_choice
+    seq/test_choice.cpp
+    ${CHOICE_GEN_DIR}/HasAlt2.cpp
+    ${CHOICE_GEN_DIR}/HasAlt4.cpp
+    ${CHOICE_GEN_DIR}/Alt2.cpp
+    ${CHOICE_GEN_DIR}/Alt4.cpp
+    ${CHOICE_GEN_DIR}/MyByte.cpp
+    ${CHOICE_GEN_DIR}/MyStr.cpp
+)
+target_include_directories(test_choice PRIVATE ${CHOICE_GEN_DIR})
+target_link_libraries(test_choice PRIVATE asn1cpp_runtime)
+add_test(NAME choice COMMAND test_choice)
+
+# ---- Constrained INTEGER types ----------------------------------------------
+set(INT_RANGE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_int_range_test)
+add_custom_command(
+    OUTPUT  ${INT_RANGE_GEN_DIR}/HasBit1.hpp   ${INT_RANGE_GEN_DIR}/HasBit1.cpp
+            ${INT_RANGE_GEN_DIR}/HasByte.hpp   ${INT_RANGE_GEN_DIR}/HasByte.cpp
+            ${INT_RANGE_GEN_DIR}/HasSigned.hpp ${INT_RANGE_GEN_DIR}/HasSigned.cpp
+            ${INT_RANGE_GEN_DIR}/HasNarrow.hpp ${INT_RANGE_GEN_DIR}/HasNarrow.cpp
+            ${INT_RANGE_GEN_DIR}/HasWord.hpp   ${INT_RANGE_GEN_DIR}/HasWord.cpp
+            ${INT_RANGE_GEN_DIR}/MyBit1.hpp    ${INT_RANGE_GEN_DIR}/MyBit1.cpp
+            ${INT_RANGE_GEN_DIR}/MyByte.hpp    ${INT_RANGE_GEN_DIR}/MyByte.cpp
+            ${INT_RANGE_GEN_DIR}/MySigned.hpp  ${INT_RANGE_GEN_DIR}/MySigned.cpp
+            ${INT_RANGE_GEN_DIR}/MyNarrow.hpp  ${INT_RANGE_GEN_DIR}/MyNarrow.cpp
+            ${INT_RANGE_GEN_DIR}/MyWord.hpp    ${INT_RANGE_GEN_DIR}/MyWord.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${INT_RANGE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/int_range_test.asn1
+                                   -o ${INT_RANGE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/int_range_test.asn1
+    COMMENT "Generating C++ from int_range_test.asn1"
+)
+add_executable(test_int_range
+    seq/test_int_range.cpp
+    ${INT_RANGE_GEN_DIR}/HasBit1.cpp
+    ${INT_RANGE_GEN_DIR}/HasByte.cpp
+    ${INT_RANGE_GEN_DIR}/HasSigned.cpp
+    ${INT_RANGE_GEN_DIR}/HasNarrow.cpp
+    ${INT_RANGE_GEN_DIR}/HasWord.cpp
+    ${INT_RANGE_GEN_DIR}/MyBit1.cpp
+    ${INT_RANGE_GEN_DIR}/MyByte.cpp
+    ${INT_RANGE_GEN_DIR}/MySigned.cpp
+    ${INT_RANGE_GEN_DIR}/MyNarrow.cpp
+    ${INT_RANGE_GEN_DIR}/MyWord.cpp
+)
+target_include_directories(test_int_range PRIVATE ${INT_RANGE_GEN_DIR})
+target_link_libraries(test_int_range PRIVATE asn1cpp_runtime)
+add_test(NAME int_range COMMAND test_int_range)
+
+# ---- Name collision: two modules define same type name ----------------------
+set(COLLISION_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_collision_test)
+add_custom_command(
+    OUTPUT  ${COLLISION_GEN_DIR}/CollisionModAStatus.hpp  ${COLLISION_GEN_DIR}/CollisionModAStatus.cpp
+            ${COLLISION_GEN_DIR}/CollisionModAWrapper.hpp ${COLLISION_GEN_DIR}/CollisionModAWrapper.cpp
+            ${COLLISION_GEN_DIR}/CollisionModBStatus.hpp  ${COLLISION_GEN_DIR}/CollisionModBStatus.cpp
+            ${COLLISION_GEN_DIR}/CollisionModBWrapper.hpp ${COLLISION_GEN_DIR}/CollisionModBWrapper.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${COLLISION_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/collision_test.asn1
+                                   -o ${COLLISION_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/collision_test.asn1
+    COMMENT "Generating C++ from collision_test.asn1"
+)
+add_executable(test_collision
+    seq/test_collision.cpp
+    ${COLLISION_GEN_DIR}/CollisionModAStatus.cpp
+    ${COLLISION_GEN_DIR}/CollisionModAWrapper.cpp
+    ${COLLISION_GEN_DIR}/CollisionModBStatus.cpp
+    ${COLLISION_GEN_DIR}/CollisionModBWrapper.cpp
+)
+target_include_directories(test_collision PRIVATE ${COLLISION_GEN_DIR})
+target_link_libraries(test_collision PRIVATE asn1cpp_runtime)
+add_test(NAME collision COMMAND test_collision)
+
+# ---- Cross-module IMPORTS ---------------------------------------------------
+set(IMPORTS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_imports_test)
+add_custom_command(
+    OUTPUT  ${IMPORTS_GEN_DIR}/ZipCode.hpp ${IMPORTS_GEN_DIR}/ZipCode.cpp
+            ${IMPORTS_GEN_DIR}/Address.hpp ${IMPORTS_GEN_DIR}/Address.cpp
+            ${IMPORTS_GEN_DIR}/Person.hpp  ${IMPORTS_GEN_DIR}/Person.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${IMPORTS_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/imports_test.asn1
+                                   -o ${IMPORTS_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/imports_test.asn1
+    COMMENT "Generating C++ from imports_test.asn1"
+)
+add_executable(test_imports
+    seq/test_imports.cpp
+    ${IMPORTS_GEN_DIR}/ZipCode.cpp
+    ${IMPORTS_GEN_DIR}/Address.cpp
+    ${IMPORTS_GEN_DIR}/Person.cpp
+)
+target_include_directories(test_imports PRIVATE ${IMPORTS_GEN_DIR})
+target_link_libraries(test_imports PRIVATE asn1cpp_runtime)
+add_test(NAME imports COMMAND test_imports)

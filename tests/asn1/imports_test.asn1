@@ -1,0 +1,17 @@
+-- Module B imports from module A — exercises cross-module type resolution.
+ImportModA DEFINITIONS ::= BEGIN
+    EXPORTS ZipCode, Address;
+    ZipCode ::= INTEGER (0..99999)
+    Address ::= SEQUENCE {
+        city  VisibleString,
+        zip   ZipCode
+    }
+END
+
+ImportModB DEFINITIONS ::= BEGIN
+    IMPORTS Address FROM ImportModA;
+    Person ::= SEQUENCE {
+        name  VisibleString,
+        home  Address
+    }
+END

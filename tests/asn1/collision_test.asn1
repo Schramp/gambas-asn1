@@ -1,0 +1,12 @@
+-- Two modules both define "Status" — exercises collision-prefixed C++ names.
+-- CollisionModA::Status → CollisionModAStatus (INTEGER)
+-- CollisionModB::Status → CollisionModBStatus (ENUMERATED)
+CollisionModA DEFINITIONS ::= BEGIN
+    Status  ::= INTEGER (0..7)
+    Wrapper ::= SEQUENCE { code Status }
+END
+
+CollisionModB DEFINITIONS ::= BEGIN
+    Status  ::= ENUMERATED { ok(0), error(1), pending(2) }
+    Wrapper ::= SEQUENCE { state Status }
+END
