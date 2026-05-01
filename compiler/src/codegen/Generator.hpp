@@ -122,6 +122,15 @@ public:
         return to_cpp_name(def_mod) + to_cpp_name(type_name);
     }
 
+    // Returns the C++ name for a fully qualified TypeRef.
+    // When module_name is set and the type is a collision type, uses module_name
+    // directly instead of resolving through from_module imports.
+    std::string cpp_name_for_typeref(const ast::TypeRef& tr) const {
+        if (!tr.module_name.empty() && collision_types_.count(tr.type_name))
+            return effective_cpp_name(tr.type_name, tr.module_name);
+        return cpp_name_for_ref(tr.type_name, current_module_);
+    }
+
 private:
     void generate_type(const ast::TypeDef& def, const ast::Module& mod);
     void generate_inline_types(const ast::TypeDef& def, const ast::Module& mod);

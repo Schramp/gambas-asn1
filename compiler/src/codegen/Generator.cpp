@@ -50,7 +50,7 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         }
     }
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body))
-        return cpp_name_for_ref(tr->type_name, current_module_);
+        return cpp_name_for_typeref(*tr);
     if (def.is_seq_of()) {
         const auto& sof = std::get<ast::SequenceOfType>(def.body);
         return std::format("std::vector<{}>", cpp_type_for(*sof.element));
@@ -192,6 +192,7 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
         case BT::VideotexString:    return "&asn1::asn_DEF_VideotexString";
         case BT::ObjectDescriptor:  return "&asn1::asn_DEF_ObjectDescriptor";
         case BT::Any:               return "&asn1::asn_DEF_Any";
+        case BT::Enumerated:        break; // handled below — inline ENUMERATED needs synthetic name
         default:                    return "nullptr";
         }
     }
@@ -209,7 +210,8 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         // For collision types, resolve_ref uses global_ and may pick the wrong module's version.
         // Prefer the current-module's definition (local shadows global), fall back to resolve_ref.
-        if (collision_types_.count(tr->type_name)) {
+        // Skip this logic for qualified references (module_name set) — they pin the source module.
+        if (tr->module_name.empty() && collision_types_.count(tr->type_name)) {
             std::string def_mod = resolver_.module_of(tr->type_name, current_module_);
             if (!def_mod.empty()) {
                 auto td = resolver_.resolve_in_module(tr->type_name, def_mod);
@@ -223,16 +225,29 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
         if (resolved && !resolved->name.empty()) {
             if (std::get_if<ast::TypeRef>(&resolved->body))
                 return type_descriptor_ref_for(*resolved);  // pure alias — follow chain
+            // Qualified ref: use explicit module for collision disambiguation on resolved name.
+            if (!tr->module_name.empty() && collision_types_.count(resolved->name))
+                return std::format("&asn_DEF_{}", effective_cpp_name(resolved->name, tr->module_name));
             return std::format("&asn_DEF_{}", cpp_name_for_ref(resolved->name, current_module_));
         }
-        return std::format("&asn_DEF_{}", cpp_name_for_ref(tr->type_name, current_module_));
+        return std::format("&asn_DEF_{}", cpp_name_for_typeref(*tr));
     }
-    // Anonymous SEQUENCE OF / SET OF — delegate to element type's descriptor
+    // SEQUENCE OF / SET OF — named member uses synthetic SeqOf wrapper descriptor
     if (def.is_seq_of()) {
+        if (!def.name.empty()) {
+            std::string sn = to_cpp_name(def.name);
+            if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
+            return std::format("&asn_DEF_{}", current_type_ + sn);
+        }
         const auto& elem = std::get<ast::SequenceOfType>(def.body).element;
         return type_descriptor_ref_for(*elem);
     }
     if (def.is_set_of()) {
+        if (!def.name.empty()) {
+            std::string sn = to_cpp_name(def.name);
+            if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
+            return std::format("&asn_DEF_{}", current_type_ + sn);
+        }
         const auto& elem = std::get<ast::SetOfType>(def.body).element;
         return type_descriptor_ref_for(*elem);
     }
@@ -521,18 +536,25 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
         };
 
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
-            auto cn = cpp_name_for_ref(tr->type_name, current_module_);
+            auto cn = cpp_name_for_typeref(*tr);
             optional && is_class_type(*m) ? emit_fwd(cn) : emit_inc(cn);
         } else if (m->is_seq_of() || m->is_set_of()) {
-            const auto& elem = m->is_seq_of()
-                ? std::get<ast::SequenceOfType>(m->body).element
-                : std::get<ast::SetOfType>(m->body).element;
-            if (auto* tr2 = std::get_if<ast::TypeRef>(&elem->body)) {
-                emit_inc(cpp_name_for_ref(tr2->type_name, current_module_));
-            } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
-                auto esn = to_cpp_name(elem->name.empty() ? "Anon" : elem->name);
-                if (!esn.empty()) esn[0] = (char)std::toupper(esn[0]);
-                emit_inc(cname + esn);
+            if (!m->name.empty()) {
+                // Named member — include the synthetic SeqOf wrapper header
+                std::string msn = to_cpp_name(m->name);
+                if (!msn.empty()) msn[0] = (char)std::toupper(msn[0]);
+                emit_inc(cname + msn);
+            } else {
+                const auto& elem = m->is_seq_of()
+                    ? std::get<ast::SequenceOfType>(m->body).element
+                    : std::get<ast::SetOfType>(m->body).element;
+                if (auto* tr2 = std::get_if<ast::TypeRef>(&elem->body)) {
+                    emit_inc(cpp_name_for_typeref(*tr2));
+                } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
+                    auto esn = to_cpp_name(elem->name.empty() ? "Anon" : elem->name);
+                    if (!esn.empty()) esn[0] = (char)std::toupper(esn[0]);
+                    emit_inc(cname + esn);
+                }
             }
         } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
             std::string sn = to_cpp_name(m->name);
@@ -636,7 +658,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             if (!optional) continue;
             if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
                 if (is_class_type(*m)) {
-                    auto cn = cpp_name_for_ref(tr->type_name, current_module_);
+                    auto cn = cpp_name_for_typeref(*tr);
                     os << std::format("#include \"{}.hpp\"\n", cn);
                     emitted_extra = true;
                 }
@@ -774,21 +796,19 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     // #include referenced alternative types and inline-type headers
     for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
-        auto emit_inc = [&](const std::string& asn_name) {
-            auto cn = cpp_name_for_ref(asn_name, current_module_);
+        auto emit_inc = [&](const std::string& cn) {
             os << std::format("#include \"{}.hpp\"\n", cn);
             track_include(cn);
         };
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
-            emit_inc(tr->type_name);
-        } else if (m->is_seq_of()) {
-            const auto& elem = std::get<ast::SequenceOfType>(m->body).element;
-            if (auto* tr2 = std::get_if<ast::TypeRef>(&elem->body))
-                emit_inc(tr2->type_name);
-        } else if (m->is_set_of()) {
-            const auto& elem = std::get<ast::SetOfType>(m->body).element;
-            if (auto* tr2 = std::get_if<ast::TypeRef>(&elem->body))
-                emit_inc(tr2->type_name);
+            emit_inc(cpp_name_for_typeref(*tr));
+        } else if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
+            // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
+            std::string msn = to_cpp_name(m->name);
+            if (!msn.empty()) msn[0] = (char)std::toupper(msn[0]);
+            auto cn2 = cpp_name_for_ref(cname + msn, current_module_);
+            os << std::format("#include \"{}.hpp\"\n", cn2);
+            track_include(cn2);
         } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
             std::string sn = to_cpp_name(m->name);
             if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
@@ -952,7 +972,7 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
             ? std::get<ast::SequenceOfType>(def.body).element
             : std::get<ast::SetOfType>(def.body).element;
         if (auto* tr = std::get_if<ast::TypeRef>(&elem->body)) {
-            auto inc = cpp_name_for_ref(tr->type_name, current_module_);
+            auto inc = cpp_name_for_typeref(*tr);
             os << std::format("#include \"{}.hpp\"\n\n", inc);
             track_include(inc);
         } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
@@ -967,7 +987,7 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
         os << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", cname);
         os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
-        auto inc = cpp_name_for_ref(tr->type_name, current_module_);
+        auto inc = cpp_name_for_typeref(*tr);
         os << std::format("#include \"{}.hpp\"\n", inc);
         track_include(inc);
         os << std::format("using {} = {};\n", cname, inc);
@@ -1204,24 +1224,47 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
     for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
 
-        // SEQUENCE OF / SET OF with inline anonymous element: generate the element type.
+        // SEQUENCE OF / SET OF: generate element type (if inline) + synthetic SeqOf wrapper.
         if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
             const auto& elem = m->is_seq_of()
                 ? *std::get<ast::SequenceOfType>(m->body).element
                 : *std::get<ast::SetOfType>(m->body).element;
+            std::string elem_type_name;  // non-empty iff element was an inline complex type
             if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
                 auto esn = to_cpp_name(elem.name.empty() ? "Anon" : elem.name);
                 if (!esn.empty()) esn[0] = (char)std::toupper(esn[0]);
-                std::string synth_name = parent_cname + esn;
-                if (!generated_names_.count(synth_name)) {
-                    generated_names_.insert(synth_name);
+                elem_type_name = parent_cname + esn;
+                if (!generated_names_.count(elem_type_name)) {
+                    generated_names_.insert(elem_type_name);
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
-                    synthetic->name = synth_name;
+                    synthetic->name = elem_type_name;
                     generate_inline_types(*synthetic, mod);
-                    current_type_ = synth_name;
-                    { std::ofstream hpp(out_dir_ / (synth_name + ".hpp")); emit_hpp(*synthetic, mod, hpp); }
-                    { std::ofstream cpp(out_dir_ / (synth_name + ".cpp")); emit_cpp(*synthetic, cpp); }
+                    current_type_ = elem_type_name;
+                    { std::ofstream hpp(out_dir_ / (elem_type_name + ".hpp")); emit_hpp(*synthetic, mod, hpp); }
+                    { std::ofstream cpp(out_dir_ / (elem_type_name + ".cpp")); emit_cpp(*synthetic, cpp); }
                 }
+            }
+            // Generate synthetic SeqOf wrapper descriptor type named parent + MemberCamel.
+            // If element was anonymous inline, replace it with a TypeRef to the named element
+            // type so emit_hpp uses the correct name and include path.
+            std::string mbr_sn = to_cpp_name(m->name);
+            if (!mbr_sn.empty()) mbr_sn[0] = (char)std::toupper(mbr_sn[0]);
+            std::string seqof_name = parent_cname + mbr_sn;
+            if (!generated_names_.count(seqof_name)) {
+                generated_names_.insert(seqof_name);
+                auto seqof_td = std::make_shared<ast::TypeDef>(*m);
+                seqof_td->name = seqof_name;
+                if (!elem_type_name.empty()) {
+                    auto named_elem = std::make_shared<ast::TypeDef>();
+                    named_elem->body = ast::TypeRef{"", elem_type_name};
+                    if (m->is_seq_of())
+                        seqof_td->body = ast::SequenceOfType{named_elem};
+                    else
+                        seqof_td->body = ast::SetOfType{named_elem};
+                }
+                current_type_ = seqof_name;
+                { std::ofstream hpp(out_dir_ / (seqof_name + ".hpp")); emit_hpp(*seqof_td, mod, hpp); }
+                { std::ofstream cpp(out_dir_ / (seqof_name + ".cpp")); emit_cpp(*seqof_td, cpp); }
             }
             continue;
         }
