@@ -211,7 +211,7 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
         // For collision types, resolve_ref uses global_ and may pick the wrong module's version.
         // Prefer the current-module's definition (local shadows global), fall back to resolve_ref.
         // Skip this logic for qualified references (module_name set) — they pin the source module.
-        if (tr->module_name.empty() && collision_types_.count(tr->type_name)) {
+        if (tr->module_name.empty() && collision_types_.count(to_cpp_name(tr->type_name))) {
             std::string def_mod = resolver_.module_of(tr->type_name, current_module_);
             if (!def_mod.empty()) {
                 auto td = resolver_.resolve_in_module(tr->type_name, def_mod);
@@ -226,7 +226,7 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
             if (std::get_if<ast::TypeRef>(&resolved->body))
                 return type_descriptor_ref_for(*resolved);  // pure alias — follow chain
             // Qualified ref: use explicit module for collision disambiguation on resolved name.
-            if (!tr->module_name.empty() && collision_types_.count(resolved->name))
+            if (!tr->module_name.empty() && collision_types_.count(to_cpp_name(resolved->name)))
                 return std::format("&asn_DEF_{}", effective_cpp_name(resolved->name, tr->module_name));
             return std::format("&asn_DEF_{}", cpp_name_for_ref(resolved->name, current_module_));
         }
