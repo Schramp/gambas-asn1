@@ -117,18 +117,19 @@ public:
                     pr.modules.begin(), pr.modules.end(),
                     [&](const auto& m){ return m->name == imp.from_module; });
 
-                if (!imp.module_oid.arcs.empty() && !src_mod->oid.arcs.empty()) {
+                if (!imp.module_oid.arcs.empty() && !src_mod->oid.arcs.empty()
+                    && !allow_newer_modules_) {
                     bool ok = oids_match(imp.module_oid, src_mod->oid);
                     if (!ok) {
                         using VP = ast::ImportVersionPolicy;
-                        if (imp.version_policy == VP::Successors || allow_newer_modules_) {
-                            // Accept if all arcs match except last, and last arc of
-                            // actual module is >= last arc of import
+                        if (imp.version_policy == VP::Successors) {
                             ok = oids_match_successors(imp.module_oid, src_mod->oid);
                         } else if (imp.version_policy == VP::Descendants) {
-                            // Accept if actual OID starts with import OID prefix
                             ok = oids_match_descendants(imp.module_oid, src_mod->oid);
                         }
+                        // Implicit: import OID is a prefix of module OID (ETSI versioning)
+                        if (!ok)
+                            ok = oids_match_descendants(imp.module_oid, src_mod->oid);
                     }
                     if (!ok) {
                         errors_.push_back("module '" + imp.from_module
@@ -179,6 +180,33 @@ public:
     ast::TypeDefPtr lookup(const std::string& name) const {
         auto it = global_.find(name);
         return it != global_.end() ? it->second : nullptr;
+    }
+
+    // Look up a type in the context of from_module: checks own symbols first,
+    // then imported symbols. Returns the DIRECT typedef (does NOT follow aliases).
+    ast::TypeDefPtr lookup_direct(const std::string& name,
+                                  const std::string& from_module) const {
+        auto own = module_symbols_.find(from_module);
+        if (own != module_symbols_.end()) {
+            auto sit = own->second.find(name);
+            if (sit != own->second.end()) return sit->second;
+        }
+        // Fall back to global (handles cross-module imports)
+        auto it = global_.find(name);
+        return it != global_.end() ? it->second : nullptr;
+    }
+
+    // Return the module name where `type_name` is defined as seen from `from_module`.
+    // Checks the calling module's own symbols first (so colliding names resolve
+    // to the locally-defined version within their own module).
+    std::string module_of(const std::string& type_name,
+                          const std::string& from_module) const {
+        auto own = module_symbols_.find(from_module);
+        if (own != module_symbols_.end() && own->second.count(type_name))
+            return from_module;
+        for (const auto& [mod, syms] : module_symbols_)
+            if (syms.count(type_name)) return mod;
+        return "";
     }
 
     // Fully resolve a TypeRef chain to the base TypeDef (follows aliases)

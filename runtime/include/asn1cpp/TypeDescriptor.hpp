@@ -27,25 +27,33 @@ struct EnumSpec {
     const long*      per_value_order;  // [root_count] values in definition order
 };
 
-// Encapsulates the two optional-member callbacks so codecs don't carry naked
-// function pointers or repeat null checks at every call site.
+// Encapsulates optional-member callbacks so codecs don't carry naked function
+// pointers or repeat null checks.  get_ptr(struct*) returns T* from the
+// unique_ptr<T> that stores the optional value; needed by table-driven codecs
+// that must write into the allocated object, not the unique_ptr itself.
 struct OptionalOps {
-    bool (*check)(const void*) = nullptr;
-    void (*set)(void*, bool)   = nullptr;
-    bool is_present(const void* p) const { return check && check(p); }
+    bool  (*check)(const void*)  = nullptr;
+    void  (*set)(void*, bool)    = nullptr;
+    void* (*get_ptr)(void*)      = nullptr; // struct* → T* (dereferences unique_ptr)
+    bool is_present(const void* p)  const { return check && check(p); }
     void set_present(void* p, bool v) const { if (set) set(p, v); }
+    // Returns pointer to the actual member object (T*) given the parent struct.
+    // Falls back to dest+offset path when get_ptr is null (required members).
+    void* member_ptr(void* struct_ptr, std::size_t offset) const {
+        return get_ptr ? get_ptr(struct_ptr)
+                       : static_cast<char*>(struct_ptr) + offset;
+    }
     explicit operator bool() const { return check != nullptr; }
 };
 
 // Per-member SEQUENCE/SET/CHOICE descriptor (mirrors asn_TYPE_member_t).
 struct MemberDescriptor {
     const char*  name;
-    Tag          tag;             // effective tag (after implicit/explicit)
+    Tag          tag;             // effective wire tag (context tag when tagged, natural otherwise)
     bool         optional;
     bool         has_default;
-    std::size_t  offset;          // offsetof into the containing struct
-                                  // for optional members: offset to std::optional<T>;
-                                  // value is at offset 0 within optional (libstdc++/libc++ guarantee)
+    std::size_t  offset;          // offsetof(Struct, member) — for unique_ptr members,
+                                  // points to the unique_ptr, not the contained value
     const void*  type_descriptor; // cast to TypeDescriptor* in codec
     OptionalOps  optional_ops;    // non-null only for optional/extension members
 };

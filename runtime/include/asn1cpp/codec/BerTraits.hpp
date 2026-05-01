@@ -3,6 +3,8 @@
 #include "BerReader.hpp"
 #include "../Error.hpp"
 #include "../Expected.hpp"
+#include <optional>
+#include <vector>
 
 namespace asn1 {
 
@@ -40,5 +42,43 @@ void ber_encode_with_tag(BerWriter& w, Tag override_tag, const T& v) {
     w.write_tag(override_tag);
     w.append(rest);
 }
+
+// Generic BerTraits for std::optional<T> — transparent; presence handled by the caller.
+template<typename T>
+struct BerTraits<std::optional<T>> {
+    static Tag tag() { return BerTraits<T>::tag(); }
+    static void encode(BerWriter& w, const std::optional<T>& v) {
+        if (v) BerTraits<T>::encode(w, *v);
+    }
+    static Expected<std::optional<T>, DecodeError> decode(BerReader& r) {
+        auto val = BerTraits<T>::decode(r);
+        if (!val) return make_unexpected<std::optional<T>, DecodeError>(val.error());
+        return std::optional<T>{std::move(*val)};
+    }
+};
+
+// Generic BerTraits for std::vector<T> — encodes as SEQUENCE OF (universal 16, constructed).
+template<typename T>
+struct BerTraits<std::vector<T>> {
+    static Tag tag() { return Tag::universal(16, true); }
+    static void encode(BerWriter& w, const std::vector<T>& v) {
+        w.write_constructed(tag(), [&](BerWriter& inner) {
+            for (const auto& elem : v)
+                BerTraits<T>::encode(inner, elem);
+        });
+    }
+    static Expected<std::vector<T>, DecodeError> decode(BerReader& r) {
+        auto tlv = r.read_tlv();
+        if (!tlv) return make_unexpected<std::vector<T>, DecodeError>(tlv.error());
+        std::vector<T> result;
+        BerReader inner = r.sub(tlv->value);
+        while (!inner.at_end()) {
+            auto val = BerTraits<T>::decode(inner);
+            if (!val) return make_unexpected<std::vector<T>, DecodeError>(val.error());
+            result.push_back(std::move(*val));
+        }
+        return result;
+    }
+};
 
 } // namespace asn1

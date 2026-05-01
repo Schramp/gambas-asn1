@@ -3,6 +3,7 @@
 #include "ICodec.hpp"
 #include "BerWriter.hpp"
 #include "BerReader.hpp"
+#include "BerTraits.hpp"
 
 namespace asn1 {
 

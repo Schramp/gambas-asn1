@@ -661,7 +661,9 @@ void XerCodec::encode_sequence(XerEncodeStream& s,
         const auto& mbr = spec.members[i];
         if (!mbr.type_descriptor) continue;
         if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
-        const void* mptr = static_cast<const char*>(src) + mbr.offset;
+        const void* mptr = mbr.optional_ops.get_ptr
+            ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
+            : static_cast<const char*>(src) + mbr.offset;
         TypeDescriptor mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
         mdef.name = mbr.name;
         os << s.indent(1);
@@ -690,7 +692,9 @@ DecodeResult XerCodec::decode_sequence(XerDecodeStream& s,
             mbr.optional_ops.set_present(dest, present);
             if (!present) continue;
         }
-        void* mptr = static_cast<char*>(dest) + mbr.offset;
+        void* mptr = mbr.optional_ops.get_ptr
+            ? mbr.optional_ops.get_ptr(dest)
+            : static_cast<char*>(dest) + mbr.offset;
         TypeDescriptor mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
         mdef.name = mbr.name;
         auto r = decode(s, mdef, mptr);

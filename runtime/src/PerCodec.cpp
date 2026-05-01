@@ -784,7 +784,9 @@ void PerCodec::encode_sequence(PerEncodeStream& s,
         const auto& mbr = spec.members[i];
         if (!mbr.type_descriptor) continue;
         if (mbr.optional && (!mbr.optional_ops.is_present(src))) continue;
-        const void* mptr = static_cast<const char*>(src) + mbr.offset;
+        const void* mptr = mbr.optional_ops.get_ptr
+            ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
+            : static_cast<const char*>(src) + mbr.offset;
         PerCodec::encode(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
     }
 
@@ -800,7 +802,9 @@ void PerCodec::encode_sequence(PerEncodeStream& s,
         for (int i = root_end; i < spec.count; ++i) {       // §18.9 open-type values
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor || !mbr.optional_ops.is_present(src)) continue;
-            const void* mptr = static_cast<const char*>(src) + mbr.offset;
+            const void* mptr = mbr.optional_ops.get_ptr
+                ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
+                : static_cast<const char*>(src) + mbr.offset;
             PerCodec::encode_open_type(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
         }
     }
@@ -842,7 +846,9 @@ DecodeResult PerCodec::decode_sequence(PerDecodeStream& s,
             mbr.optional_ops.set_present(dest, present);
             if (!present) continue;
         }
-        void* mptr = static_cast<char*>(dest) + mbr.offset;
+        void* mptr = mbr.optional_ops.get_ptr
+            ? mbr.optional_ops.get_ptr(dest)
+            : static_cast<char*>(dest) + mbr.offset;
         auto r = PerCodec::decode(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
         if (!r) return r;
     }
@@ -876,7 +882,9 @@ DecodeResult PerCodec::decode_sequence(PerDecodeStream& s,
                 if (i < known_ext) {
                     const auto& mbr = spec.members[root_end + i];
                     mbr.optional_ops.set_present(dest, true);
-                    void* mptr = static_cast<char*>(dest) + mbr.offset;
+                    void* mptr = mbr.optional_ops.get_ptr
+                        ? mbr.optional_ops.get_ptr(dest)
+                        : static_cast<char*>(dest) + mbr.offset;
                     auto r = PerCodec::decode_open_type(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
                     if (!r) return r;
                 } else {

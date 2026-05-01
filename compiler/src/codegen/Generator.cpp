@@ -24,7 +24,14 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         case BT::OctetString:       return "asn1::OctetString";
         case BT::ObjectIdentifier:  return "asn1::Oid";
         case BT::RelativeOid:       return "asn1::RelativeOid";
-        case BT::Enumerated:        return to_cpp_name(def.name.empty() ? "Enum" : def.name);
+        case BT::Enumerated: {
+            auto n = to_cpp_name(def.name.empty() ? "Enum" : def.name);
+            if (!n.empty()) n[0] = (char)std::toupper(n[0]);
+            // Inline ENUMERATED member (has enum values, not top-level)
+            if (!current_type_.empty() && !def.enum_values.empty())
+                return current_type_ + n;
+            return n;
+        }
         case BT::Utf8String:        return "asn1::Utf8String";
         case BT::NumericString:     return "asn1::NumericString";
         case BT::PrintableString:   return "asn1::PrintableString";
@@ -43,7 +50,7 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         }
     }
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body))
-        return to_cpp_name(tr->type_name);
+        return cpp_name_for_ref(tr->type_name, current_module_);
     if (def.is_seq_of()) {
         const auto& sof = std::get<ast::SequenceOfType>(def.body);
         return std::format("std::vector<{}>", cpp_type_for(*sof.element));
@@ -52,8 +59,11 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         const auto& sof = std::get<ast::SetOfType>(def.body);
         return std::format("std::vector<{}>", cpp_type_for(*sof.element));
     }
-    if (def.is_sequence() || def.is_choice())
-        return to_cpp_name(def.name.empty() ? "Anon" : def.name);
+    if (def.is_sequence() || def.is_choice() || def.is_set()) {
+        auto n = to_cpp_name(def.name.empty() ? "Anon" : def.name);
+        if (!n.empty()) n[0] = (char)std::toupper(n[0]);
+        return current_type_ + n;
+    }
     return "asn1::OctetString";
 }
 
@@ -117,9 +127,45 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) {
 }
 
 // Returns the &asn_DEF_* expression for a member's type_descriptor field.
-// Returns "nullptr" for types where the runtime can infer encoding from the tag alone,
-// and "&asn_DEF_<Name>" for generated or named types.
-static std::string type_descriptor_ref_for(const ast::TypeDef& def) {
+// C++ keywords that may not be used as identifiers.
+static bool is_cpp_keyword(const std::string& s) {
+    static const std::unordered_set<std::string> kw = {
+        "alignas","alignof","and","and_eq","asm","auto","bitand","bitor","bool",
+        "break","case","catch","char","char8_t","char16_t","char32_t","class",
+        "compl","concept","const","consteval","constexpr","constinit","const_cast",
+        "continue","co_await","co_return","co_yield","decltype","default","delete",
+        "do","double","dynamic_cast","else","enum","explicit","export","extern",
+        "false","float","for","friend","goto","if","inline","int","long","mutable",
+        "namespace","new","noexcept","not","not_eq","nullptr","operator","or",
+        "or_eq","private","protected","public","register","reinterpret_cast",
+        "requires","return","short","signed","sizeof","static","static_assert",
+        "static_cast","struct","switch","template","this","thread_local","throw",
+        "true","try","typedef","typeid","typename","union","unsigned","using",
+        "virtual","void","volatile","wchar_t","while","xor","xor_eq"
+    };
+    return kw.count(s) > 0;
+}
+
+// Escape a C++ identifier if it collides with a keyword.
+inline std::string safe_cpp_name(const std::string& s) {
+    return is_cpp_keyword(s) ? s + "_" : s;
+}
+
+// Returns true if this is a type assignment (not a value or class assignment).
+// Value assignments have a non-monostate default_value (the assigned value).
+static bool is_type_assignment(const ast::TypeDef& def) {
+    if (std::holds_alternative<std::monostate>(def.body)) return false;
+    if (def.is_extension_marker) return false;
+    // Value assignments (lowercase names) have default_value set by the grammar.
+    if (!std::holds_alternative<std::monostate>(def.default_value)) return false;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// type_descriptor_ref_for — Generator member (collision-aware)
+// ---------------------------------------------------------------------------
+
+std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
         switch (*bt) {
@@ -149,21 +195,37 @@ static std::string type_descriptor_ref_for(const ast::TypeDef& def) {
         default:                    return "nullptr";
         }
     }
-    if (auto* tr = std::get_if<ast::TypeRef>(&def.body))
-        return std::format("&asn_DEF_{}", to_cpp_name(tr->type_name));
-    if (def.is_sequence() || def.is_choice() || def.is_seq_of() || def.is_set_of() || def.is_set())
-        return std::format("&asn_DEF_{}", to_cpp_name(def.name.empty() ? "Anon" : def.name));
+    // Inline ENUMERATED member — use synthetic name
+    if (auto* bt2 = std::get_if<BT>(&def.body);
+        bt2 && *bt2 == BT::Enumerated && !def.enum_values.empty() && !current_type_.empty()) {
+        auto n = to_cpp_name(def.name.empty() ? "Enum" : def.name);
+        if (!n.empty()) n[0] = (char)std::toupper(n[0]);
+        return std::format("&asn_DEF_{}", current_type_ + n);
+    }
+    // Named type reference — every top-level name has its own asn_DEF_ (with correct
+    // name and per_constraints). Use that directly instead of collapsing to the builtin.
+    if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
+        auto resolved = resolver_.resolve_ref(*tr);
+        if (resolved && !resolved->name.empty())
+            return std::format("&asn_DEF_{}", cpp_name_for_ref(resolved->name, current_module_));
+        return std::format("&asn_DEF_{}", cpp_name_for_ref(tr->type_name, current_module_));
+    }
+    // Anonymous SEQUENCE OF / SET OF — delegate to element type's descriptor
+    if (def.is_seq_of()) {
+        const auto& elem = std::get<ast::SequenceOfType>(def.body).element;
+        return type_descriptor_ref_for(*elem);
+    }
+    if (def.is_set_of()) {
+        const auto& elem = std::get<ast::SetOfType>(def.body).element;
+        return type_descriptor_ref_for(*elem);
+    }
+    // Inline SEQUENCE / CHOICE / SET member — synthetic name = parent + member
+    if (def.is_sequence() || def.is_choice() || def.is_set()) {
+        auto n = to_cpp_name(def.name.empty() ? "Anon" : def.name);
+        if (!n.empty()) n[0] = (char)std::toupper(n[0]);
+        return std::format("&asn_DEF_{}", current_type_ + n);
+    }
     return "nullptr";
-}
-
-// Returns true if this is a type assignment (not a value or class assignment).
-// Value assignments have a non-monostate default_value (the assigned value).
-static bool is_type_assignment(const ast::TypeDef& def) {
-    if (std::holds_alternative<std::monostate>(def.body)) return false;
-    if (def.is_extension_marker) return false;
-    // Value assignments (lowercase names) have default_value set by the grammar.
-    if (!std::holds_alternative<std::monostate>(def.default_value)) return false;
-    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +233,7 @@ static bool is_type_assignment(const ast::TypeDef& def) {
 // ---------------------------------------------------------------------------
 
 void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, current_module_);
 
     // Count non-extension enum values
     int count = 0;
@@ -187,7 +249,7 @@ void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
     for (const auto& ev : def.enum_values) {
         if (ev.name == "...") { continue; }
         long v = static_cast<long>(ev.number.value_or(auto_val));
-        os << std::format("    {} = {},\n", to_cpp_name(ev.name), v);
+        os << std::format("    {} = {},\n", safe_cpp_name(to_cpp_name(ev.name)), v);
         auto_val = v + 1;
     }
     if (extensible)
@@ -208,7 +270,7 @@ void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
 }
 
 void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, current_module_);
 
     // Collect root values (before first "...")
     bool extensible = false;
@@ -291,7 +353,7 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
 // ---------------------------------------------------------------------------
 
 void Generator::emit_integer_hpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, current_module_);
 
     os << std::format("using {} = int64_t;\n\n", cname);
 
@@ -362,7 +424,7 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
 }
 
 void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, current_module_);
 
     auto range = extract_integer_range(def);
 
@@ -399,7 +461,7 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
 // ---------------------------------------------------------------------------
 
 void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, current_module_);
     bool is_set = def.is_set();
     uint32_t tag_num = is_set ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
 
@@ -411,23 +473,93 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
         ++mcount;
     }
 
-    // #include referenced types
+    // Determine if a member's named type is directly a class (SEQUENCE/CHOICE/SET) and can be
+    // forward-declared. Using a direct lookup (not following aliases) is essential: a type alias
+    // like `TraceActivation ::= ExternalASNType` generates `using TraceActivation = ...` in C++,
+    // which cannot be forward-declared as `class TraceActivation;`.
+    auto is_class_type = [&](const ast::TypeDef& m) -> bool {
+        if (m.is_sequence() || m.is_choice() || m.is_set()) return true;
+        if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+            auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
+            return direct && (direct->is_sequence() || direct->is_choice() || direct->is_set());
+        }
+        return false;
+    };
+
+    // Emit includes or forward declarations.
+    // Optional class-typed members: forward declaration only (breaks circular includes).
+    // Everything else: full include.
+    bool past_ext_inc = false;
     for (const auto& m : def.members) {
-        if (m->is_extension_marker) continue;
-        if (auto* tr = std::get_if<ast::TypeRef>(&m->body))
-            os << std::format("#include \"{}.hpp\"\n", to_cpp_name(tr->type_name));
+        if (m->is_extension_marker) { past_ext_inc = true; continue; }
+        bool optional = m->is_optional() || past_ext_inc;
+
+        auto emit_inc = [&](const std::string& cn) {
+            os << std::format("#include \"{}.hpp\"\n", cn);
+            track_include(cn);
+        };
+        auto emit_fwd = [&](const std::string& cn) {
+            os << std::format("class {};\n", cn);
+            track_include(cn);
+        };
+
+        if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
+            auto cn = cpp_name_for_ref(tr->type_name, current_module_);
+            optional && is_class_type(*m) ? emit_fwd(cn) : emit_inc(cn);
+        } else if (m->is_seq_of() || m->is_set_of()) {
+            const auto& elem = m->is_seq_of()
+                ? std::get<ast::SequenceOfType>(m->body).element
+                : std::get<ast::SetOfType>(m->body).element;
+            if (auto* tr2 = std::get_if<ast::TypeRef>(&elem->body)) {
+                emit_inc(cpp_name_for_ref(tr2->type_name, current_module_));
+            } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
+                auto esn = to_cpp_name(elem->name.empty() ? "Anon" : elem->name);
+                if (!esn.empty()) esn[0] = (char)std::toupper(esn[0]);
+                emit_inc(cname + esn);
+            }
+        } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
+            std::string sn = to_cpp_name(m->name);
+            if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
+            auto synth = cname + sn;
+            optional ? emit_fwd(synth) : emit_inc(synth);
+        } else {
+            auto* mbt = std::get_if<ast::BuiltinType>(&m->body);
+            if (mbt && *mbt == ast::BuiltinType::Enumerated && !m->enum_values.empty()) {
+                std::string sn = to_cpp_name(m->name);
+                if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
+                emit_inc(cname + sn);
+            }
+        }
     }
     if (mcount > 0) os << "\n";
 
-    // class
+    // Determine if any optional members exist — they will use unique_ptr.
+    bool has_optional_members = false;
+    {
+        bool past = false;
+        for (const auto& m : def.members) {
+            if (m->is_extension_marker) { past = true; continue; }
+            if (m->is_optional() || past) { has_optional_members = true; break; }
+        }
+    }
+
+    // class — optional members use unique_ptr (forward-decl compatible, matches asn1c semantics)
     os << std::format("class {} {{\npublic:\n", cname);
+    if (has_optional_members) {
+        // All special members declared (not defaulted) so unique_ptr<T> destructor/assignment
+        // has complete T in the .cpp where they are defined = default.
+        os << std::format("    {0}();\n", cname);
+        os << std::format("    ~{0}();\n", cname);
+        os << std::format("    {0}({0}&&) noexcept;\n", cname);
+        os << std::format("    {0}& operator=({0}&&) noexcept;\n", cname);
+    }
     bool past_ext_hpp = false;
     for (const auto& m : def.members) {
         if (m->is_extension_marker) { past_ext_hpp = true; continue; }
         std::string mtype = cpp_type_for(*m);
         std::string mname = to_member_name(m->name);
         if (m->is_optional() || past_ext_hpp)
-            os << std::format("    std::optional<{}> {};\n", mtype, mname);
+            os << std::format("    std::unique_ptr<{}> {};\n", mtype, mname);
         else
             os << std::format("    {} {}{{}};\n", mtype, mname);
     }
@@ -448,7 +580,7 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
 }
 
 void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, current_module_);
     bool is_set = def.is_set();
     uint32_t tag_num = is_set ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
 
@@ -457,6 +589,54 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     for (const auto& m : def.members) {
         if (m->is_extension_marker) { if (ext_at < 0) ext_at = mcount; continue; }
         ++mcount;
+    }
+
+    // Determine if any optional members exist (same logic as emit_sequence_hpp).
+    bool has_optional_members = false;
+    {
+        bool past = false;
+        for (const auto& m : def.members) {
+            if (m->is_extension_marker) { past = true; continue; }
+            if (m->is_optional() || past) { has_optional_members = true; break; }
+        }
+    }
+
+    if (has_optional_members) {
+        // Forward-declared types in the .hpp need full includes in the .cpp.
+        auto is_class_type = [&](const ast::TypeDef& m) -> bool {
+            if (m.is_sequence() || m.is_choice() || m.is_set()) return true;
+            if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+                auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
+                return direct && (direct->is_sequence() || direct->is_choice() || direct->is_set());
+            }
+            return false;
+        };
+        bool emitted_extra = false;
+        bool past_ext = false;
+        for (const auto& m : def.members) {
+            if (m->is_extension_marker) { past_ext = true; continue; }
+            bool optional = m->is_optional() || past_ext;
+            if (!optional) continue;
+            if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
+                if (is_class_type(*m)) {
+                    auto cn = cpp_name_for_ref(tr->type_name, current_module_);
+                    os << std::format("#include \"{}.hpp\"\n", cn);
+                    emitted_extra = true;
+                }
+            } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
+                std::string sn = to_cpp_name(m->name);
+                if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
+                os << std::format("#include \"{}.hpp\"\n", cname + sn);
+                emitted_extra = true;
+            }
+        }
+        if (emitted_extra) os << "\n";
+
+        // All special members defined here where unique_ptr<T> has complete T.
+        os << std::format("{0}::{0}() = default;\n", cname);
+        os << std::format("{0}::~{0}() = default;\n", cname);
+        os << std::format("{0}::{0}({0}&&) noexcept = default;\n", cname);
+        os << std::format("{0}& {0}::operator=({0}&&) noexcept = default;\n\n", cname);
     }
 
     // Count root-only optional members (for PER preamble bitmap width)
@@ -469,8 +649,9 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         }
     }
 
-    // Static presence helpers for all optional members (root and extension)
-    // Extension members are always treated as optional (open-type wrapped in UPER).
+    // Static helpers for all optional members (root and extension):
+    //   _isp_ = is_present check   _ssp_ = set_present (allocate/free unique_ptr)
+    //   _gmp_ = get_mutable_ptr    (returns T* from unique_ptr so BerCodec can write into T)
     if (roms_count > 0 || ext_at >= 0) {
         bool past = false;
         for (const auto& m : def.members) {
@@ -480,11 +661,13 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string mtype = cpp_type_for(*m);
             os << std::format(
                 "static bool _isp_{0}_{1}(const void* p) {{\n"
-                "    return static_cast<const {0}*>(p)->{1}.has_value(); }}\n"
+                "    return (bool)static_cast<const {0}*>(p)->{1}; }}\n"
                 "static void _ssp_{0}_{1}(void* p, bool v) {{\n"
                 "    auto& o = static_cast<{0}*>(p)->{1};\n"
-                "    if (v) {{ if (!o) o.emplace(); }} else o.reset(); }}\n",
-                cname, mname);
+                "    if (v) {{ if (!o) o = std::make_unique<{2}>(); }} else o.reset(); }}\n"
+                "static void* _gmp_{0}_{1}(void* p) {{\n"
+                "    return static_cast<{0}*>(p)->{1}.get(); }}\n",
+                cname, mname, mtype);
         }
         os << "\n";
     }
@@ -509,7 +692,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             }
 
             std::string ops = optional
-                ? std::format("{{ &_isp_{0}_{1}, &_ssp_{0}_{1} }}", cname, mname)
+                ? std::format("{{ &_isp_{0}_{1}, &_ssp_{0}_{1}, &_gmp_{0}_{1} }}", cname, mname)
                 : "{}";
             os << std::format("    {{ \"{}\", {}, {}, false, offsetof({}, {}), {}, {} }},\n",
                 m->name, eff_tag,
@@ -541,44 +724,19 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "    nullptr, nullptr, {} /* per_constraints */\n";
     os << "};\n\n";
 
-    // BerTraits encode
+    // BerTraits encode — thin wrapper; BerCodec::encode_sequence handles all members.
     os << std::format("void asn1::BerTraits<{}>::encode(asn1::BerWriter& w, const {}& v) {{\n", cname, cname);
-    os << std::format("    w.write_constructed(asn_DEF_{}.tag, [&](asn1::BerWriter& inner) {{\n", cname);
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) continue;
-        std::string fname = to_member_name(m->name);
-        std::string mtype = cpp_type_for(*m);
-        if (m->is_optional())
-            os << std::format("        if (v.{0}) asn1::BerTraits<{1}>::encode(inner, *v.{0});\n", fname, mtype);
-        else
-            os << std::format("        asn1::BerTraits<{}>::encode(inner, v.{});\n", mtype, fname);
-    }
-    os << "    });\n}\n\n";
+    os << "    asn1::BerEncodeStream s{w};\n";
+    os << std::format("    asn1::BerCodec::instance().encode(s, asn_DEF_{}, &v);\n", cname);
+    os << "}\n\n";
 
-    // BerTraits decode
+    // BerTraits decode — thin wrapper; BerCodec::decode_sequence handles all members.
     os << std::format("asn1::Expected<{0}, asn1::DecodeError>\n"
                       "asn1::BerTraits<{0}>::decode(asn1::BerReader& r) {{\n", cname);
-    os << "    auto tlv = r.read_tlv();\n";
-    os << std::format("    if (!tlv) return asn1::make_unexpected<{}, asn1::DecodeError>(tlv.error());\n", cname);
     os << std::format("    {} result{{}};\n", cname);
-    os << "    asn1::BerReader inner = r.sub(tlv->value);\n";
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) continue;
-        std::string fname = to_member_name(m->name);
-        std::string mtype = cpp_type_for(*m);
-        if (m->is_optional()) {
-            os << std::format("    if (!inner.at_end()) {{\n");
-            os << std::format("        auto val = asn1::BerTraits<{}>::decode(inner);\n", mtype);
-            os << std::format("        if (val) result.{} = std::move(*val);\n", fname);
-            os << "    }\n";
-        } else {
-            os << "    {\n";
-            os << std::format("        auto val = asn1::BerTraits<{}>::decode(inner);\n", mtype);
-            os << std::format("        if (!val) return asn1::make_unexpected<{}, asn1::DecodeError>(val.error());\n", cname);
-            os << std::format("        result.{} = std::move(*val);\n", fname);
-            os << "    }\n";
-        }
-    }
+    os << "    asn1::BerDecodeStream s{r};\n";
+    os << std::format("    auto ok = asn1::BerCodec::instance().decode(s, asn_DEF_{}, &result);\n", cname);
+    os << std::format("    if (!ok) return asn1::make_unexpected<{}, asn1::DecodeError>(ok.error());\n", cname);
     os << "    return result;\n}\n";
 }
 
@@ -587,7 +745,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
 // ---------------------------------------------------------------------------
 
 void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, current_module_);
 
     int count = 0;
     int ext_at = -1;
@@ -596,11 +754,40 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
         ++count;
     }
 
-    // #include referenced alternative types
+    // #include referenced alternative types and inline-type headers
     for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
-        if (auto* tr = std::get_if<ast::TypeRef>(&m->body))
-            os << std::format("#include \"{}.hpp\"\n", to_cpp_name(tr->type_name));
+        auto emit_inc = [&](const std::string& asn_name) {
+            auto cn = cpp_name_for_ref(asn_name, current_module_);
+            os << std::format("#include \"{}.hpp\"\n", cn);
+            track_include(cn);
+        };
+        if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
+            emit_inc(tr->type_name);
+        } else if (m->is_seq_of()) {
+            const auto& elem = std::get<ast::SequenceOfType>(m->body).element;
+            if (auto* tr2 = std::get_if<ast::TypeRef>(&elem->body))
+                emit_inc(tr2->type_name);
+        } else if (m->is_set_of()) {
+            const auto& elem = std::get<ast::SetOfType>(m->body).element;
+            if (auto* tr2 = std::get_if<ast::TypeRef>(&elem->body))
+                emit_inc(tr2->type_name);
+        } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
+            std::string sn = to_cpp_name(m->name);
+            if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
+            auto synth = cname + sn;
+            os << std::format("#include \"{}.hpp\"\n", synth);
+            track_include(synth);
+        } else {
+            auto* mbt = std::get_if<ast::BuiltinType>(&m->body);
+            if (mbt && *mbt == ast::BuiltinType::Enumerated && !m->enum_values.empty()) {
+                std::string sn = to_cpp_name(m->name);
+                if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
+                auto synth = cname + sn;
+                os << std::format("#include \"{}.hpp\"\n", synth);
+                track_include(synth);
+            }
+        }
     }
     if (count > 0) os << "\n";
 
@@ -633,7 +820,7 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
 }
 
 void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, current_module_);
 
     int count = 0;
     int ext_at = -1;
@@ -704,7 +891,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
 // ---------------------------------------------------------------------------
 
 void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::ostream& os) {
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, mod.name);
 
     // Module header comment with OID if present
     os << "// Module: " << mod.name;
@@ -720,6 +907,7 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
     os << "\n";
 
     os << "#pragma once\n";
+    os << "#include <memory>\n";
     os << "#include <optional>\n";
     os << "#include <variant>\n";
     os << "#include <vector>\n";
@@ -727,8 +915,10 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
     os << "#include <asn1cpp/asn1cpp.hpp>\n\n";
 
     if (def.is_sequence() || def.is_set()) {
+        current_type_ = cname;
         emit_sequence_hpp(def, os);
     } else if (def.is_choice()) {
+        current_type_ = cname;
         emit_choice_hpp(def, os);
     } else if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
         if (*bt == ast::BuiltinType::Enumerated) {
@@ -740,17 +930,30 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
             os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
         }
     } else if (def.is_seq_of() || def.is_set_of()) {
+        current_type_ = cname;
         const auto& elem = def.is_seq_of()
             ? std::get<ast::SequenceOfType>(def.body).element
             : std::get<ast::SetOfType>(def.body).element;
-        if (auto* tr = std::get_if<ast::TypeRef>(&elem->body))
-            os << std::format("#include \"{}.hpp\"\n\n", to_cpp_name(tr->type_name));
+        if (auto* tr = std::get_if<ast::TypeRef>(&elem->body)) {
+            auto inc = cpp_name_for_ref(tr->type_name, current_module_);
+            os << std::format("#include \"{}.hpp\"\n\n", inc);
+            track_include(inc);
+        } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
+            // Inline element: include the synthetic type header.
+            auto sn = to_cpp_name(elem->name.empty() ? "Anon" : elem->name);
+            if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
+            auto synth = cname + sn;
+            os << std::format("#include \"{}.hpp\"\n\n", synth);
+            track_include(synth);
+        }
         os << std::format("using {} = std::vector<{}>;\n\n", cname, cpp_type_for(*elem));
         os << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", cname);
         os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
-        os << std::format("#include \"{}.hpp\"\n", to_cpp_name(tr->type_name));
-        os << std::format("using {} = {};\n", cname, to_cpp_name(tr->type_name));
+        auto inc = cpp_name_for_ref(tr->type_name, current_module_);
+        os << std::format("#include \"{}.hpp\"\n", inc);
+        track_include(inc);
+        os << std::format("using {} = {};\n", cname, inc);
     }
 }
 
@@ -812,7 +1015,7 @@ static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
 }
 
 void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, current_module_);
 
     auto alphabet   = extract_from_alphabet(def);
     auto size_range = extract_size_range(def);
@@ -875,7 +1078,7 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
 // ---------------------------------------------------------------------------
 
 void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, current_module_);
     const auto& elem_node = def.is_seq_of()
         ? *std::get<ast::SequenceOfType>(def.body).element
         : *std::get<ast::SetOfType>(def.body).element;
@@ -926,14 +1129,17 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
 }
 
 void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, current_module_);
     os << std::format("#include \"{}.hpp\"\n\n", cname);
 
     if (def.is_sequence() || def.is_set()) {
+        current_type_ = cname;
         emit_sequence_cpp(def, os);
     } else if (def.is_choice()) {
+        current_type_ = cname;
         emit_choice_cpp(def, os);
     } else if (def.is_seq_of() || def.is_set_of()) {
+        current_type_ = cname;
         emit_seq_of_cpp(def, os);
     } else if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
         if (*bt == ast::BuiltinType::Enumerated)
@@ -946,13 +1152,103 @@ void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
 }
 
 // ---------------------------------------------------------------------------
+// Inline type pre-generation
+// Emits synthetic top-level types for anonymous SEQUENCE/CHOICE/SET members.
+// Must run before the parent type so includes resolve.
+// ---------------------------------------------------------------------------
+
+void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module& mod) {
+    std::string parent_cname = effective_cpp_name(def.name, mod.name);
+
+    // Handle SEQUENCE OF / SET OF with inline anonymous element
+    if (def.is_seq_of() || def.is_set_of()) {
+        const auto& elem = def.is_seq_of()
+            ? *std::get<ast::SequenceOfType>(def.body).element
+            : *std::get<ast::SetOfType>(def.body).element;
+        if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
+            auto sn = to_cpp_name(elem.name.empty() ? "Anon" : elem.name);
+            if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
+            std::string synth_name = parent_cname + sn;
+            if (!generated_names_.count(synth_name)) {
+                generated_names_.insert(synth_name);
+                auto synthetic = std::make_shared<ast::TypeDef>(elem);
+                synthetic->name = synth_name;
+                generate_inline_types(*synthetic, mod);
+                current_type_ = synth_name;
+                { std::ofstream hpp(out_dir_ / (synth_name + ".hpp")); emit_hpp(*synthetic, mod, hpp); }
+                { std::ofstream cpp(out_dir_ / (synth_name + ".cpp")); emit_cpp(*synthetic, cpp); }
+            }
+        }
+        return;
+    }
+
+    if (!def.is_sequence() && !def.is_choice() && !def.is_set()) return;
+
+    for (const auto& m : def.members) {
+        if (m->is_extension_marker) continue;
+
+        // SEQUENCE OF / SET OF with inline anonymous element: generate the element type.
+        if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
+            const auto& elem = m->is_seq_of()
+                ? *std::get<ast::SequenceOfType>(m->body).element
+                : *std::get<ast::SetOfType>(m->body).element;
+            if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
+                auto esn = to_cpp_name(elem.name.empty() ? "Anon" : elem.name);
+                if (!esn.empty()) esn[0] = (char)std::toupper(esn[0]);
+                std::string synth_name = parent_cname + esn;
+                if (!generated_names_.count(synth_name)) {
+                    generated_names_.insert(synth_name);
+                    auto synthetic = std::make_shared<ast::TypeDef>(elem);
+                    synthetic->name = synth_name;
+                    generate_inline_types(*synthetic, mod);
+                    current_type_ = synth_name;
+                    { std::ofstream hpp(out_dir_ / (synth_name + ".hpp")); emit_hpp(*synthetic, mod, hpp); }
+                    { std::ofstream cpp(out_dir_ / (synth_name + ".cpp")); emit_cpp(*synthetic, cpp); }
+                }
+            }
+            continue;
+        }
+
+        auto* mbt = std::get_if<ast::BuiltinType>(&m->body);
+        bool is_inline_enum = mbt && *mbt == ast::BuiltinType::Enumerated && !m->enum_values.empty();
+        if (!m->is_sequence() && !m->is_choice() && !m->is_set() && !is_inline_enum) continue;
+        if (m->name.empty()) continue;
+
+        std::string sn = to_cpp_name(m->name);
+        if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
+        std::string synth_name = parent_cname + sn;
+
+        if (generated_names_.count(synth_name)) continue;
+        generated_names_.insert(synth_name);
+
+        // Build a synthetic TypeDef with the synthetic name
+        auto synthetic = std::make_shared<ast::TypeDef>(*m);
+        synthetic->name = synth_name;
+
+        // Recursively generate inline types within the synthetic type
+        generate_inline_types(*synthetic, mod);
+
+        // Generate the synthetic type file
+        current_type_ = synth_name;
+        {
+            std::ofstream hpp(out_dir_ / (synth_name + ".hpp"));
+            emit_hpp(*synthetic, mod, hpp);
+        }
+        {
+            std::ofstream cpp(out_dir_ / (synth_name + ".cpp"));
+            emit_cpp(*synthetic, cpp);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Per-type file writer
 // ---------------------------------------------------------------------------
 
 void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
     if (!is_type_assignment(def)) return;
 
-    std::string cname = to_cpp_name(def.name);
+    std::string cname = effective_cpp_name(def.name, mod.name);
 
     {
         std::ofstream hpp(out_dir_ / (cname + ".hpp"));
@@ -976,6 +1272,29 @@ void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
     if (needs_cpp) {
         std::ofstream cpp(out_dir_ / (cname + ".cpp"));
         emit_cpp(def, cpp);
+    }
+}
+
+void Generator::emit_stubs_for_unresolved() {
+    for (const auto& name : referenced_names_) {
+        if (generated_names_.count(name)) continue;
+        auto path = out_dir_ / (name + ".hpp");
+        if (fs::exists(path)) continue;
+        std::ofstream os(path);
+        os << "#pragma once\n";
+        os << "#include <asn1cpp/asn1cpp.hpp>\n\n";
+        os << "/* stub: type from missing/uncompiled module */\n";
+        os << std::format("struct {} {{}};\n\n", name);
+        os << std::format("inline const asn1::TypeDescriptor asn_DEF_{} = {{\n", name);
+        os << std::format("    \"{}\",\n", name);
+        os << "    asn1::Tag{},\n";
+        os << "    nullptr, nullptr, nullptr, nullptr, {}\n";
+        os << "};\n\n";
+        os << std::format("template<> struct asn1::BerTraits<{}> {{\n", name);
+        os << std::format("    static asn1::Tag tag() {{ return asn1::Tag{{}}; }}\n");
+        os << std::format("    static void encode(asn1::BerWriter&, const {}&) {{}}\n", name);
+        os << std::format("    static asn1::Expected<{0}, asn1::DecodeError> decode(asn1::BerReader&) {{ return {0}{{}}; }}\n", name);
+        os << "};\n";
     }
 }
 

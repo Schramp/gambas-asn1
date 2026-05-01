@@ -1,3 +1,4 @@
+#include <vector>
 #include <asn1cpp/codec/BerCodec.hpp>
 #include <asn1cpp/types/Boolean.hpp>
 #include <asn1cpp/types/OctetString.hpp>
@@ -292,13 +293,41 @@ void BerCodec::encode_sequence(BerWriter& w, const TypeDescriptor& def, const vo
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
             if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
-            const void* mptr = static_cast<const char*>(src) + mbr.offset;
+            // For unique_ptr<T> optional members, get_ptr returns T* from the unique_ptr.
+            const void* mptr = mbr.optional_ops.get_ptr
+                ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
+                : static_cast<const char*>(src) + mbr.offset;
             const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
-            BerEncodeStream ms{inner};
-            encode(ms, mdef, mptr);
+
+            bool tagged = mbr.tag.cls == TagClass::Context;
+            if (tagged) {
+                bool is_explicit = mdef.choice_spec != nullptr;
+                if (is_explicit) {
+                    // EXPLICIT: context tag wraps the full member encoding.
+                    inner.write_constructed(mbr.tag, [&](BerWriter& w2) {
+                        BerEncodeStream ms2{w2};
+                        encode(ms2, mdef, mptr);
+                    });
+                } else {
+                    // IMPLICIT: encode normally to buffer, strip natural tag, re-emit with context tag.
+                    std::vector<uint8_t> tmp;
+                    { BerWriter bw{tmp}; BerEncodeStream ms{bw}; encode(ms, mdef, mptr); }
+                    BerReader br{tmp};
+                    auto tlv = br.read_tlv();
+                    if (!tlv) return;
+                    Tag ctx{TagClass::Context, mbr.tag.number, mdef.tag.constructed};
+                    inner.write_tag(ctx);
+                    inner.write_length(tlv->value.size());
+                    inner.append(tlv->value);
+                }
+            } else {
+                BerEncodeStream ms{inner};
+                encode(ms, mdef, mptr);
+            }
         }
     });
 }
+
 DecodeResult BerCodec::decode_sequence(BerReader& r, const TypeDescriptor& def, void* dest) const {
     auto tlv = r.read_tlv();
     if (!tlv) return decode_err(tlv.error());
@@ -312,11 +341,38 @@ DecodeResult BerCodec::decode_sequence(BerReader& r, const TypeDescriptor& def, 
             mbr.optional_ops.set_present(dest, present);
             if (!present) continue;
         }
-        void* mptr = static_cast<char*>(dest) + mbr.offset;
+        // For unique_ptr<T> optional members, get_ptr returns T* from the allocated object.
+        void* mptr = mbr.optional_ops.get_ptr
+            ? mbr.optional_ops.get_ptr(dest)
+            : static_cast<char*>(dest) + mbr.offset;
         const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
-        BerDecodeStream ms{inner};
-        auto ok = decode(ms, mdef, mptr);
-        if (!ok) return ok;
+
+        bool tagged = mbr.tag.cls == TagClass::Context;
+        if (tagged) {
+            auto outer = inner.read_tlv();
+            if (!outer) return decode_err(outer.error());
+            bool is_explicit = mdef.choice_spec != nullptr;
+            if (is_explicit) {
+                // EXPLICIT: inner bytes contain the full member encoding (with its own tag).
+                BerReader inner2 = inner.sub(outer->value);
+                BerDecodeStream ms{inner2};
+                auto ok = decode(ms, mdef, mptr);
+                if (!ok) return ok;
+            } else {
+                // IMPLICIT: inner bytes are the value; prepend natural type tag.
+                std::vector<uint8_t> retagged;
+                { BerWriter bw{retagged}; bw.write_tag(mdef.tag); bw.write_length(outer->value.size()); }
+                retagged.insert(retagged.end(), outer->value.begin(), outer->value.end());
+                BerReader retag_reader{retagged};
+                BerDecodeStream ms{retag_reader};
+                auto ok = decode(ms, mdef, mptr);
+                if (!ok) return ok;
+            }
+        } else {
+            BerDecodeStream ms{inner};
+            auto ok = decode(ms, mdef, mptr);
+            if (!ok) return ok;
+        }
     }
     return decode_ok();
 }
