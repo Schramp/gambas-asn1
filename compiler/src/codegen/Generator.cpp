@@ -126,6 +126,40 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) {
     return "asn1::Tag::universal(4, false)";  // fallback: OCTET STRING
 }
 
+// Collect flattened BER dispatch tags for one CHOICE alternative (X.690 §8.13,
+// X.680 §24.6). If the alternative has its own BER tag, add one entry.
+// If it resolves to an untagged CHOICE (empty natural tag), recurse into its
+// alternatives so the outer CHOICE can dispatch by the inner type's tags.
+void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
+                                      std::vector<std::pair<std::string,int>>& out)
+{
+    // Explicit outer tag: use it directly.
+    if (alt.tag.present()) {
+        bool constr = alt.is_sequence() || alt.is_choice() ||
+                      alt.is_seq_of()  || alt.is_set_of() || alt.is_set();
+        out.emplace_back(tag_literal(alt.tag, constr), alt_idx);
+        return;
+    }
+    std::string nat = natural_tag_for(alt);
+    if (!nat.empty()) {
+        out.emplace_back(nat, alt_idx);
+        return;
+    }
+    // No tag: alternative is an untagged CHOICE — flatten its inner alternatives.
+    const ast::TypeDef* inner = &alt;
+    ast::TypeDefPtr resolved;
+    if (auto* tr = std::get_if<ast::TypeRef>(&alt.body)) {
+        resolved = resolver_.resolve_ref(*tr);
+        if (resolved) inner = resolved.get();
+    }
+    if (inner->is_choice()) {
+        for (const auto& m : inner->members) {
+            if (!m || m->is_extension_marker) continue;
+            collect_ber_tags_for(*m, alt_idx, out);
+        }
+    }
+}
+
 // Returns the &asn_DEF_* expression for a member's type_descriptor field.
 // C++ keywords that may not be used as identifiers.
 static bool is_cpp_keyword(const std::string& s) {
@@ -830,6 +864,27 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         os << "};\n\n";
     }
 
+    // Compute flattened BER dispatch table (needed when any alternative is an
+    // untagged CHOICE that contributes its inner tags for outer dispatch).
+    std::vector<std::pair<std::string,int>> ber_tags; // {tag_literal, 0-based alt_index}
+    bool needs_ber_table = false;
+    {
+        int ai = 0;
+        for (const auto& m : def.members) {
+            if (m->is_extension_marker) continue;
+            if (!m->tag.present() && natural_tag_for(*m).empty())
+                needs_ber_table = true;
+            collect_ber_tags_for(*m, ai, ber_tags);
+            ++ai;
+        }
+    }
+    if (needs_ber_table && !ber_tags.empty()) {
+        os << std::format("static const asn1::ChoiceTagEntry asn_BER_{}[] = {{\n", cname);
+        for (const auto& [tag_lit, idx] : ber_tags)
+            os << std::format("    {{ {}, {} }},\n", tag_lit, idx);
+        os << "};\n\n";
+    }
+
     // ChoiceSpec
     os << std::format("const asn1::ChoiceSpec asn_SPC_{} = {{\n", cname);
     if (count > 0)
@@ -839,6 +894,8 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    {},\n", count);
     os << std::format("    {}, /* ext_at */\n", ext_at);
     os << "    {} /* PER: per_constraints */\n";
+    if (needs_ber_table && !ber_tags.empty())
+        os << std::format("    , asn_BER_{}, {} /* ber_tags */\n", cname, (int)ber_tags.size());
     os << "};\n\n";
 
     // TypeDescriptor (CHOICE has no fixed universal tag)

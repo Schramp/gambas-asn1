@@ -408,6 +408,49 @@ void BerCodec::encode_choice(BerWriter& w, const TypeDescriptor& def, const void
 DecodeResult BerCodec::decode_choice(BerReader& r, const TypeDescriptor& def, void* dest) const {
     const auto& spec = *def.choice_spec;
     Tag peek = r.peek_tag();
+
+    // Flattened BER tag table (pre-computed at codegen time for nested CHOICE alts).
+    if (spec.ber_tags) {
+        int matched = -1;
+        for (int j = 0; j < spec.ber_tag_count; ++j) {
+            if (peek.cls == spec.ber_tags[j].tag.cls &&
+                peek.number == spec.ber_tags[j].tag.number) {
+                matched = spec.ber_tags[j].alt_index;
+                break;
+            }
+        }
+        if (matched < 0) goto no_match;
+        {
+            const auto& alt = spec.alternatives[matched];
+            void* mptr = static_cast<char*>(dest) + alt.offset;
+            const auto& mdef = *alt.type_descriptor;
+            DecodeResult ok = decode_ok();
+            if (alt.tag.cls == TagClass::Context) {
+                auto outer = r.read_tlv();
+                if (!outer) return decode_err(outer.error());
+                bool is_explicit = mdef.choice_spec != nullptr;
+                if (is_explicit) {
+                    BerReader inner2 = r.sub(outer->value);
+                    BerDecodeStream ms{inner2};
+                    ok = decode(ms, mdef, mptr);
+                } else {
+                    std::vector<uint8_t> retagged;
+                    { BerWriter bw{retagged}; bw.write_tag(mdef.tag); bw.write_length(outer->value.size()); }
+                    retagged.insert(retagged.end(), outer->value.begin(), outer->value.end());
+                    BerReader retag_reader{retagged};
+                    BerDecodeStream ms{retag_reader};
+                    ok = decode(ms, mdef, mptr);
+                }
+            } else {
+                BerDecodeStream ms{r};
+                ok = decode(ms, mdef, mptr);
+            }
+            if (!ok) return ok;
+            *static_cast<int*>(dest) = matched + 1;
+            return decode_ok();
+        }
+    }
+
     for (int i = 0; i < spec.count; ++i) {
         const auto& alt = spec.alternatives[i];
         if (!alt.type_descriptor) continue;
@@ -442,6 +485,7 @@ DecodeResult BerCodec::decode_choice(BerReader& r, const TypeDescriptor& def, vo
         *static_cast<int*>(dest) = i + 1;
         return decode_ok();
     }
+    no_match:
     // Extensible CHOICE: unknown extension alternative — skip TLV, leave present=NOTHING.
     if (spec.ext_at >= 0) {
         if (debug_flags() & DBG_BER_CHOICE)

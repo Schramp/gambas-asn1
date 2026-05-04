@@ -128,6 +128,13 @@ struct SequenceSpec {
 };
 
 // CHOICE specifics.
+// BER dispatch entry: maps one BER tag to the 0-based alternative index.
+// Pre-computed for CHOICEs that have untagged CHOICE alternatives (nested flattening).
+struct ChoiceTagEntry {
+    Tag tag;
+    int alt_index; // 0-based index into ChoiceSpec::alternatives
+};
+
 struct ChoiceSpec {
     const MemberDescriptor* alternatives;
     int                     count;
@@ -135,6 +142,12 @@ struct ChoiceSpec {
 
     // PER: default-constructed (flags==0) means unconstrained.
     PerConstraints per_constraints;
+
+    // BER: flattened tag → alternative dispatch (X.690 §8.13, X.680 §24.6).
+    // Non-null only when at least one alternative is itself an untagged CHOICE.
+    // Existing initializers leave these zero/nullptr (valid: means use alternatives[].tag).
+    const ChoiceTagEntry* ber_tags      = nullptr;
+    int                   ber_tag_count = 0;
 };
 
 // Top-level per-type descriptor (mirrors asn_TYPE_descriptor_t).

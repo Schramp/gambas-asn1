@@ -157,6 +157,11 @@ private:
     std::string type_descriptor_ref_for(const ast::TypeDef& def);
     std::string tag_literal(const ast::Tag& tag, bool constructed);
     std::string natural_tag_for(const ast::TypeDef& def);
+    // Collect flattened BER dispatch tags for one CHOICE alternative.
+    // alt_idx: 0-based index of the alternative in its parent CHOICE.
+    // Appends {tag_literal, alt_idx} pairs; recurses if alt resolves to untagged CHOICE.
+    void collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
+                               std::vector<std::pair<std::string,int>>& out);
     std::optional<int64_t> resolve_int_value(const ast::Value& v) const;
     std::optional<std::pair<int64_t,int64_t>> extract_integer_range(const ast::TypeDef& def) const;
 };

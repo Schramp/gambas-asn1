@@ -56,7 +56,7 @@ $(PCH_WRAP): | $(OBJ_DIR)
 	@mkdir -p $(PCH_DIR)
 	@printf '#include <memory>\n#include <optional>\n#include <variant>\n#include <vector>\n#include <span>\n#include <string>\n#include <cstdint>\n#include <asn1cpp/asn1cpp.hpp>\n' > $@
 
-$(PCH_GCH): $(PCH_WRAP) $(RUNTIME_INC)/asn1cpp/asn1cpp.hpp $(wildcard $(RUNTIME_INC)/asn1cpp/codec/*.hpp)
+$(PCH_GCH): $(PCH_WRAP) $(RUNTIME_INC)/asn1cpp/asn1cpp.hpp $(wildcard $(RUNTIME_INC)/asn1cpp/*.hpp) $(wildcard $(RUNTIME_INC)/asn1cpp/codec/*.hpp)
 	@echo "[PCH]  asn1cpp.hpp"
 	$(CXX) $(BASE_FLAGS) -x c++-header -o $@ $<
 
