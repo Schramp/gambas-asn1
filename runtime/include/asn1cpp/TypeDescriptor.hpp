@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <memory>
 #include "Tag.hpp"
 #include "codec/PerConstraints.hpp"
 
@@ -27,6 +28,24 @@ struct EnumSpec {
     const long*      per_value_order;  // [root_count] values in definition order
 };
 
+// Template that generates the three OptionalOps callbacks for a unique_ptr<T> member.
+// Usage in generated code:
+//   using _Ops_Type_member = asn1::UniquePtrOps<Type, MemberType, &Type::member>;
+//   ... OptionalOps{ &_Ops_Type_member::check, &_Ops_Type_member::set, &_Ops_Type_member::get } ...
+template<typename Owner, typename T, std::unique_ptr<T> Owner::* Mbr>
+struct UniquePtrOps {
+    static bool  check(const void* p) {
+        return (bool)(static_cast<const Owner*>(p)->*Mbr);
+    }
+    static void  set(void* p, bool v) {
+        auto& o = static_cast<Owner*>(p)->*Mbr;
+        if (v) { if (!o) o = std::make_unique<T>(); } else o.reset();
+    }
+    static void* get(void* p) {
+        return (static_cast<Owner*>(p)->*Mbr).get();
+    }
+};
+
 // Encapsulates optional-member callbacks so codecs don't carry naked function
 // pointers or repeat null checks.  get_ptr(struct*) returns T* from the
 // unique_ptr<T> that stores the optional value; needed by table-driven codecs
@@ -46,20 +65,40 @@ struct OptionalOps {
     explicit operator bool() const { return check != nullptr; }
 };
 
+// Forward declaration — MemberDescriptor references TypeDescriptor.
+struct TypeDescriptor;
+
 // Per-member SEQUENCE/SET/CHOICE descriptor (mirrors asn_TYPE_member_t).
 struct MemberDescriptor {
-    const char*  name;
-    Tag          tag;             // effective wire tag (context tag when tagged, natural otherwise)
-    bool         optional;
-    bool         has_default;
-    std::size_t  offset;          // offsetof(Struct, member) — for unique_ptr members,
-                                  // points to the unique_ptr, not the contained value
-    const void*  type_descriptor; // cast to TypeDescriptor* in codec
-    OptionalOps  optional_ops;    // non-null only for optional/extension members
+    const char*           name;
+    Tag                   tag;            // effective wire tag (context tag when tagged, natural otherwise)
+    bool                  optional;
+    bool                  has_default;
+    std::size_t           offset;         // offsetof(Struct, member) — for unique_ptr members,
+                                          // points to the unique_ptr, not the contained value
+    const TypeDescriptor* type_descriptor;
+    OptionalOps           optional_ops;   // non-null only for optional/extension members
 };
 
-// Forward declaration for SeqOfSpec::element pointer.
-struct TypeDescriptor;
+// Template that generates the four SeqOfSpec callbacks for a std::vector-based SEQUENCE OF.
+// Usage in generated code:
+//   using _VecOps = asn1::VectorOps<CollectionType>;
+//   ... SeqOfSpec{ ..., &_VecOps::count, &_VecOps::get_const, &_VecOps::get_mut, &_VecOps::resize } ...
+template<typename Container>
+struct VectorOps {
+    static std::size_t count(const void* v) {
+        return static_cast<const Container*>(v)->size();
+    }
+    static const void* get_const(const void* v, std::size_t i) {
+        return static_cast<const Container*>(v)->data() + i;
+    }
+    static void* get_mut(void* v, std::size_t i) {
+        return static_cast<Container*>(v)->data() + i;
+    }
+    static void resize(void* v, std::size_t n) {
+        static_cast<Container*>(v)->resize(n);
+    }
+};
 
 // SEQUENCE OF / SET OF specifics.
 struct SeqOfSpec {

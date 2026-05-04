@@ -664,7 +664,7 @@ void XerCodec::encode_sequence(XerEncodeStream& s,
         const void* mptr = mbr.optional_ops.get_ptr
             ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
             : static_cast<const char*>(src) + mbr.offset;
-        TypeDescriptor mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
+        TypeDescriptor mdef = *mbr.type_descriptor;
         mdef.name = mbr.name;
         os << s.indent(1);
         XerEncodeStream ms{os, s.depth() + 1};
@@ -695,7 +695,7 @@ DecodeResult XerCodec::decode_sequence(XerDecodeStream& s,
         void* mptr = mbr.optional_ops.get_ptr
             ? mbr.optional_ops.get_ptr(dest)
             : static_cast<char*>(dest) + mbr.offset;
-        TypeDescriptor mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
+        TypeDescriptor mdef = *mbr.type_descriptor;
         mdef.name = mbr.name;
         auto r = decode(s, mdef, mptr);
         if (!r) return r;
@@ -725,7 +725,7 @@ void XerCodec::encode_choice(XerEncodeStream& s,
 
     os << '<' << def.name << ">\n";
     os << s.indent(1);
-    TypeDescriptor adef = *static_cast<const TypeDescriptor*>(alt.type_descriptor);
+    TypeDescriptor adef = *alt.type_descriptor;
     adef.name = alt.name;
     XerEncodeStream as{os, s.depth() + 1};
     encode(as, adef, static_cast<const char*>(src) + alt.offset);
@@ -747,7 +747,7 @@ DecodeResult XerCodec::decode_choice(XerDecodeStream& s,
             if (ti.name != alt.name) continue;
             if (!alt.type_descriptor)
                 return decode_err(DecodeError(std::string("XER CHOICE: no descriptor for ") + alt.name));
-            TypeDescriptor adef = *static_cast<const TypeDescriptor*>(alt.type_descriptor);
+            TypeDescriptor adef = *alt.type_descriptor;
             adef.name = alt.name;
             void* mptr = static_cast<char*>(dest) + alt.offset;
             auto r = decode(s, adef, mptr);

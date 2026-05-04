@@ -299,7 +299,7 @@ void BerCodec::encode_sequence(BerWriter& w, const TypeDescriptor& def, const vo
             const void* mptr = mbr.optional_ops.get_ptr
                 ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
                 : static_cast<const char*>(src) + mbr.offset;
-            const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
+            const auto& mdef = *mbr.type_descriptor;
 
             bool tagged = mbr.tag.cls == TagClass::Context;
             if (tagged) {
@@ -358,7 +358,7 @@ DecodeResult BerCodec::decode_sequence(BerReader& r, const TypeDescriptor& def, 
         void* mptr = mbr.optional_ops.get_ptr
             ? mbr.optional_ops.get_ptr(dest)
             : static_cast<char*>(dest) + mbr.offset;
-        const auto& mdef = *static_cast<const TypeDescriptor*>(mbr.type_descriptor);
+        const auto& mdef = *mbr.type_descriptor;
 
         bool tagged = mbr.tag.cls == TagClass::Context;
         if (tagged) {
@@ -401,7 +401,7 @@ void BerCodec::encode_choice(BerWriter& w, const TypeDescriptor& def, const void
     const auto& alt = spec.alternatives[idx - 1];
     if (!alt.type_descriptor) return;
     const void* mptr = static_cast<const char*>(src) + alt.offset;
-    const auto& mdef = *static_cast<const TypeDescriptor*>(alt.type_descriptor);
+    const auto& mdef = *alt.type_descriptor;
     BerEncodeStream ms{w};
     encode(ms, mdef, mptr);
 }
@@ -413,7 +413,7 @@ DecodeResult BerCodec::decode_choice(BerReader& r, const TypeDescriptor& def, vo
         if (!alt.type_descriptor) continue;
         if (peek.cls != alt.tag.cls || peek.number != alt.tag.number) continue;
         void* mptr = static_cast<char*>(dest) + alt.offset;
-        const auto& mdef = *static_cast<const TypeDescriptor*>(alt.type_descriptor);
+        const auto& mdef = *alt.type_descriptor;
         DecodeResult ok = decode_ok();
         if (alt.tag.cls == TagClass::Context) {
             // Context-tagged alternative: read the context TLV first.

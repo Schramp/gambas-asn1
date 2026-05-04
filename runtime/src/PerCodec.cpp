@@ -787,7 +787,7 @@ void PerCodec::encode_sequence(PerEncodeStream& s,
         const void* mptr = mbr.optional_ops.get_ptr
             ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
             : static_cast<const char*>(src) + mbr.offset;
-        PerCodec::encode(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
+        PerCodec::encode(s, *mbr.type_descriptor, mptr);
     }
 
     // Extension encoding (X.691 §18.7-18.9)
@@ -805,7 +805,7 @@ void PerCodec::encode_sequence(PerEncodeStream& s,
             const void* mptr = mbr.optional_ops.get_ptr
                 ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
                 : static_cast<const char*>(src) + mbr.offset;
-            PerCodec::encode_open_type(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
+            PerCodec::encode_open_type(s, *mbr.type_descriptor, mptr);
         }
     }
 }
@@ -849,7 +849,7 @@ DecodeResult PerCodec::decode_sequence(PerDecodeStream& s,
         void* mptr = mbr.optional_ops.get_ptr
             ? mbr.optional_ops.get_ptr(dest)
             : static_cast<char*>(dest) + mbr.offset;
-        auto r = PerCodec::decode(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
+        auto r = PerCodec::decode(s, *mbr.type_descriptor, mptr);
         if (!r) return r;
     }
 
@@ -885,7 +885,7 @@ DecodeResult PerCodec::decode_sequence(PerDecodeStream& s,
                     void* mptr = mbr.optional_ops.get_ptr
                         ? mbr.optional_ops.get_ptr(dest)
                         : static_cast<char*>(dest) + mbr.offset;
-                    auto r = PerCodec::decode_open_type(s, *static_cast<const TypeDescriptor*>(mbr.type_descriptor), mptr);
+                    auto r = PerCodec::decode_open_type(s, *mbr.type_descriptor, mptr);
                     if (!r) return r;
                 } else {
                     if (auto r = skip_open_type(s); !r) return r;
@@ -951,7 +951,7 @@ void PerCodec::encode_choice(PerEncodeStream& s,
         const auto& alt = spec.alternatives[def_idx];
         if (!alt.type_descriptor) return;
         const void* mptr = static_cast<const char*>(src) + alt.offset;
-        PerCodec::encode(s, *static_cast<const TypeDescriptor*>(alt.type_descriptor), mptr);
+        PerCodec::encode(s, *alt.type_descriptor, mptr);
     } else {
         // X.691 §22.8: normally-small non-negative whole number for ext index
         int ext_idx = def_idx - root_count;
@@ -965,7 +965,7 @@ void PerCodec::encode_choice(PerEncodeStream& s,
         const auto& alt = spec.alternatives[def_idx];
         if (!alt.type_descriptor) return;
         const void* mptr = static_cast<const char*>(src) + alt.offset;
-        PerCodec::encode_open_type(s, *static_cast<const TypeDescriptor*>(alt.type_descriptor), mptr);
+        PerCodec::encode_open_type(s, *alt.type_descriptor, mptr);
     }
 }
 
@@ -1000,7 +1000,7 @@ DecodeResult PerCodec::decode_choice(PerDecodeStream& s,
         if (!alt.type_descriptor)
             return decode_err(DecodeError("CHOICE alternative has no type descriptor"));
         void* mptr = static_cast<char*>(dest) + alt.offset;
-        auto r = PerCodec::decode(s, *static_cast<const TypeDescriptor*>(alt.type_descriptor), mptr);
+        auto r = PerCodec::decode(s, *alt.type_descriptor, mptr);
         if (!r) return r;
         *static_cast<int*>(dest) = def_idx + 1;
         return decode_ok();
@@ -1023,7 +1023,7 @@ DecodeResult PerCodec::decode_choice(PerDecodeStream& s,
             const auto& alt = spec.alternatives[def_idx];
             if (alt.type_descriptor) {
                 void* mptr = static_cast<char*>(dest) + alt.offset;
-                auto r = PerCodec::decode_open_type(s, *static_cast<const TypeDescriptor*>(alt.type_descriptor), mptr);
+                auto r = PerCodec::decode_open_type(s, *alt.type_descriptor, mptr);
                 if (!r) return r;
                 *static_cast<int*>(dest) = def_idx + 1;
             } else {

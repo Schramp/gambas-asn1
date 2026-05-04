@@ -658,9 +658,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         }
     }
 
-    // Static helpers for all optional members (root and extension):
-    //   _isp_ = is_present check   _ssp_ = set_present (allocate/free unique_ptr)
-    //   _gmp_ = get_mutable_ptr    (returns T* from unique_ptr so BerCodec can write into T)
+    // Type aliases for optional member callbacks — one per optional member.
     if (roms_count > 0 || ext_at >= 0) {
         bool past = false;
         for (const auto& m : def.members) {
@@ -669,13 +667,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string mname = to_member_name(m->name);
             std::string mtype = cpp_type_for(*m);
             os << std::format(
-                "static bool _isp_{0}_{1}(const void* p) {{\n"
-                "    return (bool)static_cast<const {0}*>(p)->{1}; }}\n"
-                "static void _ssp_{0}_{1}(void* p, bool v) {{\n"
-                "    auto& o = static_cast<{0}*>(p)->{1};\n"
-                "    if (v) {{ if (!o) o = std::make_unique<{2}>(); }} else o.reset(); }}\n"
-                "static void* _gmp_{0}_{1}(void* p) {{\n"
-                "    return static_cast<{0}*>(p)->{1}.get(); }}\n",
+                "using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
                 cname, mname, mtype);
         }
         os << "\n";
@@ -701,7 +693,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             }
 
             std::string ops = optional
-                ? std::format("{{ &_isp_{0}_{1}, &_ssp_{0}_{1}, &_gmp_{0}_{1} }}", cname, mname)
+                ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, mname)
                 : "{}";
             os << std::format("    {{ \"{}\", {}, {}, false, offsetof({}, {}), {}, {} }},\n",
                 m->name, eff_tag,
@@ -1057,17 +1049,8 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
         ? *std::get<ast::SequenceOfType>(def.body).element
         : *std::get<ast::SetOfType>(def.body).element;
 
-    // Type-erased collection callbacks
-    os << std::format(
-        "static std::size_t _cnt_{0}(const void* p) {{\n"
-        "    return static_cast<const {0}*>(p)->size(); }}\n"
-        "static const void* _getc_{0}(const void* p, std::size_t i) {{\n"
-        "    return static_cast<const {0}*>(p)->data() + i; }}\n"
-        "static void* _get_{0}(void* p, std::size_t i) {{\n"
-        "    return static_cast<{0}*>(p)->data() + i; }}\n"
-        "static void _rsz_{0}(void* p, std::size_t n) {{\n"
-        "    static_cast<{0}*>(p)->resize(n); }}\n\n",
-        cname);
+    // Type-erased collection callbacks via template alias
+    os << std::format("using _VecOps_{0} = asn1::VectorOps<{0}>;\n\n", cname);
 
     // SIZE constraint on collection length
     auto size_range = extract_size_range(def);
@@ -1089,7 +1072,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    {},\n", type_descriptor_ref_for(elem_node));
     os << std::format("    {{ {}, 0, 0, 0, {}, {}, {} }},\n",
                       size_flags, size_rb, size_lb, size_ub);
-    os << std::format("    _cnt_{0}, _getc_{0}, _get_{0}, _rsz_{0}\n", cname);
+    os << std::format("    &_VecOps_{0}::count, &_VecOps_{0}::get_const, &_VecOps_{0}::get_mut, &_VecOps_{0}::resize\n", cname);
     os << "};\n\n";
 
     // TypeDescriptor

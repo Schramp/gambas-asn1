@@ -7,6 +7,7 @@
 #include "Tag.hpp"
 
 #include "codec/ICodec.hpp"
+#include "codec/CodecUtils.hpp"
 #include "codec/BerWriter.hpp"
 #include "codec/BerReader.hpp"
 #include "codec/BerTraits.hpp"
