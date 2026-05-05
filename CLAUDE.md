@@ -13,9 +13,17 @@ cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
-Run BER tests:
+Run all tests (BER + parser conformance):
 ```bash
 ctest --test-dir build/tests
+```
+
+asn1c cross-validation is enabled automatically when `asn1c` is on `PATH` or in
+`/usr/local/bin`. To point at a custom build:
+```bash
+cmake -B build -DASN1C_BIN_DIR=/path/to/asn1c/build
+# or
+ASN1C_BIN_DIR=/path/to/asn1c/build cmake -B build
 ```
 
 Run compiler:

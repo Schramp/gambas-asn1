@@ -346,3 +346,23 @@ add_executable(test_imports
 target_include_directories(test_imports PRIVATE ${IMPORTS_GEN_DIR})
 target_link_libraries(test_imports PRIVATE asn1cpp_runtime)
 add_test(NAME imports COMMAND test_imports)
+
+# ---- Parser conformance: asn1c test suite -----------------------------------
+# Runs run_parser_tests.py against all *-OK/-NP/-SE.asn1 files imported from
+# the asn1c compiler test suite. Pass --asn1c when WITH_ASN1C_XVAL is ON.
+set(_parser_test_args
+    ${CMAKE_CURRENT_SOURCE_DIR}/run_parser_tests.py
+    --asn1cpp $<TARGET_FILE:asn1cpp>
+    --test-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler
+    --known-failures 59-choice-extended-OK.asn1
+)
+if(WITH_ASN1C_XVAL)
+    list(APPEND _parser_test_args --asn1c ${ASN1C_EXECUTABLE})
+endif()
+add_test(
+    NAME parser_conformance
+    COMMAND ${Python3_EXECUTABLE} ${_parser_test_args}
+)
+set_tests_properties(parser_conformance PROPERTIES
+    TIMEOUT 120
+)
