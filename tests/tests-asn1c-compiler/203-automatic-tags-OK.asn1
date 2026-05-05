@@ -1,0 +1,49 @@
+-- OK: AUTOMATIC TAGS applied to SEQUENCE, SET, and CHOICE.
+-- Members without explicit tags receive [0],[1],[2],... IMPLICIT context
+-- tags per X.680 §24.8 (SEQUENCE/SET) and §28.4 (CHOICE).
+-- Also tests: self-recursive CHOICE, OPTIONAL members, nested SEQUENCE member.
+
+AutoTagTest
+    DEFINITIONS AUTOMATIC TAGS ::=
+BEGIN
+
+Inner ::= SEQUENCE {
+    x   INTEGER,
+    y   INTEGER
+}
+
+AutoSeq ::= SEQUENCE {
+    a   INTEGER,
+    b   OCTET STRING,
+    c   Inner
+}
+
+AutoSeqOpt ::= SEQUENCE {
+    a   INTEGER,
+    b   INTEGER OPTIONAL,
+    c   INTEGER
+}
+
+AutoSet ::= SET {
+    p   INTEGER,
+    q   OCTET STRING
+}
+
+AutoChoice ::= CHOICE {
+    first   INTEGER,
+    second  OCTET STRING,
+    third   Inner
+}
+
+Wrap ::= SEQUENCE {
+    id      INTEGER,
+    payload AutoChoice
+}
+
+RecChoice ::= [0] CHOICE {
+    a   INTEGER,
+    b   INTEGER,
+    c   RecChoice
+}
+
+END

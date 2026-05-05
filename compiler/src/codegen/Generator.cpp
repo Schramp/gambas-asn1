@@ -718,10 +718,22 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         os << "\n";
     }
 
+    // Determine if AUTOMATIC TAGS applies: module is AUTOMATIC TAGS and none of the
+    // ComponentTypes in any ComponentTypeList has an explicit tag (X.680 §24.8).
+    bool apply_auto_tags = false;
+    if (current_tag_default_ == ast::TagDefault::Automatic) {
+        apply_auto_tags = true;
+        for (const auto& m : def.members) {
+            if (!m || m->is_extension_marker) continue;
+            if (m->tag.present()) { apply_auto_tags = false; break; }
+        }
+    }
+
     // Member descriptor table
     if (mcount > 0) {
         os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
         bool past_ext_mbr = false;
+        int auto_tag_num = 0;
         for (const auto& m : def.members) {
             if (m->is_extension_marker) { past_ext_mbr = true; continue; }
             std::string mname = to_member_name(m->name);
@@ -732,6 +744,21 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             if (m->tag.present()) {
                 bool constr = m->is_sequence() || m->is_choice() || m->is_seq_of() || m->is_set_of() || m->is_set();
                 eff_tag = tag_literal(m->tag, constr);
+            } else if (apply_auto_tags) {
+                // §24.8-24.9: assign [auto_tag_num] IMPLICIT; constructed follows inner type.
+                bool is_constr = m->is_sequence() || m->is_set() || m->is_seq_of() || m->is_set_of();
+                if (!is_constr) {
+                    if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
+                        auto res = resolver_.resolve_ref(*tr);
+                        if (res) is_constr = res->is_sequence() || res->is_set() ||
+                                             res->is_seq_of()   || res->is_set_of();
+                    }
+                }
+                ast::Tag auto_tag;
+                auto_tag.cls    = ast::TagClass::Context;
+                auto_tag.number = auto_tag_num;
+                auto_tag.mode   = ast::TagMode::Implicit;
+                eff_tag = tag_literal(auto_tag, is_constr);
             } else {
                 eff_tag = natural_tag_for(*m);
                 if (eff_tag.empty()) eff_tag = "asn1::Tag{}";  // CHOICE has no universal tag
@@ -746,6 +773,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 cname, mname,
                 type_descriptor_ref_for(*m),
                 ops);
+            ++auto_tag_num;
         }
         os << "};\n\n";
     }
