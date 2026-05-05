@@ -131,7 +131,8 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) {
 // If it resolves to an untagged CHOICE (empty natural tag), recurse into its
 // alternatives so the outer CHOICE can dispatch by the inner type's tags.
 void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
-                                      std::vector<std::pair<std::string,int>>& out)
+                                      std::vector<std::pair<std::string,int>>& out,
+                                      std::set<std::string>& visited)
 {
     // Explicit outer tag: use it directly.
     if (alt.tag.present()) {
@@ -145,17 +146,27 @@ void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
         out.emplace_back(nat, alt_idx);
         return;
     }
-    // No tag: alternative is an untagged CHOICE — flatten its inner alternatives.
+    // No tag: resolve TypeRef to find the actual type.
     const ast::TypeDef* inner = &alt;
     ast::TypeDefPtr resolved;
     if (auto* tr = std::get_if<ast::TypeRef>(&alt.body)) {
+        if (visited.count(tr->type_name)) return;  // cycle guard
+        visited.insert(tr->type_name);
         resolved = resolver_.resolve_ref(*tr);
         if (resolved) inner = resolved.get();
     }
+    // If the resolved type has its own explicit tag, use it (tagged CHOICE is not untagged).
+    if (inner->tag.present()) {
+        bool constr = inner->is_sequence() || inner->is_choice() ||
+                      inner->is_seq_of()   || inner->is_set_of() || inner->is_set();
+        out.emplace_back(tag_literal(inner->tag, constr), alt_idx);
+        return;
+    }
+    // Truly untagged CHOICE: flatten its inner alternatives for dispatch.
     if (inner->is_choice()) {
         for (const auto& m : inner->members) {
             if (!m || m->is_extension_marker) continue;
-            collect_ber_tags_for(*m, alt_idx, out);
+            collect_ber_tags_for(*m, alt_idx, out, visited);
         }
     }
 }
@@ -843,9 +854,21 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         ++count;
     }
 
+    // Determine if AUTOMATIC TAGS applies: module is AUTOMATIC TAGS and none of the
+    // NamedTypes in any AlternativeTypeList has an explicit tag (X.680 §28.2).
+    bool apply_auto_tags = false;
+    if (current_tag_default_ == ast::TagDefault::Automatic) {
+        apply_auto_tags = true;
+        for (const auto& m : def.members) {
+            if (!m || m->is_extension_marker) continue;
+            if (m->tag.present()) { apply_auto_tags = false; break; }
+        }
+    }
+
     // Alternative descriptor table
     if (count > 0) {
         os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
+        int auto_tag_num = 0;
         for (const auto& m : def.members) {
             if (m->is_extension_marker) continue;
             std::string mname = to_member_name(m->name);
@@ -853,6 +876,21 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             if (m->tag.present()) {
                 bool constr = m->is_sequence() || m->is_choice() || m->is_seq_of() || m->is_set_of() || m->is_set();
                 eff_tag = tag_literal(m->tag, constr);
+            } else if (apply_auto_tags) {
+                // §28.5: assign [auto_tag_num] IMPLICIT; constructed follows inner type.
+                bool is_constr = m->is_sequence() || m->is_set() || m->is_seq_of() || m->is_set_of();
+                if (!is_constr) {
+                    if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
+                        auto res = resolver_.resolve_ref(*tr);
+                        if (res) is_constr = res->is_sequence() || res->is_set() ||
+                                             res->is_seq_of()   || res->is_set_of();
+                    }
+                }
+                ast::Tag auto_tag;
+                auto_tag.cls    = ast::TagClass::Context;
+                auto_tag.number = auto_tag_num;
+                auto_tag.mode   = ast::TagMode::Implicit;
+                eff_tag = tag_literal(auto_tag, is_constr);
             } else {
                 eff_tag = natural_tag_for(*m);
                 if (eff_tag.empty()) eff_tag = "asn1::Tag{}";  // nested CHOICE has no universal tag
@@ -860,21 +898,24 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             os << std::format("    {{ \"{}\", {}, false, false, offsetof({}, {}), {} }},\n",
                 m->name, eff_tag, cname, mname,
                 type_descriptor_ref_for(*m));
+            ++auto_tag_num;
         }
         os << "};\n\n";
     }
 
-    // Compute flattened BER dispatch table (needed when any alternative is an
-    // untagged CHOICE that contributes its inner tags for outer dispatch).
+    // Compute flattened BER dispatch table (needed when any alternative is an untagged
+    // CHOICE that contributes its inner tags for outer dispatch).
+    // When AUTOMATIC TAGS is applied, all alternatives have distinct context tags — no table needed.
     std::vector<std::pair<std::string,int>> ber_tags; // {tag_literal, 0-based alt_index}
     bool needs_ber_table = false;
-    {
+    if (!apply_auto_tags) {
         int ai = 0;
         for (const auto& m : def.members) {
             if (m->is_extension_marker) continue;
             if (!m->tag.present() && natural_tag_for(*m).empty())
                 needs_ber_table = true;
-            collect_ber_tags_for(*m, ai, ber_tags);
+            std::set<std::string> visited;
+            collect_ber_tags_for(*m, ai, ber_tags, visited);
             ++ai;
         }
     }
@@ -1285,6 +1326,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
 void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
     if (!is_type_assignment(def)) return;
 
+    current_tag_default_ = mod.tag_default;
     std::string cname = effective_cpp_name(def.name, mod.name);
 
     {

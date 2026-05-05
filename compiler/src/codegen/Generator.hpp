@@ -70,6 +70,7 @@ class Generator {
     std::set<std::string>   collision_types_;   // ASN.1 type names defined in >1 module
     std::string             current_module_;    // module being generated right now
     std::string             current_type_;      // C++ name of type currently being generated
+    ast::TagDefault         current_tag_default_{ast::TagDefault::Explicit};
 
 public:
     Generator(fs::path out_dir, sema::Resolver& res)
@@ -160,8 +161,10 @@ private:
     // Collect flattened BER dispatch tags for one CHOICE alternative.
     // alt_idx: 0-based index of the alternative in its parent CHOICE.
     // Appends {tag_literal, alt_idx} pairs; recurses if alt resolves to untagged CHOICE.
+    // visited: set of type names already on the recursion stack (cycle guard).
     void collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
-                               std::vector<std::pair<std::string,int>>& out);
+                               std::vector<std::pair<std::string,int>>& out,
+                               std::set<std::string>& visited);
     std::optional<int64_t> resolve_int_value(const ast::Value& v) const;
     std::optional<std::pair<int64_t,int64_t>> extract_integer_range(const ast::TypeDef& def) const;
 };

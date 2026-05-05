@@ -354,8 +354,8 @@ set(_parser_test_args
     ${CMAKE_CURRENT_SOURCE_DIR}/run_parser_tests.py
     --asn1cpp $<TARGET_FILE:asn1cpp>
     --test-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler
-    --known-failures 59-choice-extended-OK.asn1
 )
+
 if(WITH_ASN1C_XVAL)
     list(APPEND _parser_test_args --asn1c ${ASN1C_EXECUTABLE})
 endif()

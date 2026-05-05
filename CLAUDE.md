@@ -304,7 +304,7 @@ tests/
 
 | Suite | Pass | Total | Notes |
 |-------|------|-------|-------|
-| Parser (-OK) | 144 | 145 | `59-choice-extended-OK.asn1` fails |
+| Parser (-OK) | 145 | 145 | all pass |
 | Parser (-NP) | 3 | 3 | correctly rejected |
 | Parser (-SE) | 34 | 35 | semantic errors not yet validated |
 | BER vectors (data-62) | 0 | 33 | not yet wired into ctest |
@@ -321,11 +321,6 @@ Constructs present in asn1c tests, absent from asn1cpp BER round-trip tests:
 | Basic ENUMERATED (non-extensible) | 03, 68, 88, 129, 130 | medium — only ext variant tested |
 | Recursive types | 43, 73, 92 | medium — self-ref pointer handling |
 | WITH COMPONENTS | 55, 57, 82, 83, 150 | low |
-
-### Known parser failure
-
-`59-choice-extended-OK.asn1` — extensible CHOICE with extension groups (`[[...]]`). Parser
-rejects it; asn1c accepts it.
 
 ## Commits
 
