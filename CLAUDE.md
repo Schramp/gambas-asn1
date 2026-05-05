@@ -270,6 +270,55 @@ table-only with no PER-specific logic.
 ### Grammar portability rule
 `asn1c/libasn1parser/asn1p_l.l` and `asn1p_y.y` are the **immutable reference grammar**. Port them with the smallest possible changes needed for Bison C++ mode and RE/flex. `asn1c` (installed at `/usr/local/bin/asn1c`) is the cross-validation ground truth — test ASN.1 files against it before debugging the asn1cpp parser.
 
+## Testing
+
+### Goal
+
+All asn1c parser and BER tests must run automatically inside the asn1cpp codebase.
+The asn1c test suite is the ground truth; asn1cpp must pass every test it passes.
+
+### Test layout
+
+```
+tests/
+  asn1/                          # asn1cpp-authored codec round-trip schemas
+  asn1c-tests/                   # mirror of asn1c test tree (copied verbatim)
+    tests-asn1c-compiler/        # 188 parser tests (*-OK, *-NP, *-SE)
+    tests-c-compiler/            # BER/DER test vectors + schemas
+      data-62/                   # 33 .ber + 33 .xbr vectors (ANY/CHOICE/SET/SEQUENCE)
+      data-70/
+      data-119/
+      data-126/
+      data-202/
+```
+
+### Current status
+
+| Suite | Pass | Total | Notes |
+|-------|------|-------|-------|
+| Parser (-OK) | 144 | 145 | `59-choice-extended-OK.asn1` fails |
+| Parser (-NP) | 3 | 3 | correctly rejected |
+| Parser (-SE) | 34 | 35 | semantic errors not yet validated |
+| BER vectors (data-62) | 0 | 33 | not yet wired into ctest |
+
+### BER codec coverage gaps (vs asn1c tests)
+
+Constructs present in asn1c tests, absent from asn1cpp BER round-trip tests:
+
+| Construct | asn1c test files | Priority |
+|-----------|-----------------|----------|
+| SET / SET OF | 31, 35, 47, 94 | high — different codec logic from SEQUENCE |
+| DEFAULT values | 50, 81, 148 | high — suppress on encode, fill on decode |
+| EXPLICIT / IMPLICIT tagging | 17, 21, 22, 29, 65, 86 | high — changes BER structure |
+| Basic ENUMERATED (non-extensible) | 03, 68, 88, 129, 130 | medium — only ext variant tested |
+| Recursive types | 43, 73, 92 | medium — self-ref pointer handling |
+| WITH COMPONENTS | 55, 57, 82, 83, 150 | low |
+
+### Known parser failure
+
+`59-choice-extended-OK.asn1` — extensible CHOICE with extension groups (`[[...]]`). Parser
+rejects it; asn1c accepts it.
+
 ## Commits
 
 Do not add `Co-Authored-By` lines to commits in this repository.
