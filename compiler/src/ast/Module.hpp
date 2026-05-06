@@ -11,6 +11,13 @@ namespace asn1::ast {
 
 enum class TagDefault { Explicit, Implicit, Automatic };
 
+// Holds parsed module flags. tag_default is unset until a TAGS clause is seen;
+// EXTENSIBILITY IMPLIED is independent and never overrides tag_default.
+struct ModuleFlags {
+    std::optional<TagDefault> tag_default;
+    bool extensibility_implied{false};
+};
+
 enum class ImportVersionPolicy { Exact, Successors, Descendants };
 
 struct ImportList {

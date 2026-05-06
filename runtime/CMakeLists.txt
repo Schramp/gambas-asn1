@@ -2,6 +2,7 @@ add_library(asn1cpp_runtime STATIC
     src/BerCodec.cpp
     src/XerCodec.cpp
     src/PerCodec.cpp
+    src/RandomFiller.cpp
 )
 target_include_directories(asn1cpp_runtime PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

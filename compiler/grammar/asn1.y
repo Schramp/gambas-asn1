@@ -163,7 +163,7 @@
 /* Module */
 %type <ModulePtr>                   ModuleDefinition
 %type <ModulePtr>                   ModuleBody AssignmentList Assignment optModuleBody
-%type <TagDefault>                  optModuleDefinitionFlags ModuleDefinitionFlags ModuleDefinitionFlag
+%type <ModuleFlags>                 optModuleDefinitionFlags ModuleDefinitionFlags ModuleDefinitionFlag
 %type <OidValue>                    AssignedIdentifier ObjectIdentifier optObjectIdentifier ObjectIdentifierBody
 %type <OidValue::Arc>               ObjectIdentifierElement
 %type <std::vector<ImportList>>     optImports ImportsDefinition optImportsBundleSet ImportsBundleSet
@@ -274,9 +274,10 @@ ModuleDefinition:
 	    TOK_END
 	{
 	    auto m = $7 ? $7 : std::make_shared<Module>();
-	    m->name        = $1;
-	    m->oid         = $2;
-	    m->tag_default = $4;
+	    m->name                  = $1;
+	    m->oid                   = $2;
+	    m->tag_default           = $4.tag_default.value_or(TagDefault::Explicit);
+	    m->extensibility_implied = $4.extensibility_implied;
 	    $$ = m;
 	}
 	;
@@ -308,21 +309,25 @@ ObjectIdentifierElement:
 	;
 
 optModuleDefinitionFlags:
-	  /* empty */              { $$ = TagDefault::Explicit; }
+	  /* empty */              { /* default-constructed ModuleFlags */ }
 	| ModuleDefinitionFlags    { $$ = $1; }
 	;
 
 ModuleDefinitionFlags:
 	  ModuleDefinitionFlag                       { $$ = $1; }
-	| ModuleDefinitionFlags ModuleDefinitionFlag { $$ = $2; }
+	| ModuleDefinitionFlags ModuleDefinitionFlag {
+	      $$ = $1;
+	      if ($2.tag_default) $$.tag_default = $2.tag_default;
+	      if ($2.extensibility_implied) $$.extensibility_implied = true;
+	  }
 	;
 
 ModuleDefinitionFlag:
-	  TOK_EXPLICIT TOK_TAGS          { $$ = TagDefault::Explicit; }
-	| TOK_IMPLICIT TOK_TAGS          { $$ = TagDefault::Implicit; }
-	| TOK_AUTOMATIC TOK_TAGS         { $$ = TagDefault::Automatic; }
-	| TOK_EXTENSIBILITY TOK_IMPLIED  { $$ = TagDefault::Explicit; }
-	| TOK_capitalreference TOK_INSTRUCTIONS { $$ = TagDefault::Explicit; }
+	  TOK_EXPLICIT TOK_TAGS          { $$.tag_default = TagDefault::Explicit; }
+	| TOK_IMPLICIT TOK_TAGS          { $$.tag_default = TagDefault::Implicit; }
+	| TOK_AUTOMATIC TOK_TAGS         { $$.tag_default = TagDefault::Automatic; }
+	| TOK_EXTENSIBILITY TOK_IMPLIED  { $$.extensibility_implied = true; }
+	| TOK_capitalreference TOK_INSTRUCTIONS { /* encoding instructions — ignored */ }
 	;
 
 optModuleBody:

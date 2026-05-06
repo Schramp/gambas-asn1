@@ -13,6 +13,27 @@
 
 namespace asn1 {
 
+namespace {
+// Returns a short human-readable tag string for debug output: e.g. "[C3]" or "[U16]".
+static const char* tag_cls_char(TagClass cls) {
+    switch (cls) {
+        case TagClass::Universal:   return "U";
+        case TagClass::Application: return "A";
+        case TagClass::Context:     return "C";
+        case TagClass::Private:     return "P";
+    }
+    return "?";
+}
+static void dbg_write_tag(const char* parent, const char* member, const Tag& t,
+                          bool is_explicit, std::size_t value_bytes) {
+    std::fprintf(stderr, "[BER-WRITE] %s.%s tag=%s%u %s %zu bytes\n",
+        parent, member,
+        tag_cls_char(t.cls), t.number,
+        is_explicit ? "EXPLICIT" : "IMPLICIT",
+        value_bytes);
+}
+} // anonymous namespace
+
 void BerCodec::encode(IEncodeStream& dst,
                       const TypeDescriptor& def,
                       const void* src) const
@@ -263,6 +284,9 @@ void BerCodec::encode_seq_of(BerWriter& w, const TypeDescriptor& def, const void
     const auto& spec = *def.seq_of_spec;
     std::size_t count = spec.count_fn(src);
     const auto& edef = *spec.element;
+    if (debug_flags() & DBG_BER_WRITE)
+        std::fprintf(stderr, "[BER-WRITE] %s SEQUENCE-OF %zu elements of %s\n",
+                     def.name, count, edef.name);
     w.write_constructed(def.tag, [&](BerWriter& inner) {
         for (std::size_t i = 0; i < count; ++i) {
             const void* eptr = spec.get_const_fn(src, i);
@@ -294,7 +318,18 @@ void BerCodec::encode_sequence(BerWriter& w, const TypeDescriptor& def, const vo
         for (int i = 0; i < spec.count; ++i) {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
-            if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
+            if (mbr.optional && !mbr.optional_ops.is_present(src)) {
+                if (debug_flags() & DBG_BER_WRITE)
+                    std::fprintf(stderr, "[BER-WRITE] %s.%s absent (optional)\n",
+                                 def.name, mbr.name);
+                continue;
+            }
+            // Mandatory member with optional_ops means the unique_ptr is null — structural error.
+            if (!mbr.optional && mbr.optional_ops && !mbr.optional_ops.is_present(src)) {
+                std::fprintf(stderr, "BerCodec: mandatory member '%s.%s' is null (not filled)\n",
+                             def.name, mbr.name);
+                return; // skip — will produce truncated output; caller must detect
+            }
             // For unique_ptr<T> optional members, get_ptr returns T* from the unique_ptr.
             const void* mptr = mbr.optional_ops.get_ptr
                 ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
@@ -303,9 +338,12 @@ void BerCodec::encode_sequence(BerWriter& w, const TypeDescriptor& def, const vo
 
             bool tagged = mbr.tag.cls == TagClass::Context;
             if (tagged) {
-                bool is_explicit = mdef.choice_spec != nullptr;
+                bool is_explicit = mbr.is_explicit;
                 if (is_explicit) {
                     // EXPLICIT: context tag wraps the full member encoding.
+                    if (debug_flags() & DBG_BER_WRITE)
+                        std::fprintf(stderr, "[BER-WRITE] %s.%s tag=C%u EXPLICIT\n",
+                                     def.name, mbr.name, mbr.tag.number);
                     inner.write_constructed(mbr.tag, [&](BerWriter& w2) {
                         BerEncodeStream ms2{w2};
                         encode(ms2, mdef, mptr);
@@ -318,11 +356,16 @@ void BerCodec::encode_sequence(BerWriter& w, const TypeDescriptor& def, const vo
                     auto tlv = br.read_tlv();
                     if (!tlv) return;
                     Tag ctx{TagClass::Context, mbr.tag.number, mdef.tag.constructed};
+                    if (debug_flags() & DBG_BER_WRITE)
+                        dbg_write_tag(def.name, mbr.name, ctx, false, tlv->value.size());
                     inner.write_tag(ctx);
                     inner.write_length(tlv->value.size());
                     inner.append(tlv->value);
                 }
             } else {
+                if (debug_flags() & DBG_BER_WRITE)
+                    std::fprintf(stderr, "[BER-WRITE] %s.%s untagged type=%s\n",
+                                 def.name, mbr.name, mdef.name);
                 BerEncodeStream ms{inner};
                 encode(ms, mdef, mptr);
             }
@@ -364,7 +407,7 @@ DecodeResult BerCodec::decode_sequence(BerReader& r, const TypeDescriptor& def, 
         if (tagged) {
             auto outer = inner.read_tlv();
             if (!outer) return decode_err(outer.error());
-            bool is_explicit = mdef.choice_spec != nullptr;
+            bool is_explicit = mbr.is_explicit;
             if (is_explicit) {
                 // EXPLICIT: inner bytes contain the full member encoding (with its own tag).
                 if (debug_flags() & DBG_BER_SEQ)
@@ -397,13 +440,48 @@ DecodeResult BerCodec::decode_sequence(BerReader& r, const TypeDescriptor& def, 
 void BerCodec::encode_choice(BerWriter& w, const TypeDescriptor& def, const void* src) const {
     const auto& spec = *def.choice_spec;
     int idx = *static_cast<const int*>(src);
-    if (idx <= 0 || idx > spec.count) return;
+    if (idx <= 0 || idx > spec.count) {
+        if (debug_flags() & DBG_BER_WRITE)
+            std::fprintf(stderr, "[BER-WRITE] %s CHOICE idx=%d out of range (count=%d)\n",
+                         def.name, idx, spec.count);
+        return;
+    }
     const auto& alt = spec.alternatives[idx - 1];
     if (!alt.type_descriptor) return;
     const void* mptr = static_cast<const char*>(src) + alt.offset;
     const auto& mdef = *alt.type_descriptor;
-    BerEncodeStream ms{w};
-    encode(ms, mdef, mptr);
+
+    if (alt.tag.cls == TagClass::Context) {
+        bool is_explicit = alt.is_explicit;
+        if (is_explicit) {
+            if (debug_flags() & DBG_BER_WRITE)
+                std::fprintf(stderr, "[BER-WRITE] %s CHOICE alt[%d]=%s tag=C%u EXPLICIT\n",
+                             def.name, idx - 1, alt.name, alt.tag.number);
+            w.write_constructed(alt.tag, [&](BerWriter& w2) {
+                BerEncodeStream ms{w2};
+                encode(ms, mdef, mptr);
+            });
+        } else {
+            // IMPLICIT: encode inner type, strip its universal tag, re-emit under alt.tag.
+            std::vector<uint8_t> tmp;
+            { BerWriter bw{tmp}; BerEncodeStream ms{bw}; encode(ms, mdef, mptr); }
+            BerReader br{tmp};
+            auto tlv = br.read_tlv();
+            if (!tlv) return;
+            Tag ctx{TagClass::Context, alt.tag.number, mdef.tag.constructed};
+            if (debug_flags() & DBG_BER_WRITE)
+                dbg_write_tag(def.name, alt.name, ctx, false, tlv->value.size());
+            w.write_tag(ctx);
+            w.write_length(tlv->value.size());
+            w.append(tlv->value);
+        }
+    } else {
+        if (debug_flags() & DBG_BER_WRITE)
+            std::fprintf(stderr, "[BER-WRITE] %s CHOICE alt[%d]=%s untagged type=%s\n",
+                         def.name, idx - 1, alt.name, mdef.name);
+        BerEncodeStream ms{w};
+        encode(ms, mdef, mptr);
+    }
 }
 DecodeResult BerCodec::decode_choice(BerReader& r, const TypeDescriptor& def, void* dest) const {
     const auto& spec = *def.choice_spec;
@@ -428,7 +506,7 @@ DecodeResult BerCodec::decode_choice(BerReader& r, const TypeDescriptor& def, vo
             if (alt.tag.cls == TagClass::Context) {
                 auto outer = r.read_tlv();
                 if (!outer) return decode_err(outer.error());
-                bool is_explicit = mdef.choice_spec != nullptr;
+                bool is_explicit = alt.is_explicit;
                 if (is_explicit) {
                     BerReader inner2 = r.sub(outer->value);
                     BerDecodeStream ms{inner2};
@@ -462,7 +540,7 @@ DecodeResult BerCodec::decode_choice(BerReader& r, const TypeDescriptor& def, vo
             // Context-tagged alternative: read the context TLV first.
             auto outer = r.read_tlv();
             if (!outer) return decode_err(outer.error());
-            bool is_explicit = mdef.choice_spec != nullptr;
+            bool is_explicit = alt.is_explicit;
             if (is_explicit) {
                 // EXPLICIT: outer value bytes contain the full alternative encoding.
                 BerReader inner2 = r.sub(outer->value);

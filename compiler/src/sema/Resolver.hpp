@@ -61,6 +61,10 @@ inline std::string oid_to_string(const ast::OidValue& oid) {
 class Resolver {
     // Per-module symbol tables: module_name -> all definitions in that module
     std::unordered_map<std::string, SymbolTable> module_symbols_;
+    // Per-module visible-name → typedef map: own symbols + symbols imported
+    // by that module. Distinct from global_ so that name collisions across
+    // modules resolve correctly per importing scope.
+    std::unordered_map<std::string, SymbolTable> module_resolution_;
     // Per-module visible names: own symbols + explicitly imported names
     std::unordered_map<std::string, std::unordered_set<std::string>> module_visible_;
     // Flat global table for codegen lookups (all resolvable symbols)
@@ -93,11 +97,13 @@ public:
     void resolve_imports(const ast::ParseResult& pr) {
         for (const auto& mod : pr.modules) {
             auto& vis = module_visible_[mod->name];
+            auto& res = module_resolution_[mod->name];
 
             // Every module can see its own symbols
             for (auto& [name, def] : module_symbols_[mod->name]) {
                 global_[name] = def;
                 vis.insert(name);
+                res[name] = def;
             }
 
             // Bring in imports
@@ -160,6 +166,7 @@ public:
                     if (sym != it->second.end()) {
                         global_[imported_name] = sym->second;
                         vis.insert(imported_name);
+                        res[imported_name] = sym->second;
                     }
                 }
             }
@@ -182,16 +189,40 @@ public:
         return it != global_.end() ? it->second : nullptr;
     }
 
-    // Look up a type in the context of from_module: checks own symbols first,
-    // then imported symbols. Returns the DIRECT typedef (does NOT follow aliases).
+    // Walk a TypeRef alias chain starting at `def`, using `start_module` as the
+    // initial scope; cross to other modules via qualified TypeRefs.
+    ast::TypeDefPtr follow_aliases(ast::TypeDefPtr def,
+                                   const std::string& start_module) const {
+        std::string scope = start_module;
+        for (int depth = 0; depth < 64; ++depth) {
+            if (!def) return nullptr;
+            auto* tr = std::get_if<ast::TypeRef>(&def->body);
+            if (!tr) return def;
+            if (!tr->module_name.empty()) {
+                auto mit = module_symbols_.find(tr->module_name);
+                if (mit == module_symbols_.end()) return nullptr;
+                auto sit = mit->second.find(tr->type_name);
+                if (sit == mit->second.end()) return nullptr;
+                def = sit->second;
+                scope = tr->module_name;
+                continue;
+            }
+            def = lookup_direct(tr->type_name, scope);
+        }
+        return nullptr;
+    }
+
+    // Look up a type in the context of from_module: per-module map already
+    // contains own + imported symbols (built in resolve_imports), so no fallback
+    // to global_ is needed — that flat map is unsafe under name collisions.
     ast::TypeDefPtr lookup_direct(const std::string& name,
                                   const std::string& from_module) const {
-        auto own = module_symbols_.find(from_module);
-        if (own != module_symbols_.end()) {
-            auto sit = own->second.find(name);
-            if (sit != own->second.end()) return sit->second;
+        auto rit = module_resolution_.find(from_module);
+        if (rit != module_resolution_.end()) {
+            auto sit = rit->second.find(name);
+            if (sit != rit->second.end()) return sit->second;
         }
-        // Fall back to global (handles cross-module imports)
+        // Last-resort fallback (e.g. when from_module unknown to resolver).
         auto it = global_.find(name);
         return it != global_.end() ? it->second : nullptr;
     }
@@ -220,13 +251,29 @@ public:
 
     // Fully resolve a TypeRef chain to the base TypeDef (follows aliases)
     ast::TypeDefPtr resolve_ref(const ast::TypeRef& ref) const {
+        return resolve_ref(ref, /*from_module=*/{});
+    }
+
+    // Module-aware resolution: when the ref is unqualified, look up via the
+    // importing module's IMPORTS so that name collisions across modules resolve
+    // to the correct type (e.g. CivicAddress is CHOICE in UmtsHI2Operations
+    // but SEQUENCE in TS33128Payloads).
+    ast::TypeDefPtr resolve_ref(const ast::TypeRef& ref,
+                                const std::string& from_module) const {
         // Qualified ref: look up directly in the named module's symbol table
         if (!ref.module_name.empty()) {
             auto mit = module_symbols_.find(ref.module_name);
             if (mit == module_symbols_.end()) return nullptr;
             auto sit = mit->second.find(ref.type_name);
-            return sit != mit->second.end() ? sit->second : nullptr;
+            if (sit == mit->second.end()) return nullptr;
+            return follow_aliases(sit->second, mit->first);
         }
+        // Unqualified: prefer module-scoped lookup if from_module known.
+        if (!from_module.empty()) {
+            if (auto def = lookup_direct(ref.type_name, from_module))
+                return follow_aliases(def, from_module);
+        }
+        // Fall back to global flat lookup (legacy path).
         auto name = ref.type_name;
         for (int depth = 0; depth < 64; ++depth) {
             auto it = global_.find(name);

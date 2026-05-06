@@ -75,7 +75,7 @@ all: $(LIBRARY)
 $(OBJ_DIR):
 	mkdir -p $@
 
-$(GEN_DIR)/sources.mk: $(ASN_FILES)
+$(GEN_DIR)/sources.mk: $(ASN_FILES) $(ASNCPP)
 	@echo "[GEN]  running asn1cpp on $(words $(ASN_FILES)) ASN.1 files ..."
 	@mkdir -p $(GEN_DIR) $(OBJ_DIR) $(LIB_DIR)
 	$(ASNCPP) $(ASN_FILES) $(ASNCPP_FLAGS) -o $(GEN_DIR) 2>&1 | grep -v '^warning:'

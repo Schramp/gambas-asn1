@@ -156,6 +156,11 @@ private:
 
     std::string cpp_type_for(const ast::TypeDef& def);
     std::string type_descriptor_ref_for(const ast::TypeDef& def);
+    bool        member_is_constructed(const ast::TypeDef& m) const;
+    bool        member_type_is_choice(const ast::TypeDef& m) const;
+    bool        member_is_explicit(const ast::Tag& tag, const ast::TypeDef& member_type) const;
+    std::string emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
+                                            const std::string& mname, std::ostream& os);
     std::string tag_literal(const ast::Tag& tag, bool constructed);
     std::string natural_tag_for(const ast::TypeDef& def);
     // Collect flattened BER dispatch tags for one CHOICE alternative.

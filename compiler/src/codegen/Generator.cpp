@@ -67,6 +67,44 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
     return "asn1::OctetString";
 }
 
+// Returns true if the member encodes as a constructed TLV (SEQUENCE, SET, CHOICE, OF).
+// Follows one level of TypeRef so that [n] IMPLICIT ReferencedChoice is also caught.
+bool Generator::member_is_constructed(const ast::TypeDef& m) const {
+    if (m.is_sequence() || m.is_set() || m.is_choice() || m.is_seq_of() || m.is_set_of())
+        return true;
+    if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+        auto res = resolver_.resolve_ref(*tr);
+        if (res) return res->is_sequence() || res->is_set() || res->is_choice()
+                           || res->is_seq_of() || res->is_set_of();
+    }
+    return false;
+}
+
+// Returns true if a tagged member/alternative uses EXPLICIT tagging.
+// Rules (X.680 §24.11 / §30.6):
+//   - Explicitly declared [N] EXPLICIT → true
+//   - Explicitly declared [N] IMPLICIT → false
+//   - Default: follows module tag default; but CHOICE with no natural tag forces EXPLICIT
+//     even under IMPLICIT TAGS (X.680 §30.6c).
+bool Generator::member_type_is_choice(const ast::TypeDef& m) const {
+    if (m.is_choice()) return true;
+    if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+        auto res = resolver_.resolve_ref(*tr, current_module_);
+        if (res) return res->is_choice();
+    }
+    return false;
+}
+
+bool Generator::member_is_explicit(const ast::Tag& tag, const ast::TypeDef& member_type) const {
+    if (tag.mode == ast::TagMode::Explicit) return true;
+    if (tag.mode == ast::TagMode::Implicit) return false;
+    // TagMode::Default — use module-level default.
+    if (current_tag_default_ == ast::TagDefault::Explicit) return true;
+    // IMPLICIT or AUTOMATIC default.
+    // Exception: CHOICE has no universal tag; tagging must be EXPLICIT.
+    return member_type_is_choice(member_type);
+}
+
 // Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
 std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) {
     if (!tag.present()) return "";
@@ -113,12 +151,16 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) {
         default: break;
         }
     }
-    if (def.is_sequence() || def.is_set())
+    if (def.is_sequence())
         return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Sequence);
+    if (def.is_set())
+        return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Set);
     if (def.is_choice())
         return "";  // CHOICE has no universal tag
-    if (def.is_seq_of() || def.is_set_of())
+    if (def.is_seq_of())
         return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Sequence);
+    if (def.is_set_of())
+        return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Set);
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto base = resolver_.resolve_ref(*tr);
         if (base) return natural_tag_for(*base);
@@ -510,6 +552,50 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
 }
 
 // ---------------------------------------------------------------------------
+// Inline-constrained member TypeDescriptor helpers
+// ---------------------------------------------------------------------------
+
+// If `m` is an inline INTEGER with a value-range constraint, emit a static
+// per-member TypeDescriptor (so RandomFiller and PerCodec can see the constraint)
+// and return its C++ reference expression.  Otherwise return type_descriptor_ref_for(m).
+std::string Generator::emit_member_type_descriptor(
+    const ast::TypeDef& m, const std::string& parent_cname,
+    const std::string& mname, std::ostream& os)
+{
+    using BT = ast::BuiltinType;
+    if (auto* bt = std::get_if<BT>(&m.body)) {
+        if (*bt == BT::Integer && !m.constraints.empty()) {
+            auto range = extract_integer_range(m);
+            if (range) {
+                std::string tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
+                int64_t lo = range->first, hi = range->second;
+                bool ext = is_constraint_extensible(m);
+                std::string pc;
+                if (hi == std::numeric_limits<int64_t>::max()) {
+                    int flags = asn1::PerConstraints::SEMI_CONSTRAINED
+                              | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
+                    pc = std::format("{{ {}, -1, {}, 0 }}", flags, lo);
+                } else {
+                    int64_t rc = hi - lo + 1;
+                    int rb = 0;
+                    if (rc > 1) for (int64_t r = rc - 1; r > 0; r >>= 1) ++rb;
+                    int flags = asn1::PerConstraints::CONSTRAINED
+                              | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
+                    pc = std::format("{{ {}, {}, {}, {} }}", flags, rb, lo, hi);
+                }
+                os << std::format(
+                    "static const asn1::TypeDescriptor {} = "
+                    "{{ \"INTEGER\", asn1::Tag::universal({}, false), "
+                    "nullptr, nullptr, nullptr, nullptr, {} }};\n",
+                    tname, asn1::UniversalTag::Integer, pc);
+                return "&" + tname;
+            }
+        }
+    }
+    return type_descriptor_ref_for(m);
+}
+
+// ---------------------------------------------------------------------------
 // Emit SEQUENCE / SET
 // ---------------------------------------------------------------------------
 
@@ -731,49 +817,55 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // Member descriptor table
     if (mcount > 0) {
-        os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
-        bool past_ext_mbr = false;
-        int auto_tag_num = 0;
-        for (const auto& m : def.members) {
-            if (m->is_extension_marker) { past_ext_mbr = true; continue; }
-            std::string mname = to_member_name(m->name);
-            bool optional = m->is_optional() || past_ext_mbr;
-
-            // Effective tag
-            std::string eff_tag;
-            if (m->tag.present()) {
-                bool constr = m->is_sequence() || m->is_choice() || m->is_seq_of() || m->is_set_of() || m->is_set();
-                eff_tag = tag_literal(m->tag, constr);
-            } else if (apply_auto_tags) {
-                // §24.8-24.9: assign [auto_tag_num] IMPLICIT; constructed follows inner type.
-                bool is_constr = m->is_sequence() || m->is_set() || m->is_seq_of() || m->is_set_of();
-                if (!is_constr) {
-                    if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
-                        auto res = resolver_.resolve_ref(*tr);
-                        if (res) is_constr = res->is_sequence() || res->is_set() ||
-                                             res->is_seq_of()   || res->is_set_of();
-                    }
+        // Pass 1: collect per-row data and emit any static per-member TypeDescriptors
+        // before the array opening brace (can't have declarations inside initializer lists).
+        struct MbrRow {
+            std::string name, eff_tag, mname, ops, tdref;
+            bool optional, is_explicit;
+        };
+        std::vector<MbrRow> rows;
+        {
+            bool past = false;
+            int atag = 0;
+            for (const auto& m : def.members) {
+                if (m->is_extension_marker) { past = true; continue; }
+                std::string mname = to_member_name(m->name);
+                bool optional = m->is_optional() || past;
+                std::string eff_tag;
+                bool is_explicit = false;
+                if (m->tag.present()) {
+                    eff_tag = tag_literal(m->tag, member_is_constructed(*m));
+                    is_explicit = member_is_explicit(m->tag, *m);
+                } else if (apply_auto_tags) {
+                    // X.680 §24.9: untagged CHOICE in AUTOMATIC TAGS gets EXPLICIT, not IMPLICIT.
+                    bool is_choice = member_type_is_choice(*m);
+                    ast::Tag auto_tag;
+                    auto_tag.cls    = ast::TagClass::Context;
+                    auto_tag.number = atag;
+                    auto_tag.mode   = is_choice ? ast::TagMode::Explicit : ast::TagMode::Implicit;
+                    eff_tag = tag_literal(auto_tag, is_choice || member_is_constructed(*m));
+                    is_explicit = is_choice;
+                } else {
+                    eff_tag = natural_tag_for(*m);
+                    if (eff_tag.empty()) eff_tag = "asn1::Tag{}";
                 }
-                ast::Tag auto_tag;
-                auto_tag.cls    = ast::TagClass::Context;
-                auto_tag.number = auto_tag_num;
-                auto_tag.mode   = ast::TagMode::Implicit;
-                eff_tag = tag_literal(auto_tag, is_constr);
-            } else {
-                eff_tag = natural_tag_for(*m);
-                if (eff_tag.empty()) eff_tag = "asn1::Tag{}";  // CHOICE has no universal tag
+                std::string ops = optional
+                    ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, mname)
+                    : "{}";
+                std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
+                rows.push_back({ m->name, eff_tag, mname, ops, tdref, optional, is_explicit });
+                ++atag;
             }
-
-            std::string ops = optional
-                ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, mname)
-                : "{}";
-            os << std::format("    {{ \"{}\", {}, {}, false, offsetof({}, {}), {}, {} }},\n",
-                m->name, eff_tag,
-                optional ? "true" : "false",
-                cname, mname,
-                type_descriptor_ref_for(*m),
-                ops);
-            ++auto_tag_num;
+        }
+        // Pass 2: emit the array
+        os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
+        for (const auto& r : rows) {
+            os << std::format("    {{ \"{}\", {}, {}, false, offsetof({}, {}), {}, {}, {} }},\n",
+                r.name, r.eff_tag,
+                r.optional ? "true" : "false",
+                cname, r.mname,
+                r.tdref, r.ops,
+                r.is_explicit ? "true" : "false");
         }
         os << "};\n\n";
     }
@@ -895,38 +987,46 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // Alternative descriptor table
     if (count > 0) {
-        os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
-        int auto_tag_num = 0;
-        for (const auto& m : def.members) {
+        struct AltRow {
+            std::string name, eff_tag, mname, tdref;
+            bool is_explicit;
+        };
+        std::vector<AltRow> rows;
+        // Pass 1: collect rows + emit any static TypeDescriptors (must precede array).
+        { int auto_tag_num = 0;
+          for (const auto& m : def.members) {
             if (m->is_extension_marker) continue;
             std::string mname = to_member_name(m->name);
             std::string eff_tag;
+            bool is_explicit = false;
             if (m->tag.present()) {
-                bool constr = m->is_sequence() || m->is_choice() || m->is_seq_of() || m->is_set_of() || m->is_set();
-                eff_tag = tag_literal(m->tag, constr);
+                eff_tag = tag_literal(m->tag, member_is_constructed(*m));
+                is_explicit = member_is_explicit(m->tag, *m);
             } else if (apply_auto_tags) {
-                // §28.5: assign [auto_tag_num] IMPLICIT; constructed follows inner type.
-                bool is_constr = m->is_sequence() || m->is_set() || m->is_seq_of() || m->is_set_of();
-                if (!is_constr) {
-                    if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
-                        auto res = resolver_.resolve_ref(*tr);
-                        if (res) is_constr = res->is_sequence() || res->is_set() ||
-                                             res->is_seq_of()   || res->is_set_of();
-                    }
-                }
+                // X.680 §28.2: untagged CHOICE alternative in AUTOMATIC TAGS gets EXPLICIT.
+                bool is_choice = member_type_is_choice(*m);
                 ast::Tag auto_tag;
                 auto_tag.cls    = ast::TagClass::Context;
                 auto_tag.number = auto_tag_num;
-                auto_tag.mode   = ast::TagMode::Implicit;
-                eff_tag = tag_literal(auto_tag, is_constr);
+                auto_tag.mode   = is_choice ? ast::TagMode::Explicit : ast::TagMode::Implicit;
+                eff_tag = tag_literal(auto_tag, is_choice || member_is_constructed(*m));
+                is_explicit = is_choice;
             } else {
                 eff_tag = natural_tag_for(*m);
-                if (eff_tag.empty()) eff_tag = "asn1::Tag{}";  // nested CHOICE has no universal tag
+                if (eff_tag.empty()) eff_tag = "asn1::Tag{}";
             }
-            os << std::format("    {{ \"{}\", {}, false, false, offsetof({}, {}), {} }},\n",
-                m->name, eff_tag, cname, mname,
-                type_descriptor_ref_for(*m));
+            std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
+            rows.push_back({ m->name, eff_tag, mname, tdref, is_explicit });
             ++auto_tag_num;
+          }
+        }
+        // Pass 2: emit array.
+        os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
+        for (const auto& r : rows) {
+            os << std::format("    {{ \"{}\", {}, false, false, offsetof({}, {}), {}, {{}}, {} }},\n",
+                r.name, r.eff_tag, cname, r.mname,
+                r.tdref,
+                r.is_explicit ? "true" : "false");
         }
         os << "};\n\n";
     }
@@ -1202,9 +1302,10 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "};\n\n";
 
     // TypeDescriptor
+    uint32_t of_tag = def.is_set_of() ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", def.name);
-    os << std::format("    asn1::Tag::universal({}, true),\n", asn1::UniversalTag::Sequence);
+    os << std::format("    asn1::Tag::universal({}, true),\n", of_tag);
     os << "    nullptr, nullptr, nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
     os << "    {} /* per_constraints */\n";

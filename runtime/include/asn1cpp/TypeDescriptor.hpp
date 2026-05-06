@@ -78,6 +78,7 @@ struct MemberDescriptor {
                                           // points to the unique_ptr, not the contained value
     const TypeDescriptor* type_descriptor;
     OptionalOps           optional_ops;   // non-null only for optional/extension members
+    bool                  is_explicit = false; // true → EXPLICIT tagging; false → IMPLICIT
 };
 
 // Template that generates the four SeqOfSpec callbacks for a std::vector-based SEQUENCE OF.
@@ -170,12 +171,12 @@ inline const TypeDescriptor asn_DEF_Integer      = { "INTEGER",      Tag::univer
 inline const TypeDescriptor asn_DEF_Boolean      = { "BOOLEAN",      Tag::universal( 1, false), nullptr, nullptr, nullptr };
 inline const TypeDescriptor asn_DEF_Null         = { "NULL",         Tag::universal( 5, false), nullptr, nullptr, nullptr };
 inline const TypeDescriptor asn_DEF_Real         = { "REAL",         Tag::universal( 9, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_BitString    = { "BIT STRING",   Tag::universal( 3, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Oid          = { "OBJECT IDENTIFIER", Tag::universal( 6, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_RelativeOid  = { "RELATIVE-OID", Tag::universal(13, false), nullptr, nullptr, nullptr };
+inline const TypeDescriptor asn_DEF_BitString    = { "BIT_STRING",        Tag::universal( 3, false), nullptr, nullptr, nullptr };
+inline const TypeDescriptor asn_DEF_Oid          = { "OBJECT_IDENTIFIER", Tag::universal( 6, false), nullptr, nullptr, nullptr };
+inline const TypeDescriptor asn_DEF_RelativeOid  = { "RELATIVE_OID",      Tag::universal(13, false), nullptr, nullptr, nullptr };
 inline const TypeDescriptor asn_DEF_UtcTime      = { "UTCTime",       Tag::universal(23, false), nullptr, nullptr, nullptr };
 inline const TypeDescriptor asn_DEF_GeneralizedTime = { "GeneralizedTime", Tag::universal(24, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_OctetString    = { "OCTET STRING",   Tag::universal( 4, false), nullptr, nullptr, nullptr };
+inline const TypeDescriptor asn_DEF_OctetString    = { "OCTET_STRING",   Tag::universal( 4, false), nullptr, nullptr, nullptr };
 inline const TypeDescriptor asn_DEF_Utf8String     = { "UTF8String",     Tag::universal(12, false), nullptr, nullptr, nullptr };
 inline const TypeDescriptor asn_DEF_Ia5String      = { "IA5String",      Tag::universal(22, false), nullptr, nullptr, nullptr };
 inline const TypeDescriptor asn_DEF_NumericString  = { "NumericString",  Tag::universal(18, false), nullptr, nullptr, nullptr };
