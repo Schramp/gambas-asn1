@@ -373,10 +373,13 @@ void BerCodec::encode_sequence(BerWriter& w, const TypeDescriptor& def, const vo
                 bool is_explicit = mbr.is_explicit;
                 if (is_explicit) {
                     // EXPLICIT: context tag wraps the full member encoding.
+                    // Wrapper is always constructed (X.690 §8.14.3); force the
+                    // bit on regardless of how mbr.tag was constructed by codegen.
+                    Tag exp_tag{mbr.tag.cls, mbr.tag.number, true};
                     if (debug_flags() & DBG_BER_WRITE)
                         std::fprintf(stderr, "[BER-WRITE] %s.%s tag=C%u EXPLICIT\n",
                                      def.name, mbr.name, mbr.tag.number);
-                    inner.write_constructed(mbr.tag, [&](BerWriter& w2) {
+                    inner.write_constructed(exp_tag, [&](BerWriter& w2) {
                         BerEncodeStream ms2{w2};
                         encode(ms2, mdef, mptr);
                     });
@@ -489,10 +492,12 @@ void BerCodec::encode_choice(BerWriter& w, const TypeDescriptor& def, const void
     if (alt.tag.cls == TagClass::Context) {
         bool is_explicit = alt.is_explicit;
         if (is_explicit) {
+            // EXPLICIT wrapper is always constructed (X.690 §8.14.3).
+            Tag exp_tag{alt.tag.cls, alt.tag.number, true};
             if (debug_flags() & DBG_BER_WRITE)
                 std::fprintf(stderr, "[BER-WRITE] %s CHOICE alt[%d]=%s tag=C%u EXPLICIT\n",
                              def.name, idx - 1, alt.name, alt.tag.number);
-            w.write_constructed(alt.tag, [&](BerWriter& w2) {
+            w.write_constructed(exp_tag, [&](BerWriter& w2) {
                 BerEncodeStream ms{w2};
                 encode(ms, mdef, mptr);
             });
