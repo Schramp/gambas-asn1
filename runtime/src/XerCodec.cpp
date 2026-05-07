@@ -611,11 +611,18 @@ void XerCodec::encode_seq_of(XerEncodeStream& s,
     if (count == 0) {
         os << '<' << def.name << "></" << def.name << ">\n";
     } else {
-        os << '<' << def.name << ">\n";
+        os << '<' << def.name << '>';
         for (std::size_t i = 0; i < count; ++i) {
             const void* eptr = spec.get_const_fn(src, i);
-            os << s.indent(1);
             XerEncodeStream es{os, s.depth() + 1};
+            // Non-CHOICE elements: asn1c first iter emits "\n + ilevel*4",
+            // subsequent iter emits "ilevel*4" only (preceding close already
+            // wrote \n). CHOICE elements: encode_choice emits its own
+            // "\n + indent" each time (matches asn1c as_XMLValueList path).
+            if (!edef.choice_spec) {
+                if (i == 0) os << '\n';
+                os << s.indent(1);
+            }
             encode(es, edef, eptr);
         }
         os << s.indent() << "</" << def.name << ">\n";
@@ -679,10 +686,11 @@ void XerCodec::encode_sequence(XerEncodeStream& s,
         TypeDescriptor mdef = *mbr.type_descriptor;
         mdef.name = mbr.name;
         // CHOICE is XER-transparent (no own wrapper); enclose with member name here.
+        // No \n after the opener and no pre-indent: encode_choice emits
+        // "\n + indent + <altname>...</altname>\n" itself, mirroring asn1c.
         if (mdef.choice_spec) {
-            os << s.indent(1) << '<' << mbr.name << ">\n";
-            os << s.indent(2);
-            XerEncodeStream ms{os, s.depth() + 2};
+            os << s.indent(1) << '<' << mbr.name << '>';
+            XerEncodeStream ms{os, s.depth() + 1};
             encode(ms, mdef, mptr);
             os << s.indent(1) << "</" << mbr.name << ">\n";
         } else {
@@ -759,13 +767,20 @@ void XerCodec::encode_choice(XerEncodeStream& s,
     TypeDescriptor adef = *alt.type_descriptor;
     adef.name = alt.name;
     if (adef.choice_spec) {
-        os << '<' << alt.name << ">\n";
-        os << s.indent(1);
+        // CHOICE-of-CHOICE: outer wraps with alt.name (X.693 transparent
+        // applies once; nested CHOICE needs an explicit wrapper). Inner
+        // encode_choice emits its own "\n + indent + <inner_alt>".
+        os << '\n' << s.indent(1) << '<' << alt.name << '>';
         XerEncodeStream as{os, s.depth() + 1};
         encode(as, adef, static_cast<const char*>(src) + alt.offset);
-        os << s.indent() << "</" << alt.name << ">\n";
+        os << s.indent(1) << "</" << alt.name << ">\n";
     } else {
-        encode(s, adef, static_cast<const char*>(src) + alt.offset);
+        // Mirror asn1c constr_CHOICE_xer.c line 324: leading "\n + indent"
+        // before the alternative's opening tag, then call the alt encoder at
+        // ilevel+1 (X.693: CHOICE has no own wrapper; alt name is the wrapper).
+        os << '\n' << s.indent(1);
+        XerEncodeStream as{os, s.depth() + 1};
+        encode(as, adef, static_cast<const char*>(src) + alt.offset);
     }
 }
 
