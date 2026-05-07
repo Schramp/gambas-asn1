@@ -205,11 +205,18 @@ bool RandomFiller::try_fill_primitive(void* obj, const TypeDescriptor& def) {
 // ---------------------------------------------------------------------------
 
 void RandomFiller::fill_enum(void* obj, const EnumSpec& spec) {
-    // Pick from root values only (extension enums may be unknown to asn1c).
+    // Pick from root values only (extension values may be rejected by parents
+    // expecting non-extensible enums). spec.entries is sorted by value for
+    // BER/XER binary search, so its first root_count slots are NOT
+    // necessarily roots when any extension value sorts before any root.
+    // spec.per_value_order is the definition-order array of root values.
     int n = spec.root_count > 0 ? spec.root_count : spec.count;
     if (n == 0) return;
     int idx = rand_int(0, n - 1);
-    *static_cast<long*>(obj) = spec.entries[idx].value;
+    long v = (spec.per_value_order && spec.root_count > 0)
+                 ? spec.per_value_order[idx]
+                 : spec.entries[idx].value;
+    *static_cast<long*>(obj) = v;
 }
 
 // ---------------------------------------------------------------------------
