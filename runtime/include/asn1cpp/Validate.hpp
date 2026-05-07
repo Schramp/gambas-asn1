@@ -9,10 +9,12 @@
 // recurses into members via the descriptor table when that is desired.
 //
 // Returns 0 when valid (or no constraint to check), otherwise a signed
-// distance to the nearest valid value:
-//   - INTEGER:        distance from the constraint range (units = value).
-//   - OCTET / BIT / strings / SEQ-OF: distance from the SIZE range
-//     (units = bytes / bits / chars / elements).
+// delta such that (current_value + delta) lands at the nearest valid bound:
+//   +delta — value/size below lower bound; raise sampling min by delta.
+//   -delta — value/size above upper bound; lower sampling max by |delta|.
+// Units:
+//   - INTEGER:        units = value.
+//   - OCTET / BIT / strings / SEQ-OF: units = bytes / bits / chars / elements.
 //   - ENUMERATED:     1 when value is unknown, 0 otherwise (no metric).
 //
 // EXTENSIBLE constraints always return 0 — extension space is open.

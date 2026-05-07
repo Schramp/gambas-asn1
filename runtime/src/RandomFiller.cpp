@@ -30,6 +30,23 @@ int RandomFiller::rand_int(int lo, int hi) {
     return std::uniform_int_distribution<int>{lo, hi}(rng_);
 }
 
+// Resolve effective [lo, hi] sampling range for a SIZE-constrained primitive.
+// Reads bounds straight from PerConstraints when SIZE_CONSTRAINED is set; caps
+// at 65536 so absurd schema-level bounds (e.g. SIZE(0..2^32-1)) don't drive
+// gigabyte allocations. Falls back to caller-supplied defaults otherwise.
+static std::pair<int,int> size_range(const PerConstraints& c,
+                                     int dflt_lo, int dflt_hi) {
+    constexpr int64_t CAP = 65536;
+    int lo = dflt_lo, hi = dflt_hi;
+    if (c.flags & PerConstraints::SIZE_CONSTRAINED) {
+        int64_t clo = c.size_lower, chi = c.size_upper;
+        if (clo >= 0) lo = static_cast<int>(std::min(clo, CAP));
+        if (chi >= 0) hi = static_cast<int>(std::min(chi, CAP));
+        if (lo > hi)  hi = lo;
+    }
+    return {lo, hi};
+}
+
 std::string RandomFiller::random_printable(int len) {
     static constexpr std::string_view chars =
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
@@ -67,55 +84,117 @@ bool RandomFiller::fill(void* obj, const TypeDescriptor& def, int depth, bool ma
     return try_fill_primitive(obj, def);
 }
 
+// Rewrite obj as a fresh random value of exactly `len` units (bytes for
+// OctetString, bits for BitString, chars for the string family). Returns
+// false for non-resizable primitives. Used by try_fill_primitive's SIZE
+// nudge path so we adjust the produced object directly instead of mutating
+// constraints to coerce fill_primitive into a target length.
+static bool resize_in_place(void* obj, const TypeDescriptor& def,
+                            std::size_t len, std::mt19937& rng) {
+    if (def.tag.cls != TagClass::Universal) return false;
+    auto rand_byte = [&]{
+        return static_cast<uint8_t>(std::uniform_int_distribution<int>{0, 255}(rng));
+    };
+    auto rand_char = [&]{
+        static constexpr std::string_view chars =
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
+        return chars[std::uniform_int_distribution<int>{
+            0, static_cast<int>(chars.size()) - 1}(rng)];
+    };
+
+    switch (def.tag.number) {
+    case UniversalTag::OctetString: {
+        std::vector<uint8_t> v(len);
+        for (auto& b : v) b = rand_byte();
+        *static_cast<OctetString*>(obj) = OctetString{std::move(v)};
+        return true;
+    }
+    case UniversalTag::BitString: {
+        std::size_t bytes = (len + 7) / 8;
+        std::vector<uint8_t> v(bytes);
+        for (auto& b : v) b = rand_byte();
+        uint8_t unused = bytes > 0
+            ? static_cast<uint8_t>(bytes * 8 - len) : 0;
+        if (!v.empty() && unused > 0)
+            v.back() &= static_cast<uint8_t>(0xFF << unused);
+        *static_cast<BitString*>(obj) = BitString{std::move(v), unused};
+        return true;
+    }
+    case UniversalTag::Utf8String:
+    case UniversalTag::NumericString:
+    case UniversalTag::PrintableString:
+    case UniversalTag::T61String:
+    case UniversalTag::VideotexString:
+    case UniversalTag::Ia5String:
+    case UniversalTag::GraphicString:
+    case UniversalTag::VisibleString:
+    case UniversalTag::GeneralString:
+    case UniversalTag::UniversalString:
+    case UniversalTag::BmpString:
+    case UniversalTag::ObjectDescriptor: {
+        std::string s;
+        s.reserve(len);
+        for (std::size_t i = 0; i < len; ++i) s += rand_char();
+        detail::asnstring_assign(obj, s);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 bool RandomFiller::try_fill_primitive(void* obj, const TypeDescriptor& def) {
     constexpr int MAX_RETRIES = 16;
-    for (int i = 0; i < MAX_RETRIES; ++i) {
-        fill_primitive(obj, def);
-        if (validate(def, obj) == 0) return true;
-    }
 
-    // SIZE-able primitives: walk a permuted length list 0..256 and force
-    // fill_primitive to produce that length. Only types whose fill_primitive
-    // honours the constraint flags can use this path; we toggle SIZE bounds
-    // on a local copy of the descriptor.
-    auto is_sized = [&]() {
-        if (def.tag.cls != TagClass::Universal) return false;
-        switch (def.tag.number) {
-        case UniversalTag::OctetString:
-        case UniversalTag::BitString:
-        case UniversalTag::Utf8String:
-        case UniversalTag::NumericString:
-        case UniversalTag::PrintableString:
-        case UniversalTag::T61String:
-        case UniversalTag::VideotexString:
-        case UniversalTag::Ia5String:
-        case UniversalTag::GraphicString:
-        case UniversalTag::VisibleString:
-        case UniversalTag::GeneralString:
-        case UniversalTag::UniversalString:
-        case UniversalTag::BmpString:
-        case UniversalTag::ObjectDescriptor:
-            return true;
-        default:
-            return false;
+    bool is_int = (def.tag.cls == TagClass::Universal &&
+                   def.tag.number == UniversalTag::Integer);
+
+    // Integer: distance-tightening loop. Each failure narrows a working
+    // descriptor copy's lower/upper bound using validate()'s signed delta:
+    //   +delta → value below lower; raise sampling min by delta
+    //   -delta → value above upper; lower sampling max by |delta|
+    // Working copy converges monotonically toward the valid window.
+    if (is_int) {
+        TypeDescriptor d = def;
+        for (int i = 0; i < MAX_RETRIES; ++i) {
+            fill_primitive(obj, d);
+            int64_t dist = validate(def, obj);
+            if (dist == 0) return true;
+
+            auto& pc = d.per_constraints;
+            int64_t v = static_cast<const Integer*>(obj)->value();
+            if (dist > 0) {
+                int64_t new_lo = (v <= std::numeric_limits<int64_t>::max() - dist)
+                    ? v + dist : std::numeric_limits<int64_t>::max();
+                if (!(pc.flags & PerConstraints::CONSTRAINED) || new_lo > pc.lower_bound)
+                    pc.lower_bound = new_lo;
+            } else {
+                int64_t new_hi = (v >= std::numeric_limits<int64_t>::min() - dist)
+                    ? v + dist : std::numeric_limits<int64_t>::min();
+                if (!(pc.flags & PerConstraints::CONSTRAINED) || new_hi < pc.upper_bound)
+                    pc.upper_bound = new_hi;
+            }
+            pc.flags |= PerConstraints::CONSTRAINED;
+            pc.flags &= ~(PerConstraints::SEMI_CONSTRAINED | PerConstraints::EXTENSIBLE);
+            if (pc.lower_bound > pc.upper_bound) return false;
         }
-    };
-    if (!is_sized()) return false;
-
-    std::vector<int> lengths(257);
-    for (int n = 0; n <= 256; ++n) lengths[n] = n;
-    std::shuffle(lengths.begin(), lengths.end(), rng_);
-
-    TypeDescriptor d = def;
-    d.per_constraints.flags        |= PerConstraints::SIZE_CONSTRAINED;
-    d.per_constraints.flags        &= ~PerConstraints::EXTENSIBLE;
-    for (int n : lengths) {
-        d.per_constraints.size_lower = n;
-        d.per_constraints.size_upper = n;
-        fill_primitive(obj, d);
-        if (validate(def, obj) == 0) return true;
+        return false;
     }
-    return false;
+
+    // Non-integer primitive: one regeneration attempt, then if still invalid
+    // resize the produced object directly to a target length derived from
+    // validate()'s delta. (current_size + delta) lands exactly on the
+    // violated bound; cap at 256 so absurd schema-level bounds like
+    // SIZE(0..2^32-1) don't trigger gigabyte allocations.
+    fill_primitive(obj, def);
+    int64_t dist = validate(def, obj);
+    if (dist == 0) return true;
+
+    int64_t target = (dist > 0) ? def.per_constraints.size_lower
+                                : def.per_constraints.size_upper;
+    if (target < 0)   target = 0;
+    if (target > 256) target = 256;
+    return resize_in_place(obj, def, static_cast<std::size_t>(target), rng_);
 }
 
 // ---------------------------------------------------------------------------
@@ -297,14 +376,8 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
         break;
 
     case UT::OctetString: {
-        int lo = cfg_.min_str_len, hi = cfg_.max_str_len;
-        const auto& c = def.per_constraints;
-        if (c.flags & PerConstraints::SIZE_CONSTRAINED) {
-            int64_t clo = c.size_lower, chi = c.size_upper;
-            if (clo >= 0 && clo <= 65536) lo = static_cast<int>(clo);
-            if (chi >= lo && chi <= 65536) hi = static_cast<int>(chi);
-            if (lo > hi) hi = lo;
-        }
+        auto [lo, hi] = size_range(def.per_constraints,
+                                   cfg_.min_str_len, cfg_.max_str_len);
         int len = rand_int(lo, hi);
         std::vector<uint8_t> b(len);
         for (auto& byte : b)
@@ -314,15 +387,8 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
     }
 
     case UT::BitString: {
-        int lo = cfg_.min_str_len, hi = cfg_.max_str_len;
-        const auto& c = def.per_constraints;
-        if (c.flags & PerConstraints::SIZE_CONSTRAINED) {
-            int64_t clo = c.size_lower, chi = c.size_upper;
-            // Guard against overflow (e.g. SIZE(0..4294967295) stored as int64_t).
-            if (clo >= 0 && clo <= 65536) lo = static_cast<int>(clo);
-            if (chi >= lo && chi <= 65536) hi = static_cast<int>(chi);
-            if (lo > hi) hi = lo;
-        }
+        auto [lo, hi] = size_range(def.per_constraints,
+                                   cfg_.min_str_len, cfg_.max_str_len);
         int bits = rand_int(lo, hi);
         if (bits < 0) bits = 0;
         int byte_count = (bits + 7) / 8;
@@ -371,14 +437,8 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
     case UT::VideotexString:
     case UT::GraphicString:
     {
-        int lo = cfg_.min_str_len, hi = cfg_.max_str_len;
         const auto& c = def.per_constraints;
-        if (c.flags & PerConstraints::SIZE_CONSTRAINED) {
-            int64_t clo = c.size_lower, chi = c.size_upper;
-            if (clo >= 0 && clo <= 65536) lo = static_cast<int>(clo);
-            if (chi >= lo && chi <= 65536) hi = static_cast<int>(chi);
-            if (lo > hi) hi = lo;
-        }
+        auto [lo, hi] = size_range(c, cfg_.min_str_len, cfg_.max_str_len);
         // If an alphabet constraint is present, pick chars from it.
         std::string s;
         int len = rand_int(lo, hi);

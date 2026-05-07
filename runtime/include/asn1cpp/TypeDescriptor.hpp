@@ -131,13 +131,14 @@ struct SeqOfSpec {
     void        (*resize_fn)(void* vec, std::size_t n);
 
     // Returns 0 when the collection at `vec` satisfies SIZE(...), otherwise
-    // signed distance (elements) to the nearest valid count.
+    // signed delta (elements) such that (count + delta) lands at the nearest
+    // valid bound: positive = too few, negative = too many.
     int64_t validate(const void* vec) const {
         if (!(size_constraints.flags & PerConstraints::SIZE_CONSTRAINED)) return 0;
         if (size_constraints.flags & PerConstraints::EXTENSIBLE) return 0;
         auto n = static_cast<int64_t>(count_fn(vec));
-        if (n < size_constraints.size_lower) return n - size_constraints.size_lower;
-        if (n > size_constraints.size_upper) return n - size_constraints.size_upper;
+        if (n < size_constraints.size_lower) return size_constraints.size_lower - n;
+        if (n > size_constraints.size_upper) return size_constraints.size_upper - n;
         return 0;
     }
 };

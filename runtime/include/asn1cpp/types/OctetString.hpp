@@ -22,15 +22,16 @@ public:
 
     bool operator==(const OctetString& o) const = default;
 
-    // Returns 0 when size satisfies SIZE(...), otherwise signed distance:
-    //   negative — too short by |result| bytes
-    //   positive — too long  by  result  bytes
+    // Returns 0 when size satisfies SIZE(...), otherwise signed delta such
+    // that (size + delta) lands at the nearest valid bound:
+    //   positive — too short; delta = size_lower - n
+    //   negative — too long;  delta = size_upper - n
     int64_t validate(const PerConstraints& c) const {
         if (!(c.flags & PerConstraints::SIZE_CONSTRAINED)) return 0;
         if (c.flags & PerConstraints::EXTENSIBLE) return 0;
         auto n = static_cast<int64_t>(bytes_.size());
-        if (n < c.size_lower) return n - c.size_lower;
-        if (n > c.size_upper) return n - c.size_upper;
+        if (n < c.size_lower) return c.size_lower - n;
+        if (n > c.size_upper) return c.size_upper - n;
         return 0;
     }
 };

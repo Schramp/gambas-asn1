@@ -46,20 +46,22 @@ public:
     operator int64_t() const { return value_; }
     bool operator==(const Integer&) const = default;
 
-    // Returns 0 when value_ satisfies the constraint, otherwise the signed
-    // distance to the nearest valid value:
-    //   negative — value_ is below lower_bound by |result|
-    //   positive — value_ is above upper_bound by  result
+    // Returns 0 when value_ satisfies the constraint, otherwise a signed
+    // delta such that (value_ + delta) lands at the nearest valid bound:
+    //   positive — value_ is below lower_bound; delta = lower_bound - value_
+    //   negative — value_ is above upper_bound; delta = upper_bound - value_
+    // Caller convention (RandomFiller): +delta raises sampling min; -delta
+    // lowers sampling max.
     // EXTENSIBLE ranges are open (returns 0 for any value).
     int64_t validate(const PerConstraints& c) const {
         if (c.flags & PerConstraints::EXTENSIBLE) return 0;
         if (c.flags & PerConstraints::CONSTRAINED) {
-            if (value_ < c.lower_bound) return value_ - c.lower_bound;
-            if (value_ > c.upper_bound) return value_ - c.upper_bound;
+            if (value_ < c.lower_bound) return c.lower_bound - value_;
+            if (value_ > c.upper_bound) return c.upper_bound - value_;
             return 0;
         }
         if (c.flags & PerConstraints::SEMI_CONSTRAINED) {
-            if (value_ < c.lower_bound) return value_ - c.lower_bound;
+            if (value_ < c.lower_bound) return c.lower_bound - value_;
             return 0;
         }
         return 0;
