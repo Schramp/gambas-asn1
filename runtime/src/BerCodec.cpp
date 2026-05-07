@@ -324,6 +324,14 @@ void BerCodec::encode_sequence(BerWriter& w, const TypeDescriptor& def, const vo
                                  def.name, mbr.name);
                 continue;
             }
+            // X.690 §11.5: a SEQUENCE/SET shall not encode a component value
+            // that equals the schema default. Skip when comparator says yes.
+            if (mbr.is_default_equal && mbr.is_default_equal(src)) {
+                if (debug_flags() & DBG_BER_WRITE)
+                    std::fprintf(stderr, "[BER-WRITE] %s.%s suppressed (== DEFAULT)\n",
+                                 def.name, mbr.name);
+                continue;
+            }
             // Mandatory member with optional_ops means the unique_ptr is null — structural error.
             if (!mbr.optional && mbr.optional_ops && !mbr.optional_ops.is_present(src)) {
                 std::fprintf(stderr, "BerCodec: mandatory member '%s.%s' is null (not filled)\n",

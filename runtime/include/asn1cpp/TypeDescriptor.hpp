@@ -84,6 +84,11 @@ struct MemberDescriptor {
     // Allocates the optional and writes the DEFAULT value from the ASN.1 schema.
     // Null when no DEFAULT applies.
     void (*set_default)(void* owner) = nullptr;
+
+    // BER encode: when set and returns true, the member is suppressed (X.690
+    // §11.5: DEFAULT-equal values must not be encoded). True only when the
+    // member is present AND its value equals the schema default.
+    bool (*is_default_equal)(const void* owner) = nullptr;
 };
 
 // Template that generates the four SeqOfSpec callbacks for a std::vector-based SEQUENCE OF.

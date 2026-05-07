@@ -514,6 +514,7 @@ std::string Generator::emit_default_setter(
     }
 
     std::string fname = std::format("_setdef_{}_{}", parent_cname, mname);
+    std::string cname2 = std::format("_isdef_{}_{}", parent_cname, mname);
     os << std::format(
         "static void {0}(void* p) {{\n"
         "    using Ops = _Ops_{1}_{2};\n"
@@ -521,6 +522,13 @@ std::string Generator::emit_default_setter(
         "    *static_cast<{3}*>(Ops::get(p)) = {4};\n"
         "}}\n",
         fname, parent_cname, mname, mtype, literal);
+    os << std::format(
+        "static bool {0}(const void* p) {{\n"
+        "    using Ops = _Ops_{1}_{2};\n"
+        "    if (!Ops::check(p)) return false;\n"
+        "    return *static_cast<const {3}*>(Ops::get(const_cast<void*>(p))) == ({4});\n"
+        "}}\n",
+        cname2, parent_cname, mname, mtype, literal);
     return "&" + fname;
 }
 
@@ -914,14 +922,17 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         // Pass 2: emit the array
         os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
         for (const auto& r : rows) {
-            os << std::format("    {{ \"{}\", {}, {}, {}, offsetof({}, {}), {}, {}, {}, {} }},\n",
+            std::string def_cmp = r.has_default
+                ? std::format("&_isdef_{}_{}", cname, r.mname)
+                : "nullptr";
+            os << std::format("    {{ \"{}\", {}, {}, {}, offsetof({}, {}), {}, {}, {}, {}, {} }},\n",
                 r.name, r.eff_tag,
                 r.optional ? "true" : "false",
                 r.has_default ? "true" : "false",
                 cname, r.mname,
                 r.tdref, r.ops,
                 r.is_explicit ? "true" : "false",
-                r.def_setter);
+                r.def_setter, def_cmp);
         }
         os << "};\n\n";
     }
@@ -1079,7 +1090,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         // Pass 2: emit array.
         os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
         for (const auto& r : rows) {
-            os << std::format("    {{ \"{}\", {}, false, false, offsetof({}, {}), {}, {{}}, {}, nullptr }},\n",
+            os << std::format("    {{ \"{}\", {}, false, false, offsetof({}, {}), {}, {{}}, {}, nullptr, nullptr }},\n",
                 r.name, r.eff_tag, cname, r.mname,
                 r.tdref,
                 r.is_explicit ? "true" : "false");
