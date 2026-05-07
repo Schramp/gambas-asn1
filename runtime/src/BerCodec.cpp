@@ -395,7 +395,10 @@ DecodeResult BerCodec::decode_sequence(BerReader& r, const TypeDescriptor& def, 
             Tag pt = inner.peek_tag();
             bool present = !inner.at_end() && pt.cls == mbr.tag.cls && pt.number == mbr.tag.number;
             mbr.optional_ops.set_present(dest, present);
-            if (!present) continue;
+            if (!present) {
+                if (mbr.set_default) mbr.set_default(dest);
+                continue;
+            }
         }
         // For unique_ptr<T> optional members, get_ptr returns T* from the allocated object.
         void* mptr = mbr.optional_ops.get_ptr

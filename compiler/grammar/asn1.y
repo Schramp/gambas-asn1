@@ -247,7 +247,7 @@
 %type <TagMode>                     TagPlicit
 
 /* Markers */
-%type <Marker>                      optMarker Marker
+%type <MarkerInfo>                  optMarker Marker
 
 /* Encoding control */
 %type <std::monostate>              EncodingControlBody EncodingInstructionList EncodingInstruction
@@ -927,12 +927,14 @@ ComponentType:
 	  Identifier MaybeIndirectTaggedType optMarker
 	{
 	    $2->name   = $1;
-	    $2->marker = $3;
+	    $2->marker = $3.marker;
+	    $2->default_value = std::move($3.default_value);
 	    $$ = $2;
 	}
 	| MaybeIndirectTaggedType optMarker
 	{
-	    $1->marker = $2;
+	    $1->marker = $2.marker;
+	    $1->default_value = std::move($2.default_value);
 	    $$ = $1;
 	}
 	| TOK_COMPONENTS TOK_OF MaybeIndirectTaggedType
@@ -1027,49 +1029,49 @@ ClassField:
 	{
 	    auto t = std::make_shared<TypeDef>();
 	    t->name   = $1;
-	    t->marker = $2;
+	    t->marker = $2.marker;
 	    $$ = t;
 	}
 	| TOK_typefieldreference Type optMarker
 	{
 	    auto t = std::make_shared<TypeDef>();
 	    t->name   = $1;
-	    t->marker = $3;
+	    t->marker = $3.marker;
 	    $$ = t;
 	}
 	| TOK_valuefieldreference Type optUNIQUE optMarker
 	{
 	    auto t = std::make_shared<TypeDef>();
 	    t->name   = $1;
-	    t->marker = $4;
+	    t->marker = $4.marker;
 	    $$ = t;
 	}
 	| TOK_valuefieldreference FieldName optMarker
 	{
 	    auto t = std::make_shared<TypeDef>();
 	    t->name   = $1;
-	    t->marker = $3;
+	    t->marker = $3.marker;
 	    $$ = t;
 	}
 	| TOK_typefieldreference FieldName optMarker
 	{
 	    auto t = std::make_shared<TypeDef>();
 	    t->name   = $1;
-	    t->marker = $3;
+	    t->marker = $3.marker;
 	    $$ = t;
 	}
 	| TOK_valuefieldreference DefinedObjectClass optMarker
 	{
 	    auto t = std::make_shared<TypeDef>();
 	    t->name   = $1;
-	    t->marker = $3;
+	    t->marker = $3.marker;
 	    $$ = t;
 	}
 	| TOK_typefieldreference DefinedObjectClass optMarker
 	{
 	    auto t = std::make_shared<TypeDef>();
 	    t->name   = $1;
-	    t->marker = $3;
+	    t->marker = $3.marker;
 	    $$ = t;
 	}
 	| TOK_IDENTIFIED TOK_BY PrimitiveFieldReference
@@ -1143,13 +1145,13 @@ TagPlicit:
 /* ===== Markers ============================================================= */
 
 optMarker:
-	  /* empty */ { $$ = Marker::None; }
-	| Marker      { $$ = $1; }
+	  /* empty */ { }
+	| Marker      { $$ = std::move($1); }
 	;
 
 Marker:
-	  TOK_OPTIONAL        { $$ = Marker::Optional; }
-	| TOK_DEFAULT Value   { $$ = Marker::Default; }
+	  TOK_OPTIONAL        { $$.marker = Marker::Optional; }
+	| TOK_DEFAULT Value   { $$.marker = Marker::Default; $$.default_value = std::move($2); }
 	;
 
 /* ===== Identifiers ========================================================= */

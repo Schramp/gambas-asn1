@@ -473,6 +473,57 @@ std::optional<int64_t> Generator::resolve_int_value(const ast::Value& v) const {
     return std::nullopt;
 }
 
+// Resolve a member's underlying TypeDef by walking TypeRef chain.
+static const ast::TypeDef* resolve_underlying(const ast::TypeDef& m,
+                                              const sema::Resolver& res) {
+    const ast::TypeDef* cur = &m;
+    for (int hop = 0; hop < 32; ++hop) {
+        auto* tr = std::get_if<ast::TypeRef>(&cur->body);
+        if (!tr) return cur;
+        auto next = res.resolve_ref(*tr);
+        if (!next) return cur;
+        cur = next.get();
+    }
+    return cur;
+}
+
+std::string Generator::emit_default_setter(
+    const ast::TypeDef& m, const std::string& parent_cname,
+    const std::string& mname, std::ostream& os)
+{
+    if (m.marker != ast::Marker::Default) return "nullptr";
+    if (std::holds_alternative<std::monostate>(m.default_value)) return "nullptr";
+
+    std::string mtype = cpp_type_for(m);
+    const ast::TypeDef* base = resolve_underlying(m, resolver_);
+
+    std::string literal;
+    if (auto* b = std::get_if<bool>(&m.default_value)) {
+        literal = std::format("{}{{{}}}", mtype, *b ? "true" : "false");
+    } else if (auto* i = std::get_if<int64_t>(&m.default_value)) {
+        literal = std::format("{}{{{}}}", mtype, *i);
+    } else if (auto* nr = std::get_if<ast::NamedValueRef>(&m.default_value)) {
+        // ENUMERATED named ref → EnumType::name
+        bool is_enum = base
+            && std::holds_alternative<ast::BuiltinType>(base->body)
+            && std::get<ast::BuiltinType>(base->body) == ast::BuiltinType::Enumerated;
+        if (!is_enum) return "nullptr";
+        literal = std::format("{}::{}", mtype, safe_cpp_name(to_cpp_name(nr->name)));
+    } else {
+        return "nullptr";
+    }
+
+    std::string fname = std::format("_setdef_{}_{}", parent_cname, mname);
+    os << std::format(
+        "static void {0}(void* p) {{\n"
+        "    using Ops = _Ops_{1}_{2};\n"
+        "    Ops::set(p, true);\n"
+        "    *static_cast<{3}*>(Ops::get(p)) = {4};\n"
+        "}}\n",
+        fname, parent_cname, mname, mtype, literal);
+    return "&" + fname;
+}
+
 // True if any top-level constraint carries a trailing '...'.
 static bool is_constraint_extensible(const ast::TypeDef& def) {
     for (const auto& cptr : def.constraints)
@@ -820,8 +871,8 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         // Pass 1: collect per-row data and emit any static per-member TypeDescriptors
         // before the array opening brace (can't have declarations inside initializer lists).
         struct MbrRow {
-            std::string name, eff_tag, mname, ops, tdref;
-            bool optional, is_explicit;
+            std::string name, eff_tag, mname, ops, tdref, def_setter;
+            bool optional, is_explicit, has_default;
         };
         std::vector<MbrRow> rows;
         {
@@ -853,19 +904,24 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                     ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, mname)
                     : "{}";
                 std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
-                rows.push_back({ m->name, eff_tag, mname, ops, tdref, optional, is_explicit });
+                std::string def_setter = emit_default_setter(*m, cname, mname, os);
+                bool has_default = (m->marker == ast::Marker::Default);
+                rows.push_back({ m->name, eff_tag, mname, ops, tdref, def_setter,
+                                 optional, is_explicit, has_default });
                 ++atag;
             }
         }
         // Pass 2: emit the array
         os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
         for (const auto& r : rows) {
-            os << std::format("    {{ \"{}\", {}, {}, false, offsetof({}, {}), {}, {}, {} }},\n",
+            os << std::format("    {{ \"{}\", {}, {}, {}, offsetof({}, {}), {}, {}, {}, {} }},\n",
                 r.name, r.eff_tag,
                 r.optional ? "true" : "false",
+                r.has_default ? "true" : "false",
                 cname, r.mname,
                 r.tdref, r.ops,
-                r.is_explicit ? "true" : "false");
+                r.is_explicit ? "true" : "false",
+                r.def_setter);
         }
         os << "};\n\n";
     }
@@ -1023,7 +1079,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         // Pass 2: emit array.
         os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
         for (const auto& r : rows) {
-            os << std::format("    {{ \"{}\", {}, false, false, offsetof({}, {}), {}, {{}}, {} }},\n",
+            os << std::format("    {{ \"{}\", {}, false, false, offsetof({}, {}), {}, {{}}, {}, nullptr }},\n",
                 r.name, r.eff_tag, cname, r.mname,
                 r.tdref,
                 r.is_explicit ? "true" : "false");

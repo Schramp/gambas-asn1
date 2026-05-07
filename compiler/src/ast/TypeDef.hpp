@@ -51,6 +51,12 @@ struct EnumValue {
 // Marker for OPTIONAL / DEFAULT on sequence members
 enum class Marker { None, Optional, Default };
 
+// Grammar-only carrier: optMarker returns marker + (for DEFAULT) the parsed value.
+struct MarkerInfo {
+    Marker marker{Marker::None};
+    Value  default_value;
+};
+
 // --- The main TypeDef node ---------------------------------------------------
 struct TypeDef : Node {
     std::string name;            // identifier or type reference name (may be empty for anonymous)

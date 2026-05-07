@@ -79,6 +79,11 @@ struct MemberDescriptor {
     const TypeDescriptor* type_descriptor;
     OptionalOps           optional_ops;   // non-null only for optional/extension members
     bool                  is_explicit = false; // true → EXPLICIT tagging; false → IMPLICIT
+
+    // BER/XER: when set, called after decode if the member was absent on the wire.
+    // Allocates the optional and writes the DEFAULT value from the ASN.1 schema.
+    // Null when no DEFAULT applies.
+    void (*set_default)(void* owner) = nullptr;
 };
 
 // Template that generates the four SeqOfSpec callbacks for a std::vector-based SEQUENCE OF.

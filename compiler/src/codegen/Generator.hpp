@@ -171,6 +171,10 @@ private:
                                std::vector<std::pair<std::string,int>>& out,
                                std::set<std::string>& visited);
     std::optional<int64_t> resolve_int_value(const ast::Value& v) const;
+    // For DEFAULT members in SEQUENCE/SET: emits a static helper that sets the
+    // optional and writes the DEFAULT value. Returns "&_setdef_..." or "nullptr".
+    std::string emit_default_setter(const ast::TypeDef& m, const std::string& parent_cname,
+                                    const std::string& mname, std::ostream& os);
     std::optional<std::pair<int64_t,int64_t>> extract_integer_range(const ast::TypeDef& def) const;
 };
 
