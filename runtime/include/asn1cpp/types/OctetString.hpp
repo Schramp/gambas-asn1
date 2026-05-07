@@ -4,6 +4,7 @@
 #include <format>
 #include "../Tag.hpp"
 #include "../codec/BerTraits.hpp"
+#include "../codec/PerConstraints.hpp"
 
 namespace asn1 {
 
@@ -20,6 +21,15 @@ public:
     bool empty()                    const { return bytes_.empty(); }
 
     bool operator==(const OctetString& o) const = default;
+
+    // True if size satisfies the SIZE(...) constraint (if present).
+    // EXTENSIBLE size constraints are open.
+    bool validate(const PerConstraints& c) const {
+        if (!(c.flags & PerConstraints::SIZE_CONSTRAINED)) return true;
+        if (c.flags & PerConstraints::EXTENSIBLE) return true;
+        auto n = static_cast<int64_t>(bytes_.size());
+        return n >= c.size_lower && n <= c.size_upper;
+    }
 };
 
 template<>

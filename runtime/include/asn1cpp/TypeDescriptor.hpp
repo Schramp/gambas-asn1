@@ -132,6 +132,16 @@ struct SeqOfSpec {
     const void* (*get_const_fn)(const void* vec, std::size_t i);
     void*       (*get_fn)(void* vec, std::size_t i);
     void        (*resize_fn)(void* vec, std::size_t n);
+
+    // True when the collection at `vec` satisfies SIZE(...) on the SEQUENCE OF.
+    // EXTENSIBLE size constraints are open. Element-level validation is the
+    // caller's responsibility (they recurse via `validate(*element, e)`).
+    bool validate(const void* vec) const {
+        if (!(size_constraints.flags & PerConstraints::SIZE_CONSTRAINED)) return true;
+        if (size_constraints.flags & PerConstraints::EXTENSIBLE) return true;
+        auto n = static_cast<int64_t>(count_fn(vec));
+        return n >= size_constraints.size_lower && n <= size_constraints.size_upper;
+    }
 };
 
 // SEQUENCE / SET specifics (mirrors asn_SEQUENCE_specifics_t).

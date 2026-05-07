@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include "../Tag.hpp"
 #include "../codec/BerTraits.hpp"
+#include "../codec/PerConstraints.hpp"
 
 namespace asn1 {
 
@@ -26,6 +27,14 @@ public:
     }
 
     bool operator==(const BitString&) const = default;
+
+    // SIZE(...) on BIT STRING is in bits.
+    bool validate(const PerConstraints& c) const {
+        if (!(c.flags & PerConstraints::SIZE_CONSTRAINED)) return true;
+        if (c.flags & PerConstraints::EXTENSIBLE) return true;
+        auto n = static_cast<int64_t>(bit_count());
+        return n >= c.size_lower && n <= c.size_upper;
+    }
 };
 
 template<>

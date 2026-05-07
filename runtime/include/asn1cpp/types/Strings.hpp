@@ -3,6 +3,7 @@
 #include <format>
 #include "../Tag.hpp"
 #include "../codec/BerTraits.hpp"
+#include "../codec/PerConstraints.hpp"
 
 namespace asn1 {
 
@@ -22,6 +23,15 @@ public:
     std::size_t size() const { return value_.size(); }
 
     bool operator==(const AsnString&) const = default;
+
+    // SIZE(...) check. Alphabet (FROM "...") is step 4 — needs codegen
+    // support to carry the permitted-charset.
+    bool validate(const PerConstraints& c) const {
+        if (!(c.flags & PerConstraints::SIZE_CONSTRAINED)) return true;
+        if (c.flags & PerConstraints::EXTENSIBLE) return true;
+        auto n = static_cast<int64_t>(value_.size());
+        return n >= c.size_lower && n <= c.size_upper;
+    }
 };
 
 template<uint32_t N>
