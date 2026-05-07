@@ -435,7 +435,7 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // TypeDescriptor
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.name);
+    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
     os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Enumerated);
     os << std::format("    &asn_SPC_{},\n", cname);
     os << "    nullptr, nullptr, nullptr, {} /* per_constraints */\n";
@@ -524,7 +524,7 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
     auto range = extract_integer_range(def);
 
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.name);
+    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
     os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Integer);
     os << "    nullptr, nullptr, nullptr, nullptr,\n";
     if (range) {
@@ -883,7 +883,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // TypeDescriptor
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.name);
+    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
     os << std::format("    asn1::Tag::universal({}, true),\n", tag_num);
     os << "    nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
@@ -1069,7 +1069,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // TypeDescriptor (CHOICE has no fixed universal tag)
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.name);
+    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
     os << "    asn1::Tag{asn1::TagClass::Context, 0, false}, /* placeholder — CHOICE tag is transparent */\n";
     os << "    nullptr, nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
@@ -1215,7 +1215,7 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
     bool needs_per = !alphabet.empty() || size_range.has_value();
 
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.name);
+    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
     os << std::format("    {},\n", natural_tag_for(def));
     os << "    nullptr, nullptr, nullptr, nullptr,\n";
 
@@ -1304,7 +1304,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     // TypeDescriptor
     uint32_t of_tag = def.is_set_of() ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.name);
+    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
     os << std::format("    asn1::Tag::universal({}, true),\n", of_tag);
     os << "    nullptr, nullptr, nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
@@ -1350,13 +1350,19 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
             ? *std::get<ast::SequenceOfType>(def.body).element
             : *std::get<ast::SetOfType>(def.body).element;
         if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
-            auto sn = to_cpp_name(elem.name.empty() ? "Anon" : elem.name);
+            bool was_anon = elem.name.empty();
+            auto sn = to_cpp_name(was_anon ? "Anon" : elem.name);
             if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
             std::string synth_name = parent_cname + sn;
             if (!generated_names_.count(synth_name)) {
                 generated_names_.insert(synth_name);
                 auto synthetic = std::make_shared<ast::TypeDef>(elem);
                 synthetic->name = synth_name;
+                if (was_anon) {
+                    synthetic->xer_name = elem.is_sequence() ? "SEQUENCE"
+                                        : elem.is_set()      ? "SET"
+                                        : "CHOICE";
+                }
                 generate_inline_types(*synthetic, mod);
                 current_type_ = synth_name;
                 { std::ofstream hpp(out_dir_ / (synth_name + ".hpp")); emit_hpp(*synthetic, mod, hpp); }
@@ -1378,13 +1384,19 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 : *std::get<ast::SetOfType>(m->body).element;
             std::string elem_type_name;  // non-empty iff element was an inline complex type
             if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
-                auto esn = to_cpp_name(elem.name.empty() ? "Anon" : elem.name);
+                bool was_anon = elem.name.empty();
+                auto esn = to_cpp_name(was_anon ? "Anon" : elem.name);
                 if (!esn.empty()) esn[0] = (char)std::toupper(esn[0]);
                 elem_type_name = parent_cname + esn;
                 if (!generated_names_.count(elem_type_name)) {
                     generated_names_.insert(elem_type_name);
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
                     synthetic->name = elem_type_name;
+                    if (was_anon) {
+                        synthetic->xer_name = elem.is_sequence() ? "SEQUENCE"
+                                            : elem.is_set()      ? "SET"
+                                            : "CHOICE";
+                    }
                     generate_inline_types(*synthetic, mod);
                     current_type_ = elem_type_name;
                     { std::ofstream hpp(out_dir_ / (elem_type_name + ".hpp")); emit_hpp(*synthetic, mod, hpp); }

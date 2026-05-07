@@ -54,6 +54,7 @@ enum class Marker { None, Optional, Default };
 // --- The main TypeDef node ---------------------------------------------------
 struct TypeDef : Node {
     std::string name;            // identifier or type reference name (may be empty for anonymous)
+    std::string xer_name;        // override for XER element tag (anonymous types use ASN.1 keyword: SEQUENCE/SET/CHOICE)
 
     // What kind of type is this?
     using TypeBody = std::variant<

@@ -656,6 +656,18 @@ void XerCodec::encode_sequence(XerEncodeStream& s,
 {
     auto& os = s.os();
     const auto& spec = *def.sequence_spec;
+    bool any_present = false;
+    for (int i = 0; i < spec.count; ++i) {
+        const auto& mbr = spec.members[i];
+        if (!mbr.type_descriptor) continue;
+        if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
+        any_present = true;
+        break;
+    }
+    if (!any_present) {
+        os << '<' << def.name << "></" << def.name << ">\n";
+        return;
+    }
     os << '<' << def.name << ">\n";
     for (int i = 0; i < spec.count; ++i) {
         const auto& mbr = spec.members[i];
@@ -666,9 +678,18 @@ void XerCodec::encode_sequence(XerEncodeStream& s,
             : static_cast<const char*>(src) + mbr.offset;
         TypeDescriptor mdef = *mbr.type_descriptor;
         mdef.name = mbr.name;
-        os << s.indent(1);
-        XerEncodeStream ms{os, s.depth() + 1};
-        encode(ms, mdef, mptr);
+        // CHOICE is XER-transparent (no own wrapper); enclose with member name here.
+        if (mdef.choice_spec) {
+            os << s.indent(1) << '<' << mbr.name << ">\n";
+            os << s.indent(2);
+            XerEncodeStream ms{os, s.depth() + 2};
+            encode(ms, mdef, mptr);
+            os << s.indent(1) << "</" << mbr.name << ">\n";
+        } else {
+            os << s.indent(1);
+            XerEncodeStream ms{os, s.depth() + 1};
+            encode(ms, mdef, mptr);
+        }
     }
     os << s.indent() << "</" << def.name << ">\n";
 }
@@ -697,8 +718,15 @@ DecodeResult XerCodec::decode_sequence(XerDecodeStream& s,
             : static_cast<char*>(dest) + mbr.offset;
         TypeDescriptor mdef = *mbr.type_descriptor;
         mdef.name = mbr.name;
-        auto r = decode(s, mdef, mptr);
-        if (!r) return r;
+        if (mdef.choice_spec) {
+            if (auto r = xer_detail::consume_open_tag(s, mbr.name); !r) return r;
+            auto r = decode(s, mdef, mptr);
+            if (!r) return r;
+            if (auto r2 = xer_detail::consume_close_tag(s, mbr.name); !r2) return r2;
+        } else {
+            auto r = decode(s, mdef, mptr);
+            if (!r) return r;
+        }
     }
 
     {
@@ -723,44 +751,51 @@ void XerCodec::encode_choice(XerEncodeStream& s,
     const auto& alt = spec.alternatives[pr - 1];
     if (!alt.type_descriptor) return;
 
-    os << '<' << def.name << ">\n";
-    os << s.indent(1);
+    // X.693: CHOICE has no own XER wrapper element; the chosen alternative's
+    // name is the wrapper. Inner alt content is whatever the alt type emits
+    // sans its own type-name wrapper (we set adef.name = alt.name; non-CHOICE
+    // types use this as their wrapper, CHOICE types are transparent and the
+    // alt-name wrap below provides their wrapper).
     TypeDescriptor adef = *alt.type_descriptor;
     adef.name = alt.name;
-    XerEncodeStream as{os, s.depth() + 1};
-    encode(as, adef, static_cast<const char*>(src) + alt.offset);
-    os << s.indent() << "</" << def.name << ">\n";
+    if (adef.choice_spec) {
+        os << '<' << alt.name << ">\n";
+        os << s.indent(1);
+        XerEncodeStream as{os, s.depth() + 1};
+        encode(as, adef, static_cast<const char*>(src) + alt.offset);
+        os << s.indent() << "</" << alt.name << ">\n";
+    } else {
+        encode(s, adef, static_cast<const char*>(src) + alt.offset);
+    }
 }
 
 DecodeResult XerCodec::decode_choice(XerDecodeStream& s,
                                       const TypeDescriptor& def,
                                       void* dest) const
 {
-    if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
-
-    {
-        auto ti = xer_detail::peek_tag(s);
-        const auto& spec = *def.choice_spec;
-        bool found = false;
-        for (int i = 0; i < spec.count; ++i) {
-            const auto& alt = spec.alternatives[i];
-            if (ti.name != alt.name) continue;
-            if (!alt.type_descriptor)
-                return decode_err(DecodeError(std::string("XER CHOICE: no descriptor for ") + alt.name));
-            TypeDescriptor adef = *alt.type_descriptor;
-            adef.name = alt.name;
-            void* mptr = static_cast<char*>(dest) + alt.offset;
+    auto ti = xer_detail::peek_tag(s);
+    const auto& spec = *def.choice_spec;
+    for (int i = 0; i < spec.count; ++i) {
+        const auto& alt = spec.alternatives[i];
+        if (ti.name != alt.name) continue;
+        if (!alt.type_descriptor)
+            return decode_err(DecodeError(std::string("XER CHOICE: no descriptor for ") + alt.name));
+        TypeDescriptor adef = *alt.type_descriptor;
+        adef.name = alt.name;
+        void* mptr = static_cast<char*>(dest) + alt.offset;
+        if (adef.choice_spec) {
+            if (auto r = xer_detail::consume_open_tag(s, alt.name); !r) return r;
             auto r = decode(s, adef, mptr);
             if (!r) return r;
-            *static_cast<int*>(dest) = i + 1;
-            found = true;
-            break;
+            if (auto r2 = xer_detail::consume_close_tag(s, alt.name); !r2) return r2;
+        } else {
+            auto r = decode(s, adef, mptr);
+            if (!r) return r;
         }
-        if (!found)
-            return decode_err(DecodeError(std::string("XER CHOICE: unknown alternative <") + std::string(ti.name) + ">"));
+        *static_cast<int*>(dest) = i + 1;
+        return decode_ok();
     }
-    if (auto r = xer_detail::consume_close_tag(s, def.name); !r) return r;
-    return decode_ok();
+    return decode_err(DecodeError(std::string("XER CHOICE: unknown alternative <") + std::string(ti.name) + ">"));
 }
 
 } // namespace asn1
