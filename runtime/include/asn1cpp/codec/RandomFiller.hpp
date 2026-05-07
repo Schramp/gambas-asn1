@@ -27,14 +27,21 @@ class RandomFiller {
 public:
     explicit RandomFiller(std::mt19937& rng, FillConfig cfg = {});
 
-    void fill(void* obj, const TypeDescriptor& def, int depth = 0, bool mandatory = false);
+    // Returns true on success. False means the random value violates a
+    // constraint we couldn't satisfy after retries. For optional members /
+    // CHOICE alternatives the caller can react (skip / try another alt).
+    bool fill(void* obj, const TypeDescriptor& def, int depth = 0, bool mandatory = false);
 
 private:
-    void fill_sequence (void* obj, const SequenceSpec&   spec, int depth);
-    void fill_choice   (void* obj, const ChoiceSpec&     spec, int depth);
-    void fill_seq_of   (void* obj, const SeqOfSpec&      spec, int depth);
+    bool fill_sequence (void* obj, const SequenceSpec&   spec, int depth);
+    bool fill_choice   (void* obj, const ChoiceSpec&     spec, int depth);
+    bool fill_seq_of   (void* obj, const SeqOfSpec&      spec, int depth);
     void fill_enum     (void* obj, const EnumSpec&       spec);
     void fill_primitive(void* obj, const TypeDescriptor& def);
+    // Retry-with-validate wrapper around fill_primitive; falls back to a
+    // permuted length scan (0..256) for SIZE-constrained primitives when
+    // simple regeneration doesn't produce a valid value.
+    bool try_fill_primitive(void* obj, const TypeDescriptor& def);
 
     // helpers
     bool coin(double p);

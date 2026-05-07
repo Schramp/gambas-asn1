@@ -28,12 +28,15 @@ public:
 
     bool operator==(const BitString&) const = default;
 
-    // SIZE(...) on BIT STRING is in bits.
-    bool validate(const PerConstraints& c) const {
-        if (!(c.flags & PerConstraints::SIZE_CONSTRAINED)) return true;
-        if (c.flags & PerConstraints::EXTENSIBLE) return true;
+    // SIZE(...) on BIT STRING is in bits. Returns 0 when valid, otherwise
+    // signed distance (bits) to the nearest valid count.
+    int64_t validate(const PerConstraints& c) const {
+        if (!(c.flags & PerConstraints::SIZE_CONSTRAINED)) return 0;
+        if (c.flags & PerConstraints::EXTENSIBLE) return 0;
         auto n = static_cast<int64_t>(bit_count());
-        return n >= c.size_lower && n <= c.size_upper;
+        if (n < c.size_lower) return n - c.size_lower;
+        if (n > c.size_upper) return n - c.size_upper;
+        return 0;
     }
 };
 

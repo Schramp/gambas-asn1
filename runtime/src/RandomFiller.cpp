@@ -1,5 +1,8 @@
 #include <asn1cpp/codec/RandomFiller.hpp>
+#include <asn1cpp/Validate.hpp>
+#include <algorithm>
 #include <limits>
+#include <vector>
 #include <asn1cpp/types/Integer.hpp>
 #include <asn1cpp/types/Boolean.hpp>
 #include <asn1cpp/types/OctetString.hpp>
@@ -42,9 +45,9 @@ std::string RandomFiller::random_printable(int len) {
 // top-level dispatch
 // ---------------------------------------------------------------------------
 
-void RandomFiller::fill(void* obj, const TypeDescriptor& def, int depth, bool mandatory) {
-    if (depth > 1000) return;                          // absolute safety — catches recursive mandatory cycles
-    if (!mandatory && depth > cfg_.max_depth) return;  // soft limit — only skips optional paths
+bool RandomFiller::fill(void* obj, const TypeDescriptor& def, int depth, bool mandatory) {
+    if (depth > 1000) return false;                       // absolute safety — catches recursive mandatory cycles
+    if (!mandatory && depth > cfg_.max_depth) return false; // soft limit — only skips optional paths
 
     if (def.is_any) {
         // Encode a small random INTEGER as the raw ANY bytes.
@@ -55,13 +58,64 @@ void RandomFiller::fill(void* obj, const TypeDescriptor& def, int depth, bool ma
         Integer iv{v};
         BerTraits<Integer>::encode(w, iv);
         new (obj) OctetString{std::move(buf)};
-        return;
+        return true;
     }
-    if (def.enum_spec)     { fill_enum(obj, *def.enum_spec); return; }
-    if (def.sequence_spec) { fill_sequence(obj, *def.sequence_spec, depth); return; }
-    if (def.choice_spec)   { fill_choice  (obj, *def.choice_spec,   depth); return; }
-    if (def.seq_of_spec)   { fill_seq_of  (obj, *def.seq_of_spec,   depth); return; }
-    fill_primitive(obj, def);
+    if (def.enum_spec)     { fill_enum(obj, *def.enum_spec); return true; }
+    if (def.sequence_spec) return fill_sequence(obj, *def.sequence_spec, depth);
+    if (def.choice_spec)   return fill_choice  (obj, *def.choice_spec,   depth);
+    if (def.seq_of_spec)   return fill_seq_of  (obj, *def.seq_of_spec,   depth);
+    return try_fill_primitive(obj, def);
+}
+
+bool RandomFiller::try_fill_primitive(void* obj, const TypeDescriptor& def) {
+    constexpr int MAX_RETRIES = 16;
+    for (int i = 0; i < MAX_RETRIES; ++i) {
+        fill_primitive(obj, def);
+        if (validate(def, obj) == 0) return true;
+    }
+
+    // SIZE-able primitives: walk a permuted length list 0..256 and force
+    // fill_primitive to produce that length. Only types whose fill_primitive
+    // honours the constraint flags can use this path; we toggle SIZE bounds
+    // on a local copy of the descriptor.
+    auto is_sized = [&]() {
+        if (def.tag.cls != TagClass::Universal) return false;
+        switch (def.tag.number) {
+        case UniversalTag::OctetString:
+        case UniversalTag::BitString:
+        case UniversalTag::Utf8String:
+        case UniversalTag::NumericString:
+        case UniversalTag::PrintableString:
+        case UniversalTag::T61String:
+        case UniversalTag::VideotexString:
+        case UniversalTag::Ia5String:
+        case UniversalTag::GraphicString:
+        case UniversalTag::VisibleString:
+        case UniversalTag::GeneralString:
+        case UniversalTag::UniversalString:
+        case UniversalTag::BmpString:
+        case UniversalTag::ObjectDescriptor:
+            return true;
+        default:
+            return false;
+        }
+    };
+    if (!is_sized()) return false;
+
+    std::vector<int> lengths(257);
+    for (int n = 0; n <= 256; ++n) lengths[n] = n;
+    std::shuffle(lengths.begin(), lengths.end(), rng_);
+
+    TypeDescriptor d = def;
+    d.per_constraints.flags        |= PerConstraints::SIZE_CONSTRAINED;
+    d.per_constraints.flags        &= ~PerConstraints::EXTENSIBLE;
+    for (int n : lengths) {
+        d.per_constraints.size_lower = n;
+        d.per_constraints.size_upper = n;
+        fill_primitive(obj, d);
+        if (validate(def, obj) == 0) return true;
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +134,7 @@ void RandomFiller::fill_enum(void* obj, const EnumSpec& spec) {
 // SEQUENCE / SET
 // ---------------------------------------------------------------------------
 
-void RandomFiller::fill_sequence(void* obj, const SequenceSpec& spec, int depth) {
+bool RandomFiller::fill_sequence(void* obj, const SequenceSpec& spec, int depth) {
     for (int i = 0; i < spec.count; ++i) {
         const MemberDescriptor& mbr = spec.members[i];
 
@@ -102,16 +156,25 @@ void RandomFiller::fill_sequence(void* obj, const SequenceSpec& spec, int depth)
         // to keep the absolute-limit stack-overflow guard working.
         // Optional: increment depth and apply soft limit.
         bool is_mand = !mbr.optional;
-        fill(mptr, *mbr.type_descriptor, depth + 1, is_mand);
+        bool ok = fill(mptr, *mbr.type_descriptor, depth + 1, is_mand);
+        if (!ok) {
+            // Couldn't satisfy a constraint. Optional members get dropped;
+            // mandatory failures bubble up so the caller can retry.
+            if (mbr.optional)
+                mbr.optional_ops.set_present(obj, false);
+            else
+                return false;
+        }
     }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
 // CHOICE
 // ---------------------------------------------------------------------------
 
-void RandomFiller::fill_choice(void* obj, const ChoiceSpec& spec, int depth) {
-    if (spec.count == 0) return;
+bool RandomFiller::fill_choice(void* obj, const ChoiceSpec& spec, int depth) {
+    if (spec.count == 0) return false;
 
     // Stay in root alternatives when near depth limit.
     int limit = (spec.ext_at >= 0 && depth >= cfg_.max_depth - 2)
@@ -132,15 +195,14 @@ void RandomFiller::fill_choice(void* obj, const ChoiceSpec& spec, int depth) {
         aptr = static_cast<char*>(obj) + alt.offset;
     }
 
-    // The chosen alternative is mandatory — bypass soft limit but still increment depth.
-    fill(aptr, *alt.type_descriptor, depth + 1, true);
+    return fill(aptr, *alt.type_descriptor, depth + 1, true);
 }
 
 // ---------------------------------------------------------------------------
 // SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------------
 
-void RandomFiller::fill_seq_of(void* obj, const SeqOfSpec& spec, int depth) {
+bool RandomFiller::fill_seq_of(void* obj, const SeqOfSpec& spec, int depth) {
     int lo = cfg_.min_seq_of;
     int hi = cfg_.max_seq_of;
 
@@ -166,12 +228,23 @@ void RandomFiller::fill_seq_of(void* obj, const SeqOfSpec& spec, int depth) {
     int n = rand_int(lo, hi);
     spec.resize_fn(obj, static_cast<std::size_t>(n));
 
+    int valid = 0;
     for (int i = 0; i < n; ++i) {
         void* eptr = spec.get_fn(obj, static_cast<std::size_t>(i));
         // Mandatory minimum elements bypass soft limit but still increment depth.
         bool mand = (i < lo);
-        fill(eptr, *spec.element, depth + 1, mand);
+        if (fill(eptr, *spec.element, depth + 1, mand)) {
+            ++valid;
+        } else if (mand) {
+            // Couldn't satisfy the mandatory minimum; truncate and signal failure.
+            spec.resize_fn(obj, static_cast<std::size_t>(valid));
+            return false;
+        }
+        // Optional element failure: stop adding more, keep what we have.
+        else { break; }
     }
+    spec.resize_fn(obj, static_cast<std::size_t>(valid));
+    return true;
 }
 
 // ---------------------------------------------------------------------------

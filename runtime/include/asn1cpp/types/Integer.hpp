@@ -46,15 +46,23 @@ public:
     operator int64_t() const { return value_; }
     bool operator==(const Integer&) const = default;
 
-    // True if value_ satisfies the constraint advertised by `def`. EXTENSIBLE
-    // ranges are open (any value valid). Unconstrained types always pass.
-    bool validate(const PerConstraints& c) const {
-        if (c.flags & PerConstraints::EXTENSIBLE) return true;
-        if (c.flags & PerConstraints::CONSTRAINED)
-            return value_ >= c.lower_bound && value_ <= c.upper_bound;
-        if (c.flags & PerConstraints::SEMI_CONSTRAINED)
-            return value_ >= c.lower_bound;
-        return true;
+    // Returns 0 when value_ satisfies the constraint, otherwise the signed
+    // distance to the nearest valid value:
+    //   negative — value_ is below lower_bound by |result|
+    //   positive — value_ is above upper_bound by  result
+    // EXTENSIBLE ranges are open (returns 0 for any value).
+    int64_t validate(const PerConstraints& c) const {
+        if (c.flags & PerConstraints::EXTENSIBLE) return 0;
+        if (c.flags & PerConstraints::CONSTRAINED) {
+            if (value_ < c.lower_bound) return value_ - c.lower_bound;
+            if (value_ > c.upper_bound) return value_ - c.upper_bound;
+            return 0;
+        }
+        if (c.flags & PerConstraints::SEMI_CONSTRAINED) {
+            if (value_ < c.lower_bound) return value_ - c.lower_bound;
+            return 0;
+        }
+        return 0;
     }
 };
 

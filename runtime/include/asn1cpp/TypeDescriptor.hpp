@@ -27,15 +27,12 @@ struct EnumSpec {
     int              root_count;       // number of root enumeration values
     const long*      per_value_order;  // [root_count] values in definition order
 
-    // Returns true if `v` is a known enumeration value. For extensible
-    // ENUMERATED any extension entry is also valid; if `v` is unknown the
-    // ext-marker rule (X.691) lets it through too — we treat unknown as
-    // invalid here so RandomFiller / encoder catches it.
-    bool validate(long v) const {
-        int n = (root_count > 0) ? count : count;
-        for (int i = 0; i < n; ++i)
-            if (entries[i].value == v) return true;
-        return false;
+    // Returns 0 if `v` is a known enumeration value (root or extension),
+    // otherwise 1 (no meaningful distance for ENUMERATED).
+    int64_t validate(long v) const {
+        for (int i = 0; i < count; ++i)
+            if (entries[i].value == v) return 0;
+        return 1;
     }
 };
 
@@ -133,14 +130,15 @@ struct SeqOfSpec {
     void*       (*get_fn)(void* vec, std::size_t i);
     void        (*resize_fn)(void* vec, std::size_t n);
 
-    // True when the collection at `vec` satisfies SIZE(...) on the SEQUENCE OF.
-    // EXTENSIBLE size constraints are open. Element-level validation is the
-    // caller's responsibility (they recurse via `validate(*element, e)`).
-    bool validate(const void* vec) const {
-        if (!(size_constraints.flags & PerConstraints::SIZE_CONSTRAINED)) return true;
-        if (size_constraints.flags & PerConstraints::EXTENSIBLE) return true;
+    // Returns 0 when the collection at `vec` satisfies SIZE(...), otherwise
+    // signed distance (elements) to the nearest valid count.
+    int64_t validate(const void* vec) const {
+        if (!(size_constraints.flags & PerConstraints::SIZE_CONSTRAINED)) return 0;
+        if (size_constraints.flags & PerConstraints::EXTENSIBLE) return 0;
         auto n = static_cast<int64_t>(count_fn(vec));
-        return n >= size_constraints.size_lower && n <= size_constraints.size_upper;
+        if (n < size_constraints.size_lower) return n - size_constraints.size_lower;
+        if (n > size_constraints.size_upper) return n - size_constraints.size_upper;
+        return 0;
     }
 };
 
