@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdio>
 #include <vector>
 #include <asn1cpp/codec/BerCodec.hpp>
@@ -284,10 +285,33 @@ void BerCodec::encode_seq_of(BerWriter& w, const TypeDescriptor& def, const void
     const auto& spec = *def.seq_of_spec;
     std::size_t count = spec.count_fn(src);
     const auto& edef = *spec.element;
+    // X.690 §11.6 (DER): SET OF elements are sorted in ascending order of
+    // their encoded octet streams. Apply the same canonicalisation in BER —
+    // it stays valid BER and matches what asn1c emits via der_encode, so the
+    // asn1c roundtrip stops shuffling our records.
+    bool is_set_of = (def.tag.cls == TagClass::Universal &&
+                      def.tag.number == UniversalTag::Set);
     if (debug_flags() & DBG_BER_WRITE)
-        std::fprintf(stderr, "[BER-WRITE] %s SEQUENCE-OF %zu elements of %s\n",
-                     def.name, count, edef.name);
+        std::fprintf(stderr, "[BER-WRITE] %s %s %zu elements of %s\n",
+                     def.name, is_set_of ? "SET-OF" : "SEQUENCE-OF",
+                     count, edef.name);
     w.write_constructed(def.tag, [&](BerWriter& inner) {
+        if (is_set_of && count > 1) {
+            std::vector<std::vector<uint8_t>> bufs;
+            bufs.reserve(count);
+            for (std::size_t i = 0; i < count; ++i) {
+                const void* eptr = spec.get_const_fn(src, i);
+                std::vector<uint8_t> tmp;
+                BerWriter ew{tmp};
+                BerEncodeStream es{ew};
+                encode(es, edef, eptr);
+                bufs.push_back(std::move(tmp));
+            }
+            std::sort(bufs.begin(), bufs.end());
+            for (auto& b : bufs)
+                inner.append(b);
+            return;
+        }
         for (std::size_t i = 0; i < count; ++i) {
             const void* eptr = spec.get_const_fn(src, i);
             BerEncodeStream es{inner};
