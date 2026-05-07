@@ -10,6 +10,7 @@
 #include "../codec/BerWriter.hpp"
 #include "../codec/BerReader.hpp"
 #include "../codec/BerTraits.hpp"
+#include "../codec/PerConstraints.hpp"
 
 namespace asn1 {
 
@@ -44,6 +45,17 @@ public:
     int64_t value() const { return value_; }
     operator int64_t() const { return value_; }
     bool operator==(const Integer&) const = default;
+
+    // True if value_ satisfies the constraint advertised by `def`. EXTENSIBLE
+    // ranges are open (any value valid). Unconstrained types always pass.
+    bool validate(const PerConstraints& c) const {
+        if (c.flags & PerConstraints::EXTENSIBLE) return true;
+        if (c.flags & PerConstraints::CONSTRAINED)
+            return value_ >= c.lower_bound && value_ <= c.upper_bound;
+        if (c.flags & PerConstraints::SEMI_CONSTRAINED)
+            return value_ >= c.lower_bound;
+        return true;
+    }
 };
 
 // BerTraits for Integer and for long (plain integer fields)
