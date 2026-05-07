@@ -555,6 +555,9 @@ static void walk_type_constraints(const ast::TypeDef& def, F&& f) {
         if (cptr) walk_constraints(*cptr, f);
 }
 
+// Forward decl: definition below; needed by emit_member_type_descriptor.
+static std::optional<std::pair<int64_t,int64_t>> extract_size_range(const ast::TypeDef& def);
+
 // Extract integer value range from constraints, if determinable.
 std::optional<std::pair<int64_t,int64_t>>
 Generator::extract_integer_range(const ast::TypeDef& def) const {
@@ -614,43 +617,117 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
 // Inline-constrained member TypeDescriptor helpers
 // ---------------------------------------------------------------------------
 
-// If `m` is an inline INTEGER with a value-range constraint, emit a static
-// per-member TypeDescriptor (so RandomFiller and PerCodec can see the constraint)
-// and return its C++ reference expression.  Otherwise return type_descriptor_ref_for(m).
+// If `m` is an inline builtin (INTEGER with value range, or a SIZE-constrained
+// string/OctetString/BitString) emit a static per-member TypeDescriptor so
+// RandomFiller's validate() and PerCodec see the constraint. Otherwise return
+// type_descriptor_ref_for(m).
 std::string Generator::emit_member_type_descriptor(
     const ast::TypeDef& m, const std::string& parent_cname,
     const std::string& mname, std::ostream& os)
 {
     using BT = ast::BuiltinType;
-    if (auto* bt = std::get_if<BT>(&m.body)) {
-        if (*bt == BT::Integer && !m.constraints.empty()) {
-            auto range = extract_integer_range(m);
-            if (range) {
-                std::string tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
-                int64_t lo = range->first, hi = range->second;
-                bool ext = is_constraint_extensible(m);
-                std::string pc;
-                if (hi == std::numeric_limits<int64_t>::max()) {
-                    int flags = asn1::PerConstraints::SEMI_CONSTRAINED
-                              | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
-                    pc = std::format("{{ {}, -1, {}, 0 }}", flags, lo);
-                } else {
-                    int64_t rc = hi - lo + 1;
-                    int rb = 0;
-                    if (rc > 1) for (int64_t r = rc - 1; r > 0; r >>= 1) ++rb;
-                    int flags = asn1::PerConstraints::CONSTRAINED
-                              | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
-                    pc = std::format("{{ {}, {}, {}, {} }}", flags, rb, lo, hi);
-                }
-                os << std::format(
-                    "static const asn1::TypeDescriptor {} = "
-                    "{{ \"INTEGER\", asn1::Tag::universal({}, false), "
-                    "nullptr, nullptr, nullptr, nullptr, {} }};\n",
-                    tname, asn1::UniversalTag::Integer, pc);
-                return "&" + tname;
+    auto* bt = std::get_if<BT>(&m.body);
+    if (!bt || m.constraints.empty()) return type_descriptor_ref_for(m);
+
+    // INTEGER value range
+    if (*bt == BT::Integer) {
+        auto range = extract_integer_range(m);
+        if (range) {
+            std::string tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
+            int64_t lo = range->first, hi = range->second;
+            bool ext = is_constraint_extensible(m);
+            std::string pc;
+            if (hi == std::numeric_limits<int64_t>::max()) {
+                int flags = asn1::PerConstraints::SEMI_CONSTRAINED
+                          | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
+                pc = std::format("{{ {}, -1, {}, 0 }}", flags, lo);
+            } else {
+                int64_t rc = hi - lo + 1;
+                int rb = 0;
+                if (rc > 1) for (int64_t r = rc - 1; r > 0; r >>= 1) ++rb;
+                int flags = asn1::PerConstraints::CONSTRAINED
+                          | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
+                pc = std::format("{{ {}, {}, {}, {} }}", flags, rb, lo, hi);
             }
+            os << std::format(
+                "static const asn1::TypeDescriptor {} = "
+                "{{ \"INTEGER\", asn1::Tag::universal({}, false), "
+                "nullptr, nullptr, nullptr, nullptr, {} }};\n",
+                tname, asn1::UniversalTag::Integer, pc);
+            return "&" + tname;
         }
     }
+
+    // SIZE-able primitives: string family, OctetString, BitString.
+    auto sizeable_universal_tag = [&](BT t) -> std::optional<int> {
+        switch (t) {
+        case BT::OctetString:      return asn1::UniversalTag::OctetString;
+        case BT::BitString:        return asn1::UniversalTag::BitString;
+        case BT::Utf8String:       return asn1::UniversalTag::Utf8String;
+        case BT::NumericString:    return asn1::UniversalTag::NumericString;
+        case BT::PrintableString:  return asn1::UniversalTag::PrintableString;
+        case BT::T61String:        return asn1::UniversalTag::T61String;
+        case BT::Ia5String:        return asn1::UniversalTag::Ia5String;
+        case BT::VisibleString:    return asn1::UniversalTag::VisibleString;
+        case BT::GeneralString:    return asn1::UniversalTag::GeneralString;
+        case BT::GraphicString:    return asn1::UniversalTag::GraphicString;
+        case BT::UniversalString:  return asn1::UniversalTag::UniversalString;
+        case BT::BmpString:        return asn1::UniversalTag::BmpString;
+        case BT::VideotexString:   return asn1::UniversalTag::VideotexString;
+        case BT::ObjectDescriptor: return asn1::UniversalTag::ObjectDescriptor;
+        default:                   return std::nullopt;
+        }
+    };
+    auto utag = sizeable_universal_tag(*bt);
+    if (utag) {
+        auto sr = extract_size_range(m);
+        if (sr) {
+            int64_t slo = sr->first, sub = sr->second;
+            bool ext = is_constraint_extensible(m);
+            int flags = asn1::PerConstraints::SIZE_CONSTRAINED
+                      | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
+            int srb = 0;
+            if (sub != std::numeric_limits<int64_t>::max()) {
+                int64_t range = sub - slo + 1;
+                if (range > 1)
+                    for (int64_t r = range - 1; r > 0; r >>= 1) ++srb;
+            }
+            int64_t pc_sub = (sub == std::numeric_limits<int64_t>::max()) ? 0 : sub;
+            // PerConstraints aggregate: flags, range_bits, lower, upper,
+            // size_range_bits, size_lower, size_upper, alphabet_bits, alphabet
+            std::string pc = std::format(
+                "{{ {}, 0, 0, 0, {}, {}, {}, 0, {{}} }}",
+                flags, srb, slo, pc_sub);
+            // Use the matching asn_DEF_*'s public name as the XER tag name —
+            // BerCodec / XerCodec consult it for primitive type names.
+            const char* tn = nullptr;
+            switch (*bt) {
+            case BT::OctetString:      tn = "OCTET_STRING";       break;
+            case BT::BitString:        tn = "BIT_STRING";         break;
+            case BT::Utf8String:       tn = "UTF8String";         break;
+            case BT::NumericString:    tn = "NumericString";      break;
+            case BT::PrintableString:  tn = "PrintableString";    break;
+            case BT::T61String:        tn = "T61String";          break;
+            case BT::Ia5String:        tn = "IA5String";          break;
+            case BT::VisibleString:    tn = "VisibleString";      break;
+            case BT::GeneralString:    tn = "GeneralString";      break;
+            case BT::GraphicString:    tn = "GraphicString";      break;
+            case BT::UniversalString:  tn = "UniversalString";    break;
+            case BT::BmpString:        tn = "BMPString";          break;
+            case BT::VideotexString:   tn = "VideotexString";     break;
+            case BT::ObjectDescriptor: tn = "ObjectDescriptor";   break;
+            default: break;
+            }
+            std::string tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
+            os << std::format(
+                "static const asn1::TypeDescriptor {} = "
+                "{{ \"{}\", asn1::Tag::universal({}, false), "
+                "nullptr, nullptr, nullptr, nullptr, {} }};\n",
+                tname, tn, *utag, pc);
+            return "&" + tname;
+        }
+    }
+
     return type_descriptor_ref_for(m);
 }
 
