@@ -1,4 +1,5 @@
 #include <asn1cpp/codec/PerCodec.hpp>
+#include <asn1cpp/codec/Alphabets.hpp>
 
 namespace asn1 {
 
@@ -307,11 +308,9 @@ DecodeResult PerCodec::decode_octetstring(PerDecodeStream& s, const TypeDescript
 //   BmpString: char-count + raw UTF-16BE bytes (2 bytes/char)
 //   UniversalString: char-count + raw UTF-32BE bytes (4 bytes/char)
 
-constexpr const char PS_CHARSET[] =
-    " '()+,-./" "0123456789" ":=?"
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    "abcdefghijklmnopqrstuvwxyz";
-
+// PerCodec NumericString PER mapping uses the X.691-canonical "space=0,
+// digits=1..10" ordering rather than NUMERIC_STRING_ALPHABET's index, so
+// we keep the two helpers in algorithmic form.
 uint8_t PerCodec::encode_numeric_char(char c) {
     if (c == ' ') return 0;
     if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0' + 1);
@@ -324,12 +323,14 @@ char PerCodec::decode_numeric_char(uint8_t v) {
 }
 
 uint8_t PerCodec::encode_ps_char(char c) {
-    for (int i = 0; PS_CHARSET[i]; ++i)
-        if (PS_CHARSET[i] == c) return static_cast<uint8_t>(i);
+    auto a = PRINTABLE_STRING_ALPHABET;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (a[i] == c) return static_cast<uint8_t>(i);
     return 0;
 }
 char PerCodec::decode_ps_char(uint8_t v) {
-    return (v < 74) ? PS_CHARSET[v] : '?';
+    auto a = PRINTABLE_STRING_ALPHABET;
+    return (v < a.size()) ? a[v] : '?';
 }
 
 // Returns {bits_per_unit, bytes_per_char} where bytes_per_char>1 for BMP/Universal.

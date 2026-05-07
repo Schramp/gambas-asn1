@@ -1,4 +1,5 @@
 #include <asn1cpp/codec/RandomFiller.hpp>
+#include <asn1cpp/codec/Alphabets.hpp>
 #include <asn1cpp/Validate.hpp>
 #include <algorithm>
 #include <limits>
@@ -48,13 +49,15 @@ static std::pair<int,int> size_range(const PerConstraints& c,
 }
 
 std::string RandomFiller::random_printable(int len) {
-    static constexpr std::string_view chars =
-        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
-    std::uniform_int_distribution<int> pick{0, static_cast<int>(chars.size()) - 1};
+    return random_from_alphabet(DEFAULT_STRING_ALPHABET, len);
+}
+
+std::string RandomFiller::random_from_alphabet(std::string_view alpha, int len) {
+    std::uniform_int_distribution<int> pick{0, static_cast<int>(alpha.size()) - 1};
     std::string s;
     s.reserve(len);
     for (int i = 0; i < len; ++i)
-        s += chars[pick(rng_)];
+        s += alpha[pick(rng_)];
     return s;
 }
 
@@ -439,19 +442,26 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
     {
         const auto& c = def.per_constraints;
         auto [lo, hi] = size_range(c, cfg_.min_str_len, cfg_.max_str_len);
-        // If an alphabet constraint is present, pick chars from it.
-        std::string s;
         int len = rand_int(lo, hi);
+        // Alphabet precedence (single source: Alphabets.hpp):
+        //   1. FROM constraint (c.alphabet) — schema-explicit charset.
+        //   2. Type built-in (NumericString / PrintableString / Visible /
+        //      IA5) via builtin_alphabet(tag).
+        //   3. DEFAULT_STRING_ALPHABET — printable subset for unrestricted
+        //      types (Utf8 / BMP / General / Graphic / Videotex / ObjDesc).
+        std::string_view alpha;
+        std::string_view from_view;
         if (!c.alphabet.empty()) {
-            std::uniform_int_distribution<int> pick{
-                0, static_cast<int>(c.alphabet.size()) - 1};
-            s.reserve(len);
-            for (int i = 0; i < len; ++i)
-                s += static_cast<char>(c.alphabet[pick(rng_)]);
+            from_view = std::string_view(
+                reinterpret_cast<const char*>(c.alphabet.data()),
+                c.alphabet.size());
+            alpha = from_view;
+        } else if (auto a = builtin_alphabet(def.tag.number); !a.empty()) {
+            alpha = a;
         } else {
-            s = random_printable(len);
+            alpha = DEFAULT_STRING_ALPHABET;
         }
-        detail::asnstring_assign(obj, s);
+        detail::asnstring_assign(obj, random_from_alphabet(alpha, len));
         break;
     }
 

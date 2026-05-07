@@ -1,9 +1,11 @@
 #pragma once
 #include <string>
+#include <string_view>
 #include <format>
 #include "../Tag.hpp"
 #include "../codec/BerTraits.hpp"
 #include "../codec/PerConstraints.hpp"
+#include "../codec/Alphabets.hpp"
 
 namespace asn1 {
 
@@ -24,17 +26,30 @@ public:
 
     bool operator==(const AsnString&) const = default;
 
-    // SIZE(...) check. Alphabet (FROM "...") is step 4 — needs codegen
-    // support to carry the permitted-charset.
-    // Returns 0 when valid, otherwise signed delta (chars) such that
-    // (size + delta) lands at the nearest valid bound: positive = too short,
-    // negative = too long.
+    // SIZE + alphabet check. Returns 0 when valid.
+    // SIZE: signed delta (chars) such that (size + delta) lands at nearest
+    //       valid bound — positive = too short, negative = too long.
+    // Alphabet: returns 1 (sentinel; no meaningful distance metric) when any
+    //           byte is outside the permitted set. FROM constraint
+    //           (c.alphabet) takes precedence; otherwise built-in alphabet
+    //           per type tag (NumericString / PrintableString / VisibleString
+    //           / IA5String). Unrestricted types (Utf8/BMP/...) return 0.
     int64_t validate(const PerConstraints& c) const {
-        if (!(c.flags & PerConstraints::SIZE_CONSTRAINED)) return 0;
-        if (c.flags & PerConstraints::EXTENSIBLE) return 0;
-        auto n = static_cast<int64_t>(value_.size());
-        if (n < c.size_lower) return c.size_lower - n;
-        if (n > c.size_upper) return c.size_upper - n;
+        if ((c.flags & PerConstraints::SIZE_CONSTRAINED) &&
+            !(c.flags & PerConstraints::EXTENSIBLE)) {
+            auto n = static_cast<int64_t>(value_.size());
+            if (n < c.size_lower) return c.size_lower - n;
+            if (n > c.size_upper) return c.size_upper - n;
+        }
+        std::string_view alpha;
+        if (!c.alphabet.empty())
+            alpha = std::string_view(reinterpret_cast<const char*>(c.alphabet.data()),
+                                     c.alphabet.size());
+        else
+            alpha = builtin_alphabet(TagNumber);
+        if (!alpha.empty())
+            for (char ch : value_)
+                if (alpha.find(ch) == std::string_view::npos) return 1;
         return 0;
     }
 };

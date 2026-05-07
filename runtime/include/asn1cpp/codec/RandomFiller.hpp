@@ -1,5 +1,7 @@
 #pragma once
 #include <random>
+#include <string>
+#include <string_view>
 #include "../TypeDescriptor.hpp"
 
 namespace asn1 {
@@ -47,6 +49,7 @@ private:
     bool coin(double p);
     int  rand_int(int lo, int hi);   // inclusive
     std::string random_printable(int len);
+    std::string random_from_alphabet(std::string_view alpha, int len);
 
     std::mt19937& rng_;
     FillConfig    cfg_;
