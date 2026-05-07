@@ -228,13 +228,28 @@ public:
     }
 
     // Return the module name where `type_name` is defined as seen from `from_module`.
-    // Checks the calling module's own symbols first (so colliding names resolve
-    // to the locally-defined version within their own module).
+    // 1. Own module wins (locally-defined types shadow imports).
+    // 2. Otherwise resolve through the importing module's IMPORTS (module_resolution_),
+    //    so a name imported from one module isn't accidentally matched against a
+    //    same-named type defined in some unrelated module.
+    // 3. Last-resort: any module that defines the name (legacy fallback).
     std::string module_of(const std::string& type_name,
                           const std::string& from_module) const {
         auto own = module_symbols_.find(from_module);
         if (own != module_symbols_.end() && own->second.count(type_name))
             return from_module;
+        auto rit = module_resolution_.find(from_module);
+        if (rit != module_resolution_.end()) {
+            auto sit = rit->second.find(type_name);
+            if (sit != rit->second.end()) {
+                // Walk all module_symbols_ to find which module owns the resolved def.
+                for (const auto& [mod, syms] : module_symbols_) {
+                    auto symit = syms.find(type_name);
+                    if (symit != syms.end() && symit->second == sit->second)
+                        return mod;
+                }
+            }
+        }
         for (const auto& [mod, syms] : module_symbols_)
             if (syms.count(type_name)) return mod;
         return "";

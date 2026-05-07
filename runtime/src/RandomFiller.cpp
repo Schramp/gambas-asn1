@@ -144,11 +144,14 @@ void RandomFiller::fill_seq_of(void* obj, const SeqOfSpec& spec, int depth) {
     int lo = cfg_.min_seq_of;
     int hi = cfg_.max_seq_of;
 
-    // Respect SIZE constraints if present.
+    // Respect SIZE constraints if present. Clamp size_lower/upper like OctetString:
+    // ETSI uses ranges like (0..18446744073709551615) which store as signed int64
+    // upper = -1, breaking min/max math.
     const auto& sc = spec.size_constraints;
     if (sc.flags & PerConstraints::SIZE_CONSTRAINED) {
-        lo = std::max(lo, static_cast<int>(sc.size_lower));
-        hi = std::min(hi, static_cast<int>(sc.size_upper));
+        int64_t clo = sc.size_lower, chi = sc.size_upper;
+        if (clo >= 0 && clo <= 65536) lo = std::max(lo, static_cast<int>(clo));
+        if (chi >= lo && chi <= 65536) hi = std::min(hi, static_cast<int>(chi));
         if (lo > hi) lo = hi;
     }
 
@@ -157,6 +160,8 @@ void RandomFiller::fill_seq_of(void* obj, const SeqOfSpec& spec, int depth) {
     // SEQUENCE OFs multiply as max_seq^nesting_levels.
     int depth_hi = std::max(cfg_.min_seq_of, cfg_.max_seq_of >> (depth / 2));
     hi = std::min(hi, depth_hi);
+    // Re-clamp lo: SIZE_CONSTRAINED may have raised lo above the depth-reduced hi.
+    if (lo > hi) lo = hi;
 
     int n = rand_int(lo, hi);
     spec.resize_fn(obj, static_cast<std::size_t>(n));
