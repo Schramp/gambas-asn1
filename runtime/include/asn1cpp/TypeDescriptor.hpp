@@ -26,6 +26,17 @@ struct EnumSpec {
     // Nullptr for non-extensible types where count == root_count == entries count.
     int              root_count;       // number of root enumeration values
     const long*      per_value_order;  // [root_count] values in definition order
+
+    // Returns true if `v` is a known enumeration value. For extensible
+    // ENUMERATED any extension entry is also valid; if `v` is unknown the
+    // ext-marker rule (X.691) lets it through too — we treat unknown as
+    // invalid here so RandomFiller / encoder catches it.
+    bool validate(long v) const {
+        int n = (root_count > 0) ? count : count;
+        for (int i = 0; i < n; ++i)
+            if (entries[i].value == v) return true;
+        return false;
+    }
 };
 
 // Template that generates the three OptionalOps callbacks for a unique_ptr<T> member.
