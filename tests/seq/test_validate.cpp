@@ -238,6 +238,43 @@ int main() {
     { HasMidList h{}; h.v = {1,2,3,4,5,6,7,8};   expect_delta("size 8 (boundary) → pass", h, asn_DEF_HasMidList, 0); }
     { HasMidList h{}; h.v = {1,2,3,4,5,6,7,8,9}; expect_delta("size 9 (over)     → fail", h, asn_DEF_HasMidList, 1); }
 
+    // --- Decode-side validation (encode + decode round-trip) ----------------
+    // With ASN1CPP_VALIDATE_ON_DECODE enabled the decoder also runs validate()
+    // on the populated object. Roundtripping invalid data therefore fires the
+    // counter twice (once on encode, once on decode); valid data: zero.
+#if defined(ASN1CPP_VALIDATE_ON_DECODE)
+    std::printf("\n=== Decode-side validation ===\n");
+    auto roundtrip_delta = [](const auto& v, const TypeDescriptor& def) -> unsigned long long {
+        reset_validate_fail_count();
+        std::vector<uint8_t> buf;
+        { BerWriter w{buf}; BerEncodeStream es{w};
+          BerCodec::instance().encode(es, def, &v); }
+        std::remove_cvref_t<decltype(v)> out{};
+        { BerReader rd{std::span<const uint8_t>{buf.data(), buf.size()}};
+          BerDecodeStream ds{rd};
+          (void)BerCodec::instance().decode(ds, def, &out); }
+        return validate_fail_count();
+    };
+    auto expect_rt = [&](const char* label, const auto& v, const TypeDescriptor& def,
+                         unsigned long long expect) {
+        auto got = roundtrip_delta(v, def);
+        if (got != expect) {
+            std::printf("  \033[31mFAIL\033[0m  %s — expected %llu fails, got %llu\n",
+                        label, expect, got);
+            ++failures;
+        } else {
+            std::printf("  \033[32mPASS\033[0m  %s (%llu fail%s)\n",
+                        label, got, got == 1 ? "" : "s");
+        }
+    };
+    { HasPct h{}; h.v = 50;   expect_rt("PercentInt valid roundtrip   → 0",  h, asn_DEF_HasPct, 0); }
+    { HasPct h{}; h.v = 200;  expect_rt("PercentInt invalid roundtrip→ 2",  h, asn_DEF_HasPct, 2); }
+    { HasTariff h{}; h.v = 1500; expect_rt("Tariff valid roundtrip      → 0", h, asn_DEF_HasTariff, 0); }
+    { HasTariff h{}; h.v = 500;  expect_rt("Tariff invalid roundtrip    → 2", h, asn_DEF_HasTariff, 2); }
+    { HasTiny h{}; h.v = OctetString{std::vector<uint8_t>{1,2,3}}; expect_rt("TinyBlob valid (size 3) → 0", h, asn_DEF_HasTiny, 0); }
+    { HasTiny h{}; h.v = OctetString{std::vector<uint8_t>{1}};     expect_rt("TinyBlob invalid (size 1)→ 2", h, asn_DEF_HasTiny, 2); }
+#endif
+
     std::printf("\n=== %d failure(s) ===\n", failures);
     return failures ? 1 : 0;
 }

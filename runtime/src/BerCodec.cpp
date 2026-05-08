@@ -87,23 +87,44 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
                               void* dest) const
 {
     auto& s = static_cast<BerDecodeStream&>(src);
-    if (def.is_any)        return decode_any        (s.reader(), dest);
-    if (def.enum_spec)     return decode_enumerated(s.reader(), def, dest);
-    if (def.sequence_spec) return decode_sequence   (s.reader(), def, dest);
-    if (def.choice_spec)   return decode_choice     (s.reader(), def, dest);
-    if (def.seq_of_spec)   return decode_seq_of     (s.reader(), def, dest);
-    if (is_boolean_tag(def.tag))  return decode_boolean (s.reader(), dest);
-    if (is_integer_tag(def.tag)) return decode_integer(s.reader(), def, dest);
-    if (is_null_tag(def.tag))    return decode_null  (s.reader(), def, dest);
-    if (is_real_tag(def.tag))       return decode_real     (s.reader(), dest);
-    if (is_bitstring_tag(def.tag))    return decode_bitstring   (s.reader(), dest);
-    if (is_oid_tag(def.tag))          return decode_oid         (s.reader(), dest);
-    if (is_relative_oid_tag(def.tag))     return decode_relative_oid    (s.reader(), dest);
-    if (is_utctime_tag(def.tag))           return decode_utctime         (s.reader(), dest);
-    if (is_generalizedtime_tag(def.tag))   return decode_generalizedtime (s.reader(), dest);
-    if (is_octetstring_tag(def.tag))        return decode_octetstring(s.reader(), dest);
-    if (is_primitive_string_tag(def.tag))  return decode_asnstring  (s.reader(), def.tag, dest);
-    return decode_err(DecodeError(std::string("BerCodec: no spec for type ") + def.name));
+    DecodeResult res = decode_ok();
+    if (def.is_any)                          res = decode_any            (s.reader(), dest);
+    else if (def.enum_spec)                  res = decode_enumerated     (s.reader(), def, dest);
+    else if (def.sequence_spec)              res = decode_sequence       (s.reader(), def, dest);
+    else if (def.choice_spec)                res = decode_choice         (s.reader(), def, dest);
+    else if (def.seq_of_spec)                res = decode_seq_of         (s.reader(), def, dest);
+    else if (is_boolean_tag(def.tag))        res = decode_boolean        (s.reader(), dest);
+    else if (is_integer_tag(def.tag))        res = decode_integer        (s.reader(), def, dest);
+    else if (is_null_tag(def.tag))           res = decode_null           (s.reader(), def, dest);
+    else if (is_real_tag(def.tag))           res = decode_real           (s.reader(), dest);
+    else if (is_bitstring_tag(def.tag))      res = decode_bitstring      (s.reader(), dest);
+    else if (is_oid_tag(def.tag))            res = decode_oid            (s.reader(), dest);
+    else if (is_relative_oid_tag(def.tag))   res = decode_relative_oid   (s.reader(), dest);
+    else if (is_utctime_tag(def.tag))        res = decode_utctime        (s.reader(), dest);
+    else if (is_generalizedtime_tag(def.tag))res = decode_generalizedtime(s.reader(), dest);
+    else if (is_octetstring_tag(def.tag))    res = decode_octetstring    (s.reader(), dest);
+    else if (is_primitive_string_tag(def.tag)) res = decode_asnstring    (s.reader(), def.tag, dest);
+    else return decode_err(DecodeError(std::string("BerCodec: no spec for type ") + def.name));
+
+#if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_DECODE)
+    // Per-primitive constraint check on decoded object.
+    // Same Postel default as encode path: counter + optional log; never rejects.
+    // Composite types recurse via member decode calls.
+    if (res.has_value() && !def.is_any && !(debug_flags() & DBG_NO_VALIDATE)) {
+        int64_t delta = validate(def, dest);
+        if (delta != 0) {
+            bump_validate_fail();
+            if (debug_flags() & DBG_BER_WRITE) {
+                std::fprintf(stderr,
+                    "[BER-READ] VALIDATE FAIL %s tag=%s%u delta=%lld\n",
+                    def.name,
+                    tag_cls_char(def.tag.cls), def.tag.number,
+                    static_cast<long long>(delta));
+            }
+        }
+    }
+#endif
+    return res;
 }
 
 bool BerCodec::is_boolean_tag(const Tag& t) {
