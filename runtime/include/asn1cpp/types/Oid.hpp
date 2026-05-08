@@ -14,6 +14,8 @@ public:
     Oid() = default;
     explicit Oid(std::vector<uint32_t> a) : arcs_(std::move(a)) {}
 
+    void set(std::vector<uint32_t> a) { arcs_ = std::move(a); }
+
     const std::vector<uint32_t>& arcs() const { return arcs_; }
     std::size_t size()                  const { return arcs_.size(); }
 
@@ -34,6 +36,7 @@ class RelativeOid {
 public:
     RelativeOid() = default;
     explicit RelativeOid(std::vector<uint32_t> a) : arcs_(std::move(a)) {}
+    void set(std::vector<uint32_t> a) { arcs_ = std::move(a); }
     const std::vector<uint32_t>& arcs() const { return arcs_; }
     bool operator==(const RelativeOid&) const = default;
 };

@@ -14,6 +14,7 @@ class UtcTime {
 public:
     UtcTime() = default;
     explicit UtcTime(std::string s) : value_(std::move(s)) {}
+    void set(std::string s) { value_ = std::move(s); }
     const std::string& str() const { return value_; }
     bool operator==(const UtcTime&) const = default;
 };
@@ -23,6 +24,7 @@ class GeneralizedTime {
 public:
     GeneralizedTime() = default;
     explicit GeneralizedTime(std::string s) : value_(std::move(s)) {}
+    void set(std::string s) { value_ = std::move(s); }
     const std::string& str() const { return value_; }
     bool operator==(const GeneralizedTime&) const = default;
 };

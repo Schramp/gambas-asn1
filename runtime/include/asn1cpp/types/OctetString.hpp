@@ -16,6 +16,10 @@ public:
     OctetString(std::span<const uint8_t> b) : bytes_(b.begin(), b.end()) {}
     OctetString(const uint8_t* p, std::size_t n) : bytes_(p, p + n) {}
 
+    void set(std::vector<uint8_t> b)        { bytes_ = std::move(b); }
+    void set(std::span<const uint8_t> b)    { bytes_.assign(b.begin(), b.end()); }
+    void set(const uint8_t* p, std::size_t n) { bytes_.assign(p, p + n); }
+
     std::span<const uint8_t> bytes() const { return bytes_; }
     std::size_t size()              const { return bytes_.size(); }
     bool empty()                    const { return bytes_.empty(); }

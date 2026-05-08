@@ -11,6 +11,7 @@ public:
     Boolean() = default;
     explicit Boolean(bool v) : value_(v) {}
     bool value() const { return value_; }
+    void set(bool v) { value_ = v; }
     operator bool() const { return value_; }
     bool operator==(const Boolean&) const = default;
 };

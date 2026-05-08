@@ -16,6 +16,7 @@ public:
     Real() = default;
     explicit Real(double v) : value_(v) {}
     double value() const { return value_; }
+    void   set(double v)   { value_ = v; }
     operator double() const { return value_; }
     bool operator==(const Real&) const = default;
 };

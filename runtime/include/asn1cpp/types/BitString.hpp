@@ -20,6 +20,12 @@ public:
         if (unused > 7) throw std::invalid_argument("unused_bits must be 0-7");
     }
 
+    void set(std::vector<uint8_t> b, uint8_t unused = 0) {
+        if (unused > 7) throw std::invalid_argument("unused_bits must be 0-7");
+        bytes_ = std::move(b);
+        unused_bits_ = unused;
+    }
+
     std::span<const uint8_t> bytes() const { return bytes_; }
     uint8_t unused_bits()            const { return unused_bits_; }
     std::size_t bit_count()          const {

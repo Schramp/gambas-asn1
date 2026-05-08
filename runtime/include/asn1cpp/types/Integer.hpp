@@ -43,6 +43,7 @@ public:
     Integer() = default;
     explicit Integer(int64_t v) : value_(v) {}
     int64_t value() const { return value_; }
+    void    set(int64_t v) { value_ = v; }
     operator int64_t() const { return value_; }
     bool operator==(const Integer&) const = default;
 
