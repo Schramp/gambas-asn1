@@ -407,3 +407,35 @@ if(ASN1CPP_VALIDATE AND ASN1CPP_VALIDATE_ON_ENCODE)
     target_link_libraries(test_validate PRIVATE asn1cpp_runtime)
     add_test(NAME validate_hooks COMMAND test_validate)
 endif()
+
+# ---- BER fuzz (in-tree) ---------------------------------------------------
+# Wire-level corruption sweep using BerCorruptor against the asn1cpp BER
+# decoder. Self-contained — no asn1c dependency, no etsitools/ binaries.
+set(FUZZ_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_fuzz_test)
+set(FUZZ_TYPES Inner Pick Bag BagItems)
+set(_fuzz_outputs)
+foreach(t IN LISTS FUZZ_TYPES)
+    list(APPEND _fuzz_outputs
+        ${FUZZ_GEN_DIR}/${t}.hpp
+        ${FUZZ_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_fuzz_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${FUZZ_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/fuzz_test.asn1
+                                   -o ${FUZZ_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/fuzz_test.asn1
+    COMMENT "Generating C++ from fuzz_test.asn1"
+)
+set(_fuzz_cpps)
+foreach(t IN LISTS FUZZ_TYPES)
+    list(APPEND _fuzz_cpps ${FUZZ_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_fuzz_ber
+    seq/test_fuzz_ber.cpp
+    ${_fuzz_cpps}
+)
+target_include_directories(test_fuzz_ber PRIVATE ${FUZZ_GEN_DIR})
+target_link_libraries(test_fuzz_ber PRIVATE asn1cpp_runtime)
+add_test(NAME fuzz_ber COMMAND test_fuzz_ber)
+set_tests_properties(fuzz_ber PROPERTIES TIMEOUT 60)

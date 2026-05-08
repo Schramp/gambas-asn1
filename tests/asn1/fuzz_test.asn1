@@ -1,0 +1,30 @@
+-- Schema for the in-tree BER fuzz test (tests/seq/test_fuzz_ber.cpp).
+-- Covers SEQUENCE / SEQUENCE OF / CHOICE / mandatory-only fields,
+-- INTEGER + OCTET/BIT STRING + IA5/Printable string with SIZE constraints.
+-- NOTE: `pick` is mandatory (not OPTIONAL) — optional-CHOICE round-trip
+-- has a separate latent bug (decoder's tag-based lookahead does not enumerate
+-- CHOICE alternative tags). Tracked separately; not in scope for fuzz coverage.
+FuzzTest DEFINITIONS ::= BEGIN
+
+  Inner ::= SEQUENCE {
+    n      INTEGER (0..1000),
+    s      OCTET STRING (SIZE(0..32)),
+    txt    IA5String (SIZE(0..16)) OPTIONAL,
+    flag   BOOLEAN
+  }
+
+  Pick ::= CHOICE {
+    a   [0] INTEGER (0..15),
+    b   [1] OCTET STRING (SIZE(1..16)),
+    c   [2] BOOLEAN,
+    d   [3] PrintableString (SIZE(1..12))
+  }
+
+  Bag ::= SEQUENCE {
+    label  PrintableString (SIZE(1..16)),
+    items  SEQUENCE (SIZE(0..6)) OF Inner,
+    pick   Pick,
+    flags  BIT STRING (SIZE(8))
+  }
+
+END
