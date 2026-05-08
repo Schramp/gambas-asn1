@@ -107,6 +107,81 @@ inline std::string_view read_text_content(XerDecodeStream& s) {
     return text;
 }
 
+// XER text content escapes — only the three required by XML 1.0 §2.4 in
+// element content (`<`, `>`, `&`) plus the two attribute-only entities
+// (`"`, `'`) for symmetry on decode. Codec emits the three; decoder
+// resolves all five named entities plus numeric `&#NN;` / `&#xNN;`.
+inline std::string xer_escape(std::string_view sv) {
+    std::string out;
+    out.reserve(sv.size());
+    for (char c : sv) {
+        switch (c) {
+        case '<': out += "&lt;";   break;
+        case '>': out += "&gt;";   break;
+        case '&': out += "&amp;";  break;
+        default:  out += c;        break;
+        }
+    }
+    return out;
+}
+
+inline std::string xer_unescape(std::string_view sv) {
+    std::string out;
+    out.reserve(sv.size());
+    for (std::size_t i = 0; i < sv.size(); ) {
+        if (sv[i] != '&') { out += sv[i++]; continue; }
+        // find ';' within a small window
+        std::size_t end = i + 1;
+        while (end < sv.size() && end - i < 12 && sv[end] != ';') ++end;
+        if (end >= sv.size() || sv[end] != ';') { out += sv[i++]; continue; }
+        std::string_view ent = sv.substr(i + 1, end - i - 1);
+        bool ok = true;
+        if      (ent == "lt")    out += '<';
+        else if (ent == "gt")    out += '>';
+        else if (ent == "amp")   out += '&';
+        else if (ent == "quot")  out += '"';
+        else if (ent == "apos")  out += '\'';
+        else if (!ent.empty() && ent.front() == '#') {
+            // numeric character reference: emit as UTF-8
+            uint32_t cp = 0;
+            std::string_view num = ent.substr(1);
+            int base = 10;
+            if (!num.empty() && (num.front() == 'x' || num.front() == 'X')) {
+                base = 16; num.remove_prefix(1);
+            }
+            for (char c : num) {
+                int d;
+                if      (c >= '0' && c <= '9') d = c - '0';
+                else if (base == 16 && c >= 'a' && c <= 'f') d = 10 + c - 'a';
+                else if (base == 16 && c >= 'A' && c <= 'F') d = 10 + c - 'A';
+                else { ok = false; break; }
+                cp = cp * base + d;
+            }
+            if (ok) {
+                if (cp < 0x80)  out += (char)cp;
+                else if (cp < 0x800) {
+                    out += (char)(0xC0 | (cp >> 6));
+                    out += (char)(0x80 | (cp & 0x3F));
+                } else if (cp < 0x10000) {
+                    out += (char)(0xE0 | (cp >> 12));
+                    out += (char)(0x80 | ((cp >> 6) & 0x3F));
+                    out += (char)(0x80 | (cp & 0x3F));
+                } else {
+                    out += (char)(0xF0 | ((cp >> 18) & 0x07));
+                    out += (char)(0x80 | ((cp >> 12) & 0x3F));
+                    out += (char)(0x80 | ((cp >> 6) & 0x3F));
+                    out += (char)(0x80 | (cp & 0x3F));
+                }
+            }
+        } else {
+            ok = false;
+        }
+        if (ok) i = end + 1;
+        else    { out += sv[i++]; }   // unknown entity: keep '&' literal, retry next char
+    }
+    return out;
+}
+
 inline DecodeResult consume_open_tag(XerDecodeStream& s, std::string_view name) {
     auto ti = consume_tag(s);
     if (ti.name != name || ti.closing || ti.self_closing)
@@ -165,9 +240,12 @@ private:
     template<typename F>
     DecodeResult decode_simple_text_element(XerDecodeStream& s, const char* name, F&& fn) const {
         if (auto r = xer_detail::consume_open_tag(s, name); !r) return r;
-        auto text = xer_detail::read_text_content(s);
+        auto raw = xer_detail::read_text_content(s);
         if (auto r = xer_detail::consume_close_tag(s, name); !r) return r;
-        return fn(text);
+        // Resolve XML entities. Only allocates when an '&' is present;
+        // otherwise xer_unescape returns the same content verbatim.
+        std::string unescaped = xer_detail::xer_unescape(raw);
+        return fn(std::string_view{unescaped});
     }
 
     template<typename T>
@@ -233,23 +311,29 @@ private:
     }
 
     static void encode_text_element(XerEncodeStream& s, const TypeDescriptor& def, const void* src) {
-        s.os() << '<' << def.name << '>' << detail::asnstring_view(src) << "</" << def.name << ">\n";
+        s.os() << '<' << def.name << '>'
+               << xer_detail::xer_escape(detail::asnstring_view(src))
+               << "</" << def.name << ">\n";
     }
 
     template<int stride>
     void encode_wide_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const {
         static_assert(stride == 2 || stride == 4);
         std::string_view sv = detail::asnstring_view(src);
-        s.os() << '<' << def.name << '>';
+        // Encode to UTF-8 in a buffer, then XML-escape — code points 0x3C /
+        // 0x3E / 0x26 emit as bare ASCII bytes that need entities.
+        std::ostringstream utf8;
         for (std::size_t i = 0; i + stride <= sv.size(); i += stride) {
             uint32_t cp;
             if constexpr (stride == 2)
                 cp = ((uint8_t)sv[i] << 8) | (uint8_t)sv[i+1];
             else
                 cp = ((uint8_t)sv[i] << 24) | ((uint8_t)sv[i+1] << 16) | ((uint8_t)sv[i+2] << 8) | (uint8_t)sv[i+3];
-            utf8_encode_cp(s.os(), cp);
+            utf8_encode_cp(utf8, cp);
         }
-        s.os() << "</" << def.name << ">\n";
+        s.os() << '<' << def.name << '>'
+               << xer_detail::xer_escape(utf8.str())
+               << "</" << def.name << ">\n";
     }
 
     template<typename T>

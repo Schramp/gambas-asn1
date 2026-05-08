@@ -27,21 +27,16 @@ inline constexpr std::string_view PRINTABLE_STRING_ALPHABET =
 inline constexpr std::string_view NUMERIC_STRING_ALPHABET =
     "0123456789 ";
 
-// VisibleString / IA5String safe randgen subset.
-// Full type permits 0x20..0x7E (VisibleString) / 0x00..0x7F (IA5String), but
-// XER serialisation needs character escaping for `< > & " '` and we don't yet
-// emit/parse XML entities round-trip-cleanly. Until XerCodec gains entity
-// escape, randgen sticks to PrintableString-safe subset (no XML specials);
-// validate() also accepts only this subset for those tags so generated
-// content roundtrips.
-//
-// TODO(XER-entity-escape): XerCodec must emit `&lt; &gt; &amp; &quot; &apos;`
-// when encoding string content and resolve them on decode. After that lands,
-// expand this alphabet back to full 0x20..0x7E and update validate() to
-// match.
+// VisibleString / IA5String alphabet — full 0x20..0x7E (VisibleString range).
+// IA5String permits 0x00..0x7F but randgen sticks to printable subset since
+// control chars round-trip-trip differently in XER. XerCodec now escapes
+// `< > &` on encode and resolves named + numeric entities on decode, so the
+// XML specials are safe in randomly generated content.
 inline constexpr std::string_view VISIBLE_STRING_ALPHABET =
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    "0123456789 ()+,-./:=?";
+    " !\"#$%&'()*+,-./"
+    "0123456789:;<=>?@"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`"
+    "abcdefghijklmnopqrstuvwxyz{|}~";
 
 // Default alphabet for unrestricted string types (Utf8/BMP/General/...) when
 // neither a FROM constraint nor a per-type built-in alphabet applies. Used by
