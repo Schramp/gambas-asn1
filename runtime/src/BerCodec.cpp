@@ -11,6 +11,10 @@
 #include <asn1cpp/types/Oid.hpp>
 #include <asn1cpp/types/Time.hpp>
 #include <asn1cpp/types/Strings.hpp>
+#ifdef ASN1CPP_VALIDATE
+#include <asn1cpp/Validate.hpp>
+#include <asn1cpp/codec/Validation.hpp>
+#endif
 
 namespace asn1 {
 
@@ -39,6 +43,26 @@ void BerCodec::encode(IEncodeStream& dst,
                       const TypeDescriptor& def,
                       const void* src) const
 {
+#if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_ENCODE)
+    // Per-primitive constraint check on caller-supplied object.
+    // Warn-only (Postel default): bump counter + optionally log.
+    // Composite types (SEQUENCE/SET/CHOICE) return 0 here; recursion validates members.
+    // Runtime kill-switch: ASN1CPP_DEBUG=0x20 (DBG_NO_VALIDATE) suppresses calls
+    // even when compile-time enabled — used to generate intentionally invalid output.
+    if (!def.is_any && !(debug_flags() & DBG_NO_VALIDATE)) {
+        int64_t delta = validate(def, src);
+        if (delta != 0) {
+            bump_validate_fail();
+            if (debug_flags() & DBG_BER_WRITE) {
+                std::fprintf(stderr,
+                    "[BER-WRITE] VALIDATE FAIL %s tag=%s%u delta=%lld\n",
+                    def.name,
+                    tag_cls_char(def.tag.cls), def.tag.number,
+                    static_cast<long long>(delta));
+            }
+        }
+    }
+#endif
     auto& s = static_cast<BerEncodeStream&>(dst);
     if (def.is_any)        { encode_any        (s.writer(), src);       return; }
     if (def.enum_spec)     { encode_enumerated(s.writer(), def, src); return; }

@@ -366,3 +366,44 @@ add_test(
 set_tests_properties(parser_conformance PROPERTIES
     TIMEOUT 120
 )
+
+# ---- Validation hook coverage ---------------------------------------------
+# Built only when validation infrastructure is enabled at compile time.
+if(ASN1CPP_VALIDATE AND ASN1CPP_VALIDATE_ON_ENCODE)
+    set(VALIDATE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_validate_test)
+    set(VALIDATE_TYPES
+        Code Color FixedBlob FlagsByte FlagsRange
+        HexDigit MidBlob MidList Name NegRange
+        PercentInt PositiveInt ShortList SignedSmall Tariff
+        TinyBlob Token Visi Vowels WideUnsigned YesNo
+        HasCode HasColor HasFixed HasFlagsByte HasFlagsRange
+        HasHex HasMid HasMidList HasName HasNeg
+        HasPct HasPos HasShortList HasSigned HasTariff
+        HasTiny HasToken HasVisi HasVowels HasWide HasYesNo
+    )
+    set(_validate_outputs)
+    foreach(t IN LISTS VALIDATE_TYPES)
+        list(APPEND _validate_outputs
+            ${VALIDATE_GEN_DIR}/${t}.hpp
+            ${VALIDATE_GEN_DIR}/${t}.cpp)
+    endforeach()
+    add_custom_command(
+        OUTPUT  ${_validate_outputs}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${VALIDATE_GEN_DIR}
+        COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/validate_test.asn1
+                                       -o ${VALIDATE_GEN_DIR}
+        DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/validate_test.asn1
+        COMMENT "Generating C++ from validate_test.asn1"
+    )
+    set(_validate_cpps)
+    foreach(t IN LISTS VALIDATE_TYPES)
+        list(APPEND _validate_cpps ${VALIDATE_GEN_DIR}/${t}.cpp)
+    endforeach()
+    add_executable(test_validate
+        seq/test_validate.cpp
+        ${_validate_cpps}
+    )
+    target_include_directories(test_validate PRIVATE ${VALIDATE_GEN_DIR})
+    target_link_libraries(test_validate PRIVATE asn1cpp_runtime)
+    add_test(NAME validate_hooks COMMAND test_validate)
+endif()

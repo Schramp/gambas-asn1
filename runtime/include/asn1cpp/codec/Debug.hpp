@@ -11,6 +11,7 @@ enum DebugFlag : unsigned {
     DBG_XER        = 1u << 2,   // XER parse / emit
     DBG_PER        = 1u << 3,   // PER bit-level ops
     DBG_BER_WRITE  = 1u << 4,   // BER encode: each member/alt written — name, tag, explicit/implicit, byte count
+    DBG_NO_VALIDATE = 1u << 5,  // Suppress validate() at runtime even if ASN1CPP_VALIDATE=1 (lets caller generate intentionally invalid ASN.1)
 };
 
 inline unsigned debug_flags() {
