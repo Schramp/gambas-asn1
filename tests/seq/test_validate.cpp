@@ -275,6 +275,60 @@ int main() {
     { HasTiny h{}; h.v = OctetString{std::vector<uint8_t>{1}};     expect_rt("TinyBlob invalid (size 1)→ 2", h, asn_DEF_HasTiny, 2); }
 #endif
 
+    // --- ValidationPolicy + encode/decode_validated wrappers ----------------
+    // Lenient (default) = current Postel behaviour; Strict = surface validate
+    // failures as hard DecodeError on the decode path. encode_validated returns
+    // bool indicating whether any failures fired during encode.
+    std::printf("\n=== ValidationPolicy wrappers ===\n");
+    {
+        // Encode wrapper, valid value → returns true.
+        HasPct h{}; h.v = 50;
+        std::vector<uint8_t> buf; BerWriter w{buf}; BerEncodeStream es{w};
+        reset_validate_fail_count();
+        bool ok = encode_validated(BerCodec::instance(), es, asn_DEF_HasPct, &h);
+        if (ok) std::printf("  \033[32mPASS\033[0m  encode_validated valid → true\n");
+        else { std::printf("  \033[31mFAIL\033[0m  encode_validated valid → false\n"); ++failures; }
+    }
+    {
+        // Encode wrapper, invalid value → returns false.
+        HasPct h{}; h.v = 200;
+        std::vector<uint8_t> buf; BerWriter w{buf}; BerEncodeStream es{w};
+        reset_validate_fail_count();
+        bool ok = encode_validated(BerCodec::instance(), es, asn_DEF_HasPct, &h);
+        if (!ok) std::printf("  \033[32mPASS\033[0m  encode_validated invalid → false\n");
+        else { std::printf("  \033[31mFAIL\033[0m  encode_validated invalid → true\n"); ++failures; }
+    }
+#if defined(ASN1CPP_VALIDATE_ON_DECODE)
+    {
+        // Strict decode of invalid bytes returns DecodeError.
+        HasPct h{}; h.v = 200;
+        std::vector<uint8_t> buf; { BerWriter w{buf}; BerEncodeStream es{w};
+            BerCodec::instance().encode(es, asn_DEF_HasPct, &h); }
+        HasPct out{};
+        BerReader rd{std::span<const uint8_t>{buf.data(), buf.size()}};
+        BerDecodeStream ds{rd};
+        reset_validate_fail_count();
+        auto res = decode_validated(BerCodec::instance(), ds, asn_DEF_HasPct, &out,
+                                    ValidationPolicy::Strict);
+        if (!res) std::printf("  \033[32mPASS\033[0m  Strict decode invalid → DecodeError\n");
+        else { std::printf("  \033[31mFAIL\033[0m  Strict decode invalid → ok\n"); ++failures; }
+    }
+    {
+        // Lenient decode of invalid bytes succeeds (counter still bumps).
+        HasPct h{}; h.v = 200;
+        std::vector<uint8_t> buf; { BerWriter w{buf}; BerEncodeStream es{w};
+            BerCodec::instance().encode(es, asn_DEF_HasPct, &h); }
+        HasPct out{};
+        BerReader rd{std::span<const uint8_t>{buf.data(), buf.size()}};
+        BerDecodeStream ds{rd};
+        reset_validate_fail_count();
+        auto res = decode_validated(BerCodec::instance(), ds, asn_DEF_HasPct, &out,
+                                    ValidationPolicy::Lenient);
+        if (res) std::printf("  \033[32mPASS\033[0m  Lenient decode invalid → ok (counter bumped)\n");
+        else { std::printf("  \033[31mFAIL\033[0m  Lenient decode invalid → DecodeError\n"); ++failures; }
+    }
+#endif
+
     std::printf("\n=== %d failure(s) ===\n", failures);
     return failures ? 1 : 0;
 }

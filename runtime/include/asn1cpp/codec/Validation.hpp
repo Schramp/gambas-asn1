@@ -18,6 +18,7 @@
 // scraping stderr.
 
 #include <atomic>
+#include "ICodec.hpp"
 
 namespace asn1 {
 
@@ -36,6 +37,47 @@ inline void reset_validate_fail_count() {
 }
 inline void bump_validate_fail() {
     detail::validate_fail_counter().fetch_add(1, std::memory_order_relaxed);
+}
+
+// Caller-selectable validation policy for the encode_validated / decode_validated
+// helpers below. Lenient = bump counter only (current Postel default); Strict =
+// also surface a hard failure to the caller.
+enum class ValidationPolicy { Lenient, Strict };
+
+// Encode wrapper that reports whether any validate-fail occurred during this
+// encode. When ASN1CPP_VALIDATE is OFF, always returns true. Strict policy is
+// not meaningful for encode (output bytes are already written by the time we
+// know); the bool is the API. Caller may treat false as a hard error.
+inline bool encode_validated(const ICodec& codec, IEncodeStream& dst,
+                             const TypeDescriptor& def, const void* src) {
+#if defined(ASN1CPP_VALIDATE)
+    auto before = validate_fail_count();
+    codec.encode(dst, def, src);
+    return validate_fail_count() == before;
+#else
+    codec.encode(dst, def, src);
+    return true;
+#endif
+}
+
+// Decode wrapper. In Strict mode, any validate-fail observed during decode
+// (counted via the global counter) is converted into a DecodeError; the
+// caller-side dest object remains populated but the result reports failure.
+// Lenient mode is identical to calling codec.decode() directly.
+inline DecodeResult decode_validated(const ICodec& codec, IDecodeStream& src,
+                                     const TypeDescriptor& def, void* dest,
+                                     ValidationPolicy policy = ValidationPolicy::Lenient) {
+#if defined(ASN1CPP_VALIDATE)
+    auto before = validate_fail_count();
+    auto res = codec.decode(src, def, dest);
+    if (!res) return res;
+    if (policy == ValidationPolicy::Strict && validate_fail_count() != before)
+        return decode_err(DecodeError("validation failure"));
+    return res;
+#else
+    (void)policy;
+    return codec.decode(src, def, dest);
+#endif
 }
 
 } // namespace asn1
