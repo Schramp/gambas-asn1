@@ -77,7 +77,7 @@ bool RandomFiller::fill(void* obj, const TypeDescriptor& def, int depth, bool ma
         int64_t v = std::uniform_int_distribution<int64_t>{-127, 127}(rng_);
         Integer iv{v};
         BerTraits<Integer>::encode(w, iv);
-        new (obj) OctetString{std::move(buf)};
+        static_cast<OctetString*>(obj)->set(std::move(buf));
         return true;
     }
     if (def.enum_spec)     { fill_enum(obj, *def.enum_spec); return true; }
@@ -109,7 +109,7 @@ static bool resize_in_place(void* obj, const TypeDescriptor& def,
     case UniversalTag::OctetString: {
         std::vector<uint8_t> v(len);
         for (auto& b : v) b = rand_byte();
-        *static_cast<OctetString*>(obj) = OctetString{std::move(v)};
+        static_cast<OctetString*>(obj)->set(std::move(v));
         return true;
     }
     case UniversalTag::BitString: {
@@ -120,7 +120,7 @@ static bool resize_in_place(void* obj, const TypeDescriptor& def,
             ? static_cast<uint8_t>(bytes * 8 - len) : 0;
         if (!v.empty() && unused > 0)
             v.back() &= static_cast<uint8_t>(0xFF << unused);
-        *static_cast<BitString*>(obj) = BitString{std::move(v), unused};
+        static_cast<BitString*>(obj)->set(std::move(v), unused);
         return true;
     }
     case UniversalTag::Utf8String:
@@ -146,7 +146,133 @@ static bool resize_in_place(void* obj, const TypeDescriptor& def,
     }
 }
 
+// Sample a primitive from a *widened* version of its constraint envelope so
+// the resulting value lands out-of-spec a fair fraction of the time, but
+// occasionally still in-spec. Mirrors fill_primitive's structure with each
+// per-type sampling range expanded by a constraint-relative margin.
+//
+// Returns true if widening was applicable (caller skips validation/retry);
+// false for primitives without a checkable constraint (caller falls through
+// to the strict in-spec path).
+static bool fill_primitive_loose(void* obj, const TypeDescriptor& def,
+                                 std::mt19937& rng) {
+    if (def.tag.cls != TagClass::Universal) return false;
+    const auto& c = def.per_constraints;
+    auto rand_byte = [&]{ return static_cast<uint8_t>(
+        std::uniform_int_distribution<int>{0, 255}(rng)); };
+
+    switch (def.tag.number) {
+    case UniversalTag::Integer: {
+        int64_t lo, hi;
+        if (c.flags & PerConstraints::CONSTRAINED) {
+            int64_t span = c.upper_bound - c.lower_bound;
+            int64_t margin = std::max<int64_t>(2, span / 4 + 5);
+            lo = (c.lower_bound > std::numeric_limits<int64_t>::min() + margin)
+                     ? c.lower_bound - margin : c.lower_bound;
+            hi = (c.upper_bound < std::numeric_limits<int64_t>::max() - margin)
+                     ? c.upper_bound + margin : c.upper_bound;
+        } else if (c.flags & PerConstraints::SEMI_CONSTRAINED) {
+            lo = (c.lower_bound > std::numeric_limits<int64_t>::min() + 100)
+                     ? c.lower_bound - 100 : c.lower_bound;
+            hi = lo + 2000;
+        } else {
+            return false;
+        }
+        if (lo > hi) std::swap(lo, hi);
+        int64_t v = std::uniform_int_distribution<int64_t>{lo, hi}(rng);
+        static_cast<Integer*>(obj)->set(v);
+        return true;
+    }
+    case UniversalTag::OctetString: {
+        if (!(c.flags & PerConstraints::SIZE_CONSTRAINED)) return false;
+        int64_t span = c.size_upper - c.size_lower;
+        int64_t margin = std::max<int64_t>(2, span / 4 + 2);
+        int64_t lo = std::max<int64_t>(0, c.size_lower - margin);
+        int64_t hi = std::min<int64_t>(256, c.size_upper + margin);
+        if (lo > hi) lo = hi;
+        int64_t len = std::uniform_int_distribution<int64_t>{lo, hi}(rng);
+        std::vector<uint8_t> buf(len);
+        for (auto& b : buf) b = rand_byte();
+        static_cast<OctetString*>(obj)->set(std::move(buf));
+        return true;
+    }
+    case UniversalTag::BitString: {
+        if (!(c.flags & PerConstraints::SIZE_CONSTRAINED)) return false;
+        int64_t span = c.size_upper - c.size_lower;
+        int64_t margin = std::max<int64_t>(2, span / 4 + 2);
+        int64_t lo = std::max<int64_t>(0, c.size_lower - margin);
+        int64_t hi = std::min<int64_t>(256, c.size_upper + margin);
+        if (lo > hi) lo = hi;
+        int64_t bits = std::uniform_int_distribution<int64_t>{lo, hi}(rng);
+        std::size_t bytes = (bits + 7) / 8;
+        std::vector<uint8_t> buf(bytes);
+        for (auto& b : buf) b = rand_byte();
+        uint8_t unused = bytes > 0
+            ? static_cast<uint8_t>(bytes * 8 - bits) : 0;
+        if (!buf.empty() && unused > 0)
+            buf.back() &= static_cast<uint8_t>(0xFF << unused);
+        static_cast<BitString*>(obj)->set(std::move(buf), unused);
+        return true;
+    }
+    case UniversalTag::Utf8String:
+    case UniversalTag::NumericString:
+    case UniversalTag::PrintableString:
+    case UniversalTag::T61String:
+    case UniversalTag::VideotexString:
+    case UniversalTag::Ia5String:
+    case UniversalTag::GraphicString:
+    case UniversalTag::VisibleString:
+    case UniversalTag::GeneralString:
+    case UniversalTag::UniversalString:
+    case UniversalTag::BmpString:
+    case UniversalTag::ObjectDescriptor: {
+        bool size_constrained  = (c.flags & PerConstraints::SIZE_CONSTRAINED) != 0;
+        bool alpha_constrained = !c.alphabet.empty();
+        if (!size_constrained && !alpha_constrained) return false;
+
+        int lo, hi;
+        if (size_constrained) {
+            int64_t span = c.size_upper - c.size_lower;
+            int64_t margin = std::max<int64_t>(2, span / 4 + 2);
+            lo = static_cast<int>(std::max<int64_t>(0, c.size_lower - margin));
+            hi = static_cast<int>(std::min<int64_t>(64, c.size_upper + margin));
+            if (lo > hi) lo = hi;
+        } else {
+            lo = 1; hi = 16;
+        }
+        int len = std::uniform_int_distribution<int>{lo, hi}(rng);
+
+        // Widened character pool: full printable ASCII regardless of FROM /
+        // built-in alphabet. Some chars will be in-spec, some not.
+        static constexpr std::string_view pool =
+            " !\"#$%&'()*+,-./0123456789:;<=>?@"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`"
+            "abcdefghijklmnopqrstuvwxyz{|}~";
+        std::uniform_int_distribution<int> pick{
+            0, static_cast<int>(pool.size()) - 1};
+        std::string s;
+        s.reserve(len);
+        for (int i = 0; i < len; ++i) s += pool[pick(rng)];
+        detail::asnstring_assign(obj, s);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 bool RandomFiller::try_fill_primitive(void* obj, const TypeDescriptor& def) {
+    // Loosened-sampling path: at probability cfg_.invalid_percent / 100 the
+    // generator samples from a *widened* range that may overshoot the
+    // declared constraint. Some samples land in-spec, some don't — natural
+    // distribution rather than always-just-past-the-bound. Validation/retry
+    // is skipped so out-of-spec values survive. Unconstrained primitives
+    // fall through to the strict in-spec path (no widening possible).
+    if (cfg_.invalid_percent > 0.0 && coin(cfg_.invalid_percent / 100.0)) {
+        if (fill_primitive_loose(obj, def, rng_))
+            return true;
+    }
+
     constexpr int MAX_RETRIES = 16;
 
     bool is_int = (def.tag.cls == TagClass::Universal &&
@@ -352,7 +478,7 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
     switch (def.tag.number) {
 
     case UT::Boolean: {
-        new (obj) Boolean{coin(0.5)};
+        static_cast<Boolean*>(obj)->set(coin(0.5));
         break;
     }
 
@@ -371,13 +497,13 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
             hi = lo + 1000;
         }
         int64_t v = std::uniform_int_distribution<int64_t>{lo, hi}(rng_);
-        new (obj) Integer{v};
+        static_cast<Integer*>(obj)->set(v);
         break;
     }
 
     case UT::Real: {
         double v = std::uniform_real_distribution<double>{-1e6, 1e6}(rng_);
-        new (obj) Real{v};
+        static_cast<Real*>(obj)->set(v);
         break;
     }
 
@@ -392,7 +518,7 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
         std::vector<uint8_t> b(len);
         for (auto& byte : b)
             byte = static_cast<uint8_t>(rand_int(0, 255));
-        new (obj) OctetString{std::move(b)};
+        static_cast<OctetString*>(obj)->set(std::move(b));
         break;
     }
 
@@ -410,26 +536,26 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
             byte = static_cast<uint8_t>(rand_int(0, 255));
         if (!b.empty() && unused > 0)
             b.back() &= static_cast<uint8_t>(0xFF << unused);
-        new (obj) BitString{std::move(b), unused};
+        static_cast<BitString*>(obj)->set(std::move(b), unused);
         break;
     }
 
     case UT::Oid:
     case UT::RelativeOid: {
         // Fixed plausible OID — arbitrary OIDs are hard to generate validly.
-        new (obj) Oid{{1, 3, 6, 1, static_cast<uint32_t>(rand_int(1, 99))}};
+        static_cast<Oid*>(obj)->set({1, 3, 6, 1, static_cast<uint32_t>(rand_int(1, 99))});
         break;
     }
 
     case UT::UtcTime: {
         // Fixed valid UTCTime: YYMMDDHHMMSSZ
-        new (obj) UtcTime{"240101120000Z"};
+        static_cast<UtcTime*>(obj)->set("240101120000Z");
         break;
     }
 
     case UT::GeneralizedTime: {
         // Fixed valid GeneralizedTime: YYYYMMDDHHMMSSZ
-        new (obj) GeneralizedTime{"20240101120000Z"};
+        static_cast<GeneralizedTime*>(obj)->set("20240101120000Z");
         break;
     }
 

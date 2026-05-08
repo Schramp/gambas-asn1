@@ -13,6 +13,16 @@ struct FillConfig {
     int    min_str_len   =  1;   // min OCTET STRING / character string length
     int    max_str_len   = 32;
     double optional_prob = 0.7;  // probability an OPTIONAL member is present
+
+    // Per-primitive probability (in PERCENT — 0.1 means 0.1 %) that the
+    // generator emits a value that intentionally violates one of the
+    // descriptor's constraints (range, SIZE, alphabet, ENUM map).  Default 0
+    // = always in-spec.  Used by xval / fuzz pipelines to verify decoder /
+    // validator behaviour when fed bad input.  Affects:
+    //   - try_fill_primitive (INTEGER range, OCTET/BIT/string SIZE, string alphabet)
+    //   - fill_enum          (value outside spec.entries)
+    //   - fill_seq_of        (size outside size_lower..size_upper)
+    double invalid_percent = 0.0;
 };
 
 // Walks a TypeDescriptor tree and fills a caller-provided, already-default-constructed
