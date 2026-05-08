@@ -638,7 +638,7 @@ ConcreteTypeDeclaration:
 	    t->members = $3;
 	    $$ = t;
 	}
-	| TOK_SEQUENCE optSizeOrConstraint TOK_OF optIdentifier optTag MaybeIndirectTypeDeclaration
+	| TOK_SEQUENCE optSizeOrConstraint TOK_OF optIdentifier optTag UntaggedType
 	{
 	    auto elem = $6;
 	    if (!$4.empty()) elem->name = $4;
@@ -648,7 +648,7 @@ ConcreteTypeDeclaration:
 	    if ($2) t->constraints.push_back($2);
 	    $$ = t;
 	}
-	| TOK_SET optSizeOrConstraint TOK_OF optIdentifier optTag MaybeIndirectTypeDeclaration
+	| TOK_SET optSizeOrConstraint TOK_OF optIdentifier optTag UntaggedType
 	{
 	    auto elem = $6;
 	    if (!$4.empty()) elem->name = $4;

@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <functional>
 #include <limits>
+#include <sstream>
 #include "asn1cpp/Tag.hpp"
 #include "asn1cpp/TypeDescriptor.hpp"
 #include "asn1cpp/codec/PerConstraints.hpp"
@@ -1443,9 +1444,14 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
         }
     }
 
-    // SeqOfSpec
+    // SeqOfSpec — when the element is an inline-constrained builtin (e.g.
+    // SEQUENCE OF INTEGER (0..100)) emit a per-element TypeDescriptor that
+    // carries the constraint, otherwise reuse the natural type descriptor.
+    std::ostringstream elem_decl;
+    std::string elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", elem_decl);
+    if (!elem_decl.str().empty()) os << elem_decl.str();
     os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", cname);
-    os << std::format("    {},\n", type_descriptor_ref_for(elem_node));
+    os << std::format("    {},\n", elem_ref);
     os << std::format("    {{ {}, 0, 0, 0, {}, {}, {} }},\n",
                       size_flags, size_rb, size_lb, size_ub);
     os << std::format("    &_VecOps_{0}::count, &_VecOps_{0}::get_const, &_VecOps_{0}::get_mut, &_VecOps_{0}::resize\n", cname);
