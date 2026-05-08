@@ -452,7 +452,34 @@ DecodeResult BerCodec::decode_sequence(BerReader& r, const TypeDescriptor& def, 
         }
         if (mbr.optional) {
             Tag pt = inner.peek_tag();
-            bool present = !inner.at_end() && pt.cls == mbr.tag.cls && pt.number == mbr.tag.number;
+            bool present;
+            if (inner.at_end()) {
+                present = false;
+            } else if (mbr.type_descriptor->choice_spec
+                       && mbr.tag.cls == TagClass::Universal
+                       && mbr.tag.number == 0) {
+                // OPTIONAL untagged CHOICE: presence is decided by matching the
+                // peek tag against any of the CHOICE alternatives (X.680 §24.6).
+                const auto& cspec = *mbr.type_descriptor->choice_spec;
+                present = false;
+                if (cspec.ber_tags && cspec.ber_tag_count > 0) {
+                    for (int j = 0; j < cspec.ber_tag_count; ++j) {
+                        if (pt.cls == cspec.ber_tags[j].tag.cls
+                            && pt.number == cspec.ber_tags[j].tag.number) {
+                            present = true; break;
+                        }
+                    }
+                } else {
+                    for (int j = 0; j < cspec.count; ++j) {
+                        if (pt.cls == cspec.alternatives[j].tag.cls
+                            && pt.number == cspec.alternatives[j].tag.number) {
+                            present = true; break;
+                        }
+                    }
+                }
+            } else {
+                present = pt.cls == mbr.tag.cls && pt.number == mbr.tag.number;
+            }
             mbr.optional_ops.set_present(dest, present);
             if (!present) {
                 if (mbr.set_default) mbr.set_default(dest);
