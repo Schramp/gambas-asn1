@@ -999,7 +999,13 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         // Pass 2: emit the array
         os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
         for (const auto& r : rows) {
-            std::string def_cmp = r.has_default
+            // Emit &_isdef_… reference only when the default-value helper
+            // pair was actually emitted. emit_default_setter() returns
+            // "nullptr" (no _setdef_/_isdef_ generated) for default-value
+            // forms it doesn't understand yet — INTEGER with named values,
+            // arbitrary IntegerLiteral, etc. Without this gate the member
+            // table would reference an undefined _isdef_ symbol.
+            std::string def_cmp = (r.has_default && r.def_setter != "nullptr")
                 ? std::format("&_isdef_{}_{}", cname, r.mname)
                 : "nullptr";
             os << std::format("    {{ \"{}\", {}, {}, {}, offsetof({}, {}), {}, {}, {}, {}, {} }},\n",
