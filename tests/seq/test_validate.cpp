@@ -11,11 +11,11 @@
 // Plus extra cases for alphabet violations, enumerated out-of-map, and
 // fixed-size SIZE(N) (3 cases: under, exact, over).
 //
-// FROM-custom-alphabet types (HexDigit / YesNo / Vowels) reuse the PER
-// alphabet table (`PerConstraints::alphabet`, populated by codegen via
-// `extract_from_alphabet`) — same table that PER would use for bit-packed
-// encoding. Validation consults it before falling back to the type's
-// built-in alphabet. They appear as "FROM-NOT-YET-WIRED" no-fail expectations
+// FROM-custom-alphabet types (HexDigit / YesNo / Vowels) consult the
+// per-type alphabet table (`PerConstraints::alphabet`, populated by codegen
+// via `extract_from_alphabet`) when set, otherwise fall back to the type's
+// built-in alphabet. Constraint validation is independent of any encoding
+// rules — alphabet checks apply equally to BER / XER / PER paths. They appear as "FROM-NOT-YET-WIRED" no-fail expectations
 // here so the test stays green until the codegen change lands.
 
 #include <cstdio>
