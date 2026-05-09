@@ -383,6 +383,71 @@ int main() {
     }
 #endif
 
+#if defined(ASN1CPP_VALIDATE_ON_SET) && defined(ASN1CPP_VALIDATE)
+    // --- set_<member> helpers (VALIDATE_ON_SET) ---------------------------------
+    std::printf("\n=== set_<member> helpers (VALIDATE_ON_SET) ===\n");
+    {
+        // set_v on int64_t alias (PercentInt): valid value → no bump
+        HasPct h{};
+        reset_validate_fail_count();
+        h.set_v(50);
+        if (validate_fail_count() == 0)
+            std::printf("  \033[32mPASS\033[0m  HasPct::set_v(50) valid → no fail\n");
+        else { std::printf("  \033[31mFAIL\033[0m  HasPct::set_v(50) valid → %llu fail(s)\n",
+                           validate_fail_count()); ++failures; }
+    }
+    {
+        // set_v on int64_t alias: out-of-range → counter bumps once
+        HasPct h{};
+        reset_validate_fail_count();
+        h.set_v(200);
+        if (validate_fail_count() == 1)
+            std::printf("  \033[32mPASS\033[0m  HasPct::set_v(200) invalid → 1 fail\n");
+        else { std::printf("  \033[31mFAIL\033[0m  HasPct::set_v(200) invalid → %llu fail(s)\n",
+                           validate_fail_count()); ++failures; }
+    }
+    {
+        // set_v on PrintableString typedef (Name): valid size → no bump
+        HasName h{};
+        reset_validate_fail_count();
+        h.set_v(Name{"hello"});   // 5 chars, within SIZE(2..20)
+        if (validate_fail_count() == 0)
+            std::printf("  \033[32mPASS\033[0m  HasName::set_v(\"hello\") valid → no fail\n");
+        else { std::printf("  \033[31mFAIL\033[0m  HasName::set_v(\"hello\") → %llu fail(s)\n",
+                           validate_fail_count()); ++failures; }
+    }
+    {
+        // set_v on PrintableString typedef: too long → counter bumps
+        HasName h{};
+        reset_validate_fail_count();
+        h.set_v(Name{std::string(25, 'x')});  // 25 chars, exceeds SIZE(2..20)
+        if (validate_fail_count() == 1)
+            std::printf("  \033[32mPASS\033[0m  HasName::set_v(25-char) invalid → 1 fail\n");
+        else { std::printf("  \033[31mFAIL\033[0m  HasName::set_v(25-char) → %llu fail(s)\n",
+                           validate_fail_count()); ++failures; }
+    }
+    {
+        // set_v on OctetString typedef (TinyBlob SIZE 2..4): valid → no bump
+        HasTiny h{};
+        reset_validate_fail_count();
+        h.set_v(TinyBlob{std::vector<uint8_t>(3, 0)});
+        if (validate_fail_count() == 0)
+            std::printf("  \033[32mPASS\033[0m  HasTiny::set_v(3 bytes) valid → no fail\n");
+        else { std::printf("  \033[31mFAIL\033[0m  HasTiny::set_v(3 bytes) → %llu fail(s)\n",
+                           validate_fail_count()); ++failures; }
+    }
+    {
+        // set_v on OctetString typedef: too short → counter bumps
+        HasTiny h{};
+        reset_validate_fail_count();
+        h.set_v(TinyBlob{std::vector<uint8_t>(1, 0)});
+        if (validate_fail_count() == 1)
+            std::printf("  \033[32mPASS\033[0m  HasTiny::set_v(1 byte) invalid → 1 fail\n");
+        else { std::printf("  \033[31mFAIL\033[0m  HasTiny::set_v(1 byte) → %llu fail(s)\n",
+                           validate_fail_count()); ++failures; }
+    }
+#endif
+
     std::printf("\n=== %d failure(s) ===\n", failures);
     return failures ? 1 : 0;
 }

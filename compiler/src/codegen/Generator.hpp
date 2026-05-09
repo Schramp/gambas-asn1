@@ -176,6 +176,14 @@ private:
     std::string emit_default_setter(const ast::TypeDef& m, const std::string& parent_cname,
                                     const std::string& mname, std::ostream& os);
     std::optional<std::pair<int64_t,int64_t>> extract_integer_range(const ast::TypeDef& def) const;
+
+    // Info for generating typed set_<member>() helpers on SEQUENCE/SET classes.
+    struct MemberSetterInfo {
+        std::string param_type;  // empty = skip this member
+        bool is_int_alias;       // field is int64_t alias; wrap in asn1::Integer{} to validate
+        bool is_move;            // pass-by-value + std::move assignment
+    };
+    MemberSetterInfo classify_member_setter(const ast::TypeDef& m);
 };
 
 } // namespace asn1::codegen

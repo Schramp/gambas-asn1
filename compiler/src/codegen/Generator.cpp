@@ -733,6 +733,61 @@ std::string Generator::emit_member_type_descriptor(
 }
 
 // ---------------------------------------------------------------------------
+// classify_member_setter — determines param type + validate strategy for
+// set_<member> helpers. Returns empty param_type for members that should
+// not get a setter (optional, complex, non-primitive types).
+// ---------------------------------------------------------------------------
+Generator::MemberSetterInfo
+Generator::classify_member_setter(const ast::TypeDef& m) {
+    using BT = ast::BuiltinType;
+    if (m.is_sequence() || m.is_set() || m.is_choice() || m.is_seq_of() || m.is_set_of())
+        return {};
+    auto* bt = std::get_if<BT>(&m.body);
+    if (bt) {
+        switch (*bt) {
+        case BT::Integer:         return {"int64_t",              false, false};
+        case BT::OctetString:
+        case BT::Any:             return {"asn1::OctetString",    false, true};
+        case BT::BitString:       return {"asn1::BitString",      false, true};
+        case BT::Utf8String:      return {"asn1::Utf8String",     false, true};
+        case BT::NumericString:   return {"asn1::NumericString",  false, true};
+        case BT::PrintableString: return {"asn1::PrintableString",false, true};
+        case BT::T61String:       return {"asn1::T61String",      false, true};
+        case BT::Ia5String:       return {"asn1::Ia5String",      false, true};
+        case BT::VisibleString:   return {"asn1::VisibleString",  false, true};
+        case BT::GeneralString:   return {"asn1::GeneralString",  false, true};
+        case BT::GraphicString:   return {"asn1::GraphicString",  false, true};
+        case BT::UniversalString: return {"asn1::UniversalString",false, true};
+        case BT::BmpString:       return {"asn1::BmpString",      false, true};
+        case BT::VideotexString:  return {"asn1::VideotexString", false, true};
+        case BT::ObjectDescriptor:return {"asn1::ObjectDescriptor",false,true};
+        default: return {};
+        }
+    }
+    if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+        auto resolved = resolver_.resolve_ref(*tr);
+        if (!resolved) return {};
+        auto* rbt = std::get_if<BT>(&resolved->body);
+        if (!rbt) return {};
+        std::string ct = cpp_type_for(m);
+        switch (*rbt) {
+        case BT::Integer:
+            // TypeRef → using T = int64_t; no .validate() — wrap in asn1::Integer{}
+            return {ct, true, false};
+        case BT::OctetString: case BT::Any: case BT::BitString:
+        case BT::Utf8String: case BT::NumericString: case BT::PrintableString:
+        case BT::T61String: case BT::Ia5String: case BT::VisibleString:
+        case BT::GeneralString: case BT::GraphicString: case BT::UniversalString:
+        case BT::BmpString: case BT::VideotexString: case BT::ObjectDescriptor:
+            // TypeRef → using T = asn1::Xxx; has .validate()
+            return {ct, false, true};
+        default: return {};
+        }
+    }
+    return {};
+}
+
+// ---------------------------------------------------------------------------
 // Emit SEQUENCE / SET
 // ---------------------------------------------------------------------------
 
@@ -846,6 +901,18 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
         else
             os << std::format("    {} {}{{}};\n", mtype, mname);
     }
+    // set_<member> declarations for non-optional primitive members
+    {
+        bool past = false;
+        for (const auto& m : def.members) {
+            if (m->is_extension_marker) { past = true; continue; }
+            if (m->is_optional() || past) continue;
+            auto si = classify_member_setter(*m);
+            if (si.param_type.empty()) continue;
+            std::string mname = to_member_name(m->name);
+            os << std::format("    void set_{}({} val);\n", mname, si.param_type);
+        }
+    }
     os << "};\n\n";
 
     // Extern descriptor declarations
@@ -952,15 +1019,19 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         }
     }
 
+    // Per-member row data — hoisted so setter definitions can reference it after
+    // the descriptor table block.
+    struct MbrRow {
+        std::string name, eff_tag, mname, ops, tdref, def_setter;
+        bool optional, is_explicit, has_default;
+        MemberSetterInfo setter;
+    };
+    std::vector<MbrRow> rows;
+
     // Member descriptor table
     if (mcount > 0) {
         // Pass 1: collect per-row data and emit any static per-member TypeDescriptors
         // before the array opening brace (can't have declarations inside initializer lists).
-        struct MbrRow {
-            std::string name, eff_tag, mname, ops, tdref, def_setter;
-            bool optional, is_explicit, has_default;
-        };
-        std::vector<MbrRow> rows;
         {
             bool past = false;
             int atag = 0;
@@ -992,8 +1063,9 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
                 std::string def_setter = emit_default_setter(*m, cname, mname, os);
                 bool has_default = (m->marker == ast::Marker::Default);
+                auto setter = optional ? MemberSetterInfo{} : classify_member_setter(*m);
                 rows.push_back({ m->name, eff_tag, mname, ops, tdref, def_setter,
-                                 optional, is_explicit, has_default });
+                                 optional, is_explicit, has_default, std::move(setter) });
                 ++atag;
             }
         }
@@ -1040,6 +1112,29 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    &asn_SPC_{},\n", cname);
     os << "    nullptr, nullptr, {} /* per_constraints */\n";
     os << "};\n\n";
+
+    // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
+    for (const auto& r : rows) {
+            if (r.setter.param_type.empty()) continue;
+            // tdref is "&asn_DEF_Foo" or "&asn_TYP_Parent_member"; strip leading &
+            std::string tdname = (r.tdref.size() > 1 && r.tdref[0] == '&')
+                ? r.tdref.substr(1) : r.tdref;
+            std::string assign = r.setter.is_move
+                ? std::format("{} = std::move(val);", r.mname)
+                : (r.setter.is_int_alias
+                    ? std::format("{} = val;", r.mname)
+                    : std::format("{}.set(val);", r.mname));
+            std::string validate_expr = r.setter.is_int_alias
+                ? std::format("asn1::Integer{{{}}}.validate({}.per_constraints)", r.mname, tdname)
+                : std::format("{}.validate({}.per_constraints)", r.mname, tdname);
+            os << std::format("void {}::set_{}({} val) {{\n", cname, r.mname, r.setter.param_type);
+            os << std::format("    {}\n", assign);
+            os << "#if defined(ASN1CPP_VALIDATE_ON_SET) && defined(ASN1CPP_VALIDATE)\n";
+            os << std::format("    if ({}) asn1::bump_validate_fail();\n", validate_expr);
+            os << "#endif\n";
+            os << "}\n";
+    }
+    if (!rows.empty()) os << "\n";
 
 }
 
