@@ -53,6 +53,7 @@ void BerCodec::encode(IEncodeStream& dst,
         int64_t delta = validate(def, src);
         if (delta != 0) {
             bump_validate_fail();
+            record_validate_fail(def.name, delta, /*on_decode=*/false);
             if (debug_flags() & DBG_BER_WRITE) {
                 std::fprintf(stderr,
                     "[BER-WRITE] VALIDATE FAIL %s tag=%s%u delta=%lld\n",
@@ -114,6 +115,7 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
         int64_t delta = validate(def, dest);
         if (delta != 0) {
             bump_validate_fail();
+            record_validate_fail(def.name, delta, /*on_decode=*/true);
             if (debug_flags() & DBG_BER_WRITE) {
                 std::fprintf(stderr,
                     "[BER-READ] VALIDATE FAIL %s tag=%s%u delta=%lld\n",
@@ -346,6 +348,7 @@ void BerCodec::encode_seq_of(BerWriter& w, const TypeDescriptor& def, const void
             bufs.reserve(count);
             for (std::size_t i = 0; i < count; ++i) {
                 const void* eptr = spec.get_const_fn(src, i);
+                ValidatePathScope _vps{"[" + std::to_string(i) + "]"};
                 std::vector<uint8_t> tmp;
                 BerWriter ew{tmp};
                 BerEncodeStream es{ew};
@@ -359,6 +362,7 @@ void BerCodec::encode_seq_of(BerWriter& w, const TypeDescriptor& def, const void
         }
         for (std::size_t i = 0; i < count; ++i) {
             const void* eptr = spec.get_const_fn(src, i);
+            ValidatePathScope _vps{"[" + std::to_string(i) + "]"};
             BerEncodeStream es{inner};
             encode(es, edef, eptr);
         }
@@ -374,6 +378,7 @@ DecodeResult BerCodec::decode_seq_of(BerReader& r, const TypeDescriptor& def, vo
     while (!inner.at_end()) {
         spec.resize_fn(dest, ++count);
         void* eptr = spec.get_fn(dest, count - 1);
+        ValidatePathScope _vps{"[" + std::to_string(count - 1) + "]"};
         BerDecodeStream es{inner};
         auto res = decode(es, edef, eptr);
         if (!res) return res;
@@ -412,6 +417,7 @@ void BerCodec::encode_sequence(BerWriter& w, const TypeDescriptor& def, const vo
                 ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
                 : static_cast<const char*>(src) + mbr.offset;
             const auto& mdef = *mbr.type_descriptor;
+            ValidatePathScope _vps{mbr.name};
 
             bool tagged = mbr.tag.cls == TagClass::Context;
             if (tagged) {
@@ -512,6 +518,7 @@ DecodeResult BerCodec::decode_sequence(BerReader& r, const TypeDescriptor& def, 
             ? mbr.optional_ops.get_ptr(dest)
             : static_cast<char*>(dest) + mbr.offset;
         const auto& mdef = *mbr.type_descriptor;
+        ValidatePathScope _vps{mbr.name};
 
         bool tagged = mbr.tag.cls == TagClass::Context;
         if (tagged) {
@@ -560,6 +567,7 @@ void BerCodec::encode_choice(BerWriter& w, const TypeDescriptor& def, const void
     if (!alt.type_descriptor) return;
     const void* mptr = static_cast<const char*>(src) + alt.offset;
     const auto& mdef = *alt.type_descriptor;
+    ValidatePathScope _vps{alt.name};
 
     if (alt.tag.cls == TagClass::Context) {
         bool is_explicit = alt.is_explicit;
@@ -614,6 +622,7 @@ DecodeResult BerCodec::decode_choice(BerReader& r, const TypeDescriptor& def, vo
             const auto& alt = spec.alternatives[matched];
             void* mptr = static_cast<char*>(dest) + alt.offset;
             const auto& mdef = *alt.type_descriptor;
+            ValidatePathScope _vps{alt.name};
             DecodeResult ok = decode_ok();
             if (alt.tag.cls == TagClass::Context) {
                 auto outer = r.read_tlv();
@@ -647,6 +656,7 @@ DecodeResult BerCodec::decode_choice(BerReader& r, const TypeDescriptor& def, vo
         if (peek.cls != alt.tag.cls || peek.number != alt.tag.number) continue;
         void* mptr = static_cast<char*>(dest) + alt.offset;
         const auto& mdef = *alt.type_descriptor;
+        ValidatePathScope _vps{alt.name};
         DecodeResult ok = decode_ok();
         if (alt.tag.cls == TagClass::Context) {
             // Context-tagged alternative: read the context TLV first.

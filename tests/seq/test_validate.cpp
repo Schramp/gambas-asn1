@@ -329,6 +329,60 @@ int main() {
     }
 #endif
 
+#if defined(ASN1CPP_VALIDATE_REPORT)
+    // --- ValidationReport: path tracking on encode --------------------------
+    std::printf("\n=== ValidationReport (paths) ===\n");
+    {
+        // HasPct.v out of range — report should record path "v" (the SEQUENCE
+        // member name pushed by encode_sequence) for type "INTEGER".
+        HasPct h{}; h.v = 200;
+        ValidationReport rpt;
+        ValidationReportScope _scope{rpt};
+        std::vector<uint8_t> buf; BerWriter w{buf}; BerEncodeStream es{w};
+        BerCodec::instance().encode(es, asn_DEF_HasPct, &h);
+        if (rpt.failures.size() == 1
+            && rpt.failures[0].path == "v"
+            && std::string(rpt.failures[0].type_name) == "PercentInt"
+            && !rpt.failures[0].on_decode) {
+            std::printf("  \033[32mPASS\033[0m  encode HasPct.v=200 → path='v' type='PercentInt'\n");
+        } else {
+            std::printf("  \033[31mFAIL\033[0m  encode HasPct.v=200 — got %zu failure(s)",
+                        rpt.failures.size());
+            if (!rpt.failures.empty())
+                std::printf(", first path='%s' type='%s' on_decode=%d",
+                            rpt.failures[0].path.c_str(),
+                            rpt.failures[0].type_name ? rpt.failures[0].type_name : "?",
+                            rpt.failures[0].on_decode);
+            std::printf("\n");
+            ++failures;
+        }
+    }
+    {
+        // Roundtrip — encode + decode, expect 2 failures (encode + decode side).
+        HasPct h{}; h.v = 200;
+        std::vector<uint8_t> buf;
+        { BerWriter w{buf}; BerEncodeStream es{w};
+          BerCodec::instance().encode(es, asn_DEF_HasPct, &h); }
+        ValidationReport rpt;
+        ValidationReportScope _scope{rpt};
+        // Re-encode + decode under report scope.
+        std::vector<uint8_t> buf2; { BerWriter w{buf2}; BerEncodeStream es{w};
+            BerCodec::instance().encode(es, asn_DEF_HasPct, &h); }
+        HasPct out{};
+        BerReader rd{std::span<const uint8_t>{buf2.data(), buf2.size()}};
+        BerDecodeStream ds{rd};
+        (void)BerCodec::instance().decode(ds, asn_DEF_HasPct, &out);
+        if (rpt.failures.size() == 2
+            && rpt.failures[0].path == "v" && !rpt.failures[0].on_decode
+            && rpt.failures[1].path == "v" &&  rpt.failures[1].on_decode) {
+            std::printf("  \033[32mPASS\033[0m  roundtrip HasPct.v=200 → 2 entries (encode + decode)\n");
+        } else {
+            std::printf("  \033[31mFAIL\033[0m  roundtrip — got %zu entries\n", rpt.failures.size());
+            ++failures;
+        }
+    }
+#endif
+
     std::printf("\n=== %d failure(s) ===\n", failures);
     return failures ? 1 : 0;
 }

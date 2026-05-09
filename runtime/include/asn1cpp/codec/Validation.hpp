@@ -18,6 +18,9 @@
 // scraping stderr.
 
 #include <atomic>
+#include <string>
+#include <vector>
+#include <cstdint>
 #include "ICodec.hpp"
 
 namespace asn1 {
@@ -43,6 +46,99 @@ inline void bump_validate_fail() {
 // helpers below. Lenient = bump counter only (current Postel default); Strict =
 // also surface a hard failure to the caller.
 enum class ValidationPolicy { Lenient, Strict };
+
+#if defined(ASN1CPP_VALIDATE_REPORT)
+
+// Per-failure record captured by the codec when a ValidationReport is active.
+// path is dotted ("Foo.bar.items[3].n") — composite codec paths push/pop
+// member names + element indices as they recurse.
+struct ValidationFailure {
+    std::string path;
+    const char* type_name = nullptr;
+    int64_t     delta = 0;
+    bool        on_decode = false;
+};
+
+struct ValidationReport {
+    std::vector<ValidationFailure> failures;
+    bool empty() const { return failures.empty(); }
+    void clear() { failures.clear(); }
+};
+
+namespace detail {
+inline ValidationReport*& current_validation_report() {
+    thread_local ValidationReport* r = nullptr;
+    return r;
+}
+inline std::vector<std::string>& validate_path_stack() {
+    thread_local std::vector<std::string> s;
+    return s;
+}
+} // namespace detail
+
+inline void set_validation_report(ValidationReport* r) {
+    detail::current_validation_report() = r;
+}
+inline ValidationReport* current_validation_report() {
+    return detail::current_validation_report();
+}
+
+inline void push_validate_path(std::string seg) {
+    detail::validate_path_stack().push_back(std::move(seg));
+}
+inline void pop_validate_path() {
+    auto& s = detail::validate_path_stack();
+    if (!s.empty()) s.pop_back();
+}
+inline std::string current_validate_path() {
+    auto& s = detail::validate_path_stack();
+    std::string out;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        if (i && !s[i].empty() && s[i][0] != '[') out += '.';
+        out += s[i];
+    }
+    return out;
+}
+
+inline void record_validate_fail(const char* type_name, int64_t delta, bool on_decode) {
+    if (auto* r = current_validation_report()) {
+        r->failures.push_back({current_validate_path(), type_name, delta, on_decode});
+    }
+}
+
+// RAII helpers — push/pop a path segment around a scope.
+struct ValidatePathScope {
+    explicit ValidatePathScope(std::string seg) { push_validate_path(std::move(seg)); }
+    ~ValidatePathScope() { pop_validate_path(); }
+    ValidatePathScope(const ValidatePathScope&) = delete;
+    ValidatePathScope& operator=(const ValidatePathScope&) = delete;
+};
+
+// RAII helper — set + clear the active report pointer.
+struct ValidationReportScope {
+    explicit ValidationReportScope(ValidationReport& r) { set_validation_report(&r); }
+    ~ValidationReportScope() { set_validation_report(nullptr); }
+    ValidationReportScope(const ValidationReportScope&) = delete;
+    ValidationReportScope& operator=(const ValidationReportScope&) = delete;
+};
+
+#else
+
+// Stub: when ASN1CPP_VALIDATE_REPORT is OFF, the path-tracking and report
+// machinery compiles to no-ops so callers can use the same code path
+// unconditionally.
+struct ValidationFailure {};
+struct ValidationReport { bool empty() const { return true; } void clear() {} };
+inline void set_validation_report(ValidationReport*) {}
+inline ValidationReport* current_validation_report() { return nullptr; }
+inline void push_validate_path(std::string) {}
+inline void pop_validate_path() {}
+inline std::string current_validate_path() { return {}; }
+inline void record_validate_fail(const char*, int64_t, bool) {}
+struct ValidatePathScope { explicit ValidatePathScope(std::string) {} };
+struct ValidationReportScope { explicit ValidationReportScope(ValidationReport&) {} };
+
+#endif // ASN1CPP_VALIDATE_REPORT
 
 // Encode wrapper that reports whether any validate-fail occurred during this
 // encode. When ASN1CPP_VALIDATE is OFF, always returns true. Strict policy is
