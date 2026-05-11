@@ -372,11 +372,11 @@ set_tests_properties(parser_conformance PROPERTIES
 if(ASN1CPP_VALIDATE AND ASN1CPP_VALIDATE_ON_ENCODE)
     set(VALIDATE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_validate_test)
     set(VALIDATE_TYPES
-        Code Color FixedBlob FlagsByte FlagsRange
+        ByteCount Code Color FixedBlob FlagsByte FlagsRange
         HexDigit MidBlob MidList Name NegRange
         PercentInt PositiveInt ShortList SignedSmall Tariff
         TinyBlob Token Visi Vowels WideUnsigned YesNo
-        HasCode HasColor HasFixed HasFlagsByte HasFlagsRange
+        HasByteCount HasCode HasColor HasFixed HasFlagsByte HasFlagsRange
         HasHex HasMid HasMidList HasName HasNeg
         HasPct HasPos HasShortList HasSigned HasTariff
         HasTiny HasToken HasVisi HasVowels HasWide HasYesNo

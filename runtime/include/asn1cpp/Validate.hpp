@@ -40,6 +40,8 @@ inline int64_t validate(const TypeDescriptor& def, const void* obj) {
     const auto& c = def.per_constraints;
     switch (def.tag.number) {
     case UniversalTag::Integer:
+        if (c.int_kind == PerConstraints::INT_U64)
+            return static_cast<const UInteger*>(obj)->validate(c);
         return static_cast<const Integer*>(obj)->validate(c);
     case UniversalTag::OctetString:
         return static_cast<const OctetString*>(obj)->validate(c);

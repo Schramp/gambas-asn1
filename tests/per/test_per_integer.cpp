@@ -61,7 +61,7 @@ static const TypeDescriptor DEF_NarrowInterval = {
     "NarrowInterval",
     Tag::universal(2, false),
     nullptr, nullptr, nullptr, nullptr,
-    {PerConstraints::CONSTRAINED, 1, 123456, 123457}
+    {.flags=PerConstraints::CONSTRAINED, .range_bits=1, .lower_bound=123456, .upper_bound=123457}
 };
 
 // ---- Interval: INTEGER (1..123456) ------------------------------------------
@@ -71,7 +71,7 @@ static const TypeDescriptor DEF_Interval = {
     "Interval",
     Tag::universal(2, false),
     nullptr, nullptr, nullptr, nullptr,
-    {PerConstraints::CONSTRAINED, 17, 1, 123456}
+    {.flags=PerConstraints::CONSTRAINED, .range_bits=17, .lower_bound=1, .upper_bound=123456}
 };
 
 int main() {

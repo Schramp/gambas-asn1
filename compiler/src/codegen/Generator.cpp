@@ -18,7 +18,15 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
     if (auto* bt = std::get_if<BT>(&def.body)) {
         switch (*bt) {
         case BT::Boolean:           return "asn1::Boolean";
-        case BT::Integer:           return "asn1::Integer";
+        case BT::Integer: {
+            auto kind = classify_integer_storage(def);
+            switch (kind) {
+                case IntStorageKind::U64:       return "asn1::UInteger";
+                case IntStorageKind::I128:      return "asn1::BigInteger";
+                case IntStorageKind::ARBITRARY: return "asn1::ArbitraryInteger";
+                default:                        return "asn1::Integer";
+            }
+        }
         case BT::Real:              return "asn1::Real";
         case BT::Null:              return "asn1::Null";
         case BT::BitString:         return "asn1::BitString";
@@ -448,10 +456,32 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
 // Emit INTEGER
 // ---------------------------------------------------------------------------
 
+IntStorageKind Generator::classify_integer_storage(const ast::TypeDef& def) const {
+    auto range = extract_integer_range(def);
+    if (!range) return default_int_kind_;  // unconstrained → CLI default
+
+    auto [lo, hi] = *range;
+    // hi == INT64_MAX is the sentinel for "..MAX" (SEMI_CONSTRAINED, no upper cap)
+    bool upper_is_max = (hi == std::numeric_limits<int64_t>::max());
+    if (upper_is_max && lo >= 0) return IntStorageKind::U64;
+    // TODO: when parser supports literals > INT64_MAX, add:
+    //   if (lo >= 0 && hi > INT64_MAX) return IntStorageKind::U64;
+    //   if (range exceeds int64 on either side) return IntStorageKind::I128;
+    return IntStorageKind::S64;
+}
+
 void Generator::emit_integer_hpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
-    os << std::format("using {} = int64_t;\n\n", cname);
+    auto kind = classify_integer_storage(def);
+    std::string cpp_storage;
+    switch (kind) {
+        case IntStorageKind::U64:       cpp_storage = "uint64_t"; break;
+        case IntStorageKind::I128:      cpp_storage = "__int128"; break;
+        case IntStorageKind::ARBITRARY: cpp_storage = "std::vector<uint8_t>"; break;
+        default:                        cpp_storage = "int64_t"; break;
+    }
+    os << std::format("using {} = {};\n\n", cname, cpp_storage);
 
     // Named integer constants (INTEGER { foo(0), bar(1) } style)
     for (const auto& ev : def.enum_values)
@@ -581,10 +611,31 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
     return std::nullopt;
 }
 
+// Build a PerConstraints designated-initializer literal for an INTEGER constraint.
+// Uses designated initializers (C++20) so struct field additions don't require
+// updating every call site.
+static std::string make_integer_pc(int flags, int range_bits, int int_kind,
+                                   int64_t lower_s64, int64_t upper_s64,
+                                   uint64_t lower_u64, uint64_t upper_u64) {
+    return std::format(
+        "{{ .flags={}, .range_bits={}, .int_kind={}, "
+        ".lower_bound={}, .upper_bound={}, "
+        ".lower_u64={:#x}u, .upper_u64={:#x}u, "
+        ".lower_hi=0, .lower_lo=0, .upper_hi=0, .upper_lo=0 }}",
+        flags, range_bits, int_kind,
+        lower_s64, upper_s64,
+        lower_u64, upper_u64);
+}
+
 void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
     auto range = extract_integer_range(def);
+    auto kind  = classify_integer_storage(def);
+    int  ik    = (kind == IntStorageKind::U64) ? asn1::PerConstraints::INT_U64
+               : (kind == IntStorageKind::I128) ? asn1::PerConstraints::INT_I128
+               : (kind == IntStorageKind::ARBITRARY) ? asn1::PerConstraints::INT_ARBITRARY
+               : asn1::PerConstraints::INT_S64;
 
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
@@ -594,19 +645,25 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
         int64_t lo = range->first, hi = range->second;
         bool ext = is_constraint_extensible(def);
         if (hi == std::numeric_limits<int64_t>::max()) {
-            // semi-constrained: lb..MAX
             int flags = asn1::PerConstraints::SEMI_CONSTRAINED
                       | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
-            os << std::format("    {{ {}, -1, {}, 0 }} /* per_constraints — semi-constrained */\n", flags, lo);
+            // upper_u64 = UINT64_MAX (no cap for SEMI_CONSTRAINED)
+            os << std::format("    {} /* per_constraints — semi-constrained */\n",
+                make_integer_pc(flags, -1, ik, lo, 0,
+                    static_cast<uint64_t>(lo >= 0 ? lo : 0),
+                    std::numeric_limits<uint64_t>::max()));
         } else {
             int64_t range_count = hi - lo + 1;
             int rb = 0;
-            if (range_count > 1) {
+            if (range_count > 1)
                 for (int64_t r = range_count - 1; r > 0; r >>= 1) ++rb;
-            }
             int flags = asn1::PerConstraints::CONSTRAINED
                       | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
-            os << std::format("    {{ {}, {}, {}, {} }} /* per_constraints */\n", flags, rb, lo, hi);
+            // u64 bounds: same as s64 for ranges that fit; lo<0 → clamp to 0
+            uint64_t u_lo = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
+            uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
+            os << std::format("    {} /* per_constraints */\n",
+                make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi));
         }
     } else {
         os << "    {} /* per_constraints — unconstrained */\n";
@@ -637,18 +694,26 @@ std::string Generator::emit_member_type_descriptor(
             std::string tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
             int64_t lo = range->first, hi = range->second;
             bool ext = is_constraint_extensible(m);
+            auto kind = classify_integer_storage(m);
+            int ik = (kind == IntStorageKind::U64) ? asn1::PerConstraints::INT_U64
+                   : (kind == IntStorageKind::I128) ? asn1::PerConstraints::INT_I128
+                   : asn1::PerConstraints::INT_S64;
             std::string pc;
             if (hi == std::numeric_limits<int64_t>::max()) {
                 int flags = asn1::PerConstraints::SEMI_CONSTRAINED
                           | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
-                pc = std::format("{{ {}, -1, {}, 0 }}", flags, lo);
+                pc = make_integer_pc(flags, -1, ik, lo, 0,
+                    static_cast<uint64_t>(lo >= 0 ? lo : 0),
+                    std::numeric_limits<uint64_t>::max());
             } else {
                 int64_t rc = hi - lo + 1;
                 int rb = 0;
                 if (rc > 1) for (int64_t r = rc - 1; r > 0; r >>= 1) ++rb;
                 int flags = asn1::PerConstraints::CONSTRAINED
                           | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
-                pc = std::format("{{ {}, {}, {}, {} }}", flags, rb, lo, hi);
+                uint64_t u_lo = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
+                uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
+                pc = make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi);
             }
             os << std::format(
                 "static const asn1::TypeDescriptor {} = "
@@ -694,10 +759,8 @@ std::string Generator::emit_member_type_descriptor(
                     for (int64_t r = range - 1; r > 0; r >>= 1) ++srb;
             }
             int64_t pc_sub = (sub == std::numeric_limits<int64_t>::max()) ? 0 : sub;
-            // PerConstraints aggregate: flags, range_bits, lower, upper,
-            // size_range_bits, size_lower, size_upper, alphabet_bits, alphabet
             std::string pc = std::format(
-                "{{ {}, 0, 0, 0, {}, {}, {}, 0, {{}} }}",
+                "{{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }}",
                 flags, srb, slo, pc_sub);
             // Use the matching asn_DEF_*'s public name as the XER tag name —
             // BerCodec / XerCodec consult it for primitive type names.
@@ -745,22 +808,27 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
     auto* bt = std::get_if<BT>(&m.body);
     if (bt) {
         switch (*bt) {
-        case BT::Integer:         return {"int64_t",              false, false};
+        case BT::Integer: {
+            auto kind = classify_integer_storage(m);
+            if (kind == IntStorageKind::U64)
+                return {"uint64_t", false, false, false};  // asn1::UInteger field, .set(uint64_t)
+            return {"int64_t", false, false, false};        // asn1::Integer field, .set(int64_t)
+        }
         case BT::OctetString:
-        case BT::Any:             return {"asn1::OctetString",    false, true};
-        case BT::BitString:       return {"asn1::BitString",      false, true};
-        case BT::Utf8String:      return {"asn1::Utf8String",     false, true};
-        case BT::NumericString:   return {"asn1::NumericString",  false, true};
-        case BT::PrintableString: return {"asn1::PrintableString",false, true};
-        case BT::T61String:       return {"asn1::T61String",      false, true};
-        case BT::Ia5String:       return {"asn1::Ia5String",      false, true};
-        case BT::VisibleString:   return {"asn1::VisibleString",  false, true};
-        case BT::GeneralString:   return {"asn1::GeneralString",  false, true};
-        case BT::GraphicString:   return {"asn1::GraphicString",  false, true};
-        case BT::UniversalString: return {"asn1::UniversalString",false, true};
-        case BT::BmpString:       return {"asn1::BmpString",      false, true};
-        case BT::VideotexString:  return {"asn1::VideotexString", false, true};
-        case BT::ObjectDescriptor:return {"asn1::ObjectDescriptor",false,true};
+        case BT::Any:             return {"asn1::OctetString",    false, false, true};
+        case BT::BitString:       return {"asn1::BitString",      false, false, true};
+        case BT::Utf8String:      return {"asn1::Utf8String",     false, false, true};
+        case BT::NumericString:   return {"asn1::NumericString",  false, false, true};
+        case BT::PrintableString: return {"asn1::PrintableString",false, false, true};
+        case BT::T61String:       return {"asn1::T61String",      false, false, true};
+        case BT::Ia5String:       return {"asn1::Ia5String",      false, false, true};
+        case BT::VisibleString:   return {"asn1::VisibleString",  false, false, true};
+        case BT::GeneralString:   return {"asn1::GeneralString",  false, false, true};
+        case BT::GraphicString:   return {"asn1::GraphicString",  false, false, true};
+        case BT::UniversalString: return {"asn1::UniversalString",false, false, true};
+        case BT::BmpString:       return {"asn1::BmpString",      false, false, true};
+        case BT::VideotexString:  return {"asn1::VideotexString", false, false, true};
+        case BT::ObjectDescriptor:return {"asn1::ObjectDescriptor",false,false,true};
         default: return {};
         }
     }
@@ -771,16 +839,20 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
         if (!rbt) return {};
         std::string ct = cpp_type_for(m);
         switch (*rbt) {
-        case BT::Integer:
-            // TypeRef → using T = int64_t; no .validate() — wrap in asn1::Integer{}
-            return {ct, true, false};
+        case BT::Integer: {
+            // TypeRef → using T = int64_t or uint64_t; no .validate() — wrap in Integer/UInteger
+            auto kind = classify_integer_storage(*resolved);
+            if (kind == IntStorageKind::U64)
+                return {ct, false, true, false};   // is_uint_alias=true
+            return {ct, true, false, false};        // is_int_alias=true
+        }
         case BT::OctetString: case BT::Any: case BT::BitString:
         case BT::Utf8String: case BT::NumericString: case BT::PrintableString:
         case BT::T61String: case BT::Ia5String: case BT::VisibleString:
         case BT::GeneralString: case BT::GraphicString: case BT::UniversalString:
         case BT::BmpString: case BT::VideotexString: case BT::ObjectDescriptor:
             // TypeRef → using T = asn1::Xxx; has .validate()
-            return {ct, false, true};
+            return {ct, false, false, true};
         default: return {};
         }
     }
@@ -1121,12 +1193,14 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 ? r.tdref.substr(1) : r.tdref;
             std::string assign = r.setter.is_move
                 ? std::format("{} = std::move(val);", r.mname)
-                : (r.setter.is_int_alias
+                : (r.setter.is_int_alias || r.setter.is_uint_alias
                     ? std::format("{} = val;", r.mname)
                     : std::format("{}.set(val);", r.mname));
             std::string validate_expr = r.setter.is_int_alias
                 ? std::format("asn1::Integer{{{}}}.validate({}.per_constraints)", r.mname, tdname)
-                : std::format("{}.validate({}.per_constraints)", r.mname, tdname);
+                : r.setter.is_uint_alias
+                    ? std::format("asn1::UInteger{{{}}}.validate({}.per_constraints)", r.mname, tdname)
+                    : std::format("{}.validate({}.per_constraints)", r.mname, tdname);
             os << std::format("void {}::set_{}({} val) {{\n", cname, r.mname, r.setter.param_type);
             os << std::format("    {}\n", assign);
             os << "#if defined(ASN1CPP_VALIDATE_ON_SET) && defined(ASN1CPP_VALIDATE)\n";
@@ -1494,10 +1568,12 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
         int val_lb = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
         int val_ub = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
 
-        os << std::format("    {{ {}, 0, {}, {}, {}, {}, {}, {}",
-                          flags, val_lb, val_ub, size_rb, size_lb, size_ub, alphabet_bits);
+        os << std::format(
+            "    {{ .flags={}, .lower_bound={}, .upper_bound={}, "
+            ".size_range_bits={}, .size_lower={}, .size_upper={}, .alphabet_bits={}",
+            flags, val_lb, val_ub, size_rb, size_lb, size_ub, alphabet_bits);
         if (!alphabet.empty()) {
-            os << ", std::vector<uint8_t>{";
+            os << ", .alphabet=std::vector<uint8_t>{";
             for (int i = 0; i < static_cast<int>(alphabet.size()); ++i) {
                 if (i) os << ", ";
                 os << static_cast<int>(alphabet[i]);
@@ -1547,7 +1623,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     if (!elem_decl.str().empty()) os << elem_decl.str();
     os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", cname);
     os << std::format("    {},\n", elem_ref);
-    os << std::format("    {{ {}, 0, 0, 0, {}, {}, {} }},\n",
+    os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
                       size_flags, size_rb, size_lb, size_ub);
     os << std::format("    &_VecOps_{0}::count, &_VecOps_{0}::get_const, &_VecOps_{0}::get_mut, &_VecOps_{0}::resize\n", cname);
     os << "};\n\n";

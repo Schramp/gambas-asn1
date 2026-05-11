@@ -284,6 +284,14 @@ bool RandomFiller::try_fill_primitive(void* obj, const TypeDescriptor& def) {
     //   -delta → value above upper; lower sampling max by |delta|
     // Working copy converges monotonically toward the valid window.
     if (is_int) {
+        // UInteger (uint64_t): validate() returns 0 for SEMI_CONSTRAINED(lo=0),
+        // so no retry needed in the common case. For constrained U64, just
+        // delegate to fill_primitive directly — practical U64 ranges are large.
+        if (def.per_constraints.int_kind == PerConstraints::INT_U64) {
+            fill_primitive(obj, def);
+            return validate(def, obj) == 0;
+        }
+
         TypeDescriptor d = def;
         for (int i = 0; i < MAX_RETRIES; ++i) {
             fill_primitive(obj, d);
@@ -483,14 +491,23 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
     }
 
     case UT::Integer: {
-        int64_t lo = -1000, hi = 1000;
         const auto& c = def.per_constraints;
+        if (c.int_kind == PerConstraints::INT_U64) {
+            uint64_t lo = c.lower_u64;
+            // Cap at INT64_MAX for cross-validation compatibility with asn1c
+            uint64_t hi = std::min(c.upper_u64,
+                                   static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+            if (c.flags & PerConstraints::SEMI_CONSTRAINED)
+                hi = lo + 1000;  // bounded sample for SEMI_CONSTRAINED
+            if (lo > hi) hi = lo;
+            uint64_t v = std::uniform_int_distribution<uint64_t>{lo, hi}(rng_);
+            static_cast<UInteger*>(obj)->set(v);
+            break;
+        }
+        int64_t lo = -1000, hi = 1000;
         if (c.flags & PerConstraints::CONSTRAINED) {
             lo = c.lower_bound;
             hi = c.upper_bound;
-            // upper_bound overflows int64_t for types like (0..18446744073709551615)
-            // (ETSI schemas assume unsigned 64-bit; asn1c treats INTEGER as signed).
-            // Clamp to INT64_MAX so the range stays valid and values are in-range.
             if (lo > hi) hi = std::numeric_limits<int64_t>::max();
         } else if (c.flags & PerConstraints::SEMI_CONSTRAINED) {
             lo = c.lower_bound;

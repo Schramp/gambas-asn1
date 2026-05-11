@@ -37,6 +37,9 @@ ValidateTest DEFINITIONS ::= BEGIN
   ShortList    ::= SEQUENCE (SIZE(1..3))  OF PercentInt
   MidList      ::= SEQUENCE (SIZE(2..8))  OF SignedSmall
 
+  -- Semi-constrained unsigned (0..MAX) → uint64_t storage
+  ByteCount    ::= INTEGER (0..MAX)
+
   -- Wrappers so each constraint type can be encoded standalone
   HasPct       ::= SEQUENCE { v PercentInt   }
   HasTariff    ::= SEQUENCE { v Tariff       }
@@ -59,5 +62,6 @@ ValidateTest DEFINITIONS ::= BEGIN
   HasColor     ::= SEQUENCE { v Color        }
   HasShortList ::= SEQUENCE { v ShortList    }
   HasMidList   ::= SEQUENCE { v MidList      }
+  HasByteCount ::= SEQUENCE { v ByteCount    }
 
 END

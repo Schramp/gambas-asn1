@@ -62,6 +62,14 @@ inline std::string to_value_name(std::string_view s) {
     return out;
 }
 
+// Storage class for INTEGER types — chosen at codegen time from constraint analysis.
+enum class IntStorageKind {
+    S64,       // int64_t  — asn1::Integer (default; constrained or signed ranges)
+    U64,       // uint64_t — asn1::UInteger (non-negative semi-constrained or large unsigned)
+    I128,      // __int128  — asn1::BigInteger (stub; future)
+    ARBITRARY, // vector<uint8_t> — asn1::ArbitraryInteger (stub; unconstrained crypto keys)
+};
+
 class Generator {
     fs::path                out_dir_;
     sema::Resolver&         resolver_;
@@ -71,10 +79,13 @@ class Generator {
     std::string             current_module_;    // module being generated right now
     std::string             current_type_;      // C++ name of type currently being generated
     ast::TagDefault         current_tag_default_{ast::TagDefault::Explicit};
+    IntStorageKind          default_int_kind_{IntStorageKind::S64};  // --integer-type default
 
 public:
     Generator(fs::path out_dir, sema::Resolver& res)
         : out_dir_(std::move(out_dir)), resolver_(res) {}
+
+    void set_default_int_kind(IntStorageKind k) { default_int_kind_ = k; }
 
     void generate(const ast::ParseResult& pr) {
         fs::create_directories(out_dir_);
@@ -179,11 +190,15 @@ private:
 
     // Info for generating typed set_<member>() helpers on SEQUENCE/SET classes.
     struct MemberSetterInfo {
-        std::string param_type;  // empty = skip this member
-        bool is_int_alias;       // field is int64_t alias; wrap in asn1::Integer{} to validate
-        bool is_move;            // pass-by-value + std::move assignment
+        std::string param_type;   // empty = skip this member
+        bool is_int_alias;        // int64_t alias: wrap in asn1::Integer{} for validate
+        bool is_uint_alias;       // uint64_t alias: wrap in asn1::UInteger{} for validate
+        bool is_move;             // pass-by-value + std::move assignment
     };
     MemberSetterInfo classify_member_setter(const ast::TypeDef& m);
+
+    // Choose INTEGER storage class from constraint analysis.
+    IntStorageKind classify_integer_storage(const ast::TypeDef& def) const;
 };
 
 } // namespace asn1::codegen

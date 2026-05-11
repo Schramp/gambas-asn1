@@ -140,4 +140,135 @@ struct BerTraits<int64_t> {
     }
 };
 
+// ---------------------------------------------------------------------------
+// UInteger — uint64_t storage for non-negative semi-constrained / large ranges
+// ---------------------------------------------------------------------------
+
+class UInteger {
+    uint64_t value_{0};
+public:
+    UInteger() = default;
+    explicit UInteger(uint64_t v) : value_(v) {}
+    uint64_t value() const { return value_; }
+    void     set(uint64_t v) { value_ = v; }
+    operator uint64_t() const { return value_; }
+    bool operator==(const UInteger&) const = default;
+
+    int64_t validate(const PerConstraints& c) const {
+        if (c.flags & PerConstraints::EXTENSIBLE) return 0;
+        if (c.flags & PerConstraints::CONSTRAINED) {
+            if (value_ < c.lower_u64) {
+                uint64_t delta = c.lower_u64 - value_;
+                return (delta > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+                    ? std::numeric_limits<int64_t>::max() : static_cast<int64_t>(delta);
+            }
+            if (value_ > c.upper_u64) {
+                uint64_t delta = value_ - c.upper_u64;
+                return (delta > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+                    ? std::numeric_limits<int64_t>::min() : -static_cast<int64_t>(delta);
+            }
+            return 0;
+        }
+        if (c.flags & PerConstraints::SEMI_CONSTRAINED) {
+            // lower_u64 == 0 → any uint64_t is valid; otherwise check lower
+            if (value_ < c.lower_u64) {
+                uint64_t delta = c.lower_u64 - value_;
+                return (delta > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+                    ? std::numeric_limits<int64_t>::max() : static_cast<int64_t>(delta);
+            }
+            return 0;
+        }
+        return 0;
+    }
+};
+
+template<>
+struct BerTraits<UInteger> {
+    static constexpr Tag tag() { return Tag::universal(UniversalTag::Integer, false); }
+
+    static void encode(BerWriter& w, const UInteger& u) {
+        uint64_t v = u.value();
+        if (v == 0) {
+            uint8_t zero = 0x00;
+            w.write_primitive(tag(), std::span<const uint8_t>(&zero, 1));
+            return;
+        }
+        // buf[0] = potential 0x00 pad; buf[1..8] = big-endian bytes of v
+        uint8_t buf[9];
+        buf[0] = 0x00;
+        for (int i = 8; i >= 1; --i) { buf[i] = v & 0xFF; v >>= 8; }
+        // Skip leading zero bytes where the following byte has MSB clear
+        int start = 1;
+        while (start < 8 && buf[start] == 0x00 && (buf[start + 1] & 0x80) == 0)
+            ++start;
+        // If first significant byte has MSB set, include the 0x00 pad at buf[0]
+        if (buf[start] & 0x80) --start;
+        w.write_primitive(tag(), std::span<const uint8_t>(buf + start, 9 - start));
+    }
+
+    static Expected<UInteger, DecodeError> decode(BerReader& r) {
+        auto tlv = r.read_tlv();
+        if (!tlv) return make_unexpected<UInteger, DecodeError>(tlv.error());
+        if (tlv->tag != tag())
+            return make_unexpected<UInteger, DecodeError>(
+                DecodeError(std::format("expected INTEGER tag (0x{:02x}) got 0x{:02x}",
+                    0x02, (static_cast<uint8_t>(tlv->tag.cls) << 6) | tlv->tag.number), 0));
+        return decode_value(tlv->value);
+    }
+
+    static Expected<UInteger, DecodeError> decode_value(std::span<const uint8_t> bytes) {
+        if (bytes.empty())
+            return make_unexpected<UInteger, DecodeError>(DecodeError("empty INTEGER value"));
+        // Strip 0x00 pad byte: present when value > INT64_MAX needs 9 bytes (X.690 §8.3.3).
+        // After stripping, the first byte may have MSB=1 — that is valid for large U64.
+        bool stripped_pad = false;
+        if (bytes.size() == 9 && bytes[0] == 0x00) {
+            bytes = bytes.subspan(1);
+            stripped_pad = true;
+        }
+        if (bytes.size() > 8)
+            return make_unexpected<UInteger, DecodeError>(
+                DecodeError("INTEGER value too large for uint64_t"));
+        // Only reject negative values when we did NOT strip a pad (unpadded MSB=1 → negative)
+        if (!stripped_pad && (bytes[0] & 0x80))
+            return make_unexpected<UInteger, DecodeError>(
+                DecodeError("negative INTEGER cannot decode as UInteger"));
+        uint64_t v = 0;
+        for (uint8_t b : bytes) v = (v << 8) | b;
+        return UInteger{v};
+    }
+};
+
+template<>
+struct BerTraits<uint64_t> {
+    static constexpr Tag tag() { return BerTraits<UInteger>::tag(); }
+    static void encode(BerWriter& w, uint64_t v) { BerTraits<UInteger>::encode(w, UInteger{v}); }
+    static Expected<uint64_t, DecodeError> decode(BerReader& r) {
+        auto r2 = BerTraits<UInteger>::decode(r);
+        if (!r2) return make_unexpected<uint64_t, DecodeError>(r2.error());
+        return r2->value();
+    }
+};
+
+// ---------------------------------------------------------------------------
+// BigInteger — __int128 storage (architecture placeholder, not yet implemented)
+// Constructors deleted: instantiation is a compile error until implemented.
+// ---------------------------------------------------------------------------
+
+class BigInteger {
+public:
+    BigInteger() = delete;
+};
+
+// ---------------------------------------------------------------------------
+// ArbitraryInteger — vector<uint8_t> BER byte-blob for unconstrained INTEGER
+// Architecture placeholder for crypto-key schemas; not yet implemented.
+// Constructors deleted: instantiation is a compile error until implemented.
+// ---------------------------------------------------------------------------
+
+class ArbitraryInteger {
+public:
+    ArbitraryInteger() = delete;
+};
+
 } // namespace asn1

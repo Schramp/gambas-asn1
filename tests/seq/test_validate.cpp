@@ -44,6 +44,7 @@
 #include "HasColor.hpp"
 #include "HasShortList.hpp"
 #include "HasMidList.hpp"
+#include "HasByteCount.hpp"
 #include "HasHex.hpp"
 #include "HasYesNo.hpp"
 #include "HasVowels.hpp"
@@ -97,7 +98,8 @@ int main() {
     { HasPos h{}; h.v = 9;        expect_delta("just below 10    → fail", h, asn_DEF_HasPos, 1); }
     { HasPos h{}; h.v = 10;       expect_delta("exactly 10       → pass", h, asn_DEF_HasPos, 0); }
     { HasPos h{}; h.v = 1000000;  expect_delta("large value      → pass", h, asn_DEF_HasPos, 0); }
-    { HasPos h{}; h.v = -1;       expect_delta("negative         → fail", h, asn_DEF_HasPos, 1); }
+    // PositiveInt is uint64_t; value 0 is below lower bound 10 → fail
+    { HasPos h{}; h.v = 0;        expect_delta("zero (below lb)  → fail", h, asn_DEF_HasPos, 1); }
 
     // SignedSmall (-50..50)
     std::printf("SignedSmall (-50..50)\n");
@@ -237,6 +239,28 @@ int main() {
     { HasMidList h{}; h.v = {1,2};               expect_delta("size 2 (boundary) → pass", h, asn_DEF_HasMidList, 0); }
     { HasMidList h{}; h.v = {1,2,3,4,5,6,7,8};   expect_delta("size 8 (boundary) → pass", h, asn_DEF_HasMidList, 0); }
     { HasMidList h{}; h.v = {1,2,3,4,5,6,7,8,9}; expect_delta("size 9 (over)     → fail", h, asn_DEF_HasMidList, 1); }
+
+    // ByteCount (0..MAX) — uint64_t (UInteger), semi-constrained, lower=0
+    std::printf("ByteCount (0..MAX) — uint64_t\n");
+    { HasByteCount h{}; h.v = 0;          expect_delta("exactly 0        → pass", h, asn_DEF_HasByteCount, 0); }
+    { HasByteCount h{}; h.v = 1000000;    expect_delta("large value      → pass", h, asn_DEF_HasByteCount, 0); }
+    // BER round-trip of value > INT64_MAX (9-byte encoding with 0x00 pad)
+    {
+        constexpr uint64_t BIG = static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1;
+        HasByteCount enc{};
+        enc.v = BIG;
+        std::vector<uint8_t> buf;
+        { BerWriter w{buf}; BerEncodeStream es{w};
+          BerCodec::instance().encode(es, asn_DEF_HasByteCount, &enc); }
+        HasByteCount dec{};
+        { BerReader rd{std::span<const uint8_t>{buf.data(), buf.size()}};
+          BerDecodeStream ds{rd};
+          BerCodec::instance().decode(ds, asn_DEF_HasByteCount, &dec); }
+        if (dec.v == BIG)
+            std::printf("  \033[32mPASS\033[0m  ByteCount BER round-trip > INT64_MAX (9-byte)\n");
+        else { std::printf("  \033[31mFAIL\033[0m  ByteCount BER round-trip: got %llu expected %llu\n",
+                           (unsigned long long)dec.v, (unsigned long long)BIG); ++failures; }
+    }
 
     // --- Decode-side validation (encode + decode round-trip) ----------------
     // With ASN1CPP_VALIDATE_ON_DECODE enabled the decoder also runs validate()

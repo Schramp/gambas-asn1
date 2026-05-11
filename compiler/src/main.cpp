@@ -18,6 +18,7 @@ namespace fs = std::filesystem;
 static void usage(const char* prog) {
     std::cerr << "Usage: " << prog
               << " [-o outdir] [-fignore-missing-modules] [-fallow-newer-modules]"
+                 " [--integer-type=int64|uint64|int128|arbitrary]"
                  " file.asn1 [file2.asn1 ...]\n";
     std::exit(1);
 }
@@ -26,6 +27,7 @@ int main(int argc, char** argv) {
     std::string out_dir = "generated";
     bool ignore_missing_modules = false;
     bool allow_newer_modules = false;
+    asn1::codegen::IntStorageKind default_int_kind = asn1::codegen::IntStorageKind::S64;
     std::vector<std::string> input_files;
 
     for (int i = 1; i < argc; ++i) {
@@ -36,6 +38,16 @@ int main(int argc, char** argv) {
             ignore_missing_modules = true;
         } else if (arg == "-fallow-newer-modules") {
             allow_newer_modules = true;
+        } else if (arg == "--integer-type=int64") {
+            default_int_kind = asn1::codegen::IntStorageKind::S64;
+        } else if (arg == "--integer-type=uint64") {
+            default_int_kind = asn1::codegen::IntStorageKind::U64;
+        } else if (arg == "--integer-type=int128") {
+            std::cerr << "warning: --integer-type=int128 is not yet implemented; using int64\n";
+            default_int_kind = asn1::codegen::IntStorageKind::S64;
+        } else if (arg == "--integer-type=arbitrary") {
+            std::cerr << "warning: --integer-type=arbitrary is not yet implemented; using int64\n";
+            default_int_kind = asn1::codegen::IntStorageKind::S64;
         } else if (arg[0] == '-') {
             usage(argv[0]);
         } else {
@@ -88,6 +100,7 @@ int main(int argc, char** argv) {
 
     // Code generation
     asn1::codegen::Generator gen(out_dir, resolver);
+    gen.set_default_int_kind(default_int_kind);
     gen.generate(pr);
 
     std::cout << "Generated C++ code in: " << out_dir << "/\n";
