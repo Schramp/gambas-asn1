@@ -630,6 +630,33 @@ static void walk_type_constraints(const ast::TypeDef& def, F&& f) {
 // Forward decl: definition below; needed by emit_member_type_descriptor.
 static std::optional<std::pair<int64_t,int64_t>> extract_size_range(const ast::TypeDef& def);
 
+struct SizeConstraintInfo {
+    int     flags      = 0;   // SIZE_CONSTRAINED | EXTENSIBLE (0 when no/semi constraint)
+    int     range_bits = 0;
+    int64_t lower      = 0;
+    int64_t upper      = 0;   // 0 when semi-constrained (ub == INT64_MAX)
+};
+
+// Compute size constraint metadata from an optional (lb, ub) pair.
+// Sets SIZE_CONSTRAINED + computes range_bits only when ub is finite.
+// Pass extensible=true to OR in EXTENSIBLE.
+static SizeConstraintInfo compute_size_constraint(
+        std::optional<std::pair<int64_t,int64_t>> size_range,
+        bool extensible = false) {
+    SizeConstraintInfo r{};
+    if (!size_range) return r;
+    r.lower = size_range->first;
+    if (size_range->second != std::numeric_limits<int64_t>::max()) {
+        r.upper = size_range->second;
+        r.flags = asn1::Constraints::SIZE_CONSTRAINED;
+        int64_t range = r.upper - r.lower + 1;
+        if (range > 1)
+            for (int64_t v = range - 1; v > 0; v >>= 1) ++r.range_bits;
+    }
+    if (extensible) r.flags |= asn1::Constraints::EXTENSIBLE;
+    return r;
+}
+
 // Extract integer value range from constraints, if determinable.
 std::optional<std::pair<int64_t,int64_t>>
 Generator::extract_integer_range(const ast::TypeDef& def) const {
@@ -790,20 +817,10 @@ std::string Generator::emit_member_type_descriptor(
     if (utag) {
         auto sr = extract_size_range(m);
         if (sr) {
-            int64_t slo = sr->first, sub = sr->second;
-            bool ext = is_constraint_extensible(m);
-            int flags = asn1::Constraints::SIZE_CONSTRAINED
-                      | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-            int srb = 0;
-            if (sub != std::numeric_limits<int64_t>::max()) {
-                int64_t range = sub - slo + 1;
-                if (range > 1)
-                    for (int64_t r = range - 1; r > 0; r >>= 1) ++srb;
-            }
-            int64_t pc_sub = (sub == std::numeric_limits<int64_t>::max()) ? 0 : sub;
+            auto sc = compute_size_constraint(sr, is_constraint_extensible(m));
             std::string pc = std::format(
                 "{{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }}",
-                flags, srb, slo, pc_sub);
+                sc.flags, sc.range_bits, sc.lower, sc.upper);
             // Use the matching asn_DEF_*'s public name as the XER tag name —
             // BerCodec / XerCodec consult it for primitive type names.
             const char* tn = nullptr;
@@ -1476,20 +1493,7 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
     os << "    nullptr, nullptr, nullptr, nullptr,\n";
 
     if (needs_per) {
-        // SIZE constraint metadata
-        int     size_flags = 0;
-        int     size_rb    = 0;
-        int64_t size_lb    = 0, size_ub = 0;
-        if (size_range) {
-            size_lb = size_range->first;
-            size_ub = size_range->second;
-            if (size_ub != std::numeric_limits<int64_t>::max()) {
-                size_flags = asn1::Constraints::SIZE_CONSTRAINED;
-                int64_t range = size_ub - size_lb + 1;
-                if (range > 1)
-                    for (int64_t r = range - 1; r > 0; r >>= 1) ++size_rb;
-            }
-        }
+        auto sc = compute_size_constraint(size_range);
 
         // FROM alphabet metadata
         int alphabet_bits = 0;
@@ -1499,7 +1503,7 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
             if (alphabet_bits == 0) alphabet_bits = 1;
         }
 
-        int flags = asn1::Constraints::CONSTRAINED | size_flags
+        int flags = asn1::Constraints::CONSTRAINED | sc.flags
                   | (is_constraint_extensible(def) ? asn1::Constraints::EXTENSIBLE : 0);
         int val_lb = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
         int val_ub = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
@@ -1507,7 +1511,7 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
         os << std::format(
             "    {{ .flags={}, .lower_bound={}, .upper_bound={}, "
             ".size_range_bits={}, .size_lower={}, .size_upper={}, .alphabet_bits={}",
-            flags, val_lb, val_ub, size_rb, size_lb, size_ub, alphabet_bits);
+            flags, val_lb, val_ub, sc.range_bits, sc.lower, sc.upper, alphabet_bits);
         if (!alphabet.empty()) {
             os << ", .alphabet=std::vector<uint8_t>{";
             for (int i = 0; i < static_cast<int>(alphabet.size()); ++i) {
@@ -1537,19 +1541,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("using _VecOps_{0} = asn1::VectorOps<{0}>;\n\n", cname);
 
     // SIZE constraint on collection length
-    auto size_range = extract_size_range(def);
-    int     size_flags = 0, size_rb = 0;
-    int64_t size_lb = 0, size_ub = 0;
-    if (size_range) {
-        size_lb = size_range->first;
-        size_ub = size_range->second;
-        if (size_ub != std::numeric_limits<int64_t>::max()) {
-            size_flags = asn1::Constraints::SIZE_CONSTRAINED;
-            int64_t range = size_ub - size_lb + 1;
-            if (range > 1)
-                for (int64_t r = range - 1; r > 0; r >>= 1) ++size_rb;
-        }
-    }
+    auto sc = compute_size_constraint(extract_size_range(def));
 
     // SeqOfSpec — when the element is an inline-constrained builtin (e.g.
     // SEQUENCE OF INTEGER (0..100)) emit a per-element TypeDescriptor that
@@ -1560,7 +1552,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", cname);
     os << std::format("    {},\n", elem_ref);
     os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
-                      size_flags, size_rb, size_lb, size_ub);
+                      sc.flags, sc.range_bits, sc.lower, sc.upper);
     os << std::format("    &_VecOps_{0}::count, &_VecOps_{0}::get_const, &_VecOps_{0}::get_mut, &_VecOps_{0}::resize\n", cname);
     os << "};\n\n";
 
