@@ -1114,8 +1114,9 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 std::string eff_tag;
                 bool is_explicit = false;
                 if (m->tag.present()) {
-                    eff_tag = tag_literal(m->tag, member_is_constructed(*m));
                     is_explicit = member_is_explicit(m->tag, *m);
+                    // EXPLICIT wrapper is always constructed (X.690 §8.14.3); IMPLICIT inherits.
+                    eff_tag = tag_literal(m->tag, is_explicit || member_is_constructed(*m));
                 } else if (apply_auto_tags) {
                     // X.680 §24.9: untagged CHOICE in AUTOMATIC TAGS gets EXPLICIT, not IMPLICIT.
                     bool is_choice = member_type_is_choice(*m);
@@ -1320,8 +1321,9 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string eff_tag;
             bool is_explicit = false;
             if (m->tag.present()) {
-                eff_tag = tag_literal(m->tag, member_is_constructed(*m));
                 is_explicit = member_is_explicit(m->tag, *m);
+                // EXPLICIT wrapper is always constructed (X.690 §8.14.3); IMPLICIT inherits.
+                eff_tag = tag_literal(m->tag, is_explicit || member_is_constructed(*m));
             } else if (apply_auto_tags) {
                 // X.680 §28.2: untagged CHOICE alternative in AUTOMATIC TAGS gets EXPLICIT.
                 bool is_choice = member_type_is_choice(*m);

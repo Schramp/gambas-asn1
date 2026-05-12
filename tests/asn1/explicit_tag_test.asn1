@@ -1,0 +1,20 @@
+ExplicitTagTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+  -- EXPLICIT on non-CHOICE (INTEGER): outer tag must be constructed
+  WithExplicitInt ::= SEQUENCE {
+    num [0] EXPLICIT INTEGER
+  }
+
+  -- EXPLICIT on SEQUENCE: outer tag constructed, inner SEQUENCE also constructed
+  Inner ::= SEQUENCE { x INTEGER }
+  WithExplicitSeq ::= SEQUENCE {
+    inner [1] EXPLICIT Inner
+  }
+
+  -- Mix: IMPLICIT INTEGER alongside EXPLICIT INTEGER
+  Mixed ::= SEQUENCE {
+    implicit [0] INTEGER,
+    explicit [1] EXPLICIT INTEGER
+  }
+
+END

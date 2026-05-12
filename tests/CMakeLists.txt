@@ -31,6 +31,30 @@ target_include_directories(test_seq_simple PRIVATE ${SIMPLE_SEQ_GEN_DIR})
 target_link_libraries(test_seq_simple PRIVATE asn1cpp_runtime)
 add_test(NAME seq_simple COMMAND test_seq_simple)
 
+# ---- EXPLICIT tagging on non-CHOICE ----------------------------------------
+set(EXPLICIT_TAG_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_explicit_tag_test)
+add_custom_command(
+    OUTPUT  ${EXPLICIT_TAG_GEN_DIR}/WithExplicitInt.hpp ${EXPLICIT_TAG_GEN_DIR}/WithExplicitInt.cpp
+            ${EXPLICIT_TAG_GEN_DIR}/WithExplicitSeq.hpp ${EXPLICIT_TAG_GEN_DIR}/WithExplicitSeq.cpp
+            ${EXPLICIT_TAG_GEN_DIR}/Mixed.hpp           ${EXPLICIT_TAG_GEN_DIR}/Mixed.cpp
+            ${EXPLICIT_TAG_GEN_DIR}/Inner.hpp           ${EXPLICIT_TAG_GEN_DIR}/Inner.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${EXPLICIT_TAG_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/explicit_tag_test.asn1
+                                   -o ${EXPLICIT_TAG_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/explicit_tag_test.asn1
+    COMMENT "Generating C++ from explicit_tag_test.asn1"
+)
+add_executable(test_explicit_tag
+    seq/test_explicit_tag.cpp
+    ${EXPLICIT_TAG_GEN_DIR}/WithExplicitInt.cpp
+    ${EXPLICIT_TAG_GEN_DIR}/WithExplicitSeq.cpp
+    ${EXPLICIT_TAG_GEN_DIR}/Mixed.cpp
+    ${EXPLICIT_TAG_GEN_DIR}/Inner.cpp
+)
+target_include_directories(test_explicit_tag PRIVATE ${EXPLICIT_TAG_GEN_DIR})
+target_link_libraries(test_explicit_tag PRIVATE asn1cpp_runtime)
+add_test(NAME explicit_tag COMMAND test_explicit_tag)
+
 # ---- NULL member BER tests -------------------------------------------------
 set(NULL_TEST_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_null_test)
 add_custom_command(
