@@ -115,7 +115,7 @@ bool Generator::member_is_explicit(const ast::Tag& tag, const ast::TypeDef& memb
 }
 
 // Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
-std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) {
+std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) const {
     if (!tag.present()) return "";
     std::string cls;
     switch (tag.cls) {
@@ -129,7 +129,7 @@ std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) {
 }
 
 // Returns the natural (universal) tag for a member def's underlying type.
-std::string Generator::natural_tag_for(const ast::TypeDef& def) {
+std::string Generator::natural_tag_for(const ast::TypeDef& def) const {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
         switch (*bt) {
@@ -175,6 +175,62 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) {
         if (base) return natural_tag_for(*base);
     }
     return "asn1::Tag::universal(4, false)";  // fallback: OCTET STRING
+}
+
+// ---------------------------------------------------------------------------
+// Shared SEQUENCE/SET/CHOICE helpers
+// ---------------------------------------------------------------------------
+
+Generator::MemberCount Generator::count_members(const ast::TypeDef& def) {
+    int count = 0, ext_at = -1;
+    for (const auto& m : def.members) {
+        if (m->is_extension_marker) { if (ext_at < 0) ext_at = count; continue; }
+        ++count;
+    }
+    return { count, ext_at };
+}
+
+bool Generator::should_apply_auto_tags(const ast::TypeDef& def) const {
+    if (current_tag_default_ != ast::TagDefault::Automatic) return false;
+    for (const auto& m : def.members) {
+        if (!m || m->is_extension_marker) continue;
+        if (m->tag.present()) return false;
+    }
+    return true;
+}
+
+Generator::TagResult Generator::compute_member_tag(const ast::TypeDef& m,
+                                                    bool apply_auto_tags,
+                                                    int auto_tag_num) const {
+    std::string eff_tag;
+    bool is_explicit = false;
+    if (m.tag.present()) {
+        is_explicit = member_is_explicit(m.tag, m);
+        // EXPLICIT wrapper is always constructed (X.690 §8.14.3); IMPLICIT inherits.
+        eff_tag = tag_literal(m.tag, is_explicit || member_is_constructed(m));
+    } else if (apply_auto_tags) {
+        // X.680 §24.9 / §28.2: untagged CHOICE in AUTOMATIC TAGS gets EXPLICIT.
+        bool is_choice = member_type_is_choice(m);
+        ast::Tag auto_tag;
+        auto_tag.cls    = ast::TagClass::Context;
+        auto_tag.number = auto_tag_num;
+        auto_tag.mode   = is_choice ? ast::TagMode::Explicit : ast::TagMode::Implicit;
+        eff_tag    = tag_literal(auto_tag, is_choice || member_is_constructed(m));
+        is_explicit = is_choice;
+    } else {
+        eff_tag = natural_tag_for(m);
+        if (eff_tag.empty()) eff_tag = "asn1::Tag{}";
+    }
+    return { std::move(eff_tag), is_explicit };
+}
+
+bool Generator::is_class_type(const ast::TypeDef& m) const {
+    if (m.is_sequence() || m.is_choice() || m.is_set()) return true;
+    if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+        auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
+        return direct && (direct->is_sequence() || direct->is_choice() || direct->is_set());
+    }
+    return false;
 }
 
 // Collect flattened BER dispatch tags for one CHOICE alternative (X.690 §8.13,
@@ -869,25 +925,12 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     uint32_t tag_num = is_set ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
 
     // Count non-extension members
-    int mcount = 0;
-    int ext_at = -1;
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) { if (ext_at < 0) ext_at = mcount; continue; }
-        ++mcount;
-    }
+    auto [mcount, ext_at] = count_members(def);
 
     // Determine if a member's named type is directly a class (SEQUENCE/CHOICE/SET) and can be
     // forward-declared. Using a direct lookup (not following aliases) is essential: a type alias
     // like `TraceActivation ::= ExternalASNType` generates `using TraceActivation = ...` in C++,
     // which cannot be forward-declared as `class TraceActivation;`.
-    auto is_class_type = [&](const ast::TypeDef& m) -> bool {
-        if (m.is_sequence() || m.is_choice() || m.is_set()) return true;
-        if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
-            auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
-            return direct && (direct->is_sequence() || direct->is_choice() || direct->is_set());
-        }
-        return false;
-    };
 
     // Emit includes or forward declarations.
     // Optional class-typed members: forward declaration only (breaks circular includes).
@@ -1000,14 +1043,9 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     bool is_set = def.is_set();
     uint32_t tag_num = is_set ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
 
-    int mcount = 0;
-    int ext_at = -1;
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) { if (ext_at < 0) ext_at = mcount; continue; }
-        ++mcount;
-    }
+    auto [mcount, ext_at] = count_members(def);
 
-    // Determine if any optional members exist (same logic as emit_sequence_hpp).
+    // Determine if any optional members exist.
     bool has_optional_members = false;
     {
         bool past = false;
@@ -1019,14 +1057,6 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     if (has_optional_members) {
         // Forward-declared types in the .hpp need full includes in the .cpp.
-        auto is_class_type = [&](const ast::TypeDef& m) -> bool {
-            if (m.is_sequence() || m.is_choice() || m.is_set()) return true;
-            if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
-                auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
-                return direct && (direct->is_sequence() || direct->is_choice() || direct->is_set());
-            }
-            return false;
-        };
         bool emitted_extra = false;
         bool past_ext = false;
         for (const auto& m : def.members) {
@@ -1082,14 +1112,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // Determine if AUTOMATIC TAGS applies: module is AUTOMATIC TAGS and none of the
     // ComponentTypes in any ComponentTypeList has an explicit tag (X.680 §24.8).
-    bool apply_auto_tags = false;
-    if (current_tag_default_ == ast::TagDefault::Automatic) {
-        apply_auto_tags = true;
-        for (const auto& m : def.members) {
-            if (!m || m->is_extension_marker) continue;
-            if (m->tag.present()) { apply_auto_tags = false; break; }
-        }
-    }
+    bool apply_auto_tags = should_apply_auto_tags(def);
 
     // Per-member row data — hoisted so setter definitions can reference it after
     // the descriptor table block.
@@ -1111,25 +1134,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 if (m->is_extension_marker) { past = true; continue; }
                 std::string mname = to_member_name(m->name);
                 bool optional = m->is_optional() || past;
-                std::string eff_tag;
-                bool is_explicit = false;
-                if (m->tag.present()) {
-                    is_explicit = member_is_explicit(m->tag, *m);
-                    // EXPLICIT wrapper is always constructed (X.690 §8.14.3); IMPLICIT inherits.
-                    eff_tag = tag_literal(m->tag, is_explicit || member_is_constructed(*m));
-                } else if (apply_auto_tags) {
-                    // X.680 §24.9: untagged CHOICE in AUTOMATIC TAGS gets EXPLICIT, not IMPLICIT.
-                    bool is_choice = member_type_is_choice(*m);
-                    ast::Tag auto_tag;
-                    auto_tag.cls    = ast::TagClass::Context;
-                    auto_tag.number = atag;
-                    auto_tag.mode   = is_choice ? ast::TagMode::Explicit : ast::TagMode::Implicit;
-                    eff_tag = tag_literal(auto_tag, is_choice || member_is_constructed(*m));
-                    is_explicit = is_choice;
-                } else {
-                    eff_tag = natural_tag_for(*m);
-                    if (eff_tag.empty()) eff_tag = "asn1::Tag{}";
-                }
+                auto [eff_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, atag);
                 std::string ops = optional
                     ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, mname)
                     : "{}";
@@ -1220,12 +1225,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
 void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
-    int count = 0;
-    int ext_at = -1;
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) { if (ext_at < 0) ext_at = count; continue; }
-        ++count;
-    }
+    auto [count, ext_at] = count_members(def);
 
     // #include referenced alternative types and inline-type headers
     for (const auto& m : def.members) {
@@ -1288,23 +1288,8 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
 void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
-    int count = 0;
-    int ext_at = -1;
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) { if (ext_at < 0) ext_at = count; continue; }
-        ++count;
-    }
-
-    // Determine if AUTOMATIC TAGS applies: module is AUTOMATIC TAGS and none of the
-    // NamedTypes in any AlternativeTypeList has an explicit tag (X.680 §28.2).
-    bool apply_auto_tags = false;
-    if (current_tag_default_ == ast::TagDefault::Automatic) {
-        apply_auto_tags = true;
-        for (const auto& m : def.members) {
-            if (!m || m->is_extension_marker) continue;
-            if (m->tag.present()) { apply_auto_tags = false; break; }
-        }
-    }
+    auto [count, ext_at] = count_members(def);
+    bool apply_auto_tags = should_apply_auto_tags(def);
 
     // Alternative descriptor table
     if (count > 0) {
@@ -1318,25 +1303,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
           for (const auto& m : def.members) {
             if (m->is_extension_marker) continue;
             std::string mname = to_member_name(m->name);
-            std::string eff_tag;
-            bool is_explicit = false;
-            if (m->tag.present()) {
-                is_explicit = member_is_explicit(m->tag, *m);
-                // EXPLICIT wrapper is always constructed (X.690 §8.14.3); IMPLICIT inherits.
-                eff_tag = tag_literal(m->tag, is_explicit || member_is_constructed(*m));
-            } else if (apply_auto_tags) {
-                // X.680 §28.2: untagged CHOICE alternative in AUTOMATIC TAGS gets EXPLICIT.
-                bool is_choice = member_type_is_choice(*m);
-                ast::Tag auto_tag;
-                auto_tag.cls    = ast::TagClass::Context;
-                auto_tag.number = auto_tag_num;
-                auto_tag.mode   = is_choice ? ast::TagMode::Explicit : ast::TagMode::Implicit;
-                eff_tag = tag_literal(auto_tag, is_choice || member_is_constructed(*m));
-                is_explicit = is_choice;
-            } else {
-                eff_tag = natural_tag_for(*m);
-                if (eff_tag.empty()) eff_tag = "asn1::Tag{}";
-            }
+            auto [eff_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
             rows.push_back({ m->name, eff_tag, mname, tdref, is_explicit });
             ++auto_tag_num;

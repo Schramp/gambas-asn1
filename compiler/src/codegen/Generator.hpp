@@ -172,8 +172,8 @@ private:
     bool        member_is_explicit(const ast::Tag& tag, const ast::TypeDef& member_type) const;
     std::string emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
                                             const std::string& mname, std::ostream& os);
-    std::string tag_literal(const ast::Tag& tag, bool constructed);
-    std::string natural_tag_for(const ast::TypeDef& def);
+    std::string tag_literal(const ast::Tag& tag, bool constructed) const;
+    std::string natural_tag_for(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
     // alt_idx: 0-based index of the alternative in its parent CHOICE.
     // Appends {tag_literal, alt_idx} pairs; recurses if alt resolves to untagged CHOICE.
@@ -199,6 +199,19 @@ private:
 
     // Choose INTEGER storage class from constraint analysis.
     IntStorageKind classify_integer_storage(const ast::TypeDef& def) const;
+
+    // Shared helpers used by both SEQUENCE/SET and CHOICE codegen.
+    struct MemberCount { int count; int ext_at; };
+    static MemberCount count_members(const ast::TypeDef& def);
+
+    bool should_apply_auto_tags(const ast::TypeDef& def) const;
+
+    struct TagResult { std::string tag_literal; bool is_explicit; };
+    TagResult compute_member_tag(const ast::TypeDef& m,
+                                 bool apply_auto_tags,
+                                 int auto_tag_num) const;
+
+    bool is_class_type(const ast::TypeDef& m) const;
 };
 
 } // namespace asn1::codegen
