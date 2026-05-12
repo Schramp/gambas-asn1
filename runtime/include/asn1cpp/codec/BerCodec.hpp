@@ -46,17 +46,14 @@ public:
                         void* dest) const override;
 
 private:
-    static bool is_boolean_tag(const Tag& t);
-    static bool is_integer_tag(const Tag& t);
-    static bool is_null_tag(const Tag& t);
-    static bool is_real_tag(const Tag& t);
-    static bool is_bitstring_tag(const Tag& t);
-    static bool is_oid_tag(const Tag& t);
-    static bool is_relative_oid_tag(const Tag& t);
-    static bool is_utctime_tag(const Tag& t);
-    static bool is_generalizedtime_tag(const Tag& t);
-    static bool is_octetstring_tag(const Tag& t);
-    static bool is_primitive_string_tag(const Tag& t);
+    DecodeResult decode_implicit_member(std::span<const uint8_t> outer_value,
+                                        const TypeDescriptor& mdef,
+                                        void* mptr) const;
+    void encode_implicit_tagged(BerWriter& w, uint32_t ctx_tag_number,
+                                const TypeDescriptor& mdef, const void* mptr,
+                                const char* parent_name, const char* member_name) const;
+    void encode_explicit_tagged(BerWriter& w, const Tag& ctx_tag,
+                                const TypeDescriptor& mdef, const void* mptr) const;
 
     void encode_integer(BerWriter& w, const TypeDescriptor& def, const void* src) const;
     DecodeResult decode_integer(BerReader& r, const TypeDescriptor& def, void* dest) const;

@@ -16,15 +16,15 @@ void PerCodec::encode(IEncodeStream& dst,
     if (def.sequence_spec) { encode_sequence   (s, def, src); return; }
     if (def.choice_spec)   { encode_choice     (s, def, src); return; }
     if (def.seq_of_spec)   { encode_seq_of     (s, def, src); return; }
-    if (is_integer_tag(def.tag))  { encode_integer(s, def, src); return; }
-    if (is_boolean_tag(def.tag))  { encode_boolean(s, src); return; }
-    if (is_real_tag(def.tag))      { encode_real     (s, src); return; }
-    if (is_bitstring_tag(def.tag))   { encode_bitstring  (s, def, src); return; }
-    if (is_octetstring_tag(def.tag)) { encode_octetstring(s, def, src); return; }
-    if (is_oid_tag(def.tag))         { encode_oid       (s, src); return; }
-    if (is_reloid_tag(def.tag))      { encode_reloid    (s, src); return; }
-    if (is_null_tag(def.tag))        { return; }  // NULL: zero bits (X.691 §18.1)
-    if (is_string_tag(def.tag))      { encode_string    (s, def, src); return; }
+    if (def.tag.is_integer())          { encode_integer   (s, def, src); return; }
+    if (def.tag.is_boolean())          { encode_boolean   (s, src);      return; }
+    if (def.tag.is_real())             { encode_real      (s, src);      return; }
+    if (def.tag.is_bitstring())        { encode_bitstring (s, def, src); return; }
+    if (def.tag.is_octetstring())      { encode_octetstring(s, def, src); return; }
+    if (def.tag.is_oid())              { encode_oid       (s, src);      return; }
+    if (def.tag.is_relative_oid())     { encode_reloid    (s, src);      return; }
+    if (def.tag.is_null())             { return; }  // NULL: zero bits (X.691 §18.1)
+    if (def.tag.is_character_string()) { encode_string    (s, def, src); return; }
 }
 
 // ------------------------------------------------------------------
@@ -38,15 +38,15 @@ DecodeResult PerCodec::decode(IDecodeStream& src,
     if (def.sequence_spec) return decode_sequence   (s, def, dest);
     if (def.choice_spec)   return decode_choice     (s, def, dest);
     if (def.seq_of_spec)   return decode_seq_of     (s, def, dest);
-    if (is_integer_tag(def.tag))  return decode_integer(s, def, dest);
-    if (is_boolean_tag(def.tag))  return decode_boolean(s, dest);
-    if (is_real_tag(def.tag))      return decode_real     (s, dest);
-    if (is_bitstring_tag(def.tag))   return decode_bitstring  (s, def, dest);
-    if (is_octetstring_tag(def.tag)) return decode_octetstring(s, def, dest);
-    if (is_oid_tag(def.tag))         return decode_oid   (s, dest);
-    if (is_reloid_tag(def.tag))      return decode_reloid(s, dest);
-    if (is_null_tag(def.tag))        return decode_ok();  // NULL: zero bits
-    if (is_string_tag(def.tag))      return decode_string(s, def, dest);
+    if (def.tag.is_integer())          return decode_integer   (s, def, dest);
+    if (def.tag.is_boolean())          return decode_boolean   (s, dest);
+    if (def.tag.is_real())             return decode_real      (s, dest);
+    if (def.tag.is_bitstring())        return decode_bitstring (s, def, dest);
+    if (def.tag.is_octetstring())      return decode_octetstring(s, def, dest);
+    if (def.tag.is_oid())              return decode_oid       (s, dest);
+    if (def.tag.is_relative_oid())     return decode_reloid    (s, dest);
+    if (def.tag.is_null())             return decode_ok();  // NULL: zero bits
+    if (def.tag.is_character_string()) return decode_string    (s, def, dest);
     return decode_err(DecodeError(std::string("PerCodec: no spec for type ") + def.name));
 }
 
@@ -141,50 +141,6 @@ DecodeResult PerCodec::skip_open_type(PerDecodeStream& s) {
 
 
 // ---- bit helpers ---------------------------------------------------
-
-bool PerCodec::is_integer_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::Integer;
-}
-bool PerCodec::is_boolean_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::Boolean;
-}
-bool PerCodec::is_real_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::Real;
-}
-bool PerCodec::is_bitstring_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::BitString;
-}
-bool PerCodec::is_octetstring_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::OctetString;
-}
-bool PerCodec::is_null_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == 5;
-}
-bool PerCodec::is_oid_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::Oid;
-}
-bool PerCodec::is_reloid_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::RelativeOid;
-}
-bool PerCodec::is_string_tag(const Tag& t) {
-    if (t.cls != TagClass::Universal) return false;
-    switch (t.number) {
-        case UniversalTag::ObjectDescriptor:
-        case UniversalTag::NumericString:
-        case UniversalTag::PrintableString:
-        case UniversalTag::T61String:
-        case UniversalTag::VideotexString:
-        case UniversalTag::UtcTime:
-        case UniversalTag::GeneralizedTime:
-        case UniversalTag::GraphicString:
-        case UniversalTag::VisibleString:
-        case UniversalTag::GeneralString:
-        case UniversalTag::UniversalString:
-        case UniversalTag::BmpString:
-            return true;
-        default: return false;
-    }
-}
 
 // Minimum bits to represent values in [0, range-1].
 int PerCodec::range_bits(int64_t range) {

@@ -134,15 +134,6 @@ private:
     DecodeResult decode_open_type(PerDecodeStream& s, const TypeDescriptor& mdef, void* mptr) const;
     static DecodeResult skip_open_type(PerDecodeStream& s);
 
-    static bool is_integer_tag(const Tag& t);
-    static bool is_boolean_tag(const Tag& t);
-    static bool is_real_tag(const Tag& t);
-    static bool is_bitstring_tag(const Tag& t);
-    static bool is_octetstring_tag(const Tag& t);
-    static bool is_null_tag(const Tag& t);
-    static bool is_oid_tag(const Tag& t);
-    static bool is_reloid_tag(const Tag& t);
-    static bool is_string_tag(const Tag& t);
 
     static int range_bits(int64_t range);
 

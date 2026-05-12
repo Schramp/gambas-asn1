@@ -219,22 +219,6 @@ public:
                         void* dest) const override;
 
 private:
-    // ---- Tag predicates ---------------------------------------------------
-    static bool is_boolean_tag(const Tag& t);
-    static bool is_integer_tag(const Tag& t);
-    static bool is_null_tag(const Tag& t);
-    static bool is_real_tag(const Tag& t);
-    static bool is_bitstring_tag(const Tag& t);
-    static bool is_oid_tag(const Tag& t);
-    static bool is_relative_oid_tag(const Tag& t);
-    static bool is_utctime_tag(const Tag& t);
-    static bool is_gentime_tag(const Tag& t);
-    static bool is_octetstring_tag(const Tag& t);
-    static bool is_primitive_string_tag(const Tag& t);
-    static bool is_hex_string_tag(const Tag& t);
-    static bool is_bmp_string_tag(const Tag& t);
-    static bool is_universal_string_tag(const Tag& t);
-
     // ---- Template methods (must stay in header) ---------------------------
 
     template<typename F>

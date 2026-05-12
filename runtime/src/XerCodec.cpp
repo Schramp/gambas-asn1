@@ -15,20 +15,20 @@ void XerCodec::encode(IEncodeStream& dst,
     if (def.sequence_spec) { encode_sequence   (s, def, src); return; }
     if (def.choice_spec)   { encode_choice     (s, def, src); return; }
     if (def.seq_of_spec)   { encode_seq_of     (s, def, src); return; }
-    if (is_boolean_tag(def.tag))          { encode_boolean         (s, def, src); return; }
-    if (is_integer_tag(def.tag))          { encode_integer         (s, def, src); return; }
-    if (is_null_tag(def.tag))             { encode_null            (s, def);      return; }
-    if (is_real_tag(def.tag))             { encode_real            (s, def, src); return; }
-    if (is_bitstring_tag(def.tag))        { encode_bitstring       (s, def, src); return; }
-    if (is_oid_tag(def.tag))              { encode_oid             (s, def, src); return; }
-    if (is_relative_oid_tag(def.tag))     { encode_relative_oid   (s, def, src); return; }
-    if (is_utctime_tag(def.tag))          { encode_time_string     (s, def, src); return; }
-    if (is_gentime_tag(def.tag))          { encode_time_string     (s, def, src); return; }
-    if (is_octetstring_tag(def.tag))      { encode_octetstring_xer (s, def, src); return; }
-    if (is_hex_string_tag(def.tag))       { encode_hex_string      (s, def, src); return; }
-    if (is_bmp_string_tag(def.tag))       { encode_bmp_string      (s, def, src); return; }
-    if (is_universal_string_tag(def.tag)) { encode_universal_string(s, def, src); return; }
-    if (is_primitive_string_tag(def.tag)) { encode_xer_string      (s, def, src); return; }
+    if (def.tag.is_boolean())          { encode_boolean         (s, def, src); return; }
+    if (def.tag.is_integer())          { encode_integer         (s, def, src); return; }
+    if (def.tag.is_null())             { encode_null            (s, def);      return; }
+    if (def.tag.is_real())             { encode_real            (s, def, src); return; }
+    if (def.tag.is_bitstring())        { encode_bitstring       (s, def, src); return; }
+    if (def.tag.is_oid())              { encode_oid             (s, def, src); return; }
+    if (def.tag.is_relative_oid())     { encode_relative_oid   (s, def, src); return; }
+    if (def.tag.is_utctime())          { encode_time_string     (s, def, src); return; }
+    if (def.tag.is_generalizedtime())  { encode_time_string     (s, def, src); return; }
+    if (def.tag.is_octetstring())      { encode_octetstring_xer (s, def, src); return; }
+    if (def.tag.is_hex_string())       { encode_hex_string      (s, def, src); return; }
+    if (def.tag.is_bmp_string())       { encode_bmp_string      (s, def, src); return; }
+    if (def.tag.is_universal_string()) { encode_universal_string(s, def, src); return; }
+    if (def.tag.is_primitive_string()) { encode_xer_string      (s, def, src); return; }
 }
 
 DecodeResult XerCodec::decode(IDecodeStream& src,
@@ -41,74 +41,21 @@ DecodeResult XerCodec::decode(IDecodeStream& src,
     if (def.sequence_spec) return decode_sequence   (s, def, dest);
     if (def.choice_spec)   return decode_choice     (s, def, dest);
     if (def.seq_of_spec)   return decode_seq_of     (s, def, dest);
-    if (is_boolean_tag(def.tag))          return decode_boolean         (s, def, dest);
-    if (is_integer_tag(def.tag))          return decode_integer         (s, def, dest);
-    if (is_null_tag(def.tag))             return decode_null            (s, def, dest);
-    if (is_real_tag(def.tag))             return decode_real            (s, def, dest);
-    if (is_bitstring_tag(def.tag))        return decode_bitstring       (s, def, dest);
-    if (is_oid_tag(def.tag))              return decode_oid             (s, def, dest);
-    if (is_relative_oid_tag(def.tag))     return decode_relative_oid   (s, def, dest);
-    if (is_utctime_tag(def.tag))          return decode_time_string<UtcTime>        (s, def, dest);
-    if (is_gentime_tag(def.tag))          return decode_time_string<GeneralizedTime>(s, def, dest);
-    if (is_octetstring_tag(def.tag))      return decode_octetstring_xer (s, def, dest);
-    if (is_hex_string_tag(def.tag))       return decode_hex_string      (s, def, dest);
-    if (is_bmp_string_tag(def.tag))       return decode_bmp_string      (s, def, dest);
-    if (is_universal_string_tag(def.tag)) return decode_universal_string(s, def, dest);
-    if (is_primitive_string_tag(def.tag)) return decode_xer_string      (s, def, dest);
+    if (def.tag.is_boolean())          return decode_boolean         (s, def, dest);
+    if (def.tag.is_integer())          return decode_integer         (s, def, dest);
+    if (def.tag.is_null())             return decode_null            (s, def, dest);
+    if (def.tag.is_real())             return decode_real            (s, def, dest);
+    if (def.tag.is_bitstring())        return decode_bitstring       (s, def, dest);
+    if (def.tag.is_oid())              return decode_oid             (s, def, dest);
+    if (def.tag.is_relative_oid())     return decode_relative_oid   (s, def, dest);
+    if (def.tag.is_utctime())          return decode_time_string<UtcTime>        (s, def, dest);
+    if (def.tag.is_generalizedtime())  return decode_time_string<GeneralizedTime>(s, def, dest);
+    if (def.tag.is_octetstring())      return decode_octetstring_xer (s, def, dest);
+    if (def.tag.is_hex_string())       return decode_hex_string      (s, def, dest);
+    if (def.tag.is_bmp_string())       return decode_bmp_string      (s, def, dest);
+    if (def.tag.is_universal_string()) return decode_universal_string(s, def, dest);
+    if (def.tag.is_primitive_string()) return decode_xer_string      (s, def, dest);
     return decode_err(DecodeError(std::string("XerCodec: no spec for type ") + def.name));
-}
-
-// ---------------------------------------------------------------------------
-// Tag predicates
-
-bool XerCodec::is_boolean_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::Boolean;
-}
-bool XerCodec::is_integer_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::Integer;
-}
-bool XerCodec::is_null_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == 5;
-}
-bool XerCodec::is_real_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == 9;
-}
-bool XerCodec::is_bitstring_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == 3;
-}
-bool XerCodec::is_oid_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == 6;
-}
-bool XerCodec::is_relative_oid_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == 13;
-}
-bool XerCodec::is_utctime_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == 23;
-}
-bool XerCodec::is_gentime_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == 24;
-}
-bool XerCodec::is_octetstring_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == 4;
-}
-bool XerCodec::is_primitive_string_tag(const Tag& t) {
-    if (t.cls != TagClass::Universal) return false;
-    switch (t.number) {
-    case 7: case 12: case 18: case 19: case 20:
-    case 21: case 22: case 25: case 26: case 27: case 28: case 30:
-        return true;
-    default: return false;
-    }
-}
-bool XerCodec::is_hex_string_tag(const Tag& t) {
-    if (t.cls != TagClass::Universal) return false;
-    switch (t.number) { case 20: case 21: case 25: case 27: return true; default: return false; }
-}
-bool XerCodec::is_bmp_string_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == 30;
-}
-bool XerCodec::is_universal_string_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == 28;
 }
 
 // ---------------------------------------------------------------------------

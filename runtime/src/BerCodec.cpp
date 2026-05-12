@@ -70,17 +70,17 @@ void BerCodec::encode(IEncodeStream& dst,
     if (def.sequence_spec) { encode_sequence   (s.writer(), def, src); return; }
     if (def.choice_spec)   { encode_choice     (s.writer(), def, src); return; }
     if (def.seq_of_spec)   { encode_seq_of     (s.writer(), def, src); return; }
-    if (is_boolean_tag(def.tag))  { encode_boolean (s.writer(), src); return; }
-    if (is_integer_tag(def.tag)) { encode_integer(s.writer(), def, src); return; }
-    if (is_null_tag(def.tag))    { encode_null   (s.writer(), def);     return; }
-    if (is_real_tag(def.tag))       { encode_real     (s.writer(), src); return; }
-    if (is_bitstring_tag(def.tag))    { encode_bitstring   (s.writer(), src); return; }
-    if (is_oid_tag(def.tag))          { encode_oid         (s.writer(), src); return; }
-    if (is_relative_oid_tag(def.tag))     { encode_relative_oid    (s.writer(), src); return; }
-    if (is_utctime_tag(def.tag))           { encode_utctime         (s.writer(), src); return; }
-    if (is_generalizedtime_tag(def.tag))   { encode_generalizedtime (s.writer(), src); return; }
-    if (is_octetstring_tag(def.tag))       { encode_octetstring(s.writer(), src); return; }
-    if (is_primitive_string_tag(def.tag))  { encode_asnstring  (s.writer(), def.tag, src); return; }
+    if (def.tag.is_boolean())          { encode_boolean        (s.writer(), src);       return; }
+    if (def.tag.is_integer())          { encode_integer        (s.writer(), def, src);  return; }
+    if (def.tag.is_null())             { encode_null           (s.writer(), def);        return; }
+    if (def.tag.is_real())             { encode_real           (s.writer(), src);        return; }
+    if (def.tag.is_bitstring())        { encode_bitstring      (s.writer(), src);        return; }
+    if (def.tag.is_oid())              { encode_oid            (s.writer(), src);        return; }
+    if (def.tag.is_relative_oid())     { encode_relative_oid   (s.writer(), src);        return; }
+    if (def.tag.is_utctime())          { encode_utctime        (s.writer(), src);        return; }
+    if (def.tag.is_generalizedtime())  { encode_generalizedtime(s.writer(), src);        return; }
+    if (def.tag.is_octetstring())      { encode_octetstring    (s.writer(), src);        return; }
+    if (def.tag.is_primitive_string()) { encode_asnstring      (s.writer(), def.tag, src); return; }
 }
 
 DecodeResult BerCodec::decode(IDecodeStream& src,
@@ -94,17 +94,17 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
     else if (def.sequence_spec)              res = decode_sequence       (s.reader(), def, dest);
     else if (def.choice_spec)                res = decode_choice         (s.reader(), def, dest);
     else if (def.seq_of_spec)                res = decode_seq_of         (s.reader(), def, dest);
-    else if (is_boolean_tag(def.tag))        res = decode_boolean        (s.reader(), dest);
-    else if (is_integer_tag(def.tag))        res = decode_integer        (s.reader(), def, dest);
-    else if (is_null_tag(def.tag))           res = decode_null           (s.reader(), def, dest);
-    else if (is_real_tag(def.tag))           res = decode_real           (s.reader(), dest);
-    else if (is_bitstring_tag(def.tag))      res = decode_bitstring      (s.reader(), dest);
-    else if (is_oid_tag(def.tag))            res = decode_oid            (s.reader(), dest);
-    else if (is_relative_oid_tag(def.tag))   res = decode_relative_oid   (s.reader(), dest);
-    else if (is_utctime_tag(def.tag))        res = decode_utctime        (s.reader(), dest);
-    else if (is_generalizedtime_tag(def.tag))res = decode_generalizedtime(s.reader(), dest);
-    else if (is_octetstring_tag(def.tag))    res = decode_octetstring    (s.reader(), dest);
-    else if (is_primitive_string_tag(def.tag)) res = decode_asnstring    (s.reader(), def.tag, dest);
+    else if (def.tag.is_boolean())          res = decode_boolean        (s.reader(), dest);
+    else if (def.tag.is_integer())          res = decode_integer        (s.reader(), def, dest);
+    else if (def.tag.is_null())             res = decode_null           (s.reader(), def, dest);
+    else if (def.tag.is_real())             res = decode_real           (s.reader(), dest);
+    else if (def.tag.is_bitstring())        res = decode_bitstring      (s.reader(), dest);
+    else if (def.tag.is_oid())              res = decode_oid            (s.reader(), dest);
+    else if (def.tag.is_relative_oid())     res = decode_relative_oid   (s.reader(), dest);
+    else if (def.tag.is_utctime())          res = decode_utctime        (s.reader(), dest);
+    else if (def.tag.is_generalizedtime())  res = decode_generalizedtime(s.reader(), dest);
+    else if (def.tag.is_octetstring())      res = decode_octetstring    (s.reader(), dest);
+    else if (def.tag.is_primitive_string()) res = decode_asnstring      (s.reader(), def.tag, dest);
     else return decode_err(DecodeError(std::string("BerCodec: no spec for type ") + def.name));
 
 #if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_DECODE)
@@ -129,54 +129,39 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
     return res;
 }
 
-bool BerCodec::is_boolean_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::Boolean;
+DecodeResult BerCodec::decode_implicit_member(std::span<const uint8_t> outer_value,
+                                              const TypeDescriptor& mdef,
+                                              void* mptr) const {
+    std::vector<uint8_t> retagged;
+    { BerWriter bw{retagged}; bw.write_tag(mdef.tag); bw.write_length(outer_value.size()); }
+    retagged.insert(retagged.end(), outer_value.begin(), outer_value.end());
+    BerReader retag_reader{retagged};
+    BerDecodeStream ms{retag_reader};
+    return decode(ms, mdef, mptr);
 }
-bool BerCodec::is_integer_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::Integer;
+
+void BerCodec::encode_implicit_tagged(BerWriter& w, uint32_t ctx_tag_number,
+                                      const TypeDescriptor& mdef, const void* mptr,
+                                      const char* parent_name, const char* member_name) const {
+    std::vector<uint8_t> tmp;
+    { BerWriter bw{tmp}; BerEncodeStream ms{bw}; encode(ms, mdef, mptr); }
+    BerReader br{tmp};
+    auto tlv = br.read_tlv();
+    if (!tlv) return;
+    Tag ctx{TagClass::Context, ctx_tag_number, mdef.tag.constructed};
+    if (debug_flags() & DBG_BER_WRITE)
+        dbg_write_tag(parent_name, member_name, ctx, false, tlv->value.size());
+    w.write_tag(ctx);
+    w.write_length(tlv->value.size());
+    w.append(tlv->value);
 }
-bool BerCodec::is_null_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::Null;
-}
-bool BerCodec::is_real_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::Real;
-}
-bool BerCodec::is_bitstring_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::BitString;
-}
-bool BerCodec::is_oid_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::Oid;
-}
-bool BerCodec::is_relative_oid_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::RelativeOid;
-}
-bool BerCodec::is_utctime_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::UtcTime;
-}
-bool BerCodec::is_generalizedtime_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::GeneralizedTime;
-}
-bool BerCodec::is_octetstring_tag(const Tag& t) {
-    return t.cls == TagClass::Universal && t.number == UniversalTag::OctetString;
-}
-bool BerCodec::is_primitive_string_tag(const Tag& t) {
-    if (t.cls != TagClass::Universal) return false;
-    switch (t.number) {
-    case UniversalTag::ObjectDescriptor:
-    case UniversalTag::Utf8String:
-    case UniversalTag::NumericString:
-    case UniversalTag::PrintableString:
-    case UniversalTag::T61String:
-    case UniversalTag::VideotexString:
-    case UniversalTag::Ia5String:
-    case UniversalTag::GraphicString:
-    case UniversalTag::VisibleString:
-    case UniversalTag::GeneralString:
-    case UniversalTag::UniversalString:
-    case UniversalTag::BmpString:
-        return true;
-    default: return false;
-    }
+
+void BerCodec::encode_explicit_tagged(BerWriter& w, const Tag& ctx_tag,
+                                      const TypeDescriptor& mdef, const void* mptr) const {
+    w.write_constructed(ctx_tag, [&](BerWriter& w2) {
+        BerEncodeStream ms{w2};
+        encode(ms, mdef, mptr);
+    });
 }
 
 void BerCodec::encode_integer(BerWriter& w, const TypeDescriptor& def, const void* src) const {
@@ -440,23 +425,10 @@ void BerCodec::encode_sequence(BerWriter& w, const TypeDescriptor& def, const vo
                     if (debug_flags() & DBG_BER_WRITE)
                         std::fprintf(stderr, "[BER-WRITE] %s.%s tag=C%u EXPLICIT\n",
                                      def.name, mbr.name, mbr.tag.number);
-                    inner.write_constructed(exp_tag, [&](BerWriter& w2) {
-                        BerEncodeStream ms2{w2};
-                        encode(ms2, mdef, mptr);
-                    });
+                    encode_explicit_tagged(inner, exp_tag, mdef, mptr);
                 } else {
                     // IMPLICIT: encode normally to buffer, strip natural tag, re-emit with context tag.
-                    std::vector<uint8_t> tmp;
-                    { BerWriter bw{tmp}; BerEncodeStream ms{bw}; encode(ms, mdef, mptr); }
-                    BerReader br{tmp};
-                    auto tlv = br.read_tlv();
-                    if (!tlv) return;
-                    Tag ctx{TagClass::Context, mbr.tag.number, mdef.tag.constructed};
-                    if (debug_flags() & DBG_BER_WRITE)
-                        dbg_write_tag(def.name, mbr.name, ctx, false, tlv->value.size());
-                    inner.write_tag(ctx);
-                    inner.write_length(tlv->value.size());
-                    inner.append(tlv->value);
+                    encode_implicit_tagged(inner, mbr.tag.number, mdef, mptr, def.name, mbr.name);
                 }
             } else {
                 if (debug_flags() & DBG_BER_WRITE)
@@ -547,12 +519,7 @@ DecodeResult BerCodec::decode_sequence(BerReader& r, const TypeDescriptor& def, 
                 if (!ok) return ok;
             } else {
                 // IMPLICIT: inner bytes are the value; prepend natural type tag.
-                std::vector<uint8_t> retagged;
-                { BerWriter bw{retagged}; bw.write_tag(mdef.tag); bw.write_length(outer->value.size()); }
-                retagged.insert(retagged.end(), outer->value.begin(), outer->value.end());
-                BerReader retag_reader{retagged};
-                BerDecodeStream ms{retag_reader};
-                auto ok = decode(ms, mdef, mptr);
+                auto ok = decode_implicit_member(outer->value, mdef, mptr);
                 if (!ok) return ok;
             }
         } else {
@@ -587,23 +554,10 @@ void BerCodec::encode_choice(BerWriter& w, const TypeDescriptor& def, const void
             if (debug_flags() & DBG_BER_WRITE)
                 std::fprintf(stderr, "[BER-WRITE] %s CHOICE alt[%d]=%s tag=C%u EXPLICIT\n",
                              def.name, idx - 1, alt.name, alt.tag.number);
-            w.write_constructed(exp_tag, [&](BerWriter& w2) {
-                BerEncodeStream ms{w2};
-                encode(ms, mdef, mptr);
-            });
+            encode_explicit_tagged(w, exp_tag, mdef, mptr);
         } else {
             // IMPLICIT: encode inner type, strip its universal tag, re-emit under alt.tag.
-            std::vector<uint8_t> tmp;
-            { BerWriter bw{tmp}; BerEncodeStream ms{bw}; encode(ms, mdef, mptr); }
-            BerReader br{tmp};
-            auto tlv = br.read_tlv();
-            if (!tlv) return;
-            Tag ctx{TagClass::Context, alt.tag.number, mdef.tag.constructed};
-            if (debug_flags() & DBG_BER_WRITE)
-                dbg_write_tag(def.name, alt.name, ctx, false, tlv->value.size());
-            w.write_tag(ctx);
-            w.write_length(tlv->value.size());
-            w.append(tlv->value);
+            encode_implicit_tagged(w, alt.tag.number, mdef, mptr, def.name, alt.name);
         }
     } else {
         if (debug_flags() & DBG_BER_WRITE)
@@ -643,12 +597,7 @@ DecodeResult BerCodec::decode_choice(BerReader& r, const TypeDescriptor& def, vo
                     BerDecodeStream ms{inner2};
                     ok = decode(ms, mdef, mptr);
                 } else {
-                    std::vector<uint8_t> retagged;
-                    { BerWriter bw{retagged}; bw.write_tag(mdef.tag); bw.write_length(outer->value.size()); }
-                    retagged.insert(retagged.end(), outer->value.begin(), outer->value.end());
-                    BerReader retag_reader{retagged};
-                    BerDecodeStream ms{retag_reader};
-                    ok = decode(ms, mdef, mptr);
+                    ok = decode_implicit_member(outer->value, mdef, mptr);
                 }
             } else {
                 BerDecodeStream ms{r};
@@ -680,12 +629,7 @@ DecodeResult BerCodec::decode_choice(BerReader& r, const TypeDescriptor& def, vo
                 ok = decode(ms, mdef, mptr);
             } else {
                 // IMPLICIT: prepend natural type tag so leaf decoders see the right tag.
-                std::vector<uint8_t> retagged;
-                { BerWriter bw{retagged}; bw.write_tag(mdef.tag); bw.write_length(outer->value.size()); }
-                retagged.insert(retagged.end(), outer->value.begin(), outer->value.end());
-                BerReader retag_reader{retagged};
-                BerDecodeStream ms{retag_reader};
-                ok = decode(ms, mdef, mptr);
+                ok = decode_implicit_member(outer->value, mdef, mptr);
             }
         } else {
             BerDecodeStream ms{r};
