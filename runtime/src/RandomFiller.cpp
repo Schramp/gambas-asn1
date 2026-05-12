@@ -494,9 +494,7 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
         const auto& c = def.per_constraints;
         if (c.int_kind == PerConstraints::INT_U64) {
             uint64_t lo = c.lower_u64;
-            // Cap at INT64_MAX for cross-validation compatibility with asn1c
-            uint64_t hi = std::min(c.upper_u64,
-                                   static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+            uint64_t hi = c.upper_u64;
             if (c.flags & PerConstraints::SEMI_CONSTRAINED)
                 hi = lo + 1000;  // bounded sample for SEMI_CONSTRAINED
             if (lo > hi) hi = lo;
