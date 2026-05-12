@@ -10,7 +10,7 @@ namespace asn1 {
 // RandomFiller (pick chars from a valid set), and validate() (reject strings
 // containing bytes outside the permitted set).
 //
-// FROM constraints (PerConstraints::alphabet) override these by narrowing
+// FROM constraints (Constraints::alphabet) override these by narrowing
 // further; an empty FROM constraint means "use the type's built-in alphabet".
 
 // PrintableString (X.680 Table 8): 74 chars, sorted lexicographically — order

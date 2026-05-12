@@ -2,7 +2,7 @@
 #include <cstddef>
 #include <memory>
 #include "Tag.hpp"
-#include "codec/PerConstraints.hpp"
+#include "codec/Constraints.hpp"
 
 // C++ equivalents of asn1c's descriptor table types.
 // Generated code fills these static tables; the runtime codec uses them.
@@ -122,7 +122,7 @@ struct VectorOps {
 // SEQUENCE OF / SET OF specifics.
 struct SeqOfSpec {
     const TypeDescriptor* element;         // element type descriptor
-    PerConstraints        size_constraints; // SIZE constraint on collection length
+    Constraints        size_constraints; // SIZE constraint on collection length
 
     // Type-erased collection operations (generated per concrete vector type).
     std::size_t (*count_fn)(const void* vec);
@@ -134,8 +134,8 @@ struct SeqOfSpec {
     // signed delta (elements) such that (count + delta) lands at the nearest
     // valid bound: positive = too few, negative = too many.
     int64_t validate(const void* vec) const {
-        if (!(size_constraints.flags & PerConstraints::SIZE_CONSTRAINED)) return 0;
-        if (size_constraints.flags & PerConstraints::EXTENSIBLE) return 0;
+        if (!(size_constraints.flags & Constraints::SIZE_CONSTRAINED)) return 0;
+        if (size_constraints.flags & Constraints::EXTENSIBLE) return 0;
         auto n = static_cast<int64_t>(count_fn(vec));
         if (n < size_constraints.size_lower) return size_constraints.size_lower - n;
         if (n > size_constraints.size_upper) return size_constraints.size_upper - n;
@@ -172,7 +172,7 @@ struct ChoiceSpec {
     int                     ext_at;
 
     // PER: default-constructed (flags==0) means unconstrained.
-    PerConstraints per_constraints;
+    Constraints constraints;
 
     // BER: flattened tag → alternative dispatch (X.690 §8.13, X.680 §24.6).
     // Non-null only when at least one alternative is itself an untagged CHOICE.
@@ -190,7 +190,7 @@ struct TypeDescriptor {
     const SequenceSpec*  sequence_spec;  // non-null for SEQUENCE/SET
     const ChoiceSpec*    choice_spec;    // non-null for CHOICE
     const SeqOfSpec*     seq_of_spec;    // non-null for SEQUENCE OF / SET OF
-    PerConstraints per_constraints; // flags==0 means unconstrained
+    Constraints constraints; // flags==0 means unconstrained
     bool is_any = false;            // true for ANY — raw BER bytes, open-type in PER
 };
 

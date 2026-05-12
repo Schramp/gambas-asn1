@@ -218,8 +218,8 @@ DecodeResult PerCodec::decode_boolean(PerDecodeStream& s, void* dest) {
 // ---- SIZE field helpers (shared by BIT STRING and OCTET STRING) ------
 
 void PerCodec::encode_size_field(PerEncodeStream& s, const TypeDescriptor& def, std::size_t len) {
-    const PerConstraints& pc = def.per_constraints;
-    bool size_constrained = pc.flags & PerConstraints::SIZE_CONSTRAINED;
+    const Constraints& pc = def.constraints;
+    bool size_constrained = pc.flags & Constraints::SIZE_CONSTRAINED;
     if (size_constrained && pc.size_range_bits == 0) {
         // Fixed SIZE(n): no length field
     } else if (size_constrained) {
@@ -231,8 +231,8 @@ void PerCodec::encode_size_field(PerEncodeStream& s, const TypeDescriptor& def, 
 
 Expected<std::size_t, DecodeError> PerCodec::decode_size_field(
         PerDecodeStream& s, const TypeDescriptor& def) {
-    const PerConstraints& pc = def.per_constraints;
-    bool size_constrained = pc.flags & PerConstraints::SIZE_CONSTRAINED;
+    const Constraints& pc = def.constraints;
+    bool size_constrained = pc.flags & Constraints::SIZE_CONSTRAINED;
     if (size_constrained && pc.size_range_bits == 0) {
         return static_cast<std::size_t>(pc.size_lower);
     } else if (size_constrained) {
@@ -351,15 +351,15 @@ std::tuple<int,int> PerCodec::string_params(uint32_t tag_num) {
 
 void PerCodec::encode_string(PerEncodeStream& s, const TypeDescriptor& def, const void* src) {
     const std::string& str = *reinterpret_cast<const std::string*>(src);
-    const PerConstraints& pc = def.per_constraints;
+    const Constraints& pc = def.constraints;
 
     auto [bits, bpc] = PerCodec::string_params(def.tag.number);
     bool has_alpha = pc.alphabet_bits > 0 && !pc.alphabet.empty();
     std::size_t char_count = has_alpha ? str.size() : str.size() / bpc;
 
-    if (pc.flags & PerConstraints::EXTENSIBLE) {
+    if (pc.flags & Constraints::EXTENSIBLE) {
         bool in_root;
-        if (pc.flags & PerConstraints::SIZE_CONSTRAINED) {
+        if (pc.flags & Constraints::SIZE_CONSTRAINED) {
             in_root = (char_count >= static_cast<std::size_t>(pc.size_lower) &&
                        char_count <= static_cast<std::size_t>(pc.size_upper));
         } else if (has_alpha) {
@@ -400,9 +400,9 @@ void PerCodec::encode_string(PerEncodeStream& s, const TypeDescriptor& def, cons
 }
 
 DecodeResult PerCodec::decode_string(PerDecodeStream& s, const TypeDescriptor& def, void* dest) {
-    const PerConstraints& pc = def.per_constraints;
+    const Constraints& pc = def.constraints;
 
-    if (pc.flags & PerConstraints::EXTENSIBLE) {
+    if (pc.flags & Constraints::EXTENSIBLE) {
         auto ext = s.get_bits(1);
         if (!ext) return decode_err(ext.error());
         if (*ext) {
@@ -539,9 +539,9 @@ void PerCodec::encode_integer(PerEncodeStream& s,
                     const void* src)
 {
     int64_t value = *static_cast<const int64_t*>(src);
-    const PerConstraints& pc = def.per_constraints;
-    if (pc.flags & PerConstraints::CONSTRAINED) {
-        if (pc.flags & PerConstraints::EXTENSIBLE) {
+    const Constraints& pc = def.constraints;
+    if (pc.flags & Constraints::CONSTRAINED) {
+        if (pc.flags & Constraints::EXTENSIBLE) {
             bool in_root = (value >= pc.lower_bound && value <= pc.upper_bound);
             s.put_bits(in_root ? 0 : 1, 1);
             if (!in_root) { encode_unconstrained_int(s, value); return; }
@@ -549,8 +549,8 @@ void PerCodec::encode_integer(PerEncodeStream& s,
         int64_t encoded = value - pc.lower_bound;
         int64_t rcount  = pc.upper_bound - pc.lower_bound + 1;
         s.put_bits(static_cast<uint64_t>(encoded), range_bits(rcount));
-    } else if (pc.flags & PerConstraints::SEMI_CONSTRAINED) {
-        if (pc.flags & PerConstraints::EXTENSIBLE) {
+    } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
+        if (pc.flags & Constraints::EXTENSIBLE) {
             bool in_root = (value >= pc.lower_bound);
             s.put_bits(in_root ? 0 : 1, 1);
             if (!in_root) { encode_unconstrained_int(s, value); return; }
@@ -565,9 +565,9 @@ DecodeResult PerCodec::decode_integer(PerDecodeStream& s,
                             const TypeDescriptor& def,
                             void* dest)
 {
-    const PerConstraints& pc = def.per_constraints;
-    if (pc.flags & PerConstraints::CONSTRAINED) {
-        if (pc.flags & PerConstraints::EXTENSIBLE) {
+    const Constraints& pc = def.constraints;
+    if (pc.flags & Constraints::CONSTRAINED) {
+        if (pc.flags & Constraints::EXTENSIBLE) {
             auto ext = s.get_bits(1);
             if (!ext) return decode_err(ext.error());
             if (*ext) return decode_unconstrained_int(s, dest);
@@ -577,8 +577,8 @@ DecodeResult PerCodec::decode_integer(PerDecodeStream& s,
         if (!bits) return decode_err(bits.error());
         *static_cast<int64_t*>(dest) = pc.lower_bound + static_cast<int64_t>(*bits);
         return decode_ok();
-    } else if (pc.flags & PerConstraints::SEMI_CONSTRAINED) {
-        if (pc.flags & PerConstraints::EXTENSIBLE) {
+    } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
+        if (pc.flags & Constraints::EXTENSIBLE) {
             auto ext = s.get_bits(1);
             if (!ext) return decode_err(ext.error());
             if (*ext) return decode_unconstrained_int(s, dest);
@@ -704,7 +704,7 @@ void PerCodec::encode_seq_of(PerEncodeStream& s,
     std::size_t count = spec.count_fn(src);
     const auto& sc = spec.size_constraints;
     // Encode count
-    if (sc.flags & PerConstraints::SIZE_CONSTRAINED) {
+    if (sc.flags & Constraints::SIZE_CONSTRAINED) {
         if (sc.size_lower == sc.size_upper) {
             // Fixed size: count implicit, no bits emitted
         } else {
@@ -727,7 +727,7 @@ DecodeResult PerCodec::decode_seq_of(PerDecodeStream& s,
     const auto& sc = spec.size_constraints;
     // Decode count
     std::size_t count = 0;
-    if (sc.flags & PerConstraints::SIZE_CONSTRAINED) {
+    if (sc.flags & Constraints::SIZE_CONSTRAINED) {
         if (sc.size_lower == sc.size_upper) {
             count = static_cast<std::size_t>(sc.size_lower);
         } else {

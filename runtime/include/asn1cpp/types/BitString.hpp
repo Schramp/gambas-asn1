@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include "../Tag.hpp"
 #include "../codec/BerTraits.hpp"
-#include "../codec/PerConstraints.hpp"
+#include "../codec/Constraints.hpp"
 
 namespace asn1 {
 
@@ -37,9 +37,9 @@ public:
     // SIZE(...) on BIT STRING is in bits. Returns 0 when valid, otherwise
     // signed delta (bits) such that (bit_count + delta) lands at the nearest
     // valid bound: positive = too short, negative = too long.
-    int64_t validate(const PerConstraints& c) const {
-        if (!(c.flags & PerConstraints::SIZE_CONSTRAINED)) return 0;
-        if (c.flags & PerConstraints::EXTENSIBLE) return 0;
+    int64_t validate(const Constraints& c) const {
+        if (!(c.flags & Constraints::SIZE_CONSTRAINED)) return 0;
+        if (c.flags & Constraints::EXTENSIBLE) return 0;
         auto n = static_cast<int64_t>(bit_count());
         if (n < c.size_lower) return c.size_lower - n;
         if (n > c.size_upper) return c.size_upper - n;

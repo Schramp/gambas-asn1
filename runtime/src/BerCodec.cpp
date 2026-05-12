@@ -180,7 +180,7 @@ bool BerCodec::is_primitive_string_tag(const Tag& t) {
 }
 
 void BerCodec::encode_integer(BerWriter& w, const TypeDescriptor& def, const void* src) const {
-    if (def.per_constraints.int_kind == PerConstraints::INT_U64) {
+    if (def.constraints.int_kind == Constraints::INT_U64) {
         BerTraits<UInteger>::encode(w, UInteger{*static_cast<const uint64_t*>(src)});
         return;
     }
@@ -193,7 +193,7 @@ DecodeResult BerCodec::decode_integer(BerReader& r, const TypeDescriptor& def, v
     if (!tlv) return decode_err(tlv.error());
     if (tlv->tag != def.tag)
         return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
-    if (def.per_constraints.int_kind == PerConstraints::INT_U64) {
+    if (def.constraints.int_kind == Constraints::INT_U64) {
         auto v = BerTraits<UInteger>::decode_value(tlv->value);
         if (!v) return decode_err(v.error());
         *static_cast<uint64_t*>(dest) = v->value();

@@ -10,7 +10,7 @@
 #include "../codec/BerWriter.hpp"
 #include "../codec/BerReader.hpp"
 #include "../codec/BerTraits.hpp"
-#include "../codec/PerConstraints.hpp"
+#include "../codec/Constraints.hpp"
 
 namespace asn1 {
 
@@ -54,14 +54,14 @@ public:
     // Caller convention (RandomFiller): +delta raises sampling min; -delta
     // lowers sampling max.
     // EXTENSIBLE ranges are open (returns 0 for any value).
-    int64_t validate(const PerConstraints& c) const {
-        if (c.flags & PerConstraints::EXTENSIBLE) return 0;
-        if (c.flags & PerConstraints::CONSTRAINED) {
+    int64_t validate(const Constraints& c) const {
+        if (c.flags & Constraints::EXTENSIBLE) return 0;
+        if (c.flags & Constraints::CONSTRAINED) {
             if (value_ < c.lower_bound) return c.lower_bound - value_;
             if (value_ > c.upper_bound) return c.upper_bound - value_;
             return 0;
         }
-        if (c.flags & PerConstraints::SEMI_CONSTRAINED) {
+        if (c.flags & Constraints::SEMI_CONSTRAINED) {
             if (value_ < c.lower_bound) return c.lower_bound - value_;
             return 0;
         }
@@ -154,9 +154,9 @@ public:
     operator uint64_t() const { return value_; }
     bool operator==(const UInteger&) const = default;
 
-    int64_t validate(const PerConstraints& c) const {
-        if (c.flags & PerConstraints::EXTENSIBLE) return 0;
-        if (c.flags & PerConstraints::CONSTRAINED) {
+    int64_t validate(const Constraints& c) const {
+        if (c.flags & Constraints::EXTENSIBLE) return 0;
+        if (c.flags & Constraints::CONSTRAINED) {
             if (value_ < c.lower_u64) {
                 uint64_t delta = c.lower_u64 - value_;
                 return (delta > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
@@ -169,7 +169,7 @@ public:
             }
             return 0;
         }
-        if (c.flags & PerConstraints::SEMI_CONSTRAINED) {
+        if (c.flags & Constraints::SEMI_CONSTRAINED) {
             // lower_u64 == 0 → any uint64_t is valid; otherwise check lower
             if (value_ < c.lower_u64) {
                 uint64_t delta = c.lower_u64 - value_;

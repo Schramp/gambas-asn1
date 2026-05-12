@@ -32,14 +32,14 @@ int RandomFiller::rand_int(int lo, int hi) {
 }
 
 // Resolve effective [lo, hi] sampling range for a SIZE-constrained primitive.
-// Reads bounds straight from PerConstraints when SIZE_CONSTRAINED is set; caps
+// Reads bounds straight from Constraints when SIZE_CONSTRAINED is set; caps
 // at 65536 so absurd schema-level bounds (e.g. SIZE(0..2^32-1)) don't drive
 // gigabyte allocations. Falls back to caller-supplied defaults otherwise.
-static std::pair<int,int> size_range(const PerConstraints& c,
+static std::pair<int,int> size_range(const Constraints& c,
                                      int dflt_lo, int dflt_hi) {
     constexpr int64_t CAP = 65536;
     int lo = dflt_lo, hi = dflt_hi;
-    if (c.flags & PerConstraints::SIZE_CONSTRAINED) {
+    if (c.flags & Constraints::SIZE_CONSTRAINED) {
         int64_t clo = c.size_lower, chi = c.size_upper;
         if (clo >= 0) lo = static_cast<int>(std::min(clo, CAP));
         if (chi >= 0) hi = static_cast<int>(std::min(chi, CAP));
@@ -157,21 +157,21 @@ static bool resize_in_place(void* obj, const TypeDescriptor& def,
 static bool fill_primitive_loose(void* obj, const TypeDescriptor& def,
                                  std::mt19937& rng) {
     if (def.tag.cls != TagClass::Universal) return false;
-    const auto& c = def.per_constraints;
+    const auto& c = def.constraints;
     auto rand_byte = [&]{ return static_cast<uint8_t>(
         std::uniform_int_distribution<int>{0, 255}(rng)); };
 
     switch (def.tag.number) {
     case UniversalTag::Integer: {
         int64_t lo, hi;
-        if (c.flags & PerConstraints::CONSTRAINED) {
+        if (c.flags & Constraints::CONSTRAINED) {
             int64_t span = c.upper_bound - c.lower_bound;
             int64_t margin = std::max<int64_t>(2, span / 4 + 5);
             lo = (c.lower_bound > std::numeric_limits<int64_t>::min() + margin)
                      ? c.lower_bound - margin : c.lower_bound;
             hi = (c.upper_bound < std::numeric_limits<int64_t>::max() - margin)
                      ? c.upper_bound + margin : c.upper_bound;
-        } else if (c.flags & PerConstraints::SEMI_CONSTRAINED) {
+        } else if (c.flags & Constraints::SEMI_CONSTRAINED) {
             lo = (c.lower_bound > std::numeric_limits<int64_t>::min() + 100)
                      ? c.lower_bound - 100 : c.lower_bound;
             hi = lo + 2000;
@@ -184,7 +184,7 @@ static bool fill_primitive_loose(void* obj, const TypeDescriptor& def,
         return true;
     }
     case UniversalTag::OctetString: {
-        if (!(c.flags & PerConstraints::SIZE_CONSTRAINED)) return false;
+        if (!(c.flags & Constraints::SIZE_CONSTRAINED)) return false;
         int64_t span = c.size_upper - c.size_lower;
         int64_t margin = std::max<int64_t>(2, span / 4 + 2);
         int64_t lo = std::max<int64_t>(0, c.size_lower - margin);
@@ -197,7 +197,7 @@ static bool fill_primitive_loose(void* obj, const TypeDescriptor& def,
         return true;
     }
     case UniversalTag::BitString: {
-        if (!(c.flags & PerConstraints::SIZE_CONSTRAINED)) return false;
+        if (!(c.flags & Constraints::SIZE_CONSTRAINED)) return false;
         int64_t span = c.size_upper - c.size_lower;
         int64_t margin = std::max<int64_t>(2, span / 4 + 2);
         int64_t lo = std::max<int64_t>(0, c.size_lower - margin);
@@ -226,7 +226,7 @@ static bool fill_primitive_loose(void* obj, const TypeDescriptor& def,
     case UniversalTag::UniversalString:
     case UniversalTag::BmpString:
     case UniversalTag::ObjectDescriptor: {
-        bool size_constrained  = (c.flags & PerConstraints::SIZE_CONSTRAINED) != 0;
+        bool size_constrained  = (c.flags & Constraints::SIZE_CONSTRAINED) != 0;
         bool alpha_constrained = !c.alphabet.empty();
         if (!size_constrained && !alpha_constrained) return false;
 
@@ -287,7 +287,7 @@ bool RandomFiller::try_fill_primitive(void* obj, const TypeDescriptor& def) {
         // UInteger (uint64_t): validate() returns 0 for SEMI_CONSTRAINED(lo=0),
         // so no retry needed in the common case. For constrained U64, just
         // delegate to fill_primitive directly — practical U64 ranges are large.
-        if (def.per_constraints.int_kind == PerConstraints::INT_U64) {
+        if (def.constraints.int_kind == Constraints::INT_U64) {
             fill_primitive(obj, def);
             return validate(def, obj) == 0;
         }
@@ -298,21 +298,21 @@ bool RandomFiller::try_fill_primitive(void* obj, const TypeDescriptor& def) {
             int64_t dist = validate(def, obj);
             if (dist == 0) return true;
 
-            auto& pc = d.per_constraints;
+            auto& pc = d.constraints;
             int64_t v = static_cast<const Integer*>(obj)->value();
             if (dist > 0) {
                 int64_t new_lo = (v <= std::numeric_limits<int64_t>::max() - dist)
                     ? v + dist : std::numeric_limits<int64_t>::max();
-                if (!(pc.flags & PerConstraints::CONSTRAINED) || new_lo > pc.lower_bound)
+                if (!(pc.flags & Constraints::CONSTRAINED) || new_lo > pc.lower_bound)
                     pc.lower_bound = new_lo;
             } else {
                 int64_t new_hi = (v >= std::numeric_limits<int64_t>::min() - dist)
                     ? v + dist : std::numeric_limits<int64_t>::min();
-                if (!(pc.flags & PerConstraints::CONSTRAINED) || new_hi < pc.upper_bound)
+                if (!(pc.flags & Constraints::CONSTRAINED) || new_hi < pc.upper_bound)
                     pc.upper_bound = new_hi;
             }
-            pc.flags |= PerConstraints::CONSTRAINED;
-            pc.flags &= ~(PerConstraints::SEMI_CONSTRAINED | PerConstraints::EXTENSIBLE);
+            pc.flags |= Constraints::CONSTRAINED;
+            pc.flags &= ~(Constraints::SEMI_CONSTRAINED | Constraints::EXTENSIBLE);
             if (pc.lower_bound > pc.upper_bound) return false;
         }
         return false;
@@ -327,8 +327,8 @@ bool RandomFiller::try_fill_primitive(void* obj, const TypeDescriptor& def) {
     int64_t dist = validate(def, obj);
     if (dist == 0) return true;
 
-    int64_t target = (dist > 0) ? def.per_constraints.size_lower
-                                : def.per_constraints.size_upper;
+    int64_t target = (dist > 0) ? def.constraints.size_lower
+                                : def.constraints.size_upper;
     if (target < 0)   target = 0;
     if (target > 256) target = 256;
     return resize_in_place(obj, def, static_cast<std::size_t>(target), rng_);
@@ -433,7 +433,7 @@ bool RandomFiller::fill_seq_of(void* obj, const SeqOfSpec& spec, int depth) {
     // ETSI uses ranges like (0..18446744073709551615) which store as signed int64
     // upper = -1, breaking min/max math.
     const auto& sc = spec.size_constraints;
-    if (sc.flags & PerConstraints::SIZE_CONSTRAINED) {
+    if (sc.flags & Constraints::SIZE_CONSTRAINED) {
         int64_t clo = sc.size_lower, chi = sc.size_upper;
         if (clo >= 0 && clo <= 65536) lo = std::max(lo, static_cast<int>(clo));
         if (chi >= lo && chi <= 65536) hi = std::min(hi, static_cast<int>(chi));
@@ -491,11 +491,11 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
     }
 
     case UT::Integer: {
-        const auto& c = def.per_constraints;
-        if (c.int_kind == PerConstraints::INT_U64) {
+        const auto& c = def.constraints;
+        if (c.int_kind == Constraints::INT_U64) {
             uint64_t lo = c.lower_u64;
             uint64_t hi = c.upper_u64;
-            if (c.flags & PerConstraints::SEMI_CONSTRAINED)
+            if (c.flags & Constraints::SEMI_CONSTRAINED)
                 hi = lo + 1000;  // bounded sample for SEMI_CONSTRAINED
             if (lo > hi) hi = lo;
             uint64_t v = std::uniform_int_distribution<uint64_t>{lo, hi}(rng_);
@@ -503,11 +503,11 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
             break;
         }
         int64_t lo = -1000, hi = 1000;
-        if (c.flags & PerConstraints::CONSTRAINED) {
+        if (c.flags & Constraints::CONSTRAINED) {
             lo = c.lower_bound;
             hi = c.upper_bound;
             if (lo > hi) hi = std::numeric_limits<int64_t>::max();
-        } else if (c.flags & PerConstraints::SEMI_CONSTRAINED) {
+        } else if (c.flags & Constraints::SEMI_CONSTRAINED) {
             lo = c.lower_bound;
             hi = lo + 1000;
         }
@@ -527,7 +527,7 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
         break;
 
     case UT::OctetString: {
-        auto [lo, hi] = size_range(def.per_constraints,
+        auto [lo, hi] = size_range(def.constraints,
                                    cfg_.min_str_len, cfg_.max_str_len);
         int len = rand_int(lo, hi);
         std::vector<uint8_t> b(len);
@@ -538,7 +538,7 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
     }
 
     case UT::BitString: {
-        auto [lo, hi] = size_range(def.per_constraints,
+        auto [lo, hi] = size_range(def.constraints,
                                    cfg_.min_str_len, cfg_.max_str_len);
         int bits = rand_int(lo, hi);
         if (bits < 0) bits = 0;
@@ -588,7 +588,7 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
     case UT::VideotexString:
     case UT::GraphicString:
     {
-        const auto& c = def.per_constraints;
+        const auto& c = def.constraints;
         auto [lo, hi] = size_range(c, cfg_.min_str_len, cfg_.max_str_len);
         int len = rand_int(lo, hi);
         // Alphabet precedence (single source: Alphabets.hpp):

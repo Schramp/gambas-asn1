@@ -12,7 +12,7 @@
 // fixed-size SIZE(N) (3 cases: under, exact, over).
 //
 // FROM-custom-alphabet types (HexDigit / YesNo / Vowels) consult the
-// per-type alphabet table (`PerConstraints::alphabet`, populated by codegen
+// per-type alphabet table (`Constraints::alphabet`, populated by codegen
 // via `extract_from_alphabet`) when set, otherwise fall back to the type's
 // built-in alphabet. Constraint validation is independent of any encoding
 // rules — alphabet checks apply equally to BER / XER / PER paths. They appear as "FROM-NOT-YET-WIRED" no-fail expectations

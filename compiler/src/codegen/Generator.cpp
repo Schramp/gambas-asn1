@@ -5,7 +5,7 @@
 #include <sstream>
 #include "asn1cpp/Tag.hpp"
 #include "asn1cpp/TypeDescriptor.hpp"
-#include "asn1cpp/codec/PerConstraints.hpp"
+#include "asn1cpp/codec/Constraints.hpp"
 
 namespace asn1::codegen {
 
@@ -447,7 +447,7 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
     os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Enumerated);
     os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr, nullptr, nullptr, {} /* per_constraints */\n";
+    os << "    nullptr, nullptr, nullptr, {} /* constraints */\n";
     os << "};\n\n";
 
 }
@@ -611,7 +611,7 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
     return std::nullopt;
 }
 
-// Build a PerConstraints designated-initializer literal for an INTEGER constraint.
+// Build a Constraints designated-initializer literal for an INTEGER constraint.
 // Uses designated initializers (C++20) so struct field additions don't require
 // updating every call site.
 static std::string make_integer_pc(int flags, int range_bits, int int_kind,
@@ -632,10 +632,10 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     auto range = extract_integer_range(def);
     auto kind  = classify_integer_storage(def);
-    int  ik    = (kind == IntStorageKind::U64) ? asn1::PerConstraints::INT_U64
-               : (kind == IntStorageKind::I128) ? asn1::PerConstraints::INT_I128
-               : (kind == IntStorageKind::ARBITRARY) ? asn1::PerConstraints::INT_ARBITRARY
-               : asn1::PerConstraints::INT_S64;
+    int  ik    = (kind == IntStorageKind::U64) ? asn1::Constraints::INT_U64
+               : (kind == IntStorageKind::I128) ? asn1::Constraints::INT_I128
+               : (kind == IntStorageKind::ARBITRARY) ? asn1::Constraints::INT_ARBITRARY
+               : asn1::Constraints::INT_S64;
 
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
@@ -645,10 +645,10 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
         int64_t lo = range->first, hi = range->second;
         bool ext = is_constraint_extensible(def);
         if (hi == std::numeric_limits<int64_t>::max()) {
-            int flags = asn1::PerConstraints::SEMI_CONSTRAINED
-                      | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
+            int flags = asn1::Constraints::SEMI_CONSTRAINED
+                      | (ext ? asn1::Constraints::EXTENSIBLE : 0);
             // upper_u64 = UINT64_MAX (no cap for SEMI_CONSTRAINED)
-            os << std::format("    {} /* per_constraints — semi-constrained */\n",
+            os << std::format("    {} /* constraints — semi-constrained */\n",
                 make_integer_pc(flags, -1, ik, lo, 0,
                     static_cast<uint64_t>(lo >= 0 ? lo : 0),
                     std::numeric_limits<uint64_t>::max()));
@@ -657,16 +657,16 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
             int rb = 0;
             if (range_count > 1)
                 for (int64_t r = range_count - 1; r > 0; r >>= 1) ++rb;
-            int flags = asn1::PerConstraints::CONSTRAINED
-                      | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
+            int flags = asn1::Constraints::CONSTRAINED
+                      | (ext ? asn1::Constraints::EXTENSIBLE : 0);
             // u64 bounds: same as s64 for ranges that fit; lo<0 → clamp to 0
             uint64_t u_lo = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
             uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
-            os << std::format("    {} /* per_constraints */\n",
+            os << std::format("    {} /* constraints */\n",
                 make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi));
         }
     } else {
-        os << "    {} /* per_constraints — unconstrained */\n";
+        os << "    {} /* constraints — unconstrained */\n";
     }
     os << "};\n";
 }
@@ -695,13 +695,13 @@ std::string Generator::emit_member_type_descriptor(
             int64_t lo = range->first, hi = range->second;
             bool ext = is_constraint_extensible(m);
             auto kind = classify_integer_storage(m);
-            int ik = (kind == IntStorageKind::U64) ? asn1::PerConstraints::INT_U64
-                   : (kind == IntStorageKind::I128) ? asn1::PerConstraints::INT_I128
-                   : asn1::PerConstraints::INT_S64;
+            int ik = (kind == IntStorageKind::U64) ? asn1::Constraints::INT_U64
+                   : (kind == IntStorageKind::I128) ? asn1::Constraints::INT_I128
+                   : asn1::Constraints::INT_S64;
             std::string pc;
             if (hi == std::numeric_limits<int64_t>::max()) {
-                int flags = asn1::PerConstraints::SEMI_CONSTRAINED
-                          | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
+                int flags = asn1::Constraints::SEMI_CONSTRAINED
+                          | (ext ? asn1::Constraints::EXTENSIBLE : 0);
                 pc = make_integer_pc(flags, -1, ik, lo, 0,
                     static_cast<uint64_t>(lo >= 0 ? lo : 0),
                     std::numeric_limits<uint64_t>::max());
@@ -709,8 +709,8 @@ std::string Generator::emit_member_type_descriptor(
                 int64_t rc = hi - lo + 1;
                 int rb = 0;
                 if (rc > 1) for (int64_t r = rc - 1; r > 0; r >>= 1) ++rb;
-                int flags = asn1::PerConstraints::CONSTRAINED
-                          | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
+                int flags = asn1::Constraints::CONSTRAINED
+                          | (ext ? asn1::Constraints::EXTENSIBLE : 0);
                 uint64_t u_lo = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
                 uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
                 pc = make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi);
@@ -750,8 +750,8 @@ std::string Generator::emit_member_type_descriptor(
         if (sr) {
             int64_t slo = sr->first, sub = sr->second;
             bool ext = is_constraint_extensible(m);
-            int flags = asn1::PerConstraints::SIZE_CONSTRAINED
-                      | (ext ? asn1::PerConstraints::EXTENSIBLE : 0);
+            int flags = asn1::Constraints::SIZE_CONSTRAINED
+                      | (ext ? asn1::Constraints::EXTENSIBLE : 0);
             int srb = 0;
             if (sub != std::numeric_limits<int64_t>::max()) {
                 int64_t range = sub - slo + 1;
@@ -1183,7 +1183,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    asn1::Tag::universal({}, true),\n", tag_num);
     os << "    nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr, nullptr, {} /* per_constraints */\n";
+    os << "    nullptr, nullptr, {} /* constraints */\n";
     os << "};\n\n";
 
     // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
@@ -1198,10 +1198,10 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                     ? std::format("{} = val;", r.mname)
                     : std::format("{}.set(val);", r.mname));
             std::string validate_expr = r.setter.is_int_alias
-                ? std::format("asn1::Integer{{{}}}.validate({}.per_constraints)", r.mname, tdname)
+                ? std::format("asn1::Integer{{{}}}.validate({}.constraints)", r.mname, tdname)
                 : r.setter.is_uint_alias
-                    ? std::format("asn1::UInteger{{{}}}.validate({}.per_constraints)", r.mname, tdname)
-                    : std::format("{}.validate({}.per_constraints)", r.mname, tdname);
+                    ? std::format("asn1::UInteger{{{}}}.validate({}.constraints)", r.mname, tdname)
+                    : std::format("{}.validate({}.constraints)", r.mname, tdname);
             os << std::format("void {}::set_{}({} val) {{\n", cname, r.mname, r.setter.param_type);
             os << std::format("    {}\n", assign);
             os << "#if defined(ASN1CPP_VALIDATE_ON_SET) && defined(ASN1CPP_VALIDATE)\n";
@@ -1384,7 +1384,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         os << "    nullptr,\n";
     os << std::format("    {},\n", count);
     os << std::format("    {}, /* ext_at */\n", ext_at);
-    os << "    {} /* PER: per_constraints */\n";
+    os << "    {} /* PER: constraints */\n";
     if (needs_ber_table && !ber_tags.empty())
         os << std::format("    , asn_BER_{}, {} /* ber_tags */\n", cname, (int)ber_tags.size());
     os << "};\n\n";
@@ -1395,7 +1395,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "    asn1::Tag{asn1::TagClass::Context, 0, false}, /* placeholder — CHOICE tag is transparent */\n";
     os << "    nullptr, nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr, {} /* per_constraints */\n";
+    os << "    nullptr, {} /* constraints */\n";
     os << "};\n\n";
 
 }
@@ -1550,7 +1550,7 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
             size_lb = size_range->first;
             size_ub = size_range->second;
             if (size_ub != std::numeric_limits<int64_t>::max()) {
-                size_flags = asn1::PerConstraints::SIZE_CONSTRAINED;
+                size_flags = asn1::Constraints::SIZE_CONSTRAINED;
                 int64_t range = size_ub - size_lb + 1;
                 if (range > 1)
                     for (int64_t r = range - 1; r > 0; r >>= 1) ++size_rb;
@@ -1565,8 +1565,8 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
             if (alphabet_bits == 0) alphabet_bits = 1;
         }
 
-        int flags = asn1::PerConstraints::CONSTRAINED | size_flags
-                  | (is_constraint_extensible(def) ? asn1::PerConstraints::EXTENSIBLE : 0);
+        int flags = asn1::Constraints::CONSTRAINED | size_flags
+                  | (is_constraint_extensible(def) ? asn1::Constraints::EXTENSIBLE : 0);
         int val_lb = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
         int val_ub = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
 
@@ -1582,9 +1582,9 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
             }
             os << "}";
         }
-        os << " } /* per_constraints */\n";
+        os << " } /* constraints */\n";
     } else {
-        os << "    {} /* per_constraints — unconstrained */\n";
+        os << "    {} /* constraints — unconstrained */\n";
     }
     os << "};\n";
 }
@@ -1610,7 +1610,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
         size_lb = size_range->first;
         size_ub = size_range->second;
         if (size_ub != std::numeric_limits<int64_t>::max()) {
-            size_flags = asn1::PerConstraints::SIZE_CONSTRAINED;
+            size_flags = asn1::Constraints::SIZE_CONSTRAINED;
             int64_t range = size_ub - size_lb + 1;
             if (range > 1)
                 for (int64_t r = range - 1; r > 0; r >>= 1) ++size_rb;
@@ -1637,7 +1637,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    asn1::Tag::universal({}, true),\n", of_tag);
     os << "    nullptr, nullptr, nullptr,\n";
     os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    {} /* per_constraints */\n";
+    os << "    {} /* constraints */\n";
     os << "};\n";
 }
 

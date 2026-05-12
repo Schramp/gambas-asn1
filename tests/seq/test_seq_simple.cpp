@@ -8,7 +8,7 @@
 #include <string>
 #include <asn1cpp/asn1cpp.hpp>
 #include <asn1cpp/codec/PerCodec.hpp>
-#include <asn1cpp/codec/PerConstraints.hpp>
+#include <asn1cpp/codec/Constraints.hpp>
 #include "Point.hpp"
 #include "ColoredPoint.hpp"
 

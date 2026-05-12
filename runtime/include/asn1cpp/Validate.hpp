@@ -37,10 +37,10 @@ inline int64_t validate(const TypeDescriptor& def, const void* obj) {
 
     if (def.tag.cls != TagClass::Universal) return 0;
 
-    const auto& c = def.per_constraints;
+    const auto& c = def.constraints;
     switch (def.tag.number) {
     case UniversalTag::Integer:
-        if (c.int_kind == PerConstraints::INT_U64)
+        if (c.int_kind == Constraints::INT_U64)
             return static_cast<const UInteger*>(obj)->validate(c);
         return static_cast<const Integer*>(obj)->validate(c);
     case UniversalTag::OctetString:

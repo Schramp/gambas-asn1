@@ -6,7 +6,7 @@ namespace asn1 {
 
 // PER constraint metadata for a single type or member.
 // Embedded by value in TypeDescriptor; flags==0 means unconstrained.
-struct PerConstraints {
+struct Constraints {
     static constexpr int CONSTRAINED      = 1;
     static constexpr int SEMI_CONSTRAINED = 2;
     static constexpr int EXTENSIBLE       = 4;

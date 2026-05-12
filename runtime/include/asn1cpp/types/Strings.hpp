@@ -4,7 +4,7 @@
 #include <format>
 #include "../Tag.hpp"
 #include "../codec/BerTraits.hpp"
-#include "../codec/PerConstraints.hpp"
+#include "../codec/Constraints.hpp"
 #include "../codec/Alphabets.hpp"
 
 namespace asn1 {
@@ -34,9 +34,9 @@ public:
     //           (c.alphabet) takes precedence; otherwise built-in alphabet
     //           per type tag (NumericString / PrintableString / VisibleString
     //           / IA5String). Unrestricted types (Utf8/BMP/...) return 0.
-    int64_t validate(const PerConstraints& c) const {
-        if ((c.flags & PerConstraints::SIZE_CONSTRAINED) &&
-            !(c.flags & PerConstraints::EXTENSIBLE)) {
+    int64_t validate(const Constraints& c) const {
+        if ((c.flags & Constraints::SIZE_CONSTRAINED) &&
+            !(c.flags & Constraints::EXTENSIBLE)) {
             auto n = static_cast<int64_t>(value_.size());
             if (n < c.size_lower) return c.size_lower - n;
             if (n > c.size_upper) return c.size_upper - n;
