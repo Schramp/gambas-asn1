@@ -34,8 +34,7 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         case BT::ObjectIdentifier:  return "asn1::Oid";
         case BT::RelativeOid:       return "asn1::RelativeOid";
         case BT::Enumerated: {
-            auto n = to_cpp_name(def.name.empty() ? "Enum" : def.name);
-            if (!n.empty()) n[0] = (char)std::toupper(n[0]);
+            auto n = capitalize_first(to_cpp_name(def.name.empty() ? "Enum" : def.name));
             // Inline ENUMERATED member (has enum values, not top-level)
             if (!current_type_.empty() && !def.enum_values.empty())
                 return current_type_ + n;
@@ -68,11 +67,8 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         const auto& sof = std::get<ast::SetOfType>(def.body);
         return std::format("std::vector<{}>", cpp_type_for(*sof.element));
     }
-    if (def.is_sequence() || def.is_choice() || def.is_set()) {
-        auto n = to_cpp_name(def.name.empty() ? "Anon" : def.name);
-        if (!n.empty()) n[0] = (char)std::toupper(n[0]);
-        return current_type_ + n;
-    }
+    if (def.is_sequence() || def.is_choice() || def.is_set())
+        return make_synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
     return "asn1::OctetString";
 }
 
@@ -351,9 +347,7 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
     // Inline ENUMERATED member — use synthetic name
     if (auto* bt2 = std::get_if<BT>(&def.body);
         bt2 && *bt2 == BT::Enumerated && !def.enum_values.empty() && !current_type_.empty()) {
-        auto n = to_cpp_name(def.name.empty() ? "Enum" : def.name);
-        if (!n.empty()) n[0] = (char)std::toupper(n[0]);
-        return std::format("&asn_DEF_{}", current_type_ + n);
+        return std::format("&asn_DEF_{}", make_synthetic_name(current_type_, def.name.empty() ? "Enum" : def.name));
     }
     // Named type reference.
     // Pure TypeRef aliases (e.g. "LawfulInterceptionIdentifier ::= LIID") generate only a
@@ -386,29 +380,20 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
     }
     // SEQUENCE OF / SET OF — named member uses synthetic SeqOf wrapper descriptor
     if (def.is_seq_of()) {
-        if (!def.name.empty()) {
-            std::string sn = to_cpp_name(def.name);
-            if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
-            return std::format("&asn_DEF_{}", current_type_ + sn);
-        }
+        if (!def.name.empty())
+            return std::format("&asn_DEF_{}", make_synthetic_name(current_type_, def.name));
         const auto& elem = std::get<ast::SequenceOfType>(def.body).element;
         return type_descriptor_ref_for(*elem);
     }
     if (def.is_set_of()) {
-        if (!def.name.empty()) {
-            std::string sn = to_cpp_name(def.name);
-            if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
-            return std::format("&asn_DEF_{}", current_type_ + sn);
-        }
+        if (!def.name.empty())
+            return std::format("&asn_DEF_{}", make_synthetic_name(current_type_, def.name));
         const auto& elem = std::get<ast::SetOfType>(def.body).element;
         return type_descriptor_ref_for(*elem);
     }
     // Inline SEQUENCE / CHOICE / SET member — synthetic name = parent + member
-    if (def.is_sequence() || def.is_choice() || def.is_set()) {
-        auto n = to_cpp_name(def.name.empty() ? "Anon" : def.name);
-        if (!n.empty()) n[0] = (char)std::toupper(n[0]);
-        return std::format("&asn_DEF_{}", current_type_ + n);
-    }
+    if (def.is_sequence() || def.is_choice() || def.is_set())
+        return std::format("&asn_DEF_{}", make_synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name));
     return "nullptr";
 }
 
@@ -751,8 +736,9 @@ std::string Generator::emit_member_type_descriptor(
             int64_t lo = range->first, hi = range->second;
             bool ext = is_constraint_extensible(m);
             auto kind = classify_integer_storage(m);
-            int ik = (kind == IntStorageKind::U64) ? asn1::Constraints::INT_U64
-                   : (kind == IntStorageKind::I128) ? asn1::Constraints::INT_I128
+            int ik = (kind == IntStorageKind::U64)       ? asn1::Constraints::INT_U64
+                   : (kind == IntStorageKind::I128)      ? asn1::Constraints::INT_I128
+                   : (kind == IntStorageKind::ARBITRARY) ? asn1::Constraints::INT_ARBITRARY
                    : asn1::Constraints::INT_S64;
             std::string pc;
             if (hi == std::numeric_limits<int64_t>::max()) {
@@ -955,9 +941,7 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
         } else if (m->is_seq_of() || m->is_set_of()) {
             if (!m->name.empty()) {
                 // Named member — include the synthetic SeqOf wrapper header
-                std::string msn = to_cpp_name(m->name);
-                if (!msn.empty()) msn[0] = (char)std::toupper(msn[0]);
-                emit_inc(cname + msn);
+                emit_inc(make_synthetic_name(cname, m->name));
             } else {
                 const auto& elem = m->is_seq_of()
                     ? std::get<ast::SequenceOfType>(m->body).element
@@ -965,23 +949,16 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
                 if (auto* tr2 = std::get_if<ast::TypeRef>(&elem->body)) {
                     emit_inc(cpp_name_for_typeref(*tr2));
                 } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
-                    auto esn = to_cpp_name(elem->name.empty() ? "Anon" : elem->name);
-                    if (!esn.empty()) esn[0] = (char)std::toupper(esn[0]);
-                    emit_inc(cname + esn);
+                    emit_inc(make_synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name));
                 }
             }
         } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
-            std::string sn = to_cpp_name(m->name);
-            if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
-            auto synth = cname + sn;
+            auto synth = make_synthetic_name(cname, m->name);
             optional ? emit_fwd(synth) : emit_inc(synth);
         } else {
             auto* mbt = std::get_if<ast::BuiltinType>(&m->body);
-            if (mbt && *mbt == ast::BuiltinType::Enumerated && !m->enum_values.empty()) {
-                std::string sn = to_cpp_name(m->name);
-                if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
-                emit_inc(cname + sn);
-            }
+            if (mbt && *mbt == ast::BuiltinType::Enumerated && !m->enum_values.empty())
+                emit_inc(make_synthetic_name(cname, m->name));
         }
     }
     if (mcount > 0) os << "\n";
@@ -1070,9 +1047,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                     emitted_extra = true;
                 }
             } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
-                std::string sn = to_cpp_name(m->name);
-                if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
-                os << std::format("#include \"{}.hpp\"\n", cname + sn);
+                os << std::format("#include \"{}.hpp\"\n", make_synthetic_name(cname, m->name));
                 emitted_extra = true;
             }
         }
@@ -1238,23 +1213,17 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
             emit_inc(cpp_name_for_typeref(*tr));
         } else if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
             // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
-            std::string msn = to_cpp_name(m->name);
-            if (!msn.empty()) msn[0] = (char)std::toupper(msn[0]);
-            auto cn2 = cpp_name_for_ref(cname + msn, current_module_);
+            auto cn2 = cpp_name_for_ref(make_synthetic_name(cname, m->name), current_module_);
             os << std::format("#include \"{}.hpp\"\n", cn2);
             track_include(cn2);
         } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
-            std::string sn = to_cpp_name(m->name);
-            if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
-            auto synth = cname + sn;
+            auto synth = make_synthetic_name(cname, m->name);
             os << std::format("#include \"{}.hpp\"\n", synth);
             track_include(synth);
         } else {
             auto* mbt = std::get_if<ast::BuiltinType>(&m->body);
             if (mbt && *mbt == ast::BuiltinType::Enumerated && !m->enum_values.empty()) {
-                std::string sn = to_cpp_name(m->name);
-                if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
-                auto synth = cname + sn;
+                auto synth = make_synthetic_name(cname, m->name);
                 os << std::format("#include \"{}.hpp\"\n", synth);
                 track_include(synth);
             }
@@ -1421,9 +1390,7 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
             track_include(inc);
         } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
             // Inline element: include the synthetic type header.
-            auto sn = to_cpp_name(elem->name.empty() ? "Anon" : elem->name);
-            if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
-            auto synth = cname + sn;
+            auto synth = make_synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name);
             os << std::format("#include \"{}.hpp\"\n\n", synth);
             track_include(synth);
         }
@@ -1647,9 +1614,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
             : *std::get<ast::SetOfType>(def.body).element;
         if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
             bool was_anon = elem.name.empty();
-            auto sn = to_cpp_name(was_anon ? "Anon" : elem.name);
-            if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
-            std::string synth_name = parent_cname + sn;
+            std::string synth_name = make_synthetic_name(parent_cname, was_anon ? "Anon" : elem.name);
             if (!generated_names_.count(synth_name)) {
                 generated_names_.insert(synth_name);
                 auto synthetic = std::make_shared<ast::TypeDef>(elem);
@@ -1681,9 +1646,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
             std::string elem_type_name;  // non-empty iff element was an inline complex type
             if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
                 bool was_anon = elem.name.empty();
-                auto esn = to_cpp_name(was_anon ? "Anon" : elem.name);
-                if (!esn.empty()) esn[0] = (char)std::toupper(esn[0]);
-                elem_type_name = parent_cname + esn;
+                elem_type_name = make_synthetic_name(parent_cname, was_anon ? "Anon" : elem.name);
                 if (!generated_names_.count(elem_type_name)) {
                     generated_names_.insert(elem_type_name);
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
@@ -1702,9 +1665,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
             // Generate synthetic SeqOf wrapper descriptor type named parent + MemberCamel.
             // If element was anonymous inline, replace it with a TypeRef to the named element
             // type so emit_hpp uses the correct name and include path.
-            std::string mbr_sn = to_cpp_name(m->name);
-            if (!mbr_sn.empty()) mbr_sn[0] = (char)std::toupper(mbr_sn[0]);
-            std::string seqof_name = parent_cname + mbr_sn;
+            std::string seqof_name = make_synthetic_name(parent_cname, m->name);
             if (!generated_names_.count(seqof_name)) {
                 generated_names_.insert(seqof_name);
                 auto seqof_td = std::make_shared<ast::TypeDef>(*m);
@@ -1729,9 +1690,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
         if (!m->is_sequence() && !m->is_choice() && !m->is_set() && !is_inline_enum) continue;
         if (m->name.empty()) continue;
 
-        std::string sn = to_cpp_name(m->name);
-        if (!sn.empty()) sn[0] = (char)std::toupper(sn[0]);
-        std::string synth_name = parent_cname + sn;
+        std::string synth_name = make_synthetic_name(parent_cname, m->name);
 
         if (generated_names_.count(synth_name)) continue;
         generated_names_.insert(synth_name);

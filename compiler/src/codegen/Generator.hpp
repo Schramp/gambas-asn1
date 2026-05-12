@@ -47,6 +47,17 @@ inline std::string safe_member_name(std::string n) {
     return kw.count(n) ? n + "_" : n;
 }
 
+// Upper-cases the first character of a C++ identifier string.
+inline std::string capitalize_first(std::string s) {
+    if (!s.empty()) s[0] = (char)std::toupper((unsigned char)s[0]);
+    return s;
+}
+
+// Builds the synthetic C++ name for an inline member type: parent + CapitalizedMember.
+inline std::string make_synthetic_name(const std::string& parent, const std::string& member_name) {
+    return parent + capitalize_first(to_cpp_name(member_name));
+}
+
 // Converts a member (identifier) name: first letter lower-case, escapes keywords.
 inline std::string to_member_name(std::string_view s) {
     auto n = to_cpp_name(s);
