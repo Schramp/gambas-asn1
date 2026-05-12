@@ -398,6 +398,27 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
 }
 
 // ---------------------------------------------------------------------------
+// Shared TypeDescriptor emitter
+// ---------------------------------------------------------------------------
+
+static void emit_type_descriptor(std::ostream& os,
+                                 const std::string& cname,
+                                 const std::string& xer_name,
+                                 const std::string& tag_expr,
+                                 bool has_enum, bool has_seq,
+                                 bool has_choice, bool has_seqof) {
+    auto sp = [&](bool h) -> std::string {
+        return h ? std::format("&asn_SPC_{}", cname) : "nullptr";
+    };
+    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
+    os << std::format("    \"{}\",\n", xer_name);
+    os << std::format("    {},\n", tag_expr);
+    os << std::format("    {}, {}, {}, {}, {{}} /* constraints */\n",
+                      sp(has_enum), sp(has_seq), sp(has_choice), sp(has_seqof));
+    os << "};\n\n";
+}
+
+// ---------------------------------------------------------------------------
 // Emit ENUMERATED
 // ---------------------------------------------------------------------------
 
@@ -484,12 +505,10 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "};\n\n";
 
     // TypeDescriptor
-    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
-    os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Enumerated);
-    os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr, nullptr, nullptr, {} /* constraints */\n";
-    os << "};\n\n";
+    emit_type_descriptor(os, cname,
+        def.xer_name.empty() ? def.name : def.xer_name,
+        std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Enumerated),
+        true, false, false, false);
 
 }
 
@@ -1175,13 +1194,10 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "};\n\n";
 
     // TypeDescriptor
-    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
-    os << std::format("    asn1::Tag::universal({}, true),\n", tag_num);
-    os << "    nullptr,\n";
-    os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr, nullptr, {} /* constraints */\n";
-    os << "};\n\n";
+    emit_type_descriptor(os, cname,
+        def.xer_name.empty() ? def.name : def.xer_name,
+        std::format("asn1::Tag::universal({}, true)", tag_num),
+        false, true, false, false);
 
     // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
     for (const auto& r : rows) {
@@ -1342,14 +1358,11 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         os << std::format("    , asn_BER_{}, {} /* ber_tags */\n", cname, (int)ber_tags.size());
     os << "};\n\n";
 
-    // TypeDescriptor (CHOICE has no fixed universal tag)
-    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
-    os << "    asn1::Tag{asn1::TagClass::Context, 0, false}, /* placeholder — CHOICE tag is transparent */\n";
-    os << "    nullptr, nullptr,\n";
-    os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    nullptr, {} /* constraints */\n";
-    os << "};\n\n";
+    // TypeDescriptor — CHOICE tag is a transparent placeholder (no fixed universal tag)
+    emit_type_descriptor(os, cname,
+        def.xer_name.empty() ? def.name : def.xer_name,
+        "asn1::Tag{asn1::TagClass::Context, 0, false}",
+        false, false, true, false);
 
 }
 
@@ -1558,13 +1571,10 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // TypeDescriptor
     uint32_t of_tag = def.is_set_of() ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
-    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
-    os << std::format("    asn1::Tag::universal({}, true),\n", of_tag);
-    os << "    nullptr, nullptr, nullptr,\n";
-    os << std::format("    &asn_SPC_{},\n", cname);
-    os << "    {} /* constraints */\n";
-    os << "};\n";
+    emit_type_descriptor(os, cname,
+        def.xer_name.empty() ? def.name : def.xer_name,
+        std::format("asn1::Tag::universal({}, true)", of_tag),
+        false, false, false, true);
 }
 
 void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
