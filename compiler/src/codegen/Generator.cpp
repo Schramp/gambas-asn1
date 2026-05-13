@@ -100,14 +100,25 @@ bool Generator::member_type_is_choice(const ast::TypeDef& m) const {
     return false;
 }
 
+bool Generator::member_type_is_any(const ast::TypeDef& m) const {
+    if (auto* bt = std::get_if<ast::BuiltinType>(&m.body))
+        return *bt == ast::BuiltinType::Any;
+    if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+        auto res = resolver_.resolve_ref(*tr, current_module_);
+        if (res) return member_type_is_any(*res);
+    }
+    return false;
+}
+
 bool Generator::member_is_explicit(const ast::Tag& tag, const ast::TypeDef& member_type) const {
     if (tag.mode == ast::TagMode::Explicit) return true;
     if (tag.mode == ast::TagMode::Implicit) return false;
     // TagMode::Default — use module-level default.
     if (current_tag_default_ == ast::TagDefault::Explicit) return true;
     // IMPLICIT or AUTOMATIC default.
-    // Exception: CHOICE has no universal tag; tagging must be EXPLICIT.
-    return member_type_is_choice(member_type);
+    // Exception: CHOICE and ANY cannot be IMPLICIT tagged (X.680 §30.6/30.7);
+    // tagging must be EXPLICIT even in an IMPLICIT TAGS module.
+    return member_type_is_choice(member_type) || member_type_is_any(member_type);
 }
 
 // Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
@@ -125,7 +136,14 @@ std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) const 
 }
 
 // Returns the natural (universal) tag for a member def's underlying type.
+// For types with an outer [N] tag, the outer tag IS the wire-level tag.
 std::string Generator::natural_tag_for(const ast::TypeDef& def) const {
+    if (def.tag.present()) {
+        bool is_constr = def.is_sequence() || def.is_choice() ||
+                         def.is_seq_of()   || def.is_set_of() || def.is_set();
+        bool is_exp = member_is_explicit(def.tag, def);
+        return tag_literal(def.tag, is_exp || is_constr);
+    }
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
         switch (*bt) {
@@ -216,6 +234,13 @@ Generator::TagResult Generator::compute_member_tag(const ast::TypeDef& m,
     } else {
         eff_tag = natural_tag_for(m);
         if (eff_tag.empty()) eff_tag = "asn1::Tag{}";
+        // If the tag came from a referenced type's outer context tag, propagate is_explicit.
+        // e.g. s4 T4 where T4 ::= [53] CHOICE — CHOICE always forces EXPLICIT.
+        if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+            auto base = resolver_.resolve_ref(*tr);
+            if (base && base->tag.present())
+                is_explicit = member_is_explicit(base->tag, *base);
+        }
     }
     return { std::move(eff_tag), is_explicit };
 }

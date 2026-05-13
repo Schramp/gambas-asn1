@@ -281,9 +281,11 @@ struct AnyBerHandler final : IBerTypeHandler {
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor&, void* dest) const override {
-        auto raw = r.read_raw_tlv();
+        // ANY content may be empty or contain multiple TLVs — consume all remaining bytes.
+        std::size_t n = r.remaining();
+        auto raw = r.read_bytes(n);
         if (!raw) return decode_err(raw.error());
-        *static_cast<OctetString*>(dest) = OctetString(*raw);
+        *static_cast<OctetString*>(dest) = OctetString(std::vector<uint8_t>(raw->begin(), raw->end()));
         return decode_ok();
     }
 };

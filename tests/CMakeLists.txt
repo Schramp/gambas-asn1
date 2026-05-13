@@ -454,6 +454,40 @@ target_include_directories(test_xer_codec PRIVATE ${XER_CODEC_GEN_DIR})
 target_link_libraries(test_xer_codec PRIVATE asn1cpp_runtime)
 add_test(NAME xer_codec COMMAND test_xer_codec)
 
+# ---- asn1c BER vector suite: data-62 (62-any-OK.asn1) ----------------------
+# Mirrors asn1c check-62.c: decode 32 BER files, re-encode, compare.
+# Covers: CHOICE of SEQUENCE/tagged-SEQUENCE/tagged-CHOICE, ANY member,
+# optional members, indefinite-length, IMPLICIT outer tags, extension marker.
+# 5 -B files are skipped (ANY inner-TLV leniency — see test source).
+set(BER_VEC_62_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_ber_vectors_62)
+set(BER_VEC_62_TYPES T T1_ext T2 T2M3 T3 T4)
+set(_bv62_outputs)
+foreach(t IN LISTS BER_VEC_62_TYPES)
+    list(APPEND _bv62_outputs ${BER_VEC_62_GEN_DIR}/${t}.hpp ${BER_VEC_62_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_bv62_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${BER_VEC_62_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/62-any-OK.asn1
+            -o ${BER_VEC_62_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/62-any-OK.asn1
+    COMMENT "Generating C++ from 62-any-OK.asn1"
+)
+set(_bv62_cpps)
+foreach(t IN LISTS BER_VEC_62_TYPES)
+    list(APPEND _bv62_cpps ${BER_VEC_62_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_ber_vectors_62
+    seq/test_ber_vectors_62.cpp
+    ${_bv62_cpps}
+)
+target_include_directories(test_ber_vectors_62 PRIVATE ${BER_VEC_62_GEN_DIR})
+target_link_libraries(test_ber_vectors_62 PRIVATE asn1cpp_runtime)
+add_test(NAME ber_vectors_62 COMMAND test_ber_vectors_62
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-62)
+set_tests_properties(ber_vectors_62 PROPERTIES TIMEOUT 30)
+
 # ---- BER fuzz (in-tree) ---------------------------------------------------
 # Wire-level corruption sweep using BerCorruptor against the asn1cpp BER
 # decoder. Self-contained — no asn1c dependency, no etsitools/ binaries.
