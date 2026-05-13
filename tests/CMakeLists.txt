@@ -519,3 +519,32 @@ target_include_directories(test_fuzz_ber PRIVATE ${FUZZ_GEN_DIR})
 target_link_libraries(test_fuzz_ber PRIVATE asn1cpp_runtime)
 add_test(NAME fuzz_ber COMMAND test_fuzz_ber)
 set_tests_properties(fuzz_ber PROPERTIES TIMEOUT 60)
+
+# ---- BER/XER gap coverage tests -------------------------------------------
+set(BER_GAPS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_ber_gaps_test)
+set(BER_GAPS_TYPES HasDefault HasOptChoice OuterChoice LeafChoice
+                   HasExtChoice ExtChoice HasEnum SimpleEnum HasSeqOf HasSeqOfItems)
+set(_bg_outputs)
+foreach(t IN LISTS BER_GAPS_TYPES)
+    list(APPEND _bg_outputs ${BER_GAPS_GEN_DIR}/${t}.hpp ${BER_GAPS_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_bg_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${BER_GAPS_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/ber_gaps_test.asn1
+                                   -o ${BER_GAPS_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/ber_gaps_test.asn1
+    COMMENT "Generating C++ from ber_gaps_test.asn1"
+)
+set(_bg_cpps)
+foreach(t IN LISTS BER_GAPS_TYPES)
+    list(APPEND _bg_cpps ${BER_GAPS_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_ber_gaps
+    seq/test_ber_gaps.cpp
+    ${_bg_cpps}
+)
+target_include_directories(test_ber_gaps PRIVATE ${BER_GAPS_GEN_DIR})
+target_link_libraries(test_ber_gaps PRIVATE asn1cpp_runtime)
+add_test(NAME ber_gaps COMMAND test_ber_gaps)
+set_tests_properties(ber_gaps PROPERTIES TIMEOUT 30)

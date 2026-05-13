@@ -169,12 +169,11 @@ int main() {
     printf("\n── INDEFINITE-LENGTH BER decode ────────────────────────────────\n");
     // =========================================================================
 
-    // OCTET STRING with indefinite-length encoding: 04 80 DE AD BE EF 00 00
+    // X.690 §8.1.3.2: indefinite-length is illegal on primitive types — must be rejected.
     {
         std::vector<uint8_t> ber_indef = {0x04, 0x80, 0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x00};
         auto r = decode<BER, OctetString>(ber_indef);
-        check("Indefinite-length OCTET STRING decoded",
-              r && r->bytes()[0] == 0xDE && r->size() == 4);
+        check("Indefinite-length primitive OCTET STRING rejected", !r);
     }
 
     // =========================================================================

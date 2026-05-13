@@ -118,19 +118,11 @@ public:
         if (!len_r) return make_unexpected<TLV, DecodeError>(len_r.error());
 
         if (len_r->indefinite) {
+            // X.690 §8.1.3.2: indefinite-length is only valid for constructed encodings.
+            if (!tag.constructed)
+                return make_unexpected<TLV, DecodeError>(
+                    DecodeError("indefinite-length encoding on primitive type", pos_ - 1));
             std::size_t start = pos_;
-            if (!tag.constructed) {
-                // Primitive indefinite-length: scan raw bytes for EOC (00 00)
-                while (pos_ + 1 < data_.size()) {
-                    if (data_[pos_] == 0x00 && data_[pos_ + 1] == 0x00) {
-                        std::size_t end = pos_;
-                        pos_ += 2;
-                        return TLV{tag, data_.subspan(start, end - start), true};
-                    }
-                    ++pos_;
-                }
-                return make_unexpected<TLV, DecodeError>(DecodeError("unterminated indefinite-length encoding", pos_));
-            }
             // Constructed: walk nested TLVs tracking depth
             std::size_t depth = 1;
             while (depth > 0) {
@@ -145,6 +137,9 @@ public:
                     auto inner_len = read_length();
                     if (!inner_len) return make_unexpected<TLV, DecodeError>(inner_len.error());
                     if (inner_len->indefinite) {
+                        if (!inner_tag->constructed)
+                            return make_unexpected<TLV, DecodeError>(
+                                DecodeError("indefinite-length encoding on primitive type", pos_ - 1));
                         ++depth;
                     } else {
                         if (remaining() < inner_len->len)

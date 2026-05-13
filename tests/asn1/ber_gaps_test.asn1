@@ -1,0 +1,46 @@
+BerGapsTest DEFINITIONS EXPLICIT TAGS ::= BEGIN
+
+    -- DEFAULT suppress on encode / fill on decode
+    HasDefault ::= SEQUENCE {
+        flag   BOOLEAN DEFAULT FALSE,
+        value  INTEGER DEFAULT 0
+    }
+
+    -- Leaf CHOICE: natural (universal) tags, no auto-tagging in EXPLICIT TAGS module.
+    LeafChoice ::= CHOICE {
+        anInt   INTEGER,
+        aString UTF8String
+    }
+
+    -- OuterChoice contains an untagged LeafChoice alternative — this causes the
+    -- codegen to populate ber_tags[] on OuterChoice (needed to dispatch by inner tag).
+    OuterChoice ::= CHOICE {
+        inner  LeafChoice,
+        aFlag  BOOLEAN
+    }
+
+    -- SEQUENCE with optional OuterChoice (no explicit context tag).
+    -- Triggers ber_tags fast-path in decode_sequence for optional-CHOICE detection,
+    -- and the untagged-alternative decode path in ChoiceBerHandler::decode.
+    HasOptChoice ::= SEQUENCE {
+        name  UTF8String,
+        pick  OuterChoice OPTIONAL
+    }
+
+    -- CHOICE with extension marker — triggers extension-skip when stream
+    -- carries an unknown tag.
+    ExtChoice ::= CHOICE {
+        anInt INTEGER,
+        ...
+    }
+
+    HasExtChoice ::= SEQUENCE { val ExtChoice }
+
+    -- Non-extensible ENUMERATED for XER unknown-value decode reject.
+    SimpleEnum ::= ENUMERATED { alpha, beta, gamma }
+    HasEnum    ::= SEQUENCE { kind SimpleEnum }
+
+    -- SEQUENCE OF with zero elements for XER empty-element encode path.
+    HasSeqOf ::= SEQUENCE { items SEQUENCE OF INTEGER }
+
+END
