@@ -406,15 +406,17 @@ static void emit_type_descriptor(std::ostream& os,
                                  const std::string& xer_name,
                                  const std::string& tag_expr,
                                  bool has_enum, bool has_seq,
-                                 bool has_choice, bool has_seqof) {
+                                 bool has_choice, bool has_seqof,
+                                 const std::string& kind) {
     auto sp = [&](bool h) -> std::string {
         return h ? std::format("&asn_SPC_{}", cname) : "nullptr";
     };
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", xer_name);
     os << std::format("    {},\n", tag_expr);
-    os << std::format("    {}, {}, {}, {}, {{}} /* constraints */\n",
+    os << std::format("    {}, {}, {}, {}, {{}} /* constraints */,\n",
                       sp(has_enum), sp(has_seq), sp(has_choice), sp(has_seqof));
+    os << std::format("    false, {} /* kind */\n", kind);
     os << "};\n\n";
 }
 
@@ -508,7 +510,7 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
         std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Enumerated),
-        true, false, false, false);
+        true, false, false, false, "asn1::TypeKind::Enumerated");
 
 }
 
@@ -735,7 +737,7 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
             int flags = asn1::Constraints::SEMI_CONSTRAINED
                       | (ext ? asn1::Constraints::EXTENSIBLE : 0);
             // upper_u64 = UINT64_MAX (no cap for SEMI_CONSTRAINED)
-            os << std::format("    {} /* constraints — semi-constrained */\n",
+            os << std::format("    {} /* constraints — semi-constrained */,\n",
                 make_integer_pc(flags, -1, ik, lo, 0,
                     static_cast<uint64_t>(lo >= 0 ? lo : 0),
                     std::numeric_limits<uint64_t>::max()));
@@ -749,12 +751,13 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
             // u64 bounds: same as s64 for ranges that fit; lo<0 → clamp to 0
             uint64_t u_lo = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
             uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
-            os << std::format("    {} /* constraints */\n",
+            os << std::format("    {} /* constraints */,\n",
                 make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi));
         }
     } else {
-        os << "    {} /* constraints — unconstrained */\n";
+        os << "    {} /* constraints — unconstrained */,\n";
     }
+    os << "    false, asn1::TypeKind::Primitive\n";
     os << "};\n";
 }
 
@@ -806,7 +809,7 @@ std::string Generator::emit_member_type_descriptor(
             os << std::format(
                 "static const asn1::TypeDescriptor {} = "
                 "{{ \"INTEGER\", asn1::Tag::universal({}, false), "
-                "nullptr, nullptr, nullptr, nullptr, {} }};\n",
+                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive }};\n",
                 tname, asn1::UniversalTag::Integer, pc);
             return "&" + tname;
         }
@@ -864,7 +867,7 @@ std::string Generator::emit_member_type_descriptor(
             os << std::format(
                 "static const asn1::TypeDescriptor {} = "
                 "{{ \"{}\", asn1::Tag::universal({}, false), "
-                "nullptr, nullptr, nullptr, nullptr, {} }};\n",
+                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive }};\n",
                 tname, tn, *utag, pc);
             return "&" + tname;
         }
@@ -1197,7 +1200,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
         std::format("asn1::Tag::universal({}, true)", tag_num),
-        false, true, false, false);
+        false, true, false, false, "asn1::TypeKind::Sequence");
 
     // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
     for (const auto& r : rows) {
@@ -1362,7 +1365,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
         "asn1::Tag{asn1::TagClass::Context, 0, false}",
-        false, false, true, false);
+        false, false, true, false, "asn1::TypeKind::Choice");
 
 }
 
@@ -1533,10 +1536,11 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
             }
             os << "}";
         }
-        os << " } /* constraints */\n";
+        os << " } /* constraints */,\n";
     } else {
-        os << "    {} /* constraints — unconstrained */\n";
+        os << "    {} /* constraints — unconstrained */,\n";
     }
+    os << "    false, asn1::TypeKind::Primitive\n";
     os << "};\n";
 }
 
@@ -1574,7 +1578,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
         std::format("asn1::Tag::universal({}, true)", of_tag),
-        false, false, false, true);
+        false, false, false, true, "asn1::TypeKind::SeqOf");
 }
 
 void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
@@ -1765,7 +1769,7 @@ void Generator::emit_stubs_for_unresolved() {
         os << std::format("inline const asn1::TypeDescriptor asn_DEF_{} = {{\n", name);
         os << std::format("    \"{}\",\n", name);
         os << "    asn1::Tag{},\n";
-        os << "    nullptr, nullptr, nullptr, nullptr, {}\n";
+        os << "    nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive\n";
         os << "};\n\n";
     }
 }

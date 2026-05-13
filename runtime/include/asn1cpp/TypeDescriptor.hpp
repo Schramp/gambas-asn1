@@ -181,6 +181,17 @@ struct ChoiceSpec {
     int                   ber_tag_count = 0;
 };
 
+// Codec dispatch discriminant — set once at descriptor definition time.
+// Primitive: tag-number indexed table. Composites: spec-pointer indexed table.
+enum class TypeKind : uint8_t {
+    Primitive  = 0,  // dispatch via prim_dispatch_[tag.number]
+    Any        = 1,
+    Enumerated = 2,
+    Sequence   = 3,  // also SET
+    Choice     = 4,
+    SeqOf      = 5,  // also SET OF
+};
+
 // Top-level per-type descriptor (mirrors asn_TYPE_descriptor_t).
 // Generated as `asn_DEF_<TypeName>` in the type's .cpp.
 struct TypeDescriptor {
@@ -191,12 +202,13 @@ struct TypeDescriptor {
     const ChoiceSpec*    choice_spec;    // non-null for CHOICE
     const SeqOfSpec*     seq_of_spec;    // non-null for SEQUENCE OF / SET OF
     Constraints constraints; // flags==0 means unconstrained
-    bool is_any = false;            // true for ANY — raw BER bytes, open-type in PER
+    bool     is_any = false;             // true for ANY — raw BER bytes, open-type in PER
+    TypeKind kind   = TypeKind::Primitive;
 };
 
 // Built-in type descriptors — used by generated SEQUENCE/CHOICE member tables
 // to fill type_descriptor pointers for plain primitive members.
-inline const TypeDescriptor asn_DEF_Any          = { "ANY",          Tag::universal( 4, false), nullptr, nullptr, nullptr, nullptr, {}, true };
+inline const TypeDescriptor asn_DEF_Any          = { "ANY",          Tag::universal( 4, false), nullptr, nullptr, nullptr, nullptr, {}, true, TypeKind::Any };
 inline const TypeDescriptor asn_DEF_Integer      = { "INTEGER",      Tag::universal( 2, false), nullptr, nullptr, nullptr };
 inline const TypeDescriptor asn_DEF_Boolean      = { "BOOLEAN",      Tag::universal( 1, false), nullptr, nullptr, nullptr };
 inline const TypeDescriptor asn_DEF_Null         = { "NULL",         Tag::universal( 5, false), nullptr, nullptr, nullptr };

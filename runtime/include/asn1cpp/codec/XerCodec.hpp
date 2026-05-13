@@ -53,7 +53,7 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// Simple XER helpers
+// XER helpers (free functions used by handler classes and callers)
 
 namespace xer_detail {
 
@@ -107,10 +107,6 @@ inline std::string_view read_text_content(XerDecodeStream& s) {
     return text;
 }
 
-// XER text content escapes — only the three required by XML 1.0 §2.4 in
-// element content (`<`, `>`, `&`) plus the two attribute-only entities
-// (`"`, `'`) for symmetry on decode. Codec emits the three; decoder
-// resolves all five named entities plus numeric `&#NN;` / `&#xNN;`.
 inline std::string xer_escape(std::string_view sv) {
     std::string out;
     out.reserve(sv.size());
@@ -130,7 +126,6 @@ inline std::string xer_unescape(std::string_view sv) {
     out.reserve(sv.size());
     for (std::size_t i = 0; i < sv.size(); ) {
         if (sv[i] != '&') { out += sv[i++]; continue; }
-        // find ';' within a small window
         std::size_t end = i + 1;
         while (end < sv.size() && end - i < 12 && sv[end] != ';') ++end;
         if (end >= sv.size() || sv[end] != ';') { out += sv[i++]; continue; }
@@ -142,7 +137,6 @@ inline std::string xer_unescape(std::string_view sv) {
         else if (ent == "quot")  out += '"';
         else if (ent == "apos")  out += '\'';
         else if (!ent.empty() && ent.front() == '#') {
-            // numeric character reference: emit as UTF-8
             uint32_t cp = 0;
             std::string_view num = ent.substr(1);
             int base = 10;
@@ -177,7 +171,7 @@ inline std::string xer_unescape(std::string_view sv) {
             ok = false;
         }
         if (ok) i = end + 1;
-        else    { out += sv[i++]; }   // unknown entity: keep '&' literal, retry next char
+        else    { out += sv[i++]; }
     }
     return out;
 }
@@ -196,10 +190,143 @@ inline DecodeResult consume_close_tag(XerDecodeStream& s, std::string_view name)
     return decode_ok();
 }
 
+// ---------------------------------------------------------------------------
+// UTF-8 / wide-string helpers (used by BmpString and UniversalString handlers)
+
+inline void utf8_encode_cp(std::ostream& os, uint32_t cp) {
+    if (cp < 0x80) {
+        os << (char)cp;
+    } else if (cp < 0x800) {
+        os << (char)(0xC0 | (cp >> 6));
+        os << (char)(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        os << (char)(0xE0 | (cp >> 12));
+        os << (char)(0x80 | ((cp >> 6) & 0x3F));
+        os << (char)(0x80 | (cp & 0x3F));
+    } else {
+        os << (char)(0xF0 | ((cp >> 18) & 0x07));
+        os << (char)(0x80 | ((cp >> 12) & 0x3F));
+        os << (char)(0x80 | ((cp >> 6) & 0x3F));
+        os << (char)(0x80 | (cp & 0x3F));
+    }
+}
+
+inline uint32_t utf8_decode_cp(const char* data, std::size_t len, std::size_t& pos) {
+    uint8_t c = (uint8_t)data[pos++];
+    if ((c & 0x80) == 0) return c;
+    uint32_t cp; int extra;
+    if      ((c & 0xE0) == 0xC0) { cp = c & 0x1Fu; extra = 1; }
+    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0Fu; extra = 2; }
+    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07u; extra = 3; }
+    else return 0xFFFDu;
+    while (extra-- > 0 && pos < len) cp = (cp << 6) | ((uint8_t)data[pos++] & 0x3Fu);
+    return cp;
+}
+
+// ---------------------------------------------------------------------------
+// OID arc helpers
+
+inline std::string format_arcs(const std::vector<uint32_t>& arcs) {
+    std::string s;
+    for (std::size_t i = 0; i < arcs.size(); ++i) {
+        if (i) s += '.';
+        s += std::to_string(arcs[i]);
+    }
+    return s;
+}
+
+inline std::vector<uint32_t> parse_arcs(std::string_view sv) {
+    std::vector<uint32_t> arcs;
+    while (!sv.empty()) {
+        uint32_t v = 0;
+        auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), v);
+        if (ec != std::errc{}) break;
+        arcs.push_back(v);
+        sv.remove_prefix(ptr - sv.data());
+        if (!sv.empty() && sv[0] == '.') sv.remove_prefix(1);
+    }
+    return arcs;
+}
+
+// ---------------------------------------------------------------------------
+// String emit helper
+
+inline void encode_text_element(XerEncodeStream& s, const TypeDescriptor& def, const void* src) {
+    s.os() << '<' << def.name << '>'
+           << xer_escape(detail::asnstring_view(src))
+           << "</" << def.name << ">\n";
+}
+
+// ---------------------------------------------------------------------------
+// Template decode/encode helpers (inline, no codec reference needed)
+
+template<typename F>
+inline DecodeResult decode_simple_text_element(XerDecodeStream& s, const char* name, F&& fn) {
+    if (auto r = consume_open_tag(s, name); !r) return r;
+    auto raw = read_text_content(s);
+    if (auto r = consume_close_tag(s, name); !r) return r;
+    std::string unescaped = xer_unescape(raw);
+    return fn(std::string_view{unescaped});
+}
+
+template<typename T>
+inline DecodeResult decode_time_string(XerDecodeStream& s, const TypeDescriptor& def, void* dest) {
+    return decode_simple_text_element(s, def.name, [dest](std::string_view text) -> DecodeResult {
+        *static_cast<T*>(dest) = T{std::string(text)};
+        return decode_ok();
+    });
+}
+
+template<int stride>
+inline void encode_wide_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) {
+    static_assert(stride == 2 || stride == 4);
+    std::string_view sv = detail::asnstring_view(src);
+    std::ostringstream utf8;
+    for (std::size_t i = 0; i + stride <= sv.size(); i += stride) {
+        uint32_t cp;
+        if constexpr (stride == 2)
+            cp = ((uint8_t)sv[i] << 8) | (uint8_t)sv[i+1];
+        else
+            cp = ((uint8_t)sv[i] << 24) | ((uint8_t)sv[i+1] << 16) | ((uint8_t)sv[i+2] << 8) | (uint8_t)sv[i+3];
+        utf8_encode_cp(utf8, cp);
+    }
+    s.os() << '<' << def.name << '>'
+           << xer_escape(utf8.str())
+           << "</" << def.name << ">\n";
+}
+
+template<typename T>
+inline void encode_oid_impl(XerEncodeStream& s, const TypeDescriptor& def, const void* src) {
+    s.os() << '<' << def.name << '>'
+           << format_arcs(static_cast<const T*>(src)->arcs())
+           << "</" << def.name << ">\n";
+}
+
+template<typename T>
+inline DecodeResult decode_oid_impl(XerDecodeStream& s, const TypeDescriptor& def, void* dest) {
+    return decode_simple_text_element(s, def.name, [dest](std::string_view text) -> DecodeResult {
+        *static_cast<T*>(dest) = T{parse_arcs(trim(text))};
+        return decode_ok();
+    });
+}
+
 } // namespace xer_detail
 
 // ---------------------------------------------------------------------------
-// XerCodec
+// Per-type handler interface — one singleton per type
+
+class XerCodec;
+
+struct IXerTypeHandler {
+    virtual ~IXerTypeHandler() = default;
+    virtual void encode(const XerCodec& codec, XerEncodeStream& s,
+                        const TypeDescriptor& def, const void* src) const = 0;
+    virtual DecodeResult decode(const XerCodec& codec, XerDecodeStream& s,
+                                const TypeDescriptor& def, void* dest) const = 0;
+};
+
+// ---------------------------------------------------------------------------
+// XerCodec — generic XER encode/decode driven by TypeDescriptor tables
 
 class XerCodec : public ICodec {
 public:
@@ -219,179 +346,8 @@ public:
                         void* dest) const override;
 
 private:
-    // ---- Template methods (must stay in header) ---------------------------
-
-    template<typename F>
-    DecodeResult decode_simple_text_element(XerDecodeStream& s, const char* name, F&& fn) const {
-        if (auto r = xer_detail::consume_open_tag(s, name); !r) return r;
-        auto raw = xer_detail::read_text_content(s);
-        if (auto r = xer_detail::consume_close_tag(s, name); !r) return r;
-        // Resolve XML entities. Only allocates when an '&' is present;
-        // otherwise xer_unescape returns the same content verbatim.
-        std::string unescaped = xer_detail::xer_unescape(raw);
-        return fn(std::string_view{unescaped});
-    }
-
-    template<typename T>
-    DecodeResult decode_time_string(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
-        return decode_simple_text_element(s, def.name, [dest](std::string_view text) -> DecodeResult {
-            *static_cast<T*>(dest) = T{std::string(text)};
-            return decode_ok();
-        });
-    }
-
-    // ---- Inline statics needed by templates -------------------------------
-
-    static void utf8_encode_cp(std::ostream& os, uint32_t cp) {
-        if (cp < 0x80) {
-            os << (char)cp;
-        } else if (cp < 0x800) {
-            os << (char)(0xC0 | (cp >> 6));
-            os << (char)(0x80 | (cp & 0x3F));
-        } else if (cp < 0x10000) {
-            os << (char)(0xE0 | (cp >> 12));
-            os << (char)(0x80 | ((cp >> 6) & 0x3F));
-            os << (char)(0x80 | (cp & 0x3F));
-        } else {
-            os << (char)(0xF0 | ((cp >> 18) & 0x07));
-            os << (char)(0x80 | ((cp >> 12) & 0x3F));
-            os << (char)(0x80 | ((cp >> 6) & 0x3F));
-            os << (char)(0x80 | (cp & 0x3F));
-        }
-    }
-
-    static uint32_t utf8_decode_cp(const char* data, std::size_t len, std::size_t& pos) {
-        uint8_t c = (uint8_t)data[pos++];
-        if ((c & 0x80) == 0) return c;
-        uint32_t cp; int extra;
-        if      ((c & 0xE0) == 0xC0) { cp = c & 0x1Fu; extra = 1; }
-        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0Fu; extra = 2; }
-        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07u; extra = 3; }
-        else return 0xFFFDu;
-        while (extra-- > 0 && pos < len) cp = (cp << 6) | ((uint8_t)data[pos++] & 0x3Fu);
-        return cp;
-    }
-
-    static std::string format_arcs(const std::vector<uint32_t>& arcs) {
-        std::string s;
-        for (std::size_t i = 0; i < arcs.size(); ++i) {
-            if (i) s += '.';
-            s += std::to_string(arcs[i]);
-        }
-        return s;
-    }
-
-    static std::vector<uint32_t> parse_arcs(std::string_view sv) {
-        std::vector<uint32_t> arcs;
-        while (!sv.empty()) {
-            uint32_t v = 0;
-            auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), v);
-            if (ec != std::errc{}) break;
-            arcs.push_back(v);
-            sv.remove_prefix(ptr - sv.data());
-            if (!sv.empty() && sv[0] == '.') sv.remove_prefix(1);
-        }
-        return arcs;
-    }
-
-    static void encode_text_element(XerEncodeStream& s, const TypeDescriptor& def, const void* src) {
-        s.os() << '<' << def.name << '>'
-               << xer_detail::xer_escape(detail::asnstring_view(src))
-               << "</" << def.name << ">\n";
-    }
-
-    template<int stride>
-    void encode_wide_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const {
-        static_assert(stride == 2 || stride == 4);
-        std::string_view sv = detail::asnstring_view(src);
-        // Encode to UTF-8 in a buffer, then XML-escape — code points 0x3C /
-        // 0x3E / 0x26 emit as bare ASCII bytes that need entities.
-        std::ostringstream utf8;
-        for (std::size_t i = 0; i + stride <= sv.size(); i += stride) {
-            uint32_t cp;
-            if constexpr (stride == 2)
-                cp = ((uint8_t)sv[i] << 8) | (uint8_t)sv[i+1];
-            else
-                cp = ((uint8_t)sv[i] << 24) | ((uint8_t)sv[i+1] << 16) | ((uint8_t)sv[i+2] << 8) | (uint8_t)sv[i+3];
-            utf8_encode_cp(utf8, cp);
-        }
-        s.os() << '<' << def.name << '>'
-               << xer_detail::xer_escape(utf8.str())
-               << "</" << def.name << ">\n";
-    }
-
-    template<typename T>
-    static void encode_oid_impl(XerEncodeStream& s, const TypeDescriptor& def, const void* src) {
-        s.os() << '<' << def.name << '>' << format_arcs(static_cast<const T*>(src)->arcs()) << "</" << def.name << ">\n";
-    }
-
-    template<typename T>
-    DecodeResult decode_oid_impl(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const {
-        return decode_simple_text_element(s, def.name, [dest](std::string_view text) -> DecodeResult {
-            *static_cast<T*>(dest) = T{parse_arcs(xer_detail::trim(text))};
-            return decode_ok();
-        });
-    }
-
-    // ---- Static helpers (defined in XerCodec.cpp) -------------------------
-    static std::string format_hex_bytes(std::string_view sv);
-    static std::string parse_hex_bytes(std::string_view sv);
-    static std::string base64_encode(std::span<const uint8_t> in);
-    static std::vector<uint8_t> base64_decode(std::string_view in);
-
-    // ---- Non-template method declarations ---------------------------------
-    void encode_null(XerEncodeStream& s, const TypeDescriptor& def) const;
-    DecodeResult decode_null(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_boolean(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_boolean(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_time_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-
-    void encode_xer_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_xer_string(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_hex_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_hex_string(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_any_xer(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_any_xer(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_octetstring_xer(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_octetstring_xer(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_bmp_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_bmp_string(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_universal_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_universal_string(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_oid(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_oid(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_relative_oid(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_relative_oid(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_bitstring(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_bitstring(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_real(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_real(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_integer(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_integer(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_enumerated(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_enumerated(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_seq_of(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_seq_of(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_sequence(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_sequence(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
-
-    void encode_choice(XerEncodeStream& s, const TypeDescriptor& def, const void* src) const;
-    DecodeResult decode_choice(XerDecodeStream& s, const TypeDescriptor& def, void* dest) const;
+    static const IXerTypeHandler* const comp_dispatch_[6];   // indexed by (int)TypeKind
+    static const IXerTypeHandler* const prim_dispatch_[32];  // indexed by tag.number
 };
 
 } // namespace asn1
