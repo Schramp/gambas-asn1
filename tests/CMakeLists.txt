@@ -432,6 +432,28 @@ if(ASN1CPP_VALIDATE AND ASN1CPP_VALIDATE_ON_ENCODE)
     add_test(NAME validate_hooks COMMAND test_validate)
 endif()
 
+# ---- XER codec coverage: ENUMERATED + ANY ----------------------------------
+set(XER_CODEC_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_codec_test)
+add_custom_command(
+    OUTPUT  ${XER_CODEC_GEN_DIR}/Direction.hpp    ${XER_CODEC_GEN_DIR}/Direction.cpp
+            ${XER_CODEC_GEN_DIR}/HasDirection.hpp ${XER_CODEC_GEN_DIR}/HasDirection.cpp
+            ${XER_CODEC_GEN_DIR}/HasAny.hpp       ${XER_CODEC_GEN_DIR}/HasAny.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${XER_CODEC_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/xer_codec_test.asn1
+                                   -o ${XER_CODEC_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/xer_codec_test.asn1
+    COMMENT "Generating C++ from xer_codec_test.asn1"
+)
+add_executable(test_xer_codec
+    seq/test_xer_codec.cpp
+    ${XER_CODEC_GEN_DIR}/Direction.cpp
+    ${XER_CODEC_GEN_DIR}/HasDirection.cpp
+    ${XER_CODEC_GEN_DIR}/HasAny.cpp
+)
+target_include_directories(test_xer_codec PRIVATE ${XER_CODEC_GEN_DIR})
+target_link_libraries(test_xer_codec PRIVATE asn1cpp_runtime)
+add_test(NAME xer_codec COMMAND test_xer_codec)
+
 # ---- BER fuzz (in-tree) ---------------------------------------------------
 # Wire-level corruption sweep using BerCorruptor against the asn1cpp BER
 # decoder. Self-contained — no asn1c dependency, no etsitools/ binaries.

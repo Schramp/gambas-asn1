@@ -1,0 +1,19 @@
+-- XER codec coverage: ENUMERATED (non-extensible) and ANY member.
+-- Tests: tests/seq/test_xer_codec.cpp
+-- Exercises: EnumeratedXerHandler encode+decode, AnyBerHandler encode+decode,
+--            AnyXerHandler encode+decode.
+
+XerCodecTest DEFINITIONS ::= BEGIN
+
+    Direction ::= ENUMERATED { north, south, east, west }
+
+    HasDirection ::= SEQUENCE {
+        dir  Direction
+    }
+
+    HasAny ::= SEQUENCE {
+        id     INTEGER (0..255),
+        value  ANY
+    }
+
+END

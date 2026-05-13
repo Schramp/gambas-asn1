@@ -1,8 +1,10 @@
-// BER round-trip tests for SEQUENCE containing a NULL member.
+// BER + XER round-trip tests for SEQUENCE containing a NULL member.
 // Schema: tests/asn1/null_test.asn1  —  type from generated HasNull.hpp / HasNull.cpp.
 // BER wire format: HasNull { present=NULL } → 30 02 05 00
 //   0x30 = SEQUENCE, 0x02 = length 2, 0x05 = NULL tag, 0x00 = length 0
 #include <cstdio>
+#include <sstream>
+#include <string>
 #include <vector>
 #include <span>
 #include <asn1cpp/asn1cpp.hpp>
@@ -31,6 +33,18 @@ static bool ber_decode(std::span<const uint8_t> bytes, HasNull& out) {
     return BerCodec::instance().decode(s, asn_DEF_HasNull, &out).has_value();
 }
 
+static std::string xer_encode(const HasNull& v) {
+    std::ostringstream oss;
+    XerEncodeStream s{oss};
+    XerCodec::instance().encode(s, asn_DEF_HasNull, &v);
+    return oss.str();
+}
+
+static bool xer_decode(const std::string& xml, HasNull& out) {
+    XerDecodeStream s{xml};
+    return XerCodec::instance().decode(s, asn_DEF_HasNull, &out).has_value();
+}
+
 int main() {
     printf("\n── NULL member — HasNull BER ────────────────────────────────────\n");
 
@@ -43,6 +57,16 @@ int main() {
     HasNull got{};
     check("HasNull BER round-trip decodes ok", ber_decode(enc, got));
     check("HasNull round-trip present == Null{}", got.present == Null{});
+
+    printf("\n── NULL member — HasNull XER ────────────────────────────────────\n");
+
+    auto xml = xer_encode(v);
+    check("HasNull XER encode contains <present></present>",
+          xml.find("<present></present>") != std::string::npos);
+
+    HasNull xgot{};
+    check("HasNull XER decode ok", xer_decode(xml, xgot));
+    check("HasNull XER round-trip present == Null{}", xgot.present == Null{});
 
     printf("\n");
     if (failures) { printf("  %d test(s) FAILED\n", failures); return 1; }

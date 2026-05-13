@@ -1,4 +1,4 @@
-// BER round-trip tests for SEQUENCE containing UTCTime and GeneralizedTime members.
+// BER + XER round-trip tests for SEQUENCE containing UTCTime and GeneralizedTime members.
 // Schema: tests/asn1/time_test.asn1
 //
 // UTCTime "240115Z" (7 bytes) → tag 0x17, len 7
@@ -7,6 +7,7 @@
 // GeneralizedTime "20240115Z" (9 bytes) → tag 0x18, len 9
 //   SEQUENCE: 30 0B 18 09 32 30 32 34 30 31 31 35 5A
 #include <cstdio>
+#include <sstream>
 #include <vector>
 #include <span>
 #include <string>
@@ -90,6 +91,42 @@ int main() {
         HasGeneralizedTime got{};
         return ber_decode_gen(enc, got) && got.ts.str() == "20240115143000.5Z";
     }());
+
+    printf("\n── UTCTime XER ──────────────────────────────────────────────────\n");
+
+    {
+        HasUtcTime v{UtcTime{"240115Z"}};
+        std::ostringstream oss;
+        XerEncodeStream xs{oss};
+        XerCodec::instance().encode(xs, asn_DEF_HasUtcTime, &v);
+        auto xml = oss.str();
+        check("HasUtcTime XER encode contains \"240115Z\"",
+              xml.find("240115Z") != std::string::npos);
+
+        HasUtcTime got{};
+        XerDecodeStream ds{xml};
+        check("HasUtcTime XER decode ok",
+              XerCodec::instance().decode(ds, asn_DEF_HasUtcTime, &got).has_value());
+        check("HasUtcTime XER round-trip value", got.ts.str() == "240115Z");
+    }
+
+    printf("\n── GeneralizedTime XER ──────────────────────────────────────────\n");
+
+    {
+        HasGeneralizedTime v{GeneralizedTime{"20240115143000.5Z"}};
+        std::ostringstream oss;
+        XerEncodeStream xs{oss};
+        XerCodec::instance().encode(xs, asn_DEF_HasGeneralizedTime, &v);
+        auto xml = oss.str();
+        check("HasGeneralizedTime XER encode contains \"20240115143000.5Z\"",
+              xml.find("20240115143000.5Z") != std::string::npos);
+
+        HasGeneralizedTime got{};
+        XerDecodeStream ds{xml};
+        check("HasGeneralizedTime XER decode ok",
+              XerCodec::instance().decode(ds, asn_DEF_HasGeneralizedTime, &got).has_value());
+        check("HasGeneralizedTime XER round-trip value", got.ts.str() == "20240115143000.5Z");
+    }
 
     printf("\n");
     if (failures) { printf("  %d test(s) FAILED\n", failures); return 1; }
