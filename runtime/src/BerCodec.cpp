@@ -12,9 +12,9 @@
 #include <asn1cpp/types/Oid.hpp>
 #include <asn1cpp/types/Time.hpp>
 #include <asn1cpp/types/Strings.hpp>
+#include <asn1cpp/codec/Validation.hpp>
 #ifdef ASN1CPP_VALIDATE
 #include <asn1cpp/Validate.hpp>
-#include <asn1cpp/codec/Validation.hpp>
 #endif
 
 namespace asn1 {
