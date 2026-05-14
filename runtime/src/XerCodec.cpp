@@ -22,7 +22,7 @@ static std::string format_hex_bytes(std::string_view sv) {
 static std::string parse_hex_bytes(std::string_view sv) {
     std::string out;
     while (!sv.empty()) {
-        while (!sv.empty() && std::isspace((unsigned char)sv[0])) sv.remove_prefix(1);
+        while (!sv.empty() && xer_detail::xer_ws[(unsigned char)sv[0]]) sv.remove_prefix(1);
         if (sv.size() < 2) break;
         uint8_t b = 0;
         auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + 2, b, 16);
@@ -250,7 +250,7 @@ struct BitStringXerHandler final : IXerTypeHandler {
         while (pos < rem.size() && rem[pos] != '<') {
             char c = rem[pos++];
             if (c == '0' || c == '1') bits += c;
-            else if (!std::isspace((unsigned char)c))
+            else if (!xer_detail::xer_ws[(unsigned char)c])
                 return decode_err(DecodeError("XER: invalid BIT STRING character"));
         }
         s.advance(pos);
