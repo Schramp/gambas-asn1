@@ -354,15 +354,22 @@ struct SeqOfBerHandler final : IBerTypeHandler {
         BerReader inner = r.sub(tlv->value);
         const auto& spec = *def.seq_of_spec;
         const auto& edef = *spec.element;
+        std::size_t old_size = spec.count_fn(dest);
         std::size_t count = 0;
         while (!inner.at_end()) {
-            spec.resize_fn(dest, ++count);
-            void* eptr = spec.get_fn(dest, count - 1);
-            ValidatePathScope _vps{"[" + std::to_string(count - 1) + "]"};
+            if (count >= old_size) {
+                spec.resize_fn(dest, count + 1);
+                ++old_size;
+            }
+            void* eptr = spec.get_fn(dest, count);
+            ValidatePathScope _vps{"[" + std::to_string(count) + "]"};
             BerDecodeStream es{inner};
             auto res = codec.decode(es, edef, eptr);
             if (!res) return res;
+            ++count;
         }
+        if (count < old_size)
+            spec.resize_fn(dest, count);
         return decode_ok();
     }
 };
@@ -557,7 +564,8 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             }
             if (matched >= 0) {
                 const auto& alt = spec.alternatives[matched];
-                if (alt.emplace_fn) alt.emplace_fn(dest);
+                if (alt.emplace_fn && *static_cast<const int*>(dest) != matched + 1)
+                    alt.emplace_fn(dest);
                 void* mptr = alt.get_mut_fn ? alt.get_mut_fn(dest)
                                             : static_cast<char*>(dest) + alt.offset;
                 const auto& mdef = *alt.type_descriptor;
@@ -588,7 +596,8 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             const auto& alt = spec.alternatives[i];
             if (!alt.type_descriptor) continue;
             if (peek.cls != alt.tag.cls || peek.number != alt.tag.number) continue;
-            if (alt.emplace_fn) alt.emplace_fn(dest);
+            if (alt.emplace_fn && *static_cast<const int*>(dest) != i + 1)
+                alt.emplace_fn(dest);
             void* mptr = alt.get_mut_fn ? alt.get_mut_fn(dest)
                                         : static_cast<char*>(dest) + alt.offset;
             const auto& mdef = *alt.type_descriptor;
