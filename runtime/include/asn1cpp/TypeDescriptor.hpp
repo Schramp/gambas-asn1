@@ -97,6 +97,16 @@ struct MemberDescriptor {
     // §11.5: DEFAULT-equal values must not be encoded). True only when the
     // member is present AND its value equals the schema default.
     bool (*is_default_equal)(const void* owner) = nullptr;
+
+    // CHOICE variant accessors — non-null only for CHOICE alternatives in
+    // std::variant-based generated structs.  Codecs use these instead of
+    // offset arithmetic when non-null.
+    //   emplace_fn  — in-place constructs this alternative in the CHOICE struct
+    //   get_mut_fn  — returns mutable pointer to the active alternative
+    //   get_const_fn — returns const pointer to the active alternative
+    void        (*emplace_fn)(void* choice_ptr)          = nullptr;
+    void*       (*get_mut_fn)(void* choice_ptr)          = nullptr;
+    const void* (*get_const_fn)(const void* choice_ptr)  = nullptr;
 };
 
 // Template that generates the four SeqOfSpec callbacks for a std::vector-based SEQUENCE OF.

@@ -1292,7 +1292,8 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     }
     if (count > 0) os << "\n";
 
-    // class with PR enum + one named field per alternative
+    // class with PR enum + std::variant storage + typed accessors
+    os << std::format("#include <variant>\n");
     os << std::format("class {} {{\npublic:\n", cname);
     os << "    enum class PR : int { NOTHING = 0";
     int pr_idx = 1;
@@ -1300,10 +1301,38 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
         if (!m->is_extension_marker)
             os << std::format(", {} = {}", to_cpp_name(m->name), pr_idx++);
     os << " };\n";
-    os << "    PR present{PR::NOTHING};\n";
+    // _present at offset 0 for codec int-write backward compat
+    os << "    int _present{0};\n";
+    // variant storage — only active alternative constructed
+    os << "    std::variant<std::monostate";
     for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
-        os << std::format("    {} {}{{}};\n", cpp_type_for(*m), to_member_name(m->name));
+        os << std::format(", {}", cpp_type_for(*m));
+    }
+    os << "> u{};\n";
+    // present() read accessor
+    os << "    PR present() const { return static_cast<PR>(_present); }\n";
+    // set_present: emplace the right alternative
+    os << "    void set_present(PR p) {\n";
+    os << "        switch (p) {\n";
+    os << "        case PR::NOTHING: u.emplace<0>(); _present = 0; break;\n";
+    pr_idx = 1;
+    for (const auto& m : def.members) {
+        if (m->is_extension_marker) continue;
+        os << std::format("        case PR::{}: u.emplace<{}>(); _present = {}; break;\n",
+                          to_cpp_name(m->name), pr_idx, pr_idx);
+        ++pr_idx;
+    }
+    os << "        }\n    }\n";
+    // typed accessor methods
+    pr_idx = 1;
+    for (const auto& m : def.members) {
+        if (m->is_extension_marker) continue;
+        std::string t = cpp_type_for(*m);
+        std::string n = to_member_name(m->name);
+        os << std::format("    {0}& {1}() {{ return std::get<{2}>(u); }}\n", t, n, pr_idx);
+        os << std::format("    const {0}& {1}() const {{ return std::get<{2}>(u); }}\n", t, n, pr_idx);
+        ++pr_idx;
     }
     os << "};\n\n";
 
@@ -1339,13 +1368,31 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             ++auto_tag_num;
           }
         }
-        // Pass 2: emit array.
+        // Pass 2: emit static variant accessor functions.
+        { int vi = 1;
+          for (const auto& r : rows) {
+            os << std::format("static void* _get_mut_{0}_{1}(void* p) {{ return &std::get<{2}>(static_cast<{0}*>(p)->u); }}\n",
+                cname, r.mname, vi);
+            os << std::format("static const void* _get_const_{0}_{1}(const void* p) {{ return &std::get<{2}>(static_cast<const {0}*>(p)->u); }}\n",
+                cname, r.mname, vi);
+            os << std::format("static void _emplace_{0}_{1}(void* p) {{ static_cast<{0}*>(p)->u.emplace<{2}>(); }}\n",
+                cname, r.mname, vi);
+            ++vi;
+          }
+          os << '\n';
+        }
+        // Pass 3: emit array.
         os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
-        for (const auto& r : rows) {
-            os << std::format("    {{ \"{}\", {}, false, false, offsetof({}, {}), {}, {{}}, {}, nullptr, nullptr }},\n",
-                r.name, r.eff_tag, cname, r.mname,
+        { int vi = 1;
+          for (const auto& r : rows) {
+            os << std::format("    {{ \"{}\", {}, false, false, 0 /* variant */, {}, {{}}, {}, nullptr, nullptr,\n",
+                r.name, r.eff_tag,
                 r.tdref,
                 r.is_explicit ? "true" : "false");
+            os << std::format("      &_emplace_{0}_{1}, &_get_mut_{0}_{1}, &_get_const_{0}_{1} }},\n",
+                cname, r.mname);
+            ++vi;
+          }
         }
         os << "};\n\n";
     }

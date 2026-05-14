@@ -96,9 +96,9 @@ static void test_untagged_choice() {
     HasOptChoice h{};
     h.name = Utf8String{"hi"};
     h.pick = std::make_unique<OuterChoice>();
-    h.pick->present = OuterChoice::PR::inner;
-    h.pick->inner.present = LeafChoice::PR::anInt;
-    h.pick->inner.anInt   = Integer{5};
+    h.pick->set_present(OuterChoice::PR::inner);
+    h.pick->inner().set_present(LeafChoice::PR::anInt);
+    h.pick->inner().anInt()   = Integer{5};
 
     auto enc = ber_enc(asn_DEF_HasOptChoice, &h);
     check("HasOptChoice with inner anInt encodes", !enc.empty());
@@ -110,10 +110,10 @@ static void test_untagged_choice() {
     check("HasOptChoice with inner anInt decodes", ok);
     check("pick present after decode", h2.pick != nullptr);
     check("OuterChoice::inner selected",
-          h2.pick && h2.pick->present == OuterChoice::PR::inner);
+          h2.pick && h2.pick->present() == OuterChoice::PR::inner);
     check("LeafChoice::anInt correct",
-          h2.pick && h2.pick->inner.present == LeafChoice::PR::anInt &&
-          h2.pick->inner.anInt == Integer{5});
+          h2.pick && h2.pick->inner().present() == LeafChoice::PR::anInt &&
+          h2.pick->inner().anInt() == Integer{5});
 
     // pick absent — ber_tags fast-path decides NOT present.
     HasOptChoice h3{};
@@ -130,32 +130,32 @@ static void test_untagged_choice() {
     HasOptChoice h5{};
     h5.name = Utf8String{"flag"};
     h5.pick = std::make_unique<OuterChoice>();
-    h5.pick->present       = OuterChoice::PR::aFlag;
-    h5.pick->aFlag         = Boolean{true};
+    h5.pick->set_present(OuterChoice::PR::aFlag);
+    h5.pick->aFlag()       = Boolean{true};
     auto enc5 = ber_enc(asn_DEF_HasOptChoice, &h5);
 
     HasOptChoice h6{};
     bool ok5 = ber_dec(enc5, asn_DEF_HasOptChoice, &h6);
     check("HasOptChoice with aFlag decodes", ok5);
     check("aFlag value correct",
-          h6.pick && h6.pick->present == OuterChoice::PR::aFlag &&
-          h6.pick->aFlag == Boolean{true});
+          h6.pick && h6.pick->present() == OuterChoice::PR::aFlag &&
+          h6.pick->aFlag() == Boolean{true});
 
     // LeafChoice::aString path through ber_tags.
     HasOptChoice h7{};
     h7.name = Utf8String{"str"};
     h7.pick = std::make_unique<OuterChoice>();
-    h7.pick->present = OuterChoice::PR::inner;
-    h7.pick->inner.present  = LeafChoice::PR::aString;
-    h7.pick->inner.aString  = Utf8String{"hello"};
+    h7.pick->set_present(OuterChoice::PR::inner);
+    h7.pick->inner().set_present(LeafChoice::PR::aString);
+    h7.pick->inner().aString()  = Utf8String{"hello"};
     auto enc7 = ber_enc(asn_DEF_HasOptChoice, &h7);
 
     HasOptChoice h8{};
     bool ok7 = ber_dec(enc7, asn_DEF_HasOptChoice, &h8);
     check("LeafChoice::aString round-trips", ok7 &&
-          h8.pick && h8.pick->present == OuterChoice::PR::inner &&
-          h8.pick->inner.present == LeafChoice::PR::aString &&
-          h8.pick->inner.aString == Utf8String{"hello"});
+          h8.pick && h8.pick->present() == OuterChoice::PR::inner &&
+          h8.pick->inner().present() == LeafChoice::PR::aString &&
+          h8.pick->inner().aString() == Utf8String{"hello"});
 }
 
 // ── CHOICE extension-skip ─────────────────────────────────────────────────────
@@ -171,7 +171,7 @@ static void test_choice_ext_skip() {
     bool ok = ber_dec(buf, asn_DEF_HasExtChoice, &h);
     check("CHOICE extension-skip: decode succeeds", ok);
     check("CHOICE extension-skip: val not set",
-          h.val.present == ExtChoice::PR::NOTHING);
+          h.val.present() == ExtChoice::PR::NOTHING);
 }
 
 // ── XerCodec gap paths ────────────────────────────────────────────────────────

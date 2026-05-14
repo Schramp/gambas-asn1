@@ -624,15 +624,17 @@ struct ChoiceXerHandler final : IXerTypeHandler {
         if (!alt.type_descriptor) return;
         TypeDescriptor adef = *alt.type_descriptor;
         adef.name = alt.name;
+        const void* mptr = alt.get_const_fn ? alt.get_const_fn(src)
+                                            : static_cast<const char*>(src) + alt.offset;
         if (adef.choice_spec) {
             os << '\n' << s.indent(1) << '<' << alt.name << '>';
             XerEncodeStream as{os, s.depth() + 1};
-            codec.encode(as, adef, static_cast<const char*>(src) + alt.offset);
+            codec.encode(as, adef, mptr);
             os << s.indent(1) << "</" << alt.name << ">\n";
         } else {
             os << '\n' << s.indent(1);
             XerEncodeStream as{os, s.depth() + 1};
-            codec.encode(as, adef, static_cast<const char*>(src) + alt.offset);
+            codec.encode(as, adef, mptr);
         }
     }
     DecodeResult decode(const XerCodec& codec, XerDecodeStream& s,
@@ -647,7 +649,9 @@ struct ChoiceXerHandler final : IXerTypeHandler {
                     std::string("XER CHOICE: no descriptor for ") + alt.name));
             TypeDescriptor adef = *alt.type_descriptor;
             adef.name = alt.name;
-            void* mptr = static_cast<char*>(dest) + alt.offset;
+            if (alt.emplace_fn) alt.emplace_fn(dest);
+            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(dest)
+                                        : static_cast<char*>(dest) + alt.offset;
             if (adef.choice_spec) {
                 if (auto r = xer_detail::consume_open_tag(s, alt.name); !r) return r;
                 auto r = codec.decode(s, adef, mptr);

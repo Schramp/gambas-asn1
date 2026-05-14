@@ -54,66 +54,66 @@ static bool per_dec(std::span<const uint8_t> b, T& out, const TypeDescriptor& de
 int main() {
     printf("\n── Alt2 (2-alternative CHOICE) BER ──────────────────────────────\n");
     {
-        HasAlt2 v; v.val.present = Alt2::PR::num; v.val.num = 42;
+        HasAlt2 v; v.val.set_present(Alt2::PR::num); v.val.num() = 42;
         auto enc = ber_enc(v, asn_DEF_HasAlt2); HasAlt2 got{};
         check("Alt2::num=42 BER rt",
               ber_dec(enc, got, asn_DEF_HasAlt2)
-              && got.val.present == Alt2::PR::num && got.val.num == 42);
+              && got.val.present() == Alt2::PR::num && got.val.num() == 42);
     }
     {
-        HasAlt2 v; v.val.present = Alt2::PR::flag; v.val.flag = Boolean{true};
+        HasAlt2 v; v.val.set_present(Alt2::PR::flag); v.val.flag() = Boolean{true};
         auto enc = ber_enc(v, asn_DEF_HasAlt2); HasAlt2 got{};
         check("Alt2::flag=true BER rt",
               ber_dec(enc, got, asn_DEF_HasAlt2)
-              && got.val.present == Alt2::PR::flag && got.val.flag.value() == true);
+              && got.val.present() == Alt2::PR::flag && got.val.flag().value() == true);
     }
 
     printf("\n── Alt2 XER ──────────────────────────────────────────────────────\n");
     {
-        HasAlt2 v; v.val.present = Alt2::PR::num; v.val.num = 7;
+        HasAlt2 v; v.val.set_present(Alt2::PR::num); v.val.num() = 7;
         auto xml = xer_enc(v, asn_DEF_HasAlt2); HasAlt2 got{};
         check("Alt2::num=7 XER rt",
               xer_dec(xml, got, asn_DEF_HasAlt2)
-              && got.val.present == Alt2::PR::num && got.val.num == 7);
+              && got.val.present() == Alt2::PR::num && got.val.num() == 7);
         check("Alt2::num XER has <num>", xml.find("<num>") != std::string::npos);
     }
     {
-        HasAlt2 v; v.val.present = Alt2::PR::flag; v.val.flag = Boolean{false};
+        HasAlt2 v; v.val.set_present(Alt2::PR::flag); v.val.flag() = Boolean{false};
         auto xml = xer_enc(v, asn_DEF_HasAlt2);
         check("Alt2::flag XER has <flag>", xml.find("<flag>") != std::string::npos);
     }
 
     printf("\n── Alt4 (4-alternative CHOICE) BER ──────────────────────────────\n");
     {
-        HasAlt4 v; v.val.present = Alt4::PR::num; v.val.num = 100;
+        HasAlt4 v; v.val.set_present(Alt4::PR::num); v.val.num() = 100;
         auto enc = ber_enc(v, asn_DEF_HasAlt4); HasAlt4 got{};
         check("Alt4::num=100 BER rt",
               ber_dec(enc, got, asn_DEF_HasAlt4)
-              && got.val.present == Alt4::PR::num && got.val.num == 100);
+              && got.val.present() == Alt4::PR::num && got.val.num() == 100);
     }
     {
-        HasAlt4 v; v.val.present = Alt4::PR::str; v.val.str = VisibleString{"hi"};
+        HasAlt4 v; v.val.set_present(Alt4::PR::str); v.val.str() = VisibleString{"hi"};
         auto enc = ber_enc(v, asn_DEF_HasAlt4); HasAlt4 got{};
         check("Alt4::str=\"hi\" BER rt",
               ber_dec(enc, got, asn_DEF_HasAlt4)
-              && got.val.present == Alt4::PR::str && got.val.str.str() == "hi");
+              && got.val.present() == Alt4::PR::str && got.val.str().str() == "hi");
     }
     {
-        HasAlt4 v; v.val.present = Alt4::PR::flag; v.val.flag = Boolean{true};
+        HasAlt4 v; v.val.set_present(Alt4::PR::flag); v.val.flag() = Boolean{true};
         auto enc = ber_enc(v, asn_DEF_HasAlt4); HasAlt4 got{};
         check("Alt4::flag=true BER rt",
               ber_dec(enc, got, asn_DEF_HasAlt4)
-              && got.val.present == Alt4::PR::flag && got.val.flag.value() == true);
+              && got.val.present() == Alt4::PR::flag && got.val.flag().value() == true);
     }
     {
-        HasAlt4 v; v.val.present = Alt4::PR::raw;
+        HasAlt4 v; v.val.set_present(Alt4::PR::raw);
         static const uint8_t rb[] = {0xde, 0xad};
-        v.val.raw = OctetString{std::span<const uint8_t>{rb, 2}};
+        v.val.raw() = OctetString{std::span<const uint8_t>{rb, 2}};
         auto enc = ber_enc(v, asn_DEF_HasAlt4); HasAlt4 got{};
         bool raw_ok = ber_dec(enc, got, asn_DEF_HasAlt4)
-                   && got.val.present == Alt4::PR::raw;
+                   && got.val.present() == Alt4::PR::raw;
         if (raw_ok) {
-            auto b = got.val.raw.bytes();
+            auto b = got.val.raw().bytes();
             raw_ok = std::vector<uint8_t>(b.begin(), b.end()) == std::vector<uint8_t>{0xde, 0xad};
         }
         check("Alt4::raw BER rt", raw_ok);
@@ -121,28 +121,28 @@ int main() {
 
     printf("\n── Alt4 XER ──────────────────────────────────────────────────────\n");
     {
-        HasAlt4 v; v.val.present = Alt4::PR::str; v.val.str = VisibleString{"ok"};
+        HasAlt4 v; v.val.set_present(Alt4::PR::str); v.val.str() = VisibleString{"ok"};
         auto xml = xer_enc(v, asn_DEF_HasAlt4); HasAlt4 got{};
         check("Alt4::str XER rt",
               xer_dec(xml, got, asn_DEF_HasAlt4)
-              && got.val.present == Alt4::PR::str && got.val.str.str() == "ok");
+              && got.val.present() == Alt4::PR::str && got.val.str().str() == "ok");
         check("Alt4::str XER has <str>", xml.find("<str>") != std::string::npos);
     }
 
     printf("\n── Alt2/Alt4 PER round-trips ─────────────────────────────────────\n");
     {
-        HasAlt2 v; v.val.present = Alt2::PR::num; v.val.num = 200;
+        HasAlt2 v; v.val.set_present(Alt2::PR::num); v.val.num() = 200;
         auto enc = per_enc(v, asn_DEF_HasAlt2); HasAlt2 got{};
         check("Alt2::num=200 PER rt",
               per_dec(enc, got, asn_DEF_HasAlt2)
-              && got.val.present == Alt2::PR::num && got.val.num == 200);
+              && got.val.present() == Alt2::PR::num && got.val.num() == 200);
     }
     {
-        HasAlt4 v; v.val.present = Alt4::PR::flag; v.val.flag = Boolean{false};
+        HasAlt4 v; v.val.set_present(Alt4::PR::flag); v.val.flag() = Boolean{false};
         auto enc = per_enc(v, asn_DEF_HasAlt4); HasAlt4 got{};
         check("Alt4::flag=false PER rt",
               per_dec(enc, got, asn_DEF_HasAlt4)
-              && got.val.present == Alt4::PR::flag && got.val.flag.value() == false);
+              && got.val.present() == Alt4::PR::flag && got.val.flag().value() == false);
     }
 
     printf("\n");

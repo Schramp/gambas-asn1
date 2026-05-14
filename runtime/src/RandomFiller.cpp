@@ -411,7 +411,10 @@ bool RandomFiller::fill_choice(void* obj, const ChoiceSpec& spec, int depth) {
     const MemberDescriptor& alt = spec.alternatives[alt_idx];
 
     void* aptr;
-    if (alt.optional_ops) {
+    if (alt.emplace_fn) {
+        alt.emplace_fn(obj);
+        aptr = alt.get_mut_fn(obj);
+    } else if (alt.optional_ops) {
         alt.optional_ops.set_present(obj, true);
         aptr = alt.optional_ops.member_ptr(obj, alt.offset);
     } else {

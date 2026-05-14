@@ -47,7 +47,8 @@ AR       := ar
 PCH_DIR     := $(OBJ_DIR)/pch
 PCH_WRAP    := $(PCH_DIR)/pch.hpp
 PCH_GCH     := $(PCH_WRAP).gch
-BASE_FLAGS  := -std=c++20 -O2 -I$(GEN_DIR) -I$(RUNTIME_INC)
+OPT        ?= -O3
+BASE_FLAGS  := -std=c++20 $(OPT) -I$(GEN_DIR) -I$(RUNTIME_INC)
 CXXFLAGS    := $(BASE_FLAGS) -include $(PCH_WRAP)
 
 .DEFAULT_GOAL := all
