@@ -49,7 +49,7 @@ static std::string base64_encode(std::span<const uint8_t> in) {
     return out;
 }
 
-static std::vector<uint8_t> base64_decode(std::string_view in) {
+static std::string base64_decode(std::string_view in) {
     auto val = [](char c) -> int {
         if (c >= 'A' && c <= 'Z') return c - 'A';
         if (c >= 'a' && c <= 'z') return c - 'a' + 26;
@@ -58,14 +58,14 @@ static std::vector<uint8_t> base64_decode(std::string_view in) {
         if (c == '/') return 63;
         return -1;
     };
-    std::vector<uint8_t> out;
+    std::string out;
     int buf = 0, bits = 0;
     for (char c : in) {
         int v = val(c);
         if (v < 0) continue;
         buf = (buf << 6) | v;
         bits += 6;
-        if (bits >= 8) { bits -= 8; out.push_back((buf >> bits) & 0xFF); }
+        if (bits >= 8) { bits -= 8; out.push_back(static_cast<char>((buf >> bits) & 0xFF)); }
     }
     return out;
 }
@@ -289,7 +289,9 @@ struct OctetStringXerHandler final : IXerTypeHandler {
                         const TypeDescriptor& def, void* dest) const override {
         return xer_detail::decode_simple_text_element(s, def.name,
             [dest](std::string_view text) -> DecodeResult {
-                *static_cast<OctetString*>(dest) = OctetString{base64_decode(text)};
+                auto dec = base64_decode(text);
+                *static_cast<OctetString*>(dest) = OctetString{
+                    reinterpret_cast<const uint8_t*>(dec.data()), dec.size()};
                 return decode_ok();
             });
     }

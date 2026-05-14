@@ -1,6 +1,7 @@
 #pragma once
-#include <vector>
+#include <string>
 #include <span>
+#include <vector>
 #include <format>
 #include "../Tag.hpp"
 #include "../codec/BerTraits.hpp"
@@ -9,18 +10,26 @@
 namespace asn1 {
 
 class OctetString {
-    std::vector<uint8_t> bytes_;
+    std::string bytes_; // binary-safe; SSO avoids heap for short strings
 public:
     OctetString() = default;
-    explicit OctetString(std::vector<uint8_t> b) : bytes_(std::move(b)) {}
-    OctetString(std::span<const uint8_t> b) : bytes_(b.begin(), b.end()) {}
-    OctetString(const uint8_t* p, std::size_t n) : bytes_(p, p + n) {}
+    explicit OctetString(std::vector<uint8_t> b)
+        : bytes_(reinterpret_cast<const char*>(b.data()), b.size()) {}
+    OctetString(std::span<const uint8_t> b)
+        : bytes_(reinterpret_cast<const char*>(b.data()), b.size()) {}
+    OctetString(const uint8_t* p, std::size_t n)
+        : bytes_(reinterpret_cast<const char*>(p), n) {}
 
-    void set(std::vector<uint8_t> b)        { bytes_ = std::move(b); }
-    void set(std::span<const uint8_t> b)    { bytes_.assign(b.begin(), b.end()); }
-    void set(const uint8_t* p, std::size_t n) { bytes_.assign(p, p + n); }
+    void set(std::vector<uint8_t> b)
+        { bytes_.assign(reinterpret_cast<const char*>(b.data()), b.size()); }
+    void set(std::span<const uint8_t> b)
+        { bytes_.assign(reinterpret_cast<const char*>(b.data()), b.size()); }
+    void set(const uint8_t* p, std::size_t n)
+        { bytes_.assign(reinterpret_cast<const char*>(p), n); }
 
-    std::span<const uint8_t> bytes() const { return bytes_; }
+    std::span<const uint8_t> bytes() const {
+        return {reinterpret_cast<const uint8_t*>(bytes_.data()), bytes_.size()};
+    }
     std::size_t size()              const { return bytes_.size(); }
     bool empty()                    const { return bytes_.empty(); }
 
