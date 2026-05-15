@@ -132,10 +132,14 @@ struct BerTraits<RelativeOid> {
         if (tlv->tag != tag())
             return make_unexpected<RelativeOid, DecodeError>(
                 DecodeError(std::format("expected RELATIVE-OID tag, got number {}", tlv->tag.number)));
+        return decode_value(tlv->value);
+    }
+
+    static Expected<RelativeOid, DecodeError> decode_value(std::span<const uint8_t> value) {
         std::vector<uint32_t> arcs;
         std::size_t i = 0;
-        while (i < tlv->value.size()) {
-            auto arc = detail::decode_arc(tlv->value, i);
+        while (i < value.size()) {
+            auto arc = detail::decode_arc(value, i);
             if (!arc) return make_unexpected<RelativeOid, DecodeError>(arc.error());
             arcs.push_back(*arc);
         }

@@ -175,6 +175,13 @@ struct RealBerHandler final : IBerTypeHandler {
         *static_cast<Real*>(dest) = *v;
         return decode_ok();
     }
+    DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
+                              const TypeDescriptor&, void* dest) const override {
+        auto v = BerTraits<Real>::decode_value(value);
+        if (!v) return decode_err(v.error());
+        *static_cast<Real*>(dest) = *v;
+        return decode_ok();
+    }
 };
 
 struct BitStringBerHandler final : IBerTypeHandler {
@@ -185,6 +192,13 @@ struct BitStringBerHandler final : IBerTypeHandler {
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor&, void* dest) const override {
         auto v = BerTraits<BitString>::decode(r);
+        if (!v) return decode_err(v.error());
+        *static_cast<BitString*>(dest) = std::move(*v);
+        return decode_ok();
+    }
+    DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
+                              const TypeDescriptor&, void* dest) const override {
+        auto v = BerTraits<BitString>::decode_value(value);
         if (!v) return decode_err(v.error());
         *static_cast<BitString*>(dest) = std::move(*v);
         return decode_ok();
@@ -222,6 +236,13 @@ struct OidBerHandler final : IBerTypeHandler {
         *static_cast<Oid*>(dest) = std::move(*v);
         return decode_ok();
     }
+    DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
+                              const TypeDescriptor&, void* dest) const override {
+        auto v = BerTraits<Oid>::decode_value(value);
+        if (!v) return decode_err(v.error());
+        *static_cast<Oid*>(dest) = std::move(*v);
+        return decode_ok();
+    }
 };
 
 struct RelOidBerHandler final : IBerTypeHandler {
@@ -232,6 +253,13 @@ struct RelOidBerHandler final : IBerTypeHandler {
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor&, void* dest) const override {
         auto v = BerTraits<RelativeOid>::decode(r);
+        if (!v) return decode_err(v.error());
+        *static_cast<RelativeOid*>(dest) = std::move(*v);
+        return decode_ok();
+    }
+    DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
+                              const TypeDescriptor&, void* dest) const override {
+        auto v = BerTraits<RelativeOid>::decode_value(value);
         if (!v) return decode_err(v.error());
         *static_cast<RelativeOid*>(dest) = std::move(*v);
         return decode_ok();
@@ -250,6 +278,13 @@ struct UtcTimeBerHandler final : IBerTypeHandler {
         *static_cast<UtcTime*>(dest) = std::move(*v);
         return decode_ok();
     }
+    DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
+                              const TypeDescriptor&, void* dest) const override {
+        auto v = BerTraits<UtcTime>::decode_value(value);
+        if (!v) return decode_err(v.error());
+        *static_cast<UtcTime*>(dest) = std::move(*v);
+        return decode_ok();
+    }
 };
 
 struct GenTimeBerHandler final : IBerTypeHandler {
@@ -260,6 +295,13 @@ struct GenTimeBerHandler final : IBerTypeHandler {
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor&, void* dest) const override {
         auto v = BerTraits<GeneralizedTime>::decode(r);
+        if (!v) return decode_err(v.error());
+        *static_cast<GeneralizedTime*>(dest) = std::move(*v);
+        return decode_ok();
+    }
+    DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
+                              const TypeDescriptor&, void* dest) const override {
+        auto v = BerTraits<GeneralizedTime>::decode_value(value);
         if (!v) return decode_err(v.error());
         *static_cast<GeneralizedTime*>(dest) = std::move(*v);
         return decode_ok();

@@ -45,8 +45,12 @@ struct BerTraits<UtcTime> {
         if (tlv->tag != tag())
             return make_unexpected<UtcTime, DecodeError>(
                 DecodeError(std::format("expected UTCTime tag, got number {}", tlv->tag.number)));
+        return decode_value(tlv->value);
+    }
+
+    static Expected<UtcTime, DecodeError> decode_value(std::span<const uint8_t> value) {
         return UtcTime{std::string(
-            reinterpret_cast<const char*>(tlv->value.data()), tlv->value.size())};
+            reinterpret_cast<const char*>(value.data()), value.size())};
     }
 };
 
@@ -66,8 +70,12 @@ struct BerTraits<GeneralizedTime> {
         if (tlv->tag != tag())
             return make_unexpected<GeneralizedTime, DecodeError>(
                 DecodeError(std::format("expected GeneralizedTime tag, got number {}", tlv->tag.number)));
+        return decode_value(tlv->value);
+    }
+
+    static Expected<GeneralizedTime, DecodeError> decode_value(std::span<const uint8_t> value) {
         return GeneralizedTime{std::string(
-            reinterpret_cast<const char*>(tlv->value.data()), tlv->value.size())};
+            reinterpret_cast<const char*>(value.data()), value.size())};
     }
 };
 

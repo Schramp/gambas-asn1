@@ -91,9 +91,13 @@ struct BerTraits<Real> {
         if (tlv->tag != tag())
             return make_unexpected<Real, DecodeError>(
                 DecodeError(std::format("expected REAL tag, got number {}", tlv->tag.number)));
-        if (tlv->value.empty()) return Real{0.0};
+        return decode_value(tlv->value);
+    }
 
-        uint8_t info = tlv->value[0];
+    static Expected<Real, DecodeError> decode_value(std::span<const uint8_t> value) {
+        if (value.empty()) return Real{0.0};
+
+        uint8_t info = value[0];
         if (info == 0x40) return Real{std::numeric_limits<double>::infinity()};
         if (info == 0x41) return Real{-std::numeric_limits<double>::infinity()};
         if (info == 0x42) return Real{std::numeric_limits<double>::quiet_NaN()};
@@ -109,18 +113,16 @@ struct BerTraits<Real> {
         int scaling   = (info >> 2) & 0x03;
         int exp_len   = (info & 0x03) + 1;
 
-        auto bytes = tlv->value.subspan(1);
+        auto bytes = value.subspan(1);
         if (static_cast<int>(bytes.size()) < exp_len)
             return make_unexpected<Real, DecodeError>(DecodeError("truncated REAL exponent"));
 
-        // Decode exponent (signed, big-endian)
         int32_t e = (bytes[0] & 0x80) ? -1 : 0;
         for (int i = 0; i < exp_len; ++i)
             e = (e << 8) | bytes[i];
         e += scaling;
         bytes = bytes.subspan(exp_len);
 
-        // Decode mantissa
         uint64_t M = 0;
         for (uint8_t b : bytes)
             M = (M << 8) | b;

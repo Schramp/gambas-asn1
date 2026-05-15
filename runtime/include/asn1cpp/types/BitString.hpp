@@ -66,13 +66,17 @@ struct BerTraits<BitString> {
         if (tlv->tag != tag())
             return make_unexpected<BitString, DecodeError>(
                 DecodeError(std::format("expected BIT STRING tag, got number {}", tlv->tag.number)));
-        if (tlv->value.empty())
+        return decode_value(tlv->value);
+    }
+
+    static Expected<BitString, DecodeError> decode_value(std::span<const uint8_t> value) {
+        if (value.empty())
             return make_unexpected<BitString, DecodeError>(DecodeError("BIT STRING value is empty (need at least unused-bits byte)"));
-        uint8_t unused = tlv->value[0];
+        uint8_t unused = value[0];
         if (unused > 7)
             return make_unexpected<BitString, DecodeError>(
                 DecodeError(std::format("BIT STRING unused bits out of range: {}", unused)));
-        auto payload = tlv->value.subspan(1);
+        auto payload = value.subspan(1);
         return BitString{std::vector<uint8_t>(payload.begin(), payload.end()), unused};
     }
 };
