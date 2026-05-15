@@ -43,7 +43,8 @@ target_include_directories(asn1cpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}          # for src/ast etc. relative includes from grammar/
 )
 
-target_link_libraries(asn1cpp PRIVATE asn1cpp_runtime)
+target_include_directories(asn1cpp PRIVATE
+    ${CMAKE_SOURCE_DIR}/runtime/include)  # Tag.hpp, TypeDescriptor.hpp, Constraints.hpp
 
 # RE/flex runtime library (installed under /usr/local)
 find_library(REFLEX_LIB reflex

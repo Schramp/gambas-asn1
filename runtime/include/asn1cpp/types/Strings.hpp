@@ -96,7 +96,7 @@ inline std::string_view asnstring_view(const void* p) {
     return *reinterpret_cast<const std::string*>(p);
 }
 inline void asnstring_assign(void* p, std::string_view sv) {
-    *reinterpret_cast<std::string*>(p) = std::string(sv);
+    reinterpret_cast<std::string*>(p)->assign(sv.data(), sv.size());
 }
 } // namespace detail
 

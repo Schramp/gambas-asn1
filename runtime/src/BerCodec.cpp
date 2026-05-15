@@ -212,14 +212,14 @@ struct OctetStringBerHandler final : IBerTypeHandler {
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor&, void* dest) const override {
-        auto v = BerTraits<OctetString>::decode(r);
-        if (!v) return decode_err(v.error());
-        *static_cast<OctetString*>(dest) = *v;
+        auto tlv = r.read_tlv();
+        if (!tlv) return decode_err(tlv.error());
+        static_cast<OctetString*>(dest)->set(tlv->value);
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
                               const TypeDescriptor&, void* dest) const override {
-        *static_cast<OctetString*>(dest) = OctetString(value);
+        static_cast<OctetString*>(dest)->set(value);
         return decode_ok();
     }
 };
@@ -273,16 +273,16 @@ struct UtcTimeBerHandler final : IBerTypeHandler {
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor&, void* dest) const override {
-        auto v = BerTraits<UtcTime>::decode(r);
-        if (!v) return decode_err(v.error());
-        *static_cast<UtcTime*>(dest) = std::move(*v);
+        auto tlv = r.read_tlv();
+        if (!tlv) return decode_err(tlv.error());
+        static_cast<UtcTime*>(dest)->assign(
+            reinterpret_cast<const char*>(tlv->value.data()), tlv->value.size());
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
                               const TypeDescriptor&, void* dest) const override {
-        auto v = BerTraits<UtcTime>::decode_value(value);
-        if (!v) return decode_err(v.error());
-        *static_cast<UtcTime*>(dest) = std::move(*v);
+        static_cast<UtcTime*>(dest)->assign(
+            reinterpret_cast<const char*>(value.data()), value.size());
         return decode_ok();
     }
 };
@@ -294,16 +294,16 @@ struct GenTimeBerHandler final : IBerTypeHandler {
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor&, void* dest) const override {
-        auto v = BerTraits<GeneralizedTime>::decode(r);
-        if (!v) return decode_err(v.error());
-        *static_cast<GeneralizedTime*>(dest) = std::move(*v);
+        auto tlv = r.read_tlv();
+        if (!tlv) return decode_err(tlv.error());
+        static_cast<GeneralizedTime*>(dest)->assign(
+            reinterpret_cast<const char*>(tlv->value.data()), tlv->value.size());
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
                               const TypeDescriptor&, void* dest) const override {
-        auto v = BerTraits<GeneralizedTime>::decode_value(value);
-        if (!v) return decode_err(v.error());
-        *static_cast<GeneralizedTime*>(dest) = std::move(*v);
+        static_cast<GeneralizedTime*>(dest)->assign(
+            reinterpret_cast<const char*>(value.data()), value.size());
         return decode_ok();
     }
 };

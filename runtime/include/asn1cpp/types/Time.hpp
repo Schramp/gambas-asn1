@@ -15,6 +15,7 @@ public:
     UtcTime() = default;
     explicit UtcTime(std::string s) : value_(std::move(s)) {}
     void set(std::string s) { value_ = std::move(s); }
+    void assign(const char* p, std::size_t n) { value_.assign(p, n); }
     const std::string& str() const { return value_; }
     bool operator==(const UtcTime&) const = default;
 };
@@ -25,6 +26,7 @@ public:
     GeneralizedTime() = default;
     explicit GeneralizedTime(std::string s) : value_(std::move(s)) {}
     void set(std::string s) { value_ = std::move(s); }
+    void assign(const char* p, std::size_t n) { value_.assign(p, n); }
     const std::string& str() const { return value_; }
     bool operator==(const GeneralizedTime&) const = default;
 };
