@@ -6,11 +6,12 @@
 #include <format>
 #include <limits>
 #include "../Tag.hpp"
+#include "../Asn1Object.hpp"
 #include "../codec/BerTraits.hpp"
 
 namespace asn1 {
 
-class Real {
+class Real : public Asn1Object {
     double value_{0.0};
 public:
     Real() = default;

@@ -4,11 +4,12 @@
 #include <span>
 #include <format>
 #include "../Tag.hpp"
+#include "../Asn1Object.hpp"
 #include "../codec/BerTraits.hpp"
 
 namespace asn1 {
 
-class Oid {
+class Oid : public Asn1Object {
     std::vector<uint32_t> arcs_;
 public:
     Oid() = default;
@@ -31,7 +32,7 @@ public:
     bool operator==(const Oid&) const = default;
 };
 
-class RelativeOid {
+class RelativeOid : public Asn1Object {
     std::vector<uint32_t> arcs_;
 public:
     RelativeOid() = default;

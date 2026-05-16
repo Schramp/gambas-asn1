@@ -3,6 +3,7 @@
 #include <string_view>
 #include <format>
 #include "../Tag.hpp"
+#include "../Asn1Object.hpp"
 #include "../codec/BerTraits.hpp"
 #include "../codec/Constraints.hpp"
 #include "../codec/Alphabets.hpp"
@@ -12,7 +13,7 @@ namespace asn1 {
 // Non-virtual base for all AsnString<N> types.
 // Codec handlers cast void* to AsnStringBase* — language-safe via inheritance,
 // no layout assumptions needed.
-class AsnStringBase {
+class AsnStringBase : public Asn1Object {
     std::string value_;
 public:
     AsnStringBase() = default;
