@@ -322,7 +322,8 @@ struct RelOidXerHandler final : IXerTypeHandler {
 struct UtcTimeXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
-        xer_detail::encode_text_element(s, def, src);
+        xer_detail::encode_text_element(s, def,
+            static_cast<const AsnStringBase*>(src)->str());
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, void* dest) const override {
@@ -333,7 +334,8 @@ struct UtcTimeXerHandler final : IXerTypeHandler {
 struct GenTimeXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
-        xer_detail::encode_text_element(s, def, src);
+        xer_detail::encode_text_element(s, def,
+            static_cast<const AsnStringBase*>(src)->str());
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, void* dest) const override {
@@ -344,13 +346,14 @@ struct GenTimeXerHandler final : IXerTypeHandler {
 struct XerStringHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
-        xer_detail::encode_text_element(s, def, src);
+        xer_detail::encode_text_element(s, def,
+            static_cast<const AsnStringBase*>(src)->str());
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, void* dest) const override {
         return xer_detail::decode_simple_text_element(s, def.name,
             [dest](std::string_view text) -> DecodeResult {
-                detail::asnstring_assign(dest, text);
+                static_cast<AsnStringBase*>(dest)->str().assign(text.data(), text.size());
                 return decode_ok();
             });
     }
@@ -359,14 +362,14 @@ struct XerStringHandler final : IXerTypeHandler {
 struct HexStringXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
-        std::string_view sv = detail::asnstring_view(src);
+        const auto& sv = static_cast<const AsnStringBase*>(src)->str();
         s.os() << '<' << def.name << '>' << format_hex_bytes(sv) << "</" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, void* dest) const override {
         return xer_detail::decode_simple_text_element(s, def.name,
             [dest](std::string_view text) -> DecodeResult {
-                detail::asnstring_assign(dest, parse_hex_bytes(text));
+                static_cast<AsnStringBase*>(dest)->str() = parse_hex_bytes(text);
                 return decode_ok();
             });
     }
@@ -375,7 +378,8 @@ struct HexStringXerHandler final : IXerTypeHandler {
 struct BmpStringXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
-        xer_detail::encode_wide_string<2>(s, def, src);
+        xer_detail::encode_wide_string<2>(s, def,
+            static_cast<const AsnStringBase*>(src)->str());
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, void* dest) const override {
@@ -388,7 +392,7 @@ struct BmpStringXerHandler final : IXerTypeHandler {
                     out += (char)(uint8_t)(cp >> 8);
                     out += (char)(uint8_t)(cp & 0xFF);
                 }
-                detail::asnstring_assign(dest, out);
+                static_cast<AsnStringBase*>(dest)->str().assign(out);
                 return decode_ok();
             });
     }
@@ -397,7 +401,8 @@ struct BmpStringXerHandler final : IXerTypeHandler {
 struct UniversalStringXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
-        xer_detail::encode_wide_string<4>(s, def, src);
+        xer_detail::encode_wide_string<4>(s, def,
+            static_cast<const AsnStringBase*>(src)->str());
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, void* dest) const override {
@@ -412,7 +417,7 @@ struct UniversalStringXerHandler final : IXerTypeHandler {
                     out += (char)(uint8_t)((cp >> 8) & 0xFF);
                     out += (char)(uint8_t)(cp & 0xFF);
                 }
-                detail::asnstring_assign(dest, out);
+                static_cast<AsnStringBase*>(dest)->str().assign(out);
                 return decode_ok();
             });
     }

@@ -268,20 +268,22 @@ struct RelOidBerHandler final : IBerTypeHandler {
 
 struct UtcTimeBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const void* src) const override {
-        BerTraits<UtcTime>::encode(w, *static_cast<const UtcTime*>(src));
+                const TypeDescriptor& def, const void* src) const override {
+        const auto& s = static_cast<const AsnStringBase*>(src)->str();
+        w.write_primitive(def.tag, std::span<const uint8_t>(
+            reinterpret_cast<const uint8_t*>(s.data()), s.size()));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor&, void* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
-        static_cast<UtcTime*>(dest)->assign(
+        static_cast<AsnStringBase*>(dest)->str().assign(
             reinterpret_cast<const char*>(tlv->value.data()), tlv->value.size());
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
                               const TypeDescriptor&, void* dest) const override {
-        static_cast<UtcTime*>(dest)->assign(
+        static_cast<AsnStringBase*>(dest)->str().assign(
             reinterpret_cast<const char*>(value.data()), value.size());
         return decode_ok();
     }
@@ -289,20 +291,22 @@ struct UtcTimeBerHandler final : IBerTypeHandler {
 
 struct GenTimeBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const void* src) const override {
-        BerTraits<GeneralizedTime>::encode(w, *static_cast<const GeneralizedTime*>(src));
+                const TypeDescriptor& def, const void* src) const override {
+        const auto& s = static_cast<const AsnStringBase*>(src)->str();
+        w.write_primitive(def.tag, std::span<const uint8_t>(
+            reinterpret_cast<const uint8_t*>(s.data()), s.size()));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor&, void* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
-        static_cast<GeneralizedTime*>(dest)->assign(
+        static_cast<AsnStringBase*>(dest)->str().assign(
             reinterpret_cast<const char*>(tlv->value.data()), tlv->value.size());
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
                               const TypeDescriptor&, void* dest) const override {
-        static_cast<GeneralizedTime*>(dest)->assign(
+        static_cast<AsnStringBase*>(dest)->str().assign(
             reinterpret_cast<const char*>(value.data()), value.size());
         return decode_ok();
     }
@@ -311,9 +315,9 @@ struct GenTimeBerHandler final : IBerTypeHandler {
 struct AsnStringBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const void* src) const override {
-        auto sv = detail::asnstring_view(src);
+        const auto& s = static_cast<const AsnStringBase*>(src)->str();
         w.write_primitive(def.tag, std::span<const uint8_t>(
-            reinterpret_cast<const uint8_t*>(sv.data()), sv.size()));
+            reinterpret_cast<const uint8_t*>(s.data()), s.size()));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor& def, void* dest) const override {
@@ -321,14 +325,14 @@ struct AsnStringBerHandler final : IBerTypeHandler {
         if (!tlv) return decode_err(tlv.error());
         if (tlv->tag != def.tag)
             return decode_err(DecodeError(std::string("wrong tag for string type")));
-        detail::asnstring_assign(dest, std::string_view(
-            reinterpret_cast<const char*>(tlv->value.data()), tlv->value.size()));
+        static_cast<AsnStringBase*>(dest)->str().assign(
+            reinterpret_cast<const char*>(tlv->value.data()), tlv->value.size());
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
                               const TypeDescriptor&, void* dest) const override {
-        detail::asnstring_assign(dest, std::string_view(
-            reinterpret_cast<const char*>(value.data()), value.size()));
+        static_cast<AsnStringBase*>(dest)->str().assign(
+            reinterpret_cast<const char*>(value.data()), value.size());
         return decode_ok();
     }
 };

@@ -138,7 +138,7 @@ static bool resize_in_place(void* obj, const TypeDescriptor& def,
         std::string s;
         s.reserve(len);
         for (std::size_t i = 0; i < len; ++i) s += rand_char();
-        detail::asnstring_assign(obj, s);
+        static_cast<AsnStringBase*>(obj)->str().assign(s);
         return true;
     }
     default:
@@ -253,7 +253,7 @@ static bool fill_primitive_loose(void* obj, const TypeDescriptor& def,
         std::string s;
         s.reserve(len);
         for (int i = 0; i < len; ++i) s += pool[pick(rng)];
-        detail::asnstring_assign(obj, s);
+        static_cast<AsnStringBase*>(obj)->str().assign(s);
         return true;
     }
     default:
@@ -567,17 +567,17 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
 
     case UT::UtcTime: {
         // Fixed valid UTCTime: YYMMDDHHMMSSZ
-        static_cast<UtcTime*>(obj)->set("240101120000Z");
+        static_cast<AsnStringBase*>(obj)->str() = "240101120000Z";
         break;
     }
 
     case UT::GeneralizedTime: {
         // Fixed valid GeneralizedTime: YYYYMMDDHHMMSSZ
-        static_cast<GeneralizedTime*>(obj)->set("20240101120000Z");
+        static_cast<AsnStringBase*>(obj)->str() = "20240101120000Z";
         break;
     }
 
-    // All string types share AsnString<N> layout (std::string at offset 0).
+    // All string types (AsnString<N>, UtcTime, GeneralizedTime) inherit AsnStringBase.
     case UT::Utf8String:
     case UT::NumericString:
     case UT::PrintableString:
@@ -612,7 +612,7 @@ void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
         } else {
             alpha = DEFAULT_STRING_ALPHABET;
         }
-        detail::asnstring_assign(obj, random_from_alphabet(alpha, len));
+        static_cast<AsnStringBase*>(obj)->str().assign(random_from_alphabet(alpha, len));
         break;
     }
 

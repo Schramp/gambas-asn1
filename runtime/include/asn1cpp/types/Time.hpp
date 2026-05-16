@@ -3,31 +3,24 @@
 #include <format>
 #include "../Tag.hpp"
 #include "../codec/BerTraits.hpp"
+#include "../types/Strings.hpp"
 
 namespace asn1 {
 
 // Both time types store their value as the raw ASN.1 string (e.g. "240115143000Z").
-// Validation is left to higher layers.
+// Inherit AsnStringBase so codec handlers can cast void* → AsnStringBase* uniformly.
 
-class UtcTime {
-    std::string value_;
+class UtcTime : public AsnStringBase {
 public:
     UtcTime() = default;
-    explicit UtcTime(std::string s) : value_(std::move(s)) {}
-    void set(std::string s) { value_ = std::move(s); }
-    void assign(const char* p, std::size_t n) { value_.assign(p, n); }
-    const std::string& str() const { return value_; }
+    explicit UtcTime(std::string s) : AsnStringBase(std::move(s)) {}
     bool operator==(const UtcTime&) const = default;
 };
 
-class GeneralizedTime {
-    std::string value_;
+class GeneralizedTime : public AsnStringBase {
 public:
     GeneralizedTime() = default;
-    explicit GeneralizedTime(std::string s) : value_(std::move(s)) {}
-    void set(std::string s) { value_ = std::move(s); }
-    void assign(const char* p, std::size_t n) { value_.assign(p, n); }
-    const std::string& str() const { return value_; }
+    explicit GeneralizedTime(std::string s) : AsnStringBase(std::move(s)) {}
     bool operator==(const GeneralizedTime&) const = default;
 };
 

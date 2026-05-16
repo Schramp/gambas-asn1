@@ -9,20 +9,32 @@
 
 namespace asn1 {
 
-// Base for all string types — each is a thin wrapper over std::string.
-// The tag number differs per subtype.
-template<uint32_t TagNumber>
-class AsnString {
+// Non-virtual base for all AsnString<N> types.
+// Codec handlers cast void* to AsnStringBase* — language-safe via inheritance,
+// no layout assumptions needed.
+class AsnStringBase {
     std::string value_;
 public:
-    AsnString() = default;
-    explicit AsnString(std::string s) : value_(std::move(s)) {}
-    AsnString(const char* s) : value_(s) {}
+    AsnStringBase() = default;
+    explicit AsnStringBase(std::string s) : value_(std::move(s)) {}
 
     const std::string& str() const { return value_; }
     std::string& str()             { return value_; }
-    bool empty() const { return value_.empty(); }
-    std::size_t size() const { return value_.size(); }
+
+    bool operator==(const AsnStringBase&) const = default;
+};
+
+// Thin per-tag wrapper. Tag number N selects the BER universal tag and
+// the built-in alphabet for validation.
+template<uint32_t TagNumber>
+class AsnString : public AsnStringBase {
+public:
+    AsnString() = default;
+    explicit AsnString(std::string s) : AsnStringBase(std::move(s)) {}
+    AsnString(const char* s) : AsnStringBase(std::string(s)) {}
+
+    bool empty() const { return str().empty(); }
+    std::size_t size() const { return str().size(); }
 
     bool operator==(const AsnString&) const = default;
 
@@ -37,7 +49,7 @@ public:
     int64_t validate(const Constraints& c) const {
         if ((c.flags & Constraints::SIZE_CONSTRAINED) &&
             !(c.flags & Constraints::EXTENSIBLE)) {
-            auto n = static_cast<int64_t>(value_.size());
+            auto n = static_cast<int64_t>(str().size());
             if (n < c.size_lower) return c.size_lower - n;
             if (n > c.size_upper) return c.size_upper - n;
         }
@@ -48,7 +60,7 @@ public:
         else
             alpha = builtin_alphabet(TagNumber);
         if (!alpha.empty())
-            for (char ch : value_)
+            for (char ch : str())
                 if (alpha.find(ch) == std::string_view::npos) return 1;
         return 0;
     }
@@ -59,7 +71,7 @@ struct BerTraits<AsnString<N>> {
     static constexpr Tag tag() { return Tag::universal(N, false); }
 
     static void encode(BerWriter& w, const AsnString<N>& v) {
-        auto s = v.str();
+        const auto& s = v.str();
         w.write_primitive(tag(), std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(s.data()), s.size()));
     }
@@ -88,16 +100,5 @@ using GeneralString    = AsnString<UniversalTag::GeneralString>;
 using UniversalString  = AsnString<UniversalTag::UniversalString>;
 using BmpString        = AsnString<UniversalTag::BmpString>;
 using ObjectDescriptor = AsnString<UniversalTag::ObjectDescriptor>;
-
-namespace detail {
-// Type-erased accessors for AsnString<N> — valid because AsnString<N> has
-// std::string as its sole data member at offset 0.
-inline std::string_view asnstring_view(const void* p) {
-    return *reinterpret_cast<const std::string*>(p);
-}
-inline void asnstring_assign(void* p, std::string_view sv) {
-    reinterpret_cast<std::string*>(p)->assign(sv.data(), sv.size());
-}
-} // namespace detail
 
 } // namespace asn1

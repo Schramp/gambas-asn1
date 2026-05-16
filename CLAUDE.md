@@ -326,6 +326,53 @@ Constructs present in asn1c tests, absent from asn1cpp BER round-trip tests:
 | Recursive types | 43, 73, 92 | medium — self-ref pointer handling |
 | WITH COMPONENTS | 55, 57, 82, 83, 150 | low |
 
+## Code quality — premature optimisations
+
+### Principle: void* is a sign of missing abstraction
+
+When codec helpers receive `void*` and cast it to a concrete type using a layout
+assumption ("this type has `std::string` at offset 0"), that assumption is already
+expressed in the language via a non-virtual base class. Prefer the base class:
+
+```cpp
+// Wrong: layout assumption via reinterpret_cast
+inline std::string_view asnstring_view(const void* p) {
+    return *reinterpret_cast<const std::string*>(p);
+}
+
+// Right: inheritance makes the assumption language-guaranteed
+class AsnStringBase { std::string v_; public: std::string& str(); };
+template<uint32_t N> class AsnString : public AsnStringBase { ... };
+// then: static_cast<AsnStringBase*>(dest)->str()  — always valid
+```
+
+### Principle: tag-indexed dispatch tables carry type information
+
+`prim_dispatch_[tag.number]` maps each tag to a handler. When all 12 string types
+share one singleton (`s_string`) because they share behaviour, that is correct and
+intentional. Do NOT template the handler just to get per-type singletons — it buys
+nothing if all instantiations produce identical code (linker ICF merges them anyway).
+The base-class approach achieves the same type safety without instantiation overhead.
+
+### Decision record: `detail::asnstring_view` / `detail::asnstring_assign` (2026-05-16)
+
+Originally: `void*` + `reinterpret_cast<std::string*>` in both `BerCodec` and
+`XerCodec` handlers, relying on `AsnString<N>` having `std::string` at offset 0.
+Considered: template handler per type (12 instantiations, ICF merges them).
+Decided: add `AsnStringBase` non-virtual base; use `static_cast<AsnStringBase*>`.
+One singleton per handler, language-safe, `detail::` namespace deleted.
+
+### Evaluating a potential premature optimisation
+
+Before rolling back or keeping a clever pattern, check:
+1. Is `def.tag` (or equivalent dispatch key) known at compile time at the call
+   site? (Usually: no — dispatch goes through a virtual interface and runtime
+   `TypeDescriptor&`.)
+2. Would the "readable" alternative (switch, template) produce identical binary
+   after optimisation? (Often: yes — but verify with the specific compiler flags.)
+3. Is the assumption that makes the clever version correct already expressible via
+   a language feature (inheritance, concept, template constraint)? If yes, use it.
+
 ## Commits
 
 Do not add `Co-Authored-By` lines to commits in this repository.

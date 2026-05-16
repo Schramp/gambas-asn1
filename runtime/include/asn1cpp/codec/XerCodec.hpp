@@ -264,9 +264,10 @@ inline std::vector<uint32_t> parse_arcs(std::string_view sv) {
 // ---------------------------------------------------------------------------
 // String emit helper
 
-inline void encode_text_element(XerEncodeStream& s, const TypeDescriptor& def, const void* src) {
+inline void encode_text_element(XerEncodeStream& s, const TypeDescriptor& def,
+                                std::string_view value) {
     s.os() << '<' << def.name << '>'
-           << xer_escape(detail::asnstring_view(src))
+           << xer_escape(value)
            << "</" << def.name << ">\n";
 }
 
@@ -291,9 +292,9 @@ inline DecodeResult decode_time_string(XerDecodeStream& s, const TypeDescriptor&
 }
 
 template<int stride>
-inline void encode_wide_string(XerEncodeStream& s, const TypeDescriptor& def, const void* src) {
+inline void encode_wide_string(XerEncodeStream& s, const TypeDescriptor& def,
+                               std::string_view sv) {
     static_assert(stride == 2 || stride == 4);
-    std::string_view sv = detail::asnstring_view(src);
     std::ostringstream utf8;
     for (std::size_t i = 0; i + stride <= sv.size(); i += stride) {
         uint32_t cp;
