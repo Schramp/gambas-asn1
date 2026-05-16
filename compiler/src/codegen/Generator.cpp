@@ -1038,11 +1038,7 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     }
 
     // class — optional members use unique_ptr (forward-decl compatible, matches asn1c semantics)
-    os << std::format("class {} : public asn1::SequenceBase<{}> {{\npublic:\n", cname, cname);
-    // TODO: generate positional constructor(s) to restore aggregate-init syntax lost when
-    // SequenceBase<T> made the type non-aggregate (C++20: base with virtuals = not aggregate).
-    // For mandatory-only sequences: emit T(M0 a0, M1 a1, ...) : m0(a0), m1(a1), ... {}
-    // For sequences with optionals: emit T(M0 a0, std::unique_ptr<M1> a1, ...) variant.
+    os << std::format("class {} : public asn1::Asn1Object {{\npublic:\n", cname);
     if (has_optional_members) {
         // All special members declared (not defaulted) so unique_ptr<T> destructor/assignment
         // has complete T in the .cpp where they are defined = default.

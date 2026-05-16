@@ -622,10 +622,11 @@ struct ChoiceXerHandler final : IXerTypeHandler {
     void encode(const XerCodec& codec, XerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
         auto& os = s.os();
+        const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
         int pr = ch->choice_present();
-        if (pr <= 0 || pr > ch->choice_alt_count()) return;
-        const auto& alt = ch->choice_alt_desc(pr - 1);
+        if (pr <= 0 || pr > spec.count) return;
+        const auto& alt = spec.alternatives[pr - 1];
         if (!alt.type_descriptor) return;
         TypeDescriptor adef = *alt.type_descriptor;
         adef.name = alt.name;
@@ -644,9 +645,10 @@ struct ChoiceXerHandler final : IXerTypeHandler {
     DecodeResult decode(const XerCodec& codec, XerDecodeStream& s,
                         const TypeDescriptor& def, void* dest) const override {
         auto ti = xer_detail::peek_tag(s);
+        const auto& spec = *def.choice_spec;
         ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(dest);
-        for (int i = 0; i < ch->choice_alt_count(); ++i) {
-            const auto& alt = ch->choice_alt_desc(i);
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& alt = spec.alternatives[i];
             if (ti.name != alt.name) continue;
             if (!alt.type_descriptor)
                 return decode_err(DecodeError(

@@ -602,15 +602,16 @@ private:
 struct ChoiceBerHandler final : IBerTypeHandler {
     void encode(const BerCodec& codec, BerWriter& w,
                 const TypeDescriptor& def, const void* src) const override {
+        const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
         int idx = ch->choice_present();
-        if (idx <= 0 || idx > ch->choice_alt_count()) {
+        if (idx <= 0 || idx > spec.count) {
             if (debug_flags() & DBG_BER_WRITE)
                 std::fprintf(stderr, "[BER-WRITE] %s CHOICE idx=%d out of range (count=%d)\n",
-                             def.name, idx, ch->choice_alt_count());
+                             def.name, idx, spec.count);
             return;
         }
-        const auto& alt = ch->choice_alt_desc(idx - 1);
+        const auto& alt = spec.alternatives[idx - 1];
         if (!alt.type_descriptor) return;
         const void* mptr = ch->choice_member_const_ptr(idx);
         const auto& mdef = *alt.type_descriptor;
@@ -651,7 +652,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 }
             }
             if (matched >= 0) {
-                const auto& alt = ch->choice_alt_desc(matched);
+                const auto& alt = spec.alternatives[matched];
                 if (ch->choice_present() != matched + 1)
                     ch->choice_emplace(matched + 1);
                 void* mptr = ch->choice_member_ptr(matched + 1);
@@ -679,8 +680,8 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             goto no_match;
         }
 
-        for (int i = 0; i < ch->choice_alt_count(); ++i) {
-            const auto& alt = ch->choice_alt_desc(i);
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& alt = spec.alternatives[i];
             if (!alt.type_descriptor) continue;
             if (peek.cls != alt.tag.cls || peek.number != alt.tag.number) continue;
             if (ch->choice_present() != i + 1)
@@ -721,9 +722,9 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         if (debug_flags() & DBG_BER_CHOICE) {
             std::fprintf(stderr, "[CHOICE-MISS] %s: peek cls=%d num=%u; alternatives:",
                 def.name, (int)peek.cls, peek.number);
-            for (int i = 0; i < ch->choice_alt_count(); ++i)
+            for (int i = 0; i < spec.count; ++i)
                 std::fprintf(stderr, " [%d]%u",
-                    (int)ch->choice_alt_desc(i).tag.cls, ch->choice_alt_desc(i).tag.number);
+                    (int)spec.alternatives[i].tag.cls, spec.alternatives[i].tag.number);
             std::fprintf(stderr, "\n");
         }
         return decode_err(DecodeError(
