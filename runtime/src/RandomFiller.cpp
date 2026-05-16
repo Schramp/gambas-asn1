@@ -452,24 +452,25 @@ bool RandomFiller::fill_seq_of(void* obj, const SeqOfSpec& spec, int depth) {
     if (lo > hi) lo = hi;
 
     int n = rand_int(lo, hi);
-    spec.resize_fn(obj, static_cast<std::size_t>(n));
+    SeqOfBase& seq = *static_cast<SeqOfBase*>(obj);
+    seq.resize(static_cast<std::size_t>(n));
 
     int valid = 0;
     for (int i = 0; i < n; ++i) {
-        void* eptr = spec.get_fn(obj, static_cast<std::size_t>(i));
+        void* eptr = seq.get_mut(static_cast<std::size_t>(i));
         // Mandatory minimum elements bypass soft limit but still increment depth.
         bool mand = (i < lo);
         if (fill(eptr, *spec.element, depth + 1, mand)) {
             ++valid;
         } else if (mand) {
             // Couldn't satisfy the mandatory minimum; truncate and signal failure.
-            spec.resize_fn(obj, static_cast<std::size_t>(valid));
+            seq.resize(static_cast<std::size_t>(valid));
             return false;
         }
         // Optional element failure: stop adding more, keep what we have.
         else { break; }
     }
-    spec.resize_fn(obj, static_cast<std::size_t>(valid));
+    seq.resize(static_cast<std::size_t>(valid));
     return true;
 }
 

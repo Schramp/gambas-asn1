@@ -2,6 +2,8 @@
 
 // Umbrella include — pull in everything in one shot.
 
+#include "Asn1Object.hpp"
+#include "SeqOfBase.hpp"
 #include "Expected.hpp"
 #include "Error.hpp"
 #include "Tag.hpp"

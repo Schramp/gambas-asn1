@@ -604,7 +604,8 @@ struct SeqOfPerHandler final : IPerTypeHandler {
     void encode(const PerCodec& codec, PerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
         const auto& spec = *def.seq_of_spec;
-        std::size_t count = spec.count_fn(src);
+        const SeqOfBase& seq = *static_cast<const SeqOfBase*>(src);
+        std::size_t count = seq.count();
         const auto& sc = spec.size_constraints;
         if (sc.flags & Constraints::SIZE_CONSTRAINED) {
             if (sc.size_lower == sc.size_upper) {
@@ -618,7 +619,7 @@ struct SeqOfPerHandler final : IPerTypeHandler {
         const auto& edef = *spec.element;
         IEncodeStream& es = s;
         for (std::size_t i = 0; i < count; ++i)
-            codec.encode(es, edef, spec.get_const_fn(src, i));
+            codec.encode(es, edef, seq.get_const(i));
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& s,
                         const TypeDescriptor& def, void* dest) const override {
@@ -638,11 +639,12 @@ struct SeqOfPerHandler final : IPerTypeHandler {
             if (!v) return decode_err(v.error());
             count = *v;
         }
-        spec.resize_fn(dest, count);
+        SeqOfBase& seq = *static_cast<SeqOfBase*>(dest);
+        seq.resize(count);
         const auto& edef = *spec.element;
         IDecodeStream& ds = s;
         for (std::size_t i = 0; i < count; ++i) {
-            auto r = codec.decode(ds, edef, spec.get_fn(dest, i));
+            auto r = codec.decode(ds, edef, seq.get_mut(i));
             if (!r) return r;
         }
         return decode_ok();

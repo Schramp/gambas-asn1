@@ -61,11 +61,11 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         return cpp_name_for_typeref(*tr);
     if (def.is_seq_of()) {
         const auto& sof = std::get<ast::SequenceOfType>(def.body);
-        return std::format("std::vector<{}>", cpp_type_for(*sof.element));
+        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(*sof.element));
     }
     if (def.is_set_of()) {
         const auto& sof = std::get<ast::SetOfType>(def.body);
-        return std::format("std::vector<{}>", cpp_type_for(*sof.element));
+        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(*sof.element));
     }
     if (def.is_sequence() || def.is_choice() || def.is_set())
         return make_synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
@@ -1499,7 +1499,7 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
             os << std::format("#include \"{}.hpp\"\n\n", synth);
             track_include(synth);
         }
-        os << std::format("using {} = std::vector<{}>;\n\n", cname, cpp_type_for(*elem));
+        os << std::format("using {} = asn1::VectorSeqOf<{}>;\n\n", cname, cpp_type_for(*elem));
         os << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", cname);
         os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
@@ -1626,9 +1626,6 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
         ? *std::get<ast::SequenceOfType>(def.body).element
         : *std::get<ast::SetOfType>(def.body).element;
 
-    // Type-erased collection callbacks via template alias
-    os << std::format("using _VecOps_{0} = asn1::VectorOps<{0}>;\n\n", cname);
-
     // SIZE constraint on collection length
     auto sc = compute_size_constraint(extract_size_range(def));
 
@@ -1642,7 +1639,6 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    {},\n", elem_ref);
     os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
                       sc.flags, sc.range_bits, sc.lower, sc.upper);
-    os << std::format("    &_VecOps_{0}::count, &_VecOps_{0}::get_const, &_VecOps_{0}::get_mut, &_VecOps_{0}::resize\n", cname);
     os << "};\n\n";
 
     // TypeDescriptor

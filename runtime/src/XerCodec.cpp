@@ -492,15 +492,16 @@ struct SeqOfXerHandler final : IXerTypeHandler {
     void encode(const XerCodec& codec, XerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
         auto& os = s.os();
-        const auto& spec = *def.seq_of_spec;
-        std::size_t count = spec.count_fn(src);
+        const auto& spec  = *def.seq_of_spec;
+        const auto& seq   = *static_cast<const SeqOfBase*>(src);
+        std::size_t count = seq.count();
         const TypeDescriptor& edef = *spec.element;
         if (count == 0) {
             os << '<' << def.name << "></" << def.name << ">\n";
         } else {
             os << '<' << def.name << '>';
             for (std::size_t i = 0; i < count; ++i) {
-                const void* eptr = spec.get_const_fn(src, i);
+                const void* eptr = seq.get_const(i);
                 XerEncodeStream es{os, s.depth() + 1};
                 if (!edef.choice_spec) {
                     if (i == 0) os << '\n';
@@ -520,6 +521,7 @@ struct SeqOfXerHandler final : IXerTypeHandler {
         }
         const auto& spec = *def.seq_of_spec;
         const TypeDescriptor& edef = *spec.element;
+        SeqOfBase& seq = *static_cast<SeqOfBase*>(dest);
         std::size_t count = 0;
         for (;;) {
             auto ti = xer_detail::peek_tag(s);
@@ -527,8 +529,8 @@ struct SeqOfXerHandler final : IXerTypeHandler {
             if (ti.name.empty())
                 return decode_err(DecodeError(
                     std::string("XER SEQUENCE OF: unexpected end in <") + def.name + ">"));
-            spec.resize_fn(dest, ++count);
-            void* eptr = spec.get_fn(dest, count - 1);
+            seq.resize(++count);
+            void* eptr = seq.get_mut(count - 1);
             auto r = codec.decode(s, edef, eptr);
             if (!r) return r;
         }

@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <memory>
 #include "Tag.hpp"
+#include "SeqOfBase.hpp"
 #include "codec/Constraints.hpp"
 
 // C++ equivalents of asn1c's descriptor table types.
@@ -109,44 +110,19 @@ struct MemberDescriptor {
     const void* (*get_const_fn)(const void* choice_ptr)  = nullptr;
 };
 
-// Template that generates the four SeqOfSpec callbacks for a std::vector-based SEQUENCE OF.
-// Usage in generated code:
-//   using _VecOps = asn1::VectorOps<CollectionType>;
-//   ... SeqOfSpec{ ..., &_VecOps::count, &_VecOps::get_const, &_VecOps::get_mut, &_VecOps::resize } ...
-template<typename Container>
-struct VectorOps {
-    static std::size_t count(const void* v) {
-        return static_cast<const Container*>(v)->size();
-    }
-    static const void* get_const(const void* v, std::size_t i) {
-        return static_cast<const Container*>(v)->data() + i;
-    }
-    static void* get_mut(void* v, std::size_t i) {
-        return static_cast<Container*>(v)->data() + i;
-    }
-    static void resize(void* v, std::size_t n) {
-        static_cast<Container*>(v)->resize(n);
-    }
-};
-
 // SEQUENCE OF / SET OF specifics.
+// Collection operations are now virtual methods on SeqOfBase — no function pointers.
 struct SeqOfSpec {
     const TypeDescriptor* element;         // element type descriptor
     Constraints        size_constraints; // SIZE constraint on collection length
 
-    // Type-erased collection operations (generated per concrete vector type).
-    std::size_t (*count_fn)(const void* vec);
-    const void* (*get_const_fn)(const void* vec, std::size_t i);
-    void*       (*get_fn)(void* vec, std::size_t i);
-    void        (*resize_fn)(void* vec, std::size_t n);
-
-    // Returns 0 when the collection at `vec` satisfies SIZE(...), otherwise
+    // Returns 0 when the collection satisfies SIZE(...), otherwise
     // signed delta (elements) such that (count + delta) lands at the nearest
     // valid bound: positive = too few, negative = too many.
-    int64_t validate(const void* vec) const {
+    int64_t validate(const SeqOfBase& seq) const {
         if (!(size_constraints.flags & Constraints::SIZE_CONSTRAINED)) return 0;
         if (size_constraints.flags & Constraints::EXTENSIBLE) return 0;
-        auto n = static_cast<int64_t>(count_fn(vec));
+        auto n = static_cast<int64_t>(seq.count());
         if (n < size_constraints.size_lower) return size_constraints.size_lower - n;
         if (n > size_constraints.size_upper) return size_constraints.size_upper - n;
         return 0;

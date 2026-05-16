@@ -8,6 +8,8 @@
 #include "ICodec.hpp"
 #include "Constraints.hpp"
 #include "../Tag.hpp"
+#include "../Asn1Object.hpp"
+#include "../SeqOfBase.hpp"
 #include "../types/Real.hpp"
 #include "../types/BitString.hpp"
 #include "../types/OctetString.hpp"

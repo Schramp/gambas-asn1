@@ -385,7 +385,8 @@ struct SeqOfBerHandler final : IBerTypeHandler {
     void encode(const BerCodec& codec, BerWriter& w,
                 const TypeDescriptor& def, const void* src) const override {
         const auto& spec = *def.seq_of_spec;
-        std::size_t count = spec.count_fn(src);
+        const auto& seq  = *static_cast<const SeqOfBase*>(src);
+        std::size_t count = seq.count();
         const auto& edef = *spec.element;
         bool is_set_of = (def.tag.cls == TagClass::Universal &&
                           def.tag.number == UniversalTag::Set);
@@ -398,7 +399,7 @@ struct SeqOfBerHandler final : IBerTypeHandler {
                 std::vector<std::vector<uint8_t>> bufs;
                 bufs.reserve(count);
                 for (std::size_t i = 0; i < count; ++i) {
-                    const void* eptr = spec.get_const_fn(src, i);
+                    const void* eptr = seq.get_const(i);
                     ValidatePathScope _vps{"[" + std::to_string(i) + "]"};
                     std::vector<uint8_t> tmp;
                     BerWriter ew{tmp};
@@ -411,7 +412,7 @@ struct SeqOfBerHandler final : IBerTypeHandler {
                 return;
             }
             for (std::size_t i = 0; i < count; ++i) {
-                const void* eptr = spec.get_const_fn(src, i);
+                const void* eptr = seq.get_const(i);
                 ValidatePathScope _vps{"[" + std::to_string(i) + "]"};
                 BerEncodeStream es{inner};
                 codec.encode(es, edef, eptr);
@@ -434,14 +435,15 @@ private:
                                     const TypeDescriptor& def, void* dest) {
         const auto& spec = *def.seq_of_spec;
         const auto& edef = *spec.element;
-        std::size_t old_size = spec.count_fn(dest);
+        SeqOfBase& seq   = *static_cast<SeqOfBase*>(dest);
+        std::size_t old_size = seq.count();
         std::size_t count = 0;
         while (!inner.at_end()) {
             if (count >= old_size) {
-                spec.resize_fn(dest, count + 1);
+                seq.resize(count + 1);
                 ++old_size;
             }
-            void* eptr = spec.get_fn(dest, count);
+            void* eptr = seq.get_mut(count);
             ValidatePathScope _vps{"[" + std::to_string(count) + "]"};
             BerDecodeStream es{inner};
             auto res = codec.decode(es, edef, eptr);
@@ -449,7 +451,7 @@ private:
             ++count;
         }
         if (count < old_size)
-            spec.resize_fn(dest, count);
+            seq.resize(count);
         return decode_ok();
     }
 };
