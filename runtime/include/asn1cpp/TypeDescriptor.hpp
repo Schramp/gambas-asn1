@@ -5,6 +5,15 @@
 #include "SeqOfBase.hpp"
 #include "codec/Constraints.hpp"
 
+// Safe offsetof for non-standard-layout types (SequenceBase<T> has virtual methods).
+// __builtin_offsetof is correct on GCC/Clang; standard offsetof is a compiler
+// intrinsic on MSVC and also works without warning there.
+#if defined(__GNUC__) || defined(__clang__)
+#  define ASN1CPP_OFFSETOF(T, m) __builtin_offsetof(T, m)
+#else
+#  define ASN1CPP_OFFSETOF(T, m) offsetof(T, m)
+#endif
+
 // C++ equivalents of asn1c's descriptor table types.
 // Generated code fills these static tables; the runtime codec uses them.
 
@@ -70,6 +79,11 @@ struct OptionalOps {
     void* member_ptr(void* struct_ptr, std::size_t offset) const {
         return get_ptr ? get_ptr(struct_ptr)
                        : static_cast<char*>(struct_ptr) + offset;
+    }
+    // const overload — get_ptr only reads the unique_ptr, so const_cast is safe.
+    const void* member_ptr(const void* struct_ptr, std::size_t offset) const {
+        return get_ptr ? get_ptr(const_cast<void*>(struct_ptr))
+                       : static_cast<const char*>(struct_ptr) + offset;
     }
     explicit operator bool() const { return check != nullptr; }
 };

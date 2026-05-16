@@ -41,7 +41,7 @@ static bool ber_decode_oid(std::span<const uint8_t> bytes, HasOid& out) {
 }
 
 static bool roundtrip_oid(Oid oid) {
-    HasOid v{oid};
+    HasOid v; v.id = oid;
     auto enc = ber_encode_oid(v);
     HasOid got{};
     if (!ber_decode_oid(enc, got)) return false;
@@ -65,7 +65,7 @@ static bool ber_decode_reloid(std::span<const uint8_t> bytes, HasRelOid& out) {
 }
 
 static bool roundtrip_reloid(RelativeOid oid) {
-    HasRelOid v{oid};
+    HasRelOid v; v.id = oid;
     auto enc = ber_encode_reloid(v);
     HasRelOid got{};
     if (!ber_decode_reloid(enc, got)) return false;
@@ -76,7 +76,7 @@ int main() {
     printf("\n── OBJECT IDENTIFIER — HasOid BER ───────────────────────────────\n");
 
     // {1,2,840}: 0x2A = 42, 840 = base128 0x86 0x48
-    HasOid v_oid{Oid{{1, 2, 840}}};
+    HasOid v_oid; v_oid.id = Oid{{1, 2, 840}};
     auto enc_oid = ber_encode_oid(v_oid);
     check("HasOid{1.2.840} BER encodes as 30 05 06 03 2A 86 48",
           enc_oid == std::vector<uint8_t>({0x30, 0x05, 0x06, 0x03, 0x2A, 0x86, 0x48}));
@@ -89,7 +89,7 @@ int main() {
     printf("\n── RELATIVE-OID — HasRelOid BER ─────────────────────────────────\n");
 
     // {1,2,3}: arcs encoded directly as 01 02 03; tag 0x0D
-    HasRelOid v_rel{RelativeOid{{1, 2, 3}}};
+    HasRelOid v_rel; v_rel.id = RelativeOid{{1, 2, 3}};
     auto enc_rel = ber_encode_reloid(v_rel);
     check("HasRelOid{1,2,3} BER encodes as 30 05 0D 03 01 02 03",
           enc_rel == std::vector<uint8_t>({0x30, 0x05, 0x0D, 0x03, 0x01, 0x02, 0x03}));

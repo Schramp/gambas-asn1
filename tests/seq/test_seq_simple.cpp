@@ -72,7 +72,7 @@ static bool per_decode(std::span<const uint8_t> bytes, Point& out) {
 // ---- Tests -----------------------------------------------------------------
 
 static bool ber_roundtrip(int64_t x, int64_t y) {
-    Point p{Integer{x}, Integer{y}};
+    Point p; p.x = Integer{x}; p.y = Integer{y};
     auto enc = ber_encode(p);
     Point got{};
     if (!ber_decode(enc, got)) return false;
@@ -80,7 +80,7 @@ static bool ber_roundtrip(int64_t x, int64_t y) {
 }
 
 static bool xer_roundtrip(int64_t x, int64_t y) {
-    Point p{Integer{x}, Integer{y}};
+    Point p; p.x = Integer{x}; p.y = Integer{y};
     auto xml = xer_encode(p);
     Point got{};
     if (!xer_decode(xml, got)) return false;
@@ -88,7 +88,7 @@ static bool xer_roundtrip(int64_t x, int64_t y) {
 }
 
 static bool per_roundtrip(int64_t x, int64_t y) {
-    Point p{Integer{x}, Integer{y}};
+    Point p; p.x = Integer{x}; p.y = Integer{y};
     auto enc = per_encode(p);
     Point got{};
     if (!per_decode(enc, got)) return false;
@@ -97,14 +97,14 @@ static bool per_roundtrip(int64_t x, int64_t y) {
 
 // Expected BER bytes cross-validated against asn1c
 static bool ber_encodes_as(int64_t x, int64_t y, std::initializer_list<uint8_t> exp) {
-    Point p{Integer{x}, Integer{y}};
+    Point p; p.x = Integer{x}; p.y = Integer{y};
     auto got = ber_encode(p);
     return got == std::vector<uint8_t>(exp);
 }
 
 // Expected PER bytes cross-validated against asn1c
 static bool per_encodes_as(int64_t x, int64_t y, std::initializer_list<uint8_t> exp) {
-    Point p{Integer{x}, Integer{y}};
+    Point p; p.x = Integer{x}; p.y = Integer{y};
     auto got = per_encode(p);
     return got == std::vector<uint8_t>(exp);
 }
@@ -131,7 +131,8 @@ int main() {
 
     // XER encode sanity: check that element names appear correctly
     {
-        auto xml = xer_encode(Point{Integer{5}, Integer{6}});
+        Point _tmp; _tmp.x = Integer{5}; _tmp.y = Integer{6};
+        auto xml = xer_encode(_tmp);
         bool has_point = xml.find("<Point>") != std::string::npos;
         bool has_x     = xml.find("<x>5</x>") != std::string::npos;
         bool has_y     = xml.find("<y>6</y>") != std::string::npos;

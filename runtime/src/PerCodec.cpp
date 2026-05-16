@@ -4,6 +4,7 @@
 #include <numeric>
 #include <asn1cpp/codec/PerCodec.hpp>
 #include <asn1cpp/codec/Alphabets.hpp>
+#include <asn1cpp/ChoiceInterface.hpp>
 
 namespace asn1 {
 
@@ -771,7 +772,8 @@ struct ChoicePerHandler final : IPerTypeHandler {
     void encode(const PerCodec& codec, PerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
         const auto& spec = *def.choice_spec;
-        int pr = *static_cast<const int*>(src);
+        const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
+        int pr = ch->choice_present();
         if (pr <= 0 || pr > spec.count) return;
         int def_idx = pr - 1;
         int root_count = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
@@ -786,8 +788,7 @@ struct ChoicePerHandler final : IPerTypeHandler {
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
             IEncodeStream& es = s;
-            const void* mptr = alt.get_const_fn ? alt.get_const_fn(src)
-                                                : static_cast<const char*>(src) + alt.offset;
+            const void* mptr = ch->choice_member_const_ptr(pr);
             codec.encode(es, *alt.type_descriptor, mptr);
         } else {
             int ext_idx = def_idx - root_count;
@@ -800,14 +801,14 @@ struct ChoicePerHandler final : IPerTypeHandler {
             }
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
-            const void* mptr = alt.get_const_fn ? alt.get_const_fn(src)
-                                                : static_cast<const char*>(src) + alt.offset;
+            const void* mptr = ch->choice_member_const_ptr(pr);
             encode_open_type(codec, s, *alt.type_descriptor, mptr);
         }
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& s,
                         const TypeDescriptor& def, void* dest) const override {
         const auto& spec = *def.choice_spec;
+        ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(dest);
         int root_count = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
         bool in_ext = false;
         if (spec.ext_at >= 0) {
@@ -831,13 +832,12 @@ struct ChoicePerHandler final : IPerTypeHandler {
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor)
                 return decode_err(DecodeError("CHOICE alternative has no type descriptor"));
-            if (alt.emplace_fn) alt.emplace_fn(dest);
-            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(dest)
-                                        : static_cast<char*>(dest) + alt.offset;
+            ch->choice_emplace(def_idx + 1);
+            ch->choice_set_present(def_idx + 1);
+            void* mptr = ch->choice_member_ptr(def_idx + 1);
             IDecodeStream& ds = s;
             auto r = codec.decode(ds, *alt.type_descriptor, mptr);
             if (!r) return r;
-            *static_cast<int*>(dest) = def_idx + 1;
             return decode_ok();
         } else {
             auto b = s.get_bits(1);
@@ -856,12 +856,11 @@ struct ChoicePerHandler final : IPerTypeHandler {
             if (def_idx < spec.count) {
                 const auto& alt = spec.alternatives[def_idx];
                 if (alt.type_descriptor) {
-                    if (alt.emplace_fn) alt.emplace_fn(dest);
-                    void* mptr = alt.get_mut_fn ? alt.get_mut_fn(dest)
-                                                : static_cast<char*>(dest) + alt.offset;
+                    ch->choice_emplace(def_idx + 1);
+                    ch->choice_set_present(def_idx + 1);
+                    void* mptr = ch->choice_member_ptr(def_idx + 1);
                     auto r = decode_open_type(codec, s, *alt.type_descriptor, mptr);
                     if (!r) return r;
-                    *static_cast<int*>(dest) = def_idx + 1;
                 } else {
                     if (auto r = skip_open_type(s); !r) return r;
                 }

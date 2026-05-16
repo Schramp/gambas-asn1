@@ -36,7 +36,7 @@ static bool ber_decode(std::span<const uint8_t> bytes, HasReal& out) {
 }
 
 static bool ber_roundtrip(double d) {
-    HasReal v{Real{d}};
+    HasReal v; v.value = Real{d};
     auto enc = ber_encode(v);
     HasReal got{};
     if (!ber_decode(enc, got)) return false;
@@ -57,7 +57,7 @@ static bool xer_decode_real(const std::string& xml, HasReal& out) {
 }
 
 static bool xer_roundtrip(double d) {
-    HasReal v{Real{d}};
+    HasReal v; v.value = Real{d};
     auto xml = xer_encode_real(v);
     HasReal got{};
     if (!xer_decode_real(xml, got)) return false;
@@ -69,7 +69,7 @@ int main() {
     printf("\n── REAL member — HasReal BER ────────────────────────────────────\n");
 
     // 0.0 encodes as SEQUENCE { REAL{} } = 30 02 09 00
-    HasReal zero{Real{0.0}};
+    HasReal zero; zero.value = Real{0.0};
     auto enc_zero = ber_encode(zero);
     check("HasReal{0.0} BER encodes as 30 02 09 00",
           enc_zero == std::vector<uint8_t>({0x30, 0x02, 0x09, 0x00}));
@@ -84,25 +84,30 @@ int main() {
 
     printf("\n── REAL member — HasReal XER ────────────────────────────────────\n");
 
-    auto xml_zero = xer_encode_real(HasReal{Real{0.0}});
-    check("HasReal{0.0} XER contains <value>0</value>",
-          xml_zero.find("<value>0</value>") != std::string::npos);
+    { HasReal _v; _v.value = Real{0.0};
+      auto xml_zero = xer_encode_real(_v);
+      check("HasReal{0.0} XER contains <value>0</value>",
+            xml_zero.find("<value>0</value>") != std::string::npos); }
 
-    auto xml_pi = xer_encode_real(HasReal{Real{3.14}});
-    check("HasReal{3.14} XER contains <value>3.14</value>",
-          xml_pi.find("<value>3.14</value>") != std::string::npos);
+    { HasReal _v; _v.value = Real{3.14};
+      auto xml_pi = xer_encode_real(_v);
+      check("HasReal{3.14} XER contains <value>3.14</value>",
+            xml_pi.find("<value>3.14</value>") != std::string::npos); }
 
-    auto xml_pinf = xer_encode_real(HasReal{Real{std::numeric_limits<double>::infinity()}});
-    check("HasReal{+inf} XER contains <PLUS-INFINITY/>",
-          xml_pinf.find("<PLUS-INFINITY/>") != std::string::npos);
+    { HasReal _v; _v.value = Real{std::numeric_limits<double>::infinity()};
+      auto xml_pinf = xer_encode_real(_v);
+      check("HasReal{+inf} XER contains <PLUS-INFINITY/>",
+            xml_pinf.find("<PLUS-INFINITY/>") != std::string::npos); }
 
-    auto xml_ninf = xer_encode_real(HasReal{Real{-std::numeric_limits<double>::infinity()}});
-    check("HasReal{-inf} XER contains <MINUS-INFINITY/>",
-          xml_ninf.find("<MINUS-INFINITY/>") != std::string::npos);
+    { HasReal _v; _v.value = Real{-std::numeric_limits<double>::infinity()};
+      auto xml_ninf = xer_encode_real(_v);
+      check("HasReal{-inf} XER contains <MINUS-INFINITY/>",
+            xml_ninf.find("<MINUS-INFINITY/>") != std::string::npos); }
 
-    auto xml_nan = xer_encode_real(HasReal{Real{std::numeric_limits<double>::quiet_NaN()}});
-    check("HasReal{NaN} XER contains <NOT-A-NUMBER/>",
-          xml_nan.find("<NOT-A-NUMBER/>") != std::string::npos);
+    { HasReal _v; _v.value = Real{std::numeric_limits<double>::quiet_NaN()};
+      auto xml_nan = xer_encode_real(_v);
+      check("HasReal{NaN} XER contains <NOT-A-NUMBER/>",
+            xml_nan.find("<NOT-A-NUMBER/>") != std::string::npos); }
 
     check("HasReal{0.0} XER round-trip",   xer_roundtrip(0.0));
     check("HasReal{1.0} XER round-trip",   xer_roundtrip(1.0));

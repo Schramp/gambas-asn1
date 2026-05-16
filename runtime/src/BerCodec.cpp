@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <vector>
 #include <asn1cpp/codec/BerCodec.hpp>
+#include <asn1cpp/SequenceInterface.hpp>
+#include <asn1cpp/ChoiceInterface.hpp>
 #include <asn1cpp/codec/Debug.hpp>
 #include <asn1cpp/types/Boolean.hpp>
 #include <asn1cpp/types/OctetString.hpp>
@@ -459,31 +461,30 @@ private:
 struct SequenceBerHandler final : IBerTypeHandler {
     void encode(const BerCodec& codec, BerWriter& w,
                 const TypeDescriptor& def, const void* src) const override {
-        const auto& spec = *def.sequence_spec;
+        // reinterpret_cast valid on Itanium ABI: single-inheritance chain puts vtable at offset 0.
+        const SequenceInterface* seq = reinterpret_cast<const SequenceInterface*>(src);
         w.write_constructed(def.tag, [&](BerWriter& inner) {
-            for (int i = 0; i < spec.count; ++i) {
-                const auto& mbr = spec.members[i];
+            for (int i = 0; i < seq->seq_member_count(); ++i) {
+                const auto& mbr = seq->seq_member_desc(i);
                 if (!mbr.type_descriptor) continue;
-                if (mbr.optional && !mbr.optional_ops.is_present(src)) {
+                if (mbr.optional && !seq->seq_member_present(i)) {
                     if (debug_flags() & DBG_BER_WRITE)
                         std::fprintf(stderr, "[BER-WRITE] %s.%s absent (optional)\n",
                                      def.name, mbr.name);
                     continue;
                 }
-                if (mbr.is_default_equal && mbr.is_default_equal(src)) {
+                if (seq->seq_is_default_equal(i)) {
                     if (debug_flags() & DBG_BER_WRITE)
                         std::fprintf(stderr, "[BER-WRITE] %s.%s suppressed (== DEFAULT)\n",
                                      def.name, mbr.name);
                     continue;
                 }
-                if (!mbr.optional && mbr.optional_ops && !mbr.optional_ops.is_present(src)) {
+                if (!mbr.optional && mbr.optional_ops && !seq->seq_member_present(i)) {
                     std::fprintf(stderr, "BerCodec: mandatory member '%s.%s' is null (not filled)\n",
                                  def.name, mbr.name);
                     return;
                 }
-                const void* mptr = mbr.optional_ops.get_ptr
-                    ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
-                    : static_cast<const char*>(src) + mbr.offset;
+                const void* mptr = seq->seq_member_ptr(i);
                 const auto& mdef = *mbr.type_descriptor;
                 ValidatePathScope _vps{mbr.name};
 
@@ -522,9 +523,9 @@ struct SequenceBerHandler final : IBerTypeHandler {
 private:
     static DecodeResult decode_body(const BerCodec& codec, BerReader inner,
                                     const TypeDescriptor& def, void* dest) {
-        const auto& spec = *def.sequence_spec;
-        for (int i = 0; i < spec.count; ++i) {
-            const auto& mbr = spec.members[i];
+        SequenceInterface* seq = reinterpret_cast<SequenceInterface*>(dest);
+        for (int i = 0; i < seq->seq_member_count(); ++i) {
+            const auto& mbr = seq->seq_member_desc(i);
             if (!mbr.type_descriptor) {
                 if (mbr.optional && mbr.tag.cls == TagClass::Context) {
                     Tag pt = inner.peek_tag();
@@ -563,15 +564,13 @@ private:
                 } else {
                     present = pt.cls == mbr.tag.cls && pt.number == mbr.tag.number;
                 }
-                mbr.optional_ops.set_present(dest, present);
+                seq->seq_set_present(i, present);
                 if (!present) {
-                    if (mbr.set_default) mbr.set_default(dest);
+                    seq->seq_set_default(i);
                     continue;
                 }
             }
-            void* mptr = mbr.optional_ops.get_ptr
-                ? mbr.optional_ops.get_ptr(dest)
-                : static_cast<char*>(dest) + mbr.offset;
+            void* mptr = seq->seq_member_ptr(i);
             const auto& mdef = *mbr.type_descriptor;
             ValidatePathScope _vps{mbr.name};
 
@@ -605,18 +604,17 @@ private:
 struct ChoiceBerHandler final : IBerTypeHandler {
     void encode(const BerCodec& codec, BerWriter& w,
                 const TypeDescriptor& def, const void* src) const override {
-        const auto& spec = *def.choice_spec;
-        int idx = *static_cast<const int*>(src);
-        if (idx <= 0 || idx > spec.count) {
+        const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
+        int idx = ch->choice_present();
+        if (idx <= 0 || idx > ch->choice_alt_count()) {
             if (debug_flags() & DBG_BER_WRITE)
                 std::fprintf(stderr, "[BER-WRITE] %s CHOICE idx=%d out of range (count=%d)\n",
-                             def.name, idx, spec.count);
+                             def.name, idx, ch->choice_alt_count());
             return;
         }
-        const auto& alt = spec.alternatives[idx - 1];
+        const auto& alt = ch->choice_alt_desc(idx - 1);
         if (!alt.type_descriptor) return;
-        const void* mptr = alt.get_const_fn ? alt.get_const_fn(src)
-                                            : static_cast<const char*>(src) + alt.offset;
+        const void* mptr = ch->choice_member_const_ptr(idx);
         const auto& mdef = *alt.type_descriptor;
         ValidatePathScope _vps{alt.name};
 
@@ -642,6 +640,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
     DecodeResult decode(const BerCodec& codec, BerReader& r,
                         const TypeDescriptor& def, void* dest) const override {
         const auto& spec = *def.choice_spec;
+        ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(dest);
         Tag peek = r.peek_tag();
 
         if (spec.ber_tags) {
@@ -654,11 +653,10 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 }
             }
             if (matched >= 0) {
-                const auto& alt = spec.alternatives[matched];
-                if (alt.emplace_fn && *static_cast<const int*>(dest) != matched + 1)
-                    alt.emplace_fn(dest);
-                void* mptr = alt.get_mut_fn ? alt.get_mut_fn(dest)
-                                            : static_cast<char*>(dest) + alt.offset;
+                const auto& alt = ch->choice_alt_desc(matched);
+                if (ch->choice_present() != matched + 1)
+                    ch->choice_emplace(matched + 1);
+                void* mptr = ch->choice_member_ptr(matched + 1);
                 const auto& mdef = *alt.type_descriptor;
                 ValidatePathScope _vps{alt.name};
                 DecodeResult ok = decode_ok();
@@ -677,20 +675,19 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                     ok = codec.decode(ms, mdef, mptr);
                 }
                 if (!ok) return ok;
-                *static_cast<int*>(dest) = matched + 1;
+                ch->choice_set_present(matched + 1);
                 return decode_ok();
             }
             goto no_match;
         }
 
-        for (int i = 0; i < spec.count; ++i) {
-            const auto& alt = spec.alternatives[i];
+        for (int i = 0; i < ch->choice_alt_count(); ++i) {
+            const auto& alt = ch->choice_alt_desc(i);
             if (!alt.type_descriptor) continue;
             if (peek.cls != alt.tag.cls || peek.number != alt.tag.number) continue;
-            if (alt.emplace_fn && *static_cast<const int*>(dest) != i + 1)
-                alt.emplace_fn(dest);
-            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(dest)
-                                        : static_cast<char*>(dest) + alt.offset;
+            if (ch->choice_present() != i + 1)
+                ch->choice_emplace(i + 1);
+            void* mptr = ch->choice_member_ptr(i + 1);
             const auto& mdef = *alt.type_descriptor;
             ValidatePathScope _vps{alt.name};
             DecodeResult ok = decode_ok();
@@ -709,7 +706,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 ok = codec.decode(ms, mdef, mptr);
             }
             if (!ok) return ok;
-            *static_cast<int*>(dest) = i + 1;
+            ch->choice_set_present(i + 1);
             return decode_ok();
         }
 
@@ -726,9 +723,9 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         if (debug_flags() & DBG_BER_CHOICE) {
             std::fprintf(stderr, "[CHOICE-MISS] %s: peek cls=%d num=%u; alternatives:",
                 def.name, (int)peek.cls, peek.number);
-            for (int i = 0; i < spec.count; ++i)
+            for (int i = 0; i < ch->choice_alt_count(); ++i)
                 std::fprintf(stderr, " [%d]%u",
-                    (int)spec.alternatives[i].tag.cls, spec.alternatives[i].tag.number);
+                    (int)ch->choice_alt_desc(i).tag.cls, ch->choice_alt_desc(i).tag.number);
             std::fprintf(stderr, "\n");
         }
         return decode_err(DecodeError(

@@ -1038,7 +1038,11 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     }
 
     // class — optional members use unique_ptr (forward-decl compatible, matches asn1c semantics)
-    os << std::format("class {} {{\npublic:\n", cname);
+    os << std::format("class {} : public asn1::SequenceBase<{}> {{\npublic:\n", cname, cname);
+    // TODO: generate positional constructor(s) to restore aggregate-init syntax lost when
+    // SequenceBase<T> made the type non-aggregate (C++20: base with virtuals = not aggregate).
+    // For mandatory-only sequences: emit T(M0 a0, M1 a1, ...) : m0(a0), m1(a1), ... {}
+    // For sequences with optionals: emit T(M0 a0, std::unique_ptr<M1> a1, ...) variant.
     if (has_optional_members) {
         // All special members declared (not defaulted) so unique_ptr<T> destructor/assignment
         // has complete T in the .cpp where they are defined = default.
@@ -1069,11 +1073,13 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
             os << std::format("    void set_{}({} val);\n", mname, si.param_type);
         }
     }
+    if (mcount > 0) {
+        os << std::format("    static const asn1::MemberDescriptor s_members[{}];\n", mcount);
+        os << "    static const int s_member_count;\n";
+    }
     os << "};\n\n";
 
-    // Extern descriptor declarations
-    if (mcount > 0)
-        os << std::format("extern const asn1::MemberDescriptor asn_MBR_{}[{}];\n", cname, mcount);
+    // Extern descriptor declarations (s_members declared inside class; only SPC+DEF are global)
     os << std::format("extern const asn1::SequenceSpec     asn_SPC_{};\n", cname);
     os << std::format("extern const asn1::TypeDescriptor   asn_DEF_{};\n\n", cname);
 
@@ -1186,8 +1192,8 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 ++atag;
             }
         }
-        // Pass 2: emit the array
-        os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
+        // Pass 2: emit the array (as class static member definition)
+        os << std::format("const asn1::MemberDescriptor {}::s_members[] = {{\n", cname);
         for (const auto& r : rows) {
             // Emit &_isdef_… reference only when the default-value helper
             // pair was actually emitted. emit_default_setter() returns
@@ -1198,7 +1204,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string def_cmp = (r.has_default && r.def_setter != "nullptr")
                 ? std::format("&_isdef_{}_{}", cname, r.mname)
                 : "nullptr";
-            os << std::format("    {{ \"{}\", {}, {}, {}, offsetof({}, {}), {}, {}, {}, {}, {} }},\n",
+            os << std::format("    {{ \"{}\", {}, {}, {}, ASN1CPP_OFFSETOF({}, {}), {}, {}, {}, {}, {} }},\n",
                 r.name, r.eff_tag,
                 r.optional ? "true" : "false",
                 r.has_default ? "true" : "false",
@@ -1207,13 +1213,14 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 r.is_explicit ? "true" : "false",
                 r.def_setter, def_cmp);
         }
-        os << "};\n\n";
+        os << "};\n";
+        os << std::format("const int {}::s_member_count = {};\n\n", cname, mcount);
     }
 
     // SequenceSpec
     os << std::format("const asn1::SequenceSpec asn_SPC_{} = {{\n", cname);
     if (mcount > 0)
-        os << std::format("    asn_MBR_{},\n", cname);
+        os << std::format("    {}::s_members,\n", cname);
     else
         os << "    nullptr,\n";
     os << std::format("    {},\n", mcount);
@@ -1294,7 +1301,7 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
 
     // class with PR enum + std::variant storage + typed accessors
     os << std::format("#include <variant>\n");
-    os << std::format("class {} {{\npublic:\n", cname);
+    os << std::format("class {} : public asn1::ChoiceBase<{}> {{\npublic:\n", cname, cname);
     os << "    enum class PR : int { NOTHING = 0";
     int pr_idx = 1;
     for (const auto& m : def.members)
@@ -1334,11 +1341,13 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
         os << std::format("    const {0}& {1}() const {{ return std::get<{2}>(u); }}\n", t, n, pr_idx);
         ++pr_idx;
     }
+    if (count > 0) {
+        os << std::format("    static const asn1::MemberDescriptor s_alternatives[{}];\n", count);
+        os << "    static const int s_alternative_count;\n";
+    }
     os << "};\n\n";
 
-    // Extern descriptor declarations
-    if (count > 0)
-        os << std::format("extern const asn1::MemberDescriptor asn_MBR_{}[{}];\n", cname, count);
+    // Extern descriptor declarations (s_alternatives declared inside class; only SPC+DEF are global)
     os << std::format("extern const asn1::ChoiceSpec       asn_SPC_{};\n", cname);
     os << std::format("extern const asn1::TypeDescriptor   asn_DEF_{};\n\n", cname);
 
@@ -1381,8 +1390,8 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
           }
           os << '\n';
         }
-        // Pass 3: emit array.
-        os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
+        // Pass 3: emit array (as class static member definition).
+        os << std::format("const asn1::MemberDescriptor {}::s_alternatives[] = {{\n", cname);
         { int vi = 1;
           for (const auto& r : rows) {
             os << std::format("    {{ \"{}\", {}, false, false, 0 /* variant */, {}, {{}}, {}, nullptr, nullptr,\n",
@@ -1394,7 +1403,8 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             ++vi;
           }
         }
-        os << "};\n\n";
+        os << "};\n";
+        os << std::format("const int {}::s_alternative_count = {};\n\n", cname, count);
     }
 
     // Compute flattened BER dispatch table (needed when any alternative is an untagged
@@ -1423,7 +1433,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     // ChoiceSpec
     os << std::format("const asn1::ChoiceSpec asn_SPC_{} = {{\n", cname);
     if (count > 0)
-        os << std::format("    asn_MBR_{},\n", cname);
+        os << std::format("    {}::s_alternatives,\n", cname);
     else
         os << "    nullptr,\n";
     os << std::format("    {},\n", count);

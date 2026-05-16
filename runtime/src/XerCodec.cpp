@@ -1,6 +1,8 @@
 #include <cassert>
 #include <asn1cpp/codec/XerCodec.hpp>
 #include <asn1cpp/types/Integer.hpp>
+#include <asn1cpp/SequenceInterface.hpp>
+#include <asn1cpp/ChoiceInterface.hpp>
 
 namespace asn1 {
 
@@ -543,12 +545,12 @@ struct SequenceXerHandler final : IXerTypeHandler {
     void encode(const XerCodec& codec, XerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
         auto& os = s.os();
-        const auto& spec = *def.sequence_spec;
+        const SequenceInterface* seq = reinterpret_cast<const SequenceInterface*>(src);
         bool any_present = false;
-        for (int i = 0; i < spec.count; ++i) {
-            const auto& mbr = spec.members[i];
+        for (int i = 0; i < seq->seq_member_count(); ++i) {
+            const auto& mbr = seq->seq_member_desc(i);
             if (!mbr.type_descriptor) continue;
-            if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
+            if (mbr.optional && !seq->seq_member_present(i)) continue;
             any_present = true;
             break;
         }
@@ -557,13 +559,11 @@ struct SequenceXerHandler final : IXerTypeHandler {
             return;
         }
         os << '<' << def.name << ">\n";
-        for (int i = 0; i < spec.count; ++i) {
-            const auto& mbr = spec.members[i];
+        for (int i = 0; i < seq->seq_member_count(); ++i) {
+            const auto& mbr = seq->seq_member_desc(i);
             if (!mbr.type_descriptor) continue;
-            if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
-            const void* mptr = mbr.optional_ops.get_ptr
-                ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
-                : static_cast<const char*>(src) + mbr.offset;
+            if (mbr.optional && !seq->seq_member_present(i)) continue;
+            const void* mptr = seq->seq_member_ptr(i);
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
             if (mdef.choice_spec) {
@@ -587,18 +587,16 @@ struct SequenceXerHandler final : IXerTypeHandler {
                 return decode_err(DecodeError(
                     std::string("XER SEQUENCE: expected <") + def.name + ">"));
         }
-        const auto& spec = *def.sequence_spec;
-        for (int i = 0; i < spec.count; ++i) {
-            const auto& mbr = spec.members[i];
+        SequenceInterface* seq = reinterpret_cast<SequenceInterface*>(dest);
+        for (int i = 0; i < seq->seq_member_count(); ++i) {
+            const auto& mbr = seq->seq_member_desc(i);
             if (!mbr.type_descriptor) continue;
             if (mbr.optional) {
                 bool present = (xer_detail::peek_tag(s).name == mbr.name);
-                mbr.optional_ops.set_present(dest, present);
+                seq->seq_set_present(i, present);
                 if (!present) continue;
             }
-            void* mptr = mbr.optional_ops.get_ptr
-                ? mbr.optional_ops.get_ptr(dest)
-                : static_cast<char*>(dest) + mbr.offset;
+            void* mptr = seq->seq_member_ptr(i);
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
             if (mdef.choice_spec) {
@@ -625,15 +623,14 @@ struct ChoiceXerHandler final : IXerTypeHandler {
     void encode(const XerCodec& codec, XerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
         auto& os = s.os();
-        const auto& spec = *def.choice_spec;
-        int pr = *static_cast<const int*>(src);
-        if (pr <= 0 || pr > spec.count) return;
-        const auto& alt = spec.alternatives[pr - 1];
+        const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
+        int pr = ch->choice_present();
+        if (pr <= 0 || pr > ch->choice_alt_count()) return;
+        const auto& alt = ch->choice_alt_desc(pr - 1);
         if (!alt.type_descriptor) return;
         TypeDescriptor adef = *alt.type_descriptor;
         adef.name = alt.name;
-        const void* mptr = alt.get_const_fn ? alt.get_const_fn(src)
-                                            : static_cast<const char*>(src) + alt.offset;
+        const void* mptr = ch->choice_member_const_ptr(pr);
         if (adef.choice_spec) {
             os << '\n' << s.indent(1) << '<' << alt.name << '>';
             XerEncodeStream as{os, s.depth() + 1};
@@ -648,18 +645,17 @@ struct ChoiceXerHandler final : IXerTypeHandler {
     DecodeResult decode(const XerCodec& codec, XerDecodeStream& s,
                         const TypeDescriptor& def, void* dest) const override {
         auto ti = xer_detail::peek_tag(s);
-        const auto& spec = *def.choice_spec;
-        for (int i = 0; i < spec.count; ++i) {
-            const auto& alt = spec.alternatives[i];
+        ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(dest);
+        for (int i = 0; i < ch->choice_alt_count(); ++i) {
+            const auto& alt = ch->choice_alt_desc(i);
             if (ti.name != alt.name) continue;
             if (!alt.type_descriptor)
                 return decode_err(DecodeError(
                     std::string("XER CHOICE: no descriptor for ") + alt.name));
             TypeDescriptor adef = *alt.type_descriptor;
             adef.name = alt.name;
-            if (alt.emplace_fn) alt.emplace_fn(dest);
-            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(dest)
-                                        : static_cast<char*>(dest) + alt.offset;
+            ch->choice_emplace(i + 1);
+            void* mptr = ch->choice_member_ptr(i + 1);
             if (adef.choice_spec) {
                 if (auto r = xer_detail::consume_open_tag(s, alt.name); !r) return r;
                 auto r = codec.decode(s, adef, mptr);
@@ -669,7 +665,7 @@ struct ChoiceXerHandler final : IXerTypeHandler {
                 auto r = codec.decode(s, adef, mptr);
                 if (!r) return r;
             }
-            *static_cast<int*>(dest) = i + 1;
+            ch->choice_set_present(i + 1);
             return decode_ok();
         }
         return decode_err(DecodeError(

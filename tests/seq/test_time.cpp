@@ -57,7 +57,7 @@ int main() {
 
     // "240115Z" = 0x32 0x34 0x30 0x31 0x31 0x35 0x5A (7 bytes)
     // SEQUENCE: 30 09 17 07 <7 bytes>
-    HasUtcTime v_utc{UtcTime{"240115Z"}};
+    HasUtcTime v_utc; v_utc.ts = UtcTime{"240115Z"};
     auto enc_utc = ber_encode_utc(v_utc);
     check("HasUtcTime{\"240115Z\"} BER encodes as 30 09 17 07 ...",
           enc_utc.size() == 11 && enc_utc[0] == 0x30 && enc_utc[2] == 0x17 && enc_utc[3] == 0x07);
@@ -67,7 +67,7 @@ int main() {
     check("HasUtcTime round-trip value matches",  got_utc.ts.str() == "240115Z");
 
     check("HasUtcTime \"240115143000Z\" round-trip", [&]{
-        HasUtcTime v{UtcTime{"240115143000Z"}};
+        HasUtcTime v; v.ts = UtcTime{"240115143000Z"};
         auto enc = ber_encode_utc(v);
         HasUtcTime got{};
         return ber_decode_utc(enc, got) && got.ts.str() == "240115143000Z";
@@ -76,7 +76,7 @@ int main() {
     printf("\n── GeneralizedTime — HasGeneralizedTime BER ─────────────────────\n");
 
     // "20240115Z" = 9 bytes; SEQUENCE: 30 0B 18 09 <9 bytes>
-    HasGeneralizedTime v_gen{GeneralizedTime{"20240115Z"}};
+    HasGeneralizedTime v_gen; v_gen.ts = GeneralizedTime{"20240115Z"};
     auto enc_gen = ber_encode_gen(v_gen);
     check("HasGeneralizedTime{\"20240115Z\"} BER encodes as 30 0B 18 09 ...",
           enc_gen.size() == 13 && enc_gen[0] == 0x30 && enc_gen[2] == 0x18 && enc_gen[3] == 0x09);
@@ -86,7 +86,7 @@ int main() {
     check("HasGeneralizedTime round-trip value matches",  got_gen.ts.str() == "20240115Z");
 
     check("HasGeneralizedTime \"20240115143000.5Z\" round-trip", [&]{
-        HasGeneralizedTime v{GeneralizedTime{"20240115143000.5Z"}};
+        HasGeneralizedTime v; v.ts = GeneralizedTime{"20240115143000.5Z"};
         auto enc = ber_encode_gen(v);
         HasGeneralizedTime got{};
         return ber_decode_gen(enc, got) && got.ts.str() == "20240115143000.5Z";
@@ -95,7 +95,7 @@ int main() {
     printf("\n── UTCTime XER ──────────────────────────────────────────────────\n");
 
     {
-        HasUtcTime v{UtcTime{"240115Z"}};
+        HasUtcTime v; v.ts = UtcTime{"240115Z"};
         std::ostringstream oss;
         XerEncodeStream xs{oss};
         XerCodec::instance().encode(xs, asn_DEF_HasUtcTime, &v);
@@ -113,7 +113,7 @@ int main() {
     printf("\n── GeneralizedTime XER ──────────────────────────────────────────\n");
 
     {
-        HasGeneralizedTime v{GeneralizedTime{"20240115143000.5Z"}};
+        HasGeneralizedTime v; v.ts = GeneralizedTime{"20240115143000.5Z"};
         std::ostringstream oss;
         XerEncodeStream xs{oss};
         XerCodec::instance().encode(xs, asn_DEF_HasGeneralizedTime, &v);

@@ -28,7 +28,7 @@ static void check(const char* name, bool cond) {
 
 template<typename HasT, typename StringT>
 static bool roundtrip(const TypeDescriptor& def, const StringT& val) {
-    HasT v{val};
+    HasT v; v.value = val;
     std::vector<uint8_t> buf;
     {
         BerWriter w{buf}; BerEncodeStream s{w};
@@ -44,7 +44,7 @@ static bool roundtrip(const TypeDescriptor& def, const StringT& val) {
 
 template<typename HasT, typename StringT>
 static bool xer_roundtrip(const TypeDescriptor& def, const StringT& val) {
-    HasT v{val};
+    HasT v; v.value = val;
     std::ostringstream oss;
     { XerEncodeStream s{oss}; XerCodec::instance().encode(s, def, &v); }
     HasT out{};
@@ -59,7 +59,7 @@ static void check_wire(const char* label,
                        uint8_t expected_tag,
                        std::vector<uint8_t> expected_bytes)
 {
-    HasT v{val};
+    HasT v; v.value = val;
     std::vector<uint8_t> buf;
     BerWriter w{buf}; BerEncodeStream s{w};
     BerCodec::instance().encode(s, def, &v);
@@ -153,7 +153,7 @@ int main() {
 
     {
         // Verify hex format in output
-        HasT61String v{T61String{"hi"}};
+        HasT61String v; v.value = T61String{"hi"};
         std::ostringstream oss;
         XerEncodeStream s{oss};
         XerCodec::instance().encode(s, asn_DEF_HasT61String, &v);
@@ -179,7 +179,7 @@ int main() {
     {
         // Verify BmpString XER output is UTF-8 text, not hex
         BmpString bmp{std::string("\x00\x41\x00\x42", 4)};  // "AB" in UCS-2BE
-        HasBmpString v{bmp};
+        HasBmpString v; v.value = bmp;
         std::ostringstream oss;
         XerEncodeStream s{oss};
         XerCodec::instance().encode(s, asn_DEF_HasBmpString, &v);

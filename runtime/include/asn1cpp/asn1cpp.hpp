@@ -4,6 +4,8 @@
 
 #include "Asn1Object.hpp"
 #include "SeqOfBase.hpp"
+#include "SequenceInterface.hpp"
+#include "ChoiceInterface.hpp"
 #include "Expected.hpp"
 #include "Error.hpp"
 #include "Tag.hpp"
