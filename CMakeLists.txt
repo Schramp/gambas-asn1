@@ -46,10 +46,10 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 # Default: ON for Debug (alpha-stage), OFF for Release.
 # ---------------------------------------------------------------------------
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    option(ASN1CPP_VALIDATE           "Master switch — enable validate() infrastructure" OFF)
+    option(ASN1CPP_VALIDATE           "Master switch — enable validate() infrastructure" ON)
     option(ASN1CPP_VALIDATE_ON_ENCODE "Run validate() inside BerCodec::encode"            OFF)
-    option(ASN1CPP_VALIDATE_ON_DECODE "Run validate() inside BerCodec::decode"            OFF)
-    option(ASN1CPP_VALIDATE_ON_SET    "Run validate() in generated set_<member> helpers" OFF)
+    option(ASN1CPP_VALIDATE_ON_DECODE "Run validate() inside BerCodec::decode"            ON)
+    option(ASN1CPP_VALIDATE_ON_SET    "Run validate() in generated set_<member> helpers" ON)
     option(ASN1CPP_VALIDATE_REPORT    "Detailed ValidationReport with paths"             OFF)
 else()
     option(ASN1CPP_VALIDATE           "Master switch — enable validate() infrastructure" ON)
