@@ -1354,12 +1354,15 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     auto [count, ext_at] = count_members(def);
     bool apply_auto_tags = should_apply_auto_tags(def);
+    bool has_tag_index = false;
+    int  tag_index_base = 0, tag_index_size = 0;
 
     // Alternative descriptor table
     if (count > 0) {
         struct AltRow {
             std::string name, eff_tag, mname, tdref;
             bool is_explicit;
+            int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows + emit any static TypeDescriptors (must precede array).
@@ -1369,7 +1372,12 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string mname = to_member_name(m->name);
             auto [eff_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
-            rows.push_back({ m->name, eff_tag, mname, tdref, is_explicit });
+            int tag_ctx_num = -1;
+            if (apply_auto_tags)
+                tag_ctx_num = auto_tag_num;
+            else if (m->tag.present() && m->tag.cls == ast::TagClass::Context)
+                tag_ctx_num = m->tag.number;
+            rows.push_back({ m->name, eff_tag, mname, tdref, is_explicit, tag_ctx_num });
             ++auto_tag_num;
           }
         }
@@ -1401,6 +1409,29 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         }
         os << "};\n";
         os << std::format("const int {}::s_alternative_count = {};\n\n", cname, count);
+
+        // O(1) context-tag dispatch table — emit when ALL alternatives carry a context tag.
+        // Density threshold: only emit if range <= 4× count (avoids huge sparse arrays).
+        bool all_ctx = true;
+        int min_tag = std::numeric_limits<int>::max(), max_tag = std::numeric_limits<int>::min();
+        for (const auto& r : rows) {
+            if (r.tag_cls_int < 0) { all_ctx = false; break; }
+            min_tag = std::min(min_tag, r.tag_cls_int);
+            max_tag = std::max(max_tag, r.tag_cls_int);
+        }
+        int range = all_ctx ? (max_tag - min_tag + 1) : 0;
+        if (all_ctx && count > 1 && range <= 4 * count) {
+            has_tag_index = true;
+            tag_index_base = min_tag;
+            tag_index_size = range;
+            std::vector<int16_t> idx_table(range, -1);
+            for (int i = 0; i < (int)rows.size(); ++i)
+                idx_table[rows[i].tag_cls_int - min_tag] = (int16_t)i;
+            os << std::format("static const int16_t asn_TAGIDX_{}[] = {{", cname);
+            for (int i = 0; i < range; ++i)
+                os << (i ? ", " : "") << idx_table[i];
+            os << "};\n\n";
+        }
     }
 
     // Compute flattened BER dispatch table (needed when any alternative is an untagged
@@ -1436,7 +1467,12 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    {}, /* ext_at */\n", ext_at);
     os << "    {} /* PER: constraints */\n";
     if (needs_ber_table && !ber_tags.empty())
-        os << std::format("    , asn_BER_{}, {} /* ber_tags */\n", cname, (int)ber_tags.size());
+        os << std::format("    , asn_BER_{0}, {1} /* ber_tags */\n", cname, (int)ber_tags.size());
+    else if (has_tag_index)
+        os << "    , nullptr, 0 /* ber_tags */\n";
+    if (has_tag_index)
+        os << std::format("    , asn_TAGIDX_{0}, {1}, {2} /* tag_index */\n",
+                          cname, tag_index_base, tag_index_size);
     os << "};\n\n";
 
     // TypeDescriptor — CHOICE tag is a transparent placeholder (no fixed universal tag)

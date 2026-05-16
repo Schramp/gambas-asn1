@@ -642,6 +642,38 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(dest);
         Tag peek = r.peek_tag();
 
+        if (spec.tag_index && peek.cls == TagClass::Context) {
+            int rel = (int)peek.number - spec.tag_index_base;
+            int matched = (rel >= 0 && rel < spec.tag_index_size) ? spec.tag_index[rel] : -1;
+            if (matched >= 0) {
+                const auto& alt = spec.alternatives[matched];
+                if (ch->choice_present() != matched + 1)
+                    ch->choice_emplace(matched + 1);
+                void* mptr = ch->choice_member_ptr(matched + 1);
+                const auto& mdef = *alt.type_descriptor;
+                ValidatePathScope _vps{alt.name};
+                DecodeResult ok = decode_ok();
+                if (alt.tag.cls == TagClass::Context) {
+                    auto outer = r.read_tlv();
+                    if (!outer) return decode_err(outer.error());
+                    if (alt.is_explicit) {
+                        BerReader inner2 = r.sub(outer->value);
+                        BerDecodeStream ms{inner2};
+                        ok = codec.decode(ms, mdef, mptr);
+                    } else {
+                        ok = codec.decode_value(outer->value, mdef, mptr);
+                    }
+                } else {
+                    BerDecodeStream ms{r};
+                    ok = codec.decode(ms, mdef, mptr);
+                }
+                if (!ok) return ok;
+                ch->choice_set_present(matched + 1);
+                return decode_ok();
+            }
+            goto no_match;
+        }
+
         if (spec.ber_tags) {
             int matched = -1;
             for (int j = 0; j < spec.ber_tag_count; ++j) {
