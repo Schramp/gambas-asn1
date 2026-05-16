@@ -1,5 +1,6 @@
 #include <cassert>
 #include <asn1cpp/codec/XerCodec.hpp>
+#include <asn1cpp/types/Integer.hpp>
 
 namespace asn1 {
 
@@ -129,10 +130,10 @@ struct IntegerXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
         if (def.constraints.int_kind == Constraints::INT_U64) {
-            uint64_t v = *static_cast<const uint64_t*>(src);
+            uint64_t v = static_cast<const UInteger*>(src)->value();
             s.os() << '<' << def.name << '>' << v << "</" << def.name << ">\n";
         } else {
-            int64_t v = *static_cast<const int64_t*>(src);
+            int64_t v = static_cast<const Integer*>(src)->value();
             s.os() << '<' << def.name << '>' << v << "</" << def.name << ">\n";
         }
     }
@@ -146,13 +147,13 @@ struct IntegerXerHandler final : IXerTypeHandler {
                     auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
                     if (ec != std::errc{})
                         return decode_err(DecodeError("XER: invalid INTEGER value: " + std::string(text)));
-                    *static_cast<uint64_t*>(dest) = value;
+                    static_cast<UInteger*>(dest)->set(value);
                 } else {
                     int64_t value = 0;
                     auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
                     if (ec != std::errc{})
                         return decode_err(DecodeError("XER: invalid INTEGER value: " + std::string(text)));
-                    *static_cast<int64_t*>(dest) = value;
+                    static_cast<Integer*>(dest)->set(value);
                 }
                 return decode_ok();
             });

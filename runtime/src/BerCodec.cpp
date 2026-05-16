@@ -109,10 +109,10 @@ struct IntegerBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const void* src) const override {
         if (def.constraints.int_kind == Constraints::INT_U64) {
-            BerTraits<UInteger>::encode(w, UInteger{*static_cast<const uint64_t*>(src)});
+            BerTraits<UInteger>::encode(w, *static_cast<const UInteger*>(src));
             return;
         }
-        int64_t v = *static_cast<const int64_t*>(src);
+        int64_t v = static_cast<const Integer*>(src)->value();
         auto bytes = detail::encode_integer_bytes(v);
         w.write_primitive(def.tag, std::span<const uint8_t>(bytes.data(), bytes.size()));
     }
@@ -134,12 +134,12 @@ private:
         if (def.constraints.int_kind == Constraints::INT_U64) {
             auto v = BerTraits<UInteger>::decode_value(value);
             if (!v) return decode_err(v.error());
-            *static_cast<uint64_t*>(dest) = v->value();
+            static_cast<UInteger*>(dest)->set(v->value());
             return decode_ok();
         }
         auto v = BerTraits<Integer>::decode_value(value);
         if (!v) return decode_err(v.error());
-        *static_cast<int64_t*>(dest) = v->value();
+        static_cast<Integer*>(dest)->set(v->value());
         return decode_ok();
     }
 };
