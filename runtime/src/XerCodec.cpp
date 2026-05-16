@@ -1,7 +1,6 @@
 #include <cassert>
 #include <asn1cpp/codec/XerCodec.hpp>
 #include <asn1cpp/types/Integer.hpp>
-#include <asn1cpp/SequenceInterface.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
 
 namespace asn1 {
@@ -545,12 +544,12 @@ struct SequenceXerHandler final : IXerTypeHandler {
     void encode(const XerCodec& codec, XerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
         auto& os = s.os();
-        const SequenceInterface* seq = reinterpret_cast<const SequenceInterface*>(src);
+        const auto& spec = *def.sequence_spec;
         bool any_present = false;
-        for (int i = 0; i < seq->seq_member_count(); ++i) {
-            const auto& mbr = seq->seq_member_desc(i);
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
-            if (mbr.optional && !seq->seq_member_present(i)) continue;
+            if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
             any_present = true;
             break;
         }
@@ -559,11 +558,11 @@ struct SequenceXerHandler final : IXerTypeHandler {
             return;
         }
         os << '<' << def.name << ">\n";
-        for (int i = 0; i < seq->seq_member_count(); ++i) {
-            const auto& mbr = seq->seq_member_desc(i);
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
-            if (mbr.optional && !seq->seq_member_present(i)) continue;
-            const void* mptr = seq->seq_member_ptr(i);
+            if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
+            const void* mptr = mbr.optional_ops.member_ptr(src, mbr.offset);
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
             if (mdef.choice_spec) {
@@ -587,16 +586,16 @@ struct SequenceXerHandler final : IXerTypeHandler {
                 return decode_err(DecodeError(
                     std::string("XER SEQUENCE: expected <") + def.name + ">"));
         }
-        SequenceInterface* seq = reinterpret_cast<SequenceInterface*>(dest);
-        for (int i = 0; i < seq->seq_member_count(); ++i) {
-            const auto& mbr = seq->seq_member_desc(i);
+        const auto& spec = *def.sequence_spec;
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
             if (mbr.optional) {
                 bool present = (xer_detail::peek_tag(s).name == mbr.name);
-                seq->seq_set_present(i, present);
+                mbr.optional_ops.set_present(dest, present);
                 if (!present) continue;
             }
-            void* mptr = seq->seq_member_ptr(i);
+            void* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
             if (mdef.choice_spec) {

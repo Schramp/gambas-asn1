@@ -1,5 +1,4 @@
 #include <asn1cpp/codec/RandomFiller.hpp>
-#include <asn1cpp/SequenceInterface.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
 #include <asn1cpp/codec/Alphabets.hpp>
 #include <asn1cpp/Validate.hpp>
@@ -360,24 +359,23 @@ void RandomFiller::fill_enum(void* obj, const EnumSpec& spec) {
 // ---------------------------------------------------------------------------
 
 bool RandomFiller::fill_sequence(void* obj, const SequenceSpec& spec, int depth) {
-    SequenceInterface* seq = reinterpret_cast<SequenceInterface*>(obj);
-    for (int i = 0; i < seq->seq_member_count(); ++i) {
-        const MemberDescriptor& mbr = seq->seq_member_desc(i);
+    for (int i = 0; i < spec.count; ++i) {
+        const MemberDescriptor& mbr = spec.members[i];
         bool is_ext = (spec.ext_at >= 0 && i >= spec.ext_at);
 
         if (mbr.optional) {
             double p = is_ext ? cfg_.optional_prob * 0.3 : cfg_.optional_prob;
             bool present = (depth < cfg_.max_depth) && coin(p);
-            seq->seq_set_present(i, present);
+            mbr.optional_ops.set_present(obj, present);
             if (!present) continue;
         }
 
-        void* mptr = seq->seq_member_ptr(i);
+        void* mptr = mbr.optional_ops.member_ptr(obj, mbr.offset);
         bool is_mand = !mbr.optional;
         bool ok = fill(mptr, *mbr.type_descriptor, depth + 1, is_mand);
         if (!ok) {
             if (mbr.optional)
-                seq->seq_set_present(i, false);
+                mbr.optional_ops.set_present(obj, false);
             else
                 return false;
         }

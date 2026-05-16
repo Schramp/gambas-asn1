@@ -3,7 +3,6 @@
 #include <cstdio>
 #include <vector>
 #include <asn1cpp/codec/BerCodec.hpp>
-#include <asn1cpp/SequenceInterface.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
 #include <asn1cpp/codec/Debug.hpp>
 #include <asn1cpp/types/Boolean.hpp>
@@ -461,30 +460,29 @@ private:
 struct SequenceBerHandler final : IBerTypeHandler {
     void encode(const BerCodec& codec, BerWriter& w,
                 const TypeDescriptor& def, const void* src) const override {
-        // reinterpret_cast valid on Itanium ABI: single-inheritance chain puts vtable at offset 0.
-        const SequenceInterface* seq = reinterpret_cast<const SequenceInterface*>(src);
+        const auto& spec = *def.sequence_spec;
         w.write_constructed(def.tag, [&](BerWriter& inner) {
-            for (int i = 0; i < seq->seq_member_count(); ++i) {
-                const auto& mbr = seq->seq_member_desc(i);
+            for (int i = 0; i < spec.count; ++i) {
+                const auto& mbr = spec.members[i];
                 if (!mbr.type_descriptor) continue;
-                if (mbr.optional && !seq->seq_member_present(i)) {
+                if (mbr.optional && !mbr.optional_ops.is_present(src)) {
                     if (debug_flags() & DBG_BER_WRITE)
                         std::fprintf(stderr, "[BER-WRITE] %s.%s absent (optional)\n",
                                      def.name, mbr.name);
                     continue;
                 }
-                if (seq->seq_is_default_equal(i)) {
+                if (mbr.is_default_equal && mbr.is_default_equal(src)) {
                     if (debug_flags() & DBG_BER_WRITE)
                         std::fprintf(stderr, "[BER-WRITE] %s.%s suppressed (== DEFAULT)\n",
                                      def.name, mbr.name);
                     continue;
                 }
-                if (!mbr.optional && mbr.optional_ops && !seq->seq_member_present(i)) {
+                if (!mbr.optional && mbr.optional_ops && !mbr.optional_ops.is_present(src)) {
                     std::fprintf(stderr, "BerCodec: mandatory member '%s.%s' is null (not filled)\n",
                                  def.name, mbr.name);
                     return;
                 }
-                const void* mptr = seq->seq_member_ptr(i);
+                const void* mptr = mbr.optional_ops.member_ptr(src, mbr.offset);
                 const auto& mdef = *mbr.type_descriptor;
                 ValidatePathScope _vps{mbr.name};
 
@@ -523,9 +521,9 @@ struct SequenceBerHandler final : IBerTypeHandler {
 private:
     static DecodeResult decode_body(const BerCodec& codec, BerReader inner,
                                     const TypeDescriptor& def, void* dest) {
-        SequenceInterface* seq = reinterpret_cast<SequenceInterface*>(dest);
-        for (int i = 0; i < seq->seq_member_count(); ++i) {
-            const auto& mbr = seq->seq_member_desc(i);
+        const auto& spec = *def.sequence_spec;
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) {
                 if (mbr.optional && mbr.tag.cls == TagClass::Context) {
                     Tag pt = inner.peek_tag();
@@ -564,13 +562,13 @@ private:
                 } else {
                     present = pt.cls == mbr.tag.cls && pt.number == mbr.tag.number;
                 }
-                seq->seq_set_present(i, present);
+                mbr.optional_ops.set_present(dest, present);
                 if (!present) {
-                    seq->seq_set_default(i);
+                    if (mbr.set_default) mbr.set_default(dest);
                     continue;
                 }
             }
-            void* mptr = seq->seq_member_ptr(i);
+            void* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
             const auto& mdef = *mbr.type_descriptor;
             ValidatePathScope _vps{mbr.name};
 
