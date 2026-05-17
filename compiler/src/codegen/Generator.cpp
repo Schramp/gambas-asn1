@@ -1200,11 +1200,17 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string def_cmp = (r.has_default && r.def_setter != "nullptr")
                 ? std::format("&_isdef_{}_{}", cname, r.mname)
                 : "nullptr";
-            os << std::format("    {{ \"{}\", {}, {}, {}, ASN1CPP_OFFSETOF({}, {}), {}, {}, {}, {}, {} }},\n",
+            // Optional members: offset unused at runtime (get_ptr function pointer
+            // handles access via UniquePtrOps). Emit 0 to avoid -Winvalid-offsetof
+            // on non-standard-layout types (unique_ptr makes them non-standard-layout).
+            std::string offset_expr = r.optional
+                ? "0"
+                : std::format("ASN1CPP_OFFSETOF({}, {})", cname, r.mname);
+            os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {}, {} }},\n",
                 r.name, r.eff_tag,
                 r.optional ? "true" : "false",
                 r.has_default ? "true" : "false",
-                cname, r.mname,
+                offset_expr,
                 r.tdref, r.ops,
                 r.is_explicit ? "true" : "false",
                 r.def_setter, def_cmp);
