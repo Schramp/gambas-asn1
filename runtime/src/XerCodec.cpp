@@ -562,7 +562,7 @@ struct SequenceXerHandler final : IXerTypeHandler {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
             if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
-            const void* mptr = mbr.optional_ops.member_ptr(src, mbr.offset);
+            const Asn1Object* mptr = static_cast<const Asn1Object*>(mbr.optional_ops.member_ptr(src, mbr.offset));
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
             if (mdef.choice_spec) {
@@ -595,7 +595,7 @@ struct SequenceXerHandler final : IXerTypeHandler {
                 mbr.optional_ops.set_present(dest, present);
                 if (!present) continue;
             }
-            void* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
+            Asn1Object* mptr = static_cast<Asn1Object*>(mbr.optional_ops.member_ptr(dest, mbr.offset));
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
             if (mdef.choice_spec) {
@@ -624,13 +624,14 @@ struct ChoiceXerHandler final : IXerTypeHandler {
         auto& os = s.os();
         const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
-        int pr = ch->choice_present();
+        int pr = ch->_present;
         if (pr <= 0 || pr > spec.count) return;
         const auto& alt = spec.alternatives[pr - 1];
         if (!alt.type_descriptor) return;
         TypeDescriptor adef = *alt.type_descriptor;
         adef.name = alt.name;
-        const void* mptr = ch->choice_member_const_ptr(pr);
+        const void* mptr = alt.get_const_fn ? alt.get_const_fn(ch)
+                                            : reinterpret_cast<const char*>(ch) + alt.offset;
         if (adef.choice_spec) {
             os << '\n' << s.indent(1) << '<' << alt.name << '>';
             XerEncodeStream as{os, s.depth() + 1};
@@ -655,8 +656,11 @@ struct ChoiceXerHandler final : IXerTypeHandler {
                     std::string("XER CHOICE: no descriptor for ") + alt.name));
             TypeDescriptor adef = *alt.type_descriptor;
             adef.name = alt.name;
-            ch->choice_emplace(i + 1);
-            void* mptr = ch->choice_member_ptr(i + 1);
+            if (ch->_present != i + 1) {
+                if (alt.emplace_fn) alt.emplace_fn(ch);
+            }
+            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                        : reinterpret_cast<char*>(ch) + alt.offset;
             if (adef.choice_spec) {
                 if (auto r = xer_detail::consume_open_tag(s, alt.name); !r) return r;
                 auto r = codec.decode(s, adef, mptr);
@@ -666,7 +670,7 @@ struct ChoiceXerHandler final : IXerTypeHandler {
                 auto r = codec.decode(s, adef, mptr);
                 if (!r) return r;
             }
-            ch->choice_set_present(i + 1);
+            ch->_present = i + 1;
             return decode_ok();
         }
         return decode_err(DecodeError(

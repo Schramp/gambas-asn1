@@ -1038,7 +1038,7 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     }
 
     // class — optional members use unique_ptr (forward-decl compatible, matches asn1c semantics)
-    os << std::format("class {} : public asn1::Asn1Object {{\npublic:\n", cname);
+    os << std::format("class {} : public asn1::SequenceBase<{}> {{\npublic:\n", cname, cname);
     if (has_optional_members) {
         // All special members declared (not defaulted) so unique_ptr<T> destructor/assignment
         // has complete T in the .cpp where they are defined = default.
@@ -1297,15 +1297,14 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
 
     // class with PR enum + std::variant storage + typed accessors
     os << std::format("#include <variant>\n");
-    os << std::format("class {} : public asn1::ChoiceBase<{}> {{\npublic:\n", cname, cname);
+    os << std::format("class {} : public asn1::ChoiceInterface {{\npublic:\n", cname);
     os << "    enum class PR : int { NOTHING = 0";
     int pr_idx = 1;
     for (const auto& m : def.members)
         if (!m->is_extension_marker)
             os << std::format(", {} = {}", to_cpp_name(m->name), pr_idx++);
     os << " };\n";
-    // _present at offset 0 for codec int-write backward compat
-    os << "    int _present{0};\n";
+    // _present lives in ChoiceInterface base class
     // variant storage — only active alternative constructed
     os << "    std::variant<std::monostate";
     for (const auto& m : def.members) {

@@ -773,7 +773,7 @@ struct ChoicePerHandler final : IPerTypeHandler {
                 const TypeDescriptor& def, const void* src) const override {
         const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
-        int pr = ch->choice_present();
+        int pr = ch->_present;
         if (pr <= 0 || pr > spec.count) return;
         int def_idx = pr - 1;
         int root_count = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
@@ -788,7 +788,8 @@ struct ChoicePerHandler final : IPerTypeHandler {
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
             IEncodeStream& es = s;
-            const void* mptr = ch->choice_member_const_ptr(pr);
+            const void* mptr = alt.get_const_fn ? alt.get_const_fn(ch)
+                                                : reinterpret_cast<const char*>(ch) + alt.offset;
             codec.encode(es, *alt.type_descriptor, mptr);
         } else {
             int ext_idx = def_idx - root_count;
@@ -801,7 +802,8 @@ struct ChoicePerHandler final : IPerTypeHandler {
             }
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
-            const void* mptr = ch->choice_member_const_ptr(pr);
+            const void* mptr = alt.get_const_fn ? alt.get_const_fn(ch)
+                                                : reinterpret_cast<const char*>(ch) + alt.offset;
             encode_open_type(codec, s, *alt.type_descriptor, mptr);
         }
     }
@@ -832,9 +834,12 @@ struct ChoicePerHandler final : IPerTypeHandler {
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor)
                 return decode_err(DecodeError("CHOICE alternative has no type descriptor"));
-            ch->choice_emplace(def_idx + 1);
-            ch->choice_set_present(def_idx + 1);
-            void* mptr = ch->choice_member_ptr(def_idx + 1);
+            if (ch->_present != def_idx + 1) {
+                if (alt.emplace_fn) alt.emplace_fn(ch);
+            }
+            ch->_present = def_idx + 1;
+            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                        : reinterpret_cast<char*>(ch) + alt.offset;
             IDecodeStream& ds = s;
             auto r = codec.decode(ds, *alt.type_descriptor, mptr);
             if (!r) return r;
@@ -856,9 +861,12 @@ struct ChoicePerHandler final : IPerTypeHandler {
             if (def_idx < spec.count) {
                 const auto& alt = spec.alternatives[def_idx];
                 if (alt.type_descriptor) {
-                    ch->choice_emplace(def_idx + 1);
-                    ch->choice_set_present(def_idx + 1);
-                    void* mptr = ch->choice_member_ptr(def_idx + 1);
+                    if (ch->_present != def_idx + 1) {
+                        if (alt.emplace_fn) alt.emplace_fn(ch);
+                    }
+                    ch->_present = def_idx + 1;
+                    void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                                : reinterpret_cast<char*>(ch) + alt.offset;
                     auto r = decode_open_type(codec, s, *alt.type_descriptor, mptr);
                     if (!r) return r;
                 } else {

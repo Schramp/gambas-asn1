@@ -70,8 +70,15 @@ inline ValidationReport*& current_validation_report() {
     thread_local ValidationReport* r = nullptr;
     return r;
 }
-inline std::vector<std::string>& validate_path_stack() {
-    thread_local std::vector<std::string> s;
+// Path stack stores tagged segments: either a member name (const char*) or
+// an element index (size_t). Formatted lazily in current_validate_path() so
+// codec hot paths never call snprintf or construct std::string per element.
+struct PathSeg {
+    bool is_index;
+    union { const char* name; std::size_t index; };
+};
+inline std::vector<PathSeg>& validate_path_stack() {
+    thread_local std::vector<PathSeg> s;
     return s;
 }
 } // namespace detail
@@ -83,19 +90,25 @@ inline ValidationReport* current_validation_report() {
     return detail::current_validation_report();
 }
 
-inline void push_validate_path(std::string seg) {
-    detail::validate_path_stack().push_back(std::move(seg));
+inline void push_validate_path(const char* name) {
+    detail::validate_path_stack().push_back({false, {.name = name}});
+}
+inline void push_validate_path(std::size_t index) {
+    detail::validate_path_stack().push_back({true, {.index = index}});
 }
 inline void pop_validate_path() {
     auto& s = detail::validate_path_stack();
     if (!s.empty()) s.pop_back();
 }
 inline std::string current_validate_path() {
-    auto& s = detail::validate_path_stack();
     std::string out;
-    for (std::size_t i = 0; i < s.size(); ++i) {
-        if (i && !s[i].empty() && s[i][0] != '[') out += '.';
-        out += s[i];
+    for (const auto& seg : detail::validate_path_stack()) {
+        if (seg.is_index) {
+            out += '['; out += std::to_string(seg.index); out += ']';
+        } else {
+            if (!out.empty() && seg.name[0] != '[') out += '.';
+            out += seg.name;
+        }
     }
     return out;
 }
@@ -107,8 +120,11 @@ inline void record_validate_fail(const char* type_name, int64_t delta, bool on_d
 }
 
 // RAII helpers — push/pop a path segment around a scope.
+// Takes const char* for member names, std::size_t for element indices.
+// Formatting to string is deferred until current_validate_path() is called.
 struct ValidatePathScope {
-    explicit ValidatePathScope(std::string seg) { push_validate_path(std::move(seg)); }
+    explicit ValidatePathScope(const char* name)  { push_validate_path(name); }
+    explicit ValidatePathScope(std::size_t index) { push_validate_path(index); }
     ~ValidatePathScope() { pop_validate_path(); }
     ValidatePathScope(const ValidatePathScope&) = delete;
     ValidatePathScope& operator=(const ValidatePathScope&) = delete;
@@ -131,11 +147,15 @@ struct ValidationFailure {};
 struct ValidationReport { bool empty() const { return true; } void clear() {} };
 inline void set_validation_report(ValidationReport*) {}
 inline ValidationReport* current_validation_report() { return nullptr; }
-inline void push_validate_path(std::string) {}
+inline void push_validate_path(const char*) {}
+inline void push_validate_path(std::size_t) {}
 inline void pop_validate_path() {}
 inline std::string current_validate_path() { return {}; }
 inline void record_validate_fail(const char*, int64_t, bool) {}
-struct ValidatePathScope { explicit ValidatePathScope(std::string) {} };
+struct ValidatePathScope {
+    explicit ValidatePathScope(const char*)  {}
+    explicit ValidatePathScope(std::size_t) {}
+};
 struct ValidationReportScope { explicit ValidationReportScope(ValidationReport&) {} };
 
 #endif // ASN1CPP_VALIDATE_REPORT

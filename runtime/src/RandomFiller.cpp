@@ -389,19 +389,21 @@ bool RandomFiller::fill_sequence(void* obj, const SequenceSpec& spec, int depth)
 
 bool RandomFiller::fill_choice(void* obj, const ChoiceSpec& spec, int depth) {
     ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(obj);
-    if (ch->choice_alt_count() == 0) return false;
+    if (spec.count == 0) return false;
 
     int limit = (spec.ext_at >= 0 && depth >= cfg_.max_depth - 2)
                     ? spec.ext_at
-                    : ch->choice_alt_count();
-    if (limit == 0) limit = ch->choice_alt_count();
+                    : spec.count;
+    if (limit == 0) limit = spec.count;
 
     int alt_idx = rand_int(0, limit - 1);
-    ch->choice_set_present(alt_idx + 1);
-    ch->choice_emplace(alt_idx + 1);
-    void* aptr = ch->choice_member_ptr(alt_idx + 1);
+    const auto& alt = spec.alternatives[alt_idx];
+    if (alt.emplace_fn) alt.emplace_fn(ch);
+    ch->_present = alt_idx + 1;
+    void* aptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                : reinterpret_cast<char*>(ch) + alt.offset;
 
-    return fill(aptr, *ch->choice_alt_desc(alt_idx).type_descriptor, depth + 1, true);
+    return fill(aptr, *alt.type_descriptor, depth + 1, true);
 }
 
 // ---------------------------------------------------------------------------

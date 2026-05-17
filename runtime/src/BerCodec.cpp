@@ -401,7 +401,7 @@ struct SeqOfBerHandler final : IBerTypeHandler {
                 bufs.reserve(count);
                 for (std::size_t i = 0; i < count; ++i) {
                     const void* eptr = seq.get_const(i);
-                    ValidatePathScope _vps{"[" + std::to_string(i) + "]"};
+                    ValidatePathScope _vps{i};
                     std::vector<uint8_t> tmp;
                     BerWriter ew{tmp};
                     BerEncodeStream es{ew};
@@ -414,7 +414,7 @@ struct SeqOfBerHandler final : IBerTypeHandler {
             }
             for (std::size_t i = 0; i < count; ++i) {
                 const void* eptr = seq.get_const(i);
-                ValidatePathScope _vps{"[" + std::to_string(i) + "]"};
+                ValidatePathScope _vps{i};
                 BerEncodeStream es{inner};
                 codec.encode(es, edef, eptr);
             }
@@ -445,7 +445,7 @@ private:
                 ++old_size;
             }
             void* eptr = seq.get_mut(count);
-            ValidatePathScope _vps{"[" + std::to_string(count) + "]"};
+            ValidatePathScope _vps{count};
             BerDecodeStream es{inner};
             auto res = codec.decode(es, edef, eptr);
             if (!res) return res;
@@ -482,7 +482,7 @@ struct SequenceBerHandler final : IBerTypeHandler {
                                  def.name, mbr.name);
                     return;
                 }
-                const void* mptr = mbr.optional_ops.member_ptr(src, mbr.offset);
+                const Asn1Object* mptr = static_cast<const Asn1Object*>(mbr.optional_ops.member_ptr(src, mbr.offset));
                 const auto& mdef = *mbr.type_descriptor;
                 ValidatePathScope _vps{mbr.name};
 
@@ -568,7 +568,7 @@ private:
                     continue;
                 }
             }
-            void* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
+            Asn1Object* mptr = static_cast<Asn1Object*>(mbr.optional_ops.member_ptr(dest, mbr.offset));
             const auto& mdef = *mbr.type_descriptor;
             ValidatePathScope _vps{mbr.name};
 
@@ -604,7 +604,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 const TypeDescriptor& def, const void* src) const override {
         const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
-        int idx = ch->choice_present();
+        int idx = ch->_present;
         if (idx <= 0 || idx > spec.count) {
             if (debug_flags() & DBG_BER_WRITE)
                 std::fprintf(stderr, "[BER-WRITE] %s CHOICE idx=%d out of range (count=%d)\n",
@@ -613,7 +613,8 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         }
         const auto& alt = spec.alternatives[idx - 1];
         if (!alt.type_descriptor) return;
-        const void* mptr = ch->choice_member_const_ptr(idx);
+        const void* mptr = alt.get_const_fn ? alt.get_const_fn(ch)
+                                            : reinterpret_cast<const char*>(ch) + alt.offset;
         const auto& mdef = *alt.type_descriptor;
         ValidatePathScope _vps{alt.name};
 
@@ -647,9 +648,11 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             int matched = (rel >= 0 && rel < spec.tag_index_size) ? spec.tag_index[rel] : -1;
             if (matched >= 0) {
                 const auto& alt = spec.alternatives[matched];
-                if (ch->choice_present() != matched + 1)
-                    ch->choice_emplace(matched + 1);
-                void* mptr = ch->choice_member_ptr(matched + 1);
+                if (ch->_present != matched + 1) {
+                    if (alt.emplace_fn) alt.emplace_fn(ch);
+                }
+                void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                            : reinterpret_cast<char*>(ch) + alt.offset;
                 const auto& mdef = *alt.type_descriptor;
                 ValidatePathScope _vps{alt.name};
                 DecodeResult ok = decode_ok();
@@ -668,7 +671,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                     ok = codec.decode(ms, mdef, mptr);
                 }
                 if (!ok) return ok;
-                ch->choice_set_present(matched + 1);
+                ch->_present = matched + 1;
                 return decode_ok();
             }
             goto no_match;
@@ -685,9 +688,11 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             }
             if (matched >= 0) {
                 const auto& alt = spec.alternatives[matched];
-                if (ch->choice_present() != matched + 1)
-                    ch->choice_emplace(matched + 1);
-                void* mptr = ch->choice_member_ptr(matched + 1);
+                if (ch->_present != matched + 1) {
+                    if (alt.emplace_fn) alt.emplace_fn(ch);
+                }
+                void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                            : reinterpret_cast<char*>(ch) + alt.offset;
                 const auto& mdef = *alt.type_descriptor;
                 ValidatePathScope _vps{alt.name};
                 DecodeResult ok = decode_ok();
@@ -706,7 +711,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                     ok = codec.decode(ms, mdef, mptr);
                 }
                 if (!ok) return ok;
-                ch->choice_set_present(matched + 1);
+                ch->_present = matched + 1;
                 return decode_ok();
             }
             goto no_match;
@@ -716,9 +721,11 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             const auto& alt = spec.alternatives[i];
             if (!alt.type_descriptor) continue;
             if (peek.cls != alt.tag.cls || peek.number != alt.tag.number) continue;
-            if (ch->choice_present() != i + 1)
-                ch->choice_emplace(i + 1);
-            void* mptr = ch->choice_member_ptr(i + 1);
+            if (ch->_present != i + 1) {
+                if (alt.emplace_fn) alt.emplace_fn(ch);
+            }
+            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                        : reinterpret_cast<char*>(ch) + alt.offset;
             const auto& mdef = *alt.type_descriptor;
             ValidatePathScope _vps{alt.name};
             DecodeResult ok = decode_ok();
@@ -737,7 +744,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 ok = codec.decode(ms, mdef, mptr);
             }
             if (!ok) return ok;
-            ch->choice_set_present(i + 1);
+            ch->_present = i + 1;
             return decode_ok();
         }
 
