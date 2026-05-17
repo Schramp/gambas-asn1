@@ -33,15 +33,15 @@ class BerCodec;
 struct IBerTypeHandler {
     virtual ~IBerTypeHandler() = default;
     virtual void encode(const BerCodec& codec, BerWriter& w,
-                        const TypeDescriptor& def, const void* src) const = 0;
+                        const TypeDescriptor& def, const Asn1Object* src) const = 0;
     virtual DecodeResult decode(const BerCodec& codec, BerReader& r,
-                                const TypeDescriptor& def, void* dest) const = 0;
+                                const TypeDescriptor& def, Asn1Object* dest) const = 0;
     // Decode from raw value bytes (tag+length already consumed by caller).
     // Default: re-tags and calls decode(). Override for zero-alloc fast paths.
     virtual DecodeResult decode_value(const BerCodec& codec,
                                       std::span<const uint8_t> value,
                                       const TypeDescriptor& def,
-                                      void* dest) const;
+                                      Asn1Object* dest) const;
 };
 
 // ---------------------------------------------------------------------------
@@ -58,15 +58,15 @@ public:
 
     void encode(IEncodeStream& dst,
                 const TypeDescriptor& def,
-                const void* src) const override;
+                const Asn1Object* src) const override;
 
     DecodeResult decode(IDecodeStream& src,
                         const TypeDescriptor& def,
-                        void* dest) const override;
+                        Asn1Object* dest) const override;
 
     DecodeResult decode_value(std::span<const uint8_t> value,
                               const TypeDescriptor& def,
-                              void* dest) const;
+                              Asn1Object* dest) const;
 
 private:
     static const IBerTypeHandler* const comp_dispatch_[6];   // indexed by (int)TypeKind

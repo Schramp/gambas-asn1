@@ -22,6 +22,8 @@
 // expected to walk members itself when desired.
 
 #include "TypeDescriptor.hpp"
+#include "Asn1Object.hpp"
+#include "EnumValue.hpp"
 #include "types/Integer.hpp"
 #include "types/OctetString.hpp"
 #include "types/BitString.hpp"
@@ -29,9 +31,9 @@
 
 namespace asn1 {
 
-inline int64_t validate(const TypeDescriptor& def, const void* obj) {
+inline int64_t validate(const TypeDescriptor& def, const Asn1Object* obj) {
     if (def.enum_spec)
-        return def.enum_spec->validate(*static_cast<const long*>(obj));
+        return def.enum_spec->validate(static_cast<const EnumValue*>(obj)->value());
     if (def.seq_of_spec)
         return def.seq_of_spec->validate(*static_cast<const SeqOfBase*>(obj));
 

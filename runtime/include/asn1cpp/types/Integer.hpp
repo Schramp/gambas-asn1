@@ -42,11 +42,15 @@ class Integer : public Asn1Object {
     int64_t value_{0};
 public:
     Integer() = default;
-    explicit Integer(int64_t v) : value_(v) {}
+    Integer(int64_t v) : value_(v) {}  // implicit: allows using MyAlias = asn1::Integer with natural syntax
     int64_t value() const { return value_; }
     void    set(int64_t v) { value_ = v; }
-    operator int64_t() const { return value_; }
-    bool operator==(const Integer&) const = default;
+    Integer& operator=(int64_t v) { value_ = v; return *this; }
+    explicit operator int64_t() const { return value_; }
+    bool operator==(const Integer& o) const { return value_ == o.value_; }
+    bool operator!=(const Integer& o) const { return value_ != o.value_; }
+    bool operator==(int64_t v) const { return value_ == v; }
+    bool operator!=(int64_t v) const { return value_ != v; }
 
     // Returns 0 when value_ satisfies the constraint, otherwise a signed
     // delta such that (value_ + delta) lands at the nearest valid bound:
@@ -149,11 +153,15 @@ class UInteger : public Asn1Object {
     uint64_t value_{0};
 public:
     UInteger() = default;
-    explicit UInteger(uint64_t v) : value_(v) {}
+    UInteger(uint64_t v) : value_(v) {}  // implicit: same rationale as Integer
     uint64_t value() const { return value_; }
     void     set(uint64_t v) { value_ = v; }
-    operator uint64_t() const { return value_; }
-    bool operator==(const UInteger&) const = default;
+    UInteger& operator=(uint64_t v) { value_ = v; return *this; }
+    explicit operator uint64_t() const { return value_; }
+    bool operator==(const UInteger& o) const { return value_ == o.value_; }
+    bool operator!=(const UInteger& o) const { return value_ != o.value_; }
+    bool operator==(uint64_t v) const { return value_ == v; }
+    bool operator!=(uint64_t v) const { return value_ != v; }
 
     int64_t validate(const Constraints& c) const {
         if (c.flags & Constraints::EXTENSIBLE) return 0;

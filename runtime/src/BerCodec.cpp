@@ -4,6 +4,7 @@
 #include <vector>
 #include <asn1cpp/codec/BerCodec.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
+#include <asn1cpp/EnumValue.hpp>
 #include <asn1cpp/codec/Debug.hpp>
 #include <asn1cpp/types/Boolean.hpp>
 #include <asn1cpp/types/OctetString.hpp>
@@ -46,7 +47,7 @@ static void dbg_write_tag(const char* parent, const char* member, const Tag& t,
 
 static void ber_encode_implicit_tagged(const BerCodec& codec, BerWriter& w,
                                        uint32_t ctx_tag_number,
-                                       const TypeDescriptor& mdef, const void* mptr,
+                                       const TypeDescriptor& mdef, const Asn1Object* mptr,
                                        const char* parent_name, const char* member_name) {
     std::vector<uint8_t> tmp;
     { BerWriter bw{tmp}; BerEncodeStream ms{bw}; codec.encode(ms, mdef, mptr); }
@@ -63,7 +64,7 @@ static void ber_encode_implicit_tagged(const BerCodec& codec, BerWriter& w,
 
 static void ber_encode_explicit_tagged(const BerCodec& codec, BerWriter& w,
                                        const Tag& ctx_tag,
-                                       const TypeDescriptor& mdef, const void* mptr) {
+                                       const TypeDescriptor& mdef, const Asn1Object* mptr) {
     w.write_constructed(ctx_tag, [&](BerWriter& w2) {
         BerEncodeStream ms{w2};
         codec.encode(ms, mdef, mptr);
@@ -75,12 +76,12 @@ static void ber_encode_explicit_tagged(const BerCodec& codec, BerWriter& w,
 
 struct ErrorBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter&,
-                const TypeDescriptor& def, const void*) const override {
+                const TypeDescriptor& def, const Asn1Object*) const override {
         std::fprintf(stderr, "BerCodec: unreachable dispatch for type '%s'\n", def.name);
         assert(false && "BerCodec: unreachable dispatch table entry");
     }
     DecodeResult decode(const BerCodec&, BerReader&,
-                        const TypeDescriptor& def, void*) const override {
+                        const TypeDescriptor& def, Asn1Object*) const override {
         assert(false && "BerCodec: unreachable dispatch table entry");
         return decode_err(DecodeError(std::string("BerCodec: unsupported: ") + def.name));
     }
@@ -88,18 +89,18 @@ struct ErrorBerHandler final : IBerTypeHandler {
 
 struct BooleanBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const void* src) const override {
+                const TypeDescriptor&, const Asn1Object* src) const override {
         BerTraits<Boolean>::encode(w, *static_cast<const Boolean*>(src));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         auto v = BerTraits<Boolean>::decode(r);
         if (!v) return decode_err(v.error());
         *static_cast<Boolean*>(dest) = *v;
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
-                              const TypeDescriptor&, void* dest) const override {
+                              const TypeDescriptor&, Asn1Object* dest) const override {
         if (value.empty()) return decode_err(DecodeError("BOOLEAN: empty value"));
         *static_cast<Boolean*>(dest) = Boolean(value[0] != 0);
         return decode_ok();
@@ -108,7 +109,7 @@ struct BooleanBerHandler final : IBerTypeHandler {
 
 struct IntegerBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         if (def.constraints.int_kind == Constraints::INT_U64) {
             BerTraits<UInteger>::encode(w, *static_cast<const UInteger*>(src));
             return;
@@ -118,7 +119,7 @@ struct IntegerBerHandler final : IBerTypeHandler {
         w.write_primitive(def.tag, std::span<const uint8_t>(bytes.data(), bytes.size()));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
         if (tlv->tag != def.tag)
@@ -126,12 +127,12 @@ struct IntegerBerHandler final : IBerTypeHandler {
         return decode_value_impl(def, tlv->value, dest);
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
-                              const TypeDescriptor& def, void* dest) const override {
+                              const TypeDescriptor& def, Asn1Object* dest) const override {
         return decode_value_impl(def, value, dest);
     }
 private:
     static DecodeResult decode_value_impl(const TypeDescriptor& def,
-                                          std::span<const uint8_t> value, void* dest) {
+                                          std::span<const uint8_t> value, Asn1Object* dest) {
         if (def.constraints.int_kind == Constraints::INT_U64) {
             auto v = BerTraits<UInteger>::decode_value(value);
             if (!v) return decode_err(v.error());
@@ -147,11 +148,11 @@ private:
 
 struct NullBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor& def, const void*) const override {
+                const TypeDescriptor& def, const Asn1Object*) const override {
         w.write_primitive(def.tag, {});
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor& def, void*) const override {
+                        const TypeDescriptor& def, Asn1Object*) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
         if (tlv->tag != def.tag)
@@ -159,25 +160,25 @@ struct NullBerHandler final : IBerTypeHandler {
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t>,
-                              const TypeDescriptor&, void*) const override {
+                              const TypeDescriptor&, Asn1Object*) const override {
         return decode_ok();
     }
 };
 
 struct RealBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const void* src) const override {
+                const TypeDescriptor&, const Asn1Object* src) const override {
         BerTraits<Real>::encode(w, *static_cast<const Real*>(src));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         auto v = BerTraits<Real>::decode(r);
         if (!v) return decode_err(v.error());
         *static_cast<Real*>(dest) = *v;
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
-                              const TypeDescriptor&, void* dest) const override {
+                              const TypeDescriptor&, Asn1Object* dest) const override {
         auto v = BerTraits<Real>::decode_value(value);
         if (!v) return decode_err(v.error());
         *static_cast<Real*>(dest) = *v;
@@ -187,18 +188,18 @@ struct RealBerHandler final : IBerTypeHandler {
 
 struct BitStringBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const void* src) const override {
+                const TypeDescriptor&, const Asn1Object* src) const override {
         BerTraits<BitString>::encode(w, *static_cast<const BitString*>(src));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         auto v = BerTraits<BitString>::decode(r);
         if (!v) return decode_err(v.error());
         *static_cast<BitString*>(dest) = std::move(*v);
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
-                              const TypeDescriptor&, void* dest) const override {
+                              const TypeDescriptor&, Asn1Object* dest) const override {
         auto v = BerTraits<BitString>::decode_value(value);
         if (!v) return decode_err(v.error());
         *static_cast<BitString*>(dest) = std::move(*v);
@@ -208,18 +209,18 @@ struct BitStringBerHandler final : IBerTypeHandler {
 
 struct OctetStringBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const void* src) const override {
+                const TypeDescriptor&, const Asn1Object* src) const override {
         BerTraits<OctetString>::encode(w, *static_cast<const OctetString*>(src));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
         static_cast<OctetString*>(dest)->set(tlv->value);
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
-                              const TypeDescriptor&, void* dest) const override {
+                              const TypeDescriptor&, Asn1Object* dest) const override {
         static_cast<OctetString*>(dest)->set(value);
         return decode_ok();
     }
@@ -227,18 +228,18 @@ struct OctetStringBerHandler final : IBerTypeHandler {
 
 struct OidBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const void* src) const override {
+                const TypeDescriptor&, const Asn1Object* src) const override {
         BerTraits<Oid>::encode(w, *static_cast<const Oid*>(src));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         auto v = BerTraits<Oid>::decode(r);
         if (!v) return decode_err(v.error());
         *static_cast<Oid*>(dest) = std::move(*v);
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
-                              const TypeDescriptor&, void* dest) const override {
+                              const TypeDescriptor&, Asn1Object* dest) const override {
         auto v = BerTraits<Oid>::decode_value(value);
         if (!v) return decode_err(v.error());
         *static_cast<Oid*>(dest) = std::move(*v);
@@ -248,18 +249,18 @@ struct OidBerHandler final : IBerTypeHandler {
 
 struct RelOidBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const void* src) const override {
+                const TypeDescriptor&, const Asn1Object* src) const override {
         BerTraits<RelativeOid>::encode(w, *static_cast<const RelativeOid*>(src));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         auto v = BerTraits<RelativeOid>::decode(r);
         if (!v) return decode_err(v.error());
         *static_cast<RelativeOid*>(dest) = std::move(*v);
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
-                              const TypeDescriptor&, void* dest) const override {
+                              const TypeDescriptor&, Asn1Object* dest) const override {
         auto v = BerTraits<RelativeOid>::decode_value(value);
         if (!v) return decode_err(v.error());
         *static_cast<RelativeOid*>(dest) = std::move(*v);
@@ -269,13 +270,13 @@ struct RelOidBerHandler final : IBerTypeHandler {
 
 struct UtcTimeBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& s = static_cast<const AsnStringBase*>(src)->str();
         w.write_primitive(def.tag, std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(s.data()), s.size()));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
         static_cast<AsnStringBase*>(dest)->str().assign(
@@ -283,7 +284,7 @@ struct UtcTimeBerHandler final : IBerTypeHandler {
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
-                              const TypeDescriptor&, void* dest) const override {
+                              const TypeDescriptor&, Asn1Object* dest) const override {
         static_cast<AsnStringBase*>(dest)->str().assign(
             reinterpret_cast<const char*>(value.data()), value.size());
         return decode_ok();
@@ -292,13 +293,13 @@ struct UtcTimeBerHandler final : IBerTypeHandler {
 
 struct GenTimeBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& s = static_cast<const AsnStringBase*>(src)->str();
         w.write_primitive(def.tag, std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(s.data()), s.size()));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
         static_cast<AsnStringBase*>(dest)->str().assign(
@@ -306,7 +307,7 @@ struct GenTimeBerHandler final : IBerTypeHandler {
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
-                              const TypeDescriptor&, void* dest) const override {
+                              const TypeDescriptor&, Asn1Object* dest) const override {
         static_cast<AsnStringBase*>(dest)->str().assign(
             reinterpret_cast<const char*>(value.data()), value.size());
         return decode_ok();
@@ -315,13 +316,13 @@ struct GenTimeBerHandler final : IBerTypeHandler {
 
 struct AsnStringBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& s = static_cast<const AsnStringBase*>(src)->str();
         w.write_primitive(def.tag, std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(s.data()), s.size()));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
         if (tlv->tag != def.tag)
@@ -331,7 +332,7 @@ struct AsnStringBerHandler final : IBerTypeHandler {
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
-                              const TypeDescriptor&, void* dest) const override {
+                              const TypeDescriptor&, Asn1Object* dest) const override {
         static_cast<AsnStringBase*>(dest)->str().assign(
             reinterpret_cast<const char*>(value.data()), value.size());
         return decode_ok();
@@ -340,12 +341,12 @@ struct AsnStringBerHandler final : IBerTypeHandler {
 
 struct AnyBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const void* src) const override {
+                const TypeDescriptor&, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
         w.append(v.bytes());
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         // ANY content may be empty or contain multiple TLVs — consume all remaining bytes.
         std::size_t n = r.remaining();
         auto raw = r.read_bytes(n);
@@ -357,34 +358,34 @@ struct AnyBerHandler final : IBerTypeHandler {
 
 struct EnumeratedBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor& def, const void* src) const override {
-        long v = *static_cast<const long*>(src);
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        long v = static_cast<const EnumValue*>(src)->value();
         auto bytes = detail::encode_integer_bytes(v);
         w.write_primitive(def.tag, std::span<const uint8_t>(bytes.data(), bytes.size()));
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
         if (tlv->tag != def.tag)
             return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
         auto v = BerTraits<Integer>::decode_value(tlv->value);
         if (!v) return decode_err(v.error());
-        *static_cast<long*>(dest) = static_cast<long>(v->value());
+        static_cast<EnumValue*>(dest)->set(static_cast<long>(v->value()));
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
-                              const TypeDescriptor&, void* dest) const override {
+                              const TypeDescriptor&, Asn1Object* dest) const override {
         auto v = BerTraits<Integer>::decode_value(value);
         if (!v) return decode_err(v.error());
-        *static_cast<long*>(dest) = static_cast<long>(v->value());
+        static_cast<EnumValue*>(dest)->set(static_cast<long>(v->value()));
         return decode_ok();
     }
 };
 
 struct SeqOfBerHandler final : IBerTypeHandler {
     void encode(const BerCodec& codec, BerWriter& w,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& spec = *def.seq_of_spec;
         const auto& seq  = *static_cast<const SeqOfBase*>(src);
         std::size_t count = seq.count();
@@ -400,7 +401,7 @@ struct SeqOfBerHandler final : IBerTypeHandler {
                 std::vector<std::vector<uint8_t>> bufs;
                 bufs.reserve(count);
                 for (std::size_t i = 0; i < count; ++i) {
-                    const void* eptr = seq.get_const(i);
+                    const Asn1Object* eptr = seq.get_const(i);
                     ValidatePathScope _vps{i};
                     std::vector<uint8_t> tmp;
                     BerWriter ew{tmp};
@@ -413,7 +414,7 @@ struct SeqOfBerHandler final : IBerTypeHandler {
                 return;
             }
             for (std::size_t i = 0; i < count; ++i) {
-                const void* eptr = seq.get_const(i);
+                const Asn1Object* eptr = seq.get_const(i);
                 ValidatePathScope _vps{i};
                 BerEncodeStream es{inner};
                 codec.encode(es, edef, eptr);
@@ -421,19 +422,19 @@ struct SeqOfBerHandler final : IBerTypeHandler {
         });
     }
     DecodeResult decode(const BerCodec& codec, BerReader& r,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
         return decode_body(codec, r.sub(tlv->value), def, dest);
     }
     DecodeResult decode_value(const BerCodec& codec, std::span<const uint8_t> value,
-                              const TypeDescriptor& def, void* dest) const override {
+                              const TypeDescriptor& def, Asn1Object* dest) const override {
         BerReader inner{value};
         return decode_body(codec, inner, def, dest);
     }
 private:
     static DecodeResult decode_body(const BerCodec& codec, BerReader inner,
-                                    const TypeDescriptor& def, void* dest) {
+                                    const TypeDescriptor& def, Asn1Object* dest) {
         const auto& spec = *def.seq_of_spec;
         const auto& edef = *spec.element;
         SeqOfBase& seq   = *static_cast<SeqOfBase*>(dest);
@@ -444,7 +445,7 @@ private:
                 seq.resize(count + 1);
                 ++old_size;
             }
-            void* eptr = seq.get_mut(count);
+            Asn1Object* eptr = seq.get_mut(count);
             ValidatePathScope _vps{count};
             BerDecodeStream es{inner};
             auto res = codec.decode(es, edef, eptr);
@@ -459,7 +460,7 @@ private:
 
 struct SequenceBerHandler final : IBerTypeHandler {
     void encode(const BerCodec& codec, BerWriter& w,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& spec = *def.sequence_spec;
         w.write_constructed(def.tag, [&](BerWriter& inner) {
             for (int i = 0; i < spec.count; ++i) {
@@ -482,7 +483,7 @@ struct SequenceBerHandler final : IBerTypeHandler {
                                  def.name, mbr.name);
                     return;
                 }
-                const Asn1Object* mptr = static_cast<const Asn1Object*>(mbr.optional_ops.member_ptr(src, mbr.offset));
+                const Asn1Object* mptr = mbr.optional_ops.member_ptr(src);
                 const auto& mdef = *mbr.type_descriptor;
                 ValidatePathScope _vps{mbr.name};
 
@@ -508,19 +509,19 @@ struct SequenceBerHandler final : IBerTypeHandler {
         });
     }
     DecodeResult decode(const BerCodec& codec, BerReader& r,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
         return decode_body(codec, r.sub(tlv->value), def, dest);
     }
     DecodeResult decode_value(const BerCodec& codec, std::span<const uint8_t> value,
-                              const TypeDescriptor& def, void* dest) const override {
+                              const TypeDescriptor& def, Asn1Object* dest) const override {
         BerReader inner{value};
         return decode_body(codec, inner, def, dest);
     }
 private:
     static DecodeResult decode_body(const BerCodec& codec, BerReader inner,
-                                    const TypeDescriptor& def, void* dest) {
+                                    const TypeDescriptor& def, Asn1Object* dest) {
         const auto& spec = *def.sequence_spec;
         for (int i = 0; i < spec.count; ++i) {
             const auto& mbr = spec.members[i];
@@ -568,7 +569,7 @@ private:
                     continue;
                 }
             }
-            Asn1Object* mptr = static_cast<Asn1Object*>(mbr.optional_ops.member_ptr(dest, mbr.offset));
+            Asn1Object* mptr = mbr.optional_ops.member_ptr(dest);
             const auto& mdef = *mbr.type_descriptor;
             ValidatePathScope _vps{mbr.name};
 
@@ -601,9 +602,9 @@ private:
 
 struct ChoiceBerHandler final : IBerTypeHandler {
     void encode(const BerCodec& codec, BerWriter& w,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& spec = *def.choice_spec;
-        const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
+        const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int idx = ch->_present;
         if (idx <= 0 || idx > spec.count) {
             if (debug_flags() & DBG_BER_WRITE)
@@ -613,8 +614,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         }
         const auto& alt = spec.alternatives[idx - 1];
         if (!alt.type_descriptor) return;
-        const void* mptr = alt.get_const_fn ? alt.get_const_fn(ch)
-                                            : reinterpret_cast<const char*>(ch) + alt.offset;
+        const Asn1Object* mptr = alt.get_const_fn(const_cast<Asn1Object*>(src));
         const auto& mdef = *alt.type_descriptor;
         ValidatePathScope _vps{alt.name};
 
@@ -638,9 +638,9 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         }
     }
     DecodeResult decode(const BerCodec& codec, BerReader& r,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         const auto& spec = *def.choice_spec;
-        ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(dest);
+        ChoiceInterface* ch = static_cast<ChoiceInterface*>(dest);
         Tag peek = r.peek_tag();
 
         if (spec.tag_index && peek.cls == TagClass::Context) {
@@ -651,8 +651,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 if (ch->_present != matched + 1) {
                     if (alt.emplace_fn) alt.emplace_fn(ch);
                 }
-                void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
-                                            : reinterpret_cast<char*>(ch) + alt.offset;
+                Asn1Object* mptr = alt.get_mut_fn(ch);
                 const auto& mdef = *alt.type_descriptor;
                 ValidatePathScope _vps{alt.name};
                 DecodeResult ok = decode_ok();
@@ -691,8 +690,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 if (ch->_present != matched + 1) {
                     if (alt.emplace_fn) alt.emplace_fn(ch);
                 }
-                void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
-                                            : reinterpret_cast<char*>(ch) + alt.offset;
+                Asn1Object* mptr = alt.get_mut_fn(ch);
                 const auto& mdef = *alt.type_descriptor;
                 ValidatePathScope _vps{alt.name};
                 DecodeResult ok = decode_ok();
@@ -724,8 +722,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             if (ch->_present != i + 1) {
                 if (alt.emplace_fn) alt.emplace_fn(ch);
             }
-            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
-                                        : reinterpret_cast<char*>(ch) + alt.offset;
+            Asn1Object* mptr = alt.get_mut_fn(ch);
             const auto& mdef = *alt.type_descriptor;
             ValidatePathScope _vps{alt.name};
             DecodeResult ok = decode_ok();
@@ -770,7 +767,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             std::string("BerCodec: no matching CHOICE alternative for ") + def.name));
     }
     DecodeResult decode_value(const BerCodec& codec, std::span<const uint8_t> value,
-                              const TypeDescriptor& def, void* dest) const override {
+                              const TypeDescriptor& def, Asn1Object* dest) const override {
         BerReader r{value};
         return decode(codec, r, def, dest);
     }
@@ -806,7 +803,7 @@ static const ChoiceBerHandler      s_choice;
 DecodeResult IBerTypeHandler::decode_value(const BerCodec& codec,
                                             std::span<const uint8_t> value,
                                             const TypeDescriptor& def,
-                                            void* dest) const {
+                                            Asn1Object* dest) const {
     std::vector<uint8_t> retagged;
     { BerWriter bw{retagged}; bw.write_tag(def.tag); bw.write_length(value.size()); }
     retagged.insert(retagged.end(), value.begin(), value.end());
@@ -867,7 +864,7 @@ const IBerTypeHandler* const BerCodec::prim_dispatch_[32] = {
 
 void BerCodec::encode(IEncodeStream& dst,
                       const TypeDescriptor& def,
-                      const void* src) const
+                      const Asn1Object* src) const
 {
 #if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_ENCODE)
     if (!def.is_any && !(debug_flags() & DBG_NO_VALIDATE)) {
@@ -895,7 +892,7 @@ void BerCodec::encode(IEncodeStream& dst,
 
 DecodeResult BerCodec::decode(IDecodeStream& src,
                               const TypeDescriptor& def,
-                              void* dest) const
+                              Asn1Object* dest) const
 {
     auto& s = static_cast<BerDecodeStream&>(src);
     BerReader& r = s.reader();
@@ -924,7 +921,7 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
 
 DecodeResult BerCodec::decode_value(std::span<const uint8_t> value,
                                      const TypeDescriptor& def,
-                                     void* dest) const {
+                                     Asn1Object* dest) const {
     if (def.kind == TypeKind::Primitive)
         return prim_dispatch_[def.tag.number]->decode_value(*this, value, def, dest);
     return comp_dispatch_[(int)def.kind]->decode_value(*this, value, def, dest);

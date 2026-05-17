@@ -30,26 +30,26 @@ static void check(const char* label, bool cond) {
     else      { printf("  \033[31mFAIL\033[0m  %s\n", label); ++failures; }
 }
 
-static std::vector<uint8_t> ber_enc(const TypeDescriptor& def, const void* p) {
+static std::vector<uint8_t> ber_enc(const TypeDescriptor& def, const Asn1Object* p) {
     std::vector<uint8_t> buf;
     BerWriter w{buf}; BerEncodeStream s{w};
     BerCodec::instance().encode(s, def, p);
     return buf;
 }
 
-static bool ber_dec(std::span<const uint8_t> bytes, const TypeDescriptor& def, void* p) {
+static bool ber_dec(std::span<const uint8_t> bytes, const TypeDescriptor& def, Asn1Object* p) {
     BerReader r{bytes}; BerDecodeStream s{r};
     return BerCodec::instance().decode(s, def, p).has_value();
 }
 
-static std::string xer_enc(const TypeDescriptor& def, const void* p) {
+static std::string xer_enc(const TypeDescriptor& def, const Asn1Object* p) {
     std::ostringstream oss;
     XerEncodeStream s{oss};
     XerCodec::instance().encode(s, def, p);
     return oss.str();
 }
 
-static bool xer_dec(const std::string& xml, const TypeDescriptor& def, void* p) {
+static bool xer_dec(const std::string& xml, const TypeDescriptor& def, Asn1Object* p) {
     XerDecodeStream s{xml};
     return XerCodec::instance().decode(s, def, p).has_value();
 }

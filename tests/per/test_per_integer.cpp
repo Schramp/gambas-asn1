@@ -27,7 +27,8 @@ static void check(const char* name, bool cond, const char* detail = "") {
 static std::vector<uint8_t> per_encode(const TypeDescriptor& def, int64_t v) {
     std::vector<uint8_t> buf;
     PerEncodeStream s{buf};
-    PerCodec::instance().encode(s, def, &v);
+    Integer iv{v};
+    PerCodec::instance().encode(s, def, &iv);
     s.flush();
     return buf;
 }
@@ -36,7 +37,9 @@ static std::vector<uint8_t> per_encode(const TypeDescriptor& def, int64_t v) {
 static bool per_decode(const TypeDescriptor& def,
                        std::span<const uint8_t> bytes, int64_t& out) {
     PerDecodeStream s{bytes};
-    auto r = PerCodec::instance().decode(s, def, &out);
+    Integer iv;
+    auto r = PerCodec::instance().decode(s, def, &iv);
+    if (r) out = iv.value();
     return r.has_value();
 }
 

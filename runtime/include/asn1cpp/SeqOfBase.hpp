@@ -10,10 +10,10 @@ namespace asn1 {
 // Inherits Asn1Object so codec handlers can cast void* -> SeqOfBase* safely.
 class SeqOfBase : public Asn1Object {
 public:
-    virtual std::size_t count()                    const = 0;
-    virtual void*       get_mut(std::size_t i)           = 0;
-    virtual const void* get_const(std::size_t i)   const = 0;
-    virtual void        resize(std::size_t n)            = 0;
+    virtual std::size_t       count()                    const = 0;
+    virtual Asn1Object*       get_mut(std::size_t i)           = 0;
+    virtual const Asn1Object* get_const(std::size_t i)   const = 0;
+    virtual void              resize(std::size_t n)            = 0;
     virtual ~SeqOfBase() = default;
 };
 
@@ -27,9 +27,9 @@ public:
     VectorSeqOf(std::initializer_list<ElemType> init) : data_(init) {}
 
     // SeqOfBase interface
-    std::size_t count() const override { return data_.size(); }
-    void*       get_mut(std::size_t i) override { return &data_[i]; }
-    const void* get_const(std::size_t i) const override { return &data_[i]; }
+    std::size_t       count() const override { return data_.size(); }
+    Asn1Object*       get_mut(std::size_t i) override { return &data_[i]; }
+    const Asn1Object* get_const(std::size_t i) const override { return &data_[i]; }
     void        resize(std::size_t n) override { data_.resize(n); }
 
     // Standard container interface for user code

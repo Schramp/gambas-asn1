@@ -5,6 +5,9 @@
 #include <asn1cpp/codec/PerCodec.hpp>
 #include <asn1cpp/codec/Alphabets.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
+#include <asn1cpp/EnumValue.hpp>
+#include <asn1cpp/types/Boolean.hpp>
+#include <asn1cpp/types/Integer.hpp>
 
 namespace asn1 {
 
@@ -100,7 +103,7 @@ static void encode_unconstrained_int(PerEncodeStream& s, int64_t value) {
     for (int i = 0; i < len; ++i) s.put_bits(buf[i], 8);
 }
 
-static DecodeResult decode_unconstrained_int(PerDecodeStream& s, void* dest) {
+static DecodeResult decode_unconstrained_int(PerDecodeStream& s, int64_t* dest) {
     auto len_bits = s.get_bits(8);
     if (!len_bits) return decode_err(len_bits.error());
     int len = static_cast<int>(*len_bits);
@@ -113,7 +116,7 @@ static DecodeResult decode_unconstrained_int(PerDecodeStream& s, void* dest) {
         if (i == 0 && (*b & 0x80)) value = -1;
         value = (value << 8) | static_cast<int64_t>(*b);
     }
-    *static_cast<int64_t*>(dest) = value;
+    *dest = value;
     return decode_ok();
 }
 
@@ -179,7 +182,7 @@ static void build_canonical_maps(const ChoiceSpec& spec, int root_count,
 }
 
 static void encode_open_type(const PerCodec& codec, PerEncodeStream& s,
-                              const TypeDescriptor& mdef, const void* mptr) {
+                              const TypeDescriptor& mdef, const Asn1Object* mptr) {
     std::vector<uint8_t> tmp;
     PerEncodeStream tmp_s{tmp};
     IEncodeStream& es = tmp_s;
@@ -190,7 +193,7 @@ static void encode_open_type(const PerCodec& codec, PerEncodeStream& s,
 }
 
 static DecodeResult decode_open_type(const PerCodec& codec, PerDecodeStream& s,
-                                     const TypeDescriptor& mdef, void* mptr) {
+                                     const TypeDescriptor& mdef, Asn1Object* mptr) {
     auto len_r = per_detail::get_length(s);
     if (!len_r) return decode_err(len_r.error());
     auto bytes_r = per_detail::read_bytes(s, *len_r);
@@ -215,12 +218,12 @@ static DecodeResult skip_open_type(PerDecodeStream& s) {
 
 struct ErrorPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream&,
-                const TypeDescriptor& def, const void*) const override {
+                const TypeDescriptor& def, const Asn1Object*) const override {
         assert(false && "PerCodec: unreachable dispatch table entry");
         (void)def;
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream&,
-                        const TypeDescriptor& def, void*) const override {
+                        const TypeDescriptor& def, Asn1Object*) const override {
         assert(false && "PerCodec: unreachable dispatch table entry");
         return decode_err(DecodeError(std::string("PerCodec: unsupported: ") + def.name));
     }
@@ -228,14 +231,14 @@ struct ErrorPerHandler final : IPerTypeHandler {
 
 struct AnyPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream& s,
-                const TypeDescriptor&, const void* src) const override {
+                const TypeDescriptor&, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
         auto bytes = v.bytes();
         per_detail::put_length(s, bytes.size());
         for (auto b : bytes) s.put_bits(b, 8);
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         auto len_r = per_detail::get_length(s);
         if (!len_r) return decode_err(len_r.error());
         auto bytes_r = per_detail::read_bytes(s, *len_r);
@@ -247,23 +250,23 @@ struct AnyPerHandler final : IPerTypeHandler {
 
 struct BooleanPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream& s,
-                const TypeDescriptor&, const void* src) const override {
-        bool v = *static_cast<const bool*>(src);
+                const TypeDescriptor&, const Asn1Object* src) const override {
+        bool v = static_cast<const Boolean*>(src)->value();
         s.put_bits(v ? 1 : 0, 1);
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         auto bit = s.get_bits(1);
         if (!bit) return decode_err(bit.error());
-        *static_cast<bool*>(dest) = (*bit != 0);
+        static_cast<Boolean*>(dest)->set(*bit != 0);
         return decode_ok();
     }
 };
 
 struct IntegerPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
-        int64_t value = *static_cast<const int64_t*>(src);
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        int64_t value = static_cast<const Integer*>(src)->value();
         const Constraints& pc = def.constraints;
         if (pc.flags & Constraints::CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
@@ -286,50 +289,55 @@ struct IntegerPerHandler final : IPerTypeHandler {
         }
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         const Constraints& pc = def.constraints;
+        auto* idest = static_cast<Integer*>(dest);
+        auto read_raw = [&](int64_t& out) { return decode_unconstrained_int(s, &out); };
         if (pc.flags & Constraints::CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
                 auto ext = s.get_bits(1);
                 if (!ext) return decode_err(ext.error());
-                if (*ext) return decode_unconstrained_int(s, dest);
+                if (*ext) { int64_t v = 0; auto r = read_raw(v); if (r) idest->set(v); return r; }
             }
             int64_t rcount = pc.upper_bound - pc.lower_bound + 1;
             auto bits = s.get_bits(range_bits(rcount));
             if (!bits) return decode_err(bits.error());
-            *static_cast<int64_t*>(dest) = pc.lower_bound + static_cast<int64_t>(*bits);
+            idest->set(pc.lower_bound + static_cast<int64_t>(*bits));
             return decode_ok();
         } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
                 auto ext = s.get_bits(1);
                 if (!ext) return decode_err(ext.error());
-                if (*ext) return decode_unconstrained_int(s, dest);
+                if (*ext) { int64_t v = 0; auto r = read_raw(v); if (r) idest->set(v); return r; }
             }
             int64_t adjusted = 0;
-            auto r = decode_unconstrained_int(s, &adjusted);
+            auto r = read_raw(adjusted);
             if (!r) return r;
-            *static_cast<int64_t*>(dest) = adjusted + pc.lower_bound;
+            idest->set(adjusted + pc.lower_bound);
             return decode_ok();
         } else {
-            return decode_unconstrained_int(s, dest);
+            int64_t v = 0;
+            auto r = read_raw(v);
+            if (r) idest->set(v);
+            return r;
         }
     }
 };
 
 struct NullPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream&,
-                const TypeDescriptor&, const void*) const override {
+                const TypeDescriptor&, const Asn1Object*) const override {
         // NULL: zero bits (X.691 §18.1)
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream&,
-                        const TypeDescriptor&, void*) const override {
+                        const TypeDescriptor&, Asn1Object*) const override {
         return decode_ok();
     }
 };
 
 struct RealPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream& s,
-                const TypeDescriptor&, const void* src) const override {
+                const TypeDescriptor&, const Asn1Object* src) const override {
         const Real& v = *static_cast<const Real*>(src);
         if (v.value() == 0.0) return;
         std::vector<uint8_t> ber;
@@ -339,14 +347,14 @@ struct RealPerHandler final : IPerTypeHandler {
         for (std::size_t i = 0; i < content_len; ++i) s.put_bits(ber[2 + i], 8);
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         return per_detail::decode_ber_content<Real>(s, dest);
     }
 };
 
 struct BitStringPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const BitString& v = *static_cast<const BitString*>(src);
         std::size_t bit_count = v.bit_count();
         encode_size_field(s, def, bit_count);
@@ -359,7 +367,7 @@ struct BitStringPerHandler final : IPerTypeHandler {
         }
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto len_r = decode_size_field(s, def);
         if (!len_r) return decode_err(len_r.error());
         std::size_t bit_count = *len_r;
@@ -382,13 +390,13 @@ struct BitStringPerHandler final : IPerTypeHandler {
 
 struct OctetStringPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
         encode_size_field(s, def, v.size());
         for (uint8_t b : v.bytes()) s.put_bits(b, 8);
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto len_r = decode_size_field(s, def);
         if (!len_r) return decode_err(len_r.error());
         auto bytes = per_detail::read_bytes(s, *len_r);
@@ -400,30 +408,30 @@ struct OctetStringPerHandler final : IPerTypeHandler {
 
 struct OidPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream& s,
-                const TypeDescriptor&, const void* src) const override {
+                const TypeDescriptor&, const Asn1Object* src) const override {
         per_detail::encode_ber_content<Oid>(s, src);
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         return per_detail::decode_ber_content<Oid>(s, dest);
     }
 };
 
 struct RelOidPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream& s,
-                const TypeDescriptor&, const void* src) const override {
+                const TypeDescriptor&, const Asn1Object* src) const override {
         per_detail::encode_ber_content<RelativeOid>(s, src);
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
-                        const TypeDescriptor&, void* dest) const override {
+                        const TypeDescriptor&, Asn1Object* dest) const override {
         return per_detail::decode_ber_content<RelativeOid>(s, dest);
     }
 };
 
 struct StringPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
-        const std::string& str = *reinterpret_cast<const std::string*>(src);
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        const std::string& str = static_cast<const AsnStringBase*>(src)->str();
         const Constraints& pc = def.constraints;
         auto [bits, bpc] = string_params(def.tag.number);
         bool has_alpha = pc.alphabet_bits > 0 && !pc.alphabet.empty();
@@ -467,7 +475,7 @@ struct StringPerHandler final : IPerTypeHandler {
         }
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         const Constraints& pc = def.constraints;
         if (pc.flags & Constraints::EXTENSIBLE) {
             auto ext = s.get_bits(1);
@@ -482,7 +490,7 @@ struct StringPerHandler final : IPerTypeHandler {
                     if (!b) return decode_err(b.error());
                     result.push_back(static_cast<char>(*b));
                 }
-                *reinterpret_cast<std::string*>(dest) = std::move(result);
+                static_cast<AsnStringBase*>(dest)->str() = std::move(result);
                 return decode_ok();
             }
         }
@@ -530,15 +538,15 @@ struct StringPerHandler final : IPerTypeHandler {
                 }
             }
         }
-        *reinterpret_cast<std::string*>(dest) = std::move(result);
+        static_cast<AsnStringBase*>(dest)->str() = std::move(result);
         return decode_ok();
     }
 };
 
 struct EnumeratedPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
-        long value = *static_cast<const long*>(src);
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        long value = static_cast<const EnumValue*>(src)->value();
         const EnumSpec& spec = *def.enum_spec;
         int rcount = spec.root_count > 0 ? spec.root_count : spec.count;
         const long* order = spec.per_value_order;
@@ -568,7 +576,7 @@ struct EnumeratedPerHandler final : IPerTypeHandler {
         }
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         const EnumSpec& spec = *def.enum_spec;
         int rcount = spec.root_count > 0 ? spec.root_count : spec.count;
         bool is_ext = false;
@@ -587,7 +595,7 @@ struct EnumeratedPerHandler final : IPerTypeHandler {
             const long* order = spec.per_value_order;
             if (order) value = order[*idx];
             else       value = spec.entries[*idx].value;
-            *static_cast<long*>(dest) = value;
+            static_cast<EnumValue*>(dest)->set(value);
             return decode_ok();
         } else {
             auto ord = get_nsnnwn(s);
@@ -595,7 +603,7 @@ struct EnumeratedPerHandler final : IPerTypeHandler {
             int ext_entry = rcount + *ord;
             if (ext_entry >= spec.count)
                 return decode_err(DecodeError("PER: ENUM extension index out of range"));
-            *static_cast<long*>(dest) = spec.entries[ext_entry].value;
+            static_cast<EnumValue*>(dest)->set(spec.entries[ext_entry].value);
             return decode_ok();
         }
     }
@@ -603,7 +611,7 @@ struct EnumeratedPerHandler final : IPerTypeHandler {
 
 struct SeqOfPerHandler final : IPerTypeHandler {
     void encode(const PerCodec& codec, PerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& spec = *def.seq_of_spec;
         const SeqOfBase& seq = *static_cast<const SeqOfBase*>(src);
         std::size_t count = seq.count();
@@ -623,7 +631,7 @@ struct SeqOfPerHandler final : IPerTypeHandler {
             codec.encode(es, edef, seq.get_const(i));
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         const auto& spec = *def.seq_of_spec;
         const auto& sc = spec.size_constraints;
         std::size_t count = 0;
@@ -654,7 +662,7 @@ struct SeqOfPerHandler final : IPerTypeHandler {
 
 struct SequencePerHandler final : IPerTypeHandler {
     void encode(const PerCodec& codec, PerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& spec = *def.sequence_spec;
         int root_end = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
         bool has_ext = false;
@@ -674,9 +682,7 @@ struct SequencePerHandler final : IPerTypeHandler {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
             if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
-            const void* mptr = mbr.optional_ops.get_ptr
-                ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
-                : static_cast<const char*>(src) + mbr.offset;
+            const Asn1Object* mptr = mbr.optional_ops.member_ptr(src);
             codec.encode(es, *mbr.type_descriptor, mptr);
         }
         if (has_ext) {
@@ -687,15 +693,13 @@ struct SequencePerHandler final : IPerTypeHandler {
             for (int i = root_end; i < spec.count; ++i) {
                 const auto& mbr = spec.members[i];
                 if (!mbr.type_descriptor || !mbr.optional_ops.is_present(src)) continue;
-                const void* mptr = mbr.optional_ops.get_ptr
-                    ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
-                    : static_cast<const char*>(src) + mbr.offset;
+                const Asn1Object* mptr = mbr.optional_ops.member_ptr(src);
                 encode_open_type(codec, s, *mbr.type_descriptor, mptr);
             }
         }
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         const auto& spec = *def.sequence_spec;
         int root_end = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
         bool ext_flag = false;
@@ -723,9 +727,7 @@ struct SequencePerHandler final : IPerTypeHandler {
                 mbr.optional_ops.set_present(dest, present);
                 if (!present) continue;
             }
-            void* mptr = mbr.optional_ops.get_ptr
-                ? mbr.optional_ops.get_ptr(dest)
-                : static_cast<char*>(dest) + mbr.offset;
+            Asn1Object* mptr = mbr.optional_ops.member_ptr(dest);
             auto r = codec.decode(ds, *mbr.type_descriptor, mptr);
             if (!r) return r;
         }
@@ -753,9 +755,7 @@ struct SequencePerHandler final : IPerTypeHandler {
                     if (i < known_ext) {
                         const auto& mbr = spec.members[root_end + i];
                         mbr.optional_ops.set_present(dest, true);
-                        void* mptr = mbr.optional_ops.get_ptr
-                            ? mbr.optional_ops.get_ptr(dest)
-                            : static_cast<char*>(dest) + mbr.offset;
+                        Asn1Object* mptr = mbr.optional_ops.member_ptr(dest);
                         auto r = decode_open_type(codec, s, *mbr.type_descriptor, mptr);
                         if (!r) return r;
                     } else {
@@ -770,9 +770,9 @@ struct SequencePerHandler final : IPerTypeHandler {
 
 struct ChoicePerHandler final : IPerTypeHandler {
     void encode(const PerCodec& codec, PerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& spec = *def.choice_spec;
-        const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
+        const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int pr = ch->_present;
         if (pr <= 0 || pr > spec.count) return;
         int def_idx = pr - 1;
@@ -788,8 +788,7 @@ struct ChoicePerHandler final : IPerTypeHandler {
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
             IEncodeStream& es = s;
-            const void* mptr = alt.get_const_fn ? alt.get_const_fn(ch)
-                                                : reinterpret_cast<const char*>(ch) + alt.offset;
+            const Asn1Object* mptr = alt.get_const_fn(ch);
             codec.encode(es, *alt.type_descriptor, mptr);
         } else {
             int ext_idx = def_idx - root_count;
@@ -802,15 +801,14 @@ struct ChoicePerHandler final : IPerTypeHandler {
             }
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
-            const void* mptr = alt.get_const_fn ? alt.get_const_fn(ch)
-                                                : reinterpret_cast<const char*>(ch) + alt.offset;
+            const Asn1Object* mptr = alt.get_const_fn(ch);
             encode_open_type(codec, s, *alt.type_descriptor, mptr);
         }
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         const auto& spec = *def.choice_spec;
-        ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(dest);
+        ChoiceInterface* ch = static_cast<ChoiceInterface*>(dest);
         int root_count = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
         bool in_ext = false;
         if (spec.ext_at >= 0) {
@@ -838,8 +836,7 @@ struct ChoicePerHandler final : IPerTypeHandler {
                 if (alt.emplace_fn) alt.emplace_fn(ch);
             }
             ch->_present = def_idx + 1;
-            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
-                                        : reinterpret_cast<char*>(ch) + alt.offset;
+            Asn1Object* mptr = alt.get_mut_fn(ch);
             IDecodeStream& ds = s;
             auto r = codec.decode(ds, *alt.type_descriptor, mptr);
             if (!r) return r;
@@ -865,8 +862,7 @@ struct ChoicePerHandler final : IPerTypeHandler {
                         if (alt.emplace_fn) alt.emplace_fn(ch);
                     }
                     ch->_present = def_idx + 1;
-                    void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
-                                                : reinterpret_cast<char*>(ch) + alt.offset;
+                    Asn1Object* mptr = alt.get_mut_fn(ch);
                     auto r = decode_open_type(codec, s, *alt.type_descriptor, mptr);
                     if (!r) return r;
                 } else {
@@ -953,7 +949,7 @@ const IPerTypeHandler* const PerCodec::prim_dispatch_[32] = {
 
 void PerCodec::encode(IEncodeStream& dst,
                       const TypeDescriptor& def,
-                      const void* src) const
+                      const Asn1Object* src) const
 {
     auto& s = static_cast<PerEncodeStream&>(dst);
     if (def.kind == TypeKind::Primitive)
@@ -964,7 +960,7 @@ void PerCodec::encode(IEncodeStream& dst,
 
 DecodeResult PerCodec::decode(IDecodeStream& src,
                               const TypeDescriptor& def,
-                              void* dest) const
+                              Asn1Object* dest) const
 {
     auto& s = static_cast<PerDecodeStream&>(src);
     if (def.kind == TypeKind::Primitive)

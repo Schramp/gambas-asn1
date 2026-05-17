@@ -1,11 +1,12 @@
 #pragma once
 #include <format>
 #include "../Tag.hpp"
+#include "../Asn1Object.hpp"
 #include "../codec/BerTraits.hpp"
 
 namespace asn1 {
 
-struct Null {
+struct Null : public Asn1Object {
     bool operator==(const Null&) const = default;
 };
 

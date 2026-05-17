@@ -222,8 +222,8 @@ int main() {
     std::printf("\nColor ENUMERATED\n");
     { HasColor h{}; h.v = Color::red;                expect_delta("red (in map)  → pass", h, asn_DEF_HasColor, 0); }
     { HasColor h{}; h.v = Color::blue;               expect_delta("blue (in map) → pass", h, asn_DEF_HasColor, 0); }
-    { HasColor h{}; h.v = static_cast<Color>(3);     expect_delta("3 (just outside)→ fail", h, asn_DEF_HasColor, 1); }
-    { HasColor h{}; h.v = static_cast<Color>(99);    expect_delta("99 (far outside)→ fail", h, asn_DEF_HasColor, 1); }
+    { HasColor h{}; h.v = Color(static_cast<Color::Enm>(3));  expect_delta("3 (just outside)→ fail", h, asn_DEF_HasColor, 1); }
+    { HasColor h{}; h.v = Color(static_cast<Color::Enm>(99)); expect_delta("99 (far outside)→ fail", h, asn_DEF_HasColor, 1); }
 
     // --- SEQUENCE OF SIZE --------------------------------------------------
     // ShortList (SIZE 1..3)
@@ -259,7 +259,7 @@ int main() {
         if (dec.v == BIG)
             std::printf("  \033[32mPASS\033[0m  ByteCount BER round-trip > INT64_MAX (9-byte)\n");
         else { std::printf("  \033[31mFAIL\033[0m  ByteCount BER round-trip: got %llu expected %llu\n",
-                           (unsigned long long)dec.v, (unsigned long long)BIG); ++failures; }
+                           (unsigned long long)dec.v.value(), (unsigned long long)BIG); ++failures; }
     }
 
     // --- Decode-side validation (encode + decode round-trip) ----------------

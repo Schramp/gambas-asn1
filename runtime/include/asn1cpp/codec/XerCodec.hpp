@@ -334,9 +334,9 @@ class XerCodec;
 struct IXerTypeHandler {
     virtual ~IXerTypeHandler() = default;
     virtual void encode(const XerCodec& codec, XerEncodeStream& s,
-                        const TypeDescriptor& def, const void* src) const = 0;
+                        const TypeDescriptor& def, const Asn1Object* src) const = 0;
     virtual DecodeResult decode(const XerCodec& codec, XerDecodeStream& s,
-                                const TypeDescriptor& def, void* dest) const = 0;
+                                const TypeDescriptor& def, Asn1Object* dest) const = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -353,11 +353,11 @@ public:
 
     void encode(IEncodeStream& dst,
                 const TypeDescriptor& def,
-                const void* src) const override;
+                const Asn1Object* src) const override;
 
     DecodeResult decode(IDecodeStream& src,
                         const TypeDescriptor& def,
-                        void* dest) const override;
+                        Asn1Object* dest) const override;
 
 private:
     static const IXerTypeHandler* const comp_dispatch_[6];   // indexed by (int)TypeKind
