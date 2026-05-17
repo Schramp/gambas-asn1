@@ -5,6 +5,7 @@
 #include <span>
 #include <format>
 #include "../Tag.hpp"
+#include "../Asn1Object.hpp"
 #include "../Error.hpp"
 #include "../Expected.hpp"
 #include "../codec/BerWriter.hpp"
@@ -37,7 +38,7 @@ inline std::vector<uint8_t> encode_integer_bytes(int64_t n) {
 
 // Integer wraps int64_t (sufficient for all ETSI LI integers in practice).
 // The compiler can specialise this for constrained ranges.
-class Integer {
+class Integer : public Asn1Object {
     int64_t value_{0};
 public:
     Integer() = default;
@@ -144,7 +145,7 @@ struct BerTraits<int64_t> {
 // UInteger — uint64_t storage for non-negative semi-constrained / large ranges
 // ---------------------------------------------------------------------------
 
-class UInteger {
+class UInteger : public Asn1Object {
     uint64_t value_{0};
 public:
     UInteger() = default;

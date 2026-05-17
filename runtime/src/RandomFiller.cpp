@@ -1,4 +1,5 @@
 #include <asn1cpp/codec/RandomFiller.hpp>
+#include <asn1cpp/ChoiceInterface.hpp>
 #include <asn1cpp/codec/Alphabets.hpp>
 #include <asn1cpp/Validate.hpp>
 #include <algorithm>
@@ -360,29 +361,19 @@ void RandomFiller::fill_enum(void* obj, const EnumSpec& spec) {
 bool RandomFiller::fill_sequence(void* obj, const SequenceSpec& spec, int depth) {
     for (int i = 0; i < spec.count; ++i) {
         const MemberDescriptor& mbr = spec.members[i];
-
         bool is_ext = (spec.ext_at >= 0 && i >= spec.ext_at);
 
         if (mbr.optional) {
-            // Extension members: lower probability and only when depth allows.
             double p = is_ext ? cfg_.optional_prob * 0.3 : cfg_.optional_prob;
             bool present = (depth < cfg_.max_depth) && coin(p);
             mbr.optional_ops.set_present(obj, present);
             if (!present) continue;
         }
 
-        void* mptr = mbr.optional_ops
-                       ? mbr.optional_ops.member_ptr(obj, mbr.offset)
-                       : static_cast<char*>(obj) + mbr.offset;
-
-        // Mandatory: always fill (bypass soft depth limit), but still increment depth
-        // to keep the absolute-limit stack-overflow guard working.
-        // Optional: increment depth and apply soft limit.
+        void* mptr = mbr.optional_ops.member_ptr(obj, mbr.offset);
         bool is_mand = !mbr.optional;
         bool ok = fill(mptr, *mbr.type_descriptor, depth + 1, is_mand);
         if (!ok) {
-            // Couldn't satisfy a constraint. Optional members get dropped;
-            // mandatory failures bubble up so the caller can retry.
             if (mbr.optional)
                 mbr.optional_ops.set_present(obj, false);
             else
@@ -397,29 +388,20 @@ bool RandomFiller::fill_sequence(void* obj, const SequenceSpec& spec, int depth)
 // ---------------------------------------------------------------------------
 
 bool RandomFiller::fill_choice(void* obj, const ChoiceSpec& spec, int depth) {
+    ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(obj);
     if (spec.count == 0) return false;
 
-    // Stay in root alternatives when near depth limit.
     int limit = (spec.ext_at >= 0 && depth >= cfg_.max_depth - 2)
                     ? spec.ext_at
                     : spec.count;
     if (limit == 0) limit = spec.count;
 
     int alt_idx = rand_int(0, limit - 1);
-    *static_cast<int*>(obj) = alt_idx + 1;   // 1-based discriminant
-
-    const MemberDescriptor& alt = spec.alternatives[alt_idx];
-
-    void* aptr;
-    if (alt.emplace_fn) {
-        alt.emplace_fn(obj);
-        aptr = alt.get_mut_fn(obj);
-    } else if (alt.optional_ops) {
-        alt.optional_ops.set_present(obj, true);
-        aptr = alt.optional_ops.member_ptr(obj, alt.offset);
-    } else {
-        aptr = static_cast<char*>(obj) + alt.offset;
-    }
+    const auto& alt = spec.alternatives[alt_idx];
+    if (alt.emplace_fn) alt.emplace_fn(ch);
+    ch->_present = alt_idx + 1;
+    void* aptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                : reinterpret_cast<char*>(ch) + alt.offset;
 
     return fill(aptr, *alt.type_descriptor, depth + 1, true);
 }
@@ -452,24 +434,25 @@ bool RandomFiller::fill_seq_of(void* obj, const SeqOfSpec& spec, int depth) {
     if (lo > hi) lo = hi;
 
     int n = rand_int(lo, hi);
-    spec.resize_fn(obj, static_cast<std::size_t>(n));
+    SeqOfBase& seq = *static_cast<SeqOfBase*>(obj);
+    seq.resize(static_cast<std::size_t>(n));
 
     int valid = 0;
     for (int i = 0; i < n; ++i) {
-        void* eptr = spec.get_fn(obj, static_cast<std::size_t>(i));
+        void* eptr = seq.get_mut(static_cast<std::size_t>(i));
         // Mandatory minimum elements bypass soft limit but still increment depth.
         bool mand = (i < lo);
         if (fill(eptr, *spec.element, depth + 1, mand)) {
             ++valid;
         } else if (mand) {
             // Couldn't satisfy the mandatory minimum; truncate and signal failure.
-            spec.resize_fn(obj, static_cast<std::size_t>(valid));
+            seq.resize(static_cast<std::size_t>(valid));
             return false;
         }
         // Optional element failure: stop adding more, keep what we have.
         else { break; }
     }
-    spec.resize_fn(obj, static_cast<std::size_t>(valid));
+    seq.resize(static_cast<std::size_t>(valid));
     return true;
 }
 

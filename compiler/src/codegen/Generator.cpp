@@ -61,11 +61,11 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         return cpp_name_for_typeref(*tr);
     if (def.is_seq_of()) {
         const auto& sof = std::get<ast::SequenceOfType>(def.body);
-        return std::format("std::vector<{}>", cpp_type_for(*sof.element));
+        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(*sof.element));
     }
     if (def.is_set_of()) {
         const auto& sof = std::get<ast::SetOfType>(def.body);
-        return std::format("std::vector<{}>", cpp_type_for(*sof.element));
+        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(*sof.element));
     }
     if (def.is_sequence() || def.is_choice() || def.is_set())
         return make_synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
@@ -1038,7 +1038,7 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     }
 
     // class — optional members use unique_ptr (forward-decl compatible, matches asn1c semantics)
-    os << std::format("class {} {{\npublic:\n", cname);
+    os << std::format("class {} : public asn1::SequenceBase<{}> {{\npublic:\n", cname, cname);
     if (has_optional_members) {
         // All special members declared (not defaulted) so unique_ptr<T> destructor/assignment
         // has complete T in the .cpp where they are defined = default.
@@ -1069,11 +1069,13 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
             os << std::format("    void set_{}({} val);\n", mname, si.param_type);
         }
     }
+    if (mcount > 0) {
+        os << std::format("    static const asn1::MemberDescriptor s_members[{}];\n", mcount);
+        os << "    static const int s_member_count;\n";
+    }
     os << "};\n\n";
 
-    // Extern descriptor declarations
-    if (mcount > 0)
-        os << std::format("extern const asn1::MemberDescriptor asn_MBR_{}[{}];\n", cname, mcount);
+    // Extern descriptor declarations (s_members declared inside class; only SPC+DEF are global)
     os << std::format("extern const asn1::SequenceSpec     asn_SPC_{};\n", cname);
     os << std::format("extern const asn1::TypeDescriptor   asn_DEF_{};\n\n", cname);
 
@@ -1186,8 +1188,8 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 ++atag;
             }
         }
-        // Pass 2: emit the array
-        os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
+        // Pass 2: emit the array (as class static member definition)
+        os << std::format("const asn1::MemberDescriptor {}::s_members[] = {{\n", cname);
         for (const auto& r : rows) {
             // Emit &_isdef_… reference only when the default-value helper
             // pair was actually emitted. emit_default_setter() returns
@@ -1198,22 +1200,29 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string def_cmp = (r.has_default && r.def_setter != "nullptr")
                 ? std::format("&_isdef_{}_{}", cname, r.mname)
                 : "nullptr";
-            os << std::format("    {{ \"{}\", {}, {}, {}, offsetof({}, {}), {}, {}, {}, {}, {} }},\n",
+            // Optional members: offset unused at runtime (get_ptr function pointer
+            // handles access via UniquePtrOps). Emit 0 to avoid -Winvalid-offsetof
+            // on non-standard-layout types (unique_ptr makes them non-standard-layout).
+            std::string offset_expr = r.optional
+                ? "0"
+                : std::format("ASN1CPP_OFFSETOF({}, {})", cname, r.mname);
+            os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {}, {} }},\n",
                 r.name, r.eff_tag,
                 r.optional ? "true" : "false",
                 r.has_default ? "true" : "false",
-                cname, r.mname,
+                offset_expr,
                 r.tdref, r.ops,
                 r.is_explicit ? "true" : "false",
                 r.def_setter, def_cmp);
         }
-        os << "};\n\n";
+        os << "};\n";
+        os << std::format("const int {}::s_member_count = {};\n\n", cname, mcount);
     }
 
     // SequenceSpec
     os << std::format("const asn1::SequenceSpec asn_SPC_{} = {{\n", cname);
     if (mcount > 0)
-        os << std::format("    asn_MBR_{},\n", cname);
+        os << std::format("    {}::s_members,\n", cname);
     else
         os << "    nullptr,\n";
     os << std::format("    {},\n", mcount);
@@ -1294,15 +1303,14 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
 
     // class with PR enum + std::variant storage + typed accessors
     os << std::format("#include <variant>\n");
-    os << std::format("class {} {{\npublic:\n", cname);
+    os << std::format("class {} : public asn1::ChoiceInterface {{\npublic:\n", cname);
     os << "    enum class PR : int { NOTHING = 0";
     int pr_idx = 1;
     for (const auto& m : def.members)
         if (!m->is_extension_marker)
             os << std::format(", {} = {}", to_cpp_name(m->name), pr_idx++);
     os << " };\n";
-    // _present at offset 0 for codec int-write backward compat
-    os << "    int _present{0};\n";
+    // _present lives in ChoiceInterface base class
     // variant storage — only active alternative constructed
     os << "    std::variant<std::monostate";
     for (const auto& m : def.members) {
@@ -1334,11 +1342,13 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
         os << std::format("    const {0}& {1}() const {{ return std::get<{2}>(u); }}\n", t, n, pr_idx);
         ++pr_idx;
     }
+    if (count > 0) {
+        os << std::format("    static const asn1::MemberDescriptor s_alternatives[{}];\n", count);
+        os << "    static const int s_alternative_count;\n";
+    }
     os << "};\n\n";
 
-    // Extern descriptor declarations
-    if (count > 0)
-        os << std::format("extern const asn1::MemberDescriptor asn_MBR_{}[{}];\n", cname, count);
+    // Extern descriptor declarations (s_alternatives declared inside class; only SPC+DEF are global)
     os << std::format("extern const asn1::ChoiceSpec       asn_SPC_{};\n", cname);
     os << std::format("extern const asn1::TypeDescriptor   asn_DEF_{};\n\n", cname);
 
@@ -1349,12 +1359,15 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     auto [count, ext_at] = count_members(def);
     bool apply_auto_tags = should_apply_auto_tags(def);
+    bool has_tag_index = false;
+    int  tag_index_base = 0, tag_index_size = 0;
 
     // Alternative descriptor table
     if (count > 0) {
         struct AltRow {
             std::string name, eff_tag, mname, tdref;
             bool is_explicit;
+            int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows + emit any static TypeDescriptors (must precede array).
@@ -1364,7 +1377,12 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string mname = to_member_name(m->name);
             auto [eff_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
-            rows.push_back({ m->name, eff_tag, mname, tdref, is_explicit });
+            int tag_ctx_num = -1;
+            if (apply_auto_tags)
+                tag_ctx_num = auto_tag_num;
+            else if (m->tag.present() && m->tag.cls == ast::TagClass::Context)
+                tag_ctx_num = m->tag.number;
+            rows.push_back({ m->name, eff_tag, mname, tdref, is_explicit, tag_ctx_num });
             ++auto_tag_num;
           }
         }
@@ -1381,8 +1399,8 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
           }
           os << '\n';
         }
-        // Pass 3: emit array.
-        os << std::format("const asn1::MemberDescriptor asn_MBR_{}[] = {{\n", cname);
+        // Pass 3: emit array (as class static member definition).
+        os << std::format("const asn1::MemberDescriptor {}::s_alternatives[] = {{\n", cname);
         { int vi = 1;
           for (const auto& r : rows) {
             os << std::format("    {{ \"{}\", {}, false, false, 0 /* variant */, {}, {{}}, {}, nullptr, nullptr,\n",
@@ -1394,7 +1412,31 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             ++vi;
           }
         }
-        os << "};\n\n";
+        os << "};\n";
+        os << std::format("const int {}::s_alternative_count = {};\n\n", cname, count);
+
+        // O(1) context-tag dispatch table — emit when ALL alternatives carry a context tag.
+        // Density threshold: only emit if range <= 4× count (avoids huge sparse arrays).
+        bool all_ctx = true;
+        int min_tag = std::numeric_limits<int>::max(), max_tag = std::numeric_limits<int>::min();
+        for (const auto& r : rows) {
+            if (r.tag_cls_int < 0) { all_ctx = false; break; }
+            min_tag = std::min(min_tag, r.tag_cls_int);
+            max_tag = std::max(max_tag, r.tag_cls_int);
+        }
+        int range = all_ctx ? (max_tag - min_tag + 1) : 0;
+        if (all_ctx && count > 1 && range <= 4 * count) {
+            has_tag_index = true;
+            tag_index_base = min_tag;
+            tag_index_size = range;
+            std::vector<int16_t> idx_table(range, -1);
+            for (int i = 0; i < (int)rows.size(); ++i)
+                idx_table[rows[i].tag_cls_int - min_tag] = (int16_t)i;
+            os << std::format("static const int16_t asn_TAGIDX_{}[] = {{", cname);
+            for (int i = 0; i < range; ++i)
+                os << (i ? ", " : "") << idx_table[i];
+            os << "};\n\n";
+        }
     }
 
     // Compute flattened BER dispatch table (needed when any alternative is an untagged
@@ -1423,14 +1465,19 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     // ChoiceSpec
     os << std::format("const asn1::ChoiceSpec asn_SPC_{} = {{\n", cname);
     if (count > 0)
-        os << std::format("    asn_MBR_{},\n", cname);
+        os << std::format("    {}::s_alternatives,\n", cname);
     else
         os << "    nullptr,\n";
     os << std::format("    {},\n", count);
     os << std::format("    {}, /* ext_at */\n", ext_at);
     os << "    {} /* PER: constraints */\n";
     if (needs_ber_table && !ber_tags.empty())
-        os << std::format("    , asn_BER_{}, {} /* ber_tags */\n", cname, (int)ber_tags.size());
+        os << std::format("    , asn_BER_{0}, {1} /* ber_tags */\n", cname, (int)ber_tags.size());
+    else if (has_tag_index)
+        os << "    , nullptr, 0 /* ber_tags */\n";
+    if (has_tag_index)
+        os << std::format("    , asn_TAGIDX_{0}, {1}, {2} /* tag_index */\n",
+                          cname, tag_index_base, tag_index_size);
     os << "};\n\n";
 
     // TypeDescriptor — CHOICE tag is a transparent placeholder (no fixed universal tag)
@@ -1499,7 +1546,7 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
             os << std::format("#include \"{}.hpp\"\n\n", synth);
             track_include(synth);
         }
-        os << std::format("using {} = std::vector<{}>;\n\n", cname, cpp_type_for(*elem));
+        os << std::format("using {} = asn1::VectorSeqOf<{}>;\n\n", cname, cpp_type_for(*elem));
         os << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", cname);
         os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
@@ -1626,9 +1673,6 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
         ? *std::get<ast::SequenceOfType>(def.body).element
         : *std::get<ast::SetOfType>(def.body).element;
 
-    // Type-erased collection callbacks via template alias
-    os << std::format("using _VecOps_{0} = asn1::VectorOps<{0}>;\n\n", cname);
-
     // SIZE constraint on collection length
     auto sc = compute_size_constraint(extract_size_range(def));
 
@@ -1642,7 +1686,6 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    {},\n", elem_ref);
     os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
                       sc.flags, sc.range_bits, sc.lower, sc.upper);
-    os << std::format("    &_VecOps_{0}::count, &_VecOps_{0}::get_const, &_VecOps_{0}::get_mut, &_VecOps_{0}::resize\n", cname);
     os << "};\n\n";
 
     // TypeDescriptor

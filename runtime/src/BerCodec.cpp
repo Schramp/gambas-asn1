@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <vector>
 #include <asn1cpp/codec/BerCodec.hpp>
+#include <asn1cpp/ChoiceInterface.hpp>
 #include <asn1cpp/codec/Debug.hpp>
 #include <asn1cpp/types/Boolean.hpp>
 #include <asn1cpp/types/OctetString.hpp>
@@ -109,10 +110,10 @@ struct IntegerBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const void* src) const override {
         if (def.constraints.int_kind == Constraints::INT_U64) {
-            BerTraits<UInteger>::encode(w, UInteger{*static_cast<const uint64_t*>(src)});
+            BerTraits<UInteger>::encode(w, *static_cast<const UInteger*>(src));
             return;
         }
-        int64_t v = *static_cast<const int64_t*>(src);
+        int64_t v = static_cast<const Integer*>(src)->value();
         auto bytes = detail::encode_integer_bytes(v);
         w.write_primitive(def.tag, std::span<const uint8_t>(bytes.data(), bytes.size()));
     }
@@ -134,12 +135,12 @@ private:
         if (def.constraints.int_kind == Constraints::INT_U64) {
             auto v = BerTraits<UInteger>::decode_value(value);
             if (!v) return decode_err(v.error());
-            *static_cast<uint64_t*>(dest) = v->value();
+            static_cast<UInteger*>(dest)->set(v->value());
             return decode_ok();
         }
         auto v = BerTraits<Integer>::decode_value(value);
         if (!v) return decode_err(v.error());
-        *static_cast<int64_t*>(dest) = v->value();
+        static_cast<Integer*>(dest)->set(v->value());
         return decode_ok();
     }
 };
@@ -385,7 +386,8 @@ struct SeqOfBerHandler final : IBerTypeHandler {
     void encode(const BerCodec& codec, BerWriter& w,
                 const TypeDescriptor& def, const void* src) const override {
         const auto& spec = *def.seq_of_spec;
-        std::size_t count = spec.count_fn(src);
+        const auto& seq  = *static_cast<const SeqOfBase*>(src);
+        std::size_t count = seq.count();
         const auto& edef = *spec.element;
         bool is_set_of = (def.tag.cls == TagClass::Universal &&
                           def.tag.number == UniversalTag::Set);
@@ -398,8 +400,8 @@ struct SeqOfBerHandler final : IBerTypeHandler {
                 std::vector<std::vector<uint8_t>> bufs;
                 bufs.reserve(count);
                 for (std::size_t i = 0; i < count; ++i) {
-                    const void* eptr = spec.get_const_fn(src, i);
-                    ValidatePathScope _vps{"[" + std::to_string(i) + "]"};
+                    const void* eptr = seq.get_const(i);
+                    ValidatePathScope _vps{i};
                     std::vector<uint8_t> tmp;
                     BerWriter ew{tmp};
                     BerEncodeStream es{ew};
@@ -411,8 +413,8 @@ struct SeqOfBerHandler final : IBerTypeHandler {
                 return;
             }
             for (std::size_t i = 0; i < count; ++i) {
-                const void* eptr = spec.get_const_fn(src, i);
-                ValidatePathScope _vps{"[" + std::to_string(i) + "]"};
+                const void* eptr = seq.get_const(i);
+                ValidatePathScope _vps{i};
                 BerEncodeStream es{inner};
                 codec.encode(es, edef, eptr);
             }
@@ -434,22 +436,23 @@ private:
                                     const TypeDescriptor& def, void* dest) {
         const auto& spec = *def.seq_of_spec;
         const auto& edef = *spec.element;
-        std::size_t old_size = spec.count_fn(dest);
+        SeqOfBase& seq   = *static_cast<SeqOfBase*>(dest);
+        std::size_t old_size = seq.count();
         std::size_t count = 0;
         while (!inner.at_end()) {
             if (count >= old_size) {
-                spec.resize_fn(dest, count + 1);
+                seq.resize(count + 1);
                 ++old_size;
             }
-            void* eptr = spec.get_fn(dest, count);
-            ValidatePathScope _vps{"[" + std::to_string(count) + "]"};
+            void* eptr = seq.get_mut(count);
+            ValidatePathScope _vps{count};
             BerDecodeStream es{inner};
             auto res = codec.decode(es, edef, eptr);
             if (!res) return res;
             ++count;
         }
         if (count < old_size)
-            spec.resize_fn(dest, count);
+            seq.resize(count);
         return decode_ok();
     }
 };
@@ -479,9 +482,7 @@ struct SequenceBerHandler final : IBerTypeHandler {
                                  def.name, mbr.name);
                     return;
                 }
-                const void* mptr = mbr.optional_ops.get_ptr
-                    ? mbr.optional_ops.get_ptr(const_cast<void*>(src))
-                    : static_cast<const char*>(src) + mbr.offset;
+                const Asn1Object* mptr = static_cast<const Asn1Object*>(mbr.optional_ops.member_ptr(src, mbr.offset));
                 const auto& mdef = *mbr.type_descriptor;
                 ValidatePathScope _vps{mbr.name};
 
@@ -567,9 +568,7 @@ private:
                     continue;
                 }
             }
-            void* mptr = mbr.optional_ops.get_ptr
-                ? mbr.optional_ops.get_ptr(dest)
-                : static_cast<char*>(dest) + mbr.offset;
+            Asn1Object* mptr = static_cast<Asn1Object*>(mbr.optional_ops.member_ptr(dest, mbr.offset));
             const auto& mdef = *mbr.type_descriptor;
             ValidatePathScope _vps{mbr.name};
 
@@ -604,7 +603,8 @@ struct ChoiceBerHandler final : IBerTypeHandler {
     void encode(const BerCodec& codec, BerWriter& w,
                 const TypeDescriptor& def, const void* src) const override {
         const auto& spec = *def.choice_spec;
-        int idx = *static_cast<const int*>(src);
+        const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
+        int idx = ch->_present;
         if (idx <= 0 || idx > spec.count) {
             if (debug_flags() & DBG_BER_WRITE)
                 std::fprintf(stderr, "[BER-WRITE] %s CHOICE idx=%d out of range (count=%d)\n",
@@ -613,8 +613,8 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         }
         const auto& alt = spec.alternatives[idx - 1];
         if (!alt.type_descriptor) return;
-        const void* mptr = alt.get_const_fn ? alt.get_const_fn(src)
-                                            : static_cast<const char*>(src) + alt.offset;
+        const void* mptr = alt.get_const_fn ? alt.get_const_fn(ch)
+                                            : reinterpret_cast<const char*>(ch) + alt.offset;
         const auto& mdef = *alt.type_descriptor;
         ValidatePathScope _vps{alt.name};
 
@@ -640,23 +640,19 @@ struct ChoiceBerHandler final : IBerTypeHandler {
     DecodeResult decode(const BerCodec& codec, BerReader& r,
                         const TypeDescriptor& def, void* dest) const override {
         const auto& spec = *def.choice_spec;
+        ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(dest);
         Tag peek = r.peek_tag();
 
-        if (spec.ber_tags) {
-            int matched = -1;
-            for (int j = 0; j < spec.ber_tag_count; ++j) {
-                if (peek.cls == spec.ber_tags[j].tag.cls &&
-                    peek.number == spec.ber_tags[j].tag.number) {
-                    matched = spec.ber_tags[j].alt_index;
-                    break;
-                }
-            }
+        if (spec.tag_index && peek.cls == TagClass::Context) {
+            int rel = (int)peek.number - spec.tag_index_base;
+            int matched = (rel >= 0 && rel < spec.tag_index_size) ? spec.tag_index[rel] : -1;
             if (matched >= 0) {
                 const auto& alt = spec.alternatives[matched];
-                if (alt.emplace_fn && *static_cast<const int*>(dest) != matched + 1)
-                    alt.emplace_fn(dest);
-                void* mptr = alt.get_mut_fn ? alt.get_mut_fn(dest)
-                                            : static_cast<char*>(dest) + alt.offset;
+                if (ch->_present != matched + 1) {
+                    if (alt.emplace_fn) alt.emplace_fn(ch);
+                }
+                void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                            : reinterpret_cast<char*>(ch) + alt.offset;
                 const auto& mdef = *alt.type_descriptor;
                 ValidatePathScope _vps{alt.name};
                 DecodeResult ok = decode_ok();
@@ -675,7 +671,47 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                     ok = codec.decode(ms, mdef, mptr);
                 }
                 if (!ok) return ok;
-                *static_cast<int*>(dest) = matched + 1;
+                ch->_present = matched + 1;
+                return decode_ok();
+            }
+            goto no_match;
+        }
+
+        if (spec.ber_tags) {
+            int matched = -1;
+            for (int j = 0; j < spec.ber_tag_count; ++j) {
+                if (peek.cls == spec.ber_tags[j].tag.cls &&
+                    peek.number == spec.ber_tags[j].tag.number) {
+                    matched = spec.ber_tags[j].alt_index;
+                    break;
+                }
+            }
+            if (matched >= 0) {
+                const auto& alt = spec.alternatives[matched];
+                if (ch->_present != matched + 1) {
+                    if (alt.emplace_fn) alt.emplace_fn(ch);
+                }
+                void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                            : reinterpret_cast<char*>(ch) + alt.offset;
+                const auto& mdef = *alt.type_descriptor;
+                ValidatePathScope _vps{alt.name};
+                DecodeResult ok = decode_ok();
+                if (alt.tag.cls == TagClass::Context) {
+                    auto outer = r.read_tlv();
+                    if (!outer) return decode_err(outer.error());
+                    if (alt.is_explicit) {
+                        BerReader inner2 = r.sub(outer->value);
+                        BerDecodeStream ms{inner2};
+                        ok = codec.decode(ms, mdef, mptr);
+                    } else {
+                        ok = codec.decode_value(outer->value, mdef, mptr);
+                    }
+                } else {
+                    BerDecodeStream ms{r};
+                    ok = codec.decode(ms, mdef, mptr);
+                }
+                if (!ok) return ok;
+                ch->_present = matched + 1;
                 return decode_ok();
             }
             goto no_match;
@@ -685,10 +721,11 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             const auto& alt = spec.alternatives[i];
             if (!alt.type_descriptor) continue;
             if (peek.cls != alt.tag.cls || peek.number != alt.tag.number) continue;
-            if (alt.emplace_fn && *static_cast<const int*>(dest) != i + 1)
-                alt.emplace_fn(dest);
-            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(dest)
-                                        : static_cast<char*>(dest) + alt.offset;
+            if (ch->_present != i + 1) {
+                if (alt.emplace_fn) alt.emplace_fn(ch);
+            }
+            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                        : reinterpret_cast<char*>(ch) + alt.offset;
             const auto& mdef = *alt.type_descriptor;
             ValidatePathScope _vps{alt.name};
             DecodeResult ok = decode_ok();
@@ -707,7 +744,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 ok = codec.decode(ms, mdef, mptr);
             }
             if (!ok) return ok;
-            *static_cast<int*>(dest) = i + 1;
+            ch->_present = i + 1;
             return decode_ok();
         }
 

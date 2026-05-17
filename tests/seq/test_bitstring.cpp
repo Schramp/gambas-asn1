@@ -39,7 +39,7 @@ static bool ber_decode(std::span<const uint8_t> bytes, HasBitString& out) {
 }
 
 static bool roundtrip(BitString bs) {
-    HasBitString v{bs};
+    HasBitString v; v.flags = bs;
     auto enc = ber_encode(v);
     HasBitString got{};
     if (!ber_decode(enc, got)) return false;
@@ -51,13 +51,13 @@ int main() {
 
     // Empty bit string: SEQUENCE { BIT STRING{unused=0, no payload} }
     // = 30 03 03 01 00
-    HasBitString empty{BitString{{}, 0}};
+    HasBitString empty; empty.flags = BitString{{}, 0};
     auto enc_empty = ber_encode(empty);
     check("HasBitString{empty} BER encodes as 30 03 03 01 00",
           enc_empty == std::vector<uint8_t>({0x30, 0x03, 0x03, 0x01, 0x00}));
 
     // {0xA0}, 3 unused bits: SEQUENCE { 03 02 03 A0 } = 30 04 03 02 03 A0
-    HasBitString one_byte{BitString{{0xA0}, 3}};
+    HasBitString one_byte; one_byte.flags = BitString{{0xA0}, 3};
     auto enc_one = ber_encode(one_byte);
     check("HasBitString{0xA0,3unused} BER encodes as 30 04 03 02 03 A0",
           enc_one == std::vector<uint8_t>({0x30, 0x04, 0x03, 0x02, 0x03, 0xA0}));

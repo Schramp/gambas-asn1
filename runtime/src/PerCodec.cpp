@@ -4,6 +4,7 @@
 #include <numeric>
 #include <asn1cpp/codec/PerCodec.hpp>
 #include <asn1cpp/codec/Alphabets.hpp>
+#include <asn1cpp/ChoiceInterface.hpp>
 
 namespace asn1 {
 
@@ -604,7 +605,8 @@ struct SeqOfPerHandler final : IPerTypeHandler {
     void encode(const PerCodec& codec, PerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
         const auto& spec = *def.seq_of_spec;
-        std::size_t count = spec.count_fn(src);
+        const SeqOfBase& seq = *static_cast<const SeqOfBase*>(src);
+        std::size_t count = seq.count();
         const auto& sc = spec.size_constraints;
         if (sc.flags & Constraints::SIZE_CONSTRAINED) {
             if (sc.size_lower == sc.size_upper) {
@@ -618,7 +620,7 @@ struct SeqOfPerHandler final : IPerTypeHandler {
         const auto& edef = *spec.element;
         IEncodeStream& es = s;
         for (std::size_t i = 0; i < count; ++i)
-            codec.encode(es, edef, spec.get_const_fn(src, i));
+            codec.encode(es, edef, seq.get_const(i));
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& s,
                         const TypeDescriptor& def, void* dest) const override {
@@ -638,11 +640,12 @@ struct SeqOfPerHandler final : IPerTypeHandler {
             if (!v) return decode_err(v.error());
             count = *v;
         }
-        spec.resize_fn(dest, count);
+        SeqOfBase& seq = *static_cast<SeqOfBase*>(dest);
+        seq.resize(count);
         const auto& edef = *spec.element;
         IDecodeStream& ds = s;
         for (std::size_t i = 0; i < count; ++i) {
-            auto r = codec.decode(ds, edef, spec.get_fn(dest, i));
+            auto r = codec.decode(ds, edef, seq.get_mut(i));
             if (!r) return r;
         }
         return decode_ok();
@@ -769,7 +772,8 @@ struct ChoicePerHandler final : IPerTypeHandler {
     void encode(const PerCodec& codec, PerEncodeStream& s,
                 const TypeDescriptor& def, const void* src) const override {
         const auto& spec = *def.choice_spec;
-        int pr = *static_cast<const int*>(src);
+        const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
+        int pr = ch->_present;
         if (pr <= 0 || pr > spec.count) return;
         int def_idx = pr - 1;
         int root_count = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
@@ -784,8 +788,8 @@ struct ChoicePerHandler final : IPerTypeHandler {
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
             IEncodeStream& es = s;
-            const void* mptr = alt.get_const_fn ? alt.get_const_fn(src)
-                                                : static_cast<const char*>(src) + alt.offset;
+            const void* mptr = alt.get_const_fn ? alt.get_const_fn(ch)
+                                                : reinterpret_cast<const char*>(ch) + alt.offset;
             codec.encode(es, *alt.type_descriptor, mptr);
         } else {
             int ext_idx = def_idx - root_count;
@@ -798,14 +802,15 @@ struct ChoicePerHandler final : IPerTypeHandler {
             }
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
-            const void* mptr = alt.get_const_fn ? alt.get_const_fn(src)
-                                                : static_cast<const char*>(src) + alt.offset;
+            const void* mptr = alt.get_const_fn ? alt.get_const_fn(ch)
+                                                : reinterpret_cast<const char*>(ch) + alt.offset;
             encode_open_type(codec, s, *alt.type_descriptor, mptr);
         }
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& s,
                         const TypeDescriptor& def, void* dest) const override {
         const auto& spec = *def.choice_spec;
+        ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(dest);
         int root_count = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
         bool in_ext = false;
         if (spec.ext_at >= 0) {
@@ -829,13 +834,15 @@ struct ChoicePerHandler final : IPerTypeHandler {
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor)
                 return decode_err(DecodeError("CHOICE alternative has no type descriptor"));
-            if (alt.emplace_fn) alt.emplace_fn(dest);
-            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(dest)
-                                        : static_cast<char*>(dest) + alt.offset;
+            if (ch->_present != def_idx + 1) {
+                if (alt.emplace_fn) alt.emplace_fn(ch);
+            }
+            ch->_present = def_idx + 1;
+            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                        : reinterpret_cast<char*>(ch) + alt.offset;
             IDecodeStream& ds = s;
             auto r = codec.decode(ds, *alt.type_descriptor, mptr);
             if (!r) return r;
-            *static_cast<int*>(dest) = def_idx + 1;
             return decode_ok();
         } else {
             auto b = s.get_bits(1);
@@ -854,12 +861,14 @@ struct ChoicePerHandler final : IPerTypeHandler {
             if (def_idx < spec.count) {
                 const auto& alt = spec.alternatives[def_idx];
                 if (alt.type_descriptor) {
-                    if (alt.emplace_fn) alt.emplace_fn(dest);
-                    void* mptr = alt.get_mut_fn ? alt.get_mut_fn(dest)
-                                                : static_cast<char*>(dest) + alt.offset;
+                    if (ch->_present != def_idx + 1) {
+                        if (alt.emplace_fn) alt.emplace_fn(ch);
+                    }
+                    ch->_present = def_idx + 1;
+                    void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
+                                                : reinterpret_cast<char*>(ch) + alt.offset;
                     auto r = decode_open_type(codec, s, *alt.type_descriptor, mptr);
                     if (!r) return r;
-                    *static_cast<int*>(dest) = def_idx + 1;
                 } else {
                     if (auto r = skip_open_type(s); !r) return r;
                 }

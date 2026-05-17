@@ -4,12 +4,13 @@
 #include <format>
 #include <stdexcept>
 #include "../Tag.hpp"
+#include "../Asn1Object.hpp"
 #include "../codec/BerTraits.hpp"
 #include "../codec/Constraints.hpp"
 
 namespace asn1 {
 
-class BitString {
+class BitString : public Asn1Object {
     std::vector<uint8_t> bytes_;  // raw bytes (excluding unused-bits byte)
     uint8_t unused_bits_{0};      // 0-7 unused bits in the last byte
 

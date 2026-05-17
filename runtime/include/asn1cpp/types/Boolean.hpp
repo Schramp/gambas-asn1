@@ -1,11 +1,12 @@
 #pragma once
 #include <format>
 #include "../Tag.hpp"
+#include "../Asn1Object.hpp"
 #include "../codec/BerTraits.hpp"
 
 namespace asn1 {
 
-class Boolean {
+class Boolean : public Asn1Object {
     bool value_{false};
 public:
     Boolean() = default;

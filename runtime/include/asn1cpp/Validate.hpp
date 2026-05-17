@@ -33,7 +33,7 @@ inline int64_t validate(const TypeDescriptor& def, const void* obj) {
     if (def.enum_spec)
         return def.enum_spec->validate(*static_cast<const long*>(obj));
     if (def.seq_of_spec)
-        return def.seq_of_spec->validate(obj);
+        return def.seq_of_spec->validate(*static_cast<const SeqOfBase*>(obj));
 
     if (def.tag.cls != TagClass::Universal) return 0;
 

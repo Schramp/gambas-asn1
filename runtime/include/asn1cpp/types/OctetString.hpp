@@ -4,12 +4,13 @@
 #include <vector>
 #include <format>
 #include "../Tag.hpp"
+#include "../Asn1Object.hpp"
 #include "../codec/BerTraits.hpp"
 #include "../codec/Constraints.hpp"
 
 namespace asn1 {
 
-class OctetString {
+class OctetString : public Asn1Object {
     std::string bytes_; // binary-safe; SSO avoids heap for short strings
 public:
     OctetString() = default;

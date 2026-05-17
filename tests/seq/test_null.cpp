@@ -48,7 +48,7 @@ static bool xer_decode(const std::string& xml, HasNull& out) {
 int main() {
     printf("\n── NULL member — HasNull BER ────────────────────────────────────\n");
 
-    HasNull v{Null{}};
+    HasNull v; v.present = Null{};
     auto enc = ber_encode(v);
 
     check("HasNull BER encodes as 30 02 05 00",
