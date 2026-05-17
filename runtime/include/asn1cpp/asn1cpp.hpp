@@ -3,6 +3,7 @@
 // Umbrella include — pull in everything in one shot.
 
 #include "Asn1Object.hpp"
+#include "EnumValue.hpp"
 #include "SeqOfBase.hpp"
 #include "SequenceInterface.hpp"
 #include "ChoiceInterface.hpp"

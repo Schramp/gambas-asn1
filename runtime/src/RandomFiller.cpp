@@ -1,5 +1,6 @@
 #include <asn1cpp/codec/RandomFiller.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
+#include <asn1cpp/EnumValue.hpp>
 #include <asn1cpp/codec/Alphabets.hpp>
 #include <asn1cpp/Validate.hpp>
 #include <algorithm>
@@ -66,7 +67,7 @@ std::string RandomFiller::random_from_alphabet(std::string_view alpha, int len) 
 // top-level dispatch
 // ---------------------------------------------------------------------------
 
-bool RandomFiller::fill(void* obj, const TypeDescriptor& def, int depth, bool mandatory) {
+bool RandomFiller::fill(Asn1Object* obj, const TypeDescriptor& def, int depth, bool mandatory) {
     if (depth > 1000) return false;                       // absolute safety — catches recursive mandatory cycles
     if (!mandatory && depth > cfg_.max_depth) return false; // soft limit — only skips optional paths
 
@@ -93,7 +94,7 @@ bool RandomFiller::fill(void* obj, const TypeDescriptor& def, int depth, bool ma
 // false for non-resizable primitives. Used by try_fill_primitive's SIZE
 // nudge path so we adjust the produced object directly instead of mutating
 // constraints to coerce fill_primitive into a target length.
-static bool resize_in_place(void* obj, const TypeDescriptor& def,
+static bool resize_in_place(Asn1Object* obj, const TypeDescriptor& def,
                             std::size_t len, std::mt19937& rng) {
     if (def.tag.cls != TagClass::Universal) return false;
     auto rand_byte = [&]{
@@ -155,7 +156,7 @@ static bool resize_in_place(void* obj, const TypeDescriptor& def,
 // Returns true if widening was applicable (caller skips validation/retry);
 // false for primitives without a checkable constraint (caller falls through
 // to the strict in-spec path).
-static bool fill_primitive_loose(void* obj, const TypeDescriptor& def,
+static bool fill_primitive_loose(Asn1Object* obj, const TypeDescriptor& def,
                                  std::mt19937& rng) {
     if (def.tag.cls != TagClass::Universal) return false;
     const auto& c = def.constraints;
@@ -262,7 +263,7 @@ static bool fill_primitive_loose(void* obj, const TypeDescriptor& def,
     }
 }
 
-bool RandomFiller::try_fill_primitive(void* obj, const TypeDescriptor& def) {
+bool RandomFiller::try_fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
     // Loosened-sampling path: at probability cfg_.invalid_percent / 100 the
     // generator samples from a *widened* range that may overshoot the
     // declared constraint. Some samples land in-spec, some don't — natural
@@ -339,7 +340,7 @@ bool RandomFiller::try_fill_primitive(void* obj, const TypeDescriptor& def) {
 // ENUMERATED
 // ---------------------------------------------------------------------------
 
-void RandomFiller::fill_enum(void* obj, const EnumSpec& spec) {
+void RandomFiller::fill_enum(Asn1Object* obj, const EnumSpec& spec) {
     // Pick from root values only (extension values may be rejected by parents
     // expecting non-extensible enums). spec.entries is sorted by value for
     // BER/XER binary search, so its first root_count slots are NOT
@@ -351,14 +352,14 @@ void RandomFiller::fill_enum(void* obj, const EnumSpec& spec) {
     long v = (spec.per_value_order && spec.root_count > 0)
                  ? spec.per_value_order[idx]
                  : spec.entries[idx].value;
-    *static_cast<long*>(obj) = v;
+    static_cast<EnumValue*>(obj)->set(v);
 }
 
 // ---------------------------------------------------------------------------
 // SEQUENCE / SET
 // ---------------------------------------------------------------------------
 
-bool RandomFiller::fill_sequence(void* obj, const SequenceSpec& spec, int depth) {
+bool RandomFiller::fill_sequence(Asn1Object* obj, const SequenceSpec& spec, int depth) {
     for (int i = 0; i < spec.count; ++i) {
         const MemberDescriptor& mbr = spec.members[i];
         bool is_ext = (spec.ext_at >= 0 && i >= spec.ext_at);
@@ -370,7 +371,7 @@ bool RandomFiller::fill_sequence(void* obj, const SequenceSpec& spec, int depth)
             if (!present) continue;
         }
 
-        void* mptr = mbr.optional_ops.member_ptr(obj, mbr.offset);
+        Asn1Object* mptr = mbr.optional_ops.member_ptr(obj);
         bool is_mand = !mbr.optional;
         bool ok = fill(mptr, *mbr.type_descriptor, depth + 1, is_mand);
         if (!ok) {
@@ -387,8 +388,8 @@ bool RandomFiller::fill_sequence(void* obj, const SequenceSpec& spec, int depth)
 // CHOICE
 // ---------------------------------------------------------------------------
 
-bool RandomFiller::fill_choice(void* obj, const ChoiceSpec& spec, int depth) {
-    ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(obj);
+bool RandomFiller::fill_choice(Asn1Object* obj, const ChoiceSpec& spec, int depth) {
+    ChoiceInterface* ch = static_cast<ChoiceInterface*>(obj);
     if (spec.count == 0) return false;
 
     int limit = (spec.ext_at >= 0 && depth >= cfg_.max_depth - 2)
@@ -400,8 +401,7 @@ bool RandomFiller::fill_choice(void* obj, const ChoiceSpec& spec, int depth) {
     const auto& alt = spec.alternatives[alt_idx];
     if (alt.emplace_fn) alt.emplace_fn(ch);
     ch->_present = alt_idx + 1;
-    void* aptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
-                                : reinterpret_cast<char*>(ch) + alt.offset;
+    Asn1Object* aptr = alt.get_mut_fn(ch);
 
     return fill(aptr, *alt.type_descriptor, depth + 1, true);
 }
@@ -410,7 +410,7 @@ bool RandomFiller::fill_choice(void* obj, const ChoiceSpec& spec, int depth) {
 // SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------------
 
-bool RandomFiller::fill_seq_of(void* obj, const SeqOfSpec& spec, int depth) {
+bool RandomFiller::fill_seq_of(Asn1Object* obj, const SeqOfSpec& spec, int depth) {
     int lo = cfg_.min_seq_of;
     int hi = cfg_.max_seq_of;
 
@@ -439,7 +439,7 @@ bool RandomFiller::fill_seq_of(void* obj, const SeqOfSpec& spec, int depth) {
 
     int valid = 0;
     for (int i = 0; i < n; ++i) {
-        void* eptr = seq.get_mut(static_cast<std::size_t>(i));
+        Asn1Object* eptr = seq.get_mut(static_cast<std::size_t>(i));
         // Mandatory minimum elements bypass soft limit but still increment depth.
         bool mand = (i < lo);
         if (fill(eptr, *spec.element, depth + 1, mand)) {
@@ -460,7 +460,7 @@ bool RandomFiller::fill_seq_of(void* obj, const SeqOfSpec& spec, int depth) {
 // Primitive types — dispatched by universal tag number
 // ---------------------------------------------------------------------------
 
-void RandomFiller::fill_primitive(void* obj, const TypeDescriptor& def) {
+void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
     namespace UT = UniversalTag;
 
     // Non-universal tag: underlying C++ type is determined by the base type,

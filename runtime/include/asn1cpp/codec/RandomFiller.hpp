@@ -3,6 +3,7 @@
 #include <string>
 #include <string_view>
 #include "../TypeDescriptor.hpp"
+#include "../Asn1Object.hpp"
 
 namespace asn1 {
 
@@ -42,18 +43,18 @@ public:
     // Returns true on success. False means the random value violates a
     // constraint we couldn't satisfy after retries. For optional members /
     // CHOICE alternatives the caller can react (skip / try another alt).
-    bool fill(void* obj, const TypeDescriptor& def, int depth = 0, bool mandatory = false);
+    bool fill(Asn1Object* obj, const TypeDescriptor& def, int depth = 0, bool mandatory = false);
 
 private:
-    bool fill_sequence (void* obj, const SequenceSpec&   spec, int depth);
-    bool fill_choice   (void* obj, const ChoiceSpec&     spec, int depth);
-    bool fill_seq_of   (void* obj, const SeqOfSpec&      spec, int depth);
-    void fill_enum     (void* obj, const EnumSpec&       spec);
-    void fill_primitive(void* obj, const TypeDescriptor& def);
+    bool fill_sequence (Asn1Object* obj, const SequenceSpec&   spec, int depth);
+    bool fill_choice   (Asn1Object* obj, const ChoiceSpec&     spec, int depth);
+    bool fill_seq_of   (Asn1Object* obj, const SeqOfSpec&      spec, int depth);
+    void fill_enum     (Asn1Object* obj, const EnumSpec&       spec);
+    void fill_primitive(Asn1Object* obj, const TypeDescriptor& def);
     // Retry-with-validate wrapper around fill_primitive; falls back to a
     // permuted length scan (0..256) for SIZE-constrained primitives when
     // simple regeneration doesn't produce a valid value.
-    bool try_fill_primitive(void* obj, const TypeDescriptor& def);
+    bool try_fill_primitive(Asn1Object* obj, const TypeDescriptor& def);
 
     // helpers
     bool coin(double p);

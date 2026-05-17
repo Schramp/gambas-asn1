@@ -109,7 +109,7 @@ inline Expected<std::vector<uint8_t>, DecodeError> read_bytes(PerDecodeStream& s
 }
 
 template<typename T>
-inline void encode_ber_content(PerEncodeStream& s, const void* src) {
+inline void encode_ber_content(PerEncodeStream& s, const Asn1Object* src) {
     std::vector<uint8_t> ber;
     { BerWriter w{ber}; BerTraits<T>::encode(w, *static_cast<const T*>(src)); }
     uint8_t content_len = ber[1];
@@ -118,7 +118,7 @@ inline void encode_ber_content(PerEncodeStream& s, const void* src) {
 }
 
 template<typename T>
-inline DecodeResult decode_ber_content(PerDecodeStream& s, void* dest) {
+inline DecodeResult decode_ber_content(PerDecodeStream& s, Asn1Object* dest) {
     auto len_r = get_length(s);
     if (!len_r) return decode_err(len_r.error());
     auto content = read_bytes(s, *len_r);
@@ -145,9 +145,9 @@ class PerCodec;
 struct IPerTypeHandler {
     virtual ~IPerTypeHandler() = default;
     virtual void encode(const PerCodec& codec, PerEncodeStream& s,
-                        const TypeDescriptor& def, const void* src) const = 0;
+                        const TypeDescriptor& def, const Asn1Object* src) const = 0;
     virtual DecodeResult decode(const PerCodec& codec, PerDecodeStream& s,
-                                const TypeDescriptor& def, void* dest) const = 0;
+                                const TypeDescriptor& def, Asn1Object* dest) const = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -164,11 +164,11 @@ public:
 
     void encode(IEncodeStream& dst,
                 const TypeDescriptor& def,
-                const void* src) const override;
+                const Asn1Object* src) const override;
 
     DecodeResult decode(IDecodeStream& src,
                         const TypeDescriptor& def,
-                        void* dest) const override;
+                        Asn1Object* dest) const override;
 
 private:
     static const IPerTypeHandler* const comp_dispatch_[6];   // indexed by (int)TypeKind

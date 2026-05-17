@@ -460,17 +460,27 @@ void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
         ++count;
     }
 
-    // enum class
-    os << std::format("enum class {} : long {{\n", cname);
+    // class inheriting EnumValue — plain inner enum so values leak into class scope
+    os << std::format("class {} : public asn1::EnumValue {{\npublic:\n", cname);
+    os << "    enum Enm : long {\n";
     long auto_val = 0;
     for (const auto& ev : def.enum_values) {
         if (ev.name == "...") { continue; }
         long v = static_cast<long>(ev.number.value_or(auto_val));
-        os << std::format("    {} = {},\n", safe_cpp_name(to_cpp_name(ev.name)), v);
+        os << std::format("        {} = {},\n", safe_cpp_name(to_cpp_name(ev.name)), v);
         auto_val = v + 1;
     }
     if (extensible)
-        os << "    /* extensible */\n";
+        os << "        /* extensible */\n";
+    os << "    };\n";
+    os << std::format("    {}() = default;\n", cname);
+    os << std::format("    {}(Enm v) {{ value_ = static_cast<long>(v); }}\n", cname);
+    os << std::format("    {}& operator=(Enm v) {{ value_ = static_cast<long>(v); return *this; }}\n", cname);
+    os << std::format("    Enm present() const {{ return static_cast<Enm>(value_); }}\n");
+    os << std::format("    bool operator==(Enm v) const {{ return value_ == static_cast<long>(v); }}\n");
+    os << std::format("    bool operator!=(Enm v) const {{ return value_ != static_cast<long>(v); }}\n");
+    os << "    using asn1::EnumValue::operator==;\n";
+    os << "    using asn1::EnumValue::operator!=;\n";
     os << "};\n\n";
 
     // Extern descriptor declarations (defined in .cpp)
@@ -563,10 +573,10 @@ void Generator::emit_integer_hpp(const ast::TypeDef& def, std::ostream& os) {
     auto kind = classify_integer_storage(def);
     std::string cpp_storage;
     switch (kind) {
-        case IntStorageKind::U64:       cpp_storage = "uint64_t"; break;
+        case IntStorageKind::U64:       cpp_storage = "asn1::UInteger"; break;
         case IntStorageKind::I128:      cpp_storage = "__int128"; break;
         case IntStorageKind::ARBITRARY: cpp_storage = "std::vector<uint8_t>"; break;
-        default:                        cpp_storage = "int64_t"; break;
+        default:                        cpp_storage = "asn1::Integer"; break;
     }
     os << std::format("using {} = {};\n\n", cname, cpp_storage);
 
@@ -634,17 +644,17 @@ std::string Generator::emit_default_setter(
     std::string fname = std::format("_setdef_{}_{}", parent_cname, mname);
     std::string cname2 = std::format("_isdef_{}_{}", parent_cname, mname);
     os << std::format(
-        "static void {0}(void* p) {{\n"
+        "static void {0}(asn1::Asn1Object* p) {{\n"
         "    using Ops = _Ops_{1}_{2};\n"
         "    Ops::set(p, true);\n"
         "    *static_cast<{3}*>(Ops::get(p)) = {4};\n"
         "}}\n",
         fname, parent_cname, mname, mtype, literal);
     os << std::format(
-        "static bool {0}(const void* p) {{\n"
+        "static bool {0}(const asn1::Asn1Object* p) {{\n"
         "    using Ops = _Ops_{1}_{2};\n"
         "    if (!Ops::check(p)) return false;\n"
-        "    return *static_cast<const {3}*>(Ops::get(const_cast<void*>(p))) == ({4});\n"
+        "    return *static_cast<const {3}*>(Ops::get(const_cast<asn1::Asn1Object*>(p))) == ({4});\n"
         "}}\n",
         cname2, parent_cname, mname, mtype, literal);
     return "&" + fname;
@@ -1137,16 +1147,25 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     }
 
     // Type aliases for optional member callbacks — one per optional member.
-    if (roms_count > 0 || ext_at >= 0) {
+    // Emit per-member accessor aliases.
+    // Optional members: UniquePtrOps (check/set/get_ptr through unique_ptr).
+    // Non-optional members: DirectMemberOps (get_ptr via pointer-to-member, no offsetof).
+    {
         bool past = false;
         for (const auto& m : def.members) {
             if (m->is_extension_marker) { past = true; continue; }
-            if (!m->is_optional() && !past) continue;
             std::string mname = to_member_name(m->name);
             std::string mtype = cpp_type_for(*m);
-            os << std::format(
-                "using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
-                cname, mname, mtype);
+            bool optional = m->is_optional() || past;
+            if (optional) {
+                os << std::format(
+                    "using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
+                    cname, mname, mtype);
+            } else {
+                os << std::format(
+                    "using _Direct_{0}_{1} = asn1::DirectMemberOps<{0}, {2}, &{0}::{1}>;\n",
+                    cname, mname, mtype);
+            }
         }
         os << "\n";
     }
@@ -1178,7 +1197,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 auto [eff_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, atag);
                 std::string ops = optional
                     ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, mname)
-                    : "{}";
+                    : std::format("{{ nullptr, nullptr, &_Direct_{0}_{1}::get }}", cname, mname);
                 std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
                 std::string def_setter = emit_default_setter(*m, cname, mname, os);
                 bool has_default = (m->marker == ast::Marker::Default);
@@ -1200,17 +1219,10 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string def_cmp = (r.has_default && r.def_setter != "nullptr")
                 ? std::format("&_isdef_{}_{}", cname, r.mname)
                 : "nullptr";
-            // Optional members: offset unused at runtime (get_ptr function pointer
-            // handles access via UniquePtrOps). Emit 0 to avoid -Winvalid-offsetof
-            // on non-standard-layout types (unique_ptr makes them non-standard-layout).
-            std::string offset_expr = r.optional
-                ? "0"
-                : std::format("ASN1CPP_OFFSETOF({}, {})", cname, r.mname);
-            os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {}, {} }},\n",
+            os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {} }},\n",
                 r.name, r.eff_tag,
                 r.optional ? "true" : "false",
                 r.has_default ? "true" : "false",
-                offset_expr,
                 r.tdref, r.ops,
                 r.is_explicit ? "true" : "false",
                 r.def_setter, def_cmp);
@@ -1389,11 +1401,11 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         // Pass 2: emit static variant accessor functions.
         { int vi = 1;
           for (const auto& r : rows) {
-            os << std::format("static void* _get_mut_{0}_{1}(void* p) {{ return &std::get<{2}>(static_cast<{0}*>(p)->u); }}\n",
+            os << std::format("static asn1::Asn1Object* _get_mut_{0}_{1}(asn1::Asn1Object* p) {{ return &std::get<{2}>(static_cast<{0}*>(p)->u); }}\n",
                 cname, r.mname, vi);
-            os << std::format("static const void* _get_const_{0}_{1}(const void* p) {{ return &std::get<{2}>(static_cast<const {0}*>(p)->u); }}\n",
+            os << std::format("static const asn1::Asn1Object* _get_const_{0}_{1}(const asn1::Asn1Object* p) {{ return &std::get<{2}>(static_cast<const {0}*>(p)->u); }}\n",
                 cname, r.mname, vi);
-            os << std::format("static void _emplace_{0}_{1}(void* p) {{ static_cast<{0}*>(p)->u.emplace<{2}>(); }}\n",
+            os << std::format("static void _emplace_{0}_{1}(asn1::Asn1Object* p) {{ static_cast<{0}*>(p)->u.emplace<{2}>(); }}\n",
                 cname, r.mname, vi);
             ++vi;
           }
@@ -1403,7 +1415,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         os << std::format("const asn1::MemberDescriptor {}::s_alternatives[] = {{\n", cname);
         { int vi = 1;
           for (const auto& r : rows) {
-            os << std::format("    {{ \"{}\", {}, false, false, 0 /* variant */, {}, {{}}, {}, nullptr, nullptr,\n",
+            os << std::format("    {{ \"{}\", {}, false, false, {}, {{}}, {}, nullptr, nullptr,\n",
                 r.name, r.eff_tag,
                 r.tdref,
                 r.is_explicit ? "true" : "false");

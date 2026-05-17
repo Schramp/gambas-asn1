@@ -2,6 +2,7 @@
 #include <asn1cpp/codec/XerCodec.hpp>
 #include <asn1cpp/types/Integer.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
+#include <asn1cpp/EnumValue.hpp>
 
 namespace asn1 {
 
@@ -77,12 +78,12 @@ static std::string base64_decode(std::string_view in) {
 
 struct ErrorXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream&,
-                const TypeDescriptor& def, const void*) const override {
+                const TypeDescriptor& def, const Asn1Object*) const override {
         assert(false && "XerCodec: unreachable dispatch table entry");
         (void)def;
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream&,
-                        const TypeDescriptor& def, void*) const override {
+                        const TypeDescriptor& def, Asn1Object*) const override {
         assert(false && "XerCodec: unreachable dispatch table entry");
         return decode_err(DecodeError(std::string("XerCodec: unsupported: ") + def.name));
     }
@@ -90,11 +91,11 @@ struct ErrorXerHandler final : IXerTypeHandler {
 
 struct NullXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void*) const override {
+                const TypeDescriptor& def, const Asn1Object*) const override {
         s.os() << '<' << def.name << "></" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void*) const override {
+                        const TypeDescriptor& def, Asn1Object*) const override {
         auto ti = xer_detail::consume_tag(s);
         if (ti.name != def.name || ti.closing)
             return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
@@ -109,12 +110,12 @@ struct NullXerHandler final : IXerTypeHandler {
 
 struct BooleanXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         bool v = static_cast<const Boolean*>(src)->value();
         s.os() << '<' << def.name << '>' << (v ? "<true/>" : "<false/>") << "</" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
         auto inner = xer_detail::consume_tag(s);
         bool value;
@@ -129,7 +130,7 @@ struct BooleanXerHandler final : IXerTypeHandler {
 
 struct IntegerXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         if (def.constraints.int_kind == Constraints::INT_U64) {
             uint64_t v = static_cast<const UInteger*>(src)->value();
             s.os() << '<' << def.name << '>' << v << "</" << def.name << ">\n";
@@ -139,7 +140,7 @@ struct IntegerXerHandler final : IXerTypeHandler {
         }
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         return xer_detail::decode_simple_text_element(s, def.name,
             [dest, &def](std::string_view text) -> DecodeResult {
                 text = xer_detail::trim(text);
@@ -163,7 +164,7 @@ struct IntegerXerHandler final : IXerTypeHandler {
 
 struct RealXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         double d = static_cast<const Real*>(src)->value();
         auto& os = s.os();
         os << '<' << def.name << '>';
@@ -189,7 +190,7 @@ struct RealXerHandler final : IXerTypeHandler {
         os << "</" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
         s.skip_whitespace();
         double d;
@@ -221,7 +222,7 @@ struct RealXerHandler final : IXerTypeHandler {
 
 struct BitStringXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const BitString& bs = *static_cast<const BitString*>(src);
         auto& os = s.os();
         os << '<' << def.name << ">\n";
@@ -243,7 +244,7 @@ struct BitStringXerHandler final : IXerTypeHandler {
         os << s.indent() << "</" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
         s.skip_whitespace();
         std::string_view rem = s.remaining();
@@ -273,7 +274,7 @@ struct BitStringXerHandler final : IXerTypeHandler {
 
 struct OctetStringXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
         auto& os = s.os();
         std::string b64 = base64_encode(v.bytes());
@@ -288,7 +289,7 @@ struct OctetStringXerHandler final : IXerTypeHandler {
         os << "</" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         return xer_detail::decode_simple_text_element(s, def.name,
             [dest](std::string_view text) -> DecodeResult {
                 auto dec = base64_decode(text);
@@ -301,58 +302,58 @@ struct OctetStringXerHandler final : IXerTypeHandler {
 
 struct OidXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         xer_detail::encode_oid_impl<Oid>(s, def, src);
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         return xer_detail::decode_oid_impl<Oid>(s, def, dest);
     }
 };
 
 struct RelOidXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         xer_detail::encode_oid_impl<RelativeOid>(s, def, src);
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         return xer_detail::decode_oid_impl<RelativeOid>(s, def, dest);
     }
 };
 
 struct UtcTimeXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         xer_detail::encode_text_element(s, def,
             static_cast<const AsnStringBase*>(src)->str());
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         return xer_detail::decode_time_string<UtcTime>(s, def, dest);
     }
 };
 
 struct GenTimeXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         xer_detail::encode_text_element(s, def,
             static_cast<const AsnStringBase*>(src)->str());
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         return xer_detail::decode_time_string<GeneralizedTime>(s, def, dest);
     }
 };
 
 struct XerStringHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         xer_detail::encode_text_element(s, def,
             static_cast<const AsnStringBase*>(src)->str());
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         return xer_detail::decode_simple_text_element(s, def.name,
             [dest](std::string_view text) -> DecodeResult {
                 static_cast<AsnStringBase*>(dest)->str().assign(text.data(), text.size());
@@ -363,12 +364,12 @@ struct XerStringHandler final : IXerTypeHandler {
 
 struct HexStringXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& sv = static_cast<const AsnStringBase*>(src)->str();
         s.os() << '<' << def.name << '>' << format_hex_bytes(sv) << "</" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         return xer_detail::decode_simple_text_element(s, def.name,
             [dest](std::string_view text) -> DecodeResult {
                 static_cast<AsnStringBase*>(dest)->str() = parse_hex_bytes(text);
@@ -379,12 +380,12 @@ struct HexStringXerHandler final : IXerTypeHandler {
 
 struct BmpStringXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         xer_detail::encode_wide_string<2>(s, def,
             static_cast<const AsnStringBase*>(src)->str());
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         return xer_detail::decode_simple_text_element(s, def.name,
             [dest](std::string_view text) -> DecodeResult {
                 std::string out;
@@ -402,12 +403,12 @@ struct BmpStringXerHandler final : IXerTypeHandler {
 
 struct UniversalStringXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         xer_detail::encode_wide_string<4>(s, def,
             static_cast<const AsnStringBase*>(src)->str());
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         return xer_detail::decode_simple_text_element(s, def.name,
             [dest](std::string_view text) -> DecodeResult {
                 std::string out;
@@ -427,14 +428,14 @@ struct UniversalStringXerHandler final : IXerTypeHandler {
 
 struct AnyXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
         auto bytes = v.bytes();
         std::string_view sv(reinterpret_cast<const char*>(bytes.data()), bytes.size());
         s.os() << '<' << def.name << '>' << format_hex_bytes(sv) << "</" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         return xer_detail::decode_simple_text_element(s, def.name,
             [dest](std::string_view text) -> DecodeResult {
                 std::string bytes = parse_hex_bytes(text);
@@ -447,9 +448,9 @@ struct AnyXerHandler final : IXerTypeHandler {
 
 struct EnumeratedXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         auto& os = s.os();
-        long v = *static_cast<const long*>(src);
+        long v = static_cast<const EnumValue*>(src)->value();
         const EnumSpec& spec = *def.enum_spec;
         const char* name = nullptr;
         int lo = 0, hi = spec.count - 1;
@@ -464,7 +465,7 @@ struct EnumeratedXerHandler final : IXerTypeHandler {
         os << "</" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto outer = xer_detail::consume_tag(s);
         if (outer.name != def.name || outer.closing)
             return decode_err(DecodeError(std::string("XER: expected <") + def.name + ">"));
@@ -482,7 +483,7 @@ struct EnumeratedXerHandler final : IXerTypeHandler {
         const EnumSpec& spec = *def.enum_spec;
         for (int i = 0; i < spec.count; ++i) {
             if (inner.name == spec.entries[i].name) {
-                *static_cast<long*>(dest) = spec.entries[i].value;
+                static_cast<EnumValue*>(dest)->set(spec.entries[i].value);
                 return decode_ok();
             }
         }
@@ -492,7 +493,7 @@ struct EnumeratedXerHandler final : IXerTypeHandler {
 
 struct SeqOfXerHandler final : IXerTypeHandler {
     void encode(const XerCodec& codec, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         auto& os = s.os();
         const auto& spec  = *def.seq_of_spec;
         const auto& seq   = *static_cast<const SeqOfBase*>(src);
@@ -503,7 +504,7 @@ struct SeqOfXerHandler final : IXerTypeHandler {
         } else {
             os << '<' << def.name << '>';
             for (std::size_t i = 0; i < count; ++i) {
-                const void* eptr = seq.get_const(i);
+                const Asn1Object* eptr = seq.get_const(i);
                 XerEncodeStream es{os, s.depth() + 1};
                 if (!edef.choice_spec) {
                     if (i == 0) os << '\n';
@@ -515,7 +516,7 @@ struct SeqOfXerHandler final : IXerTypeHandler {
         }
     }
     DecodeResult decode(const XerCodec& codec, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         {
             auto ti = xer_detail::consume_tag(s);
             if (ti.name != def.name || ti.closing || ti.self_closing)
@@ -532,7 +533,7 @@ struct SeqOfXerHandler final : IXerTypeHandler {
                 return decode_err(DecodeError(
                     std::string("XER SEQUENCE OF: unexpected end in <") + def.name + ">"));
             seq.resize(++count);
-            void* eptr = seq.get_mut(count - 1);
+            Asn1Object* eptr = seq.get_mut(count - 1);
             auto r = codec.decode(s, edef, eptr);
             if (!r) return r;
         }
@@ -542,7 +543,7 @@ struct SeqOfXerHandler final : IXerTypeHandler {
 
 struct SequenceXerHandler final : IXerTypeHandler {
     void encode(const XerCodec& codec, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         auto& os = s.os();
         const auto& spec = *def.sequence_spec;
         bool any_present = false;
@@ -562,7 +563,7 @@ struct SequenceXerHandler final : IXerTypeHandler {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
             if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
-            const Asn1Object* mptr = static_cast<const Asn1Object*>(mbr.optional_ops.member_ptr(src, mbr.offset));
+            const Asn1Object* mptr = mbr.optional_ops.member_ptr(src);
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
             if (mdef.choice_spec) {
@@ -579,7 +580,7 @@ struct SequenceXerHandler final : IXerTypeHandler {
         os << s.indent() << "</" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec& codec, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         {
             auto ti = xer_detail::consume_tag(s);
             if (ti.name != def.name || ti.closing || ti.self_closing)
@@ -595,7 +596,7 @@ struct SequenceXerHandler final : IXerTypeHandler {
                 mbr.optional_ops.set_present(dest, present);
                 if (!present) continue;
             }
-            Asn1Object* mptr = static_cast<Asn1Object*>(mbr.optional_ops.member_ptr(dest, mbr.offset));
+            Asn1Object* mptr = mbr.optional_ops.member_ptr(dest);
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
             if (mdef.choice_spec) {
@@ -620,18 +621,17 @@ struct SequenceXerHandler final : IXerTypeHandler {
 
 struct ChoiceXerHandler final : IXerTypeHandler {
     void encode(const XerCodec& codec, XerEncodeStream& s,
-                const TypeDescriptor& def, const void* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         auto& os = s.os();
         const auto& spec = *def.choice_spec;
-        const ChoiceInterface* ch = reinterpret_cast<const ChoiceInterface*>(src);
+        const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int pr = ch->_present;
         if (pr <= 0 || pr > spec.count) return;
         const auto& alt = spec.alternatives[pr - 1];
         if (!alt.type_descriptor) return;
         TypeDescriptor adef = *alt.type_descriptor;
         adef.name = alt.name;
-        const void* mptr = alt.get_const_fn ? alt.get_const_fn(ch)
-                                            : reinterpret_cast<const char*>(ch) + alt.offset;
+        const Asn1Object* mptr = alt.get_const_fn(ch);
         if (adef.choice_spec) {
             os << '\n' << s.indent(1) << '<' << alt.name << '>';
             XerEncodeStream as{os, s.depth() + 1};
@@ -644,10 +644,10 @@ struct ChoiceXerHandler final : IXerTypeHandler {
         }
     }
     DecodeResult decode(const XerCodec& codec, XerDecodeStream& s,
-                        const TypeDescriptor& def, void* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto ti = xer_detail::peek_tag(s);
         const auto& spec = *def.choice_spec;
-        ChoiceInterface* ch = reinterpret_cast<ChoiceInterface*>(dest);
+        ChoiceInterface* ch = static_cast<ChoiceInterface*>(dest);
         for (int i = 0; i < spec.count; ++i) {
             const auto& alt = spec.alternatives[i];
             if (ti.name != alt.name) continue;
@@ -659,8 +659,7 @@ struct ChoiceXerHandler final : IXerTypeHandler {
             if (ch->_present != i + 1) {
                 if (alt.emplace_fn) alt.emplace_fn(ch);
             }
-            void* mptr = alt.get_mut_fn ? alt.get_mut_fn(ch)
-                                        : reinterpret_cast<char*>(ch) + alt.offset;
+            Asn1Object* mptr = alt.get_mut_fn(ch);
             if (adef.choice_spec) {
                 if (auto r = xer_detail::consume_open_tag(s, alt.name); !r) return r;
                 auto r = codec.decode(s, adef, mptr);
@@ -756,7 +755,7 @@ const IXerTypeHandler* const XerCodec::prim_dispatch_[32] = {
 
 void XerCodec::encode(IEncodeStream& dst,
                       const TypeDescriptor& def,
-                      const void* src) const
+                      const Asn1Object* src) const
 {
     auto& s = static_cast<XerEncodeStream&>(dst);
     if (def.kind == TypeKind::Primitive)
@@ -767,7 +766,7 @@ void XerCodec::encode(IEncodeStream& dst,
 
 DecodeResult XerCodec::decode(IDecodeStream& src,
                                const TypeDescriptor& def,
-                               void* dest) const
+                               Asn1Object* dest) const
 {
     auto& s = static_cast<XerDecodeStream&>(src);
     if (def.kind == TypeKind::Primitive)

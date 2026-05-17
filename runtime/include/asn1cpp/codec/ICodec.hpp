@@ -38,12 +38,12 @@ public:
     // Encode value at src (described by def) into dst.
     virtual void encode(IEncodeStream& dst,
                         const TypeDescriptor& def,
-                        const void* src) const = 0;
+                        const Asn1Object* src) const = 0;
 
     // Decode from src into dest (described by def).
     virtual DecodeResult decode(IDecodeStream& src,
                                 const TypeDescriptor& def,
-                                void* dest) const = 0;
+                                Asn1Object* dest) const = 0;
 };
 
 } // namespace asn1

@@ -165,7 +165,7 @@ struct ValidationReportScope { explicit ValidationReportScope(ValidationReport&)
 // not meaningful for encode (output bytes are already written by the time we
 // know); the bool is the API. Caller may treat false as a hard error.
 inline bool encode_validated(const ICodec& codec, IEncodeStream& dst,
-                             const TypeDescriptor& def, const void* src) {
+                             const TypeDescriptor& def, const Asn1Object* src) {
 #if defined(ASN1CPP_VALIDATE)
     auto before = validate_fail_count();
     codec.encode(dst, def, src);
@@ -181,7 +181,7 @@ inline bool encode_validated(const ICodec& codec, IEncodeStream& dst,
 // caller-side dest object remains populated but the result reports failure.
 // Lenient mode is identical to calling codec.decode() directly.
 inline DecodeResult decode_validated(const ICodec& codec, IDecodeStream& src,
-                                     const TypeDescriptor& def, void* dest,
+                                     const TypeDescriptor& def, Asn1Object* dest,
                                      ValidationPolicy policy = ValidationPolicy::Lenient) {
 #if defined(ASN1CPP_VALIDATE)
     auto before = validate_fail_count();

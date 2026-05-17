@@ -5,15 +5,6 @@
 #include "SeqOfBase.hpp"
 #include "codec/Constraints.hpp"
 
-// Safe offsetof for non-standard-layout types (SequenceBase<T> has virtual methods).
-// __builtin_offsetof is correct on GCC/Clang; standard offsetof is a compiler
-// intrinsic on MSVC and also works without warning there.
-#if defined(__GNUC__) || defined(__clang__)
-#  define ASN1CPP_OFFSETOF(T, m) __builtin_offsetof(T, m)
-#else
-#  define ASN1CPP_OFFSETOF(T, m) offsetof(T, m)
-#endif
-
 // C++ equivalents of asn1c's descriptor table types.
 // Generated code fills these static tables; the runtime codec uses them.
 
@@ -46,20 +37,30 @@ struct EnumSpec {
     }
 };
 
+// Template that generates a get_ptr callback for a direct (non-optional) member.
+// Owner is always a SEQUENCE struct (inherits Asn1Object via SequenceBase<>).
+// Return is void* because member type may be EnumValue, Null, or any Asn1Object subtype.
+template<typename Owner, typename T, T Owner::* Mbr>
+struct DirectMemberOps {
+    static Asn1Object* get(Asn1Object* p) {
+        return &(static_cast<Owner*>(p)->*Mbr);
+    }
+};
+
 // Template that generates the three OptionalOps callbacks for a unique_ptr<T> member.
 // Usage in generated code:
 //   using _Ops_Type_member = asn1::UniquePtrOps<Type, MemberType, &Type::member>;
 //   ... OptionalOps{ &_Ops_Type_member::check, &_Ops_Type_member::set, &_Ops_Type_member::get } ...
 template<typename Owner, typename T, std::unique_ptr<T> Owner::* Mbr>
 struct UniquePtrOps {
-    static bool  check(const void* p) {
+    static bool        check(const Asn1Object* p) {
         return (bool)(static_cast<const Owner*>(p)->*Mbr);
     }
-    static void  set(void* p, bool v) {
+    static void        set(Asn1Object* p, bool v) {
         auto& o = static_cast<Owner*>(p)->*Mbr;
         if (v) { if (!o) o = std::make_unique<T>(); } else o.reset();
     }
-    static void* get(void* p) {
+    static Asn1Object* get(Asn1Object* p) {
         return (static_cast<Owner*>(p)->*Mbr).get();
     }
 };
@@ -69,22 +70,20 @@ struct UniquePtrOps {
 // unique_ptr<T> that stores the optional value; needed by table-driven codecs
 // that must write into the allocated object, not the unique_ptr itself.
 struct OptionalOps {
-    bool  (*check)(const void*)  = nullptr;
-    void  (*set)(void*, bool)    = nullptr;
-    void* (*get_ptr)(void*)      = nullptr; // struct* → T* (dereferences unique_ptr)
-    bool is_present(const void* p)  const { return check && check(p); }
-    void set_present(void* p, bool v) const { if (set) set(p, v); }
-    // Returns pointer to the actual member object (T*) given the parent struct.
-    // Falls back to dest+offset path when get_ptr is null (required members).
-    void* member_ptr(void* struct_ptr, std::size_t offset) const {
-        return get_ptr ? get_ptr(struct_ptr)
-                       : static_cast<char*>(struct_ptr) + offset;
-    }
-    // const overload — get_ptr only reads the unique_ptr, so const_cast is safe.
-    const void* member_ptr(const void* struct_ptr, std::size_t offset) const {
-        return get_ptr ? get_ptr(const_cast<void*>(struct_ptr))
-                       : static_cast<const char*>(struct_ptr) + offset;
-    }
+    bool        (*check)(const Asn1Object*)  = nullptr;
+    void        (*set)(Asn1Object*, bool)    = nullptr;
+    Asn1Object* (*get_ptr)(Asn1Object*)      = nullptr; // owner* → member* (always non-null)
+    bool is_present(const Asn1Object* p)  const { return check && check(p); }
+    bool is_present(const void* p)         const { return is_present(static_cast<const Asn1Object*>(p)); }
+    void set_present(Asn1Object* p, bool v) const { if (set) set(p, v); }
+    void set_present(void* p, bool v)       const { set_present(static_cast<Asn1Object*>(p), v); }
+    // Returns typed pointer to the member given the owner struct.
+    // get_ptr is always non-null (DirectMemberOps or UniquePtrOps).
+    Asn1Object*       member_ptr(Asn1Object* struct_ptr)       const { return get_ptr(struct_ptr); }
+    const Asn1Object* member_ptr(const Asn1Object* struct_ptr) const { return get_ptr(const_cast<Asn1Object*>(struct_ptr)); }
+    // void* overloads kept for call sites passing untyped owner pointers.
+    Asn1Object*       member_ptr(void* p)       const { return member_ptr(static_cast<Asn1Object*>(p)); }
+    const Asn1Object* member_ptr(const void* p) const { return member_ptr(static_cast<const Asn1Object*>(p)); }
     explicit operator bool() const { return check != nullptr; }
 };
 
@@ -97,31 +96,29 @@ struct MemberDescriptor {
     Tag                   tag;            // effective wire tag (context tag when tagged, natural otherwise)
     bool                  optional;
     bool                  has_default;
-    std::size_t           offset;         // offsetof(Struct, member) — for unique_ptr members,
-                                          // points to the unique_ptr, not the contained value
     const TypeDescriptor* type_descriptor;
-    OptionalOps           optional_ops;   // non-null only for optional/extension members
+    OptionalOps           optional_ops;   // always set (DirectMemberOps or UniquePtrOps)
     bool                  is_explicit = false; // true → EXPLICIT tagging; false → IMPLICIT
 
     // BER/XER: when set, called after decode if the member was absent on the wire.
     // Allocates the optional and writes the DEFAULT value from the ASN.1 schema.
     // Null when no DEFAULT applies.
-    void (*set_default)(void* owner) = nullptr;
+    void (*set_default)(Asn1Object* owner) = nullptr;
 
     // BER encode: when set and returns true, the member is suppressed (X.690
     // §11.5: DEFAULT-equal values must not be encoded). True only when the
     // member is present AND its value equals the schema default.
-    bool (*is_default_equal)(const void* owner) = nullptr;
+    bool (*is_default_equal)(const Asn1Object* owner) = nullptr;
 
     // CHOICE variant accessors — non-null only for CHOICE alternatives in
     // std::variant-based generated structs.  Codecs use these instead of
-    // offset arithmetic when non-null.
+    // offset arithmetic.
     //   emplace_fn  — in-place constructs this alternative in the CHOICE struct
     //   get_mut_fn  — returns mutable pointer to the active alternative
     //   get_const_fn — returns const pointer to the active alternative
-    void        (*emplace_fn)(void* choice_ptr)          = nullptr;
-    void*       (*get_mut_fn)(void* choice_ptr)          = nullptr;
-    const void* (*get_const_fn)(const void* choice_ptr)  = nullptr;
+    void              (*emplace_fn)(Asn1Object* choice_ptr)          = nullptr;
+    Asn1Object*       (*get_mut_fn)(Asn1Object* choice_ptr)          = nullptr;
+    const Asn1Object* (*get_const_fn)(const Asn1Object* choice_ptr)  = nullptr;
 };
 
 // SEQUENCE OF / SET OF specifics.
