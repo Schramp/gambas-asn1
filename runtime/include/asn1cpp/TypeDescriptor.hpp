@@ -81,8 +81,40 @@ struct OptionalOps {
     bool is_present(const void* p)         const { return is_present(static_cast<const Asn1Object*>(p)); }
     void set_present(Asn1Object* p, bool v) const { if (set) set(p, v); }
     void set_present(void* p, bool v)       const { set_present(static_cast<Asn1Object*>(p), v); }
-    // Returns pointer to the member. For optional members: get_ptr dereferences
-    // the unique_ptr. For required members: get_ptr is null; offset arithmetic used.
+    // Returns a typed pointer to the member within the owner struct.
+    //
+    // Two cases:
+    //
+    //   get_ptr != null  (optional members, UniquePtrOps):
+    //     Calls get_ptr(p), which dereferences the unique_ptr<T> stored at the
+    //     member's location and returns the T* inside it. The T is heap-allocated;
+    //     the unique_ptr itself is at a fixed offset but the member value is one
+    //     level of indirection deeper.
+    //
+    //   get_ptr == null  (required members):
+    //     The member is stored directly inside the struct (not behind a pointer).
+    //     We compute its address as: (char*)p + offset, where offset =
+    //     ASN1CPP_OFFSETOF(StructType, member_name), emitted by codegen.
+    //     This is a single ADD instruction — the cheapest possible access.
+    //
+    // Why the void* round-trip in the offset path:
+    //   C++ forbids static_cast<char*> from a pointer-to-class (Asn1Object*).
+    //   The standard-legal route for byte arithmetic is through void*:
+    //     Asn1Object* → void* → char* → +offset → void* → Asn1Object*
+    //   The object at (p + offset) really is an Asn1Object (all member types
+    //   inherit from it), so the final static_cast is well-defined.
+    //   reinterpret_cast<char*>(p) is technically UB without the void* hop.
+    //
+    // Why NOT use a stored function pointer for required members too:
+    //   Commit 053f795 tried DirectMemberOps<Owner,T,Mbr>::get stored as get_ptr
+    //   for required members, removing the offset field entirely. Measured result:
+    //   +1.015B Ir (+4.86% total), confirmed by interleaved A/B perfdiff (winner
+    //   every round, P=0.1%). LTO cannot devirtualize a function pointer loaded
+    //   from a descriptor table in a runtime loop — it sees only the call through
+    //   the pointer, not the callee. The offset ADD compiles to one instruction;
+    //   the function pointer call costs a load + indirect branch + return.
+    //   Reverted in 00b4942. Do not revisit without a profiler trace showing
+    //   something has changed in how LTO handles this pattern.
     Asn1Object* member_ptr(Asn1Object* p, std::size_t offset) const {
         return get_ptr ? get_ptr(p)
                        : static_cast<Asn1Object*>(static_cast<void*>(
