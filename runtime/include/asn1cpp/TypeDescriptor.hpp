@@ -10,6 +10,13 @@
 
 namespace asn1 {
 
+// Sentinel for MemberDescriptor::offset when the field is not used
+// (optional members use get_ptr; CHOICE alternatives use get_const_fn).
+// High bit of size_t — maps to kernel address space, causing an immediate
+// fault on any architecture if accidentally used in pointer arithmetic.
+inline constexpr std::size_t kInvalidMemberOffset =
+    std::size_t{1} << (sizeof(std::size_t) * 8 - 1);
+
 // One row in an ENUMERATED value<->name map (mirrors asn_INTEGER_enum_map_t).
 struct EnumEntry {
     long        value;
@@ -37,15 +44,12 @@ struct EnumSpec {
     }
 };
 
-// Template that generates a get_ptr callback for a direct (non-optional) member.
-// Owner is always a SEQUENCE struct (inherits Asn1Object via SequenceBase<>).
-// Return is void* because member type may be EnumValue, Null, or any Asn1Object subtype.
-template<typename Owner, typename T, T Owner::* Mbr>
-struct DirectMemberOps {
-    static Asn1Object* get(Asn1Object* p) {
-        return &(static_cast<Owner*>(p)->*Mbr);
-    }
-};
+// Safe offsetof for non-standard-layout types (SequenceBase<T> has virtual methods).
+#if defined(__GNUC__) || defined(__clang__)
+#  define ASN1CPP_OFFSETOF(T, m) __builtin_offsetof(T, m)
+#else
+#  define ASN1CPP_OFFSETOF(T, m) offsetof(T, m)
+#endif
 
 // Template that generates the three OptionalOps callbacks for a unique_ptr<T> member.
 // Usage in generated code:
@@ -72,18 +76,23 @@ struct UniquePtrOps {
 struct OptionalOps {
     bool        (*check)(const Asn1Object*)  = nullptr;
     void        (*set)(Asn1Object*, bool)    = nullptr;
-    Asn1Object* (*get_ptr)(Asn1Object*)      = nullptr; // owner* → member* (always non-null)
+    Asn1Object* (*get_ptr)(Asn1Object*)      = nullptr; // null for required members; UniquePtrOps::get for optional
     bool is_present(const Asn1Object* p)  const { return check && check(p); }
     bool is_present(const void* p)         const { return is_present(static_cast<const Asn1Object*>(p)); }
     void set_present(Asn1Object* p, bool v) const { if (set) set(p, v); }
     void set_present(void* p, bool v)       const { set_present(static_cast<Asn1Object*>(p), v); }
-    // Returns typed pointer to the member given the owner struct.
-    // get_ptr is always non-null (DirectMemberOps or UniquePtrOps).
-    Asn1Object*       member_ptr(Asn1Object* struct_ptr)       const { return get_ptr(struct_ptr); }
-    const Asn1Object* member_ptr(const Asn1Object* struct_ptr) const { return get_ptr(const_cast<Asn1Object*>(struct_ptr)); }
-    // void* overloads kept for call sites passing untyped owner pointers.
-    Asn1Object*       member_ptr(void* p)       const { return member_ptr(static_cast<Asn1Object*>(p)); }
-    const Asn1Object* member_ptr(const void* p) const { return member_ptr(static_cast<const Asn1Object*>(p)); }
+    // Returns pointer to the member. For optional members: get_ptr dereferences
+    // the unique_ptr. For required members: get_ptr is null; offset arithmetic used.
+    Asn1Object* member_ptr(Asn1Object* p, std::size_t offset) const {
+        return get_ptr ? get_ptr(p)
+                       : static_cast<Asn1Object*>(static_cast<void*>(
+                             static_cast<char*>(static_cast<void*>(p)) + offset));
+    }
+    const Asn1Object* member_ptr(const Asn1Object* p, std::size_t offset) const {
+        return get_ptr ? get_ptr(const_cast<Asn1Object*>(p))
+                       : static_cast<const Asn1Object*>(static_cast<const void*>(
+                             static_cast<const char*>(static_cast<const void*>(p)) + offset));
+    }
     explicit operator bool() const { return check != nullptr; }
 };
 
@@ -96,8 +105,9 @@ struct MemberDescriptor {
     Tag                   tag;            // effective wire tag (context tag when tagged, natural otherwise)
     bool                  optional;
     bool                  has_default;
+    std::size_t           offset;         // offsetof(Struct, member); 0 for CHOICE alternatives
     const TypeDescriptor* type_descriptor;
-    OptionalOps           optional_ops;   // always set (DirectMemberOps or UniquePtrOps)
+    OptionalOps           optional_ops;   // non-null only for optional/extension members (UniquePtrOps)
     bool                  is_explicit = false; // true → EXPLICIT tagging; false → IMPLICIT
 
     // BER/XER: when set, called after decode if the member was absent on the wire.

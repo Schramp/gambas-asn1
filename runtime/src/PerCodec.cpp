@@ -682,7 +682,7 @@ struct SequencePerHandler final : IPerTypeHandler {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
             if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
-            const Asn1Object* mptr = mbr.optional_ops.member_ptr(src);
+            const Asn1Object* mptr = mbr.optional_ops.member_ptr(src, mbr.offset);
             codec.encode(es, *mbr.type_descriptor, mptr);
         }
         if (has_ext) {
@@ -693,7 +693,7 @@ struct SequencePerHandler final : IPerTypeHandler {
             for (int i = root_end; i < spec.count; ++i) {
                 const auto& mbr = spec.members[i];
                 if (!mbr.type_descriptor || !mbr.optional_ops.is_present(src)) continue;
-                const Asn1Object* mptr = mbr.optional_ops.member_ptr(src);
+                const Asn1Object* mptr = mbr.optional_ops.member_ptr(src, mbr.offset);
                 encode_open_type(codec, s, *mbr.type_descriptor, mptr);
             }
         }
@@ -727,7 +727,7 @@ struct SequencePerHandler final : IPerTypeHandler {
                 mbr.optional_ops.set_present(dest, present);
                 if (!present) continue;
             }
-            Asn1Object* mptr = mbr.optional_ops.member_ptr(dest);
+            Asn1Object* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
             auto r = codec.decode(ds, *mbr.type_descriptor, mptr);
             if (!r) return r;
         }
@@ -755,7 +755,7 @@ struct SequencePerHandler final : IPerTypeHandler {
                     if (i < known_ext) {
                         const auto& mbr = spec.members[root_end + i];
                         mbr.optional_ops.set_present(dest, true);
-                        Asn1Object* mptr = mbr.optional_ops.member_ptr(dest);
+                        Asn1Object* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
                         auto r = decode_open_type(codec, s, *mbr.type_descriptor, mptr);
                         if (!r) return r;
                     } else {

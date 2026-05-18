@@ -371,7 +371,7 @@ bool RandomFiller::fill_sequence(Asn1Object* obj, const SequenceSpec& spec, int 
             if (!present) continue;
         }
 
-        Asn1Object* mptr = mbr.optional_ops.member_ptr(obj);
+        Asn1Object* mptr = mbr.optional_ops.member_ptr(obj, mbr.offset);
         bool is_mand = !mbr.optional;
         bool ok = fill(mptr, *mbr.type_descriptor, depth + 1, is_mand);
         if (!ok) {

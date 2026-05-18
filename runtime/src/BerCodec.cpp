@@ -483,7 +483,7 @@ struct SequenceBerHandler final : IBerTypeHandler {
                                  def.name, mbr.name);
                     return;
                 }
-                const Asn1Object* mptr = mbr.optional_ops.member_ptr(src);
+                const Asn1Object* mptr = mbr.optional_ops.member_ptr(src, mbr.offset);
                 const auto& mdef = *mbr.type_descriptor;
                 ValidatePathScope _vps{mbr.name};
 
@@ -569,7 +569,7 @@ private:
                     continue;
                 }
             }
-            Asn1Object* mptr = mbr.optional_ops.member_ptr(dest);
+            Asn1Object* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
             const auto& mdef = *mbr.type_descriptor;
             ValidatePathScope _vps{mbr.name};
 

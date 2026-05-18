@@ -1147,9 +1147,8 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     }
 
     // Type aliases for optional member callbacks — one per optional member.
-    // Emit per-member accessor aliases.
     // Optional members: UniquePtrOps (check/set/get_ptr through unique_ptr).
-    // Non-optional members: DirectMemberOps (get_ptr via pointer-to-member, no offsetof).
+    // Required members: use offsetof (no alias needed).
     {
         bool past = false;
         for (const auto& m : def.members) {
@@ -1160,10 +1159,6 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             if (optional) {
                 os << std::format(
                     "using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
-                    cname, mname, mtype);
-            } else {
-                os << std::format(
-                    "using _Direct_{0}_{1} = asn1::DirectMemberOps<{0}, {2}, &{0}::{1}>;\n",
                     cname, mname, mtype);
             }
         }
@@ -1177,7 +1172,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     // Per-member row data — hoisted so setter definitions can reference it after
     // the descriptor table block.
     struct MbrRow {
-        std::string name, eff_tag, mname, ops, tdref, def_setter;
+        std::string name, eff_tag, mname, ops, tdref, def_setter, offset_expr;
         bool optional, is_explicit, has_default;
         MemberSetterInfo setter;
     };
@@ -1197,12 +1192,16 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 auto [eff_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, atag);
                 std::string ops = optional
                     ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, mname)
-                    : std::format("{{ nullptr, nullptr, &_Direct_{0}_{1}::get }}", cname, mname);
+                    : "{ nullptr, nullptr, nullptr }";
                 std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
                 std::string def_setter = emit_default_setter(*m, cname, mname, os);
                 bool has_default = (m->marker == ast::Marker::Default);
                 auto setter = optional ? MemberSetterInfo{} : classify_member_setter(*m);
-                rows.push_back({ m->name, eff_tag, mname, ops, tdref, def_setter,
+                // Required members use offset arithmetic; optional use get_ptr (offset unused).
+                // Sentinel kInvalidMemberOffset for optional: accidental use crashes immediately.
+                std::string offset_expr = optional ? "asn1::kInvalidMemberOffset"
+                    : std::format("ASN1CPP_OFFSETOF({}, {})", cname, mname);
+                rows.push_back({ m->name, eff_tag, mname, ops, tdref, def_setter, offset_expr,
                                  optional, is_explicit, has_default, std::move(setter) });
                 ++atag;
             }
@@ -1219,10 +1218,11 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string def_cmp = (r.has_default && r.def_setter != "nullptr")
                 ? std::format("&_isdef_{}_{}", cname, r.mname)
                 : "nullptr";
-            os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {} }},\n",
+            os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {}, {} }},\n",
                 r.name, r.eff_tag,
                 r.optional ? "true" : "false",
                 r.has_default ? "true" : "false",
+                r.offset_expr,
                 r.tdref, r.ops,
                 r.is_explicit ? "true" : "false",
                 r.def_setter, def_cmp);
@@ -1415,7 +1415,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         os << std::format("const asn1::MemberDescriptor {}::s_alternatives[] = {{\n", cname);
         { int vi = 1;
           for (const auto& r : rows) {
-            os << std::format("    {{ \"{}\", {}, false, false, {}, {{}}, {}, nullptr, nullptr,\n",
+            os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, nullptr, nullptr,\n",
                 r.name, r.eff_tag,
                 r.tdref,
                 r.is_explicit ? "true" : "false");

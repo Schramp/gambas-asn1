@@ -563,7 +563,7 @@ struct SequenceXerHandler final : IXerTypeHandler {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
             if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
-            const Asn1Object* mptr = mbr.optional_ops.member_ptr(src);
+            const Asn1Object* mptr = mbr.optional_ops.member_ptr(src, mbr.offset);
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
             if (mdef.choice_spec) {
@@ -596,7 +596,7 @@ struct SequenceXerHandler final : IXerTypeHandler {
                 mbr.optional_ops.set_present(dest, present);
                 if (!present) continue;
             }
-            Asn1Object* mptr = mbr.optional_ops.member_ptr(dest);
+            Asn1Object* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
             if (mdef.choice_spec) {
