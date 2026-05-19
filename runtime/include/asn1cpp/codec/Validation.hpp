@@ -81,6 +81,14 @@ inline std::vector<PathSeg>& validate_path_stack() {
     thread_local std::vector<PathSeg> s;
     return s;
 }
+// True when a ValidationReportScope is open (or before any scope has ever
+// closed on this thread). push/pop_validate_path are no-ops when false —
+// hot path pays one TLS read + correctly-predicted branch instead of a
+// vector push_back per member.
+inline bool& validate_path_active() {
+    thread_local bool v = true;  // default ON so first-use works without a scope
+    return v;
+}
 } // namespace detail
 
 inline void set_validation_report(ValidationReport* r) {
@@ -91,12 +99,15 @@ inline ValidationReport* current_validation_report() {
 }
 
 inline void push_validate_path(const char* name) {
+    if (!detail::validate_path_active()) return;
     detail::validate_path_stack().push_back({false, {.name = name}});
 }
 inline void push_validate_path(std::size_t index) {
+    if (!detail::validate_path_active()) return;
     detail::validate_path_stack().push_back({true, {.index = index}});
 }
 inline void pop_validate_path() {
+    if (!detail::validate_path_active()) return;
     auto& s = detail::validate_path_stack();
     if (!s.empty()) s.pop_back();
 }
@@ -130,10 +141,19 @@ struct ValidatePathScope {
     ValidatePathScope& operator=(const ValidatePathScope&) = delete;
 };
 
-// RAII helper — set + clear the active report pointer.
+// RAII helper — set + clear the active report pointer and path-tracking gate.
+// Ctor enables path tracking (in case it was cleared by a previous scope).
+// Dtor clears the report and disables path tracking — hot path pays zero
+// between report scopes (one TLS read + correctly-predicted not-taken branch).
 struct ValidationReportScope {
-    explicit ValidationReportScope(ValidationReport& r) { set_validation_report(&r); }
-    ~ValidationReportScope() { set_validation_report(nullptr); }
+    explicit ValidationReportScope(ValidationReport& r) {
+        set_validation_report(&r);
+        detail::validate_path_active() = true;
+    }
+    ~ValidationReportScope() {
+        set_validation_report(nullptr);
+        detail::validate_path_active() = false;
+    }
     ValidationReportScope(const ValidationReportScope&) = delete;
     ValidationReportScope& operator=(const ValidationReportScope&) = delete;
 };

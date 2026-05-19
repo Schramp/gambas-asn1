@@ -246,8 +246,8 @@ struct TypeDescriptor {
     const EnumSpec*      enum_spec;      // non-null for ENUMERATED
     const SequenceSpec*  sequence_spec;  // non-null for SEQUENCE/SET
     const ChoiceSpec*    choice_spec;    // non-null for CHOICE
-    const SeqOfSpec*     seq_of_spec;    // non-null for SEQUENCE OF / SET OF
-    Constraints constraints; // flags==0 means unconstrained
+    const SeqOfSpec*     seq_of_spec     = nullptr; // non-null for SEQUENCE OF / SET OF
+    Constraints          constraints     = {};      // flags==0 means unconstrained
     bool     is_any = false;             // true for ANY — raw BER bytes, open-type in PER
     TypeKind kind   = TypeKind::Primitive;
 };

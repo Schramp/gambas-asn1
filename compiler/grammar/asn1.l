@@ -279,7 +279,7 @@ DESCENDANTS         { return yy::parser::make_TOK_DESCENDANTS(location()); }
     return yy::parser::symbol_type(text()[0], location());
 }
 
-<*>.    {
+<INITIAL,with_syntax,extended_values>.    {
     /* Unexpected character — skip and continue */
 }
 

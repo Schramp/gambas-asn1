@@ -1710,7 +1710,13 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
 
 void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
-    os << std::format("#include \"{}.hpp\"\n\n", cname);
+    os << std::format("#include \"{}.hpp\"\n", cname);
+    // __builtin_offsetof is well-defined for all types without virtual functions
+    // on GCC/Clang, including non-standard-layout types (conditionally supported
+    // per C++ standard). Suppress the pedantic diagnostic in generated files.
+    os << "#ifdef __GNUC__\n";
+    os << "#pragma GCC diagnostic ignored \"-Winvalid-offsetof\"\n";
+    os << "#endif\n\n";
 
     if (def.is_sequence() || def.is_set()) {
         current_type_ = cname;
