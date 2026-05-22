@@ -52,8 +52,9 @@
 %token <std::string>  TOK_cstring
 %token <std::string>  TOK_hstring
 %token <std::string>  TOK_identifier    "identifier"
-%token <long long>    TOK_number        "number"
-%token <long long>    TOK_number_negative "negative number"
+%token <long long>              TOK_number        "number"
+%token <long long>              TOK_number_negative "negative number"
+%token <unsigned long long>     TOK_number_large  "large number"
 %token <double>       TOK_realnumber
 %token <long long>    TOK_tuple
 %token <long long>    TOK_quadruple
@@ -1240,6 +1241,7 @@ RealValue:
 SignedNumber:
 	  TOK_number          { $$ = (int64_t)$1; }
 	| TOK_number_negative { $$ = (int64_t)$1; }
+	| TOK_number_large    { $$ = (uint64_t)$1; }
 	;
 
 /* ===== Object Identifier value ============================================= */

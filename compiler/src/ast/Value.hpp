@@ -16,7 +16,8 @@ struct OidValue {
 
 using Value = std::variant<
     std::monostate,        // absent / not set
-    int64_t,               // integer or enumerated literal
+    int64_t,               // integer literal that fits in int64_t
+    uint64_t,              // positive integer literal that exceeds INT64_MAX
     double,                // real literal
     bool,                  // TRUE / FALSE
     std::string,           // cstring or identifier value

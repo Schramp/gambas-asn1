@@ -134,7 +134,14 @@ WSP     [\t\r\v\f\n ]
 [1-9][0-9]*     {
     errno = 0;
     long long v = std::strtoll(text(), nullptr, 10);
-    if (errno == ERANGE) v = LLONG_MAX;
+    if (errno == ERANGE) {
+        // Value exceeds INT64_MAX — try as unsigned long long.
+        errno = 0;
+        unsigned long long u = std::strtoull(text(), nullptr, 10);
+        if (errno == 0) return yy::parser::make_TOK_number_large(u, location());
+        // Exceeds UINT64_MAX too — fall back to ULLONG_MAX as best effort.
+        return yy::parser::make_TOK_number_large(ULLONG_MAX, location());
+    }
     return yy::parser::make_TOK_number(v, location());
 }
 
