@@ -266,59 +266,103 @@ struct BooleanPerHandler final : IPerTypeHandler {
 struct IntegerPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
-        int64_t value = static_cast<const Integer*>(src)->value();
         const Constraints& pc = def.constraints;
+        bool is_u64 = (pc.int_kind == Constraints::INT_U64);
+        uint64_t uvalue = is_u64 ? static_cast<const UInteger*>(src)->value()
+                                 : static_cast<uint64_t>(static_cast<const Integer*>(src)->value());
+        int64_t  svalue = is_u64 ? static_cast<int64_t>(uvalue)
+                                 : static_cast<const Integer*>(src)->value();
+
         if (pc.flags & Constraints::CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
-                bool in_root = (value >= pc.lower_bound && value <= pc.upper_bound);
+                bool in_root = is_u64 ? (uvalue >= pc.lower_u64 && uvalue <= pc.upper_u64)
+                                      : (svalue >= pc.lower_bound && svalue <= pc.upper_bound);
                 s.put_bits(in_root ? 0 : 1, 1);
-                if (!in_root) { encode_unconstrained_int(s, value); return; }
+                if (!in_root) { encode_unconstrained_int(s, svalue); return; }
             }
-            int64_t encoded = value - pc.lower_bound;
-            int64_t rcount  = pc.upper_bound - pc.lower_bound + 1;
-            s.put_bits(static_cast<uint64_t>(encoded), range_bits(rcount));
+            if (is_u64) {
+                uint64_t encoded = uvalue - pc.lower_u64;
+                s.put_bits(encoded, pc.range_bits);
+            } else {
+                int64_t encoded = svalue - pc.lower_bound;
+                int64_t rcount  = pc.upper_bound - pc.lower_bound + 1;
+                s.put_bits(static_cast<uint64_t>(encoded), range_bits(rcount));
+            }
         } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
-                bool in_root = (value >= pc.lower_bound);
+                bool in_root = is_u64 ? (uvalue >= pc.lower_u64) : (svalue >= pc.lower_bound);
                 s.put_bits(in_root ? 0 : 1, 1);
-                if (!in_root) { encode_unconstrained_int(s, value); return; }
+                if (!in_root) { encode_unconstrained_int(s, svalue); return; }
             }
-            encode_unconstrained_int(s, value - pc.lower_bound);
+            if (is_u64)
+                encode_unconstrained_int(s, static_cast<int64_t>(uvalue - pc.lower_u64));
+            else
+                encode_unconstrained_int(s, svalue - pc.lower_bound);
         } else {
-            encode_unconstrained_int(s, value);
+            encode_unconstrained_int(s, svalue);
         }
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         const Constraints& pc = def.constraints;
-        auto* idest = static_cast<Integer*>(dest);
-        auto read_raw = [&](int64_t& out) { return decode_unconstrained_int(s, &out); };
+        bool is_u64 = (pc.int_kind == Constraints::INT_U64);
+        auto* udest = is_u64 ? static_cast<UInteger*>(dest) : nullptr;
+        auto* idest = is_u64 ? nullptr : static_cast<Integer*>(dest);
+
+        auto read_raw_s = [&](int64_t& out) { return decode_unconstrained_int(s, &out); };
+
         if (pc.flags & Constraints::CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
                 auto ext = s.get_bits(1);
                 if (!ext) return decode_err(ext.error());
-                if (*ext) { int64_t v = 0; auto r = read_raw(v); if (r) idest->set(v); return r; }
+                if (*ext) {
+                    int64_t v = 0;
+                    auto r = read_raw_s(v);
+                    if (r) {
+                        if (is_u64) udest->set(static_cast<uint64_t>(v));
+                        else        idest->set(v);
+                    }
+                    return r;
+                }
             }
-            int64_t rcount = pc.upper_bound - pc.lower_bound + 1;
-            auto bits = s.get_bits(range_bits(rcount));
-            if (!bits) return decode_err(bits.error());
-            idest->set(pc.lower_bound + static_cast<int64_t>(*bits));
+            if (is_u64) {
+                auto bits = s.get_bits(pc.range_bits);
+                if (!bits) return decode_err(bits.error());
+                udest->set(*bits + pc.lower_u64);
+            } else {
+                int64_t rcount = pc.upper_bound - pc.lower_bound + 1;
+                auto bits = s.get_bits(range_bits(rcount));
+                if (!bits) return decode_err(bits.error());
+                idest->set(pc.lower_bound + static_cast<int64_t>(*bits));
+            }
             return decode_ok();
         } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
                 auto ext = s.get_bits(1);
                 if (!ext) return decode_err(ext.error());
-                if (*ext) { int64_t v = 0; auto r = read_raw(v); if (r) idest->set(v); return r; }
+                if (*ext) {
+                    int64_t v = 0;
+                    auto r = read_raw_s(v);
+                    if (r) {
+                        if (is_u64) udest->set(static_cast<uint64_t>(v));
+                        else        idest->set(v);
+                    }
+                    return r;
+                }
             }
             int64_t adjusted = 0;
-            auto r = read_raw(adjusted);
+            auto r = read_raw_s(adjusted);
             if (!r) return r;
-            idest->set(adjusted + pc.lower_bound);
+            if (is_u64) udest->set(static_cast<uint64_t>(adjusted) + pc.lower_u64);
+            else        idest->set(adjusted + pc.lower_bound);
             return decode_ok();
         } else {
             int64_t v = 0;
-            auto r = read_raw(v);
-            if (r) idest->set(v);
+            auto r = read_raw_s(v);
+            if (r) {
+                if (is_u64) udest->set(static_cast<uint64_t>(v));
+                else        idest->set(v);
+            }
             return r;
         }
     }
@@ -549,30 +593,24 @@ struct EnumeratedPerHandler final : IPerTypeHandler {
         long value = static_cast<const EnumValue*>(src)->value();
         const EnumSpec& spec = *def.enum_spec;
         int rcount = spec.root_count > 0 ? spec.root_count : spec.count;
-        const long* order = spec.per_value_order;
-        int ordinal = -1;
-        bool is_ext = false;
-        if (order) {
-            for (int i = 0; i < rcount; ++i)
-                if (order[i] == value) { ordinal = i; break; }
-        } else {
-            for (int i = 0; i < rcount; ++i)
-                if (spec.entries[i].value == value) { ordinal = i; break; }
+        // Binary search in entries (sorted by numeric value) to get sorted position.
+        // This matches asn1c: PER ordinal = position in numerically-sorted value2enum,
+        // not declaration order. Needed when extension values have lower numeric values
+        // than root values (e.g. unknown(0) declared after "...").
+        int lo = 0, hi = spec.count - 1, ordinal = -1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (spec.entries[mid].value == value) { ordinal = mid; break; }
+            else if (spec.entries[mid].value < value) lo = mid + 1;
+            else hi = mid - 1;
         }
-        if (ordinal < 0) {
-            for (int i = rcount; i < spec.count; ++i) {
-                if (spec.entries[i].value == value) {
-                    ordinal = i - rcount;
-                    is_ext = true;
-                    break;
-                }
-            }
-        }
+        bool is_ext = (ordinal < 0) || (ordinal >= rcount);
+        int ext_ordinal = (ordinal >= rcount) ? (ordinal - rcount) : 0;
         if (spec.extensible) s.put_bits(is_ext ? 1 : 0, 1);
         if (!is_ext) {
             s.put_bits(static_cast<uint64_t>(ordinal), range_bits(rcount));
         } else {
-            put_nsnnwn(s, ordinal);
+            put_nsnnwn(s, ext_ordinal);
         }
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
@@ -591,11 +629,8 @@ struct EnumeratedPerHandler final : IPerTypeHandler {
             if (!idx) return decode_err(idx.error());
             if (*idx >= static_cast<uint64_t>(rcount))
                 return decode_err(DecodeError("PER: ENUM index out of range"));
-            long value;
-            const long* order = spec.per_value_order;
-            if (order) value = order[*idx];
-            else       value = spec.entries[*idx].value;
-            static_cast<EnumValue*>(dest)->set(value);
+            // entries sorted by value; ordinal = sorted position (matches asn1c)
+            static_cast<EnumValue*>(dest)->set(spec.entries[*idx].value);
             return decode_ok();
         } else {
             auto ord = get_nsnnwn(s);
@@ -922,7 +957,7 @@ const IPerTypeHandler* const PerCodec::prim_dispatch_[32] = {
     &s_real,       // [ 9] Real
     &s_error,      // [10] Enumerated   — TypeKind::Enumerated → comp_dispatch_
     &s_error,      // [11] EmbeddedPdv
-    &s_error,      // [12] Utf8String   — not in is_character_string
+    &s_string,     // [12] Utf8String   — AsnStringBase, 8 bits/char (unconstrained)
     &s_reloid,     // [13] RelativeOid
     &s_error,      // [14] (unassigned)
     &s_error,      // [15] (unassigned)
@@ -932,7 +967,7 @@ const IPerTypeHandler* const PerCodec::prim_dispatch_[32] = {
     &s_string,     // [19] PrintableString
     &s_string,     // [20] T61String
     &s_string,     // [21] VideotexString
-    &s_error,      // [22] Ia5String    — not in is_character_string
+    &s_string,     // [22] Ia5String    — AsnStringBase, 8 bits/char (unconstrained)
     &s_string,     // [23] UtcTime
     &s_string,     // [24] GeneralizedTime
     &s_string,     // [25] GraphicString
