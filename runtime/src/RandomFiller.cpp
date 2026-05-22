@@ -481,8 +481,9 @@ void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
         if (c.int_kind == Constraints::INT_U64) {
             uint64_t lo = c.lower_u64;
             uint64_t hi = c.upper_u64;
-            if (c.flags & Constraints::SEMI_CONSTRAINED)
-                hi = lo + 1000;  // bounded sample for SEMI_CONSTRAINED
+            // UINT64_MAX sentinel: (0..MAX) maps to "no upper bound" — treat as semi-constrained.
+            if ((c.flags & Constraints::SEMI_CONSTRAINED) || hi == std::numeric_limits<uint64_t>::max())
+                hi = lo + 1000;  // bounded sample avoids values asn1c XER can't parse
             if (lo > hi) hi = lo;
             uint64_t v = std::uniform_int_distribution<uint64_t>{lo, hi}(rng_);
             static_cast<UInteger*>(obj)->set(v);
