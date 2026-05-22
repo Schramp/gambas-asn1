@@ -28,8 +28,18 @@ inline std::string to_cpp_name(std::string_view s) {
     return out;
 }
 
-// C++ keywords that cannot be used as identifiers — append underscore if matched.
-inline std::string safe_member_name(std::string n) {
+// FNV-1a hash of s — used to generate a deterministic, build-constant suffix.
+inline uint32_t fnv1a_hash(std::string_view s) {
+    uint32_t h = 2166136261u;
+    for (unsigned char c : s) { h ^= c; h *= 16777619u; }
+    return h;
+}
+
+// Escape an identifier that clashes with C++ keywords or any name in `extra`.
+// Tries name+"_" first; if that also clashes, appends "_HHHHHHHH" (FNV-1a hash).
+// The hash suffix is constant across builds for a given input name.
+inline std::string safe_name(std::string n,
+                              std::initializer_list<std::string_view> extra = {}) {
     static const std::unordered_set<std::string> kw = {
         "alignas","alignof","and","and_eq","asm","auto","bitand","bitor","bool",
         "break","case","catch","char","char8_t","char16_t","char32_t","class",
@@ -44,8 +54,22 @@ inline std::string safe_member_name(std::string n) {
         "true","try","typedef","typeid","typename","union","unsigned","using",
         "virtual","void","volatile","wchar_t","while","xor","xor_eq"
     };
-    return kw.count(n) ? n + "_" : n;
+    auto is_reserved = [&](const std::string& s) {
+        if (kw.count(s)) return true;
+        for (auto e : extra) if (s == e) return true;
+        return false;
+    };
+    if (!is_reserved(n)) return n;
+    std::string with_suffix = n + "_";
+    if (!is_reserved(with_suffix)) return with_suffix;
+    // Both n and n+"_" are reserved — append build-constant hash suffix.
+    char buf[10];
+    snprintf(buf, sizeof(buf), "%08x", fnv1a_hash(n));
+    return n + "_" + buf;
 }
+
+// Escape a C++ identifier if it collides with a keyword (backward compat alias).
+inline std::string safe_member_name(std::string n) { return safe_name(std::move(n)); }
 
 // Upper-cases the first character of a C++ identifier string.
 inline std::string capitalize_first(std::string s) {
@@ -58,11 +82,12 @@ inline std::string make_synthetic_name(const std::string& parent, const std::str
     return parent + capitalize_first(to_cpp_name(member_name));
 }
 
-// Converts a member (identifier) name: first letter lower-case, escapes keywords.
-inline std::string to_member_name(std::string_view s) {
+// Converts a member (identifier) name: first letter lower-case, escapes keywords + extra.
+inline std::string to_member_name(std::string_view s,
+                                  std::initializer_list<std::string_view> extra = {}) {
     auto n = to_cpp_name(s);
     if (!n.empty()) n[0] = (char)std::tolower(n[0]);
-    return safe_member_name(std::move(n));
+    return safe_name(std::move(n), extra);
 }
 
 // Converts a named-value (INTEGER constant) name: hyphens → underscores, matching asn1c.
@@ -194,11 +219,22 @@ private:
                                std::vector<std::pair<std::string,int>>& out,
                                std::set<std::string>& visited);
     std::optional<int64_t> resolve_int_value(const ast::Value& v) const;
+    std::optional<uint64_t> resolve_uint_value(const ast::Value& v) const;
+
+    // Rich result from extract_integer_range.
+    struct IntRange {
+        bool has_value;   // false → no constraint found
+        int64_t lo;
+        int64_t hi;        // int64_t view of upper; INT64_MAX when truly_max=true
+        bool truly_max;    // true → upper endpoint was the MAX keyword (semi-constrained)
+        uint64_t hi_u64;   // actual upper as uint64_t; valid when has_value && !truly_max
+    };
+
     // For DEFAULT members in SEQUENCE/SET: emits a static helper that sets the
     // optional and writes the DEFAULT value. Returns "&_setdef_..." or "nullptr".
     std::string emit_default_setter(const ast::TypeDef& m, const std::string& parent_cname,
                                     const std::string& mname, std::ostream& os);
-    std::optional<std::pair<int64_t,int64_t>> extract_integer_range(const ast::TypeDef& def) const;
+    IntRange extract_integer_range(const ast::TypeDef& def) const;
 
     // Info for generating typed set_<member>() helpers on SEQUENCE/SET classes.
     struct MemberSetterInfo {
