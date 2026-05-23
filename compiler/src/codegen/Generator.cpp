@@ -98,11 +98,19 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         return cpp_name_for_typeref(*tr);
     if (def.is_seq_of()) {
         const auto& sof = std::get<ast::SequenceOfType>(def.body);
-        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(*sof.element));
+        const auto& elem = *sof.element;
+        if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
+            return std::format("asn1::VectorSeqOf<{}>",
+                               make_synthetic_name(make_synthetic_name(current_type_, def.name), "Anon"));
+        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(elem));
     }
     if (def.is_set_of()) {
         const auto& sof = std::get<ast::SetOfType>(def.body);
-        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(*sof.element));
+        const auto& elem = *sof.element;
+        if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
+            return std::format("asn1::VectorSeqOf<{}>",
+                               make_synthetic_name(make_synthetic_name(current_type_, def.name), "Anon"));
+        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(elem));
     }
     if (def.is_sequence() || def.is_choice() || def.is_set())
         return make_synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
@@ -1876,10 +1884,14 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
             const auto& elem = m->is_seq_of()
                 ? *std::get<ast::SequenceOfType>(m->body).element
                 : *std::get<ast::SetOfType>(m->body).element;
+            // Compute seqof_name first so anonymous element types are scoped under it,
+            // preventing collisions when multiple SeqOf members have structurally-similar
+            // but differently-constrained inline element types (e.g. ctfc2Bit vs ctfc6Bit).
+            std::string seqof_name = make_synthetic_name(parent_cname, m->name);
             std::string elem_type_name;  // non-empty iff element was an inline complex type
             if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
                 bool was_anon = elem.name.empty();
-                elem_type_name = make_synthetic_name(parent_cname, was_anon ? "Anon" : elem.name);
+                elem_type_name = make_synthetic_name(seqof_name, was_anon ? "Anon" : elem.name);
                 if (!generated_names_.count(elem_type_name)) {
                     generated_names_.insert(elem_type_name);
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
@@ -1898,7 +1910,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
             // Generate synthetic SeqOf wrapper descriptor type named parent + MemberCamel.
             // If element was anonymous inline, replace it with a TypeRef to the named element
             // type so emit_hpp uses the correct name and include path.
-            std::string seqof_name = make_synthetic_name(parent_cname, m->name);
+            // (seqof_name already computed above)
             if (!generated_names_.count(seqof_name)) {
                 generated_names_.insert(seqof_name);
                 auto seqof_td = std::make_shared<ast::TypeDef>(*m);
