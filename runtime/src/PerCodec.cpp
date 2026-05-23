@@ -12,6 +12,16 @@
 
 namespace asn1 {
 
+// TODO: remove this flag and the suppression code once frame #7 DL_DCCH_Message
+// byte-mismatch is fixed. Currently suppression is needed to match asn1c output
+// on frame #5 (asn1c also suppresses DEFAULT-equal members per X.691 §18).
+// When suppression is removed: verify per-test 4/4 and xval-per 198/198.
+// Runtime toggle (for testing): set ASN1CPP_PER_SUPPRESS_DEFAULT=0 to disable.
+static const bool per_suppress_default = []() {
+    const char* v = std::getenv("ASN1CPP_PER_SUPPRESS_DEFAULT");
+    return v == nullptr || std::string_view(v) != "0";
+}();
+
 namespace {
 
 // ---------------------------------------------------------------------------
@@ -729,13 +739,19 @@ struct SequencePerHandler final : IPerTypeHandler {
         for (int i = 0; i < root_end; ++i) {
             const auto& mbr = spec.members[i];
             if (!mbr.optional) continue;
-            s.put_bits(mbr.optional_ops.is_present(src) ? 1 : 0, 1);
+            bool suppress = per_suppress_default &&
+                            mbr.has_default && mbr.is_default_equal &&
+                            mbr.is_default_equal(src);
+            bool present = mbr.optional_ops.is_present(src) && !suppress;
+            s.put_bits(present ? 1 : 0, 1);
         }
         IEncodeStream& es = s;
         for (int i = 0; i < root_end; ++i) {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
             if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
+            if (per_suppress_default && mbr.has_default &&
+                mbr.is_default_equal && mbr.is_default_equal(src)) continue;
             const Asn1Object* mptr = mbr.optional_ops.member_ptr(src, mbr.offset);
             codec.encode(es, *mbr.type_descriptor, mptr);
         }

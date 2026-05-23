@@ -220,6 +220,7 @@ private:
                                std::set<std::string>& visited);
     std::optional<int64_t> resolve_int_value(const ast::Value& v) const;
     std::optional<uint64_t> resolve_uint_value(const ast::Value& v) const;
+    std::optional<std::pair<int64_t,int64_t>> extract_size_range(const ast::TypeDef& def) const;
 
     // Rich result from extract_integer_range.
     struct IntRange {

@@ -13,6 +13,31 @@ namespace asn1::codegen {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Write content to path only if it differs from the existing file.
+// Uses a .tmp sidecar: write there, compare, then rename or remove.
+// Avoids bumping mtime on unchanged generated files → fewer downstream recompiles.
+static void write_if_changed(const fs::path& path, const std::string& content) {
+    fs::path tmp = path; tmp += ".tmp";
+    { std::ofstream out(tmp, std::ios::binary); out << content; }
+    if (fs::exists(path)) {
+        std::ifstream existing(path, std::ios::binary);
+        std::string old((std::istreambuf_iterator<char>(existing)),
+                         std::istreambuf_iterator<char>());
+        if (old == content) { fs::remove(tmp); return; }
+    }
+    fs::rename(tmp, path);
+}
+
+// Emit to a string then call write_if_changed.
+template<typename EmitFn>
+static void emit_file(const fs::path& path, EmitFn&& fn) {
+    std::ostringstream buf;
+    fn(buf);
+    write_if_changed(path, buf.str());
+}
+
+// ---------------------------------------------------------------------------
+
 // Linux NAME_MAX is 255; .hpp/.cpp extensions take 4 bytes. When cname exceeds
 // 240 chars, truncate to 220 and append a deterministic FNV-1a 32-bit hash so
 // the filename fits on any POSIX filesystem.
@@ -697,8 +722,8 @@ static void walk_type_constraints(const ast::TypeDef& def, F&& f) {
         if (cptr) walk_constraints(*cptr, f);
 }
 
-// Forward decl: definition below; needed by emit_member_type_descriptor.
-static std::optional<std::pair<int64_t,int64_t>> extract_size_range(const ast::TypeDef& def);
+// Forward decl: defined as Generator member below; needed by emit_member_type_descriptor.
+// (Member function rather than static free fn so it can resolve named value references.)
 
 struct SizeConstraintInfo {
     int     flags      = 0;   // SIZE_CONSTRAINED | EXTENSIBLE (0 when no/semi constraint)
@@ -1641,7 +1666,7 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
 
 // Extract SIZE (lb..ub) constraint. Returns {lb, ub} or nullopt if none.
 // lb==ub → fixed size; ub==INT64_MAX → semi-constrained (SIZE lb..MAX).
-static std::optional<std::pair<int64_t,int64_t>> extract_size_range(const ast::TypeDef& def) {
+std::optional<std::pair<int64_t,int64_t>> Generator::extract_size_range(const ast::TypeDef& def) const {
     std::optional<std::pair<int64_t,int64_t>> result;
     walk_type_constraints(def, [&](const ast::ConstraintBody& body) {
         if (result) return;
@@ -1650,13 +1675,13 @@ static std::optional<std::pair<int64_t,int64_t>> extract_size_range(const ast::T
         if (auto* vr = std::get_if<ast::ValueRange>(&sc->inner->body)) {
             int64_t lb = 0, ub = std::numeric_limits<int64_t>::max();
             if (vr->lower.kind != ast::RangeEndpoint::Kind::Min)
-                if (auto* n = std::get_if<int64_t>(&vr->lower.value)) lb = *n;
+                if (auto opt = resolve_int_value(vr->lower.value)) lb = *opt;
             if (vr->upper.kind == ast::RangeEndpoint::Kind::Max)
                 ub = std::numeric_limits<int64_t>::max();
-            else if (auto* n = std::get_if<int64_t>(&vr->upper.value)) ub = *n;
+            else if (auto opt = resolve_int_value(vr->upper.value)) ub = *opt;
             result = {lb, ub};
         } else if (auto* sv = std::get_if<ast::Value>(&sc->inner->body)) {
-            if (auto* n = std::get_if<int64_t>(sv)) result = {*n, *n};
+            if (auto opt = resolve_int_value(*sv)) result = {*opt, *opt};
         }
     });
     return result;
@@ -1834,8 +1859,8 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 }
                 generate_inline_types(*synthetic, mod);
                 current_type_ = synth_name;
-                { std::ofstream hpp(out_dir_ / (filename_for(synth_name) + ".hpp")); emit_hpp(*synthetic, mod, hpp); }
-                { std::ofstream cpp(out_dir_ / (filename_for(synth_name) + ".cpp")); emit_cpp(*synthetic, cpp); }
+                emit_file(out_dir_ / (filename_for(synth_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
+                emit_file(out_dir_ / (filename_for(synth_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
             }
         }
         return;
@@ -1866,8 +1891,8 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                     }
                     generate_inline_types(*synthetic, mod);
                     current_type_ = elem_type_name;
-                    { std::ofstream hpp(out_dir_ / (filename_for(elem_type_name) + ".hpp")); emit_hpp(*synthetic, mod, hpp); }
-                    { std::ofstream cpp(out_dir_ / (filename_for(elem_type_name) + ".cpp")); emit_cpp(*synthetic, cpp); }
+                    emit_file(out_dir_ / (filename_for(elem_type_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
+                    emit_file(out_dir_ / (filename_for(elem_type_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
                 }
             }
             // Generate synthetic SeqOf wrapper descriptor type named parent + MemberCamel.
@@ -1887,8 +1912,8 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                         seqof_td->body = ast::SetOfType{named_elem};
                 }
                 current_type_ = seqof_name;
-                { std::ofstream hpp(out_dir_ / (filename_for(seqof_name) + ".hpp")); emit_hpp(*seqof_td, mod, hpp); }
-                { std::ofstream cpp(out_dir_ / (filename_for(seqof_name) + ".cpp")); emit_cpp(*seqof_td, cpp); }
+                emit_file(out_dir_ / (filename_for(seqof_name) + ".hpp"), [&](auto& os){ emit_hpp(*seqof_td, mod, os); });
+                emit_file(out_dir_ / (filename_for(seqof_name) + ".cpp"), [&](auto& os){ emit_cpp(*seqof_td, os); });
             }
             continue;
         }
@@ -1903,23 +1928,14 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
         if (generated_names_.count(synth_name)) continue;
         generated_names_.insert(synth_name);
 
-        // Build a synthetic TypeDef with the synthetic name
         auto synthetic = std::make_shared<ast::TypeDef>(*m);
         synthetic->name = synth_name;
 
-        // Recursively generate inline types within the synthetic type
         generate_inline_types(*synthetic, mod);
 
-        // Generate the synthetic type file
         current_type_ = synth_name;
-        {
-            std::ofstream hpp(out_dir_ / (filename_for(synth_name) + ".hpp"));
-            emit_hpp(*synthetic, mod, hpp);
-        }
-        {
-            std::ofstream cpp(out_dir_ / (filename_for(synth_name) + ".cpp"));
-            emit_cpp(*synthetic, cpp);
-        }
+        emit_file(out_dir_ / (filename_for(synth_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
+        emit_file(out_dir_ / (filename_for(synth_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
     }
 }
 
@@ -1933,10 +1949,7 @@ void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
     current_tag_default_ = mod.tag_default;
     std::string cname = effective_cpp_name(def.name, mod.name);
 
-    {
-        std::ofstream hpp(out_dir_ / (filename_for(cname) + ".hpp"));
-        emit_hpp(def, mod, hpp);
-    }
+    emit_file(out_dir_ / (filename_for(cname) + ".hpp"), [&](auto& os){ emit_hpp(def, mod, os); });
 
     auto bt_is = [&](ast::BuiltinType t) {
         auto* bt = std::get_if<ast::BuiltinType>(&def.body);
@@ -1952,27 +1965,25 @@ void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
         || bt_is(ast::BuiltinType::Enumerated)
         || bt_is(ast::BuiltinType::Integer)
         || is_named_builtin_alias();
-    if (needs_cpp) {
-        std::ofstream cpp(out_dir_ / (filename_for(cname) + ".cpp"));
-        emit_cpp(def, cpp);
-    }
+    if (needs_cpp)
+        emit_file(out_dir_ / (filename_for(cname) + ".cpp"), [&](auto& os){ emit_cpp(def, os); });
 }
 
 void Generator::emit_stubs_for_unresolved() {
     for (const auto& name : referenced_names_) {
         if (generated_names_.count(name)) continue;
         auto path = out_dir_ / (filename_for(name) + ".hpp");
-        if (fs::exists(path)) continue;
-        std::ofstream os(path);
-        os << "#pragma once\n";
-        os << "#include <asn1cpp/asn1cpp.hpp>\n\n";
-        os << "/* stub: type from missing/uncompiled module */\n";
-        os << std::format("struct {} {{}};\n\n", name);
-        os << std::format("inline const asn1::TypeDescriptor asn_DEF_{} = {{\n", name);
-        os << std::format("    \"{}\",\n", name);
-        os << "    asn1::Tag{},\n";
-        os << "    nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive\n";
-        os << "};\n\n";
+        emit_file(path, [&](auto& os) {
+            os << "#pragma once\n";
+            os << "#include <asn1cpp/asn1cpp.hpp>\n\n";
+            os << "/* stub: type from missing/uncompiled module */\n";
+            os << std::format("struct {} {{}};\n\n", name);
+            os << std::format("inline const asn1::TypeDescriptor asn_DEF_{} = {{\n", name);
+            os << std::format("    \"{}\",\n", name);
+            os << "    asn1::Tag{},\n";
+            os << "    nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive\n";
+            os << "};\n\n";
+        });
     }
 }
 
