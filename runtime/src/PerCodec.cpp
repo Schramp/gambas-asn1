@@ -1,5 +1,6 @@
 #include <cassert>
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <numeric>
 #include <asn1cpp/codec/PerCodec.hpp>
@@ -650,12 +651,24 @@ struct SeqOfPerHandler final : IPerTypeHandler {
         const auto& spec = *def.seq_of_spec;
         const SeqOfBase& seq = *static_cast<const SeqOfBase*>(src);
         std::size_t count = seq.count();
+        if (debug_flags() & DBG_PER)
+            std::fprintf(stderr, "[PER-ENC] SOF %s count=%zu @%d\n",
+                         def.name, count, s.bit_pos());
         const auto& sc = spec.size_constraints;
         if (sc.flags & Constraints::SIZE_CONSTRAINED) {
             if (sc.size_lower == sc.size_upper) {
                 // Fixed size: count implicit
             } else {
-                s.put_bits(count - static_cast<std::size_t>(sc.size_lower), sc.size_range_bits);
+                // TODO: wire into ValidationReport when available (currently no encode-time report scope here)
+                std::size_t enc_count = count;
+                if (enc_count < static_cast<std::size_t>(sc.size_lower)) {
+                    std::fprintf(stderr, "[PER-ENC] SOF %s: count=%zu below SIZE lower bound %lld\n",
+                                 def.name, count, (long long)sc.size_lower);
+                    enc_count = static_cast<std::size_t>(sc.size_lower);
+                }
+                s.put_bits(enc_count - static_cast<std::size_t>(sc.size_lower), sc.size_range_bits);
+                // Encode only actual elements; missing elements produce a desync (caller's fault).
+                count = std::min(count, enc_count);
             }
         } else {
             per_detail::put_length(s, count);
@@ -667,6 +680,9 @@ struct SeqOfPerHandler final : IPerTypeHandler {
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
+        if (debug_flags() & DBG_PER)
+            std::fprintf(stderr, "[PER-DEC] SOF %s @%d/%d\n",
+                         def.name, s.bit_pos(), s.total_bits());
         const auto& spec = *def.seq_of_spec;
         const auto& sc = spec.size_constraints;
         std::size_t count = 0;
@@ -700,6 +716,9 @@ struct SequencePerHandler final : IPerTypeHandler {
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& spec = *def.sequence_spec;
         int root_end = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
+        if (debug_flags() & DBG_PER)
+            std::fprintf(stderr, "[PER-ENC] SEQ %s members=%d ext_at=%d @%d\n",
+                         def.name, spec.count, spec.ext_at, s.bit_pos());
         bool has_ext = false;
         if (spec.ext_at >= 0) {
             for (int i = root_end; i < spec.count; ++i) {
@@ -737,6 +756,9 @@ struct SequencePerHandler final : IPerTypeHandler {
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         const auto& spec = *def.sequence_spec;
         int root_end = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
+        if (debug_flags() & DBG_PER)
+            std::fprintf(stderr, "[PER-DEC] SEQ %s members=%d ext_at=%d @%d/%d\n",
+                         def.name, spec.count, spec.ext_at, s.bit_pos(), s.total_bits());
         bool ext_flag = false;
         if (spec.ext_at >= 0) {
             auto b = s.get_bits(1);
@@ -813,6 +835,9 @@ struct ChoicePerHandler final : IPerTypeHandler {
         int def_idx = pr - 1;
         int root_count = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
         bool in_ext = (spec.ext_at >= 0) && (def_idx >= root_count);
+        if (debug_flags() & DBG_PER)
+            std::fprintf(stderr, "[PER-ENC] CHO %s pr=%d root=%d ext=%d @%d\n",
+                         def.name, pr, root_count, (int)in_ext, s.bit_pos());
         if (spec.ext_at >= 0) s.put_bits(in_ext ? 1 : 0, 1);
         if (!in_ext) {
             std::vector<int> to_can, from_can;
@@ -846,6 +871,9 @@ struct ChoicePerHandler final : IPerTypeHandler {
         ChoiceInterface* ch = static_cast<ChoiceInterface*>(dest);
         int root_count = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
         bool in_ext = false;
+        if (debug_flags() & DBG_PER)
+            std::fprintf(stderr, "[PER-DEC] CHO %s root=%d @%d/%d\n",
+                         def.name, root_count, s.bit_pos(), s.total_bits());
         if (spec.ext_at >= 0) {
             auto b = s.get_bits(1);
             if (!b) return decode_err(b.error());

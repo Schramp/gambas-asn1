@@ -428,10 +428,10 @@ bool RandomFiller::fill_seq_of(Asn1Object* obj, const SeqOfSpec& spec, int depth
     // Exponential backoff: halve effective max every 2 depth levels so that
     // total data stays bounded regardless of max_depth.  Without this, nested
     // SEQUENCE OFs multiply as max_seq^nesting_levels.
+    // SIZE lower bound (lo) is non-negotiable — depth reduction must not violate it.
     int depth_hi = std::max(cfg_.min_seq_of, cfg_.max_seq_of >> (depth / 2));
     hi = std::min(hi, depth_hi);
-    // Re-clamp lo: SIZE_CONSTRAINED may have raised lo above the depth-reduced hi.
-    if (lo > hi) lo = hi;
+    if (hi < lo) hi = lo;  // SIZE constraint floor overrides depth reduction
 
     int n = rand_int(lo, hi);
     SeqOfBase& seq = *static_cast<SeqOfBase*>(obj);

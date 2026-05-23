@@ -1,12 +1,14 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <numeric>
 #include <vector>
 #include <span>
 #include "ICodec.hpp"
 #include "Constraints.hpp"
+#include "Debug.hpp"
 #include "../Tag.hpp"
 #include "../Asn1Object.hpp"
 #include "../SeqOfBase.hpp"
@@ -30,7 +32,15 @@ class PerEncodeStream : public IEncodeStream {
 public:
     explicit PerEncodeStream(std::vector<uint8_t>& buf) : buf_(buf) {}
 
+    int bit_pos() const { return static_cast<int>(buf_.size()) * 8 + bits_; }
+
     void put_bits(uint64_t value, int n) {
+        if (n > 0 && (debug_flags() & DBG_PER)) {
+            int off = bit_pos();
+            std::fprintf(stderr, "[PER-ENC] @%4d +%2d ", off, n);
+            for (int i = n-1; i >= 0; --i) std::fprintf(stderr, "%d", (int)((value>>i)&1));
+            std::fprintf(stderr, " (%llu)\n", (unsigned long long)value);
+        }
         for (int i = n - 1; i >= 0; --i) {
             int bit = (value >> i) & 1;
             current_ |= static_cast<uint8_t>(bit << (7 - bits_));
@@ -56,15 +66,28 @@ public:
         return byte_pos_ >= static_cast<int>(buf_.size());
     }
 
+    int bit_pos() const { return byte_pos_ * 8 + bit_pos_; }
+    int total_bits() const { return static_cast<int>(buf_.size()) * 8; }
+
     Expected<uint64_t, DecodeError> get_bits(int n) {
+        int off = bit_pos();
         uint64_t result = 0;
         for (int i = 0; i < n; ++i) {
-            if (byte_pos_ >= static_cast<int>(buf_.size()))
+            if (byte_pos_ >= static_cast<int>(buf_.size())) {
+                if (debug_flags() & DBG_PER)
+                    std::fprintf(stderr, "[PER-DEC] @%4d +%2d EOF (total=%d)\n",
+                                 off, n, total_bits());
                 return make_unexpected<uint64_t, DecodeError>(
                     DecodeError("PER: unexpected end of data"));
+            }
             int bit = (buf_[byte_pos_] >> (7 - bit_pos_)) & 1;
             result = (result << 1) | static_cast<uint64_t>(bit);
             if (++bit_pos_ == 8) { ++byte_pos_; bit_pos_ = 0; }
+        }
+        if (debug_flags() & DBG_PER) {
+            std::fprintf(stderr, "[PER-DEC] @%4d +%2d ", off, n);
+            for (int i = n-1; i >= 0; --i) std::fprintf(stderr, "%d", (int)((result>>i)&1));
+            std::fprintf(stderr, " (%llu)\n", (unsigned long long)result);
         }
         return result;
     }

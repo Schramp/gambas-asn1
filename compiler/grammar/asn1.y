@@ -770,9 +770,9 @@ DefinedType:
 	    auto s = $1;
 	    auto dot = s.find('.');
 	    if (dot != std::string::npos && s.find('&') == std::string::npos)
-	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1)};
+	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), {}};
 	    else
-	        t->body = TypeRef{"", s};
+	        t->body = TypeRef{"", s, {}};
 	    $$ = t;
 	}
 	| ComplexTypeReference '{' ActualParameterList '}'
@@ -781,9 +781,9 @@ DefinedType:
 	    auto s = $1;
 	    auto dot = s.find('.');
 	    if (dot != std::string::npos && s.find('&') == std::string::npos)
-	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1)};
+	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), {}};
 	    else
-	        t->body = TypeRef{"", s};
+	        t->body = TypeRef{"", s, {}};
 	    $$ = t;
 	}
 	;
