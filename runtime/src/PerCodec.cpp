@@ -12,17 +12,24 @@
 
 namespace asn1 {
 
-
+// Unnamed namespace: limits symbol visibility to this translation unit (equivalent to static
+// for free functions in C++). Intentional — these helpers are internal codec primitives.
 namespace {
 
 // ---------------------------------------------------------------------------
-// Utility functions (previously static members of PerCodec)
+// Utility functions
+// Standard reference: ITU-T Rec. X.691 (1997) — Packed Encoding Rules (PER)
+// File: asn1-docs/X.691-199712.txt  Grep: grep -n "<title>" X.691-199712.txt
 
+// X.691 §10.9.3.4 "Where the length determinant is a normally small length and
+// "n" is less than or equal to 64, a single-bit bit-field [...]"
+// Flag=0: n in [1..64], encode n-1 in 6 bits. Flag=1: delegate to put_length().
 static void put_nslength(PerEncodeStream& s, std::size_t n) {
     if (n >= 1 && n <= 64) { s.put_bits(0, 1); s.put_bits(n - 1, 6); }
     else { s.put_bits(1, 1); per_detail::put_length(s, n); }
 }
 
+// X.691 §10.9.3.4 — see put_nslength above.
 static Expected<std::size_t, DecodeError> get_nslength(PerDecodeStream& s) {
     auto b = s.get_bits(1);
     if (!b) return make_unexpected<std::size_t, DecodeError>(b.error());
@@ -34,11 +41,17 @@ static Expected<std::size_t, DecodeError> get_nslength(PerDecodeStream& s) {
     return per_detail::get_length(s);
 }
 
+
+// X.691 §10.6 "Encoding of a normally small non-negative whole number"
+// Flag=0: value in [0..63], encode in 6 bits. Flag=1: delegate to put_length().
+// Name: put_ns(normally-small)nn(non-negative)w(whole)n(number).
+// TODO: rename to something less cryptic.
 static void put_nsnnwn(PerEncodeStream& s, int n) {
     if (n <= 63) { s.put_bits(0, 1); s.put_bits(static_cast<uint64_t>(n), 6); }
     else { s.put_bits(1, 1); per_detail::put_length(s, static_cast<std::size_t>(n)); }
 }
 
+// X.691 §10.6 — see put_nsnnwn above.
 static Expected<int, DecodeError> get_nsnnwn(PerDecodeStream& s) {
     auto b = s.get_bits(1);
     if (!b) return make_unexpected<int, DecodeError>(b.error());
@@ -52,6 +65,10 @@ static Expected<int, DecodeError> get_nsnnwn(PerDecodeStream& s) {
     return static_cast<int>(*len);
 }
 
+// X.691 §10.5.6 "In the case of the UNALIGNED variant the value ("n" - "lb") shall be
+// encoded as a non-negative binary-integer in a bit-field [...] with the minimum number
+// of bits necessary to represent the range."
+// Returns the minimum bit width to represent values in [0 .. range-1].
 static int range_bits(int64_t range) {
     if (range <= 1) return 0;
     int bits = 0;
@@ -59,6 +76,9 @@ static int range_bits(int64_t range) {
     return bits;
 }
 
+// X.691 §10.5 "Encoding of a constrained whole number" (SIZE-constrained case),
+//        §10.9 "General rules for encoding a length determinant" (unconstrained case).
+// Fixed SIZE (size_range_bits==0): no bits written. Constrained: encode offset from lower bound.
 static void encode_size_field(PerEncodeStream& s, const TypeDescriptor& def, std::size_t len) {
     const Constraints& pc = def.constraints;
     bool size_constrained = pc.flags & Constraints::SIZE_CONSTRAINED;
@@ -71,6 +91,7 @@ static void encode_size_field(PerEncodeStream& s, const TypeDescriptor& def, std
     }
 }
 
+// X.691 §10.5 / §10.9 — see encode_size_field above.
 static Expected<std::size_t, DecodeError> decode_size_field(PerDecodeStream& s,
                                                              const TypeDescriptor& def) {
     const Constraints& pc = def.constraints;
@@ -86,6 +107,8 @@ static Expected<std::size_t, DecodeError> decode_size_field(PerDecodeStream& s,
     }
 }
 
+// X.691 §10.8 "Encoding of an unconstrained whole number"
+// 2's-complement, minimum octets, preceded by 8-bit octet count.
 static void encode_unconstrained_int(PerEncodeStream& s, int64_t value) {
     uint8_t buf[8]; int len = 0;
     if (value == 0) { buf[0] = 0; len = 1; }
@@ -105,6 +128,7 @@ static void encode_unconstrained_int(PerEncodeStream& s, int64_t value) {
     for (int i = 0; i < len; ++i) s.put_bits(buf[i], 8);
 }
 
+// X.691 §10.8 — see encode_unconstrained_int above.
 static DecodeResult decode_unconstrained_int(PerDecodeStream& s, int64_t* dest) {
     auto len_bits = s.get_bits(8);
     if (!len_bits) return decode_err(len_bits.error());
@@ -122,18 +146,24 @@ static DecodeResult decode_unconstrained_int(PerDecodeStream& s, int64_t* dest) 
     return decode_ok();
 }
 
+// X.691 §26.5 "This subclause applies to known-multiplier character strings"
+// NumericString: space=0, '0'-'9'=1-10 (4 bits per character).
 static uint8_t encode_numeric_char(char c) {
     if (c == ' ') return 0;
     if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0' + 1);
     return 0;
 }
 
+// X.691 §26.5 — see encode_numeric_char above.
 static char decode_numeric_char(uint8_t v) {
     if (v == 0) return ' ';
     if (v >= 1 && v <= 10) return static_cast<char>('0' + (v - 1));
     return '?';
 }
 
+// X.691 §26.5 "This subclause applies to known-multiplier character strings"
+// PrintableString: 7-bit index into PrintableString alphabet.
+// TODO: use TypeDescriptor alphabet table instead of linear scan.
 static uint8_t encode_ps_char(char c) {
     auto a = PRINTABLE_STRING_ALPHABET;
     for (std::size_t i = 0; i < a.size(); ++i)
@@ -141,11 +171,16 @@ static uint8_t encode_ps_char(char c) {
     return 0;
 }
 
+// X.691 §26.5 — see encode_ps_char above.
 static char decode_ps_char(uint8_t v) {
     auto a = PRINTABLE_STRING_ALPHABET;
     return (v < a.size()) ? a[v] : '?';
 }
 
+// X.691 §26.5 "This subclause applies to known-multiplier character strings"
+// Returns {bits_per_char, bytes_per_char} for each string type:
+//   NumericString: {4,1}, PrintableString/VisibleString/UTCTime/GeneralizedTime: {7,1},
+//   BMPString: {8,2}, UniversalString: {8,4}, default: {8,1}.
 static std::tuple<int,int> string_params(uint32_t tag_num) {
     switch (tag_num) {
         case UniversalTag::NumericString:   return {4, 1};
@@ -159,6 +194,9 @@ static std::tuple<int,int> string_params(uint32_t tag_num) {
     }
 }
 
+// X.691 §22 "Encoding the choice type" — index encoded as constrained whole number.
+// Returns ceil(log2(n)): bits to encode alternative index in [0..n-1].
+// TODO: equivalent to range_bits(n) — consider merging.
 static int choice_index_bits(int n) {
     if (n <= 1) return 0;
     int bits = 0, m = 1;
@@ -166,6 +204,10 @@ static int choice_index_bits(int n) {
     return bits;
 }
 
+// X.691 §22.6 "The root alternatives shall be ordered according to their tags"
+// Sorts by tag class then tag number: to_canonical[i] = canonical index of alternative i;
+// from_canonical is the inverse permutation.
+// TODO: precompute in Generator.cpp and store as static table content.
 static void build_canonical_maps(const ChoiceSpec& spec, int root_count,
                                  std::vector<int>& to_canonical,
                                  std::vector<int>& from_canonical) {
@@ -183,6 +225,8 @@ static void build_canonical_maps(const ChoiceSpec& spec, int root_count,
         from_canonical[to_canonical[i]] = i;
 }
 
+// X.691 §10.2 "Open type fields"
+// Encodes value to temporary buffer; prepends octet-aligned length determinant.
 static void encode_open_type(const PerCodec& codec, PerEncodeStream& s,
                               const TypeDescriptor& mdef, const Asn1Object* mptr) {
     std::vector<uint8_t> tmp;
@@ -194,6 +238,7 @@ static void encode_open_type(const PerCodec& codec, PerEncodeStream& s,
     for (auto b : tmp) s.put_bits(b, 8);
 }
 
+// X.691 §10.2 — see encode_open_type above.
 static DecodeResult decode_open_type(const PerCodec& codec, PerDecodeStream& s,
                                      const TypeDescriptor& mdef, Asn1Object* mptr) {
     auto len_r = per_detail::get_length(s);
@@ -205,6 +250,7 @@ static DecodeResult decode_open_type(const PerCodec& codec, PerDecodeStream& s,
     return codec.decode(ds, mdef, mptr);
 }
 
+// X.691 §10.2 — skip unknown open-type field by length-prefixed byte count.
 static DecodeResult skip_open_type(PerDecodeStream& s) {
     auto len_r = per_detail::get_length(s);
     if (!len_r) return decode_err(len_r.error());
@@ -387,6 +433,7 @@ struct RealPerHandler final : IPerTypeHandler {
         const Real& v = *static_cast<const Real*>(src);
         if (v.value() == 0.0) return;
         std::vector<uint8_t> ber;
+	//TODO: slightly longer names would be nice, don't like all these s, w, v etc. i as look counter ok, but this just too much.
         { BerWriter w{ber}; BerTraits<Real>::encode(w, v); }
         std::size_t content_len = ber[1];
         per_detail::put_length(s, content_len);
@@ -474,6 +521,8 @@ struct RelOidPerHandler final : IPerTypeHandler {
     }
 };
 
+//TODO: Although stucts can have methods in cpp, why not use classes? Is there a specific advantage to using structs?
+//As we't focussing in CPP I think we should call them classes as well.
 struct StringPerHandler final : IPerTypeHandler {
     void encode(const PerCodec&, PerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
