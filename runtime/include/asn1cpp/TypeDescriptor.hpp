@@ -238,6 +238,10 @@ enum class TypeKind : uint8_t {
     SeqOf      = 5,  // also SET OF
 };
 
+// Forward declaration — avoids circular dependency (PerCodec.hpp includes TypeDescriptor.hpp).
+// Defined in runtime/include/asn1cpp/codec/PerCodec.hpp.
+struct IPerTypeHandler;
+
 // Top-level per-type descriptor (mirrors asn_TYPE_descriptor_t).
 // Generated as `asn_DEF_<TypeName>` in the type's .cpp.
 struct TypeDescriptor {
@@ -250,6 +254,10 @@ struct TypeDescriptor {
     Constraints          constraints     = {};      // flags==0 means unconstrained
     bool     is_any = false;             // true for ANY — raw BER bytes, open-type in PER
     TypeKind kind   = TypeKind::Primitive;
+    // Direct PER handler; null means fall back to PerCodec's LUT.
+    // Builtin inline descriptors (asn_DEF_Integer etc.) keep nullptr — LUT handles them.
+    // Generated asn_DEF_* get the correct singleton from PerHandlers.hpp.
+    const IPerTypeHandler* per_handler = nullptr;
 };
 
 // Built-in type descriptors — used by generated SEQUENCE/CHOICE member tables

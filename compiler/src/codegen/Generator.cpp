@@ -460,7 +460,8 @@ static void emit_type_descriptor(std::ostream& os,
                                  const std::string& tag_expr,
                                  bool has_enum, bool has_seq,
                                  bool has_choice, bool has_seqof,
-                                 const std::string& kind) {
+                                 const std::string& kind,
+                                 const std::string& per_handler = "nullptr") {
     auto sp = [&](bool h) -> std::string {
         return h ? std::format("&asn_SPC_{}", cname) : "nullptr";
     };
@@ -469,7 +470,8 @@ static void emit_type_descriptor(std::ostream& os,
     os << std::format("    {},\n", tag_expr);
     os << std::format("    {}, {}, {}, {}, {{}} /* constraints */,\n",
                       sp(has_enum), sp(has_seq), sp(has_choice), sp(has_seqof));
-    os << std::format("    false, {} /* kind */\n", kind);
+    os << std::format("    false, {} /* kind */,\n", kind);
+    os << std::format("    {} /* per_handler */\n", per_handler);
     os << "};\n\n";
 }
 
@@ -578,7 +580,8 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
         std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Enumerated),
-        true, false, false, false, "asn1::TypeKind::Enumerated");
+        true, false, false, false, "asn1::TypeKind::Enumerated",
+        "&asn1::per_enumerated_handler");
 
 }
 
@@ -875,7 +878,10 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
     } else {
         os << "    {} /* constraints — unconstrained */,\n";
     }
-    os << "    false, asn1::TypeKind::Primitive\n";
+    const char* per_h = (ik == asn1::Constraints::INT_U64)
+        ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
+    os << std::format("    false, asn1::TypeKind::Primitive,\n");
+    os << std::format("    {} /* per_handler */\n", per_h);
     os << "};\n";
 }
 
@@ -935,11 +941,13 @@ std::string Generator::emit_member_type_descriptor(
                 uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
                 pc = make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi);
             }
+            const char* per_h = (kind == IntStorageKind::U64)
+                ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
             os << std::format(
                 "static const asn1::TypeDescriptor {} = "
                 "{{ \"INTEGER\", asn1::Tag::universal({}, false), "
-                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive }};\n",
-                tname, asn1::UniversalTag::Integer, pc);
+                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {} }};\n",
+                tname, asn1::UniversalTag::Integer, pc, per_h);
             return "&" + tname;
         }
     }
@@ -993,11 +1001,14 @@ std::string Generator::emit_member_type_descriptor(
             default: break;
             }
             std::string tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
+            const char* per_h = "&asn1::per_string_handler";
+            if (*bt == BT::BitString)   per_h = "&asn1::per_bitstring_handler";
+            if (*bt == BT::OctetString) per_h = "&asn1::per_octetstring_handler";
             os << std::format(
                 "static const asn1::TypeDescriptor {} = "
                 "{{ \"{}\", asn1::Tag::universal({}, false), "
-                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive }};\n",
-                tname, tn, *utag, pc);
+                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {} }};\n",
+                tname, tn, *utag, pc, per_h);
             return "&" + tname;
         }
     }
@@ -1340,7 +1351,8 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
         std::format("asn1::Tag::universal({}, true)", tag_num),
-        false, true, false, false, "asn1::TypeKind::Sequence");
+        false, true, false, false, "asn1::TypeKind::Sequence",
+        "&asn1::per_sequence_handler");
 
     // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
     for (const auto& r : rows) {
@@ -1598,7 +1610,8 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
         "asn1::Tag{asn1::TagClass::Context, 0, false}",
-        false, false, true, false, "asn1::TypeKind::Choice");
+        false, false, true, false, "asn1::TypeKind::Choice",
+        "&asn1::per_choice_handler");
 
 }
 
@@ -1731,6 +1744,23 @@ static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
 void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
+    // Determine PER handler for this builtin type alias.
+    using BT = ast::BuiltinType;
+    const char* per_h = "&asn1::per_string_handler"; // default for all string types
+    if (auto* bt2 = std::get_if<BT>(&def.body)) {
+        switch (*bt2) {
+        case BT::Boolean:            per_h = "&asn1::per_boolean_handler";    break;
+        case BT::Null:               per_h = "&asn1::per_null_handler";       break;
+        case BT::Real:               per_h = "&asn1::per_real_handler";       break;
+        case BT::BitString:          per_h = "&asn1::per_bitstring_handler";  break;
+        case BT::OctetString:        per_h = "&asn1::per_octetstring_handler";break;
+        case BT::ObjectIdentifier:   per_h = "&asn1::per_oid_handler";        break;
+        case BT::RelativeOid:        per_h = "&asn1::per_reloid_handler";     break;
+        case BT::Any:                per_h = "&asn1::per_any_handler";        break;
+        default: break; // string types: keep per_string_handler
+        }
+    }
+
     auto alphabet   = extract_from_alphabet(def);
     auto size_range = extract_size_range(def);
 
@@ -1773,7 +1803,8 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
     } else {
         os << "    {} /* constraints — unconstrained */,\n";
     }
-    os << "    false, asn1::TypeKind::Primitive\n";
+    os << std::format("    false, asn1::TypeKind::Primitive,\n");
+    os << std::format("    {} /* per_handler */\n", per_h);
     os << "};\n";
 }
 
@@ -1807,12 +1838,14 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
         std::format("asn1::Tag::universal({}, true)", of_tag),
-        false, false, false, true, "asn1::TypeKind::SeqOf");
+        false, false, false, true, "asn1::TypeKind::SeqOf",
+        "&asn1::per_seqof_handler");
 }
 
 void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
     os << std::format("#include \"{}.hpp\"\n", filename_for(cname));
+    os << "#include <asn1cpp/codec/PerHandlers.hpp>\n";
     // __builtin_offsetof is well-defined for all types without virtual functions
     // on GCC/Clang, including non-standard-layout types (conditionally supported
     // per C++ standard). Suppress the pedantic diagnostic in generated files.

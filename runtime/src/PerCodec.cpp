@@ -314,38 +314,24 @@ public:
     void encode(const PerCodec&, PerEncodeStream& stream,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const Constraints& pc = def.constraints;
-        bool is_u64 = (pc.int_kind == Constraints::INT_U64);
-        // TODO: split into IntegerPerHandler + UIntegerPerHandler to remove dual-read (plan item 7).
-        uint64_t uvalue = is_u64 ? static_cast<const UInteger*>(src)->value()
-                                 : static_cast<uint64_t>(static_cast<const Integer*>(src)->value());
-        int64_t  svalue = is_u64 ? static_cast<int64_t>(uvalue)
-                                 : static_cast<const Integer*>(src)->value();
+        int64_t svalue = static_cast<const Integer*>(src)->value();
 
         if (pc.flags & Constraints::CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
-                bool in_root = is_u64 ? (uvalue >= pc.lower_u64 && uvalue <= pc.upper_u64)
-                                      : (svalue >= pc.lower_bound && svalue <= pc.upper_bound);
+                bool in_root = (svalue >= pc.lower_bound && svalue <= pc.upper_bound);
                 stream.put_bits(in_root ? 0 : 1, 1, "INT.ext");
                 if (!in_root) { encode_unconstrained_int(stream, svalue); return; }
             }
-            if (is_u64) {
-                uint64_t encoded = uvalue - pc.lower_u64;
-                stream.put_bits(encoded, pc.range_bits, "INT.value");
-            } else {
-                // X.691 §10.5.7.1 UPER: value in [lb..ub] encoded in minimum bits, no length prefix.
-                int64_t encoded = svalue - pc.lower_bound;
-                stream.put_bits(static_cast<uint64_t>(encoded), pc.range_bits, "INT.value");
-            }
+            // X.691 §10.5.7.1 UPER: value in [lb..ub] encoded in minimum bits, no length prefix.
+            int64_t encoded = svalue - pc.lower_bound;
+            stream.put_bits(static_cast<uint64_t>(encoded), pc.range_bits, "INT.value");
         } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
-                bool in_root = is_u64 ? (uvalue >= pc.lower_u64) : (svalue >= pc.lower_bound);
+                bool in_root = (svalue >= pc.lower_bound);
                 stream.put_bits(in_root ? 0 : 1, 1, "INT.ext");
                 if (!in_root) { encode_unconstrained_int(stream, svalue); return; }
             }
-            if (is_u64)
-                encode_unconstrained_int(stream, static_cast<int64_t>(uvalue - pc.lower_u64));
-            else
-                encode_unconstrained_int(stream, svalue - pc.lower_bound);
+            encode_unconstrained_int(stream, svalue - pc.lower_bound);
         } else {
             encode_unconstrained_int(stream, svalue);
         }
@@ -353,9 +339,7 @@ public:
     DecodeResult decode(const PerCodec&, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         const Constraints& pc = def.constraints;
-        bool is_u64 = (pc.int_kind == Constraints::INT_U64);
-        auto* udest = is_u64 ? static_cast<UInteger*>(dest) : nullptr;
-        auto* idest = is_u64 ? nullptr : static_cast<Integer*>(dest);
+        auto* idest = static_cast<Integer*>(dest);
 
         auto read_raw_s = [&](int64_t& out) { return decode_unconstrained_int(stream, &out); };
 
@@ -366,22 +350,13 @@ public:
                 if (*ext) {
                     int64_t v = 0;
                     auto r = read_raw_s(v);
-                    if (r) {
-                        if (is_u64) udest->set(static_cast<uint64_t>(v));
-                        else        idest->set(v);
-                    }
+                    if (r) idest->set(v);
                     return r;
                 }
             }
-            if (is_u64) {
-                auto bits = stream.get_bits(pc.range_bits);
-                if (!bits) return decode_err(bits.error());
-                udest->set(*bits + pc.lower_u64);
-            } else {
-                auto bits = stream.get_bits(pc.range_bits);
-                if (!bits) return decode_err(bits.error());
-                idest->set(pc.lower_bound + static_cast<int64_t>(*bits));
-            }
+            auto bits = stream.get_bits(pc.range_bits);
+            if (!bits) return decode_err(bits.error());
+            idest->set(pc.lower_bound + static_cast<int64_t>(*bits));
             return decode_ok();
         } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
@@ -390,26 +365,92 @@ public:
                 if (*ext) {
                     int64_t v = 0;
                     auto r = read_raw_s(v);
-                    if (r) {
-                        if (is_u64) udest->set(static_cast<uint64_t>(v));
-                        else        idest->set(v);
-                    }
+                    if (r) idest->set(v);
                     return r;
                 }
             }
             int64_t adjusted = 0;
             auto r = read_raw_s(adjusted);
             if (!r) return r;
-            if (is_u64) udest->set(static_cast<uint64_t>(adjusted) + pc.lower_u64);
-            else        idest->set(adjusted + pc.lower_bound);
+            idest->set(adjusted + pc.lower_bound);
             return decode_ok();
         } else {
             int64_t v = 0;
             auto r = read_raw_s(v);
-            if (r) {
-                if (is_u64) udest->set(static_cast<uint64_t>(v));
-                else        idest->set(v);
+            if (r) idest->set(v);
+            return r;
+        }
+    }
+};
+
+class UIntegerPerHandler final : public IPerTypeHandler {
+public:
+    void encode(const PerCodec&, PerEncodeStream& stream,
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        const Constraints& pc = def.constraints;
+        uint64_t uvalue = static_cast<const UInteger*>(src)->value();
+
+        if (pc.flags & Constraints::CONSTRAINED) {
+            if (pc.flags & Constraints::EXTENSIBLE) {
+                bool in_root = (uvalue >= pc.lower_u64 && uvalue <= pc.upper_u64);
+                stream.put_bits(in_root ? 0 : 1, 1, "INT.ext");
+                if (!in_root) { encode_unconstrained_int(stream, static_cast<int64_t>(uvalue)); return; }
             }
+            uint64_t encoded = uvalue - pc.lower_u64;
+            stream.put_bits(encoded, pc.range_bits, "INT.value");
+        } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
+            if (pc.flags & Constraints::EXTENSIBLE) {
+                bool in_root = (uvalue >= pc.lower_u64);
+                stream.put_bits(in_root ? 0 : 1, 1, "INT.ext");
+                if (!in_root) { encode_unconstrained_int(stream, static_cast<int64_t>(uvalue)); return; }
+            }
+            encode_unconstrained_int(stream, static_cast<int64_t>(uvalue - pc.lower_u64));
+        } else {
+            encode_unconstrained_int(stream, static_cast<int64_t>(uvalue));
+        }
+    }
+    DecodeResult decode(const PerCodec&, PerDecodeStream& stream,
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
+        const Constraints& pc = def.constraints;
+        auto* udest = static_cast<UInteger*>(dest);
+
+        auto read_raw_s = [&](int64_t& out) { return decode_unconstrained_int(stream, &out); };
+
+        if (pc.flags & Constraints::CONSTRAINED) {
+            if (pc.flags & Constraints::EXTENSIBLE) {
+                auto ext = stream.get_bits(1);
+                if (!ext) return decode_err(ext.error());
+                if (*ext) {
+                    int64_t v = 0;
+                    auto r = read_raw_s(v);
+                    if (r) udest->set(static_cast<uint64_t>(v));
+                    return r;
+                }
+            }
+            auto bits = stream.get_bits(pc.range_bits);
+            if (!bits) return decode_err(bits.error());
+            udest->set(*bits + pc.lower_u64);
+            return decode_ok();
+        } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
+            if (pc.flags & Constraints::EXTENSIBLE) {
+                auto ext = stream.get_bits(1);
+                if (!ext) return decode_err(ext.error());
+                if (*ext) {
+                    int64_t v = 0;
+                    auto r = read_raw_s(v);
+                    if (r) udest->set(static_cast<uint64_t>(v));
+                    return r;
+                }
+            }
+            int64_t adjusted = 0;
+            auto r = read_raw_s(adjusted);
+            if (!r) return r;
+            udest->set(static_cast<uint64_t>(adjusted) + pc.lower_u64);
+            return decode_ok();
+        } else {
+            int64_t v = 0;
+            auto r = read_raw_s(v);
+            if (r) udest->set(static_cast<uint64_t>(v));
             return r;
         }
     }
@@ -995,6 +1036,7 @@ static const ErrorPerHandler      s_error;
 static const AnyPerHandler        s_any;
 static const BooleanPerHandler    s_boolean;
 static const IntegerPerHandler    s_integer;
+static const UIntegerPerHandler   s_uinteger;
 static const NullPerHandler       s_null;
 static const RealPerHandler       s_real;
 static const BitStringPerHandler  s_bitstring;
@@ -1008,6 +1050,23 @@ static const SequencePerHandler   s_sequence;
 static const ChoicePerHandler     s_choice;
 
 } // anonymous namespace
+
+// Named references for TypeDescriptor::per_handler (declared in PerHandlers.hpp).
+const IPerTypeHandler& per_any_handler         = s_any;
+const IPerTypeHandler& per_boolean_handler     = s_boolean;
+const IPerTypeHandler& per_integer_handler     = s_integer;
+const IPerTypeHandler& per_uinteger_handler    = s_uinteger;
+const IPerTypeHandler& per_null_handler        = s_null;
+const IPerTypeHandler& per_real_handler        = s_real;
+const IPerTypeHandler& per_bitstring_handler   = s_bitstring;
+const IPerTypeHandler& per_octetstring_handler = s_octetstring;
+const IPerTypeHandler& per_oid_handler         = s_oid;
+const IPerTypeHandler& per_reloid_handler      = s_reloid;
+const IPerTypeHandler& per_string_handler      = s_string;
+const IPerTypeHandler& per_enumerated_handler  = s_enumerated;
+const IPerTypeHandler& per_seqof_handler       = s_seqof;
+const IPerTypeHandler& per_sequence_handler    = s_sequence;
+const IPerTypeHandler& per_choice_handler      = s_choice;
 
 // ---------------------------------------------------------------------------
 // Dispatch tables
@@ -1064,10 +1123,11 @@ void PerCodec::encode(IEncodeStream& dst,
                       const Asn1Object* src) const
 {
     auto& stream = static_cast<PerEncodeStream&>(dst);
-    if (def.kind == TypeKind::Primitive)
-        prim_dispatch_[def.tag.number]->encode(*this, stream, def, src);
-    else
-        comp_dispatch_[(int)def.kind]->encode(*this, stream, def, src);
+    const IPerTypeHandler* h = def.per_handler;
+    if (!h) h = (def.kind == TypeKind::Primitive)
+                ? prim_dispatch_[def.tag.number]
+                : comp_dispatch_[(int)def.kind];
+    h->encode(*this, stream, def, src);
 }
 
 DecodeResult PerCodec::decode(IDecodeStream& src,
@@ -1075,9 +1135,11 @@ DecodeResult PerCodec::decode(IDecodeStream& src,
                               Asn1Object* dest) const
 {
     auto& stream = static_cast<PerDecodeStream&>(src);
-    if (def.kind == TypeKind::Primitive)
-        return prim_dispatch_[def.tag.number]->decode(*this, stream, def, dest);
-    return comp_dispatch_[(int)def.kind]->decode(*this, stream, def, dest);
+    const IPerTypeHandler* h = def.per_handler;
+    if (!h) h = (def.kind == TypeKind::Primitive)
+                ? prim_dispatch_[def.tag.number]
+                : comp_dispatch_[(int)def.kind];
+    return h->decode(*this, stream, def, dest);
 }
 
 } // namespace asn1
