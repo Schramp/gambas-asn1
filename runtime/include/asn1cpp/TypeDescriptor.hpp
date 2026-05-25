@@ -239,7 +239,6 @@ enum class TypeKind : uint8_t {
 };
 
 // Forward declaration — avoids circular dependency (PerCodec.hpp includes TypeDescriptor.hpp).
-// Defined in runtime/include/asn1cpp/codec/PerCodec.hpp.
 struct IPerTypeHandler;
 
 // Top-level per-type descriptor (mirrors asn_TYPE_descriptor_t).
@@ -255,35 +254,33 @@ struct TypeDescriptor {
     bool     is_any = false;             // true for ANY — raw BER bytes, open-type in PER
     TypeKind kind   = TypeKind::Primitive;
     // Direct PER handler; null means fall back to PerCodec's LUT.
-    // Builtin inline descriptors (asn_DEF_Integer etc.) keep nullptr — LUT handles them.
-    // Generated asn_DEF_* get the correct singleton from PerHandlers.hpp.
     const IPerTypeHandler* per_handler = nullptr;
 };
 
-// Built-in type descriptors — used by generated SEQUENCE/CHOICE member tables
-// to fill type_descriptor pointers for plain primitive members.
-inline const TypeDescriptor asn_DEF_Any          = { "ANY",          Tag::universal( 4, false), nullptr, nullptr, nullptr, nullptr, {}, true, TypeKind::Any };
-inline const TypeDescriptor asn_DEF_Integer      = { "INTEGER",      Tag::universal( 2, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Boolean      = { "BOOLEAN",      Tag::universal( 1, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Null         = { "NULL",         Tag::universal( 5, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Real         = { "REAL",         Tag::universal( 9, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_BitString    = { "BIT_STRING",        Tag::universal( 3, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Oid          = { "OBJECT_IDENTIFIER", Tag::universal( 6, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_RelativeOid  = { "RELATIVE_OID",      Tag::universal(13, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_UtcTime      = { "UTCTime",       Tag::universal(23, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_GeneralizedTime = { "GeneralizedTime", Tag::universal(24, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_OctetString    = { "OCTET_STRING",   Tag::universal( 4, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Utf8String     = { "UTF8String",     Tag::universal(12, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Ia5String      = { "IA5String",      Tag::universal(22, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_NumericString  = { "NumericString",  Tag::universal(18, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_PrintableString= { "PrintableString",Tag::universal(19, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_T61String      = { "T61String",      Tag::universal(20, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_VisibleString  = { "VisibleString",  Tag::universal(26, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_GeneralString  = { "GeneralString",  Tag::universal(27, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_GraphicString  = { "GraphicString",  Tag::universal(25, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_UniversalString= { "UniversalString",Tag::universal(28, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_BmpString      = { "BMPString",      Tag::universal(30, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_VideotexString = { "VideotexString", Tag::universal(21, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_ObjectDescriptor={ "ObjectDescriptor",Tag::universal(7, false), nullptr, nullptr, nullptr };
+// Built-in type descriptors — defined in runtime/src/BuiltinTypes.cpp (per_handler wired there).
+// Used by generated SEQUENCE/CHOICE member tables for plain primitive members.
+extern const TypeDescriptor asn_DEF_Any;
+extern const TypeDescriptor asn_DEF_Integer;
+extern const TypeDescriptor asn_DEF_Boolean;
+extern const TypeDescriptor asn_DEF_Null;
+extern const TypeDescriptor asn_DEF_Real;
+extern const TypeDescriptor asn_DEF_BitString;
+extern const TypeDescriptor asn_DEF_Oid;
+extern const TypeDescriptor asn_DEF_RelativeOid;
+extern const TypeDescriptor asn_DEF_UtcTime;
+extern const TypeDescriptor asn_DEF_GeneralizedTime;
+extern const TypeDescriptor asn_DEF_OctetString;
+extern const TypeDescriptor asn_DEF_Utf8String;
+extern const TypeDescriptor asn_DEF_Ia5String;
+extern const TypeDescriptor asn_DEF_NumericString;
+extern const TypeDescriptor asn_DEF_PrintableString;
+extern const TypeDescriptor asn_DEF_T61String;
+extern const TypeDescriptor asn_DEF_VisibleString;
+extern const TypeDescriptor asn_DEF_GeneralString;
+extern const TypeDescriptor asn_DEF_GraphicString;
+extern const TypeDescriptor asn_DEF_UniversalString;
+extern const TypeDescriptor asn_DEF_BmpString;
+extern const TypeDescriptor asn_DEF_VideotexString;
+extern const TypeDescriptor asn_DEF_ObjectDescriptor;
 
 } // namespace asn1

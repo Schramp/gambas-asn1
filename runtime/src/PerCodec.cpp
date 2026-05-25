@@ -1069,53 +1069,6 @@ const IPerTypeHandler& per_sequence_handler    = s_sequence;
 const IPerTypeHandler& per_choice_handler      = s_choice;
 
 // ---------------------------------------------------------------------------
-// Dispatch tables
-
-const IPerTypeHandler* const PerCodec::comp_dispatch_[6] = {
-    &s_error,      // [0] Primitive — routed to prim_dispatch_, never lands here
-    &s_any,        // [1] Any
-    &s_enumerated, // [2] Enumerated
-    &s_sequence,   // [3] Sequence / SET
-    &s_choice,     // [4] Choice
-    &s_seqof,      // [5] SeqOf / SET OF
-};
-
-const IPerTypeHandler* const PerCodec::prim_dispatch_[32] = {
-    &s_error,      // [ 0] EndOfContents
-    &s_boolean,    // [ 1] Boolean
-    &s_integer,    // [ 2] Integer
-    &s_bitstring,  // [ 3] BitString
-    &s_octetstring,// [ 4] OctetString (ANY has TypeKind::Any → comp_dispatch_)
-    &s_null,       // [ 5] Null        (zero bits, X.691 §18.1)
-    &s_oid,        // [ 6] OID
-    &s_string,     // [ 7] ObjectDescriptor   (is_character_string)
-    &s_error,      // [ 8] External
-    &s_real,       // [ 9] Real
-    &s_error,      // [10] Enumerated   — TypeKind::Enumerated → comp_dispatch_
-    &s_error,      // [11] EmbeddedPdv
-    &s_string,     // [12] Utf8String   — AsnStringBase, 8 bits/char (unconstrained)
-    &s_reloid,     // [13] RelativeOid
-    &s_error,      // [14] (unassigned)
-    &s_error,      // [15] (unassigned)
-    &s_error,      // [16] Sequence     — TypeKind::Sequence → comp_dispatch_
-    &s_error,      // [17] Set          — TypeKind::Sequence → comp_dispatch_
-    &s_string,     // [18] NumericString
-    &s_string,     // [19] PrintableString
-    &s_string,     // [20] T61String
-    &s_string,     // [21] VideotexString
-    &s_string,     // [22] Ia5String    — AsnStringBase, 8 bits/char (unconstrained)
-    &s_string,     // [23] UtcTime
-    &s_string,     // [24] GeneralizedTime
-    &s_string,     // [25] GraphicString
-    &s_string,     // [26] VisibleString
-    &s_string,     // [27] GeneralString
-    &s_string,     // [28] UniversalString
-    &s_error,      // [29] CharacterString
-    &s_string,     // [30] BmpString
-    &s_error,      // [31] LongForm
-};
-
-// ---------------------------------------------------------------------------
 // PerCodec public entry points
 
 void PerCodec::encode(IEncodeStream& dst,
@@ -1123,11 +1076,7 @@ void PerCodec::encode(IEncodeStream& dst,
                       const Asn1Object* src) const
 {
     auto& stream = static_cast<PerEncodeStream&>(dst);
-    const IPerTypeHandler* h = def.per_handler;
-    if (!h) h = (def.kind == TypeKind::Primitive)
-                ? prim_dispatch_[def.tag.number]
-                : comp_dispatch_[(int)def.kind];
-    h->encode(*this, stream, def, src);
+    def.per_handler->encode(*this, stream, def, src);
 }
 
 DecodeResult PerCodec::decode(IDecodeStream& src,
@@ -1135,11 +1084,7 @@ DecodeResult PerCodec::decode(IDecodeStream& src,
                               Asn1Object* dest) const
 {
     auto& stream = static_cast<PerDecodeStream&>(src);
-    const IPerTypeHandler* h = def.per_handler;
-    if (!h) h = (def.kind == TypeKind::Primitive)
-                ? prim_dispatch_[def.tag.number]
-                : comp_dispatch_[(int)def.kind];
-    return h->decode(*this, stream, def, dest);
+    return def.per_handler->decode(*this, stream, def, dest);
 }
 
 } // namespace asn1

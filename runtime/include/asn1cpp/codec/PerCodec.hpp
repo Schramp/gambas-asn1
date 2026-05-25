@@ -216,9 +216,6 @@ public:
                         const TypeDescriptor& def,
                         Asn1Object* dest) const override;
 
-private:
-    static const IPerTypeHandler* const comp_dispatch_[6];   // indexed by (int)TypeKind
-    static const IPerTypeHandler* const prim_dispatch_[32];  // indexed by tag.number
 };
 
 } // namespace asn1

@@ -8,6 +8,7 @@
 #include <span>
 #include <asn1cpp/asn1cpp.hpp>
 #include <asn1cpp/codec/PerCodec.hpp>
+#include <asn1cpp/codec/PerHandlers.hpp>
 #include <asn1cpp/codec/Constraints.hpp>
 
 using namespace asn1;
@@ -64,7 +65,9 @@ static const TypeDescriptor DEF_NarrowInterval = {
     "NarrowInterval",
     Tag::universal(2, false),
     nullptr, nullptr, nullptr, nullptr,
-    {.flags=Constraints::CONSTRAINED, .range_bits=1, .lower_bound=123456, .upper_bound=123457}
+    {.flags=Constraints::CONSTRAINED, .range_bits=1, .lower_bound=123456, .upper_bound=123457},
+    false, TypeKind::Primitive,
+    &asn1::per_integer_handler
 };
 
 // ---- Interval: INTEGER (1..123456) ------------------------------------------
@@ -74,7 +77,9 @@ static const TypeDescriptor DEF_Interval = {
     "Interval",
     Tag::universal(2, false),
     nullptr, nullptr, nullptr, nullptr,
-    {.flags=Constraints::CONSTRAINED, .range_bits=17, .lower_bound=1, .upper_bound=123456}
+    {.flags=Constraints::CONSTRAINED, .range_bits=17, .lower_bound=1, .upper_bound=123456},
+    false, TypeKind::Primitive,
+    &asn1::per_integer_handler
 };
 
 int main() {
