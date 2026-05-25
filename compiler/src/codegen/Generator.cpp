@@ -1086,8 +1086,6 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
 
 void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
-    bool is_set = def.is_set();
-    uint32_t tag_num = is_set ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
 
     // Count non-extension members
     auto [mcount, ext_at] = count_members(def);
@@ -1950,7 +1948,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 seqof_td->name = seqof_name;
                 if (!elem_type_name.empty()) {
                     auto named_elem = std::make_shared<ast::TypeDef>();
-                    named_elem->body = ast::TypeRef{"", elem_type_name};
+                    named_elem->body = ast::TypeRef{"", elem_type_name, {}};
                     if (m->is_seq_of())
                         seqof_td->body = ast::SequenceOfType{named_elem};
                     else
