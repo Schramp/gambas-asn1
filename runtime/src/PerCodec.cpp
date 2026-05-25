@@ -44,15 +44,13 @@ static Expected<std::size_t, DecodeError> get_nslength(PerDecodeStream& s) {
 
 // X.691 §10.6 "Encoding of a normally small non-negative whole number"
 // Flag=0: value in [0..63], encode in 6 bits. Flag=1: delegate to put_length().
-// Name: put_ns(normally-small)nn(non-negative)w(whole)n(number).
-// TODO: rename to something less cryptic.
-static void put_nsnnwn(PerEncodeStream& s, int n) {
+static void put_nsnn(PerEncodeStream& s, int n) {
     if (n <= 63) { s.put_bits(0, 1); s.put_bits(static_cast<uint64_t>(n), 6); }
     else { s.put_bits(1, 1); per_detail::put_length(s, static_cast<std::size_t>(n)); }
 }
 
-// X.691 §10.6 — see put_nsnnwn above.
-static Expected<int, DecodeError> get_nsnnwn(PerDecodeStream& s) {
+// X.691 §10.6 — see put_nsnn above.
+static Expected<int, DecodeError> get_nsnn(PerDecodeStream& s) {
     auto b = s.get_bits(1);
     if (!b) return make_unexpected<int, DecodeError>(b.error());
     if (*b == 0) {
@@ -85,6 +83,9 @@ static void encode_size_field(PerEncodeStream& s, const TypeDescriptor& def, std
     if (size_constrained && pc.size_range_bits == 0) {
         // Fixed SIZE(n): no length field
     } else if (size_constrained) {
+	//TODO: Consider making a #define for put_bits that gives it a third ignored parameter that
+	//can be used to specifify the name of the field as a string. default implementation
+	//would drop the parameter at macro expansion, but be suitable to have a debug implementation as well protected y a #define.
         s.put_bits(len - static_cast<std::size_t>(pc.size_lower), pc.size_range_bits);
     } else {
         per_detail::put_length(s, len);
@@ -148,6 +149,7 @@ static DecodeResult decode_unconstrained_int(PerDecodeStream& s, int64_t* dest) 
 
 // X.691 §26.5 "This subclause applies to known-multiplier character strings"
 // NumericString: space=0, '0'-'9'=1-10 (4 bits per character).
+// TODO lookup based? Via TypeDescriptor?
 static uint8_t encode_numeric_char(char c) {
     if (c == ' ') return 0;
     if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0' + 1);
@@ -172,6 +174,7 @@ static uint8_t encode_ps_char(char c) {
 }
 
 // X.691 §26.5 — see encode_ps_char above.
+// TODO: use TypeDescriptor alphabet table instead of linear scan.
 static char decode_ps_char(uint8_t v) {
     auto a = PRINTABLE_STRING_ALPHABET;
     return (v < a.size()) ? a[v] : '?';
@@ -181,6 +184,7 @@ static char decode_ps_char(uint8_t v) {
 // Returns {bits_per_char, bytes_per_char} for each string type:
 //   NumericString: {4,1}, PrintableString/VisibleString/UTCTime/GeneralizedTime: {7,1},
 //   BMPString: {8,2}, UniversalString: {8,4}, default: {8,1}.
+// TODO: use TypeDescriptor alphabet to know length?
 static std::tuple<int,int> string_params(uint32_t tag_num) {
     switch (tag_num) {
         case UniversalTag::NumericString:   return {4, 1};
@@ -192,16 +196,6 @@ static std::tuple<int,int> string_params(uint32_t tag_num) {
         case UniversalTag::VisibleString:   return {7, 1};
         default:                            return {8, 1};
     }
-}
-
-// X.691 §22 "Encoding the choice type" — index encoded as constrained whole number.
-// Returns ceil(log2(n)): bits to encode alternative index in [0..n-1].
-// TODO: equivalent to range_bits(n) — consider merging.
-static int choice_index_bits(int n) {
-    if (n <= 1) return 0;
-    int bits = 0, m = 1;
-    while (m < n) { ++bits; m <<= 1; }
-    return bits;
 }
 
 // X.691 §22.6 "The root alternatives shall be ordered according to their tags"
@@ -264,7 +258,8 @@ static DecodeResult skip_open_type(PerDecodeStream& s) {
 // ---------------------------------------------------------------------------
 // Handler classes
 
-struct ErrorPerHandler final : IPerTypeHandler {
+class ErrorPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec&, PerEncodeStream&,
                 const TypeDescriptor& def, const Asn1Object*) const override {
         assert(false && "PerCodec: unreachable dispatch table entry");
@@ -277,7 +272,8 @@ struct ErrorPerHandler final : IPerTypeHandler {
     }
 };
 
-struct AnyPerHandler final : IPerTypeHandler {
+class AnyPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec&, PerEncodeStream& s,
                 const TypeDescriptor&, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
@@ -296,7 +292,8 @@ struct AnyPerHandler final : IPerTypeHandler {
     }
 };
 
-struct BooleanPerHandler final : IPerTypeHandler {
+class BooleanPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec&, PerEncodeStream& s,
                 const TypeDescriptor&, const Asn1Object* src) const override {
         bool v = static_cast<const Boolean*>(src)->value();
@@ -311,11 +308,13 @@ struct BooleanPerHandler final : IPerTypeHandler {
     }
 };
 
-struct IntegerPerHandler final : IPerTypeHandler {
+class IntegerPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec&, PerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const Constraints& pc = def.constraints;
         bool is_u64 = (pc.int_kind == Constraints::INT_U64);
+        // TODO: split into IntegerPerHandler + UIntegerPerHandler to remove dual-read (plan item 7).
         uint64_t uvalue = is_u64 ? static_cast<const UInteger*>(src)->value()
                                  : static_cast<uint64_t>(static_cast<const Integer*>(src)->value());
         int64_t  svalue = is_u64 ? static_cast<int64_t>(uvalue)
@@ -332,9 +331,9 @@ struct IntegerPerHandler final : IPerTypeHandler {
                 uint64_t encoded = uvalue - pc.lower_u64;
                 s.put_bits(encoded, pc.range_bits);
             } else {
+                // X.691 §10.5.7.1 UPER: value in [lb..ub] encoded in minimum bits, no length prefix.
                 int64_t encoded = svalue - pc.lower_bound;
-                int64_t rcount  = pc.upper_bound - pc.lower_bound + 1;
-                s.put_bits(static_cast<uint64_t>(encoded), range_bits(rcount));
+                s.put_bits(static_cast<uint64_t>(encoded), pc.range_bits);
             }
         } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
@@ -378,8 +377,7 @@ struct IntegerPerHandler final : IPerTypeHandler {
                 if (!bits) return decode_err(bits.error());
                 udest->set(*bits + pc.lower_u64);
             } else {
-                int64_t rcount = pc.upper_bound - pc.lower_bound + 1;
-                auto bits = s.get_bits(range_bits(rcount));
+                auto bits = s.get_bits(pc.range_bits);
                 if (!bits) return decode_err(bits.error());
                 idest->set(pc.lower_bound + static_cast<int64_t>(*bits));
             }
@@ -416,7 +414,8 @@ struct IntegerPerHandler final : IPerTypeHandler {
     }
 };
 
-struct NullPerHandler final : IPerTypeHandler {
+class NullPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec&, PerEncodeStream&,
                 const TypeDescriptor&, const Asn1Object*) const override {
         // NULL: zero bits (X.691 §18.1)
@@ -427,14 +426,14 @@ struct NullPerHandler final : IPerTypeHandler {
     }
 };
 
-struct RealPerHandler final : IPerTypeHandler {
+class RealPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec&, PerEncodeStream& s,
                 const TypeDescriptor&, const Asn1Object* src) const override {
-        const Real& v = *static_cast<const Real*>(src);
-        if (v.value() == 0.0) return;
+        const Real& real_val = *static_cast<const Real*>(src);
+        if (real_val.value() == 0.0) return;
         std::vector<uint8_t> ber;
-	//TODO: slightly longer names would be nice, don't like all these s, w, v etc. i as look counter ok, but this just too much.
-        { BerWriter w{ber}; BerTraits<Real>::encode(w, v); }
+        { BerWriter ber_writer{ber}; BerTraits<Real>::encode(ber_writer, real_val); }
         std::size_t content_len = ber[1];
         per_detail::put_length(s, content_len);
         for (std::size_t i = 0; i < content_len; ++i) s.put_bits(ber[2 + i], 8);
@@ -445,7 +444,8 @@ struct RealPerHandler final : IPerTypeHandler {
     }
 };
 
-struct BitStringPerHandler final : IPerTypeHandler {
+class BitStringPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec&, PerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const BitString& v = *static_cast<const BitString*>(src);
@@ -481,7 +481,8 @@ struct BitStringPerHandler final : IPerTypeHandler {
     }
 };
 
-struct OctetStringPerHandler final : IPerTypeHandler {
+class OctetStringPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec&, PerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
@@ -499,7 +500,8 @@ struct OctetStringPerHandler final : IPerTypeHandler {
     }
 };
 
-struct OidPerHandler final : IPerTypeHandler {
+class OidPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec&, PerEncodeStream& s,
                 const TypeDescriptor&, const Asn1Object* src) const override {
         per_detail::encode_ber_content<Oid>(s, src);
@@ -510,7 +512,8 @@ struct OidPerHandler final : IPerTypeHandler {
     }
 };
 
-struct RelOidPerHandler final : IPerTypeHandler {
+class RelOidPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec&, PerEncodeStream& s,
                 const TypeDescriptor&, const Asn1Object* src) const override {
         per_detail::encode_ber_content<RelativeOid>(s, src);
@@ -521,9 +524,8 @@ struct RelOidPerHandler final : IPerTypeHandler {
     }
 };
 
-//TODO: Although stucts can have methods in cpp, why not use classes? Is there a specific advantage to using structs?
-//As we't focussing in CPP I think we should call them classes as well.
-struct StringPerHandler final : IPerTypeHandler {
+class StringPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec&, PerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const std::string& str = static_cast<const AsnStringBase*>(src)->str();
@@ -638,7 +640,8 @@ struct StringPerHandler final : IPerTypeHandler {
     }
 };
 
-struct EnumeratedPerHandler final : IPerTypeHandler {
+class EnumeratedPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec&, PerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         long value = static_cast<const EnumValue*>(src)->value();
@@ -661,7 +664,7 @@ struct EnumeratedPerHandler final : IPerTypeHandler {
         if (!is_ext) {
             s.put_bits(static_cast<uint64_t>(ordinal), range_bits(rcount));
         } else {
-            put_nsnnwn(s, ext_ordinal);
+            put_nsnn(s, ext_ordinal);
         }
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& s,
@@ -684,7 +687,7 @@ struct EnumeratedPerHandler final : IPerTypeHandler {
             static_cast<EnumValue*>(dest)->set(spec.entries[*idx].value);
             return decode_ok();
         } else {
-            auto ord = get_nsnnwn(s);
+            auto ord = get_nsnn(s);
             if (!ord) return decode_err(ord.error());
             int ext_entry = rcount + *ord;
             if (ext_entry >= spec.count)
@@ -695,7 +698,8 @@ struct EnumeratedPerHandler final : IPerTypeHandler {
     }
 };
 
-struct SeqOfPerHandler final : IPerTypeHandler {
+class SeqOfPerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec& codec, PerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& spec = *def.seq_of_spec;
@@ -761,7 +765,8 @@ struct SeqOfPerHandler final : IPerTypeHandler {
     }
 };
 
-struct SequencePerHandler final : IPerTypeHandler {
+class SequencePerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec& codec, PerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& spec = *def.sequence_spec;
@@ -880,7 +885,8 @@ struct SequencePerHandler final : IPerTypeHandler {
     }
 };
 
-struct ChoicePerHandler final : IPerTypeHandler {
+class ChoicePerHandler final : public IPerTypeHandler {
+public:
     void encode(const PerCodec& codec, PerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const auto& spec = *def.choice_spec;
@@ -898,7 +904,7 @@ struct ChoicePerHandler final : IPerTypeHandler {
             std::vector<int> to_can, from_can;
             build_canonical_maps(spec, root_count, to_can, from_can);
             int canonical_idx = to_can[def_idx];
-            int bits = choice_index_bits(root_count);
+            int bits = range_bits(root_count);
             if (bits > 0) s.put_bits(static_cast<uint64_t>(canonical_idx), bits);
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
@@ -937,7 +943,7 @@ struct ChoicePerHandler final : IPerTypeHandler {
         if (!in_ext) {
             std::vector<int> to_can, from_can;
             build_canonical_maps(spec, root_count, to_can, from_can);
-            int bits = choice_index_bits(root_count);
+            int bits = range_bits(root_count);
             int canonical_idx = 0;
             if (bits > 0) {
                 auto v = s.get_bits(bits);
