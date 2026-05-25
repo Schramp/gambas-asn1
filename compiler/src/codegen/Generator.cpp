@@ -1641,7 +1641,7 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
     os << "#include <variant>\n";
     os << "#include <vector>\n";
     os << "#include <span>\n";
-    os << "#include <asn1cpp/asn1cpp.hpp>\n\n";
+    os << "#include <asn1cpp/asn1cpp_gen.hpp>\n\n";
 
     if (def.is_sequence() || def.is_set()) {
         current_type_ = cname;
@@ -2020,7 +2020,7 @@ void Generator::emit_stubs_for_unresolved() {
         auto path = out_dir_ / (filename_for(name) + ".hpp");
         emit_file(path, [&](auto& os) {
             os << "#pragma once\n";
-            os << "#include <asn1cpp/asn1cpp.hpp>\n\n";
+            os << "#include <asn1cpp/asn1cpp_gen.hpp>\n\n";
             os << "/* stub: type from missing/uncompiled module */\n";
             os << std::format("struct {} {{}};\n\n", name);
             os << std::format("inline const asn1::TypeDescriptor asn_DEF_{} = {{\n", name);

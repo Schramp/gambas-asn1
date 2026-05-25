@@ -17,30 +17,13 @@
 // assert that intentionally-invalid encodes triggered validate-fail without
 // scraping stderr.
 
-#include <atomic>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include "ICodec.hpp"
+#include "ValidateCounter.hpp"
 
 namespace asn1 {
-
-namespace detail {
-inline std::atomic<unsigned long long>& validate_fail_counter() {
-    static std::atomic<unsigned long long> n{0};
-    return n;
-}
-} // namespace detail
-
-inline unsigned long long validate_fail_count() {
-    return detail::validate_fail_counter().load(std::memory_order_relaxed);
-}
-inline void reset_validate_fail_count() {
-    detail::validate_fail_counter().store(0, std::memory_order_relaxed);
-}
-inline void bump_validate_fail() {
-    detail::validate_fail_counter().fetch_add(1, std::memory_order_relaxed);
-}
 
 // Caller-selectable validation policy for the encode_validated / decode_validated
 // helpers below. Lenient = bump counter only (current Postel default); Strict =
