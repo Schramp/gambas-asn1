@@ -44,6 +44,7 @@ static Expected<std::size_t, DecodeError> get_nslength(PerDecodeStream& stream) 
 
 // X.691 §10.6 "Encoding of a normally small non-negative whole number"
 // Flag=0: value in [0..63], encode in 6 bits. Flag=1: delegate to put_length().
+// TODO: replace magic 6 / 63 / 64 with named constants (X.691 §10.6 "short form" bit width).
 static void put_nsnn(PerEncodeStream& stream, int n) {
     if (n <= 63) { stream.put_bits(0, 1); stream.put_bits(static_cast<uint64_t>(n), 6); }
     else { stream.put_bits(1, 1); per_detail::put_length(stream, static_cast<std::size_t>(n)); }
@@ -86,7 +87,7 @@ static void encode_size_field(PerEncodeStream& stream, const TypeDescriptor& def
 	//TODO: Consider making a #define for put_bits that gives it a third ignored parameter that
 	//can be used to specifify the name of the field as a string. default implementation
 	//would drop the parameter at macro expansion, but be suitable to have a debug implementation as well protected y a #define.
-        stream.put_bits(len - static_cast<std::size_t>(pc.size_lower), pc.size_range_bits);
+        stream.put_bits(len - static_cast<std::size_t>(pc.size_lower), pc.size_range_bits, "SIZE");
     } else {
         per_detail::put_length(stream, len);
     }
@@ -324,21 +325,21 @@ public:
             if (pc.flags & Constraints::EXTENSIBLE) {
                 bool in_root = is_u64 ? (uvalue >= pc.lower_u64 && uvalue <= pc.upper_u64)
                                       : (svalue >= pc.lower_bound && svalue <= pc.upper_bound);
-                stream.put_bits(in_root ? 0 : 1, 1);
+                stream.put_bits(in_root ? 0 : 1, 1, "INT.ext");
                 if (!in_root) { encode_unconstrained_int(stream, svalue); return; }
             }
             if (is_u64) {
                 uint64_t encoded = uvalue - pc.lower_u64;
-                stream.put_bits(encoded, pc.range_bits);
+                stream.put_bits(encoded, pc.range_bits, "INT.value");
             } else {
                 // X.691 §10.5.7.1 UPER: value in [lb..ub] encoded in minimum bits, no length prefix.
                 int64_t encoded = svalue - pc.lower_bound;
-                stream.put_bits(static_cast<uint64_t>(encoded), pc.range_bits);
+                stream.put_bits(static_cast<uint64_t>(encoded), pc.range_bits, "INT.value");
             }
         } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
                 bool in_root = is_u64 ? (uvalue >= pc.lower_u64) : (svalue >= pc.lower_bound);
-                stream.put_bits(in_root ? 0 : 1, 1);
+                stream.put_bits(in_root ? 0 : 1, 1, "INT.ext");
                 if (!in_root) { encode_unconstrained_int(stream, svalue); return; }
             }
             if (is_u64)
@@ -660,9 +661,9 @@ public:
         }
         bool is_ext = (ordinal < 0) || (ordinal >= rcount);
         int ext_ordinal = (ordinal >= rcount) ? (ordinal - rcount) : 0;
-        if (spec.extensible) stream.put_bits(is_ext ? 1 : 0, 1);
+        if (spec.extensible) stream.put_bits(is_ext ? 1 : 0, 1, "ENUM.ext");
         if (!is_ext) {
-            stream.put_bits(static_cast<uint64_t>(ordinal), range_bits(rcount));
+            stream.put_bits(static_cast<uint64_t>(ordinal), range_bits(rcount), "ENUM.value");
         } else {
             put_nsnn(stream, ext_ordinal);
         }
@@ -720,7 +721,7 @@ public:
                                  def.name, count, (long long)sc.size_lower);
                     enc_count = static_cast<std::size_t>(sc.size_lower);
                 }
-                stream.put_bits(enc_count - static_cast<std::size_t>(sc.size_lower), sc.size_range_bits);
+                stream.put_bits(enc_count - static_cast<std::size_t>(sc.size_lower), sc.size_range_bits, "SOF.size");
                 // Encode only actual elements; missing elements produce a desync (caller's fault).
                 count = std::min(count, enc_count);
             }
@@ -779,7 +780,7 @@ public:
             for (int i = root_end; i < spec.count; ++i) {
                 if (spec.members[i].optional_ops.is_present(src)) { has_ext = true; break; }
             }
-            stream.put_bits(has_ext ? 1 : 0, 1);
+            stream.put_bits(has_ext ? 1 : 0, 1, "SEQ.ext");
         }
         for (int i = 0; i < root_end; ++i) {
             const auto& mbr = spec.members[i];
@@ -787,7 +788,7 @@ public:
             bool suppress = mbr.has_default && mbr.is_default_equal &&
                            mbr.is_default_equal(src);
             bool present = mbr.optional_ops.is_present(src) && !suppress;
-            stream.put_bits(present ? 1 : 0, 1);
+            stream.put_bits(present ? 1 : 0, 1, "SEQ.preamble");
         }
         IEncodeStream& es = stream;
         for (int i = 0; i < root_end; ++i) {
@@ -803,7 +804,7 @@ public:
             int n_ext = spec.count - root_end;
             put_nslength(stream, static_cast<std::size_t>(n_ext));
             for (int i = root_end; i < spec.count; ++i)
-                stream.put_bits(spec.members[i].optional_ops.is_present(src) ? 1 : 0, 1);
+                stream.put_bits(spec.members[i].optional_ops.is_present(src) ? 1 : 0, 1, "SEQ.ext_bitmap");
             for (int i = root_end; i < spec.count; ++i) {
                 const auto& mbr = spec.members[i];
                 if (!mbr.type_descriptor || !mbr.optional_ops.is_present(src)) continue;
@@ -899,13 +900,13 @@ public:
         if (debug_flags() & DBG_PER)
             std::fprintf(stderr, "[PER-ENC] CHO %s pr=%d root=%d ext=%d @%d\n",
                          def.name, pr, root_count, (int)in_ext, stream.bit_pos());
-        if (spec.ext_at >= 0) stream.put_bits(in_ext ? 1 : 0, 1);
+        if (spec.ext_at >= 0) stream.put_bits(in_ext ? 1 : 0, 1, "CHO.ext");
         if (!in_ext) {
             std::vector<int> to_can, from_can;
             build_canonical_maps(spec, root_count, to_can, from_can);
             int canonical_idx = to_can[def_idx];
             int bits = range_bits(root_count);
-            if (bits > 0) stream.put_bits(static_cast<uint64_t>(canonical_idx), bits);
+            if (bits > 0) stream.put_bits(static_cast<uint64_t>(canonical_idx), bits, "CHO.index");
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
             IEncodeStream& es = stream;
@@ -913,13 +914,8 @@ public:
             codec.encode(es, *alt.type_descriptor, mptr);
         } else {
             int ext_idx = def_idx - root_count;
-            if (ext_idx < 64) {
-                stream.put_bits(0, 1);
-                stream.put_bits(static_cast<uint64_t>(ext_idx), 6);
-            } else {
-                stream.put_bits(1, 1);
-                per_detail::put_length(stream, static_cast<std::size_t>(ext_idx));
-            }
+            // X.691 §22.8: extension alternative index encoded as normally-small non-neg whole number.
+            put_nsnn(stream, ext_idx);
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
             const Asn1Object* mptr = alt.get_const_fn(ch);
@@ -966,18 +962,10 @@ public:
             if (!r) return r;
             return decode_ok();
         } else {
-            auto b = stream.get_bits(1);
-            if (!b) return decode_err(b.error());
-            int ext_idx;
-            if (*b == 0) {
-                auto v = stream.get_bits(6);
-                if (!v) return decode_err(v.error());
-                ext_idx = static_cast<int>(*v);
-            } else {
-                auto v = per_detail::get_length(stream);
-                if (!v) return decode_err(v.error());
-                ext_idx = static_cast<int>(*v);
-            }
+            // X.691 §22.8: extension alternative index encoded as normally-small non-neg whole number.
+            auto ext_r = get_nsnn(stream);
+            if (!ext_r) return decode_err(ext_r.error());
+            int ext_idx = *ext_r;
             int def_idx = root_count + ext_idx;
             if (def_idx < spec.count) {
                 const auto& alt = spec.alternatives[def_idx];

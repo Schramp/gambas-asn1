@@ -29,11 +29,20 @@ class PerEncodeStream : public IEncodeStream {
     std::vector<uint8_t>& buf_;
     uint8_t current_{0};
     int     bits_{0};
+
+    void put_bits_impl(uint64_t value, int n) {
+        for (int i = n - 1; i >= 0; --i) {
+            int bit = (value >> i) & 1;
+            current_ |= static_cast<uint8_t>(bit << (7 - bits_));
+            if (++bits_ == 8) { buf_.push_back(current_); current_ = 0; bits_ = 0; }
+        }
+    }
 public:
     explicit PerEncodeStream(std::vector<uint8_t>& buf) : buf_(buf) {}
 
     int bit_pos() const { return static_cast<int>(buf_.size()) * 8 + bits_; }
 
+    // put_bits(val, n) — unnamed: basic DBG_PER trace (offset + bits + value).
     void put_bits(uint64_t value, int n) {
         if (n > 0 && (debug_flags() & DBG_PER)) {
             int off = bit_pos();
@@ -41,11 +50,25 @@ public:
             for (int i = n-1; i >= 0; --i) std::fprintf(stderr, "%d", (int)((value>>i)&1));
             std::fprintf(stderr, " (%llu)\n", (unsigned long long)value);
         }
-        for (int i = n - 1; i >= 0; --i) {
-            int bit = (value >> i) & 1;
-            current_ |= static_cast<uint8_t>(bit << (7 - bits_));
-            if (++bits_ == 8) { buf_.push_back(current_); current_ = 0; bits_ = 0; }
+        put_bits_impl(value, n);
+    }
+
+    // put_bits(val, n, field_name) — named overload.
+    // Compile with -DASN1CPP_PER_TRACE to include field-name logging (runtime-gated by DBG_PER).
+    // Without ASN1CPP_PER_TRACE: field_name discarded, delegates to put_bits(val, n).
+    void put_bits(uint64_t value, int n, const char* field_name) {
+#ifdef ASN1CPP_PER_TRACE
+        if (n > 0 && (debug_flags() & DBG_PER)) {
+            int off = bit_pos();
+            std::fprintf(stderr, "[PER-ENC] @%4d +%2d %-24s ", off, n, field_name);
+            for (int i = n-1; i >= 0; --i) std::fprintf(stderr, "%d", (int)((value>>i)&1));
+            std::fprintf(stderr, " (%llu)\n", (unsigned long long)value);
         }
+        put_bits_impl(value, n);
+#else
+        (void)field_name;
+        put_bits(value, n);
+#endif
     }
 
     void flush() {
