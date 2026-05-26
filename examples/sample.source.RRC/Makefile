@@ -55,7 +55,7 @@ CXXFLAGS    := $(BASE_FLAGS) -include $(PCH_WRAP)
 
 $(PCH_WRAP): | $(OBJ_DIR)
 	@mkdir -p $(PCH_DIR)
-	@printf '#include <memory>\n#include <optional>\n#include <variant>\n#include <vector>\n#include <span>\n#include <string>\n#include <cstdint>\n#include <asn1cpp/asn1cpp_gen.hpp>\n' > $@
+	@printf '#include <memory>\n#include <optional>\n#include <vector>\n#include <span>\n#include <string>\n#include <cstdint>\n#include <asn1cpp/asn1cpp_gen.hpp>\n' > $@
 
 $(PCH_GCH): $(PCH_WRAP) $(RUNTIME_INC)/asn1cpp/asn1cpp_gen.hpp $(wildcard $(RUNTIME_INC)/asn1cpp/*.hpp)
 	@echo "[PCH]  asn1cpp_gen.hpp"

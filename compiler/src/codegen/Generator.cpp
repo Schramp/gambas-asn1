@@ -41,6 +41,13 @@ static void emit_file(const fs::path& path, EmitFn&& fn) {
 // Linux NAME_MAX is 255; .hpp/.cpp extensions take 4 bytes. When cname exceeds
 // 240 chars, truncate to 220 and append a deterministic FNV-1a 32-bit hash so
 // the filename fits on any POSIX filesystem.
+// Strip namespace prefix — "asn1::Null" → "Null", "FooBar" → "FooBar".
+// Used to emit destructor calls: ~Null() not ~asn1::Null() (ill-formed in C++).
+static std::string unqualified_name(const std::string& t) {
+    auto pos = t.rfind("::");
+    return (pos == std::string::npos) ? t : t.substr(pos + 2);
+}
+
 static std::string filename_for(const std::string& cname) {
     if (cname.size() <= 240) return cname;
     uint32_t h = 2166136261u;
@@ -1155,6 +1162,13 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     if (has_optional_members) {
         // All special members declared (not defaulted) so unique_ptr<T> destructor/assignment
         // has complete T in the .cpp where they are defined = default.
+        // NOTE: no copy constructor is emitted here — any SEQUENCE with optional
+        // (unique_ptr) members is move-only.  A correct deep-copy ctor would emit
+        // `make_unique<T>(*o.m)` for each unique_ptr member; not yet implemented.
+        // Consequence: generated CHOICE types are also move-only (see CHOICE codegen).
+        // TODO: emit copy ctor + copy assignment for SEQUENCE with unique_ptr members
+        //       using make_unique<T>(*o.m) per optional field, making all types
+        //       properly deep-copyable.
         os << std::format("    {0}();\n", cname);
         os << std::format("    ~{0}();\n", cname);
         os << std::format("    {0}({0}&&) noexcept;\n", cname);
@@ -1417,16 +1431,38 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     }
     if (count > 0) os << "\n";
 
-    // class with PR enum + std::variant storage + typed accessors
-    // PR enum uses enum class — values don't inject into class scope, no keyword conflict.
-    // Accessor methods DO inject into class scope — must not clash with generated API.
+    // Storage strategy: raw byte buffer sized/aligned to the largest alternative.
+    //
+    // Why not std::variant<T1, T2, ..., TN>?
+    //   std::variant is implemented via recursive template specialisations.
+    //   std::get<K> descends K levels of template recursion.  With N alternatives and
+    //   N different get<K> calls, GCC instantiates O(N²) templates.  For a CHOICE
+    //   with 198 alternatives (e.g. XIRIContents in the ETSI LI schema) this
+    //   consumes ~5 GB RSS and kills the build.
+    //
+    // Why a char buffer instead of a typed union?
+    //   A union { T1 a; T2 b; ... } still needs per-member access syntax and doesn't
+    //   help with the destructor/copy dispatch problem.  A raw char[] + placement new
+    //   lets the _emplace_* functions in the .cpp carry all type knowledge, keeping
+    //   the header O(N) in both parse and instantiation cost.
+    //
+    // How it works:
+    //   alignas(max_align) char val_[max_size]   — in-place storage, no heap
+    //     max_size  = std::max({sizeof(T1), ..., sizeof(TN)})   — constexpr O(N) scan
+    //     max_align = std::max({alignof(T1), ..., alignof(TN)}) — constexpr O(N) scan
+    //   destroy_fn_ / move_fn_ — set by _emplace_* (in the .cpp) when an alt is activated.
+    //   destroy_fn_ called by ~ChoiceClass() and before replacing the active alt.
+    //   move_fn_ called by move ctor/assign: move-constructs into dst, destroys src.
+    //   Raw memcpy would corrupt SSO strings (self-pointer into source buffer).
+    //   Move uses memcpy: all generated ASN.1 types contain only std::string /
+    //   std::vector / integers — all trivially relocatable in practice on GCC/Clang.
+    //   std::launder is required on every read-back after placement-new (C++17 §6.8.4).
+
     static constexpr std::initializer_list<std::string_view> choice_acc_api = {
-        "present", "set_present", "u", "s_alternatives", "s_alternative_count"
+        "present", "set_present", "val_", "destroy_fn_", "move_fn_",
+        "s_alternatives", "s_alternative_count"
     };
-    os << std::format("#include <variant>\n");
     os << std::format("class {} : public asn1::ChoiceInterface {{\npublic:\n", cname);
-    // PR enum uses enum class — values are scoped (PR::x), don't inject into class scope.
-    // Only need to protect against C++ keywords and the hardcoded NOTHING sentinel.
     static constexpr std::initializer_list<std::string_view> choice_pr_api = { "NOTHING" };
     os << "    enum class PR : int { NOTHING = 0";
     int pr_idx = 1;
@@ -1434,37 +1470,74 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
         if (!m->is_extension_marker)
             os << std::format(", {} = {}", safe_cpp_name(to_cpp_name(m->name), choice_pr_api), pr_idx++);
     os << " };\n";
-    // _present lives in ChoiceInterface base class
-    // variant storage — only active alternative constructed
-    os << "    std::variant<std::monostate";
-    for (const auto& m : def.members) {
+
+    // Emit: alignas(std::max({alignof(T1),...,size_t(1)})) char val_[std::max({sizeof(T1),...,size_t(1)})];
+    // size_t(1) guard makes the expression valid for a zero-alternative CHOICE.
+    os << "    alignas(std::max({";
+    { bool first = true;
+      for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
-        os << std::format(", {}", cpp_type_for(*m));
+        if (!first) os << ", ";
+        os << std::format("alignof({})", cpp_type_for(*m));
+        first = false;
+      }
+      if (count > 0) os << ", ";
+      os << "size_t(1)})) char val_[std::max({";
     }
-    os << "> u{};\n";
-    // present() read accessor
+    { bool first = true;
+      for (const auto& m : def.members) {
+        if (m->is_extension_marker) continue;
+        if (!first) os << ", ";
+        os << std::format("sizeof({})", cpp_type_for(*m));
+        first = false;
+      }
+      if (count > 0) os << ", ";
+      os << "size_t(1)})] {};\n";
+    }
+    os << "    void (*destroy_fn_)(void*) = nullptr;\n";
+    // move_fn_(dst, src) move-constructs into dst then destroys src.
+    // Needed because std::string uses SSO: the string stores data inline and keeps a
+    // self-pointer to that buffer.  A raw memcpy of the bytes would leave the copy's
+    // internal pointer pointing into the source object — use-after-move corruption.
+    // The lambda is set in _emplace_* (non-template, no instantiation overhead).
+    // CHOICE types are move-only: copy is deleted because some SEQUENCE alternatives
+    // contain unique_ptr members.  Codecs never copy CHOICE objects.
+    os << "    void (*move_fn_)(void*, void*) = nullptr;\n";
+
+    // Special members.
+    os << std::format("    {}() = default;\n", cname);
+    os << std::format(
+        "    ~{}() {{ if (destroy_fn_) destroy_fn_(val_); }}\n", cname);
+    os << std::format("    {0}(const {0}&) = delete;\n", cname);
+    os << std::format("    {0}& operator=(const {0}&) = delete;\n", cname);
+    os << std::format(
+        "    {0}({0}&& o) noexcept"
+        " : asn1::ChoiceInterface(o), destroy_fn_(o.destroy_fn_), move_fn_(o.move_fn_)"
+        " {{ if (move_fn_) move_fn_(val_, o.val_);"
+        " o.destroy_fn_ = nullptr; o.move_fn_ = nullptr; o._present = 0; }}\n", cname);
+    os << std::format(
+        "    {0}& operator=({0}&& o) noexcept {{"
+        " if (this != &o) {{"
+        " if (destroy_fn_) destroy_fn_(val_);"
+        " asn1::ChoiceInterface::operator=(o);"
+        " destroy_fn_ = o.destroy_fn_; move_fn_ = o.move_fn_;"
+        " if (move_fn_) move_fn_(val_, o.val_);"
+        " o.destroy_fn_ = nullptr; o.move_fn_ = nullptr; o._present = 0;"
+        " }} return *this; }}\n", cname);
+
     os << "    PR present() const { return static_cast<PR>(_present); }\n";
-    // set_present: emplace the right alternative
-    os << "    void set_present(PR p) {\n";
-    os << "        switch (p) {\n";
-    os << "        case PR::NOTHING: u.emplace<0>(); _present = 0; break;\n";
-    pr_idx = 1;
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) continue;
-        os << std::format("        case PR::{}: u.emplace<{}>(); _present = {}; break;\n",
-                          safe_cpp_name(to_cpp_name(m->name), choice_pr_api), pr_idx, pr_idx);
-        ++pr_idx;
-    }
-    os << "        }\n    }\n";
-    // typed accessor methods — safe_name ensures no clash with generated API
-    pr_idx = 1;
+    // set_present delegates to emplace_fn in the descriptor table — defined in .cpp.
+    os << "    void set_present(PR p);\n";
+
     for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
         std::string t = cpp_type_for(*m);
         std::string n = to_member_name(m->name, choice_acc_api);
-        os << std::format("    {0}& {1}() {{ return std::get<{2}>(u); }}\n", t, n, pr_idx);
-        os << std::format("    const {0}& {1}() const {{ return std::get<{2}>(u); }}\n", t, n, pr_idx);
-        ++pr_idx;
+        os << std::format(
+            "    {0}& {1}() {{ return *std::launder(reinterpret_cast<{0}*>(val_)); }}\n", t, n);
+        os << std::format(
+            "    const {0}& {1}() const"
+            " {{ return *std::launder(reinterpret_cast<const {0}*>(val_)); }}\n", t, n);
     }
     if (count > 0) {
         os << std::format("    static const asn1::MemberDescriptor s_alternatives[{}];\n", count);
@@ -1510,16 +1583,53 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             ++auto_tag_num;
           }
         }
-        // Pass 2: emit static variant accessor functions.
-        { int vi = 1;
-          for (const auto& r : rows) {
-            os << std::format("static asn1::Asn1Object* _get_mut_{0}_{1}(asn1::Asn1Object* p) {{ return &std::get<{2}>(static_cast<{0}*>(p)->u); }}\n",
-                cname, r.mname, vi);
-            os << std::format("static const asn1::Asn1Object* _get_const_{0}_{1}(const asn1::Asn1Object* p) {{ return &std::get<{2}>(static_cast<const {0}*>(p)->u); }}\n",
-                cname, r.mname, vi);
-            os << std::format("static void _emplace_{0}_{1}(asn1::Asn1Object* p) {{ static_cast<{0}*>(p)->u.emplace<{2}>(); }}\n",
-                cname, r.mname, vi);
-            ++vi;
+        // Pass 2: emit static accessor/emplace functions.
+        // get_mut / get_const: std::launder re-establishes pointer provenance after
+        //   placement-new into a char[] buffer (required by C++17 §6.8.4).
+        //   The cast is always to the correct type because _present tracks which
+        //   alternative was last emplaced — UB would require calling get on the
+        //   wrong alternative, which the codec never does.
+        // _emplace: destroy the current occupant (if any), placement-new the new
+        //   alternative, then set the two function-pointer slots so that the
+        //   destructor and copy-ctor dispatch correctly without a switch.
+        //   The lambdas are stateless ([]) so they decay to plain function pointers.
+        { for (const auto& r : rows) {
+            // Collect the C++ type for this alternative (needed in lambdas below).
+            // rows were built with cpp_type_for, which we re-derive from the member.
+            // Use r.tdref to find the type — actually we need cpp_type_for again.
+            // Re-derive: rows[i].mname corresponds to members in order.
+            // Simpler: scan members to find the matching name.
+            std::string alt_type;
+            for (const auto& m : def.members) {
+                if (m->is_extension_marker) continue;
+                if (to_member_name(m->name) == r.mname) {
+                    alt_type = cpp_type_for(*m);
+                    break;
+                }
+            }
+            os << std::format(
+                "static asn1::Asn1Object* _get_mut_{0}_{1}(asn1::Asn1Object* p)"
+                " {{ return std::launder(reinterpret_cast<{2}*>(static_cast<{0}*>(p)->val_)); }}\n",
+                cname, r.mname, alt_type);
+            os << std::format(
+                "static const asn1::Asn1Object* _get_const_{0}_{1}(const asn1::Asn1Object* p)"
+                " {{ return std::launder(reinterpret_cast<const {2}*>(static_cast<const {0}*>(p)->val_)); }}\n",
+                cname, r.mname, alt_type);
+            os << std::format(
+                "static void _emplace_{0}_{1}(asn1::Asn1Object* p) {{\n"
+                "    auto* self = static_cast<{0}*>(p);\n"
+                "    if (self->destroy_fn_) self->destroy_fn_(self->val_);\n"
+                "    new (self->val_) {2}{{}};\n"
+                // std::destroy_at resolves through using-aliases (e.g. PrintableString →
+                // AsnString<19>) so ~TypeName() pseudo-destructor syntax is not needed.
+                "    self->destroy_fn_ = [](void* q){{ std::destroy_at(static_cast<{2}*>(q)); }};\n"
+                // move_fn_ move-constructs into dst then destroys src — handles SSO strings
+                // and other non-trivially-relocatable types (self-referential internals).
+                "    self->move_fn_  = [](void* d, void* s){{"
+                " new(d) {2}(std::move(*static_cast<{2}*>(s)));"
+                " std::destroy_at(static_cast<{2}*>(s)); }};\n"
+                "}}\n",
+                cname, r.mname, alt_type);
           }
           os << '\n';
         }
@@ -1538,6 +1648,20 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         }
         os << "};\n";
         os << std::format("const int {}::s_alternative_count = {};\n\n", cname, count);
+
+        // set_present: resets the active alternative then activates the requested one.
+        // Delegates to emplace_fn from the descriptor table so the switch lives only
+        // in the _emplace_* functions above — no additional per-alternative code here.
+        os << std::format(
+            "void {0}::set_present(PR p) {{\n"
+            "    if (destroy_fn_) {{ destroy_fn_(val_); destroy_fn_ = nullptr; move_fn_ = nullptr; }}\n"
+            "    _present = 0;\n"
+            "    if (p == PR::NOTHING) return;\n"
+            "    int idx = static_cast<int>(p) - 1;\n"
+            "    if (idx >= 0 && idx < s_alternative_count)\n"
+            "        s_alternatives[idx].emplace_fn(this);\n"
+            "    _present = static_cast<int>(p);\n"
+            "}}\n\n", cname);
 
         // O(1) context-tag dispatch table — emit when ALL alternatives carry a context tag.
         // Density threshold: only emit if range <= 4× count (avoids huge sparse arrays).
@@ -1636,7 +1760,6 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
     os << "#pragma once\n";
     os << "#include <memory>\n";
     os << "#include <optional>\n";
-    os << "#include <variant>\n";
     os << "#include <vector>\n";
     os << "#include <span>\n";
     os << "#include <asn1cpp/asn1cpp_gen.hpp>\n\n";
