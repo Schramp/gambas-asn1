@@ -47,7 +47,7 @@ AR       := ar
 PCH_DIR     := $(OBJ_DIR)/pch
 PCH_WRAP    := $(PCH_DIR)/pch.hpp
 PCH_GCH     := $(PCH_WRAP).gch
-OPT        ?= -O3
+OPT        ?= -O3 -flto=auto
 BASE_FLAGS  := -std=c++20 $(OPT) -I$(GEN_DIR) -I$(RUNTIME_INC)
 CXXFLAGS    := $(BASE_FLAGS) -include $(PCH_WRAP)
 
