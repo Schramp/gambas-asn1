@@ -121,21 +121,21 @@ public:
 
 namespace per_detail {
 
-inline void put_length(PerEncodeStream& s, std::size_t n) {
+inline void put_length(PerEncodeStream& stream, std::size_t n) {
     if (n <= 127) {
-        s.put_bits(n, 8);
+        stream.put_bits(n, 8);
     } else if (n <= 16383) {
-        s.put_bits(0x80 | (n >> 8), 8);
-        s.put_bits(n & 0xFF, 8);
+        stream.put_bits(0x80 | (n >> 8), 8);
+        stream.put_bits(n & 0xFF, 8);
     }
 }
 
-inline Expected<std::size_t, DecodeError> get_length(PerDecodeStream& s) {
-    auto first = s.get_bits(8);
+inline Expected<std::size_t, DecodeError> get_length(PerDecodeStream& stream) {
+    auto first = stream.get_bits(8);
     if (!first) return make_unexpected<std::size_t, DecodeError>(first.error());
     if (!(*first & 0x80)) return static_cast<std::size_t>(*first);
     if ((*first & 0xC0) == 0x80) {
-        auto second = s.get_bits(8);
+        auto second = stream.get_bits(8);
         if (!second) return make_unexpected<std::size_t, DecodeError>(second.error());
         return static_cast<std::size_t>((*first & 0x3F) << 8 | *second);
     }
@@ -143,11 +143,11 @@ inline Expected<std::size_t, DecodeError> get_length(PerDecodeStream& s) {
         DecodeError("PER: fragmented length not implemented"));
 }
 
-inline Expected<std::vector<uint8_t>, DecodeError> read_bytes(PerDecodeStream& s, std::size_t n) {
+inline Expected<std::vector<uint8_t>, DecodeError> read_bytes(PerDecodeStream& stream, std::size_t n) {
     std::vector<uint8_t> out;
     out.reserve(n);
     for (std::size_t i = 0; i < n; ++i) {
-        auto b = s.get_bits(8);
+        auto b = stream.get_bits(8);
         if (!b) return make_unexpected<std::vector<uint8_t>, DecodeError>(b.error());
         out.push_back(static_cast<uint8_t>(*b));
     }
@@ -155,19 +155,19 @@ inline Expected<std::vector<uint8_t>, DecodeError> read_bytes(PerDecodeStream& s
 }
 
 template<typename T>
-inline void encode_ber_content(PerEncodeStream& s, const Asn1Object* src) {
+inline void encode_ber_content(PerEncodeStream& stream, const Asn1Object* src) {
     std::vector<uint8_t> ber;
     { BerWriter w{ber}; BerTraits<T>::encode(w, *static_cast<const T*>(src)); }
     uint8_t content_len = ber[1];
-    put_length(s, content_len);
-    for (int i = 0; i < content_len; ++i) s.put_bits(ber[2 + i], 8);
+    put_length(stream, content_len);
+    for (int i = 0; i < content_len; ++i) stream.put_bits(ber[2 + i], 8);
 }
 
 template<typename T>
-inline DecodeResult decode_ber_content(PerDecodeStream& s, Asn1Object* dest) {
-    auto len_r = get_length(s);
+inline DecodeResult decode_ber_content(PerDecodeStream& stream, Asn1Object* dest) {
+    auto len_r = get_length(stream);
     if (!len_r) return decode_err(len_r.error());
-    auto content = read_bytes(s, *len_r);
+    auto content = read_bytes(stream, *len_r);
     if (!content) return decode_err(content.error());
     std::vector<uint8_t> ber;
     const auto tag = BerTraits<T>::tag();
@@ -190,9 +190,9 @@ class PerCodec;
 
 struct IPerTypeHandler {
     virtual ~IPerTypeHandler() = default;
-    virtual void encode(const PerCodec& codec, PerEncodeStream& s,
+    virtual void encode(const PerCodec& codec, PerEncodeStream& stream,
                         const TypeDescriptor& def, const Asn1Object* src) const = 0;
-    virtual DecodeResult decode(const PerCodec& codec, PerDecodeStream& s,
+    virtual DecodeResult decode(const PerCodec& codec, PerDecodeStream& stream,
                                 const TypeDescriptor& def, Asn1Object* dest) const = 0;
 };
 
