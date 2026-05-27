@@ -238,8 +238,9 @@ enum class TypeKind : uint8_t {
     SeqOf      = 5,  // also SET OF
 };
 
-// Forward declaration — avoids circular dependency (PerCodec.hpp includes TypeDescriptor.hpp).
+// Forward declarations — avoid circular dependency (codec headers include TypeDescriptor.hpp).
 struct IPerTypeHandler;
+struct IBerTypeHandler;
 
 // Top-level per-type descriptor (mirrors asn_TYPE_descriptor_t).
 // Generated as `asn_DEF_<TypeName>` in the type's .cpp.
@@ -255,6 +256,8 @@ struct TypeDescriptor {
     TypeKind kind   = TypeKind::Primitive;
     // Direct PER handler; null means fall back to PerCodec's LUT.
     const IPerTypeHandler* per_handler = nullptr;
+    // Direct BER handler; null means fall back to BerCodec's LUT.
+    const IBerTypeHandler* ber_handler = nullptr;
 };
 
 // Built-in type descriptors — defined in runtime/src/BuiltinTypes.cpp (per_handler wired there).

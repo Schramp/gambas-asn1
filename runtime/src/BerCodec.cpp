@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <vector>
 #include <asn1cpp/codec/BerCodec.hpp>
+#include <asn1cpp/codec/BerHandlers.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
 #include <asn1cpp/EnumValue.hpp>
 #include <asn1cpp/codec/Debug.hpp>
@@ -110,10 +111,6 @@ struct BooleanBerHandler final : IBerTypeHandler {
 struct IntegerBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
-        if (def.constraints.int_kind == Constraints::INT_U64) {
-            BerTraits<UInteger>::encode(w, *static_cast<const UInteger*>(src));
-            return;
-        }
         int64_t v = static_cast<const Integer*>(src)->value();
         auto bytes = detail::encode_integer_bytes(v);
         w.write_primitive(def.tag, std::span<const uint8_t>(bytes.data(), bytes.size()));
@@ -124,24 +121,43 @@ struct IntegerBerHandler final : IBerTypeHandler {
         if (!tlv) return decode_err(tlv.error());
         if (tlv->tag != def.tag)
             return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
-        return decode_value_impl(def, tlv->value, dest);
+        return decode_value_impl(tlv->value, dest);
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
-                              const TypeDescriptor& def, Asn1Object* dest) const override {
-        return decode_value_impl(def, value, dest);
+                              const TypeDescriptor&, Asn1Object* dest) const override {
+        return decode_value_impl(value, dest);
     }
 private:
-    static DecodeResult decode_value_impl(const TypeDescriptor& def,
-                                          std::span<const uint8_t> value, Asn1Object* dest) {
-        if (def.constraints.int_kind == Constraints::INT_U64) {
-            auto v = BerTraits<UInteger>::decode_value(value);
-            if (!v) return decode_err(v.error());
-            static_cast<UInteger*>(dest)->set(v->value());
-            return decode_ok();
-        }
+    static DecodeResult decode_value_impl(std::span<const uint8_t> value, Asn1Object* dest) {
         auto v = BerTraits<Integer>::decode_value(value);
         if (!v) return decode_err(v.error());
         static_cast<Integer*>(dest)->set(v->value());
+        return decode_ok();
+    }
+};
+
+struct UIntegerBerHandler final : IBerTypeHandler {
+    void encode(const BerCodec&, BerWriter& w,
+                const TypeDescriptor&, const Asn1Object* src) const override {
+        BerTraits<UInteger>::encode(w, *static_cast<const UInteger*>(src));
+    }
+    DecodeResult decode(const BerCodec&, BerReader& r,
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
+        auto tlv = r.read_tlv();
+        if (!tlv) return decode_err(tlv.error());
+        if (tlv->tag != def.tag)
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
+        return decode_value_impl(tlv->value, dest);
+    }
+    DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
+                              const TypeDescriptor&, Asn1Object* dest) const override {
+        return decode_value_impl(value, dest);
+    }
+private:
+    static DecodeResult decode_value_impl(std::span<const uint8_t> value, Asn1Object* dest) {
+        auto v = BerTraits<UInteger>::decode_value(value);
+        if (!v) return decode_err(v.error());
+        static_cast<UInteger*>(dest)->set(v->value());
         return decode_ok();
     }
 };
@@ -779,6 +795,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
 static const ErrorBerHandler       s_error;
 static const BooleanBerHandler     s_boolean;
 static const IntegerBerHandler     s_integer;
+static const UIntegerBerHandler    s_uinteger;
 static const NullBerHandler        s_null;
 static const RealBerHandler        s_real;
 static const BitStringBerHandler   s_bitstring;
@@ -795,6 +812,25 @@ static const SequenceBerHandler    s_sequence;
 static const ChoiceBerHandler      s_choice;
 
 } // anonymous namespace
+
+// Named handler references — used by generated .cpp files via BerHandlers.hpp.
+const IBerTypeHandler& ber_any_handler        = s_any;
+const IBerTypeHandler& ber_boolean_handler    = s_boolean;
+const IBerTypeHandler& ber_integer_handler    = s_integer;
+const IBerTypeHandler& ber_uinteger_handler   = s_uinteger;
+const IBerTypeHandler& ber_null_handler       = s_null;
+const IBerTypeHandler& ber_real_handler       = s_real;
+const IBerTypeHandler& ber_bitstring_handler  = s_bitstring;
+const IBerTypeHandler& ber_octetstring_handler= s_octetstring;
+const IBerTypeHandler& ber_oid_handler        = s_oid;
+const IBerTypeHandler& ber_reloid_handler     = s_reloid;
+const IBerTypeHandler& ber_utctime_handler    = s_utctime;
+const IBerTypeHandler& ber_gentime_handler    = s_gentime;
+const IBerTypeHandler& ber_string_handler     = s_string;
+const IBerTypeHandler& ber_enumerated_handler = s_enumerated;
+const IBerTypeHandler& ber_seqof_handler      = s_seqof;
+const IBerTypeHandler& ber_sequence_handler   = s_sequence;
+const IBerTypeHandler& ber_choice_handler     = s_choice;
 
 // ---------------------------------------------------------------------------
 // IBerTypeHandler default decode_value — re-tag and call decode()
@@ -884,10 +920,7 @@ void BerCodec::encode(IEncodeStream& dst,
 #endif
     auto& s = static_cast<BerEncodeStream&>(dst);
     BerWriter& w = s.writer();
-    if (def.kind == TypeKind::Primitive)
-        prim_dispatch_[def.tag.number]->encode(*this, w, def, src);
-    else
-        comp_dispatch_[(int)def.kind]->encode(*this, w, def, src);
+    def.ber_handler->encode(*this, w, def, src);
 }
 
 DecodeResult BerCodec::decode(IDecodeStream& src,
@@ -896,9 +929,7 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
 {
     auto& s = static_cast<BerDecodeStream&>(src);
     BerReader& r = s.reader();
-    DecodeResult res = (def.kind == TypeKind::Primitive)
-        ? prim_dispatch_[def.tag.number]->decode(*this, r, def, dest)
-        : comp_dispatch_[(int)def.kind]->decode(*this, r, def, dest);
+    DecodeResult res = def.ber_handler->decode(*this, r, def, dest);
 
 #if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_DECODE)
     if (res.has_value() && !def.is_any && !(debug_flags() & DBG_NO_VALIDATE)) {
@@ -922,9 +953,7 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
 DecodeResult BerCodec::decode_value(std::span<const uint8_t> value,
                                      const TypeDescriptor& def,
                                      Asn1Object* dest) const {
-    if (def.kind == TypeKind::Primitive)
-        return prim_dispatch_[def.tag.number]->decode_value(*this, value, def, dest);
-    return comp_dispatch_[(int)def.kind]->decode_value(*this, value, def, dest);
+    return def.ber_handler->decode_value(*this, value, def, dest);
 }
 
 } // namespace asn1
