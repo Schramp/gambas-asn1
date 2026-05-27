@@ -399,7 +399,7 @@ bool RandomFiller::fill_choice(Asn1Object* obj, const ChoiceSpec& spec, int dept
 
     int alt_idx = rand_int(0, limit - 1);
     const auto& alt = spec.alternatives[alt_idx];
-    if (alt.emplace_fn) alt.emplace_fn(ch);
+    ch->emplace_alt(alt);
     ch->_present = alt_idx + 1;
     Asn1Object* aptr = alt.get_mut_fn(ch);
 

@@ -152,13 +152,11 @@ struct MemberDescriptor {
     // member is present AND its value equals the schema default.
     bool (*is_default_equal)(const Asn1Object* owner) = nullptr;
 
-    // CHOICE variant accessors — non-null only for CHOICE alternatives in
-    // std::variant-based generated structs.  Codecs use these instead of
-    // offset arithmetic.
-    //   emplace_fn  — in-place constructs this alternative in the CHOICE struct
+    // CHOICE variant accessors — non-null only for CHOICE alternatives.
     //   get_mut_fn  — returns mutable pointer to the active alternative
     //   get_const_fn — returns const pointer to the active alternative
-    void              (*emplace_fn)(Asn1Object* choice_ptr)          = nullptr;
+    // Emplace is handled generically via ChoiceInterface::emplace_alt(alt),
+    // which uses TypeDescriptor::lifecycle.
     Asn1Object*       (*get_mut_fn)(Asn1Object* choice_ptr)          = nullptr;
     const Asn1Object* (*get_const_fn)(const Asn1Object* choice_ptr)  = nullptr;
 };
@@ -242,6 +240,36 @@ enum class TypeKind : uint8_t {
 struct IPerTypeHandler;
 struct IBerTypeHandler;
 
+// Type-tag for TypeLifecycleOps template constructor — zero-size knob selecting T.
+template<typename T> struct TypeTag {};
+
+// Per-type lifecycle operations used by ChoiceInterface::emplace_alt.
+// Embedded by value in TypeDescriptor (same 3×ptr cost as three separate fields).
+// Default-constructed with all nullptrs — builtins and non-CHOICE types that are
+// never emplaced as CHOICE alternatives may leave lifecycle default-constructed,
+// but all TypeDescriptors referenced from ChoiceSpec::alternatives must have it set.
+struct TypeLifecycleOps {
+    void (*construct)(void*)   = nullptr; // placement new T into storage
+    void (*destroy)(void*)     = nullptr; // ~T
+    void (*move)(void*, void*) = nullptr; // move-construct T into dst, then ~T(src)
+
+    TypeLifecycleOps() = default;
+
+    // Direct fn-ptr constructor — used for the k_noop_lifecycle sentinel.
+    constexpr TypeLifecycleOps(void (*c)(void*), void (*d)(void*),
+                               void (*m)(void*, void*)) noexcept
+        : construct(c), destroy(d), move(m) {}
+
+    template<typename T>
+    explicit constexpr TypeLifecycleOps(TypeTag<T>) noexcept
+        : construct([](void* p){ new(p) T{}; })
+        , destroy  ([](void* p){ std::destroy_at(static_cast<T*>(p)); })
+        , move     ([](void* d, void* s){
+              new(d) T(std::move(*static_cast<T*>(s)));
+              std::destroy_at(static_cast<T*>(s)); })
+    {}
+};
+
 // Top-level per-type descriptor (mirrors asn_TYPE_descriptor_t).
 // Generated as `asn_DEF_<TypeName>` in the type's .cpp.
 struct TypeDescriptor {
@@ -258,6 +286,9 @@ struct TypeDescriptor {
     const IPerTypeHandler* per_handler = nullptr;
     // Direct BER handler; null means fall back to BerCodec's LUT.
     const IBerTypeHandler* ber_handler = nullptr;
+    // Lifecycle ops for CHOICE alternative emplace — set for all types used as
+    // CHOICE alternatives; default (all nullptrs) for types that never appear as alternatives.
+    TypeLifecycleOps lifecycle;
 };
 
 // Built-in type descriptors — defined in runtime/src/BuiltinTypes.cpp (per_handler wired there).

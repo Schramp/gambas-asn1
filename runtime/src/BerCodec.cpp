@@ -665,7 +665,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             if (matched >= 0) {
                 const auto& alt = spec.alternatives[matched];
                 if (ch->_present != matched + 1) {
-                    if (alt.emplace_fn) alt.emplace_fn(ch);
+                    ch->emplace_alt(alt);
                 }
                 Asn1Object* mptr = alt.get_mut_fn(ch);
                 const auto& mdef = *alt.type_descriptor;
@@ -704,7 +704,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             if (matched >= 0) {
                 const auto& alt = spec.alternatives[matched];
                 if (ch->_present != matched + 1) {
-                    if (alt.emplace_fn) alt.emplace_fn(ch);
+                    ch->emplace_alt(alt);
                 }
                 Asn1Object* mptr = alt.get_mut_fn(ch);
                 const auto& mdef = *alt.type_descriptor;
@@ -736,7 +736,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             if (!alt.type_descriptor) continue;
             if (peek.cls != alt.tag.cls || peek.number != alt.tag.number) continue;
             if (ch->_present != i + 1) {
-                if (alt.emplace_fn) alt.emplace_fn(ch);
+                ch->emplace_alt(alt);
             }
             Asn1Object* mptr = alt.get_mut_fn(ch);
             const auto& mdef = *alt.type_descriptor;

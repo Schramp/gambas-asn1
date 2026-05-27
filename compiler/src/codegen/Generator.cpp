@@ -480,7 +480,8 @@ static void emit_type_descriptor(std::ostream& os,
                       sp(has_enum), sp(has_seq), sp(has_choice), sp(has_seqof));
     os << std::format("    false, {} /* kind */,\n", kind);
     os << std::format("    {} /* per_handler */,\n", per_handler);
-    os << std::format("    {} /* ber_handler */\n", ber_handler);
+    os << std::format("    {} /* ber_handler */,\n", ber_handler);
+    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cname);
     os << "};\n\n";
 }
 
@@ -891,9 +892,12 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
         ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
     const char* ber_h = (ik == asn1::Constraints::INT_U64)
         ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
+    const char* cpp_t = (ik == asn1::Constraints::INT_U64)
+        ? "asn1::UInteger" : "asn1::Integer";
     os << std::format("    false, asn1::TypeKind::Primitive,\n");
     os << std::format("    {} /* per_handler */,\n", per_h);
-    os << std::format("    {} /* ber_handler */\n", ber_h);
+    os << std::format("    {} /* ber_handler */,\n", ber_h);
+    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cpp_t);
     os << "};\n";
 }
 
@@ -957,11 +961,14 @@ std::string Generator::emit_member_type_descriptor(
                 ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
             const char* ber_h = (kind == IntStorageKind::U64)
                 ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
+            const char* cpp_t = (kind == IntStorageKind::U64)
+                ? "asn1::UInteger" : "asn1::Integer";
             os << std::format(
                 "static const asn1::TypeDescriptor {} = "
                 "{{ \"INTEGER\", asn1::Tag::universal({}, false), "
-                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {} }};\n",
-                tname, asn1::UniversalTag::Integer, pc, per_h, ber_h);
+                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
+                "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) }};\n",
+                tname, asn1::UniversalTag::Integer, pc, per_h, ber_h, cpp_t);
             return "&" + tname;
         }
     }
@@ -1021,11 +1028,13 @@ std::string Generator::emit_member_type_descriptor(
             const char* ber_h = "&asn1::ber_string_handler";
             if (*bt == BT::BitString)   ber_h = "&asn1::ber_bitstring_handler";
             if (*bt == BT::OctetString) ber_h = "&asn1::ber_octetstring_handler";
+            std::string cpp_t = cpp_type_for(m);
             os << std::format(
                 "static const asn1::TypeDescriptor {} = "
                 "{{ \"{}\", asn1::Tag::universal({}, false), "
-                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {} }};\n",
-                tname, tn, *utag, pc, per_h, ber_h);
+                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
+                "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) }};\n",
+                tname, tn, *utag, pc, per_h, ber_h, cpp_t);
             return "&" + tname;
         }
     }
@@ -1460,16 +1469,12 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     //   alignas(max_align) char val_[max_size]   — in-place storage, no heap
     //     max_size  = std::max({sizeof(T1), ..., sizeof(TN)})   — constexpr O(N) scan
     //     max_align = std::max({alignof(T1), ..., alignof(TN)}) — constexpr O(N) scan
-    //   destroy_fn_ / move_fn_ — set by _emplace_* (in the .cpp) when an alt is activated.
-    //   destroy_fn_ called by ~ChoiceClass() and before replacing the active alt.
-    //   move_fn_ called by move ctor/assign: move-constructs into dst, destroys src.
-    //   Raw memcpy would corrupt SSO strings (self-pointer into source buffer).
-    //   Move uses memcpy: all generated ASN.1 types contain only std::string /
-    //   std::vector / integers — all trivially relocatable in practice on GCC/Clang.
+    //   active_lifecycle — pointer into TypeDescriptor::lifecycle of the current alternative;
+    //   set by ChoiceInterface::emplace_alt. destroy/move ops reached via one pointer deref.
     //   std::launder is required on every read-back after placement-new (C++17 §6.8.4).
 
     static constexpr std::initializer_list<std::string_view> choice_acc_api = {
-        "present", "set_present", "val_", "destroy_fn_", "move_fn_",
+        "present", "set_present", "val_", "val_storage_", "active_lifecycle",
         "s_alternatives", "s_alternative_count"
     };
     os << std::format("class {} : public asn1::ChoiceInterface {{\npublic:\n", cname);
@@ -1481,8 +1486,8 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
             os << std::format(", {} = {}", safe_cpp_name(to_cpp_name(m->name), choice_pr_api), pr_idx++);
     os << " };\n";
 
-    // Emit: alignas(std::max({alignof(T1),...,size_t(1)})) char val_[std::max({sizeof(T1),...,size_t(1)})];
-    // size_t(1) guard makes the expression valid for a zero-alternative CHOICE.
+    // val_storage_: raw byte buffer sized/aligned to the largest alternative.
+    // val_ (in ChoiceInterface base) points here — set once in the constructor.
     os << "    alignas(std::max({";
     { bool first = true;
       for (const auto& m : def.members) {
@@ -1492,7 +1497,7 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
         first = false;
       }
       if (count > 0) os << ", ";
-      os << "size_t(1)})) char val_[std::max({";
+      os << "size_t(1)})) char val_storage_[std::max({";
     }
     { bool first = true;
       for (const auto& m : def.members) {
@@ -1504,39 +1509,33 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
       if (count > 0) os << ", ";
       os << "size_t(1)})] {};\n";
     }
-    os << "    void (*destroy_fn_)(void*) = nullptr;\n";
-    // move_fn_(dst, src) move-constructs into dst then destroys src.
-    // Needed because std::string uses SSO: the string stores data inline and keeps a
-    // self-pointer to that buffer.  A raw memcpy of the bytes would leave the copy's
-    // internal pointer pointing into the source object — use-after-move corruption.
-    // The lambda is set in _emplace_* (non-template, no instantiation overhead).
-    // CHOICE types are move-only: copy is deleted because some SEQUENCE alternatives
-    // contain unique_ptr members.  Codecs never copy CHOICE objects.
-    os << "    void (*move_fn_)(void*, void*) = nullptr;\n";
 
     // Special members.
-    os << std::format("    {}() = default;\n", cname);
+    // Constructor sets val_ to val_storage_ so ChoiceInterface::emplace_alt / accessors work.
+    os << std::format("    {0}() {{ val_ = val_storage_; }}\n", cname);
     os << std::format(
-        "    ~{}() {{ if (destroy_fn_) destroy_fn_(val_); }}\n", cname);
+        "    ~{0}() {{ active_lifecycle->destroy(val_); }}\n", cname);
     os << std::format("    {0}(const {0}&) = delete;\n", cname);
     os << std::format("    {0}& operator=(const {0}&) = delete;\n", cname);
     os << std::format(
-        "    {0}({0}&& o) noexcept"
-        " : asn1::ChoiceInterface(o), destroy_fn_(o.destroy_fn_), move_fn_(o.move_fn_)"
-        " {{ if (move_fn_) move_fn_(val_, o.val_);"
-        " o.destroy_fn_ = nullptr; o.move_fn_ = nullptr; o._present = 0; }}\n", cname);
+        "    {0}({0}&& o) noexcept {{"
+        " val_ = val_storage_;"
+        " _present = o._present; o._present = 0;"
+        " active_lifecycle = o.active_lifecycle;"
+        " o.active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;"
+        " active_lifecycle->move(val_, o.val_); }}\n", cname);
     os << std::format(
         "    {0}& operator=({0}&& o) noexcept {{"
         " if (this != &o) {{"
-        " if (destroy_fn_) destroy_fn_(val_);"
-        " asn1::ChoiceInterface::operator=(o);"
-        " destroy_fn_ = o.destroy_fn_; move_fn_ = o.move_fn_;"
-        " if (move_fn_) move_fn_(val_, o.val_);"
-        " o.destroy_fn_ = nullptr; o.move_fn_ = nullptr; o._present = 0;"
+        " active_lifecycle->destroy(val_);"
+        " _present = o._present; o._present = 0;"
+        " active_lifecycle = o.active_lifecycle;"
+        " o.active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;"
+        " active_lifecycle->move(val_, o.val_);"
         " }} return *this; }}\n", cname);
 
     os << "    PR present() const { return static_cast<PR>(_present); }\n";
-    // set_present delegates to emplace_fn in the descriptor table — defined in .cpp.
+    // set_present delegates to emplace_alt (ChoiceInterface) — defined in .cpp.
     os << "    void set_present(PR p);\n";
 
     for (const auto& m : def.members) {
@@ -1572,7 +1571,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     // Alternative descriptor table
     if (count > 0) {
         struct AltRow {
-            std::string name, eff_tag, mname, tdref;
+            std::string name, eff_tag, mname, tdref, alt_type;
             bool is_explicit;
             int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
         };
@@ -1584,92 +1583,43 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string mname = to_member_name(m->name);
             auto [eff_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
+            std::string alt_type = cpp_type_for(*m);
             int tag_ctx_num = -1;
             if (apply_auto_tags)
                 tag_ctx_num = auto_tag_num;
             else if (m->tag.present() && m->tag.cls == ast::TagClass::Context)
                 tag_ctx_num = m->tag.number;
-            rows.push_back({ m->name, eff_tag, mname, tdref, is_explicit, tag_ctx_num });
+            rows.push_back({ m->name, eff_tag, mname, tdref, alt_type, is_explicit, tag_ctx_num });
             ++auto_tag_num;
           }
         }
-        // Pass 2: emit static accessor/emplace functions.
-        // get_mut / get_const: std::launder re-establishes pointer provenance after
-        //   placement-new into a char[] buffer (required by C++17 §6.8.4).
-        //   The cast is always to the correct type because _present tracks which
-        //   alternative was last emplaced — UB would require calling get on the
-        //   wrong alternative, which the codec never does.
-        // _emplace: destroy the current occupant (if any), placement-new the new
-        //   alternative, then set the two function-pointer slots so that the
-        //   destructor and copy-ctor dispatch correctly without a switch.
-        //   The lambdas are stateless ([]) so they decay to plain function pointers.
-        { for (const auto& r : rows) {
-            // Collect the C++ type for this alternative (needed in lambdas below).
-            // rows were built with cpp_type_for, which we re-derive from the member.
-            // Use r.tdref to find the type — actually we need cpp_type_for again.
-            // Re-derive: rows[i].mname corresponds to members in order.
-            // Simpler: scan members to find the matching name.
-            std::string alt_type;
-            for (const auto& m : def.members) {
-                if (m->is_extension_marker) continue;
-                if (to_member_name(m->name) == r.mname) {
-                    alt_type = cpp_type_for(*m);
-                    break;
-                }
-            }
-            os << std::format(
-                "static asn1::Asn1Object* _get_mut_{0}_{1}(asn1::Asn1Object* p)"
-                " {{ return std::launder(reinterpret_cast<{2}*>(static_cast<{0}*>(p)->val_)); }}\n",
-                cname, r.mname, alt_type);
-            os << std::format(
-                "static const asn1::Asn1Object* _get_const_{0}_{1}(const asn1::Asn1Object* p)"
-                " {{ return std::launder(reinterpret_cast<const {2}*>(static_cast<const {0}*>(p)->val_)); }}\n",
-                cname, r.mname, alt_type);
-            os << std::format(
-                "static void _emplace_{0}_{1}(asn1::Asn1Object* p) {{\n"
-                "    auto* self = static_cast<{0}*>(p);\n"
-                "    if (self->destroy_fn_) self->destroy_fn_(self->val_);\n"
-                "    new (self->val_) {2}{{}};\n"
-                // std::destroy_at resolves through using-aliases (e.g. PrintableString →
-                // AsnString<19>) so ~TypeName() pseudo-destructor syntax is not needed.
-                "    self->destroy_fn_ = [](void* q){{ std::destroy_at(static_cast<{2}*>(q)); }};\n"
-                // move_fn_ move-constructs into dst then destroys src — handles SSO strings
-                // and other non-trivially-relocatable types (self-referential internals).
-                "    self->move_fn_  = [](void* d, void* s){{"
-                " new(d) {2}(std::move(*static_cast<{2}*>(s)));"
-                " std::destroy_at(static_cast<{2}*>(s)); }};\n"
-                "}}\n",
-                cname, r.mname, alt_type);
-          }
-          os << '\n';
-        }
+        // Pass 2 removed: _get_mut_T_alt / _get_const_T_alt / _emplace_T_alt named free
+        // functions replaced by ChoiceOps<AltT>::get_mut / get_const (single-type-param
+        // template in ChoiceInterface.hpp) and ChoiceInterface::emplace_alt (generic).
+
         // Pass 3: emit array (as class static member definition).
         os << std::format("const asn1::MemberDescriptor {}::s_alternatives[] = {{\n", cname);
-        { int vi = 1;
-          for (const auto& r : rows) {
+        { for (const auto& r : rows) {
             os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, nullptr, nullptr,\n",
-                r.name, r.eff_tag,
-                r.tdref,
-                r.is_explicit ? "true" : "false");
-            os << std::format("      &_emplace_{0}_{1}, &_get_mut_{0}_{1}, &_get_const_{0}_{1} }},\n",
-                cname, r.mname);
-            ++vi;
+                r.name, r.eff_tag, r.tdref, r.is_explicit ? "true" : "false");
+            os << std::format("      &asn1::ChoiceOps<{0}>::get_mut, &asn1::ChoiceOps<{0}>::get_const }},\n",
+                r.alt_type);
           }
         }
         os << "};\n";
         os << std::format("const int {}::s_alternative_count = {};\n\n", cname, count);
 
         // set_present: resets the active alternative then activates the requested one.
-        // Delegates to emplace_fn from the descriptor table so the switch lives only
-        // in the _emplace_* functions above — no additional per-alternative code here.
+        // emplace_alt (generic in ChoiceInterface) handles construction via TypeDescriptor::lifecycle.
         os << std::format(
             "void {0}::set_present(PR p) {{\n"
-            "    if (destroy_fn_) {{ destroy_fn_(val_); destroy_fn_ = nullptr; move_fn_ = nullptr; }}\n"
+            "    active_lifecycle->destroy(val_);\n"
+            "    active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;\n"
             "    _present = 0;\n"
             "    if (p == PR::NOTHING) return;\n"
             "    int idx = static_cast<int>(p) - 1;\n"
             "    if (idx >= 0 && idx < s_alternative_count)\n"
-            "        s_alternatives[idx].emplace_fn(this);\n"
+            "        emplace_alt(s_alternatives[idx]);\n"
             "    _present = static_cast<int>(p);\n"
             "}}\n\n", cname);
 
@@ -1976,9 +1926,11 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
     } else {
         os << "    {} /* constraints — unconstrained */,\n";
     }
+    std::string cpp_t = cpp_type_for(def);
     os << std::format("    false, asn1::TypeKind::Primitive,\n");
     os << std::format("    {} /* per_handler */,\n", per_h);
-    os << std::format("    {} /* ber_handler */\n", ber_h);
+    os << std::format("    {} /* ber_handler */,\n", ber_h);
+    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cpp_t);
     os << "};\n";
 }
 

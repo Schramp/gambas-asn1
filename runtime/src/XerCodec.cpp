@@ -657,7 +657,7 @@ struct ChoiceXerHandler final : IXerTypeHandler {
             TypeDescriptor adef = *alt.type_descriptor;
             adef.name = alt.name;
             if (ch->_present != i + 1) {
-                if (alt.emplace_fn) alt.emplace_fn(ch);
+                ch->emplace_alt(alt);
             }
             Asn1Object* mptr = alt.get_mut_fn(ch);
             if (adef.choice_spec) {
