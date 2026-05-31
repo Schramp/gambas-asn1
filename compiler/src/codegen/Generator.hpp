@@ -228,7 +228,8 @@ private:
         int64_t lo;
         int64_t hi;        // int64_t view of upper; INT64_MAX when truly_max=true
         bool truly_max;    // true → upper endpoint was the MAX keyword (semi-constrained)
-        uint64_t hi_u64;   // actual upper as uint64_t; valid when has_value && !truly_max
+        uint64_t hi_u64;   // actual upper as uint64_t; valid only when hi_is_large=true
+        bool hi_is_large;  // true iff upper was TOK_number_large (positive literal > INT64_MAX)
     };
 
     // For DEFAULT members in SEQUENCE/SET: emits a static helper that sets the

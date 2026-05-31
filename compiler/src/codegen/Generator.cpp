@@ -604,9 +604,8 @@ IntStorageKind Generator::classify_integer_storage(const ast::TypeDef& def) cons
     if (!r.has_value) return default_int_kind_;  // unconstrained → CLI default
     // Semi-constrained (..MAX) with lo>=0: needs unsigned storage, no fixed upper.
     if (r.truly_max && r.lo >= 0) return IntStorageKind::U64;
-    // Literal upper > INT64_MAX (e.g. UINT64_MAX): needs unsigned storage.
-    if (!r.truly_max && r.hi_u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())
-        && r.lo >= 0) return IntStorageKind::U64;
+    // Literal upper was TOK_number_large (> INT64_MAX): needs unsigned storage.
+    if (r.hi_is_large && r.lo >= 0) return IntStorageKind::U64;
     return IntStorageKind::S64;
 }
 
@@ -775,9 +774,10 @@ static SizeConstraintInfo compute_size_constraint(
 
 // Extract integer value range from constraints, if determinable.
 // Returns {lo, hi, truly_max, hi_u64} where:
-//   truly_max = true  → upper endpoint was the MAX keyword (semi-constrained)
-//   truly_max = false → upper was a literal; hi_u64 holds the true unsigned value
-// hi is always the int64_t view (may be negative for large unsigned literals).
+//   truly_max  = true  → upper endpoint was the MAX keyword (semi-constrained)
+//   hi_is_large = true → upper was TOK_number_large (positive literal > INT64_MAX);
+//                        hi_u64 holds the exact unsigned value
+//   otherwise         → upper was a signed literal or named ref; use hi (int64_t)
 Generator::IntRange
 Generator::extract_integer_range(const ast::TypeDef& def) const {
     // Intersect all ValueRange constraints (including those nested inside
@@ -786,6 +786,7 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
     std::optional<int64_t> hi;
     bool truly_max = false;
     uint64_t hi_u64 = 0;
+    bool hi_is_large = false;
     walk_type_constraints(def, [&](const ast::ConstraintBody& body) {
         auto* vr = std::get_if<ast::ValueRange>(&body);
         if (!vr) return;
@@ -794,24 +795,30 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
             : resolve_int_value(vr->lower.value).value_or(std::numeric_limits<int64_t>::min());
         bool vhi_is_max = (vr->upper.kind == ast::RangeEndpoint::Kind::Max);
         int64_t vhi;
-        uint64_t vhi_u64;
+        uint64_t vhi_u64 = 0;
+        bool vhi_is_large = false;
         if (vhi_is_max) {
             vhi = std::numeric_limits<int64_t>::max();
             vhi_u64 = std::numeric_limits<uint64_t>::max();
-        } else {
-            vhi_u64 = resolve_uint_value(vr->upper.value).value_or(
-                static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+        } else if (auto* u = std::get_if<uint64_t>(&vr->upper.value)) {
+            /* TOK_number_large: positive literal that does not fit in int64_t */
+            vhi_u64 = *u;
             vhi = static_cast<int64_t>(vhi_u64);
+            vhi_is_large = true;
+        } else {
+            /* TOK_number / TOK_number_negative / named ref: signed literal */
+            vhi = resolve_int_value(vr->upper.value).value_or(std::numeric_limits<int64_t>::max());
         }
         lo = lo ? std::max(*lo, vlo) : vlo;
         if (!hi || vhi < *hi) {
             hi = vhi;
             truly_max = vhi_is_max;
             hi_u64 = vhi_u64;
+            hi_is_large = vhi_is_large;
         }
     });
-    if (lo && hi) return IntRange{true, *lo, *hi, truly_max, hi_u64};
-    return IntRange{false, 0, 0, false, 0};
+    if (lo && hi) return IntRange{true, *lo, *hi, truly_max, hi_u64, hi_is_large};
+    return IntRange{false, 0, 0, false, 0, false};
 }
 
 // Build a Constraints designated-initializer literal for an INTEGER constraint.
@@ -855,8 +862,8 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
                 make_integer_pc(flags, -1, ik, lo, 0,
                     static_cast<uint64_t>(lo >= 0 ? lo : 0),
                     std::numeric_limits<uint64_t>::max()));
-        } else if (r.hi_u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
-            // Large positive literal upper bound (e.g. UINT64_MAX).
+        } else if (r.hi_is_large) {
+            // TOK_number_large upper bound (e.g. UINT64_MAX).
             // X.691 §10.5.6 UPER: range = hi_u64 - lo + 1; compute range_bits.
             // For the full uint64 range (lo=0, hi=UINT64_MAX), range_bits=64.
             int rb = 0;
@@ -937,8 +944,8 @@ std::string Generator::emit_member_type_descriptor(
                 pc = make_integer_pc(flags, -1, ik, lo, 0,
                     static_cast<uint64_t>(lo >= 0 ? lo : 0),
                     std::numeric_limits<uint64_t>::max());
-            } else if (ir.hi_u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
-                // Large positive literal upper bound (e.g. UINT64_MAX).
+            } else if (ir.hi_is_large) {
+                // TOK_number_large upper bound (e.g. UINT64_MAX).
                 uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
                 uint64_t range_count_m1 = ir.hi_u64 - u_lo;
                 int rb = (range_count_m1 == std::numeric_limits<uint64_t>::max())
