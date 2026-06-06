@@ -277,14 +277,11 @@ struct OctetStringXerHandler final : IXerTypeHandler {
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
         auto& os = s.os();
-        std::string b64 = base64_encode(v.bytes());
         os << '<' << def.name << '>';
-        for (std::size_t i = 0; i < b64.size(); ) {
-            if (i > 0) os << s.indent(1);
-            std::size_t end = std::min(i + 76, b64.size());
-            os << b64.substr(i, end - i);
-            i = end;
-            if (i < b64.size()) os << "\n";
+        char hex[3];
+        for (uint8_t b : v.bytes()) {
+            std::snprintf(hex, sizeof(hex), "%02X", b);
+            os << hex;
         }
         os << "</" << def.name << ">\n";
     }
@@ -292,7 +289,7 @@ struct OctetStringXerHandler final : IXerTypeHandler {
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         return xer_detail::decode_simple_text_element(s, def.name,
             [dest](std::string_view text) -> DecodeResult {
-                auto dec = base64_decode(text);
+                auto dec = parse_hex_bytes(text);
                 *static_cast<OctetString*>(dest) = OctetString{
                     reinterpret_cast<const uint8_t*>(dec.data()), dec.size()};
                 return decode_ok();
