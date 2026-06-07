@@ -33,7 +33,9 @@ jobs:
           git clone --branch v6.1.0 --depth 1 https://github.com/Genivia/RE-flex reflex-src
           cd reflex-src
           ./build.sh
-          sudo make install
+          sudo cp bin/reflex /usr/local/bin/
+          sudo cp -r include/reflex /usr/local/include/
+          sudo cp lib/libreflex.a /usr/local/lib/
 
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
