@@ -249,9 +249,10 @@ template<typename T> struct TypeTag {};
 // never emplaced as CHOICE alternatives may leave lifecycle default-constructed,
 // but all TypeDescriptors referenced from ChoiceSpec::alternatives must have it set.
 struct TypeLifecycleOps {
-    void (*construct)(void*)   = nullptr; // placement new T into storage
-    void (*destroy)(void*)     = nullptr; // ~T
-    void (*move)(void*, void*) = nullptr; // move-construct T into dst, then ~T(src)
+    void (*construct)(void*)            = nullptr; // placement new T{} into storage
+    void (*destroy)(void*)              = nullptr; // ~T
+    void (*move)(void*, void*)          = nullptr; // move-construct T into dst, then ~T(src)
+    void (*clone)(void*, const void*)   = nullptr; // placement new T(*src) into uninitialised dst
 
     TypeLifecycleOps() = default;
 
@@ -260,6 +261,17 @@ struct TypeLifecycleOps {
                                void (*m)(void*, void*)) noexcept
         : construct(c), destroy(d), move(m) {}
 
+    // Returns a clone fn-ptr only when T is copy-constructible (nullptr otherwise).
+    // SEQUENCE-with-optionals and CHOICE types are move-only until deep_copy copy ctors
+    // are generated — this avoids a compile error on their TypeLifecycleOps instantiation.
+    template<typename T>
+    static constexpr auto make_clone_fn() noexcept -> void(*)(void*, const void*) {
+        if constexpr (std::is_copy_constructible_v<T>)
+            return [](void* d, const void* s){ new(d) T(*static_cast<const T*>(s)); };
+        else
+            return nullptr;
+    }
+
     template<typename T>
     explicit constexpr TypeLifecycleOps(TypeTag<T>) noexcept
         : construct([](void* p){ new(p) T{}; })
@@ -267,6 +279,7 @@ struct TypeLifecycleOps {
         , move     ([](void* d, void* s){
               new(d) T(std::move(*static_cast<T*>(s)));
               std::destroy_at(static_cast<T*>(s)); })
+        , clone    (make_clone_fn<T>())
     {}
 };
 
