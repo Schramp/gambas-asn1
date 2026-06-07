@@ -30,14 +30,14 @@ static std::vector<uint8_t> ber_encode(const Point& p) {
     std::vector<uint8_t> buf;
     BerWriter w{buf};
     BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_Point, &p);
+    BerCodec::instance().encode(s, Point::asn_DEF, &p);
     return buf;
 }
 
 static bool ber_decode(std::span<const uint8_t> bytes, Point& out) {
     BerReader r{bytes};
     BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_Point, &out).has_value();
+    return BerCodec::instance().decode(s, Point::asn_DEF, &out).has_value();
 }
 
 // ---- XER helpers -----------------------------------------------------------
@@ -45,13 +45,13 @@ static bool ber_decode(std::span<const uint8_t> bytes, Point& out) {
 static std::string xer_encode(const Point& p) {
     std::ostringstream oss;
     XerEncodeStream s{oss};
-    XerCodec::instance().encode(s, asn_DEF_Point, &p);
+    XerCodec::instance().encode(s, Point::asn_DEF, &p);
     return oss.str();
 }
 
 static bool xer_decode(const std::string& xml, Point& out) {
     XerDecodeStream s{xml};
-    return XerCodec::instance().decode(s, asn_DEF_Point, &out).has_value();
+    return XerCodec::instance().decode(s, Point::asn_DEF, &out).has_value();
 }
 
 // ---- PER helpers -----------------------------------------------------------
@@ -59,14 +59,14 @@ static bool xer_decode(const std::string& xml, Point& out) {
 static std::vector<uint8_t> per_encode(const Point& p) {
     std::vector<uint8_t> buf;
     PerEncodeStream s{buf};
-    PerCodec::instance().encode(s, asn_DEF_Point, &p);
+    PerCodec::instance().encode(s, Point::asn_DEF, &p);
     s.flush();
     return buf;
 }
 
 static bool per_decode(std::span<const uint8_t> bytes, Point& out) {
     PerDecodeStream s{bytes};
-    return PerCodec::instance().decode(s, asn_DEF_Point, &out).has_value();
+    return PerCodec::instance().decode(s, Point::asn_DEF, &out).has_value();
 }
 
 // ---- Tests -----------------------------------------------------------------

@@ -28,14 +28,14 @@ static std::vector<uint8_t> ber_encode(const HasBitString& v) {
     std::vector<uint8_t> buf;
     BerWriter w{buf};
     BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_HasBitString, &v);
+    BerCodec::instance().encode(s, HasBitString::asn_DEF, &v);
     return buf;
 }
 
 static bool ber_decode(std::span<const uint8_t> bytes, HasBitString& out) {
     BerReader r{bytes};
     BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_HasBitString, &out).has_value();
+    return BerCodec::instance().decode(s, HasBitString::asn_DEF, &out).has_value();
 }
 
 static bool roundtrip(BitString bs) {

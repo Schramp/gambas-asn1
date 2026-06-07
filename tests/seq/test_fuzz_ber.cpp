@@ -33,14 +33,14 @@ static std::vector<uint8_t> encode_bag(const Bag& v) {
     std::vector<uint8_t> buf;
     BerWriter w{buf};
     BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_Bag, &v);
+    BerCodec::instance().encode(s, Bag::asn_DEF, &v);
     return buf;
 }
 
 static bool decode_bag(const std::vector<uint8_t>& buf, Bag& out) {
     BerReader r{std::span<const uint8_t>{buf.data(), buf.size()}};
     BerDecodeStream s{r};
-    auto res = BerCodec::instance().decode(s, asn_DEF_Bag, &out);
+    auto res = BerCodec::instance().decode(s, Bag::asn_DEF, &out);
     return res.has_value();
 }
 
@@ -58,7 +58,7 @@ static void sweep_mode(const char* label, CorruptMask mask,
         RandomFiller filler{rng, cfg};
         for (int rec = 0; rec < records; ++rec) {
             Bag b{};
-            filler.fill(&b, asn_DEF_Bag);
+            filler.fill(&b, Bag::asn_DEF);
             auto buf = encode_bag(b);
             corrupt_ber(buf, percent, rng, mask);
             Bag out{};
@@ -82,7 +82,7 @@ static void roundtrip_clean(int seeds, int records) {
         RandomFiller filler{rng, cfg};
         for (int rec = 0; rec < records; ++rec) {
             Bag b{};
-            filler.fill(&b, asn_DEF_Bag);
+            filler.fill(&b, Bag::asn_DEF);
             auto buf = encode_bag(b);
             Bag out{};
             if (decode_bag(buf, out)) ++ok; else ++err;

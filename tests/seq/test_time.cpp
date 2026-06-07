@@ -28,28 +28,28 @@ static std::vector<uint8_t> ber_encode_utc(const HasUtcTime& v) {
     std::vector<uint8_t> buf;
     BerWriter w{buf};
     BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_HasUtcTime, &v);
+    BerCodec::instance().encode(s, HasUtcTime::asn_DEF, &v);
     return buf;
 }
 
 static bool ber_decode_utc(std::span<const uint8_t> bytes, HasUtcTime& out) {
     BerReader r{bytes};
     BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_HasUtcTime, &out).has_value();
+    return BerCodec::instance().decode(s, HasUtcTime::asn_DEF, &out).has_value();
 }
 
 static std::vector<uint8_t> ber_encode_gen(const HasGeneralizedTime& v) {
     std::vector<uint8_t> buf;
     BerWriter w{buf};
     BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_HasGeneralizedTime, &v);
+    BerCodec::instance().encode(s, HasGeneralizedTime::asn_DEF, &v);
     return buf;
 }
 
 static bool ber_decode_gen(std::span<const uint8_t> bytes, HasGeneralizedTime& out) {
     BerReader r{bytes};
     BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_HasGeneralizedTime, &out).has_value();
+    return BerCodec::instance().decode(s, HasGeneralizedTime::asn_DEF, &out).has_value();
 }
 
 int main() {
@@ -98,7 +98,7 @@ int main() {
         HasUtcTime v; v.ts = UtcTime{"240115Z"};
         std::ostringstream oss;
         XerEncodeStream xs{oss};
-        XerCodec::instance().encode(xs, asn_DEF_HasUtcTime, &v);
+        XerCodec::instance().encode(xs, HasUtcTime::asn_DEF, &v);
         auto xml = oss.str();
         check("HasUtcTime XER encode contains \"240115Z\"",
               xml.find("240115Z") != std::string::npos);
@@ -106,7 +106,7 @@ int main() {
         HasUtcTime got{};
         XerDecodeStream ds{xml};
         check("HasUtcTime XER decode ok",
-              XerCodec::instance().decode(ds, asn_DEF_HasUtcTime, &got).has_value());
+              XerCodec::instance().decode(ds, HasUtcTime::asn_DEF, &got).has_value());
         check("HasUtcTime XER round-trip value", got.ts.str() == "240115Z");
     }
 
@@ -116,7 +116,7 @@ int main() {
         HasGeneralizedTime v; v.ts = GeneralizedTime{"20240115143000.5Z"};
         std::ostringstream oss;
         XerEncodeStream xs{oss};
-        XerCodec::instance().encode(xs, asn_DEF_HasGeneralizedTime, &v);
+        XerCodec::instance().encode(xs, HasGeneralizedTime::asn_DEF, &v);
         auto xml = oss.str();
         check("HasGeneralizedTime XER encode contains \"20240115143000.5Z\"",
               xml.find("20240115143000.5Z") != std::string::npos);
@@ -124,7 +124,7 @@ int main() {
         HasGeneralizedTime got{};
         XerDecodeStream ds{xml};
         check("HasGeneralizedTime XER decode ok",
-              XerCodec::instance().decode(ds, asn_DEF_HasGeneralizedTime, &got).has_value());
+              XerCodec::instance().decode(ds, HasGeneralizedTime::asn_DEF, &got).has_value());
         check("HasGeneralizedTime XER round-trip value", got.ts.str() == "20240115143000.5Z");
     }
 

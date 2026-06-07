@@ -52,14 +52,14 @@ static std::vector<uint8_t> ber_encode(const T& val) {
     std::vector<uint8_t> buf;
     BerWriter w{buf};
     BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_T, &val);
+    BerCodec::instance().encode(s, T::asn_DEF, &val);
     return buf;
 }
 
 static bool ber_decode(std::span<const uint8_t> bytes, T& out) {
     BerReader r{bytes};
     BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_T, &out).has_value();
+    return BerCodec::instance().decode(s, T::asn_DEF, &out).has_value();
 }
 
 enum class Expect { OK, Broken, Recless, Different };

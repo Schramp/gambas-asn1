@@ -404,15 +404,16 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
         default:                    return "nullptr";
         }
     }
-    // Inline ENUMERATED member — use synthetic name
+    // Inline ENUMERATED member — use synthetic name (generates a class)
     if (auto* bt2 = std::get_if<BT>(&def.body);
         bt2 && *bt2 == BT::Enumerated && !def.enum_values.empty() && !current_type_.empty()) {
-        return std::format("&asn_DEF_{}", make_synthetic_name(current_type_, def.name.empty() ? "Enum" : def.name));
+        auto sname = make_synthetic_name(current_type_, def.name.empty() ? "Enum" : def.name);
+        return std::format("&{}::asn_DEF", sname);
     }
     // Named type reference.
     // Pure TypeRef aliases (e.g. "LawfulInterceptionIdentifier ::= LIID") generate only a
     // C++ `using` declaration — no asn_DEF_. Follow the chain until reaching a type that
-    // generates its own asn_DEF_ (BuiltinType with constraints, SEQUENCE, CHOICE, etc.).
+    // generates its own descriptor (BuiltinType with constraints, SEQUENCE, CHOICE, etc.).
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         // For collision types, resolve_ref uses global_ and may pick the wrong module's version.
         // Prefer the current-module's definition (local shadows global), fall back to resolve_ref.
@@ -423,22 +424,36 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
                 auto td = resolver_.resolve_in_module(tr->type_name, def_mod);
                 if (td && std::get_if<ast::TypeRef>(&td->body))
                     return type_descriptor_ref_for(*td);  // pure alias — follow chain
-                if (td)  // concrete type — use local module's asn_DEF_
-                    return std::format("&asn_DEF_{}", effective_cpp_name(tr->type_name, def_mod));
+                if (td) {
+                    auto n = effective_cpp_name(tr->type_name, def_mod);
+                    if (td->is_sequence() || td->is_set() || td->is_choice() ||
+                        (std::get_if<BT>(&td->body) && std::get<BT>(td->body) == BT::Enumerated))
+                        return std::format("&{}::asn_DEF", n);
+                    return std::format("&asn_DEF_{}", n);
+                }
             }
         }
         auto resolved = resolver_.resolve_ref(*tr);
         if (resolved && !resolved->name.empty()) {
             if (std::get_if<ast::TypeRef>(&resolved->body))
                 return type_descriptor_ref_for(*resolved);  // pure alias — follow chain
+            bool is_class = resolved->is_sequence() || resolved->is_set() || resolved->is_choice() ||
+                (std::get_if<BT>(&resolved->body) && std::get<BT>(resolved->body) == BT::Enumerated);
             // Qualified ref: use explicit module for collision disambiguation on resolved name.
-            if (!tr->module_name.empty() && collision_types_.count(to_cpp_name(resolved->name)))
-                return std::format("&asn_DEF_{}", effective_cpp_name(resolved->name, tr->module_name));
-            return std::format("&asn_DEF_{}", cpp_name_for_ref(resolved->name, current_module_));
+            if (!tr->module_name.empty() && collision_types_.count(to_cpp_name(resolved->name))) {
+                auto n = effective_cpp_name(resolved->name, tr->module_name);
+                return is_class ? std::format("&{}::asn_DEF", n)
+                                : std::format("&asn_DEF_{}", n);
+            }
+            auto n = cpp_name_for_ref(resolved->name, current_module_);
+            return is_class ? std::format("&{}::asn_DEF", n)
+                            : std::format("&asn_DEF_{}", n);
         }
-        return std::format("&asn_DEF_{}", cpp_name_for_typeref(*tr));
+        // Fallback: unresolved ref — synthetic types (compiler-generated SeqOf element
+        // replacements) are always SEQUENCE/CHOICE/ENUM → class-scoped static member.
+        return std::format("&{}::asn_DEF", cpp_name_for_typeref(*tr));
     }
-    // SEQUENCE OF / SET OF — named member uses synthetic SeqOf wrapper descriptor
+    // SEQUENCE OF / SET OF — named member uses synthetic SeqOf wrapper descriptor (using alias)
     if (def.is_seq_of()) {
         if (!def.name.empty())
             return std::format("&asn_DEF_{}", make_synthetic_name(current_type_, def.name));
@@ -451,9 +466,11 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
         const auto& elem = std::get<ast::SetOfType>(def.body).element;
         return type_descriptor_ref_for(*elem);
     }
-    // Inline SEQUENCE / CHOICE / SET member — synthetic name = parent + member
-    if (def.is_sequence() || def.is_choice() || def.is_set())
-        return std::format("&asn_DEF_{}", make_synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name));
+    // Inline SEQUENCE / CHOICE / SET member — synthetic name, generates a class
+    if (def.is_sequence() || def.is_choice() || def.is_set()) {
+        auto sname = make_synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
+        return std::format("&{}::asn_DEF", sname);
+    }
     return "nullptr";
 }
 
@@ -469,11 +486,17 @@ static void emit_type_descriptor(std::ostream& os,
                                  bool has_choice, bool has_seqof,
                                  const std::string& kind,
                                  const std::string& per_handler = "nullptr",
-                                 const std::string& ber_handler = "nullptr") {
+                                 const std::string& ber_handler = "nullptr",
+                                 bool use_class_scope = false) {
     auto sp = [&](bool h) -> std::string {
-        return h ? std::format("&asn_SPC_{}", cname) : "nullptr";
+        if (!h) return "nullptr";
+        return use_class_scope ? std::format("&{}::asn_SPC", cname)
+                               : std::format("&asn_SPC_{}", cname);
     };
-    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
+    if (use_class_scope)
+        os << std::format("const asn1::TypeDescriptor {}::asn_DEF = {{\n", cname);
+    else
+        os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", xer_name);
     os << std::format("    {},\n", tag_expr);
     os << std::format("    {}, {}, {}, {}, {{}} /* constraints */,\n",
@@ -526,12 +549,10 @@ void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    bool operator!=(Enm v) const {{ return value_ != static_cast<long>(v); }}\n");
     os << "    using asn1::EnumValue::operator==;\n";
     os << "    using asn1::EnumValue::operator!=;\n";
+    os << std::format("    static const asn1::EnumEntry    asn_MAP_value2enum[{}];\n", count);
+    os << "    static const asn1::EnumSpec     asn_SPC;\n";
+    os << "    static const asn1::TypeDescriptor asn_DEF;\n";
     os << "};\n\n";
-
-    // Extern descriptor declarations (defined in .cpp)
-    os << std::format("extern const asn1::EnumEntry   asn_MAP_{}_value2enum[{}];\n", cname, count);
-    os << std::format("extern const asn1::EnumSpec     asn_SPC_{};\n", cname);
-    os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n\n", cname);
 
 }
 
@@ -565,21 +586,20 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
     auto sorted = root_values;
     std::sort(sorted.begin(), sorted.end(), [](const EV& a, const EV& b){ return a.value < b.value; });
 
-    os << std::format("const asn1::EnumEntry asn_MAP_{}_value2enum[] = {{\n", cname);
+    os << std::format("const asn1::EnumEntry {}::asn_MAP_value2enum[] = {{\n", cname);
     for (const auto& ev : sorted)
         os << std::format("    {{ {}, \"{}\" }},\n", ev.value, ev.name);
     os << "};\n\n";
 
-    // PER: root values in definition order (ordinal → value mapping).
-    // root_values holds root entries in definition order (before sorting).
-    os << std::format("const long asn_PER_{}_value_order[] = {{\n", cname);
+    // PER: root values in definition order (ordinal → value mapping). File-local — not in header.
+    os << std::format("static const long asn_PER_{}_value_order[] = {{\n", cname);
     for (int i = 0; i < ext_root_count; ++i)
         os << std::format("    {},\n", root_values[i].value);
     os << "};\n\n";
 
     // EnumSpec
-    os << std::format("const asn1::EnumSpec asn_SPC_{} = {{\n", cname);
-    os << std::format("    asn_MAP_{}_value2enum,\n", cname);
+    os << std::format("const asn1::EnumSpec {}::asn_SPC = {{\n", cname);
+    os << std::format("    {}::asn_MAP_value2enum,\n", cname);
     os << std::format("    {},\n", (int)sorted.size());
     os << std::format("    {}, /* extensible */\n", extensible ? "true" : "false");
     os << std::format("    {}, /* root_count */\n", ext_root_count);
@@ -591,7 +611,8 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
         def.xer_name.empty() ? def.name : def.xer_name,
         std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Enumerated),
         true, false, false, false, "asn1::TypeKind::Enumerated",
-        "&asn1::per_enumerated_handler", "&asn1::ber_enumerated_handler");
+        "&asn1::per_enumerated_handler", "&asn1::ber_enumerated_handler",
+        /*use_class_scope=*/true);
 
 }
 
@@ -1226,11 +1247,9 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
         os << std::format("    static const asn1::MemberDescriptor s_members[{}];\n", mcount);
         os << "    static const int s_member_count;\n";
     }
+    os << "    static const asn1::SequenceSpec   asn_SPC;\n";
+    os << "    static const asn1::TypeDescriptor asn_DEF;\n";
     os << "};\n\n";
-
-    // Extern descriptor declarations (s_members declared inside class; only SPC+DEF are global)
-    os << std::format("extern const asn1::SequenceSpec     asn_SPC_{};\n", cname);
-    os << std::format("extern const asn1::TypeDescriptor   asn_DEF_{};\n\n", cname);
 
 }
 
@@ -1375,7 +1394,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     }
 
     // SequenceSpec
-    os << std::format("const asn1::SequenceSpec asn_SPC_{} = {{\n", cname);
+    os << std::format("const asn1::SequenceSpec {}::asn_SPC = {{\n", cname);
     if (mcount > 0)
         os << std::format("    {}::s_members,\n", cname);
     else
@@ -1390,7 +1409,8 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         def.xer_name.empty() ? def.name : def.xer_name,
         std::format("asn1::Tag::universal({}, true)", tag_num),
         false, true, false, false, "asn1::TypeKind::Sequence",
-        "&asn1::per_sequence_handler", "&asn1::ber_sequence_handler");
+        "&asn1::per_sequence_handler", "&asn1::ber_sequence_handler",
+        /*use_class_scope=*/true);
 
     // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
     for (const auto& r : rows) {
@@ -1559,11 +1579,9 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
         os << std::format("    static const asn1::MemberDescriptor s_alternatives[{}];\n", count);
         os << "    static const int s_alternative_count;\n";
     }
+    os << "    static const asn1::ChoiceSpec     asn_SPC;\n";
+    os << "    static const asn1::TypeDescriptor asn_DEF;\n";
     os << "};\n\n";
-
-    // Extern descriptor declarations (s_alternatives declared inside class; only SPC+DEF are global)
-    os << std::format("extern const asn1::ChoiceSpec       asn_SPC_{};\n", cname);
-    os << std::format("extern const asn1::TypeDescriptor   asn_DEF_{};\n\n", cname);
 
 }
 
@@ -1678,7 +1696,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     }
 
     // ChoiceSpec
-    os << std::format("const asn1::ChoiceSpec asn_SPC_{} = {{\n", cname);
+    os << std::format("const asn1::ChoiceSpec {}::asn_SPC = {{\n", cname);
     if (count > 0)
         os << std::format("    {}::s_alternatives,\n", cname);
     else
@@ -1700,7 +1718,8 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         def.xer_name.empty() ? def.name : def.xer_name,
         "asn1::Tag{asn1::TagClass::Context, 0, false}",
         false, false, true, false, "asn1::TypeKind::Choice",
-        "&asn1::per_choice_handler", "&asn1::ber_choice_handler");
+        "&asn1::per_choice_handler", "&asn1::ber_choice_handler",
+        /*use_class_scope=*/true);
 
 }
 

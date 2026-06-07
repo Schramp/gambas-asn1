@@ -21,27 +21,27 @@ static void check(const char* name, bool cond) {
 
 static std::vector<uint8_t> ber_enc(const Rec5& v) {
     std::vector<uint8_t> buf; BerWriter w{buf};
-    BerEncodeStream s{w}; BerCodec::instance().encode(s, asn_DEF_Rec5, &v); return buf;
+    BerEncodeStream s{w}; BerCodec::instance().encode(s, Rec5::asn_DEF, &v); return buf;
 }
 static bool ber_dec(std::span<const uint8_t> b, Rec5& out) {
     BerReader r{b}; BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_Rec5, &out).has_value();
+    return BerCodec::instance().decode(s, Rec5::asn_DEF, &out).has_value();
 }
 static std::string xer_enc(const Rec5& v) {
     std::ostringstream o; XerEncodeStream s{o};
-    XerCodec::instance().encode(s, asn_DEF_Rec5, &v); return o.str();
+    XerCodec::instance().encode(s, Rec5::asn_DEF, &v); return o.str();
 }
 static bool xer_dec(const std::string& xml, Rec5& out) {
     XerDecodeStream s{xml};
-    return XerCodec::instance().decode(s, asn_DEF_Rec5, &out).has_value();
+    return XerCodec::instance().decode(s, Rec5::asn_DEF, &out).has_value();
 }
 static std::vector<uint8_t> per_enc(const Rec5& v) {
     std::vector<uint8_t> buf; PerEncodeStream s{buf};
-    PerCodec::instance().encode(s, asn_DEF_Rec5, &v); s.flush(); return buf;
+    PerCodec::instance().encode(s, Rec5::asn_DEF, &v); s.flush(); return buf;
 }
 static bool per_dec(std::span<const uint8_t> b, Rec5& out) {
     PerDecodeStream s{b};
-    return PerCodec::instance().decode(s, asn_DEF_Rec5, &out).has_value();
+    return PerCodec::instance().decode(s, Rec5::asn_DEF, &out).has_value();
 }
 
 static bool ber_rt(const Rec5& v, MyByte id, bool flag,
