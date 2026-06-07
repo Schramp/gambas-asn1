@@ -23,26 +23,26 @@ static std::vector<uint8_t> ber_encode(const HasNull& v) {
     std::vector<uint8_t> buf;
     BerWriter w{buf};
     BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_HasNull, &v);
+    BerCodec::instance().encode(s, HasNull::asn_DEF, &v);
     return buf;
 }
 
 static bool ber_decode(std::span<const uint8_t> bytes, HasNull& out) {
     BerReader r{bytes};
     BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_HasNull, &out).has_value();
+    return BerCodec::instance().decode(s, HasNull::asn_DEF, &out).has_value();
 }
 
 static std::string xer_encode(const HasNull& v) {
     std::ostringstream oss;
     XerEncodeStream s{oss};
-    XerCodec::instance().encode(s, asn_DEF_HasNull, &v);
+    XerCodec::instance().encode(s, HasNull::asn_DEF, &v);
     return oss.str();
 }
 
 static bool xer_decode(const std::string& xml, HasNull& out) {
     XerDecodeStream s{xml};
-    return XerCodec::instance().decode(s, asn_DEF_HasNull, &out).has_value();
+    return XerCodec::instance().decode(s, HasNull::asn_DEF, &out).has_value();
 }
 
 int main() {

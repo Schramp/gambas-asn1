@@ -49,7 +49,7 @@ int main() {
     {
         WithExplicitInt v{};
         v.set_num(42);
-        auto enc = encode(v, asn_DEF_WithExplicitInt);
+        auto enc = encode(v, WithExplicitInt::asn_DEF);
 
         check("[0] EXPLICIT INTEGER: outer tag constructed (0xa0)",
               enc.size() >= 2 && enc[2] == 0xa0);
@@ -57,7 +57,7 @@ int main() {
               enc == std::vector<uint8_t>({0x30,0x05, 0xa0,0x03, 0x02,0x01,0x2a}));
 
         WithExplicitInt got{};
-        check("[0] EXPLICIT INTEGER: decode ok",  decode(enc, asn_DEF_WithExplicitInt, got));
+        check("[0] EXPLICIT INTEGER: decode ok",  decode(enc, WithExplicitInt::asn_DEF, got));
         check("[0] EXPLICIT INTEGER: round-trip",  got.num.value() == 42);
     }
 
@@ -72,7 +72,7 @@ int main() {
     {
         WithExplicitSeq v{};
         v.inner.x.set(7);
-        auto enc = encode(v, asn_DEF_WithExplicitSeq);
+        auto enc = encode(v, WithExplicitSeq::asn_DEF);
 
         check("[1] EXPLICIT SEQUENCE: outer tag constructed (0xa1)",
               enc.size() >= 4 && enc[2] == 0xa1);
@@ -80,7 +80,7 @@ int main() {
               enc == std::vector<uint8_t>({0x30,0x07, 0xa1,0x05, 0x30,0x03, 0x02,0x01,0x07}));
 
         WithExplicitSeq got{};
-        check("[1] EXPLICIT SEQUENCE: decode ok",  decode(enc, asn_DEF_WithExplicitSeq, got));
+        check("[1] EXPLICIT SEQUENCE: decode ok",  decode(enc, WithExplicitSeq::asn_DEF, got));
         check("[1] EXPLICIT SEQUENCE: round-trip",  got.inner.x.value() == 7);
     }
 
@@ -96,7 +96,7 @@ int main() {
         Mixed v{};
         v.set_implicit(1);
         v.set_explicit_(2);
-        auto enc = encode(v, asn_DEF_Mixed);
+        auto enc = encode(v, Mixed::asn_DEF);
 
         check("IMPLICIT [0] INTEGER: primitive tag (0x80)",
               enc.size() >= 3 && enc[2] == 0x80);
@@ -108,7 +108,7 @@ int main() {
                                            0xa1,0x03, 0x02,0x01,0x02}));
 
         Mixed got{};
-        check("Mixed: decode ok",     decode(enc, asn_DEF_Mixed, got));
+        check("Mixed: decode ok",     decode(enc, Mixed::asn_DEF, got));
         check("Mixed: implicit r/t",  got.implicit.value() == 1);
         check("Mixed: explicit r/t",  got.explicit_.value() == 2);
     }

@@ -48,7 +48,7 @@ static bool strip_and_decode(const asn1::OctetString& blob)
     EncryptedPayload ep{};
     {
         BerDecodeStream s{reader};
-        auto ok = BerCodec::instance().decode(s, asn_DEF_EncryptedPayload, &ep);
+        auto ok = BerCodec::instance().decode(s, EncryptedPayload::asn_DEF, &ep);
         if (!ok) {
             std::fprintf(stderr, "  inner: BER decode failed: %s\n",
                          ok.error().message.c_str());
@@ -66,7 +66,7 @@ static bool strip_and_decode(const asn1::OctetString& blob)
         }
     }
 
-    xer_print(asn_DEF_EncryptedPayload, &ep);
+    xer_print(EncryptedPayload::asn_DEF, &ep);
     return true;
 }
 
@@ -99,7 +99,7 @@ int main(int argc, char* argv[])
         PS_PDU pdu{};
         {
             BerDecodeStream s{reader};
-            auto ok = BerCodec::instance().decode(s, asn_DEF_PS_PDU, &pdu);
+            auto ok = BerCodec::instance().decode(s, PS_PDU::asn_DEF, &pdu);
             if (!ok) {
                 std::fprintf(stderr, "Outer BER decode failed at offset %zu (PDU #%d): %s\n",
                              offset, pdu_num + 1, ok.error().message.c_str());
@@ -109,7 +109,7 @@ int main(int argc, char* argv[])
         offset += reader.pos();
         ++pdu_num;
         std::printf("=== PS-PDU #%d ===\n", pdu_num);
-        xer_print(asn_DEF_PS_PDU, &pdu);
+        xer_print(PS_PDU::asn_DEF, &pdu);
 
         if (pdu.payload.present() == Payload::PR::encryptionContainer) {
             const auto& ec = pdu.payload.encryptionContainer();

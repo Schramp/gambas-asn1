@@ -31,23 +31,23 @@ static void check(const char* name, bool cond) {
 static std::vector<uint8_t> ber_enc_dir(const HasDirection& v) {
     std::vector<uint8_t> buf;
     BerWriter w{buf}; BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_HasDirection, &v);
+    BerCodec::instance().encode(s, HasDirection::asn_DEF, &v);
     return buf;
 }
 static bool ber_dec_dir(std::span<const uint8_t> b, HasDirection& out) {
     BerReader r{b}; BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_HasDirection, &out).has_value();
+    return BerCodec::instance().decode(s, HasDirection::asn_DEF, &out).has_value();
 }
 
 static std::vector<uint8_t> ber_enc_any(const HasAny& v) {
     std::vector<uint8_t> buf;
     BerWriter w{buf}; BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_HasAny, &v);
+    BerCodec::instance().encode(s, HasAny::asn_DEF, &v);
     return buf;
 }
 static bool ber_dec_any(std::span<const uint8_t> b, HasAny& out) {
     BerReader r{b}; BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_HasAny, &out).has_value();
+    return BerCodec::instance().decode(s, HasAny::asn_DEF, &out).has_value();
 }
 
 // ---------------------------------------------------------------------------
@@ -56,23 +56,23 @@ static bool ber_dec_any(std::span<const uint8_t> b, HasAny& out) {
 static std::string xer_enc_dir(const HasDirection& v) {
     std::ostringstream oss;
     XerEncodeStream s{oss};
-    XerCodec::instance().encode(s, asn_DEF_HasDirection, &v);
+    XerCodec::instance().encode(s, HasDirection::asn_DEF, &v);
     return oss.str();
 }
 static bool xer_dec_dir(const std::string& xml, HasDirection& out) {
     XerDecodeStream s{xml};
-    return XerCodec::instance().decode(s, asn_DEF_HasDirection, &out).has_value();
+    return XerCodec::instance().decode(s, HasDirection::asn_DEF, &out).has_value();
 }
 
 static std::string xer_enc_any(const HasAny& v) {
     std::ostringstream oss;
     XerEncodeStream s{oss};
-    XerCodec::instance().encode(s, asn_DEF_HasAny, &v);
+    XerCodec::instance().encode(s, HasAny::asn_DEF, &v);
     return oss.str();
 }
 static bool xer_dec_any(const std::string& xml, HasAny& out) {
     XerDecodeStream s{xml};
-    return XerCodec::instance().decode(s, asn_DEF_HasAny, &out).has_value();
+    return XerCodec::instance().decode(s, HasAny::asn_DEF, &out).has_value();
 }
 
 int main() {

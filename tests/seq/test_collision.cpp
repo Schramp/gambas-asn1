@@ -42,28 +42,28 @@ int main() {
     check("CollisionModAStatus asn_DEF name == \"Status\"",
           std::string(asn_DEF_CollisionModAStatus.name) == "Status");
     check("CollisionModBStatus asn_DEF name == \"Status\"",
-          std::string(asn_DEF_CollisionModBStatus.name) == "Status");
+          std::string(CollisionModBStatus::asn_DEF.name) == "Status");
 
     printf("\n── CollisionModAWrapper (INTEGER code) BER ───────────────────────\n");
     {
         CollisionModAWrapper v; v.code = 5;
-        auto enc = ber_enc(v, asn_DEF_CollisionModAWrapper);
+        auto enc = ber_enc(v, CollisionModAWrapper::asn_DEF);
         CollisionModAWrapper got{};
         check("WrapperA{code=5} BER rt",
-              ber_dec(enc, got, asn_DEF_CollisionModAWrapper) && got.code == 5);
+              ber_dec(enc, got, CollisionModAWrapper::asn_DEF) && got.code == 5);
     }
     {
         CollisionModAWrapper v; v.code = 0;
-        auto enc = ber_enc(v, asn_DEF_CollisionModAWrapper);
+        auto enc = ber_enc(v, CollisionModAWrapper::asn_DEF);
         CollisionModAWrapper got{};
         check("WrapperA{code=0} BER rt",
-              ber_dec(enc, got, asn_DEF_CollisionModAWrapper) && got.code == 0);
+              ber_dec(enc, got, CollisionModAWrapper::asn_DEF) && got.code == 0);
     }
 
     printf("\n── CollisionModAWrapper XER ──────────────────────────────────────\n");
     {
         CollisionModAWrapper v; v.code = 3;
-        auto xml = xer_enc(v, asn_DEF_CollisionModAWrapper);
+        auto xml = xer_enc(v, CollisionModAWrapper::asn_DEF);
         check("WrapperA XER has <Wrapper>",  xml.find("<Wrapper>")  != std::string::npos);
         check("WrapperA XER has <code>",     xml.find("<code>")     != std::string::npos);
     }
@@ -71,25 +71,25 @@ int main() {
     printf("\n── CollisionModBWrapper (ENUMERATED state) BER ───────────────────\n");
     {
         CollisionModBWrapper v; v.state = CollisionModBStatus::ok;
-        auto enc = ber_enc(v, asn_DEF_CollisionModBWrapper);
+        auto enc = ber_enc(v, CollisionModBWrapper::asn_DEF);
         CollisionModBWrapper got{};
         check("WrapperB{ok} BER rt",
-              ber_dec(enc, got, asn_DEF_CollisionModBWrapper)
+              ber_dec(enc, got, CollisionModBWrapper::asn_DEF)
               && got.state == CollisionModBStatus::ok);
     }
     {
         CollisionModBWrapper v; v.state = CollisionModBStatus::pending;
-        auto enc = ber_enc(v, asn_DEF_CollisionModBWrapper);
+        auto enc = ber_enc(v, CollisionModBWrapper::asn_DEF);
         CollisionModBWrapper got{};
         check("WrapperB{pending} BER rt",
-              ber_dec(enc, got, asn_DEF_CollisionModBWrapper)
+              ber_dec(enc, got, CollisionModBWrapper::asn_DEF)
               && got.state == CollisionModBStatus::pending);
     }
 
     printf("\n── CollisionModBWrapper XER ──────────────────────────────────────\n");
     {
         CollisionModBWrapper v; v.state = CollisionModBStatus::error;
-        auto xml = xer_enc(v, asn_DEF_CollisionModBWrapper);
+        auto xml = xer_enc(v, CollisionModBWrapper::asn_DEF);
         check("WrapperB XER has <Wrapper>",  xml.find("<Wrapper>")  != std::string::npos);
         check("WrapperB XER has <state>",    xml.find("<state>")    != std::string::npos);
         check("WrapperB XER has <error/>",   xml.find("<error/>")   != std::string::npos);
@@ -100,8 +100,8 @@ int main() {
         // Encode both; their BER bytes should differ in structure (INTEGER vs ENUMERATED)
         CollisionModAWrapper a; a.code = 1;
         CollisionModBWrapper b; b.state = CollisionModBStatus::ok;
-        auto ea = ber_enc(a, asn_DEF_CollisionModAWrapper);
-        auto eb = ber_enc(b, asn_DEF_CollisionModBWrapper);
+        auto ea = ber_enc(a, CollisionModAWrapper::asn_DEF);
+        auto eb = ber_enc(b, CollisionModBWrapper::asn_DEF);
         check("WrapperA and WrapperB BER differ", ea != eb);
     }
 

@@ -20,19 +20,19 @@ static void check(const char* name, bool cond) {
 
 static std::vector<uint8_t> ber_enc(const Person& v) {
     std::vector<uint8_t> buf; BerWriter w{buf};
-    BerEncodeStream s{w}; BerCodec::instance().encode(s, asn_DEF_Person, &v); return buf;
+    BerEncodeStream s{w}; BerCodec::instance().encode(s, Person::asn_DEF, &v); return buf;
 }
 static bool ber_dec(std::span<const uint8_t> b, Person& out) {
     BerReader r{b}; BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_Person, &out).has_value();
+    return BerCodec::instance().decode(s, Person::asn_DEF, &out).has_value();
 }
 static std::string xer_enc(const Person& v) {
     std::ostringstream o; XerEncodeStream s{o};
-    XerCodec::instance().encode(s, asn_DEF_Person, &v); return o.str();
+    XerCodec::instance().encode(s, Person::asn_DEF, &v); return o.str();
 }
 static bool xer_dec(const std::string& xml, Person& out) {
     XerDecodeStream s{xml};
-    return XerCodec::instance().decode(s, asn_DEF_Person, &out).has_value();
+    return XerCodec::instance().decode(s, Person::asn_DEF, &out).has_value();
 }
 
 static Person make_person(const char* name, const char* city, int64_t zip) {
@@ -81,10 +81,10 @@ int main() {
     }
 
     printf("\n── Address descriptor carries original ASN.1 name ────────────────\n");
-    check("asn_DEF_Address.name == \"Address\"",
-          std::string(asn_DEF_Address.name) == "Address");
-    check("asn_DEF_Person.name == \"Person\"",
-          std::string(asn_DEF_Person.name) == "Person");
+    check("Address::asn_DEF.name == \"Address\"",
+          std::string(Address::asn_DEF.name) == "Address");
+    check("Person::asn_DEF.name == \"Person\"",
+          std::string(Person::asn_DEF.name) == "Person");
 
     printf("\n");
     if (failures) { printf("  %d test(s) FAILED\n", failures); return 1; }

@@ -25,14 +25,14 @@ static std::vector<uint8_t> ber_encode(const HasReal& v) {
     std::vector<uint8_t> buf;
     BerWriter w{buf};
     BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_HasReal, &v);
+    BerCodec::instance().encode(s, HasReal::asn_DEF, &v);
     return buf;
 }
 
 static bool ber_decode(std::span<const uint8_t> bytes, HasReal& out) {
     BerReader r{bytes};
     BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_HasReal, &out).has_value();
+    return BerCodec::instance().decode(s, HasReal::asn_DEF, &out).has_value();
 }
 
 static bool ber_roundtrip(double d) {
@@ -47,13 +47,13 @@ static bool ber_roundtrip(double d) {
 static std::string xer_encode_real(const HasReal& v) {
     std::ostringstream oss;
     XerEncodeStream s{oss};
-    XerCodec::instance().encode(s, asn_DEF_HasReal, &v);
+    XerCodec::instance().encode(s, HasReal::asn_DEF, &v);
     return oss.str();
 }
 
 static bool xer_decode_real(const std::string& xml, HasReal& out) {
     XerDecodeStream s{xml};
-    return XerCodec::instance().decode(s, asn_DEF_HasReal, &out).has_value();
+    return XerCodec::instance().decode(s, HasReal::asn_DEF, &out).has_value();
 }
 
 static bool xer_roundtrip(double d) {

@@ -30,14 +30,14 @@ static std::vector<uint8_t> ber_encode_oid(const HasOid& v) {
     std::vector<uint8_t> buf;
     BerWriter w{buf};
     BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_HasOid, &v);
+    BerCodec::instance().encode(s, HasOid::asn_DEF, &v);
     return buf;
 }
 
 static bool ber_decode_oid(std::span<const uint8_t> bytes, HasOid& out) {
     BerReader r{bytes};
     BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_HasOid, &out).has_value();
+    return BerCodec::instance().decode(s, HasOid::asn_DEF, &out).has_value();
 }
 
 static bool roundtrip_oid(Oid oid) {
@@ -54,14 +54,14 @@ static std::vector<uint8_t> ber_encode_reloid(const HasRelOid& v) {
     std::vector<uint8_t> buf;
     BerWriter w{buf};
     BerEncodeStream s{w};
-    BerCodec::instance().encode(s, asn_DEF_HasRelOid, &v);
+    BerCodec::instance().encode(s, HasRelOid::asn_DEF, &v);
     return buf;
 }
 
 static bool ber_decode_reloid(std::span<const uint8_t> bytes, HasRelOid& out) {
     BerReader r{bytes};
     BerDecodeStream s{r};
-    return BerCodec::instance().decode(s, asn_DEF_HasRelOid, &out).has_value();
+    return BerCodec::instance().decode(s, HasRelOid::asn_DEF, &out).has_value();
 }
 
 static bool roundtrip_reloid(RelativeOid oid) {
