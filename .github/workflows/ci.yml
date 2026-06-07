@@ -1,0 +1,48 @@
+name: asn1cpp build & test
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y bison cmake g++ python3
+
+      - name: Cache RE/flex build
+        id: cache-reflex
+        uses: actions/cache@v4
+        with:
+          path: /usr/local
+          key: reflex-6.1.0-ubuntu24
+
+      - name: Build RE/flex
+        if: steps.cache-reflex.outputs.cache-hit != 'true'
+        run: |
+          git clone --branch v6.1.0 --depth 1 https://github.com/Genivia/RE-flex reflex-src
+          cd reflex-src
+          ./build.sh
+          sudo make install
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j$(nproc)
+
+      - name: Build ETSI LI example
+        run: make -C examples/sample.source.ETSI-LI-PS-PDU -j$(nproc)
