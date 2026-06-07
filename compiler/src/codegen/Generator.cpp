@@ -13,6 +13,50 @@ namespace asn1::codegen {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Write content to path only if it differs from the existing file.
+// Uses a .tmp sidecar: write there, compare, then rename or remove.
+// Avoids bumping mtime on unchanged generated files → fewer downstream recompiles.
+static void write_if_changed(const fs::path& path, const std::string& content) {
+    fs::path tmp = path; tmp += ".tmp";
+    { std::ofstream out(tmp, std::ios::binary); out << content; }
+    if (fs::exists(path)) {
+        std::ifstream existing(path, std::ios::binary);
+        std::string old((std::istreambuf_iterator<char>(existing)),
+                         std::istreambuf_iterator<char>());
+        if (old == content) { fs::remove(tmp); return; }
+    }
+    fs::rename(tmp, path);
+}
+
+// Emit to a string then call write_if_changed.
+template<typename EmitFn>
+static void emit_file(const fs::path& path, EmitFn&& fn) {
+    std::ostringstream buf;
+    fn(buf);
+    write_if_changed(path, buf.str());
+}
+
+// ---------------------------------------------------------------------------
+
+// Linux NAME_MAX is 255; .hpp/.cpp extensions take 4 bytes. When cname exceeds
+// 240 chars, truncate to 220 and append a deterministic FNV-1a 32-bit hash so
+// the filename fits on any POSIX filesystem.
+// Strip namespace prefix — "asn1::Null" → "Null", "FooBar" → "FooBar".
+// Used to emit destructor calls: ~Null() not ~asn1::Null() (ill-formed in C++).
+static std::string unqualified_name(const std::string& t) {
+    auto pos = t.rfind("::");
+    return (pos == std::string::npos) ? t : t.substr(pos + 2);
+}
+
+static std::string filename_for(const std::string& cname) {
+    if (cname.size() <= 240) return cname;
+    uint32_t h = 2166136261u;
+    for (unsigned char c : cname) { h ^= c; h *= 16777619u; }
+    char suffix[10];
+    snprintf(suffix, sizeof(suffix), "_%08x", h);
+    return cname.substr(0, 220) + suffix;
+}
+
 std::string Generator::cpp_type_for(const ast::TypeDef& def) {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
@@ -61,11 +105,19 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         return cpp_name_for_typeref(*tr);
     if (def.is_seq_of()) {
         const auto& sof = std::get<ast::SequenceOfType>(def.body);
-        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(*sof.element));
+        const auto& elem = *sof.element;
+        if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
+            return std::format("asn1::VectorSeqOf<{}>",
+                               make_synthetic_name(make_synthetic_name(current_type_, def.name), "Anon"));
+        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(elem));
     }
     if (def.is_set_of()) {
         const auto& sof = std::get<ast::SetOfType>(def.body);
-        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(*sof.element));
+        const auto& elem = *sof.element;
+        if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
+            return std::format("asn1::VectorSeqOf<{}>",
+                               make_synthetic_name(make_synthetic_name(current_type_, def.name), "Anon"));
+        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(elem));
     }
     if (def.is_sequence() || def.is_choice() || def.is_set())
         return make_synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
@@ -300,28 +352,11 @@ void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
 }
 
 // Returns the &asn_DEF_* expression for a member's type_descriptor field.
-// C++ keywords that may not be used as identifiers.
-static bool is_cpp_keyword(const std::string& s) {
-    static const std::unordered_set<std::string> kw = {
-        "alignas","alignof","and","and_eq","asm","auto","bitand","bitor","bool",
-        "break","case","catch","char","char8_t","char16_t","char32_t","class",
-        "compl","concept","const","consteval","constexpr","constinit","const_cast",
-        "continue","co_await","co_return","co_yield","decltype","default","delete",
-        "do","double","dynamic_cast","else","enum","explicit","export","extern",
-        "false","float","for","friend","goto","if","inline","int","long","mutable",
-        "namespace","new","noexcept","not","not_eq","nullptr","operator","or",
-        "or_eq","private","protected","public","register","reinterpret_cast",
-        "requires","return","short","signed","sizeof","static","static_assert",
-        "static_cast","struct","switch","template","this","thread_local","throw",
-        "true","try","typedef","typeid","typename","union","unsigned","using",
-        "virtual","void","volatile","wchar_t","while","xor","xor_eq"
-    };
-    return kw.count(s) > 0;
-}
 
-// Escape a C++ identifier if it collides with a keyword.
-inline std::string safe_cpp_name(const std::string& s) {
-    return is_cpp_keyword(s) ? s + "_" : s;
+// Escape a C++ identifier vs keywords and optional extra reserved API names.
+inline std::string safe_cpp_name(const std::string& s,
+                                  std::initializer_list<std::string_view> extra = {}) {
+    return safe_name(s, extra);
 }
 
 // Returns true if this is a type assignment (not a value or class assignment).
@@ -432,7 +467,9 @@ static void emit_type_descriptor(std::ostream& os,
                                  const std::string& tag_expr,
                                  bool has_enum, bool has_seq,
                                  bool has_choice, bool has_seqof,
-                                 const std::string& kind) {
+                                 const std::string& kind,
+                                 const std::string& per_handler = "nullptr",
+                                 const std::string& ber_handler = "nullptr") {
     auto sp = [&](bool h) -> std::string {
         return h ? std::format("&asn_SPC_{}", cname) : "nullptr";
     };
@@ -441,7 +478,10 @@ static void emit_type_descriptor(std::ostream& os,
     os << std::format("    {},\n", tag_expr);
     os << std::format("    {}, {}, {}, {}, {{}} /* constraints */,\n",
                       sp(has_enum), sp(has_seq), sp(has_choice), sp(has_seqof));
-    os << std::format("    false, {} /* kind */\n", kind);
+    os << std::format("    false, {} /* kind */,\n", kind);
+    os << std::format("    {} /* per_handler */,\n", per_handler);
+    os << std::format("    {} /* ber_handler */,\n", ber_handler);
+    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cname);
     os << "};\n\n";
 }
 
@@ -462,12 +502,17 @@ void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
 
     // class inheriting EnumValue — plain inner enum so values leak into class scope
     os << std::format("class {} : public asn1::EnumValue {{\npublic:\n", cname);
+    // Enum values are plain enum (not enum class) — they inject into class scope.
+    // Reserve all generated method names so values can't clash with them.
+    static constexpr std::initializer_list<std::string_view> enum_api = {
+        "present", "value_", "value", "set", "Enm"
+    };
     os << "    enum Enm : long {\n";
     long auto_val = 0;
     for (const auto& ev : def.enum_values) {
         if (ev.name == "...") { continue; }
         long v = static_cast<long>(ev.number.value_or(auto_val));
-        os << std::format("        {} = {},\n", safe_cpp_name(to_cpp_name(ev.name)), v);
+        os << std::format("        {} = {},\n", safe_cpp_name(to_cpp_name(ev.name), enum_api), v);
         auto_val = v + 1;
     }
     if (extensible)
@@ -545,7 +590,8 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
         std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Enumerated),
-        true, false, false, false, "asn1::TypeKind::Enumerated");
+        true, false, false, false, "asn1::TypeKind::Enumerated",
+        "&asn1::per_enumerated_handler", "&asn1::ber_enumerated_handler");
 
 }
 
@@ -554,16 +600,12 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
 // ---------------------------------------------------------------------------
 
 IntStorageKind Generator::classify_integer_storage(const ast::TypeDef& def) const {
-    auto range = extract_integer_range(def);
-    if (!range) return default_int_kind_;  // unconstrained → CLI default
-
-    auto [lo, hi] = *range;
-    // hi == INT64_MAX is the sentinel for "..MAX" (SEMI_CONSTRAINED, no upper cap)
-    bool upper_is_max = (hi == std::numeric_limits<int64_t>::max());
-    if (upper_is_max && lo >= 0) return IntStorageKind::U64;
-    // TODO: when parser supports literals > INT64_MAX, add:
-    //   if (lo >= 0 && hi > INT64_MAX) return IntStorageKind::U64;
-    //   if (range exceeds int64 on either side) return IntStorageKind::I128;
+    auto r = extract_integer_range(def);
+    if (!r.has_value) return default_int_kind_;  // unconstrained → CLI default
+    // Semi-constrained (..MAX) with lo>=0: needs unsigned storage, no fixed upper.
+    if (r.truly_max && r.lo >= 0) return IntStorageKind::U64;
+    // Literal upper was TOK_number_large (> INT64_MAX): needs unsigned storage.
+    if (r.hi_is_large && r.lo >= 0) return IntStorageKind::U64;
     return IntStorageKind::S64;
 }
 
@@ -590,12 +632,29 @@ void Generator::emit_integer_hpp(const ast::TypeDef& def, std::ostream& os) {
 }
 
 // Try to extract a concrete int64_t from a Value, resolving NamedValueRef via resolver.
+// Large positive literals stored as uint64_t are cast to int64_t (may be negative).
 std::optional<int64_t> Generator::resolve_int_value(const ast::Value& v) const {
     if (auto* i = std::get_if<int64_t>(&v)) return *i;
+    if (auto* u = std::get_if<uint64_t>(&v)) return static_cast<int64_t>(*u);
     if (auto* ref = std::get_if<ast::NamedValueRef>(&v)) {
         auto def = resolver_.lookup(ref->name);
         if (def) {
             if (auto* i = std::get_if<int64_t>(&def->default_value)) return *i;
+            if (auto* u = std::get_if<uint64_t>(&def->default_value)) return static_cast<int64_t>(*u);
+        }
+    }
+    return std::nullopt;
+}
+
+// Try to extract a uint64_t from a Value (for large positive literals).
+std::optional<uint64_t> Generator::resolve_uint_value(const ast::Value& v) const {
+    if (auto* u = std::get_if<uint64_t>(&v)) return *u;
+    if (auto* i = std::get_if<int64_t>(&v)) return static_cast<uint64_t>(*i);
+    if (auto* ref = std::get_if<ast::NamedValueRef>(&v)) {
+        auto def = resolver_.lookup(ref->name);
+        if (def) {
+            if (auto* u = std::get_if<uint64_t>(&def->default_value)) return *u;
+            if (auto* i = std::get_if<int64_t>(&def->default_value)) return static_cast<uint64_t>(*i);
         }
     }
     return std::nullopt;
@@ -683,8 +742,8 @@ static void walk_type_constraints(const ast::TypeDef& def, F&& f) {
         if (cptr) walk_constraints(*cptr, f);
 }
 
-// Forward decl: definition below; needed by emit_member_type_descriptor.
-static std::optional<std::pair<int64_t,int64_t>> extract_size_range(const ast::TypeDef& def);
+// Forward decl: defined as Generator member below; needed by emit_member_type_descriptor.
+// (Member function rather than static free fn so it can resolve named value references.)
 
 struct SizeConstraintInfo {
     int     flags      = 0;   // SIZE_CONSTRAINED | EXTENSIBLE (0 when no/semi constraint)
@@ -714,25 +773,52 @@ static SizeConstraintInfo compute_size_constraint(
 }
 
 // Extract integer value range from constraints, if determinable.
-std::optional<std::pair<int64_t,int64_t>>
+// Returns {lo, hi, truly_max, hi_u64} where:
+//   truly_max  = true  → upper endpoint was the MAX keyword (semi-constrained)
+//   hi_is_large = true → upper was TOK_number_large (positive literal > INT64_MAX);
+//                        hi_u64 holds the exact unsigned value
+//   otherwise         → upper was a signed literal or named ref; use hi (int64_t)
+Generator::IntRange
 Generator::extract_integer_range(const ast::TypeDef& def) const {
     // Intersect all ValueRange constraints (including those nested inside
     // IntersectionConstraint): take max(lowers) and min(uppers).
-    std::optional<int64_t> lo, hi;
+    std::optional<int64_t> lo;
+    std::optional<int64_t> hi;
+    bool truly_max = false;
+    uint64_t hi_u64 = 0;
+    bool hi_is_large = false;
     walk_type_constraints(def, [&](const ast::ConstraintBody& body) {
         auto* vr = std::get_if<ast::ValueRange>(&body);
         if (!vr) return;
         int64_t vlo = (vr->lower.kind == ast::RangeEndpoint::Kind::Min)
             ? std::numeric_limits<int64_t>::min()
             : resolve_int_value(vr->lower.value).value_or(std::numeric_limits<int64_t>::min());
-        int64_t vhi = (vr->upper.kind == ast::RangeEndpoint::Kind::Max)
-            ? std::numeric_limits<int64_t>::max()
-            : resolve_int_value(vr->upper.value).value_or(std::numeric_limits<int64_t>::max());
+        bool vhi_is_max = (vr->upper.kind == ast::RangeEndpoint::Kind::Max);
+        int64_t vhi;
+        uint64_t vhi_u64 = 0;
+        bool vhi_is_large = false;
+        if (vhi_is_max) {
+            vhi = std::numeric_limits<int64_t>::max();
+            vhi_u64 = std::numeric_limits<uint64_t>::max();
+        } else if (auto* u = std::get_if<uint64_t>(&vr->upper.value)) {
+            /* TOK_number_large: positive literal that does not fit in int64_t */
+            vhi_u64 = *u;
+            vhi = static_cast<int64_t>(vhi_u64);
+            vhi_is_large = true;
+        } else {
+            /* TOK_number / TOK_number_negative / named ref: signed literal */
+            vhi = resolve_int_value(vr->upper.value).value_or(std::numeric_limits<int64_t>::max());
+        }
         lo = lo ? std::max(*lo, vlo) : vlo;
-        hi = hi ? std::min(*hi, vhi) : vhi;
+        if (!hi || vhi < *hi) {
+            hi = vhi;
+            truly_max = vhi_is_max;
+            hi_u64 = vhi_u64;
+            hi_is_large = vhi_is_large;
+        }
     });
-    if (lo && hi) return std::make_pair(*lo, *hi);
-    return std::nullopt;
+    if (lo && hi) return IntRange{true, *lo, *hi, truly_max, hi_u64, hi_is_large};
+    return IntRange{false, 0, 0, false, 0, false};
 }
 
 // Build a Constraints designated-initializer literal for an INTEGER constraint.
@@ -754,7 +840,7 @@ static std::string make_integer_pc(int flags, int range_bits, int int_kind,
 void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
-    auto range = extract_integer_range(def);
+    auto r     = extract_integer_range(def);
     auto kind  = classify_integer_storage(def);
     int  ik    = (kind == IntStorageKind::U64) ? asn1::Constraints::INT_U64
                : (kind == IntStorageKind::I128) ? asn1::Constraints::INT_I128
@@ -765,25 +851,42 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
     os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Integer);
     os << "    nullptr, nullptr, nullptr, nullptr,\n";
-    if (range) {
-        int64_t lo = range->first, hi = range->second;
+    if (r.has_value) {
+        int64_t lo = r.lo, hi = r.hi;
         bool ext = is_constraint_extensible(def);
-        if (hi == std::numeric_limits<int64_t>::max()) {
+        if (r.truly_max) {
+            // Truly semi-constrained (..MAX keyword): no upper cap.
             int flags = asn1::Constraints::SEMI_CONSTRAINED
                       | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-            // upper_u64 = UINT64_MAX (no cap for SEMI_CONSTRAINED)
             os << std::format("    {} /* constraints — semi-constrained */,\n",
                 make_integer_pc(flags, -1, ik, lo, 0,
                     static_cast<uint64_t>(lo >= 0 ? lo : 0),
                     std::numeric_limits<uint64_t>::max()));
+        } else if (r.hi_is_large) {
+            // TOK_number_large upper bound (e.g. UINT64_MAX).
+            // X.691 §10.5.6 UPER: range = hi_u64 - lo + 1; compute range_bits.
+            // For the full uint64 range (lo=0, hi=UINT64_MAX), range_bits=64.
+            int rb = 0;
+            uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
+            // range = hi_u64 - u_lo + 1; if it wraps (full 64-bit range), rb=64.
+            uint64_t range_count_m1 = r.hi_u64 - u_lo; // range - 1 (exact even if range=2^64)
+            if (range_count_m1 == std::numeric_limits<uint64_t>::max()) {
+                rb = 64; // 2^64 range
+            } else {
+                for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
+            }
+            int flags = asn1::Constraints::CONSTRAINED
+                      | (ext ? asn1::Constraints::EXTENSIBLE : 0);
+            os << std::format("    {} /* constraints — constrained large (up to UINT64_MAX) */,\n",
+                make_integer_pc(flags, rb, ik, lo, hi /* int64_t view */,
+                    u_lo, r.hi_u64));
         } else {
             int64_t range_count = hi - lo + 1;
             int rb = 0;
             if (range_count > 1)
-                for (int64_t r = range_count - 1; r > 0; r >>= 1) ++rb;
+                for (int64_t v = range_count - 1; v > 0; v >>= 1) ++rb;
             int flags = asn1::Constraints::CONSTRAINED
                       | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-            // u64 bounds: same as s64 for ranges that fit; lo<0 → clamp to 0
             uint64_t u_lo = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
             uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
             os << std::format("    {} /* constraints */,\n",
@@ -792,7 +895,16 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
     } else {
         os << "    {} /* constraints — unconstrained */,\n";
     }
-    os << "    false, asn1::TypeKind::Primitive\n";
+    const char* per_h = (ik == asn1::Constraints::INT_U64)
+        ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
+    const char* ber_h = (ik == asn1::Constraints::INT_U64)
+        ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
+    const char* cpp_t = (ik == asn1::Constraints::INT_U64)
+        ? "asn1::UInteger" : "asn1::Integer";
+    os << std::format("    false, asn1::TypeKind::Primitive,\n");
+    os << std::format("    {} /* per_handler */,\n", per_h);
+    os << std::format("    {} /* ber_handler */,\n", ber_h);
+    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cpp_t);
     os << "};\n";
 }
 
@@ -814,10 +926,10 @@ std::string Generator::emit_member_type_descriptor(
 
     // INTEGER value range
     if (*bt == BT::Integer) {
-        auto range = extract_integer_range(m);
-        if (range) {
+        auto ir = extract_integer_range(m);
+        if (ir.has_value) {
             std::string tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
-            int64_t lo = range->first, hi = range->second;
+            int64_t lo = ir.lo, hi = ir.hi;
             bool ext = is_constraint_extensible(m);
             auto kind = classify_integer_storage(m);
             int ik = (kind == IntStorageKind::U64)       ? asn1::Constraints::INT_U64
@@ -825,27 +937,45 @@ std::string Generator::emit_member_type_descriptor(
                    : (kind == IntStorageKind::ARBITRARY) ? asn1::Constraints::INT_ARBITRARY
                    : asn1::Constraints::INT_S64;
             std::string pc;
-            if (hi == std::numeric_limits<int64_t>::max()) {
+            if (ir.truly_max) {
+                // Truly semi-constrained (..MAX): no upper cap.
                 int flags = asn1::Constraints::SEMI_CONSTRAINED
                           | (ext ? asn1::Constraints::EXTENSIBLE : 0);
                 pc = make_integer_pc(flags, -1, ik, lo, 0,
                     static_cast<uint64_t>(lo >= 0 ? lo : 0),
                     std::numeric_limits<uint64_t>::max());
+            } else if (ir.hi_is_large) {
+                // TOK_number_large upper bound (e.g. UINT64_MAX).
+                uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
+                uint64_t range_count_m1 = ir.hi_u64 - u_lo;
+                int rb = (range_count_m1 == std::numeric_limits<uint64_t>::max())
+                    ? 64 : 0;
+                if (rb == 0) for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
+                int flags = asn1::Constraints::CONSTRAINED
+                          | (ext ? asn1::Constraints::EXTENSIBLE : 0);
+                pc = make_integer_pc(flags, rb, ik, lo, hi, u_lo, ir.hi_u64);
             } else {
                 int64_t rc = hi - lo + 1;
                 int rb = 0;
-                if (rc > 1) for (int64_t r = rc - 1; r > 0; r >>= 1) ++rb;
+                if (rc > 1) for (int64_t v = rc - 1; v > 0; v >>= 1) ++rb;
                 int flags = asn1::Constraints::CONSTRAINED
                           | (ext ? asn1::Constraints::EXTENSIBLE : 0);
                 uint64_t u_lo = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
                 uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
                 pc = make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi);
             }
+            const char* per_h = (kind == IntStorageKind::U64)
+                ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
+            const char* ber_h = (kind == IntStorageKind::U64)
+                ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
+            const char* cpp_t = (kind == IntStorageKind::U64)
+                ? "asn1::UInteger" : "asn1::Integer";
             os << std::format(
                 "static const asn1::TypeDescriptor {} = "
                 "{{ \"INTEGER\", asn1::Tag::universal({}, false), "
-                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive }};\n",
-                tname, asn1::UniversalTag::Integer, pc);
+                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
+                "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) }};\n",
+                tname, asn1::UniversalTag::Integer, pc, per_h, ber_h, cpp_t);
             return "&" + tname;
         }
     }
@@ -899,11 +1029,19 @@ std::string Generator::emit_member_type_descriptor(
             default: break;
             }
             std::string tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
+            const char* per_h = "&asn1::per_string_handler";
+            if (*bt == BT::BitString)   per_h = "&asn1::per_bitstring_handler";
+            if (*bt == BT::OctetString) per_h = "&asn1::per_octetstring_handler";
+            const char* ber_h = "&asn1::ber_string_handler";
+            if (*bt == BT::BitString)   ber_h = "&asn1::ber_bitstring_handler";
+            if (*bt == BT::OctetString) ber_h = "&asn1::ber_octetstring_handler";
+            std::string cpp_t = cpp_type_for(m);
             os << std::format(
                 "static const asn1::TypeDescriptor {} = "
                 "{{ \"{}\", asn1::Tag::universal({}, false), "
-                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive }};\n",
-                tname, tn, *utag, pc);
+                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
+                "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) }};\n",
+                tname, tn, *utag, pc, per_h, ber_h, cpp_t);
             return "&" + tname;
         }
     }
@@ -981,8 +1119,6 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
 
 void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
-    bool is_set = def.is_set();
-    uint32_t tag_num = is_set ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
 
     // Count non-extension members
     auto [mcount, ext_at] = count_members(def);
@@ -1001,7 +1137,7 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
         bool optional = m->is_optional() || past_ext_inc;
 
         auto emit_inc = [&](const std::string& cn) {
-            os << std::format("#include \"{}.hpp\"\n", cn);
+            os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
             track_include(cn);
         };
         auto emit_fwd = [&](const std::string& cn) {
@@ -1052,6 +1188,13 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     if (has_optional_members) {
         // All special members declared (not defaulted) so unique_ptr<T> destructor/assignment
         // has complete T in the .cpp where they are defined = default.
+        // NOTE: no copy constructor is emitted here — any SEQUENCE with optional
+        // (unique_ptr) members is move-only.  A correct deep-copy ctor would emit
+        // `make_unique<T>(*o.m)` for each unique_ptr member; not yet implemented.
+        // Consequence: generated CHOICE types are also move-only (see CHOICE codegen).
+        // TODO: emit copy ctor + copy assignment for SEQUENCE with unique_ptr members
+        //       using make_unique<T>(*o.m) per optional field, making all types
+        //       properly deep-copyable.
         os << std::format("    {0}();\n", cname);
         os << std::format("    ~{0}();\n", cname);
         os << std::format("    {0}({0}&&) noexcept;\n", cname);
@@ -1119,11 +1262,11 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
                 if (is_class_type(*m)) {
                     auto cn = cpp_name_for_typeref(*tr);
-                    os << std::format("#include \"{}.hpp\"\n", cn);
+                    os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
                     emitted_extra = true;
                 }
             } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
-                os << std::format("#include \"{}.hpp\"\n", make_synthetic_name(cname, m->name));
+                os << std::format("#include \"{}.hpp\"\n", filename_for(make_synthetic_name(cname, m->name)));
                 emitted_extra = true;
             }
         }
@@ -1246,7 +1389,8 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
         std::format("asn1::Tag::universal({}, true)", tag_num),
-        false, true, false, false, "asn1::TypeKind::Sequence");
+        false, true, false, false, "asn1::TypeKind::Sequence",
+        "&asn1::per_sequence_handler", "&asn1::ber_sequence_handler");
 
     // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
     for (const auto& r : rows) {
@@ -1288,7 +1432,7 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
         auto emit_inc = [&](const std::string& cn) {
-            os << std::format("#include \"{}.hpp\"\n", cn);
+            os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
             track_include(cn);
         };
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
@@ -1296,63 +1440,120 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
         } else if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
             // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
             auto cn2 = cpp_name_for_ref(make_synthetic_name(cname, m->name), current_module_);
-            os << std::format("#include \"{}.hpp\"\n", cn2);
+            os << std::format("#include \"{}.hpp\"\n", filename_for(cn2));
             track_include(cn2);
         } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
             auto synth = make_synthetic_name(cname, m->name);
-            os << std::format("#include \"{}.hpp\"\n", synth);
+            os << std::format("#include \"{}.hpp\"\n", filename_for(synth));
             track_include(synth);
         } else {
             auto* mbt = std::get_if<ast::BuiltinType>(&m->body);
             if (mbt && *mbt == ast::BuiltinType::Enumerated && !m->enum_values.empty()) {
                 auto synth = make_synthetic_name(cname, m->name);
-                os << std::format("#include \"{}.hpp\"\n", synth);
+                os << std::format("#include \"{}.hpp\"\n", filename_for(synth));
                 track_include(synth);
             }
         }
     }
     if (count > 0) os << "\n";
 
-    // class with PR enum + std::variant storage + typed accessors
-    os << std::format("#include <variant>\n");
+    // Storage strategy: raw byte buffer sized/aligned to the largest alternative.
+    //
+    // Why not std::variant<T1, T2, ..., TN>?
+    //   std::variant is implemented via recursive template specialisations.
+    //   std::get<K> descends K levels of template recursion.  With N alternatives and
+    //   N different get<K> calls, GCC instantiates O(N²) templates.  For a CHOICE
+    //   with 198 alternatives (e.g. XIRIContents in the ETSI LI schema) this
+    //   consumes ~5 GB RSS and kills the build.
+    //
+    // Why a char buffer instead of a typed union?
+    //   A union { T1 a; T2 b; ... } still needs per-member access syntax and doesn't
+    //   help with the destructor/copy dispatch problem.  A raw char[] + placement new
+    //   lets the _emplace_* functions in the .cpp carry all type knowledge, keeping
+    //   the header O(N) in both parse and instantiation cost.
+    //
+    // How it works:
+    //   alignas(max_align) char val_[max_size]   — in-place storage, no heap
+    //     max_size  = std::max({sizeof(T1), ..., sizeof(TN)})   — constexpr O(N) scan
+    //     max_align = std::max({alignof(T1), ..., alignof(TN)}) — constexpr O(N) scan
+    //   active_lifecycle — pointer into TypeDescriptor::lifecycle of the current alternative;
+    //   set by ChoiceInterface::emplace_alt. destroy/move ops reached via one pointer deref.
+    //   std::launder is required on every read-back after placement-new (C++17 §6.8.4).
+
+    static constexpr std::initializer_list<std::string_view> choice_acc_api = {
+        "present", "set_present", "val_", "val_storage_", "active_lifecycle",
+        "s_alternatives", "s_alternative_count"
+    };
     os << std::format("class {} : public asn1::ChoiceInterface {{\npublic:\n", cname);
+    static constexpr std::initializer_list<std::string_view> choice_pr_api = { "NOTHING" };
     os << "    enum class PR : int { NOTHING = 0";
     int pr_idx = 1;
     for (const auto& m : def.members)
         if (!m->is_extension_marker)
-            os << std::format(", {} = {}", to_cpp_name(m->name), pr_idx++);
+            os << std::format(", {} = {}", safe_cpp_name(to_cpp_name(m->name), choice_pr_api), pr_idx++);
     os << " };\n";
-    // _present lives in ChoiceInterface base class
-    // variant storage — only active alternative constructed
-    os << "    std::variant<std::monostate";
-    for (const auto& m : def.members) {
+
+    // val_storage_: raw byte buffer sized/aligned to the largest alternative.
+    // val_ (in ChoiceInterface base) points here — set once in the constructor.
+    os << "    alignas(std::max({";
+    { bool first = true;
+      for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
-        os << std::format(", {}", cpp_type_for(*m));
+        if (!first) os << ", ";
+        os << std::format("alignof({})", cpp_type_for(*m));
+        first = false;
+      }
+      if (count > 0) os << ", ";
+      os << "size_t(1)})) char val_storage_[std::max({";
     }
-    os << "> u{};\n";
-    // present() read accessor
+    { bool first = true;
+      for (const auto& m : def.members) {
+        if (m->is_extension_marker) continue;
+        if (!first) os << ", ";
+        os << std::format("sizeof({})", cpp_type_for(*m));
+        first = false;
+      }
+      if (count > 0) os << ", ";
+      os << "size_t(1)})] {};\n";
+    }
+
+    // Special members.
+    // Constructor sets val_ to val_storage_ so ChoiceInterface::emplace_alt / accessors work.
+    os << std::format("    {0}() {{ val_ = val_storage_; }}\n", cname);
+    os << std::format(
+        "    ~{0}() {{ active_lifecycle->destroy(val_); }}\n", cname);
+    os << std::format("    {0}(const {0}&) = delete;\n", cname);
+    os << std::format("    {0}& operator=(const {0}&) = delete;\n", cname);
+    os << std::format(
+        "    {0}({0}&& o) noexcept {{"
+        " val_ = val_storage_;"
+        " _present = o._present; o._present = 0;"
+        " active_lifecycle = o.active_lifecycle;"
+        " o.active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;"
+        " active_lifecycle->move(val_, o.val_); }}\n", cname);
+    os << std::format(
+        "    {0}& operator=({0}&& o) noexcept {{"
+        " if (this != &o) {{"
+        " active_lifecycle->destroy(val_);"
+        " _present = o._present; o._present = 0;"
+        " active_lifecycle = o.active_lifecycle;"
+        " o.active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;"
+        " active_lifecycle->move(val_, o.val_);"
+        " }} return *this; }}\n", cname);
+
     os << "    PR present() const { return static_cast<PR>(_present); }\n";
-    // set_present: emplace the right alternative
-    os << "    void set_present(PR p) {\n";
-    os << "        switch (p) {\n";
-    os << "        case PR::NOTHING: u.emplace<0>(); _present = 0; break;\n";
-    pr_idx = 1;
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) continue;
-        os << std::format("        case PR::{}: u.emplace<{}>(); _present = {}; break;\n",
-                          to_cpp_name(m->name), pr_idx, pr_idx);
-        ++pr_idx;
-    }
-    os << "        }\n    }\n";
-    // typed accessor methods
-    pr_idx = 1;
+    // set_present delegates to emplace_alt (ChoiceInterface) — defined in .cpp.
+    os << "    void set_present(PR p);\n";
+
     for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
         std::string t = cpp_type_for(*m);
-        std::string n = to_member_name(m->name);
-        os << std::format("    {0}& {1}() {{ return std::get<{2}>(u); }}\n", t, n, pr_idx);
-        os << std::format("    const {0}& {1}() const {{ return std::get<{2}>(u); }}\n", t, n, pr_idx);
-        ++pr_idx;
+        std::string n = to_member_name(m->name, choice_acc_api);
+        os << std::format(
+            "    {0}& {1}() {{ return *std::launder(reinterpret_cast<{0}*>(val_)); }}\n", t, n);
+        os << std::format(
+            "    const {0}& {1}() const"
+            " {{ return *std::launder(reinterpret_cast<const {0}*>(val_)); }}\n", t, n);
     }
     if (count > 0) {
         os << std::format("    static const asn1::MemberDescriptor s_alternatives[{}];\n", count);
@@ -1377,7 +1578,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     // Alternative descriptor table
     if (count > 0) {
         struct AltRow {
-            std::string name, eff_tag, mname, tdref;
+            std::string name, eff_tag, mname, tdref, alt_type;
             bool is_explicit;
             int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
         };
@@ -1389,43 +1590,45 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string mname = to_member_name(m->name);
             auto [eff_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
+            std::string alt_type = cpp_type_for(*m);
             int tag_ctx_num = -1;
             if (apply_auto_tags)
                 tag_ctx_num = auto_tag_num;
             else if (m->tag.present() && m->tag.cls == ast::TagClass::Context)
                 tag_ctx_num = m->tag.number;
-            rows.push_back({ m->name, eff_tag, mname, tdref, is_explicit, tag_ctx_num });
+            rows.push_back({ m->name, eff_tag, mname, tdref, alt_type, is_explicit, tag_ctx_num });
             ++auto_tag_num;
           }
         }
-        // Pass 2: emit static variant accessor functions.
-        { int vi = 1;
-          for (const auto& r : rows) {
-            os << std::format("static asn1::Asn1Object* _get_mut_{0}_{1}(asn1::Asn1Object* p) {{ return &std::get<{2}>(static_cast<{0}*>(p)->u); }}\n",
-                cname, r.mname, vi);
-            os << std::format("static const asn1::Asn1Object* _get_const_{0}_{1}(const asn1::Asn1Object* p) {{ return &std::get<{2}>(static_cast<const {0}*>(p)->u); }}\n",
-                cname, r.mname, vi);
-            os << std::format("static void _emplace_{0}_{1}(asn1::Asn1Object* p) {{ static_cast<{0}*>(p)->u.emplace<{2}>(); }}\n",
-                cname, r.mname, vi);
-            ++vi;
-          }
-          os << '\n';
-        }
+        // Pass 2 removed: _get_mut_T_alt / _get_const_T_alt / _emplace_T_alt named free
+        // functions replaced by ChoiceOps<AltT>::get_mut / get_const (single-type-param
+        // template in ChoiceInterface.hpp) and ChoiceInterface::emplace_alt (generic).
+
         // Pass 3: emit array (as class static member definition).
         os << std::format("const asn1::MemberDescriptor {}::s_alternatives[] = {{\n", cname);
-        { int vi = 1;
-          for (const auto& r : rows) {
+        { for (const auto& r : rows) {
             os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, nullptr, nullptr,\n",
-                r.name, r.eff_tag,
-                r.tdref,
-                r.is_explicit ? "true" : "false");
-            os << std::format("      &_emplace_{0}_{1}, &_get_mut_{0}_{1}, &_get_const_{0}_{1} }},\n",
-                cname, r.mname);
-            ++vi;
+                r.name, r.eff_tag, r.tdref, r.is_explicit ? "true" : "false");
+            os << std::format("      &asn1::ChoiceOps<{0}>::get_mut, &asn1::ChoiceOps<{0}>::get_const }},\n",
+                r.alt_type);
           }
         }
         os << "};\n";
         os << std::format("const int {}::s_alternative_count = {};\n\n", cname, count);
+
+        // set_present: resets the active alternative then activates the requested one.
+        // emplace_alt (generic in ChoiceInterface) handles construction via TypeDescriptor::lifecycle.
+        os << std::format(
+            "void {0}::set_present(PR p) {{\n"
+            "    active_lifecycle->destroy(val_);\n"
+            "    active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;\n"
+            "    _present = 0;\n"
+            "    if (p == PR::NOTHING) return;\n"
+            "    int idx = static_cast<int>(p) - 1;\n"
+            "    if (idx >= 0 && idx < s_alternative_count)\n"
+            "        emplace_alt(s_alternatives[idx]);\n"
+            "    _present = static_cast<int>(p);\n"
+            "}}\n\n", cname);
 
         // O(1) context-tag dispatch table — emit when ALL alternatives carry a context tag.
         // Density threshold: only emit if range <= 4× count (avoids huge sparse arrays).
@@ -1496,7 +1699,8 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
         "asn1::Tag{asn1::TagClass::Context, 0, false}",
-        false, false, true, false, "asn1::TypeKind::Choice");
+        false, false, true, false, "asn1::TypeKind::Choice",
+        "&asn1::per_choice_handler", "&asn1::ber_choice_handler");
 
 }
 
@@ -1523,10 +1727,9 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
     os << "#pragma once\n";
     os << "#include <memory>\n";
     os << "#include <optional>\n";
-    os << "#include <variant>\n";
     os << "#include <vector>\n";
     os << "#include <span>\n";
-    os << "#include <asn1cpp/asn1cpp.hpp>\n\n";
+    os << "#include <asn1cpp/asn1cpp_gen.hpp>\n\n";
 
     if (def.is_sequence() || def.is_set()) {
         current_type_ = cname;
@@ -1550,12 +1753,12 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
             : std::get<ast::SetOfType>(def.body).element;
         if (auto* tr = std::get_if<ast::TypeRef>(&elem->body)) {
             auto inc = cpp_name_for_typeref(*tr);
-            os << std::format("#include \"{}.hpp\"\n\n", inc);
+            os << std::format("#include \"{}.hpp\"\n\n", filename_for(inc));
             track_include(inc);
         } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
             // Inline element: include the synthetic type header.
             auto synth = make_synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name);
-            os << std::format("#include \"{}.hpp\"\n\n", synth);
+            os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
             track_include(synth);
         }
         os << std::format("using {} = asn1::VectorSeqOf<{}>;\n\n", cname, cpp_type_for(*elem));
@@ -1563,7 +1766,7 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
         os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto inc = cpp_name_for_typeref(*tr);
-        os << std::format("#include \"{}.hpp\"\n", inc);
+        os << std::format("#include \"{}.hpp\"\n", filename_for(inc));
         track_include(inc);
         os << std::format("using {} = {};\n", cname, inc);
     }
@@ -1572,7 +1775,7 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
 
 // Extract SIZE (lb..ub) constraint. Returns {lb, ub} or nullopt if none.
 // lb==ub → fixed size; ub==INT64_MAX → semi-constrained (SIZE lb..MAX).
-static std::optional<std::pair<int64_t,int64_t>> extract_size_range(const ast::TypeDef& def) {
+std::optional<std::pair<int64_t,int64_t>> Generator::extract_size_range(const ast::TypeDef& def) const {
     std::optional<std::pair<int64_t,int64_t>> result;
     walk_type_constraints(def, [&](const ast::ConstraintBody& body) {
         if (result) return;
@@ -1581,13 +1784,13 @@ static std::optional<std::pair<int64_t,int64_t>> extract_size_range(const ast::T
         if (auto* vr = std::get_if<ast::ValueRange>(&sc->inner->body)) {
             int64_t lb = 0, ub = std::numeric_limits<int64_t>::max();
             if (vr->lower.kind != ast::RangeEndpoint::Kind::Min)
-                if (auto* n = std::get_if<int64_t>(&vr->lower.value)) lb = *n;
+                if (auto opt = resolve_int_value(vr->lower.value)) lb = *opt;
             if (vr->upper.kind == ast::RangeEndpoint::Kind::Max)
                 ub = std::numeric_limits<int64_t>::max();
-            else if (auto* n = std::get_if<int64_t>(&vr->upper.value)) ub = *n;
+            else if (auto opt = resolve_int_value(vr->upper.value)) ub = *opt;
             result = {lb, ub};
         } else if (auto* sv = std::get_if<ast::Value>(&sc->inner->body)) {
-            if (auto* n = std::get_if<int64_t>(sv)) result = {*n, *n};
+            if (auto opt = resolve_int_value(*sv)) result = {*opt, *opt};
         }
     });
     return result;
@@ -1628,6 +1831,65 @@ static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
 
 void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
+
+    // Handler LUTs indexed by ast::BuiltinType (Boolean=0 .. Any=23).
+    // Integer and Enumerated are never routed here (handled by separate emit functions).
+    using BT = ast::BuiltinType;
+    static const char* const per_lut[] = {
+        "&asn1::per_boolean_handler",    // Boolean       = 0
+        "&asn1::per_integer_handler",    // Integer       = 1  (unreachable)
+        "&asn1::per_bitstring_handler",  // BitString     = 2
+        "&asn1::per_octetstring_handler",// OctetString   = 3
+        "&asn1::per_null_handler",       // Null          = 4
+        "&asn1::per_oid_handler",        // ObjectIdentifier = 5
+        "&asn1::per_reloid_handler",     // RelativeOid   = 6
+        "&asn1::per_real_handler",       // Real          = 7
+        "&asn1::per_enumerated_handler", // Enumerated    = 8  (unreachable)
+        "&asn1::per_string_handler",     // Utf8String    = 9
+        "&asn1::per_string_handler",     // NumericString = 10
+        "&asn1::per_string_handler",     // PrintableString=11
+        "&asn1::per_string_handler",     // T61String     = 12
+        "&asn1::per_string_handler",     // VideotexString= 13
+        "&asn1::per_string_handler",     // Ia5String     = 14
+        "&asn1::per_string_handler",     // GraphicString = 15
+        "&asn1::per_string_handler",     // VisibleString = 16
+        "&asn1::per_string_handler",     // GeneralString = 17
+        "&asn1::per_string_handler",     // UniversalString=18
+        "&asn1::per_string_handler",     // BmpString     = 19
+        "&asn1::per_string_handler",     // ObjectDescriptor=20
+        "&asn1::per_string_handler",     // UtcTime       = 21
+        "&asn1::per_string_handler",     // GeneralizedTime=22
+        "&asn1::per_any_handler",        // Any           = 23
+    };
+    static const char* const ber_lut[] = {
+        "&asn1::ber_boolean_handler",    // Boolean       = 0
+        "&asn1::ber_integer_handler",    // Integer       = 1  (unreachable)
+        "&asn1::ber_bitstring_handler",  // BitString     = 2
+        "&asn1::ber_octetstring_handler",// OctetString   = 3
+        "&asn1::ber_null_handler",       // Null          = 4
+        "&asn1::ber_oid_handler",        // ObjectIdentifier = 5
+        "&asn1::ber_reloid_handler",     // RelativeOid   = 6
+        "&asn1::ber_real_handler",       // Real          = 7
+        "&asn1::ber_enumerated_handler", // Enumerated    = 8  (unreachable)
+        "&asn1::ber_string_handler",     // Utf8String    = 9
+        "&asn1::ber_string_handler",     // NumericString = 10
+        "&asn1::ber_string_handler",     // PrintableString=11
+        "&asn1::ber_string_handler",     // T61String     = 12
+        "&asn1::ber_string_handler",     // VideotexString= 13
+        "&asn1::ber_string_handler",     // Ia5String     = 14
+        "&asn1::ber_string_handler",     // GraphicString = 15
+        "&asn1::ber_string_handler",     // VisibleString = 16
+        "&asn1::ber_string_handler",     // GeneralString = 17
+        "&asn1::ber_string_handler",     // UniversalString=18
+        "&asn1::ber_string_handler",     // BmpString     = 19
+        "&asn1::ber_string_handler",     // ObjectDescriptor=20
+        "&asn1::ber_utctime_handler",    // UtcTime       = 21
+        "&asn1::ber_gentime_handler",    // GeneralizedTime=22
+        "&asn1::ber_any_handler",        // Any           = 23
+    };
+    auto* bt2 = std::get_if<BT>(&def.body);
+    const char* per_h = bt2 ? per_lut[(int)*bt2] : "&asn1::per_string_handler";
+    const char* ber_h = bt2 ? ber_lut[(int)*bt2] : "&asn1::ber_string_handler";
 
     auto alphabet   = extract_from_alphabet(def);
     auto size_range = extract_size_range(def);
@@ -1671,7 +1933,11 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
     } else {
         os << "    {} /* constraints — unconstrained */,\n";
     }
-    os << "    false, asn1::TypeKind::Primitive\n";
+    std::string cpp_t = cpp_type_for(def);
+    os << std::format("    false, asn1::TypeKind::Primitive,\n");
+    os << std::format("    {} /* per_handler */,\n", per_h);
+    os << std::format("    {} /* ber_handler */,\n", ber_h);
+    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cpp_t);
     os << "};\n";
 }
 
@@ -1705,12 +1971,15 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
         std::format("asn1::Tag::universal({}, true)", of_tag),
-        false, false, false, true, "asn1::TypeKind::SeqOf");
+        false, false, false, true, "asn1::TypeKind::SeqOf",
+        "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler");
 }
 
 void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
-    os << std::format("#include \"{}.hpp\"\n", cname);
+    os << std::format("#include \"{}.hpp\"\n", filename_for(cname));
+    os << "#include <asn1cpp/codec/PerHandlers.hpp>\n";
+    os << "#include <asn1cpp/codec/BerHandlers.hpp>\n";
     // __builtin_offsetof is well-defined for all types without virtual functions
     // on GCC/Clang, including non-standard-layout types (conditionally supported
     // per C++ standard). Suppress the pedantic diagnostic in generated files.
@@ -1765,8 +2034,8 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 }
                 generate_inline_types(*synthetic, mod);
                 current_type_ = synth_name;
-                { std::ofstream hpp(out_dir_ / (synth_name + ".hpp")); emit_hpp(*synthetic, mod, hpp); }
-                { std::ofstream cpp(out_dir_ / (synth_name + ".cpp")); emit_cpp(*synthetic, cpp); }
+                emit_file(out_dir_ / (filename_for(synth_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
+                emit_file(out_dir_ / (filename_for(synth_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
             }
         }
         return;
@@ -1782,10 +2051,14 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
             const auto& elem = m->is_seq_of()
                 ? *std::get<ast::SequenceOfType>(m->body).element
                 : *std::get<ast::SetOfType>(m->body).element;
+            // Compute seqof_name first so anonymous element types are scoped under it,
+            // preventing collisions when multiple SeqOf members have structurally-similar
+            // but differently-constrained inline element types (e.g. ctfc2Bit vs ctfc6Bit).
+            std::string seqof_name = make_synthetic_name(parent_cname, m->name);
             std::string elem_type_name;  // non-empty iff element was an inline complex type
             if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
                 bool was_anon = elem.name.empty();
-                elem_type_name = make_synthetic_name(parent_cname, was_anon ? "Anon" : elem.name);
+                elem_type_name = make_synthetic_name(seqof_name, was_anon ? "Anon" : elem.name);
                 if (!generated_names_.count(elem_type_name)) {
                     generated_names_.insert(elem_type_name);
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
@@ -1797,29 +2070,29 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                     }
                     generate_inline_types(*synthetic, mod);
                     current_type_ = elem_type_name;
-                    { std::ofstream hpp(out_dir_ / (elem_type_name + ".hpp")); emit_hpp(*synthetic, mod, hpp); }
-                    { std::ofstream cpp(out_dir_ / (elem_type_name + ".cpp")); emit_cpp(*synthetic, cpp); }
+                    emit_file(out_dir_ / (filename_for(elem_type_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
+                    emit_file(out_dir_ / (filename_for(elem_type_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
                 }
             }
             // Generate synthetic SeqOf wrapper descriptor type named parent + MemberCamel.
             // If element was anonymous inline, replace it with a TypeRef to the named element
             // type so emit_hpp uses the correct name and include path.
-            std::string seqof_name = make_synthetic_name(parent_cname, m->name);
+            // (seqof_name already computed above)
             if (!generated_names_.count(seqof_name)) {
                 generated_names_.insert(seqof_name);
                 auto seqof_td = std::make_shared<ast::TypeDef>(*m);
                 seqof_td->name = seqof_name;
                 if (!elem_type_name.empty()) {
                     auto named_elem = std::make_shared<ast::TypeDef>();
-                    named_elem->body = ast::TypeRef{"", elem_type_name};
+                    named_elem->body = ast::TypeRef{"", elem_type_name, {}};
                     if (m->is_seq_of())
                         seqof_td->body = ast::SequenceOfType{named_elem};
                     else
                         seqof_td->body = ast::SetOfType{named_elem};
                 }
                 current_type_ = seqof_name;
-                { std::ofstream hpp(out_dir_ / (seqof_name + ".hpp")); emit_hpp(*seqof_td, mod, hpp); }
-                { std::ofstream cpp(out_dir_ / (seqof_name + ".cpp")); emit_cpp(*seqof_td, cpp); }
+                emit_file(out_dir_ / (filename_for(seqof_name) + ".hpp"), [&](auto& os){ emit_hpp(*seqof_td, mod, os); });
+                emit_file(out_dir_ / (filename_for(seqof_name) + ".cpp"), [&](auto& os){ emit_cpp(*seqof_td, os); });
             }
             continue;
         }
@@ -1834,23 +2107,14 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
         if (generated_names_.count(synth_name)) continue;
         generated_names_.insert(synth_name);
 
-        // Build a synthetic TypeDef with the synthetic name
         auto synthetic = std::make_shared<ast::TypeDef>(*m);
         synthetic->name = synth_name;
 
-        // Recursively generate inline types within the synthetic type
         generate_inline_types(*synthetic, mod);
 
-        // Generate the synthetic type file
         current_type_ = synth_name;
-        {
-            std::ofstream hpp(out_dir_ / (synth_name + ".hpp"));
-            emit_hpp(*synthetic, mod, hpp);
-        }
-        {
-            std::ofstream cpp(out_dir_ / (synth_name + ".cpp"));
-            emit_cpp(*synthetic, cpp);
-        }
+        emit_file(out_dir_ / (filename_for(synth_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
+        emit_file(out_dir_ / (filename_for(synth_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
     }
 }
 
@@ -1864,10 +2128,7 @@ void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
     current_tag_default_ = mod.tag_default;
     std::string cname = effective_cpp_name(def.name, mod.name);
 
-    {
-        std::ofstream hpp(out_dir_ / (cname + ".hpp"));
-        emit_hpp(def, mod, hpp);
-    }
+    emit_file(out_dir_ / (filename_for(cname) + ".hpp"), [&](auto& os){ emit_hpp(def, mod, os); });
 
     auto bt_is = [&](ast::BuiltinType t) {
         auto* bt = std::get_if<ast::BuiltinType>(&def.body);
@@ -1883,27 +2144,25 @@ void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
         || bt_is(ast::BuiltinType::Enumerated)
         || bt_is(ast::BuiltinType::Integer)
         || is_named_builtin_alias();
-    if (needs_cpp) {
-        std::ofstream cpp(out_dir_ / (cname + ".cpp"));
-        emit_cpp(def, cpp);
-    }
+    if (needs_cpp)
+        emit_file(out_dir_ / (filename_for(cname) + ".cpp"), [&](auto& os){ emit_cpp(def, os); });
 }
 
 void Generator::emit_stubs_for_unresolved() {
     for (const auto& name : referenced_names_) {
         if (generated_names_.count(name)) continue;
-        auto path = out_dir_ / (name + ".hpp");
-        if (fs::exists(path)) continue;
-        std::ofstream os(path);
-        os << "#pragma once\n";
-        os << "#include <asn1cpp/asn1cpp.hpp>\n\n";
-        os << "/* stub: type from missing/uncompiled module */\n";
-        os << std::format("struct {} {{}};\n\n", name);
-        os << std::format("inline const asn1::TypeDescriptor asn_DEF_{} = {{\n", name);
-        os << std::format("    \"{}\",\n", name);
-        os << "    asn1::Tag{},\n";
-        os << "    nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive\n";
-        os << "};\n\n";
+        auto path = out_dir_ / (filename_for(name) + ".hpp");
+        emit_file(path, [&](auto& os) {
+            os << "#pragma once\n";
+            os << "#include <asn1cpp/asn1cpp_gen.hpp>\n\n";
+            os << "/* stub: type from missing/uncompiled module */\n";
+            os << std::format("struct {} {{}};\n\n", name);
+            os << std::format("inline const asn1::TypeDescriptor asn_DEF_{} = {{\n", name);
+            os << std::format("    \"{}\",\n", name);
+            os << "    asn1::Tag{},\n";
+            os << "    nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive\n";
+            os << "};\n\n";
+        });
     }
 }
 

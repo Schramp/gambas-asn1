@@ -47,7 +47,7 @@ AR       := ar
 PCH_DIR     := $(OBJ_DIR)/pch
 PCH_WRAP    := $(PCH_DIR)/pch.hpp
 PCH_GCH     := $(PCH_WRAP).gch
-OPT        ?= -O3
+OPT        ?= -O3 -flto=auto
 BASE_FLAGS  := -std=c++20 $(OPT) -I$(GEN_DIR) -I$(RUNTIME_INC)
 CXXFLAGS    := $(BASE_FLAGS) -include $(PCH_WRAP)
 
@@ -55,10 +55,10 @@ CXXFLAGS    := $(BASE_FLAGS) -include $(PCH_WRAP)
 
 $(PCH_WRAP): | $(OBJ_DIR)
 	@mkdir -p $(PCH_DIR)
-	@printf '#include <memory>\n#include <optional>\n#include <variant>\n#include <vector>\n#include <span>\n#include <string>\n#include <cstdint>\n#include <asn1cpp/asn1cpp.hpp>\n' > $@
+	@printf '#include <memory>\n#include <optional>\n#include <vector>\n#include <span>\n#include <string>\n#include <cstdint>\n#include <asn1cpp/asn1cpp_gen.hpp>\n' > $@
 
-$(PCH_GCH): $(PCH_WRAP) $(RUNTIME_INC)/asn1cpp/asn1cpp.hpp $(wildcard $(RUNTIME_INC)/asn1cpp/*.hpp) $(wildcard $(RUNTIME_INC)/asn1cpp/codec/*.hpp)
-	@echo "[PCH]  asn1cpp.hpp"
+$(PCH_GCH): $(PCH_WRAP) $(RUNTIME_INC)/asn1cpp/asn1cpp_gen.hpp $(wildcard $(RUNTIME_INC)/asn1cpp/*.hpp)
+	@echo "[PCH]  asn1cpp_gen.hpp"
 	$(CXX) $(BASE_FLAGS) -x c++-header -o $@ $<
 
 # Declare all before any other target so it is the default goal.
@@ -94,7 +94,7 @@ OBJ_FILES := $(patsubst $(GEN_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(GEN_SRCS))
 
 $(OBJ_DIR)/%.o: $(GEN_DIR)/%.cpp $(PCH_GCH) | $(GEN_DIR)/sources.mk
 	@echo "[CXX]  $(<F)"
-	@$(CXX) $(CXXFLAGS) -c -o $@ $<
+	@ulimit -s unlimited && $(CXX) $(CXXFLAGS) -c -o $@ $<
 
 # ---------------------------------------------------------------------------
 # Phase 3 — archive
