@@ -26,7 +26,9 @@ definitions with BER, XER, and PER codec support via a runtime library.
 git clone --branch v6.1.0 --depth 1 https://github.com/Genivia/RE-flex
 cd RE-flex
 ./build.sh
-sudo make install
+sudo cp bin/reflex /usr/local/bin/
+sudo cp -r include/reflex /usr/local/include/
+sudo cp lib/libreflex.a /usr/local/lib/
 ```
 
 ### Install Bison (Ubuntu / Debian)
