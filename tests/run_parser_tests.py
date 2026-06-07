@@ -34,6 +34,13 @@ def run(cmd, asn1_file, extra_flags=None):
         return False
 
 
+def extra_flags_for(filename):
+    """Return extra compiler flags implied by the test filename."""
+    if "fallow-newer-modules" in filename:
+        return ["-fallow-newer-modules"]
+    return []
+
+
 def classify(name):
     if "-OK." in name:
         return "OK"
@@ -73,7 +80,8 @@ def main():
         if kind == "?":
             continue
 
-        cpp_ok = run(cpp_cmd, f)
+        fflags = extra_flags_for(f.name)
+        cpp_ok = run(cpp_cmd, f, fflags)
 
         if asn1c_cmd:
             ac_ok = run(asn1c_cmd, f)

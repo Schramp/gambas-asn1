@@ -399,7 +399,7 @@ bool RandomFiller::fill_choice(Asn1Object* obj, const ChoiceSpec& spec, int dept
 
     int alt_idx = rand_int(0, limit - 1);
     const auto& alt = spec.alternatives[alt_idx];
-    if (alt.emplace_fn) alt.emplace_fn(ch);
+    ch->emplace_alt(alt);
     ch->_present = alt_idx + 1;
     Asn1Object* aptr = alt.get_mut_fn(ch);
 
@@ -428,10 +428,10 @@ bool RandomFiller::fill_seq_of(Asn1Object* obj, const SeqOfSpec& spec, int depth
     // Exponential backoff: halve effective max every 2 depth levels so that
     // total data stays bounded regardless of max_depth.  Without this, nested
     // SEQUENCE OFs multiply as max_seq^nesting_levels.
+    // SIZE lower bound (lo) is non-negotiable — depth reduction must not violate it.
     int depth_hi = std::max(cfg_.min_seq_of, cfg_.max_seq_of >> (depth / 2));
     hi = std::min(hi, depth_hi);
-    // Re-clamp lo: SIZE_CONSTRAINED may have raised lo above the depth-reduced hi.
-    if (lo > hi) lo = hi;
+    if (hi < lo) hi = lo;  // SIZE constraint floor overrides depth reduction
 
     int n = rand_int(lo, hi);
     SeqOfBase& seq = *static_cast<SeqOfBase*>(obj);
@@ -481,8 +481,9 @@ void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
         if (c.int_kind == Constraints::INT_U64) {
             uint64_t lo = c.lower_u64;
             uint64_t hi = c.upper_u64;
-            if (c.flags & Constraints::SEMI_CONSTRAINED)
-                hi = lo + 1000;  // bounded sample for SEMI_CONSTRAINED
+            // UINT64_MAX sentinel: (0..MAX) maps to "no upper bound" — treat as semi-constrained.
+            if ((c.flags & Constraints::SEMI_CONSTRAINED) || hi == std::numeric_limits<uint64_t>::max())
+                hi = lo + 1000;  // bounded sample avoids values asn1c XER can't parse
             if (lo > hi) hi = lo;
             uint64_t v = std::uniform_int_distribution<uint64_t>{lo, hi}(rng_);
             static_cast<UInteger*>(obj)->set(v);

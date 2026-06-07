@@ -30,6 +30,7 @@ add_library(asn1cpp_runtime_objs OBJECT
     src/XerCodec.cpp
     src/PerCodec.cpp
     src/RandomFiller.cpp
+    src/BuiltinTypes.cpp
 )
 target_link_libraries(asn1cpp_runtime_objs PUBLIC asn1cpp_runtime_iface)
 

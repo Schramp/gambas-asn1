@@ -52,8 +52,9 @@
 %token <std::string>  TOK_cstring
 %token <std::string>  TOK_hstring
 %token <std::string>  TOK_identifier    "identifier"
-%token <long long>    TOK_number        "number"
-%token <long long>    TOK_number_negative "negative number"
+%token <long long>              TOK_number        "number"
+%token <long long>              TOK_number_negative "negative number"
+%token <unsigned long long>     TOK_number_large  "large number"
 %token <double>       TOK_realnumber
 %token <long long>    TOK_tuple
 %token <long long>    TOK_quadruple
@@ -183,7 +184,7 @@
 %type <TypeDefPtr>                  Type TaggedType UntaggedType DefinedUntaggedType
 %type <TypeDefPtr>                  TypeDeclaration ConcreteTypeDeclaration DefinedType
 %type <TypeDefPtr>                  MaybeIndirectTaggedType MaybeIndirectTypeDeclaration
-%type <std::monostate>              NSTD_IndirectMarker
+%type <std::monostate>              NSTD_IndirectMarker XerEncodingInstructionPrefix
 
 /* References */
 %type <std::string>                 TypeRefName
@@ -565,7 +566,21 @@ ValueAssignment:
 
 /* ===== Type hierarchy ====================================================== */
 
-Type: TaggedType { $$ = $1; };
+/* X.693 §21 per-type encoding instruction prefix: [BASE64] T or [XER:BASE64] T.
+ * '[' is unambiguous here: Tag uses '[' TagClass number ']' which requires a
+ * number after the optional class keyword; TOK_capitalreference cannot be a
+ * number, so there is no shift/reduce conflict with the Tag path. */
+/* TODO: store the encoding reference on the TypeDef and honour it in XerCodec
+ * (e.g. emit/expect base64 instead of hex for [BASE64] OCTET STRING). */
+XerEncodingInstructionPrefix:
+	  '[' TOK_capitalreference ']'                              { }
+	| '[' TOK_capitalreference ':' TOK_capitalreference ']'    { }
+	;
+
+Type:
+	  TaggedType                          { $$ = $1; }
+	| XerEncodingInstructionPrefix Type   { $$ = $2; }
+	;
 
 TaggedType:
 	optTag UntaggedType
@@ -769,9 +784,9 @@ DefinedType:
 	    auto s = $1;
 	    auto dot = s.find('.');
 	    if (dot != std::string::npos && s.find('&') == std::string::npos)
-	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1)};
+	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), {}};
 	    else
-	        t->body = TypeRef{"", s};
+	        t->body = TypeRef{"", s, {}};
 	    $$ = t;
 	}
 	| ComplexTypeReference '{' ActualParameterList '}'
@@ -780,9 +795,9 @@ DefinedType:
 	    auto s = $1;
 	    auto dot = s.find('.');
 	    if (dot != std::string::npos && s.find('&') == std::string::npos)
-	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1)};
+	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), {}};
 	    else
-	        t->body = TypeRef{"", s};
+	        t->body = TypeRef{"", s, {}};
 	    $$ = t;
 	}
 	;
@@ -1240,6 +1255,7 @@ RealValue:
 SignedNumber:
 	  TOK_number          { $$ = (int64_t)$1; }
 	| TOK_number_negative { $$ = (int64_t)$1; }
+	| TOK_number_large    { $$ = (uint64_t)$1; }
 	;
 
 /* ===== Object Identifier value ============================================= */

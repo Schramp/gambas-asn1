@@ -1,6 +1,6 @@
-L2AccessPDU
+L2AccessPDU 
 {itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulIntercept(2)
-li-ps(5) l2Access(4) version10(10)}
+li-ps(5) l2Access(4) version7(7)}
 
 DEFINITIONS IMPLICIT TAGS ::=
 BEGIN
@@ -9,188 +9,158 @@ BEGIN
 -- Object Identifier Definition
 -- ============================
 
-l2AccessPDUObjId RELATIVE-OID   ::= {li-ps(5) l2Access(4) version10(10)}
-l2IRIObjId RELATIVE-OID         ::= {l2AccessPDUObjId iRI(1)}
-l2CCObjId RELATIVE-OID          ::= {l2AccessPDUObjId cC(2)}
-l2IRIOnlyObjId RELATIVE-OID     ::= {l2AccessPDUObjId iRIOnly(3)}
-
-    -- definitions are relative to
-    -- {itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulintercept(2)}
-
+l2IRIObjId RELATIVE-OID			::= {li-ps(5) l2Access(4) version7(7) iRI(1)}
+l2CCObjId RELATIVE-OID			::= {li-ps(5) l2Access(4) version7(7) cC(2)}
+l2IRIOnlyObjId RELATIVE-OID		::= {li-ps(5) l2Access(4) version7(7) iRIOnly(3)}
+	-- all three definitions relative to {itu-t(0) identified-organization(4)
+	-- etsi(0) securityDomain(2) lawfulintercept(2)}
 
 -- ==========================
 -- L2 Communications Contents
 -- ==========================
 
-L2CC        ::= SEQUENCE
+L2CC		::= SEQUENCE
 {
-    l2CCObjId               [0] RELATIVE-OID,
-    l2CCContents            [1] CHOICE
-    {
-        l2TP                    [1] OCTET STRING,
-            -- The L2TP protocol is used
-        l2F                     [2] OCTET STRING,
-            -- The L2F protocol is used
-        pPTP                    [3] OCTET STRING,
-            -- The PPTP protocol is used
-        pPP                     [4] OCTET STRING,
-            -- The PPP protocol is used
-        ethernet                [5] OCTET STRING,
-            -- The ethernet protocol is used
-        ...,
-        l2ATM2684               [6] OCTET STRING,
-            -- The protocol RFC 2684, method "LLC Encapsulation for Bridged Protocols" [16] is used
-        l2FR2427                [7] OCTET STRING,
-            -- The protocol RFC 2427 "Multiprotocol Interconnect over Frame Relay" [18] is used
-        truncatedL2TP           [8] L2TruncatedDatagram,
-            -- truncated l2TP[1]
-        truncatedL2F            [9] L2TruncatedDatagram,
-            -- truncated l2F[2]
-        truncatedPPTP           [10] L2TruncatedDatagram,
-            -- truncated pPTP[3]
-        truncatedPPP            [11] L2TruncatedDatagram,
-            -- truncated pPP[4]
-        truncatedEthernet       [12] L2TruncatedDatagram,
-            -- truncated ethernet[5]
-        truncatedL2ATM2684      [13] L2TruncatedDatagram,
-            -- truncated l2ATM2684[6]
-        truncatedL2FR2427       [14] L2TruncatedDatagram
-            -- truncated l2FR2427[7]
-    }
-}
-
-L2TruncatedDatagram ::= SEQUENCE
-{
-    truncatedDatagram   [0] OCTET STRING,
-    originalLength      [1] INTEGER,
-    ...
+	l2CCObjId 				[0] RELATIVE-OID,
+	l2CCContents			[1] CHOICE
+	{
+		l2TP			[1] OCTET STRING,
+			-- The L2TP protocol is used
+		l2F				[2] OCTET STRING,
+			-- The L2F protocol is used
+		pPTP			[3] OCTET STRING,
+			-- The PPTP protocol is used
+		pPP				[4] OCTET STRING,
+			-- The PPP protocol is used
+		ethernet		[5] OCTET STRING,
+			-- The ethernet protocol is used
+		...,
+		l2ATM2684		[6] OCTET STRING,
+			-- The protocol RFC 2684, method "LLC Encapsulation for Bridged Protocols" [16] is used
+		l2FR2427		[7] OCTET STRING
+			-- The protocol RFC 2427 "Multiprotocol Interconnect over Frame Relay" [18] is used
+	}
 }
 
 -- ===================================================
 -- Intercept-related information for general L2-Access
 -- ===================================================
 
-L2IRI           ::= SEQUENCE
+L2IRI			::= SEQUENCE
 {
-    l2IRIObjId          [0] RELATIVE-OID,
-    l2IRIContents       [1] L2IRIContents,
-    ...
+	l2IRIObjId 			[0] RELATIVE-OID,
+	l2IRIContents		[1] L2IRIContents,
+	...
 }
 
-L2IRIContents           ::= SEQUENCE
+L2IRIContents			::= SEQUENCE
 {
-    accessEventType             [0] AccessEventType,
-    internetAccessType          [2] InternetAccessType OPTIONAL,
-    targetNetworkID             [5] UTF8String (SIZE (1..128)) OPTIONAL,
-        -- Target network ID (e.g. MAC address, PSTN number, additional information from
-        -- network elements)
-    targetCPEID                 [6] UTF8String (SIZE (1..128)) OPTIONAL,
-        -- CPEID (e.g. Relay Agent info, computer name)
-    targetLocation              [7] UTF8String (SIZE (1..64))OPTIONAL,
-        -- <for further study>
-    nASPortNumber               [8] INTEGER (0..4294967295) OPTIONAL,
-        -- The NAS port number used by the target
-    callBackNumber              [9] UTF8String (SIZE (1..20)) OPTIONAL,
-        -- The number used to call-back the target
-    startTime                   [10] GeneralizedTime OPTIONAL,
-        -- The start date-time of the session or lease
-    endTime                     [11] GeneralizedTime OPTIONAL,
-            -- The end date-time of the session or lease
-    endReason                   [12] EndReason OPTIONAL,
-        -- The reason for the session to end
-    octetsReceived              [13]    INTEGER (0..18446744073709551615) OPTIONAL,
-        -- The number of octets the target received
-    octetsTransmitted           [14]    INTEGER (0..18446744073709551615) OPTIONAL,
-        -- The number of octets the target transmitted
-    rawAAAData                  [15]    OCTET STRING OPTIONAL,
-        -- Content of the raw AAA record
-    ...,
-    authenticationType          [16] AuthenticationType OPTIONAL
-        -- Field used to identify the authentication type to assist with LEMF data validation
+	accessEventType				[0] AccessEventType,
+	internetAccessType			[2] InternetAccessType OPTIONAL,
+	targetNetworkID				[5] UTF8String (SIZE (1..128)) OPTIONAL,
+		-- Target network ID (e.g. MAC address, PSTN number, additional information from
+		-- network elements)
+	targetCPEID					[6] UTF8String (SIZE (1..128)) OPTIONAL,
+		-- CPEID (e.g. Relay Agent info, computer name)
+	targetLocation				[7] UTF8String (SIZE (1..64))OPTIONAL,
+		-- <for further study>
+	nASPortNumber				[8] INTEGER (0..4294967295) OPTIONAL,
+		-- The NAS port number used by the target
+	callBackNumber				[9] UTF8String (SIZE (1..20)) OPTIONAL,
+		-- The number used to call-back the target
+	startTime					[10] GeneralizedTime OPTIONAL,
+		-- The start date-time of the session or lease
+	endTime						[11] GeneralizedTime OPTIONAL,
+			-- The end date-time of the session or lease
+	endReason					[12] EndReason OPTIONAL,
+		-- The reason for the session to end
+	octetsReceived				[13]	INTEGER (0..18446744073709551615) OPTIONAL,
+		-- The number of octets the target received
+	octetsTransmitted			[14]	INTEGER (0..18446744073709551615) OPTIONAL,
+		-- The number of octets the target transmitted
+	rawAAAData					[15]	OCTET STRING OPTIONAL,
+		-- Content of the raw AAA record
+	...,
+	authenticationType			[16] AuthenticationType OPTIONAL
+		-- Field used to identify the authentication type to assist with LEMF data validation
 }
 
-AccessEventType         ::= ENUMERATED
+AccessEventType			::= ENUMERATED
 {
-    accessAttempt(0),
-        -- A target requests access to the IAS
-    accessAccept(1),
-        -- IAS access is granted to the target, the session begins
-    accessReject(2),
-        -- IAS access is refused to the target
-    accessFailed(3),
-        -- The accessAttempt timed-out or failed otherwise
-    sessionStart(4),
-        -- A target starts using the IAS; not in use anymore from version 4(4).
-    sessionEnd(5),
-        -- A target stops using the IAS; not in use anymore from version 4(4).
-    interimUpdate(6),
-        -- Intermediate status report on service status or usage
-    unknown(7),
-    ...,
-    startOfInterceptionWithSessionActive(8),
-        -- LI is started on a target who already has an active session
-    accessEnd(9),
-        -- A target stops using the IAS, the session ends.
-    endOfInterceptionWithSessionActive(10),
-        -- LI is ended on a target who still has an active session
-    startOfInterceptionWithoutNetworkSession(11),
-        -- Start of LI session without a network session
-    endOfInterceptionWithoutNetworkSession(12),
-        -- End of LI session without a network session
-    sessionExpired(13)
-        -- LI session terminated due to expiry by MF
+	accessAttempt(0),
+		-- A target requests access to the IAS
+	accessAccept(1),
+		 -- IAS access is granted to the target, the session begins
+	accessReject(2),
+		-- IAS access is refused to the target
+	accessFailed(3),
+		-- The accessAttempt timed-out or failed otherwise
+	sessionStart(4),
+		-- A target starts using the IAS; not in use anymore from version 4(4).
+	sessionEnd(5),
+		-- A target stops using the IAS; not in use anymore from version 4(4).
+	interimUpdate(6),
+		-- Intermediate status report on service status or usage
+	unknown(7),
+	...,
+	startOfInterceptionWithSessionActive(8),
+		-- LI is started on a target who already has an active session
+	accessEnd(9),
+		-- A target stops using the IAS, the session ends.
+	endOfInterceptionWithSessionActive(10)
+		-- LI is ended on a target who still has an active session
 }
 
-InternetAccessType      ::= ENUMERATED
+InternetAccessType		::= ENUMERATED
 {
-    undefined(0),
-    dialUp(1),
-        -- IAS via DialUp access
-    xDSL(2),
-        -- IAS via DSL access
-    cableModem(3),
-        -- IAS via Cable access
-    lAN(4),
-        -- IAS via LAN access
-    ...,
-    wirelessLAN(5),
-        -- IAS via Wireless LAN access
-    fTTx(6),
-        -- IAS via Fiber access
-    wIMAX-HIPERMAN(7),
-        -- IAS via WIMAX/HIPERMAN (fixed access)
-    satellite(8)
-        -- IAS via Satellite access
-        -- (when it is not covered by any 3GPP or ETSI mobile Lawful Interception specifications)
+	undefined(0),
+	dialUp(1),
+		-- IAS via DialUp access
+	xDSL(2),
+		-- IAS via DSL access
+	cableModem(3),
+		-- IAS via Cable access
+	lAN(4),
+		-- IAS via LAN access
+	...,
+	wirelessLAN(5),
+		-- IAS via Wireless LAN access
+	fTTx(6),
+		-- IAS via Fiber access
+	wIMAX-HIPERMAN(7),
+		-- IAS via WIMAX/HIPERMAN (fixed access)
+	satellite(8)
+		-- IAS via Satellite access
+		-- (when it is not covered by any 3GPP or ETSI mobile Lawful Interception specifications)
 }
 
-EndReason           ::= ENUMERATED
+EndReason			::= ENUMERATED
 {
-    undefined(0),
-    regularLogoff(1),
-        -- The target logged off
-    connectionLoss(2),
-        -- The connection was lost
-    connectionTimeout(3),
-        -- The connection timed-out
-    leaseExpired(4),
-        -- The DHCP lease expired
-    ...
+	undefined(0),
+	regularLogoff(1),
+		-- The target logged off
+	connectionLoss(2),
+		-- The connection was lost
+	connectionTimeout(3),
+		-- The connection timed-out
+	leaseExpired(4),
+		-- The DHCP lease expired
+	...
 }
 
 AuthenticationType ::= ENUMERATED
 {
-    unknown(0),
-        -- AAA function for the target service is unknown
-    static(1),
-        -- The target service is assigned a static IP address & no AAA expected
-    radiusAAA(2),
-        -- AAA function for the target service is provided by RADIUS
-    dhcpAAA(3),
-        -- AAA function for the target service is provided by DHCP
-    diameterAAA(4),
-        -- AAA function for the target service is provided by DIAMETER
-    ...
+	unknown(0),
+		-- AAA function for the target service is unknown
+	static(1),
+		-- The target service is assigned a static IP address & no AAA expected
+	radiusAAA(2),
+		-- AAA function for the target service is provided by RADIUS
+	dhcpAAA(3),
+		-- AAA function for the target service is provided by DHCP
+	diameterAAA(4),
+		-- AAA function for the target service is provided by DIAMETER
+	...
 }
 
 
@@ -198,33 +168,33 @@ AuthenticationType ::= ENUMERATED
 -- Intercept-related information for IRI-Only intercepts
 -- =====================================================
 
-L2IRIOnly       ::= SEQUENCE
+L2IRIOnly		::= SEQUENCE
 {
-    l2IRIOnlyObjId                  [0] RELATIVE-OID,
-    l2protocolInformation       [2] L2ProtocolInformation,
-    l2AggregatedNbrOfPackets    [3] INTEGER OPTIONAL,
-    l2AggregatedNbrOfBytes      [4] INTEGER OPTIONAL,
-    ...
+	l2IRIOnlyObjId					[0] RELATIVE-OID,
+	l2protocolInformation		[2] L2ProtocolInformation,
+	l2AggregatedNbrOfPackets	[3] INTEGER OPTIONAL,
+	l2AggregatedNbrOfBytes		[4] INTEGER OPTIONAL,
+	...
 }
 
-L2ProtocolInformation       ::= ENUMERATED
+L2ProtocolInformation		::= ENUMERATED
 {
-    l2ProtocolL2tp(1),
-        -- The L2TP protocol is used
-    l2ProtocolL2f(2),
-        -- The L2F protocol is used
-    l2ProtocolPptp(3),
-        -- The PPTP protocol is used
-    l2ProtocolPpp(4),
-        -- The PPP protocol is used
-    ethernetProtocol(5),
-        -- The ethernet protocol is used
-    undefined(6),
-    ...,
-    l2ProtocolATM2684(7),
-        -- The protocol RFC 2684, method "LLC Encapsulation for Bridged Protocols" [16] is used
-    l2ProtocolFR2427(8)
-        -- The protocol RFC2427 "Multiprotocol Interconnect over Frame Relay" [18] is used
+	l2ProtocolL2tp(1),
+		-- The L2TP protocol is used
+	l2ProtocolL2f(2),
+		-- The L2F protocol is used
+	l2ProtocolPptp(3),
+		-- The PPTP protocol is used
+	l2ProtocolPpp(4),
+		-- The PPP protocol is used
+	ethernetProtocol(5),
+		-- The ethernet protocol is used
+	undefined(6),
+	...,
+	l2ProtocolATM2684(7),
+		-- The protocol RFC 2684, method "LLC Encapsulation for Bridged Protocols" [16] is used
+	l2ProtocolFR2427(8)
+		-- The protocol RFC2427 "Multiprotocol Interconnect over Frame Relay" [18] is used
 }
 
 END -- end of L2AccessPDU

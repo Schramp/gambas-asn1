@@ -1,0 +1,94 @@
+Common-Parameters
+{itu-t(0) identified-organization(4) etsi(0) common-parameters(3280) version231(231)}
+
+DEFINITIONS IMPLICIT TAGS EXTENSIBILITY IMPLIED ::= BEGIN
+
+-- Object Identifier definitions
+
+commonParameterDomainId OBJECT IDENTIFIER ::= {itu-t(0) identified-organization(4) etsi(0) common-parameters(3280) version231(231)}
+
+-- Common Parameters (below are as defined in clause 6)
+
+LIID ::= OCTET STRING (SIZE (1..25))
+
+TCPPort ::= INTEGER (1..65535)
+
+TCPPortRange ::= SEQUENCE
+{
+    start [0] TCPPort,
+    end   [1] TCPPort
+}
+
+UDPPort ::= INTEGER (0..65535)
+
+UDPPortRange ::= SEQUENCE
+{
+    start [0] UDPPort,
+    end   [1] UDPPort
+}
+
+Port ::= CHOICE
+{
+    tCPPort [0] TCPPort,
+    uDPPort [1] UDPPort
+}
+
+PortRange ::= CHOICE
+{
+    tCPPortRange [0] TCPPortRange,
+    uDPPortRange [1] UDPPortRange
+}
+
+QualifiedDateTime ::= GeneralizedTime
+
+QualifiedMicrosecondDateTime ::= GeneralizedTime
+
+WGS84CoordinateDecimal ::= SEQUENCE
+{
+    latitude  [0] WGS84LatitudeDecimal,
+    longitude [1] WGS84LongitudeDecimal
+}
+
+WGS84LatitudeDecimal ::= OCTET STRING (SIZE (10))
+
+WGS84LongitudeDecimal ::= OCTET STRING (SIZE (11))
+
+WGS84CoordinateAngular ::= SEQUENCE
+{
+    latitude  [0] WGS84LatitudeAngular,
+    longitude [1] WGS84LongitudeAngular
+}
+
+WGS84LatitudeAngular ::= OCTET STRING (SIZE (10))
+
+WGS84LongitudeAngular ::= OCTET STRING (SIZE (11))
+
+InternationalE164 ::= NumericString (SIZE(1..15))
+
+IMSI ::= NumericString (SIZE(6..15))
+
+IMEI ::= NumericString (SIZE(14))
+
+IMEICheckDigit ::= NumericString (SIZE(15))
+
+IMEISV ::= NumericString (SIZE(16))
+
+SUPIIMSI ::= IMSI
+
+SUPINAI ::= NAI
+
+SUCI ::= OCTET STRING
+
+PEIIMEI ::= IMEI
+
+PEIIMEICheckDigit ::= IMEICheckDigit
+
+PEIIMEISV ::= IMEISV
+
+GPSIMSISDN ::= NumericString (SIZE(1..15))
+
+GPSINAI ::= NAI
+
+NAI ::= UTF8String
+
+END

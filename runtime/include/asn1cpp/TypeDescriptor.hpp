@@ -152,13 +152,11 @@ struct MemberDescriptor {
     // member is present AND its value equals the schema default.
     bool (*is_default_equal)(const Asn1Object* owner) = nullptr;
 
-    // CHOICE variant accessors — non-null only for CHOICE alternatives in
-    // std::variant-based generated structs.  Codecs use these instead of
-    // offset arithmetic.
-    //   emplace_fn  — in-place constructs this alternative in the CHOICE struct
+    // CHOICE variant accessors — non-null only for CHOICE alternatives.
     //   get_mut_fn  — returns mutable pointer to the active alternative
     //   get_const_fn — returns const pointer to the active alternative
-    void              (*emplace_fn)(Asn1Object* choice_ptr)          = nullptr;
+    // Emplace is handled generically via ChoiceInterface::emplace_alt(alt),
+    // which uses TypeDescriptor::lifecycle.
     Asn1Object*       (*get_mut_fn)(Asn1Object* choice_ptr)          = nullptr;
     const Asn1Object* (*get_const_fn)(const Asn1Object* choice_ptr)  = nullptr;
 };
@@ -238,6 +236,40 @@ enum class TypeKind : uint8_t {
     SeqOf      = 5,  // also SET OF
 };
 
+// Forward declarations — avoid circular dependency (codec headers include TypeDescriptor.hpp).
+struct IPerTypeHandler;
+struct IBerTypeHandler;
+
+// Type-tag for TypeLifecycleOps template constructor — zero-size knob selecting T.
+template<typename T> struct TypeTag {};
+
+// Per-type lifecycle operations used by ChoiceInterface::emplace_alt.
+// Embedded by value in TypeDescriptor (same 3×ptr cost as three separate fields).
+// Default-constructed with all nullptrs — builtins and non-CHOICE types that are
+// never emplaced as CHOICE alternatives may leave lifecycle default-constructed,
+// but all TypeDescriptors referenced from ChoiceSpec::alternatives must have it set.
+struct TypeLifecycleOps {
+    void (*construct)(void*)   = nullptr; // placement new T into storage
+    void (*destroy)(void*)     = nullptr; // ~T
+    void (*move)(void*, void*) = nullptr; // move-construct T into dst, then ~T(src)
+
+    TypeLifecycleOps() = default;
+
+    // Direct fn-ptr constructor — used for the k_noop_lifecycle sentinel.
+    constexpr TypeLifecycleOps(void (*c)(void*), void (*d)(void*),
+                               void (*m)(void*, void*)) noexcept
+        : construct(c), destroy(d), move(m) {}
+
+    template<typename T>
+    explicit constexpr TypeLifecycleOps(TypeTag<T>) noexcept
+        : construct([](void* p){ new(p) T{}; })
+        , destroy  ([](void* p){ std::destroy_at(static_cast<T*>(p)); })
+        , move     ([](void* d, void* s){
+              new(d) T(std::move(*static_cast<T*>(s)));
+              std::destroy_at(static_cast<T*>(s)); })
+    {}
+};
+
 // Top-level per-type descriptor (mirrors asn_TYPE_descriptor_t).
 // Generated as `asn_DEF_<TypeName>` in the type's .cpp.
 struct TypeDescriptor {
@@ -250,32 +282,39 @@ struct TypeDescriptor {
     Constraints          constraints     = {};      // flags==0 means unconstrained
     bool     is_any = false;             // true for ANY — raw BER bytes, open-type in PER
     TypeKind kind   = TypeKind::Primitive;
+    // Direct PER handler; null means fall back to PerCodec's LUT.
+    const IPerTypeHandler* per_handler = nullptr;
+    // Direct BER handler; null means fall back to BerCodec's LUT.
+    const IBerTypeHandler* ber_handler = nullptr;
+    // Lifecycle ops for CHOICE alternative emplace — set for all types used as
+    // CHOICE alternatives; default (all nullptrs) for types that never appear as alternatives.
+    TypeLifecycleOps lifecycle;
 };
 
-// Built-in type descriptors — used by generated SEQUENCE/CHOICE member tables
-// to fill type_descriptor pointers for plain primitive members.
-inline const TypeDescriptor asn_DEF_Any          = { "ANY",          Tag::universal( 4, false), nullptr, nullptr, nullptr, nullptr, {}, true, TypeKind::Any };
-inline const TypeDescriptor asn_DEF_Integer      = { "INTEGER",      Tag::universal( 2, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Boolean      = { "BOOLEAN",      Tag::universal( 1, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Null         = { "NULL",         Tag::universal( 5, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Real         = { "REAL",         Tag::universal( 9, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_BitString    = { "BIT_STRING",        Tag::universal( 3, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Oid          = { "OBJECT_IDENTIFIER", Tag::universal( 6, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_RelativeOid  = { "RELATIVE_OID",      Tag::universal(13, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_UtcTime      = { "UTCTime",       Tag::universal(23, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_GeneralizedTime = { "GeneralizedTime", Tag::universal(24, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_OctetString    = { "OCTET_STRING",   Tag::universal( 4, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Utf8String     = { "UTF8String",     Tag::universal(12, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_Ia5String      = { "IA5String",      Tag::universal(22, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_NumericString  = { "NumericString",  Tag::universal(18, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_PrintableString= { "PrintableString",Tag::universal(19, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_T61String      = { "T61String",      Tag::universal(20, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_VisibleString  = { "VisibleString",  Tag::universal(26, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_GeneralString  = { "GeneralString",  Tag::universal(27, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_GraphicString  = { "GraphicString",  Tag::universal(25, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_UniversalString= { "UniversalString",Tag::universal(28, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_BmpString      = { "BMPString",      Tag::universal(30, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_VideotexString = { "VideotexString", Tag::universal(21, false), nullptr, nullptr, nullptr };
-inline const TypeDescriptor asn_DEF_ObjectDescriptor={ "ObjectDescriptor",Tag::universal(7, false), nullptr, nullptr, nullptr };
+// Built-in type descriptors — defined in runtime/src/BuiltinTypes.cpp (per_handler wired there).
+// Used by generated SEQUENCE/CHOICE member tables for plain primitive members.
+extern const TypeDescriptor asn_DEF_Any;
+extern const TypeDescriptor asn_DEF_Integer;
+extern const TypeDescriptor asn_DEF_Boolean;
+extern const TypeDescriptor asn_DEF_Null;
+extern const TypeDescriptor asn_DEF_Real;
+extern const TypeDescriptor asn_DEF_BitString;
+extern const TypeDescriptor asn_DEF_Oid;
+extern const TypeDescriptor asn_DEF_RelativeOid;
+extern const TypeDescriptor asn_DEF_UtcTime;
+extern const TypeDescriptor asn_DEF_GeneralizedTime;
+extern const TypeDescriptor asn_DEF_OctetString;
+extern const TypeDescriptor asn_DEF_Utf8String;
+extern const TypeDescriptor asn_DEF_Ia5String;
+extern const TypeDescriptor asn_DEF_NumericString;
+extern const TypeDescriptor asn_DEF_PrintableString;
+extern const TypeDescriptor asn_DEF_T61String;
+extern const TypeDescriptor asn_DEF_VisibleString;
+extern const TypeDescriptor asn_DEF_GeneralString;
+extern const TypeDescriptor asn_DEF_GraphicString;
+extern const TypeDescriptor asn_DEF_UniversalString;
+extern const TypeDescriptor asn_DEF_BmpString;
+extern const TypeDescriptor asn_DEF_VideotexString;
+extern const TypeDescriptor asn_DEF_ObjectDescriptor;
 
 } // namespace asn1
