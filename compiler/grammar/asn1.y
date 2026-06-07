@@ -570,6 +570,8 @@ ValueAssignment:
  * '[' is unambiguous here: Tag uses '[' TagClass number ']' which requires a
  * number after the optional class keyword; TOK_capitalreference cannot be a
  * number, so there is no shift/reduce conflict with the Tag path. */
+/* TODO: store the encoding reference on the TypeDef and honour it in XerCodec
+ * (e.g. emit/expect base64 instead of hex for [BASE64] OCTET STRING). */
 XerEncodingInstructionPrefix:
 	  '[' TOK_capitalreference ']'                              { }
 	| '[' TOK_capitalreference ':' TOK_capitalreference ']'    { }
