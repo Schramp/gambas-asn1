@@ -184,7 +184,7 @@
 %type <TypeDefPtr>                  Type TaggedType UntaggedType DefinedUntaggedType
 %type <TypeDefPtr>                  TypeDeclaration ConcreteTypeDeclaration DefinedType
 %type <TypeDefPtr>                  MaybeIndirectTaggedType MaybeIndirectTypeDeclaration
-%type <std::monostate>              NSTD_IndirectMarker
+%type <std::monostate>              NSTD_IndirectMarker XerEncodingInstructionPrefix
 
 /* References */
 %type <std::string>                 TypeRefName
@@ -566,7 +566,19 @@ ValueAssignment:
 
 /* ===== Type hierarchy ====================================================== */
 
-Type: TaggedType { $$ = $1; };
+/* X.693 §21 per-type encoding instruction prefix: [BASE64] T or [XER:BASE64] T.
+ * '[' is unambiguous here: Tag uses '[' TagClass number ']' which requires a
+ * number after the optional class keyword; TOK_capitalreference cannot be a
+ * number, so there is no shift/reduce conflict with the Tag path. */
+XerEncodingInstructionPrefix:
+	  '[' TOK_capitalreference ']'                              { }
+	| '[' TOK_capitalreference ':' TOK_capitalreference ']'    { }
+	;
+
+Type:
+	  TaggedType                          { $$ = $1; }
+	| XerEncodingInstructionPrefix Type   { $$ = $2; }
+	;
 
 TaggedType:
 	optTag UntaggedType
