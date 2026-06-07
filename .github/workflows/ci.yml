@@ -55,3 +55,12 @@ jobs:
 
       - name: Build ETSI LI example
         run: make -C examples/sample.source.ETSI-LI-PS-PDU -j$(nproc)
+
+      - name: Build nested-decoder
+        run: make -C examples/sample.source.ETSI-LI-PS-PDU/nested-decoder
+
+      - name: Regression test nested-decoder
+        run: |
+          cd examples/sample.source.ETSI-LI-PS-PDU/nested-decoder
+          ./nested-decoder pdu-00000001.etsi > actual.xer
+          diff pdu-00000001.expected actual.xer
