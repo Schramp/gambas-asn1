@@ -20,11 +20,11 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y bison cmake g++ python3
 
-      - name: Cache RE/flex build
+      - name: Cache RE/flex
         id: cache-reflex
         uses: actions/cache@v4
         with:
-          path: /usr/local
+          path: ~/.reflex
           key: reflex-6.1.0-ubuntu24
 
       - name: Build RE/flex
@@ -33,9 +33,16 @@ jobs:
           git clone --branch v6.1.0 --depth 1 https://github.com/Genivia/RE-flex reflex-src
           cd reflex-src
           ./build.sh
-          sudo cp bin/reflex /usr/local/bin/
-          sudo cp -r include/reflex /usr/local/include/
-          sudo cp lib/libreflex.a /usr/local/lib/
+          mkdir -p ~/.reflex/bin ~/.reflex/include ~/.reflex/lib
+          cp bin/reflex ~/.reflex/bin/
+          cp -r include/reflex ~/.reflex/include/
+          cp lib/libreflex.a ~/.reflex/lib/
+
+      - name: Install RE/flex
+        run: |
+          sudo cp ~/.reflex/bin/reflex /usr/local/bin/
+          sudo cp -r ~/.reflex/include/reflex /usr/local/include/
+          sudo cp ~/.reflex/lib/libreflex.a /usr/local/lib/
 
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
