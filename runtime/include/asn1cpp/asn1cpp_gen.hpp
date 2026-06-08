@@ -23,4 +23,5 @@
 #include "types/Strings.hpp"
 #include "types/Time.hpp"
 #include "TypeDescriptor.hpp"
+#include "codec/DeepCopy.hpp"
 #include "codec/ValidateCounter.hpp"
