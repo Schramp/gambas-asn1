@@ -1209,15 +1209,12 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     if (has_optional_members) {
         // All special members declared (not defaulted) so unique_ptr<T> destructor/assignment
         // has complete T in the .cpp where they are defined = default.
-        // NOTE: no copy constructor is emitted here — any SEQUENCE with optional
-        // (unique_ptr) members is move-only.  A correct deep-copy ctor would emit
-        // `make_unique<T>(*o.m)` for each unique_ptr member; not yet implemented.
-        // Consequence: generated CHOICE types are also move-only (see CHOICE codegen).
-        // TODO: emit copy ctor + copy assignment for SEQUENCE with unique_ptr members
-        //       using make_unique<T>(*o.m) per optional field, making all types
-        //       properly deep-copyable.
+        // Copy ctor delegates to the default ctor (ensuring all members are constructed)
+        // then calls deep_copy to reproduce the source's state field-by-field.
         os << std::format("    {0}();\n", cname);
         os << std::format("    ~{0}();\n", cname);
+        os << std::format("    {0}(const {0}& o);\n", cname);
+        os << std::format("    {0}& operator=(const {0}& o);\n", cname);
         os << std::format("    {0}({0}&&) noexcept;\n", cname);
         os << std::format("    {0}& operator=({0}&&) noexcept;\n", cname);
     }
@@ -1294,6 +1291,8 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         // All special members defined here where unique_ptr<T> has complete T.
         os << std::format("{0}::{0}() = default;\n", cname);
         os << std::format("{0}::~{0}() = default;\n", cname);
+        os << std::format("{0}::{0}(const {0}& o) : {0}() {{ asn1::deep_copy(asn_DEF, this, &o); }}\n", cname);
+        os << std::format("{0}& {0}::operator=(const {0}& o) {{ if (this != &o) asn1::deep_copy(asn_DEF, this, &o); return *this; }}\n", cname);
         os << std::format("{0}::{0}({0}&&) noexcept = default;\n", cname);
         os << std::format("{0}& {0}::operator=({0}&&) noexcept = default;\n\n", cname);
     }
@@ -1542,8 +1541,8 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("    {0}() {{ val_ = val_storage_; }}\n", cname);
     os << std::format(
         "    ~{0}() {{ active_lifecycle->destroy(val_); }}\n", cname);
-    os << std::format("    {0}(const {0}&) = delete;\n", cname);
-    os << std::format("    {0}& operator=(const {0}&) = delete;\n", cname);
+    os << std::format("    {0}(const {0}& o);\n", cname);
+    os << std::format("    {0}& operator=(const {0}& o);\n", cname);
     os << std::format(
         "    {0}({0}&& o) noexcept {{"
         " val_ = val_storage_;"
@@ -1647,6 +1646,13 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             "        emplace_alt(s_alternatives[idx]);\n"
             "    _present = static_cast<int>(p);\n"
             "}}\n\n", cname);
+
+        // Copy constructor: initialise as NOTHING (val_ = val_storage_), then deep-copy.
+        os << std::format(
+            "{0}::{0}(const {0}& o) {{ val_ = val_storage_; asn1::deep_copy(asn_DEF, this, &o); }}\n", cname);
+        os << std::format(
+            "{0}& {0}::operator=(const {0}& o) {{ if (this != &o) asn1::deep_copy(asn_DEF, this, &o); return *this; }}\n\n",
+            cname);
 
         // O(1) context-tag dispatch table — emit when ALL alternatives carry a context tag.
         // Density threshold: only emit if range <= 4× count (avoids huge sparse arrays).

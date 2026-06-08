@@ -289,6 +289,21 @@ target_include_directories(test_choice PRIVATE ${CHOICE_GEN_DIR})
 target_link_libraries(test_choice PRIVATE asn1cpp_runtime)
 add_test(NAME choice COMMAND test_choice)
 
+# ---- Deep-copy (SEQUENCE-with-optionals + CHOICE) ---------------------------
+add_executable(test_deep_copy
+    seq/test_deep_copy.cpp
+    ${SEQ_OPT_GEN_DIR}/Rec5.cpp
+    ${CHOICE_GEN_DIR}/HasAlt4.cpp
+    ${CHOICE_GEN_DIR}/Alt4.cpp
+    ${CHOICE_GEN_DIR}/MyByte.cpp
+    ${CHOICE_GEN_DIR}/MyStr.cpp
+)
+# Both gen dirs define MyByte/MyStr — include only one set (.cpp) to avoid ODR.
+# SEQ_OPT_GEN_DIR listed second so its headers are found after CHOICE_GEN_DIR.
+target_include_directories(test_deep_copy PRIVATE ${CHOICE_GEN_DIR} ${SEQ_OPT_GEN_DIR})
+target_link_libraries(test_deep_copy PRIVATE asn1cpp_runtime)
+add_test(NAME deep_copy COMMAND test_deep_copy)
+
 # ---- Constrained INTEGER types ----------------------------------------------
 set(INT_RANGE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_int_range_test)
 add_custom_command(
