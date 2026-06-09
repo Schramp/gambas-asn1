@@ -1,10 +1,15 @@
 #pragma once
+
+// Maximum OID arcs decoded into a stack buffer before falling back to heap.
+// X.680 sets no formal limit; real-world OIDs are typically < 20 arcs.
+#define ASN1CPP_OID_STACK_ARCS 64
 #include <vector>
 #include <string>
 #include <span>
 #include <format>
 #include "../Tag.hpp"
 #include "../Asn1Object.hpp"
+#include "../Hints.hpp"
 #include "../codec/BerTraits.hpp"
 
 namespace asn1 {
@@ -60,11 +65,11 @@ inline Expected<uint32_t, DecodeError>
 decode_arc(std::span<const uint8_t> bytes, std::size_t& idx) {
     uint32_t v = 0;
     for (int i = 0; i < 5; ++i) {
-        if (idx >= bytes.size())
+        if (ASN1CPP_UNLIKELY(idx >= bytes.size()))
             return make_unexpected<uint32_t, DecodeError>(DecodeError("truncated OID arc"));
         uint8_t b = bytes[idx++];
         v = (v << 7) | (b & 0x7F);
-        if (!(b & 0x80)) return v;
+        if (ASN1CPP_LIKELY(!(b & 0x80))) return v;  // last byte of arc (most arcs fit in 1-2 bytes)
     }
     return make_unexpected<uint32_t, DecodeError>(DecodeError("OID arc overflow"));
 }
@@ -99,20 +104,32 @@ struct BerTraits<Oid> {
 
     static Expected<Oid, DecodeError> decode_value(std::span<const uint8_t> bytes) {
         if (bytes.empty()) return Oid{};
-        std::vector<uint32_t> arcs;
+        // Fast path: decode into a stack buffer to avoid heap allocation.
+        // Falls back to vector if arc count exceeds ASN1CPP_OID_STACK_ARCS.
+        uint32_t stack_arcs[ASN1CPP_OID_STACK_ARCS]; std::size_t n = 0;
         std::size_t i = 0;
         auto first = detail::decode_arc(bytes, i);
         if (!first) return make_unexpected<Oid, DecodeError>(first.error());
-        // Unpack first two arcs
         uint32_t f = *first;
-        arcs.push_back(f / 40);
-        arcs.push_back(f % 40);
-        while (i < bytes.size()) {
+        stack_arcs[n++] = f / 40;
+        stack_arcs[n++] = f % 40;
+        while (ASN1CPP_LIKELY(i < bytes.size())) {
             auto arc = detail::decode_arc(bytes, i);
-            if (!arc) return make_unexpected<Oid, DecodeError>(arc.error());
-            arcs.push_back(*arc);
+            if (ASN1CPP_UNLIKELY(!arc)) return make_unexpected<Oid, DecodeError>(arc.error());
+            if (ASN1CPP_UNLIKELY(n >= ASN1CPP_OID_STACK_ARCS)) {
+                // Overflow: finish decoding into a heap vector.
+                std::vector<uint32_t> arcs(stack_arcs, stack_arcs + n);
+                arcs.push_back(*arc);
+                while (i < bytes.size()) {
+                    auto a2 = detail::decode_arc(bytes, i);
+                    if (ASN1CPP_UNLIKELY(!a2)) return make_unexpected<Oid, DecodeError>(a2.error());
+                    arcs.push_back(*a2);
+                }
+                return Oid{std::move(arcs)};
+            }
+            stack_arcs[n++] = *arc;
         }
-        return Oid{std::move(arcs)};
+        return Oid{std::vector<uint32_t>(stack_arcs, stack_arcs + n)};
     }
 };
 
@@ -137,14 +154,24 @@ struct BerTraits<RelativeOid> {
     }
 
     static Expected<RelativeOid, DecodeError> decode_value(std::span<const uint8_t> value) {
-        std::vector<uint32_t> arcs;
+        uint32_t stack_arcs[ASN1CPP_OID_STACK_ARCS]; std::size_t n = 0;
         std::size_t i = 0;
-        while (i < value.size()) {
+        while (ASN1CPP_LIKELY(i < value.size())) {
             auto arc = detail::decode_arc(value, i);
-            if (!arc) return make_unexpected<RelativeOid, DecodeError>(arc.error());
-            arcs.push_back(*arc);
+            if (ASN1CPP_UNLIKELY(!arc)) return make_unexpected<RelativeOid, DecodeError>(arc.error());
+            if (ASN1CPP_UNLIKELY(n >= ASN1CPP_OID_STACK_ARCS)) {
+                std::vector<uint32_t> arcs(stack_arcs, stack_arcs + n);
+                arcs.push_back(*arc);
+                while (i < value.size()) {
+                    auto a2 = detail::decode_arc(value, i);
+                    if (ASN1CPP_UNLIKELY(!a2)) return make_unexpected<RelativeOid, DecodeError>(a2.error());
+                    arcs.push_back(*a2);
+                }
+                return RelativeOid{std::move(arcs)};
+            }
+            stack_arcs[n++] = *arc;
         }
-        return RelativeOid{std::move(arcs)};
+        return RelativeOid{std::vector<uint32_t>(stack_arcs, stack_arcs + n)};
     }
 };
 
