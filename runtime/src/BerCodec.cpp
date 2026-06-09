@@ -46,21 +46,69 @@ static void dbg_write_tag(const char* parent, const char* member, const Tag& t,
 // ---------------------------------------------------------------------------
 // Static helpers (shared by handler classes below)
 
+// Count the number of tag-identifier octets starting at buf position p.
+// X.690 §8.1.2: first byte low 5 bits == 0x1F → long form; subsequent bytes
+// have bit 8 set until the last one.
+static int tag_byte_count(const BerWriter& w, std::size_t p) {
+    if ((w.at(p) & 0x1F) != 0x1F) return 1;
+    int n = 1;
+    while (w.at(p + n) & 0x80) ++n;
+    return n + 1;
+}
+
+// Encode tag t into a small stack buffer; return byte count.
+static int encode_tag_to_buf(Tag t, uint8_t out[6]) {
+    uint8_t first = (static_cast<uint8_t>(t.cls) << 6)
+                  | (t.constructed ? 0x20u : 0x00u);
+    if (t.number < 31) {
+        out[0] = first | static_cast<uint8_t>(t.number);
+        return 1;
+    }
+    out[0] = first | 0x1F;
+    uint8_t tmp[5]; int i = 0;
+    uint32_t n = t.number;
+    do { tmp[i++] = n & 0x7F; n >>= 7; } while (n);
+    for (int j = i - 1; j >= 0; --j)
+        out[1 + (i - 1 - j)] = tmp[j] | (j ? 0x80u : 0x00u);
+    return 1 + i;
+}
+
 static void ber_encode_implicit_tagged(const BerCodec& codec, BerWriter& w,
                                        uint32_t ctx_tag_number,
                                        const TypeDescriptor& mdef, const Asn1Object* mptr,
                                        const char* parent_name, const char* member_name) {
-    std::vector<uint8_t> tmp;
-    { BerWriter bw{tmp}; BerEncodeStream ms{bw}; codec.encode(ms, mdef, mptr); }
-    BerReader br{tmp};
-    auto tlv = br.read_tlv();
-    if (!tlv) return;
+    // Encode the member directly into w (writes [orig_tag | length | value]).
+    const std::size_t tag_pos = w.pos();
+    { BerEncodeStream ms{w}; codec.encode(ms, mdef, mptr); }
+    if (w.pos() == tag_pos) return; // nothing written
+
+    // Build replacement context tag in a stack buffer.
     Tag ctx{TagClass::Context, ctx_tag_number, mdef.tag.constructed};
-    if (debug_flags() & DBG_BER_WRITE)
-        dbg_write_tag(parent_name, member_name, ctx, false, tlv->value.size());
-    w.write_tag(ctx);
-    w.write_length(tlv->value.size());
-    w.append(tlv->value);
+    uint8_t new_tag_buf[6];
+    int new_tag_bytes = encode_tag_to_buf(ctx, new_tag_buf);
+
+    // Determine how many bytes the original tag occupied.
+    int orig_tag_bytes = tag_byte_count(w, tag_pos);
+
+    if (debug_flags() & DBG_BER_WRITE) {
+        // Length sits right after the tag bytes; compute value size from length field.
+        std::size_t len_pos = tag_pos + orig_tag_bytes;
+        std::size_t vlen = (w.at(len_pos) < 0x80)
+            ? w.at(len_pos)
+            : [&]{
+                int nb = w.at(len_pos) & 0x7F;
+                std::size_t v = 0;
+                for (int k = 1; k <= nb; ++k) v = (v << 8) | w.at(len_pos + k);
+                return v;
+              }();
+        dbg_write_tag(parent_name, member_name, ctx, false, vlen);
+    }
+
+    // Replace original tag bytes with context tag bytes — zero allocation in common case.
+    w.replace_at(tag_pos,
+                 static_cast<std::size_t>(orig_tag_bytes),
+                 new_tag_buf,
+                 static_cast<std::size_t>(new_tag_bytes));
 }
 
 static void ber_encode_explicit_tagged(const BerCodec& codec, BerWriter& w,

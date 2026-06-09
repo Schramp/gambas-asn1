@@ -2,6 +2,7 @@
 #include <vector>
 #include <span>
 #include <cstdint>
+#include <cstring>
 #include <concepts>
 #include "../Tag.hpp"
 
@@ -52,6 +53,30 @@ public:
     }
 
     void append_byte(uint8_t b) { buf_.push_back(b); }
+
+    // Position marker — index of the next byte to be written.
+    std::size_t pos() const { return buf_.size(); }
+
+    // Read a previously-written byte (for tag inspection after encode).
+    uint8_t at(std::size_t i) const { return buf_[i]; }
+
+    // Overwrite old_n bytes at offset p with new_data[0..new_n-1].
+    // Same size: memcpy only.  Shrink: memcpy + memmove.  Grow: insert (rare).
+    void replace_at(std::size_t p, std::size_t old_n,
+                    const uint8_t* new_data, std::size_t new_n) {
+        if (old_n == new_n) {
+            std::memcpy(buf_.data() + p, new_data, new_n);
+        } else if (new_n < old_n) {
+            std::memcpy(buf_.data() + p, new_data, new_n);
+            const std::size_t tail = buf_.size() - p - old_n;
+            std::memmove(buf_.data() + p + new_n, buf_.data() + p + old_n, tail);
+            buf_.resize(buf_.size() - (old_n - new_n));
+        } else {
+            buf_.insert(buf_.begin() + static_cast<std::ptrdiff_t>(p + old_n),
+                        new_n - old_n, 0x00);
+            std::memcpy(buf_.data() + p, new_data, new_n);
+        }
+    }
 
     // Write a primitive TLV: tag + length + raw value bytes.
     void write_primitive(Tag t, std::span<const uint8_t> value) {
