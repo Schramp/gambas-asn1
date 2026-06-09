@@ -7,6 +7,14 @@
 #include "../Error.hpp"
 #include "../Expected.hpp"
 
+#if defined(__GNUC__) || defined(__clang__)
+#  define ASN1CPP_LIKELY(x)   __builtin_expect(!!(x), 1)
+#  define ASN1CPP_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#  define ASN1CPP_LIKELY(x)   (x)
+#  define ASN1CPP_UNLIKELY(x) (x)
+#endif
+
 namespace asn1 {
 
 class BerReader {
@@ -110,6 +118,45 @@ public:
     };
 
     Expected<TLV, DecodeError> read_tlv() {
+        // Fast path: 1-byte tag (number < 31) + definite short/long length.
+        // Covers the vast majority of ETSI BER TLVs without function-call overhead.
+        const std::size_t avail = data_.size() - pos_;
+        if (ASN1CPP_LIKELY(avail >= 2)) {
+            const uint8_t tb = data_[pos_];
+            if (ASN1CPP_LIKELY((tb & 0x1F) != 0x1F)) {
+                // 1-byte tag
+                const uint8_t lb = data_[pos_ + 1];
+                if (ASN1CPP_LIKELY(!(lb & 0x80))) {
+                    // 1-byte definite length
+                    const std::size_t vlen = lb;
+                    if (ASN1CPP_LIKELY(avail >= 2 + vlen)) {
+                        Tag tag{static_cast<TagClass>((tb >> 6) & 0x03),
+                                static_cast<uint32_t>(tb & 0x1F),
+                                (tb & 0x20) != 0};
+                        auto val = data_.subspan(pos_ + 2, vlen);
+                        pos_ += 2 + vlen;
+                        return TLV{tag, val, false};
+                    }
+                } else if (lb != 0x80 && (lb & 0x7F) <= 4) {
+                    // Long-form definite (1-4 extra length bytes, no indefinite)
+                    const int nb = lb & 0x7F;
+                    if (ASN1CPP_LIKELY(avail >= 2u + nb)) {
+                        std::size_t vlen = 0;
+                        for (int k = 0; k < nb; ++k)
+                            vlen = (vlen << 8) | data_[pos_ + 2 + k];
+                        if (ASN1CPP_LIKELY(avail >= 2u + nb + vlen)) {
+                            Tag tag{static_cast<TagClass>((tb >> 6) & 0x03),
+                                    static_cast<uint32_t>(tb & 0x1F),
+                                    (tb & 0x20) != 0};
+                            auto val = data_.subspan(pos_ + 2 + nb, vlen);
+                            pos_ += 2 + nb + vlen;
+                            return TLV{tag, val, false};
+                        }
+                    }
+                }
+            }
+        }
+        // Slow path: multi-byte tag, indefinite length, or truncated input.
         auto tag_r = read_tag();
         if (!tag_r) return make_unexpected<TLV, DecodeError>(tag_r.error());
         Tag tag = *tag_r;
