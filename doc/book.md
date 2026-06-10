@@ -25,9 +25,10 @@
 12. [Challenges in Building a Fast ASN.1 Implementation](#12-challenges-in-building-a-fast-asn1-implementation)
 13. [The Honest Parts: Where Complexity Lives](#13-the-honest-parts-where-complexity-lives)
 14. [Status and Conformance](#14-status-and-conformance)
-15. [Performance Figures](#15-performance-figures)
-16. [Contributing](#16-contributing)
-17. [References](#17-references)
+15. [Known Limitations](#15-known-limitations)
+16. [Performance Figures](#16-performance-figures)
+17. [Contributing](#17-contributing)
+18. [References](#18-references)
 
 ---
 
@@ -263,8 +264,12 @@ buffer (`asn1::AnyBer`).
 
 ### Tags and Tagging Modes
 
+*(X.680 §30 — Tagging; X.690 §8.14 — BER tagging)*
+
 Every ASN.1 type has a tag — a class and number that identify it on the wire. Universal
-tags are standardised (INTEGER is `[UNIVERSAL 2]`, SEQUENCE is `[UNIVERSAL 16]`).
+tags are standardised (INTEGER is `[UNIVERSAL 2]`, SEQUENCE is `[UNIVERSAL 16]`). Tag
+classes are: UNIVERSAL (built-in types), APPLICATION (per-standard types),
+CONTEXT-SPECIFIC (disambiguates members within a structure), and PRIVATE.
 
 When a SEQUENCE has two OPTIONAL members of the same type, the decoder cannot tell them
 apart by tag alone. ASN.1 resolves this with explicit or implicit tagging:
@@ -276,8 +281,21 @@ Wrapper ::= SEQUENCE {
 }
 ```
 
-IMPLICIT tagging replaces the original tag. EXPLICIT tagging wraps it in an outer tag.
-The choice matters for BER encoding and is tracked in the `MemberDescriptor` table.
+**IMPLICIT tagging** replaces the original universal tag with the context tag. On the
+wire, `first` encodes with tag `[0]` (0x80) instead of `UTF8String`'s `[UNIVERSAL 12]`
+(0x0C). The decoder uses its knowledge of the schema to know that context tag 0 means a
+UTF8String at this position. No additional bytes are spent.
+
+**EXPLICIT tagging** wraps the original encoding in an outer TLV. The inner encoding is
+preserved intact. `[0] EXPLICIT UTF8String` encodes as tag `[0]` (0xA0, constructed)
+containing the full `UTF8String` TLV. This costs 2–4 extra bytes but is required when
+the inner type is CHOICE, OPEN, or ANY — types whose own tag determines which
+alternative is present and must be preserved.
+
+Tagging affects the schema as a design decision: once a type is deployed with a specific
+tag, changing the tagging mode is a wire-format break. The extension marker (`...`) and
+version brackets (`[[...]]`) in ASN.1 provide managed extensibility without breaking
+existing decoders — unknown extension members are skipped by tag, not by position.
 
 ### Constraints
 
@@ -287,11 +305,14 @@ ASN.1 constraints restrict the set of valid values:
 SmallInt  ::= INTEGER (0..255)
 ShortStr  ::= UTF8String (SIZE (1..64))
 PortNum   ::= INTEGER (0..65535)
+Digit     ::= IA5String (FROM ("0123456789"))
+PrintOnly ::= UTF8String (FROM (UNIVERSAL 32 .. UNIVERSAL 126))
 ```
 
 Constraints are compiled into `Constraints` structs in the descriptor tables. They are
 used by the constraint validator and, for PER, determine the minimum number of bits
-needed to encode a value.
+needed to encode a value. A `FROM` alphabet constraint restricts the character set of a
+string type; the validator checks every character against the allowed set.
 
 ---
 
@@ -299,10 +320,29 @@ needed to encode a value.
 
 ### Basic Encoding Rules (BER)
 
+*(X.690 §8 — BER encoding rules)*
+
 BER encodes every value as a Tag-Length-Value triple. The tag identifies the type, the
 length gives the number of value bytes, and the value bytes encode the content according
 to type-specific rules. Nested structures encode as constructed TLVs whose value bytes
 are themselves TLVs.
+
+**Wire example.** `INTEGER 42` encodes as three bytes:
+
+```
+02  01  2A
+│   │   └─ value: 42 (0x2A)
+│   └───── length: 1 byte
+└───────── tag: UNIVERSAL 2, primitive (INTEGER)
+```
+
+A `SEQUENCE { a INTEGER, b UTF8String }` with `a=1`, `b="Hi"` encodes as:
+
+```
+30 09          -- SEQUENCE, length 9
+  02 01 01     -- INTEGER 1
+  0C 02 48 69  -- UTF8String "Hi"
+```
 
 BER is self-describing: a decoder that does not know the schema can still traverse the
 structure, read tag numbers and lengths, and skip unknown fields. This makes it robust
@@ -315,17 +355,32 @@ takes 3 bytes.
 Distinguished Encoding Rules (DER) are a canonical subset of BER: lengths always use
 the shortest encoding, constructed strings are forbidden, SET members are sorted by tag.
 DER is used wherever byte-for-byte reproducibility matters — chiefly in digital
-signatures.
+signatures (X.690 §11).
 
 ### Packed Encoding Rules (PER / UPER / APER)
+
+*(X.691 — PER encoding rules)*
 
 PER dispenses with self-description entirely. The encoder and decoder must both know the
 schema; the encoded bits carry only the minimum information needed to reconstruct the
 value.
 
-A constrained INTEGER (0..7) needs 3 bits. A BOOLEAN needs 1 bit. A SEQUENCE with
+A constrained `INTEGER (0..7)` needs 3 bits. A BOOLEAN needs 1 bit. A SEQUENCE with
 three OPTIONAL members has a 3-bit preamble bitmap before any values. CHOICE alternatives
-are identified by an index into the alternative list, encoded in log₂(n) bits.
+are identified by an index into the alternative list, encoded in ⌈log₂(n)⌉ bits.
+
+**PER imposes requirements on the schema itself.** For a type to have an efficient PER
+encoding, it should carry constraints: an `INTEGER` without bounds must use an
+unconstrained encoding (length-prefixed, variable width). A `SEQUENCE OF` without a
+`SIZE` constraint requires a length prefix before each element count. Well-constrained
+schemas — where every variable-length type has explicit bounds — produce the most compact
+PER output. The 3GPP RRC schema is an example: almost every field carries constraints,
+and the resulting UPER encodings are extremely dense.
+
+The extension marker (`...`) also has a PER effect. A SEQUENCE with `...` writes a 1-bit
+extension flag before the root member preamble. If any extension members are present,
+their count and each value are encoded as open-types (length-prefixed). An extension-free
+encoding sets the flag to 0 and encodes only root members.
 
 Unaligned PER (UPER) packs values at bit boundaries with no byte alignment. Aligned PER
 (APER) byte-aligns certain constructs. 3GPP uses UPER for radio interface protocols.
@@ -335,14 +390,21 @@ bytes in UPER.
 
 ### XML Encoding Rules (XER)
 
+*(X.693 — XER encoding rules)*
+
 XER transcodes ASN.1 values to XML. Each type has a canonical XML representation:
 SEQUENCE becomes a parent element whose child elements are the member values; CHOICE
 becomes a single child element named after the chosen alternative; OCTET STRING becomes
 uppercase hex; BIT STRING becomes a space-separated bit string.
 
-XER is used for logging, debugging, and human-readable diagnostics. It is not compact —
-the XER encoding of a typical ETSI record is 10–20× larger than its BER encoding — but
-it is legible.
+XER can be used wherever XML interoperability is required. Some ETSI standards mandate
+XER for management interfaces; NETCONF (RFC 6241) uses YANG but many legacy network
+management protocols carry ASN.1 XER payloads. It is also well-suited for diagnostics
+and logging — an existing XML toolchain (SAX parser, XSLT, XPath) can process XER
+output without any ASN.1-specific tool.
+
+XER is not compact — the XER encoding of a typical ETSI record is 10–20× larger than
+its BER encoding — but it is human-readable and toolchain-compatible.
 
 ### JSON Encoding Rules (JER)
 
@@ -365,7 +427,10 @@ JER maps ASN.1 to JSON. It is not yet implemented in gambas-asn1 (stub only).
 
 Let us write a simple schema from scratch. We will model a contact book entry.
 
-Create a file `contact.asn1`:
+A working copy of this schema is kept in `examples/contact-book/contact.asn1`.
+**Note to authors:** if you modify the schema in this section, update that file too.
+
+Create `examples/contact-book/contact.asn1`:
 
 ```asn1
 ContactBook DEFINITIONS IMPLICIT TAGS ::= BEGIN
@@ -399,17 +464,17 @@ optional fields. `ContactList` is an unbounded list of contacts.
 Generate C++ code:
 
 ```bash
-./build/compiler/asn1cpp contact.asn1 -o generated/
+./build/compiler/asn1cpp examples/contact-book/contact.asn1 -o generated/
 ```
 
-The compiler emits:
+The compiler emits one `.hpp` + `.cpp` pair per type:
 
 ```
 generated/
-  PhoneNumber.hpp   PhoneNumber.cpp
-  Address.hpp       Address.cpp
-  Contact.hpp       Contact.cpp
-  ContactList.hpp   ContactList.cpp
+  PhoneNumber.hpp   PhoneNumber.cpp   -- struct PhoneNumber + asn_DEF_PhoneNumber
+  Address.hpp       Address.cpp       -- struct Address + asn_DEF_Address
+  Contact.hpp       Contact.cpp       -- struct Contact + asn_DEF_Contact
+  ContactList.hpp   ContactList.cpp   -- struct ContactList + asn_DEF_ContactList
 ```
 
 Each `.hpp` declares the type and its descriptor. Each `.cpp` defines the static
@@ -436,17 +501,22 @@ target_link_libraries(myapp PRIVATE asn1cpp_runtime)
 
 ```cpp
 #include "Contact.hpp"
+#include "PhoneNumber.hpp"
 #include <asn1cpp/codec/BerCodec.hpp>
 #include <fstream>
 
 int main() {
     Contact c{};
-    c.set_name("Alice");
-    c.set_email("alice@example.com");
+    c.set_name(asn1::Utf8String("Alice"));
+
+    // OPTIONAL members are std::unique_ptr — construct in place
+    c.email = std::make_unique<asn1::Ia5String>("alice@example.com");
 
     // Encode to BER
     std::vector<uint8_t> buf;
-    asn1::BerCodec::instance().encode(buf, asn_DEF_Contact, &c);
+    asn1::BerWriter w{buf};
+    asn1::BerEncodeStream s{w};
+    asn1::BerCodec::instance().encode(s, Contact::asn_DEF, &c);
 
     // Write to file
     std::ofstream f("alice.ber", std::ios::binary);
@@ -468,16 +538,17 @@ int main() {
     std::vector<uint8_t> buf(std::istreambuf_iterator<char>(f), {});
 
     Contact c{};
-    asn1::BerDecodeStream s{buf};
-    auto result = asn1::BerCodec::instance().decode(s, asn_DEF_Contact, &c);
+    asn1::BerReader reader{buf};
+    asn1::BerDecodeStream s{reader};
+    auto result = asn1::BerCodec::instance().decode(s, Contact::asn_DEF, &c);
     if (!result) {
         std::cerr << "Decode error: " << result.error().message << "\n";
         return 1;
     }
 
-    std::cout << "Name: " << std::string(c.name()) << "\n";
-    if (c.has_email())
-        std::cout << "Email: " << std::string(c.email()) << "\n";
+    std::cout << "Name: " << std::string(c.name) << "\n";
+    if (c.email)
+        std::cout << "Email: " << std::string(*c.email) << "\n";
 }
 ```
 
@@ -486,9 +557,8 @@ int main() {
 ```cpp
 #include <asn1cpp/codec/XerCodec.hpp>
 
-std::string xml;
-asn1::XerCodec::instance().encode(xml, asn_DEF_Contact, &c);
-std::cout << xml;
+asn1::XerEncodeStream xs{std::cout};
+asn1::XerCodec::instance().encode(xs, Contact::asn_DEF, &c);
 ```
 
 Output:
@@ -536,6 +606,27 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 |------|--------|
 | `-o <dir>` | Output directory (required) |
 | `-fallow-newer-modules` | Accept module version mismatches silently |
+
+### Comparison with asn1c CLI
+
+The following table maps asn1c flags to gambas-asn1 equivalents or notes the gap.
+Open issues are linked for gaps that have been prioritised for implementation.
+
+| asn1c flag | gambas-asn1 equivalent | Status |
+|------------|----------------------|--------|
+| `-o <dir>` | `-o <dir>` | Supported |
+| `-fallow-newer-modules` | `-fallow-newer-modules` | Supported |
+| `-pdu={all\|auto\|Type}` | — | [Issue #14](https://github.com/Schramp/gambas-asn1/issues/14) |
+| `-flong-size=32\|64` | — | [Issue #15](https://github.com/Schramp/gambas-asn1/issues/15) |
+| `-fprefix=<prefix>` | — | [Issue #16](https://github.com/Schramp/gambas-asn1/issues/16) |
+| `-fno-constraints` | `ASN1CPP_VALIDATE=0` at runtime | Runtime flag only |
+| `-fno-include-deps` | — | Not applicable (C++ `#include` is explicit) |
+| `-fwide-types` | — | UInteger auto-selected by constraint range |
+| `-finteger-native-type=<mode>` | — | Storage type auto-selected |
+| `-E` (print parse tree) | — | Not implemented |
+| `-no-gen-BER/XER/UPER` | — | Not applicable; all codecs are in the runtime |
+| `-gen-autotools` | — | Not applicable; CMake is the build system |
+| `-Werror` | — | Not implemented |
 
 ### Runtime Environment Variables
 
@@ -620,10 +711,31 @@ compiles, gambas-asn1 also compiles. The descriptor table structure mirrors asn1
 `asn_TYPE_descriptor_t` family closely enough that a developer familiar with asn1c's
 output can read gambas-asn1's generated code without confusion.
 
-Cross-validation against asn1c is the primary correctness mechanism. For every random
-test record, both encoders produce BER; both decoders produce XER; the XER outputs are
-compared. 440 records × 4 seeds × 11 checks per record = over 19,000 assertions per
-cross-validation run.
+### Cross-Validation and Round-Trip Testing
+
+asn1c is the ground truth. Any divergence between asn1c output and gambas-asn1 output
+is presumed a gambas-asn1 bug until proven otherwise.
+
+The primary correctness tool is `compare_random.py` (in the umbrella validation tools,
+not part of the gambas-asn1 repository itself). For each run it:
+
+1. Generates N random records using gambas-asn1's `RandomFiller` — a type-aware random
+   data generator that respects constraints and produces valid ASN.1 object graphs.
+2. Encodes each record to BER with gambas-asn1.
+3. Decodes that BER with gambas-asn1; re-encodes; checks BER-roundtrip identity.
+4. Encodes to XER with gambas-asn1.
+5. Feeds the BER to asn1c's `ber-to-xer` converter.
+6. Compares the XER outputs byte-for-byte.
+
+Each record is put through 11 checks (encode, decode, roundtrip, XER match, and
+combinations). Running four seeds × 10 records = 440 records total, 4,840 assertions.
+A failure names the seed, record index, and check that failed — narrowing the bug to
+a specific type within seconds.
+
+`RandomFiller` is deterministic (seed-controlled) and schema-aware: it fills required
+members, randomly includes optional members, and respects SIZE and value constraints.
+Corrupted-record variants (`BerCorruptor`) test that the decoder never crashes or
+asserts on malformed input.
 
 ### Fully Table-Based: Minimal Generated Code
 
@@ -646,8 +758,9 @@ context-sensitive in others, and has evolved across five decades of ITU-T revisi
 Writing a correct ASN.1 parser from scratch is a multi-year project.
 
 The asn1c grammar, developed by Lev Walkin over many years and maintained by Mouse, is
-the best available reference implementation. Rather than rewriting it, gambas-asn1 ports
-it — with the smallest possible changes needed for RE/flex and Bison C++ mode.
+the accepted reference implementation for open-source ASN.1 parsing. Rather than
+rewriting it, gambas-asn1 ports it — with the smallest possible changes needed for
+RE/flex and Bison C++ mode.
 
 The grammar files `compiler/grammar/asn1.l` and `asn1.y` are direct derivatives of
 `asn1c/libasn1parser/asn1p_l.l` and `asn1p_y.y`. Diffs between the two are
@@ -759,10 +872,6 @@ The fix was a mandatory base class: `Asn1Object`. Every encodable type inherits 
 The codec interface uses `Asn1Object *` throughout. Layout is expressed by the language,
 not by programmer discipline.
 
-This was a 16-file refactor that touched the codec interface, all handler overrides,
-optional-member function pointers, CHOICE accessors, and generated helpers. It took one
-session and broke nothing that the test suite didn't immediately catch.
-
 ### Why -O3 Absorbed Some Improvements
 
 Some micro-optimisations that showed large gains in Debug profiles showed no measurable
@@ -781,23 +890,58 @@ benefit of eliminating function call overhead, which LTO already eliminates.
 Every project has ugly corners. Documenting them honestly is more useful than pretending
 they do not exist.
 
-### No Runtime VTables in Generated Types
+### No Per-Instance VTables in Generated Types
 
-Generated types do not use `virtual` methods for their own operations (getting members,
-setting members, querying presence). This is a deliberate choice: virtual dispatch adds
-a pointer indirection per call, and per-member accessors are called in tight loops
-during encode and decode.
+Generated types do not use `virtual` methods for their own member operations (get, set,
+presence query). This is a design choice, not an oversight. Understanding why requires
+examining what "normal inheritance" would cost.
 
-Instead, generated SEQUENCE types expose plain `get_<member>()` and `set_<member>()`
-methods. CHOICE types expose `get_<alt>()` and `set_<alt>()` plus an index accessor.
+**Why not virtual member accessors?**
 
-The downside: generated types are not polymorphic in the OOP sense. You cannot hold a
-`MySeq *` and call `encode()` on it without also knowing its `TypeDescriptor`. The
-`TypeDescriptor` carries that information — so callers pass both. This is a slightly
-unusual API but is consistent throughout the runtime.
+A SEQUENCE type with 20 members, compiled with virtual `get_<member>()` accessors, would
+carry a vptr in every instance — 8 bytes of overhead before any payload. More
+importantly, a virtual call through a vptr requires loading the vtable, loading the
+function pointer, and an indirect branch. In a BER encode loop that iterates all 20
+members sequentially, these 20 indirect branches defeat the branch predictor. At the
+scale of millions of records per hour, this matters.
 
-The `Asn1Object` base class does have a virtual destructor — the minimum needed for
-correct polymorphic deletion. Nothing else is virtual.
+**Why not `std::variant<>` for CHOICE?**
+
+`std::variant<Alt1, Alt2, ..., AltN>` looks attractive for CHOICE: it is type-safe,
+standard, and has a discriminator. The problem is template instantiation. A CHOICE with
+20 alternatives visited by a codec that calls `std::visit` with a lambda produces 20
+template instantiations of the visitor — one per alternative. With 50 CHOICE types in a
+schema, that is 1,000 instantiations that the compiler cannot merge even when the
+generated code is identical. Compile time explodes; binary size grows.
+
+**The actual approach: opaque storage + TypeDescriptor function pointers**
+
+Generated CHOICE types use a fixed-size opaque storage buffer sized to `sizeof` of the
+largest alternative:
+
+```cpp
+alignas(max_align_t) char storage_[MaxAltSize];
+int index_{-1};  // which alternative is active
+```
+
+This is a manual union — not `std::variant`, not a pointer, not a heap allocation. Every
+mandatory member of a SEQUENCE lives inline inside the SEQUENCE object, and every
+alternative of a CHOICE lives inline inside the CHOICE storage. The entire object graph
+for a deeply nested SEQUENCE is allocated in one block.
+
+The TypeDescriptor carries a table of function pointers (`get_const_fn`, `get_mut_fn`,
+`construct_fn`, `destruct_fn`) per alternative. These are **type-level** function
+pointers, not **instance-level** vptrs. There is one table entry per type, shared across
+all instances of that type — the same information a vtable carries, but stored in static
+data alongside the descriptor rather than behind a pointer in each object.
+
+This is the ugliest part of the design, and it deserves an honest apology. Manual storage
+management, placement new in the alternative slots, and explicit destructor calls are
+not idiomatic C++. They are a deliberate trade: one design-time complexity for zero
+runtime overhead on every instance, every access, every encode loop.
+
+The result: a SEQUENCE with 20 members and no optional fields allocates exactly once.
+No virtual dispatch per member. No per-instance overhead beyond the fields themselves.
 
 ### External Descriptor Tables
 
@@ -833,12 +977,13 @@ functionally correct. Replacing it with `std::expected` is a future cleanup.
 
 UPER extension handling (the `...` marker in ASN.1) is implemented for SEQUENCE preamble
 bitmaps and CHOICE index encoding. Extension member encoding (open-type wrapping per
-X.691 §12) is a stub. The 3GPP RRC cross-validation passes because the test records
-do not exercise extension alternatives — but schemas that actually populate extension
-members will fail silently in PER.
+X.691 §12) is tracked in [Issue #13](https://github.com/Schramp/gambas-asn1/issues/13)
+and is not yet implemented. Schemas that populate extension members will currently encode
+only root members in PER.
 
-This is documented in `CLAUDE.md` and is not a hidden gotcha, but it is a real gap for
-anyone using PER with extensible types in production.
+The 3GPP RRC cross-validation passes because the generated test records do not exercise
+extension alternatives. This is a real gap for anyone using PER with extensible types
+in production.
 
 ---
 
@@ -909,7 +1054,23 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 
 ---
 
-## 15. Performance Figures
+## 15. Known Limitations
+
+| Area | Limitation |
+|------|-----------|
+| **PER extension members** | Open-type encoding of extension alternatives not yet implemented ([Issue #13](https://github.com/Schramp/gambas-asn1/issues/13)). Schemas using `...` with populated extension members will silently omit extension values in PER. |
+| **NamedBits / WITH COMPONENTS / PATTERN** | BIT STRING named-bit constraints, WITH COMPONENTS, and PATTERN constraints are not enforced by the validator and not used during PER encoding. Not present in ETSI LI or 3GPP RRC schemas. |
+| **BigInteger / ArbitraryInteger** | Unconstrained INTEGER values that exceed int64_t / uint64_t range have stub types with deleted constructors. Codec cannot encode or decode these. Not used by supported schemas. |
+| **JER (JSON Encoding Rules)** | Stub only — returns `not_implemented`. |
+| **-flong-size cross-compilation** | asn1cpp compiled for a 64-bit host generates code assuming 64-bit `long`. Cross-compilation to 32-bit targets may produce wrong native INTEGER storage types ([Issue #15](https://github.com/Schramp/gambas-asn1/issues/15)). |
+| **SET member ordering** | SET members are decoded in tag order (same as SEQUENCE). The standard permits any order; out-of-order SETs from other encoders are not handled. |
+| **Indefinite-length encode** | Decoder accepts indefinite-length BER. Encoder always uses definite-length encoding. |
+| **RandomFiller coverage** | ENUMERATED fill, UInteger, Real, Null, OID, UTCTime, and GeneralizedTime fill paths have zero test coverage. |
+
+---
+
+## 16. Performance Figures
+
 
 Benchmarks run on an AMD system under WSL2, Release build (`-O3 -flto`), using
 randomly generated ETSI LI PS-PDU records (BER, seed=1).
@@ -952,7 +1113,7 @@ run on native Linux.
 
 ---
 
-## 16. Contributing
+## 17. Contributing
 
 Contributions are welcome. The project follows these conventions:
 
@@ -984,19 +1145,12 @@ python3 asn1cpp-validation-tools/compare_random.py --count 10 --seed 1 7 42 99
 
 ### Open Work
 
-See `CLAUDE.md` in the repository root for the current backlog, ranked by impact and
-effort. The highest-priority open items are:
-
-- **BER vector ctests for data-70, data-119, data-126, data-202** — mirror of the
-  existing data-62 test.
-- **PER extension member open-type encoding** — needed for schemas that populate
-  extension alternatives in UPER.
-- **NamedBits / WITH COMPONENTS / PATTERN constraints** — not used by ETSI or 3GPP
-  RRC but needed for full ASN.1 conformance.
+Open issues are tracked at https://github.com/Schramp/gambas-asn1/issues.
+See `CLAUDE.md` in the repository root for detailed technical context on each item.
 
 ---
 
-## 17. References
+## 18. References
 
 **Standards**
 
