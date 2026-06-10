@@ -75,17 +75,26 @@ struct BerTraits<Oid> {
     static constexpr Tag tag() { return Tag::universal(UniversalTag::Oid, false); }
 
     static void encode(BerWriter& w, const Oid& v) {
+        // Write OID value bytes directly into w to avoid a heap-allocated temp vector.
+        // Each arc encodes to at most 5 bytes; OIDs have at most ~128 arcs in practice.
+        // Use an inline stack buffer: 128 arcs × 5 bytes = 640 bytes max.
+        // write_primitive needs a span, so accumulate into fixed stack storage.
         const auto& a = v.arcs();
-        std::vector<uint8_t> val;
+        uint8_t stack_buf[640];
+        std::size_t len = 0;
+        auto push_arc = [&](uint32_t arc) {
+            uint8_t tmp[5]; int n = 0;
+            do { tmp[n++] = arc & 0x7F; arc >>= 7; } while (arc);
+            for (int i = n - 1; i >= 0; --i)
+                stack_buf[len++] = tmp[i] | (i ? 0x80u : 0x00u);
+        };
         if (a.size() >= 2) {
-            // First two arcs combined: first*40 + second
-            detail::encode_arc(val, a[0] * 40 + a[1]);
-            for (std::size_t i = 2; i < a.size(); ++i)
-                detail::encode_arc(val, a[i]);
+            push_arc(a[0] * 40 + a[1]);
+            for (std::size_t i = 2; i < a.size(); ++i) push_arc(a[i]);
         } else if (a.size() == 1) {
-            detail::encode_arc(val, a[0] * 40);
+            push_arc(a[0] * 40);
         }
-        w.write_primitive(tag(), val);
+        w.write_primitive(tag(), {stack_buf, len});
     }
 
     static Expected<Oid, DecodeError> decode(BerReader& r) {
@@ -121,10 +130,14 @@ struct BerTraits<RelativeOid> {
     static constexpr Tag tag() { return Tag::universal(UniversalTag::RelativeOid, false); }
 
     static void encode(BerWriter& w, const RelativeOid& v) {
-        std::vector<uint8_t> val;
-        for (uint32_t a : v.arcs())
-            detail::encode_arc(val, a);
-        w.write_primitive(tag(), val);
+        uint8_t stack_buf[640]; std::size_t len = 0;
+        for (uint32_t arc : v.arcs()) {
+            uint8_t tmp[5]; int n = 0;
+            do { tmp[n++] = arc & 0x7F; arc >>= 7; } while (arc);
+            for (int i = n - 1; i >= 0; --i)
+                stack_buf[len++] = tmp[i] | (i ? 0x80u : 0x00u);
+        }
+        w.write_primitive(tag(), {stack_buf, len});
     }
 
     static Expected<RelativeOid, DecodeError> decode(BerReader& r) {
