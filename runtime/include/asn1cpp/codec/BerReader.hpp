@@ -6,6 +6,7 @@
 #include "../Tag.hpp"
 #include "../Error.hpp"
 #include "../Expected.hpp"
+#include "../Hints.hpp"
 
 namespace asn1 {
 
@@ -27,39 +28,21 @@ public:
     }
 
     // Peek at the next TLV tag without advancing pos_.
-    // Returns nullopt (as a Tag with number=~0u) on failure.
-    Tag peek_tag() const {
-        std::size_t save = pos_;
-        // We need mutable access to call read_tag, so use a temp reader.
-        BerReader tmp{data_.subspan(save)};
-        auto r = tmp.read_tag();
-        if (!r) return Tag{TagClass::Context, ~0u, false};
-        return *r;
+    // Returns a sentinel Tag{Context, ~0u, false} on failure/end.
+    [[nodiscard]] ASN1CPP_ALWAYS_INLINE Tag peek_tag() const {
+        if (ASN1CPP_UNLIKELY(pos_ >= data_.size()))
+            return Tag{TagClass::Context, ~0u, false};
+        std::size_t p = pos_;
+        return parse_tag_at(data_, p);
     }
 
-    Expected<Tag, DecodeError> read_tag() {
+    [[nodiscard]] ASN1CPP_ALWAYS_INLINE Expected<Tag, DecodeError> read_tag() {
         if (at_end())
             return make_unexpected<Tag, DecodeError>(DecodeError("unexpected end of data reading tag", pos_));
-
-        uint8_t first = data_[pos_++];
-        TagClass cls   = static_cast<TagClass>((first >> 6) & 0x03);
-        bool constr    = (first & 0x20) != 0;
-        uint32_t num   = first & 0x1F;
-
-        if (num == 0x1F) {
-            // Long-form tag
-            num = 0;
-            for (int i = 0; i < 5; ++i) {
-                if (at_end())
-                    return make_unexpected<Tag, DecodeError>(DecodeError("truncated long-form tag", pos_));
-                uint8_t b = data_[pos_++];
-                num = (num << 7) | (b & 0x7F);
-                if (!(b & 0x80)) break;
-                if (i == 4)
-                    return make_unexpected<Tag, DecodeError>(DecodeError("long-form tag too large", pos_));
-            }
-        }
-        return Tag{cls, num, constr};
+        Tag t = parse_tag_at(data_, pos_);
+        if (ASN1CPP_UNLIKELY(t.number == ~0u))
+            return make_unexpected<Tag, DecodeError>(DecodeError("truncated or oversized long-form tag", pos_));
+        return t;
     }
 
     struct LengthResult {
@@ -67,7 +50,7 @@ public:
         bool indefinite;
     };
 
-    Expected<LengthResult, DecodeError> read_length() {
+    [[nodiscard]] ASN1CPP_ALWAYS_INLINE Expected<LengthResult, DecodeError> read_length() {
         if (at_end())
             return make_unexpected<LengthResult, DecodeError>(DecodeError("unexpected end of data reading length", pos_));
 
@@ -109,7 +92,46 @@ public:
         bool indefinite;
     };
 
-    Expected<TLV, DecodeError> read_tlv() {
+    [[nodiscard]] ASN1CPP_ALWAYS_INLINE Expected<TLV, DecodeError> read_tlv() {
+        // Fast path: 1-byte tag (number < 31) + definite short/long length.
+        // Covers the vast majority of ETSI BER TLVs without function-call overhead.
+        const std::size_t avail = data_.size() - pos_;
+        if (ASN1CPP_LIKELY(avail >= 2)) {
+            const uint8_t tb = data_[pos_];
+            if (ASN1CPP_LIKELY((tb & 0x1F) != 0x1F)) {
+                // 1-byte tag
+                const uint8_t lb = data_[pos_ + 1];
+                if (ASN1CPP_LIKELY(!(lb & 0x80))) {
+                    // 1-byte definite length
+                    const std::size_t vlen = lb;
+                    if (ASN1CPP_LIKELY(avail >= 2 + vlen)) {
+                        Tag tag{static_cast<TagClass>((tb >> 6) & 0x03),
+                                static_cast<uint32_t>(tb & 0x1F),
+                                (tb & 0x20) != 0};
+                        auto val = data_.subspan(pos_ + 2, vlen);
+                        pos_ += 2 + vlen;
+                        return TLV{tag, val, false};
+                    }
+                } else if (lb != 0x80 && (lb & 0x7F) <= 4) {
+                    // Long-form definite (1-4 extra length bytes, no indefinite)
+                    const int nb = lb & 0x7F;
+                    if (ASN1CPP_LIKELY(avail >= 2u + nb)) {
+                        std::size_t vlen = 0;
+                        for (int k = 0; k < nb; ++k)
+                            vlen = (vlen << 8) | data_[pos_ + 2 + k];
+                        if (ASN1CPP_LIKELY(avail >= 2u + nb + vlen)) {
+                            Tag tag{static_cast<TagClass>((tb >> 6) & 0x03),
+                                    static_cast<uint32_t>(tb & 0x1F),
+                                    (tb & 0x20) != 0};
+                            auto val = data_.subspan(pos_ + 2 + nb, vlen);
+                            pos_ += 2 + nb + vlen;
+                            return TLV{tag, val, false};
+                        }
+                    }
+                }
+            }
+        }
+        // Slow path: multi-byte tag, indefinite length, or truncated input.
         auto tag_r = read_tag();
         if (!tag_r) return make_unexpected<TLV, DecodeError>(tag_r.error());
         Tag tag = *tag_r;
@@ -168,6 +190,29 @@ public:
     // Create a sub-reader over a slice of the current data (for recursing into value bytes)
     BerReader sub(std::span<const uint8_t> slice) const {
         return BerReader{slice};
+    }
+
+private:
+    // Decode one tag from data[pos], advancing pos.
+    // Handles 1-byte tags (fast) and long-form multi-byte tags.
+    // Returns sentinel Tag{Context, ~0u, false} if the stream is truncated or
+    // the tag number overflows 5 base-128 bytes — callers must check number != ~0u.
+    [[nodiscard]] static ASN1CPP_ALWAYS_INLINE Tag parse_tag_at(std::span<const uint8_t> data, std::size_t& pos) noexcept {
+        uint8_t first  = data[pos++];
+        TagClass cls   = static_cast<TagClass>((first >> 6) & 0x03);
+        bool     constr = (first & 0x20) != 0;
+        uint32_t num   = first & 0x1F;
+        if (ASN1CPP_LIKELY(num != 0x1F)) return Tag{cls, num, constr};
+        // Long-form tag: base-128 continuation bytes (up to 5)
+        num = 0;
+        for (int i = 0; i < 5; ++i) {
+            if (ASN1CPP_UNLIKELY(pos >= data.size()))
+                return Tag{TagClass::Context, ~0u, false};
+            uint8_t b = data[pos++];
+            num = (num << 7) | (b & 0x7F);
+            if (ASN1CPP_LIKELY(!(b & 0x80))) return Tag{cls, num, constr};
+        }
+        return Tag{TagClass::Context, ~0u, false}; // > 5 continuation bytes
     }
 };
 
