@@ -339,9 +339,9 @@ are themselves TLVs.
 A `SEQUENCE { a INTEGER, b UTF8String }` with `a=1`, `b="Hi"` encodes as:
 
 ```
-30 09          -- SEQUENCE, length 9
-  02 01 01     -- INTEGER 1
-  0C 02 48 69  -- UTF8String "Hi"
+30 09          -- tag 0x30: UNIVERSAL 16, constructed (SEQUENCE); length 9
+  02 01 01     -- tag 0x02: UNIVERSAL  2, primitive (INTEGER);   length 1; value 1
+  0C 02 48 69  -- tag 0x0C: UNIVERSAL 12, primitive (UTF8String); length 2; "Hi"
 ```
 
 BER is self-describing: a decoder that does not know the schema can still traverse the
@@ -378,9 +378,10 @@ PER output. The 3GPP RRC schema is an example: almost every field carries constr
 and the resulting UPER encodings are extremely dense.
 
 The extension marker (`...`) also has a PER effect. A SEQUENCE with `...` writes a 1-bit
-extension flag before the root member preamble. If any extension members are present,
-their count and each value are encoded as open-types (length-prefixed). An extension-free
-encoding sets the flag to 0 and encodes only root members.
+extension flag before the root member preamble. If any extension members are present, a
+presence bitmap follows; its length is encoded as a normally small number (X.691 §12.2.6),
+and each present extension is wrapped as an open-type (length-prefixed octet string).
+An extension-free encoding sets the flag to 0 and encodes only root members.
 
 Unaligned PER (UPER) packs values at bit boundaries with no byte alignment. Aligned PER
 (APER) byte-aligns certain constructs. 3GPP uses UPER for radio interface protocols.
@@ -1062,6 +1063,7 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 | **NamedBits / WITH COMPONENTS / PATTERN** | BIT STRING named-bit constraints, WITH COMPONENTS, and PATTERN constraints are not enforced by the validator and not used during PER encoding. Not present in ETSI LI or 3GPP RRC schemas. |
 | **BigInteger / ArbitraryInteger** | Unconstrained INTEGER values that exceed int64_t / uint64_t range have stub types with deleted constructors. Codec cannot encode or decode these. Not used by supported schemas. |
 | **JER (JSON Encoding Rules)** | Stub only — returns `not_implemented`. |
+| **32-bit platforms not supported** | asn1cpp requires a 64-bit host. Both the compiler and the generated runtime use 64-bit `long`/`uint64_t` types. Building or running on a 32-bit CPU is untested and unsupported. |
 | **-flong-size cross-compilation** | asn1cpp compiled for a 64-bit host generates code assuming 64-bit `long`. Cross-compilation to 32-bit targets may produce wrong native INTEGER storage types ([Issue #15](https://github.com/Schramp/gambas-asn1/issues/15)). |
 | **SET member ordering** | SET members are decoded in tag order (same as SEQUENCE). The standard permits any order; out-of-order SETs from other encoders are not handled. |
 | **Indefinite-length encode** | Decoder accepts indefinite-length BER. Encoder always uses definite-length encoding. |
