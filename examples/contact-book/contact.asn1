@@ -1,0 +1,23 @@
+ContactBook DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+    PhoneNumber ::= SEQUENCE {
+        countryCode  INTEGER (1..999),
+        number       NumericString (SIZE (4..15))
+    }
+
+    Address ::= SEQUENCE {
+        street   UTF8String (SIZE (1..100)),
+        city     UTF8String (SIZE (1..50)),
+        country  PrintableString (SIZE (2))
+    }
+
+    Contact ::= SEQUENCE {
+        name     UTF8String (SIZE (1..100)),
+        email    IA5String (SIZE (0..254))  OPTIONAL,
+        phone    PhoneNumber                OPTIONAL,
+        address  Address                    OPTIONAL
+    }
+
+    ContactList ::= SEQUENCE OF Contact
+
+END

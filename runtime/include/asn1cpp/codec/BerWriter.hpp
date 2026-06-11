@@ -2,6 +2,7 @@
 #include <vector>
 #include <span>
 #include <cstdint>
+#include <cstring>
 #include <concepts>
 #include "../Tag.hpp"
 
@@ -53,6 +54,30 @@ public:
 
     void append_byte(uint8_t b) { buf_.push_back(b); }
 
+    // Position marker — index of the next byte to be written.
+    std::size_t pos() const { return buf_.size(); }
+
+    // Read a previously-written byte (for tag inspection after encode).
+    uint8_t at(std::size_t i) const { return buf_[i]; }
+
+    // Overwrite old_n bytes at offset p with new_data[0..new_n-1].
+    // Same size: memcpy only.  Shrink: memcpy + memmove.  Grow: insert (rare).
+    void replace_at(std::size_t p, std::size_t old_n,
+                    const uint8_t* new_data, std::size_t new_n) {
+        if (old_n == new_n) {
+            std::memcpy(buf_.data() + p, new_data, new_n);
+        } else if (new_n < old_n) {
+            std::memcpy(buf_.data() + p, new_data, new_n);
+            const std::size_t tail = buf_.size() - p - old_n;
+            std::memmove(buf_.data() + p + new_n, buf_.data() + p + old_n, tail);
+            buf_.resize(buf_.size() - (old_n - new_n));
+        } else {
+            buf_.insert(buf_.begin() + static_cast<std::ptrdiff_t>(p + old_n),
+                        new_n - old_n, 0x00);
+            std::memcpy(buf_.data() + p, new_data, new_n);
+        }
+    }
+
     // Write a primitive TLV: tag + length + raw value bytes.
     void write_primitive(Tag t, std::span<const uint8_t> value) {
         write_tag(t);
@@ -60,16 +85,50 @@ public:
         append(value);
     }
 
-    // Write a constructed TLV: encode value into a temp buffer, then emit.
+    // Write a constructed TLV in-place: reserve 3 bytes for the length field,
+    // encode content directly into this buffer, then back-fill the length.
+    // If the content fits in 1 or 2 length bytes, memmove content left to close
+    // the gap — no heap allocation for content ≤ 65535 bytes.
+    // Fallback to insert for content > 65535 bytes (rare).
     // Fn signature: void(BerWriter&)
     template<std::invocable<BerWriter&> Fn>
     void write_constructed(Tag t, Fn&& fn) {
-        std::vector<uint8_t> tmp;
-        BerWriter inner(tmp);
-        fn(inner);
         write_tag(t);
-        write_length(tmp.size());
-        append(tmp);
+
+        // Reserve 3 bytes for the length field (covers 0..65535 without shifting).
+        const std::size_t len_pos      = buf_.size();
+        buf_.resize(len_pos + 3);
+        const std::size_t content_start = buf_.size();
+
+        fn(*this);
+
+        const std::size_t content_size = buf_.size() - content_start;
+
+        if (content_size < 128) {
+            // 1-byte length: shift content left by 2
+            std::memmove(&buf_[content_start - 2], &buf_[content_start], content_size);
+            buf_.resize(len_pos + 1 + content_size);
+            buf_[len_pos] = static_cast<uint8_t>(content_size);
+        } else if (content_size < 256) {
+            // 2-byte length: shift content left by 1
+            std::memmove(&buf_[content_start - 1], &buf_[content_start], content_size);
+            buf_.resize(len_pos + 2 + content_size);
+            buf_[len_pos]     = 0x81;
+            buf_[len_pos + 1] = static_cast<uint8_t>(content_size);
+        } else if (content_size < 65536) {
+            // 3-byte length: no shift, fill in place
+            buf_[len_pos]     = 0x82;
+            buf_[len_pos + 1] = static_cast<uint8_t>(content_size >> 8);
+            buf_[len_pos + 2] = static_cast<uint8_t>(content_size);
+        } else {
+            // >65535 bytes (up to 16MB): 4-byte length (0x83 + 3 bytes).
+            // Insert one extra byte before content to extend the reserved 3→4 bytes.
+            buf_.insert(buf_.begin() + (std::ptrdiff_t)content_start, 0x00);
+            buf_[len_pos]     = 0x83;
+            buf_[len_pos + 1] = static_cast<uint8_t>(content_size >> 16);
+            buf_[len_pos + 2] = static_cast<uint8_t>(content_size >> 8);
+            buf_[len_pos + 3] = static_cast<uint8_t>(content_size);
+        }
     }
 };
 
