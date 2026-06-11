@@ -4,9 +4,11 @@
 // that are almost always true/false on the hot path.
 // Falls back to plain boolean on compilers without __builtin_expect.
 #if defined(__GNUC__) || defined(__clang__)
-#  define ASN1CPP_LIKELY(x)   __builtin_expect(!!(x), 1)
-#  define ASN1CPP_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#  define ASN1CPP_LIKELY(x)      __builtin_expect(!!(x), 1)
+#  define ASN1CPP_UNLIKELY(x)    __builtin_expect(!!(x), 0)
+#  define ASN1CPP_ALWAYS_INLINE  __attribute__((always_inline))
 #else
-#  define ASN1CPP_LIKELY(x)   (x)
-#  define ASN1CPP_UNLIKELY(x) (x)
+#  define ASN1CPP_LIKELY(x)      (x)
+#  define ASN1CPP_UNLIKELY(x)    (x)
+#  define ASN1CPP_ALWAYS_INLINE
 #endif

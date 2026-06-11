@@ -29,14 +29,14 @@ public:
 
     // Peek at the next TLV tag without advancing pos_.
     // Returns a sentinel Tag{Context, ~0u, false} on failure/end.
-    Tag peek_tag() const {
+    [[nodiscard]] ASN1CPP_ALWAYS_INLINE Tag peek_tag() const {
         if (ASN1CPP_UNLIKELY(pos_ >= data_.size()))
             return Tag{TagClass::Context, ~0u, false};
         std::size_t p = pos_;
         return parse_tag_at(data_, p);
     }
 
-    Expected<Tag, DecodeError> read_tag() {
+    [[nodiscard]] ASN1CPP_ALWAYS_INLINE Expected<Tag, DecodeError> read_tag() {
         if (at_end())
             return make_unexpected<Tag, DecodeError>(DecodeError("unexpected end of data reading tag", pos_));
         Tag t = parse_tag_at(data_, pos_);
@@ -50,7 +50,7 @@ public:
         bool indefinite;
     };
 
-    Expected<LengthResult, DecodeError> read_length() {
+    [[nodiscard]] ASN1CPP_ALWAYS_INLINE Expected<LengthResult, DecodeError> read_length() {
         if (at_end())
             return make_unexpected<LengthResult, DecodeError>(DecodeError("unexpected end of data reading length", pos_));
 
@@ -92,7 +92,7 @@ public:
         bool indefinite;
     };
 
-    Expected<TLV, DecodeError> read_tlv() {
+    [[nodiscard]] ASN1CPP_ALWAYS_INLINE Expected<TLV, DecodeError> read_tlv() {
         // Fast path: 1-byte tag (number < 31) + definite short/long length.
         // Covers the vast majority of ETSI BER TLVs without function-call overhead.
         const std::size_t avail = data_.size() - pos_;
@@ -197,7 +197,7 @@ private:
     // Handles 1-byte tags (fast) and long-form multi-byte tags.
     // Returns sentinel Tag{Context, ~0u, false} if the stream is truncated or
     // the tag number overflows 5 base-128 bytes — callers must check number != ~0u.
-    static Tag parse_tag_at(std::span<const uint8_t> data, std::size_t& pos) noexcept {
+    [[nodiscard]] static ASN1CPP_ALWAYS_INLINE Tag parse_tag_at(std::span<const uint8_t> data, std::size_t& pos) noexcept {
         uint8_t first  = data[pos++];
         TagClass cls   = static_cast<TagClass>((first >> 6) & 0x03);
         bool     constr = (first & 0x20) != 0;
