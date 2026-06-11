@@ -462,6 +462,10 @@ struct SeqOfBerHandler final : IBerTypeHandler {
                          count, edef.name);
         w.write_constructed(def.tag, [&](BerWriter& inner) {
             if (is_set_of && count > 1) {
+                // DER (X.690 §11.6) requires SET OF elements in ascending order of
+                // their encodings. The sort key is the encoded byte content, which
+                // depends on runtime values — pre-sorting the static member tables
+                // is not possible. Encode each element into a temp buffer, sort, emit.
                 std::vector<std::vector<uint8_t>> bufs;
                 bufs.reserve(count);
                 for (std::size_t i = 0; i < count; ++i) {
@@ -473,7 +477,12 @@ struct SeqOfBerHandler final : IBerTypeHandler {
                     codec.encode(es, edef, eptr);
                     bufs.push_back(std::move(tmp));
                 }
+                // g++ 13 false-positive: -Wstringop-overread fires on
+                // lexicographical_compare_three_way's memcmp bound analysis.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overread"
                 std::sort(bufs.begin(), bufs.end());
+#pragma GCC diagnostic pop
                 for (auto& b : bufs) inner.append(b);
                 return;
             }
