@@ -503,6 +503,47 @@ add_test(NAME ber_vectors_62 COMMAND test_ber_vectors_62
     ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-62)
 set_tests_properties(ber_vectors_62 PROPERTIES TIMEOUT 30)
 
+# ---- asn1c XER vector suite: data-70 (70-xer-test-OK.asn1) -----------------
+# Mirrors asn1c check-70.c: XER decode → BER encode → BER decode → XER encode.
+# (none)/-E: round-trip output must equal input (whitespace-stripped).
+# -B: XER decode must fail (broken input).
+# -D/-X: round-trip succeeds; output may differ from input.
+set(XER_VEC_70_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_vectors_70)
+set(XER_VEC_70_TYPES
+    PDU Sequence Set ExtensibleSet ExtensibleSetEnum
+    ExtensibleSequence ExtensibleSequence2
+    SetOfNULL SetOfREAL SetOfEnums SetOfEnumsEnum
+    NamedSetOfNULL NamedSetOfREAL NamedSetOfEnums NamedSetOfEnumsName
+    SequenceOf SeqOfZuka
+    SetOfChoice NamedSetOfChoice SimpleChoice
+)
+set(_xv70_outputs)
+foreach(t IN LISTS XER_VEC_70_TYPES)
+    list(APPEND _xv70_outputs ${XER_VEC_70_GEN_DIR}/${t}.hpp ${XER_VEC_70_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_xv70_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${XER_VEC_70_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/70-xer-test-OK.asn1
+            -o ${XER_VEC_70_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/70-xer-test-OK.asn1
+    COMMENT "Generating C++ from 70-xer-test-OK.asn1"
+)
+set(_xv70_cpps)
+foreach(t IN LISTS XER_VEC_70_TYPES)
+    list(APPEND _xv70_cpps ${XER_VEC_70_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_xer_vectors_70
+    seq/test_xer_vectors_70.cpp
+    ${_xv70_cpps}
+)
+target_include_directories(test_xer_vectors_70 PRIVATE ${XER_VEC_70_GEN_DIR})
+target_link_libraries(test_xer_vectors_70 PRIVATE asn1cpp_runtime)
+add_test(NAME xer_vectors_70 COMMAND test_xer_vectors_70
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-70)
+set_tests_properties(xer_vectors_70 PROPERTIES TIMEOUT 30)
+
 # ---- BER fuzz (in-tree) ---------------------------------------------------
 # Wire-level corruption sweep using BerCorruptor against the asn1cpp BER
 # decoder. Self-contained — no asn1c dependency, no etsitools/ binaries.

@@ -92,7 +92,12 @@ struct ErrorXerHandler final : IXerTypeHandler {
 struct NullXerHandler final : IXerTypeHandler {
     void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object*) const override {
-        s.os() << '<' << def.name << "></" << def.name << ">\n";
+        // asn1c uses self-closing <NULL/> when the tag name is the type name "NULL"
+        // (SEQOF element or top-level), but <name></name> for named wrappers (CHOICE alts).
+        if (def.name == std::string_view{"NULL"})
+            s.os() << "<NULL/>\n";
+        else
+            s.os() << '<' << def.name << "></" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object*) const override {
