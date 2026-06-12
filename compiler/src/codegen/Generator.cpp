@@ -1985,16 +1985,37 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     // SIZE constraint on collection length
     auto sc = compute_size_constraint(extract_size_range(def));
 
-    // SeqOfSpec — when the element is an inline-constrained builtin (e.g.
-    // SEQUENCE OF INTEGER (0..100)) emit a per-element TypeDescriptor that
-    // carries the constraint, otherwise reuse the natural type descriptor.
+    // SeqOfSpec — when the element is an inline-constrained builtin emit a per-element
+    // TypeDescriptor that carries the constraint; otherwise reuse the natural descriptor.
+    // When the element has a declared identifier (X.693 §12), emit a renamed TypeDescriptor
+    // so that XerCodec sees the right tag via edef.name without any runtime rename.
     std::ostringstream elem_decl;
+    bool has_declared_name = !elem_node.name.empty();
     std::string elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", elem_decl);
+    // Flush any per-element constrained descriptor before the SeqOfSpec.
     if (!elem_decl.str().empty()) os << elem_decl.str();
+
     os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", cname);
     os << std::format("    {},\n", elem_ref);
     os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
                       sc.flags, sc.range_bits, sc.lower, sc.upper);
+    // X.693 §12: declared element identifier overrides the XER tag at the use site.
+    // Exception: asn1c uses <NULL/> for NULL-typed elements regardless of declared name.
+    // Similarly, ANY keeps is_any=true semantics and must not be renamed.
+    if (has_declared_name) {
+        using BT = ast::BuiltinType;
+        bool is_null_or_any = false;
+        if (auto* bt = std::get_if<BT>(&elem_node.body)) {
+            is_null_or_any = (*bt == BT::Null || *bt == BT::Any);
+        } else if (auto* tr = std::get_if<ast::TypeRef>(&elem_node.body)) {
+            if (auto resolved = resolver_.resolve_ref(*tr, current_module_)) {
+                if (auto* rbt = std::get_if<BT>(&resolved->body))
+                    is_null_or_any = (*rbt == BT::Null || *rbt == BT::Any);
+            }
+        }
+        if (!is_null_or_any)
+            os << std::format("    \"{}\",\n", elem_node.name);
+    }
     os << "};\n\n";
 
     // TypeDescriptor

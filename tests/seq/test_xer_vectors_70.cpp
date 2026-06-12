@@ -16,9 +16,6 @@
 //   Inline elements inside UTF8String text content (issue #35):
 //     15, 19, 20-D, 21-D, 22-D, 23-D, 24-D, 40-D, 41-D
 //
-//   Named element XER tag — SEQOF declared-name vs type-name (issue #36):
-//     11 (SequenceOf id), 32 (SequenceOf id), 49 (NamedSetOfREAL name)
-//
 // NULL CHOICE alternative encodes as <a></a> (same as asn1c) — files 51, 53 pass.
 #include <cstdio>
 #include <fstream>
@@ -49,8 +46,6 @@ static const std::set<std::string> KNOWN_SKIP = {
     "data-70-19.in",
     "data-70-20-D.in", "data-70-21-D.in", "data-70-22-D.in", "data-70-23-D.in", "data-70-24-D.in",
     "data-70-40-D.in", "data-70-41-D.in",
-    // Named element XER tag (declared-name vs type-name) — https://github.com/Schramp/gambas-asn1/issues/36
-    "data-70-11.in", "data-70-32.in", "data-70-49.in",
 };
 
 static int failures = 0;
