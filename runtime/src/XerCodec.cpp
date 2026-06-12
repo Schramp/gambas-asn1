@@ -644,7 +644,8 @@ struct SequenceXerHandler final : IXerTypeHandler {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
             if (mbr.optional) {
-                bool present = (xer_detail::peek_tag(s).name == mbr.name);
+                auto pk = xer_detail::peek_tag(s);
+                bool present = (pk.name == mbr.name && !pk.closing && !pk.self_closing);
                 mbr.optional_ops.set_present(dest, present);
                 if (!present) continue;
             }
