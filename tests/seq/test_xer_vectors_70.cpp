@@ -10,14 +10,16 @@
 //
 // Known limitations — files in KNOWN_SKIP are counted as skipped, not failed:
 //
-//   XML comments / inline elements in text content (not parsed by asn1cpp XER):
-//     07-D, 09-D, 14-D, 15, 17-D, 19, 20-D, 21-D, 22-D, 23-D, 24-D,
-//     37-D, 38-B, 40-D, 41-D, 57-D, 58-D, 59-D, 60-D, 61-D, 62-D
+//   XML comments in element/text content (issue #34):
+//     07-D, 09-D, 14-D, 17-D, 37-D, 38-B, 57-D, 58-D, 59-D, 60-D, 61-D, 62-D
 //
-//   Named element XER tag (SEQOF declared-name vs type-name):
+//   Inline elements inside UTF8String text content (issue #35):
+//     15, 19, 20-D, 21-D, 22-D, 23-D, 24-D, 40-D, 41-D
+//
+//   Named element XER tag — SEQOF declared-name vs type-name (issue #36):
 //     11 (SequenceOf id), 32 (SequenceOf id), 49 (NamedSetOfREAL name)
 //
-//   ENUMERATED element in SEQOF (encoded as <TypeName><val/></TypeName>, not <val/>):
+//   ENUMERATED in SEQOF — bare value tag, no type wrapper (issue #37):
 //     28 (SetOfEnums), 29-D (SetOfEnums), 47 (NamedSetOfEnums)
 //
 // NULL CHOICE alternative encodes as <a></a> (same as asn1c) — files 51, 53 pass.
@@ -38,18 +40,21 @@ namespace fs = std::filesystem;
 
 // Files skipped due to known asn1cpp XER limitations (see top-of-file comment).
 static const std::set<std::string> KNOWN_SKIP = {
-    // XML comments / inline elements in text content:
+    // XML comments in element/text content — https://github.com/Schramp/gambas-asn1/issues/34
     "data-70-07-D.in", "data-70-09-D.in",
-    "data-70-14-D.in", "data-70-15.in",
-    "data-70-17-D.in", "data-70-19.in",
-    "data-70-20-D.in", "data-70-21-D.in", "data-70-22-D.in", "data-70-23-D.in", "data-70-24-D.in",
+    "data-70-14-D.in",
+    "data-70-17-D.in",
     "data-70-37-D.in", "data-70-38-B.in",
-    "data-70-40-D.in", "data-70-41-D.in",
     "data-70-57-D.in", "data-70-58-D.in", "data-70-59-D.in",
     "data-70-60-D.in", "data-70-61-D.in", "data-70-62-D.in",
-    // Named element XER tag (declared-name vs type-name):
+    // Inline elements inside UTF8String text content — https://github.com/Schramp/gambas-asn1/issues/35
+    "data-70-15.in",
+    "data-70-19.in",
+    "data-70-20-D.in", "data-70-21-D.in", "data-70-22-D.in", "data-70-23-D.in", "data-70-24-D.in",
+    "data-70-40-D.in", "data-70-41-D.in",
+    // Named element XER tag (declared-name vs type-name) — https://github.com/Schramp/gambas-asn1/issues/36
     "data-70-11.in", "data-70-32.in", "data-70-49.in",
-    // ENUMERATED element in SEQOF (value tag without type wrapper):
+    // ENUMERATED element in SEQOF (bare value tag, no type wrapper) — https://github.com/Schramp/gambas-asn1/issues/37
     "data-70-28.in", "data-70-29-D.in", "data-70-47.in",
 };
 
