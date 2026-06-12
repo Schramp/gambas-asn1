@@ -1,0 +1,27 @@
+RecursiveTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    -- Singly-linked list: recursive via unique_ptr<Node>
+    Node ::= SEQUENCE {
+        value  INTEGER,
+        next   Node OPTIONAL
+    }
+
+    -- Binary tree
+    Tree ::= SEQUENCE {
+        value  INTEGER,
+        left   Tree OPTIONAL,
+        right  Tree OPTIONAL
+    }
+
+    -- Mutually recursive pair
+    Even ::= SEQUENCE {
+        n     INTEGER,
+        odd   Odd OPTIONAL
+    }
+
+    Odd ::= SEQUENCE {
+        n     INTEGER,
+        even  Even OPTIONAL
+    }
+
+END
