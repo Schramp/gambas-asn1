@@ -1785,6 +1785,12 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
             auto synth = make_synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name);
             os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
             track_include(synth);
+        } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem->body);
+                   ebt && *ebt == ast::BuiltinType::Enumerated && !elem->enum_values.empty()) {
+            // Inline ENUMERATED element: include the pre-generated synthetic enum header.
+            auto synth = make_synthetic_name(cname, elem->name.empty() ? "Enum" : elem->name);
+            os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
+            track_include(synth);
         }
         os << std::format("using {} = asn1::VectorSeqOf<{}>;\n\n", cname, cpp_type_for(*elem));
         os << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", cname);
@@ -2098,6 +2104,18 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                     emit_file(out_dir_ / (filename_for(elem_type_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
                     emit_file(out_dir_ / (filename_for(elem_type_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
                 }
+            } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body);
+                       ebt && *ebt == ast::BuiltinType::Enumerated && !elem.enum_values.empty()) {
+                bool was_anon = elem.name.empty();
+                elem_type_name = make_synthetic_name(seqof_name, was_anon ? "Enum" : elem.name);
+                if (!generated_names_.count(elem_type_name)) {
+                    generated_names_.insert(elem_type_name);
+                    auto synthetic = std::make_shared<ast::TypeDef>(elem);
+                    synthetic->name = elem_type_name;
+                    current_type_ = elem_type_name;
+                    emit_file(out_dir_ / (filename_for(elem_type_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
+                    emit_file(out_dir_ / (filename_for(elem_type_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
+                }
             }
             // Generate synthetic SeqOf wrapper descriptor type named parent + MemberCamel.
             // If element was anonymous inline, replace it with a TypeRef to the named element
@@ -2152,6 +2170,28 @@ void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
 
     current_tag_default_ = mod.tag_default;
     std::string cname = effective_cpp_name(def.name, mod.name);
+
+    // Pre-generate inline ENUMERATED element types for top-level SEQOF/SETOF.
+    // (Analogous to the member-SEQOF path in generate_inline_types.)
+    if (def.is_seq_of() || def.is_set_of()) {
+        const auto* elem_ptr = def.is_seq_of()
+            ? std::get<ast::SequenceOfType>(def.body).element.get()
+            : std::get<ast::SetOfType>(def.body).element.get();
+        auto* ebt = std::get_if<ast::BuiltinType>(&elem_ptr->body);
+        if (ebt && *ebt == ast::BuiltinType::Enumerated && !elem_ptr->enum_values.empty()) {
+            std::string elem_name = make_synthetic_name(cname, elem_ptr->name.empty() ? "Enum" : elem_ptr->name);
+            if (!generated_names_.count(elem_name)) {
+                generated_names_.insert(elem_name);
+                auto synthetic = std::make_shared<ast::TypeDef>(*elem_ptr);
+                synthetic->name = elem_name;
+                auto save = current_type_;
+                current_type_ = elem_name;
+                emit_file(out_dir_ / (filename_for(elem_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
+                emit_file(out_dir_ / (filename_for(elem_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
+                current_type_ = save;
+            }
+        }
+    }
 
     emit_file(out_dir_ / (filename_for(cname) + ".hpp"), [&](auto& os){ emit_hpp(def, mod, os); });
 
