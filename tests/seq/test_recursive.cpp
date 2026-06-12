@@ -1,5 +1,4 @@
-// BER/XER round-trip tests for recursive types (self-referencing via unique_ptr).
-// Covers: linked list, binary tree, mutually recursive pair.
+// BER/XER round-trip tests for recursive types (linked list, binary tree, mutual recursion).
 #include <cstdio>
 #include <vector>
 #include <string>
@@ -151,6 +150,30 @@ int main() {
         check("Tree depth-2 BER idempotent", bytes == bytes2);
     }
 
+    // --- Tree: XER round-trip (both children populated) ---
+    printf("Tree — XER depth 2\n");
+    {
+        Tree enc{};
+        enc.value = Integer{1};
+        enc.left  = std::make_unique<Tree>();
+        enc.left->value = Integer{2};
+        enc.right = std::make_unique<Tree>();
+        enc.right->value = Integer{3};
+
+        std::string xer = xer_enc(Tree::asn_DEF, &enc);
+        check("Tree XER encode non-empty", !xer.empty());
+
+        Tree dec{};
+        check("Tree XER decode ok",              xer_dec(xer, Tree::asn_DEF, &dec));
+        check("Tree XER root value",             (int64_t)dec.value == 1);
+        check("Tree XER left present",           !!dec.left);
+        check("Tree XER left value",             dec.left  && (int64_t)dec.left->value  == 2);
+        check("Tree XER right present",          !!dec.right);
+        check("Tree XER right value",            dec.right && (int64_t)dec.right->value == 3);
+        check("Tree XER left children absent",   dec.left  && !dec.left->left  && !dec.left->right);
+        check("Tree XER right children absent",  dec.right && !dec.right->left && !dec.right->right);
+    }
+
     // --- Mutual recursion: Even ↔ Odd ---
     printf("Even/Odd — mutual recursion depth 2\n");
     {
@@ -177,6 +200,31 @@ int main() {
 
         auto bytes2 = ber_enc(Even::asn_DEF, &dec);
         check("Even BER idempotent",         bytes == bytes2);
+    }
+
+    // --- Mutual recursion: Even ↔ Odd XER ---
+    printf("Even/Odd — XER mutual recursion depth 2\n");
+    {
+        Even enc{};
+        enc.n   = Integer{0};
+        enc.odd = std::make_unique<Odd>();
+        enc.odd->n    = Integer{1};
+        enc.odd->even = std::make_unique<Even>();
+        enc.odd->even->n = Integer{2};
+
+        std::string xer = xer_enc(Even::asn_DEF, &enc);
+        check("Even XER encode non-empty",   !xer.empty());
+
+        Even dec{};
+        check("Even XER decode ok",          xer_dec(xer, Even::asn_DEF, &dec));
+        check("Even XER n",                  (int64_t)dec.n == 0);
+        check("Even XER odd present",        !!dec.odd);
+        check("Even XER odd.n",              dec.odd && (int64_t)dec.odd->n == 1);
+        check("Even XER odd.even present",   dec.odd && !!dec.odd->even);
+        check("Even XER odd.even.n",         dec.odd && dec.odd->even &&
+                                             (int64_t)dec.odd->even->n == 2);
+        check("Even XER odd.even.odd absent",dec.odd && dec.odd->even &&
+                                             !dec.odd->even->odd);
     }
 
     printf("\n%s  %d failure(s)\n", failures ? "\033[31mFAIL\033[0m" : "\033[32mPASS\033[0m", failures);
