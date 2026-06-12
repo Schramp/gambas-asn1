@@ -2004,8 +2004,9 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
         //    SIOF-free because all fields are link-time constants or constexpr.
         //  - same-TU constrained descriptor (elem_decl was non-empty): IIFE is safe —
         //    same-TU statics initialize top-to-bottom before this one.
-        //  - cross-TU type ref (&asn_DEF_SomeType): IIFE has SIOF risk, but in
-        //    practice CHOICE elements (the common case) ignore def.name entirely.
+        //  - cross-TU type ref: emit full descriptor via linker-resolved addresses
+        //    (CHOICE/SEQUENCE/SET/SEQOF/ENUMERATED/primitive all handled below).
+        //    IIFE is only reached for same-TU constrained descriptors.
         std::string tname = std::format("asn_TYP_{}_elem", cname);
         using BT = ast::BuiltinType;
         auto* bt = std::get_if<BT>(&elem_node.body);
@@ -2106,8 +2107,12 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
                             emit_full(*bi);
                             handled = true;
                         }
-                        // Null / Any: keep base_ref (handled = false, falls to IIFE below,
-                        // but base_ref is a runtime global so SIOF-safe in practice).
+                        else if (*rbt == BT::Null || *rbt == BT::Any) {
+                            // Keep base_ref unchanged — same behaviour as direct BT::Null/Any.
+                            // For Null: asn1c uses <NULL/> regardless of declared name.
+                            // For Any: is_any flag requires the original descriptor.
+                            handled = true;
+                        }
                     }
                     if (!handled && !kind_s.empty()) {
                         os << std::format(
