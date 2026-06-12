@@ -604,3 +604,31 @@ target_include_directories(test_ber_gaps PRIVATE ${BER_GAPS_GEN_DIR})
 target_link_libraries(test_ber_gaps PRIVATE asn1cpp_runtime)
 add_test(NAME ber_gaps COMMAND test_ber_gaps)
 set_tests_properties(ber_gaps PROPERTIES TIMEOUT 30)
+
+# test_set — SET and SET OF BER/XER round-trip (issue #23)
+set(SET_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_set_test)
+set(SET_TYPES Point Config IntSet Pair PairSet ExtPoint)
+set(_st_outputs)
+foreach(t IN LISTS SET_TYPES)
+    list(APPEND _st_outputs ${SET_GEN_DIR}/${t}.hpp ${SET_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_st_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SET_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/set_test.asn1
+                                   -o ${SET_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/set_test.asn1
+    COMMENT "Generating C++ from set_test.asn1"
+)
+set(_st_cpps)
+foreach(t IN LISTS SET_TYPES)
+    list(APPEND _st_cpps ${SET_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_set
+    seq/test_set.cpp
+    ${_st_cpps}
+)
+target_include_directories(test_set PRIVATE ${SET_GEN_DIR})
+target_link_libraries(test_set PRIVATE asn1cpp_runtime)
+add_test(NAME set COMMAND test_set)
+set_tests_properties(set PROPERTIES TIMEOUT 30)

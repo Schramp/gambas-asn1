@@ -1,0 +1,34 @@
+SetTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    -- SET: auto-tagged members get [0],[1],[2] IMPLICIT — distinguishable in BER
+    Point ::= SET {
+        x  INTEGER,
+        y  INTEGER,
+        z  INTEGER
+    }
+
+    -- SET with OPTIONAL and DEFAULT members
+    Config ::= SET {
+        width   INTEGER DEFAULT 80,
+        height  INTEGER DEFAULT 24,
+        label   UTF8String OPTIONAL
+    }
+
+    -- SET OF INTEGER — DER canonical sort required (X.690 §11.6)
+    IntSet ::= SET OF INTEGER
+
+    -- SET OF SEQUENCE — sort by encoded TLV bytes
+    Pair ::= SEQUENCE {
+        a  INTEGER,
+        b  INTEGER
+    }
+    PairSet ::= SET OF Pair
+
+    -- Extensible SET
+    ExtPoint ::= SET {
+        x  INTEGER,
+        y  INTEGER,
+        ...
+    }
+
+END
