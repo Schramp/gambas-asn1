@@ -164,8 +164,9 @@ struct MemberDescriptor {
 // SEQUENCE OF / SET OF specifics.
 // Collection operations are now virtual methods on SeqOfBase — no function pointers.
 struct SeqOfSpec {
-    const TypeDescriptor* element;         // element type descriptor; name field = XER tag (declared or type name)
+    const TypeDescriptor* element;         // element type descriptor
     Constraints        size_constraints; // SIZE constraint on collection length
+    const char*        element_xer_tag = nullptr; // X.693 §12: declared element name; nullptr = use element->name
 
     // Returns 0 when the collection satisfies SIZE(...), otherwise
     // signed delta (elements) such that (count + delta) lands at the nearest
