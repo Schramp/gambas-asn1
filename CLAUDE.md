@@ -373,6 +373,42 @@ Before rolling back or keeping a clever pattern, check:
 3. Is the assumption that makes the clever version correct already expressible via
    a language feature (inheritance, concept, template constraint)? If yes, use it.
 
-## Commits
+## Commits and pull requests
 
 Do not add `Co-Authored-By` lines to commits in this repository.
+
+### Branch discipline
+
+**Never commit directly to `main`.** Every change — feature, bugfix, test, doc — goes on a feature branch:
+
+```bash
+git checkout -b test/set-ber-roundtrip   # or fix/..., refactor/..., ci/...
+# ... make changes, commit ...
+git push --set-upstream origin <branch>
+gh pr create --repo Schramp/gambas-asn1 --title "..." --body "..."
+```
+
+Exceptions (direct-to-main only): submodule pointer bumps in the umbrella repo.
+
+### Remotes
+
+Two remotes exist:
+
+| Remote | URL | Purpose |
+|--------|-----|---------|
+| `origin` | `git.eminjenv.nl` (GitLab) | push target for all branches |
+| `github` | `github.com/Schramp/gambas-asn1` | issues + pull requests only |
+
+Push branches to `origin`. Open PRs and manage issues on GitHub using the `gh` CLI:
+```bash
+gh pr create --repo Schramp/gambas-asn1 --title "..." --body "..."
+gh issue create --repo Schramp/gambas-asn1 --title "..." --body "..."
+```
+
+Do not open GitLab merge requests. Do not push directly to the `github` remote.
+
+### ASN.1 test file immutability
+
+Files under `tests/tests-asn1c-compiler/` are **verbatim mirrors** of the asn1c test suite. Do not modify them in any way — not content, not comments, not whitespace. They are ground truth.
+
+New test schemas belong in `tests/asn1/` (asn1cpp-authored).
