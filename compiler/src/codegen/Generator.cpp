@@ -2010,6 +2010,34 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
         using BT = ast::BuiltinType;
         auto* bt = std::get_if<BT>(&elem_node.body);
         struct BInfo { int tag; const char* per_h; const char* ber_h; const char* cpp_t; };
+        // Returns BInfo for primitive builtins that support declared-name renaming.
+        // Returns nullopt for Null (asn1c uses <NULL/> regardless) and Any (is_any flag).
+        auto binfo_for = [](BT b) -> std::optional<BInfo> {
+            switch (b) {
+            case BT::Boolean:    return BInfo{asn1::UniversalTag::Boolean,  "&asn1::per_boolean_handler",    "&asn1::ber_boolean_handler",    "asn1::Boolean"};
+            case BT::Integer:    return BInfo{asn1::UniversalTag::Integer,  "&asn1::per_integer_handler",    "&asn1::ber_integer_handler",    "asn1::Integer"};
+            case BT::Real:       return BInfo{asn1::UniversalTag::Real,     "&asn1::per_real_handler",       "&asn1::ber_real_handler",       "asn1::Real"};
+            case BT::BitString:  return BInfo{asn1::UniversalTag::BitString,"&asn1::per_bitstring_handler",  "&asn1::ber_bitstring_handler",  "asn1::BitString"};
+            case BT::OctetString:return BInfo{asn1::UniversalTag::OctetString,"&asn1::per_octetstring_handler","&asn1::ber_octetstring_handler","asn1::OctetString"};
+            case BT::ObjectIdentifier:return BInfo{asn1::UniversalTag::Oid,"&asn1::per_oid_handler",        "&asn1::ber_oid_handler",        "asn1::Oid"};
+            case BT::RelativeOid:return BInfo{asn1::UniversalTag::RelativeOid,"&asn1::per_reloid_handler",  "&asn1::ber_reloid_handler",     "asn1::RelativeOid"};
+            case BT::UtcTime:    return BInfo{asn1::UniversalTag::UtcTime,  "&asn1::per_string_handler",     "&asn1::ber_utctime_handler",    "asn1::UtcTime"};
+            case BT::GeneralizedTime:return BInfo{asn1::UniversalTag::GeneralizedTime,"&asn1::per_string_handler","&asn1::ber_gentime_handler","asn1::GeneralizedTime"};
+            case BT::Utf8String: return BInfo{asn1::UniversalTag::Utf8String,"&asn1::per_string_handler",   "&asn1::ber_string_handler",     "asn1::Utf8String"};
+            case BT::Ia5String:  return BInfo{asn1::UniversalTag::Ia5String,"&asn1::per_string_handler",    "&asn1::ber_string_handler",     "asn1::Ia5String"};
+            case BT::NumericString:return BInfo{asn1::UniversalTag::NumericString,"&asn1::per_string_handler","&asn1::ber_string_handler",   "asn1::NumericString"};
+            case BT::PrintableString:return BInfo{asn1::UniversalTag::PrintableString,"&asn1::per_string_handler","&asn1::ber_string_handler","asn1::PrintableString"};
+            case BT::T61String:  return BInfo{asn1::UniversalTag::T61String,"&asn1::per_string_handler",    "&asn1::ber_string_handler",     "asn1::T61String"};
+            case BT::VisibleString:return BInfo{asn1::UniversalTag::VisibleString,"&asn1::per_string_handler","&asn1::ber_string_handler",   "asn1::VisibleString"};
+            case BT::GeneralString:return BInfo{asn1::UniversalTag::GeneralString,"&asn1::per_string_handler","&asn1::ber_string_handler",   "asn1::GeneralString"};
+            case BT::GraphicString:return BInfo{asn1::UniversalTag::GraphicString,"&asn1::per_string_handler","&asn1::ber_string_handler",   "asn1::GraphicString"};
+            case BT::UniversalString:return BInfo{asn1::UniversalTag::UniversalString,"&asn1::per_string_handler","&asn1::ber_string_handler","asn1::UniversalString"};
+            case BT::BmpString:  return BInfo{asn1::UniversalTag::BmpString,"&asn1::per_string_handler",    "&asn1::ber_string_handler",     "asn1::BmpString"};
+            case BT::VideotexString:return BInfo{asn1::UniversalTag::VideotexString,"&asn1::per_string_handler","&asn1::ber_string_handler", "asn1::VideotexString"};
+            case BT::ObjectDescriptor:return BInfo{asn1::UniversalTag::ObjectDescriptor,"&asn1::per_string_handler","&asn1::ber_string_handler","asn1::ObjectDescriptor"};
+            default: return std::nullopt; // Null, Any, Enumerated, etc.: handled separately
+            }
+        };
         auto emit_full = [&](BInfo b) {
             os << std::format(
                 "static const asn1::TypeDescriptor {} = "
@@ -2024,32 +2052,8 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
         bool handled = false;
         if (bt && elem_decl.str().empty()) {
             // Builtin global — emit full descriptor (no IIFE, SIOF-free).
-            handled = true;
-            switch (*bt) {
-            case BT::Boolean:    emit_full({asn1::UniversalTag::Boolean,  "&asn1::per_boolean_handler",    "&asn1::ber_boolean_handler",    "asn1::Boolean"});           break;
-            case BT::Integer:    emit_full({asn1::UniversalTag::Integer,  "&asn1::per_integer_handler",    "&asn1::ber_integer_handler",    "asn1::Integer"});           break;
-            case BT::Null:       /* asn1c keeps <NULL/> for declared-name NULL elements */ break;
-            case BT::Real:       emit_full({asn1::UniversalTag::Real,     "&asn1::per_real_handler",       "&asn1::ber_real_handler",       "asn1::Real"});              break;
-            case BT::BitString:  emit_full({asn1::UniversalTag::BitString,"&asn1::per_bitstring_handler",  "&asn1::ber_bitstring_handler",  "asn1::BitString"});         break;
-            case BT::OctetString:emit_full({asn1::UniversalTag::OctetString,"&asn1::per_octetstring_handler","&asn1::ber_octetstring_handler","asn1::OctetString"});     break;
-            case BT::ObjectIdentifier:emit_full({asn1::UniversalTag::Oid,"&asn1::per_oid_handler",        "&asn1::ber_oid_handler",        "asn1::Oid"});               break;
-            case BT::RelativeOid:emit_full({asn1::UniversalTag::RelativeOid,"&asn1::per_reloid_handler",  "&asn1::ber_reloid_handler",     "asn1::RelativeOid"});       break;
-            case BT::UtcTime:    emit_full({asn1::UniversalTag::UtcTime,  "&asn1::per_string_handler",     "&asn1::ber_utctime_handler",    "asn1::UtcTime"});           break;
-            case BT::GeneralizedTime: emit_full({asn1::UniversalTag::GeneralizedTime,"&asn1::per_string_handler","&asn1::ber_gentime_handler","asn1::GeneralizedTime"}); break;
-            case BT::Utf8String: emit_full({asn1::UniversalTag::Utf8String,"&asn1::per_string_handler",   "&asn1::ber_string_handler",     "asn1::Utf8String"});        break;
-            case BT::Ia5String:  emit_full({asn1::UniversalTag::Ia5String,"&asn1::per_string_handler",     "&asn1::ber_string_handler",     "asn1::Ia5String"});         break;
-            case BT::NumericString:emit_full({asn1::UniversalTag::NumericString,"&asn1::per_string_handler","&asn1::ber_string_handler",   "asn1::NumericString"});     break;
-            case BT::PrintableString:emit_full({asn1::UniversalTag::PrintableString,"&asn1::per_string_handler","&asn1::ber_string_handler","asn1::PrintableString"});  break;
-            case BT::T61String:  emit_full({asn1::UniversalTag::T61String,"&asn1::per_string_handler",    "&asn1::ber_string_handler",     "asn1::T61String"});         break;
-            case BT::VisibleString:emit_full({asn1::UniversalTag::VisibleString,"&asn1::per_string_handler","&asn1::ber_string_handler",   "asn1::VisibleString"});     break;
-            case BT::GeneralString:emit_full({asn1::UniversalTag::GeneralString,"&asn1::per_string_handler","&asn1::ber_string_handler",   "asn1::GeneralString"});     break;
-            case BT::GraphicString:emit_full({asn1::UniversalTag::GraphicString,"&asn1::per_string_handler","&asn1::ber_string_handler",   "asn1::GraphicString"});     break;
-            case BT::UniversalString:emit_full({asn1::UniversalTag::UniversalString,"&asn1::per_string_handler","&asn1::ber_string_handler","asn1::UniversalString"}); break;
-            case BT::BmpString:  emit_full({asn1::UniversalTag::BmpString,"&asn1::per_string_handler",    "&asn1::ber_string_handler",     "asn1::BmpString"});         break;
-            case BT::VideotexString:emit_full({asn1::UniversalTag::VideotexString,"&asn1::per_string_handler","&asn1::ber_string_handler", "asn1::VideotexString"});    break;
-            case BT::ObjectDescriptor:emit_full({asn1::UniversalTag::ObjectDescriptor,"&asn1::per_string_handler","&asn1::ber_string_handler","asn1::ObjectDescriptor"}); break;
-            default: handled = false; break;
-            }
+            if (auto bi = binfo_for(*bt)) { emit_full(*bi); handled = true; }
+            else if (*bt == BT::Null || *bt == BT::Any) handled = true; // keep base_ref as-is
         }
         if (!handled) {
             // For cross-TU type refs: emit a full TypeDescriptor with linker-resolved
@@ -2085,16 +2089,27 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
                         kind_s = "asn1::TypeKind::SeqOf";
                         per_h = "&asn1::per_seqof_handler";
                         ber_h = "&asn1::ber_seqof_handler";
-                    } else if (auto* rbt = std::get_if<ast::BuiltinType>(&resolved->body);
-                               rbt && *rbt == ast::BuiltinType::Enumerated) {
-                        tag_lit = std::format("asn1::Tag::universal({}, false)",
-                                              asn1::UniversalTag::Enumerated);
-                        es = std::format("&{}::asn_SPC", cn);
-                        kind_s = "asn1::TypeKind::Enumerated";
-                        per_h = "&asn1::per_enumerated_handler";
-                        ber_h = "&asn1::ber_enumerated_handler";
+                    } else if (auto* rbt = std::get_if<ast::BuiltinType>(&resolved->body)) {
+                        if (*rbt == ast::BuiltinType::Enumerated) {
+                            // TypeRef to named ENUMERATED typedef: linker-resolved spec pointer.
+                            tag_lit = std::format("asn1::Tag::universal({}, false)",
+                                                  asn1::UniversalTag::Enumerated);
+                            es = std::format("&{}::asn_SPC", cn);
+                            kind_s = "asn1::TypeKind::Enumerated";
+                            per_h = "&asn1::per_enumerated_handler";
+                            ber_h = "&asn1::ber_enumerated_handler";
+                        } else if (auto bi = binfo_for(*rbt)) {
+                            // TypeRef to primitive typedef (INTEGER, REAL, string, etc.):
+                            // emit full descriptor using base type's handlers (SIOF-free).
+                            // Note: value constraints from the typedef are dropped here;
+                            // XER/BER are unaffected, PER would need the typedef's descriptor.
+                            emit_full(*bi);
+                            handled = true;
+                        }
+                        // Null / Any: keep base_ref (handled = false, falls to IIFE below,
+                        // but base_ref is a runtime global so SIOF-safe in practice).
                     }
-                    if (!kind_s.empty()) {
+                    if (!handled && !kind_s.empty()) {
                         os << std::format(
                             "static const asn1::TypeDescriptor {} = "
                             "{{ \"{}\", {}, "
@@ -2113,8 +2128,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
             // synthetic class lives in a separate TU — emit full descriptor via linker address.
             if (!handled && bt && *bt == ast::BuiltinType::Enumerated &&
                 !elem_node.enum_values.empty()) {
-                std::string sn = make_synthetic_name(cname,
-                    elem_node.name.empty() ? "Enum" : elem_node.name);
+                std::string sn = make_synthetic_name(cname, elem_node.name);
                 os << std::format(
                     "static const asn1::TypeDescriptor {} = "
                     "{{ \"{}\", asn1::Tag::universal({}, false), "
