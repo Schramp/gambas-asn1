@@ -19,9 +19,6 @@
 //   Named element XER tag — SEQOF declared-name vs type-name (issue #36):
 //     11 (SequenceOf id), 32 (SequenceOf id), 49 (NamedSetOfREAL name)
 //
-//   ENUMERATED in SEQOF — bare value tag, no type wrapper (issue #37):
-//     28 (SetOfEnums), 29-D (SetOfEnums), 47 (NamedSetOfEnums)
-//
 // NULL CHOICE alternative encodes as <a></a> (same as asn1c) — files 51, 53 pass.
 #include <cstdio>
 #include <fstream>
@@ -54,8 +51,6 @@ static const std::set<std::string> KNOWN_SKIP = {
     "data-70-40-D.in", "data-70-41-D.in",
     // Named element XER tag (declared-name vs type-name) — https://github.com/Schramp/gambas-asn1/issues/36
     "data-70-11.in", "data-70-32.in", "data-70-49.in",
-    // ENUMERATED element in SEQOF (bare value tag, no type wrapper) — https://github.com/Schramp/gambas-asn1/issues/37
-    "data-70-28.in", "data-70-29-D.in", "data-70-47.in",
 };
 
 static int failures = 0;

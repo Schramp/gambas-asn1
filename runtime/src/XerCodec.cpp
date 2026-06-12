@@ -512,7 +512,22 @@ struct SeqOfXerHandler final : IXerTypeHandler {
                     if (i == 0) os << '\n';
                     os << s.indent(1);
                 }
-                codec.encode(es, edef, eptr);
+                if (edef.enum_spec) {
+                    // X.693 §9.3: ENUMERATED in SEQOF/SETOF encodes as bare <value/> (no type wrapper)
+                    long v = static_cast<const EnumValue*>(eptr)->value();
+                    const EnumSpec& esp = *edef.enum_spec;
+                    const char* name = nullptr;
+                    int lo = 0, hi = esp.count - 1;
+                    while (lo <= hi) {
+                        int mid = (lo + hi) / 2;
+                        if (esp.entries[mid].value == v) { name = esp.entries[mid].name; break; }
+                        if (esp.entries[mid].value < v) lo = mid + 1; else hi = mid - 1;
+                    }
+                    if (name) os << '<' << name << "/>\n";
+                    else      os << v << '\n';
+                } else {
+                    codec.encode(es, edef, eptr);
+                }
             }
             os << s.indent() << "</" << def.name << ">\n";
         }
@@ -536,8 +551,30 @@ struct SeqOfXerHandler final : IXerTypeHandler {
                     std::string("XER SEQUENCE OF: unexpected end in <") + def.name + ">"));
             seq.resize(++count);
             Asn1Object* eptr = seq.get_mut(count - 1);
-            auto r = codec.decode(s, edef, eptr);
-            if (!r) return r;
+            if (edef.enum_spec) {
+                // X.693 §9.3: ENUMERATED in SEQOF/SETOF — bare <value/> (no type wrapper)
+                auto vt = xer_detail::consume_tag(s);
+                if (vt.closing || vt.name.empty())
+                    return decode_err(DecodeError("XER SEQOF ENUM: expected value tag"));
+                if (!vt.self_closing) {
+                    auto cl = xer_detail::consume_tag(s);
+                    if (!cl.closing || cl.name != vt.name)
+                        return decode_err(DecodeError("XER SEQOF ENUM: malformed value tag"));
+                }
+                const EnumSpec& esp = *edef.enum_spec;
+                bool found = false;
+                for (int k = 0; k < esp.count; ++k) {
+                    if (vt.name == esp.entries[k].name) {
+                        static_cast<EnumValue*>(eptr)->set(esp.entries[k].value);
+                        found = true; break;
+                    }
+                }
+                if (!found)
+                    return decode_err(DecodeError("XER SEQOF ENUM: unknown value: " + vt.name));
+            } else {
+                auto r = codec.decode(s, edef, eptr);
+                if (!r) return r;
+            }
         }
         return decode_ok();
     }
