@@ -526,6 +526,7 @@ struct SeqOfXerHandler final : IXerTypeHandler {
                     if (name) os << '<' << name << "/>\n";
                     else      os << v << '\n';
                 } else {
+                    // edef.name is the XER tag: declared element name if any, else type name
                     codec.encode(es, edef, eptr);
                 }
             }
@@ -572,6 +573,7 @@ struct SeqOfXerHandler final : IXerTypeHandler {
                 if (!found)
                     return decode_err(DecodeError("XER SEQOF ENUM: unknown value: " + vt.name));
             } else {
+                // edef.name is the XER tag: declared element name if any, else type name
                 auto r = codec.decode(s, edef, eptr);
                 if (!r) return r;
             }

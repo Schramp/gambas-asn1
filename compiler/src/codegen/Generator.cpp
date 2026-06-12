@@ -1985,12 +1985,157 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     // SIZE constraint on collection length
     auto sc = compute_size_constraint(extract_size_range(def));
 
-    // SeqOfSpec — when the element is an inline-constrained builtin (e.g.
-    // SEQUENCE OF INTEGER (0..100)) emit a per-element TypeDescriptor that
-    // carries the constraint, otherwise reuse the natural type descriptor.
+    // SeqOfSpec — when the element is an inline-constrained builtin emit a per-element
+    // TypeDescriptor that carries the constraint; otherwise reuse the natural descriptor.
+    // When the element has a declared identifier (X.693 §12), emit a renamed TypeDescriptor
+    // so that XerCodec sees the right tag via edef.name without any runtime rename.
     std::ostringstream elem_decl;
-    std::string elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", elem_decl);
+    bool has_declared_name = !elem_node.name.empty();
+    // Use "_elem_base" suffix when we will emit a renamed wrapper on top.
+    std::string base_ref = emit_member_type_descriptor(
+        elem_node, cname, has_declared_name ? "elem_base" : "elem", elem_decl);
+    // Flush any per-element constrained descriptor BEFORE the renamed wrapper.
     if (!elem_decl.str().empty()) os << elem_decl.str();
+    std::string elem_ref = base_ref;
+    if (has_declared_name) {
+        // X.693 §12: emit a static TypeDescriptor with name = declared identifier.
+        // Strategy depends on where base_ref lives:
+        //  - builtin global (&asn1::asn_DEF_*): emit full descriptor inline —
+        //    SIOF-free because all fields are link-time constants or constexpr.
+        //  - same-TU constrained descriptor (elem_decl was non-empty): IIFE is safe —
+        //    same-TU statics initialize top-to-bottom before this one.
+        //  - cross-TU type ref (&asn_DEF_SomeType): IIFE has SIOF risk, but in
+        //    practice CHOICE elements (the common case) ignore def.name entirely.
+        std::string tname = std::format("asn_TYP_{}_elem", cname);
+        using BT = ast::BuiltinType;
+        auto* bt = std::get_if<BT>(&elem_node.body);
+        struct BInfo { int tag; const char* per_h; const char* ber_h; const char* cpp_t; };
+        auto emit_full = [&](BInfo b) {
+            os << std::format(
+                "static const asn1::TypeDescriptor {} = "
+                "{{ \"{}\", asn1::Tag::universal({}, false), "
+                "nullptr, nullptr, nullptr, nullptr, {{}}, false, asn1::TypeKind::Primitive, "
+                "{}, {}, "
+                "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}})"
+                " }};\n\n",
+                tname, elem_node.name, b.tag, b.per_h, b.ber_h, b.cpp_t);
+            elem_ref = "&" + tname;
+        };
+        bool handled = false;
+        if (bt && elem_decl.str().empty()) {
+            // Builtin global — emit full descriptor (no IIFE, SIOF-free).
+            handled = true;
+            switch (*bt) {
+            case BT::Boolean:    emit_full({asn1::UniversalTag::Boolean,  "&asn1::per_boolean_handler",    "&asn1::ber_boolean_handler",    "asn1::Boolean"});           break;
+            case BT::Integer:    emit_full({asn1::UniversalTag::Integer,  "&asn1::per_integer_handler",    "&asn1::ber_integer_handler",    "asn1::Integer"});           break;
+            case BT::Null:       /* asn1c keeps <NULL/> for declared-name NULL elements */ break;
+            case BT::Real:       emit_full({asn1::UniversalTag::Real,     "&asn1::per_real_handler",       "&asn1::ber_real_handler",       "asn1::Real"});              break;
+            case BT::BitString:  emit_full({asn1::UniversalTag::BitString,"&asn1::per_bitstring_handler",  "&asn1::ber_bitstring_handler",  "asn1::BitString"});         break;
+            case BT::OctetString:emit_full({asn1::UniversalTag::OctetString,"&asn1::per_octetstring_handler","&asn1::ber_octetstring_handler","asn1::OctetString"});     break;
+            case BT::ObjectIdentifier:emit_full({asn1::UniversalTag::Oid,"&asn1::per_oid_handler",        "&asn1::ber_oid_handler",        "asn1::Oid"});               break;
+            case BT::RelativeOid:emit_full({asn1::UniversalTag::RelativeOid,"&asn1::per_reloid_handler",  "&asn1::ber_reloid_handler",     "asn1::RelativeOid"});       break;
+            case BT::UtcTime:    emit_full({asn1::UniversalTag::UtcTime,  "&asn1::per_string_handler",     "&asn1::ber_utctime_handler",    "asn1::UtcTime"});           break;
+            case BT::GeneralizedTime: emit_full({asn1::UniversalTag::GeneralizedTime,"&asn1::per_string_handler","&asn1::ber_gentime_handler","asn1::GeneralizedTime"}); break;
+            case BT::Utf8String: emit_full({asn1::UniversalTag::Utf8String,"&asn1::per_string_handler",   "&asn1::ber_string_handler",     "asn1::Utf8String"});        break;
+            case BT::Ia5String:  emit_full({asn1::UniversalTag::Ia5String,"&asn1::per_string_handler",     "&asn1::ber_string_handler",     "asn1::Ia5String"});         break;
+            case BT::NumericString:emit_full({asn1::UniversalTag::NumericString,"&asn1::per_string_handler","&asn1::ber_string_handler",   "asn1::NumericString"});     break;
+            case BT::PrintableString:emit_full({asn1::UniversalTag::PrintableString,"&asn1::per_string_handler","&asn1::ber_string_handler","asn1::PrintableString"});  break;
+            case BT::T61String:  emit_full({asn1::UniversalTag::T61String,"&asn1::per_string_handler",    "&asn1::ber_string_handler",     "asn1::T61String"});         break;
+            case BT::VisibleString:emit_full({asn1::UniversalTag::VisibleString,"&asn1::per_string_handler","&asn1::ber_string_handler",   "asn1::VisibleString"});     break;
+            case BT::GeneralString:emit_full({asn1::UniversalTag::GeneralString,"&asn1::per_string_handler","&asn1::ber_string_handler",   "asn1::GeneralString"});     break;
+            case BT::GraphicString:emit_full({asn1::UniversalTag::GraphicString,"&asn1::per_string_handler","&asn1::ber_string_handler",   "asn1::GraphicString"});     break;
+            case BT::UniversalString:emit_full({asn1::UniversalTag::UniversalString,"&asn1::per_string_handler","&asn1::ber_string_handler","asn1::UniversalString"}); break;
+            case BT::BmpString:  emit_full({asn1::UniversalTag::BmpString,"&asn1::per_string_handler",    "&asn1::ber_string_handler",     "asn1::BmpString"});         break;
+            case BT::VideotexString:emit_full({asn1::UniversalTag::VideotexString,"&asn1::per_string_handler","&asn1::ber_string_handler", "asn1::VideotexString"});    break;
+            case BT::ObjectDescriptor:emit_full({asn1::UniversalTag::ObjectDescriptor,"&asn1::per_string_handler","&asn1::ber_string_handler","asn1::ObjectDescriptor"}); break;
+            default: handled = false; break;
+            }
+        }
+        if (!handled) {
+            // For cross-TU type refs: emit a full TypeDescriptor with linker-resolved
+            // addresses — all fields known from AST, no init-time reads of other TU statics.
+            // For same-TU constrained descriptors (elem_decl non-empty): IIFE is safe
+            // (same-TU statics initialise top-to-bottom before this one).
+            if (auto* tr = std::get_if<ast::TypeRef>(&elem_node.body)) {
+                auto resolved = resolver_.resolve_ref(*tr, current_module_);
+                if (resolved) {
+                    std::string cn = cpp_name_for_ref(resolved->name, current_module_);
+                    std::string tag_lit;
+                    std::string es = "nullptr", ss = "nullptr", cs = "nullptr", sos = "nullptr";
+                    std::string kind_s, per_h, ber_h;
+                    if (resolved->is_choice()) {
+                        tag_lit = "asn1::Tag{asn1::TagClass::Context, 0, false}";
+                        cs = std::format("&{}::asn_SPC", cn);
+                        kind_s = "asn1::TypeKind::Choice";
+                        per_h = "&asn1::per_choice_handler";
+                        ber_h = "&asn1::ber_choice_handler";
+                    } else if (resolved->is_sequence() || resolved->is_set()) {
+                        uint32_t utag = resolved->is_set() ? asn1::UniversalTag::Set
+                                                           : asn1::UniversalTag::Sequence;
+                        tag_lit = std::format("asn1::Tag::universal({}, true)", utag);
+                        ss = std::format("&{}::asn_SPC", cn);
+                        kind_s = "asn1::TypeKind::Sequence";
+                        per_h = "&asn1::per_sequence_handler";
+                        ber_h = "&asn1::ber_sequence_handler";
+                    } else if (resolved->is_seq_of() || resolved->is_set_of()) {
+                        uint32_t utag = resolved->is_set_of() ? asn1::UniversalTag::Set
+                                                              : asn1::UniversalTag::Sequence;
+                        tag_lit = std::format("asn1::Tag::universal({}, true)", utag);
+                        sos = std::format("&asn_SPC_{}", cn);
+                        kind_s = "asn1::TypeKind::SeqOf";
+                        per_h = "&asn1::per_seqof_handler";
+                        ber_h = "&asn1::ber_seqof_handler";
+                    } else if (auto* rbt = std::get_if<ast::BuiltinType>(&resolved->body);
+                               rbt && *rbt == ast::BuiltinType::Enumerated) {
+                        tag_lit = std::format("asn1::Tag::universal({}, false)",
+                                              asn1::UniversalTag::Enumerated);
+                        es = std::format("&{}::asn_SPC", cn);
+                        kind_s = "asn1::TypeKind::Enumerated";
+                        per_h = "&asn1::per_enumerated_handler";
+                        ber_h = "&asn1::ber_enumerated_handler";
+                    }
+                    if (!kind_s.empty()) {
+                        os << std::format(
+                            "static const asn1::TypeDescriptor {} = "
+                            "{{ \"{}\", {}, "
+                            "{}, {}, {}, {}, {{}}, false, {}, "
+                            "{}, {}, "
+                            "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}})"
+                            " }};\n\n",
+                            tname, elem_node.name, tag_lit,
+                            es, ss, cs, sos, kind_s, per_h, ber_h, cn);
+                        elem_ref = "&" + tname;
+                        handled = true;
+                    }
+                }
+            }
+            // Inline ENUMERATED with declared name (e.g. SET OF name ENUMERATED{...}):
+            // synthetic class lives in a separate TU — emit full descriptor via linker address.
+            if (!handled && bt && *bt == ast::BuiltinType::Enumerated &&
+                !elem_node.enum_values.empty()) {
+                std::string sn = make_synthetic_name(cname,
+                    elem_node.name.empty() ? "Enum" : elem_node.name);
+                os << std::format(
+                    "static const asn1::TypeDescriptor {} = "
+                    "{{ \"{}\", asn1::Tag::universal({}, false), "
+                    "&{}::asn_SPC, nullptr, nullptr, nullptr, {{}}, false, asn1::TypeKind::Enumerated, "
+                    "&asn1::per_enumerated_handler, &asn1::ber_enumerated_handler, "
+                    "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}})"
+                    " }};\n\n",
+                    tname, elem_node.name, asn1::UniversalTag::Enumerated, sn, sn);
+                elem_ref = "&" + tname;
+                handled = true;
+            }
+            if (!handled) {
+                // Same-TU constrained descriptor: IIFE copy is safe.
+                os << std::format(
+                    "static const asn1::TypeDescriptor {} = "
+                    "[](){{ auto d = *{}; d.name = \"{}\"; return d; }}();\n\n",
+                    tname, base_ref, elem_node.name);
+                elem_ref = "&" + tname;
+            }
+        }
+    }
     os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", cname);
     os << std::format("    {},\n", elem_ref);
     os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
