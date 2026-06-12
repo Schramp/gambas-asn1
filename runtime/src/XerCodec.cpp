@@ -526,7 +526,13 @@ struct SeqOfXerHandler final : IXerTypeHandler {
                     if (name) os << '<' << name << "/>\n";
                     else      os << v << '\n';
                 } else {
-                    codec.encode(es, edef, eptr);
+                    // X.693 §12: use declared element name when set, else edef.name
+                    if (spec.element_xer_tag) {
+                        TypeDescriptor named = edef; named.name = spec.element_xer_tag;
+                        codec.encode(es, named, eptr);
+                    } else {
+                        codec.encode(es, edef, eptr);
+                    }
                 }
             }
             os << s.indent() << "</" << def.name << ">\n";
@@ -572,8 +578,15 @@ struct SeqOfXerHandler final : IXerTypeHandler {
                 if (!found)
                     return decode_err(DecodeError("XER SEQOF ENUM: unknown value: " + vt.name));
             } else {
-                auto r = codec.decode(s, edef, eptr);
-                if (!r) return r;
+                // X.693 §12: use declared element name when set, else edef.name
+                if (spec.element_xer_tag) {
+                    TypeDescriptor named = edef; named.name = spec.element_xer_tag;
+                    auto r = codec.decode(s, named, eptr);
+                    if (!r) return r;
+                } else {
+                    auto r = codec.decode(s, edef, eptr);
+                    if (!r) return r;
+                }
             }
         }
         return decode_ok();
