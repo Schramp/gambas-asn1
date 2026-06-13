@@ -41,12 +41,6 @@ static void emit_file(const fs::path& path, EmitFn&& fn) {
 // Linux NAME_MAX is 255; .hpp/.cpp extensions take 4 bytes. When cname exceeds
 // 240 chars, truncate to 220 and append a deterministic FNV-1a 32-bit hash so
 // the filename fits on any POSIX filesystem.
-// Strip namespace prefix — "asn1::Null" → "Null", "FooBar" → "FooBar".
-// Used to emit destructor calls: ~Null() not ~asn1::Null() (ill-formed in C++).
-static std::string unqualified_name(const std::string& t) {
-    auto pos = t.rfind("::");
-    return (pos == std::string::npos) ? t : t.substr(pos + 2);
-}
 
 static std::string filename_for(const std::string& cname) {
     if (cname.size() <= 240) return cname;
