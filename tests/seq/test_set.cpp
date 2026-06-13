@@ -137,7 +137,10 @@ int main() {
 
         std::vector<std::vector<uint8_t>> expected = {e_1, e_50, e_neg1, e_300};
         std::vector<std::vector<uint8_t>> sorted    = {e_neg1, e_1, e_50, e_300};
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overread"
         std::sort(sorted.begin(), sorted.end());
+#pragma GCC diagnostic pop
         check("IntSet DER sort order", sorted == expected);
 
         // Verify the encoded payload is the sorted concatenation
