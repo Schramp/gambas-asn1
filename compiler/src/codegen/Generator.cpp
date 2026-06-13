@@ -41,7 +41,6 @@ static void emit_file(const fs::path& path, EmitFn&& fn) {
 // Linux NAME_MAX is 255; .hpp/.cpp extensions take 4 bytes. When cname exceeds
 // 240 chars, truncate to 220 and append a deterministic FNV-1a 32-bit hash so
 // the filename fits on any POSIX filesystem.
-
 static std::string filename_for(const std::string& cname) {
     if (cname.size() <= 240) return cname;
     uint32_t h = 2166136261u;
