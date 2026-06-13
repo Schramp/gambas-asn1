@@ -36,9 +36,6 @@ static void test_primitive_all_default() {
     // Encode with all members at their default values — body must be empty (30 00).
     Primitive enc{};
     auto setdef = [](Primitive& p) {
-        BerReader r{std::span<const uint8_t>{}};
-        BerDecodeStream s{r};
-        // Use set_default path: encode empty sequence, decode to trigger set_default fill.
         std::vector<uint8_t> empty{0x30, 0x00};
         BerReader r2{empty}; BerDecodeStream s2{r2};
         BerCodec::instance().decode(s2, Primitive::asn_DEF, &p);
