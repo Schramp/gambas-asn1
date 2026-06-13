@@ -955,7 +955,7 @@ ComponentType:
 	| TOK_COMPONENTS TOK_OF MaybeIndirectTaggedType
 	{
 	    auto t = std::make_shared<TypeDef>();
-	    t->body = TypeRef{"", "__COMPONENTS_OF__"};
+	    t->body = TypeRef{"", "__COMPONENTS_OF__", {}};
 	    $$ = t;
 	}
 	| ExtensionAndException { $$ = $1; }
