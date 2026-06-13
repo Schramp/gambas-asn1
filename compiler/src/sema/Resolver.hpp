@@ -430,6 +430,71 @@ private:
                 }
             }
         }
+        // X.680 §20: ENUMERATED — at most one extension marker; all identifiers and
+        // all numeric values (auto-resolved) distinct; extension values in ascending order.
+        {
+            auto* bt = std::get_if<ast::BuiltinType>(&def->body);
+            if (bt && *bt == ast::BuiltinType::Enumerated && !def->enum_values.empty()) {
+                std::string type_ctx = def->name.empty() ? "" : " '" + def->name + "'";
+                const auto& evs = def->enum_values;
+                int n = static_cast<int>(evs.size());
+
+                // Locate extension marker(s)
+                int marker_count = 0, ext_start = n;
+                for (int i = 0; i < n; ++i)
+                    if (evs[i].name == "...") { ++marker_count; if (marker_count == 1) ext_start = i; }
+                if (marker_count > 1)
+                    errors_.push_back("more than one extension marker in ENUMERATED"
+                                      + type_ctx + " in module '" + mod_name + "'");
+
+                // Auto-assign numeric values: root phase (0,1,...), then extension phase
+                // (max_root+1, ...). Explicit numbers override; next tracks the sequence.
+                std::vector<int64_t> vals(n, 0);
+                int64_t next = 0;
+                for (int i = 0; i < ext_start; ++i) {
+                    vals[i] = evs[i].number.value_or(next);
+                    next = vals[i] + 1;
+                }
+                int64_t max_root = ext_start > 0
+                    ? *std::max_element(vals.begin(), vals.begin() + ext_start)
+                    : -1;
+                next = max_root + 1;
+                for (int i = ext_start + 1; i < n; ++i) {
+                    if (evs[i].name == "...") continue;
+                    vals[i] = evs[i].number.value_or(next);
+                    next = vals[i] + 1;
+                }
+
+                // Duplicate identifier / duplicate numeric value
+                std::unordered_set<std::string> seen_names;
+                std::unordered_set<int64_t>     seen_vals;
+                for (int i = 0; i < n; ++i) {
+                    if (evs[i].name == "...") continue;
+                    if (!seen_names.insert(evs[i].name).second)
+                        errors_.push_back("duplicate identifier '" + evs[i].name
+                                          + "' in ENUMERATED" + type_ctx
+                                          + " in module '" + mod_name + "'");
+                    if (!seen_vals.insert(vals[i]).second)
+                        errors_.push_back("duplicate numeric value " + std::to_string(vals[i])
+                                          + " in ENUMERATED" + type_ctx
+                                          + " in module '" + mod_name + "'");
+                }
+
+                // Extension values must be in strictly ascending order (X.680 §20.6)
+                if (ext_start < n) {
+                    std::optional<int64_t> prev;
+                    for (int i = ext_start + 1; i < n; ++i) {
+                        if (evs[i].name == "...") continue;
+                        if (prev && vals[i] <= *prev)
+                            errors_.push_back("extension value '" + evs[i].name + "' ("
+                                              + std::to_string(vals[i])
+                                              + ") not in ascending order in ENUMERATED"
+                                              + type_ctx + " in module '" + mod_name + "'");
+                        prev = vals[i];
+                    }
+                }
+            }
+        }
         // Recurse into SEQUENCE/SET/CHOICE members
         for (auto& member : def->members)
             check_and_resolve(member, mod_name);
