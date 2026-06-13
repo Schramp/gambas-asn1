@@ -408,6 +408,28 @@ private:
                 }
             }
         }
+        // X.680 §18.3 / §22.4: all identifiers and all numeric values in an INTEGER
+        // named-number or BIT STRING named-bit list must be distinct.
+        {
+            auto* bt = std::get_if<ast::BuiltinType>(&def->body);
+            if (bt && (*bt == ast::BuiltinType::Integer || *bt == ast::BuiltinType::BitString)
+                    && !def->enum_values.empty()) {
+                const char* kind = (*bt == ast::BuiltinType::Integer) ? "INTEGER" : "BIT STRING";
+                std::string type_ctx = def->name.empty() ? "" : " '" + def->name + "'";
+                std::unordered_set<std::string> seen_names;
+                std::unordered_set<int64_t>     seen_nums;
+                for (const auto& ev : def->enum_values) {
+                    if (!seen_names.insert(ev.name).second)
+                        errors_.push_back(std::string("duplicate identifier '") + ev.name
+                            + "' in " + kind + " named-value list" + type_ctx
+                            + " in module '" + mod_name + "'");
+                    if (ev.number.has_value() && !seen_nums.insert(*ev.number).second)
+                        errors_.push_back(std::string("duplicate numeric value ")
+                            + std::to_string(*ev.number) + " in " + kind
+                            + " named-value list" + type_ctx + " in module '" + mod_name + "'");
+                }
+            }
+        }
         // Recurse into SEQUENCE/SET/CHOICE members
         for (auto& member : def->members)
             check_and_resolve(member, mod_name);
