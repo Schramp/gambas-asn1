@@ -632,3 +632,31 @@ target_include_directories(test_set PRIVATE ${SET_GEN_DIR})
 target_link_libraries(test_set PRIVATE asn1cpp_runtime)
 add_test(NAME set COMMAND test_set)
 set_tests_properties(set PROPERTIES TIMEOUT 30)
+
+# test_recursive — recursive type BER/XER round-trip (issue #25)
+set(RECURSIVE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_recursive_test)
+set(RECURSIVE_TYPES Node Tree Even Odd)
+set(_rt_outputs)
+foreach(t IN LISTS RECURSIVE_TYPES)
+    list(APPEND _rt_outputs ${RECURSIVE_GEN_DIR}/${t}.hpp ${RECURSIVE_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_rt_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RECURSIVE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/recursive_test.asn1
+                                   -o ${RECURSIVE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/recursive_test.asn1
+    COMMENT "Generating C++ from recursive_test.asn1"
+)
+set(_rt_cpps)
+foreach(t IN LISTS RECURSIVE_TYPES)
+    list(APPEND _rt_cpps ${RECURSIVE_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_recursive
+    seq/test_recursive.cpp
+    ${_rt_cpps}
+)
+target_include_directories(test_recursive PRIVATE ${RECURSIVE_GEN_DIR})
+target_link_libraries(test_recursive PRIVATE asn1cpp_runtime)
+add_test(NAME recursive COMMAND test_recursive)
+set_tests_properties(recursive PROPERTIES TIMEOUT 30)
