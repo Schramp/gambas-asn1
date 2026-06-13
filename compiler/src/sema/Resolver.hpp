@@ -126,11 +126,25 @@ public:
 
     // Phase 1: collect all top-level definitions from all modules
     void collect(const ast::ParseResult& pr) {
+        // X.680 §12.1: module names must be unique within a compilation unit.
+        std::unordered_set<std::string> seen_modules;
+        for (const auto& mod : pr.modules) {
+            if (!seen_modules.insert(mod->name).second)
+                errors_.push_back("duplicate module name '" + mod->name + "'");
+        }
+
+        // Collect per-module symbols; flag cross-module type name collisions.
+        std::unordered_map<std::string, std::string> global_type_origin; // name → first module
         for (const auto& mod : pr.modules) {
             SymbolTable& tbl = module_symbols_[mod->name];
             for (const auto& def : mod->assignments) {
-                if (!def->name.empty())
+                if (!def->name.empty()) {
                     tbl[def->name] = def;
+                    auto [it, inserted] = global_type_origin.emplace(def->name, mod->name);
+                    if (!inserted && it->second != mod->name)
+                        errors_.push_back("type '" + def->name + "' defined in both module '"
+                                          + it->second + "' and module '" + mod->name + "'");
+                }
             }
         }
     }
