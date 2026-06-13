@@ -1,0 +1,26 @@
+DefaultTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    -- INTEGER / BOOLEAN / ENUMERATED DEFAULT (all codegen-supported types)
+    Primitive ::= SEQUENCE {
+        count   INTEGER     DEFAULT 0,
+        active  BOOLEAN     DEFAULT FALSE,
+        level   Level       DEFAULT medium
+    }
+
+    Level ::= ENUMERATED { low, medium, high }
+
+    -- Non-zero / non-false defaults
+    Config ::= SEQUENCE {
+        timeout INTEGER     DEFAULT 30,
+        retries INTEGER     DEFAULT 3,
+        loud    BOOLEAN     DEFAULT TRUE
+    }
+
+    -- Required + DEFAULT + OPTIONAL mixed
+    Mixed ::= SEQUENCE {
+        id      INTEGER,
+        code    INTEGER     DEFAULT 200,
+        extra   INTEGER     OPTIONAL
+    }
+
+END
