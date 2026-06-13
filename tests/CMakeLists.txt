@@ -634,6 +634,34 @@ add_test(NAME set COMMAND test_set)
 set_tests_properties(set PROPERTIES TIMEOUT 30)
 
 # test_recursive — recursive type BER/XER round-trip (issue #25)
+# test_default — DEFAULT suppress/fill for INTEGER / BOOLEAN / ENUMERATED (issue #24)
+set(DEFAULT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_default_test)
+set(DEFAULT_TYPES Primitive Config Mixed Level)
+set(_df_outputs)
+foreach(t IN LISTS DEFAULT_TYPES)
+    list(APPEND _df_outputs ${DEFAULT_GEN_DIR}/${t}.hpp ${DEFAULT_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_df_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${DEFAULT_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/default_test.asn1
+                                   -o ${DEFAULT_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/default_test.asn1
+    COMMENT "Generating C++ from default_test.asn1"
+)
+set(_df_cpps)
+foreach(t IN LISTS DEFAULT_TYPES)
+    list(APPEND _df_cpps ${DEFAULT_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_default
+    seq/test_default.cpp
+    ${_df_cpps}
+)
+target_include_directories(test_default PRIVATE ${DEFAULT_GEN_DIR})
+target_link_libraries(test_default PRIVATE asn1cpp_runtime)
+add_test(NAME default_values COMMAND test_default)
+set_tests_properties(default_values PROPERTIES TIMEOUT 30)
+
 set(RECURSIVE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_recursive_test)
 set(RECURSIVE_TYPES Node Tree Even Odd)
 set(_rt_outputs)
