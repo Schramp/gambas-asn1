@@ -395,6 +395,7 @@ private:
         using Key = std::pair<uint8_t /*TagClass*/, uint32_t /*tag number*/>;
         std::set<Key> concrete;
         bool open = false; // extensible CHOICE: unknown extension tags possible
+        bool any  = false; // legacy ANY type (X.208): no fixed BER tag, clashes with all concrete tags
     };
 
     static const char* tag_class_str(uint8_t c) {
@@ -404,6 +405,26 @@ private:
         case ast::TagClass::Context:     return "CONTEXT";
         case ast::TagClass::Private:     return "PRIVATE";
         default:                         return "?";
+        }
+    }
+
+    // X.680 Annex B.5 / asn1c asn1fix_compat.c — string type compatibility group.
+    // KM  (group 1): IA5/Printable/Visible/Numeric/Universal/BMP + UTF8String.
+    // NKM (group 2): General/Graphic/T61/Videotex/ObjectDescriptor.
+    // Two strings are compatible iff they are in the same group.
+    // Returns 0 for non-string types.
+    static int string_group(ast::BuiltinType bt) {
+        using B = ast::BuiltinType;
+        switch (bt) {
+        case B::Utf8String: case B::PrintableString: case B::VisibleString:
+        case B::NumericString: case B::UniversalString: case B::BmpString:
+        case B::Ia5String:
+            return 1;
+        case B::GeneralString: case B::GraphicString: case B::T61String:
+        case B::VideotexString: case B::ObjectDescriptor:
+            return 2;
+        default:
+            return 0;
         }
     }
 
@@ -418,7 +439,7 @@ private:
         if (def.tag.present()) {
             TagSet::Key k{static_cast<uint8_t>(def.tag.cls),
                           static_cast<uint32_t>(def.tag.number)};
-            return {{k}, false};
+            return {{k}, false, false};
         }
         // CHOICE: union of all alternatives' visible tags
         if (def.is_choice()) {
@@ -429,6 +450,7 @@ private:
                 auto sub = tag_set_of(*m, from_module, depth + 1);
                 result.concrete.insert(sub.concrete.begin(), sub.concrete.end());
                 if (sub.open) result.open = true;
+                if (sub.any)  result.any  = true;
             }
             return result;
         }
@@ -468,7 +490,7 @@ private:
             case B::GeneralString:    n = 27; break;
             case B::UniversalString:  n = 28; break;
             case B::BmpString:        n = 30; break;
-            case B::Any:              return {{}, true};  // ANY has no fixed tag
+            case B::Any:              return {{}, false, true};  // ANY has no fixed BER tag (X.208 legacy)
             default: break;
             }
             if (n) return {{{u, n}}, false};
@@ -624,9 +646,15 @@ private:
                     errors_.push_back("ambiguous extensible CHOICE members in "
                         + std::string(kind) + ctx + " in module '" + mod_name + "'");
                 };
+                auto report_any = [&]() {
+                    errors_.push_back("ANY tag conflict in "
+                        + std::string(kind) + ctx + " in module '" + mod_name + "'");
+                };
 
                 // Compare two TagSets; report any collision.
+                // ANY (any=true): no fixed BER tag — clashes with any concrete OPTIONAL member (X.208).
                 auto compare_sets = [&](const TagSet& a, const TagSet& b) {
+                    if (a.any || b.any) { report_any(); return; }
                     for (const auto& tk : a.concrete)
                         if (b.concrete.count(tk)) { report_tag(tk); return; }
                     if (a.open && b.open) { report_open(); return; }
@@ -665,6 +693,56 @@ private:
                             if (!nv || nv->is_extension_marker) continue;
                             auto ts_nv = tag_set_of(*nv, mod_name, 0);
                             compare_sets(ts_v, ts_nv);
+                        }
+                    }
+                }
+            }
+        }
+        // IMPLICIT tag on legacy ANY is meaningless: ANY encodes as a complete TLV whose tag
+        // is determined at runtime; stripping it via IMPLICIT leaves an undecodable structure.
+        // ANY is a deprecated X.208 type; X.680 §30.8 governs X.681 open types, but the
+        // practical prohibition is identical.  asn1c rejects this with a fatal error.
+        if (def->tag.present() && def->tag.mode == ast::TagMode::Implicit) {
+            auto base = follow_aliases(def, mod_name);
+            if (base) {
+                auto* bt = std::get_if<ast::BuiltinType>(&base->body);
+                if (bt && *bt == ast::BuiltinType::Any)
+                    errors_.push_back("IMPLICIT tag on ANY '"
+                        + def->name + "' in module '" + mod_name + "'");
+            }
+        }
+        // X.680 §24.11: the DEFAULT value "shall be a value notation for a value of
+        // the type defined by 'Type'".  This fires when a NamedValueRef DEFAULT
+        // resolves to a type incompatible with the member's type.
+        // String compatibility per Annex B.5 (see string_group()); all other builtin
+        // type mismatches are unconditionally incompatible per §24.11.
+        if (def->has_default()) {
+            if (auto* nvr = std::get_if<ast::NamedValueRef>(&def->default_value)) {
+                if (!nvr->name.empty()) {
+                    // Value assignments are stored in the same symbol table as types
+                    // (module_resolution_ holds own + imported symbols).
+                    auto val_def = lookup_direct(nvr->name, mod_name);
+                    if (val_def) {
+                        auto member_base = follow_aliases(def, mod_name);
+                        auto val_base    = follow_aliases(val_def, mod_name);
+                        if (member_base && val_base) {
+                            auto* mb = std::get_if<ast::BuiltinType>(&member_base->body);
+                            auto* vb = std::get_if<ast::BuiltinType>(&val_base->body);
+                            // X.680 §24.11 + Annex B: same builtin type → always
+                            // compatible (e.g. INTEGER aliases per B.4.5, same string
+                            // type per B.5).  Only cross-type mismatches need checking.
+                            if (mb && vb && *mb != *vb) {
+                                int gm = string_group(*mb);
+                                int gv = string_group(*vb);
+                                // String member: error only when value is from a different
+                                // string group (Annex B.5 allows cross-type within same group).
+                                // Non-string member: any builtin mismatch is an error (§24.11).
+                                bool incompatible = (gm != 0) ? (gm != gv) : true;
+                                if (incompatible)
+                                    errors_.push_back("DEFAULT value '" + nvr->name
+                                        + "' type incompatible with member '"
+                                        + def->name + "' in module '" + mod_name + "'");
+                            }
                         }
                     }
                 }
