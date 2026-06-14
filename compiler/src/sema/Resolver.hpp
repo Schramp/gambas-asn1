@@ -189,7 +189,7 @@ public:
                         ? &oids_match_newer
                         : (imp.version_policy == VP::Successors)  ? &oids_match_successors
                         : (imp.version_policy == VP::Descendants) ? &oids_match_descendants
-                        :                                            &oids_match_descendants;
+                        :                                            &oids_match;
 
                 // Lookup: OID authoritative when present; fall back to name when absent.
                 std::string resolved_name;
