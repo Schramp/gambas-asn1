@@ -168,6 +168,11 @@ public:
 
             // Bring in imports
             for (const auto& imp : mod->imports) {
+                // X.680 §12.3: a module may not import from itself.
+                if (imp.from_module == mod->name) {
+                    errors_.push_back("module '" + mod->name + "' imports from itself");
+                    continue;
+                }
                 auto it = module_symbols_.find(imp.from_module);
                 if (it == module_symbols_.end()) {
                     std::string msg = "module '" + imp.from_module
@@ -217,13 +222,17 @@ public:
                         bool ok = oids_match(imp.module_oid, src_mod->oid);
                         if (!ok) {
                             if (imp.version_policy == VP::Successors) {
+                                // X.680 §12.6: WITH SUCCESSORS — same OID arc count,
+                                // last arc must be >= imported.  An extra arc does not
+                                // qualify; do NOT fall through to the prefix check.
                                 ok = oids_match_successors(imp.module_oid, src_mod->oid);
                             } else if (imp.version_policy == VP::Descendants) {
                                 ok = oids_match_descendants(imp.module_oid, src_mod->oid);
-                            }
-                            // Implicit: import OID is a prefix of module OID (ETSI versioning)
-                            if (!ok)
+                            } else {
+                                // VP::Exact (no keyword): implicit prefix match for ETSI
+                                // versioning where the module OID may carry extra arcs.
                                 ok = oids_match_descendants(imp.module_oid, src_mod->oid);
+                            }
                         }
                         if (!ok) {
                             errors_.push_back("module '" + imp.from_module
