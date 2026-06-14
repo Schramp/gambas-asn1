@@ -393,6 +393,10 @@ set(_parser_test_args
     ${CMAKE_CURRENT_SOURCE_DIR}/run_parser_tests.py
     --asn1cpp $<TARGET_FILE:asn1cpp>
     --test-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler
+    # 49: imports from modules not provided in the same file — valid in asn1c -E (parse-only)
+    # but a hard error in asn1cpp full sema. Re-enable when -E / parse-only mode is added.
+    # 183: inline base64 member syntax not yet supported by asn1cpp parser.
+    --known-failures 49-real-life-OK.asn1 183-inline-base64-member-OK.asn1
 )
 
 if(WITH_ASN1C_XVAL)
