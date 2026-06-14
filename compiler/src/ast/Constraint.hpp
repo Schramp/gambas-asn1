@@ -30,6 +30,7 @@ struct ExtensionMarker {};
 
 struct IntersectionConstraint {
     std::vector<ConstraintPtr> operands;
+    bool serial{false}; // true when built from serial (A)(B) syntax, not explicit A ^ B
 };
 struct UnionConstraint {
     std::vector<ConstraintPtr> operands;
