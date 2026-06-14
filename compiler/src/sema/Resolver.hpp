@@ -99,6 +99,37 @@ inline bool oids_match_newer(const ast::OidValue& imp, const ast::OidValue& mod)
     return v == 0 || v == -1 || v == 2;
 }
 
+inline const char* builtin_type_name(ast::BuiltinType bt) {
+    using B = ast::BuiltinType;
+    switch (bt) {
+    case B::Boolean:          return "BOOLEAN";
+    case B::Integer:          return "INTEGER";
+    case B::BitString:        return "BIT STRING";
+    case B::OctetString:      return "OCTET STRING";
+    case B::Null:             return "NULL";
+    case B::ObjectIdentifier: return "OBJECT IDENTIFIER";
+    case B::RelativeOid:      return "RELATIVE-OID";
+    case B::Real:             return "REAL";
+    case B::Enumerated:       return "ENUMERATED";
+    case B::Utf8String:       return "UTF8String";
+    case B::NumericString:    return "NumericString";
+    case B::PrintableString:  return "PrintableString";
+    case B::T61String:        return "T61String";
+    case B::VideotexString:   return "VideotexString";
+    case B::Ia5String:        return "IA5String";
+    case B::GraphicString:    return "GraphicString";
+    case B::VisibleString:    return "VisibleString";
+    case B::GeneralString:    return "GeneralString";
+    case B::UniversalString:  return "UniversalString";
+    case B::BmpString:        return "BMPString";
+    case B::ObjectDescriptor: return "ObjectDescriptor";
+    case B::UtcTime:          return "UTCTime";
+    case B::GeneralizedTime:  return "GeneralizedTime";
+    case B::Any:              return "ANY";
+    }
+    return "builtin type";
+}
+
 inline std::string oid_to_string(const ast::OidValue& oid) {
     std::string s = "{";
     for (const auto& arc : oid.arcs) {
@@ -538,6 +569,25 @@ private:
                     if (!skip && !module_visible_[mod_name].count(tname))
                         errors_.push_back("'" + tname + "' used in module '"
                             + mod_name + "' is not defined or imported");
+                    // X.680 §24.1: COMPONENTS OF must reference a SEQUENCE or SET type.
+                    if (tname == "__COMPONENTS_OF__" && !tr->params.empty()) {
+                        const auto& param = tr->params[0];
+                        auto base = follow_aliases(param, mod_name);
+                        if (base && !base->is_sequence() && !base->is_set()) {
+                            std::string ref_name;
+                            if (auto* tr2 = std::get_if<ast::TypeRef>(&param->body))
+                                ref_name = tr2->type_name;
+                            if (ref_name.empty() && !base->name.empty())
+                                ref_name = base->name;
+                            if (ref_name.empty()) {
+                                if (auto* bt2 = std::get_if<ast::BuiltinType>(&param->body))
+                                    ref_name = builtin_type_name(*bt2);
+                            }
+                            if (ref_name.empty()) ref_name = "inline type";
+                            errors_.push_back("COMPONENTS OF '" + ref_name
+                                + "' is not a SEQUENCE or SET in module '" + mod_name + "'");
+                        }
+                    }
                 }
                 // Qualified ref (ModuleA.TypeFoo): warn if module not in compilation unit
                 if (!tr->module_name.empty()
