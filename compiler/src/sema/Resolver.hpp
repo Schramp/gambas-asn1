@@ -395,7 +395,7 @@ private:
         using Key = std::pair<uint8_t /*TagClass*/, uint32_t /*tag number*/>;
         std::set<Key> concrete;
         bool open = false; // extensible CHOICE: unknown extension tags possible
-        bool any  = false; // ANY (open type, X.680 §48.7.3): indeterminate tag, clashes with all
+        bool any  = false; // legacy ANY type (X.208): no fixed BER tag, clashes with all concrete tags
     };
 
     static const char* tag_class_str(uint8_t c) {
@@ -470,7 +470,7 @@ private:
             case B::GeneralString:    n = 27; break;
             case B::UniversalString:  n = 28; break;
             case B::BmpString:        n = 30; break;
-            case B::Any:              return {{}, false, true};  // ANY: indeterminate tag (X.680 §48.7.3)
+            case B::Any:              return {{}, false, true};  // ANY has no fixed BER tag (X.208 legacy)
             default: break;
             }
             if (n) return {{{u, n}}, false};
@@ -627,12 +627,12 @@ private:
                         + std::string(kind) + ctx + " in module '" + mod_name + "'");
                 };
                 auto report_any = [&]() {
-                    errors_.push_back("ANY (open type) tag conflict in "
+                    errors_.push_back("ANY tag conflict in "
                         + std::string(kind) + ctx + " in module '" + mod_name + "'");
                 };
 
                 // Compare two TagSets; report any collision.
-                // ANY (any=true) has indeterminate tag that clashes with all tags (X.680 §48.7.3).
+                // ANY (any=true): no fixed BER tag — clashes with any concrete OPTIONAL member (X.208).
                 auto compare_sets = [&](const TagSet& a, const TagSet& b) {
                     if (a.any || b.any) { report_any(); return; }
                     for (const auto& tk : a.concrete)
@@ -678,13 +678,16 @@ private:
                 }
             }
         }
-        // X.680 §30.8: IMPLICIT tag on ANY (open type) is prohibited.
+        // IMPLICIT tag on legacy ANY is meaningless: ANY encodes as a complete TLV whose tag
+        // is determined at runtime; stripping it via IMPLICIT leaves an undecodable structure.
+        // ANY is a deprecated X.208 type; X.680 §30.8 governs X.681 open types, but the
+        // practical prohibition is identical.  asn1c rejects this with a fatal error.
         if (def->tag.present() && def->tag.mode == ast::TagMode::Implicit) {
             auto base = follow_aliases(def, mod_name);
             if (base) {
                 auto* bt = std::get_if<ast::BuiltinType>(&base->body);
                 if (bt && *bt == ast::BuiltinType::Any)
-                    errors_.push_back("IMPLICIT tag on ANY (open type) '"
+                    errors_.push_back("IMPLICIT tag on ANY '"
                         + def->name + "' in module '" + mod_name + "'");
             }
         }
@@ -708,7 +711,7 @@ private:
                                 // use NamedValueRef defaults and compatibility is complex.
                                 using B = ast::BuiltinType;
                                 auto str_group = [](B bt) -> int {
-                                    // 1 = KM+UTF8 group, 2 = NKM-UTF8 group, 0 = not a string
+                                    // 1 = KM group (KM + UTF8String), 2 = NKM group, 0 = not a string
                                     switch (bt) {
                                     case B::Utf8String: case B::PrintableString:
                                     case B::VisibleString: case B::NumericString:
