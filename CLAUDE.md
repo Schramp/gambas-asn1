@@ -377,38 +377,52 @@ Before rolling back or keeping a clever pattern, check:
 
 Do not add `Co-Authored-By` lines to commits in this repository.
 
+### Development workflow
+
+Issues are the unit of work. Pick the highest-priority open issue on GitHub (`Schramp/gambas-asn1`), work it on a dedicated branch, and open a PR when done. One issue per branch — do not bundle unrelated changes.
+
+If a related problem surfaces while fixing an issue but falls outside the PR's scope, park it as a new GitHub issue rather than expanding the PR.
+
+PRs are reviewed by Schramp and optionally by a clean Claude instance. Process review comments when indicated. Merge only when Schramp says to merge.
+
+### Issue management
+
+- Issues live on GitHub (`Schramp/gambas-asn1`) and carry priority labels.
+- Pick the highest-priority unlabelled or highest-labelled open issue as the next task.
+- To file a new issue: `gh issue create --repo Schramp/gambas-asn1 --title "..." --body "..."`
+
 ### Branch discipline
 
-**Never commit directly to `main`.** Every change — feature, bugfix, test, doc — goes on a feature branch:
+**Never commit directly to `main`.** Every change goes on a feature branch:
 
 ```bash
-git checkout -b test/set-ber-roundtrip   # or fix/..., refactor/..., ci/...
+git checkout -b fix/my-bug    # or test/..., refactor/..., ci/...
 # ... make changes, commit ...
-git push --set-upstream origin <branch>
-gh pr create --repo Schramp/gambas-asn1 --title "..." --body "..."
+git push --set-upstream github <branch>
+gh api repos/Schramp/gambas-asn1/pulls --method POST \
+  --field title="..." --field head="<branch>" --field base="main" \
+  --field body="..." --jq '.html_url'
 ```
+
+`gh pr create` requires `origin` to point to GitHub; since `origin` was removed, use `gh api` to create PRs directly (as shown above).
 
 Exceptions (direct-to-main only): submodule pointer bumps in the umbrella repo.
 
 ### Remotes
 
-Two remotes exist:
-
 | Remote | URL | Purpose |
 |--------|-----|---------|
-| `origin` | `git.eminjenv.nl` (GitLab) | push target for all branches |
-| `github` | `github.com/Schramp/gambas-asn1` | issues + pull requests only |
+| `github` | `github.com/Schramp/gambas-asn1` | sole remote — push target + issues + PRs |
 
-Push branches to `origin`. Open PRs and manage issues on GitHub using the `gh` CLI:
+`origin` remote has been removed. All pushes use `github`:
 ```bash
-gh pr create --repo Schramp/gambas-asn1 --title "..." --body "..."
-gh issue create --repo Schramp/gambas-asn1 --title "..." --body "..."
+git push --set-upstream github <branch>
 ```
-
-Do not open GitLab merge requests. Do not push directly to the `github` remote.
 
 ### ASN.1 test file immutability
 
 Files under `tests/tests-asn1c-compiler/` are **verbatim mirrors** of the asn1c test suite. Do not modify them in any way — not content, not comments, not whitespace. They are ground truth.
 
-New test schemas belong in `tests/asn1/` (asn1cpp-authored).
+gambas-asn1-specific tests use numbers **≥ 1000** to avoid conflicts with upstream asn1c additions. Same naming convention: `<N>-<description>-OK.asn1`, `-SE.asn1`, or `-NP.asn1`.
+
+New codec round-trip schemas belong in `tests/asn1/` (asn1cpp-authored).
