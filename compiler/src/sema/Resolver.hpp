@@ -395,6 +395,7 @@ private:
         using Key = std::pair<uint8_t /*TagClass*/, uint32_t /*tag number*/>;
         std::set<Key> concrete;
         bool open = false; // extensible CHOICE: unknown extension tags possible
+        bool any  = false; // ANY (open type, X.680 §48.7.3): indeterminate tag, clashes with all
     };
 
     static const char* tag_class_str(uint8_t c) {
@@ -418,7 +419,7 @@ private:
         if (def.tag.present()) {
             TagSet::Key k{static_cast<uint8_t>(def.tag.cls),
                           static_cast<uint32_t>(def.tag.number)};
-            return {{k}, false};
+            return {{k}, false, false};
         }
         // CHOICE: union of all alternatives' visible tags
         if (def.is_choice()) {
@@ -429,6 +430,7 @@ private:
                 auto sub = tag_set_of(*m, from_module, depth + 1);
                 result.concrete.insert(sub.concrete.begin(), sub.concrete.end());
                 if (sub.open) result.open = true;
+                if (sub.any)  result.any  = true;
             }
             return result;
         }
@@ -468,7 +470,7 @@ private:
             case B::GeneralString:    n = 27; break;
             case B::UniversalString:  n = 28; break;
             case B::BmpString:        n = 30; break;
-            case B::Any:              return {{}, true};  // ANY has no fixed tag
+            case B::Any:              return {{}, false, true};  // ANY: indeterminate tag (X.680 §48.7.3)
             default: break;
             }
             if (n) return {{{u, n}}, false};
@@ -624,9 +626,15 @@ private:
                     errors_.push_back("ambiguous extensible CHOICE members in "
                         + std::string(kind) + ctx + " in module '" + mod_name + "'");
                 };
+                auto report_any = [&]() {
+                    errors_.push_back("ANY (open type) tag conflict in "
+                        + std::string(kind) + ctx + " in module '" + mod_name + "'");
+                };
 
                 // Compare two TagSets; report any collision.
+                // ANY (any=true) has indeterminate tag that clashes with all tags (X.680 §48.7.3).
                 auto compare_sets = [&](const TagSet& a, const TagSet& b) {
+                    if (a.any || b.any) { report_any(); return; }
                     for (const auto& tk : a.concrete)
                         if (b.concrete.count(tk)) { report_tag(tk); return; }
                     if (a.open && b.open) { report_open(); return; }
@@ -665,6 +673,62 @@ private:
                             if (!nv || nv->is_extension_marker) continue;
                             auto ts_nv = tag_set_of(*nv, mod_name, 0);
                             compare_sets(ts_v, ts_nv);
+                        }
+                    }
+                }
+            }
+        }
+        // X.680 §30.8: IMPLICIT tag on ANY (open type) is prohibited.
+        if (def->tag.present() && def->tag.mode == ast::TagMode::Implicit) {
+            auto base = follow_aliases(def, mod_name);
+            if (base) {
+                auto* bt = std::get_if<ast::BuiltinType>(&base->body);
+                if (bt && *bt == ast::BuiltinType::Any)
+                    errors_.push_back("IMPLICIT tag on ANY (open type) '"
+                        + def->name + "' in module '" + mod_name + "'");
+            }
+        }
+        // X.680 §24.11: DEFAULT value shall be a value of the type defined by "Type".
+        // String type compatibility follows X.680 B.5 / asn1c asn1fix_compat.c:
+        //   KM group  (compatible with each other): IA5/Printable/Visible/Numeric/Universal/BMP/UTF8
+        //   NKM group (compatible with each other): General/Graphic/T61/Videotex/ObjectDescriptor
+        //   Cross-group string mismatch → error.
+        if (def->has_default()) {
+            if (auto* nvr = std::get_if<ast::NamedValueRef>(&def->default_value)) {
+                if (!nvr->name.empty()) {
+                    auto val_def = lookup_direct(nvr->name, mod_name);
+                    if (val_def) {
+                        auto member_base = follow_aliases(def, mod_name);
+                        auto val_base    = follow_aliases(val_def, mod_name);
+                        if (member_base && val_base) {
+                            auto* mb = std::get_if<ast::BuiltinType>(&member_base->body);
+                            auto* vb = std::get_if<ast::BuiltinType>(&val_base->body);
+                            if (mb && vb && *mb != *vb) {
+                                // Only check string-type members; other types rarely
+                                // use NamedValueRef defaults and compatibility is complex.
+                                using B = ast::BuiltinType;
+                                auto str_group = [](B bt) -> int {
+                                    // 1 = KM+UTF8 group, 2 = NKM-UTF8 group, 0 = not a string
+                                    switch (bt) {
+                                    case B::Utf8String: case B::PrintableString:
+                                    case B::VisibleString: case B::NumericString:
+                                    case B::UniversalString: case B::BmpString:
+                                    case B::Ia5String:
+                                        return 1;
+                                    case B::GeneralString: case B::GraphicString:
+                                    case B::T61String: case B::VideotexString:
+                                    case B::ObjectDescriptor:
+                                        return 2;
+                                    default: return 0;
+                                    }
+                                };
+                                int gm = str_group(*mb);
+                                int gv = str_group(*vb);
+                                if (gm != 0 && gm != gv)
+                                    errors_.push_back("DEFAULT value '" + nvr->name
+                                        + "' type incompatible with member '"
+                                        + def->name + "' in module '" + mod_name + "'");
+                            }
                         }
                     }
                 }
