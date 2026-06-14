@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <climits>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -113,6 +114,8 @@ class Resolver {
     // Flat global table for codegen lookups (all resolvable symbols)
     SymbolTable global_;
 
+    std::unordered_map<std::string, ast::TagDefault> module_tag_defaults_;
+
     bool ignore_missing_modules_{false};
     bool allow_newer_modules_{false};
     std::vector<std::string> errors_;
@@ -137,6 +140,7 @@ public:
                 errors_.push_back("duplicate module name '" + mod->name + "'");
                 continue;
             }
+            module_tag_defaults_[mod->name] = mod->tag_default;
             SymbolTable& tbl = module_symbols_[mod->name];
             for (const auto& def : mod->assignments) {
                 if (!def->name.empty()) {
@@ -386,6 +390,103 @@ public:
     }
 
 private:
+    // --- Tag-distinctness helpers ------------------------------------------------
+    struct TagSet {
+        using Key = std::pair<uint8_t /*TagClass*/, uint32_t /*tag number*/>;
+        std::set<Key> concrete;
+        bool open = false; // extensible CHOICE: unknown extension tags possible
+    };
+
+    static const char* tag_class_str(uint8_t c) {
+        switch (static_cast<ast::TagClass>(c)) {
+        case ast::TagClass::Universal:   return "UNIVERSAL";
+        case ast::TagClass::Application: return "APPLICATION";
+        case ast::TagClass::Context:     return "CONTEXT";
+        case ast::TagClass::Private:     return "PRIVATE";
+        default:                         return "?";
+        }
+    }
+
+    // Compute the set of BER tags visible at the outermost level for `def`.
+    // For CHOICE (no outer tag): union of alternatives' visible tags.
+    // For extensible CHOICE: also sets open=true (extension alternatives = any tag).
+    // TypeRef: resolved before recursing so alias chains don't cause extra depth.
+    TagSet tag_set_of(const ast::TypeDef& def, const std::string& from_module,
+                      int depth) const {
+        if (depth > 16) return {};
+        // Explicit outer tag: decoder sees only this tag (IMPLICIT or EXPLICIT wrapper)
+        if (def.tag.present()) {
+            TagSet::Key k{static_cast<uint8_t>(def.tag.cls),
+                          static_cast<uint32_t>(def.tag.number)};
+            return {{k}, false};
+        }
+        // CHOICE: union of all alternatives' visible tags
+        if (def.is_choice()) {
+            TagSet result;
+            for (const auto& m : def.members) {
+                if (!m) continue;
+                if (m->is_extension_marker) { result.open = true; continue; }
+                auto sub = tag_set_of(*m, from_module, depth + 1);
+                result.concrete.insert(sub.concrete.begin(), sub.concrete.end());
+                if (sub.open) result.open = true;
+            }
+            return result;
+        }
+        // TypeRef: resolve (follow_aliases inside resolve_ref) then check base
+        if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
+            auto base = resolve_ref(*tr, from_module);
+            if (base && base.get() != &def)
+                return tag_set_of(*base, from_module, depth + 1);
+            return {};
+        }
+        // BuiltinType: natural UNIVERSAL tag
+        if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
+            uint8_t  u = static_cast<uint8_t>(ast::TagClass::Universal);
+            uint32_t n = 0;
+            using B = ast::BuiltinType;
+            switch (*bt) {
+            case B::Boolean:          n = 1;  break;
+            case B::Integer:          n = 2;  break;
+            case B::BitString:        n = 3;  break;
+            case B::OctetString:      n = 4;  break;
+            case B::Null:             n = 5;  break;
+            case B::ObjectIdentifier: n = 6;  break;
+            case B::ObjectDescriptor: n = 7;  break;
+            case B::Real:             n = 9;  break;
+            case B::Enumerated:       n = 10; break;
+            case B::Utf8String:       n = 12; break;
+            case B::RelativeOid:      n = 13; break;
+            case B::NumericString:    n = 18; break;
+            case B::PrintableString:  n = 19; break;
+            case B::T61String:        n = 20; break;
+            case B::VideotexString:   n = 21; break;
+            case B::Ia5String:        n = 22; break;
+            case B::UtcTime:          n = 23; break;
+            case B::GeneralizedTime:  n = 24; break;
+            case B::GraphicString:    n = 25; break;
+            case B::VisibleString:    n = 26; break;
+            case B::GeneralString:    n = 27; break;
+            case B::UniversalString:  n = 28; break;
+            case B::BmpString:        n = 30; break;
+            case B::Any:              return {{}, true};  // ANY has no fixed tag
+            default: break;
+            }
+            if (n) return {{{u, n}}, false};
+            return {};
+        }
+        // SEQUENCE / SEQUENCE OF → [UNIV 16]
+        if (def.is_sequence() || def.is_seq_of())
+            return {{{static_cast<uint8_t>(ast::TagClass::Universal), 16u}}, false};
+        // SET / SET OF → [UNIV 17]
+        if (def.is_set() || def.is_set_of())
+            return {{{static_cast<uint8_t>(ast::TagClass::Universal), 17u}}, false};
+        // INSTANCE OF → SEQUENCE encoding [UNIV 16]
+        if (std::holds_alternative<ast::InstanceOfType>(def.body))
+            return {{{static_cast<uint8_t>(ast::TagClass::Universal), 16u}}, false};
+        return {};
+    }
+    // ----------------------------------------------------------------------------
+
     void check_and_resolve(const ast::TypeDefPtr& def, const std::string& mod_name) {
         if (!def) return;
         // Check unqualified TypeRef visibility (only when all modules are available)
@@ -491,6 +592,80 @@ private:
                                               + ") not in ascending order in ENUMERATED"
                                               + type_ctx + " in module '" + mod_name + "'");
                         prev = vals[i];
+                    }
+                }
+            }
+        }
+        // X.680 §24.8 / §25.5: tag distinctness in SEQUENCE/SET/CHOICE.
+        // Under AUTOMATIC TAGS, if no member carries an explicit tag,
+        // auto-tagging assigns distinct context tags — skip in that case.
+        if ((def->is_sequence() || def->is_set() || def->is_choice()) && !def->members.empty()) {
+            auto td_it = module_tag_defaults_.find(mod_name);
+            bool skip = td_it != module_tag_defaults_.end()
+                     && td_it->second == ast::TagDefault::Automatic;
+            if (skip) {
+                for (const auto& m : def->members)
+                    if (m && !m->is_extension_marker && m->tag.present()) { skip = false; break; }
+            }
+            if (!skip) {
+                const char* kind = def->is_sequence() ? "SEQUENCE"
+                                 : def->is_set()      ? "SET" : "CHOICE";
+                std::string ctx = def->name.empty() ? "" : " '" + def->name + "'";
+                const auto& mems = def->members;
+                const int nm = static_cast<int>(mems.size());
+
+                auto report_tag = [&](const TagSet::Key& tk) {
+                    errors_.push_back("ambiguous tag ["
+                        + std::string(tag_class_str(tk.first)) + " "
+                        + std::to_string(tk.second) + "] in "
+                        + kind + ctx + " in module '" + mod_name + "'");
+                };
+                auto report_open = [&]() {
+                    errors_.push_back("ambiguous extensible CHOICE members in "
+                        + std::string(kind) + ctx + " in module '" + mod_name + "'");
+                };
+
+                // Compare two TagSets; report any collision.
+                auto compare_sets = [&](const TagSet& a, const TagSet& b) {
+                    for (const auto& tk : a.concrete)
+                        if (b.concrete.count(tk)) { report_tag(tk); return; }
+                    if (a.open && b.open) { report_open(); return; }
+                };
+
+                if (def->is_sequence()) {
+                    // SEQUENCE: mirrors asn1c's asn1f_check_constr_tags_distinct logic.
+                    // Only OPTIONAL/DEFAULT members (not extension markers) enter the
+                    // outer check. Inner loop stops after the first non-optional member
+                    // (including extension markers, which act as mandatory delimiters).
+                    for (int i = 0; i < nm; ++i) {
+                        const auto& v = mems[i];
+                        if (!v) continue;
+                        if (!v->is_optional()) continue;  // only DEFAULT/OPTIONAL members
+                        auto ts_v = tag_set_of(*v, mod_name, 0);
+
+                        for (int j = i + 1; j < nm; ++j) {
+                            const auto& nv = mems[j];
+                            if (!nv) continue;
+                            // Extension markers terminate the optional span; they carry
+                            // no BER tag so there is nothing to compare.
+                            if (!nv->is_extension_marker)
+                                compare_sets(ts_v, tag_set_of(*nv, mod_name, 0));
+                            if (!nv->is_optional()) break;
+                        }
+                    }
+                } else {
+                    // SET / CHOICE: compare every pair (i < j),
+                    // skipping extension markers as the outer member v.
+                    for (int i = 0; i < nm; ++i) {
+                        const auto& v = mems[i];
+                        if (!v || v->is_extension_marker) continue;
+                        auto ts_v = tag_set_of(*v, mod_name, 0);
+                        for (int j = i + 1; j < nm; ++j) {
+                            const auto& nv = mems[j];
+                            if (!nv || nv->is_extension_marker) continue;
+                            auto ts_nv = tag_set_of(*nv, mod_name, 0);
+                            compare_sets(ts_v, ts_nv);
+                        }
                     }
                 }
             }
