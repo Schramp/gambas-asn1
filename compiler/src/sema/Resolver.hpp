@@ -221,9 +221,7 @@ public:
                         errors_.push_back("module '" + imp.from_module
                             + "': available OID does not satisfy " + policy + " import constraint");
                     } else {
-                        // Module absent from compilation unit — warn, not error.
-                        // Missing modules may be supplied in a separate compiler invocation.
-                        warnings_.push_back("module '" + imp.from_module
+                        errors_.push_back("module '" + imp.from_module
                             + "' imported by '" + mod->name + "' was not found");
                     }
                     continue;
