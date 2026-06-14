@@ -212,10 +212,18 @@ public:
                 }
 
                 if (it == module_symbols_.end()) {
-                    // Missing module: warn (not error) — schema may be compiled
-                    // incrementally with additional files provided later.
-                    warnings_.push_back("module '" + imp.from_module
-                        + "' imported by '" + mod->name + "' was not found");
+                    // OID scan failed — check if module exists by name for a better diagnostic.
+                    if (!imp.module_oid.arcs.empty()
+                            && module_symbols_.count(imp.from_module)) {
+                        const char* policy =
+                            (imp.version_policy == VP::Successors)  ? "WITH SUCCESSORS" :
+                            (imp.version_policy == VP::Descendants) ? "WITH DESCENDANTS" : "exact";
+                        errors_.push_back("module '" + imp.from_module
+                            + "': available OID does not satisfy " + policy + " import constraint");
+                    } else {
+                        errors_.push_back("module '" + imp.from_module
+                            + "' imported by '" + mod->name + "' was not found");
+                    }
                     continue;
                 }
                 // OID lookup may resolve an alias to the importing module itself.
