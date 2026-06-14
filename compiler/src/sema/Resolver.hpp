@@ -116,13 +116,11 @@ class Resolver {
 
     std::unordered_map<std::string, ast::TagDefault> module_tag_defaults_;
 
-    bool ignore_missing_modules_{false};
     bool allow_newer_modules_{false};
     std::vector<std::string> errors_;
     std::vector<std::string> warnings_;
 
 public:
-    void set_ignore_missing_modules(bool v) { ignore_missing_modules_ = v; }
     void set_allow_newer_modules(bool v)    { allow_newer_modules_ = v; }
     const std::vector<std::string>& errors()   const { return errors_; }
     const std::vector<std::string>& warnings() const { return warnings_; }
@@ -175,12 +173,10 @@ public:
                 }
                 auto it = module_symbols_.find(imp.from_module);
                 if (it == module_symbols_.end()) {
-                    std::string msg = "module '" + imp.from_module
-                        + "' imported by '" + mod->name + "' was not found";
-                    if (ignore_missing_modules_)
-                        warnings_.push_back(msg);
-                    else
-                        errors_.push_back(msg);
+                    // Missing module: warn (not error) — the schema may be compiled
+                    // incrementally with additional files provided later.
+                    warnings_.push_back("module '" + imp.from_module
+                        + "' imported by '" + mod->name + "' was not found");
                     continue;
                 }
                 // If import specifies an OID, verify it matches the source module's OID
@@ -273,8 +269,6 @@ public:
 
     // Phase 3: check TypeRefs used in each module are visible there,
     // then walk all TypeDef trees.
-    // Visibility check is skipped when ignore_missing_modules_ is set because
-    // we cannot determine which names come from unresolved imports.
     void resolve_types(const ast::ParseResult& pr) {
         for (const auto& mod : pr.modules)
             for (const auto& def : mod->assignments)
@@ -518,25 +512,42 @@ private:
     }
     // ----------------------------------------------------------------------------
 
-    void check_and_resolve(const ast::TypeDefPtr& def, const std::string& mod_name) {
+    // in_parameterized: true when recursing inside a parameterized type body.
+    // TypeRefs within parameterized types may name formal parameters, not module-level
+    // types, so undefined-type checks are suppressed there.
+    void check_and_resolve(const ast::TypeDefPtr& def, const std::string& mod_name,
+                           bool in_parameterized = false) {
         if (!def) return;
-        // Check unqualified TypeRef visibility (only when all modules are available)
-        if (!ignore_missing_modules_) {
+        // Set in_parameterized for recursion into parameterized type bodies.
+        if (def->is_parameterized) in_parameterized = true;
+        // Undefined-type check: a TypeRef that names a type not defined in this module
+        // and not brought in by any IMPORT is always an error (same as asn1c).
+        // Inside a parameterized type body, TypeRefs may be formal parameters — skip.
+        {
             if (auto* tr = std::get_if<ast::TypeRef>(&def->body)) {
-                if (tr->module_name.empty() && !tr->type_name.empty()) {
-                    auto& vis = module_visible_[mod_name];
-                    if (vis.find(tr->type_name) == vis.end()) {
-                        errors_.push_back("'" + tr->type_name + "' used in module '"
+                if (!in_parameterized && tr->module_name.empty() && !tr->type_name.empty()) {
+                    const auto& tname = tr->type_name;
+                    // Skip non-module-level names:
+                    // - __COMPONENTS_OF__: synthetic parser placeholder
+                    // - '.' or '&' in name: IOC field references (X.681)
+                    // - X.680 §33-35 useful types + X.681 §14 built-in IOCs (always visible)
+                    static const std::unordered_set<std::string> builtin_visible = {
+                        "EXTERNAL", "EmbeddedPDV", "CharacterString",
+                        "TYPE-IDENTIFIER", "ABSTRACT-SYNTAX",
+                    };
+                    bool skip = tname == "__COMPONENTS_OF__"
+                        || tname.find('.') != std::string::npos
+                        || tname.find('&') != std::string::npos
+                        || builtin_visible.count(tname);
+                    if (!skip && !module_visible_[mod_name].count(tname))
+                        errors_.push_back("'" + tname + "' used in module '"
                             + mod_name + "' is not defined or imported");
-                    }
                 }
-                // Qualified ref (ModuleA.TypeFoo): verify module exists
-                if (!tr->module_name.empty()) {
-                    if (module_symbols_.find(tr->module_name) == module_symbols_.end() &&
-                        !ignore_missing_modules_) {
-                        errors_.push_back("qualified reference '" + tr->module_name + "."
-                            + tr->type_name + "': module '" + tr->module_name + "' not found");
-                    }
+                // Qualified ref (ModuleA.TypeFoo): warn if module not in compilation unit
+                if (!tr->module_name.empty()
+                        && module_symbols_.find(tr->module_name) == module_symbols_.end()) {
+                    warnings_.push_back("qualified reference '" + tr->module_name + "."
+                        + tr->type_name + "': module '" + tr->module_name + "' not found");
                 }
             }
         }
@@ -759,12 +770,12 @@ private:
         }
         // Recurse into SEQUENCE/SET/CHOICE members
         for (auto& member : def->members)
-            check_and_resolve(member, mod_name);
+            check_and_resolve(member, mod_name, in_parameterized);
         // Recurse into SEQUENCE OF / SET OF element
         if (auto* sof = std::get_if<ast::SequenceOfType>(&def->body))
-            check_and_resolve(sof->element, mod_name);
+            check_and_resolve(sof->element, mod_name, in_parameterized);
         if (auto* sof = std::get_if<ast::SetOfType>(&def->body))
-            check_and_resolve(sof->element, mod_name);
+            check_and_resolve(sof->element, mod_name, in_parameterized);
     }
 };
 

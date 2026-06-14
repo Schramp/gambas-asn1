@@ -98,8 +98,7 @@ struct TypeDef : Node {
     // Whether UNIQUE keyword is present (for CLASS fields)
     bool unique{false};
 
-    // Whether this top-level definition is parameterised
-    std::vector<std::string> lhs_params;
+    bool is_parameterized{false};
 
     // Helpers
     bool is_optional()  const { return marker == Marker::Optional || marker == Marker::Default; }
