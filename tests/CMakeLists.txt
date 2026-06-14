@@ -394,8 +394,8 @@ set(_parser_test_args
     --asn1cpp $<TARGET_FILE:asn1cpp>
     --test-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler
     # 49: imports from modules not provided in the same file — valid in asn1c -E (parse-only)
-    # but a hard error in asn1cpp full sema. Re-enable when -E / parse-only mode is added.
-    # 183: inline base64 member syntax not yet supported by asn1cpp parser.
+    # but a hard error in asn1cpp full sema. Re-enable when -E added (issue #67).
+    # 183: inline [BASE64] OCTET STRING member not yet supported by parser (issue #68).
     --known-failures 49-real-life-OK.asn1 183-inline-base64-member-OK.asn1
 )
 
