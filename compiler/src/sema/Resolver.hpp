@@ -217,9 +217,9 @@ public:
                             && module_symbols_.count(imp.from_module)) {
                         const char* policy =
                             (imp.version_policy == VP::Successors)  ? "WITH SUCCESSORS" :
-                            (imp.version_policy == VP::Descendants) ? "WITH DESCENDANTS" : "OID";
+                            (imp.version_policy == VP::Descendants) ? "WITH DESCENDANTS" : "exact";
                         errors_.push_back("module '" + imp.from_module
-                            + "' OID does not satisfy " + policy + " constraint");
+                            + "': available OID does not satisfy " + policy + " import constraint");
                     } else {
                         // Module absent from compilation unit — warn, not error.
                         // Missing modules may be supplied in a separate compiler invocation.
