@@ -171,7 +171,21 @@ public:
                     errors_.push_back("module '" + mod->name + "' imports from itself");
                     continue;
                 }
+                // X.680 §12.3: module name in IMPORTS may be an alias; OID is authoritative.
+                std::string resolved_name = imp.from_module;
                 auto it = module_symbols_.find(imp.from_module);
+                if (it == module_symbols_.end() && !imp.module_oid.arcs.empty()) {
+                    for (const auto& m : pr.modules) {
+                        if (!m->oid.arcs.empty() && oids_match_descendants(imp.module_oid, m->oid)) {
+                            auto candidate = module_symbols_.find(m->name);
+                            if (candidate != module_symbols_.end()) {
+                                it = candidate;
+                                resolved_name = m->name;
+                                break;
+                            }
+                        }
+                    }
+                }
                 if (it == module_symbols_.end()) {
                     // Missing module: warn (not error) — the schema may be compiled
                     // incrementally with additional files provided later.
@@ -182,7 +196,7 @@ public:
                 // If import specifies an OID, verify it matches the source module's OID
                 const auto& src_mod = *std::find_if(
                     pr.modules.begin(), pr.modules.end(),
-                    [&](const auto& m){ return m->name == imp.from_module; });
+                    [&](const auto& m){ return m->name == resolved_name; });
 
                 if (!imp.module_oid.arcs.empty() && !src_mod->oid.arcs.empty()) {
                     bool oid_accepted = false;
