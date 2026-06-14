@@ -408,6 +408,26 @@ private:
         }
     }
 
+    // X.680 Annex B.5 / asn1c asn1fix_compat.c — string type compatibility group.
+    // KM  (group 1): IA5/Printable/Visible/Numeric/Universal/BMP + UTF8String.
+    // NKM (group 2): General/Graphic/T61/Videotex/ObjectDescriptor.
+    // Two strings are compatible iff they are in the same group.
+    // Returns 0 for non-string types.
+    static int string_group(ast::BuiltinType bt) {
+        using B = ast::BuiltinType;
+        switch (bt) {
+        case B::Utf8String: case B::PrintableString: case B::VisibleString:
+        case B::NumericString: case B::UniversalString: case B::BmpString:
+        case B::Ia5String:
+            return 1;
+        case B::GeneralString: case B::GraphicString: case B::T61String:
+        case B::VideotexString: case B::ObjectDescriptor:
+            return 2;
+        default:
+            return 0;
+        }
+    }
+
     // Compute the set of BER tags visible at the outermost level for `def`.
     // For CHOICE (no outer tag): union of alternatives' visible tags.
     // For extensible CHOICE: also sets open=true (extension alternatives = any tag).
@@ -691,14 +711,16 @@ private:
                         + def->name + "' in module '" + mod_name + "'");
             }
         }
-        // X.680 §24.11: DEFAULT value shall be a value of the type defined by "Type".
-        // String type compatibility follows X.680 B.5 / asn1c asn1fix_compat.c:
-        //   KM group  (compatible with each other): IA5/Printable/Visible/Numeric/Universal/BMP/UTF8
-        //   NKM group (compatible with each other): General/Graphic/T61/Videotex/ObjectDescriptor
-        //   Cross-group string mismatch → error.
+        // X.680 §24.11: the DEFAULT value "shall be a value notation for a value of
+        // the type defined by 'Type'".  This fires when a NamedValueRef DEFAULT
+        // resolves to a type incompatible with the member's type.
+        // String compatibility per Annex B.5 (see string_group()); all other builtin
+        // type mismatches are unconditionally incompatible per §24.11.
         if (def->has_default()) {
             if (auto* nvr = std::get_if<ast::NamedValueRef>(&def->default_value)) {
                 if (!nvr->name.empty()) {
+                    // Value assignments are stored in the same symbol table as types
+                    // (module_resolution_ holds own + imported symbols).
                     auto val_def = lookup_direct(nvr->name, mod_name);
                     if (val_def) {
                         auto member_base = follow_aliases(def, mod_name);
@@ -707,27 +729,13 @@ private:
                             auto* mb = std::get_if<ast::BuiltinType>(&member_base->body);
                             auto* vb = std::get_if<ast::BuiltinType>(&val_base->body);
                             if (mb && vb && *mb != *vb) {
-                                // Only check string-type members; other types rarely
-                                // use NamedValueRef defaults and compatibility is complex.
-                                using B = ast::BuiltinType;
-                                auto str_group = [](B bt) -> int {
-                                    // 1 = KM group (KM + UTF8String), 2 = NKM group, 0 = not a string
-                                    switch (bt) {
-                                    case B::Utf8String: case B::PrintableString:
-                                    case B::VisibleString: case B::NumericString:
-                                    case B::UniversalString: case B::BmpString:
-                                    case B::Ia5String:
-                                        return 1;
-                                    case B::GeneralString: case B::GraphicString:
-                                    case B::T61String: case B::VideotexString:
-                                    case B::ObjectDescriptor:
-                                        return 2;
-                                    default: return 0;
-                                    }
-                                };
-                                int gm = str_group(*mb);
-                                int gv = str_group(*vb);
-                                if (gm != 0 && gm != gv)
+                                int gm = string_group(*mb);
+                                int gv = string_group(*vb);
+                                // String member: error only when value is from a different
+                                // string group (Annex B.5 allows cross-type within same group).
+                                // Non-string member: any builtin mismatch is an error (§24.11).
+                                bool incompatible = (gm != 0) ? (gm != gv) : true;
+                                if (incompatible)
                                     errors_.push_back("DEFAULT value '" + nvr->name
                                         + "' type incompatible with member '"
                                         + def->name + "' in module '" + mod_name + "'");
