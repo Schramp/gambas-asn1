@@ -224,6 +224,7 @@ public:
                     continue;
                 }
 
+                // resolved_name was taken from pr.modules during lookup, so find_if is guaranteed to match
                 const auto& src_mod = *std::find_if(
                     pr.modules.begin(), pr.modules.end(),
                     [&](const auto& m){ return m->name == resolved_name; });
