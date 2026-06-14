@@ -423,4 +423,6 @@ git push --set-upstream github <branch>
 
 Files under `tests/tests-asn1c-compiler/` are **verbatim mirrors** of the asn1c test suite. Do not modify them in any way — not content, not comments, not whitespace. They are ground truth.
 
-New test schemas belong in `tests/asn1/` (asn1cpp-authored).
+gambas-asn1-specific tests use numbers **≥ 1000** to avoid conflicts with upstream asn1c additions. Same naming convention: `<N>-<description>-OK.asn1`, `-SE.asn1`, or `-NP.asn1`.
+
+New codec round-trip schemas belong in `tests/asn1/` (asn1cpp-authored).
