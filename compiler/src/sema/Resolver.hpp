@@ -92,6 +92,13 @@ inline int oid_version_compare(const ast::OidValue& imp, const ast::OidValue& mo
     return 0;
 }
 
+// -fallow-newer-modules: accept if mod is same version, newer, or a descendant prefix.
+// Returns false for older (reject) or unrelated OID family (no match).
+inline bool oids_match_newer(const ast::OidValue& imp, const ast::OidValue& mod) {
+    int v = oid_version_compare(imp, mod);
+    return v == 0 || v == -1 || v == 2;
+}
+
 inline std::string oid_to_string(const ast::OidValue& oid) {
     std::string s = "{";
     for (const auto& arc : oid.arcs) {
@@ -171,12 +178,25 @@ public:
                     errors_.push_back("module '" + mod->name + "' imports from itself");
                     continue;
                 }
-                // X.680 §12.3: module name in IMPORTS may be an alias; OID is authoritative.
-                std::string resolved_name = imp.from_module;
-                auto it = module_symbols_.find(imp.from_module);
-                if (it == module_symbols_.end() && !imp.module_oid.arcs.empty()) {
+
+                // Select OID matcher from import version policy.
+                // X.680 §12.3: OID is authoritative identity; name in IMPORTS is alias only.
+                using VP = ast::ImportVersionPolicy;
+                using OidMatcher = bool(*)(const ast::OidValue&, const ast::OidValue&);
+                OidMatcher oid_matches =
+                    (allow_newer_modules_ && (imp.version_policy == VP::Exact ||
+                                              imp.version_policy == VP::Successors))
+                        ? &oids_match_newer
+                        : (imp.version_policy == VP::Successors)  ? &oids_match_successors
+                        : (imp.version_policy == VP::Descendants) ? &oids_match_descendants
+                        :                                            &oids_match_descendants;
+
+                // Lookup: OID authoritative when present; fall back to name when absent.
+                std::string resolved_name;
+                auto it = module_symbols_.end();
+                if (!imp.module_oid.arcs.empty()) {
                     for (const auto& m : pr.modules) {
-                        if (!m->oid.arcs.empty() && oids_match(imp.module_oid, m->oid)) {
+                        if (!m->oid.arcs.empty() && oid_matches(imp.module_oid, m->oid)) {
                             auto candidate = module_symbols_.find(m->name);
                             if (candidate != module_symbols_.end()) {
                                 it = candidate;
@@ -185,75 +205,23 @@ public:
                             }
                         }
                     }
+                } else {
+                    it = module_symbols_.find(imp.from_module);
+                    if (it != module_symbols_.end())
+                        resolved_name = imp.from_module;
                 }
+
                 if (it == module_symbols_.end()) {
-                    // Missing module: warn (not error) — the schema may be compiled
+                    // Missing module: warn (not error) — schema may be compiled
                     // incrementally with additional files provided later.
                     warnings_.push_back("module '" + imp.from_module
                         + "' imported by '" + mod->name + "' was not found");
                     continue;
                 }
-                // If import specifies an OID, verify it matches the source module's OID
+
                 const auto& src_mod = *std::find_if(
                     pr.modules.begin(), pr.modules.end(),
                     [&](const auto& m){ return m->name == resolved_name; });
-
-                if (!imp.module_oid.arcs.empty() && !src_mod->oid.arcs.empty()) {
-                    bool oid_accepted = false;
-
-                    // -fallow-newer-modules: version-aware matching (overrides WITH SUCCESSORS too)
-                    using VP = ast::ImportVersionPolicy;
-                    bool use_newer = allow_newer_modules_
-                        && (imp.version_policy == VP::Exact
-                            || imp.version_policy == VP::Successors);
-                    if (use_newer) {
-                        int vcmp = oid_version_compare(imp.module_oid, src_mod->oid);
-                        if (vcmp == 0) {
-                            oid_accepted = true;  // exact — silent
-                        } else if (vcmp == -1) {
-                            warnings_.push_back("module '" + imp.from_module
-                                + "': available OID is newer than imported OID;"
-                                  " accepting (-fallow-newer-modules)");
-                            oid_accepted = true;
-                        } else if (vcmp == 2) {
-                            warnings_.push_back("module '" + imp.from_module
-                                + "': imported OID is a base prefix of available OID;"
-                                  " accepting (-fallow-newer-modules)");
-                            oid_accepted = true;
-                        } else if (vcmp == 1) {
-                            errors_.push_back("module '" + imp.from_module
-                                + "': available OID is older than imported OID");
-                            continue;
-                        }
-                        // INT_MIN: unrelated family — fall through to normal check
-                    }
-
-                    if (!oid_accepted) {
-                        bool ok = oids_match(imp.module_oid, src_mod->oid);
-                        if (!ok) {
-                            if (imp.version_policy == VP::Successors) {
-                                // X.680 §12.6: WITH SUCCESSORS — same OID arc count,
-                                // last arc must be >= imported.  An extra arc does not
-                                // qualify; do NOT fall through to the prefix check.
-                                ok = oids_match_successors(imp.module_oid, src_mod->oid);
-                            } else if (imp.version_policy == VP::Descendants) {
-                                ok = oids_match_descendants(imp.module_oid, src_mod->oid);
-                            } else {
-                                // VP::Exact (no keyword): implicit prefix match for ETSI
-                                // versioning where the module OID may carry extra arcs.
-                                ok = oids_match_descendants(imp.module_oid, src_mod->oid);
-                            }
-                        }
-                        if (!ok) {
-                            errors_.push_back("module '" + imp.from_module
-                                + "' OID mismatch: import specifies "
-                                + oid_to_string(imp.module_oid)
-                                + " but module defines "
-                                + oid_to_string(src_mod->oid));
-                            continue;
-                        }
-                    }
-                }
 
                 // Check EXPORTS restriction of source module
                 bool src_exports_all = src_mod->exports_all;
