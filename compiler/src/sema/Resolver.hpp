@@ -140,22 +140,6 @@ inline std::string oid_to_string(const ast::OidValue& oid) {
     return s + " }";
 }
 
-// Compare two RangeEndpoints: -1 if a<b, 0 if equal, +1 if a>b.
-// MIN is less than any value; MAX is greater than any value.
-// Returns 0 for incomparable (e.g. non-integer values) to be conservative.
-inline int endpoint_cmp(const ast::RangeEndpoint& a, const ast::RangeEndpoint& b) {
-    using K = ast::RangeEndpoint::Kind;
-    if (a.kind == K::Min && b.kind == K::Min) return 0;
-    if (a.kind == K::Max && b.kind == K::Max) return 0;
-    if (a.kind == K::Min) return -1;
-    if (b.kind == K::Min) return  1;
-    if (a.kind == K::Max) return  1;
-    if (b.kind == K::Max) return -1;
-    if (auto* ia = std::get_if<int64_t>(&a.value))
-        if (auto* ib = std::get_if<int64_t>(&b.value))
-            return (*ia < *ib) ? -1 : (*ia > *ib) ? 1 : 0;
-    return 0; // non-integer (string char, etc.) — treat as equal, skip check
-}
 
 class Resolver {
     // Per-module symbol tables: module_name -> all definitions in that module
@@ -557,6 +541,22 @@ private:
     // ----------------------------------------------------------------------------
 
     // --- Constraint applicability helpers (X.680 §47-§51) -----------------------
+
+    // Compare two RangeEndpoints: -1 if a<b, 0 if equal, +1 if a>b.
+    // MIN < any value < MAX. Returns 0 for incomparable (e.g. string chars) — conservative.
+    static int endpoint_cmp(const ast::RangeEndpoint& a, const ast::RangeEndpoint& b) {
+        using K = ast::RangeEndpoint::Kind;
+        if (a.kind == K::Min && b.kind == K::Min) return 0;
+        if (a.kind == K::Max && b.kind == K::Max) return 0;
+        if (a.kind == K::Min) return -1;
+        if (b.kind == K::Min) return  1;
+        if (a.kind == K::Max) return  1;
+        if (b.kind == K::Max) return -1;
+        if (auto* ia = std::get_if<int64_t>(&a.value))
+            if (auto* ib = std::get_if<int64_t>(&b.value))
+                return (*ia < *ib) ? -1 : (*ia > *ib) ? 1 : 0;
+        return 0;
+    }
 
     static bool is_string_builtin(ast::BuiltinType bt) {
         using B = ast::BuiltinType;
