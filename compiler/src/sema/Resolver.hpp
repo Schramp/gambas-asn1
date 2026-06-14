@@ -218,6 +218,11 @@ public:
                         + "' imported by '" + mod->name + "' was not found");
                     continue;
                 }
+                // OID lookup may resolve an alias to the importing module itself.
+                if (resolved_name == mod->name) {
+                    errors_.push_back("module '" + mod->name + "' imports from itself");
+                    continue;
+                }
 
                 const auto& src_mod = *std::find_if(
                     pr.modules.begin(), pr.modules.end(),
