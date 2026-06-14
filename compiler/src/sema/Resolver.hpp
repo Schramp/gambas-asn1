@@ -399,7 +399,7 @@ private:
 
     static const char* tag_class_str(uint8_t c) {
         switch (static_cast<ast::TagClass>(c)) {
-        case ast::TagClass::Universal:   return "UNIV";
+        case ast::TagClass::Universal:   return "UNIVERSAL";
         case ast::TagClass::Application: return "APPLICATION";
         case ast::TagClass::Context:     return "CONTEXT";
         case ast::TagClass::Private:     return "PRIVATE";
@@ -468,7 +468,7 @@ private:
             case B::GeneralString:    n = 27; break;
             case B::UniversalString:  n = 28; break;
             case B::BmpString:        n = 30; break;
-            case B::Any:              return {{{u, 4u}}, true}; // ANY = open
+            case B::Any:              return {{}, true};  // ANY has no fixed tag
             default: break;
             }
             if (n) return {{{u, n}}, false};
@@ -646,11 +646,10 @@ private:
                         for (int j = i + 1; j < nm; ++j) {
                             const auto& nv = mems[j];
                             if (!nv) continue;
-                            auto ts_nv = nv->is_extension_marker
-                                ? TagSet{{}, false}  // extension marker: no concrete tags
-                                : tag_set_of(*nv, mod_name, 0);
-                            compare_sets(ts_v, ts_nv);
-                            // Stop after first non-optional (mandatory or extension marker)
+                            // Extension markers terminate the optional span; they carry
+                            // no BER tag so there is nothing to compare.
+                            if (!nv->is_extension_marker)
+                                compare_sets(ts_v, tag_set_of(*nv, mod_name, 0));
                             if (!nv->is_optional()) break;
                         }
                     }
