@@ -176,7 +176,7 @@ public:
                 auto it = module_symbols_.find(imp.from_module);
                 if (it == module_symbols_.end() && !imp.module_oid.arcs.empty()) {
                     for (const auto& m : pr.modules) {
-                        if (!m->oid.arcs.empty() && oids_match_descendants(imp.module_oid, m->oid)) {
+                        if (!m->oid.arcs.empty() && oids_match(imp.module_oid, m->oid)) {
                             auto candidate = module_symbols_.find(m->name);
                             if (candidate != module_symbols_.end()) {
                                 it = candidate;
