@@ -518,11 +518,13 @@ DataTypeReference:
 	| TypeRefName '{' ParameterArgumentList '}' TOK_PPEQ Type
 	{
 	    $6->name = $1;
+	    $6->is_parameterized = true;
 	    $$ = $6;
 	}
 	| TypeRefName '{' ParameterArgumentList '}' TOK_PPEQ ObjectClass
 	{
 	    $6->name = $1;
+	    $6->is_parameterized = true;
 	    $$ = $6;
 	}
 	;
