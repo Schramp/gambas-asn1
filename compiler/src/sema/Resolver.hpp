@@ -728,6 +728,9 @@ private:
                         if (member_base && val_base) {
                             auto* mb = std::get_if<ast::BuiltinType>(&member_base->body);
                             auto* vb = std::get_if<ast::BuiltinType>(&val_base->body);
+                            // X.680 §24.11 + Annex B: same builtin type → always
+                            // compatible (e.g. INTEGER aliases per B.4.5, same string
+                            // type per B.5).  Only cross-type mismatches need checking.
                             if (mb && vb && *mb != *vb) {
                                 int gm = string_group(*mb);
                                 int gv = string_group(*vb);
