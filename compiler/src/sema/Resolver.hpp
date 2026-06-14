@@ -108,11 +108,26 @@ inline const char* builtin_type_name(ast::BuiltinType bt) {
     case B::OctetString:      return "OCTET STRING";
     case B::Null:             return "NULL";
     case B::ObjectIdentifier: return "OBJECT IDENTIFIER";
+    case B::RelativeOid:      return "RELATIVE-OID";
     case B::Real:             return "REAL";
     case B::Enumerated:       return "ENUMERATED";
+    case B::Utf8String:       return "UTF8String";
+    case B::NumericString:    return "NumericString";
+    case B::PrintableString:  return "PrintableString";
+    case B::T61String:        return "T61String";
+    case B::VideotexString:   return "VideotexString";
+    case B::Ia5String:        return "IA5String";
+    case B::GraphicString:    return "GraphicString";
+    case B::VisibleString:    return "VisibleString";
+    case B::GeneralString:    return "GeneralString";
+    case B::UniversalString:  return "UniversalString";
+    case B::BmpString:        return "BMPString";
+    case B::ObjectDescriptor: return "ObjectDescriptor";
+    case B::UtcTime:          return "UTCTime";
+    case B::GeneralizedTime:  return "GeneralizedTime";
     case B::Any:              return "ANY";
-    default:                  return "builtin type";
     }
+    return "builtin type";
 }
 
 inline std::string oid_to_string(const ast::OidValue& oid) {
