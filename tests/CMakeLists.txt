@@ -393,9 +393,6 @@ set(_parser_test_args
     ${CMAKE_CURRENT_SOURCE_DIR}/run_parser_tests.py
     --asn1cpp $<TARGET_FILE:asn1cpp>
     --test-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler
-    # Known gaps: OID-based import alias resolution not yet implemented (issue #63).
-    # asn1c resolves these by OID; asn1cpp currently resolves imports by name only.
-    --known-failures 13-resolver-OK.asn1 14-resolver-OK.asn1
 )
 
 if(WITH_ASN1C_XVAL)

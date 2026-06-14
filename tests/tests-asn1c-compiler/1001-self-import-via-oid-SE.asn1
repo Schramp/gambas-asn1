@@ -1,0 +1,15 @@
+-- SE: module imports from itself via OID alias (X.680 §12.3)
+-- The IMPORTS clause names a different alias but the OID resolves back
+-- to the importing module itself.
+
+SelfImportByOid
+	{ iso org(3) dod(6) internet(1) private(4) enterprise(1)
+	  spelio(9363) software(1) asn1c(5) test(1) 211 }
+	DEFINITIONS ::=
+BEGIN
+	IMPORTS Foo FROM SomeAlias
+		{ iso org(3) dod(6) internet(1) private(4) enterprise(1)
+		  spelio(9363) software(1) asn1c(5) test(1) 211 };
+
+	Bar ::= Foo
+END
