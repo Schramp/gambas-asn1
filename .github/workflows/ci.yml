@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.reflex
-          key: reflex-6.1.0-ubuntu24
+          key: reflex-6.1.0-ubuntu-latest
 
       - name: Build RE/flex
         if: steps.cache-reflex.outputs.cache-hit != 'true'
@@ -61,12 +61,15 @@ jobs:
         run: ctest --test-dir build --output-on-failure -j$(nproc)
 
       - name: Build ETSI LI example
+        if: github.ref == 'refs/heads/main'
         run: make -C examples/sample.source.ETSI-LI-PS-PDU -j$(nproc)
 
       - name: Build nested-decoder
+        if: github.ref == 'refs/heads/main'
         run: make -C examples/sample.source.ETSI-LI-PS-PDU/nested-decoder
 
       - name: Regression test nested-decoder
+        if: github.ref == 'refs/heads/main'
         run: |
           cd examples/sample.source.ETSI-LI-PS-PDU/nested-decoder
           ./nested-decoder pdu-00000001.etsi > actual.xer
