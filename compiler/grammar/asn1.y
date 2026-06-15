@@ -1291,13 +1291,14 @@ Constraint:
 ManyConstraints:
 	  Constraint               { $$ = $1; }
 	| ManyConstraints Constraint {
-	    // Accumulate into flat IntersectionConstraint
-	    if ($1 && std::holds_alternative<ast::IntersectionConstraint>($1->body)) {
+	    // Accumulate into flat serial IntersectionConstraint
+	    if ($1 && std::holds_alternative<ast::IntersectionConstraint>($1->body)
+	            && std::get<ast::IntersectionConstraint>($1->body).serial) {
 	        std::get<ast::IntersectionConstraint>($1->body).operands.push_back($2);
 	        $$ = $1;
 	    } else {
 	        auto c = std::make_shared<ast::Constraint>();
-	        c->body = ast::IntersectionConstraint{{$1, $2}};
+	        c->body = ast::IntersectionConstraint{{$1, $2}, /*serial=*/true};
 	        $$ = c;
 	    }
 	}

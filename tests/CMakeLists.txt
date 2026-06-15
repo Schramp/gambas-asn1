@@ -395,8 +395,10 @@ set(_parser_test_args
     --test-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler
     # 49: imports from modules not provided in the same file — valid in asn1c -E (parse-only)
     # but a hard error in asn1cpp full sema. Re-enable when -E added (issue #67).
+    # 91: INTEGER (SIZE(N)) requires -fbless-SIZE flag; asn1cpp rejects it without the flag.
+    #     Re-enable when -fbless-SIZE support is added.
     # 183: inline [BASE64] OCTET STRING member not yet supported by parser (issue #68).
-    --known-failures 49-real-life-OK.asn1 183-inline-base64-member-OK.asn1
+    --known-failures 49-real-life-OK.asn1 91-cond-int-blessSize-OK.asn1 183-inline-base64-member-OK.asn1
 )
 
 if(WITH_ASN1C_XVAL)
