@@ -997,8 +997,10 @@ The compiler reads and processes all ASN.1 modules in both ETSI TS 102 232 and
 3GPP TS 25.331 without error. It passes all 145 asn1c parser pass-tests and all
 3 reject-tests. 34 of 35 semantic-error tests are correctly handled.
 
-Parser conformance is tracked by `validate_parser.py`, which runs the asn1cpp compiler
-and asn1c side by side on ~200 test files and compares pass/fail outcomes.
+Parser conformance is tracked by `tests/run_parser_tests.py`, which runs the asn1cpp
+compiler on ~200 asn1c test files and checks pass/fail outcomes. Known failures are
+listed in `tests/parser_known_failures.txt`; both the ctest harness and the convenience
+wrapper `asn1cpp-validation-tools/validate_parser.py` read from that file.
 
 ### BER Codec
 

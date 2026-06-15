@@ -405,13 +405,21 @@ add_test(NAME imports COMMAND test_imports)
 # ---- Parser conformance: asn1c test suite -----------------------------------
 # Runs run_parser_tests.py against all *-OK/-NP/-SE.asn1 files imported from
 # the asn1c compiler test suite. Pass --asn1c when WITH_ASN1C_XVAL is ON.
+#
+# Known failures are maintained in parser_known_failures.txt (one basename per
+# line; lines starting with '#' are comments).  CMakeLists and validate_parser.py
+# both read the same file, so the list cannot drift between the two.
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/parser_known_failures.txt _parser_known_failures
+     REGEX "^[^#]")
+
 set(_parser_test_args
     ${CMAKE_CURRENT_SOURCE_DIR}/run_parser_tests.py
     --asn1cpp $<TARGET_FILE:asn1cpp>
     --test-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler
-    # 183: inline [BASE64] OCTET STRING member not yet supported by parser (issue #68).
-    --known-failures 183-inline-base64-member-OK.asn1
 )
+if(_parser_known_failures)
+    list(APPEND _parser_test_args --known-failures ${_parser_known_failures})
+endif()
 
 if(WITH_ASN1C_XVAL)
     list(APPEND _parser_test_args --asn1c ${ASN1C_EXECUTABLE})
