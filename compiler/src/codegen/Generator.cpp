@@ -191,33 +191,12 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) const {
     }
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
-        switch (*bt) {
-        case BT::Boolean:           return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Boolean);
-        case BT::Integer:           return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Integer);
-        case BT::BitString:         return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::BitString);
-        case BT::OctetString:       return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::OctetString);
-        case BT::Null:              return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Null);
-        case BT::ObjectIdentifier:  return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Oid);
-        case BT::RelativeOid:       return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::RelativeOid);
-        case BT::Real:              return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Real);
-        case BT::Enumerated:        return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Enumerated);
-        case BT::Utf8String:        return "asn1::Tag::universal(12, false)";
-        case BT::NumericString:     return "asn1::Tag::universal(18, false)";
-        case BT::PrintableString:   return "asn1::Tag::universal(19, false)";
-        case BT::T61String:         return "asn1::Tag::universal(20, false)";
-        case BT::Ia5String:         return "asn1::Tag::universal(22, false)";
-        case BT::VisibleString:     return "asn1::Tag::universal(26, false)";
-        case BT::GeneralString:     return "asn1::Tag::universal(27, false)";
-        case BT::GraphicString:     return "asn1::Tag::universal(25, false)";
-        case BT::UniversalString:   return "asn1::Tag::universal(28, false)";
-        case BT::BmpString:         return "asn1::Tag::universal(30, false)";
-        case BT::VideotexString:    return "asn1::Tag::universal(21, false)";
-        case BT::ObjectDescriptor:  return "asn1::Tag::universal(7, false)";
-        case BT::UtcTime:           return "asn1::Tag::universal(23, false)";
-        case BT::GeneralizedTime:   return "asn1::Tag::universal(24, false)";
-        case BT::Any:               return "asn1::Tag::universal( 4, false)";
-        default: break;
-        }
+        if (*bt == BT::Any)
+            // ANY is stored as raw BER bytes at runtime; codegen uses OCTET STRING tag.
+            // sema treats ANY as tag-less (no fixed universal tag), so builtin_universal_tag returns 0.
+            return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::OctetString);
+        uint32_t n = sema::builtin_universal_tag(*bt);
+        if (n) return std::format("asn1::Tag::universal({}, false)", n);
     }
     if (def.is_sequence())
         return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Sequence);

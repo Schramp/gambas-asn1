@@ -142,6 +142,32 @@ inline std::string oid_to_string(const ast::OidValue& oid) {
     return s + " }";
 }
 
+// Map an ASN.1 builtin type to its UNIVERSAL tag number (X.680 §8.6 / X.690 §8.1.2).
+// Returns 0 for types with no fixed universal tag (ANY).
+// Table order must match ast::BuiltinType enum order.
+inline uint32_t builtin_universal_tag(ast::BuiltinType bt) {
+    namespace UT = asn1::UniversalTag;
+    static constexpr uint32_t kTable[] = {
+        // Boolean, Integer, BitString, OctetString, Null,
+        UT::Boolean, UT::Integer, UT::BitString, UT::OctetString, UT::Null,
+        // ObjectIdentifier, RelativeOid, Real, Enumerated,
+        UT::Oid, UT::RelativeOid, UT::Real, UT::Enumerated,
+        // Utf8String, NumericString, PrintableString, T61String, VideotexString,
+        UT::Utf8String, UT::NumericString, UT::PrintableString, UT::T61String, UT::VideotexString,
+        // Ia5String, GraphicString, VisibleString, GeneralString,
+        UT::Ia5String, UT::GraphicString, UT::VisibleString, UT::GeneralString,
+        // UniversalString, BmpString, ObjectDescriptor,
+        UT::UniversalString, UT::BmpString, UT::ObjectDescriptor,
+        // UtcTime, GeneralizedTime,
+        UT::UtcTime, UT::GeneralizedTime,
+        // Any — no fixed BER tag (X.208 legacy)
+        0,
+    };
+    static_assert(std::size(kTable) == static_cast<std::size_t>(ast::BuiltinType::Any) + 1,
+                  "kTable out of sync with ast::BuiltinType");
+    auto idx = static_cast<std::size_t>(bt);
+    return idx < std::size(kTable) ? kTable[idx] : 0;
+}
 
 class Resolver {
     // Per-module symbol tables: module_name -> all definitions in that module
@@ -496,36 +522,10 @@ private:
         }
         // BuiltinType: natural UNIVERSAL tag
         if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
+            if (*bt == ast::BuiltinType::Any)
+                return {{}, false, true};  // ANY has no fixed BER tag (X.208 legacy)
             uint8_t  u = static_cast<uint8_t>(ast::TagClass::Universal);
-            uint32_t n = 0;
-            using B = ast::BuiltinType;
-            switch (*bt) {
-            case B::Boolean:          n = 1;  break;
-            case B::Integer:          n = 2;  break;
-            case B::BitString:        n = 3;  break;
-            case B::OctetString:      n = 4;  break;
-            case B::Null:             n = 5;  break;
-            case B::ObjectIdentifier: n = 6;  break;
-            case B::ObjectDescriptor: n = 7;  break;
-            case B::Real:             n = 9;  break;
-            case B::Enumerated:       n = 10; break;
-            case B::Utf8String:       n = 12; break;
-            case B::RelativeOid:      n = 13; break;
-            case B::NumericString:    n = 18; break;
-            case B::PrintableString:  n = 19; break;
-            case B::T61String:        n = 20; break;
-            case B::VideotexString:   n = 21; break;
-            case B::Ia5String:        n = 22; break;
-            case B::UtcTime:          n = 23; break;
-            case B::GeneralizedTime:  n = 24; break;
-            case B::GraphicString:    n = 25; break;
-            case B::VisibleString:    n = 26; break;
-            case B::GeneralString:    n = 27; break;
-            case B::UniversalString:  n = 28; break;
-            case B::BmpString:        n = 30; break;
-            case B::Any:              return {{}, false, true};  // ANY has no fixed BER tag (X.208 legacy)
-            default: break;
-            }
+            uint32_t n = builtin_universal_tag(*bt);
             if (n) return {{{u, n}}, false};
             return {};
         }
@@ -567,14 +567,7 @@ private:
     // Uses runtime Alphabets.hpp constants — single source of truth.
     // Empty = no fixed alphabet (Utf8String, GeneralString, etc.).
     static std::string_view string_type_alphabet(ast::BuiltinType bt) {
-        using B = ast::BuiltinType;
-        switch (bt) {
-        case B::NumericString:   return asn1::builtin_alphabet(UniversalTag::NumericString);
-        case B::PrintableString: return asn1::builtin_alphabet(UniversalTag::PrintableString);
-        case B::VisibleString:   return asn1::builtin_alphabet(UniversalTag::VisibleString);
-        case B::Ia5String:       return asn1::builtin_alphabet(UniversalTag::Ia5String);
-        default:                 return {};
-        }
+        return asn1::builtin_alphabet(builtin_universal_tag(bt));
     }
 
     // Walk a FROM inner constraint tree and report any single-char Value that falls
