@@ -64,7 +64,7 @@ def main():
     args = ap.parse_args()
 
     test_dir = Path(args.test_dir)
-    cpp_cmd  = [args.asn1cpp]
+    cpp_cmd  = [args.asn1cpp, "-E"]
     asn1c_cmd = [args.asn1c, "-E"] if args.asn1c else None
 
     files = sorted(test_dir.glob("*.asn1"))
