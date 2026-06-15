@@ -165,27 +165,10 @@ static char decode_numeric_char(uint8_t v) {
 }
 
 // X.691 §26.5 "This subclause applies to known-multiplier character strings"
-// PrintableString: 7-bit index into PrintableString alphabet.
-// TODO: use TypeDescriptor alphabet table instead of linear scan.
-static uint8_t encode_ps_char(char c) {
-    auto a = PRINTABLE_STRING_ALPHABET;
-    for (std::size_t i = 0; i < a.size(); ++i)
-        if (a[i] == c) return static_cast<uint8_t>(i);
-    return 0;
-}
-
-// X.691 §26.5 — see encode_ps_char above.
-// TODO: use TypeDescriptor alphabet table instead of linear scan.
-static char decode_ps_char(uint8_t v) {
-    auto a = PRINTABLE_STRING_ALPHABET;
-    return (v < a.size()) ? a[v] : '?';
-}
-
-// X.691 §26.5 "This subclause applies to known-multiplier character strings"
 // Returns {bits_per_char, bytes_per_char} for each string type:
 //   NumericString: {4,1}, PrintableString/VisibleString/UTCTime/GeneralizedTime: {7,1},
 //   BMPString: {8,2}, UniversalString: {8,4}, default: {8,1}.
-// TODO: use TypeDescriptor alphabet to know length?
+// Used only when TypeDescriptor has no FROM alphabet (pc.alphabet_bits == 0).
 static std::tuple<int,int> string_params(uint32_t tag_num) {
     switch (tag_num) {
         case UniversalTag::NumericString:   return {4, 1};
@@ -583,7 +566,7 @@ public:
             } else if (has_alpha) {
                 in_root = true;
                 for (unsigned char c : str)
-                    if (std::find(pc.alphabet.begin(), pc.alphabet.end(), c) == pc.alphabet.end())
+                    if (!std::binary_search(pc.alphabet.begin(), pc.alphabet.end(), c))
                         { in_root = false; break; }
             } else {
                 in_root = true;
@@ -598,9 +581,9 @@ public:
         encode_size_field(stream, def, char_count);
         if (has_alpha) {
             for (unsigned char c : str) {
-                int code = 0;
-                for (int i = 0; i < static_cast<int>(pc.alphabet.size()); ++i)
-                    if (pc.alphabet[i] == c) { code = i; break; }
+                auto it = std::lower_bound(pc.alphabet.begin(), pc.alphabet.end(), c);
+                int code = (it != pc.alphabet.end() && *it == c)
+                    ? static_cast<int>(it - pc.alphabet.begin()) : 0;
                 stream.put_bits(static_cast<uint64_t>(code), pc.alphabet_bits);
             }
         } else if (bpc > 1) {
