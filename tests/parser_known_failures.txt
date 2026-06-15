@@ -3,5 +3,3 @@
 # Add entries here when a test is blocked by an open issue;
 # remove them when the issue is fixed.
 #
-# 183: inline [BASE64] OCTET STRING member not yet supported (issue #68)
-183-inline-base64-member-OK.asn1

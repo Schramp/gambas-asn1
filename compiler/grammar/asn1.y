@@ -615,6 +615,7 @@ MaybeIndirectTaggedType:
 	    if ($3) $2->constraints.push_back($3);
 	    $$ = $2;
 	}
+	| XerEncodingInstructionPrefix MaybeIndirectTaggedType { $$ = $2; }
 	;
 
 NSTD_IndirectMarker:
