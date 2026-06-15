@@ -17,7 +17,7 @@ namespace fs = std::filesystem;
 
 static void usage(const char* prog) {
     std::cerr << "Usage: " << prog
-              << " [-E] [-o outdir] [-fallow-newer-modules]"
+              << " [-E] [-o outdir] [-fallow-newer-modules] [-fbless-SIZE]"
                  " [--integer-type=int64|uint64|int128|arbitrary]"
                  " file.asn1 [file2.asn1 ...]\n";
     std::exit(1);
@@ -26,6 +26,7 @@ static void usage(const char* prog) {
 int main(int argc, char** argv) {
     std::string out_dir = "generated";
     bool allow_newer_modules = false;
+    bool bless_size = false;
     bool parse_only = false;
     asn1::codegen::IntStorageKind default_int_kind = asn1::codegen::IntStorageKind::S64;
     std::vector<std::string> input_files;
@@ -38,6 +39,10 @@ int main(int argc, char** argv) {
             out_dir = argv[++i];
         } else if (arg == "-fallow-newer-modules") {
             allow_newer_modules = true;
+        } else if (arg == "-fbless-SIZE") {
+            // Non-standard: accept SIZE() on INTEGER/ENUMERATED (asn1c compatibility).
+            // X.680 §47.5.2 forbids this; the constraint is silently ignored in codegen.
+            bless_size = true;
         } else if (arg == "--integer-type=int64") {
             default_int_kind = asn1::codegen::IntStorageKind::S64;
         } else if (arg == "--integer-type=uint64") {
@@ -88,6 +93,7 @@ int main(int argc, char** argv) {
     // Semantic analysis
     asn1::sema::Resolver resolver;
     resolver.set_allow_newer_modules(allow_newer_modules);
+    resolver.set_bless_size(bless_size);
     resolver.collect(pr);
     resolver.resolve_imports(pr);
     resolver.resolve_types(pr);

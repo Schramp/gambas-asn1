@@ -184,11 +184,17 @@ class Resolver {
     std::unordered_map<std::string, ast::TagDefault> module_tag_defaults_;
 
     bool allow_newer_modules_{false};
+    // -fbless-SIZE: accept SIZE() on INTEGER/ENUMERATED (non-standard, X.680 §47.5.2 forbids it).
+    // Matches asn1c -fbless-SIZE behaviour: constraint is accepted but silently ignored in codegen.
+    // Only enable for schemas that rely on this asn1c extension for byte-width hints.
+    bool bless_size_{false};
     std::vector<std::string> errors_;
     std::vector<std::string> warnings_;
 
 public:
     void set_allow_newer_modules(bool v)    { allow_newer_modules_ = v; }
+    // Enable non-standard SIZE constraint on INTEGER/ENUMERATED (see -fbless-SIZE).
+    void set_bless_size(bool v)             { bless_size_ = v; }
     const std::vector<std::string>& errors()   const { return errors_; }
     const std::vector<std::string>& warnings() const { return warnings_; }
 
@@ -603,9 +609,16 @@ private:
                     check_from_alphabet(*fc->inner, alpha, ctx, mod_name);
             }
         } else if (std::holds_alternative<ast::SizeConstraint>(c.body)) {
-            if (!is_sized)
+            // X.680 §47.5.2: SIZE only applies to bit/octet/character strings and *-OF types.
+            // -fbless-SIZE relaxes this for INTEGER and ENUMERATED to match asn1c's non-standard
+            // extension. The constraint is accepted but ignored during code generation (asn1c
+            // also ignores it: generated constraint functions say "No applicable constraints").
+            bool size_on_int_or_enum = bt && (*bt == ast::BuiltinType::Integer ||
+                                              *bt == ast::BuiltinType::Enumerated);
+            if (!is_sized && !(bless_size_ && size_on_int_or_enum))
                 errors_.push_back("SIZE constraint not applicable to type "
-                    + ctx + " in module '" + mod_name + "'");
+                    + ctx + " in module '" + mod_name + "'"
+                    + " (hint: -fbless-SIZE allows this non-standard asn1c extension)");
         } else if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c.body)) {
             if (ic->serial) {
                 // Serial (A)(B) constraints: X.680 §47.4 each must be a subset of the prior.

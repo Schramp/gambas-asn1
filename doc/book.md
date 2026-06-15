@@ -608,6 +608,7 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `-E` | Parse only — skip semantic analysis and code generation. Exit 0 on parse success. Useful for validating syntax without resolving imports. |
 | `-o <dir>` | Output directory (required for code generation; ignored with `-E`) |
 | `-fallow-newer-modules` | Accept module version mismatches silently |
+| `-fbless-SIZE` | **(Non-standard)** Accept `SIZE()` constraints on `INTEGER` and `ENUMERATED`. X.680 §47.5.2 forbids this; the constraint is silently ignored during code generation. Matches asn1c's `-fbless-SIZE` extension for byte-width hints in legacy schemas. |
 
 ### Comparison with asn1c CLI
 
@@ -618,6 +619,7 @@ Open issues are linked for gaps that have been prioritised for implementation.
 |------------|----------------------|--------|
 | `-o <dir>` | `-o <dir>` | Supported |
 | `-fallow-newer-modules` | `-fallow-newer-modules` | Supported |
+| `-fbless-SIZE` | `-fbless-SIZE` | Supported (non-standard; SIZE on INTEGER/ENUMERATED silently ignored) |
 | `-pdu={all\|auto\|Type}` | — | [Issue #14](https://github.com/Schramp/gambas-asn1/issues/14) |
 | `-flong-size=32\|64` | — | [Issue #15](https://github.com/Schramp/gambas-asn1/issues/15) |
 | `-fprefix=<prefix>` | — | [Issue #16](https://github.com/Schramp/gambas-asn1/issues/16) |

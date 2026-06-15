@@ -36,9 +36,13 @@ def run(cmd, asn1_file, extra_flags=None):
 
 def extra_flags_for(filename):
     """Return extra compiler flags implied by the test filename."""
+    flags = []
     if "fallow-newer-modules" in filename:
-        return ["-fallow-newer-modules"]
-    return []
+        flags.append("-fallow-newer-modules")
+    if "blessSize" in filename:
+        # asn1c -fbless-SIZE: accept SIZE() on INTEGER/ENUMERATED (non-standard extension).
+        flags.append("-fbless-SIZE")
+    return flags
 
 
 def classify(name):
