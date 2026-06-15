@@ -595,7 +595,7 @@ for (auto& fail : report.failures())
 ### Compiler
 
 ```
-asn1cpp <file.asn1> [<file2.asn1> ...] -o <outdir>
+asn1cpp [-E] <file.asn1> [<file2.asn1> ...] -o <outdir>
 ```
 
 Reads one or more ASN.1 module files, resolves cross-module references, and generates
@@ -605,7 +605,8 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 
 | Flag | Effect |
 |------|--------|
-| `-o <dir>` | Output directory (required) |
+| `-E` | Parse only — skip semantic analysis and code generation. Exit 0 on parse success. Useful for validating syntax without resolving imports. |
+| `-o <dir>` | Output directory (required for code generation; ignored with `-E`) |
 | `-fallow-newer-modules` | Accept module version mismatches silently |
 
 ### Comparison with asn1c CLI
@@ -624,7 +625,7 @@ Open issues are linked for gaps that have been prioritised for implementation.
 | `-fno-include-deps` | — | Not applicable (C++ `#include` is explicit) |
 | `-fwide-types` | — | UInteger auto-selected by constraint range |
 | `-finteger-native-type=<mode>` | — | Storage type auto-selected |
-| `-E` (print parse tree) | — | Not implemented |
+| `-E` (print parse tree) | `-E` | Supported (parse-only, skip sema + codegen) |
 | `-no-gen-BER/XER/UPER` | — | Not applicable; all codecs are in the runtime |
 | `-gen-autotools` | — | Not applicable; CMake is the build system |
 | `-Werror` | — | Not implemented |
