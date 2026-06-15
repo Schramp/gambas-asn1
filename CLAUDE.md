@@ -385,6 +385,8 @@ If a related problem surfaces while fixing an issue but falls outside the PR's s
 
 PRs are reviewed by Schramp and optionally by a clean Claude instance. Process review comments when indicated. Merge only when Schramp says to merge.
 
+**Documentation:** `doc/book.md` is the user-facing reference. When a PR adds or changes CLI flags, codec behaviour, runtime env-vars, or any feature visible to users, update the relevant section of `doc/book.md` in the same commit. Do not leave documentation trailing behind implementation.
+
 ### Issue management
 
 - Issues live on GitHub (`Schramp/gambas-asn1`) and carry priority labels.
