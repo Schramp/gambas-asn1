@@ -569,10 +569,10 @@ private:
     static std::string_view string_type_alphabet(ast::BuiltinType bt) {
         using B = ast::BuiltinType;
         switch (bt) {
-        case B::NumericString:   return asn1::NUMERIC_STRING_ALPHABET;
-        case B::PrintableString: return asn1::PRINTABLE_STRING_ALPHABET;
-        case B::VisibleString:
-        case B::Ia5String:       return asn1::VISIBLE_STRING_ALPHABET;
+        case B::NumericString:   return asn1::builtin_alphabet(UniversalTag::NumericString);
+        case B::PrintableString: return asn1::builtin_alphabet(UniversalTag::PrintableString);
+        case B::VisibleString:   return asn1::builtin_alphabet(UniversalTag::VisibleString);
+        case B::Ia5String:       return asn1::builtin_alphabet(UniversalTag::Ia5String);
         default:                 return {};
         }
     }
