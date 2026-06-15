@@ -162,9 +162,14 @@ add_custom_command(
             ${STRINGS_TEST_GEN_DIR}/HasBmpString.hpp       ${STRINGS_TEST_GEN_DIR}/HasBmpString.cpp
             ${STRINGS_TEST_GEN_DIR}/HasVideotexString.hpp  ${STRINGS_TEST_GEN_DIR}/HasVideotexString.cpp
             ${STRINGS_TEST_GEN_DIR}/HasObjectDescriptor.hpp ${STRINGS_TEST_GEN_DIR}/HasObjectDescriptor.cpp
+            ${STRINGS_TEST_GEN_DIR}/HexCharType.hpp        ${STRINGS_TEST_GEN_DIR}/HexCharType.cpp
+            ${STRINGS_TEST_GEN_DIR}/YesNoCharType.hpp      ${STRINGS_TEST_GEN_DIR}/YesNoCharType.cpp
+            ${STRINGS_TEST_GEN_DIR}/VowelType.hpp          ${STRINGS_TEST_GEN_DIR}/VowelType.cpp
+            ${STRINGS_TEST_GEN_DIR}/OutOfOrderType.hpp     ${STRINGS_TEST_GEN_DIR}/OutOfOrderType.cpp
             ${STRINGS_TEST_GEN_DIR}/HasHexStr.hpp          ${STRINGS_TEST_GEN_DIR}/HasHexStr.cpp
             ${STRINGS_TEST_GEN_DIR}/HasYesNoStr.hpp        ${STRINGS_TEST_GEN_DIR}/HasYesNoStr.cpp
             ${STRINGS_TEST_GEN_DIR}/HasVowelStr.hpp        ${STRINGS_TEST_GEN_DIR}/HasVowelStr.cpp
+            ${STRINGS_TEST_GEN_DIR}/HasOutOfOrder.hpp      ${STRINGS_TEST_GEN_DIR}/HasOutOfOrder.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${STRINGS_TEST_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/strings_test.asn1
                                    -o ${STRINGS_TEST_GEN_DIR}
@@ -183,9 +188,14 @@ add_executable(test_strings
     ${STRINGS_TEST_GEN_DIR}/HasBmpString.cpp
     ${STRINGS_TEST_GEN_DIR}/HasVideotexString.cpp
     ${STRINGS_TEST_GEN_DIR}/HasObjectDescriptor.cpp
+    ${STRINGS_TEST_GEN_DIR}/HexCharType.cpp
+    ${STRINGS_TEST_GEN_DIR}/YesNoCharType.cpp
+    ${STRINGS_TEST_GEN_DIR}/VowelType.cpp
+    ${STRINGS_TEST_GEN_DIR}/OutOfOrderType.cpp
     ${STRINGS_TEST_GEN_DIR}/HasHexStr.cpp
     ${STRINGS_TEST_GEN_DIR}/HasYesNoStr.cpp
     ${STRINGS_TEST_GEN_DIR}/HasVowelStr.cpp
+    ${STRINGS_TEST_GEN_DIR}/HasOutOfOrder.cpp
 )
 target_include_directories(test_strings PRIVATE ${STRINGS_TEST_GEN_DIR})
 target_link_libraries(test_strings PRIVATE asn1cpp_runtime)

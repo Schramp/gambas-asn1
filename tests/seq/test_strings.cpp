@@ -17,9 +17,14 @@
 #include "HasBmpString.hpp"
 #include "HasVideotexString.hpp"
 #include "HasObjectDescriptor.hpp"
+#include "HexCharType.hpp"
+#include "YesNoCharType.hpp"
+#include "VowelType.hpp"
+#include "OutOfOrderType.hpp"
 #include "HasHexStr.hpp"
 #include "HasYesNoStr.hpp"
 #include "HasVowelStr.hpp"
+#include "HasOutOfOrder.hpp"
 
 using namespace asn1;
 
@@ -192,12 +197,12 @@ int main() {
     }
 
     // ── PER FROM-constrained strings ──────────────────────────────────────────
-    // Verifies that the alphabet table (TypeDescriptor::constraints.alphabet) is
-    // used for UPER character indexing, not a hardcoded linear scan.
+    // Named intermediate types (HexCharType etc.) get dedicated TypeDescriptors
+    // with constraints.alphabet populated. X.691 §26.5.7: canonical index =
+    // position in numerically-sorted alphabet — std::lower_bound is valid.
     printf("\n── PER FROM-constrained string round-trips ──────────────────────\n");
 
-    auto per_rt_str = [](const char* label, const TypeDescriptor& def,
-                         const auto& val, auto& wrapper) -> bool {
+    auto per_rt_str = [](const TypeDescriptor& def, const auto& val, auto& wrapper) -> bool {
         wrapper.value = val;
         std::vector<uint8_t> buf;
         { PerEncodeStream s{buf}; PerCodec::instance().encode(s, def, &wrapper); s.flush(); }
@@ -207,25 +212,33 @@ int main() {
         return out.value.str() == wrapper.value.str();
     };
 
-    // HasHexStr: IA5String FROM "0-9A-F", 16-char alphabet → 4 bits/char
+    // HexCharType: IA5String FROM "0-9A-F", 16-char alphabet → 4 bits/char
     { HasHexStr w{};
-      check("HasHexStr PER round-trip \"DEAD\"",    per_rt_str("", HasHexStr::asn_DEF, Ia5String{"DEAD"}, w)); }
+      check("HasHexStr PER round-trip \"DEAD\"",    per_rt_str(HasHexStr::asn_DEF, Ia5String{"DEAD"}, w)); }
     { HasHexStr w{};
-      check("HasHexStr PER round-trip \"0\"",       per_rt_str("", HasHexStr::asn_DEF, Ia5String{"0"}, w)); }
+      check("HasHexStr PER round-trip \"0\"",       per_rt_str(HasHexStr::asn_DEF, Ia5String{"0"}, w)); }
     { HasHexStr w{};
-      check("HasHexStr PER round-trip \"DEADBEEF\"",per_rt_str("", HasHexStr::asn_DEF, Ia5String{"DEADBEEF"}, w)); }
+      check("HasHexStr PER round-trip \"DEADBEEF\"",per_rt_str(HasHexStr::asn_DEF, Ia5String{"DEADBEEF"}, w)); }
 
-    // HasYesNoStr: IA5String FROM "NY", 2-char alphabet → 1 bit/char
+    // YesNoCharType: IA5String FROM "NY", 2-char alphabet → 1 bit/char
     { HasYesNoStr w{};
-      check("HasYesNoStr PER round-trip \"Y\"",     per_rt_str("", HasYesNoStr::asn_DEF, Ia5String{"Y"}, w)); }
+      check("HasYesNoStr PER round-trip \"Y\"",     per_rt_str(HasYesNoStr::asn_DEF, Ia5String{"Y"}, w)); }
     { HasYesNoStr w{};
-      check("HasYesNoStr PER round-trip \"NYN\"",   per_rt_str("", HasYesNoStr::asn_DEF, Ia5String{"NYN"}, w)); }
+      check("HasYesNoStr PER round-trip \"NYN\"",   per_rt_str(HasYesNoStr::asn_DEF, Ia5String{"NYN"}, w)); }
 
-    // HasVowelStr: PrintableString FROM "aeiou", 5-char alphabet → 3 bits/char
+    // VowelType: PrintableString FROM "aeiou", 5-char alphabet → 3 bits/char
     { HasVowelStr w{};
-      check("HasVowelStr PER round-trip \"aeiou\"", per_rt_str("", HasVowelStr::asn_DEF, PrintableString{"aeiou"}, w)); }
+      check("HasVowelStr PER round-trip \"aeiou\"", per_rt_str(HasVowelStr::asn_DEF, PrintableString{"aeiou"}, w)); }
     { HasVowelStr w{};
-      check("HasVowelStr PER round-trip \"a\"",     per_rt_str("", HasVowelStr::asn_DEF, PrintableString{"a"}, w)); }
+      check("HasVowelStr PER round-trip \"a\"",     per_rt_str(HasVowelStr::asn_DEF, PrintableString{"a"}, w)); }
+
+    // OutOfOrderType: FROM ("F"|"A"|"9"|"0") — declared out of ASCII order.
+    // Generator sorts to {0x30,0x39,0x41,0x46} before emitting; PerCodec encodes
+    // by sorted index. Verifies sort is applied regardless of declaration order.
+    { HasOutOfOrder w{};
+      check("HasOutOfOrder PER round-trip \"0AF9\"", per_rt_str(HasOutOfOrder::asn_DEF, Ia5String{"0AF9"}, w)); }
+    { HasOutOfOrder w{};
+      check("HasOutOfOrder PER round-trip \"F\"",    per_rt_str(HasOutOfOrder::asn_DEF, Ia5String{"F"}, w)); }
 
     printf("\n");
     if (failures) { printf("  %d test(s) FAILED\n", failures); return 1; }
