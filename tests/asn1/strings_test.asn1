@@ -14,4 +14,9 @@ StringsTest DEFINITIONS ::= BEGIN
     HasVideotexString  ::= SEQUENCE { value  VideotexString }
     HasObjectDescriptor::= SEQUENCE { value  ObjectDescriptor }
 
+    -- FROM-constrained string types: exercise PER alphabet encoding
+    HasHexStr  ::= SEQUENCE { value  IA5String     (FROM ("0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"|"A"|"B"|"C"|"D"|"E"|"F")) }
+    HasYesNoStr::= SEQUENCE { value  IA5String     (FROM ("N"|"Y")) }
+    HasVowelStr::= SEQUENCE { value  PrintableString (FROM ("a"|"e"|"i"|"o"|"u")) }
+
 END
