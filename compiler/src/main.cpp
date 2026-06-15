@@ -17,7 +17,7 @@ namespace fs = std::filesystem;
 
 static void usage(const char* prog) {
     std::cerr << "Usage: " << prog
-              << " [-o outdir] [-fallow-newer-modules]"
+              << " [-E] [-o outdir] [-fallow-newer-modules]"
                  " [--integer-type=int64|uint64|int128|arbitrary]"
                  " file.asn1 [file2.asn1 ...]\n";
     std::exit(1);
@@ -26,12 +26,15 @@ static void usage(const char* prog) {
 int main(int argc, char** argv) {
     std::string out_dir = "generated";
     bool allow_newer_modules = false;
+    bool parse_only = false;
     asn1::codegen::IntStorageKind default_int_kind = asn1::codegen::IntStorageKind::S64;
     std::vector<std::string> input_files;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "-o" && i + 1 < argc) {
+        if (arg == "-E") {
+            parse_only = true;
+        } else if (arg == "-o" && i + 1 < argc) {
             out_dir = argv[++i];
         } else if (arg == "-fallow-newer-modules") {
             allow_newer_modules = true;
@@ -78,6 +81,9 @@ int main(int argc, char** argv) {
     for (const auto& mod : pr.modules)
         std::cout << "  Module: " << mod->name
                   << " (" << mod->assignments.size() << " assignments)\n";
+
+    if (parse_only)
+        return 0;
 
     // Semantic analysis
     asn1::sema::Resolver resolver;
