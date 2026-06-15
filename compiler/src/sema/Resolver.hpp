@@ -163,7 +163,8 @@ inline uint32_t builtin_universal_tag(ast::BuiltinType bt) {
         // Any — no fixed BER tag (X.208 legacy)
         0,
     };
-    static_assert(std::size(kTable) == 24, "kTable out of sync with ast::BuiltinType");
+    static_assert(std::size(kTable) == static_cast<std::size_t>(ast::BuiltinType::Any) + 1,
+                  "kTable out of sync with ast::BuiltinType");
     auto idx = static_cast<std::size_t>(bt);
     return idx < std::size(kTable) ? kTable[idx] : 0;
 }

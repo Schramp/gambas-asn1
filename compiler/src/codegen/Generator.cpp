@@ -192,6 +192,8 @@ std::string Generator::natural_tag_for(const ast::TypeDef& def) const {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
         if (*bt == BT::Any)
+            // ANY is stored as raw BER bytes at runtime; codegen uses OCTET STRING tag.
+            // sema treats ANY as tag-less (no fixed universal tag), so builtin_universal_tag returns 0.
             return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::OctetString);
         uint32_t n = sema::builtin_universal_tag(*bt);
         if (n) return std::format("asn1::Tag::universal({}, false)", n);
