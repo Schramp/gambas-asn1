@@ -915,7 +915,8 @@ std::string Generator::emit_member_type_descriptor(
 {
     using BT = ast::BuiltinType;
     auto* bt = std::get_if<BT>(&m.body);
-    if (!bt || m.constraints.empty()) return type_descriptor_ref_for(m);
+    bool needs_xer = m.xer_encoding != ast::XerEncoding::Default;
+    if (!bt || (m.constraints.empty() && !needs_xer)) return type_descriptor_ref_for(m);
 
     // INTEGER value range
     if (*bt == BT::Integer) {
@@ -996,11 +997,13 @@ std::string Generator::emit_member_type_descriptor(
     auto utag = sizeable_universal_tag(*bt);
     if (utag) {
         auto sr = extract_size_range(m);
-        if (sr) {
-            auto sc = compute_size_constraint(sr, is_constraint_extensible(m));
-            std::string pc = std::format(
-                "{{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }}",
-                sc.flags, sc.range_bits, sc.lower, sc.upper);
+        if (sr || needs_xer) {
+            std::string pc = "{}";
+            if (sr) {
+                auto sc = compute_size_constraint(sr, is_constraint_extensible(m));
+                pc = std::format("{{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }}",
+                    sc.flags, sc.range_bits, sc.lower, sc.upper);
+            }
             // Use the matching asn_DEF_*'s public name as the XER tag name —
             // BerCodec / XerCodec consult it for primitive type names.
             const char* tn = nullptr;
@@ -1029,12 +1032,15 @@ std::string Generator::emit_member_type_descriptor(
             if (*bt == BT::BitString)   ber_h = "&asn1::ber_bitstring_handler";
             if (*bt == BT::OctetString) ber_h = "&asn1::ber_octetstring_handler";
             std::string cpp_t = cpp_type_for(m);
+            std::string xer_tail = needs_xer
+                ? std::format(", asn1::XerEncoding::Base64")
+                : "";
             os << std::format(
                 "static const asn1::TypeDescriptor {} = "
                 "{{ \"{}\", asn1::Tag::universal({}, false), "
                 "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
-                "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) }};\n",
-                tname, tn, *utag, pc, per_h, ber_h, cpp_t);
+                "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}){}}};\n",
+                tname, tn, *utag, pc, per_h, ber_h, cpp_t, xer_tail);
             return "&" + tname;
         }
     }
@@ -1940,7 +1946,11 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
     os << std::format("    false, asn1::TypeKind::Primitive,\n");
     os << std::format("    {} /* per_handler */,\n", per_h);
     os << std::format("    {} /* ber_handler */,\n", ber_h);
-    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cpp_t);
+    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */", cpp_t);
+    if (def.xer_encoding == ast::XerEncoding::Base64)
+        os << ",\n    asn1::XerEncoding::Base64 /* xer_encoding */\n";
+    else
+        os << "\n";
     os << "};\n";
 }
 

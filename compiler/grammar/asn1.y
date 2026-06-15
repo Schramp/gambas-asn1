@@ -184,7 +184,8 @@
 %type <TypeDefPtr>                  Type TaggedType UntaggedType DefinedUntaggedType
 %type <TypeDefPtr>                  TypeDeclaration ConcreteTypeDeclaration DefinedType
 %type <TypeDefPtr>                  MaybeIndirectTaggedType MaybeIndirectTypeDeclaration
-%type <std::monostate>              NSTD_IndirectMarker XerEncodingInstructionPrefix
+%type <std::monostate>              NSTD_IndirectMarker
+%type <std::string>                 XerEncodingInstructionPrefix
 
 /* References */
 %type <std::string>                 TypeRefName
@@ -571,17 +572,20 @@ ValueAssignment:
 /* X.693 §21 per-type encoding instruction prefix: [BASE64] T or [XER:BASE64] T.
  * '[' is unambiguous here: Tag uses '[' TagClass number ']' which requires a
  * number after the optional class keyword; TOK_capitalreference cannot be a
- * number, so there is no shift/reduce conflict with the Tag path. */
-/* TODO: store the encoding reference on the TypeDef and honour it in XerCodec
- * (e.g. emit/expect base64 instead of hex for [BASE64] OCTET STRING). */
+ * number, so there is no shift/reduce conflict with the Tag path.
+ * Returns the instruction name (e.g. "BASE64") so callers can set xer_encoding. */
 XerEncodingInstructionPrefix:
-	  '[' TOK_capitalreference ']'                              { }
-	| '[' TOK_capitalreference ':' TOK_capitalreference ']'    { }
+	  '[' TOK_capitalreference ']'                              { $$ = $2; }
+	| '[' TOK_capitalreference ':' TOK_capitalreference ']'    { $$ = $4; }
 	;
 
 Type:
 	  TaggedType                          { $$ = $1; }
-	| XerEncodingInstructionPrefix Type   { $$ = $2; }
+	| XerEncodingInstructionPrefix Type
+	  {
+	      if ($1 == "BASE64") $2->xer_encoding = ast::XerEncoding::Base64;
+	      $$ = $2;
+	  }
 	;
 
 TaggedType:
@@ -615,7 +619,11 @@ MaybeIndirectTaggedType:
 	    if ($3) $2->constraints.push_back($3);
 	    $$ = $2;
 	}
-	| XerEncodingInstructionPrefix MaybeIndirectTaggedType { $$ = $2; }
+	| XerEncodingInstructionPrefix MaybeIndirectTaggedType
+	  {
+	      if ($1 == "BASE64") $2->xer_encoding = ast::XerEncoding::Base64;
+	      $$ = $2;
+	  }
 	;
 
 NSTD_IndirectMarker:
