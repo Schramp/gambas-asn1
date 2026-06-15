@@ -5,9 +5,6 @@ on:
     branches: [main]
     paths-ignore:
       - '**.md'
-  pull_request:
-    paths-ignore:
-      - '**.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,7 +12,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -32,7 +29,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.reflex
-          key: reflex-6.1.0-ubuntu24
+          key: reflex-6.1.0-ubuntu-latest
 
       - name: Build RE/flex
         if: steps.cache-reflex.outputs.cache-hit != 'true'
