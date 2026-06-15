@@ -1,4 +1,4 @@
-// BER + XER round-trip tests for SEQUENCE containing each new string type.
+// BER + XER + PER round-trip tests for SEQUENCE containing each string type.
 // Schema: tests/asn1/strings_test.asn1
 #include <cstdio>
 #include <sstream>
@@ -6,6 +6,7 @@
 #include <span>
 #include <string>
 #include <asn1cpp/asn1cpp.hpp>
+#include <asn1cpp/codec/PerCodec.hpp>
 #include "HasNumericString.hpp"
 #include "HasPrintableString.hpp"
 #include "HasT61String.hpp"
@@ -16,6 +17,9 @@
 #include "HasBmpString.hpp"
 #include "HasVideotexString.hpp"
 #include "HasObjectDescriptor.hpp"
+#include "HasHexStr.hpp"
+#include "HasYesNoStr.hpp"
+#include "HasVowelStr.hpp"
 
 using namespace asn1;
 
@@ -186,6 +190,42 @@ int main() {
         check("BmpString XER output contains UTF-8 text \"AB\"",
               oss.str().find("AB") != std::string::npos);
     }
+
+    // ── PER FROM-constrained strings ──────────────────────────────────────────
+    // Verifies that the alphabet table (TypeDescriptor::constraints.alphabet) is
+    // used for UPER character indexing, not a hardcoded linear scan.
+    printf("\n── PER FROM-constrained string round-trips ──────────────────────\n");
+
+    auto per_rt_str = [](const char* label, const TypeDescriptor& def,
+                         const auto& val, auto& wrapper) -> bool {
+        wrapper.value = val;
+        std::vector<uint8_t> buf;
+        { PerEncodeStream s{buf}; PerCodec::instance().encode(s, def, &wrapper); s.flush(); }
+        std::decay_t<decltype(wrapper)> out{};
+        { PerDecodeStream s{std::span<const uint8_t>(buf)};
+          if (!PerCodec::instance().decode(s, def, &out).has_value()) return false; }
+        return out.value.str() == wrapper.value.str();
+    };
+
+    // HasHexStr: IA5String FROM "0-9A-F", 16-char alphabet → 4 bits/char
+    { HasHexStr w{};
+      check("HasHexStr PER round-trip \"DEAD\"",    per_rt_str("", HasHexStr::asn_DEF, Ia5String{"DEAD"}, w)); }
+    { HasHexStr w{};
+      check("HasHexStr PER round-trip \"0\"",       per_rt_str("", HasHexStr::asn_DEF, Ia5String{"0"}, w)); }
+    { HasHexStr w{};
+      check("HasHexStr PER round-trip \"DEADBEEF\"",per_rt_str("", HasHexStr::asn_DEF, Ia5String{"DEADBEEF"}, w)); }
+
+    // HasYesNoStr: IA5String FROM "NY", 2-char alphabet → 1 bit/char
+    { HasYesNoStr w{};
+      check("HasYesNoStr PER round-trip \"Y\"",     per_rt_str("", HasYesNoStr::asn_DEF, Ia5String{"Y"}, w)); }
+    { HasYesNoStr w{};
+      check("HasYesNoStr PER round-trip \"NYN\"",   per_rt_str("", HasYesNoStr::asn_DEF, Ia5String{"NYN"}, w)); }
+
+    // HasVowelStr: PrintableString FROM "aeiou", 5-char alphabet → 3 bits/char
+    { HasVowelStr w{};
+      check("HasVowelStr PER round-trip \"aeiou\"", per_rt_str("", HasVowelStr::asn_DEF, PrintableString{"aeiou"}, w)); }
+    { HasVowelStr w{};
+      check("HasVowelStr PER round-trip \"a\"",     per_rt_str("", HasVowelStr::asn_DEF, PrintableString{"a"}, w)); }
 
     printf("\n");
     if (failures) { printf("  %d test(s) FAILED\n", failures); return 1; }
