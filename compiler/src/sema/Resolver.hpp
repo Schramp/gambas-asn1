@@ -3,12 +3,14 @@
 #include <climits>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <stdexcept>
 #include "../ast/Module.hpp"
 #include "../ast/TypeDef.hpp"
+#include "asn1cpp/codec/Alphabets.hpp"
 
 namespace asn1::sema {
 
@@ -139,6 +141,7 @@ inline std::string oid_to_string(const ast::OidValue& oid) {
     }
     return s + " }";
 }
+
 
 class Resolver {
     // Per-module symbol tables: module_name -> all definitions in that module
@@ -539,6 +542,123 @@ private:
     }
     // ----------------------------------------------------------------------------
 
+    // --- Constraint applicability helpers (X.680 §47-§51) -----------------------
+
+    // Compare two RangeEndpoints: -1 if a<b, 0 if equal, +1 if a>b.
+    // MIN < any value < MAX. Returns 0 for incomparable (e.g. string chars) — conservative.
+    static int endpoint_cmp(const ast::RangeEndpoint& a, const ast::RangeEndpoint& b) {
+        using K = ast::RangeEndpoint::Kind;
+        if (a.kind == K::Min && b.kind == K::Min) return 0;
+        if (a.kind == K::Max && b.kind == K::Max) return 0;
+        if (a.kind == K::Min) return -1;
+        if (b.kind == K::Min) return  1;
+        if (a.kind == K::Max) return  1;
+        if (b.kind == K::Max) return -1;
+        if (auto* ia = std::get_if<int64_t>(&a.value))
+            if (auto* ib = std::get_if<int64_t>(&b.value))
+                return (*ia < *ib) ? -1 : (*ia > *ib) ? 1 : 0;
+        return 0;
+    }
+
+    // Reuses string_group(): any type in group 1 or 2 is a string type.
+    static bool is_string_builtin(ast::BuiltinType bt) { return string_group(bt) != 0; }
+
+    // Returns the canonical restricted alphabet for string types that have one (X.680 §41).
+    // Uses runtime Alphabets.hpp constants — single source of truth.
+    // Empty = no fixed alphabet (Utf8String, GeneralString, etc.).
+    static std::string_view string_type_alphabet(ast::BuiltinType bt) {
+        using B = ast::BuiltinType;
+        switch (bt) {
+        case B::NumericString:   return asn1::builtin_alphabet(UniversalTag::NumericString);
+        case B::PrintableString: return asn1::builtin_alphabet(UniversalTag::PrintableString);
+        case B::VisibleString:   return asn1::builtin_alphabet(UniversalTag::VisibleString);
+        case B::Ia5String:       return asn1::builtin_alphabet(UniversalTag::Ia5String);
+        default:                 return {};
+        }
+    }
+
+    // Walk a FROM inner constraint tree and report any single-char Value that falls
+    // outside `alpha`. Ranges are not checked (conservative; matches asn1c behaviour).
+    void check_from_alphabet(const ast::Constraint& c, std::string_view alpha,
+                             const std::string& ctx, const std::string& mod_name) {
+        if (auto* v = std::get_if<ast::Value>(&c.body)) {
+            if (auto* s = std::get_if<std::string>(v)) {
+                if (s->size() == 1 && alpha.find((*s)[0]) == std::string::npos)
+                    errors_.push_back("character '" + *s + "' in FROM constraint"
+                        " is not in the alphabet of " + ctx
+                        + " in module '" + mod_name + "'");
+            }
+        } else if (auto* uc = std::get_if<ast::UnionConstraint>(&c.body)) {
+            for (const auto& op : uc->operands) if (op) check_from_alphabet(*op, alpha, ctx, mod_name);
+        } else if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c.body)) {
+            for (const auto& op : ic->operands) if (op) check_from_alphabet(*op, alpha, ctx, mod_name);
+        }
+    }
+
+    // Check one constraint node for applicability and serial-narrowing violations.
+    void check_one_constraint(const ast::Constraint& c,
+                              bool is_string, bool is_sized,
+                              const std::string& ctx, const std::string& mod_name,
+                              const ast::BuiltinType* bt) {
+        if (auto* fc = std::get_if<ast::FromConstraint>(&c.body)) {
+            if (!is_string) {
+                errors_.push_back("FROM constraint not applicable to non-string type "
+                    + ctx + " in module '" + mod_name + "'");
+            } else if (bt && fc->inner) {
+                auto alpha = string_type_alphabet(*bt);
+                if (!alpha.empty())
+                    check_from_alphabet(*fc->inner, alpha, ctx, mod_name);
+            }
+        } else if (std::holds_alternative<ast::SizeConstraint>(c.body)) {
+            if (!is_sized)
+                errors_.push_back("SIZE constraint not applicable to type "
+                    + ctx + " in module '" + mod_name + "'");
+        } else if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c.body)) {
+            if (ic->serial) {
+                // Serial (A)(B) constraints: X.680 §47.4 each must be a subset of the prior.
+                const ast::ValueRange* prev_vr = nullptr;
+                for (const auto& op : ic->operands) {
+                    if (!op) continue;
+                    if (auto* vr = std::get_if<ast::ValueRange>(&op->body)) {
+                        if (prev_vr) {
+                            bool lower_widens = endpoint_cmp(vr->lower, prev_vr->lower) < 0;
+                            bool upper_widens = endpoint_cmp(vr->upper, prev_vr->upper) > 0;
+                            if (lower_widens || upper_widens)
+                                errors_.push_back("constraint range widens previous constraint on "
+                                    + ctx + " in module '" + mod_name + "'");
+                        }
+                        prev_vr = vr;
+                    } else {
+                        // Non-ValueRange (FROM, SIZE, etc.): recurse, reset chain.
+                        check_one_constraint(*op, is_string, is_sized, ctx, mod_name, bt);
+                        prev_vr = nullptr;
+                    }
+                }
+            } else {
+                // Explicit A ^ B intersection: recurse for FROM/SIZE, no widening check.
+                for (const auto& op : ic->operands)
+                    if (op) check_one_constraint(*op, is_string, is_sized, ctx, mod_name, bt);
+            }
+        }
+    }
+
+    void check_constraint_applicability(const ast::TypeDefPtr& def,
+                                        const std::string& mod_name) {
+        if (!def || def->constraints.empty()) return;
+        auto base = follow_aliases(def, mod_name);
+        if (!base) base = def;
+        const auto* bt  = std::get_if<ast::BuiltinType>(&base->body);
+        bool is_string  = bt && is_string_builtin(*bt);
+        bool is_sized   = is_string
+                       || (bt && (*bt == ast::BuiltinType::BitString
+                               || *bt == ast::BuiltinType::OctetString))
+                       || base->is_seq_of() || base->is_set_of();
+        std::string ctx = def->name.empty() ? "anonymous type" : "'" + def->name + "'";
+        for (const auto& c : def->constraints)
+            if (c) check_one_constraint(*c, is_string, is_sized, ctx, mod_name, bt);
+    }
+    // ----------------------------------------------------------------------------
+
     // in_parameterized: true when recursing inside a parameterized type body.
     // TypeRefs within parameterized types may name formal parameters, not module-level
     // types, so undefined-type checks are suppressed there.
@@ -777,6 +897,9 @@ private:
                         + def->name + "' in module '" + mod_name + "'");
             }
         }
+        // X.680 §47-§51: constraint applicability (FROM/SIZE on wrong types, range widening).
+        if (!in_parameterized)
+            check_constraint_applicability(def, mod_name);
         // X.680 §24.11: the DEFAULT value "shall be a value notation for a value of
         // the type defined by 'Type'".  This fires when a NamedValueRef DEFAULT
         // resolves to a type incompatible with the member's type.
