@@ -3,12 +3,14 @@
 #include <climits>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <stdexcept>
 #include "../ast/Module.hpp"
 #include "../ast/TypeDef.hpp"
+#include "asn1cpp/codec/Alphabets.hpp"
 
 namespace asn1::sema {
 
@@ -558,33 +560,26 @@ private:
         return 0;
     }
 
-    static bool is_string_builtin(ast::BuiltinType bt) {
-        using B = ast::BuiltinType;
-        switch (bt) {
-        case B::Utf8String: case B::NumericString: case B::PrintableString:
-        case B::T61String:  case B::VideotexString: case B::Ia5String:
-        case B::GraphicString: case B::VisibleString: case B::GeneralString:
-        case B::UniversalString: case B::BmpString: case B::ObjectDescriptor:
-            return true;
-        default: return false;
-        }
-    }
+    // Reuses string_group(): any type in group 1 or 2 is a string type.
+    static bool is_string_builtin(ast::BuiltinType bt) { return string_group(bt) != 0; }
 
-    // Returns the canonical alphabet for string types that have a restricted one.
-    // Empty = no restriction (type accepts arbitrary characters).
-    static std::string string_type_alphabet(ast::BuiltinType bt) {
+    // Returns the canonical restricted alphabet for string types that have one (X.680 §41).
+    // Uses runtime Alphabets.hpp constants — single source of truth.
+    // Empty = no fixed alphabet (Utf8String, GeneralString, etc.).
+    static std::string_view string_type_alphabet(ast::BuiltinType bt) {
         using B = ast::BuiltinType;
         switch (bt) {
-        case B::NumericString:   return " 0123456789";  // X.680 §41.8
-        case B::PrintableString: return                 // X.680 §41.4
-            " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'()+,-./:=?";
-        default: return "";
+        case B::NumericString:   return asn1::NUMERIC_STRING_ALPHABET;
+        case B::PrintableString: return asn1::PRINTABLE_STRING_ALPHABET;
+        case B::VisibleString:
+        case B::Ia5String:       return asn1::VISIBLE_STRING_ALPHABET;
+        default:                 return {};
         }
     }
 
     // Walk a FROM inner constraint tree and report any single-char Value that falls
     // outside `alpha`. Ranges are not checked (conservative; matches asn1c behaviour).
-    void check_from_alphabet(const ast::Constraint& c, const std::string& alpha,
+    void check_from_alphabet(const ast::Constraint& c, std::string_view alpha,
                              const std::string& ctx, const std::string& mod_name) {
         if (auto* v = std::get_if<ast::Value>(&c.body)) {
             if (auto* s = std::get_if<std::string>(v)) {
@@ -610,7 +605,7 @@ private:
                 errors_.push_back("FROM constraint not applicable to non-string type "
                     + ctx + " in module '" + mod_name + "'");
             } else if (bt && fc->inner) {
-                std::string alpha = string_type_alphabet(*bt);
+                auto alpha = string_type_alphabet(*bt);
                 if (!alpha.empty())
                     check_from_alphabet(*fc->inner, alpha, ctx, mod_name);
             }
