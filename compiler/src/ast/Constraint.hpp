@@ -30,7 +30,9 @@ struct ExtensionMarker {};
 
 struct IntersectionConstraint {
     std::vector<ConstraintPtr> operands;
-    bool serial{false}; // true when built from serial (A)(B) syntax, not explicit A ^ B
+    // X.680 §47.4: serial (A)(B) constraints form a narrowing chain; each must be
+    // a subset of the preceding. Explicit intersection (A ^ B, X.680 §46.3) does not.
+    bool serial{false};
 };
 struct UnionConstraint {
     std::vector<ConstraintPtr> operands;
