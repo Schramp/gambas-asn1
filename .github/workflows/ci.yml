@@ -61,15 +61,15 @@ jobs:
         run: ctest --test-dir build --output-on-failure -j$(nproc)
 
       - name: Build ETSI LI example
-        if: github.event_name == 'push'
+        if: github.ref == 'refs/heads/main'
         run: make -C examples/sample.source.ETSI-LI-PS-PDU -j$(nproc)
 
       - name: Build nested-decoder
-        if: github.event_name == 'push'
+        if: github.ref == 'refs/heads/main'
         run: make -C examples/sample.source.ETSI-LI-PS-PDU/nested-decoder
 
       - name: Regression test nested-decoder
-        if: github.event_name == 'push'
+        if: github.ref == 'refs/heads/main'
         run: |
           cd examples/sample.source.ETSI-LI-PS-PDU/nested-decoder
           ./nested-decoder pdu-00000001.etsi > actual.xer
