@@ -14,4 +14,20 @@ StringsTest DEFINITIONS ::= BEGIN
     HasVideotexString  ::= SEQUENCE { value  VideotexString }
     HasObjectDescriptor::= SEQUENCE { value  ObjectDescriptor }
 
+    -- FROM-constrained string types: exercise PER alphabet encoding.
+    -- Named types (not inline member constraints) so codegen emits a
+    -- dedicated TypeDescriptor with constraints.alphabet populated.
+    -- X.691 §26.5.7: canonical index = position in numerically-sorted alphabet.
+    HexCharType   ::= IA5String      (FROM ("0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"|"A"|"B"|"C"|"D"|"E"|"F"))
+    YesNoCharType ::= IA5String      (FROM ("N"|"Y"))
+    VowelType     ::= PrintableString (FROM ("a"|"e"|"i"|"o"|"u"))
+    -- Declaration order differs from ASCII order: "F" "A" "9" "0" → sorted to {0x30 0x39 0x41 0x46}.
+    -- Verifies Generator.cpp sorts alphabet before emitting and PerCodec encodes by sorted index.
+    OutOfOrderType ::= IA5String     (FROM ("F"|"A"|"9"|"0"))
+
+    HasHexStr     ::= SEQUENCE { value  HexCharType   }
+    HasYesNoStr   ::= SEQUENCE { value  YesNoCharType }
+    HasVowelStr   ::= SEQUENCE { value  VowelType     }
+    HasOutOfOrder ::= SEQUENCE { value  OutOfOrderType }
+
 END
