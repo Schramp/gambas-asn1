@@ -826,3 +826,31 @@ target_include_directories(test_random_roundtrip PRIVATE ${ROUNDTRIP_GEN_DIR})
 target_link_libraries(test_random_roundtrip PRIVATE asn1cpp_runtime)
 add_test(NAME random_roundtrip COMMAND test_random_roundtrip)
 set_tests_properties(random_roundtrip PROPERTIES TIMEOUT 60)
+
+# ---- BER fuzz harness / corpus-replay (data-62, issue #30) -----------------
+# fuzz_ber_corpus_replay: standalone replay binary that feeds all data-62
+# .ber files into the BER decoder and asserts no crash.  Always built.
+#
+# fuzz_ber_decode: libfuzzer target for continuous fuzzing.  Only built when
+# LIBFUZZER_AVAILABLE=ON (requires clang with -fsanitize=fuzzer).
+set(FUZZ_BER_SOURCES
+    fuzz/fuzz_ber_decode.cpp
+    ${_bv62_cpps}
+)
+
+add_executable(fuzz_ber_corpus_replay ${FUZZ_BER_SOURCES})
+target_include_directories(fuzz_ber_corpus_replay PRIVATE ${BER_VEC_62_GEN_DIR})
+target_link_libraries(fuzz_ber_corpus_replay PRIVATE asn1cpp_runtime)
+add_test(NAME fuzz_ber_corpus_replay COMMAND fuzz_ber_corpus_replay
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-62)
+set_tests_properties(fuzz_ber_corpus_replay PROPERTIES TIMEOUT 30)
+
+option(LIBFUZZER_AVAILABLE "Build libfuzzer fuzz targets (requires clang -fsanitize=fuzzer)" OFF)
+if(LIBFUZZER_AVAILABLE)
+    add_executable(fuzz_ber_decode ${FUZZ_BER_SOURCES})
+    target_include_directories(fuzz_ber_decode PRIVATE ${BER_VEC_62_GEN_DIR})
+    target_link_libraries(fuzz_ber_decode PRIVATE asn1cpp_runtime)
+    target_compile_definitions(fuzz_ber_decode PRIVATE FUZZ_DRIVER)
+    target_compile_options(fuzz_ber_decode PRIVATE -fsanitize=fuzzer)
+    target_link_options(fuzz_ber_decode PRIVATE -fsanitize=fuzzer)
+endif()
