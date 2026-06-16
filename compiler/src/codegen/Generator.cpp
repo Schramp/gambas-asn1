@@ -1032,9 +1032,7 @@ std::string Generator::emit_member_type_descriptor(
             if (*bt == BT::BitString)   ber_h = "&asn1::ber_bitstring_handler";
             if (*bt == BT::OctetString) ber_h = "&asn1::ber_octetstring_handler";
             std::string cpp_t = cpp_type_for(m);
-            std::string xer_tail = needs_xer
-                ? std::format(", asn1::XerEncoding::Base64")
-                : "";
+            std::string xer_tail = needs_xer ? ", asn1::XerEncoding::Base64" : "";
             os << std::format(
                 "static const asn1::TypeDescriptor {} = "
                 "{{ \"{}\", asn1::Tag::universal({}, false), "
