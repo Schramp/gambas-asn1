@@ -749,16 +749,33 @@ private:
     }
     // ----------------------------------------------------------------------------
 
-    // X.680 §43: at each instantiation site T{A1,...,An}, check that any DEFAULT
-    // value name in T's body is present in the corresponding actual parameter's
-    // named-value list (enum_values).  Only fires when the actual param is an
-    // inline type (INTEGER/ENUMERATED with named values); value-param actuals
-    // (nullptr in the params vector) are skipped.
+    // X.680 §43 — parameterized type DEFAULT validation.
+    //
+    // Problem: given a parameterized type like
+    //
+    //   Flag{Color} ::= SEQUENCE { field Color DEFAULT cyan }
+    //
+    // and an instantiation like
+    //
+    //   IntegerColorFlag ::= Flag{INTEGER{ red(0), green(1), blue(5) }}
+    //
+    // the DEFAULT name 'cyan' must exist in the actual parameter's named-value
+    // list {red, green, blue}.  Without this check, the compiler silently accepts
+    // an impossible DEFAULT that no encoder can ever produce.
+    //
+    // How the check works:
+    //   1. Grammar stores formal parameter names (e.g. "Color") in TypeDef::formal_params.
+    //   2. Grammar stores actual parameters (e.g. the INTEGER{...} TypeDef) in TypeRef::params.
+    //   3. This function is called whenever a TypeRef with non-empty params is encountered
+    //      at a non-parameterized (real) instantiation site.
+    //   4. We look up the parameterized definition, pair formals with actuals, then walk
+    //      the body looking for members whose type is a formal param and whose DEFAULT
+    //      is a NamedValueRef — and verify the name exists in the actual's enum_values.
     void check_parameterized_defaults(const ast::TypeRef& tr, const std::string& mod_name) {
-        // Look up the parameterized type definition.
         auto param_def = lookup_direct(tr.type_name, mod_name);
         if (!param_def || !param_def->is_parameterized) return;
         const auto& formals = param_def->formal_params;
+        // Only check when the number of formals matches actuals (mismatch is a parse-level issue).
         if (formals.empty() || formals.size() != tr.params.size()) return;
 
         // Build substitution map: formal name → actual TypeDefPtr.
@@ -766,10 +783,15 @@ private:
         for (std::size_t i = 0; i < formals.size(); ++i)
             subst[formals[i]] = tr.params[i];
 
-        // Walk the parameterized body's members recursively, checking DEFAULTs.
         check_defaults_with_subst(param_def, subst, mod_name);
     }
 
+    // Recursively walk 'def's member list.  For each member that:
+    //   - carries a DEFAULT value expressed as a named identifier (NamedValueRef), AND
+    //   - has a type that is one of the formal parameter names in 'subst',
+    // verify that the identifier exists in the actual parameter's named-value list.
+    // Actual params that are nullptr (value-param actuals, e.g. a bare integer literal)
+    // or that have no named values are skipped — we can't validate them here.
     void check_defaults_with_subst(
             const ast::TypeDefPtr& def,
             const std::unordered_map<std::string, ast::TypeDefPtr>& subst,
@@ -777,17 +799,16 @@ private:
         if (!def) return;
         for (const auto& member : def->members) {
             if (!member) continue;
-            // Walk sub-members recursively (nested SEQUENCE etc.)
-            check_defaults_with_subst(member, subst, mod_name);
+            check_defaults_with_subst(member, subst, mod_name);  // recurse into nested composites
             if (!member->has_default()) continue;
             auto* nvr = std::get_if<ast::NamedValueRef>(&member->default_value);
             if (!nvr || nvr->name.empty()) continue;
-            // Check if this member's type is a formal parameter.
+            // Is this member's type a formal parameter (e.g. 'Color')?
             auto* mtr = std::get_if<ast::TypeRef>(&member->body);
             if (!mtr || mtr->type_name.empty()) continue;
             auto it = subst.find(mtr->type_name);
-            if (it == subst.end()) continue;
-            // Actual param must be an inline type with named values to check.
+            if (it == subst.end()) continue;  // not a formal param — skip
+            // Check: does the actual parameter's named-value list contain the DEFAULT name?
             const auto& actual = it->second;
             if (!actual || actual->enum_values.empty()) continue;
             bool found = false;

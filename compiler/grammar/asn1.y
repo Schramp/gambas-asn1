@@ -534,6 +534,10 @@ DataTypeReference:
 	}
 	;
 
+/* Formal parameter list: Flag{Color} or Flag{Type:Color} or Flag{INTEGER:Value}.
+   We only need the formal parameter name (the DummyReference in X.680 §43 terms),
+   not the governor (the part before the colon, if any).  The name is what appears
+   in the parameterized body as a type reference (e.g. 'Color' in 'field Color DEFAULT cyan'). */
 ParameterArgumentList:
 	  ParameterArgumentName
 	    { $$ = std::vector<std::string>{std::move($1)}; }
@@ -542,13 +546,18 @@ ParameterArgumentList:
 	;
 
 ParameterArgumentName:
-	  TypeRefName                      { $$ = $1; }
-	| TypeRefName ':' Identifier       { $$ = $3; }
-	| TypeRefName ':' TypeRefName      { $$ = $3; }
-	| BasicTypeId ':' Identifier       { $$ = $3; }
-	| BasicTypeId ':' TypeRefName      { $$ = $3; }
+	  TypeRefName                      { $$ = $1; }       /* {Color}           → "Color" */
+	| TypeRefName ':' Identifier       { $$ = $3; }       /* {TypeRef:name}    → "name"  */
+	| TypeRefName ':' TypeRefName      { $$ = $3; }       /* {TypeRef:Name}    → "Name"  */
+	| BasicTypeId ':' Identifier       { $$ = $3; }       /* {INTEGER:name}    → "name"  */
+	| BasicTypeId ':' TypeRefName      { $$ = $3; }       /* {INTEGER:Name}    → "Name"  */
 	;
 
+/* Actual parameter list: Flag{INTEGER{red(0),green(1),blue(5)}}.
+   Type-valued actuals (UntaggedType) are captured as TypeDefPtrs so the resolver
+   can inspect their named-value lists when validating DEFAULT names.
+   Value-valued actuals (SimpleValue, DefinedValue, ValueSet) are stored as nullptr
+   since we do not currently validate DEFAULT names against them. */
 ActualParameterList:
 	  ActualParameter
 	    { $$ = std::vector<TypeDefPtr>{std::move($1)}; }
