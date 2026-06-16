@@ -5,12 +5,13 @@ run_parser_tests.py — run asn1cpp against the imported asn1c parser test suite
 For each .asn1 file in tests-asn1c-compiler/:
   *-OK.asn1  → asn1cpp must exit 0
   *-NP.asn1  → asn1cpp must exit non-zero  (parse rejects garbage)
-  *-SE.asn1  → asn1cpp may exit 0 or non-zero (semantic errors not yet implemented)
+  *-SE.asn1  → asn1cpp must exit non-zero  (semantic errors must be caught)
+              Files in SE_NOT_YET_ENFORCED are still informational only.
 
 When --asn1c is given (cross-validation mode):
   *-OK  → both compilers must succeed
   *-NP  → asn1c rejects; asn1cpp must also reject
-  *-SE  → asn1c rejects; asn1cpp outcome is informational only
+  *-SE  → asn1c rejects; asn1cpp must also reject (modulo SE_NOT_YET_ENFORCED)
 
 Exit 0 if all required checks pass, 1 otherwise.
 """
@@ -19,6 +20,18 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+
+# SE files where the required semantic check is not yet implemented.
+# These are treated as informational (not enforced) until the gap is filled.
+SE_NOT_YET_ENFORCED = {
+    "11-int-SE.asn1",          # named-number uniqueness not checked
+    "12-int-SE.asn1",          # named-number uniqueness not checked
+    "71-duplicate-types-SE.asn1",   # duplicate type names across modules not checked
+    "101-class-ref-SE.asn1",   # CLASS type-misuse checks not implemented
+    "102-class-ref-SE.asn1",   # CLASS type-misuse checks not implemented
+    "111-param-4-SE.asn1",     # parameterized type semantic errors not checked
+    "209-prefer-import-source-SE.asn1",  # ambiguous import preference not checked
+}
 
 
 def run(cmd, asn1_file, extra_flags=None):
@@ -76,7 +89,8 @@ def main():
         print(f"ERROR: no .asn1 files in {test_dir}", file=sys.stderr)
         sys.exit(1)
 
-    ok_pass = ok_fail = np_pass = np_fail = se_pass = se_fail = 0
+    ok_pass = ok_fail = np_pass = np_fail = 0
+    se_enforced_pass = se_enforced_fail = se_skip = 0
     failures = []
 
     for f in files:
@@ -85,7 +99,9 @@ def main():
             continue
 
         fflags = extra_flags_for(f.name)
-        cpp_ok = run(cpp_cmd, f, fflags)
+        # SE files: run without -E so the sema pass runs (errors appear after parsing).
+        cmd_for_file = [args.asn1cpp] if kind == "SE" else cpp_cmd
+        cpp_ok = run(cmd_for_file, f, fflags + (["-o", "/dev/null"] if kind == "SE" else []))
 
         if asn1c_cmd:
             ac_ok = run(asn1c_cmd, f)
@@ -109,24 +125,35 @@ def main():
                 failures.append((f.name, "asn1cpp accepted -NP file (should reject)"))
             else:
                 np_pass += 1
-        else:  # SE — informational only
-            if cpp_ok:
-                se_pass += 1
+        else:  # SE — must be rejected (unless in skip list)
+            if f.name in SE_NOT_YET_ENFORCED:
+                se_skip += 1
+                verdict_se = "skip"
+            elif not cpp_ok:
+                se_enforced_pass += 1
+                verdict_se = "ok"
             else:
-                se_fail += 1
+                se_enforced_fail += 1
+                failures.append((f.name, "asn1cpp accepted -SE file (should reject)"))
+                verdict_se = "FAIL"
 
         if args.verbose:
             ac_str = f"  asn1c={'OK' if ac_ok else 'FAIL' if ac_ok is not None else 'n/a'}" if asn1c_cmd else ""
-            verdict = "ok" if (kind == "SE" or
-                               (kind == "OK" and cpp_ok) or
-                               (kind == "NP" and not cpp_ok)) else "FAIL"
+            if kind == "SE":
+                verdict = verdict_se
+            elif kind == "OK":
+                verdict = "ok" if cpp_ok else "FAIL"
+            else:
+                verdict = "ok" if not cpp_ok else "FAIL"
             print(f"  {verdict:4s}  {kind:2s}  {f.name}{ac_str}")
 
     xval = " (with asn1c cross-check)" if asn1c_cmd else ""
+    se_total = se_enforced_pass + se_enforced_fail
     print(f"\nParser test results{xval}:")
     print(f"  -OK : {ok_pass}/{ok_pass+ok_fail} pass")
     print(f"  -NP : {np_pass}/{np_pass+np_fail} correctly rejected")
-    print(f"  -SE : {se_pass}/{se_pass+se_fail} accepted (informational)")
+    print(f"  -SE : {se_enforced_pass}/{se_total} correctly rejected"
+          + (f" ({se_skip} not yet enforced)" if se_skip else ""))
 
     known = set(args.known_failures)
     real_failures = [(n, r) for n, r in failures if n not in known]
