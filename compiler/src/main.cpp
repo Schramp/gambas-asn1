@@ -51,10 +51,11 @@ int main(int argc, char** argv) {
     bool allow_newer_modules = false;
     bool bless_size = false;
     bool parse_only = false;
-    asn1::codegen::IntStorageKind default_int_kind = asn1::codegen::IntStorageKind::S64;
+    std::optional<asn1::codegen::IntStorageKind> int_kind_override;
     std::vector<std::string> input_files;
 
     int opt;
+    opterr = 0;  // suppress getopt's own diagnostics; usage() handles all errors
     while ((opt = getopt_long_only(argc, argv, "Eo:h", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'E': parse_only = true; break;
@@ -69,9 +70,9 @@ int main(int argc, char** argv) {
         case 'I': {
             std::string kind = optarg;
             if (kind == "int64") {
-                default_int_kind = asn1::codegen::IntStorageKind::S64;
+                int_kind_override = asn1::codegen::IntStorageKind::S64;
             } else if (kind == "uint64") {
-                default_int_kind = asn1::codegen::IntStorageKind::U64;
+                int_kind_override = asn1::codegen::IntStorageKind::U64;
             } else if (kind == "int128") {
                 std::cerr << "warning: --integer-type=int128 is not yet implemented; using int64\n";
             } else if (kind == "arbitrary") {
@@ -85,6 +86,8 @@ int main(int argc, char** argv) {
         default: usage(argv[0]);
         }
     }
+    asn1::codegen::IntStorageKind default_int_kind =
+        int_kind_override.value_or(asn1::codegen::IntStorageKind::S64);
     for (int i = optind; i < argc; ++i)
         input_files.push_back(argv[i]);
     if (input_files.empty()) usage(argv[0]);
