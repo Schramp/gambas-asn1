@@ -1,0 +1,17 @@
+RecursiveChoiceTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    -- Indirect recursive CHOICE: Expr references ExprSeq, ExprSeq references Expr.
+    -- The cycle is broken by OPTIONAL members, which codegen emits as unique_ptr.
+    -- This pattern represents a simple expression tree (integer leaf or binary compound).
+
+    Expr ::= CHOICE {
+        num      INTEGER,
+        compound ExprSeq
+    }
+
+    ExprSeq ::= SEQUENCE {
+        left   Expr OPTIONAL,
+        right  Expr OPTIONAL
+    }
+
+END
