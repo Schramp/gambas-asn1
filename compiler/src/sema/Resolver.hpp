@@ -359,6 +359,22 @@ public:
         return it != global_.end() ? it->second : nullptr;
     }
 
+    // Resolve a NamedValueRef honoring module qualification.
+    // Qualified (module_name set): looks in that module's own symbols only.
+    // Unqualified: uses lookup_direct (own + imported symbols of from_module).
+    ast::TypeDefPtr lookup_value_ref(const ast::NamedValueRef& nvr,
+                                     const std::string& from_module) const {
+        if (!nvr.module_name.empty()) {
+            auto mit = module_symbols_.find(nvr.module_name);
+            if (mit != module_symbols_.end()) {
+                auto sit = mit->second.find(nvr.name);
+                if (sit != mit->second.end()) return sit->second;
+            }
+            return nullptr;
+        }
+        return lookup_direct(nvr.name, from_module);
+    }
+
     // Walk a TypeRef alias chain starting at `def`, using `start_module` as the
     // initial scope; cross to other modules via qualified TypeRefs.
     ast::TypeDefPtr follow_aliases(ast::TypeDefPtr def,

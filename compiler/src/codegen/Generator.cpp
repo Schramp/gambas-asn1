@@ -630,7 +630,7 @@ std::optional<int64_t> Generator::resolve_int_value(const ast::Value& v) const {
     if (auto* i = std::get_if<int64_t>(&v)) return *i;
     if (auto* u = std::get_if<uint64_t>(&v)) return static_cast<int64_t>(*u);
     if (auto* ref = std::get_if<ast::NamedValueRef>(&v)) {
-        auto def = resolver_.lookup(ref->name);
+        auto def = resolver_.lookup_value_ref(*ref, current_module_);
         if (def) {
             if (auto* i = std::get_if<int64_t>(&def->default_value)) return *i;
             if (auto* u = std::get_if<uint64_t>(&def->default_value)) return static_cast<int64_t>(*u);
@@ -644,7 +644,7 @@ std::optional<uint64_t> Generator::resolve_uint_value(const ast::Value& v) const
     if (auto* u = std::get_if<uint64_t>(&v)) return *u;
     if (auto* i = std::get_if<int64_t>(&v)) return static_cast<uint64_t>(*i);
     if (auto* ref = std::get_if<ast::NamedValueRef>(&v)) {
-        auto def = resolver_.lookup(ref->name);
+        auto def = resolver_.lookup_value_ref(*ref, current_module_);
         if (def) {
             if (auto* u = std::get_if<uint64_t>(&def->default_value)) return *u;
             if (auto* i = std::get_if<int64_t>(&def->default_value)) return static_cast<uint64_t>(*i);
