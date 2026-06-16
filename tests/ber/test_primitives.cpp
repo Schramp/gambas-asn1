@@ -177,6 +177,93 @@ int main() {
     }
 
     // =========================================================================
+    printf("\n── UInteger (unsigned 64-bit INTEGER) ──────────────────────────\n");
+    // =========================================================================
+
+    // Values that fit in 8 bytes: encode like a signed INTEGER but without sign-extension.
+    check("UInteger 0 round-trip",    roundtrip(UInteger{0}));
+    check("UInteger 1 round-trip",    roundtrip(UInteger{1}));
+    check("UInteger 255 round-trip",  roundtrip(UInteger{255}));
+    check("UInteger 256 round-trip",  roundtrip(UInteger{256}));
+
+    // INT64_MAX (0x7FFFFFFFFFFFFFFF): fits in 8 bytes, no sign-extension needed.
+    check("UInteger INT64_MAX round-trip",
+          roundtrip(UInteger{static_cast<uint64_t>(INT64_MAX)}));
+
+    // INT64_MAX + 1 (0x8000000000000000): high bit set → needs 0x00 pad byte → 9 bytes total.
+    // X.690 §8.3.3: if the unsigned value has bit 7 set in the first content byte,
+    // a 0x00 pad byte must be prepended to preserve the sign.
+    {
+        UInteger v{static_cast<uint64_t>(INT64_MAX) + 1};
+        auto enc = encode<BER>(v);
+        // Tag=02, length=09, value= 00 80 00 00 00 00 00 00 00
+        check("UInteger INT64_MAX+1 encodes as 02 09 00 80 ...",
+              enc.size() == 11 && enc[0] == 0x02 && enc[1] == 0x09 && enc[2] == 0x00 && enc[3] == 0x80);
+        check("UInteger INT64_MAX+1 round-trip", roundtrip(v));
+    }
+
+    // UINT64_MAX (0xFFFFFFFFFFFFFFFF): also needs 0x00 pad → 9-byte value.
+    {
+        UInteger v{UINT64_MAX};
+        auto enc = encode<BER>(v);
+        check("UInteger UINT64_MAX encodes as 02 09 00 FF ...",
+              enc.size() == 11 && enc[0] == 0x02 && enc[1] == 0x09 && enc[2] == 0x00 && enc[3] == 0xFF);
+        check("UInteger UINT64_MAX round-trip", roundtrip(v));
+    }
+
+    // Negative INTEGER value must be rejected when decoding as UInteger.
+    {
+        std::vector<uint8_t> neg_one = {0x02, 0x01, 0xFF};  // INTEGER -1
+        auto r = decode<BER, UInteger>(neg_one);
+        check("UInteger rejects negative INTEGER", !r);
+    }
+
+    // =========================================================================
+    printf("\n── RELATIVE-OID ─────────────────────────────────────────────────\n");
+    // =========================================================================
+
+    // RELATIVE-OID tag=0x0D. Arcs encoded as base-128 each. No first-arc compression.
+    // {1, 2, 3} = 0x0D 0x03 0x01 0x02 0x03
+    {
+        RelativeOid r1({1, 2, 3});
+        check("RELATIVE-OID {1,2,3} encodes as 0D 03 01 02 03",
+              encodes_as(r1, {0x0D, 0x03, 0x01, 0x02, 0x03}));
+        check("RELATIVE-OID {1,2,3} round-trip", roundtrip(r1));
+    }
+    // {128} = arc 128 = 0x81 0x00 (two bytes, high bit continuation)
+    {
+        RelativeOid r2({128});
+        check("RELATIVE-OID {128} encodes as 0D 02 81 00",
+              encodes_as(r2, {0x0D, 0x02, 0x81, 0x00}));
+        check("RELATIVE-OID {128} round-trip", roundtrip(r2));
+    }
+    check("RELATIVE-OID empty round-trip", roundtrip(RelativeOid{}));
+
+    // =========================================================================
+    printf("\n── Long-form length encoding ────────────────────────────────────\n");
+    // =========================================================================
+
+    // A value with > 127 bytes content uses multi-byte length (X.690 §8.1.3.5).
+    // OCTET STRING of 128 zero bytes: tag=04, length=81 80 (long form, 1 length byte, value=128).
+    {
+        OctetString big(std::vector<uint8_t>(128, 0x00));
+        auto enc = encode<BER>(big);
+        // Expected: 04 81 80 [128 zero bytes]
+        check("128-byte OCTET STRING uses long-form length (04 81 80 ...)",
+              enc.size() == 131 && enc[0] == 0x04 && enc[1] == 0x81 && enc[2] == 0x80);
+        check("128-byte OCTET STRING round-trip", roundtrip(big));
+    }
+
+    // 256-byte content: length = 82 01 00 (long form, 2 length bytes, value=256).
+    {
+        OctetString huge(std::vector<uint8_t>(256, 0xAB));
+        auto enc = encode<BER>(huge);
+        check("256-byte OCTET STRING uses long-form length (04 82 01 00 ...)",
+              enc.size() == 260 && enc[0] == 0x04 && enc[1] == 0x82 && enc[2] == 0x01 && enc[3] == 0x00);
+        check("256-byte OCTET STRING round-trip", roundtrip(huge));
+    }
+
+    // =========================================================================
     printf("\n");
     if (failures) {
         printf("  %d test(s) FAILED\n", failures);
