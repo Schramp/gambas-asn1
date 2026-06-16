@@ -854,3 +854,25 @@ if(LIBFUZZER_AVAILABLE)
     target_compile_options(fuzz_ber_decode PRIVATE -fsanitize=fuzzer)
     target_link_options(fuzz_ber_decode PRIVATE -fsanitize=fuzzer)
 endif()
+
+# ---- XER fuzz harness / corpus-replay (data-70, issue #30) -----------------
+set(FUZZ_XER_SOURCES
+    fuzz/fuzz_xer_decode.cpp
+    ${_xv70_cpps}
+)
+
+add_executable(fuzz_xer_corpus_replay ${FUZZ_XER_SOURCES})
+target_include_directories(fuzz_xer_corpus_replay PRIVATE ${XER_VEC_70_GEN_DIR})
+target_link_libraries(fuzz_xer_corpus_replay PRIVATE asn1cpp_runtime)
+add_test(NAME fuzz_xer_corpus_replay COMMAND fuzz_xer_corpus_replay
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-70)
+set_tests_properties(fuzz_xer_corpus_replay PROPERTIES TIMEOUT 30)
+
+if(LIBFUZZER_AVAILABLE)
+    add_executable(fuzz_xer_decode ${FUZZ_XER_SOURCES})
+    target_include_directories(fuzz_xer_decode PRIVATE ${XER_VEC_70_GEN_DIR})
+    target_link_libraries(fuzz_xer_decode PRIVATE asn1cpp_runtime)
+    target_compile_definitions(fuzz_xer_decode PRIVATE FUZZ_DRIVER)
+    target_compile_options(fuzz_xer_decode PRIVATE -fsanitize=fuzzer)
+    target_link_options(fuzz_xer_decode PRIVATE -fsanitize=fuzzer)
+endif()
