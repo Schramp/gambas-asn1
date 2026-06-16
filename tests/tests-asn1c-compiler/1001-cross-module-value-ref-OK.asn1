@@ -1,0 +1,13 @@
+-- Cross-module value reference: ModA.alphaVal references ModB.betaVal.
+-- Both must parse and resolve without errors (no circular reference, no
+-- undefined reference).  Covers the fix from issue #89.
+
+ModB DEFINITIONS ::= BEGIN
+    EXPORTS betaVal;
+    betaVal INTEGER ::= 42
+END
+
+ModA DEFINITIONS ::= BEGIN
+    IMPORTS betaVal FROM ModB;
+    alphaVal INTEGER ::= betaVal
+END
