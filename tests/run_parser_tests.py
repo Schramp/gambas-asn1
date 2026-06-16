@@ -24,8 +24,6 @@ from pathlib import Path
 # SE files where the required semantic check is not yet implemented.
 # These are treated as informational (not enforced) until the gap is filled.
 SE_NOT_YET_ENFORCED = {
-    "11-int-SE.asn1",          # named-number uniqueness not checked
-    "12-int-SE.asn1",          # named-number uniqueness not checked
     "71-duplicate-types-SE.asn1",   # duplicate type names across modules not checked
     "101-class-ref-SE.asn1",   # CLASS type-misuse checks not implemented
     "102-class-ref-SE.asn1",   # CLASS type-misuse checks not implemented
