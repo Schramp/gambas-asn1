@@ -832,7 +832,7 @@ set_tests_properties(random_roundtrip PROPERTIES TIMEOUT 60)
 # .ber files into the BER decoder and asserts no crash.  Always built.
 #
 # fuzz_ber_decode: libfuzzer target for continuous fuzzing.  Only built when
-# LIBFUZZER_AVAILABLE=ON (requires clang with -fsanitize=fuzzer).
+# LIBFUZZER_AVAILABLE=ON (requires clang with -fsanitize=fuzzer,address).
 set(FUZZ_BER_SOURCES
     fuzz/fuzz_ber_decode.cpp
     ${_bv62_cpps}
@@ -845,14 +845,14 @@ add_test(NAME fuzz_ber_corpus_replay COMMAND fuzz_ber_corpus_replay
     ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-62)
 set_tests_properties(fuzz_ber_corpus_replay PROPERTIES TIMEOUT 30)
 
-option(LIBFUZZER_AVAILABLE "Build libfuzzer fuzz targets (requires clang -fsanitize=fuzzer)" OFF)
+option(LIBFUZZER_AVAILABLE "Build libfuzzer fuzz targets (requires clang -fsanitize=fuzzer,address)" OFF)
 if(LIBFUZZER_AVAILABLE)
     add_executable(fuzz_ber_decode ${FUZZ_BER_SOURCES})
     target_include_directories(fuzz_ber_decode PRIVATE ${BER_VEC_62_GEN_DIR})
     target_link_libraries(fuzz_ber_decode PRIVATE asn1cpp_runtime)
     target_compile_definitions(fuzz_ber_decode PRIVATE FUZZ_DRIVER)
-    target_compile_options(fuzz_ber_decode PRIVATE -fsanitize=fuzzer)
-    target_link_options(fuzz_ber_decode PRIVATE -fsanitize=fuzzer)
+    target_compile_options(fuzz_ber_decode PRIVATE -fsanitize=fuzzer,address)
+    target_link_options(fuzz_ber_decode PRIVATE -fsanitize=fuzzer,address)
 endif()
 
 # ---- XER fuzz harness / corpus-replay (data-70, issue #30) -----------------
@@ -873,6 +873,6 @@ if(LIBFUZZER_AVAILABLE)
     target_include_directories(fuzz_xer_decode PRIVATE ${XER_VEC_70_GEN_DIR})
     target_link_libraries(fuzz_xer_decode PRIVATE asn1cpp_runtime)
     target_compile_definitions(fuzz_xer_decode PRIVATE FUZZ_DRIVER)
-    target_compile_options(fuzz_xer_decode PRIVATE -fsanitize=fuzzer)
-    target_link_options(fuzz_xer_decode PRIVATE -fsanitize=fuzzer)
+    target_compile_options(fuzz_xer_decode PRIVATE -fsanitize=fuzzer,address)
+    target_link_options(fuzz_xer_decode PRIVATE -fsanitize=fuzzer,address)
 endif()
