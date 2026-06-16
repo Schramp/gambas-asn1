@@ -1,10 +1,10 @@
 #include <iostream>
 #include <fstream>
-#include <sstream>
 #include <string>
 #include <vector>
 #include <filesystem>
 #include <cstdlib>
+#include <getopt.h>
 #include <reflex/input.h>
 
 #include "Lexer.hpp"      // in build/compiler/ (generated) or grammar/ (wrapper)
@@ -15,11 +15,34 @@
 
 namespace fs = std::filesystem;
 
+static const struct option long_opts[] = {
+    {"help",                 no_argument,       nullptr, 'h'},
+    {"fallow-newer-modules", no_argument,       nullptr, 'A'},
+    {"fbless-SIZE",          no_argument,       nullptr, 'B'},
+    {"integer-type",         required_argument, nullptr, 'I'},
+    {nullptr, 0, nullptr, 0}
+};
+
+static void print_help(const char* prog) {
+    std::cout <<
+        "Usage: " << prog << " [options] file.asn1 [file2.asn1 ...]\n"
+        "\n"
+        "Options:\n"
+        "  -h, --help                  Show this help and exit\n"
+        "  -E                          Parse and check only; skip code generation\n"
+        "  -o <dir>                    Output directory (default: generated)\n"
+        "  -fallow-newer-modules       Accept module version mismatches silently\n"
+        "  -fbless-SIZE                (Non-standard) Accept SIZE() on INTEGER/ENUMERATED\n"
+        "  --integer-type=<kind>       Integer storage: int64 (default), uint64,\n"
+        "                              int128 (unimplemented), arbitrary (unimplemented)\n";
+}
+
 static void usage(const char* prog) {
     std::cerr << "Usage: " << prog
               << " [-E] [-o outdir] [-fallow-newer-modules] [-fbless-SIZE]"
                  " [--integer-type=int64|uint64|int128|arbitrary]"
-                 " file.asn1 [file2.asn1 ...]\n";
+                 " file.asn1 [file2.asn1 ...]\n"
+                 "Try '" << prog << " --help' for more information.\n";
     std::exit(1);
 }
 
@@ -31,34 +54,40 @@ int main(int argc, char** argv) {
     asn1::codegen::IntStorageKind default_int_kind = asn1::codegen::IntStorageKind::S64;
     std::vector<std::string> input_files;
 
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "-E") {
-            parse_only = true;
-        } else if (arg == "-o" && i + 1 < argc) {
-            out_dir = argv[++i];
-        } else if (arg == "-fallow-newer-modules") {
-            allow_newer_modules = true;
-        } else if (arg == "-fbless-SIZE") {
+    int opt;
+    opterr = 0;  // suppress getopt's own diagnostics; usage() handles all errors
+    while ((opt = getopt_long_only(argc, argv, "Eo:h", long_opts, nullptr)) != -1) {
+        switch (opt) {
+        case 'E': parse_only = true; break;
+        case 'o': out_dir = optarg; break;
+        case 'h': print_help(argv[0]); return 0;
+        case 'A': allow_newer_modules = true; break;
+        case 'B':
             // Non-standard: accept SIZE() on INTEGER/ENUMERATED (asn1c compatibility).
             // X.680 §47.5.2 forbids this; the constraint is silently ignored in codegen.
             bless_size = true;
-        } else if (arg == "--integer-type=int64") {
-            default_int_kind = asn1::codegen::IntStorageKind::S64;
-        } else if (arg == "--integer-type=uint64") {
-            default_int_kind = asn1::codegen::IntStorageKind::U64;
-        } else if (arg == "--integer-type=int128") {
-            std::cerr << "warning: --integer-type=int128 is not yet implemented; using int64\n";
-            default_int_kind = asn1::codegen::IntStorageKind::S64;
-        } else if (arg == "--integer-type=arbitrary") {
-            std::cerr << "warning: --integer-type=arbitrary is not yet implemented; using int64\n";
-            default_int_kind = asn1::codegen::IntStorageKind::S64;
-        } else if (arg[0] == '-') {
-            usage(argv[0]);
-        } else {
-            input_files.push_back(argv[i]);
+            break;
+        case 'I': {
+            std::string kind = optarg;
+            if (kind == "int64") {
+                default_int_kind = asn1::codegen::IntStorageKind::S64;
+            } else if (kind == "uint64") {
+                default_int_kind = asn1::codegen::IntStorageKind::U64;
+            } else if (kind == "int128") {
+                std::cerr << "warning: --integer-type=int128 is not yet implemented; using int64\n";
+            } else if (kind == "arbitrary") {
+                std::cerr << "warning: --integer-type=arbitrary is not yet implemented; using int64\n";
+            } else {
+                std::cerr << "error: unknown --integer-type value '" << kind << "'\n";
+                usage(argv[0]);
+            }
+            break;
+        }
+        default: usage(argv[0]);
         }
     }
+    for (int i = optind; i < argc; ++i)
+        input_files.push_back(argv[i]);
     if (input_files.empty()) usage(argv[0]);
 
     asn1::ast::ParseResult pr;
@@ -72,10 +101,8 @@ int main(int argc, char** argv) {
         std::string src((std::istreambuf_iterator<char>(in)),
                          std::istreambuf_iterator<char>());
 
-        // Instantiate RE/flex lexer over this source buffer
         Lexer lexer(reflex::Input(src), std::cerr);
         yy::parser parser(lexer, pr);
-        // parser.set_debug_level(1);  // uncomment for grammar trace
         if (parser.parse() != 0) {
             std::cerr << "Parse error in " << path << "\n";
             return 1;
@@ -90,7 +117,6 @@ int main(int argc, char** argv) {
     if (parse_only)
         return 0;
 
-    // Semantic analysis
     asn1::sema::Resolver resolver;
     resolver.set_allow_newer_modules(allow_newer_modules);
     resolver.set_bless_size(bless_size);
@@ -107,7 +133,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Code generation
     asn1::codegen::Generator gen(out_dir, resolver);
     gen.set_default_int_kind(default_int_kind);
     gen.generate(pr);
