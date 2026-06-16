@@ -103,6 +103,7 @@ struct TypeDef : Node {
     bool unique{false};
 
     bool is_parameterized{false};
+    std::vector<std::string> formal_params;  // formal parameter names, e.g. {"Color"} in Flag{Color}
 
     // Helpers
     bool is_optional()  const { return marker == Marker::Optional || marker == Marker::Default; }
