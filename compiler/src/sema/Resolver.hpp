@@ -673,6 +673,8 @@ private:
         if (!nvr || nvr->name.empty()) return; // literal (int64, bool, …) — OK
 
         const std::string& ref = nvr->name;
+        // Qualified reference (OtherModule.name) resolves in the named module.
+        const std::string& ref_mod = nvr->module_name.empty() ? mod_name : nvr->module_name;
 
         // Cycle detection: ref already on the path
         for (const auto& nm : path) {
@@ -684,9 +686,10 @@ private:
         }
 
         // Undefined reference
-        auto ref_def = lookup_direct(ref, mod_name);
+        auto ref_def = lookup_direct(ref, ref_mod);
         if (!ref_def) {
-            errors_.push_back("undefined value reference: '" + ref
+            std::string loc = nvr->module_name.empty() ? ref : nvr->module_name + "." + ref;
+            errors_.push_back("undefined value reference: '" + loc
                 + "' in module '" + mod_name + "'");
             return;
         }
@@ -695,7 +698,7 @@ private:
         if (!std::holds_alternative<std::monostate>(ref_def->default_value)
                 && ref_def->marker == ast::Marker::None) {
             path.push_back(ref);
-            check_value_ref_chain(ref_def, mod_name, path);
+            check_value_ref_chain(ref_def, ref_mod, path);
             path.pop_back();
         }
     }
