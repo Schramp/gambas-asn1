@@ -346,8 +346,6 @@ public:
             for (const auto& def : mod->assignments) {
                 if (std::holds_alternative<std::monostate>(def->default_value))
                     continue; // type assignment, not a value assignment
-                if (def->marker != ast::Marker::None)
-                    continue; // SEQUENCE/SET member with DEFAULT — handled elsewhere
                 std::vector<std::string> path;
                 path.push_back(def->name);
                 check_value_ref_chain(def, mod->name, path);
@@ -688,7 +686,7 @@ private:
         // Undefined reference
         auto ref_def = lookup_direct(ref, mod_name);
         if (!ref_def) {
-            errors_.push_back("undefined value reference '" + ref
+            errors_.push_back("undefined value reference: '" + ref
                 + "' in module '" + mod_name + "'");
             return;
         }
