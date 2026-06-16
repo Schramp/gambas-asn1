@@ -770,3 +770,31 @@ target_include_directories(test_xer_encoding_instr PRIVATE ${XER_ENC_INSTR_GEN_D
 target_link_libraries(test_xer_encoding_instr PRIVATE asn1cpp_runtime)
 add_test(NAME xer_encoding_instr COMMAND test_xer_encoding_instr)
 set_tests_properties(xer_encoding_instr PROPERTIES TIMEOUT 30)
+
+# test_recursive_choice — indirect recursive CHOICE via SEQUENCE OPTIONAL (issue #43)
+set(REC_CHOICE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_recursive_choice_test)
+set(REC_CHOICE_TYPES Expr ExprSeq)
+set(_rc_outputs)
+foreach(t IN LISTS REC_CHOICE_TYPES)
+    list(APPEND _rc_outputs ${REC_CHOICE_GEN_DIR}/${t}.hpp ${REC_CHOICE_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_rc_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${REC_CHOICE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/recursive_choice_test.asn1
+                                   -o ${REC_CHOICE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/recursive_choice_test.asn1
+    COMMENT "Generating C++ from recursive_choice_test.asn1"
+)
+set(_rc_cpps)
+foreach(t IN LISTS REC_CHOICE_TYPES)
+    list(APPEND _rc_cpps ${REC_CHOICE_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_recursive_choice
+    seq/test_recursive_choice.cpp
+    ${_rc_cpps}
+)
+target_include_directories(test_recursive_choice PRIVATE ${REC_CHOICE_GEN_DIR})
+target_link_libraries(test_recursive_choice PRIVATE asn1cpp_runtime)
+add_test(NAME recursive_choice COMMAND test_recursive_choice)
+set_tests_properties(recursive_choice PROPERTIES TIMEOUT 30)
