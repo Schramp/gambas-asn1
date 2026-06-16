@@ -27,7 +27,6 @@ SE_NOT_YET_ENFORCED = {
     "71-duplicate-types-SE.asn1",   # duplicate type names across modules not checked
     "101-class-ref-SE.asn1",   # CLASS type-misuse checks not implemented
     "102-class-ref-SE.asn1",   # CLASS type-misuse checks not implemented
-    "111-param-4-SE.asn1",     # parameterized type semantic errors not checked
     "209-prefer-import-source-SE.asn1",  # ambiguous import preference not checked
 }
 

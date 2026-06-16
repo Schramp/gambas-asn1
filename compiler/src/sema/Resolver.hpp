@@ -749,6 +749,78 @@ private:
     }
     // ----------------------------------------------------------------------------
 
+    // X.680 §43 — parameterized type DEFAULT validation.
+    //
+    // Problem: given a parameterized type like
+    //
+    //   Flag{Color} ::= SEQUENCE { field Color DEFAULT cyan }
+    //
+    // and an instantiation like
+    //
+    //   IntegerColorFlag ::= Flag{INTEGER{ red(0), green(1), blue(5) }}
+    //
+    // the DEFAULT name 'cyan' must exist in the actual parameter's named-value
+    // list {red, green, blue}.  Without this check, the compiler silently accepts
+    // an impossible DEFAULT that no encoder can ever produce.
+    //
+    // How the check works:
+    //   1. Grammar stores formal parameter names (e.g. "Color") in TypeDef::formal_params.
+    //   2. Grammar stores actual parameters (e.g. the INTEGER{...} TypeDef) in TypeRef::params.
+    //   3. This function is called whenever a TypeRef with non-empty params is encountered
+    //      at a non-parameterized (real) instantiation site.
+    //   4. We look up the parameterized definition, pair formals with actuals, then walk
+    //      the body looking for members whose type is a formal param and whose DEFAULT
+    //      is a NamedValueRef — and verify the name exists in the actual's enum_values.
+    void check_parameterized_defaults(const ast::TypeRef& tr, const std::string& mod_name) {
+        auto param_def = lookup_direct(tr.type_name, mod_name);
+        if (!param_def || !param_def->is_parameterized) return;
+        const auto& formals = param_def->formal_params;
+        // Only check when the number of formals matches actuals (mismatch is a parse-level issue).
+        if (formals.empty() || formals.size() != tr.params.size()) return;
+
+        // Build substitution map: formal name → actual TypeDefPtr.
+        std::unordered_map<std::string, ast::TypeDefPtr> subst;
+        for (std::size_t i = 0; i < formals.size(); ++i)
+            subst[formals[i]] = tr.params[i];
+
+        check_defaults_with_subst(param_def, subst, mod_name);
+    }
+
+    // Recursively walk 'def's member list.  For each member that:
+    //   - carries a DEFAULT value expressed as a named identifier (NamedValueRef), AND
+    //   - has a type that is one of the formal parameter names in 'subst',
+    // verify that the identifier exists in the actual parameter's named-value list.
+    // Actual params that are nullptr (value-param actuals, e.g. a bare integer literal)
+    // or that have no named values are skipped — we can't validate them here.
+    void check_defaults_with_subst(
+            const ast::TypeDefPtr& def,
+            const std::unordered_map<std::string, ast::TypeDefPtr>& subst,
+            const std::string& mod_name) {
+        if (!def) return;
+        for (const auto& member : def->members) {
+            if (!member) continue;
+            check_defaults_with_subst(member, subst, mod_name);  // recurse into nested composites
+            if (!member->has_default()) continue;
+            auto* nvr = std::get_if<ast::NamedValueRef>(&member->default_value);
+            if (!nvr || nvr->name.empty()) continue;
+            // Is this member's type a formal parameter (e.g. 'Color')?
+            auto* mtr = std::get_if<ast::TypeRef>(&member->body);
+            if (!mtr || mtr->type_name.empty()) continue;
+            auto it = subst.find(mtr->type_name);
+            if (it == subst.end()) continue;  // not a formal param — skip
+            // Check: does the actual parameter's named-value list contain the DEFAULT name?
+            const auto& actual = it->second;
+            if (!actual || actual->enum_values.empty()) continue;
+            bool found = false;
+            for (const auto& ev : actual->enum_values)
+                if (ev.name == nvr->name) { found = true; break; }
+            if (!found)
+                errors_.push_back("DEFAULT value '" + nvr->name
+                    + "' is not defined in the actual parameter for '"
+                    + mtr->type_name + "' in module '" + mod_name + "'");
+        }
+    }
+
     // in_parameterized: true when recursing inside a parameterized type body.
     // TypeRefs within parameterized types may name formal parameters, not module-level
     // types, so undefined-type checks are suppressed there.
@@ -805,6 +877,10 @@ private:
                     warnings_.push_back("qualified reference '" + tr->module_name + "."
                         + tr->type_name + "': module '" + tr->module_name + "' not found");
                 }
+                // Parameterized instantiation: check DEFAULT values against actual params.
+                // E.g. Flag{INTEGER{red,green,blue}} — DEFAULT cyan is invalid if cyan ∉ {red,green,blue}.
+                if (!tr->params.empty() && !in_parameterized)
+                    check_parameterized_defaults(*tr, mod_name);
             }
         }
         // X.680 §18.3 / §22.4: all identifiers and all numeric values in an INTEGER
