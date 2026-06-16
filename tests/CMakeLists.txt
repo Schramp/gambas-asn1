@@ -715,6 +715,34 @@ target_link_libraries(test_recursive PRIVATE asn1cpp_runtime)
 add_test(NAME recursive COMMAND test_recursive)
 set_tests_properties(recursive PROPERTIES TIMEOUT 30)
 
+# test_cross_module_value — cross-module named-value constraint bounds resolved correctly (issue #89)
+set(CROSS_MOD_VAL_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_cross_module_value_test)
+set(CROSS_MOD_VAL_TYPES CountedField)
+set(_cmv_outputs)
+foreach(t IN LISTS CROSS_MOD_VAL_TYPES)
+    list(APPEND _cmv_outputs ${CROSS_MOD_VAL_GEN_DIR}/${t}.hpp ${CROSS_MOD_VAL_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_cmv_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CROSS_MOD_VAL_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/cross_module_value_test.asn1
+                                   -o ${CROSS_MOD_VAL_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/cross_module_value_test.asn1
+    COMMENT "Generating C++ from cross_module_value_test.asn1"
+)
+set(_cmv_cpps)
+foreach(t IN LISTS CROSS_MOD_VAL_TYPES)
+    list(APPEND _cmv_cpps ${CROSS_MOD_VAL_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_cross_module_value
+    seq/test_cross_module_value.cpp
+    ${_cmv_cpps}
+)
+target_include_directories(test_cross_module_value PRIVATE ${CROSS_MOD_VAL_GEN_DIR})
+target_link_libraries(test_cross_module_value PRIVATE asn1cpp_runtime)
+add_test(NAME cross_module_value COMMAND test_cross_module_value)
+set_tests_properties(cross_module_value PROPERTIES TIMEOUT 30)
+
 # test_xer_encoding_instr — XER encoding instruction [BASE64] on OCTET STRING (issue #68)
 set(XER_ENC_INSTR_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_encoding_instr_test)
 set(XER_ENC_INSTR_TYPES InlineTest Base64Payload PayloadWrapper)

@@ -347,7 +347,7 @@ public:
                 if (std::holds_alternative<std::monostate>(def->default_value))
                     continue; // type assignment, not a value assignment
                 std::vector<std::string> path;
-                path.push_back(def->name);
+                path.push_back(mod->name + "." + def->name); // qualified to avoid cross-module false positives
                 check_value_ref_chain(def, mod->name, path);
             }
         }
@@ -357,6 +357,22 @@ public:
     ast::TypeDefPtr lookup(const std::string& name) const {
         auto it = global_.find(name);
         return it != global_.end() ? it->second : nullptr;
+    }
+
+    // Resolve a NamedValueRef honoring module qualification.
+    // Qualified (module_name set): looks in that module's own symbols only.
+    // Unqualified: uses lookup_direct (own + imported symbols of from_module).
+    ast::TypeDefPtr lookup_value_ref(const ast::NamedValueRef& nvr,
+                                     const std::string& from_module) const {
+        if (!nvr.module_name.empty()) {
+            auto mit = module_symbols_.find(nvr.module_name);
+            if (mit != module_symbols_.end()) {
+                auto sit = mit->second.find(nvr.name);
+                if (sit != mit->second.end()) return sit->second;
+            }
+            return nullptr;
+        }
+        return lookup_direct(nvr.name, from_module);
     }
 
     // Walk a TypeRef alias chain starting at `def`, using `start_module` as the
@@ -673,20 +689,36 @@ private:
         if (!nvr || nvr->name.empty()) return; // literal (int64, bool, …) — OK
 
         const std::string& ref = nvr->name;
+        // Qualified reference (OtherModule.name) resolves in the named module's own
+        // symbols (module_symbols_), not its resolution map which includes imports.
+        // Unqualified references use lookup_direct (own + imported symbols).
+        const std::string ref_mod = nvr->module_name.empty() ? mod_name : nvr->module_name;
+        const std::string qref    = ref_mod + "." + ref;
 
-        // Cycle detection: ref already on the path
+        // Cycle detection: compare qualified names to avoid false positives when
+        // two unrelated modules happen to define a value with the same bare name.
         for (const auto& nm : path) {
-            if (nm == ref) {
+            if (nm == qref) {
                 errors_.push_back("circular value reference: '" + path.front()
                     + "' in module '" + mod_name + "'");
                 return;
             }
         }
 
-        // Undefined reference
-        auto ref_def = lookup_direct(ref, mod_name);
+        // Undefined reference — qualified refs look in the named module's own symbols only.
+        ast::TypeDefPtr ref_def;
+        if (!nvr->module_name.empty()) {
+            auto mit = module_symbols_.find(ref_mod);
+            if (mit != module_symbols_.end()) {
+                auto sit = mit->second.find(ref);
+                if (sit != mit->second.end()) ref_def = sit->second;
+            }
+        } else {
+            ref_def = lookup_direct(ref, mod_name);
+        }
         if (!ref_def) {
-            errors_.push_back("undefined value reference: '" + ref
+            std::string loc = nvr->module_name.empty() ? ref : nvr->module_name + "." + ref;
+            errors_.push_back("undefined value reference: '" + loc
                 + "' in module '" + mod_name + "'");
             return;
         }
@@ -694,8 +726,8 @@ private:
         // If the referenced symbol is itself a value assignment, follow the chain
         if (!std::holds_alternative<std::monostate>(ref_def->default_value)
                 && ref_def->marker == ast::Marker::None) {
-            path.push_back(ref);
-            check_value_ref_chain(ref_def, mod_name, path);
+            path.push_back(qref);
+            check_value_ref_chain(ref_def, ref_mod, path);
             path.pop_back();
         }
     }
