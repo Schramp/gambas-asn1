@@ -1,21 +1,44 @@
 -- Cross-module value reference in constraint bounds (issue #89 / codegen fix).
--- ModLimits defines named integer constants; ModConstrained uses them as
--- constraint bounds.  The generator must look up the value in the correct
--- module (ModLimits.maxCount = 10, ModLimits.baseOffset = 5) rather than
--- using the flat global_ map, which is unsafe under same-name collisions.
+--
+-- Three realistic failure modes tested:
+--
+-- 1. Same-named constant in two modules with different values:
+--    ModLimits.maxCount=10, ModMid.maxCount=99. ModConstrained imports
+--    from ModLimits, so maxCount must resolve to 10, not 99.
+--
+-- 2. Three-level indirection:
+--    ModConstrained.deep uses chainedVal (imported from ModMid).
+--    ModMid.chainedVal ::= deepVal (from ModBase).
+--    ModBase.deepVal   ::= 7.
+--    The generator must follow the chain and emit upper_bound=7.
+--
+-- 3. Baseline: two direct constraints from ModLimits (0..10, 5..10).
+
+ModBase DEFINITIONS ::= BEGIN
+    EXPORTS deepVal;
+    deepVal INTEGER ::= 7
+END
+
+ModMid DEFINITIONS ::= BEGIN
+    EXPORTS chainedVal, maxCount;
+    IMPORTS deepVal FROM ModBase;
+    chainedVal INTEGER ::= deepVal   -- hop 2: resolves to 7 via ModBase
+    maxCount   INTEGER ::= 99        -- same name as ModLimits.maxCount, different value
+END
 
 ModLimits DEFINITIONS ::= BEGIN
     EXPORTS maxCount, baseOffset;
-    maxCount    INTEGER ::= 10
-    baseOffset  INTEGER ::= 5
+    maxCount   INTEGER ::= 10        -- the correct value for ModConstrained
+    baseOffset INTEGER ::= 5
 END
 
 ModConstrained DEFINITIONS ::= BEGIN
-    IMPORTS maxCount, baseOffset FROM ModLimits;
+    IMPORTS maxCount, baseOffset FROM ModLimits
+            chainedVal FROM ModMid;
 
-    -- Uses ModLimits.maxCount as upper bound; generator must resolve to 10.
     CountedField ::= SEQUENCE {
-        count   INTEGER (0..maxCount),
-        offset  INTEGER (baseOffset..maxCount)
+        count   INTEGER (0..maxCount),          -- must be 0..10 (ModLimits, not ModMid)
+        offset  INTEGER (baseOffset..maxCount), -- must be 5..10
+        deep    INTEGER (0..chainedVal)         -- must be 0..7 (three hops deep)
     }
 END

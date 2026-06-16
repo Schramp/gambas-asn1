@@ -624,13 +624,50 @@ void Generator::emit_integer_hpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
 }
 
+// Walk a value reference chain until a literal is reached.
+// Returns the terminal def (whose default_value is a literal), or nullptr on
+// undefined ref or if the hop limit is hit.
+//
+// Cycles cannot occur in valid input: resolve_value_assignments() in the sema
+// phase rejects them before codegen runs (see Resolver.hpp). The hop limit is
+// defence-in-depth only — it guards against a future caller that skips sema
+// (e.g. a test harness or tool that drives Generator directly). Without it, a
+// cycle would cause an infinite loop; with it, the constraint is silently
+// dropped (upper/lower bound defaults to unconstrained), which is at least safe.
+//
+// `cur_module` tracks the module in which the *current* node was defined so
+// that unqualified references in each hop resolve against the right scope.
+static ast::TypeDefPtr follow_value_chain(const ast::NamedValueRef& start,
+                                          const sema::Resolver& res,
+                                          const std::string& from_module,
+                                          int limit = 32) {
+    std::string cur_module = from_module;
+    ast::TypeDefPtr cur = res.lookup_value_ref(start, cur_module);
+    // Advance cur_module to the actual owning module so unqualified references
+    // in subsequent hops resolve in the right scope, not the caller's module.
+    if (cur) cur_module = res.module_of(start.name, cur_module);
+
+    for (int i = 0; i < limit && cur; ++i) {
+        if (!std::holds_alternative<ast::NamedValueRef>(cur->default_value)) return cur;
+        const auto& nvr = std::get<ast::NamedValueRef>(cur->default_value);
+        cur = res.lookup_value_ref(nvr, cur_module);
+        // For qualified refs the owning module is explicit; for unqualified
+        // refs use module_of() to find the actual owning module rather than
+        // assuming it is cur_module (where the reference appeared).
+        if (cur) cur_module = nvr.module_name.empty()
+                                  ? res.module_of(nvr.name, cur_module)
+                                  : nvr.module_name;
+    }
+    return nullptr;
+}
+
 // Try to extract a concrete int64_t from a Value, resolving NamedValueRef via resolver.
-// Large positive literals stored as uint64_t are cast to int64_t (may be negative).
+// Follows multi-hop chains (a ::= b, b ::= c, c ::= 42). Cycle-safe via hop limit.
 std::optional<int64_t> Generator::resolve_int_value(const ast::Value& v) const {
     if (auto* i = std::get_if<int64_t>(&v)) return *i;
     if (auto* u = std::get_if<uint64_t>(&v)) return static_cast<int64_t>(*u);
     if (auto* ref = std::get_if<ast::NamedValueRef>(&v)) {
-        auto def = resolver_.lookup_value_ref(*ref, current_module_);
+        auto def = follow_value_chain(*ref, resolver_, current_module_);
         if (def) {
             if (auto* i = std::get_if<int64_t>(&def->default_value)) return *i;
             if (auto* u = std::get_if<uint64_t>(&def->default_value)) return static_cast<int64_t>(*u);
@@ -644,7 +681,7 @@ std::optional<uint64_t> Generator::resolve_uint_value(const ast::Value& v) const
     if (auto* u = std::get_if<uint64_t>(&v)) return *u;
     if (auto* i = std::get_if<int64_t>(&v)) return static_cast<uint64_t>(*i);
     if (auto* ref = std::get_if<ast::NamedValueRef>(&v)) {
-        auto def = resolver_.lookup_value_ref(*ref, current_module_);
+        auto def = follow_value_chain(*ref, resolver_, current_module_);
         if (def) {
             if (auto* u = std::get_if<uint64_t>(&def->default_value)) return *u;
             if (auto* i = std::get_if<int64_t>(&def->default_value)) return static_cast<uint64_t>(*i);
