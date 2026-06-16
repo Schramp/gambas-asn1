@@ -1,0 +1,22 @@
+-- X.693 §21 XER encoding instruction tests for OCTET STRING.
+-- [BASE64] switches the XER representation from hexadecimal to Base64 (RFC 2045 §6.8).
+-- No other encoding instruction changes the byte encoding of OCTET STRING content
+-- (NAME/ATTRIBUTE/LIST/WHITESPACE affect XML structure, not byte serialisation).
+
+XerEncodingInstrTest DEFINITIONS ::= BEGIN
+
+    -- Inline [BASE64] on a SEQUENCE member: the primary case from issue #68.
+    InlineTest ::= SEQUENCE {
+        hexfield  OCTET STRING,          -- default: uppercase hex pairs
+        b64field  [BASE64] OCTET STRING  -- X.693 §21 BASE64 instruction
+    }
+
+    -- Named typedef with [BASE64]: exercises emit_builtin_alias_cpp path.
+    Base64Payload ::= [BASE64] OCTET STRING
+
+    -- Named typedef embedding a Base64Payload: exercises type-ref resolution.
+    PayloadWrapper ::= SEQUENCE {
+        data  Base64Payload
+    }
+
+END

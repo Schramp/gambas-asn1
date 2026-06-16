@@ -1,0 +1,12 @@
+-- Parser acceptance test: an inline [BASE64] OCTET STRING member must parse
+-- without error even when it is not lifted into a named type (issue #68).
+-- XER encoding behaviour (base64 vs hex) is covered by test_xer_encoding_instr.
+
+TestInlineBase64Member DEFINITIONS ::= BEGIN
+
+Packet ::= SEQUENCE {
+    id      INTEGER,
+    payload [BASE64] OCTET STRING
+}
+
+END

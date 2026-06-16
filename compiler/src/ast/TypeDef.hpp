@@ -57,10 +57,14 @@ struct MarkerInfo {
     Value  default_value;
 };
 
+// XER encoding instruction (X.693 §21): affects how the value is serialised in XER.
+enum class XerEncoding { Default, Base64 };
+
 // --- The main TypeDef node ---------------------------------------------------
 struct TypeDef : Node {
     std::string name;            // identifier or type reference name (may be empty for anonymous)
     std::string xer_name;        // override for XER element tag (anonymous types use ASN.1 keyword: SEQUENCE/SET/CHOICE)
+    XerEncoding xer_encoding = XerEncoding::Default;
 
     // What kind of type is this?
     using TypeBody = std::variant<

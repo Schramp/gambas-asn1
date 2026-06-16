@@ -714,3 +714,31 @@ target_include_directories(test_recursive PRIVATE ${RECURSIVE_GEN_DIR})
 target_link_libraries(test_recursive PRIVATE asn1cpp_runtime)
 add_test(NAME recursive COMMAND test_recursive)
 set_tests_properties(recursive PROPERTIES TIMEOUT 30)
+
+# test_xer_encoding_instr — XER encoding instruction [BASE64] on OCTET STRING (issue #68)
+set(XER_ENC_INSTR_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_encoding_instr_test)
+set(XER_ENC_INSTR_TYPES InlineTest Base64Payload PayloadWrapper)
+set(_xei_outputs)
+foreach(t IN LISTS XER_ENC_INSTR_TYPES)
+    list(APPEND _xei_outputs ${XER_ENC_INSTR_GEN_DIR}/${t}.hpp ${XER_ENC_INSTR_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_xei_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${XER_ENC_INSTR_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/xer_encoding_instr_test.asn1
+                                   -o ${XER_ENC_INSTR_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/xer_encoding_instr_test.asn1
+    COMMENT "Generating C++ from xer_encoding_instr_test.asn1"
+)
+set(_xei_cpps)
+foreach(t IN LISTS XER_ENC_INSTR_TYPES)
+    list(APPEND _xei_cpps ${XER_ENC_INSTR_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_xer_encoding_instr
+    seq/test_xer_encoding_instr.cpp
+    ${_xei_cpps}
+)
+target_include_directories(test_xer_encoding_instr PRIVATE ${XER_ENC_INSTR_GEN_DIR})
+target_link_libraries(test_xer_encoding_instr PRIVATE asn1cpp_runtime)
+add_test(NAME xer_encoding_instr COMMAND test_xer_encoding_instr)
+set_tests_properties(xer_encoding_instr PROPERTIES TIMEOUT 30)
