@@ -284,6 +284,11 @@ struct TypeLifecycleOps {
     {}
 };
 
+// XER encoding instruction (X.693 §21): switches OCTET STRING XER serialisation.
+// Default = hexadecimal uppercase pairs (X.693 §17.4 first alternative).
+// Base64  = RFC 2045 §6.8 base64 (X.693 §21 "BASE64" instruction).
+enum class XerEncoding : uint8_t { Default = 0, Base64 = 1 };
+
 // Top-level per-type descriptor (mirrors asn_TYPE_descriptor_t).
 // Generated as `asn_DEF_<TypeName>` in the type's .cpp.
 struct TypeDescriptor {
@@ -303,6 +308,8 @@ struct TypeDescriptor {
     // Lifecycle ops for CHOICE alternative emplace — set for all types used as
     // CHOICE alternatives; default (all nullptrs) for types that never appear as alternatives.
     TypeLifecycleOps lifecycle;
+    // X.693 XER encoding instruction (only meaningful for OCTET STRING).
+    XerEncoding xer_encoding = XerEncoding::Default;
 };
 
 // Built-in type descriptors — defined in runtime/src/BuiltinTypes.cpp (per_handler wired there).

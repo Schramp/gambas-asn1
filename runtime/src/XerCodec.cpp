@@ -283,18 +283,25 @@ struct OctetStringXerHandler final : IXerTypeHandler {
         const OctetString& v = *static_cast<const OctetString*>(src);
         auto& os = s.os();
         os << '<' << def.name << '>';
-        char hex[3];
-        for (uint8_t b : v.bytes()) {
-            std::snprintf(hex, sizeof(hex), "%02X", b);
-            os << hex;
+        if (def.xer_encoding == XerEncoding::Base64) {
+            auto sp = std::span<const uint8_t>(
+                reinterpret_cast<const uint8_t*>(v.bytes().data()), v.bytes().size());
+            os << base64_encode(sp);
+        } else {
+            char hex[3];
+            for (uint8_t b : v.bytes()) {
+                std::snprintf(hex, sizeof(hex), "%02X", b);
+                os << hex;
+            }
         }
         os << "</" << def.name << ">\n";
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
+        bool b64 = def.xer_encoding == XerEncoding::Base64;
         return xer_detail::decode_simple_text_element(s, def.name,
-            [dest](std::string_view text) -> DecodeResult {
-                auto dec = parse_hex_bytes(text);
+            [dest, b64](std::string_view text) -> DecodeResult {
+                std::string dec = b64 ? base64_decode(text) : parse_hex_bytes(text);
                 *static_cast<OctetString*>(dest) = OctetString{
                     reinterpret_cast<const uint8_t*>(dec.data()), dec.size()};
                 return decode_ok();
