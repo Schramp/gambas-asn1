@@ -1,0 +1,36 @@
+-- Schema for the randomised round-trip test (tests/seq/test_random_roundtrip.cpp).
+-- Covers all primitive types that RandomFiller supports, plus composite wrappers.
+RoundtripTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    PrimEnum ::= ENUMERATED { alpha, beta, gamma, delta, ... }
+
+    Primitives ::= SEQUENCE {
+        b       BOOLEAN,
+        i       INTEGER (-500..500),
+        ui      INTEGER (0..1000000),
+        r       REAL,
+        n       NULL,
+        os      OCTET STRING (SIZE(0..32)),
+        bs      BIT STRING  (SIZE(0..64)),
+        oid     OBJECT IDENTIFIER,
+        utc     UTCTime,
+        gen     GeneralizedTime,
+        utf8    UTF8String   (SIZE(0..32)),
+        ia5     IA5String    (SIZE(0..32)),
+        vis     VisibleString(SIZE(0..32)),
+        num     NumericString(SIZE(0..16)),
+        en      PrimEnum
+    }
+
+    Item ::= SEQUENCE {
+        key   IA5String (SIZE(1..16)),
+        value INTEGER   (0..65535)
+    }
+
+    Container ::= SEQUENCE {
+        prims  Primitives,
+        items  SEQUENCE (SIZE(0..8)) OF Item,
+        opt    Primitives OPTIONAL
+    }
+
+END

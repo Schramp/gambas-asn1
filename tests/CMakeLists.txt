@@ -798,3 +798,31 @@ target_include_directories(test_recursive_choice PRIVATE ${REC_CHOICE_GEN_DIR})
 target_link_libraries(test_recursive_choice PRIVATE asn1cpp_runtime)
 add_test(NAME recursive_choice COMMAND test_recursive_choice)
 set_tests_properties(recursive_choice PROPERTIES TIMEOUT 30)
+
+# test_random_roundtrip — randomised BER/XER round-trip for all primitive types (issue #29)
+set(ROUNDTRIP_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_roundtrip_test)
+set(ROUNDTRIP_TYPES Container ContainerItems Primitives Item PrimEnum)
+set(_rrt_outputs)
+foreach(t IN LISTS ROUNDTRIP_TYPES)
+    list(APPEND _rrt_outputs ${ROUNDTRIP_GEN_DIR}/${t}.hpp ${ROUNDTRIP_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_rrt_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${ROUNDTRIP_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/roundtrip_test.asn1
+                                   -o ${ROUNDTRIP_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/roundtrip_test.asn1
+    COMMENT "Generating C++ from roundtrip_test.asn1"
+)
+set(_rrt_cpps)
+foreach(t IN LISTS ROUNDTRIP_TYPES)
+    list(APPEND _rrt_cpps ${ROUNDTRIP_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_random_roundtrip
+    seq/test_random_roundtrip.cpp
+    ${_rrt_cpps}
+)
+target_include_directories(test_random_roundtrip PRIVATE ${ROUNDTRIP_GEN_DIR})
+target_link_libraries(test_random_roundtrip PRIVATE asn1cpp_runtime)
+add_test(NAME random_roundtrip COMMAND test_random_roundtrip)
+set_tests_properties(random_roundtrip PROPERTIES TIMEOUT 60)
