@@ -595,7 +595,7 @@ for (auto& fail : report.failures())
 ### Compiler
 
 ```
-asn1cpp [-E] <file.asn1> [<file2.asn1> ...] -o <outdir>
+asn1cpp [options] file.asn1 [file2.asn1 ...]
 ```
 
 Reads one or more ASN.1 module files, resolves cross-module references, and generates
@@ -605,10 +605,12 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 
 | Flag | Effect |
 |------|--------|
+| `-h`, `--help` | Print option summary and exit. |
 | `-E` | Parse only — skip semantic analysis and code generation. Exit 0 on parse success. Useful for validating syntax without resolving imports. |
-| `-o <dir>` | Output directory (required for code generation; ignored with `-E`) |
+| `-o <dir>` | Output directory (default: `generated`; ignored with `-E`) |
 | `-fallow-newer-modules` | Accept module version mismatches silently |
 | `-fbless-SIZE` | **(Non-standard)** Accept `SIZE()` constraints on `INTEGER` and `ENUMERATED`. X.680 §47.5.2 forbids this; the constraint is silently ignored during code generation. Matches asn1c's `-fbless-SIZE` extension for byte-width hints in legacy schemas. |
+| `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |
 
 ### Comparison with asn1c CLI
 
@@ -626,7 +628,7 @@ Open issues are linked for gaps that have been prioritised for implementation.
 | `-fno-constraints` | `ASN1CPP_VALIDATE=0` at runtime | Runtime flag only |
 | `-fno-include-deps` | — | Not applicable (C++ `#include` is explicit) |
 | `-fwide-types` | — | UInteger auto-selected by constraint range |
-| `-finteger-native-type=<mode>` | — | Storage type auto-selected |
+| `-finteger-native-type=<mode>` | `--integer-type=int64\|uint64` | Override via CLI flag; auto-selected from range by default |
 | `-E` (print parse tree) | `-E` | Supported (parse-only, skip sema + codegen) |
 | `-no-gen-BER/XER/UPER` | — | Not applicable; all codecs are in the runtime |
 | `-gen-autotools` | — | Not applicable; CMake is the build system |
