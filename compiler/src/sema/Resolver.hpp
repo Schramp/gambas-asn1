@@ -337,6 +337,24 @@ public:
                 check_and_resolve(def, mod->name);
     }
 
+    // Phase: check top-level value assignments for undefined and circular references.
+    // `alpha INTEGER ::= beta` is a value assignment: body=Integer, default_value=NamedValueRef.
+    // Undefined: beta not in symbol table → error.
+    // Circular: alpha ::= beta, beta ::= alpha → DFS detects the back-edge.
+    void resolve_value_assignments(const ast::ParseResult& pr) {
+        for (const auto& mod : pr.modules) {
+            for (const auto& def : mod->assignments) {
+                if (std::holds_alternative<std::monostate>(def->default_value))
+                    continue; // type assignment, not a value assignment
+                if (def->marker != ast::Marker::None)
+                    continue; // SEQUENCE/SET member with DEFAULT — handled elsewhere
+                std::vector<std::string> path;
+                path.push_back(def->name);
+                check_value_ref_chain(def, mod->name, path);
+            }
+        }
+    }
+
     // Look up a type by name in global table (returns nullptr if not found)
     ast::TypeDefPtr lookup(const std::string& name) const {
         auto it = global_.find(name);
@@ -645,6 +663,42 @@ private:
                 for (const auto& op : ic->operands)
                     if (op) check_one_constraint(*op, is_string, is_sized, ctx, mod_name, bt);
             }
+        }
+    }
+
+    // DFS helper for resolve_value_assignments.
+    // path contains the names on the current resolution chain (including the start).
+    void check_value_ref_chain(const ast::TypeDefPtr& def,
+                               const std::string& mod_name,
+                               std::vector<std::string>& path) {
+        auto* nvr = std::get_if<ast::NamedValueRef>(&def->default_value);
+        if (!nvr || nvr->name.empty()) return; // literal (int64, bool, …) — OK
+
+        const std::string& ref = nvr->name;
+
+        // Cycle detection: ref already on the path
+        for (const auto& nm : path) {
+            if (nm == ref) {
+                errors_.push_back("circular value reference: '" + path.front()
+                    + "' in module '" + mod_name + "'");
+                return;
+            }
+        }
+
+        // Undefined reference
+        auto ref_def = lookup_direct(ref, mod_name);
+        if (!ref_def) {
+            errors_.push_back("undefined value reference '" + ref
+                + "' in module '" + mod_name + "'");
+            return;
+        }
+
+        // If the referenced symbol is itself a value assignment, follow the chain
+        if (!std::holds_alternative<std::monostate>(ref_def->default_value)
+                && ref_def->marker == ast::Marker::None) {
+            path.push_back(ref);
+            check_value_ref_chain(ref_def, mod_name, path);
+            path.pop_back();
         }
     }
 
