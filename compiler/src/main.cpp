@@ -97,6 +97,7 @@ int main(int argc, char** argv) {
     resolver.collect(pr);
     resolver.resolve_imports(pr);
     resolver.resolve_types(pr);
+    resolver.resolve_value_assignments(pr);
 
     for (const auto& w : resolver.warnings())
         std::cerr << "warning: " << w << "\n";
