@@ -198,8 +198,10 @@
 %type <Value>                       IdentifierAsValue
 
 /* Parameters */
-%type <std::monostate>              ParameterArgumentList ParameterArgumentName
-%type <std::monostate>              ActualParameterList ActualParameter
+%type <std::string>                 ParameterArgumentName
+%type <std::vector<std::string>>    ParameterArgumentList
+%type <TypeDefPtr>                  ActualParameter
+%type <std::vector<TypeDefPtr>>     ActualParameterList
 
 /* Builtin types */
 %type <TypeDefPtr>                  BuiltinType
@@ -520,39 +522,45 @@ DataTypeReference:
 	{
 	    $6->name = $1;
 	    $6->is_parameterized = true;
+	    $6->formal_params = std::move($3);
 	    $$ = $6;
 	}
 	| TypeRefName '{' ParameterArgumentList '}' TOK_PPEQ ObjectClass
 	{
 	    $6->name = $1;
 	    $6->is_parameterized = true;
+	    $6->formal_params = std::move($3);
 	    $$ = $6;
 	}
 	;
 
 ParameterArgumentList:
-	  ParameterArgumentName                            { }
-	| ParameterArgumentList ',' ParameterArgumentName { }
+	  ParameterArgumentName
+	    { $$ = std::vector<std::string>{std::move($1)}; }
+	| ParameterArgumentList ',' ParameterArgumentName
+	    { $1.push_back(std::move($3)); $$ = std::move($1); }
 	;
 
 ParameterArgumentName:
-	  TypeRefName                      { }
-	| TypeRefName ':' Identifier       { }
-	| TypeRefName ':' TypeRefName      { }
-	| BasicTypeId ':' Identifier       { }
-	| BasicTypeId ':' TypeRefName      { }
+	  TypeRefName                      { $$ = $1; }
+	| TypeRefName ':' Identifier       { $$ = $3; }
+	| TypeRefName ':' TypeRefName      { $$ = $3; }
+	| BasicTypeId ':' Identifier       { $$ = $3; }
+	| BasicTypeId ':' TypeRefName      { $$ = $3; }
 	;
 
 ActualParameterList:
-	  ActualParameter                           { }
-	| ActualParameterList ',' ActualParameter   { }
+	  ActualParameter
+	    { $$ = std::vector<TypeDefPtr>{std::move($1)}; }
+	| ActualParameterList ',' ActualParameter
+	    { $1.push_back(std::move($3)); $$ = std::move($1); }
 	;
 
 ActualParameter:
-	  UntaggedType { }
-	| SimpleValue  { }
-	| DefinedValue { }
-	| ValueSet     { }
+	  UntaggedType { $$ = std::move($1); }
+	| SimpleValue  { $$ = nullptr; }
+	| DefinedValue { $$ = nullptr; }
+	| ValueSet     { $$ = nullptr; }
 	;
 
 /* ===== Value Assignment ==================================================== */
@@ -806,9 +814,9 @@ DefinedType:
 	    auto s = $1;
 	    auto dot = s.find('.');
 	    if (dot != std::string::npos && s.find('&') == std::string::npos)
-	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), {}};
+	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), std::move($3)};
 	    else
-	        t->body = TypeRef{"", s, {}};
+	        t->body = TypeRef{"", s, std::move($3)};
 	    $$ = t;
 	}
 	;
