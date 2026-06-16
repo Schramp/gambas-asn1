@@ -1,0 +1,16 @@
+-- SE: Semantic error
+--
+-- IMPLICIT tag on ANY is prohibited: ANY encodes as a complete TLV whose
+-- tag is determined at runtime; stripping it via IMPLICIT leaves an
+-- undecodable structure.  X.680 §30.8 / asn1c fatal: "tagged in IMPLICIT
+-- mode but must be EXPLICIT".
+
+ImplicitAny
+    DEFINITIONS ::=
+BEGIN
+
+    T ::= SEQUENCE {
+        a  [0] IMPLICIT ANY
+    }
+
+END

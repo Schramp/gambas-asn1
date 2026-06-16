@@ -13,6 +13,11 @@ When --asn1c is given (cross-validation mode):
   *-NP  → asn1c rejects; asn1cpp must also reject
   *-SE  → asn1c rejects; asn1cpp must also reject (modulo SE_NOT_YET_ENFORCED)
 
+Note: asn1c returns exit 0 even for FATAL semantic errors (it generates code with
+#error directives instead).  So --asn1c cross-checks may show "asn1c=OK" for -SE
+files even when asn1c printed a FATAL diagnostic.  The primary check is always
+asn1cpp's exit code.
+
 Exit 0 if all required checks pass, 1 otherwise.
 """
 
@@ -21,13 +26,25 @@ import subprocess
 import sys
 from pathlib import Path
 
-# SE files where the required semantic check is not yet implemented.
-# These are treated as informational (not enforced) until the gap is filled.
+# SE files where the semantic check is either infeasible or not yet implemented.
+# Treated as informational (not enforced) with documented rationale.
 SE_NOT_YET_ENFORCED = {
-    "71-duplicate-types-SE.asn1",   # duplicate type names across modules not checked
-    "101-class-ref-SE.asn1",   # CLASS type-misuse checks not implemented
-    "102-class-ref-SE.asn1",   # CLASS type-misuse checks not implemented
-    "209-prefer-import-source-SE.asn1",  # ambiguous import preference not checked
+    # asn1c rejects this because both modules define `Type`, which collides in the
+    # generated C namespace.  asn1cpp avoids the collision by prefixing each type with
+    # its module name (effective_cpp_name), so cross-module same-name types compile
+    # cleanly.  ETSI LI schemas use many modules with overlapping type names (e.g.
+    # AccessType, AddressType) — enforcing this check would break ETSI compilation.
+    # Design decision: asn1cpp intentionally permits cross-module duplicate type names.
+    "71-duplicate-types-SE.asn1",
+    # CLASS / Information Object Class (IOC) semantic checks are not implemented.
+    # These require IOC support (issue #65); out of scope until then.
+    "101-class-ref-SE.asn1",
+    "102-class-ref-SE.asn1",
+    # Requires -fprefer-import-source flag semantics: when two modules both export a
+    # symbol with the same name, the resolver must prefer the one named in IMPORTS FROM
+    # rather than scanning all visible symbols.  Complex multi-module resolver change;
+    # tracked separately.
+    "209-prefer-import-source-SE.asn1",
 }
 
 
