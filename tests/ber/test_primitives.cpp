@@ -186,9 +186,22 @@ int main() {
     check("UInteger 255 round-trip",  roundtrip(UInteger{255}));
     check("UInteger 256 round-trip",  roundtrip(UInteger{256}));
 
-    // INT64_MAX (0x7FFFFFFFFFFFFFFF): fits in 8 bytes, no sign-extension needed.
-    check("UInteger INT64_MAX round-trip",
-          roundtrip(UInteger{static_cast<uint64_t>(INT64_MAX)}));
+    // 127 (0x7F): fits in 1 byte, no sign-extension.
+    check("UInteger 127 encodes as 02 01 7F",
+          encodes_as(UInteger{127}, {0x02, 0x01, 0x7F}));
+
+    // 128 (0x80): high bit set → needs 0x00 pad byte → 02 02 00 80.
+    check("UInteger 128 encodes as 02 02 00 80",
+          encodes_as(UInteger{128}, {0x02, 0x02, 0x00, 0x80}));
+
+    // INT64_MAX (0x7FFFFFFFFFFFFFFF): fits in 8 bytes, no sign-extension.
+    {
+        UInteger v{static_cast<uint64_t>(INT64_MAX)};
+        auto enc = encode<BER>(v);
+        check("UInteger INT64_MAX encodes as 02 08 7F FF FF FF FF FF FF FF",
+              enc.size() == 10 && enc[0] == 0x02 && enc[1] == 0x08 && enc[2] == 0x7F && enc[9] == 0xFF);
+        check("UInteger INT64_MAX round-trip", roundtrip(v));
+    }
 
     // INT64_MAX + 1 (0x8000000000000000): high bit set → needs 0x00 pad byte → 9 bytes total.
     // X.690 §8.3.3: if the unsigned value has bit 7 set in the first content byte,
@@ -236,6 +249,14 @@ int main() {
         check("RELATIVE-OID {128} encodes as 0D 02 81 00",
               encodes_as(r2, {0x0D, 0x02, 0x81, 0x00}));
         check("RELATIVE-OID {128} round-trip", roundtrip(r2));
+    }
+    // {16384} = 0x81 0x80 0x00 (three bytes: 16384 = 0x4000 → base-128: 0x01 0x00 0x00)
+    // Encoding: 0x81 (more, hi bits 0..1), 0x80 (more, lo bits 0..6 = 0), 0x00 (last byte = 0)
+    {
+        RelativeOid r3({16384});
+        check("RELATIVE-OID {16384} encodes as 0D 03 81 80 00",
+              encodes_as(r3, {0x0D, 0x03, 0x81, 0x80, 0x00}));
+        check("RELATIVE-OID {16384} round-trip", roundtrip(r3));
     }
     check("RELATIVE-OID empty round-trip", roundtrip(RelativeOid{}));
 
