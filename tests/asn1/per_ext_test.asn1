@@ -1,0 +1,22 @@
+PerExtTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+-- SEQUENCE with extension members.
+-- Root: id (0..255), flag BOOLEAN.
+-- Extension: note VisibleString OPTIONAL, extra INTEGER (0..255) OPTIONAL.
+SeqWithExt ::= SEQUENCE {
+    id    INTEGER (0..255),
+    flag  BOOLEAN,
+    ...,
+    note  VisibleString (SIZE (1..8)) OPTIONAL,
+    extra INTEGER (0..255) OPTIONAL
+}
+
+-- CHOICE with an extension alternative.
+ChoiceWithExt ::= CHOICE {
+    num  INTEGER (0..255),
+    flag BOOLEAN,
+    ...,
+    str  VisibleString (SIZE (1..8))
+}
+
+END

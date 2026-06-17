@@ -607,6 +607,35 @@ add_test(NAME xer_vectors_202 COMMAND test_xer_vectors_202
     ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-202)
 set_tests_properties(xer_vectors_202 PROPERTIES TIMEOUT 30)
 
+# ---- PER extension members (issue #13) ------------------------------------
+# Verifies SEQUENCE and CHOICE extension member encode/decode in UPER:
+#   root-only (ext flag=0), one extension present, both present, CHOICE ext alt.
+# Cross-validated against asn1c converter during development.
+set(PER_EXT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_per_ext_test)
+set(PER_EXT_TYPES SeqWithExt ChoiceWithExt)
+set(_pe_outputs)
+foreach(t IN LISTS PER_EXT_TYPES)
+    list(APPEND _pe_outputs ${PER_EXT_GEN_DIR}/${t}.hpp ${PER_EXT_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_pe_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PER_EXT_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_ext_test.asn1
+            -o ${PER_EXT_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_ext_test.asn1
+    COMMENT "Generating C++ from per_ext_test.asn1"
+)
+set(_pe_cpps)
+foreach(t IN LISTS PER_EXT_TYPES)
+    list(APPEND _pe_cpps ${PER_EXT_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_per_ext seq/test_per_ext.cpp ${_pe_cpps})
+target_include_directories(test_per_ext PRIVATE ${PER_EXT_GEN_DIR})
+target_link_libraries(test_per_ext PRIVATE asn1cpp_runtime)
+add_test(NAME per_ext COMMAND test_per_ext)
+set_tests_properties(per_ext PROPERTIES TIMEOUT 30)
+
 # ---- BER fuzz (in-tree) ---------------------------------------------------
 # Wire-level corruption sweep using BerCorruptor against the asn1cpp BER
 # decoder. Self-contained — no asn1c dependency, no etsitools/ binaries.
