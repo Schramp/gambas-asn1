@@ -1007,3 +1007,14 @@ add_test(NAME pdu_filter_absent
             -DFILE=${PDU_FILTER_GEN_DIR}/Unrelated.hpp
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_file_absent.cmake)
 set_tests_properties(pdu_filter_absent PROPERTIES DEPENDS pdu_filter)
+
+# ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
+# Enable with: cmake -DWITH_SMOKE_MATRIX=ON  (default OFF; see Release Testing in doc/book.md)
+if(WITH_SMOKE_MATRIX)
+    add_test(NAME smoke_matrix
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/run_smoke_matrix.py
+                --compiler $<TARGET_FILE:asn1cpp>
+                --runtime-inc ${CMAKE_SOURCE_DIR}/runtime/include)
+    set_tests_properties(smoke_matrix PROPERTIES TIMEOUT 300)
+endif()

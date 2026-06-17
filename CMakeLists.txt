@@ -35,6 +35,10 @@ else()
     message(STATUS "asn1c cross-validation: OFF (asn1c not found; set ASN1C_BIN_DIR to enable)")
 endif()
 
+option(WITH_SMOKE_MATRIX
+    "Run type × flag smoke test matrix (17 types × 4 flag combos; requires g++)"
+    OFF)
+
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 # ---------------------------------------------------------------------------
