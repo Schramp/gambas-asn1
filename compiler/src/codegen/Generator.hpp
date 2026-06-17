@@ -116,12 +116,15 @@ class Generator {
     std::string             current_type_;      // C++ name of type currently being generated
     ast::TagDefault         current_tag_default_{ast::TagDefault::Explicit};
     IntStorageKind          default_int_kind_{IntStorageKind::S64};  // --integer-type default
+    std::string             namespace_;           // -fprefix wraps output in this namespace
+    std::ostream*           pre_ns_os_{nullptr};  // when set, #include "X.hpp" writes here instead of body stream
 
 public:
     Generator(fs::path out_dir, sema::Resolver& res)
         : out_dir_(std::move(out_dir)), resolver_(res) {}
 
     void set_default_int_kind(IntStorageKind k) { default_int_kind_ = k; }
+    void set_namespace(std::string ns)           { namespace_ = std::move(ns); }
 
     void generate(const ast::ParseResult& pr) {
         fs::create_directories(out_dir_);
