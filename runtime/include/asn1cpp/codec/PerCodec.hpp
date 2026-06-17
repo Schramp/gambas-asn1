@@ -90,8 +90,10 @@ public:
     // Nonzero means the stream contained a newer schema version than ours.
     int  skipped_extensions() const { return skipped_ext_count_; }
     void reset_skipped_extensions()  { skipped_ext_count_ = 0; }
-    // Called by skip_open_type() in PerCodec.cpp — not for general use.
-    void increment_skipped_extensions() { ++skipped_ext_count_; }
+
+    // Skip one unknown extension open-type payload (X.691 §10.2).
+    // Increments skipped_extensions(). Defined in PerCodec.cpp.
+    DecodeResult skip_open_type();
 
     bool at_end() const override {
         return byte_pos_ >= static_cast<int>(buf_.size());
@@ -122,6 +124,9 @@ public:
         }
         return result;
     }
+
+private:
+    void increment_skipped_extensions() { ++skipped_ext_count_; }
 };
 
 // ---------------------------------------------------------------------------

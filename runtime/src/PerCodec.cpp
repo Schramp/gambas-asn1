@@ -12,6 +12,18 @@
 
 namespace asn1 {
 
+// X.691 §10.2 — skip unknown open-type field by length-prefixed byte count.
+DecodeResult PerDecodeStream::skip_open_type() {
+    auto len_r = per_detail::get_length(*this);
+    if (!len_r) return decode_err(len_r.error());
+    for (std::size_t i = 0; i < *len_r; ++i) {
+        auto b = get_bits(8);
+        if (!b) return decode_err(b.error());
+    }
+    increment_skipped_extensions();
+    return decode_ok();
+}
+
 // Unnamed namespace: limits symbol visibility to this translation unit (equivalent to static
 // for free functions in C++). Intentional — these helpers are internal codec primitives.
 namespace {
@@ -226,19 +238,6 @@ static DecodeResult decode_open_type(const PerCodec& codec, PerDecodeStream& str
     PerDecodeStream tmp_s{std::span<const uint8_t>{bytes_r->data(), bytes_r->size()}};
     IDecodeStream& ds = tmp_s;
     return codec.decode(ds, mdef, mptr);
-}
-
-// X.691 §10.2 — skip unknown open-type field by length-prefixed byte count.
-// Calls stream.increment_skipped_extensions() so callers can detect version skew.
-static DecodeResult skip_open_type(PerDecodeStream& stream) {
-    auto len_r = per_detail::get_length(stream);
-    if (!len_r) return decode_err(len_r.error());
-    for (std::size_t i = 0; i < *len_r; ++i) {
-        auto b = stream.get_bits(8);
-        if (!b) return decode_err(b.error());
-    }
-    stream.increment_skipped_extensions();
-    return decode_ok();
 }
 
 // ---------------------------------------------------------------------------
@@ -903,7 +902,7 @@ public:
                         auto r = decode_open_type(codec, stream, *mbr.type_descriptor, mptr);
                         if (!r) return r;
                     } else {
-                        if (auto r = skip_open_type(stream); !r) return r;
+                        if (auto r = stream.skip_open_type(); !r) return r;
                     }
                 }
             }
@@ -1004,10 +1003,10 @@ public:
                     auto r = decode_open_type(codec, stream, *alt.type_descriptor, mptr);
                     if (!r) return r;
                 } else {
-                    if (auto r = skip_open_type(stream); !r) return r;
+                    if (auto r = stream.skip_open_type(); !r) return r;
                 }
             } else {
-                if (auto r = skip_open_type(stream); !r) return r;
+                if (auto r = stream.skip_open_type(); !r) return r;
             }
             return decode_ok();
         }
