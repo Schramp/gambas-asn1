@@ -122,11 +122,24 @@ struct BooleanXerHandler final : IXerTypeHandler {
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
-        auto inner = xer_detail::consume_tag(s);
+        s.skip_whitespace();
         bool value;
-        if (inner.name == "true"  && inner.self_closing) { value = true; }
-        else if (inner.name == "false" && inner.self_closing) { value = false; }
-        else return decode_err(DecodeError("XER BOOLEAN: expected <true/> or <false/>"));
+        if (!s.remaining().empty() && s.remaining()[0] == '<') {
+            // Standard BASIC-XER: EmptyElementBoolean (<true/> or <false/>).
+            auto inner = xer_detail::consume_tag(s);
+            if (inner.name == "true"  && inner.self_closing) { value = true; }
+            else if (inner.name == "false" && inner.self_closing) { value = false; }
+            else return decode_err(DecodeError("XER BOOLEAN: expected <true/> or <false/>"));
+        } else if (s.lenient()) {
+            // Non-standard: EXTENDED-XER TextBoolean (X.693 §10) — text "true"/"false".
+            std::string_view rem = s.remaining();
+            if (rem.substr(0, 4) == "true") { value = true; s.advance(4); }
+            else if (rem.substr(0, 5) == "false") { value = false; s.advance(5); }
+            else return decode_err(DecodeError("XER BOOLEAN: expected true or false"));
+            s.skip_whitespace();
+        } else {
+            return decode_err(DecodeError("XER BOOLEAN: expected <true/> or <false/>"));
+        }
         if (auto r = xer_detail::consume_close_tag(s, def.name); !r) return r;
         *static_cast<Boolean*>(dest) = Boolean{value};
         return decode_ok();
@@ -254,23 +267,48 @@ struct BitStringXerHandler final : IXerTypeHandler {
         s.skip_whitespace();
         std::string_view rem = s.remaining();
         std::size_t pos = 0;
-        std::string bits;
+        std::string content;
+        bool has_hex = false;
         while (pos < rem.size() && rem[pos] != '<') {
             char c = rem[pos++];
-            if (c == '0' || c == '1') bits += c;
-            else if (!xer_detail::xer_ws[(unsigned char)c])
+            if (xer_detail::xer_ws[(unsigned char)c]) continue;
+            content += c;
+            if ((c >= '2' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))
+                has_hex = true;
+            else if (c != '0' && c != '1')
                 return decode_err(DecodeError("XER: invalid BIT STRING character"));
         }
         s.advance(pos);
         if (auto r = xer_detail::consume_close_tag(s, def.name); !r) return r;
+        if (has_hex && !s.lenient())
+            return decode_err(DecodeError("XER: hex BIT STRING requires lenient mode (non-standard extension)"));
         std::vector<uint8_t> bytes;
         uint8_t unused = 0;
-        if (!bits.empty()) {
-            std::size_t n = bits.size();
-            bytes.resize((n + 7) / 8, 0);
-            for (std::size_t i = 0; i < n; ++i)
-                if (bits[i] == '1') bytes[i / 8] |= (uint8_t)(0x80 >> (i % 8));
-            unused = (uint8_t)(bytes.size() * 8 - n);
+        if (!content.empty()) {
+            if (has_hex) {
+                // Non-standard asn1c extension: hex pairs, one byte each, 0 unused bits.
+                // (No production for this in X.680 §21 XMLBitStringValue grammar.)
+                // NOTE: pure 0/1 hex strings (e.g. "0001") are indistinguishable from
+                // binary and are decoded as binary — matches asn1c's own heuristic.
+                if (content.size() % 2 != 0)
+                    return decode_err(DecodeError("XER: odd-length hex BIT STRING"));
+                auto hex_val = [](char c) -> uint8_t {
+                    if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
+                    if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
+                    return (uint8_t)(c - 'a' + 10);
+                };
+                bytes.reserve(content.size() / 2);
+                for (std::size_t i = 0; i < content.size(); i += 2)
+                    bytes.push_back((uint8_t)((hex_val(content[i]) << 4) | hex_val(content[i+1])));
+                unused = 0;
+            } else {
+                // Standard xmlbstring (X.680 §21): each char is one bit.
+                std::size_t n = content.size();
+                bytes.resize((n + 7) / 8, 0);
+                for (std::size_t i = 0; i < n; ++i)
+                    if (content[i] == '1') bytes[i / 8] |= (uint8_t)(0x80 >> (i % 8));
+                unused = (uint8_t)(bytes.size() * 8 - n);
+            }
         }
         *static_cast<BitString*>(dest) = BitString{std::move(bytes), unused};
         return decode_ok();
