@@ -2300,6 +2300,9 @@ void Generator::emit_stubs_for_unresolved() {
     }
 }
 
+// BFS helper used by compute_reachable.  Appends to `worklist` the ASN.1 name
+// of every type that `def` directly references: via TypeRef body, inline
+// SEQUENCE/SET/CHOICE members, or SEQUENCE-OF/SET-OF element type.
 void Generator::collect_type_refs(const ast::TypeDef& def, std::vector<std::string>& worklist) {
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         worklist.push_back(tr->type_name);
@@ -2317,6 +2320,10 @@ void Generator::collect_type_refs(const ast::TypeDef& def, std::vector<std::stri
     }
 }
 
+// Populates `reachable_asn_names_` with the transitive closure of all ASN.1
+// types reachable from `pdu_roots_` via TypeRef and structural member edges.
+// Called by generate() when -pdu= roots are set; generate() then skips any
+// TypeDef whose name is absent from reachable_asn_names_.
 void Generator::compute_reachable(const ast::ParseResult& pr) {
     // Build ASN.1-name → ALL definitions multimap.
     // Collision types (same name in multiple modules) are common in ETSI schemas;
@@ -2335,7 +2342,7 @@ void Generator::compute_reachable(const ast::ParseResult& pr) {
         if (reachable_asn_names_.count(name)) continue;
 
         auto it = type_multimap.find(name);
-        if (it == type_multimap.end()) continue; // unresolved → will become stub
+        if (it == type_multimap.end()) continue; // not defined in any module — emit_stubs_for_unresolved handles it
 
         reachable_asn_names_.insert(name);
         // Walk ALL definitions for this name (collision types span multiple modules).
