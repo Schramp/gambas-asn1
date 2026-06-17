@@ -48,6 +48,15 @@ static bool per_dec(std::span<const uint8_t> buf, const TypeDescriptor& def, Asn
     return PerCodec::instance().decode(ds, def, obj).has_value();
 }
 
+// Returns the stream so caller can inspect skipped_extensions().
+static PerDecodeStream per_dec_stream(std::span<const uint8_t> buf,
+                                      const TypeDescriptor& def, Asn1Object* obj) {
+    PerDecodeStream s{buf};
+    IDecodeStream& ds = s;
+    PerCodec::instance().decode(ds, def, obj);
+    return s;
+}
+
 // ── SEQUENCE extension tests ──────────────────────────────────────────────────
 
 static void test_seq_root_only() {
@@ -176,10 +185,12 @@ static void test_deep_ext_skip() {
 
     // Old receiver: same root layout, no knowledge of the extension.
     SeqDeepExtRootOnly receiver{};
+    auto s = per_dec_stream(enc, SeqDeepExtRootOnly::asn_DEF, &receiver);
     bool ok = per_dec(enc, SeqDeepExtRootOnly::asn_DEF, &receiver);
-    check("deep-skip: decode ok (no error on unknown extension)", ok);
+    check("deep-skip: decode ok",             ok);
+    check("deep-skip: skipped_extensions==1", s.skipped_extensions() == 1);
     if (ok) {
-        check("deep-skip: id==42",     (int64_t)receiver.id == 42);
+        check("deep-skip: id==42",      (int64_t)receiver.id == 42);
         check("deep-skip: name==hello", receiver.name.str() == "hello");
     }
 }

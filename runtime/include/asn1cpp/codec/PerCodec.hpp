@@ -82,8 +82,15 @@ class PerDecodeStream : public IDecodeStream {
     std::span<const uint8_t> buf_;
     int byte_pos_{0};
     int bit_pos_{0};
+    int skipped_ext_count_{0};
 public:
     explicit PerDecodeStream(std::span<const uint8_t> buf) : buf_(buf) {}
+
+    // Number of unknown extension members skipped during the last decode call.
+    // Nonzero means the stream contained a newer schema version than ours.
+    int  skipped_extensions() const { return skipped_ext_count_; }
+    void reset_skipped_extensions()  { skipped_ext_count_ = 0; }
+    void increment_skipped_extensions() { ++skipped_ext_count_; }
 
     bool at_end() const override {
         return byte_pos_ >= static_cast<int>(buf_.size());
