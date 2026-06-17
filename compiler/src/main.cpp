@@ -20,6 +20,7 @@ static const struct option long_opts[] = {
     {"fallow-newer-modules", no_argument,       nullptr, 'A'},
     {"fbless-SIZE",          no_argument,       nullptr, 'B'},
     {"fprefix",              required_argument, nullptr, 'P'},
+    {"pdu",                  required_argument, nullptr, 'D'},
     {"integer-type",         required_argument, nullptr, 'I'},
     {nullptr, 0, nullptr, 0}
 };
@@ -38,6 +39,10 @@ static void print_help(const char* prog) {
         "                              (asn1c compatibility flag — asn1c prepends <name>\n"
         "                              as a C identifier prefix; asn1cpp uses a C++ namespace\n"
         "                              instead, which is idiomatic and collision-safe.)\n"
+        "  -pdu=<TypeName>             Generate only <TypeName> and its transitive dependencies.\n"
+        "                              May be specified multiple times for multiple roots.\n"
+        "                              Without -pdu, all types in all modules are generated.\n"
+        "                              -pdu=all is accepted as an alias for the default.\n"
         "  --integer-type=<kind>       Integer storage: int64 (default), uint64,\n"
         "                              int128 (unimplemented), arbitrary (unimplemented)\n";
 }
@@ -45,7 +50,7 @@ static void print_help(const char* prog) {
 static void usage(const char* prog) {
     std::cerr << "Usage: " << prog
               << " [-E] [-o outdir] [-fallow-newer-modules] [-fbless-SIZE]"
-                 " [-fprefix=<name>]"
+                 " [-fprefix=<name>] [-pdu=<TypeName>]"
                  " [--integer-type=int64|uint64|int128|arbitrary]"
                  " file.asn1 [file2.asn1 ...]\n"
                  "Try '" << prog << " --help' for more information.\n";
@@ -55,6 +60,7 @@ static void usage(const char* prog) {
 int main(int argc, char** argv) {
     std::string out_dir = "generated";
     std::string ns_prefix;
+    std::vector<std::string> pdu_types;
     bool allow_newer_modules = false;
     bool bless_size = false;
     bool parse_only = false;
@@ -70,6 +76,10 @@ int main(int argc, char** argv) {
         case 'h': print_help(argv[0]); return 0;
         case 'A': allow_newer_modules = true; break;
         case 'P': ns_prefix = optarg; break;
+        case 'D':
+            if (std::string(optarg) != "all")
+                pdu_types.push_back(optarg);
+            break;
         case 'B':
             // Non-standard: accept SIZE() on INTEGER/ENUMERATED (asn1c compatibility).
             // X.680 §47.5.2 forbids this; the constraint is silently ignored in codegen.
@@ -158,6 +168,7 @@ int main(int argc, char** argv) {
     asn1::codegen::Generator gen(out_dir, resolver);
     gen.set_default_int_kind(default_int_kind);
     if (!ns_prefix.empty()) gen.set_namespace(ns_prefix);
+    for (const auto& t : pdu_types) gen.add_pdu_type(t);
     gen.generate(pr);
 
     std::cout << "Generated C++ code in: " << out_dir << "/\n";

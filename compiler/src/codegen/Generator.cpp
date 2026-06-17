@@ -1,6 +1,7 @@
 #include "Generator.hpp"
 #include <algorithm>
 #include <functional>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include "asn1cpp/Tag.hpp"
@@ -2297,6 +2298,51 @@ void Generator::emit_stubs_for_unresolved() {
             os << "};\n\n";
         });
     }
+}
+
+void Generator::collect_type_refs(const ast::TypeDef& def, std::vector<std::string>& worklist) {
+    if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
+        worklist.push_back(tr->type_name);
+    }
+    if (def.is_sequence() || def.is_set() || def.is_choice()) {
+        for (const auto& m : def.members) {
+            if (m->is_extension_marker) continue;
+            collect_type_refs(*m, worklist);
+        }
+    } else if (def.is_seq_of() || def.is_set_of()) {
+        const auto& elem = def.is_seq_of()
+            ? std::get<ast::SequenceOfType>(def.body).element
+            : std::get<ast::SetOfType>(def.body).element;
+        collect_type_refs(*elem, worklist);
+    }
+}
+
+void Generator::compute_reachable(const ast::ParseResult& pr) {
+    // Build ASN.1-name → (TypeDef, Module) map for all top-level assignments.
+    std::unordered_map<std::string,
+        std::pair<const ast::TypeDef*, const ast::Module*>> type_map;
+    for (const auto& mod : pr.modules)
+        for (const auto& def : mod->assignments)
+            if (!def->name.empty() && !def->is_extension_marker)
+                type_map[def->name] = {def.get(), mod.get()};
+
+    // BFS from every requested PDU root.
+    std::vector<std::string> worklist(pdu_roots_.begin(), pdu_roots_.end());
+    while (!worklist.empty()) {
+        auto name = worklist.back(); worklist.pop_back();
+        if (reachable_asn_names_.count(name)) continue;
+
+        auto it = type_map.find(name);
+        if (it == type_map.end()) continue; // unresolved → will become stub
+
+        reachable_asn_names_.insert(name);
+        collect_type_refs(*it->second.first, worklist);
+    }
+
+    // Report any PDU roots that could not be resolved.
+    for (const auto& root : pdu_roots_)
+        if (!reachable_asn_names_.count(root))
+            std::cerr << "warning: -pdu type '" << root << "' not found in input\n";
 }
 
 } // namespace asn1::codegen
