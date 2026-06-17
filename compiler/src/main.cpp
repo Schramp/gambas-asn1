@@ -98,6 +98,20 @@ int main(int argc, char** argv) {
         input_files.push_back(argv[i]);
     if (input_files.empty()) usage(argv[0]);
 
+    if (!ns_prefix.empty()) {
+        auto valid_id = [](std::string_view s) {
+            if (s.empty()) return false;
+            if (!std::isalpha((unsigned char)s[0]) && s[0] != '_') return false;
+            return std::all_of(s.begin(), s.end(), [](char c){
+                return std::isalnum((unsigned char)c) || c == '_';
+            });
+        };
+        if (!valid_id(ns_prefix)) {
+            std::cerr << "error: -fprefix value '" << ns_prefix << "' is not a valid C++ identifier\n";
+            return 1;
+        }
+    }
+
     asn1::ast::ParseResult pr;
 
     for (const auto& path : input_files) {

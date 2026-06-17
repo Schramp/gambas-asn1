@@ -1302,7 +1302,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
                 emitted_extra = true;
             }
         }
-        if (emitted_extra) os << "\n";
+        if (emitted_extra) { auto& nl_os = pre_ns_os_ ? *pre_ns_os_ : os; nl_os << "\n"; }
 
         // All special members defined here where unique_ptr<T> has complete T.
         os << std::format("{0}::{0}() = default;\n", cname);
