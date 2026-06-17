@@ -1193,7 +1193,26 @@ ctest --test-dir build/tests --output-on-failure
 python3 asn1cpp-validation-tools/compare_random.py --count 10 --seed 1 7 42 99
 ```
 
-440/440 xval and 24/24 ctest must pass.
+440/440 xval and 40/40 ctest must pass.
+
+### Release Testing
+
+Before tagging a release or merging to `main`, run the smoke matrix in addition to the
+standard suite. The smoke matrix compiles 17 ASN.1 built-in types under four flag
+combinations (`-fprefix=`, `-pdu=`, and both combined) and verifies the generated C++
+compiles without error — 68 checks total.
+
+Enable and run:
+
+```bash
+cmake -S . -B build -DWITH_SMOKE_MATRIX=ON
+cmake --build build
+ctest --test-dir build/tests --output-on-failure
+```
+
+The `smoke_matrix` test takes ~2 minutes. It is disabled by default
+(`-DWITH_SMOKE_MATRIX=OFF`) so routine development cycles stay fast. CI enables it
+automatically on pushes to `main`.
 
 ### Open Work
 
