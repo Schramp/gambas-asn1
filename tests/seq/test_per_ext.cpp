@@ -103,7 +103,8 @@ static void test_seq_both_ext() {
     bool ok = per_dec(enc, SeqWithExt::asn_DEF, &r2);
     check("seq both-ext: decode ok", ok);
     if (ok) {
-        check("seq both-ext: id==99", (int64_t)r2.id == 99);
+        check("seq both-ext: id==99",     (int64_t)r2.id == 99);
+        check("seq both-ext: flag==true", r2.flag.value());
         check("seq both-ext: note present", r2.note != nullptr);
         if (r2.note)
             check("seq both-ext: note==\"world\"", r2.note->str() == "world");
