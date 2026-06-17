@@ -383,6 +383,14 @@ presence bitmap follows; its length is encoded as a normally small number (X.691
 and each present extension is wrapped as an open-type (length-prefixed octet string).
 An extension-free encoding sets the flag to 0 and encodes only root members.
 
+When a decoder encounters an extension member whose index exceeds the number of known
+alternatives in its schema (schema version skew), it skips the open-type payload by
+reading and discarding its length-prefixed bytes. This preserves forward compatibility:
+an older receiver can always decode a newer sender's message as long as the root members
+are unchanged. After decoding, `PerDecodeStream::skipped_extensions()` returns the number
+of open-type fields that were skipped; a nonzero value indicates the stream contained a
+newer schema version than the decoder's descriptor tables.
+
 Unaligned PER (UPER) packs values at bit boundaries with no byte alignment. Aligned PER
 (APER) byte-aligns certain constructs. 3GPP uses UPER for radio interface protocols.
 
@@ -1070,7 +1078,9 @@ UPER encode and decode are complete for all types present in 3GPP TS 25.331 (RRC
 Cross-validation: **40,000/40,000** records (2,000 × 4 RRC types × 5 paths) against
 asn1c UPER.
 
-Extension member open-type encoding is not yet implemented (see §13).
+Extension members (open-type wrapping per X.691 §12) are fully implemented for both
+encode and decode. Unknown extension members from newer senders are skipped;
+`PerDecodeStream::skipped_extensions()` reports the skip count.
 
 ### XER Codec
 
@@ -1099,7 +1109,6 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 
 | Area | Limitation |
 |------|-----------|
-| **PER extension members** | Open-type encoding of extension alternatives not yet implemented ([Issue #13](https://github.com/Schramp/gambas-asn1/issues/13)). Schemas using `...` with populated extension members will silently omit extension values in PER. |
 | **NamedBits / WITH COMPONENTS / PATTERN** | BIT STRING named-bit constraints, WITH COMPONENTS, and PATTERN constraints are not enforced by the validator and not used during PER encoding. Not present in ETSI LI or 3GPP RRC schemas. |
 | **BigInteger / ArbitraryInteger** | Unconstrained INTEGER values that exceed int64_t / uint64_t range have stub types with deleted constructors. Codec cannot encode or decode these. Not used by supported schemas. |
 | **JER (JSON Encoding Rules)** | Stub only — returns `not_implemented`. |
