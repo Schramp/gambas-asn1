@@ -636,6 +636,35 @@ target_link_libraries(test_per_ext PRIVATE asn1cpp_runtime)
 add_test(NAME per_ext COMMAND test_per_ext)
 set_tests_properties(per_ext PROPERTIES TIMEOUT 30)
 
+# ---- -fprefix namespace test (issue #16) ------------------------------------
+# Verifies that -fprefix=<name> wraps generated types in namespace <name>.
+# Uses per_ext_test.asn1 (already available) regenerated with -fprefix=testns.
+# test_fprefix.cpp accesses types as testns::SeqWithExt to confirm the wrapper.
+set(FPREFIX_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_fprefix_test)
+set(FPREFIX_TYPES SeqWithExt ChoiceWithExt InnerSeq SeqDeepExt SeqDeepExtRootOnly)
+set(_fp_outputs)
+foreach(t IN LISTS FPREFIX_TYPES)
+    list(APPEND _fp_outputs ${FPREFIX_GEN_DIR}/${t}.hpp ${FPREFIX_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_fp_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${FPREFIX_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_ext_test.asn1
+            -fprefix=testns -o ${FPREFIX_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_ext_test.asn1
+    COMMENT "Generating C++ from per_ext_test.asn1 with -fprefix=testns"
+)
+set(_fp_cpps)
+foreach(t IN LISTS FPREFIX_TYPES)
+    list(APPEND _fp_cpps ${FPREFIX_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_fprefix seq/test_fprefix.cpp ${_fp_cpps})
+target_include_directories(test_fprefix PRIVATE ${FPREFIX_GEN_DIR})
+target_link_libraries(test_fprefix PRIVATE asn1cpp_runtime)
+add_test(NAME fprefix COMMAND test_fprefix)
+set_tests_properties(fprefix PROPERTIES TIMEOUT 30)
+
 # ---- BER fuzz (in-tree) ---------------------------------------------------
 # Wire-level corruption sweep using BerCorruptor against the asn1cpp BER
 # decoder. Self-contained — no asn1c dependency, no etsitools/ binaries.

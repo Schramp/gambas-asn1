@@ -19,6 +19,7 @@ static const struct option long_opts[] = {
     {"help",                 no_argument,       nullptr, 'h'},
     {"fallow-newer-modules", no_argument,       nullptr, 'A'},
     {"fbless-SIZE",          no_argument,       nullptr, 'B'},
+    {"fprefix",              required_argument, nullptr, 'P'},
     {"integer-type",         required_argument, nullptr, 'I'},
     {nullptr, 0, nullptr, 0}
 };
@@ -33,6 +34,10 @@ static void print_help(const char* prog) {
         "  -o <dir>                    Output directory (default: generated)\n"
         "  -fallow-newer-modules       Accept module version mismatches silently\n"
         "  -fbless-SIZE                (Non-standard) Accept SIZE() on INTEGER/ENUMERATED\n"
+        "  -fprefix=<name>             Wrap all generated types in namespace <name>.\n"
+        "                              (asn1c compatibility flag — asn1c prepends <name>\n"
+        "                              as a C identifier prefix; asn1cpp uses a C++ namespace\n"
+        "                              instead, which is idiomatic and collision-safe.)\n"
         "  --integer-type=<kind>       Integer storage: int64 (default), uint64,\n"
         "                              int128 (unimplemented), arbitrary (unimplemented)\n";
 }
@@ -40,6 +45,7 @@ static void print_help(const char* prog) {
 static void usage(const char* prog) {
     std::cerr << "Usage: " << prog
               << " [-E] [-o outdir] [-fallow-newer-modules] [-fbless-SIZE]"
+                 " [-fprefix=<name>]"
                  " [--integer-type=int64|uint64|int128|arbitrary]"
                  " file.asn1 [file2.asn1 ...]\n"
                  "Try '" << prog << " --help' for more information.\n";
@@ -48,6 +54,7 @@ static void usage(const char* prog) {
 
 int main(int argc, char** argv) {
     std::string out_dir = "generated";
+    std::string ns_prefix;
     bool allow_newer_modules = false;
     bool bless_size = false;
     bool parse_only = false;
@@ -62,6 +69,7 @@ int main(int argc, char** argv) {
         case 'o': out_dir = optarg; break;
         case 'h': print_help(argv[0]); return 0;
         case 'A': allow_newer_modules = true; break;
+        case 'P': ns_prefix = optarg; break;
         case 'B':
             // Non-standard: accept SIZE() on INTEGER/ENUMERATED (asn1c compatibility).
             // X.680 §47.5.2 forbids this; the constraint is silently ignored in codegen.
@@ -89,6 +97,20 @@ int main(int argc, char** argv) {
     for (int i = optind; i < argc; ++i)
         input_files.push_back(argv[i]);
     if (input_files.empty()) usage(argv[0]);
+
+    if (!ns_prefix.empty()) {
+        auto valid_id = [](std::string_view s) {
+            if (s.empty()) return false;
+            if (!std::isalpha((unsigned char)s[0]) && s[0] != '_') return false;
+            return std::all_of(s.begin(), s.end(), [](char c){
+                return std::isalnum((unsigned char)c) || c == '_';
+            });
+        };
+        if (!valid_id(ns_prefix)) {
+            std::cerr << "error: -fprefix value '" << ns_prefix << "' is not a valid C++ identifier\n";
+            return 1;
+        }
+    }
 
     asn1::ast::ParseResult pr;
 
@@ -135,6 +157,7 @@ int main(int argc, char** argv) {
 
     asn1::codegen::Generator gen(out_dir, resolver);
     gen.set_default_int_kind(default_int_kind);
+    if (!ns_prefix.empty()) gen.set_namespace(ns_prefix);
     gen.generate(pr);
 
     std::cout << "Generated C++ code in: " << out_dir << "/\n";

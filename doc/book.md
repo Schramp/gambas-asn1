@@ -660,7 +660,7 @@ Open issues are linked for gaps that have been prioritised for implementation.
 | `-fbless-SIZE` | `-fbless-SIZE` | Supported (non-standard; SIZE on INTEGER/ENUMERATED silently ignored) |
 | `-pdu={all\|auto\|Type}` | — | [Issue #14](https://github.com/Schramp/gambas-asn1/issues/14) |
 | `-flong-size=32\|64` | — | [Issue #15](https://github.com/Schramp/gambas-asn1/issues/15) |
-| `-fprefix=<prefix>` | — | [Issue #16](https://github.com/Schramp/gambas-asn1/issues/16) |
+| `-fprefix=<prefix>` | `-fprefix=<ns>` (wraps generated types in C++ namespace `ns`) | Supported (asn1c compat alias; asn1c uses name-mangling, gambas-asn1 uses `namespace`) |
 | `-fno-constraints` | `ASN1CPP_VALIDATE=0` at runtime | Runtime flag only |
 | `-fno-include-deps` | — | Not applicable (C++ `#include` is explicit) |
 | `-fwide-types` | — | UInteger auto-selected by constraint range |
