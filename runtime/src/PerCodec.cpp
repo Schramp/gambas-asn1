@@ -229,7 +229,7 @@ static DecodeResult decode_open_type(const PerCodec& codec, PerDecodeStream& str
 }
 
 // X.691 §10.2 — skip unknown open-type field by length-prefixed byte count.
-// Increments skipped_ext_count_ on the stream so callers can detect version skew.
+// Calls stream.increment_skipped_extensions() so callers can detect version skew.
 static DecodeResult skip_open_type(PerDecodeStream& stream) {
     auto len_r = per_detail::get_length(stream);
     if (!len_r) return decode_err(len_r.error());

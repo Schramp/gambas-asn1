@@ -90,6 +90,7 @@ public:
     // Nonzero means the stream contained a newer schema version than ours.
     int  skipped_extensions() const { return skipped_ext_count_; }
     void reset_skipped_extensions()  { skipped_ext_count_ = 0; }
+    // Called by skip_open_type() in PerCodec.cpp — not for general use.
     void increment_skipped_extensions() { ++skipped_ext_count_; }
 
     bool at_end() const override {
