@@ -27,7 +27,7 @@ LIB_DIR   := lib
 INC_DIR   := include
 LIBRARY   := $(LIB_DIR)/libasn1cpp_etsi.a
 
-ASNCPP_FLAGS := -fallow-newer-modules
+ASNCPP_FLAGS := -fallow-newer-modules -pdu=PS-PDU -pdu=EncryptedPayload
 
 # ---------------------------------------------------------------------------
 # Source discovery (all .asn and .asn1 files under asn1-files/)

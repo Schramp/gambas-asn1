@@ -118,6 +118,8 @@ class Generator {
     IntStorageKind          default_int_kind_{IntStorageKind::S64};  // --integer-type default
     std::string             namespace_;           // -fprefix wraps output in this namespace
     std::ostream*           pre_ns_os_{nullptr};  // when set, #include "X.hpp" writes here instead of body stream
+    std::set<std::string>   pdu_roots_;           // ASN.1 names of -pdu= root types (empty = generate all)
+    std::set<std::string>   reachable_asn_names_; // populated by compute_reachable(); ASN.1 names
 
 public:
     Generator(fs::path out_dir, sema::Resolver& res)
@@ -125,6 +127,7 @@ public:
 
     void set_default_int_kind(IntStorageKind k) { default_int_kind_ = k; }
     void set_namespace(std::string ns)           { namespace_ = std::move(ns); }
+    void add_pdu_type(std::string asn_name)      { pdu_roots_.insert(std::move(asn_name)); }
 
     void generate(const ast::ParseResult& pr) {
         fs::create_directories(out_dir_);
@@ -143,10 +146,14 @@ public:
                         collision_types_.insert(cpp);
                 }
 
+        if (!pdu_roots_.empty())
+            compute_reachable(pr);
+
         for (const auto& mod : pr.modules) {
             current_module_ = mod->name;
             for (const auto& def : mod->assignments)
                 if (!def->name.empty() && !def->is_extension_marker) {
+                    if (!pdu_roots_.empty() && !reachable_asn_names_.count(def->name)) continue;
                     generated_names_.insert(effective_cpp_name(def->name, mod->name));
                     generate_inline_types(*def, *mod);
                     generate_type(*def, *mod);
@@ -186,6 +193,8 @@ public:
     }
 
 private:
+    void compute_reachable(const ast::ParseResult& pr);
+    void collect_type_refs(const ast::TypeDef& def, std::vector<std::string>& worklist);
     void generate_type(const ast::TypeDef& def, const ast::Module& mod);
     void generate_inline_types(const ast::TypeDef& def, const ast::Module& mod);
     void emit_stubs_for_unresolved();

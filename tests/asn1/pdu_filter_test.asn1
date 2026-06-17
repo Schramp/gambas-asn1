@@ -1,0 +1,24 @@
+-- Schema for -pdu= filter ctest (issue #14).
+-- RootType references Dep1 and Dep2. Unrelated is unreachable from RootType.
+
+PduFilterTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+    Dep2 ::= SEQUENCE {
+        value   INTEGER (0..255)
+    }
+
+    Dep1 ::= SEQUENCE {
+        name    VisibleString (SIZE (1..32)),
+        sub     Dep2
+    }
+
+    RootType ::= SEQUENCE {
+        id      INTEGER (0..65535),
+        dep     Dep1
+    }
+
+    Unrelated ::= SEQUENCE {
+        x       INTEGER
+    }
+
+END
