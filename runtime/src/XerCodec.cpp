@@ -288,17 +288,18 @@ struct BitStringXerHandler final : IXerTypeHandler {
             if (has_hex) {
                 // Non-standard asn1c extension: hex pairs, one byte each, 0 unused bits.
                 // (No production for this in X.680 §21 XMLBitStringValue grammar.)
+                // NOTE: pure 0/1 hex strings (e.g. "0001") are indistinguishable from
+                // binary and are decoded as binary — matches asn1c's own heuristic.
                 if (content.size() % 2 != 0)
                     return decode_err(DecodeError("XER: odd-length hex BIT STRING"));
+                auto hex_val = [](char c) -> uint8_t {
+                    if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
+                    if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
+                    return (uint8_t)(c - 'a' + 10);
+                };
                 bytes.reserve(content.size() / 2);
-                for (std::size_t i = 0; i < content.size(); i += 2) {
-                    auto hex_val = [](char c) -> uint8_t {
-                        if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
-                        if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
-                        return (uint8_t)(c - 'a' + 10);
-                    };
+                for (std::size_t i = 0; i < content.size(); i += 2)
                     bytes.push_back((uint8_t)((hex_val(content[i]) << 4) | hex_val(content[i+1])));
-                }
                 unused = 0;
             } else {
                 // Standard xmlbstring (X.680 §21): each char is one bit.

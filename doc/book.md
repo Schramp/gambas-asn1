@@ -403,11 +403,10 @@ uppercase hex pairs; BIT STRING becomes a binary string of `0` and `1` character
 
 Some encoders (notably asn1c) produce XER that deviates from BASIC-XER (X.693 §8):
 
-| Field | Standard BASIC-XER | Non-standard extension |
-|-------|--------------------|----------------------|
-| BOOLEAN | `<true/>` / `<false/>` empty elements | Text content `true` / `false` (valid in EXTENDED-XER §10) |
-| BIT STRING | Binary `0`/`1` characters (xmlbstring, X.680 §21) | Hex pairs `AABBCC…` (no grammar production in the standard) |
-| OCTET STRING | Uppercase hex pairs (standard) | Base64 (`XerEncoding::Base64` compile-time annotation) |
+| Field | Standard BASIC-XER | Non-standard (lenient mode) |
+|-------|--------------------|-----------------------------|
+| BOOLEAN | `<true/>` / `<false/>` empty elements | Text content `true` / `false` (valid in EXTENDED-XER §10, not BASIC-XER) |
+| BIT STRING | Binary `0`/`1` characters (xmlbstring, X.680 §21) | Hex pairs `AABBCC…` (no grammar production in the standard — asn1c extension) |
 
 To decode XER produced by such encoders, pass `XerDecodeMode::Lenient` to
 `XerDecodeStream`:
@@ -420,9 +419,12 @@ asn1::XerDecodeStream xs{xml, asn1::XerDecodeMode::Lenient};
 asn1::XerCodec::instance().decode(xs, Certificate::asn_DEF, &cert);
 ```
 
-The default is `XerDecodeMode::Strict`, which rejects non-standard encodings.
-The OCTET STRING Base64 fallback is controlled by a schema-level annotation
-(`XerEncoding::Base64` on the `TypeDescriptor`) and is independent of this flag.
+The default is `XerDecodeMode::Strict`, which rejects both non-standard forms.
+
+**OCTET STRING / Base64** is a separate mechanism: Base64 encoding is a compile-time
+annotation (`XerEncoding::Base64` on the `TypeDescriptor`, set via the `BASE64`
+encoding instruction in the schema). It is always active for annotated types and is
+independent of `XerDecodeMode`.
 
 XER can be used wherever XML interoperability is required. Some ETSI standards mandate
 XER for management interfaces; NETCONF (RFC 6241) uses YANG but many legacy network
