@@ -55,12 +55,23 @@ static constexpr auto xer_ws = make_xer_ws();
 
 } // namespace xer_detail (reopened below after XerDecodeStream)
 
+// Controls non-standard XER extensions accepted by the decoder.
+// Standard BASIC-XER (X.693 §8) is strict: BOOLEAN must use empty-element
+// form (<true/>/<false/>) and BIT STRING must use xmlbstring (0/1 chars).
+// Lenient mode additionally accepts:
+//   BOOLEAN: text content "true"/"false" (EXTENDED-XER §10)
+//   BIT STRING: hex pairs "AABBCC…" (non-standard asn1c extension, no grammar production)
+enum class XerDecodeMode { Strict, Lenient };
+
 class XerDecodeStream : public IDecodeStream {
     std::string buf_;
     std::size_t pos_{0};
+    bool lenient_;
 public:
-    explicit XerDecodeStream(std::string text) : buf_(std::move(text)) {}
+    explicit XerDecodeStream(std::string text, XerDecodeMode mode = XerDecodeMode::Strict)
+        : buf_(std::move(text)), lenient_(mode == XerDecodeMode::Lenient) {}
     bool at_end() const override { return pos_ >= buf_.size(); }
+    bool lenient() const { return lenient_; }
     std::string_view remaining() const { return std::string_view(buf_).substr(pos_); }
     void advance(std::size_t n) { pos_ += n; }
     void skip_whitespace() {

@@ -396,7 +396,33 @@ bytes in UPER.
 XER transcodes ASN.1 values to XML. Each type has a canonical XML representation:
 SEQUENCE becomes a parent element whose child elements are the member values; CHOICE
 becomes a single child element named after the chosen alternative; OCTET STRING becomes
-uppercase hex; BIT STRING becomes a space-separated bit string.
+uppercase hex pairs; BIT STRING becomes a binary string of `0` and `1` characters
+(xmlbstring per X.680 §21); BOOLEAN becomes an empty element (`<true/>` or `<false/>`).
+
+**Non-standard extensions — lenient decode mode**
+
+Some encoders (notably asn1c) produce XER that deviates from BASIC-XER (X.693 §8):
+
+| Field | Standard BASIC-XER | Non-standard extension |
+|-------|--------------------|----------------------|
+| BOOLEAN | `<true/>` / `<false/>` empty elements | Text content `true` / `false` (valid in EXTENDED-XER §10) |
+| BIT STRING | Binary `0`/`1` characters (xmlbstring, X.680 §21) | Hex pairs `AABBCC…` (no grammar production in the standard) |
+| OCTET STRING | Uppercase hex pairs (standard) | Base64 (`XerEncoding::Base64` compile-time annotation) |
+
+To decode XER produced by such encoders, pass `XerDecodeMode::Lenient` to
+`XerDecodeStream`:
+
+```cpp
+std::string xml = read_file("cert.xer");
+Certificate cert{};
+// lenient: accepts text BOOLEAN and hex BIT STRING
+asn1::XerDecodeStream xs{xml, asn1::XerDecodeMode::Lenient};
+asn1::XerCodec::instance().decode(xs, Certificate::asn_DEF, &cert);
+```
+
+The default is `XerDecodeMode::Strict`, which rejects non-standard encodings.
+The OCTET STRING Base64 fallback is controlled by a schema-level annotation
+(`XerEncoding::Base64` on the `TypeDescriptor`) and is independent of this flag.
 
 XER can be used wherever XML interoperability is required. Some ETSI standards mandate
 XER for management interfaces; NETCONF (RFC 6241) uses YANG but many legacy network
@@ -1049,6 +1075,11 @@ Extension member open-type encoding is not yet implemented (see §13).
 XER encode and decode are complete. Entity escaping (`&amp;`, `&lt;`, `&gt;`,
 `&apos;`, `&quot;`, numeric references) is implemented per X.693. BmpString and
 UniversalString transcode between UCS-2BE/UCS-4BE and UTF-8.
+
+The decoder defaults to strict BASIC-XER (X.693 §8). Pass `XerDecodeMode::Lenient`
+to `XerDecodeStream` to additionally accept non-standard asn1c extensions: BOOLEAN
+text content (`true`/`false`) and hex BIT STRING (`AABBCC…` pairs). See §6 for
+details.
 
 ### Constraint Validation
 

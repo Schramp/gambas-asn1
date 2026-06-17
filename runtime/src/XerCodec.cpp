@@ -125,18 +125,20 @@ struct BooleanXerHandler final : IXerTypeHandler {
         s.skip_whitespace();
         bool value;
         if (!s.remaining().empty() && s.remaining()[0] == '<') {
-            // Element form: <true/> or <false/>
+            // Standard BASIC-XER: EmptyElementBoolean (<true/> or <false/>).
             auto inner = xer_detail::consume_tag(s);
             if (inner.name == "true"  && inner.self_closing) { value = true; }
             else if (inner.name == "false" && inner.self_closing) { value = false; }
             else return decode_err(DecodeError("XER BOOLEAN: expected <true/> or <false/>"));
-        } else {
-            // Text content form: "true" or "false"
+        } else if (s.lenient()) {
+            // Non-standard: EXTENDED-XER TextBoolean (X.693 §10) — text "true"/"false".
             std::string_view rem = s.remaining();
             if (rem.substr(0, 4) == "true") { value = true; s.advance(4); }
             else if (rem.substr(0, 5) == "false") { value = false; s.advance(5); }
             else return decode_err(DecodeError("XER BOOLEAN: expected true or false"));
             s.skip_whitespace();
+        } else {
+            return decode_err(DecodeError("XER BOOLEAN: expected <true/> or <false/>"));
         }
         if (auto r = xer_detail::consume_close_tag(s, def.name); !r) return r;
         *static_cast<Boolean*>(dest) = Boolean{value};
@@ -278,11 +280,14 @@ struct BitStringXerHandler final : IXerTypeHandler {
         }
         s.advance(pos);
         if (auto r = xer_detail::consume_close_tag(s, def.name); !r) return r;
+        if (has_hex && !s.lenient())
+            return decode_err(DecodeError("XER: hex BIT STRING requires lenient mode (non-standard extension)"));
         std::vector<uint8_t> bytes;
         uint8_t unused = 0;
         if (!content.empty()) {
             if (has_hex) {
-                // Hex format: each pair of hex chars = 1 byte, 0 unused bits.
+                // Non-standard asn1c extension: hex pairs, one byte each, 0 unused bits.
+                // (No production for this in X.680 §21 XMLBitStringValue grammar.)
                 if (content.size() % 2 != 0)
                     return decode_err(DecodeError("XER: odd-length hex BIT STRING"));
                 bytes.reserve(content.size() / 2);
@@ -296,7 +301,7 @@ struct BitStringXerHandler final : IXerTypeHandler {
                 }
                 unused = 0;
             } else {
-                // Binary format: each char is one bit.
+                // Standard xmlbstring (X.680 §21): each char is one bit.
                 std::size_t n = content.size();
                 bytes.resize((n + 7) / 8, 0);
                 for (std::size_t i = 0; i < n; ++i)

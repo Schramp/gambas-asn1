@@ -42,8 +42,9 @@ int main(int argc, char** argv) {
     }
     std::string xml((std::istreambuf_iterator<char>(f)), {});
 
+    // s1.xer uses non-standard asn1c extensions: hex BIT STRING and text BOOLEAN.
     Certificate cert{};
-    XerDecodeStream xs{xml};
+    XerDecodeStream xs{xml, XerDecodeMode::Lenient};
     auto r = XerCodec::instance().decode(xs, Certificate::asn_DEF, &cert);
     check("s1.xer  XER decode ok", r.has_value());
     if (!r) {
