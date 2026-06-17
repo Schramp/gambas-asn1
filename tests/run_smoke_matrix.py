@@ -13,7 +13,6 @@ Exit 0 if all combinations pass, 1 otherwise.
 """
 
 import argparse
-import glob
 import shutil
 import subprocess
 import sys
@@ -108,6 +107,9 @@ def main():
 
     if not compiler.exists():
         print(f"ERROR: compiler not found: {compiler}", file=sys.stderr)
+        sys.exit(1)
+    if not runtime_inc.is_dir():
+        print(f"ERROR: runtime include dir not found: {runtime_inc}", file=sys.stderr)
         sys.exit(1)
 
     passes = 0
