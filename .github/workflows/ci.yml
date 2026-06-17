@@ -52,7 +52,9 @@ jobs:
           sudo cp ~/.reflex/lib/libreflex.a /usr/local/lib/
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+        run: |
+          SMOKE=${{ github.ref == 'refs/heads/main' && 'ON' || 'OFF' }}
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug -DWITH_SMOKE_MATRIX=$SMOKE
 
       - name: Build
         run: cmake --build build --parallel $(nproc)
