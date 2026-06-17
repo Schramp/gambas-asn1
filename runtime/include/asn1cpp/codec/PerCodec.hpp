@@ -86,22 +86,15 @@ class PerDecodeStream : public IDecodeStream {
 public:
     explicit PerDecodeStream(std::span<const uint8_t> buf) : buf_(buf) {}
 
-    // Number of unknown extension members skipped during the last decode call.
-    // Nonzero means the stream contained a newer schema version than ours.
+    // Caller-facing API: inspect skip count after decode to detect version skew.
     int  skipped_extensions() const { return skipped_ext_count_; }
     void reset_skipped_extensions()  { skipped_ext_count_ = 0; }
-
-    // Skip one unknown extension open-type payload (X.691 §10.2).
-    // Increments skipped_extensions(). Defined in PerCodec.cpp.
-    DecodeResult skip_open_type();
 
     bool at_end() const override {
         return byte_pos_ >= static_cast<int>(buf_.size());
     }
 
-    int bit_pos() const { return byte_pos_ * 8 + bit_pos_; }
-    int total_bits() const { return static_cast<int>(buf_.size()) * 8; }
-
+    // Called by per_detail inline helpers in this header — must be public.
     Expected<uint64_t, DecodeError> get_bits(int n) {
         int off = bit_pos();
         uint64_t result = 0;
@@ -126,6 +119,10 @@ public:
     }
 
 private:
+    friend class PerCodec;
+    int  bit_pos()    const { return byte_pos_ * 8 + bit_pos_; }
+    int  total_bits() const { return static_cast<int>(buf_.size()) * 8; }
+    DecodeResult skip_open_type();          // defined in PerCodec.cpp
     void increment_skipped_extensions() { ++skipped_ext_count_; }
 };
 
@@ -229,6 +226,11 @@ public:
                         const TypeDescriptor& def,
                         Asn1Object* dest) const override;
 
+    // Codec-internal helpers — for use by PerCodec handler classes only.
+    static int           stream_bit_pos(const PerEncodeStream& s) { return s.bit_pos(); }
+    static int           stream_bit_pos(const PerDecodeStream& s) { return s.bit_pos(); }
+    static int           stream_total_bits(const PerDecodeStream& s) { return s.total_bits(); }
+    static DecodeResult  skip_ext(PerDecodeStream& s) { return s.skip_open_type(); }
 };
 
 } // namespace asn1

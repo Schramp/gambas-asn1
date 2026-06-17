@@ -733,7 +733,7 @@ public:
         std::size_t count = seq.count();
         if (debug_flags() & DBG_PER)
             std::fprintf(stderr, "[PER-ENC] SOF %s count=%zu @%d\n",
-                         def.name, count, stream.bit_pos());
+                         def.name, count, PerCodec::stream_bit_pos(stream));
         const auto& sc = spec.size_constraints;
         if (sc.flags & Constraints::SIZE_CONSTRAINED) {
             if (sc.size_lower == sc.size_upper) {
@@ -762,7 +762,7 @@ public:
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         if (debug_flags() & DBG_PER)
             std::fprintf(stderr, "[PER-DEC] SOF %s @%d/%d\n",
-                         def.name, stream.bit_pos(), stream.total_bits());
+                         def.name, PerCodec::stream_bit_pos(stream), PerCodec::stream_total_bits(stream));
         const auto& spec = *def.seq_of_spec;
         const auto& sc = spec.size_constraints;
         std::size_t count = 0;
@@ -799,7 +799,7 @@ public:
         int root_end = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
         if (debug_flags() & DBG_PER)
             std::fprintf(stderr, "[PER-ENC] SEQ %s members=%d ext_at=%d @%d\n",
-                         def.name, spec.count, spec.ext_at, stream.bit_pos());
+                         def.name, spec.count, spec.ext_at, PerCodec::stream_bit_pos(stream));
         bool has_ext = false;
         if (spec.ext_at >= 0) {
             for (int i = root_end; i < spec.count; ++i) {
@@ -844,7 +844,7 @@ public:
         int root_end = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
         if (debug_flags() & DBG_PER)
             std::fprintf(stderr, "[PER-DEC] SEQ %s members=%d ext_at=%d @%d/%d\n",
-                         def.name, spec.count, spec.ext_at, stream.bit_pos(), stream.total_bits());
+                         def.name, spec.count, spec.ext_at, PerCodec::stream_bit_pos(stream), PerCodec::stream_total_bits(stream));
         bool ext_flag = false;
         if (spec.ext_at >= 0) {
             auto b = stream.get_bits(1);
@@ -902,7 +902,7 @@ public:
                         auto r = decode_open_type(codec, stream, *mbr.type_descriptor, mptr);
                         if (!r) return r;
                     } else {
-                        if (auto r = stream.skip_open_type(); !r) return r;
+                        if (auto r = PerCodec::skip_ext(stream); !r) return r;
                     }
                 }
             }
@@ -924,7 +924,7 @@ public:
         bool in_ext = (spec.ext_at >= 0) && (def_idx >= root_count);
         if (debug_flags() & DBG_PER)
             std::fprintf(stderr, "[PER-ENC] CHO %s pr=%d root=%d ext=%d @%d\n",
-                         def.name, pr, root_count, (int)in_ext, stream.bit_pos());
+                         def.name, pr, root_count, (int)in_ext, PerCodec::stream_bit_pos(stream));
         if (spec.ext_at >= 0) stream.put_bits(in_ext ? 1 : 0, 1, "CHO.ext");
         if (!in_ext) {
             std::vector<int> to_can, from_can;
@@ -955,7 +955,7 @@ public:
         bool in_ext = false;
         if (debug_flags() & DBG_PER)
             std::fprintf(stderr, "[PER-DEC] CHO %s root=%d @%d/%d\n",
-                         def.name, root_count, stream.bit_pos(), stream.total_bits());
+                         def.name, root_count, PerCodec::stream_bit_pos(stream), PerCodec::stream_total_bits(stream));
         if (spec.ext_at >= 0) {
             auto b = stream.get_bits(1);
             if (!b) return decode_err(b.error());
@@ -1003,10 +1003,10 @@ public:
                     auto r = decode_open_type(codec, stream, *alt.type_descriptor, mptr);
                     if (!r) return r;
                 } else {
-                    if (auto r = stream.skip_open_type(); !r) return r;
+                    if (auto r = PerCodec::skip_ext(stream); !r) return r;
                 }
             } else {
-                if (auto r = stream.skip_open_type(); !r) return r;
+                if (auto r = PerCodec::skip_ext(stream); !r) return r;
             }
             return decode_ok();
         }
