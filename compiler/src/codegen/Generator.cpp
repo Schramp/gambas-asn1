@@ -1,6 +1,7 @@
 #include "Generator.hpp"
 #include <algorithm>
 #include <functional>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include "asn1cpp/Tag.hpp"
@@ -2297,6 +2298,62 @@ void Generator::emit_stubs_for_unresolved() {
             os << "};\n\n";
         });
     }
+}
+
+// BFS helper used by compute_reachable.  Appends to `worklist` the ASN.1 name
+// of every type that `def` directly references: via TypeRef body, inline
+// SEQUENCE/SET/CHOICE members, or SEQUENCE-OF/SET-OF element type.
+void Generator::collect_type_refs(const ast::TypeDef& def, std::vector<std::string>& worklist) {
+    if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
+        worklist.push_back(tr->type_name);
+    }
+    if (def.is_sequence() || def.is_set() || def.is_choice()) {
+        for (const auto& m : def.members) {
+            if (m->is_extension_marker) continue;
+            collect_type_refs(*m, worklist);
+        }
+    } else if (def.is_seq_of() || def.is_set_of()) {
+        const auto& elem = def.is_seq_of()
+            ? std::get<ast::SequenceOfType>(def.body).element
+            : std::get<ast::SetOfType>(def.body).element;
+        collect_type_refs(*elem, worklist);
+    }
+}
+
+// Populates `reachable_asn_names_` with the transitive closure of all ASN.1
+// types reachable from `pdu_roots_` via TypeRef and structural member edges.
+// Called by generate() when -pdu= roots are set; generate() then skips any
+// TypeDef whose name is absent from reachable_asn_names_.
+void Generator::compute_reachable(const ast::ParseResult& pr) {
+    // Build ASN.1-name → ALL definitions multimap.
+    // Collision types (same name in multiple modules) are common in ETSI schemas;
+    // BFS must walk every module's definition so no cross-module refs are missed.
+    std::unordered_map<std::string,
+        std::vector<const ast::TypeDef*>> type_multimap;
+    for (const auto& mod : pr.modules)
+        for (const auto& def : mod->assignments)
+            if (!def->name.empty() && !def->is_extension_marker)
+                type_multimap[def->name].push_back(def.get());
+
+    // BFS from every requested PDU root.
+    std::vector<std::string> worklist(pdu_roots_.begin(), pdu_roots_.end());
+    while (!worklist.empty()) {
+        auto name = worklist.back(); worklist.pop_back();
+        if (reachable_asn_names_.count(name)) continue;
+
+        auto it = type_multimap.find(name);
+        if (it == type_multimap.end()) continue; // not defined in any module — emit_stubs_for_unresolved handles it
+
+        reachable_asn_names_.insert(name);
+        // Walk ALL definitions for this name (collision types span multiple modules).
+        for (const auto* def : it->second)
+            collect_type_refs(*def, worklist);
+    }
+
+    // Report any PDU roots that could not be resolved.
+    for (const auto& root : pdu_roots_)
+        if (!reachable_asn_names_.count(root))
+            std::cerr << "warning: -pdu type '" << root << "' not found in input\n";
 }
 
 } // namespace asn1::codegen

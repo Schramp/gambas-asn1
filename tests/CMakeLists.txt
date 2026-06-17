@@ -971,3 +971,39 @@ if(LIBFUZZER_AVAILABLE)
     target_compile_options(fuzz_xer_decode PRIVATE -fsanitize=fuzzer,address)
     target_link_options(fuzz_xer_decode PRIVATE -fsanitize=fuzzer,address)
 endif()
+
+# ---- -pdu= dependency filter test (issue #14) --------------------------------
+# Generates from pdu_filter_test.asn1 with -pdu=RootType.
+# Only RootType, Dep1, Dep2 should be generated; Unrelated should be absent.
+# Two tests: (1) BER round-trip for generated types; (2) cmake check for absence.
+set(PDU_FILTER_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_pdu_filter_test)
+set(PDU_FILTER_TYPES RootType Dep1 Dep2)
+set(_pf_outputs)
+foreach(t IN LISTS PDU_FILTER_TYPES)
+    list(APPEND _pf_outputs ${PDU_FILTER_GEN_DIR}/${t}.hpp ${PDU_FILTER_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_pf_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PDU_FILTER_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/pdu_filter_test.asn1
+            -pdu=RootType -o ${PDU_FILTER_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/pdu_filter_test.asn1
+    COMMENT "Generating C++ from pdu_filter_test.asn1 with -pdu=RootType"
+)
+set(_pf_cpps)
+foreach(t IN LISTS PDU_FILTER_TYPES)
+    list(APPEND _pf_cpps ${PDU_FILTER_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_pdu_filter seq/test_1001_pdu_filter.cpp ${_pf_cpps})
+target_include_directories(test_pdu_filter PRIVATE ${PDU_FILTER_GEN_DIR})
+target_link_libraries(test_pdu_filter PRIVATE asn1cpp_runtime)
+add_test(NAME pdu_filter COMMAND test_pdu_filter)
+set_tests_properties(pdu_filter PROPERTIES TIMEOUT 30)
+
+# Verify Unrelated.hpp was NOT generated (must run after codegen step).
+add_test(NAME pdu_filter_absent
+    COMMAND ${CMAKE_COMMAND}
+            -DFILE=${PDU_FILTER_GEN_DIR}/Unrelated.hpp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_file_absent.cmake)
+set_tests_properties(pdu_filter_absent PROPERTIES DEPENDS pdu_filter)

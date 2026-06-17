@@ -647,6 +647,7 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `-fallow-newer-modules` | Accept module version mismatches silently |
 | `-fbless-SIZE` | **(Non-standard)** Accept `SIZE()` constraints on `INTEGER` and `ENUMERATED`. X.680 §47.5.2 forbids this; the constraint is silently ignored during code generation. Matches asn1c's `-fbless-SIZE` extension for byte-width hints in legacy schemas. |
 | `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |
+| `-pdu=<TypeName>` | Limit generation to `<TypeName>` and all types reachable from it (transitive BFS through TypeRef edges). May be specified multiple times. `-pdu=all` generates all types (same as omitting the flag). Note: types embedded as `OCTET STRING` bytes (two-level nested BER, e.g. `EncryptedPayload` inside `PS-PDU`) are not TypeRef dependencies and must be listed as separate `-pdu=` roots if needed. |
 
 ### Comparison with asn1c CLI
 
@@ -658,7 +659,7 @@ Open issues are linked for gaps that have been prioritised for implementation.
 | `-o <dir>` | `-o <dir>` | Supported |
 | `-fallow-newer-modules` | `-fallow-newer-modules` | Supported |
 | `-fbless-SIZE` | `-fbless-SIZE` | Supported (non-standard; SIZE on INTEGER/ENUMERATED silently ignored) |
-| `-pdu={all\|auto\|Type}` | — | [Issue #14](https://github.com/Schramp/gambas-asn1/issues/14) |
+| `-pdu={all\|auto\|Type}` | `-pdu=<TypeName>` (may be repeated; `-pdu=all` = generate all) | Supported (auto not implemented — treated as all) |
 | `-flong-size=32\|64` | — | [Issue #15](https://github.com/Schramp/gambas-asn1/issues/15) |
 | `-fprefix=<prefix>` | `-fprefix=<ns>` (wraps generated types in C++ namespace `ns`) | Supported (asn1c compat alias; asn1c uses name-mangling, gambas-asn1 uses `namespace`) |
 | `-fno-constraints` | `ASN1CPP_VALIDATE=0` at runtime | Runtime flag only |
