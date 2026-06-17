@@ -2318,13 +2318,15 @@ void Generator::collect_type_refs(const ast::TypeDef& def, std::vector<std::stri
 }
 
 void Generator::compute_reachable(const ast::ParseResult& pr) {
-    // Build ASN.1-name → (TypeDef, Module) map for all top-level assignments.
+    // Build ASN.1-name → ALL definitions multimap.
+    // Collision types (same name in multiple modules) are common in ETSI schemas;
+    // BFS must walk every module's definition so no cross-module refs are missed.
     std::unordered_map<std::string,
-        std::pair<const ast::TypeDef*, const ast::Module*>> type_map;
+        std::vector<const ast::TypeDef*>> type_multimap;
     for (const auto& mod : pr.modules)
         for (const auto& def : mod->assignments)
             if (!def->name.empty() && !def->is_extension_marker)
-                type_map[def->name] = {def.get(), mod.get()};
+                type_multimap[def->name].push_back(def.get());
 
     // BFS from every requested PDU root.
     std::vector<std::string> worklist(pdu_roots_.begin(), pdu_roots_.end());
@@ -2332,11 +2334,13 @@ void Generator::compute_reachable(const ast::ParseResult& pr) {
         auto name = worklist.back(); worklist.pop_back();
         if (reachable_asn_names_.count(name)) continue;
 
-        auto it = type_map.find(name);
-        if (it == type_map.end()) continue; // unresolved → will become stub
+        auto it = type_multimap.find(name);
+        if (it == type_multimap.end()) continue; // unresolved → will become stub
 
         reachable_asn_names_.insert(name);
-        collect_type_refs(*it->second.first, worklist);
+        // Walk ALL definitions for this name (collision types span multiple modules).
+        for (const auto* def : it->second)
+            collect_type_refs(*def, worklist);
     }
 
     // Report any PDU roots that could not be resolved.
