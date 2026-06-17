@@ -19,4 +19,29 @@ ChoiceWithExt ::= CHOICE {
     str  VisibleString (SIZE (1..8))
 }
 
+-- Nested SEQUENCE used as an extension member in SeqDeepExt.
+InnerSeq ::= SEQUENCE {
+    a INTEGER (0..255),
+    b BOOLEAN,
+    c INTEGER (0..255)
+}
+
+-- SEQUENCE with an extension member that is itself a SEQUENCE (2 levels deep).
+-- Used to test that receivers without knowledge of the extension skip the
+-- entire open-type payload (which contains a PER-encoded InnerSeq).
+SeqDeepExt ::= SEQUENCE {
+    id   INTEGER (0..255),
+    name VisibleString (SIZE (1..8)),
+    ...,
+    detail InnerSeq OPTIONAL
+}
+
+-- Same root layout as SeqDeepExt but with no known extension members.
+-- Represents an old receiver that only knows about the root.
+SeqDeepExtRootOnly ::= SEQUENCE {
+    id   INTEGER (0..255),
+    name VisibleString (SIZE (1..8)),
+    ...
+}
+
 END

@@ -6,6 +6,8 @@
 //   - Encode/decode with all extension members present
 //   - CHOICE root alternative vs. extension alternative
 //   - Skip: decode a stream containing more extension members than known
+//   - Deep skip: extension member is itself a SEQUENCE (2 levels); old receiver
+//     must skip the entire open-type payload and keep root members intact.
 //
 // Cross-validated against asn1c (converter-SeqWithExt -iuper) during development;
 // encoding bytes were confirmed identical.
@@ -18,6 +20,9 @@
 #include <asn1cpp/codec/PerCodec.hpp>
 #include "SeqWithExt.hpp"
 #include "ChoiceWithExt.hpp"
+#include "InnerSeq.hpp"
+#include "SeqDeepExt.hpp"
+#include "SeqDeepExtRootOnly.hpp"
 
 using namespace asn1;
 
@@ -146,6 +151,38 @@ static void test_choice_ext_alt() {
     }
 }
 
+// ── Deep extension skip (forward compatibility) ───────────────────────────────
+//
+// Sender: SeqDeepExt — knows about extension member "detail" (an InnerSeq).
+// Receiver: SeqDeepExtRootOnly — same root (id, name) + extension marker, but
+//   zero known extension members.  The open-type payload for "detail" contains
+//   a full PER-encoded InnerSeq (3 members), so the skip covers real nested data.
+//
+// After decoding: root fields id and name must be intact; no decode error.
+
+static void test_deep_ext_skip() {
+    // Sender encodes with a populated nested extension.
+    SeqDeepExt sender{};
+    sender.id = Integer{42};
+    sender.name = VisibleString{"hello"};
+    sender.detail = std::make_unique<InnerSeq>();
+    sender.detail->a = Integer{10};
+    sender.detail->b = Boolean{true};
+    sender.detail->c = Integer{200};
+
+    auto enc = per_enc(SeqDeepExt::asn_DEF, &sender);
+    check("deep-skip: encode non-empty", !enc.empty());
+
+    // Old receiver: same root layout, no knowledge of the extension.
+    SeqDeepExtRootOnly receiver{};
+    bool ok = per_dec(enc, SeqDeepExtRootOnly::asn_DEF, &receiver);
+    check("deep-skip: decode ok (no error on unknown extension)", ok);
+    if (ok) {
+        check("deep-skip: id==42",     (int64_t)receiver.id == 42);
+        check("deep-skip: name==hello", receiver.name.str() == "hello");
+    }
+}
+
 // ── Round-trip consistency ────────────────────────────────────────────────────
 
 static void test_roundtrip_idempotent() {
@@ -170,6 +207,7 @@ int main() {
     test_seq_both_ext();
     test_choice_root();
     test_choice_ext_alt();
+    test_deep_ext_skip();
     test_roundtrip_idempotent();
 
     printf("\n  %d failure(s).\n", failures);

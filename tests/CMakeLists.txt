@@ -612,7 +612,7 @@ set_tests_properties(xer_vectors_202 PROPERTIES TIMEOUT 30)
 #   root-only (ext flag=0), one extension present, both present, CHOICE ext alt.
 # Cross-validated against asn1c converter during development.
 set(PER_EXT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_per_ext_test)
-set(PER_EXT_TYPES SeqWithExt ChoiceWithExt)
+set(PER_EXT_TYPES SeqWithExt ChoiceWithExt InnerSeq SeqDeepExt SeqDeepExtRootOnly)
 set(_pe_outputs)
 foreach(t IN LISTS PER_EXT_TYPES)
     list(APPEND _pe_outputs ${PER_EXT_GEN_DIR}/${t}.hpp ${PER_EXT_GEN_DIR}/${t}.cpp)
