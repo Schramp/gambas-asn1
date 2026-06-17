@@ -1171,7 +1171,8 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
         bool optional = m->is_optional() || past_ext_inc;
 
         auto emit_inc = [&](const std::string& cn) {
-            os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
+            auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+            inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
             track_include(cn);
         };
         auto emit_fwd = [&](const std::string& cn) {
@@ -1291,11 +1292,13 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
                 if (is_class_type(*m)) {
                     auto cn = cpp_name_for_typeref(*tr);
-                    os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
+                    auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+                    inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
                     emitted_extra = true;
                 }
             } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
-                os << std::format("#include \"{}.hpp\"\n", filename_for(make_synthetic_name(cname, m->name)));
+                auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+                inc_os << std::format("#include \"{}.hpp\"\n", filename_for(make_synthetic_name(cname, m->name)));
                 emitted_extra = true;
             }
         }
@@ -1464,7 +1467,8 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
         auto emit_inc = [&](const std::string& cn) {
-            os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
+            auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+            inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
             track_include(cn);
         };
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
@@ -1472,18 +1476,15 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
         } else if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
             // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
             auto cn2 = cpp_name_for_ref(make_synthetic_name(cname, m->name), current_module_);
-            os << std::format("#include \"{}.hpp\"\n", filename_for(cn2));
-            track_include(cn2);
+            emit_inc(cn2);
         } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
             auto synth = make_synthetic_name(cname, m->name);
-            os << std::format("#include \"{}.hpp\"\n", filename_for(synth));
-            track_include(synth);
+            emit_inc(synth);
         } else {
             auto* mbt = std::get_if<ast::BuiltinType>(&m->body);
             if (mbt && *mbt == ast::BuiltinType::Enumerated && !m->enum_values.empty()) {
                 auto synth = make_synthetic_name(cname, m->name);
-                os << std::format("#include \"{}.hpp\"\n", filename_for(synth));
-                track_include(synth);
+                emit_inc(synth);
             }
         }
     }
@@ -1769,50 +1770,66 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
     os << "#include <span>\n";
     os << "#include <asn1cpp/asn1cpp_gen.hpp>\n\n";
 
+    // When namespace wrapping is active, cross-type #include "X.hpp" directives must land
+    // BEFORE the namespace opens (each peer .hpp already wraps itself in the namespace).
+    // Forward declarations (class X;) and the class body go inside the namespace.
+    // Use a body stringstream; set pre_ns_os_ so emit_inc() writes to os directly.
+    std::ostringstream body_ns;
+    std::ostream& body = namespace_.empty() ? os : static_cast<std::ostream&>(body_ns);
+    if (!namespace_.empty()) pre_ns_os_ = &os;
+
     if (def.is_sequence() || def.is_set()) {
         current_type_ = cname;
-        emit_sequence_hpp(def, os);
+        emit_sequence_hpp(def, body);
     } else if (def.is_choice()) {
         current_type_ = cname;
-        emit_choice_hpp(def, os);
+        emit_choice_hpp(def, body);
     } else if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
         if (*bt == ast::BuiltinType::Enumerated) {
-            emit_enumerated_hpp(def, os);
+            emit_enumerated_hpp(def, body);
         } else if (*bt == ast::BuiltinType::Integer) {
-            emit_integer_hpp(def, os);
+            emit_integer_hpp(def, body);
         } else {
-            os << std::format("using {} = {};\n\n", cname, cpp_type_for(def));
-            os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
+            body << std::format("using {} = {};\n\n", cname, cpp_type_for(def));
+            body << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
         }
     } else if (def.is_seq_of() || def.is_set_of()) {
         current_type_ = cname;
         const auto& elem = def.is_seq_of()
             ? std::get<ast::SequenceOfType>(def.body).element
             : std::get<ast::SetOfType>(def.body).element;
+        // SeqOf element includes go before the namespace (each .hpp wraps itself).
+        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : body;
         if (auto* tr = std::get_if<ast::TypeRef>(&elem->body)) {
             auto inc = cpp_name_for_typeref(*tr);
-            os << std::format("#include \"{}.hpp\"\n\n", filename_for(inc));
+            inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(inc));
             track_include(inc);
         } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
-            // Inline element: include the synthetic type header.
             auto synth = make_synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name);
-            os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
+            inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
             track_include(synth);
         } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem->body);
                    ebt && *ebt == ast::BuiltinType::Enumerated && !elem->enum_values.empty()) {
-            // Inline ENUMERATED element: include the pre-generated synthetic enum header.
             auto synth = make_synthetic_name(cname, elem->name.empty() ? "Enum" : elem->name);
-            os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
+            inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
             track_include(synth);
         }
-        os << std::format("using {} = asn1::VectorSeqOf<{}>;\n\n", cname, cpp_type_for(*elem));
-        os << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", cname);
-        os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
+        body << std::format("using {} = asn1::VectorSeqOf<{}>;\n\n", cname, cpp_type_for(*elem));
+        body << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", cname);
+        body << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto inc = cpp_name_for_typeref(*tr);
-        os << std::format("#include \"{}.hpp\"\n", filename_for(inc));
+        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : body;
+        inc_os << std::format("#include \"{}.hpp\"\n", filename_for(inc));
         track_include(inc);
-        os << std::format("using {} = {};\n", cname, inc);
+        body << std::format("using {} = {};\n", cname, inc);
+    }
+
+    pre_ns_os_ = nullptr;
+    if (!namespace_.empty()) {
+        os << "namespace " << namespace_ << " {\n\n";
+        os << body_ns.str();
+        os << "\n} // namespace " << namespace_ << "\n";
     }
 }
 
@@ -2056,22 +2073,35 @@ void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "#pragma GCC diagnostic ignored \"-Winvalid-offsetof\"\n";
     os << "#endif\n\n";
 
+    // When namespace wrapping is active, member-type includes (e.g. for optional members
+    // that need a complete type in the .cpp) must precede the namespace opener.
+    std::ostringstream body_ns_cpp;
+    std::ostream& body = namespace_.empty() ? os : static_cast<std::ostream&>(body_ns_cpp);
+    if (!namespace_.empty()) pre_ns_os_ = &os;
+
     if (def.is_sequence() || def.is_set()) {
         current_type_ = cname;
-        emit_sequence_cpp(def, os);
+        emit_sequence_cpp(def, body);
     } else if (def.is_choice()) {
         current_type_ = cname;
-        emit_choice_cpp(def, os);
+        emit_choice_cpp(def, body);
     } else if (def.is_seq_of() || def.is_set_of()) {
         current_type_ = cname;
-        emit_seq_of_cpp(def, os);
+        emit_seq_of_cpp(def, body);
     } else if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
         if (*bt == ast::BuiltinType::Enumerated)
-            emit_enumerated_cpp(def, os);
+            emit_enumerated_cpp(def, body);
         else if (*bt == ast::BuiltinType::Integer)
-            emit_integer_cpp(def, os);
+            emit_integer_cpp(def, body);
         else
-            emit_builtin_alias_cpp(def, os);
+            emit_builtin_alias_cpp(def, body);
+    }
+
+    pre_ns_os_ = nullptr;
+    if (!namespace_.empty()) {
+        os << "namespace " << namespace_ << " {\n\n";
+        os << body_ns_cpp.str();
+        os << "\n} // namespace " << namespace_ << "\n";
     }
 }
 
