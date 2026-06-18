@@ -1165,7 +1165,11 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
 
     // Emit includes or forward declarations.
     // Optional class-typed members: forward declaration only (breaks circular includes).
-    // Everything else: full include.
+    // Self-referential SEQUENCE OF members (e.g. `many SEQUENCE OF PDU` inside PDU):
+    //   the synthetic SeqOf header (PDUMany.hpp) uses VectorSeqOf<PDU> which requires PDU
+    //   to be complete — defer those includes to after the class definition.
+    // Everything else: full include before the class.
+    std::vector<std::string> post_class_includes; // deferred self-referential SeqOf includes
     bool past_ext_inc = false;
     for (const auto& m : def.members) {
         if (m->is_extension_marker) { past_ext_inc = true; continue; }
@@ -1186,8 +1190,18 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
             optional && is_class_type(*m) ? emit_fwd(cn) : emit_inc(cn);
         } else if (m->is_seq_of() || m->is_set_of()) {
             if (!m->name.empty()) {
-                // Named member — include the synthetic SeqOf wrapper header
-                emit_inc(make_synthetic_name(cname, m->name));
+                // Named member — check for self-referential element type.
+                const auto& seqof_elem = m->is_seq_of()
+                    ? std::get<ast::SequenceOfType>(m->body).element
+                    : std::get<ast::SetOfType>(m->body).element;
+                bool self_ref = false;
+                if (auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body))
+                    self_ref = (to_cpp_name(tr_elem->type_name) == to_cpp_name(def.name));
+                auto synth = make_synthetic_name(cname, m->name);
+                if (self_ref)
+                    post_class_includes.push_back(synth); // defer: needs current class complete
+                else
+                    emit_inc(synth);
             } else {
                 const auto& elem = m->is_seq_of()
                     ? std::get<ast::SequenceOfType>(m->body).element
@@ -1263,6 +1277,15 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     os << "    static const asn1::TypeDescriptor asn_DEF;\n";
     os << "};\n\n";
 
+    // Deferred includes: self-referential SeqOf headers that need the class complete.
+    if (!post_class_includes.empty()) {
+        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+        for (const auto& sinc : post_class_includes) {
+            inc_os << std::format("#include \"{}.hpp\"\n", filename_for(sinc));
+            track_include(sinc);
+        }
+        inc_os << "\n";
+    }
 }
 
 void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
