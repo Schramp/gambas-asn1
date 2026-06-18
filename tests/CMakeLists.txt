@@ -570,6 +570,32 @@ add_test(NAME xer_vectors_70 COMMAND test_xer_vectors_70
     ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-70)
 set_tests_properties(xer_vectors_70 PROPERTIES TIMEOUT 30)
 
+# ---- asn1c PER vector suite: data-119 (119-per-strings-OK.asn1) -------------
+# Mirrors asn1c check-119.c: XER decode → UPER encode → UPER decode → XER encode.
+# (none): round-trip output must equal input (whitespace-stripped).
+# -P: PER-incompatible (constraint violations); skipped — see KNOWN_SKIP in test file.
+set(XER_VEC_119_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_vectors_119)
+add_custom_command(
+    OUTPUT  ${XER_VEC_119_GEN_DIR}/PDU.hpp    ${XER_VEC_119_GEN_DIR}/PDU.cpp
+            ${XER_VEC_119_GEN_DIR}/PDUMany.hpp ${XER_VEC_119_GEN_DIR}/PDUMany.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${XER_VEC_119_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/119-per-strings-OK.asn1
+            -o ${XER_VEC_119_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/119-per-strings-OK.asn1
+    COMMENT "Generating C++ from 119-per-strings-OK.asn1"
+)
+add_executable(test_xer_vectors_119
+    seq/test_xer_vectors_119.cpp
+    ${XER_VEC_119_GEN_DIR}/PDU.cpp
+    ${XER_VEC_119_GEN_DIR}/PDUMany.cpp
+)
+target_include_directories(test_xer_vectors_119 PRIVATE ${XER_VEC_119_GEN_DIR})
+target_link_libraries(test_xer_vectors_119 PRIVATE asn1cpp_runtime)
+add_test(NAME xer_vectors_119 COMMAND test_xer_vectors_119
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-119)
+set_tests_properties(xer_vectors_119 PROPERTIES TIMEOUT 30)
+
 # ---- asn1c XER vector suite: data-202 (202-XIOTCertificate-OK.asn1) --------
 # Single vector s1.xer: X.509-style certificate with BIT STRING in hex XER format.
 # Verifies XER decode, field values, and BER round-trip.
