@@ -1,0 +1,11 @@
+NsRecursiveSeqOf DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    -- Tree with children as SEQUENCE OF <self>.
+    -- In namespace mode (-fprefix), the deferred include of TreeChildren.hpp
+    -- must land AFTER the closing `} // namespace` brace, not before it.
+    Tree ::= SEQUENCE {
+        value    INTEGER,
+        children SEQUENCE OF Tree OPTIONAL
+    }
+
+END

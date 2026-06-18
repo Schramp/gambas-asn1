@@ -118,6 +118,7 @@ class Generator {
     IntStorageKind          default_int_kind_{IntStorageKind::S64};  // --integer-type default
     std::string             namespace_;           // -fprefix wraps output in this namespace
     std::ostream*           pre_ns_os_{nullptr};  // when set, #include "X.hpp" writes here instead of body stream
+    std::ostream*           post_ns_os_{nullptr}; // when set, deferred post-class includes write here (after namespace close)
     std::set<std::string>   pdu_roots_;           // ASN.1 names of -pdu= root types (empty = generate all)
     std::set<std::string>   reachable_asn_names_; // populated by compute_reachable(); ASN.1 names
 

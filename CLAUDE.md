@@ -387,6 +387,14 @@ PRs are reviewed by Schramp and optionally by a clean Claude instance. Process r
 
 **Documentation:** `doc/book.md` is the user-facing reference. When a PR adds or changes CLI flags, codec behaviour, runtime env-vars, or any feature visible to users, update the relevant section of `doc/book.md` in the same commit. Do not leave documentation trailing behind implementation.
 
+**Doxygen comments (slow-refactor policy):** Functions lack Doxygen comments historically — do not add them everywhere at once. Instead, whenever a function is touched in a PR (modified, created, or read carefully as part of a fix), add a Doxygen block describing: goal, parameters (`@param`), return value (`@return`), and a reference to the relevant ASN.1 standard clause if applicable (`@see X.690 §8.1.2`). Leave untouched functions as-is. Over time coverage accumulates without a disruptive mass-edit. Format:
+```cpp
+/// @brief Short description of what the function does.
+/// @param name  What it represents.
+/// @return What is returned (or void).
+/// @see X.691 §22.6 — PER CHOICE index encoding.
+```
+
 ### Issue management
 
 - Issues live on GitHub (`Schramp/gambas-asn1`) and carry priority labels.
