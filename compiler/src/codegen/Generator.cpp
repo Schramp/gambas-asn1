@@ -1294,8 +1294,10 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     os << "};\n\n";
 
     // Deferred includes: self-referential SeqOf headers that need the class complete.
+    // In namespace mode they must land AFTER the closing `} // namespace` brace
+    // (post_ns_os_); in flat mode they go directly after the class definition.
     if (!post_class_includes.empty()) {
-        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+        auto& inc_os = post_ns_os_ ? *post_ns_os_ : os;
         for (const auto& sinc : post_class_includes) {
             inc_os << std::format("#include \"{}.hpp\"\n", filename_for(sinc));
             track_include(sinc);
@@ -1900,9 +1902,15 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
     // BEFORE the namespace opens (each peer .hpp already wraps itself in the namespace).
     // Forward declarations (class X;) and the class body go inside the namespace.
     // Use a body stringstream; set pre_ns_os_ so emit_inc() writes to os directly.
+    // Deferred self-referential includes (post_class_includes from emit_sequence_hpp)
+    // must land AFTER the closing `} // namespace` brace — use post_ns_ss for that.
     std::ostringstream body_ns;
+    std::ostringstream post_ns_ss;
     std::ostream& body = namespace_.empty() ? os : static_cast<std::ostream&>(body_ns);
-    if (!namespace_.empty()) pre_ns_os_ = &os;
+    if (!namespace_.empty()) {
+        pre_ns_os_  = &os;
+        post_ns_os_ = &post_ns_ss;
+    }
 
     if (def.is_sequence() || def.is_set()) {
         current_type_ = cname;
@@ -1951,11 +1959,14 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
         body << std::format("using {} = {};\n", cname, inc);
     }
 
-    pre_ns_os_ = nullptr;
+    pre_ns_os_  = nullptr;
+    post_ns_os_ = nullptr;
     if (!namespace_.empty()) {
         os << "namespace " << namespace_ << " {\n\n";
         os << body_ns.str();
         os << "\n} // namespace " << namespace_ << "\n";
+        auto post = post_ns_ss.str();
+        if (!post.empty()) os << "\n" << post;
     }
 }
 
