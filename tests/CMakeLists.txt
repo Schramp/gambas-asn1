@@ -722,6 +722,32 @@ target_link_libraries(test_fprefix PRIVATE asn1cpp_runtime)
 add_test(NAME fprefix COMMAND test_fprefix)
 set_tests_properties(fprefix PROPERTIES TIMEOUT 30)
 
+# ---- ns_recursive_seqof: self-referential SeqOf in namespace mode (issue #109) ---
+# Regression for the bug where post-class deferred includes landed before the
+# `namespace X {` opener instead of after `} // namespace X`.
+set(NS_RECURSIVE_SEQOF_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_ns_recursive_seqof)
+add_custom_command(
+    OUTPUT  ${NS_RECURSIVE_SEQOF_GEN_DIR}/Tree.hpp
+            ${NS_RECURSIVE_SEQOF_GEN_DIR}/Tree.cpp
+            ${NS_RECURSIVE_SEQOF_GEN_DIR}/TreeChildren.hpp
+            ${NS_RECURSIVE_SEQOF_GEN_DIR}/TreeChildren.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${NS_RECURSIVE_SEQOF_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/ns_recursive_seqof_test.asn1
+            -fprefix=testns -o ${NS_RECURSIVE_SEQOF_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/ns_recursive_seqof_test.asn1
+    COMMENT "Generating C++ from ns_recursive_seqof_test.asn1 with -fprefix=testns"
+)
+add_executable(test_ns_recursive_seqof
+    seq/test_ns_recursive_seqof.cpp
+    ${NS_RECURSIVE_SEQOF_GEN_DIR}/Tree.cpp
+    ${NS_RECURSIVE_SEQOF_GEN_DIR}/TreeChildren.cpp
+)
+target_include_directories(test_ns_recursive_seqof PRIVATE ${NS_RECURSIVE_SEQOF_GEN_DIR})
+target_link_libraries(test_ns_recursive_seqof PRIVATE asn1cpp_runtime)
+add_test(NAME ns_recursive_seqof COMMAND test_ns_recursive_seqof)
+set_tests_properties(ns_recursive_seqof PROPERTIES TIMEOUT 30)
+
 # ---- BER fuzz (in-tree) ---------------------------------------------------
 # Wire-level corruption sweep using BerCorruptor against the asn1cpp BER
 # decoder. Self-contained — no asn1c dependency, no etsitools/ binaries.
