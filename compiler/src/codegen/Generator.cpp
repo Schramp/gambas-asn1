@@ -1168,6 +1168,10 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
 // Emit SEQUENCE / SET
 // ---------------------------------------------------------------------------
 
+/// @brief Emit the `.hpp` for a SEQUENCE or SET type.
+/// @param def  ASN.1 type definition (must satisfy is_sequence() or is_set()).
+/// @param os   Output stream for the generated header.
+/// @see X.680 §24 (SEQUENCE), §26 (SET); X.690 §8.9 (BER SEQUENCE encoding).
 void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
@@ -1194,11 +1198,9 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
         auto emit_inc = [&](const std::string& cn) {
             auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
             inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
-            track_include(cn);
         };
         auto emit_fwd = [&](const std::string& cn) {
             os << std::format("class {};\n", cn);
-            track_include(cn);
         };
 
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
@@ -1299,7 +1301,6 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
         auto& inc_os = post_ns_os_ ? *post_ns_os_ : os;
         for (const auto& sinc : post_class_includes) {
             inc_os << std::format("#include \"{}.hpp\"\n", filename_for(sinc));
-            track_include(sinc);
         }
         inc_os << "\n";
     }
@@ -1565,6 +1566,10 @@ static std::vector<const ast::TypeDef*> canonical_choice_members(
     return result;
 }
 
+/// @brief Emit the `.hpp` for a CHOICE type.
+/// @param def  ASN.1 type definition (must satisfy is_choice()).
+/// @param os   Output stream for the generated header.
+/// @see X.680 §28 (CHOICE); X.690 §8.13 (BER CHOICE encoding); X.691 §22 (PER CHOICE).
 void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
@@ -1576,7 +1581,6 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
         auto emit_inc = [&](const std::string& cn) {
             auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
             inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
-            track_include(cn);
         };
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
             emit_inc(cpp_name_for_typeref(*tr));
@@ -1880,6 +1884,10 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
 // Top-level emit_hpp / emit_cpp dispatch
 // ---------------------------------------------------------------------------
 
+/// @brief Emit the `.hpp` file for any top-level type definition.
+/// @param def  ASN.1 type definition to generate.
+/// @param mod  Owning module (provides tag default and OID for the file header comment).
+/// @param os   Output stream for the generated header.
 void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, mod.name);
 
@@ -1942,16 +1950,13 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
         if (auto* tr = std::get_if<ast::TypeRef>(&elem->body)) {
             auto inc = cpp_name_for_typeref(*tr);
             inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(inc));
-            track_include(inc);
         } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
             auto synth = make_synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name);
             inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
-            track_include(synth);
         } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem->body);
                    ebt && *ebt == ast::BuiltinType::Enumerated && !elem->enum_values.empty()) {
             auto synth = make_synthetic_name(cname, elem->name.empty() ? "Enum" : elem->name);
             inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
-            track_include(synth);
         }
         body << std::format("using {} = asn1::VectorSeqOf<{}>;\n\n", cname, cpp_type_for(*elem));
         body << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", cname);
@@ -1960,7 +1965,6 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
         auto inc = cpp_name_for_typeref(*tr);
         auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : body;
         inc_os << std::format("#include \"{}.hpp\"\n", filename_for(inc));
-        track_include(inc);
         body << std::format("using {} = {};\n", cname, inc);
     }
 
@@ -2253,6 +2257,9 @@ void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
 // Must run before the parent type so includes resolve.
 // ---------------------------------------------------------------------------
 
+/// @brief Pre-generate synthetic types that must be defined before the parent type's header.
+/// @param def  Parent type whose inline member types are to be generated.
+/// @param mod  Owning module.
 void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module& mod) {
     std::string parent_cname = effective_cpp_name(def.name, mod.name);
 
@@ -2375,6 +2382,9 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
 // Per-type file writer
 // ---------------------------------------------------------------------------
 
+/// @brief Emit `.hpp` and `.cpp` for one top-level ASN.1 type assignment.
+/// @param def  Type assignment to generate (skipped if not a type assignment).
+/// @param mod  Owning module (sets current_tag_default_ for the duration).
 void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
     if (!is_type_assignment(def)) return;
 
@@ -2423,27 +2433,9 @@ void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
         emit_file(out_dir_ / (filename_for(cname) + ".cpp"), [&](auto& os){ emit_cpp(def, os); });
 }
 
-void Generator::emit_stubs_for_unresolved() {
-    for (const auto& name : referenced_names_) {
-        if (generated_names_.count(name)) continue;
-        auto path = out_dir_ / (filename_for(name) + ".hpp");
-        emit_file(path, [&](auto& os) {
-            os << "#pragma once\n";
-            os << "#include <asn1cpp/asn1cpp_gen.hpp>\n\n";
-            os << "/* stub: type from missing/uncompiled module */\n";
-            os << std::format("struct {} {{}};\n\n", name);
-            os << std::format("inline const asn1::TypeDescriptor asn_DEF_{} = {{\n", name);
-            os << std::format("    \"{}\",\n", name);
-            os << "    asn1::Tag{},\n";
-            os << "    nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive\n";
-            os << "};\n\n";
-        });
-    }
-}
-
-// BFS helper used by compute_reachable.  Appends to `worklist` the ASN.1 name
-// of every type that `def` directly references: via TypeRef body, inline
-// SEQUENCE/SET/CHOICE members, or SEQUENCE-OF/SET-OF element type.
+/// @brief Append to `worklist` all ASN.1 type names directly referenced by `def`.
+/// @param def      Type definition to inspect (TypeRef body, members, or element type).
+/// @param worklist BFS queue; names are pushed without deduplication (caller deduplicates).
 void Generator::collect_type_refs(const ast::TypeDef& def, std::vector<std::string>& worklist) {
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         worklist.push_back(tr->type_name);
@@ -2461,10 +2453,13 @@ void Generator::collect_type_refs(const ast::TypeDef& def, std::vector<std::stri
     }
 }
 
-// Populates `reachable_asn_names_` with the transitive closure of all ASN.1
-// types reachable from `pdu_roots_` via TypeRef and structural member edges.
-// Called by generate() when -pdu= roots are set; generate() then skips any
-// TypeDef whose name is absent from reachable_asn_names_.
+/// @brief Populate `reachable_asn_names_` via BFS from `pdu_roots_`.
+/// @param pr  Full parse result; all modules are searched for type definitions.
+///
+/// Computes the transitive closure of types reachable from the `-pdu=` roots
+/// through TypeRef and structural member edges.  `generate()` then skips any
+/// TypeDef whose ASN.1 name is absent from `reachable_asn_names_`.
+/// Called only when at least one `-pdu=` root has been set.
 void Generator::compute_reachable(const ast::ParseResult& pr) {
     // Build ASN.1-name → ALL definitions multimap.
     // Collision types (same name in multiple modules) are common in ETSI schemas;
@@ -2483,7 +2478,7 @@ void Generator::compute_reachable(const ast::ParseResult& pr) {
         if (reachable_asn_names_.count(name)) continue;
 
         auto it = type_multimap.find(name);
-        if (it == type_multimap.end()) continue; // not defined in any module — emit_stubs_for_unresolved handles it
+        if (it == type_multimap.end()) continue; // not defined in any module (e.g. extern type)
 
         reachable_asn_names_.insert(name);
         // Walk ALL definitions for this name (collision types span multiple modules).

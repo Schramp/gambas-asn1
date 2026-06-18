@@ -110,7 +110,6 @@ class Generator {
     fs::path                out_dir_;
     sema::Resolver&         resolver_;
     std::set<std::string>   generated_names_;
-    std::set<std::string>   referenced_names_;
     std::set<std::string>   collision_types_;   // ASN.1 type names defined in >1 module
     std::string             current_module_;    // module being generated right now
     std::string             current_type_;      // C++ name of type currently being generated
@@ -130,6 +129,8 @@ public:
     void set_namespace(std::string ns)           { namespace_ = std::move(ns); }
     void add_pdu_type(std::string asn_name)      { pdu_roots_.insert(std::move(asn_name)); }
 
+    /// @brief Run codegen over all modules in `pr`, writing `.hpp`/`.cpp` files to `out_dir_`.
+    /// @param pr  Resolved parse result containing all input modules.
     void generate(const ast::ParseResult& pr) {
         fs::create_directories(out_dir_);
 
@@ -160,7 +161,6 @@ public:
                     generate_type(*def, *mod);
                 }
         }
-        emit_stubs_for_unresolved();
     }
 
     // Returns the C++ name to use for a type, prefixing with module when colliding.
@@ -198,8 +198,6 @@ private:
     void collect_type_refs(const ast::TypeDef& def, std::vector<std::string>& worklist);
     void generate_type(const ast::TypeDef& def, const ast::Module& mod);
     void generate_inline_types(const ast::TypeDef& def, const ast::Module& mod);
-    void emit_stubs_for_unresolved();
-    void track_include(const std::string& cname) { referenced_names_.insert(cname); }
     void emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::ostream& os);
     void emit_cpp(const ast::TypeDef& def, std::ostream& os);
 
