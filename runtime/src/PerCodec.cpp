@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <numeric>
 #include <asn1cpp/codec/PerCodec.hpp>
 #include <asn1cpp/codec/Alphabets.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
@@ -187,6 +186,7 @@ static std::tuple<int,int> string_params(uint32_t tag_num) {
         case UniversalTag::PrintableString: return {7, 1};
         case UniversalTag::BmpString:       return {8, 2};
         case UniversalTag::UniversalString: return {8, 4};
+        case UniversalTag::Ia5String:       return {7, 1};  // 128-char alphabet → 7 bits/char
         case UniversalTag::UtcTime:
         case UniversalTag::GeneralizedTime:
         case UniversalTag::VisibleString:   return {7, 1};
@@ -194,26 +194,8 @@ static std::tuple<int,int> string_params(uint32_t tag_num) {
     }
 }
 
-// X.691 §22.6 "The root alternatives shall be ordered according to their tags"
-// Sorts by tag class then tag number: to_canonical[i] = canonical index of alternative i;
-// from_canonical is the inverse permutation.
-// TODO: precompute in Generator.cpp and store as static table content.
-static void build_canonical_maps(const ChoiceSpec& spec, int root_count,
-                                 std::vector<int>& to_canonical,
-                                 std::vector<int>& from_canonical) {
-    to_canonical.resize(root_count);
-    std::iota(to_canonical.begin(), to_canonical.end(), 0);
-    std::stable_sort(to_canonical.begin(), to_canonical.end(),
-        [&](int a, int b) {
-            const auto& ta = spec.alternatives[a].tag;
-            const auto& tb = spec.alternatives[b].tag;
-            if (ta.cls != tb.cls) return (int)ta.cls < (int)tb.cls;
-            return ta.number < tb.number;
-        });
-    from_canonical.resize(root_count);
-    for (int i = 0; i < root_count; ++i)
-        from_canonical[to_canonical[i]] = i;
-}
+// X.691 §22.6: alternatives emitted in canonical (tag-ascending) order by Generator.cpp.
+// Runtime needs no sorting — array index IS the canonical index.
 
 // X.691 §10.2 "Open type fields"
 // Encodes value to temporary buffer; prepends octet-aligned length determinant.
@@ -868,7 +850,10 @@ public:
             if (mbr.optional) {
                 bool present = bitmap[opt_idx++];
                 mbr.optional_ops.set_present(dest, present);
-                if (!present) continue;
+                if (!present) {
+                    if (mbr.set_default) mbr.set_default(dest);
+                    continue;
+                }
             }
             Asn1Object* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
             auto r = codec.decode(ds, *mbr.type_descriptor, mptr);
@@ -891,8 +876,11 @@ public:
                 }
                 for (int i = 0; i < n_ext; ++i) {
                     if (!ext_bitmap[i]) {
-                        if (i < known_ext)
-                            spec.members[root_end + i].optional_ops.set_present(dest, false);
+                        if (i < known_ext) {
+                            const auto& absent = spec.members[root_end + i];
+                            absent.optional_ops.set_present(dest, false);
+                            if (absent.set_default) absent.set_default(dest);
+                        }
                         continue;
                     }
                     if (i < known_ext) {
@@ -927,11 +915,9 @@ public:
                          def.name, pr, root_count, (int)in_ext, PerCodec::stream_bit_pos(stream));
         if (spec.ext_at >= 0) stream.put_bits(in_ext ? 1 : 0, 1, "CHO.ext");
         if (!in_ext) {
-            std::vector<int> to_can, from_can;
-            build_canonical_maps(spec, root_count, to_can, from_can);
-            int canonical_idx = to_can[def_idx];
+            // Generator emits root alternatives in canonical tag order — def_idx IS canonical.
             int bits = range_bits(root_count);
-            if (bits > 0) stream.put_bits(static_cast<uint64_t>(canonical_idx), bits, "CHO.index");
+            if (bits > 0) stream.put_bits(static_cast<uint64_t>(def_idx), bits, "CHO.index");
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
             IEncodeStream& es = stream;
@@ -939,7 +925,7 @@ public:
             codec.encode(es, *alt.type_descriptor, mptr);
         } else {
             int ext_idx = def_idx - root_count;
-            // X.691 §22.8: extension alternative index encoded as normally-small non-neg whole number.
+            // Generator emits extension alternatives in canonical tag order — ext_idx IS canonical.
             put_nsnn(stream, ext_idx);
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
@@ -962,18 +948,16 @@ public:
             in_ext = (*b != 0);
         }
         if (!in_ext) {
-            std::vector<int> to_can, from_can;
-            build_canonical_maps(spec, root_count, to_can, from_can);
+            // Generator emits root alternatives in canonical tag order — index IS canonical.
             int bits = range_bits(root_count);
-            int canonical_idx = 0;
+            int def_idx = 0;
             if (bits > 0) {
                 auto v = stream.get_bits(bits);
                 if (!v) return decode_err(v.error());
-                canonical_idx = static_cast<int>(*v);
+                def_idx = static_cast<int>(*v);
             }
-            if (canonical_idx < 0 || canonical_idx >= root_count)
+            if (def_idx < 0 || def_idx >= root_count)
                 return decode_err(DecodeError("CHOICE index out of range"));
-            int def_idx = from_can[canonical_idx];
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor)
                 return decode_err(DecodeError("CHOICE alternative has no type descriptor"));
@@ -987,11 +971,10 @@ public:
             if (!r) return r;
             return decode_ok();
         } else {
-            // X.691 §22.8: extension alternative index encoded as normally-small non-neg whole number.
-            auto ext_r = get_nsnn(stream);
-            if (!ext_r) return decode_err(ext_r.error());
-            int ext_idx = *ext_r;
-            int def_idx = root_count + ext_idx;
+            // Generator emits extension alternatives in canonical tag order — index IS canonical.
+            auto ext_idx_r = get_nsnn(stream);
+            if (!ext_idx_r) return decode_err(ext_idx_r.error());
+            int def_idx = root_count + *ext_idx_r;
             if (def_idx < spec.count) {
                 const auto& alt = spec.alternatives[def_idx];
                 if (alt.type_descriptor) {

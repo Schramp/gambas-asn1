@@ -720,6 +720,22 @@ std::string Generator::emit_default_setter(
         literal = std::format("{}{{{}}}", mtype, *b ? "true" : "false");
     } else if (auto* i = std::get_if<int64_t>(&m.default_value)) {
         literal = std::format("{}{{{}}}", mtype, *i);
+    } else if (auto* s = std::get_if<std::string>(&m.default_value)) {
+        // String literal default (IA5String/VisibleString/PrintableString/etc.)
+        // Full C escape: backslash, quote, and all control characters.
+        std::string esc;
+        for (unsigned char c : *s) {
+            if      (c == '\\') esc += "\\\\";
+            else if (c == '"')  esc += "\\\"";
+            else if (c == '\n') esc += "\\n";
+            else if (c == '\r') esc += "\\r";
+            else if (c == '\t') esc += "\\t";
+            else if (c < 0x20 || c == 0x7f)
+                esc += std::format("\\x{:02x}", c);
+            else
+                esc += static_cast<char>(c);
+        }
+        literal = std::format("{}{{\"{}\"}}", mtype, esc);
     } else if (auto* nr = std::get_if<ast::NamedValueRef>(&m.default_value)) {
         // ENUMERATED named ref → EnumType::name
         bool is_enum = base
@@ -1482,6 +1498,66 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
 // Emit CHOICE
 // ---------------------------------------------------------------------------
 
+// Canonical PER tag key: (class, number), tagless → (INT_MAX, INT_MAX) to sort last.
+// For AUTOMATIC TAGS, apply_auto_tags=true and auto_n is the declaration position,
+// which becomes the Context[n] tag.
+static std::pair<int,int> canonical_tag_key(const ast::Tag& tag, bool apply_auto_tags, int auto_n) {
+    if (apply_auto_tags && !tag.present())
+        return { static_cast<int>(ast::TagClass::Context), auto_n };
+    if (tag.present())
+        return { static_cast<int>(tag.cls), tag.number };
+    return { INT_MAX, INT_MAX };
+}
+
+// Shared less-than comparator for canonical tag ordering of CHOICE alternatives.
+// Tagless alternatives (INT_MAX, INT_MAX) sort after all tagged alternatives.
+static bool canonical_tag_less(const ast::Tag& a, const ast::Tag& b,
+                                bool apply_auto_tags, int auto_a, int auto_b) {
+    return canonical_tag_key(a, apply_auto_tags, auto_a)
+         < canonical_tag_key(b, apply_auto_tags, auto_b);
+}
+
+// Returns CHOICE members (no extension markers) in canonical PER tag order.
+// Root alternatives sorted by (tag_class, tag_number); extension alternatives
+// sorted by (tag_class, tag_number). For AUTOMATIC TAGS schemas, root alternatives
+// are Context[0],[1],[2]... — already canonical, so the sort is a no-op there.
+// Extension alternatives with explicit non-sequential tags (e.g. ext1=[1],ext0=[0])
+// are reordered here so the generator emits them in canonical order.
+static std::vector<const ast::TypeDef*> canonical_choice_members(
+    const ast::TypeDef& def, bool apply_auto_tags)
+{
+    std::vector<const ast::TypeDef*> root_alts, ext_alts;
+    bool past_ext = false;
+    for (const auto& m : def.members) {
+        if (m->is_extension_marker) { past_ext = true; continue; }
+        if (!past_ext) root_alts.push_back(m.get());
+        else           ext_alts.push_back(m.get());
+    }
+
+    // Root: if not AUTOMATIC TAGS, sort by explicit tag (tagless go last).
+    if (!apply_auto_tags) {
+        std::vector<std::pair<const ast::TypeDef*, int>> root_with_num;
+        int n = 0;
+        for (auto* r : root_alts) root_with_num.push_back({ r, n++ });
+        std::stable_sort(root_with_num.begin(), root_with_num.end(),
+            [&](const auto& a, const auto& b) {
+                return canonical_tag_less(a.first->tag, b.first->tag,
+                                         /*apply_auto_tags=*/false, a.second, b.second);
+            });
+        root_alts.clear();
+        for (auto& [m, _] : root_with_num) root_alts.push_back(m);
+    }
+    // Extension: sort by explicit tag (tagless go last, same comparator for consistency).
+    std::stable_sort(ext_alts.begin(), ext_alts.end(),
+        [](const ast::TypeDef* a, const ast::TypeDef* b) {
+            return canonical_tag_less(a->tag, b->tag, /*apply_auto_tags=*/false, 0, 0);
+        });
+
+    std::vector<const ast::TypeDef*> result(root_alts);
+    result.insert(result.end(), ext_alts.begin(), ext_alts.end());
+    return result;
+}
+
 void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
@@ -1542,20 +1618,20 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
         "s_alternatives", "s_alternative_count"
     };
     os << std::format("class {} : public asn1::ChoiceInterface {{\npublic:\n", cname);
+    bool apply_auto_tags_hpp = should_apply_auto_tags(def);
+    auto canon_members = canonical_choice_members(def, apply_auto_tags_hpp);
     static constexpr std::initializer_list<std::string_view> choice_pr_api = { "NOTHING" };
     os << "    enum class PR : int { NOTHING = 0";
     int pr_idx = 1;
-    for (const auto& m : def.members)
-        if (!m->is_extension_marker)
-            os << std::format(", {} = {}", safe_cpp_name(to_cpp_name(m->name), choice_pr_api), pr_idx++);
+    for (const auto* m : canon_members)
+        os << std::format(", {} = {}", safe_cpp_name(to_cpp_name(m->name), choice_pr_api), pr_idx++);
     os << " };\n";
 
     // val_storage_: raw byte buffer sized/aligned to the largest alternative.
     // val_ (in ChoiceInterface base) points here — set once in the constructor.
     os << "    alignas(std::max({";
     { bool first = true;
-      for (const auto& m : def.members) {
-        if (m->is_extension_marker) continue;
+      for (const auto* m : canon_members) {
         if (!first) os << ", ";
         os << std::format("alignof({})", cpp_type_for(*m));
         first = false;
@@ -1564,8 +1640,7 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
       os << "size_t(1)})) char val_storage_[std::max({";
     }
     { bool first = true;
-      for (const auto& m : def.members) {
-        if (m->is_extension_marker) continue;
+      for (const auto* m : canon_members) {
         if (!first) os << ", ";
         os << std::format("sizeof({})", cpp_type_for(*m));
         first = false;
@@ -1602,8 +1677,7 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     // set_present delegates to emplace_alt (ChoiceInterface) — defined in .cpp.
     os << "    void set_present(PR p);\n";
 
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) continue;
+    for (const auto* m : canon_members) {
         std::string t = cpp_type_for(*m);
         std::string n = to_member_name(m->name, choice_acc_api);
         os << std::format(
@@ -1636,9 +1710,11 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string name, eff_tag, mname, tdref, alt_type;
             bool is_explicit;
             int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
+            ast::Tag full_tag;      // for canonical sort
         };
         std::vector<AltRow> rows;
-        // Pass 1: collect rows + emit any static TypeDescriptors (must precede array).
+        // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
+        // TypeDescriptors must be emitted before the alternatives array references them.
         { int auto_tag_num = 0;
           for (const auto& m : def.members) {
             if (m->is_extension_marker) continue;
@@ -1647,13 +1723,39 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
             std::string alt_type = cpp_type_for(*m);
             int tag_ctx_num = -1;
-            if (apply_auto_tags)
+            ast::Tag full_tag = m->tag;
+            if (apply_auto_tags && !m->tag.present()) {
                 tag_ctx_num = auto_tag_num;
-            else if (m->tag.present() && m->tag.cls == ast::TagClass::Context)
+                full_tag.cls = ast::TagClass::Context;
+                full_tag.number = auto_tag_num;
+            } else if (m->tag.present() && m->tag.cls == ast::TagClass::Context) {
                 tag_ctx_num = m->tag.number;
-            rows.push_back({ m->name, eff_tag, mname, tdref, alt_type, is_explicit, tag_ctx_num });
+            }
+            rows.push_back({ m->name, eff_tag, mname, tdref, alt_type, is_explicit,
+                             tag_ctx_num, full_tag });
             ++auto_tag_num;
           }
+        }
+        // Sort root and extension alternatives separately into canonical tag order.
+        // X.691 §22.6: PER uses tag-ascending order; generator pre-sorts so runtime
+        // can use the array index directly without a canonical-map lookup.
+        // full_tag already incorporates auto-tags (resolved during pass 1), so sort
+        // with apply_auto_tags=false here — the effective tag is already in full_tag.
+        // Tagless alternatives (full_tag not present) sort last, matching
+        // canonical_choice_members() so PR enum indices stay aligned with s_alternatives[].
+        { int ext_start = (ext_at >= 0) ? ext_at : count;
+          auto tag_cmp = [](const AltRow& a, const AltRow& b) {
+              return canonical_tag_less(a.full_tag, b.full_tag,
+                                       /*apply_auto_tags=*/false, 0, 0);
+          };
+          if (!apply_auto_tags)   // root already canonical for AUTOMATIC TAGS
+              std::stable_sort(rows.begin(), rows.begin() + ext_start, tag_cmp);
+          if (ext_at >= 0)
+              std::stable_sort(rows.begin() + ext_at, rows.end(), tag_cmp);
+          // Rebuild tag_ctx_num for the tag-index table after reorder.
+          for (auto& r : rows)
+              r.tag_cls_int = (r.full_tag.present() && r.full_tag.cls == ast::TagClass::Context)
+                              ? r.full_tag.number : -1;
         }
         // Pass 2 removed: _get_mut_T_alt / _get_const_T_alt / _emplace_T_alt named free
         // functions replaced by ChoiceOps<AltT>::get_mut / get_const (single-type-param
