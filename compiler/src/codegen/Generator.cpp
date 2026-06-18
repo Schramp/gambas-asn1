@@ -1293,9 +1293,8 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     os << "    static const asn1::TypeDescriptor asn_DEF;\n";
     os << "};\n\n";
 
-    // Deferred includes: self-referential SeqOf headers that need the class complete.
-    // In namespace mode they must land AFTER the closing `} // namespace` brace
-    // (post_ns_os_); in flat mode they go directly after the class definition.
+    // Self-referential SeqOf includes: deferred until class is complete.
+    // post_ns_os_ routes them after `} // namespace` in namespace mode.
     if (!post_class_includes.empty()) {
         auto& inc_os = post_ns_os_ ? *post_ns_os_ : os;
         for (const auto& sinc : post_class_includes) {
@@ -1500,9 +1499,12 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
 // Emit CHOICE
 // ---------------------------------------------------------------------------
 
-// Canonical PER tag key: (class, number), tagless → (INT_MAX, INT_MAX) to sort last.
-// For AUTOMATIC TAGS, apply_auto_tags=true and auto_n is the declaration position,
-// which becomes the Context[n] tag.
+/// @brief Map an ASN.1 tag to a (class, number) sort key for canonical PER ordering.
+/// @param tag            The tag to convert.
+/// @param apply_auto_tags True when the enclosing module uses AUTOMATIC TAGS.
+/// @param auto_n         Declaration-order position used as tag number when auto-tagging.
+/// @return (class, number) pair; tagless alternatives return (INT_MAX, INT_MAX) to sort last.
+/// @see X.691 §22.6 — CHOICE alternatives encoded in canonical tag order.
 static std::pair<int,int> canonical_tag_key(const ast::Tag& tag, bool apply_auto_tags, int auto_n) {
     if (apply_auto_tags && !tag.present())
         return { static_cast<int>(ast::TagClass::Context), auto_n };
@@ -1511,8 +1513,11 @@ static std::pair<int,int> canonical_tag_key(const ast::Tag& tag, bool apply_auto
     return { INT_MAX, INT_MAX };
 }
 
-// Shared less-than comparator for canonical tag ordering of CHOICE alternatives.
-// Tagless alternatives (INT_MAX, INT_MAX) sort after all tagged alternatives.
+/// @brief Less-than comparator for canonical PER tag ordering of CHOICE alternatives.
+/// @param a,b            Tags to compare.
+/// @param apply_auto_tags True when the enclosing module uses AUTOMATIC TAGS.
+/// @param auto_a,auto_b  Declaration-order positions for auto-tag resolution.
+/// @return True if a sorts before b in canonical order.
 static bool canonical_tag_less(const ast::Tag& a, const ast::Tag& b,
                                 bool apply_auto_tags, int auto_a, int auto_b) {
     return canonical_tag_key(a, apply_auto_tags, auto_a)
