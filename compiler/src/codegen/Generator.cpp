@@ -722,10 +722,18 @@ std::string Generator::emit_default_setter(
         literal = std::format("{}{{{}}}", mtype, *i);
     } else if (auto* s = std::get_if<std::string>(&m.default_value)) {
         // String literal default (IA5String/VisibleString/PrintableString/etc.)
+        // Full C escape: backslash, quote, and all control characters.
         std::string esc;
-        for (char c : *s) {
-            if (c == '\\' || c == '"') esc += '\\';
-            esc += c;
+        for (unsigned char c : *s) {
+            if      (c == '\\') esc += "\\\\";
+            else if (c == '"')  esc += "\\\"";
+            else if (c == '\n') esc += "\\n";
+            else if (c == '\r') esc += "\\r";
+            else if (c == '\t') esc += "\\t";
+            else if (c < 0x20 || c == 0x7f)
+                esc += std::format("\\x{:02x}", c);
+            else
+                esc += static_cast<char>(c);
         }
         literal = std::format("{}{{\"{}\"}}", mtype, esc);
     } else if (auto* nr = std::get_if<ast::NamedValueRef>(&m.default_value)) {
@@ -1490,6 +1498,25 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
 // Emit CHOICE
 // ---------------------------------------------------------------------------
 
+// Canonical PER tag key: (class, number), tagless → (INT_MAX, INT_MAX) to sort last.
+// For AUTOMATIC TAGS, apply_auto_tags=true and auto_n is the declaration position,
+// which becomes the Context[n] tag.
+static std::pair<int,int> canonical_tag_key(const ast::Tag& tag, bool apply_auto_tags, int auto_n) {
+    if (apply_auto_tags && !tag.present())
+        return { static_cast<int>(ast::TagClass::Context), auto_n };
+    if (tag.present())
+        return { static_cast<int>(tag.cls), tag.number };
+    return { INT_MAX, INT_MAX };
+}
+
+// Shared less-than comparator for canonical tag ordering of CHOICE alternatives.
+// Tagless alternatives (INT_MAX, INT_MAX) sort after all tagged alternatives.
+static bool canonical_tag_less(const ast::Tag& a, const ast::Tag& b,
+                                bool apply_auto_tags, int auto_a, int auto_b) {
+    return canonical_tag_key(a, apply_auto_tags, auto_a)
+         < canonical_tag_key(b, apply_auto_tags, auto_b);
+}
+
 // Returns CHOICE members (no extension markers) in canonical PER tag order.
 // Root alternatives sorted by (tag_class, tag_number); extension alternatives
 // sorted by (tag_class, tag_number). For AUTOMATIC TAGS schemas, root alternatives
@@ -1501,40 +1528,29 @@ static std::vector<const ast::TypeDef*> canonical_choice_members(
 {
     std::vector<const ast::TypeDef*> root_alts, ext_alts;
     bool past_ext = false;
-    int auto_num = 0;
     for (const auto& m : def.members) {
         if (m->is_extension_marker) { past_ext = true; continue; }
         if (!past_ext) root_alts.push_back(m.get());
         else           ext_alts.push_back(m.get());
     }
 
-    auto tag_key = [&](const ast::TypeDef* m, int auto_n) -> std::pair<int,int> {
-        if (apply_auto_tags && !m->tag.present())
-            return { static_cast<int>(ast::TagClass::Context), auto_n };
-        if (m->tag.present())
-            return { static_cast<int>(m->tag.cls), m->tag.number };
-        return { INT_MAX, INT_MAX };
-    };
-
-    // Root: if not AUTOMATIC TAGS, sort by explicit tag.
+    // Root: if not AUTOMATIC TAGS, sort by explicit tag (tagless go last).
     if (!apply_auto_tags) {
-        // Build index → auto_num mapping for root (unused for non-auto, but harmless).
         std::vector<std::pair<const ast::TypeDef*, int>> root_with_num;
         int n = 0;
         for (auto* r : root_alts) root_with_num.push_back({ r, n++ });
         std::stable_sort(root_with_num.begin(), root_with_num.end(),
             [&](const auto& a, const auto& b) {
-                return tag_key(a.first, a.second) < tag_key(b.first, b.second);
+                return canonical_tag_less(a.first->tag, b.first->tag,
+                                         /*apply_auto_tags=*/false, a.second, b.second);
             });
         root_alts.clear();
         for (auto& [m, _] : root_with_num) root_alts.push_back(m);
     }
-    // Extension: sort by explicit tag (extension alternatives always carry explicit tags).
+    // Extension: sort by explicit tag (tagless go last, same comparator for consistency).
     std::stable_sort(ext_alts.begin(), ext_alts.end(),
         [](const ast::TypeDef* a, const ast::TypeDef* b) {
-            if (!a->tag.present() || !b->tag.present()) return false;
-            if (a->tag.cls != b->tag.cls) return (int)a->tag.cls < (int)b->tag.cls;
-            return a->tag.number < b->tag.number;
+            return canonical_tag_less(a->tag, b->tag, /*apply_auto_tags=*/false, 0, 0);
         });
 
     std::vector<const ast::TypeDef*> result(root_alts);
@@ -1723,12 +1739,14 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         // Sort root and extension alternatives separately into canonical tag order.
         // X.691 §22.6: PER uses tag-ascending order; generator pre-sorts so runtime
         // can use the array index directly without a canonical-map lookup.
+        // full_tag already incorporates auto-tags (resolved during pass 1), so sort
+        // with apply_auto_tags=false here — the effective tag is already in full_tag.
+        // Tagless alternatives (full_tag not present) sort last, matching
+        // canonical_choice_members() so PR enum indices stay aligned with s_alternatives[].
         { int ext_start = (ext_at >= 0) ? ext_at : count;
           auto tag_cmp = [](const AltRow& a, const AltRow& b) {
-              if (!a.full_tag.present() || !b.full_tag.present()) return false;
-              if (a.full_tag.cls != b.full_tag.cls)
-                  return (int)a.full_tag.cls < (int)b.full_tag.cls;
-              return a.full_tag.number < b.full_tag.number;
+              return canonical_tag_less(a.full_tag, b.full_tag,
+                                       /*apply_auto_tags=*/false, 0, 0);
           };
           if (!apply_auto_tags)   // root already canonical for AUTOMATIC TAGS
               std::stable_sort(rows.begin(), rows.begin() + ext_start, tag_cmp);
