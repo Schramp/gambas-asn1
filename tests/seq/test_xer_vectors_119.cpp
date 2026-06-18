@@ -5,9 +5,8 @@
 //   and the result is compared to the original using whitespace-stripped equality.
 //
 //   - (none) files: round-trip must succeed; output must equal input (whitespace-stripped).
-//   - -P files: PER-incompatible input (alphabet/size constraint violation).
-//               Skipped — PerCodec does not yet reject constraint-violating encodes.
-//               Tracked for future work (add constraint checking to PerCodec).
+//   - -P files: PER-incompatible input (alphabet/size constraint violation);
+//               PerCodec must reject them (encode returns failed=true).
 #include <cstdio>
 #include <fstream>
 #include <filesystem>
@@ -25,9 +24,9 @@
 using namespace asn1;
 namespace fs = std::filesystem;
 
-// -P files: PER-incompatible by design (constraint violations).
-// Skipped until PerCodec validates alphabet/size constraints on encode.
-static const std::set<std::string> KNOWN_SKIP = {
+// -P files: PER-incompatible by design (alphabet or SIZE constraint violation).
+// PerCodec must reject them — encode returns failed=true.
+static const std::set<std::string> KNOWN_P = {
     "data-119-04-P.in",
     "data-119-06-P.in",
     "data-119-07-P.in",
@@ -45,7 +44,6 @@ static const std::set<std::string> KNOWN_SKIP = {
 };
 
 static int failures = 0;
-static int skipped  = 0;
 
 static void check(const char* label, bool cond) {
     if (cond) printf("  \033[32mPASS\033[0m  %s\n", label);
@@ -79,12 +77,15 @@ static std::string xer_encode(const PDU& val) {
     return oss.str();
 }
 
-static std::vector<uint8_t> per_encode(const PDU& val) {
+struct PerEncodeResult { std::vector<uint8_t> buf; bool failed; };
+
+static PerEncodeResult per_encode(const PDU& val) {
     std::vector<uint8_t> buf;
     PerEncodeStream s{buf};
     PerCodec::instance().encode(s, PDU::asn_DEF, &val);
-    s.flush(); // commit any trailing partial byte
-    return buf;
+    bool failed = s.encode_failed();
+    if (!failed) s.flush();
+    return {std::move(buf), failed};
 }
 
 static bool per_decode(std::span<const uint8_t> bytes, PDU& out) {
@@ -94,12 +95,7 @@ static bool per_decode(std::span<const uint8_t> bytes, PDU& out) {
 
 static void process(const fs::path& path) {
     std::string name = path.filename().string();
-
-    if (KNOWN_SKIP.count(name)) {
-        printf("  \033[33mSKIP\033[0m  %s\n", name.c_str());
-        ++skipped;
-        return;
-    }
+    bool is_p = KNOWN_P.count(name) > 0;
 
     std::string input = read_text(path);
 
@@ -112,13 +108,20 @@ static void process(const fs::path& path) {
     }
     if (!decoded) return;
 
-    auto per = per_encode(val);
+    auto [per, per_failed] = per_encode(val);
+    if (is_p) {
+        char label[256];
+        std::snprintf(label, sizeof(label), "%s  UPER encode rejected (constraint violation)", name.c_str());
+        check(label, per_failed);
+        return;
+    }
+
     {
         char label[256];
         std::snprintf(label, sizeof(label), "%s  UPER encode non-empty", name.c_str());
-        check(label, !per.empty());
+        check(label, !per.empty() && !per_failed);
     }
-    if (per.empty()) return;
+    if (per.empty() || per_failed) return;
 
     PDU val2{};
     bool per_ok = per_decode(per, val2);
@@ -155,9 +158,9 @@ int main(int argc, char** argv) {
     for (auto& f : files)
         process(f);
 
-    printf("\n  Processed %zu files, %d skipped, %d failed.\n",
-           files.size(), skipped, failures);
+    printf("\n  Processed %zu files (%zu -P constraint checks), %d failed.\n",
+           files.size(), KNOWN_P.size(), failures);
     if (failures) return 1;
-    printf("  All active tests passed.\n");
+    printf("  All tests passed.\n");
     return 0;
 }

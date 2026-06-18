@@ -29,6 +29,7 @@ class PerEncodeStream : public IEncodeStream {
     std::vector<uint8_t>& buf_;
     uint8_t current_{0};
     int     bits_{0};
+    bool    encode_failed_{false};
 
     void put_bits_impl(uint64_t value, int n) {
         for (int i = n - 1; i >= 0; --i) {
@@ -74,6 +75,15 @@ public:
     void flush() {
         if (bits_ > 0 || buf_.empty()) { buf_.push_back(current_); current_ = 0; bits_ = 0; }
     }
+
+    /// @brief Signal a constraint violation during encode; subsequent put_bits calls are no-ops.
+    void set_encode_failed(const char* reason) {
+        encode_failed_ = true;
+        if (debug_flags() & DBG_PER)
+            std::fprintf(stderr, "[PER-ENC] constraint violation: %s\n", reason);
+    }
+    /// @return True if any constraint violation was signalled during this encode.
+    bool encode_failed() const { return encode_failed_; }
 
     std::vector<uint8_t>& buf() { return buf_; }
 };
