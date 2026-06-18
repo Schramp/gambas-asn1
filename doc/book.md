@@ -1064,6 +1064,9 @@ zero signal kills, zero assertion failures.
 The asn1c BER vector suite for schema 62 (33 vectors): 27 pass, 5 intentionally skipped
 (malformed nested BER inside ANY — stored verbatim, consistent with standard behaviour).
 
+The asn1c XER→UPER→XER vector suite for schema 119 (25 vectors): 11 pass, 14 skipped
+(PER-incompatible inputs — alphabet/size constraint violations expected to fail encode).
+
 ### UPER (PER) Codec
 
 UPER encode and decode are complete for all types present in 3GPP TS 25.331 (RRC):
@@ -1193,7 +1196,7 @@ ctest --test-dir build/tests --output-on-failure
 python3 asn1cpp-validation-tools/compare_random.py --count 10 --seed 1 7 42 99
 ```
 
-440/440 xval and 40/40 ctest must pass.
+440/440 xval and 41/41 ctest must pass.
 
 ### Release Testing
 
