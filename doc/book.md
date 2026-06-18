@@ -1018,15 +1018,20 @@ functionally correct. Replacing it with `std::expected` is a future cleanup.
 
 ### PER Extension Points
 
-UPER extension handling (the `...` marker in ASN.1) is implemented for SEQUENCE preamble
-bitmaps and CHOICE index encoding. Extension member encoding (open-type wrapping per
-X.691 §12) is tracked in [Issue #13](https://github.com/Schramp/gambas-asn1/issues/13)
-and is not yet implemented. Schemas that populate extension members will currently encode
-only root members in PER.
+UPER extension handling is complete:
 
-The 3GPP RRC cross-validation passes because the generated test records do not exercise
-extension alternatives. This is a real gap for anyone using PER with extensible types
-in production.
+- SEQUENCE preamble bitmap and extension flag (X.691 §18.1).
+- Extension members: present-bitmap (normally-small number of extensions, then n bits),
+  each present member wrapped as an open-type (length-prefixed octet string, X.691 §12).
+- CHOICE root alternatives encoded by canonical-tag-order index in ⌈log₂(n)⌉ bits.
+  Extension alternatives use the normally-small-non-negative-number encoding (X.691 §22.6).
+- Unknown extension members from newer senders are skipped by consuming the open-type
+  length prefix. `PerDecodeStream::skipped_extensions()` reports the skip count.
+
+**Canonical ordering**: The generator (`Generator.cpp`) emits CHOICE alternative tables
+in canonical tag order (tag class ascending, then tag number ascending, separately for
+root and extension alternatives). The runtime uses the array index directly as the
+canonical index — no runtime sorting.
 
 ---
 
@@ -1075,16 +1080,19 @@ UPER encode and decode are complete for all types present in 3GPP TS 25.331 (RRC
 - DEFAULT suppression per X.691 §18.5
 - Constrained INTEGER encoding (bit-packed)
 - CONSTRAINED ENUMERATED encoding (index-packed)
-- CHOICE canonical-index dispatch
+- CHOICE canonical-index dispatch (generator emits alternatives in canonical tag order;
+  runtime uses array index directly)
 - SEQUENCE OF with SIZE constraints
 - Extension bitmap (root extension flag)
+- Extension member open-type wrapping (X.691 §12): encode present members, decode with
+  skip of unknown alternatives
 
 Cross-validation: **40,000/40,000** records (2,000 × 4 RRC types × 5 paths) against
 asn1c UPER.
 
-Extension members (open-type wrapping per X.691 §12) are fully implemented for both
-encode and decode. Unknown extension members from newer senders are skipped;
-`PerDecodeStream::skipped_extensions()` reports the skip count.
+The asn1c XER→UPER vector suite for schema 126 (21 vectors): 20 pass, 1 known-permissive
+(file 04-P: encoded with older 2-extension schema; our decoder accepts it via
+forward-compatible extension skipping, asn1c rejects it).
 
 ### XER Codec
 

@@ -596,6 +596,37 @@ add_test(NAME xer_vectors_119 COMMAND test_xer_vectors_119
     ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-119)
 set_tests_properties(xer_vectors_119 PROPERTIES TIMEOUT 30)
 
+# ---- asn1c PER vector suite: data-126 (126-per-extensions-OK.asn1) ----------
+# Mirrors asn1c check-126.-gen-UPER.c: XER decode → UPER encode → binary compare
+# → UPER decode → XER re-encode compare.
+# (none): binary must equal .out; XER round-trip must equal .in.
+# -C: binary may differ (schema-version delta); XER round-trip must equal .in.
+# -P: UPER decode of .out must fail; our own round-trip must succeed.
+# -X: binary must equal .out; XER round-trip must differ from .in.
+set(XER_VEC_126_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_vectors_126)
+add_custom_command(
+    OUTPUT  ${XER_VEC_126_GEN_DIR}/PDU.hpp    ${XER_VEC_126_GEN_DIR}/PDU.cpp
+            ${XER_VEC_126_GEN_DIR}/PDU_2.hpp  ${XER_VEC_126_GEN_DIR}/PDU_2.cpp
+            ${XER_VEC_126_GEN_DIR}/Singleton.hpp ${XER_VEC_126_GEN_DIR}/Singleton.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${XER_VEC_126_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/126-per-extensions-OK.asn1
+            -o ${XER_VEC_126_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/126-per-extensions-OK.asn1
+    COMMENT "Generating C++ from 126-per-extensions-OK.asn1"
+)
+add_executable(test_xer_vectors_126
+    seq/test_xer_vectors_126.cpp
+    ${XER_VEC_126_GEN_DIR}/PDU.cpp
+    ${XER_VEC_126_GEN_DIR}/PDU_2.cpp
+    ${XER_VEC_126_GEN_DIR}/Singleton.cpp
+)
+target_include_directories(test_xer_vectors_126 PRIVATE ${XER_VEC_126_GEN_DIR})
+target_link_libraries(test_xer_vectors_126 PRIVATE asn1cpp_runtime)
+add_test(NAME xer_vectors_126 COMMAND test_xer_vectors_126
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-126)
+set_tests_properties(xer_vectors_126 PROPERTIES TIMEOUT 30)
+
 # ---- asn1c XER vector suite: data-202 (202-XIOTCertificate-OK.asn1) --------
 # Single vector s1.xer: X.509-style certificate with BIT STRING in hex XER format.
 # Verifies XER decode, field values, and BER round-trip.
