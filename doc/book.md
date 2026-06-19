@@ -397,6 +397,24 @@ Unaligned PER (UPER) packs values at bit boundaries with no byte alignment. Alig
 The payoff is density: a typical 3GPP RRC message that takes 50 bytes in BER takes 5–10
 bytes in UPER.
 
+**PER encode-time constraint validation.** `PerEncodeStream` rejects values that violate
+string constraints at encode time: a `FROM` alphabet constraint means every character must
+come from the declared set; a fixed `SIZE` constraint means the string length must match
+exactly. Violations set an internal flag rather than throwing:
+
+```cpp
+std::vector<uint8_t> buf;
+asn1::PerEncodeStream s{buf};
+asn1::PerCodec::instance().encode(s, MyType::asn_DEF, &val);
+if (s.encode_failed()) {
+    // value violates a PER string constraint (FROM alphabet or SIZE)
+}
+```
+
+`encode_failed()` returns true if any member violated its constraint during encoding.
+BER and XER encoders do not enforce PER constraints; they accept any structurally valid
+value.
+
 ### XML Encoding Rules (XER)
 
 *(X.693 — XER encoding rules)*
