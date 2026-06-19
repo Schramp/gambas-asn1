@@ -556,6 +556,10 @@ public:
         if (pc.flags & Constraints::EXTENSIBLE) {
             bool in_root;
             if (pc.flags & Constraints::SIZE_CONSTRAINED) {
+                // TODO: also check alphabet membership here when has_alpha is true.
+                // A SIZE-and-FROM extensible type with valid size but out-of-alphabet chars
+                // is incorrectly classified as in_root; the per-char alphabet validation
+                // below is skipped (EXTENSIBLE is set). No data-119 vector exercises this.
                 in_root = (char_count >= static_cast<std::size_t>(pc.size_lower) &&
                            char_count <= static_cast<std::size_t>(pc.size_upper));
             } else if (has_alpha) {
@@ -588,6 +592,8 @@ public:
             }
         }
         // Validate SIZE constraint (non-extensible or extensible root).
+        // Only fixed-size (lower==upper) violations are caught here; range violations
+        // (lower<upper, e.g. SIZE(1..32)) are deferred — see issue #114.
         if ((pc.flags & Constraints::SIZE_CONSTRAINED) &&
             !(pc.flags & Constraints::EXTENSIBLE) &&
             pc.size_lower == pc.size_upper &&

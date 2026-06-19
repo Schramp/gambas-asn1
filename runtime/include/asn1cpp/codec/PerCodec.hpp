@@ -76,7 +76,9 @@ public:
         if (bits_ > 0 || buf_.empty()) { buf_.push_back(current_); current_ = 0; bits_ = 0; }
     }
 
-    /// @brief Signal a constraint violation during encode; subsequent put_bits calls are no-ops.
+    /// @brief Signal a constraint violation during encode.
+    /// The caller must return immediately after calling this; bits already in the buffer
+    /// are discarded by the call site on encode failure.
     void set_encode_failed(const char* reason) {
         encode_failed_ = true;
         if (debug_flags() & DBG_PER)
