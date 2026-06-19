@@ -593,12 +593,11 @@ public:
         }
         // Validate SIZE constraint (non-extensible or extensible root).
         // Only fixed-size (lower==upper) violations are caught here; range violations
-        // (lower<upper, e.g. SIZE(1..32)) are deferred — see issue #114.
         if ((pc.flags & Constraints::SIZE_CONSTRAINED) &&
             !(pc.flags & Constraints::EXTENSIBLE) &&
-            pc.size_lower == pc.size_upper &&
-            char_count != static_cast<std::size_t>(pc.size_lower)) {
-            stream.set_encode_failed("string length violates fixed SIZE constraint");
+            (char_count < static_cast<std::size_t>(pc.size_lower) ||
+             char_count > static_cast<std::size_t>(pc.size_upper))) {
+            stream.set_encode_failed("string length violates SIZE constraint");
             return;
         }
         // Validate FROM alphabet constraint (emitted by codegen into the per-member descriptor).

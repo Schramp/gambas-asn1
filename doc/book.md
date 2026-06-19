@@ -399,8 +399,9 @@ bytes in UPER.
 
 **PER encode-time constraint validation.** `PerEncodeStream` rejects values that violate
 string constraints at encode time: a `FROM` alphabet constraint means every character must
-come from the declared set; a fixed `SIZE` constraint means the string length must match
-exactly. Violations set an internal flag rather than throwing:
+come from the declared set; a `SIZE(lower..upper)` constraint means the string length must
+fall within the declared range (including fixed-size `SIZE(n)` where lower equals upper).
+Violations set an internal flag rather than throwing:
 
 ```cpp
 std::vector<uint8_t> buf;
