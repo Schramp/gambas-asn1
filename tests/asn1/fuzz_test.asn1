@@ -1,14 +1,16 @@
 -- Schema for the in-tree BER fuzz test (tests/seq/test_fuzz_ber.cpp).
 -- Covers SEQUENCE / SEQUENCE OF / CHOICE OPTIONAL,
 -- INTEGER + OCTET/BIT STRING + IA5/Printable string with SIZE constraints,
--- ENUMERATED (non-extensible + extensible, exercises both fill_enum paths).
+-- ENUMERATED (non-extensible + extensible, exercises both fill_enum paths),
+-- UInteger (semi-constrained INTEGER), REAL, NULL, OID, UTCTime, GeneralizedTime.
 FuzzTest DEFINITIONS ::= BEGIN
 
   Inner ::= SEQUENCE {
-    n      INTEGER (0..1000),
-    s      OCTET STRING (SIZE(0..32)),
-    txt    IA5String (SIZE(0..16)) OPTIONAL,
-    flag   BOOLEAN
+    n       INTEGER (0..1000),
+    counter INTEGER (0..MAX),    -- semi-constrained: exercises fill_primitive UInteger path
+    s       OCTET STRING (SIZE(0..32)),
+    txt     IA5String (SIZE(0..16)) OPTIONAL,
+    flag    BOOLEAN
   }
 
   Pick ::= CHOICE {
@@ -25,12 +27,18 @@ FuzzTest DEFINITIONS ::= BEGIN
   Mode ::= ENUMERATED { off, on, ... }
 
   Bag ::= SEQUENCE {
-    label  PrintableString (SIZE(1..16)),
-    items  SEQUENCE (SIZE(0..6)) OF Inner,
-    pick   Pick OPTIONAL,
-    flags  BIT STRING (SIZE(8)),
-    color  [4] IMPLICIT Color OPTIONAL,
-    mode   [5] IMPLICIT Mode  OPTIONAL
+    label    PrintableString (SIZE(1..16)),
+    items    SEQUENCE (SIZE(0..6)) OF Inner,
+    pick     Pick OPTIONAL,
+    flags    BIT STRING (SIZE(8)),
+    color    [4] IMPLICIT Color              OPTIONAL,
+    mode     [5] IMPLICIT Mode               OPTIONAL,
+    -- context tags [6..10]: one per primitive type lacking fuzz coverage
+    r        [6] IMPLICIT REAL               OPTIONAL,
+    nothing  [7] IMPLICIT NULL               OPTIONAL,
+    oid      [8] IMPLICIT OBJECT IDENTIFIER  OPTIONAL,
+    utc      [9] IMPLICIT UTCTime            OPTIONAL,
+    gtime   [10] IMPLICIT GeneralizedTime    OPTIONAL
   }
 
 END
