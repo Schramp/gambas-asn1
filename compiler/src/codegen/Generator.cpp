@@ -789,8 +789,48 @@ static void walk_type_constraints(const ast::TypeDef& def, F&& f) {
         if (cptr) walk_constraints(*cptr, f);
 }
 
-// Forward decl: defined as Generator member below; needed by emit_member_type_descriptor.
-// (Member function rather than static free fn so it can resolve named value references.)
+// Forward decls: defined later in this file; needed by emit_member_type_descriptor.
+// (Generator member fns can resolve named value references; extract_from_alphabet is free.)
+static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def);
+
+/// @brief Returns ceil(log2(n)) clamped to [1,∞) — bits per character for an n-symbol alphabet.
+static int compute_alphabet_bits(int n) {
+    int bits = 0;
+    for (int r = n - 1; r > 0; r >>= 1) ++bits;
+    return (bits == 0) ? 1 : bits;
+}
+
+/// @brief Emit a C++ Constraints aggregate-initializer for a string or octet-string member.
+/// @param flags         Combined Constraints::* flags (CONSTRAINED, SIZE_CONSTRAINED, …).
+/// @param sc_range_bits ceil(log2(size_upper - size_lower + 1)); 0 for fixed SIZE.
+/// @param sc_lower      SIZE lower bound.
+/// @param sc_upper      SIZE upper bound.
+/// @param alphabet      Sorted FROM-alphabet character values; empty = no alphabet constraint.
+/// @return Initializer string, e.g. `"{ .flags=8, .size_lower=6, .size_upper=6, … }"`.
+/// @see X.691 §26.5 (character string PER encoding); X.691 §12 (size constraints).
+static std::string make_string_constraints_init(
+    int flags, int sc_range_bits, int64_t sc_lower, int64_t sc_upper,
+    const std::vector<uint8_t>& alphabet)
+{
+    int val_lb      = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
+    int val_ub      = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
+    int alpha_bits  = alphabet.empty() ? 0
+        : compute_alphabet_bits(static_cast<int>(alphabet.size()));
+    std::string s = std::format(
+        "{{ .flags={}, .lower_bound={}, .upper_bound={}, "
+        ".size_range_bits={}, .size_lower={}, .size_upper={}, .alphabet_bits={}",
+        flags, val_lb, val_ub, sc_range_bits, sc_lower, sc_upper, alpha_bits);
+    if (!alphabet.empty()) {
+        s += ", .alphabet=std::vector<uint8_t>{";
+        for (int i = 0; i < static_cast<int>(alphabet.size()); ++i) {
+            if (i) s += ", ";
+            s += std::to_string(static_cast<int>(alphabet[i]));
+        }
+        s += "}";
+    }
+    s += " }";
+    return s;
+}
 
 struct SizeConstraintInfo {
     int     flags      = 0;   // SIZE_CONSTRAINED | EXTENSIBLE (0 when no/semi constraint)
@@ -959,10 +999,13 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
 // Inline-constrained member TypeDescriptor helpers
 // ---------------------------------------------------------------------------
 
-// If `m` is an inline builtin (INTEGER with value range, or a SIZE-constrained
-// string/OctetString/BitString) emit a static per-member TypeDescriptor so
-// RandomFiller's validate() and PerCodec see the constraint. Otherwise return
-// type_descriptor_ref_for(m).
+/// @brief Emit a static per-member TypeDescriptor when the member carries inline constraints.
+/// @param m             Member type definition (may carry value-range, SIZE, or FROM constraints).
+/// @param parent_cname  C++ name of the enclosing SEQUENCE/CHOICE type.
+/// @param mname         Sanitised C++ member name used as the descriptor variable suffix.
+/// @param os            Output stream for the generated `.cpp` file.
+/// @return A C++ expression referencing the descriptor (e.g. `"&asn_TYP_Foo_bar"`).
+/// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
 std::string Generator::emit_member_type_descriptor(
     const ast::TypeDef& m, const std::string& parent_cname,
     const std::string& mname, std::ostream& os)
@@ -1050,14 +1093,33 @@ std::string Generator::emit_member_type_descriptor(
     };
     auto utag = sizeable_universal_tag(*bt);
     if (utag) {
-        auto sr = extract_size_range(m);
-        if (sr || needs_xer) {
-            std::string pc = "{}";
+        auto sr       = extract_size_range(m);
+        auto alphabet = extract_from_alphabet(m);
+        // UTF8String is not a known-multiplier character string (X.691 §26.6):
+        // FROM constraints on it are not enforced in PER encoding — drop alphabet.
+        if (*bt == BT::Utf8String) alphabet.clear();
+        if (sr || !alphabet.empty() || needs_xer) {
+            // Compute SIZE constraint fields.
+            int     sc_flags = 0, sc_range_bits = 0;
+            int64_t sc_lower = 0, sc_upper = 0;
             if (sr) {
                 auto sc = compute_size_constraint(sr, is_constraint_extensible(m));
-                pc = std::format("{{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }}",
-                    sc.flags, sc.range_bits, sc.lower, sc.upper);
+                sc_flags = sc.flags; sc_range_bits = sc.range_bits;
+                sc_lower = sc.lower; sc_upper = sc.upper;
             }
+            bool ext = is_constraint_extensible(m);
+            // FROM("A".."Z",...) has the extension marker inside the FromConstraint;
+            // is_constraint_extensible only checks the outer Constraint::extensible.
+            if (!ext && !alphabet.empty()) {
+                walk_type_constraints(m, [&](const ast::ConstraintBody& body) {
+                    auto* fc = std::get_if<ast::FromConstraint>(&body);
+                    if (fc && fc->inner && fc->inner->extensible) ext = true;
+                });
+            }
+            int  all_flags = sc_flags | (ext ? asn1::Constraints::EXTENSIBLE : 0);
+            std::string pc = (!sr && alphabet.empty())
+                ? "{}"
+                : make_string_constraints_init(all_flags, sc_range_bits, sc_lower, sc_upper, alphabet);
             // Use the matching asn_DEF_*'s public name as the XER tag name —
             // BerCodec / XerCodec consult it for primitive type names.
             const char* tn = nullptr;
@@ -2003,26 +2065,51 @@ std::optional<std::pair<int64_t,int64_t>> Generator::extract_size_range(const as
     return result;
 }
 
-// Extract sorted char values from a FROM alphabet constraint.
-// Returns empty vector if no FROM constraint or if chars can't be resolved.
+/// @brief Extract the sorted character values of a FROM alphabet constraint.
+/// @param def  Type definition to inspect; may carry zero or more FROM sub-constraints.
+/// @return Sorted `uint8_t` vector of allowed character codes, or empty if no FROM constraint
+///         is present or its values cannot be resolved to single-byte literals.
+/// @see X.680 §51.6 (CharacterStringList); X.691 §26.5.2 (known-multiplier string PER encoding).
 static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
     std::vector<uint8_t> chars;
-    auto collect = [&](const ast::ConstraintBody& body) {
+
+    // Collect a single char value from a leaf ConstraintBody.
+    auto collect_single = [&](const ast::ConstraintBody& body) {
         if (auto* v = std::get_if<ast::Value>(&body))
             if (auto* s = std::get_if<std::string>(v))
                 if (s->size() == 1)
                     chars.push_back(static_cast<uint8_t>((*s)[0]));
     };
 
+    // Collect chars from a leaf: single value or a "lo".."hi" range.
+    auto collect_leaf = [&](const ast::ConstraintBody& body) {
+        if (auto* r = std::get_if<ast::ValueRange>(&body)) {
+            // Expand "A".."Z" style ranges (single-byte string endpoints only).
+            if (r->lower.kind == ast::RangeEndpoint::Kind::Value &&
+                r->upper.kind == ast::RangeEndpoint::Kind::Value) {
+                const auto* lo_s = std::get_if<std::string>(&r->lower.value);
+                const auto* hi_s = std::get_if<std::string>(&r->upper.value);
+                if (lo_s && hi_s && lo_s->size() == 1 && hi_s->size() == 1) {
+                    // Use int to avoid uint8_t wrap when hi == 0xFF.
+                    int lo = static_cast<unsigned char>((*lo_s)[0]);
+                    int hi = static_cast<unsigned char>((*hi_s)[0]);
+                    for (int c = lo; c <= hi; ++c) chars.push_back(static_cast<uint8_t>(c));
+                }
+            }
+        } else {
+            collect_single(body);
+        }
+    };
+
     // Grammar builds left-recursive Union pairs: A|B|C → Union(Union(A,B),C).
-    // Recurse into nested UnionConstraints to reach all leaf Values.
+    // Recurse into nested UnionConstraints to reach all leaf Values and ValueRanges.
     std::function<void(const ast::ConstraintBody&)> recurse_union;
     recurse_union = [&](const ast::ConstraintBody& b) {
         if (auto* uc = std::get_if<ast::UnionConstraint>(&b)) {
             for (const auto& op : uc->operands)
                 if (op) recurse_union(op->body);
         } else {
-            collect(b);
+            collect_leaf(b);
         }
     };
 
@@ -2036,6 +2123,10 @@ static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
     return chars;
 }
 
+/// @brief Emit the `.cpp` body for a top-level builtin string/octet/bit-string type alias.
+/// @param def  ASN.1 type assignment that resolves to a sizeable primitive (e.g. `MyStr ::= IA5String (SIZE(1..32) FROM("A".."Z"))`).
+/// @param os   Output stream for the generated `.cpp` file.
+/// @see X.691 §26.5 (character string PER constraints); X.690 §8.7 (OCTET STRING BER encoding).
 void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
@@ -2109,34 +2200,11 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
     os << "    nullptr, nullptr, nullptr, nullptr,\n";
 
     if (needs_per) {
-        auto sc = compute_size_constraint(size_range);
-
-        // FROM alphabet metadata
-        int alphabet_bits = 0;
-        if (!alphabet.empty()) {
-            int alphabet_size = static_cast<int>(alphabet.size());
-            for (int r = alphabet_size - 1; r > 0; r >>= 1) ++alphabet_bits;
-            if (alphabet_bits == 0) alphabet_bits = 1;
-        }
-
-        int flags = asn1::Constraints::CONSTRAINED | sc.flags
-                  | (is_constraint_extensible(def) ? asn1::Constraints::EXTENSIBLE : 0);
-        int val_lb = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
-        int val_ub = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
-
-        os << std::format(
-            "    {{ .flags={}, .lower_bound={}, .upper_bound={}, "
-            ".size_range_bits={}, .size_lower={}, .size_upper={}, .alphabet_bits={}",
-            flags, val_lb, val_ub, sc.range_bits, sc.lower, sc.upper, alphabet_bits);
-        if (!alphabet.empty()) {
-            os << ", .alphabet=std::vector<uint8_t>{";
-            for (int i = 0; i < static_cast<int>(alphabet.size()); ++i) {
-                if (i) os << ", ";
-                os << static_cast<int>(alphabet[i]);
-            }
-            os << "}";
-        }
-        os << " } /* constraints */,\n";
+        auto sc    = compute_size_constraint(size_range);
+        int  flags = asn1::Constraints::CONSTRAINED | sc.flags
+                   | (is_constraint_extensible(def) ? asn1::Constraints::EXTENSIBLE : 0);
+        os << "    " << make_string_constraints_init(flags, sc.range_bits, sc.lower, sc.upper, alphabet)
+           << " /* constraints */,\n";
     } else {
         os << "    {} /* constraints — unconstrained */,\n";
     }

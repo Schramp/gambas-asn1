@@ -532,42 +532,140 @@ public:
     }
 };
 
+/// PER handler for all known-multiplier character strings (X.691 §26).
+/// Handles IA5String, VisibleString, NumericString, PrintableString, BMPString,
+/// UniversalString, and others. Validates SIZE and FROM alphabet constraints on encode;
+/// rejects violations via `PerEncodeStream::set_encode_failed`.
 class StringPerHandler final : public IPerTypeHandler {
 public:
+    /// @brief Encode a known-multiplier character string to UPER bit stream.
+    /// @param stream  Output bit stream; `encode_failed()` set on constraint violation.
+    /// @param def     TypeDescriptor carrying SIZE/alphabet constraints (from generated table).
+    /// @param src     `AsnStringBase*` holding the string value to encode.
+    /// @see X.691 §26.5 (known-multiplier character string encoding); §12 (size constraints).
     void encode(const PerCodec&, PerEncodeStream& stream,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const std::string& str = static_cast<const AsnStringBase*>(src)->str();
         const Constraints& pc = def.constraints;
         auto [bits, bpc] = string_params(def.tag.number);
         bool has_alpha = pc.alphabet_bits > 0 && !pc.alphabet.empty();
-        std::size_t char_count = has_alpha ? str.size() : str.size() / bpc;
+        // char_count is always code-point count (str.size() / bpc).
+        // For bpc=1 this equals str.size(); for bpc=2 (BMPString) and bpc=4 (UniversalString)
+        // it is the number of wide characters, not the byte length.
+        std::size_t char_count = str.size() / static_cast<std::size_t>(bpc);
         if (pc.flags & Constraints::EXTENSIBLE) {
             bool in_root;
             if (pc.flags & Constraints::SIZE_CONSTRAINED) {
+                // TODO: also check alphabet membership here when has_alpha is true.
+                // A SIZE-and-FROM extensible type with valid size but out-of-alphabet chars
+                // is incorrectly classified as in_root; the per-char alphabet validation
+                // below is skipped (EXTENSIBLE is set). No data-119 vector exercises this.
                 in_root = (char_count >= static_cast<std::size_t>(pc.size_lower) &&
                            char_count <= static_cast<std::size_t>(pc.size_upper));
             } else if (has_alpha) {
+                // For wide-char types (bpc>1), iterate code points: all high bytes must be
+                // 0x00 (Basic Latin) AND low byte must be in the FROM alphabet.
                 in_root = true;
-                for (unsigned char c : str)
-                    if (!std::binary_search(pc.alphabet.begin(), pc.alphabet.end(), c))
-                        { in_root = false; break; }
+                if (bpc > 1) {
+                    for (std::size_t i = 0; i + static_cast<std::size_t>(bpc) <= str.size(); i += bpc) {
+                        for (int b = 0; b < bpc - 1; ++b)
+                            if (static_cast<unsigned char>(str[i + b]) != 0) { in_root = false; break; }
+                        if (!in_root) break;
+                        unsigned char lo = static_cast<unsigned char>(str[i + bpc - 1]);
+                        if (!std::binary_search(pc.alphabet.begin(), pc.alphabet.end(), lo))
+                            { in_root = false; break; }
+                    }
+                } else {
+                    for (unsigned char c : str)
+                        if (!std::binary_search(pc.alphabet.begin(), pc.alphabet.end(), c))
+                            { in_root = false; break; }
+                }
             } else {
                 in_root = true;
             }
             stream.put_bits(in_root ? 0 : 1, 1);
             if (!in_root) {
-                per_detail::put_length(stream, char_count);
+                // Out-of-root: encode as open type (X.691 §18.8) — byte-length prefixed raw bytes.
+                per_detail::put_length(stream, str.size());
                 for (unsigned char c : str) stream.put_bits(c, 8);
                 return;
             }
         }
+        // Validate SIZE constraint (non-extensible or extensible root).
+        // Only fixed-size (lower==upper) violations are caught here; range violations
+        // (lower<upper, e.g. SIZE(1..32)) are deferred — see issue #114.
+        if ((pc.flags & Constraints::SIZE_CONSTRAINED) &&
+            !(pc.flags & Constraints::EXTENSIBLE) &&
+            pc.size_lower == pc.size_upper &&
+            char_count != static_cast<std::size_t>(pc.size_lower)) {
+            stream.set_encode_failed("string length violates fixed SIZE constraint");
+            return;
+        }
+        // Validate FROM alphabet constraint (emitted by codegen into the per-member descriptor).
+        // Wide-char types (BMPString bpc=2, UniversalString bpc=4): alphabet entries are
+        // single-byte codepoint low bytes; high bytes must be 0x00 (Basic Latin plane).
+        if (has_alpha && !(pc.flags & Constraints::EXTENSIBLE)) {
+            if (bpc > 1) {
+                // Check bpc-byte code points: all leading bytes must be 0x00, low byte in alphabet.
+                for (std::size_t i = 0; i + static_cast<std::size_t>(bpc) <= str.size(); i += bpc) {
+                    for (int b = 0; b < bpc - 1; ++b)
+                        if (static_cast<unsigned char>(str[i + b]) != 0) {
+                            stream.set_encode_failed("codepoint outside Basic Latin in FROM alphabet");
+                            return;
+                        }
+                    unsigned char lo = static_cast<unsigned char>(str[i + bpc - 1]);
+                    if (!std::binary_search(pc.alphabet.begin(), pc.alphabet.end(), lo)) {
+                        stream.set_encode_failed("codepoint not in FROM alphabet");
+                        return;
+                    }
+                }
+            } else {
+                for (unsigned char c : str) {
+                    if (!std::binary_search(pc.alphabet.begin(), pc.alphabet.end(), c)) {
+                        stream.set_encode_failed("character not in FROM alphabet");
+                        return;
+                    }
+                }
+            }
+        }
+        // Validate type-intrinsic character sets (no FROM constraint needed).
+        // X.691 §26.5.3: NumericString canonical set is space + '0'..'9'.
+        if (!has_alpha && !(pc.flags & Constraints::EXTENSIBLE)) {
+            if (def.tag.number == UniversalTag::NumericString) {
+                for (unsigned char c : str) {
+                    if (c != ' ' && (c < '0' || c > '9')) {
+                        stream.set_encode_failed("character not in NumericString natural alphabet");
+                        return;
+                    }
+                }
+            } else if (def.tag.number == UniversalTag::Ia5String) {
+                // X.691 §26.5.6: IA5String canonical set is 0x00..0x7F.
+                for (unsigned char c : str) {
+                    if (c > 0x7F) {
+                        stream.set_encode_failed("character not in IA5String natural alphabet");
+                        return;
+                    }
+                }
+            }
+        }
         encode_size_field(stream, def, char_count);
         if (has_alpha) {
-            for (unsigned char c : str) {
-                auto it = std::lower_bound(pc.alphabet.begin(), pc.alphabet.end(), c);
-                int code = (it != pc.alphabet.end() && *it == c)
-                    ? static_cast<int>(it - pc.alphabet.begin()) : 0;
-                stream.put_bits(static_cast<uint64_t>(code), pc.alphabet_bits);
+            if (bpc > 1) {
+                // Encode each wide code point as its alphabet index.
+                for (std::size_t i = 0; i + static_cast<std::size_t>(bpc) <= str.size(); i += bpc) {
+                    unsigned char lo = static_cast<unsigned char>(str[i + bpc - 1]);
+                    auto it = std::lower_bound(pc.alphabet.begin(), pc.alphabet.end(), lo);
+                    int code = (it != pc.alphabet.end() && *it == lo)
+                        ? static_cast<int>(it - pc.alphabet.begin()) : 0;
+                    stream.put_bits(static_cast<uint64_t>(code), pc.alphabet_bits);
+                }
+            } else {
+                for (unsigned char c : str) {
+                    auto it = std::lower_bound(pc.alphabet.begin(), pc.alphabet.end(), c);
+                    int code = (it != pc.alphabet.end() && *it == c)
+                        ? static_cast<int>(it - pc.alphabet.begin()) : 0;
+                    stream.put_bits(static_cast<uint64_t>(code), pc.alphabet_bits);
+                }
             }
         } else if (bpc > 1) {
             for (unsigned char c : str) stream.put_bits(c, 8);
@@ -579,6 +677,11 @@ public:
             for (char c : str) stream.put_bits(static_cast<uint8_t>(c), 8);
         }
     }
+    /// @brief Decode a known-multiplier character string from UPER bit stream.
+    /// @param stream  Input bit stream.
+    /// @param def     TypeDescriptor carrying SIZE/alphabet constraints.
+    /// @param dest    `AsnStringBase*` to receive the decoded string.
+    /// @see X.691 §26.5.
     DecodeResult decode(const PerCodec&, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         const Constraints& pc = def.constraints;
@@ -605,14 +708,15 @@ public:
         auto [bits, bpc] = string_params(def.tag.number);
         std::string result;
         if (pc.alphabet_bits > 0 && !pc.alphabet.empty()) {
-            result.reserve(char_count);
+            // Alphabet-indexed decode. For wide-char types (bpc>1), each code point is
+            // written as (bpc-1) zero high bytes + one low byte from the alphabet table.
+            result.reserve(char_count * static_cast<std::size_t>(bpc));
             for (std::size_t i = 0; i < char_count; ++i) {
                 auto v = stream.get_bits(pc.alphabet_bits);
                 if (!v) return decode_err(v.error());
-                if (*v < pc.alphabet.size())
-                    result.push_back(static_cast<char>(pc.alphabet[*v]));
-                else
-                    result.push_back('?');
+                uint8_t lo = (*v < pc.alphabet.size()) ? pc.alphabet[*v] : '?';
+                for (int b = 0; b < bpc - 1; ++b) result.push_back('\0');
+                result.push_back(static_cast<char>(lo));
             }
         } else {
             std::size_t byte_count = char_count * bpc;
