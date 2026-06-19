@@ -2090,9 +2090,10 @@ static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
                 const auto* lo_s = std::get_if<std::string>(&r->lower.value);
                 const auto* hi_s = std::get_if<std::string>(&r->upper.value);
                 if (lo_s && hi_s && lo_s->size() == 1 && hi_s->size() == 1) {
-                    uint8_t lo = static_cast<uint8_t>((*lo_s)[0]);
-                    uint8_t hi = static_cast<uint8_t>((*hi_s)[0]);
-                    for (uint8_t c = lo; c <= hi; ++c) chars.push_back(c);
+                    // Use int to avoid uint8_t wrap when hi == 0xFF.
+                    int lo = static_cast<unsigned char>((*lo_s)[0]);
+                    int hi = static_cast<unsigned char>((*hi_s)[0]);
+                    for (int c = lo; c <= hi; ++c) chars.push_back(static_cast<uint8_t>(c));
                 }
             }
         } else {
