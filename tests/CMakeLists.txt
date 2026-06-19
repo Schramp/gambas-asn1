@@ -752,7 +752,7 @@ set_tests_properties(ns_recursive_seqof PROPERTIES TIMEOUT 30)
 # Wire-level corruption sweep using BerCorruptor against the asn1cpp BER
 # decoder. Self-contained — no asn1c dependency, no etsitools/ binaries.
 set(FUZZ_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_fuzz_test)
-set(FUZZ_TYPES Inner Pick Bag BagItems)
+set(FUZZ_TYPES Inner Pick Color Mode Bag BagItems)
 set(_fuzz_outputs)
 foreach(t IN LISTS FUZZ_TYPES)
     list(APPEND _fuzz_outputs

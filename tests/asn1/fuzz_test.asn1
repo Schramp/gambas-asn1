@@ -1,6 +1,7 @@
 -- Schema for the in-tree BER fuzz test (tests/seq/test_fuzz_ber.cpp).
 -- Covers SEQUENCE / SEQUENCE OF / CHOICE OPTIONAL,
--- INTEGER + OCTET/BIT STRING + IA5/Printable string with SIZE constraints.
+-- INTEGER + OCTET/BIT STRING + IA5/Printable string with SIZE constraints,
+-- ENUMERATED (non-extensible + extensible, exercises both fill_enum paths).
 FuzzTest DEFINITIONS ::= BEGIN
 
   Inner ::= SEQUENCE {
@@ -17,11 +18,19 @@ FuzzTest DEFINITIONS ::= BEGIN
     d   [3] PrintableString (SIZE(1..12))
   }
 
+  -- Non-extensible: fill_enum uses entries[idx].value path (per_value_order = null).
+  Color ::= ENUMERATED { red, green, blue }
+
+  -- Extensible: fill_enum uses per_value_order[idx] path (root_count = 2).
+  Mode ::= ENUMERATED { off, on, ... }
+
   Bag ::= SEQUENCE {
     label  PrintableString (SIZE(1..16)),
     items  SEQUENCE (SIZE(0..6)) OF Inner,
     pick   Pick OPTIONAL,
-    flags  BIT STRING (SIZE(8))
+    flags  BIT STRING (SIZE(8)),
+    color  [4] IMPLICIT Color OPTIONAL,
+    mode   [5] IMPLICIT Mode  OPTIONAL
   }
 
 END
