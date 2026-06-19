@@ -24,11 +24,17 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           track_progress: true
+          allowed_tools: "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment,Read,Glob,Grep,LS"
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
-            /review-pr
-          claude_args: >-
-            --allowedTools
-            "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read"
+            Review this pull request. Steps:
+            1. Run `gh pr diff ${{ github.event.pull_request.number }}` to get the diff.
+            2. Run `gh pr view ${{ github.event.pull_request.number }}` to get the PR description.
+            3. Read any changed source files relevant to understanding the diff.
+            4. Post your review via `gh pr comment ${{ github.event.pull_request.number }} --body "..."`.
+
+            Focus on: correctness bugs, missing edge cases, API/ABI breaks, missing tests, doc gaps.
+            Skip style nits unless they affect correctness.
+            Be concise — one line per finding: file:line problem. fix.
