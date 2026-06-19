@@ -1,0 +1,9 @@
+-- SE: two OPTIONAL members with the same universal tag in a SEQUENCE.
+-- Both asn1c and asn1cpp must reject this (ambiguous BER decoding).
+-- Fix: add [N] IMPLICIT context tags or AUTOMATIC TAGS on the module.
+AmbigTest DEFINITIONS ::= BEGIN
+    Broken ::= SEQUENCE {
+        a  INTEGER OPTIONAL,
+        b  INTEGER OPTIONAL
+    }
+END
