@@ -809,6 +809,35 @@ target_link_libraries(test_ber_gaps PRIVATE asn1cpp_runtime)
 add_test(NAME ber_gaps COMMAND test_ber_gaps)
 set_tests_properties(ber_gaps PROPERTIES TIMEOUT 30)
 
+# test_per_size_range — UPER SIZE range constraint rejection (issue #114)
+set(PER_SIZE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_per_size_range)
+set(PER_SIZE_TYPES HasFixed HasRange14 HasRange8b HasRange1b HasFromSize
+                   MyFixed3 MyRange14 MyRange0_180 MyRange180_181 MyFromSize)
+set(_ps_outputs)
+foreach(t IN LISTS PER_SIZE_TYPES)
+    list(APPEND _ps_outputs ${PER_SIZE_GEN_DIR}/${t}.hpp ${PER_SIZE_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_ps_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PER_SIZE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/size_string_test.asn1
+                                   -o ${PER_SIZE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/size_string_test.asn1
+    COMMENT "Generating C++ from size_string_test.asn1"
+)
+set(_ps_cpps)
+foreach(t IN LISTS PER_SIZE_TYPES)
+    list(APPEND _ps_cpps ${PER_SIZE_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_per_size_range
+    seq/test_per_size_range.cpp
+    ${_ps_cpps}
+)
+target_include_directories(test_per_size_range PRIVATE ${PER_SIZE_GEN_DIR})
+target_link_libraries(test_per_size_range PRIVATE asn1cpp_runtime)
+add_test(NAME per_size_range COMMAND test_per_size_range)
+set_tests_properties(per_size_range PROPERTIES TIMEOUT 30)
+
 # test_set — SET and SET OF BER/XER round-trip (issue #23)
 set(SET_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_set_test)
 set(SET_TYPES Point Config IntSet Pair PairSet ExtPoint)
