@@ -820,12 +820,13 @@ static const char* builtin_def_name(ast::BuiltinType bt) {
 ///
 /// Produces a comma-prefixed fragment suitable for insertion into a Constraints initializer:
 /// `.alphabet_bits`, `.alphabet`/`.alphabet_size` (decode table), and `.encode_table`.
-/// When def_name is nullptr (unrestricted type), returns an empty string.
+/// Returns an empty string for types without a fixed alphabet (UTF8String, etc.).
 ///
-/// @param def_name  Value returned by builtin_def_name(), e.g. `"asn_DEF_NumericString"`.
+/// @param bt  Built-in type whose global `asn_DEF_*` descriptor carries the alphabet tables.
 /// @return Constraint fragment, e.g. `", .alphabet_bits=…, .alphabet=…, …"`, or `""`.
 /// @see X.691 §26.5 — known-multiplier character string PER canonical index.
-static std::string builtin_alphabet_refs(const char* def_name) {
+static std::string builtin_alphabet_refs(ast::BuiltinType bt) {
+    const char* def_name = builtin_def_name(bt);
     if (!def_name) return "";
     return std::format(
         ", .alphabet_bits=asn1::{0}.constraints.alphabet_bits"
@@ -885,16 +886,16 @@ static std::string make_string_constraints_init(
     int flags, int sc_range_bits, int64_t sc_lower, int64_t sc_upper,
     const std::vector<uint8_t>& alphabet,
     const std::string& alpha_prefix = "",
-    const char* builtin_def = nullptr)
+    std::optional<ast::BuiltinType> builtin_bt = std::nullopt)
 {
     int val_lb      = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
     int val_ub      = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
     int alpha_bits  = alphabet.empty() ? 0
         : compute_alphabet_bits(static_cast<int>(alphabet.size()));
-    // When builtin_def is set, alphabet_bits comes from builtin_alphabet_refs — omit here
+    // When builtin_bt is set, alphabet_bits comes from builtin_alphabet_refs — omit here
     // to avoid emitting the designator twice (which is a C++ error even when values match).
     std::string s;
-    if (builtin_def) {
+    if (builtin_bt) {
         s = std::format(
             "{{ .flags={}, .lower_bound={}, .upper_bound={}, "
             ".size_range_bits={}, .size_lower={}, .size_upper={}",
@@ -910,9 +911,9 @@ static std::string make_string_constraints_init(
         s += std::format(
             ", .alphabet={0}_alpha, .alphabet_size={1}u, .encode_table={0}_enc",
             alpha_prefix, alphabet.size());
-    } else if (builtin_def) {
+    } else if (builtin_bt) {
         // No FROM constraint but restricted type: inherit all alphabet fields from global descriptor.
-        s += builtin_alphabet_refs(builtin_def);
+        s += builtin_alphabet_refs(*builtin_bt);
     }
     s += " }";
     return s;
@@ -1208,11 +1209,11 @@ std::string Generator::emit_member_type_descriptor(
                 alpha_prefix = std::format("asn_FROM_{}_{}", parent_cname, mname);
                 emit_from_alphabet_arrays(os, alpha_prefix, alphabet);
             }
-            const char* bdef = alphabet.empty() ? builtin_def_name(*bt) : nullptr;
-            std::string pc = (!sr && alphabet.empty() && !bdef)
+            std::optional<ast::BuiltinType> bbt = alphabet.empty() ? std::optional{*bt} : std::nullopt;
+            std::string pc = (!sr && alphabet.empty() && (!bbt || !builtin_def_name(*bbt)))
                 ? "{}"
                 : make_string_constraints_init(all_flags, sc_range_bits, sc_lower, sc_upper,
-                                               alphabet, alpha_prefix, bdef);
+                                               alphabet, alpha_prefix, bbt);
             // Use the matching asn_DEF_*'s public name as the XER tag name —
             // BerCodec / XerCodec consult it for primitive type names.
             const char* tn = nullptr;
@@ -2304,9 +2305,9 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
         auto sc    = compute_size_constraint(size_range);
         int  flags = asn1::Constraints::CONSTRAINED | sc.flags
                    | (is_constraint_extensible(def) ? asn1::Constraints::EXTENSIBLE : 0);
-        const char* bdef = alphabet.empty() && bt2 ? builtin_def_name(*bt2) : nullptr;
+        std::optional<ast::BuiltinType> bbt = (alphabet.empty() && bt2) ? std::optional{*bt2} : std::nullopt;
         os << "    " << make_string_constraints_init(flags, sc.range_bits, sc.lower, sc.upper,
-                                                     alphabet, alpha_prefix, bdef)
+                                                     alphabet, alpha_prefix, bbt)
            << " /* constraints */,\n";
     } else {
         os << "    {} /* constraints — unconstrained */,\n";
