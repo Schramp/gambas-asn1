@@ -229,7 +229,7 @@ static bool fill_primitive_loose(Asn1Object* obj, const TypeDescriptor& def,
     case UniversalTag::BmpString:
     case UniversalTag::ObjectDescriptor: {
         bool size_constrained  = (c.flags & Constraints::SIZE_CONSTRAINED) != 0;
-        bool alpha_constrained = !c.alphabet.empty();
+        bool alpha_constrained = c.alphabet_bits > 0 && c.alphabet != nullptr;
         if (!size_constrained && !alpha_constrained) return false;
 
         int lo, hi;
@@ -586,10 +586,11 @@ void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
         //      types (Utf8 / BMP / General / Graphic / Videotex / ObjDesc).
         std::string_view alpha;
         std::string_view from_view;
-        if (!c.alphabet.empty()) {
+        if (c.alphabet_bits > 0 && c.alphabet != nullptr) {
+            // FROM constraint: use codegen-emitted alphabet (narrowed charset).
             from_view = std::string_view(
-                reinterpret_cast<const char*>(c.alphabet.data()),
-                c.alphabet.size());
+                reinterpret_cast<const char*>(c.alphabet),
+                c.alphabet_size);
             alpha = from_view;
         } else if (auto a = builtin_alphabet(def.tag.number); !a.empty()) {
             alpha = a;
