@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -23,18 +23,6 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          track_progress: true
-          allowed_tools: "Bash(gh:*),Glob,Grep,LS,Read,mcp__github_comment__update_claude_comment,Bash(git add:*),Bash(git commit:*),Bash(git rm:*)"
-          prompt: |
-            REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
-
-            Review this pull request. Steps:
-            1. Run `gh pr diff ${{ github.event.pull_request.number }}` to get the diff.
-            2. Run `gh pr view ${{ github.event.pull_request.number }}` to get the PR description.
-            3. Read any changed source files relevant to understanding the diff.
-            4. Post your review via `gh pr comment ${{ github.event.pull_request.number }} --body "..."`.
-
-            Focus on: correctness bugs, missing edge cases, API/ABI breaks, missing tests, doc gaps.
-            Skip style nits unless they affect correctness.
-            Be concise — one line per finding: file:line problem. fix.
+          plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
+          plugins: "code-review@claude-code-plugins"
+          prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
