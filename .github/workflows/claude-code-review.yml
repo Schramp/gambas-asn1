@@ -24,7 +24,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           track_progress: true
-          claude_args: --allowedTools Bash(gh:*),Glob,Grep,LS,Read,mcp__github_comment__update_claude_comment,Bash(git add:*),Bash(git commit:*),Bash(git rm:*)
+          allowed_tools: "Bash(gh:*),Glob,Grep,LS,Read,mcp__github_comment__update_claude_comment,Bash(git add:*),Bash(git commit:*),Bash(git rm:*)"
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
