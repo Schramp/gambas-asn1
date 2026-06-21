@@ -836,9 +836,6 @@ static std::string builtin_alphabet_refs(ast::BuiltinType bt) {
         def_name);
 }
 
-/// @brief Emit a C++ Constraints aggregate-initializer for a string or octet-string member.
-/// @param flags         Combined Constraints::* flags (CONSTRAINED, SIZE_CONSTRAINED, …).
-/// @param sc_range_bits ceil(log2(size_upper - size_lower + 1)); 0 for fixed SIZE.
 /// @brief Emit static FROM-alphabet lookup tables into a generated `.cpp` file.
 /// @param os          Output stream for the generated `.cpp` file.
 /// @param prefix      Name prefix used for the static arrays (e.g. `"asn_FROM_MyStr"`).
@@ -860,13 +857,14 @@ static void emit_from_alphabet_arrays(
     enc.fill(0xFFFFu);
     for (int i = 0; i < static_cast<int>(alphabet.size()); ++i)
         enc[alphabet[i]] = static_cast<uint16_t>(i);
-    os << std::format("static const uint16_t {}_enc[256] = {{", prefix);
+    os << std::format("static const uint16_t {}_enc[256] = {{\n", prefix);
     for (int i = 0; i < 256; ++i) {
-        if (i) os << ", ";
+        if (i % 16 == 0) os << "  ";
         if (enc[i] == 0xFFFFu) os << "0xFFFFu";
         else                   os << enc[i];
+        if (i < 255) os << (i % 16 == 15 ? ",\n" : ", ");
     }
-    os << "};\n";
+    os << "\n};\n";
 }
 
 /// @brief Return a `Constraints` aggregate-initializer string for a character string type.

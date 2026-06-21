@@ -28,8 +28,12 @@ TYPES = {
                       "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                       "abcdefghijklmnopqrstuvwxyz"),
     },
+    "ia5": {
+        "comment": "IA5String (X.680 §41.4): 0x00..0x7F — 128 chars, sorted ASCII.",
+        "chars": [chr(c) for c in range(0x00, 0x80)],
+    },
     "vis": {
-        "comment": "VisibleString / IA5String: printable ASCII 0x20..0x7E (95 chars).",
+        "comment": "VisibleString (X.680 §41.6): printable ASCII 0x20..0x7E — 95 chars, sorted ASCII.",
         "chars": [chr(c) for c in range(0x20, 0x7F)],
     },
 }

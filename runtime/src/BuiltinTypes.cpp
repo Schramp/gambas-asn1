@@ -72,7 +72,37 @@ static const uint16_t k_prt_enc[256] = {
     0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu
 };
 
-// VisibleString / IA5String: printable ASCII 0x20..0x7E (95 chars).
+// IA5String (X.680 §41.4): 0x00..0x7F — 128 chars, sorted ASCII.
+static const uint8_t k_ia5_alpha[128] = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+    32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+    48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+    64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+    80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+    96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
+    112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127
+};
+static const uint16_t k_ia5_enc[256] = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+    32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+    48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+    64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+    80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+    96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
+    112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127,
+    0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu,
+    0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu,
+    0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu,
+    0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu,
+    0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu,
+    0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu,
+    0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu,
+    0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu
+};
+
+// VisibleString (X.680 §41.6): printable ASCII 0x20..0x7E — 95 chars, sorted ASCII.
 static const uint8_t k_vis_alpha[95] = {
     32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126
 };
@@ -122,7 +152,7 @@ const TypeDescriptor asn_DEF_Utf8String    = { "UTF8String",       Tag::universa
 // alphabet_bits intentionally 0: PerCodec uses string_params() raw-bit path for these
 // types, not the encode_table index path. alphabet/encode_table are used only by
 // validate() and (FROM-constrained) RandomFiller for O(1) membership testing.
-const TypeDescriptor asn_DEF_Ia5String     = { "IA5String",        Tag::universal(22, false), nullptr, nullptr, nullptr, nullptr, { .alphabet=k_vis_alpha, .alphabet_size=95u, .encode_table=k_vis_enc }, false, TypeKind::Primitive, &per_string_handler,      &ber_string_handler,      TypeLifecycleOps(TypeTag<Ia5String>{}) };
+const TypeDescriptor asn_DEF_Ia5String     = { "IA5String",        Tag::universal(22, false), nullptr, nullptr, nullptr, nullptr, { .alphabet=k_ia5_alpha, .alphabet_size=128u, .encode_table=k_ia5_enc }, false, TypeKind::Primitive, &per_string_handler,      &ber_string_handler,      TypeLifecycleOps(TypeTag<Ia5String>{}) };
 const TypeDescriptor asn_DEF_NumericString = { "NumericString",    Tag::universal(18, false), nullptr, nullptr, nullptr, nullptr, { .alphabet=k_num_alpha, .alphabet_size=11u, .encode_table=k_num_enc }, false, TypeKind::Primitive, &per_string_handler,      &ber_string_handler,      TypeLifecycleOps(TypeTag<NumericString>{}) };
 const TypeDescriptor asn_DEF_PrintableString={ "PrintableString",  Tag::universal(19, false), nullptr, nullptr, nullptr, nullptr, { .alphabet=k_prt_alpha, .alphabet_size=74u, .encode_table=k_prt_enc }, false, TypeKind::Primitive, &per_string_handler,      &ber_string_handler,      TypeLifecycleOps(TypeTag<PrintableString>{}) };
 const TypeDescriptor asn_DEF_T61String     = { "T61String",        Tag::universal(20, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_string_handler,      &ber_string_handler,      TypeLifecycleOps(TypeTag<T61String>{}) };
