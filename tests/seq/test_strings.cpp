@@ -25,6 +25,14 @@
 #include "HasYesNoStr.hpp"
 #include "HasVowelStr.hpp"
 #include "HasOutOfOrder.hpp"
+#include "HasSizedIa5.hpp"
+#include "HasSizedVis.hpp"
+#include "HasSizedNum.hpp"
+#include "HasSizedPrt.hpp"
+#include "SizedIa5.hpp"
+#include "SizedVis.hpp"
+#include "SizedNum.hpp"
+#include "SizedPrt.hpp"
 
 using namespace asn1;
 
@@ -239,6 +247,104 @@ int main() {
       check("HasOutOfOrder PER round-trip \"0AF9\"", per_rt_str(HasOutOfOrder::asn_DEF, Ia5String{"0AF9"}, w)); }
     { HasOutOfOrder w{};
       check("HasOutOfOrder PER round-trip \"F\"",    per_rt_str(HasOutOfOrder::asn_DEF, Ia5String{"F"}, w)); }
+
+    // ── PER builtin string type encoding (regression: IA5String table fix) ────
+    // Expected bytes cross-validated against asn1c uper_encode_to_buffer().
+    // See gen_builtin_tables.py — IA5String must use k_ia5_alpha[128] (0x00..0x7F),
+    // NOT k_vis_alpha[95] (0x20..0x7E). Wrong tables → wrong encode_table indices.
+    printf("\n── PER builtin string UPER encoding (asn1c-xval) ───────────────\n");
+
+    // Direct table regression guards.
+    check("asn_DEF_Ia5String alphabet_size=128",
+        asn_DEF_Ia5String.constraints.alphabet_size == 128);
+    check("asn_DEF_Ia5String enc[TAB=0x09]=9",
+        asn_DEF_Ia5String.constraints.encode_table &&
+        asn_DEF_Ia5String.constraints.encode_table[0x09] == 9);
+    check("asn_DEF_Ia5String enc['B'=0x42]=66",
+        asn_DEF_Ia5String.constraints.encode_table &&
+        asn_DEF_Ia5String.constraints.encode_table[0x42] == 66);
+    check("asn_DEF_Ia5String enc[0x80]=0xFFFF",
+        asn_DEF_Ia5String.constraints.encode_table &&
+        asn_DEF_Ia5String.constraints.encode_table[0x80] == 0xFFFFu);
+    check("asn_DEF_VisibleString alphabet_size=95",
+        asn_DEF_VisibleString.constraints.alphabet_size == 95);
+    check("asn_DEF_VisibleString enc['B'=0x42]=34",
+        asn_DEF_VisibleString.constraints.encode_table &&
+        asn_DEF_VisibleString.constraints.encode_table[0x42] == 34);
+    check("asn_DEF_VisibleString enc[TAB=0x09]=0xFFFF",
+        asn_DEF_VisibleString.constraints.encode_table &&
+        asn_DEF_VisibleString.constraints.encode_table[0x09] == 0xFFFFu);
+
+    auto per_enc_bytes = [](const TypeDescriptor& def, const Asn1Object* obj) {
+        std::vector<uint8_t> buf;
+        PerEncodeStream s{buf};
+        PerCodec::instance().encode(s, def, obj);
+        s.flush();
+        return buf;
+    };
+    auto per_dec_ok = [](const TypeDescriptor& def, Asn1Object* obj,
+                         const std::vector<uint8_t>& buf) {
+        PerDecodeStream s{std::span<const uint8_t>(buf)};
+        return PerCodec::instance().decode(s, def, obj).has_value();
+    };
+    auto bytes_eq = [](const std::vector<uint8_t>& got,
+                       std::initializer_list<uint8_t> exp) {
+        return std::vector<uint8_t>(exp) == got;
+    };
+
+    // Unconstrained string types: length as 1-byte unconstrained determinant,
+    // then characters at natural bit-width per string_params().
+    // NumericString: 4 bits/char; "333" → {0x03, 0x44, 0x40}
+    // PrintableString/IA5String/VisibleString: 7 bits/char; "BBB" → {0x03, 0x85, 0x0A, 0x10}
+    printf("  unconstrained:\n");
+    { HasNumericString w{}; w.value = NumericString{"333"};
+      check("  HasNum{\"333\"} UPER={0x03,0x44,0x40}",
+            bytes_eq(per_enc_bytes(HasNumericString::asn_DEF, &w), {0x03, 0x44, 0x40})); }
+    { HasPrintableString w{}; w.value = PrintableString{"BBB"};
+      check("  HasPrt{\"BBB\"} UPER={0x03,0x85,0x0A,0x10}",
+            bytes_eq(per_enc_bytes(HasPrintableString::asn_DEF, &w), {0x03, 0x85, 0x0A, 0x10})); }
+    { HasVisibleString w{}; w.value = VisibleString{"BBB"};
+      check("  HasVis{\"BBB\"} UPER={0x03,0x85,0x0A,0x10}",
+            bytes_eq(per_enc_bytes(HasVisibleString::asn_DEF, &w), {0x03, 0x85, 0x0A, 0x10})); }
+
+    // SIZE(1..10) types: 4-bit size field (range=10, range_bits=4), then chars.
+    // NumericString "333" → {0x24, 0x44}
+    // PrintableString/IA5String/VisibleString "BBB" → {0x28, 0x50, 0xA1, 0x00}
+    // IA5String "\t" (TAB=0x09): size_field=0000, char=0001001 → {0x01, 0x20}
+    printf("  SIZE(1..10):\n");
+    { HasSizedNum w{}; w.value = SizedNum{"333"};
+      check("  HasSizedNum{\"333\"} UPER={0x24,0x44}",
+            bytes_eq(per_enc_bytes(HasSizedNum::asn_DEF, &w), {0x24, 0x44})); }
+    { HasSizedPrt w{}; w.value = SizedPrt{"BBB"};
+      check("  HasSizedPrt{\"BBB\"} UPER={0x28,0x50,0xA1,0x00}",
+            bytes_eq(per_enc_bytes(HasSizedPrt::asn_DEF, &w), {0x28, 0x50, 0xA1, 0x00})); }
+    { HasSizedVis w{}; w.value = SizedVis{"BBB"};
+      check("  HasSizedVis{\"BBB\"} UPER={0x28,0x50,0xA1,0x00}",
+            bytes_eq(per_enc_bytes(HasSizedVis::asn_DEF, &w), {0x28, 0x50, 0xA1, 0x00})); }
+    { HasSizedIa5 w{}; w.value = SizedIa5{"BBB"};
+      check("  HasSizedIa5{\"BBB\"} UPER={0x28,0x50,0xA1,0x00}",
+            bytes_eq(per_enc_bytes(HasSizedIa5::asn_DEF, &w), {0x28, 0x50, 0xA1, 0x00})); }
+    // TAB is valid in IA5String (0x00..0x7F) but not in VisibleString (0x20..0x7E).
+    { HasSizedIa5 w{}; w.value = SizedIa5{"\t"};
+      auto b = per_enc_bytes(HasSizedIa5::asn_DEF, &w);
+      check("  HasSizedIa5{TAB} UPER={0x01,0x20}",
+            bytes_eq(b, {0x01, 0x20}));
+      HasSizedIa5 dec{};
+      check("  HasSizedIa5{TAB} round-trip",
+            per_dec_ok(HasSizedIa5::asn_DEF, &dec, b) && dec.value.str() == "\t"); }
+
+    // Round-trips for all SIZE-constrained types.
+    printf("  round-trips:\n");
+    auto per_rt = [&](const TypeDescriptor& def, auto& w, auto& out, const std::string& s) {
+        w.value = decltype(w.value)(s);
+        auto b = per_enc_bytes(def, &w);
+        return per_dec_ok(def, &out, b) && out.value.str() == s;
+    };
+    { HasSizedNum w{}, o{}; check("  SizedNum \"12345\" round-trip",   per_rt(HasSizedNum::asn_DEF, w, o, "12345")); }
+    { HasSizedPrt w{}, o{}; check("  SizedPrt \"Hello\" round-trip",   per_rt(HasSizedPrt::asn_DEF, w, o, "Hello")); }
+    { HasSizedVis w{}, o{}; check("  SizedVis \"ABC\" round-trip",     per_rt(HasSizedVis::asn_DEF, w, o, "ABC")); }
+    { HasSizedIa5 w{}, o{}; check("  SizedIa5 \"BBB\" round-trip",     per_rt(HasSizedIa5::asn_DEF, w, o, "BBB")); }
+    { HasSizedIa5 w{}, o{}; check("  SizedIa5 \"\\tHello\" round-trip",per_rt(HasSizedIa5::asn_DEF, w, o, "\tHello")); }
 
     printf("\n");
     if (failures) { printf("  %d test(s) FAILED\n", failures); return 1; }

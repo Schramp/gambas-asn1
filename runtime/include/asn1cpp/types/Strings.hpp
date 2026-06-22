@@ -54,15 +54,12 @@ public:
             if (n < c.size_lower) return c.size_lower - n;
             if (n > c.size_upper) return c.size_upper - n;
         }
-        std::string_view alpha;
-        if (!c.alphabet.empty())
-            alpha = std::string_view(reinterpret_cast<const char*>(c.alphabet.data()),
-                                     c.alphabet.size());
-        else
-            alpha = builtin_alphabet(TagNumber);
-        if (!alpha.empty())
+        // encode_table is present for both FROM-constrained types (codegen-emitted) and
+        // built-in restricted types (NumericString, PrintableString, IA5String, VisibleString).
+        // O(1) lookup: 0xFFFF = character not in permitted alphabet.
+        if (c.encode_table)
             for (char ch : str())
-                if (alpha.find(ch) == std::string_view::npos) return 1;
+                if (c.encode_table[static_cast<unsigned char>(ch)] == 0xFFFFu) return 1;
         return 0;
     }
 };

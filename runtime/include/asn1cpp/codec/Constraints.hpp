@@ -1,6 +1,5 @@
 #pragma once
 #include <cstdint>
-#include <vector>
 
 namespace asn1 {
 
@@ -41,10 +40,16 @@ struct Constraints {
     int64_t size_lower{0};
     int64_t size_upper{0};
 
-    // FROM alphabet constraint (character strings with restricted charset)
-    // alphabet_bits == 0 means no FROM constraint (use per-type default bit width)
-    int                   alphabet_bits{0};  // bits per character in UPER (ceil(log2(alphabet.size())))
-    std::vector<uint8_t>  alphabet;          // sorted allowed char values; empty = no FROM constraint
+    // FROM alphabet constraint (character strings with restricted charset).
+    // All three fields are null/zero when no FROM constraint applies.
+    // alphabet_bits: ceil(log2(alphabet_size)) — bits per character in UPER.
+    // alphabet:      decode table — alphabet[constrained_idx] → char value (sorted).
+    // encode_table:  encode table — encode_table[char_value] → constrained_idx;
+    //                0xFFFF means the character is not in the alphabet (constraint violation).
+    int              alphabet_bits{0};
+    const uint8_t*   alphabet{nullptr};       // decode: alphabet[idx] → char
+    uint8_t          alphabet_size{0};        // number of entries in alphabet[]
+    const uint16_t*  encode_table{nullptr};   // encode: encode_table[char] → idx | 0xFFFF
 };
 
 } // namespace asn1

@@ -170,6 +170,14 @@ add_custom_command(
             ${STRINGS_TEST_GEN_DIR}/HasYesNoStr.hpp        ${STRINGS_TEST_GEN_DIR}/HasYesNoStr.cpp
             ${STRINGS_TEST_GEN_DIR}/HasVowelStr.hpp        ${STRINGS_TEST_GEN_DIR}/HasVowelStr.cpp
             ${STRINGS_TEST_GEN_DIR}/HasOutOfOrder.hpp      ${STRINGS_TEST_GEN_DIR}/HasOutOfOrder.cpp
+            ${STRINGS_TEST_GEN_DIR}/SizedIa5.hpp           ${STRINGS_TEST_GEN_DIR}/SizedIa5.cpp
+            ${STRINGS_TEST_GEN_DIR}/SizedVis.hpp           ${STRINGS_TEST_GEN_DIR}/SizedVis.cpp
+            ${STRINGS_TEST_GEN_DIR}/SizedNum.hpp           ${STRINGS_TEST_GEN_DIR}/SizedNum.cpp
+            ${STRINGS_TEST_GEN_DIR}/SizedPrt.hpp           ${STRINGS_TEST_GEN_DIR}/SizedPrt.cpp
+            ${STRINGS_TEST_GEN_DIR}/HasSizedIa5.hpp        ${STRINGS_TEST_GEN_DIR}/HasSizedIa5.cpp
+            ${STRINGS_TEST_GEN_DIR}/HasSizedVis.hpp        ${STRINGS_TEST_GEN_DIR}/HasSizedVis.cpp
+            ${STRINGS_TEST_GEN_DIR}/HasSizedNum.hpp        ${STRINGS_TEST_GEN_DIR}/HasSizedNum.cpp
+            ${STRINGS_TEST_GEN_DIR}/HasSizedPrt.hpp        ${STRINGS_TEST_GEN_DIR}/HasSizedPrt.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${STRINGS_TEST_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/strings_test.asn1
                                    -o ${STRINGS_TEST_GEN_DIR}
@@ -196,6 +204,14 @@ add_executable(test_strings
     ${STRINGS_TEST_GEN_DIR}/HasYesNoStr.cpp
     ${STRINGS_TEST_GEN_DIR}/HasVowelStr.cpp
     ${STRINGS_TEST_GEN_DIR}/HasOutOfOrder.cpp
+    ${STRINGS_TEST_GEN_DIR}/SizedIa5.cpp
+    ${STRINGS_TEST_GEN_DIR}/SizedVis.cpp
+    ${STRINGS_TEST_GEN_DIR}/SizedNum.cpp
+    ${STRINGS_TEST_GEN_DIR}/SizedPrt.cpp
+    ${STRINGS_TEST_GEN_DIR}/HasSizedIa5.cpp
+    ${STRINGS_TEST_GEN_DIR}/HasSizedVis.cpp
+    ${STRINGS_TEST_GEN_DIR}/HasSizedNum.cpp
+    ${STRINGS_TEST_GEN_DIR}/HasSizedPrt.cpp
 )
 target_include_directories(test_strings PRIVATE ${STRINGS_TEST_GEN_DIR})
 target_link_libraries(test_strings PRIVATE asn1cpp_runtime)
