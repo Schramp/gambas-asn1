@@ -448,7 +448,7 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
 }
 
 // ---------------------------------------------------------------------------
-// Member-list helpers
+// Member-list helpers (split_members, root_optional_count)
 // ---------------------------------------------------------------------------
 
 /// Split def.members into (root, extension) lists, skipping extension markers.
