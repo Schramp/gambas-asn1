@@ -346,6 +346,29 @@ int main() {
     { HasSizedIa5 w{}, o{}; check("  SizedIa5 \"BBB\" round-trip",     per_rt(HasSizedIa5::asn_DEF, w, o, "BBB")); }
     { HasSizedIa5 w{}, o{}; check("  SizedIa5 \"\\tHello\" round-trip",per_rt(HasSizedIa5::asn_DEF, w, o, "\tHello")); }
 
+    // Out-of-range alphabet index → DecodeError (was silent '?' substitution).
+    // VowelType: PrintableString FROM("a"|"e"|"i"|"o"|"u"), alphabet_size=5, alphabet_bits=3.
+    // Valid indices 0..4; index 5 (0b101) fits in 3 bits but is out of range.
+    // Stream layout: unconstrained length byte (0x01 = 1 char), then 3-bit index padded.
+    printf("  out-of-range alphabet index → DecodeError:\n");
+    {
+        // idx=5 (0b101): length=0x01, bits=10100000=0xA0 → out of range → error
+        HasVowelStr out{};
+        std::vector<uint8_t> corrupt{0x01, 0xA0};
+        PerDecodeStream s{std::span<const uint8_t>(corrupt)};
+        check("  VowelType idx=5 (out of range) → decode fails",
+              !PerCodec::instance().decode(s, HasVowelStr::asn_DEF, &out).has_value());
+    }
+    {
+        // idx=4 (0b100): length=0x01, bits=10000000=0x80 → 'u' (last valid entry)
+        HasVowelStr out{};
+        std::vector<uint8_t> valid{0x01, 0x80};
+        PerDecodeStream s{std::span<const uint8_t>(valid)};
+        check("  VowelType idx=4 ('u', in range) → decode succeeds",
+              PerCodec::instance().decode(s, HasVowelStr::asn_DEF, &out).has_value()
+              && out.value.str() == "u");
+    }
+
     printf("\n");
     if (failures) { printf("  %d test(s) FAILED\n", failures); return 1; }
     printf("  All tests passed.\n");

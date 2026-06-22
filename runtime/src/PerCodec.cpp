@@ -701,7 +701,9 @@ public:
             for (std::size_t i = 0; i < char_count; ++i) {
                 auto v = stream.get_bits(pc.alphabet_bits);
                 if (!v) return decode_err(v.error());
-                uint8_t lo = (*v < pc.alphabet_size) ? pc.alphabet[*v] : '?';
+                if (*v >= pc.alphabet_size)
+                    return decode_err(DecodeError("PER: alphabet index out of range"));
+                uint8_t lo = pc.alphabet[*v];
                 for (int b = 0; b < bpc - 1; ++b) result.push_back('\0');
                 result.push_back(static_cast<char>(lo));
             }
