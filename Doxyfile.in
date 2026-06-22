@@ -1,0 +1,33 @@
+PROJECT_NAME           = "@PROJECT_NAME@"
+PROJECT_NUMBER         = "@PROJECT_VERSION@"
+PROJECT_BRIEF          = "Modern C++20 ASN.1 compiler and runtime"
+
+OUTPUT_DIRECTORY       = "@DOXYGEN_OUTPUT_DIR@"
+CREATE_SUBDIRS         = NO
+ALLOW_UNICODE_NAMES    = NO
+
+# Input
+INPUT                  = "@PROJECT_SOURCE_DIR@/runtime" \
+                         "@PROJECT_SOURCE_DIR@/compiler/src"
+RECURSIVE              = YES
+FILE_PATTERNS          = *.cpp *.hpp *.h
+
+# Extraction
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+
+# Output formats
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+
+# Source browsing
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+
+# Warnings — fail-fast on undocumented public symbols
+WARN_IF_UNDOCUMENTED   = NO
+WARN_NO_PARAMDOC       = NO
+QUIET                  = YES
+WARNINGS               = YES

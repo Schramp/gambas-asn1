@@ -71,3 +71,22 @@ message(STATUS "ASN1CPP_VALIDATE_REPORT    = ${ASN1CPP_VALIDATE_REPORT}")
 add_subdirectory(runtime)
 add_subdirectory(compiler)
 add_subdirectory(tests)
+
+# ---------------------------------------------------------------------------
+# Optional: Doxygen documentation
+#   cmake -DBUILD_DOCS=ON -B build && cmake --build build --target doxygen
+# ---------------------------------------------------------------------------
+option(BUILD_DOCS "Build Doxygen HTML documentation" OFF)
+if(BUILD_DOCS)
+    find_package(Doxygen REQUIRED)
+    set(DOXYGEN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/docs")
+    configure_file(Doxyfile.in "${CMAKE_BINARY_DIR}/Doxyfile" @ONLY)
+    add_custom_target(doxygen
+        COMMAND "${DOXYGEN_EXECUTABLE}" "${CMAKE_BINARY_DIR}/Doxyfile"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        COMMENT "Generating Doxygen documentation -> ${DOXYGEN_OUTPUT_DIR}/html/index.html"
+        VERBATIM)
+    message(STATUS "BUILD_DOCS: ON  — run: cmake --build build --target doxygen")
+else()
+    message(STATUS "BUILD_DOCS: OFF — enable with -DBUILD_DOCS=ON")
+endif()
