@@ -76,3 +76,21 @@ jobs:
           cd examples/sample.source.ETSI-LI-PS-PDU/nested-decoder
           ./nested-decoder pdu-00000001.etsi > actual.xer
           diff pdu-00000001.expected actual.xer
+
+      - name: Install Doxygen
+        if: github.ref == 'refs/heads/main'
+        run: sudo apt-get install -y doxygen
+
+      - name: Build documentation
+        if: github.ref == 'refs/heads/main'
+        run: |
+          cmake -B build -DBUILD_DOCS=ON
+          cmake --build build --target doxygen
+
+      - name: Upload documentation artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: doxygen-html
+          path: build/docs/html/
+          retention-days: 30
