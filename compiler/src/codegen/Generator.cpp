@@ -448,6 +448,34 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
 }
 
 // ---------------------------------------------------------------------------
+// Member-list helpers
+// ---------------------------------------------------------------------------
+
+/// Split def.members into (root, extension) lists, skipping extension markers.
+/// Extension members are optional by definition; root members carry their own optional flag.
+static std::pair<std::vector<const ast::TypeDef*>, std::vector<const ast::TypeDef*>>
+split_members(const ast::TypeDef& def)
+{
+    std::vector<const ast::TypeDef*> root, ext;
+    bool past = false;
+    for (const auto& m : def.members) {
+        if (m->is_extension_marker) { past = true; continue; }
+        (past ? ext : root).push_back(m.get());
+    }
+    return {root, ext};
+}
+
+/// Count root optional members — used for the PER preamble bitmap width.
+/// Extension members are NOT counted here; they have their own extension bitmap.
+static int root_optional_count(const ast::TypeDef& def)
+{
+    auto [root, _] = split_members(def);
+    return static_cast<int>(
+        std::count_if(root.begin(), root.end(),
+                      [](const ast::TypeDef* m){ return m->is_optional(); }));
+}
+
+// ---------------------------------------------------------------------------
 // Shared TypeDescriptor emitter
 // ---------------------------------------------------------------------------
 
@@ -1344,66 +1372,60 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     //   to be complete — defer those includes to after the class definition.
     // Everything else: full include before the class.
     std::vector<std::string> post_class_includes; // deferred self-referential SeqOf includes
-    bool past_ext_inc = false;
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) { past_ext_inc = true; continue; }
-        bool optional = m->is_optional() || past_ext_inc;
+    auto [sm_root, sm_ext] = split_members(def);
 
-        auto emit_inc = [&](const std::string& cn) {
-            auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-            inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
-        };
-        auto emit_fwd = [&](const std::string& cn) {
-            os << std::format("class {};\n", cn);
-        };
-
-        if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
+    auto emit_inc = [&](const std::string& cn) {
+        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+        inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
+    };
+    auto emit_fwd = [&](const std::string& cn) {
+        os << std::format("class {};\n", cn);
+    };
+    auto emit_member_include = [&](const ast::TypeDef& m, bool optional) {
+        if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
             auto cn = cpp_name_for_typeref(*tr);
-            optional && is_class_type(*m) ? emit_fwd(cn) : emit_inc(cn);
-        } else if (m->is_seq_of() || m->is_set_of()) {
-            if (!m->name.empty()) {
+            optional && is_class_type(m) ? emit_fwd(cn) : emit_inc(cn);
+        } else if (m.is_seq_of() || m.is_set_of()) {
+            if (!m.name.empty()) {
                 // Named member — check for self-referential element type.
-                const auto& seqof_elem = m->is_seq_of()
-                    ? std::get<ast::SequenceOfType>(m->body).element
-                    : std::get<ast::SetOfType>(m->body).element;
+                const auto& seqof_elem = m.is_seq_of()
+                    ? std::get<ast::SequenceOfType>(m.body).element
+                    : std::get<ast::SetOfType>(m.body).element;
                 bool self_ref = false;
                 if (auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body))
                     self_ref = (to_cpp_name(tr_elem->type_name) == to_cpp_name(def.name));
-                auto synth = make_synthetic_name(cname, m->name);
+                auto synth = make_synthetic_name(cname, m.name);
                 if (self_ref)
                     post_class_includes.push_back(synth); // defer: needs current class complete
                 else
                     emit_inc(synth);
             } else {
-                const auto& elem = m->is_seq_of()
-                    ? std::get<ast::SequenceOfType>(m->body).element
-                    : std::get<ast::SetOfType>(m->body).element;
+                const auto& elem = m.is_seq_of()
+                    ? std::get<ast::SequenceOfType>(m.body).element
+                    : std::get<ast::SetOfType>(m.body).element;
                 if (auto* tr2 = std::get_if<ast::TypeRef>(&elem->body)) {
                     emit_inc(cpp_name_for_typeref(*tr2));
                 } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
                     emit_inc(make_synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name));
                 }
             }
-        } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
-            auto synth = make_synthetic_name(cname, m->name);
+        } else if ((m.is_sequence() || m.is_choice() || m.is_set()) && !m.name.empty()) {
+            auto synth = make_synthetic_name(cname, m.name);
             optional ? emit_fwd(synth) : emit_inc(synth);
         } else {
-            auto* mbt = std::get_if<ast::BuiltinType>(&m->body);
-            if (mbt && *mbt == ast::BuiltinType::Enumerated && !m->enum_values.empty())
-                emit_inc(make_synthetic_name(cname, m->name));
+            auto* mbt = std::get_if<ast::BuiltinType>(&m.body);
+            if (mbt && *mbt == ast::BuiltinType::Enumerated && !m.enum_values.empty())
+                emit_inc(make_synthetic_name(cname, m.name));
         }
-    }
+    };
+    for (auto* m : sm_root) emit_member_include(*m, m->is_optional());
+    for (auto* m : sm_ext)  emit_member_include(*m, /*optional=*/true);
     if (mcount > 0) os << "\n";
 
     // Determine if any optional members exist — they will use unique_ptr.
-    bool has_optional_members = false;
-    {
-        bool past = false;
-        for (const auto& m : def.members) {
-            if (m->is_extension_marker) { past = true; continue; }
-            if (m->is_optional() || past) { has_optional_members = true; break; }
-        }
-    }
+    bool has_optional_members = !sm_ext.empty() ||
+        std::any_of(sm_root.begin(), sm_root.end(),
+                    [](const ast::TypeDef* m){ return m->is_optional(); });
 
     // class — optional members use unique_ptr (forward-decl compatible, matches asn1c semantics)
     os << std::format("class {} : public asn1::SequenceBase<{}> {{\npublic:\n", cname, cname);
@@ -1419,27 +1441,25 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
         os << std::format("    {0}({0}&&) noexcept;\n", cname);
         os << std::format("    {0}& operator=({0}&&) noexcept;\n", cname);
     }
-    bool past_ext_hpp = false;
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) { past_ext_hpp = true; continue; }
+    for (auto* m : sm_root) {
         std::string mtype = cpp_type_for(*m);
         std::string mname = to_member_name(m->name);
-        if (m->is_optional() || past_ext_hpp)
+        if (m->is_optional())
             os << std::format("    std::unique_ptr<{}> {};\n", mtype, mname);
         else
             os << std::format("    {} {}{{}};\n", mtype, mname);
     }
-    // set_<member> declarations for non-optional primitive members
-    {
-        bool past = false;
-        for (const auto& m : def.members) {
-            if (m->is_extension_marker) { past = true; continue; }
-            if (m->is_optional() || past) continue;
-            auto si = classify_member_setter(*m);
-            if (si.param_type.empty()) continue;
-            std::string mname = to_member_name(m->name);
-            os << std::format("    void set_{}({} val);\n", mname, si.param_type);
-        }
+    for (auto* m : sm_ext) {
+        os << std::format("    std::unique_ptr<{}> {};\n",
+                          cpp_type_for(*m), to_member_name(m->name));
+    }
+    // set_<member> declarations for non-optional root members only
+    for (auto* m : sm_root) {
+        if (m->is_optional()) continue;
+        auto si = classify_member_setter(*m);
+        if (si.param_type.empty()) continue;
+        os << std::format("    void set_{}({} val);\n",
+                          to_member_name(m->name), si.param_type);
     }
     if (mcount > 0) {
         os << std::format("    static const asn1::MemberDescriptor s_members[{}];\n", mcount);
@@ -1467,37 +1487,33 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     auto [mcount, ext_at] = count_members(def);
 
+    auto [sm_root, sm_ext] = split_members(def);
+
     // Determine if any optional members exist.
-    bool has_optional_members = false;
-    {
-        bool past = false;
-        for (const auto& m : def.members) {
-            if (m->is_extension_marker) { past = true; continue; }
-            if (m->is_optional() || past) { has_optional_members = true; break; }
-        }
-    }
+    bool has_optional_members = !sm_ext.empty() ||
+        std::any_of(sm_root.begin(), sm_root.end(),
+                    [](const ast::TypeDef* m){ return m->is_optional(); });
 
     if (has_optional_members) {
         // Forward-declared types in the .hpp need full includes in the .cpp.
         bool emitted_extra = false;
-        bool past_ext = false;
-        for (const auto& m : def.members) {
-            if (m->is_extension_marker) { past_ext = true; continue; }
-            bool optional = m->is_optional() || past_ext;
-            if (!optional) continue;
-            if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
-                if (is_class_type(*m)) {
+        auto emit_opt_include = [&](const ast::TypeDef& m) {
+            if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+                if (is_class_type(m)) {
                     auto cn = cpp_name_for_typeref(*tr);
                     auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
                     inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
                     emitted_extra = true;
                 }
-            } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
+            } else if ((m.is_sequence() || m.is_choice() || m.is_set()) && !m.name.empty()) {
                 auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-                inc_os << std::format("#include \"{}.hpp\"\n", filename_for(make_synthetic_name(cname, m->name)));
+                inc_os << std::format("#include \"{}.hpp\"\n",
+                                      filename_for(make_synthetic_name(cname, m.name)));
                 emitted_extra = true;
             }
-        }
+        };
+        for (auto* m : sm_root) { if (m->is_optional()) emit_opt_include(*m); }
+        for (auto* m : sm_ext)  emit_opt_include(*m);
         if (emitted_extra) { auto& nl_os = pre_ns_os_ ? *pre_ns_os_ : os; nl_os << "\n"; }
 
         // All special members defined here where unique_ptr<T> has complete T.
@@ -1509,34 +1525,25 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         os << std::format("{0}& {0}::operator=({0}&&) noexcept = default;\n\n", cname);
     }
 
-    // Count root-only optional members (for PER preamble bitmap width)
-    int roms_count = 0;
-    {
-        bool past = false;
-        for (const auto& m : def.members) {
-            if (m->is_extension_marker) { past = true; continue; }
-            if (!past && m->is_optional()) ++roms_count;
-        }
-    }
+    // Count root-only optional members (for PER preamble bitmap width).
+    // Extension members are NOT counted — they have their own extension bitmap.
+    int roms_count = static_cast<int>(
+        std::count_if(sm_root.begin(), sm_root.end(),
+                      [](const ast::TypeDef* m){ return m->is_optional(); }));
 
     // Type aliases for optional member callbacks — one per optional member.
     // Optional members: UniquePtrOps (check/set/get_ptr through unique_ptr).
     // Required members: use offsetof (no alias needed).
-    {
-        bool past = false;
-        for (const auto& m : def.members) {
-            if (m->is_extension_marker) { past = true; continue; }
-            std::string mname = to_member_name(m->name);
-            std::string mtype = cpp_type_for(*m);
-            bool optional = m->is_optional() || past;
-            if (optional) {
-                os << std::format(
-                    "using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
-                    cname, mname, mtype);
-            }
-        }
-        os << "\n";
+    for (auto* m : sm_root) {
+        if (!m->is_optional()) continue;
+        os << std::format("using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
+                          cname, to_member_name(m->name), cpp_type_for(*m));
     }
+    for (auto* m : sm_ext) {
+        os << std::format("using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
+                          cname, to_member_name(m->name), cpp_type_for(*m));
+    }
+    os << "\n";
 
     // Determine if AUTOMATIC TAGS applies: module is AUTOMATIC TAGS and none of the
     // ComponentTypes in any ComponentTypeList has an explicit tag (X.680 §24.8).
@@ -1555,29 +1562,29 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     if (mcount > 0) {
         // Pass 1: collect per-row data and emit any static per-member TypeDescriptors
         // before the array opening brace (can't have declarations inside initializer lists).
+        // atag continues across root→ext so auto-tagging numbers extensions after root members.
         {
-            bool past = false;
             int atag = 0;
-            for (const auto& m : def.members) {
-                if (m->is_extension_marker) { past = true; continue; }
-                std::string mname = to_member_name(m->name);
-                bool optional = m->is_optional() || past;
-                auto [eff_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, atag);
+            auto collect = [&](const ast::TypeDef& m, bool optional) {
+                std::string mname = to_member_name(m.name);
+                auto [eff_tag, is_explicit] = compute_member_tag(m, apply_auto_tags, atag);
                 std::string ops = optional
                     ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, mname)
                     : "{ nullptr, nullptr, nullptr }";
-                std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
-                std::string def_setter = emit_default_setter(*m, cname, mname, os);
-                bool has_default = (m->marker == ast::Marker::Default);
-                auto setter = optional ? MemberSetterInfo{} : classify_member_setter(*m);
+                std::string tdref = emit_member_type_descriptor(m, cname, mname, os);
+                std::string def_setter = emit_default_setter(m, cname, mname, os);
+                bool has_default = (m.marker == ast::Marker::Default);
+                auto setter = optional ? MemberSetterInfo{} : classify_member_setter(m);
                 // Required members use offset arithmetic; optional use get_ptr (offset unused).
                 // Sentinel kInvalidMemberOffset for optional: accidental use crashes immediately.
                 std::string offset_expr = optional ? "asn1::kInvalidMemberOffset"
                     : std::format("ASN1CPP_OFFSETOF({}, {})", cname, mname);
-                rows.push_back({ m->name, eff_tag, mname, ops, tdref, def_setter, offset_expr,
+                rows.push_back({ m.name, eff_tag, mname, ops, tdref, def_setter, offset_expr,
                                  optional, is_explicit, has_default, std::move(setter) });
                 ++atag;
-            }
+            };
+            for (auto* m : sm_root) collect(*m, m->is_optional());
+            for (auto* m : sm_ext)  collect(*m, /*optional=*/true);
         }
         // Pass 2: emit the array (as class static member definition)
         os << std::format("const asn1::MemberDescriptor {}::s_members[] = {{\n", cname);
@@ -1688,13 +1695,7 @@ static bool canonical_tag_less(const ast::Tag& a, const ast::Tag& b,
 static std::vector<const ast::TypeDef*> canonical_choice_members(
     const ast::TypeDef& def, bool apply_auto_tags)
 {
-    std::vector<const ast::TypeDef*> root_alts, ext_alts;
-    bool past_ext = false;
-    for (const auto& m : def.members) {
-        if (m->is_extension_marker) { past_ext = true; continue; }
-        if (!past_ext) root_alts.push_back(m.get());
-        else           ext_alts.push_back(m.get());
-    }
+    auto [root_alts, ext_alts] = split_members(def);
 
     // Root: if not AUTOMATIC TAGS, sort by explicit tag (tagless go last).
     if (!apply_auto_tags) {
