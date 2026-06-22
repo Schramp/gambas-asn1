@@ -1473,6 +1473,10 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     }
 }
 
+/// @brief Emit the .cpp-side definitions for a generated SEQUENCE type.
+/// @param def  The SEQUENCE TypeDef from the AST.
+/// @param os   Output stream for the generated .cpp source file.
+/// @see X.680 §24 — SEQUENCE type.
 void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
     bool is_set = def.is_set();
@@ -1680,6 +1684,12 @@ static bool canonical_tag_less(const ast::Tag& a, const ast::Tag& b,
 }
 
 // Returns CHOICE members (no extension markers) in canonical PER tag order.
+/// @brief Build the canonical ordered alternative list for a CHOICE type.
+/// @param def             The CHOICE TypeDef from the AST.
+/// @param apply_auto_tags Whether AUTOMATIC TAGS mode is in effect for this module.
+/// @return Root alternatives (sorted by tag unless AUTOMATIC TAGS) followed by extension
+///         alternatives, with auto-generated tags applied if requested.
+/// @see X.680 §28 — CHOICE type; X.680 §24.8 — AUTOMATIC TAGS.
 // Root alternatives sorted by (tag_class, tag_number); extension alternatives
 // sorted by (tag_class, tag_number). For AUTOMATIC TAGS schemas, root alternatives
 // are Context[0],[1],[2]... — already canonical, so the sort is a no-op there.
