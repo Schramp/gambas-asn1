@@ -448,11 +448,14 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
 }
 
 // ---------------------------------------------------------------------------
-// Member-list helpers (split_members, root_optional_count)
+// Member-list helpers
 // ---------------------------------------------------------------------------
 
-/// Split def.members into (root, extension) lists, skipping extension markers.
+/// @brief Split def.members into (root, extension) lists, skipping extension markers.
 /// Extension members are optional by definition; root members carry their own optional flag.
+/// @param def  Any type definition whose members list may contain an extension marker.
+/// @return Pair (root, ext): root members before the marker, extension members after.
+/// @see X.680 §24.1 — ExtensionEndMarker separates root and extension component lists.
 static std::pair<std::vector<const ast::TypeDef*>, std::vector<const ast::TypeDef*>>
 split_members(const ast::TypeDef& def)
 {
@@ -463,16 +466,6 @@ split_members(const ast::TypeDef& def)
         (past ? ext : root).push_back(m.get());
     }
     return {root, ext};
-}
-
-/// Count root optional members — used for the PER preamble bitmap width.
-/// Extension members are NOT counted here; they have their own extension bitmap.
-static int root_optional_count(const ast::TypeDef& def)
-{
-    auto [root, _] = split_members(def);
-    return static_cast<int>(
-        std::count_if(root.begin(), root.end(),
-                      [](const ast::TypeDef* m){ return m->is_optional(); }));
 }
 
 // ---------------------------------------------------------------------------
