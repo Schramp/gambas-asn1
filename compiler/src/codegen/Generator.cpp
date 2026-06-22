@@ -800,33 +800,118 @@ static int compute_alphabet_bits(int n) {
     return (bits == 0) ? 1 : bits;
 }
 
-/// @brief Emit a C++ Constraints aggregate-initializer for a string or octet-string member.
-/// @param flags         Combined Constraints::* flags (CONSTRAINED, SIZE_CONSTRAINED, …).
-/// @param sc_range_bits ceil(log2(size_upper - size_lower + 1)); 0 for fixed SIZE.
+/// @brief Returns the name of the global `asn_DEF_*` descriptor for a restricted built-in
+///        string type, or nullptr for types without a fixed alphabet (UTF8String, etc.).
+/// @param bt  Built-in type tag.
+/// @return Pointer to a string literal such as `"asn_DEF_NumericString"`, or nullptr.
+/// @see X.680 §41 — restricted character string types and their canonical alphabets.
+static const char* builtin_def_name(ast::BuiltinType bt) {
+    using BT = ast::BuiltinType;
+    switch (bt) {
+    case BT::NumericString:   return "asn_DEF_NumericString";
+    case BT::PrintableString: return "asn_DEF_PrintableString";
+    case BT::Ia5String:       return "asn_DEF_Ia5String";
+    case BT::VisibleString:   return "asn_DEF_VisibleString";
+    default:                  return nullptr;
+    }
+}
+
+/// @brief Generate the three alphabet constraint fields that reference a built-in descriptor.
+///
+/// Produces a comma-prefixed fragment suitable for insertion into a Constraints initializer:
+/// `.alphabet_bits`, `.alphabet`/`.alphabet_size` (decode table), and `.encode_table`.
+/// Returns an empty string for types without a fixed alphabet (UTF8String, etc.).
+///
+/// @param bt  Built-in type whose global `asn_DEF_*` descriptor carries the alphabet tables.
+/// @return Constraint fragment, e.g. `", .alphabet_bits=…, .alphabet=…, …"`, or `""`.
+/// @see X.691 §26.5 — known-multiplier character string PER canonical index.
+static std::string builtin_alphabet_refs(ast::BuiltinType bt) {
+    const char* def_name = builtin_def_name(bt);
+    if (!def_name) return "";
+    return std::format(
+        ", .alphabet_bits=asn1::{0}.constraints.alphabet_bits"
+        ", .alphabet=asn1::{0}.constraints.alphabet"
+        ", .alphabet_size=asn1::{0}.constraints.alphabet_size"
+        ", .encode_table=asn1::{0}.constraints.encode_table",
+        def_name);
+}
+
+/// @brief Emit static FROM-alphabet lookup tables into a generated `.cpp` file.
+/// @param os          Output stream for the generated `.cpp` file.
+/// @param prefix      Name prefix used for the static arrays (e.g. `"asn_FROM_MyStr"`).
+/// @param alphabet    Sorted FROM-alphabet character values (non-empty).
+/// @see X.691 §26.5 — known-multiplier character string PER encoding.
+static void emit_from_alphabet_arrays(
+    std::ostream& os, const std::string& prefix,
+    const std::vector<uint8_t>& alphabet)
+{
+    // Decode table: alphabet[constrained_idx] → char value (sorted, same as input).
+    os << std::format("static const uint8_t {}_alpha[{}] = {{", prefix, alphabet.size());
+    for (int i = 0; i < static_cast<int>(alphabet.size()); ++i) {
+        if (i) os << ", ";
+        os << static_cast<int>(alphabet[i]);
+    }
+    os << "};\n";
+    // Encode table: encode_table[char_value] → constrained_idx, or 0xFFFF if not in alphabet.
+    std::array<uint16_t, 256> enc;
+    enc.fill(0xFFFFu);
+    for (int i = 0; i < static_cast<int>(alphabet.size()); ++i)
+        enc[alphabet[i]] = static_cast<uint16_t>(i);
+    os << std::format("static const uint16_t {}_enc[256] = {{\n", prefix);
+    for (int i = 0; i < 256; ++i) {
+        if (i % 16 == 0) os << "  ";
+        if (enc[i] == 0xFFFFu) os << "0xFFFFu";
+        else                   os << enc[i];
+        if (i < 255) os << (i % 16 == 15 ? ",\n" : ", ");
+    }
+    os << "\n};\n";
+}
+
+/// @brief Return a `Constraints` aggregate-initializer string for a character string type.
+/// @param flags         Constraints::flags bitmask (SIZE_CONSTRAINED, EXTENSIBLE, …).
+/// @param sc_range_bits Bits needed for SIZE range encoding.
 /// @param sc_lower      SIZE lower bound.
 /// @param sc_upper      SIZE upper bound.
-/// @param alphabet      Sorted FROM-alphabet character values; empty = no alphabet constraint.
+/// @param alphabet      Sorted FROM-alphabet character values; empty = no FROM constraint.
+/// @param alpha_prefix  Name prefix of the static arrays emitted by emit_from_alphabet_arrays;
+///                      empty when alphabet is empty.
+/// @param builtin_def   Result of builtin_def_name() for the base string type; used to
+///                      inherit alphabet_bits/alphabet/encode_table from the global descriptor
+///                      when there is a SIZE constraint but no FROM constraint.  nullptr = skip.
 /// @return Initializer string, e.g. `"{ .flags=8, .size_lower=6, .size_upper=6, … }"`.
 /// @see X.691 §26.5 (character string PER encoding); X.691 §12 (size constraints).
 static std::string make_string_constraints_init(
     int flags, int sc_range_bits, int64_t sc_lower, int64_t sc_upper,
-    const std::vector<uint8_t>& alphabet)
+    const std::vector<uint8_t>& alphabet,
+    const std::string& alpha_prefix = "",
+    std::optional<ast::BuiltinType> builtin_bt = std::nullopt)
 {
     int val_lb      = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
     int val_ub      = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
     int alpha_bits  = alphabet.empty() ? 0
         : compute_alphabet_bits(static_cast<int>(alphabet.size()));
-    std::string s = std::format(
-        "{{ .flags={}, .lower_bound={}, .upper_bound={}, "
-        ".size_range_bits={}, .size_lower={}, .size_upper={}, .alphabet_bits={}",
-        flags, val_lb, val_ub, sc_range_bits, sc_lower, sc_upper, alpha_bits);
-    if (!alphabet.empty()) {
-        s += ", .alphabet=std::vector<uint8_t>{";
-        for (int i = 0; i < static_cast<int>(alphabet.size()); ++i) {
-            if (i) s += ", ";
-            s += std::to_string(static_cast<int>(alphabet[i]));
-        }
-        s += "}";
+    // When builtin_bt is set, alphabet_bits comes from builtin_alphabet_refs — omit here
+    // to avoid emitting the designator twice (which is a C++ error even when values match).
+    std::string s;
+    if (builtin_bt) {
+        s = std::format(
+            "{{ .flags={}, .lower_bound={}, .upper_bound={}, "
+            ".size_range_bits={}, .size_lower={}, .size_upper={}",
+            flags, val_lb, val_ub, sc_range_bits, sc_lower, sc_upper);
+    } else {
+        s = std::format(
+            "{{ .flags={}, .lower_bound={}, .upper_bound={}, "
+            ".size_range_bits={}, .size_lower={}, .size_upper={}, .alphabet_bits={}",
+            flags, val_lb, val_ub, sc_range_bits, sc_lower, sc_upper, alpha_bits);
+    }
+    if (!alphabet.empty() && !alpha_prefix.empty()) {
+        // FROM constraint: emit inline static arrays.
+        s += std::format(
+            ", .alphabet={0}_alpha, .alphabet_size={1}u, .encode_table={0}_enc",
+            alpha_prefix, alphabet.size());
+    } else if (builtin_bt) {
+        // No FROM constraint but restricted type: inherit all alphabet fields from global descriptor.
+        s += builtin_alphabet_refs(*builtin_bt);
     }
     s += " }";
     return s;
@@ -1117,9 +1202,16 @@ std::string Generator::emit_member_type_descriptor(
                 });
             }
             int  all_flags = sc_flags | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-            std::string pc = (!sr && alphabet.empty())
+            std::string alpha_prefix;
+            if (!alphabet.empty()) {
+                alpha_prefix = std::format("asn_FROM_{}_{}", parent_cname, mname);
+                emit_from_alphabet_arrays(os, alpha_prefix, alphabet);
+            }
+            std::optional<ast::BuiltinType> bbt = alphabet.empty() ? std::optional{*bt} : std::nullopt;
+            std::string pc = (!sr && alphabet.empty() && (!bbt || !builtin_def_name(*bbt)))
                 ? "{}"
-                : make_string_constraints_init(all_flags, sc_range_bits, sc_lower, sc_upper, alphabet);
+                : make_string_constraints_init(all_flags, sc_range_bits, sc_lower, sc_upper,
+                                               alphabet, alpha_prefix, bbt);
             // Use the matching asn_DEF_*'s public name as the XER tag name —
             // BerCodec / XerCodec consult it for primitive type names.
             const char* tn = nullptr;
@@ -2194,6 +2286,14 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
 
     bool needs_per = !alphabet.empty() || size_range.has_value();
 
+    // Emit FROM-alphabet static arrays before the TypeDescriptor so they can be
+    // referenced by the Constraints initializer inside it.
+    std::string alpha_prefix;
+    if (!alphabet.empty()) {
+        alpha_prefix = std::format("asn_FROM_{}", cname);
+        emit_from_alphabet_arrays(os, alpha_prefix, alphabet);
+    }
+
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
     os << std::format("    {},\n", natural_tag_for(def));
@@ -2203,7 +2303,9 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
         auto sc    = compute_size_constraint(size_range);
         int  flags = asn1::Constraints::CONSTRAINED | sc.flags
                    | (is_constraint_extensible(def) ? asn1::Constraints::EXTENSIBLE : 0);
-        os << "    " << make_string_constraints_init(flags, sc.range_bits, sc.lower, sc.upper, alphabet)
+        std::optional<ast::BuiltinType> bbt = (alphabet.empty() && bt2) ? std::optional{*bt2} : std::nullopt;
+        os << "    " << make_string_constraints_init(flags, sc.range_bits, sc.lower, sc.upper,
+                                                     alphabet, alpha_prefix, bbt)
            << " /* constraints */,\n";
     } else {
         os << "    {} /* constraints — unconstrained */,\n";

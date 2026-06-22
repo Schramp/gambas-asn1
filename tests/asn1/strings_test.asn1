@@ -30,4 +30,17 @@ StringsTest DEFINITIONS ::= BEGIN
     HasVowelStr   ::= SEQUENCE { value  VowelType     }
     HasOutOfOrder ::= SEQUENCE { value  OutOfOrderType }
 
+    -- SIZE-only constraints on each built-in reduced string type.
+    -- These inherit the builtin encode_table via builtin_alphabet_refs(); regression
+    -- guard for the IA5String table fix (was sharing k_vis_enc, 95 chars, 0x20..0x7E).
+    SizedIa5 ::= IA5String      (SIZE (1..10))
+    SizedVis ::= VisibleString  (SIZE (1..10))
+    SizedNum ::= NumericString  (SIZE (1..10))
+    SizedPrt ::= PrintableString(SIZE (1..10))
+
+    HasSizedIa5 ::= SEQUENCE { value  SizedIa5 }
+    HasSizedVis ::= SEQUENCE { value  SizedVis }
+    HasSizedNum ::= SEQUENCE { value  SizedNum }
+    HasSizedPrt ::= SEQUENCE { value  SizedPrt }
+
 END
