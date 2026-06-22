@@ -10,8 +10,11 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: write
       id-token: write
       actions: read
+      checks: read
+      statuses: read
 
     steps:
       - name: Checkout repository
@@ -26,4 +29,5 @@ jobs:
           plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
           plugins: "code-review@claude-code-plugins"
           show_full_output: "true"
+          allowed_tools: "Bash,Read,Write,Edit"
           prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment"
