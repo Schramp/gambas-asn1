@@ -6,12 +6,17 @@
 
 namespace asn1 {
 
+/// @brief ASN.1 BOOLEAN.
+/// DER encoding: FALSE = 0x00, TRUE = 0xFF (X.690 §11.1).
+/// @see X.680 §17 — BOOLEAN type; X.690 §8.2 — BER encoding.
 class Boolean : public Asn1Object {
     bool value_{false};
 public:
     Boolean() = default;
     explicit Boolean(bool v) : value_(v) {}
+    /// @brief Return the stored boolean value.
     bool value() const { return value_; }
+    /// @brief Set the stored boolean value.
     void set(bool v) { value_ = v; }
     operator bool() const { return value_; }
     bool operator==(const Boolean&) const = default;

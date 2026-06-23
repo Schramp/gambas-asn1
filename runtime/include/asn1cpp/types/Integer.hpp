@@ -36,14 +36,21 @@ inline std::vector<uint8_t> encode_integer_bytes(int64_t n) {
 }
 } // namespace detail
 
-// Integer wraps int64_t (sufficient for all ETSI LI integers in practice).
-// The compiler can specialise this for constrained ranges.
+/// @brief ASN.1 INTEGER — signed 64-bit value.
+///
+/// Sufficient for all constrained INTEGER types in ETSI LI and most real-world schemas.
+/// Implicit construction from \c int64_t allows natural assignment syntax.
+/// For non-negative semi-constrained types with values > INT64_MAX use \c UInteger.
+///
+/// @see X.680 §18 — INTEGER type; X.690 §8.3 — BER encoding.
 class Integer : public Asn1Object {
     int64_t value_{0};
 public:
     Integer() = default;
     Integer(int64_t v) : value_(v) {}  // implicit: allows using MyAlias = asn1::Integer with natural syntax
+    /// @brief Return the stored integer value.
     int64_t value() const { return value_; }
+    /// @brief Set the stored integer value.
     void    set(int64_t v) { value_ = v; }
     Integer& operator=(int64_t v) { value_ = v; return *this; }
     explicit operator int64_t() const { return value_; }
@@ -52,13 +59,10 @@ public:
     bool operator==(int64_t v) const { return value_ == v; }
     bool operator!=(int64_t v) const { return value_ != v; }
 
-    // Returns 0 when value_ satisfies the constraint, otherwise a signed
-    // delta such that (value_ + delta) lands at the nearest valid bound:
-    //   positive — value_ is below lower_bound; delta = lower_bound - value_
-    //   negative — value_ is above upper_bound; delta = upper_bound - value_
-    // Caller convention (RandomFiller): +delta raises sampling min; -delta
-    // lowers sampling max.
-    // EXTENSIBLE ranges are open (returns 0 for any value).
+    /// @brief Return 0 when the value satisfies the constraint, otherwise signed delta
+    /// such that \c (value+delta) lands at the nearest valid bound.
+    /// Positive = below lower_bound; negative = above upper_bound.
+    /// EXTENSIBLE ranges are open (always returns 0).
     int64_t validate(const Constraints& c) const {
         if (c.flags & Constraints::EXTENSIBLE) return 0;
         if (c.flags & Constraints::CONSTRAINED) {
@@ -149,12 +153,18 @@ struct BerTraits<int64_t> {
 // UInteger — uint64_t storage for non-negative semi-constrained / large ranges
 // ---------------------------------------------------------------------------
 
+/// @brief ASN.1 INTEGER with unsigned 64-bit storage.
+/// Used for constrained INTEGER types whose upper bound exceeds INT64_MAX,
+/// or for non-negative semi-constrained types with lower_bound ≥ 0.
+/// @see Integer — the signed 64-bit variant.
 class UInteger : public Asn1Object {
     uint64_t value_{0};
 public:
     UInteger() = default;
     UInteger(uint64_t v) : value_(v) {}  // implicit: same rationale as Integer
+    /// @brief Return the stored unsigned integer value.
     uint64_t value() const { return value_; }
+    /// @brief Set the stored unsigned integer value.
     void     set(uint64_t v) { value_ = v; }
     UInteger& operator=(uint64_t v) { value_ = v; return *this; }
     explicit operator uint64_t() const { return value_; }
@@ -261,9 +271,10 @@ struct BerTraits<uint64_t> {
 
 // ---------------------------------------------------------------------------
 // BigInteger — __int128 storage (architecture placeholder, not yet implemented)
-// Constructors deleted: instantiation is a compile error until implemented.
 // ---------------------------------------------------------------------------
 
+/// @brief Placeholder for `__int128` INTEGER storage — not yet implemented.
+/// Constructors are deleted; instantiation is a compile error.
 class BigInteger {
 public:
     BigInteger() = delete;
@@ -271,10 +282,10 @@ public:
 
 // ---------------------------------------------------------------------------
 // ArbitraryInteger — vector<uint8_t> BER byte-blob for unconstrained INTEGER
-// Architecture placeholder for crypto-key schemas; not yet implemented.
-// Constructors deleted: instantiation is a compile error until implemented.
 // ---------------------------------------------------------------------------
 
+/// @brief Placeholder for arbitrary-precision INTEGER (e.g. crypto-key schemas).
+/// Constructors are deleted; instantiation is a compile error until implemented.
 class ArbitraryInteger {
 public:
     ArbitraryInteger() = delete;
