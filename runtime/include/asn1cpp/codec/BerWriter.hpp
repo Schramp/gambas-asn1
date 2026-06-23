@@ -8,12 +8,33 @@
 
 namespace asn1 {
 
+/// @brief Output sink for BER/DER encoding — appends to a \c std::vector<uint8_t>.
+///
+/// Provides helpers for writing individual TLV components.  The high-level entry
+/// points are \c write_primitive() and \c write_constructed(); lower-level
+/// \c write_tag() / \c write_length() are used by the codec internally.
+///
+/// Usage:
+/// @code
+/// std::vector<uint8_t> buf;
+/// asn1::BerWriter w{buf};
+/// asn1::BerEncodeStream s{w};
+/// asn1::BerCodec::instance().encode(s, MyType::asn_DEF, &obj);
+/// // buf now holds the complete BER encoding of obj
+/// @endcode
+///
+/// @see X.690 §8.1 — TLV structure; §8.1.2 — Identifier (tag) octets;
+///      §8.1.3 — Length octets.
 class BerWriter {
     std::vector<uint8_t>& buf_;
 
 public:
+    /// @brief Wrap \p buf for BER output.  \p buf must outlive this writer.
     explicit BerWriter(std::vector<uint8_t>& buf) : buf_(buf) {}
 
+    /// @brief Encode and append the tag octets for \p t.
+    /// Handles short-form (tag.number < 31) and long-form (base-128) tags.
+    /// @see X.690 §8.1.2 — Identifier octets.
     void write_tag(Tag t) {
         uint8_t first = (static_cast<uint8_t>(t.cls) << 6)
                       | (t.constructed ? 0x20 : 0x00);
@@ -34,6 +55,9 @@ public:
         }
     }
 
+    /// @brief Encode and append the length octets for \p len bytes.
+    /// Uses short form (1 byte) for len < 128, long form otherwise.
+    /// @see X.690 §8.1.3 — Length octets.
     void write_length(std::size_t len) {
         if (len < 128) {
             buf_.push_back(static_cast<uint8_t>(len));
@@ -48,20 +72,24 @@ public:
         }
     }
 
+    /// @brief Append \p data verbatim (no tag or length).
     void append(std::span<const uint8_t> data) {
         buf_.insert(buf_.end(), data.begin(), data.end());
     }
 
+    /// @brief Append a single byte.
     void append_byte(uint8_t b) { buf_.push_back(b); }
 
-    // Position marker — index of the next byte to be written.
+    /// @brief Return the byte offset at which the next write will land.
+    /// Use this to record a position before writing, then \c replace_at() to back-fill.
     std::size_t pos() const { return buf_.size(); }
 
-    // Read a previously-written byte (for tag inspection after encode).
+    /// @brief Read a previously-written byte at absolute offset \p i.
     uint8_t at(std::size_t i) const { return buf_[i]; }
 
-    // Overwrite old_n bytes at offset p with new_data[0..new_n-1].
-    // Same size: memcpy only.  Shrink: memcpy + memmove.  Grow: insert (rare).
+    /// @brief Overwrite \p old_n bytes at offset \p p with \p new_data[0..\p new_n-1].
+    /// Same size: memcpy.  Shrink: memcpy + memmove.  Grow: insert (rare, used when a
+    /// pre-reserved 3-byte length field turns out to need 4 bytes).
     void replace_at(std::size_t p, std::size_t old_n,
                     const uint8_t* new_data, std::size_t new_n) {
         if (old_n == new_n) {
@@ -78,19 +106,29 @@ public:
         }
     }
 
-    // Write a primitive TLV: tag + length + raw value bytes.
+    /// @brief Write a primitive TLV: tag octets + length octets + \p value bytes.
+    /// @param t      Tag to encode.
+    /// @param value  Raw value bytes to append after the length.
     void write_primitive(Tag t, std::span<const uint8_t> value) {
         write_tag(t);
         write_length(value.size());
         append(value);
     }
 
-    // Write a constructed TLV in-place: reserve 3 bytes for the length field,
-    // encode content directly into this buffer, then back-fill the length.
-    // If the content fits in 1 or 2 length bytes, memmove content left to close
-    // the gap — no heap allocation for content ≤ 65535 bytes.
-    // Fallback to insert for content > 65535 bytes (rare).
-    // Fn signature: void(BerWriter&)
+    /// @brief Write a constructed TLV: tag + length (back-filled) + content.
+    /// Reserves 3 bytes for the length, calls \p fn to emit content into this writer,
+    /// then back-fills the actual length.  For content ≤ 65535 bytes a \c memmove
+    /// closes the pre-reserved gap without heap allocation.
+    ///
+    /// Usage:
+    /// @code
+    /// w.write_constructed(Tag{TagClass::Universal, 16, true}, [&](BerWriter& w) {
+    ///     w.write_primitive(Tag{TagClass::Universal, 2, false}, int_bytes);
+    /// });
+    /// @endcode
+    ///
+    /// @param t   Tag for the constructed TLV.
+    /// @param fn  Callable \c void(BerWriter&) that writes the content elements.
     template<std::invocable<BerWriter&> Fn>
     void write_constructed(Tag t, Fn&& fn) {
         write_tag(t);
