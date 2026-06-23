@@ -29,14 +29,26 @@ namespace asn1 {
 // ---------------------------------------------------------------------------
 // XER stream wrappers
 
+/// @brief \c IEncodeStream adapter that writes XML to a \c std::ostream.
+/// Construct one on the stack, pass by reference to \c XerCodec::encode().
+/// @code
+/// asn1::XerEncodeStream xs{std::cout};
+/// asn1::XerCodec::instance().encode(xs, MyType::asn_DEF, &obj);
+/// @endcode
 class XerEncodeStream : public IEncodeStream {
     std::ostream& os_;
     int depth_{0};
 public:
+    /// @brief Wrap \p os for XER output at nesting depth 0.
+    /// @param os  Output stream; must outlive this object.
     explicit XerEncodeStream(std::ostream& os) : os_(os) {}
+    /// @brief Wrap \p os at a specific nesting \p depth (used by recursive encode).
     explicit XerEncodeStream(std::ostream& os, int depth) : os_(os), depth_(depth) {}
+    /// @brief Access the underlying output stream.
     std::ostream& os() { return os_; }
+    /// @brief Current XML element nesting depth (0 = top-level).
     int depth() const { return depth_; }
+    /// @brief Return an indentation string for the current depth plus \p offset levels.
     std::string indent(int offset = 0) const { return std::string(4 * (depth_ + offset), ' '); }
 };
 
@@ -55,25 +67,44 @@ static constexpr auto xer_ws = make_xer_ws();
 
 } // namespace xer_detail (reopened below after XerDecodeStream)
 
-// Controls non-standard XER extensions accepted by the decoder.
-// Standard BASIC-XER (X.693 §8) is strict: BOOLEAN must use empty-element
-// form (<true/>/<false/>) and BIT STRING must use xmlbstring (0/1 chars).
-// Lenient mode additionally accepts:
-//   BOOLEAN: text content "true"/"false" (EXTENDED-XER §10)
-//   BIT STRING: hex pairs "AABBCC…" (non-standard asn1c extension, no grammar production)
+/// @brief Controls non-standard XER extensions accepted by \c XerDecodeStream.
+///
+/// - \c Strict — BASIC-XER only (X.693 §8): BOOLEAN uses empty-element form
+///   (\c \<true/\>/\<false/\>), BIT STRING uses xmlbstring (0/1 chars).
+/// - \c Lenient — additionally accepts BOOLEAN as text content \c "true"/"false"
+///   (EXTENDED-XER §10) and BIT STRING as hex pairs (asn1c non-standard extension).
+///
+/// @see X.693 §8 — BASIC-XER encoding rules.
 enum class XerDecodeMode { Strict, Lenient };
 
+/// @brief \c IDecodeStream adapter that parses XML text for \c XerCodec::decode().
+/// Construct from a complete XML string (not streaming — the full document must
+/// be in memory).
+/// @code
+/// std::string xml = "<MyType><field>42</field></MyType>";
+/// asn1::XerDecodeStream ds{xml};
+/// MyType obj{};
+/// auto ok = asn1::XerCodec::instance().decode(ds, MyType::asn_DEF, &obj);
+/// @endcode
 class XerDecodeStream : public IDecodeStream {
     std::string buf_;
     std::size_t pos_{0};
     bool lenient_;
 public:
+    /// @brief Construct from \p text with optional \p mode (default: \c Strict).
+    /// @param text  Complete XML document or element string to decode.
+    /// @param mode  \c Strict (BASIC-XER only) or \c Lenient (accepts asn1c extensions).
     explicit XerDecodeStream(std::string text, XerDecodeMode mode = XerDecodeMode::Strict)
         : buf_(std::move(text)), lenient_(mode == XerDecodeMode::Lenient) {}
+    /// @brief Return true when all input has been consumed.
     bool at_end() const override { return pos_ >= buf_.size(); }
+    /// @brief Return true if lenient mode is active.
     bool lenient() const { return lenient_; }
+    /// @brief View of unconsumed input from the current position.
     std::string_view remaining() const { return std::string_view(buf_).substr(pos_); }
+    /// @brief Advance the read position by \p n bytes.
     void advance(std::size_t n) { pos_ += n; }
+    /// @brief Skip leading whitespace characters (\c \\t \\n \\r space).
     void skip_whitespace() {
         while (pos_ < buf_.size() && xer_detail::xer_ws[(unsigned char)buf_[pos_]]) ++pos_;
     }
@@ -342,6 +373,8 @@ inline DecodeResult decode_oid_impl(XerDecodeStream& s, const TypeDescriptor& de
 
 class XerCodec;
 
+/// @brief Internal per-type XER handler interface.
+/// Not part of the public API — use \c XerCodec directly.
 struct IXerTypeHandler {
     virtual ~IXerTypeHandler() = default;
     virtual void encode(const XerCodec& codec, XerEncodeStream& s,
@@ -353,19 +386,40 @@ struct IXerTypeHandler {
 // ---------------------------------------------------------------------------
 // XerCodec — generic XER encode/decode driven by TypeDescriptor tables
 
+/// @brief XER codec singleton.
+///
+/// All encode/decode logic is table-driven via \c TypeDescriptor; generated
+/// files contain only descriptor tables, no codec logic.  The singleton is
+/// stateless and thread-safe.
+///
+/// @see X.693 — XML Encoding Rules (XER).
 class XerCodec : public ICodec {
 public:
+    /// @brief Return the process-wide \c XerCodec singleton.
     static XerCodec& instance() {
         static XerCodec inst;
         return inst;
     }
 
+    /// @brief Return \c "XER".
     const char* name() const override { return "XER"; }
 
+    /// @brief XER-encode \p src as XML into the \c std::ostream wrapped by \p dst.
+    /// @param dst  Must be an \c XerEncodeStream wrapping a \c std::ostream.
+    /// @param def  TypeDescriptor of the value (e.g. \c MyType::asn_DEF).
+    /// @param src  Source object; must not be null.
+    /// @see X.693 §8 — BASIC-XER encoding rules.
     void encode(IEncodeStream& dst,
                 const TypeDescriptor& def,
                 const Asn1Object* src) const override;
 
+    /// @brief XER-decode from the XML text wrapped by \p src into \p dest.
+    /// \p dest must be default-constructed before the call.
+    /// @param src   Must be an \c XerDecodeStream holding the full XML text.
+    /// @param def   TypeDescriptor of the expected type.
+    /// @param dest  Pre-allocated, default-constructed target object.
+    /// @return \c DecodeResult — check with \c .has_value().
+    /// @see X.693 §8 — BASIC-XER decoding rules.
     DecodeResult decode(IDecodeStream& src,
                         const TypeDescriptor& def,
                         Asn1Object* dest) const override;

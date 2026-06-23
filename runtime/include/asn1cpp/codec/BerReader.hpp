@@ -10,25 +10,46 @@
 
 namespace asn1 {
 
+/// @brief Cursor over a read-only byte span for BER/DER parsing.
+///
+/// Provides low-level TLV access.  The typical entry point is \c read_tlv();
+/// use \c peek_tag() when you need to inspect the next tag without consuming it
+/// (e.g. CHOICE dispatch).
+///
+/// Construction:
+/// @code
+/// std::span<const uint8_t> data = ...;
+/// asn1::BerReader r{data};
+/// asn1::BerDecodeStream s{r};
+/// asn1::BerCodec::instance().decode(s, MyType::asn_DEF, &obj);
+/// @endcode
+///
+/// @see X.690 §8 — BER TLV structure.
 class BerReader {
     std::span<const uint8_t> data_;
     std::size_t pos_{0};
 
 public:
+    /// @brief Construct a reader over \p data.
+    /// @param data  Byte span to read from; must outlive this object.
     explicit BerReader(std::span<const uint8_t> data) : data_(data) {}
 
+    /// @brief Return true when all input has been consumed.
     bool at_end()  const { return pos_ >= data_.size(); }
+    /// @brief Number of unread bytes remaining.
     std::size_t remaining() const { return pos_ < data_.size() ? data_.size() - pos_ : 0; }
+    /// @brief Current read position (byte offset from start of \p data).
     std::size_t pos()   const { return pos_; }
 
-    // Peek at data without consuming
+    /// @brief Peek at up to \p n bytes starting at the current position without advancing.
     std::span<const uint8_t> peek(std::size_t n) const {
         std::size_t avail = std::min(n, remaining());
         return data_.subspan(pos_, avail);
     }
 
-    // Peek at the next TLV tag without advancing pos_.
-    // Returns a sentinel Tag{Context, ~0u, false} on failure/end.
+    /// @brief Peek at the next TLV tag without consuming it.
+    /// Use for CHOICE dispatch: inspect the tag, then call \c read_tlv() to consume.
+    /// @return Parsed tag, or sentinel \c Tag{Context,~0u,false} at end or on error.
     [[nodiscard]] ASN1CPP_ALWAYS_INLINE Tag peek_tag() const {
         if (ASN1CPP_UNLIKELY(pos_ >= data_.size()))
             return Tag{TagClass::Context, ~0u, false};
@@ -36,6 +57,8 @@ public:
         return parse_tag_at(data_, p);
     }
 
+    /// @brief Read and consume the next tag.
+    /// @return Parsed tag, or \c DecodeError if the stream is empty or malformed.
     [[nodiscard]] ASN1CPP_ALWAYS_INLINE Expected<Tag, DecodeError> read_tag() {
         if (at_end())
             return make_unexpected<Tag, DecodeError>(DecodeError("unexpected end of data reading tag", pos_));
@@ -45,11 +68,15 @@ public:
         return t;
     }
 
+    /// @brief Pair of decoded length + indefinite-length flag.
     struct LengthResult {
-        std::size_t len;
-        bool indefinite;
+        std::size_t len;       ///< Definite length in bytes (0 when \c indefinite is true).
+        bool indefinite;       ///< True for indefinite-length (0x80 form, X.690 §8.1.3.2).
     };
 
+    /// @brief Read and consume the length octets of a TLV.
+    /// @return \c LengthResult, or \c DecodeError on truncation or unsupported encoding.
+    /// @see X.690 §8.1.3 — Length octets.
     [[nodiscard]] ASN1CPP_ALWAYS_INLINE Expected<LengthResult, DecodeError> read_length() {
         if (at_end())
             return make_unexpected<LengthResult, DecodeError>(DecodeError("unexpected end of data reading length", pos_));
@@ -74,7 +101,8 @@ public:
         return LengthResult{len, false};
     }
 
-    // Read and consume exactly n bytes.
+    /// @brief Read and consume exactly \p n bytes.
+    /// @return Span into the underlying buffer, or \c DecodeError if fewer bytes remain.
     Expected<std::span<const uint8_t>, DecodeError> read_bytes(std::size_t n) {
         if (remaining() < n)
             return make_unexpected<std::span<const uint8_t>, DecodeError>(
@@ -84,14 +112,20 @@ public:
         return s;
     }
 
-    // Read a complete TLV returning a sub-reader over the value bytes.
-    // For indefinite-length, reads until the EOC marker.
+    /// @brief Decoded TLV returned by \c read_tlv().
     struct TLV {
-        Tag tag;
-        std::span<const uint8_t> value; // empty for indefinite-length (use value_reader)
-        bool indefinite;
+        Tag tag;                          ///< Parsed tag (class, number, constructed bit).
+        std::span<const uint8_t> value;   ///< Value bytes (zero-copy view into input).
+                                          ///< For indefinite-length encodings the EOC octets (00 00)
+                                          ///< are consumed by \c read_tlv() but excluded here; check \c indefinite.
+        bool indefinite;                  ///< True if encoded with indefinite length (X.690 §8.1.3.2).
     };
 
+    /// @brief Read and consume one complete TLV.
+    /// Handles 1-byte tags, long-form tags, definite and indefinite lengths.
+    /// The fast path (1-byte tag + short definite length) is inlined.
+    /// @return \c TLV with the value bytes, or \c DecodeError on any parse failure.
+    /// @see X.690 §8.1 — Structure of an encoding.
     [[nodiscard]] ASN1CPP_ALWAYS_INLINE Expected<TLV, DecodeError> read_tlv() {
         // Fast path: 1-byte tag (number < 31) + definite short/long length.
         // Covers the vast majority of ETSI BER TLVs without function-call overhead.
@@ -179,7 +213,8 @@ public:
         return TLV{tag, *val_r, false};
     }
 
-    // Read a complete TLV and return the full byte span (tag + length + value).
+    /// @brief Read a complete TLV and return the full encoding (tag + length + value bytes).
+    /// Unlike \c read_tlv(), the returned span includes the tag and length octets.
     Expected<std::span<const uint8_t>, DecodeError> read_raw_tlv() {
         std::size_t start = pos_;
         auto tlv = read_tlv();
@@ -187,7 +222,8 @@ public:
         return data_.subspan(start, pos_ - start);
     }
 
-    // Create a sub-reader over a slice of the current data (for recursing into value bytes)
+    /// @brief Create a reader over \p slice (used to recurse into a TLV's value bytes).
+    /// @param slice  Typically \c TLV::value from a prior \c read_tlv() call.
     BerReader sub(std::span<const uint8_t> slice) const {
         return BerReader{slice};
     }
