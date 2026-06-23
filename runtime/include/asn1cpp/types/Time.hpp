@@ -7,9 +7,9 @@
 
 namespace asn1 {
 
-// Both time types store their value as the raw ASN.1 string (e.g. "240115143000Z").
-// Inherit AsnStringBase so codec handlers can cast void* → AsnStringBase* uniformly.
-
+/// @brief ASN.1 UTCTime — stored as the raw ASN.1 string (e.g. \c "240115143000Z").
+/// Inherits \c AsnStringBase so codec handlers can access the string uniformly.
+/// @see X.680 §46 — UTCTime; X.690 §11.7 — DER UTCTime encoding.
 class UtcTime : public AsnStringBase {
 public:
     UtcTime() = default;
@@ -17,6 +17,9 @@ public:
     bool operator==(const UtcTime&) const = default;
 };
 
+/// @brief ASN.1 GeneralizedTime — stored as the raw ASN.1 string (e.g. \c "20240115143000Z").
+/// Inherits \c AsnStringBase so codec handlers can access the string uniformly.
+/// @see X.680 §47 — GeneralizedTime; X.690 §11.7 — DER GeneralizedTime encoding.
 class GeneralizedTime : public AsnStringBase {
 public:
     GeneralizedTime() = default;

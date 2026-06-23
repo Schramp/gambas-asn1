@@ -6,6 +6,8 @@
 
 namespace asn1 {
 
+/// @brief ASN.1 NULL — carries no data; used as a CHOICE alternative marker.
+/// @see X.680 §23 — NULL type; X.690 §8.8 — BER encoding (empty value field).
 struct Null : public Asn1Object {
     bool operator==(const Null&) const = default;
 };

@@ -10,34 +10,45 @@
 
 namespace asn1 {
 
+/// @brief ASN.1 BIT STRING — a sequence of bits with optional trailing padding.
+///
+/// Stored as raw payload bytes plus an unused-bits count (0–7) for the last byte.
+/// \c bit_count() returns the logical bit length.
+///
+/// @see X.680 §21 — BIT STRING type; X.690 §8.6 — BER encoding.
 class BitString : public Asn1Object {
     std::vector<uint8_t> bytes_;  // raw bytes (excluding unused-bits byte)
     uint8_t unused_bits_{0};      // 0-7 unused bits in the last byte
 
 public:
     BitString() = default;
+    /// @brief Construct from payload bytes with \p unused trailing bits in the last byte.
     BitString(std::vector<uint8_t> b, uint8_t unused = 0)
         : bytes_(std::move(b)), unused_bits_(unused) {
         if (unused > 7) throw std::invalid_argument("unused_bits must be 0-7");
     }
 
+    /// @brief Replace the payload bytes and unused-bit count.
     void set(std::vector<uint8_t> b, uint8_t unused = 0) {
         if (unused > 7) throw std::invalid_argument("unused_bits must be 0-7");
         bytes_ = std::move(b);
         unused_bits_ = unused;
     }
 
+    /// @brief View the payload bytes (excludes the BER unused-bits prefix byte).
     std::span<const uint8_t> bytes() const { return bytes_; }
+    /// @brief Number of unused (padding) bits in the last payload byte (0–7).
     uint8_t unused_bits()            const { return unused_bits_; }
+    /// @brief Logical bit length: \c bytes.size()*8 - unused_bits.
     std::size_t bit_count()          const {
         return bytes_.empty() ? 0 : bytes_.size() * 8 - unused_bits_;
     }
 
     bool operator==(const BitString&) const = default;
 
-    // SIZE(...) on BIT STRING is in bits. Returns 0 when valid, otherwise
-    // signed delta (bits) such that (bit_count + delta) lands at the nearest
-    // valid bound: positive = too short, negative = too long.
+    /// @brief Return 0 when \c bit_count() satisfies the SIZE constraint (in bits),
+    /// otherwise signed delta such that \c (bit_count+delta) lands at the nearest bound.
+    /// Positive = too short; negative = too long.
     int64_t validate(const Constraints& c) const {
         if (!(c.flags & Constraints::SIZE_CONSTRAINED)) return 0;
         if (c.flags & Constraints::EXTENSIBLE) return 0;

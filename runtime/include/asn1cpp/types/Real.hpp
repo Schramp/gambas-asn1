@@ -11,12 +11,18 @@
 
 namespace asn1 {
 
+/// @brief ASN.1 REAL — IEEE 754 double-precision floating point.
+/// BER encoding uses the X.690 §8.5.7 binary form (base-2, minimal mantissa bytes).
+/// Special values +∞, -∞, and NaN are encoded per X.690 §8.5.9.
+/// @see X.680 §21 — REAL type; X.690 §8.5 — BER encoding.
 class Real : public Asn1Object {
     double value_{0.0};
 public:
     Real() = default;
     explicit Real(double v) : value_(v) {}
+    /// @brief Return the stored double value.
     double value() const { return value_; }
+    /// @brief Set the stored double value.
     void   set(double v)   { value_ = v; }
     operator double() const { return value_; }
     bool operator==(const Real&) const = default;

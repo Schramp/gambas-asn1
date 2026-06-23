@@ -10,36 +10,51 @@
 
 namespace asn1 {
 
+/// @brief ASN.1 OCTET STRING — arbitrary binary data.
+///
+/// Stored internally as \c std::string for binary-safe SSO (avoids heap for
+/// short octet strings).  All public accessors use \c std::span<const uint8_t>
+/// so callers don't see the internal string representation.
+///
+/// @see X.680 §22 — OCTET STRING type; X.690 §8.7 — BER encoding.
 class OctetString : public Asn1Object {
     std::string bytes_; // binary-safe; SSO avoids heap for short strings
 public:
     OctetString() = default;
+    /// @brief Construct from a byte vector.
     explicit OctetString(std::vector<uint8_t> b)
         : bytes_(reinterpret_cast<const char*>(b.data()), b.size()) {}
+    /// @brief Construct from a byte span.
     OctetString(std::span<const uint8_t> b)
         : bytes_(reinterpret_cast<const char*>(b.data()), b.size()) {}
+    /// @brief Construct from a raw pointer + length.
     OctetString(const uint8_t* p, std::size_t n)
         : bytes_(reinterpret_cast<const char*>(p), n) {}
 
+    /// @brief Replace contents with \p b.
     void set(std::vector<uint8_t> b)
         { bytes_.assign(reinterpret_cast<const char*>(b.data()), b.size()); }
+    /// @brief Replace contents with \p b.
     void set(std::span<const uint8_t> b)
         { bytes_.assign(reinterpret_cast<const char*>(b.data()), b.size()); }
+    /// @brief Replace contents with \p n bytes from \p p.
     void set(const uint8_t* p, std::size_t n)
         { bytes_.assign(reinterpret_cast<const char*>(p), n); }
 
+    /// @brief View the stored bytes (zero-copy).
     std::span<const uint8_t> bytes() const {
         return {reinterpret_cast<const uint8_t*>(bytes_.data()), bytes_.size()};
     }
-    std::size_t size()              const { return bytes_.size(); }
-    bool empty()                    const { return bytes_.empty(); }
+    /// @brief Number of bytes stored.
+    std::size_t size()  const { return bytes_.size(); }
+    /// @brief True if no bytes are stored.
+    bool empty()        const { return bytes_.empty(); }
 
     bool operator==(const OctetString& o) const = default;
 
-    // Returns 0 when size satisfies SIZE(...), otherwise signed delta such
-    // that (size + delta) lands at the nearest valid bound:
-    //   positive — too short; delta = size_lower - n
-    //   negative — too long;  delta = size_upper - n
+    /// @brief Return 0 when size satisfies the SIZE constraint, otherwise signed delta
+    /// such that \c (size+delta) lands at the nearest valid bound.
+    /// Positive = too short; negative = too long.
     int64_t validate(const Constraints& c) const {
         if (!(c.flags & Constraints::SIZE_CONSTRAINED)) return 0;
         if (c.flags & Constraints::EXTENSIBLE) return 0;
