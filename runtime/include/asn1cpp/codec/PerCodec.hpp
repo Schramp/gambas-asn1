@@ -25,6 +25,16 @@ namespace asn1 {
 // ---------------------------------------------------------------------------
 // Bit-level stream wrappers for PER (UPER / APER)
 
+/// @brief \c IEncodeStream adapter for PER — writes bit-by-bit into a \c std::vector<uint8_t>.
+///
+/// Construct on the stack, pass by reference to \c PerCodec::encode().
+/// @code
+/// std::vector<uint8_t> buf;
+/// asn1::PerEncodeStream s{buf};
+/// asn1::PerCodec::instance().encode(s, MyType::asn_DEF, &obj);
+/// s.flush();  // pad final byte
+/// @endcode
+/// @see X.691 — Packed Encoding Rules (PER).
 class PerEncodeStream : public IEncodeStream {
     std::vector<uint8_t>& buf_;
     uint8_t current_{0};
@@ -39,11 +49,13 @@ class PerEncodeStream : public IEncodeStream {
         }
     }
 public:
+    /// @brief Construct wrapping \p buf.  \p buf must outlive this stream.
     explicit PerEncodeStream(std::vector<uint8_t>& buf) : buf_(buf) {}
 
+    /// @brief Current write position in bits (committed bytes × 8 + pending bits).
     int bit_pos() const { return static_cast<int>(buf_.size()) * 8 + bits_; }
 
-    // put_bits(val, n) — unnamed: basic DBG_PER trace (offset + bits + value).
+    /// @brief Write the low \p n bits of \p value MSB-first.
     void put_bits(uint64_t value, int n) {
         if (n > 0 && (debug_flags() & DBG_PER)) {
             int off = bit_pos();
@@ -72,6 +84,8 @@ public:
 #endif
     }
 
+    /// @brief Pad and flush the current partial byte to the buffer.
+    /// Must be called after the last \c put_bits() to ensure the final byte is committed.
     void flush() {
         if (bits_ > 0 || buf_.empty()) { buf_.push_back(current_); current_ = 0; bits_ = 0; }
     }
@@ -90,23 +104,36 @@ public:
     std::vector<uint8_t>& buf() { return buf_; }
 };
 
+/// @brief \c IDecodeStream adapter for PER — reads bit-by-bit from a byte span.
+///
+/// Construct on the stack, pass by reference to \c PerCodec::decode().
+/// @code
+/// asn1::PerDecodeStream s{data_span};
+/// MyType obj{};
+/// auto ok = asn1::PerCodec::instance().decode(s, MyType::asn_DEF, &obj);
+/// @endcode
+/// @see X.691 — Packed Encoding Rules (PER).
 class PerDecodeStream : public IDecodeStream {
     std::span<const uint8_t> buf_;
     int byte_pos_{0};
     int bit_pos_{0};
     int skipped_ext_count_{0};
 public:
+    /// @brief Construct over \p buf.  \p buf must outlive this stream.
     explicit PerDecodeStream(std::span<const uint8_t> buf) : buf_(buf) {}
 
-    // Caller-facing API: inspect skip count after decode to detect version skew.
+    /// @brief Number of extension alternatives skipped since the last \c reset_skipped_extensions().
+    /// Non-zero indicates a version skew between encoder and decoder schemas.
     int  skipped_extensions() const { return skipped_ext_count_; }
+    /// @brief Reset the skipped-extension counter to zero.
     void reset_skipped_extensions()  { skipped_ext_count_ = 0; }
 
+    /// @brief Return true when all input bits have been consumed.
     bool at_end() const override {
         return byte_pos_ >= static_cast<int>(buf_.size());
     }
 
-    // Called by per_detail inline helpers in this header — must be public.
+    /// @brief Read and consume \p n bits, returning them as a \c uint64_t (MSB-first).
     Expected<uint64_t, DecodeError> get_bits(int n) {
         int off = bit_pos();
         uint64_t result = 0;
@@ -210,6 +237,8 @@ inline DecodeResult decode_ber_content(PerDecodeStream& stream, Asn1Object* dest
 
 class PerCodec;
 
+/// @brief Internal per-type PER handler interface.
+/// Not part of the public API — use \c PerCodec directly.
 struct IPerTypeHandler {
     virtual ~IPerTypeHandler() = default;
     virtual void encode(const PerCodec& codec, PerEncodeStream& stream,
@@ -221,19 +250,42 @@ struct IPerTypeHandler {
 // ---------------------------------------------------------------------------
 // PerCodec — generic PER encode/decode driven by TypeDescriptor tables
 
+/// @brief PER codec singleton (UPER / APER — aligned flag in the descriptor).
+///
+/// The interface mirrors \c BerCodec and \c XerCodec; all encode/decode logic is
+/// table-driven.  The singleton is stateless and thread-safe.
+///
+/// **Note:** PER support is fully implemented for all SEQUENCE, CHOICE, SEQUENCE OF,
+/// ENUMERATED, INTEGER (constrained), and common string types.  Verify constraint
+/// coverage for your schema before using in production.
+///
+/// @see X.691 — Packed Encoding Rules; \c BerCodec — BER equivalent.
 class PerCodec : public ICodec {
 public:
+    /// @brief Return the process-wide \c PerCodec singleton.
     static PerCodec& instance() {
         static PerCodec inst;
         return inst;
     }
 
+    /// @brief Return \c "PER".
     const char* name() const override { return "PER"; }
 
+    /// @brief PER-encode \p src into the \c PerEncodeStream wrapped by \p dst.
+    /// Call \c PerEncodeStream::flush() after encode to commit the final partial byte.
+    /// @param dst  Must be a \c PerEncodeStream.
+    /// @param def  TypeDescriptor of the value.
+    /// @param src  Source object; must not be null.
     void encode(IEncodeStream& dst,
                 const TypeDescriptor& def,
                 const Asn1Object* src) const override;
 
+    /// @brief PER-decode from \p src into \p dest.
+    /// \p dest must be default-constructed before the call.
+    /// @param src   Must be a \c PerDecodeStream.
+    /// @param def   TypeDescriptor of the expected type.
+    /// @param dest  Pre-allocated, default-constructed target object.
+    /// @return \c DecodeResult — check with \c .has_value().
     DecodeResult decode(IDecodeStream& src,
                         const TypeDescriptor& def,
                         Asn1Object* dest) const override;

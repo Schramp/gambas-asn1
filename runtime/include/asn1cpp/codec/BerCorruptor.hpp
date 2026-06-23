@@ -1,28 +1,22 @@
+/// @file BerCorruptor.hpp
+/// @brief Post-encode BER byte-level wire fuzzer.
+///
+/// Walks a well-formed BER buffer and occasionally mutates TLV header bytes to produce
+/// malformed-but-plausible records.  Applied \b after normal encoding — orthogonal to
+/// the schema-constraint fuzz path in \c RandomFiller (\c FillConfig::invalid_percent).
+///
+/// All mutations are in-place: buffer size stays unchanged so sibling TLV offsets remain
+/// valid for the recursive walker.
+///
+/// Typical usage:
+/// @code
+/// std::vector<uint8_t> buf = encode(obj);
+/// asn1::corrupt_ber(buf, 5.0, rng);            // 5 % corruption, all modes
+/// asn1::corrupt_ber(buf, 2.0, rng, asn1::CORRUPT_LEN_INDEF); // one mode only
+/// @endcode
+///
+/// @see RandomFiller — schema-level constraint fuzzing (value range, SIZE, alphabet).
 #pragma once
-// Post-encode BER byte-level fuzzer. Walks a well-formed BER buffer and
-// occasionally mutates a TLV header byte to produce malformed-but-plausible
-// records. Applied AFTER normal encoding — orthogonal to the schema-
-// constraint fuzz path in RandomFiller (FillConfig::invalid_percent).
-//
-// Selectable mutation modes:
-//   FlipPc          XOR bit 6 of tag byte (primitive ↔ constructed)
-//   RotateClass     rotate top 2 tag bits (universal → application → ...)
-//   TagBump         tag number low-bits ±1 (small drift)
-//   TagJump         tag number += 6 (bigger drift; tries to land outside
-//                   any registered member set, exercising extension paths)
-//   LenBitFlip      XOR bit 0 of first length byte
-//   LenIndef        force first length byte = 0x80 (indefinite — illegal on
-//                   primitive per X.690 §8.1.3.2 a)
-//   LenOverstate    first length byte += 0x10 (without changing byte count)
-//   LenUnderstate   first length byte -= small (clamped ≥ 1)
-//   All             pick one of the above uniformly per trip (default)
-//
-// All mutations are in-place: buffer size unchanged so sibling TLV offsets
-// stay valid for recursive walking.
-//
-// API:
-//   asn1::corrupt_ber(buf, percent, rng[, mode]) — mutate buf in place,
-//   percent in PERCENT (0.1 = 0.1 %). Recurses into constructed TLVs.
 
 #include <cctype>
 #include <cstdint>
@@ -34,23 +28,29 @@
 
 namespace asn1 {
 
-// Each mode is a bit; combine via bitwise OR. Pass the mask to corrupt_ber.
-// On each trip, the corruptor picks one set bit uniformly at random.
+/// @brief Bitmask type for \c corrupt_ber mode selection.
+/// Combine multiple \c CorruptModeBit values with bitwise OR.
 using CorruptMask = uint32_t;
 
+/// @brief Individual corruption mode bits for \c corrupt_ber.
+///
+/// Pass one or more OR'd bits as the \c mask argument to \c corrupt_ber.
+/// On each TLV visit the corruptor picks one set bit uniformly at random.
+///
+/// @see X.690 §8.1.2 — identifier (tag) octets; §8.1.3 — length octets.
 enum CorruptModeBit : CorruptMask {
-    CORRUPT_FLIP_PC        = 1u << 0,   // XOR bit 6 of tag (P/C bit)
-    CORRUPT_ROTATE_CLASS   = 1u << 1,   // rotate top 2 tag bits
-    CORRUPT_TAG_BUMP       = 1u << 2,   // tag number ±1
-    CORRUPT_TAG_JUMP       = 1u << 3,   // tag number += 6
-    CORRUPT_LEN_BIT_FLIP   = 1u << 4,   // XOR bit 0 of first length byte
-    CORRUPT_LEN_INDEF      = 1u << 5,   // force length byte = 0x80
-    CORRUPT_LEN_OVERSTATE  = 1u << 6,   // length += 0x10 (short form)
-    CORRUPT_LEN_UNDERSTATE = 1u << 7,   // length -= small (clamped ≥ 1)
+    CORRUPT_FLIP_PC        = 1u << 0,  ///< XOR bit 6 of tag byte (primitive ↔ constructed). Violates X.690 §8.1.2.5.
+    CORRUPT_ROTATE_CLASS   = 1u << 1,  ///< Rotate top 2 tag bits (Universal → Application → Context → Private → …).
+    CORRUPT_TAG_BUMP       = 1u << 2,  ///< Tag number ±1 (small type drift).
+    CORRUPT_TAG_JUMP       = 1u << 3,  ///< Tag number += 6 (larger drift; targets unregistered alternatives).
+    CORRUPT_LEN_BIT_FLIP   = 1u << 4,  ///< XOR bit 0 of first length byte.
+    CORRUPT_LEN_INDEF      = 1u << 5,  ///< Force first length byte = 0x80 (indefinite form — illegal on primitives per X.690 §8.1.3.2 a).
+    CORRUPT_LEN_OVERSTATE  = 1u << 6,  ///< First length byte += 0x10 (claims more bytes than present).
+    CORRUPT_LEN_UNDERSTATE = 1u << 7,  ///< First length byte -= small delta (clamped ≥ 1).
 
     CORRUPT_ALL = CORRUPT_FLIP_PC | CORRUPT_ROTATE_CLASS | CORRUPT_TAG_BUMP |
                   CORRUPT_TAG_JUMP | CORRUPT_LEN_BIT_FLIP | CORRUPT_LEN_INDEF |
-                  CORRUPT_LEN_OVERSTATE | CORRUPT_LEN_UNDERSTATE,
+                  CORRUPT_LEN_OVERSTATE | CORRUPT_LEN_UNDERSTATE, ///< All modes combined.
 };
 
 inline std::string_view corrupt_mode_name(CorruptModeBit m) {
@@ -81,9 +81,12 @@ inline bool parse_corrupt_mode_token(std::string_view name, CorruptMask& bit) {
     return false;
 }
 
-// Parse a CLI mask spec: one or more mode names joined by '+' or ',' (e.g.
-// "flip-pc+tag-jump"), OR a hex/decimal mask ("0x21" / "33"). Returns false
-// on any unknown token. Empty input → CORRUPT_ALL.
+/// @brief Parse a CLI mask spec into a \c CorruptMask.
+/// Accepts one or more mode names joined by \c '+' or \c ',' (e.g. \c "flip-pc+tag-jump"),
+/// or a hex/decimal numeric mask (\c "0x21" / \c "33").  Empty input → \c CORRUPT_ALL.
+/// @param spec  Input string.
+/// @param out   Receives the parsed mask on success.
+/// @return True on success; false if any token is unknown or the result would be zero.
 inline bool parse_corrupt_mask(std::string_view spec, CorruptMask& out) {
     if (spec.empty()) { out = CORRUPT_ALL; return true; }
     // Hex / decimal numeric mask
@@ -263,6 +266,20 @@ inline void corrupt_ber_range(std::vector<uint8_t>& buf, std::size_t begin,
 
 } // namespace detail
 
+/// @brief Mutate a BER buffer in-place, corrupting TLV headers with probability \p percent.
+///
+/// Walks the buffer recursively (recurses into constructed TLVs).  On each TLV visit
+/// a Bernoulli trial with probability \c percent/100 decides whether to apply a mutation.
+/// When triggered, one bit from \p mask is picked uniformly at random and applied.
+///
+/// Buffer size is never changed — mutations only alter existing header bytes.
+///
+/// @param buf      BER-encoded buffer to mutate.
+/// @param percent  Corruption probability in percent (e.g. \c 5.0 = 5% per TLV).
+/// @param rng      Random number generator.
+/// @param mask     Which mutation modes to use (default: \c CORRUPT_ALL).
+///
+/// @see CorruptModeBit — individual mode descriptions and affected X.690 rules.
 inline void corrupt_ber(std::vector<uint8_t>& buf, double percent,
                         std::mt19937& rng,
                         CorruptMask mask = CORRUPT_ALL) {
