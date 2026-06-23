@@ -7,42 +7,54 @@
 
 namespace asn1 {
 
+/// @brief Configuration knobs for \c RandomFiller.
+/// All fields have safe defaults; override only the knobs you care about.
 struct FillConfig {
-    int    max_depth     = 10;   // recursion depth limit (self-recursive types)
-    int    min_seq_of    =  1;   // min elements in SEQUENCE OF / SET OF
-    int    max_seq_of    =  8;   // max elements
-    int    min_str_len   =  1;   // min OCTET STRING / character string length
-    int    max_str_len   = 32;
-    double optional_prob = 0.7;  // probability an OPTIONAL member is present
+    int    max_depth     = 10;   ///< Recursion depth limit (prevents infinite loops in self-recursive types).
+    int    min_seq_of    =  1;   ///< Minimum element count for SEQUENCE OF / SET OF.
+    int    max_seq_of    =  8;   ///< Maximum element count for SEQUENCE OF / SET OF.
+    int    min_str_len   =  1;   ///< Minimum length for OCTET STRING and character strings.
+    int    max_str_len   = 32;   ///< Maximum length for OCTET STRING and character strings.
+    double optional_prob = 0.7;  ///< Probability (0–1) that an OPTIONAL member is generated.
 
-    // Per-primitive probability (in PERCENT — 0.1 means 0.1 %) that the
-    // generator emits a value that intentionally violates one of the
-    // descriptor's constraints (range, SIZE, alphabet, ENUM map).  Default 0
-    // = always in-spec.  Used by xval / fuzz pipelines to verify decoder /
-    // validator behaviour when fed bad input.  Affects:
-    //   - try_fill_primitive (INTEGER range, OCTET/BIT/string SIZE, string alphabet)
-    //   - fill_enum          (value outside spec.entries)
-    //   - fill_seq_of        (size outside size_lower..size_upper)
+    /// @brief Per-primitive probability (in PERCENT, e.g. \c 0.1 = 0.1%) that
+    /// the generator emits a value intentionally violating a constraint.
+    /// Used by xval / fuzz pipelines to verify decoder/validator behaviour on bad input.
+    /// Affects: INTEGER range, OCTET/BIT/string SIZE, string alphabet, ENUM map, SEQUENCE OF size.
+    /// Default 0 = always in-spec.
     double invalid_percent = 0.0;
 };
 
-// Walks a TypeDescriptor tree and fills a caller-provided, already-default-constructed
-// object with random but structurally valid data.  Works through the same void*/offset
-// mechanism as BerCodec — no knowledge of the concrete C++ type is required.
-//
-// Usage:
-//   std::mt19937 rng{42};
-//   asn1::RandomFiller filler{rng};
-//   MyType obj{};                              // default-construct
-//   filler.fill(&obj, asn_DEF_MyType);
-//   // obj is now ready to encode with any ICodec
+/// @brief Fills a default-constructed ASN.1 object with random but structurally valid data.
+///
+/// Walks the \c TypeDescriptor tree in the same way \c BerCodec does — no knowledge
+/// of the concrete C++ type is required.  The result is ready to encode with any \c ICodec.
+///
+/// Usage:
+/// @code
+/// std::mt19937 rng{42};
+/// asn1::RandomFiller filler{rng};
+/// MyType obj{};
+/// filler.fill(&obj, MyType::asn_DEF);
+/// // obj is now ready to encode
+/// @endcode
+///
+/// To generate intentionally invalid values (for fuzz / validator testing) set
+/// \c FillConfig::invalid_percent to a small positive number (e.g. \c 5.0 for 5%).
 class RandomFiller {
 public:
+    /// @brief Construct with the given RNG and optional config.
+    /// @param rng  Random number generator; must outlive this object.
+    /// @param cfg  Fill parameters; defaults are reasonable for structural testing.
     explicit RandomFiller(std::mt19937& rng, FillConfig cfg = {});
 
-    // Returns true on success. False means the random value violates a
-    // constraint we couldn't satisfy after retries. For optional members /
-    // CHOICE alternatives the caller can react (skip / try another alt).
+    /// @brief Fill \p obj (described by \p def) with random data.
+    /// \p obj must be default-constructed before the call.
+    /// @param obj       Target object; must not be null.
+    /// @param def       TypeDescriptor of \p obj's type.
+    /// @param depth     Current recursion depth (callers pass 0).
+    /// @param mandatory True when this member must succeed (no optional skip fallback).
+    /// @return True on success; false when a constraint could not be satisfied after retries.
     bool fill(Asn1Object* obj, const TypeDescriptor& def, int depth = 0, bool mandatory = false);
 
 private:
