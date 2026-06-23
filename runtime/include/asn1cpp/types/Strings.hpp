@@ -10,23 +10,33 @@
 
 namespace asn1 {
 
-// Non-virtual base for all AsnString<N> types.
-// Codec handlers cast void* to AsnStringBase* — language-safe via inheritance,
-// no layout assumptions needed.
+/// @brief Non-virtual base for all \c AsnString<N> types.
+///
+/// Codec handlers upcast to \c AsnStringBase* via static_cast (safe by inheritance) —
+/// no layout assumptions or \c reinterpret_cast needed.
+/// Holds a single \c std::string regardless of the ASN.1 string type.
 class AsnStringBase : public Asn1Object {
     std::string value_;
 public:
     AsnStringBase() = default;
     explicit AsnStringBase(std::string s) : value_(std::move(s)) {}
 
+    /// @brief Access the string contents.
     const std::string& str() const { return value_; }
+    /// @brief Mutable access to the string contents.
     std::string& str()             { return value_; }
 
     bool operator==(const AsnStringBase&) const = default;
 };
 
-// Thin per-tag wrapper. Tag number N selects the BER universal tag and
-// the built-in alphabet for validation.
+/// @brief Thin per-tag ASN.1 string wrapper — tag number \c N selects the BER
+/// universal tag and the built-in alphabet for constraint validation.
+///
+/// Named aliases (\c Utf8String, \c Ia5String, etc.) are defined below.
+/// Access the string contents via the inherited \c str() method.
+///
+/// @tparam TagNumber  Universal tag number from \c UniversalTag::.
+/// @see X.680 §40–50 — string type definitions; X.690 §8.21 — BER string encoding.
 template<uint32_t TagNumber>
 class AsnString : public AsnStringBase {
 public:
@@ -34,19 +44,21 @@ public:
     explicit AsnString(std::string s) : AsnStringBase(std::move(s)) {}
     AsnString(const char* s) : AsnStringBase(std::string(s)) {}
 
+    /// @brief True if the string is empty.
     bool empty() const { return str().empty(); }
+    /// @brief Number of bytes (not characters for multi-byte encodings like UTF-8).
     std::size_t size() const { return str().size(); }
 
     bool operator==(const AsnString&) const = default;
 
-    // SIZE + alphabet check. Returns 0 when valid.
-    // SIZE: signed delta (chars) such that (size + delta) lands at nearest
-    //       valid bound — positive = too short, negative = too long.
-    // Alphabet: returns 1 (sentinel; no meaningful distance metric) when any
-    //           byte is outside the permitted set. FROM constraint
-    //           (c.alphabet) takes precedence; otherwise built-in alphabet
-    //           per type tag (NumericString / PrintableString / VisibleString
-    //           / IA5String). Unrestricted types (Utf8/BMP/...) return 0.
+    /// @brief Return 0 when the string satisfies SIZE and alphabet constraints.
+    ///
+    /// - SIZE: signed delta (chars) such that \c (size+delta) lands at nearest
+    ///   valid bound — positive = too short, negative = too long.
+    /// - Alphabet: returns 1 (sentinel) when any byte is outside the permitted set.
+    ///   FROM constraint (\c c.encode_table) takes precedence; otherwise the built-in
+    ///   alphabet per tag (NumericString / PrintableString / IA5String / VisibleString).
+    ///   Unrestricted types (UTF8String, BMPString, …) always return 0.
     int64_t validate(const Constraints& c) const {
         if ((c.flags & Constraints::SIZE_CONSTRAINED) &&
             !(c.flags & Constraints::EXTENSIBLE)) {
@@ -85,18 +97,21 @@ struct BerTraits<AsnString<N>> {
     }
 };
 
-// Named string type aliases matching ASN.1 built-in names
-using Utf8String       = AsnString<UniversalTag::Utf8String>;
-using NumericString    = AsnString<UniversalTag::NumericString>;
-using PrintableString  = AsnString<UniversalTag::PrintableString>;
-using T61String        = AsnString<UniversalTag::T61String>;
-using VideotexString   = AsnString<UniversalTag::VideotexString>;
-using Ia5String        = AsnString<UniversalTag::Ia5String>;
-using GraphicString    = AsnString<UniversalTag::GraphicString>;
-using VisibleString    = AsnString<UniversalTag::VisibleString>;
-using GeneralString    = AsnString<UniversalTag::GeneralString>;
-using UniversalString  = AsnString<UniversalTag::UniversalString>;
-using BmpString        = AsnString<UniversalTag::BmpString>;
-using ObjectDescriptor = AsnString<UniversalTag::ObjectDescriptor>;
+/// @name ASN.1 string type aliases
+/// Named \c AsnString<N> instantiations matching ASN.1 built-in type names.
+///@{
+using Utf8String       = AsnString<UniversalTag::Utf8String>;       ///< UTF-8 (unrestricted).
+using NumericString    = AsnString<UniversalTag::NumericString>;    ///< Digits and space only.
+using PrintableString  = AsnString<UniversalTag::PrintableString>;  ///< Printable subset of ASCII.
+using T61String        = AsnString<UniversalTag::T61String>;        ///< Teletex / T.61.
+using VideotexString   = AsnString<UniversalTag::VideotexString>;   ///< Videotex.
+using Ia5String        = AsnString<UniversalTag::Ia5String>;        ///< IA5 / ASCII (7-bit).
+using GraphicString    = AsnString<UniversalTag::GraphicString>;    ///< Graphic characters.
+using VisibleString    = AsnString<UniversalTag::VisibleString>;    ///< Visible (printable) ASCII.
+using GeneralString    = AsnString<UniversalTag::GeneralString>;    ///< General character set.
+using UniversalString  = AsnString<UniversalTag::UniversalString>;  ///< ISO/IEC 10646-1 (UCS-4).
+using BmpString        = AsnString<UniversalTag::BmpString>;        ///< Basic Multilingual Plane (UCS-2).
+using ObjectDescriptor = AsnString<UniversalTag::ObjectDescriptor>; ///< Object descriptor string.
+///@}
 
 } // namespace asn1

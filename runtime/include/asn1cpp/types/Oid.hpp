@@ -14,17 +14,27 @@
 
 namespace asn1 {
 
+/// @brief ASN.1 OBJECT IDENTIFIER — sequence of non-negative integer arcs.
+///
+/// Stored as a \c vector<uint32_t> of decoded arc values.  The first two arcs
+/// (X.680 §32.3: first*40+second on the wire) are already split by the decoder.
+///
+/// @see X.680 §32 — OBJECT IDENTIFIER type; X.690 §8.19 — BER encoding.
 class Oid : public Asn1Object {
     std::vector<uint32_t> arcs_;
 public:
     Oid() = default;
     explicit Oid(std::vector<uint32_t> a) : arcs_(std::move(a)) {}
 
+    /// @brief Replace the arc list.
     void set(std::vector<uint32_t> a) { arcs_ = std::move(a); }
 
+    /// @brief Access the arc list.
     const std::vector<uint32_t>& arcs() const { return arcs_; }
+    /// @brief Number of arcs.
     std::size_t size()                  const { return arcs_.size(); }
 
+    /// @brief Return a dotted-decimal string representation (e.g. \c "2.5.4.3").
     std::string to_string() const {
         std::string s;
         for (std::size_t i = 0; i < arcs_.size(); ++i) {
@@ -37,12 +47,16 @@ public:
     bool operator==(const Oid&) const = default;
 };
 
+/// @brief ASN.1 RELATIVE-OID — like \c Oid but without the first-two-arc encoding trick.
+/// @see X.680 §33 — RELATIVE-OID type; X.690 §8.20 — BER encoding.
 class RelativeOid : public Asn1Object {
     std::vector<uint32_t> arcs_;
 public:
     RelativeOid() = default;
     explicit RelativeOid(std::vector<uint32_t> a) : arcs_(std::move(a)) {}
+    /// @brief Replace the arc list.
     void set(std::vector<uint32_t> a) { arcs_ = std::move(a); }
+    /// @brief Access the arc list.
     const std::vector<uint32_t>& arcs() const { return arcs_; }
     bool operator==(const RelativeOid&) const = default;
 };
