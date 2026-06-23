@@ -84,7 +84,7 @@ struct IBerTypeHandler {
 class BerCodec : public ICodec {
 public:
     /// @brief Return the process-wide \c BerCodec singleton.
-    /// Do not store the returned reference — always call \c instance() at the use site.
+    /// The returned reference is valid for the process lifetime.
     static BerCodec& instance() {
         static BerCodec inst;
         return inst;

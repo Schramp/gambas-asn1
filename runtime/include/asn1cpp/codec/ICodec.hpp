@@ -76,7 +76,6 @@ public:
     /// @param dst  Encoding-specific output stream (must match this codec).
     /// @param def  TypeDescriptor of the value to encode (e.g. \c MyType::asn_DEF).
     /// @param src  Pointer to the source object; must not be null.
-    /// @see X.690 §8 — BER encoding rules.
     virtual void encode(IEncodeStream& dst,
                         const TypeDescriptor& def,
                         const Asn1Object* src) const = 0;
@@ -88,7 +87,6 @@ public:
     /// @param def   TypeDescriptor describing the expected type.
     /// @param dest  Pre-allocated, default-constructed target object.
     /// @return \c DecodeResult — success if \c .has_value(), failure with error if not.
-    /// @see X.690 §8 — BER decoding rules.
     virtual DecodeResult decode(IDecodeStream& src,
                                 const TypeDescriptor& def,
                                 Asn1Object* dest) const = 0;

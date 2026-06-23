@@ -116,6 +116,8 @@ public:
     struct TLV {
         Tag tag;                          ///< Parsed tag (class, number, constructed bit).
         std::span<const uint8_t> value;   ///< Value bytes (zero-copy view into input).
+                                          ///< For indefinite-length encodings the EOC octets (00 00)
+                                          ///< are consumed by \c read_tlv() but excluded here; check \c indefinite.
         bool indefinite;                  ///< True if encoded with indefinite length (X.690 §8.1.3.2).
     };
 
