@@ -51,6 +51,9 @@ find_library(REFLEX_LIB reflex
     HINTS /usr/local/lib /home/ruud/RE-flex/lib
     REQUIRED)
 target_link_libraries(asn1cpp PRIVATE ${REFLEX_LIB})
+if(fmt_FOUND)
+    target_link_libraries(asn1cpp PRIVATE fmt::fmt)
+endif()
 target_include_directories(asn1cpp PRIVATE /usr/local/include)
 
 target_compile_options(asn1cpp PRIVATE -Wall -Wextra -Wno-unused-parameter)

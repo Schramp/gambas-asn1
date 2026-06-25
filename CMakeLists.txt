@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(BISON 3.8 REQUIRED)
+find_package(fmt QUIET)  # optional: fallback for std::format on GCC < 13 (Ubuntu 22.04)
 find_program(REFLEX_EXECUTABLE reflex
     PATHS /usr/local/bin
     NO_DEFAULT_PATH
