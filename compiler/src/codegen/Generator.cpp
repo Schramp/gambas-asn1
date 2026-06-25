@@ -521,15 +521,14 @@ void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
     os << std::format("class {} : public asn1::EnumValue {{\npublic:\n", cname);
     // Enum values are plain enum (not enum class) — they inject into class scope.
     // Reserve all generated method names so values can't clash with them.
-    static constexpr std::initializer_list<std::string_view> enum_api = {
-        "present", "value_", "value", "set", "Enm"
-    };
     os << "    enum Enm : long {\n";
     long auto_val = 0;
     for (const auto& ev : def.enum_values) {
         if (ev.name == "...") { continue; }
         long v = static_cast<long>(ev.number.value_or(auto_val));
-        os << std::format("        {} = {},\n", safe_cpp_name(to_cpp_name(ev.name), enum_api), v);
+        os << std::format("        {} = {},\n",
+            safe_cpp_name(to_cpp_name(ev.name),
+                {"present", "value_", "value", "set", "Enm"}), v);
         auto_val = v + 1;
     }
     if (extensible)
@@ -1782,18 +1781,14 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     //   set by ChoiceInterface::emplace_alt. destroy/move ops reached via one pointer deref.
     //   std::launder is required on every read-back after placement-new (C++17 §6.8.4).
 
-    static constexpr std::initializer_list<std::string_view> choice_acc_api = {
-        "present", "set_present", "val_", "val_storage_", "active_lifecycle",
-        "s_alternatives", "s_alternative_count"
-    };
     os << std::format("class {} : public asn1::ChoiceInterface {{\npublic:\n", cname);
     bool apply_auto_tags_hpp = should_apply_auto_tags(def);
     auto canon_members = canonical_choice_members(def, apply_auto_tags_hpp);
-    static constexpr std::initializer_list<std::string_view> choice_pr_api = { "NOTHING" };
     os << "    enum class PR : int { NOTHING = 0";
     int pr_idx = 1;
     for (const auto* m : canon_members)
-        os << std::format(", {} = {}", safe_cpp_name(to_cpp_name(m->name), choice_pr_api), pr_idx++);
+        os << std::format(", {} = {}",
+            safe_cpp_name(to_cpp_name(m->name), {"NOTHING"}), pr_idx++);
     os << " };\n";
 
     // val_storage_: raw byte buffer sized/aligned to the largest alternative.
@@ -1848,7 +1843,9 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
 
     for (const auto* m : canon_members) {
         std::string t = cpp_type_for(*m);
-        std::string n = to_member_name(m->name, choice_acc_api);
+        std::string n = to_member_name(m->name,
+            {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
+             "s_alternatives", "s_alternative_count"});
         os << std::format(
             "    {0}& {1}() {{ return *std::launder(reinterpret_cast<{0}*>(val_)); }}\n", t, n);
         os << std::format(
