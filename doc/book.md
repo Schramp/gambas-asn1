@@ -151,7 +151,8 @@ The language is 40 years old. It is not going away.
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| GCC or Clang | C++20 | GCC 13+ recommended |
+| GCC or Clang | C++20 | GCC 13+ (native `<format>`), or GCC 11 + libfmt (Ubuntu 22.04 LTS) |
+| libfmt | ≥ 8.0 | Only needed on GCC < 13: `sudo apt install libfmt-dev` |
 | CMake | ≥ 3.20 | |
 | Bison | ≥ 3.8 | `sudo apt-get install bison` |
 | RE/flex | 6.1.0 | Must be built from source (see below) |

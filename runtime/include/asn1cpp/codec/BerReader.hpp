@@ -2,7 +2,7 @@
 #include <span>
 #include <cstdint>
 #include <cstddef>
-#include <format>
+#include <asn1cpp/compat/format.hpp>
 #include "../Tag.hpp"
 #include "../Error.hpp"
 #include "../Expected.hpp"
