@@ -1,11 +1,11 @@
 Common-Parameters
-{itu-t(0) identified-organization(4) etsi(0) common-parameters(3280) version231(231)}
+{itu-t(0) identified-organization(4) etsi(0) common-parameters(3280) version271(271)}
 
 DEFINITIONS IMPLICIT TAGS EXTENSIBILITY IMPLIED ::= BEGIN
 
 -- Object Identifier definitions
 
-commonParameterDomainId OBJECT IDENTIFIER ::= {itu-t(0) identified-organization(4) etsi(0) common-parameters(3280) version231(231)}
+commonParameterDomainId OBJECT IDENTIFIER ::= {itu-t(0) identified-organization(4) etsi(0) common-parameters(3280) version271(271)}
 
 -- Common Parameters (below are as defined in clause 6)
 
@@ -90,5 +90,81 @@ GPSIMSISDN ::= NumericString (SIZE(1..15))
 GPSINAI ::= NAI
 
 NAI ::= UTF8String
+
+IPProtocol ::= INTEGER (0..255)
+
+VLANID ::= INTEGER (0..4095)
+
+ServiceAccessIdentifier ::= UTF8String
+
+Percentage ::= INTEGER (0..100)
+
+AltitudeMeters ::= INTEGER (-1000..50000)
+
+Altitude ::= CHOICE
+{
+    altitudeAboveGroundLevel  [0] AltitudeMeters,
+    altitudeAboveMeanSeaLevel [1] AltitudeMeters
+}
+
+UncertaintyMeters ::= INTEGER (1..MAX)
+
+GNSSLocation ::= SEQUENCE
+{
+    location [0] GeoShape,
+    fixMode  [1] FixMode
+}
+
+WGS84Location ::= SEQUENCE
+{
+    location [0] WGS84Coordinate,
+    altitude [1] Altitude OPTIONAL
+}
+
+WGS84Coordinate ::= CHOICE
+{
+    decimal [0] WGS84CoordinateDecimal,
+    angular [1] WGS84CoordinateAngular
+}
+
+GeoShape ::= SEQUENCE
+{
+    shape      [0] GMLShape,
+    confidence [1] Percentage OPTIONAL
+}
+
+GMLShape ::= CHOICE
+{
+    point       [0] GeoPoint,
+    sphere      [1] GeoSphere,
+    xyEllipsoid [2] XYEllipsoid
+}
+
+GeoPoint ::= CHOICE
+{
+    wGS84Point [0] WGS84Location
+}
+
+GeoSphere ::= SEQUENCE
+{
+    centerPoint  [0] GeoPoint,
+    radiusMeters [1] UncertaintyMeters
+}
+
+XYEllipsoid ::= SEQUENCE
+{
+    centerPoint          [0] GeoPoint,
+    uncertaintyLongitude [1] UncertaintyMeters,
+    uncertaintyLatitude  [2] UncertaintyMeters,
+    uncertaintyAltitude  [3] UncertaintyMeters OPTIONAL
+}
+
+FixMode ::= ENUMERATED
+{
+    unknown(0),
+    noFix(1),
+    fix2D(2),
+    fix3D(3)
+}
 
 END

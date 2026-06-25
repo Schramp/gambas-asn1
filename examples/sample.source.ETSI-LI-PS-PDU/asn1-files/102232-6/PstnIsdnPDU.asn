@@ -1,31 +1,27 @@
--- ===============================
--- Description of the PstnIsdn PDU
--- ===============================
-
 PstnIsdnPDU
-{itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulIntercept(2) li-ps(5) pstnIsdn(6) version5(5)}
+{itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulIntercept(2) li-ps(5) pstnIsdn(6) version6(6)}
 
 DEFINITIONS IMPLICIT TAGS ::=
 BEGIN
 
 IMPORTS
 
-	
-
-	-- from TS 102 232-01 [2]
-	PayloadDirection
-		FROM LI-PS-PDU
-		{itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulIntercept(2) li-ps(5) genHeader(1) version18(18)};
+    -- from TS 102 232-01 [2]
+    PayloadDirection
+        FROM LI-PS-PDU
+        {itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulIntercept(2) li-ps(5) genHeader(1) version35(35)};
 
 
 -- ============================
 -- Object Identifier Definition
 -- ============================
 
-	-- definitions are relative to
-	-- {itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulintercept(2)}
-pstnIsdnIRIObjId RELATIVE-OID	::= {li-ps(5) pstnIsdn(6) version5(5) iRI(1)}
-pstnIsdnCCObjId RELATIVE-OID	::= {li-ps(5) pstnIsdn(6) version5(5) cC(2)}
+pstnIsdnPDUObjId RELATIVE-OID   ::= {li-ps(5) pstnIsdn(6) version6(6)}
+pstnIsdnIRIObjId RELATIVE-OID   ::= {pstnIsdnPDUObjId iRI(1)}
+pstnIsdnCCObjId RELATIVE-OID    ::= {pstnIsdnPDUObjId cC(2)}
+
+    -- definitions are relative to
+    -- {itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulintercept(2)}
 
 
 -- ===============================
@@ -34,75 +30,75 @@ pstnIsdnCCObjId RELATIVE-OID	::= {li-ps(5) pstnIsdn(6) version5(5) cC(2)}
 
 PstnIsdnIRI ::= SEQUENCE
 {
-	pstnIsdnIRIObjId		[0] RELATIVE-OID,
-	pstnIsdnIRIContents		[1] PstnIsdnIRIContents
+    pstnIsdnIRIObjId        [0] RELATIVE-OID,
+    pstnIsdnIRIContents     [1] PstnIsdnIRIContents
 }
 
 PstnIsdnIRIContents ::= CHOICE
 {
-	supplementaryInfo		[0] SupplementaryInfo,
-	...
+    supplementaryInfo       [0] SupplementaryInfo,
+    ...
 }
 
 SupplementaryInfo ::= SEQUENCE
 {
-	informationAppliesTo	[0] InformationAppliesTo,
-		-- Identifies the PDUs to which this info applies
-	mediaFormat				[1] INTEGER (0..127),
-		-- As defined in RFC 3551 [10]
-	mediaAttributes			[2] OCTET STRING OPTIONAL,
-		-- Format as per RFC 4566 [7]
-		-- Clause 6.3 describes when the mediaAttributes shall be present
-	encryptionKey			[3] OCTET STRING OPTIONAL,
-		-- Format as per RFC 4566 [7]
-	sessionName				[4] OCTET STRING OPTIONAL,
-		-- Format as per RFC 4566 [7]
-	sessionInfo				[5] OCTET STRING OPTIONAL,
-		-- Format as per RFC 4566 [7]
-	copyOfSDPMessage		[6] OCTET STRING OPTIONAL,
-		-- Format as per RFC 4566 [7]
-	...,
-	frameType				[7] FrameType OPTIONAL,
-		-- Populated if one or more protocol layers are missing from CC data
-		-- May be omitted if all headers are present.
-	alternateProtocol		[8] AlternateProtocol OPTIONAL
-		-- Used to identify the protocol of packets sent in pstnIsdnCCContents
+    informationAppliesTo    [0] InformationAppliesTo,
+        -- Identifies the PDUs to which this info applies
+    mediaFormat             [1] INTEGER (0..127),
+        -- As defined in RFC 3551 [10]
+    mediaAttributes         [2] OCTET STRING OPTIONAL,
+        -- Format as per RFC 4566 [7]
+        -- Clause 6.3 describes when the mediaAttributes shall be present
+    encryptionKey           [3] OCTET STRING OPTIONAL,
+        -- Format as per RFC 4566 [7]
+    sessionName             [4] OCTET STRING OPTIONAL,
+        -- Format as per RFC 4566 [7]
+    sessionInfo             [5] OCTET STRING OPTIONAL,
+        -- Format as per RFC 4566 [7]
+    copyOfSDPMessage        [6] OCTET STRING OPTIONAL,
+        -- Format as per RFC 4566 [7]
+    ...,
+    frameType               [7] FrameType OPTIONAL,
+        -- Populated if one or more protocol layers are missing from CC data
+        -- May be omitted if all headers are present.
+    alternateProtocol       [8] AlternateProtocol OPTIONAL
+        -- Used to identify the protocol of packets sent in pstnIsdnCCContents
 
 
 }
 
 InformationAppliesTo ::= SEQUENCE
-	-- Identifies the PDUs to which a piece of supplementary information applies
+    -- Identifies the PDUs to which a piece of supplementary information applies
 {
-	payloadDirection		[0] PayloadDirection,
-		-- The direction of the traffic to which this info applies
-	cCLinkID				[1] INTEGER (0..65535) OPTIONAL,
-		-- If there are multiple CCLinks, this field states CCLink to which this info applies
-	firstPDUNumber			[2] INTEGER (0..4294967295) OPTIONAL,
-		-- The supplementary info applies to all PDUs with this sequence number and above
-	...
+    payloadDirection        [0] LI-PS-PDU.PayloadDirection,
+        -- The direction of the traffic to which this info applies
+    cCLinkID                [1] INTEGER (0..65535) OPTIONAL,
+        -- If there are multiple CCLinks, this field states CCLink to which this info applies
+    firstPDUNumber          [2] INTEGER (0..4294967295) OPTIONAL,
+        -- The supplementary info applies to all PDUs with this sequence number and above
+    ...
 }
 
 FrameType ::= ENUMERATED
 {
-	ipFrame(0),
-		-- All headers are present. Use AlternateProtocol to signal the contents if not RTP
-	udpFrame(1),
-		-- IP header is missing. Use AlternateProtocol to signal the contents if not RTP
-	applicationFrame(2),
-		-- UDP and IP headers are missing. Use AlternateProtocol to signal the contents if not RTP
-	audioFrame(3),
-		-- All headers are missing
-	...,
-	artificialRtpFrame(4)
-		-- UDP and IP headers are missing, artificial RTP frame has been added
+    ipFrame(0),
+        -- All headers are present. Use AlternateProtocol to signal the contents if not RTP
+    udpFrame(1),
+        -- IP header is missing. Use AlternateProtocol to signal the contents if not RTP
+    applicationFrame(2),
+        -- UDP and IP headers are missing. Use AlternateProtocol to signal the contents if not RTP
+    audioFrame(3),
+        -- All headers are missing
+    ...,
+    artificialRtpFrame(4)
+        -- UDP and IP headers are missing, artificial RTP frame has been added
 
 }
 AlternateProtocol ::= ENUMERATED
 {
-	uDPTL(1),
-		-- pstnIsdnCCContents parameter contains UDPTL packets
-	...
+    uDPTL(1),
+        -- pstnIsdnCCContents parameter contains UDPTL packets
+    ...
 }
 
 
@@ -112,14 +108,14 @@ AlternateProtocol ::= ENUMERATED
 
 PstnIsdnCC ::= SEQUENCE
 {
-	pstnIsdnCCObjId			[0] RELATIVE-OID,
-	pstnIsdnCCContents		[1] OCTET STRING,
-		-- See clause 6.2 for definition of format of PstnIsdn CC
-	cCLinkID				[2] INTEGER (0..65535) OPTIONAL,
-		-- Shall be present if multiple CCLinks are used (see clause 6.3.4)
-	...,
-	supplementaryInfo		[3] SupplementaryInfo OPTIONAL
-		-- Shall be present at least in the first PDU
+    pstnIsdnCCObjId         [0] RELATIVE-OID,
+    pstnIsdnCCContents      [1] OCTET STRING,
+        -- See clause 6.2 for definition of format of PstnIsdn CC
+    cCLinkID                [2] INTEGER (0..65535) OPTIONAL,
+        -- Shall be present if multiple CCLinks are used (see clause 6.3.4)
+    ...,
+    supplementaryInfo       [3] SupplementaryInfo OPTIONAL
+        -- Shall be present at least in the first PDU
 }
 
 END -- end of PstnIsdnPDU
