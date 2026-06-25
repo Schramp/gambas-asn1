@@ -3,7 +3,7 @@
 #include <cstring>
 #include <vector>
 #include <span>
-#include <format>
+#include <asn1cpp/compat/format.hpp>
 #include "../Tag.hpp"
 #include "../Asn1Object.hpp"
 #include "../Error.hpp"

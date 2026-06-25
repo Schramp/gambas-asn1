@@ -1,6 +1,6 @@
 #pragma once
 #include <string>
-#include <format>
+#include <asn1cpp/compat/format.hpp>
 #include "../Tag.hpp"
 #include "../codec/BerTraits.hpp"
 #include "../types/Strings.hpp"

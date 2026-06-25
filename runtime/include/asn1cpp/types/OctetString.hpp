@@ -2,7 +2,7 @@
 #include <string>
 #include <span>
 #include <vector>
-#include <format>
+#include <asn1cpp/compat/format.hpp>
 #include "../Tag.hpp"
 #include "../Asn1Object.hpp"
 #include "../codec/BerTraits.hpp"

@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <cmath>
 #include <cstring>
-#include <format>
+#include <asn1cpp/compat/format.hpp>
 #include <limits>
 #include "../Tag.hpp"
 #include "../Asn1Object.hpp"

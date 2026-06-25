@@ -6,6 +6,9 @@ target_include_directories(asn1cpp_runtime_iface INTERFACE
     $<INSTALL_INTERFACE:include>
 )
 target_compile_features(asn1cpp_runtime_iface INTERFACE cxx_std_20)
+if(fmt_FOUND)
+    target_link_libraries(asn1cpp_runtime_iface INTERFACE fmt::fmt)
+endif()
 
 if(ASN1CPP_VALIDATE)
     target_compile_definitions(asn1cpp_runtime_iface INTERFACE ASN1CPP_VALIDATE=1)

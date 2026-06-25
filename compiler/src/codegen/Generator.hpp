@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
-#include <format>
+#include <asn1cpp/compat/format.hpp>
 #include <stdexcept>
 #include "../ast/Module.hpp"
 #include "../ast/TypeDef.hpp"
