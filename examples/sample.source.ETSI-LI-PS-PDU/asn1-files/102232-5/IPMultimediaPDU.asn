@@ -1,10 +1,5 @@
--- ====================================
--- Description of the IP Multimedia PDU
--- ====================================
-
-
-IPMultimediaPDU 
-{itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulIntercept(2) li-ps(5) iPMultimedia(5) version14(14)}
+IPMultimediaPDU
+{itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulIntercept(2) li-ps(5) iPMultimedia(5) version17(17)}
 
 DEFINITIONS IMPLICIT TAGS ::=
 BEGIN
@@ -12,9 +7,9 @@ BEGIN
 IMPORTS
 -- from ETSI TS 102 232-1 [2]
     IPAddress,
-	Location
-		FROM LI-PS-PDU
-		{itu-u(0) identified-organization(4) etsi(0) securityDomain(2) lawfulIntercept(2) li-ps(5) genHeader(1) version30(30)};
+    Location
+        FROM LI-PS-PDU
+        {itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulIntercept(2) li-ps(5) genHeader(1) version37(37)};
 
 
 
@@ -22,10 +17,12 @@ IMPORTS
 -- Object Identifier Definition
 -- ============================
 
-iPMMIRIObjId RELATIVE-OID			::= {li-ps(5) iPMultimedia(5) version14(14) iRI(1)}
-iPMMCCObjId RELATIVE-OID			::= {li-ps(5) iPMultimedia(5) version14(14) cC(2)}
-	-- both definitions relative to: 
-	-- {itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulIntercept(2)}
+iPMultimediaPDUObjId RELATIVE-OID   ::= {li-ps(5) iPMultimedia(5) version17(17)}
+iPMMIRIObjId RELATIVE-OID           ::= {iPMultimediaPDUObjId iRI(1)}
+iPMMCCObjId RELATIVE-OID            ::= {iPMultimediaPDUObjId cC(2)}
+
+    -- definitions are relative to
+    -- {itu-t(0) identified-organization(4) etsi(0) securityDomain(2) lawfulIntercept(2)}
 
 -- =====================================
 -- IP Multimedia Communications Contents
@@ -33,60 +30,60 @@ iPMMCCObjId RELATIVE-OID			::= {li-ps(5) iPMultimedia(5) version14(14) cC(2)}
 
 IPMMCC ::= SEQUENCE
 {
-	iPMMCCObjId					[0] RELATIVE-OID,
-	mMCCContents				[1] OCTET STRING,
-		-- Copy of the multimediastream, i.e. all related RTP/RTCP, UDPTL or MSRP packets
-		-- Each IPMMCC shall contain one intercepted packet
-		-- Protocol of the multimedia packets is indicated by means of mMCCprotocol parameter
-		-- mMCCContents was called rTPCCContents in earlier versions until v2.3.2.
-	...,
-	frameType					[2] FrameType OPTIONAL,
-		-- The availability of header information shall be signalled with the frameType parameter
-		-- The module is defined as OPTIONAL because of backwards compatibility reasons
-		-- For new implementations the module is MANDATORY to be used as defined in clause 5.5
-	streamIdentifier			[3] OCTET STRING OPTIONAL,
-		-- Used to identify the media stream within the current CIN, typically in case of 
-		-- multiple media streams communications
-		-- May be used to correlate each media stream with the relevant SDP media description of IRI
-		-- May contain c= and m= lines extracts for instance
-	mMCCprotocol				[4] MMCCprotocol OPTIONAL
-		-- Used to identify the protocol of packets sent in MMCCContent (RTP, UDPTL, MSRP, etc.)
-		-- Absence means mMCCContents contains RTP/RTCP packets or audio frame as indicated by the 
-		-- frameType parameter. 
+    iPMMCCObjId                 [0] RELATIVE-OID,
+    mMCCContents                [1] OCTET STRING,
+        -- Copy of the multimediastream, i.e. all related RTP/RTCP, UDPTL or MSRP packets
+        -- Each IPMMCC shall contain one intercepted packet
+        -- Protocol of the multimedia packets is indicated by means of mMCCprotocol parameter
+        -- mMCCContents was called rTPCCContents in earlier versions until v2.3.2.
+    ...,
+    frameType                   [2] FrameType OPTIONAL,
+        -- The availability of header information shall be signalled with the frameType parameter
+        -- The module is defined as OPTIONAL because of backwards compatibility reasons
+        -- For new implementations the module is MANDATORY to be used as defined in clause 5.5
+    streamIdentifier            [3] OCTET STRING OPTIONAL,
+        -- Used to identify the media stream within the current CIN, typically in case of
+        -- multiple media streams communications
+        -- May be used to correlate each media stream with the relevant SDP media description of IRI
+        -- May contain c= and m= lines extracts for instance
+    mMCCprotocol                [4] MMCCprotocol OPTIONAL
+        -- Used to identify the protocol of packets sent in MMCCContent (RTP, UDPTL, MSRP, etc.)
+        -- Absence means mMCCContents contains RTP/RTCP packets or audio frame as indicated by the
+        -- frameType parameter.
 
 }
 
 FrameType ::= ENUMERATED
 {
-	ipFrame(0),
-		-- All headers are present
-	udpFrame(1),
-		-- IP header is missing
-	rtpFrame(2),
-		-- UDP and IP headers are missing
-	audioFrame(3),
-		-- All headers are missing
-	...,
-	tcpFrame(4),
-		-- IP header is missing
-	artificialRtpFrame(5),
-		-- UDP and IP headers are missing; artificial RTP frame has been added
-	udptlFrame(6),
-		-- UDP and IP headers are missing
-	msrpFrame(7)
-		-- TCP and IP headers are missing
+    ipFrame(0),
+        -- All headers are present
+    udpFrame(1),
+        -- IP header is missing
+    rtpFrame(2),
+        -- UDP and IP headers are missing
+    audioFrame(3),
+        -- All headers are missing
+    ...,
+    tcpFrame(4),
+        -- IP header is missing
+    artificialRtpFrame(5),
+        -- UDP and IP headers are missing; artificial RTP frame has been added
+    udptlFrame(6),
+        -- UDP and IP headers are missing
+    msrpFrame(7)
+        -- TCP and IP headers are missing
 
 }
 
 MMCCprotocol ::= ENUMERATED
 {
-	rTP(0),
-		-- mMCCContents parameter contains RTP/RTCP packets
-	mSRP(1),
-		-- mMCCContents parameter contains MSRP packets
-	...,
-	uDPTL(2)
-		-- mMCCContents parameter contains UDPTL packets
+    rTP(0),
+        -- mMCCContents parameter contains RTP/RTCP packets
+    mSRP(1),
+        -- mMCCContents parameter contains MSRP packets
+    ...,
+    uDPTL(2)
+        -- mMCCContents parameter contains UDPTL packets
 }
 
 -- ========================================================
@@ -95,85 +92,88 @@ MMCCprotocol ::= ENUMERATED
 
 IPMMIRI ::= SEQUENCE
 {
-	iPMMIRIObjId				[0] RELATIVE-OID,
-	iPMMIRIContents				[1] IPIRIContents,
-	...,
-	targetLocation				[2] Location OPTIONAL,
-		-- This common parameter is defined in ETSI TS 102 232-1 [2], the use of this parameter is described in clause 5.2.3
-	additionalSignalling		[3] SEQUENCE OF AdditionalSignalling OPTIONAL
-		-- The use of this parameter is defined in clause 5.2.5
+    iPMMIRIObjId                [0] RELATIVE-OID,
+    iPMMIRIContents             [1] IPIRIContents,
+    ...,
+    targetLocation              [2] LI-PS-PDU.Location OPTIONAL,
+        -- This common parameter is defined in ETSI TS 102 232-1 [2], the use of this parameter is described in clause 5.2.3
+    additionalSignalling        [3] SEQUENCE OF AdditionalSignalling OPTIONAL
+        -- The use of this parameter is defined in clause 5.2.5
 }
 
 IPIRIContents ::= CHOICE
 {
-	originalIPMMMessage			[0] OCTET STRING,
-		-- Copy of the IP MM signalling packet including the original IP and UDP/TCP headers
-	sIPMessage					[1] SIPMessage,
-		-- Copy of the SIP content and the source and destination IP address  of the intercepted
+    originalIPMMMessage         [0] OCTET STRING,
+        -- Copy of the IP MM signalling packet including the original IP and UDP/TCP headers
+    sIPMessage                  [1] SIPMessage,
+        -- Copy of the SIP content and the source and destination IP address of the intercepted
         -- SIP message as transmitted on the network layer (see clause 5.2.7).
-	h323Message					[2] H323Message,
-		-- Copy of the H.323 content and the source and destination IP address of the intercepted
+    h323Message                 [2] H323Message,
+        -- Copy of the H.323 content and the source and destination IP address of the intercepted
         -- H.323 message as transmitted on the network layer (see clause 5.2.7).
-	...,
-	nationalIPMMIRIParameters	[3] NationalIPMMIRIParameters,
-		-- This parameter is used according to national regulations
-		-- This parameter shall be delivered as an IRI-Report-record	
-	xCAPMessage					[4] OCTET STRING,
-		-- Copy of the XCAP message including all HTTP headers and contents
-	iRIOnlyOriginalIPMMMessage	[5] OCTET STRING,
-		-- Copy of the IP MM signalling packet including the original IP and UDP/TCP headers
-		-- see clause 5.2.6.
-	iRIOnlySIPMessage			[6] SIPMessage
-		-- Copy of the SIP content and the source and destination IP address of the intercepted
-		-- SIP message as transmitted on the network layer.
-		-- (see clause 5.2.6 and 5.2.7).
+    ...,
+    nationalIPMMIRIParameters   [3] NationalIPMMIRIParameters,
+        -- This parameter is used according to national regulations
+        -- This parameter shall be delivered as an IRI-Report-record
+    xCAPMessage                 [4] OCTET STRING,
+        -- Copy of the XCAP message including all HTTP headers and contents
+    iRIOnlyOriginalIPMMMessage  [5] OCTET STRING,
+        -- Copy of the IP MM signalling packet including the original IP and UDP/TCP headers
+        -- see clause 5.2.6.
+    iRIOnlySIPMessage           [6] SIPMessage,
+        -- Copy of the SIP content and the source and destination IP address of the intercepted
+        -- SIP message as transmitted on the network layer.
+        -- (see clause 5.2.6 and 5.2.7).
+    iRIOnlyRTPPacket            [7] OCTET STRING
+        -- Copy of the RTP packet containing telephony events including the original IP and UDP headers
+        -- (see clause 5.2.8.1).
 }
 
 SIPMessage ::= SEQUENCE
 {
-	iPSourceAddress				[0] IPAddress,
-	iPDestinationAddress		[1] IPAddress,
-	sIPContent					[2] OCTET STRING,
-	...
+    iPSourceAddress             [0] LI-PS-PDU.IPAddress,
+    iPDestinationAddress        [1] LI-PS-PDU.IPAddress,
+    sIPContent                  [2] OCTET STRING,
+    ...
 }
 
 H323Message ::= SEQUENCE
 {
-	iPSourceAddress				[0] IPAddress,
-	iPDestinationAddress		[1] IPAddress,
-	h323Content					[2] H323MessageContent,
-	...
+    iPSourceAddress             [0] LI-PS-PDU.IPAddress,
+    iPDestinationAddress        [1] LI-PS-PDU.IPAddress,
+    h323Content                 [2] H323MessageContent,
+    ...
 }
 
 H323MessageContent ::= CHOICE
 {
-	h225CSMessageContent		[0] OCTET STRING,
-	h225RASMessageContent		[1] OCTET STRING,
-	h245MessageContent			[2] OCTET STRING,
-	genericMessageContent		[3] OCTET STRING,
-	...
+    h225CSMessageContent        [0] OCTET STRING,
+    h225RASMessageContent       [1] OCTET STRING,
+    h245MessageContent          [2] OCTET STRING,
+    genericMessageContent       [3] OCTET STRING,
+    ...
 }
 
 NationalIPMMIRIParameters ::= SEQUENCE
 {
-	countryCode					[1] PrintableString (SIZE (2)),
-		-- Country Code according to ISO 3166-1 [20],
-		-- the country to which the parameters inserted after the extension marker apply.
-	...
-	-- In case a given country wants to use additional national parameters according to its law,
-	-- these national parameters should be defined using the ASN.1 syntax and added after the
-	-- extension marker (...).
-	-- It is recommended that "version parameter" and "vendor identification parameter" are
-	-- included in the national parameters definition. Vendor identifications can be
-	-- retrieved from the IANA web site. Besides, it is recommended 
-	-- to avoid using tags from 240 to 255 in a formal type definition.
+    countryCode                 [1] PrintableString (SIZE (2)),
+        -- Country Code according to ISO 3166-1 [20],
+        -- the country to which the parameters inserted after the extension marker apply.
+    ...
+    -- In case a given country wants to use additional national parameters according to its law,
+    -- these national parameters should be defined using the ASN.1 syntax and added after the
+    -- extension marker (...).
+    -- It is recommended that "version parameter" and "vendor identification parameter" are
+    -- included in the national parameters definition. Vendor identifications can be
+    -- retrieved from the IANA web site. Besides, it is recommended
+    -- to avoid using tags from 240 to 255 in a formal type definition.
 }
 
 AdditionalSignalling ::= CHOICE
 {
-	sipHeaderLine				[0] OCTET STRING,
-		-- A SIP header line, eg: "Contact: tel:+123456789".
-	...
+    sipHeaderLine               [0] OCTET STRING,
+        -- A SIP header line, eg: "Contact: tel:+123456789".
+    ...
 }
 
 END -- end of IPMultimediaPDU
