@@ -1136,6 +1136,28 @@ add_test(NAME pdu_filter_absent
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_file_absent.cmake)
 set_tests_properties(pdu_filter_absent PROPERTIES DEPENDS pdu_filter)
 
+# ---- JER test harness (#154 / #155) ----------------------------------------
+# Both tests are expected to fail until asn1cpp JER is implemented (#156+).
+# #155: type-bundle round-trip (JER→XER vs asn1c XER fixture)
+add_test(NAME jer_bundle_roundtrip
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/jer/run_jer_tests.py
+            --verbose)
+set_tests_properties(jer_bundle_roundtrip PROPERTIES
+    WILL_FAIL TRUE
+    TIMEOUT   60
+    LABELS    "jer")
+
+# #154: ETSI-LI JSON xval smoke test
+add_test(NAME jer_etsi_xval
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/../asn1cpp-validation-tools/compare_json.py
+            --type EncryptedPayload --count 10 --seed 42)
+set_tests_properties(jer_etsi_xval PROPERTIES
+    WILL_FAIL TRUE
+    TIMEOUT   60
+    LABELS    "jer")
+
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
 # Enable with: cmake -DWITH_SMOKE_MATRIX=ON  (default OFF; see Release Testing in doc/book.md)
 if(WITH_SMOKE_MATRIX)
