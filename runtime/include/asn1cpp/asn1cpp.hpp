@@ -18,6 +18,7 @@
 #include "codec/BerTraits.hpp"
 #include "codec/BerCodec.hpp"
 #include "codec/XerCodec.hpp"
+#include "codec/JerCodec.hpp"
 #include "codec/PerCodec.hpp"
 #include "codec/Codec.hpp"
 

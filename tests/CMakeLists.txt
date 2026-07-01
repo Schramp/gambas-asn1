@@ -1136,6 +1136,61 @@ add_test(NAME pdu_filter_absent
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_file_absent.cmake)
 set_tests_properties(pdu_filter_absent PROPERTIES DEPENDS pdu_filter)
 
+# ---- JER basic-type unit test (#156) ----------------------------------------
+add_executable(test_jer_basic jer/test_jer_basic.cpp)
+target_link_libraries(test_jer_basic PRIVATE asn1cpp_runtime)
+add_test(NAME jer_basic COMMAND test_jer_basic)
+set_tests_properties(jer_basic PROPERTIES TIMEOUT 30 LABELS "jer")
+
+# ---- JER SEQUENCE / CHOICE test (#157) ----------------------------------------
+add_executable(test_jer_composite
+    jer/test_jer_composite.cpp
+    ${CHOICE_GEN_DIR}/HasAlt2.cpp
+    ${CHOICE_GEN_DIR}/HasAlt4.cpp
+    ${CHOICE_GEN_DIR}/Alt2.cpp
+    ${CHOICE_GEN_DIR}/Alt4.cpp
+    ${CHOICE_GEN_DIR}/MyByte.cpp
+    ${CHOICE_GEN_DIR}/MyStr.cpp
+)
+target_include_directories(test_jer_composite PRIVATE ${CHOICE_GEN_DIR})
+target_link_libraries(test_jer_composite PRIVATE asn1cpp_runtime)
+add_test(NAME jer_composite COMMAND test_jer_composite)
+set_tests_properties(jer_composite PROPERTIES TIMEOUT 30 LABELS "jer")
+
+# ---- JER SEQUENCE OF test (#157/#158) -----------------------------------------
+add_executable(test_jer_seqof
+    jer/test_jer_seqof.cpp
+    ${SEQ_OF_GEN_DIR}/ByteList.cpp
+    ${SEQ_OF_GEN_DIR}/StrList.cpp
+    ${SEQ_OF_GEN_DIR}/MyByte.cpp
+    ${SEQ_OF_GEN_DIR}/MyStr.cpp
+)
+target_include_directories(test_jer_seqof PRIVATE ${SEQ_OF_GEN_DIR})
+target_link_libraries(test_jer_seqof PRIVATE asn1cpp_runtime)
+add_test(NAME jer_seqof COMMAND test_jer_seqof)
+set_tests_properties(jer_seqof PROPERTIES TIMEOUT 30 LABELS "jer")
+
+# ---- JER test harness (#154 / #155) ----------------------------------------
+# #155: type-bundle round-trip (JER→XER vs asn1c XER fixture)
+# Still WILL_FAIL — requires jer-to-xer tool (not yet built; needs generic schema compilation)
+add_test(NAME jer_bundle_roundtrip
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/jer/run_jer_tests.py
+            --verbose)
+set_tests_properties(jer_bundle_roundtrip PROPERTIES
+    WILL_FAIL TRUE
+    TIMEOUT   60
+    LABELS    "jer")
+
+# #154 / #159: ETSI-LI JSON xval smoke test — GREEN (#159 done)
+add_test(NAME jer_etsi_xval
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/../asn1cpp-validation-tools/compare_json.py
+            --type EncryptedPayload --count 10 --seed 42)
+set_tests_properties(jer_etsi_xval PROPERTIES
+    TIMEOUT   60
+    LABELS    "jer")
+
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
 # Enable with: cmake -DWITH_SMOKE_MATRIX=ON  (default OFF; see Release Testing in doc/book.md)
 if(WITH_SMOKE_MATRIX)

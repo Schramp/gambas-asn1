@@ -31,6 +31,7 @@ endif()
 add_library(asn1cpp_runtime_objs OBJECT
     src/BerCodec.cpp
     src/XerCodec.cpp
+    src/JerCodec.cpp
     src/PerCodec.cpp
     src/RandomFiller.cpp
     src/BuiltinTypes.cpp
