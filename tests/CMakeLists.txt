@@ -1142,6 +1142,34 @@ target_link_libraries(test_jer_basic PRIVATE asn1cpp_runtime)
 add_test(NAME jer_basic COMMAND test_jer_basic)
 set_tests_properties(jer_basic PROPERTIES TIMEOUT 30 LABELS "jer")
 
+# ---- JER SEQUENCE / CHOICE test (#157) ----------------------------------------
+add_executable(test_jer_composite
+    jer/test_jer_composite.cpp
+    ${CHOICE_GEN_DIR}/HasAlt2.cpp
+    ${CHOICE_GEN_DIR}/HasAlt4.cpp
+    ${CHOICE_GEN_DIR}/Alt2.cpp
+    ${CHOICE_GEN_DIR}/Alt4.cpp
+    ${CHOICE_GEN_DIR}/MyByte.cpp
+    ${CHOICE_GEN_DIR}/MyStr.cpp
+)
+target_include_directories(test_jer_composite PRIVATE ${CHOICE_GEN_DIR})
+target_link_libraries(test_jer_composite PRIVATE asn1cpp_runtime)
+add_test(NAME jer_composite COMMAND test_jer_composite)
+set_tests_properties(jer_composite PROPERTIES TIMEOUT 30 LABELS "jer")
+
+# ---- JER SEQUENCE OF test (#157/#158) -----------------------------------------
+add_executable(test_jer_seqof
+    jer/test_jer_seqof.cpp
+    ${SEQ_OF_GEN_DIR}/ByteList.cpp
+    ${SEQ_OF_GEN_DIR}/StrList.cpp
+    ${SEQ_OF_GEN_DIR}/MyByte.cpp
+    ${SEQ_OF_GEN_DIR}/MyStr.cpp
+)
+target_include_directories(test_jer_seqof PRIVATE ${SEQ_OF_GEN_DIR})
+target_link_libraries(test_jer_seqof PRIVATE asn1cpp_runtime)
+add_test(NAME jer_seqof COMMAND test_jer_seqof)
+set_tests_properties(jer_seqof PROPERTIES TIMEOUT 30 LABELS "jer")
+
 # ---- JER test harness (#154 / #155) ----------------------------------------
 # Both tests are expected to fail until asn1cpp JER tools are implemented (#156+).
 # #155: type-bundle round-trip (JER→XER vs asn1c XER fixture)
