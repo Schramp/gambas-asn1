@@ -16,18 +16,18 @@
 /// Typical usage:
 /// @code
 /// // Startup (once, not thread-safe):
-/// BerProjection proj{PS_PDU::asn_DEF};
-/// auto h_liid = proj.add_path("PSHeader/communicationIdentifier/LIID");
-/// auto h_ts   = proj.add_path("PSHeader/timeStamp");
-/// auto h_cc   = proj.add_path("Payload/cc");
+/// BerProjection proj{MyMessage::asn_DEF};
+/// auto h_id  = proj.add_path("Header/sender/id");
+/// auto h_ts  = proj.add_path("Header/timestamp");
+/// auto h_val = proj.add_path("Body/value");  // Body is a CHOICE; value is one alternative
 /// proj.finalize();
 ///
 /// // Per thread — see BerProjectionResult (#173)
 /// BerProjectionResult res{proj};
-/// res.bind(h_liid, my_liid);
+/// res.bind(h_id, my_id);
 /// while (auto frame = next_frame()) {
 ///     res.apply(frame);
-///     if (my_liid.found) use(static_cast<VisibleString&>(my_liid));
+///     if (my_id.found) use(static_cast<VisibleString&>(my_id));
 /// }
 /// @endcode
 ///
@@ -91,9 +91,9 @@ struct FieldHandle {
 /// name itself is **not** part of the path.
 ///
 /// @code
-/// // For root type PS_PDU:
-/// proj.add_path("PSHeader/communicationIdentifier/LIID");
-/// proj.add_path("Payload/cc");   // Payload is a CHOICE; cc is one alternative
+/// // For root type MyMessage:
+/// proj.add_path("Header/sender/id");
+/// proj.add_path("Body/value");   // Body is a CHOICE; value is one alternative
 /// @endcode
 ///
 /// @throws std::runtime_error  If any path component is not found in the
@@ -102,7 +102,7 @@ struct FieldHandle {
 class BerProjection {
 public:
     /// @brief Construct from the root ASN.1 type descriptor.
-    /// @param root  \c TypeDescriptor of the outermost type (e.g. \c PS_PDU::asn_DEF).
+    /// @param root  \c TypeDescriptor of the outermost type (e.g. \c MyMessage::asn_DEF).
     ///              Must outlive this \c BerProjection.
     explicit BerProjection(const TypeDescriptor& root);
 
@@ -111,7 +111,7 @@ public:
     /// Resolves each `/`-separated component against the descriptor tables,
     /// reusing existing trie nodes for shared prefixes.
     ///
-    /// @param path  Field path from the root type's members, e.g. \c "PSHeader/LIID".
+    /// @param path  Field path from the root type's members, e.g. \c "Header/sender/id".
     /// @return      Handle carrying the result-slot index and leaf \c TypeDescriptor*.
     /// @throws std::runtime_error  Unknown field name, wrong type kind, or called
     ///                             after \c finalize().
