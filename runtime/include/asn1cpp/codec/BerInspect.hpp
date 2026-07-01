@@ -23,9 +23,9 @@
 /// Example (schema-free, leaves_only=true):
 /// @code
 /// ber_dump_paths(frame, std::cout);
-/// // [UNIV 16]/[0]/[0]
-/// // [UNIV 16]/[0]/[1]
-/// // [UNIV 16]/[1]/[0]
+/// // U[16]/[0]/[0]
+/// // U[16]/[0]/[1]
+/// // U[16]/[1]/[0]
 /// @endcode
 ///
 /// Example (schema-aware):
