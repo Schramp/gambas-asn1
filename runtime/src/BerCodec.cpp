@@ -965,13 +965,11 @@ void BerCodec::encode(IEncodeStream& dst,
         if (delta != 0) {
             bump_validate_fail();
             record_validate_fail(def.name, delta, /*on_decode=*/false);
-            if (debug_flags() & DBG_BER_WRITE) {
-                std::fprintf(stderr,
-                    "[BER-WRITE] VALIDATE FAIL %s tag=%s%u delta=%lld\n",
+            if (debug_flags() & DBG_VALIDATE_TRACE)
+                std::fprintf(stderr, "[VALIDATE-ENC][BER] %s tag=%s%u delta=%lld\n",
                     def.name,
                     tag_cls_char(def.tag.cls), def.tag.number,
                     static_cast<long long>(delta));
-            }
         }
     }
 #endif
@@ -994,13 +992,11 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
         if (delta != 0) {
             bump_validate_fail();
             record_validate_fail(def.name, delta, /*on_decode=*/true);
-            if (debug_flags() & DBG_BER_WRITE) {
-                std::fprintf(stderr,
-                    "[BER-READ] VALIDATE FAIL %s tag=%s%u delta=%lld\n",
+            if (debug_flags() & DBG_VALIDATE_TRACE)
+                std::fprintf(stderr, "[VALIDATE-DEC][BER] %s tag=%s%u delta=%lld\n",
                     def.name,
                     tag_cls_char(def.tag.cls), def.tag.number,
                     static_cast<long long>(delta));
-            }
         }
     }
 #endif

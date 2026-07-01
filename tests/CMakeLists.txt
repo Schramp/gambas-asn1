@@ -487,6 +487,15 @@ if(ASN1CPP_VALIDATE AND ASN1CPP_VALIDATE_ON_ENCODE)
     target_include_directories(test_validate PRIVATE ${VALIDATE_GEN_DIR})
     target_link_libraries(test_validate PRIVATE asn1cpp_runtime)
     add_test(NAME validate_hooks COMMAND test_validate)
+
+    add_executable(test_jer_validate
+        jer/test_jer_validate.cpp
+        ${_validate_cpps}
+    )
+    target_include_directories(test_jer_validate PRIVATE ${VALIDATE_GEN_DIR})
+    target_link_libraries(test_jer_validate PRIVATE asn1cpp_runtime)
+    add_test(NAME jer_validate COMMAND test_jer_validate)
+    set_tests_properties(jer_validate PROPERTIES LABELS "jer")
 endif()
 
 # ---- XER codec coverage: ENUMERATED + ANY ----------------------------------
