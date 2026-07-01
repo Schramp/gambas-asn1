@@ -1,8 +1,10 @@
 #pragma once
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+#include "../Asn1Optional.hpp"
 #include "../Tag.hpp"
 #include "../TypeDescriptor.hpp"
 
@@ -158,6 +160,136 @@ private:
                        Tag                  t,
                        const TypeDescriptor* desc,
                        bool                 is_choice);
+};
+
+// ── BerProjectionResult ───────────────────────────────────────────────────────
+
+/// @brief Per-thread result object that binds field handles to target optionals
+///        and drives the trie-based partial BER decode.
+///
+/// One \c BerProjectionResult per thread.  The shared \c BerProjection trie is
+/// read-only and safe to access from multiple threads simultaneously.
+///
+/// Typical usage:
+/// @code
+/// // Startup (once per thread):
+/// BerProjectionResult res{proj};
+/// Asn1Optional<VisibleString>   liid;
+/// Asn1Optional<GeneralizedTime> ts;
+/// res.bind(h_liid, liid);
+/// res.bind(h_ts,   ts);
+///
+/// // Hot loop — zero allocation:
+/// while (auto frame = next_frame()) {
+///     res.apply(frame);
+///     if (liid.found) route(static_cast<VisibleString&>(liid), frame);
+/// }
+///
+/// // In-place patch (requires mutable frame):
+/// res.apply(mutable_frame);
+/// if (liid.found) {
+///     static_cast<VisibleString&>(liid) = "NEW_VAL";
+///     res.commit(h_liid);
+/// }
+/// @endcode
+///
+/// @note Only IMPLICIT-tagged fields support \c commit() — EXPLICIT tagging
+///       causes a size mismatch (commit returns false, frame unchanged).
+class BerProjectionResult {
+public:
+    /// @brief Construct a result object bound to \p proj.
+    ///
+    /// \p proj must be finalized before calling this constructor.
+    /// Allocates slot storage sized to \c proj.leaf_count().
+    ///
+    /// @param proj  Finalized projection trie; must outlive this result.
+    explicit BerProjectionResult(const BerProjection& proj);
+
+    /// @brief Link field handle \p h to target optional \p target.
+    ///
+    /// Asserts that the TypeDescriptor of \p T matches the leaf descriptor
+    /// registered at \p h (type mismatch caught at bind time, not per-frame).
+    /// May be called multiple times; each call replaces any prior binding for \p h.
+    ///
+    /// @tparam T  Generated ASN.1 type inheriting \c Asn1Object and carrying \c asn_DEF.
+    /// @param h       FieldHandle returned by \c BerProjection::add_path().
+    /// @param target  Optional wrapper whose \c found flag and value \c BerCodec fills.
+    template<typename T>
+    void bind(FieldHandle h, Asn1Optional<T>& target) {
+        bind_impl(h, target, &T::asn_DEF);
+    }
+
+    /// @brief Apply the projection to a read-only frame.
+    ///
+    /// Clears all bound optionals (\c found = false), then walks the frame
+    /// bytes using the trie.  Each matched leaf is decoded via
+    /// \c BerCodec::instance().decode_value() into the bound optional.
+    /// After this call, \c commit() is not permitted.
+    ///
+    /// Zero per-call heap allocation.
+    ///
+    /// @param frame  Complete BER-encoded outer TLV of the root type.
+    void apply(std::span<const uint8_t> frame);
+
+    /// @brief Apply the projection to a mutable frame, enabling \c commit().
+    ///
+    /// Identical to the read-only overload but additionally records the mutable
+    /// frame pointer so that \c commit() may write back encoded values.
+    ///
+    /// @param frame  Mutable BER buffer; must outlive any subsequent \c commit() call.
+    void apply(std::span<uint8_t> frame);
+
+    /// @brief Decode one field on demand without a prior \c bind().
+    ///
+    /// Requires that \c apply() has already been called on the current frame.
+    /// If the field was found during \c apply(), decodes its captured bytes into
+    /// \p target.  Otherwise leaves \p target unchanged.
+    ///
+    /// Useful for rarely-accessed fields where permanent binding is not desired.
+    ///
+    /// @tparam T  Generated ASN.1 type.
+    /// @param h       FieldHandle returned by \c BerProjection::add_path().
+    /// @param target  Optional wrapper to decode into.
+    template<typename T>
+    void load(FieldHandle h, Asn1Optional<T>& target) {
+        load_impl(h, target, &T::asn_DEF);
+    }
+
+    /// @brief Encode the current value of the bound optional for \p h and
+    ///        write it back into the mutable frame in-place.
+    ///
+    /// The re-encoded value bytes must be exactly the same number of bytes as
+    /// the bytes captured during the preceding \c apply(mutable).  Any size
+    /// difference returns \c false without modifying the frame.
+    ///
+    /// @pre A mutable \c apply() must have been called since the last read-only \c apply().
+    /// @pre The bound optional's \c found flag must be \c true.
+    ///
+    /// @param h  FieldHandle whose bound value to commit.
+    /// @return   \c true when the frame was updated; \c false on size mismatch,
+    ///           unbound handle, or unfound field.
+    bool commit(FieldHandle h);
+
+private:
+    void bind_impl(FieldHandle h, Asn1OptionalBase& target, const TypeDescriptor* desc);
+    void load_impl(FieldHandle h, Asn1OptionalBase& target, const TypeDescriptor* desc);
+
+    /// @brief Trie-driven walk: scan \p buf for trie children of \p trie_first.
+    void walk(std::span<const uint8_t> buf, size_t trie_first,
+              const uint8_t* frame_base, size_t& found);
+
+    /// @brief One result slot — one per registered path in the trie.
+    struct Slot {
+        Asn1OptionalBase* binding   = nullptr;   ///< nullptr = unbound
+        size_t            value_off = SIZE_MAX;   ///< byte offset of value bytes in the frame
+        size_t            value_len = 0;          ///< size of the value bytes
+    };
+
+    const BerProjection* proj_;
+    std::vector<Slot>    slots_;         ///< indexed by FieldHandle::index
+    const uint8_t*       frame_base_  = nullptr;  ///< set by apply(); used by load()
+    uint8_t*             mut_frame_   = nullptr;  ///< non-null only after mutable apply()
+    std::vector<uint8_t> encode_buf_;   ///< scratch buffer for commit(); reused across calls
 };
 
 } // namespace asn1
