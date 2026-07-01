@@ -1,7 +1,6 @@
 #pragma once
 #include <span>
 #include <vector>
-#include <string>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -160,22 +159,5 @@ using BerVisitor = std::function<void(BerCursor, int depth)>;
 void ber_walk(std::span<const uint8_t> buf,
               BerVisitor               visitor,
               int                      max_depth = -1);
-
-/// Callback type for ber_find_paths: (path string, cursor at leaf node).
-/// path is a slash-separated sequence of tag descriptors, e.g. "[U2]/[C0]/[U4]".
-using BerPathVisitor = std::function<void(const std::string& path, BerCursor leaf)>;
-
-/// Walk all paths in buf, invoking visitor for each node with its full path.
-/// Path components use the form "[U<n>]" (Universal), "[C<n>]" (Context),
-/// "[A<n>]" (Application), "[P<n>]" (Private); constructed tags get a "*" suffix.
-/// max_depth < 0 means unlimited.
-void ber_find_paths(std::span<const uint8_t> buf,
-                    BerPathVisitor           visitor,
-                    int                      max_depth = -1);
-
-/// Collect all paths as strings (leaf nodes only when leaf_only=true).
-std::vector<std::string> ber_collect_paths(std::span<const uint8_t> buf,
-                                           bool leaf_only  = false,
-                                           int  max_depth  = -1);
 
 } // namespace asn1

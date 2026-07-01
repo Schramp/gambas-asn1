@@ -268,41 +268,6 @@ static void test_ber_walk() {
     check("walk_depth0",    visit_count == 1);
 }
 
-// ── Tests: ber_find_paths / ber_collect_paths ─────────────────────────────────
-
-static void test_find_paths() {
-    // SEQUENCE { [0] 0x01, [1] 0x02 }
-    auto c0  = tlv(0x80, {0x01});
-    auto c1  = tlv(0x81, {0x02});
-    std::vector<uint8_t> children;
-    children.insert(children.end(), c0.begin(), c0.end());
-    children.insert(children.end(), c1.begin(), c1.end());
-    auto seq = tlv(0x30, children);  // SEQUENCE = Universal 16 constructed
-
-    auto paths = ber_collect_paths(sp(seq));
-    // Expect: "[U16*]", "[U16*]/[C0]", "[U16*]/[C1]"
-    check("paths_count",    paths.size() == 3);
-
-    bool has_seq  = false, has_c0 = false, has_c1 = false;
-    for (auto& p : paths) {
-        if (p == "[U16]*")         has_seq = true;
-        if (p == "[U16]*/[C0]")    has_c0  = true;
-        if (p == "[U16]*/[C1]")    has_c1  = true;
-    }
-    check("paths_has_seq", has_seq);
-    check("paths_has_c0",  has_c0);
-    check("paths_has_c1",  has_c1);
-
-    // leaf_only=true: skip the constructed SEQUENCE node
-    auto leaf_paths = ber_collect_paths(sp(seq), true);
-    check("leaf_paths_count", leaf_paths.size() == 2);
-
-    // Visitor form: collect (path, value) pairs
-    int visit_count = 0;
-    ber_find_paths(sp(seq), [&](const std::string&, BerCursor) { ++visit_count; });
-    check("find_paths_visit", visit_count == 3);
-}
-
 int main() {
     printf("=== BerCursor basic ===\n");
     test_basic_cursor();
@@ -329,9 +294,6 @@ int main() {
 
     printf("=== ber_walk ===\n");
     test_ber_walk();
-
-    printf("=== ber_find_paths / ber_collect_paths ===\n");
-    test_find_paths();
 
     printf("\n%s — %d failure(s)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? EXIT_FAILURE : EXIT_SUCCESS;

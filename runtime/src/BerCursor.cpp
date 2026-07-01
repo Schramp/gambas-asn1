@@ -1,7 +1,6 @@
 #include <asn1cpp/codec/BerCursor.hpp>
 #include <asn1cpp/codec/BerReader.hpp>
 #include <cstring>
-#include <string>
 
 namespace asn1 {
 
@@ -218,52 +217,5 @@ void ber_walk(std::span<const uint8_t> buf, BerVisitor visitor, int max_depth) {
     ber_walk_impl(buf, visitor, max_depth, 0);
 }
 
-// ── Path iteration ────────────────────────────────────────────────────────────
-
-static std::string tag_component(Tag t) {
-    char cls = '?';
-    switch (t.cls) {
-        case TagClass::Universal:   cls = 'U'; break;
-        case TagClass::Application: cls = 'A'; break;
-        case TagClass::Context:     cls = 'C'; break;
-        case TagClass::Private:     cls = 'P'; break;
-    }
-    std::string s = "[";
-    s += cls;
-    s += std::to_string(t.number);
-    s += ']';
-    if (t.constructed) s += '*';
-    return s;
-}
-
-static void ber_find_paths_impl(std::span<const uint8_t> buf,
-                                BerPathVisitor& visitor,
-                                const std::string& prefix,
-                                int max_depth, int depth) {
-    BerCursor c{buf};
-    while (c.valid()) {
-        std::string path = prefix.empty()
-            ? tag_component(c.tag())
-            : prefix + "/" + tag_component(c.tag());
-        visitor(path, c);
-        if (c.tag().constructed && (max_depth < 0 || depth < max_depth))
-            ber_find_paths_impl(c.value(), visitor, path, max_depth, depth + 1);
-        c.next();
-    }
-}
-
-void ber_find_paths(std::span<const uint8_t> buf, BerPathVisitor visitor, int max_depth) {
-    ber_find_paths_impl(buf, visitor, {}, max_depth, 0);
-}
-
-std::vector<std::string> ber_collect_paths(std::span<const uint8_t> buf,
-                                           bool leaf_only, int max_depth) {
-    std::vector<std::string> result;
-    ber_find_paths(buf, [&](const std::string& path, BerCursor leaf) {
-        if (!leaf_only || !leaf.tag().constructed || leaf.length() == 0)
-            result.push_back(path);
-    }, max_depth);
-    return result;
-}
 
 } // namespace asn1
