@@ -52,6 +52,8 @@ public:
 
     bool operator==(const OctetString& o) const = default;
 
+    static const TypeDescriptor& asn_DEF;
+
     /// @brief Return 0 when size satisfies the SIZE constraint, otherwise signed delta
     /// such that \c (size+delta) lands at the nearest valid bound.
     /// Positive = too short; negative = too long.
