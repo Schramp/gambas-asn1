@@ -15,10 +15,15 @@
 #include <span>
 #include <asn1cpp/codec/JerCodec.hpp>
 #include <asn1cpp/codec/XerCodec.hpp>    // for xer_detail::format_arcs / parse_arcs
+#include <asn1cpp/codec/Debug.hpp>
+#include <asn1cpp/codec/Validation.hpp>
 #include <asn1cpp/types/Integer.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
 #include <asn1cpp/EnumValue.hpp>
 #include <asn1cpp/SeqOfBase.hpp>
+#ifdef ASN1CPP_VALIDATE
+#include <asn1cpp/Validate.hpp>
+#endif
 
 namespace asn1 {
 
@@ -1032,6 +1037,18 @@ void JerCodec::encode(IEncodeStream& dst,
                       const TypeDescriptor& def,
                       const Asn1Object* src) const
 {
+#if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_ENCODE)
+    if (!def.is_any && !(debug_flags() & DBG_NO_VALIDATE)) {
+        int64_t delta = validate(def, src);
+        if (delta != 0) {
+            bump_validate_fail();
+            record_validate_fail(def.name, delta, /*on_decode=*/false);
+            if (debug_flags() & DBG_VALIDATE_TRACE)
+                std::fprintf(stderr, "[VALIDATE-ENC][JER] %s delta=%lld\n",
+                    def.name, static_cast<long long>(delta));
+        }
+    }
+#endif
     auto& s = static_cast<JerEncodeStream&>(dst);
     if (def.kind == TypeKind::Primitive)
         prim_dispatch_[def.tag.number]->encode(*this, s, def, src);
@@ -1049,7 +1066,18 @@ DecodeResult JerCodec::decode(IDecodeStream& src,
     DecodeResult res = def.kind == TypeKind::Primitive
         ? prim_dispatch_[def.tag.number]->decode(*this, s, def, dest)
         : comp_dispatch_[(int)def.kind]->decode(*this, s, def, dest);
-    // TODO #165: add validate() call on res.has_value() under ASN1CPP_VALIDATE guards (mirrors BerCodec::decode)
+#if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_DECODE)
+    if (res.has_value() && !def.is_any && !(debug_flags() & DBG_NO_VALIDATE)) {
+        int64_t delta = validate(def, dest);
+        if (delta != 0) {
+            bump_validate_fail();
+            record_validate_fail(def.name, delta, /*on_decode=*/true);
+            if (debug_flags() & DBG_VALIDATE_TRACE)
+                std::fprintf(stderr, "[VALIDATE-DEC][JER] %s delta=%lld\n",
+                    def.name, static_cast<long long>(delta));
+        }
+    }
+#endif
     return res;
 }
 
