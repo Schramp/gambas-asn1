@@ -51,6 +51,8 @@ public:
 
     bool operator==(const AsnString&) const = default;
 
+    static const TypeDescriptor& asn_DEF;
+
     /// @brief Return 0 when the string satisfies SIZE and alphabet constraints.
     ///
     /// - SIZE: signed delta (chars) such that \c (size+delta) lands at nearest

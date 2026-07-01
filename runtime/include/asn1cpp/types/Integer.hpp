@@ -59,6 +59,8 @@ public:
     bool operator==(int64_t v) const { return value_ == v; }
     bool operator!=(int64_t v) const { return value_ != v; }
 
+    static const TypeDescriptor& asn_DEF;
+
     /// @brief Return 0 when the value satisfies the constraint, otherwise signed delta
     /// such that \c (value+delta) lands at the nearest valid bound.
     /// Positive = below lower_bound; negative = above upper_bound.
@@ -172,6 +174,8 @@ public:
     bool operator!=(const UInteger& o) const { return value_ != o.value_; }
     bool operator==(uint64_t v) const { return value_ == v; }
     bool operator!=(uint64_t v) const { return value_ != v; }
+
+    static const TypeDescriptor& asn_DEF;
 
     int64_t validate(const Constraints& c) const {
         if (c.flags & Constraints::EXTENSIBLE) return 0;

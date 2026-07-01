@@ -164,4 +164,31 @@ const TypeDescriptor asn_DEF_BmpString     = { "BMPString",        Tag::universa
 const TypeDescriptor asn_DEF_VideotexString= { "VideotexString",   Tag::universal(21, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_string_handler,      &ber_string_handler,      TypeLifecycleOps(TypeTag<VideotexString>{}) };
 const TypeDescriptor asn_DEF_ObjectDescriptor={ "ObjectDescriptor",Tag::universal( 7, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_string_handler,      &ber_string_handler,      TypeLifecycleOps(TypeTag<ObjectDescriptor>{}) };
 
+// ── static asn_DEF members on primitive types — aliases to the globals above ──
+
+const TypeDescriptor& Integer::asn_DEF       = asn_DEF_Integer;
+const TypeDescriptor& UInteger::asn_DEF      = asn_DEF_Integer;
+const TypeDescriptor& Boolean::asn_DEF       = asn_DEF_Boolean;
+const TypeDescriptor& Null::asn_DEF          = asn_DEF_Null;
+const TypeDescriptor& Real::asn_DEF          = asn_DEF_Real;
+const TypeDescriptor& BitString::asn_DEF     = asn_DEF_BitString;
+const TypeDescriptor& OctetString::asn_DEF   = asn_DEF_OctetString;
+const TypeDescriptor& Oid::asn_DEF           = asn_DEF_Oid;
+const TypeDescriptor& RelativeOid::asn_DEF   = asn_DEF_RelativeOid;
+const TypeDescriptor& UtcTime::asn_DEF       = asn_DEF_UtcTime;
+const TypeDescriptor& GeneralizedTime::asn_DEF = asn_DEF_GeneralizedTime;
+
+template<> const TypeDescriptor& AsnString<UniversalTag::Utf8String>::asn_DEF       = asn_DEF_Utf8String;
+template<> const TypeDescriptor& AsnString<UniversalTag::NumericString>::asn_DEF    = asn_DEF_NumericString;
+template<> const TypeDescriptor& AsnString<UniversalTag::PrintableString>::asn_DEF  = asn_DEF_PrintableString;
+template<> const TypeDescriptor& AsnString<UniversalTag::T61String>::asn_DEF        = asn_DEF_T61String;
+template<> const TypeDescriptor& AsnString<UniversalTag::VideotexString>::asn_DEF   = asn_DEF_VideotexString;
+template<> const TypeDescriptor& AsnString<UniversalTag::Ia5String>::asn_DEF        = asn_DEF_Ia5String;
+template<> const TypeDescriptor& AsnString<UniversalTag::GraphicString>::asn_DEF    = asn_DEF_GraphicString;
+template<> const TypeDescriptor& AsnString<UniversalTag::VisibleString>::asn_DEF    = asn_DEF_VisibleString;
+template<> const TypeDescriptor& AsnString<UniversalTag::GeneralString>::asn_DEF    = asn_DEF_GeneralString;
+template<> const TypeDescriptor& AsnString<UniversalTag::UniversalString>::asn_DEF  = asn_DEF_UniversalString;
+template<> const TypeDescriptor& AsnString<UniversalTag::BmpString>::asn_DEF        = asn_DEF_BmpString;
+template<> const TypeDescriptor& AsnString<UniversalTag::ObjectDescriptor>::asn_DEF = asn_DEF_ObjectDescriptor;
+
 } // namespace asn1

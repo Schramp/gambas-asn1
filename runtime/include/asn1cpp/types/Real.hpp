@@ -26,6 +26,8 @@ public:
     void   set(double v)   { value_ = v; }
     operator double() const { return value_; }
     bool operator==(const Real&) const = default;
+
+    static const TypeDescriptor& asn_DEF;
 };
 
 template<>

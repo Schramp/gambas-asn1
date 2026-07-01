@@ -46,6 +46,8 @@ public:
 
     bool operator==(const BitString&) const = default;
 
+    static const TypeDescriptor& asn_DEF;
+
     /// @brief Return 0 when \c bit_count() satisfies the SIZE constraint (in bits),
     /// otherwise signed delta such that \c (bit_count+delta) lands at the nearest bound.
     /// Positive = too short; negative = too long.

@@ -20,6 +20,8 @@ public:
     void set(bool v) { value_ = v; }
     operator bool() const { return value_; }
     bool operator==(const Boolean&) const = default;
+
+    static const TypeDescriptor& asn_DEF;
 };
 
 template<>

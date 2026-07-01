@@ -15,6 +15,7 @@ public:
     UtcTime() = default;
     explicit UtcTime(std::string s) : AsnStringBase(std::move(s)) {}
     bool operator==(const UtcTime&) const = default;
+    static const TypeDescriptor& asn_DEF;
 };
 
 /// @brief ASN.1 GeneralizedTime — stored as the raw ASN.1 string (e.g. \c "20240115143000Z").
@@ -25,6 +26,7 @@ public:
     GeneralizedTime() = default;
     explicit GeneralizedTime(std::string s) : AsnStringBase(std::move(s)) {}
     bool operator==(const GeneralizedTime&) const = default;
+    static const TypeDescriptor& asn_DEF;
 };
 
 template<>

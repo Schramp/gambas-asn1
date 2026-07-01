@@ -1,5 +1,10 @@
 enable_testing()
 
+# ---- Asn1Optional<T> layout tests ------------------------------------------
+add_executable(test_asn1_optional ber/test_asn1_optional.cpp)
+target_link_libraries(test_asn1_optional PRIVATE asn1cpp_runtime)
+add_test(NAME asn1_optional COMMAND test_asn1_optional)
+
 # ---- BER primitive unit tests ----------------------------------------------
 add_executable(test_ber_primitives ber/test_primitives.cpp)
 target_link_libraries(test_ber_primitives PRIVATE asn1cpp_runtime)
