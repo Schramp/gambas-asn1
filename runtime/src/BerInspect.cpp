@@ -1,7 +1,6 @@
 #include <asn1cpp/codec/BerInspect.hpp>
 #include <asn1cpp/codec/BerCursor.hpp>
 #include <cctype>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -24,6 +23,9 @@ static std::string tag_to_str(Tag t)
         break;
     case TagClass::Private:
         std::snprintf(buf, sizeof(buf), "P[%u]", t.number);
+        break;
+    default:
+        std::snprintf(buf, sizeof(buf), "?[%u]", t.number);
         break;
     }
     return buf;
@@ -51,8 +53,8 @@ static std::string join_path(const std::vector<std::string>& path)
 // Case-insensitive glob match; '*' matches any sequence of chars (including '/').
 static bool glob_matches(std::string_view pattern, std::string_view text)
 {
-    // Consume leading '*'s — consecutive stars collapse.
-    while (pattern.size() >= 2 && pattern[0] == '*' && pattern[1] == '*')
+    // Collapse consecutive stars — "**" behaves identically to "*".
+    while (pattern.starts_with("**"))
         pattern.remove_prefix(1);
 
     if (pattern.empty())
