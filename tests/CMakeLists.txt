@@ -1171,8 +1171,8 @@ add_test(NAME jer_seqof COMMAND test_jer_seqof)
 set_tests_properties(jer_seqof PROPERTIES TIMEOUT 30 LABELS "jer")
 
 # ---- JER test harness (#154 / #155) ----------------------------------------
-# Both tests are expected to fail until asn1cpp JER tools are implemented (#156+).
 # #155: type-bundle round-trip (JER→XER vs asn1c XER fixture)
+# Still WILL_FAIL — requires jer-to-xer tool (not yet built; needs generic schema compilation)
 add_test(NAME jer_bundle_roundtrip
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/jer/run_jer_tests.py
@@ -1182,13 +1182,12 @@ set_tests_properties(jer_bundle_roundtrip PROPERTIES
     TIMEOUT   60
     LABELS    "jer")
 
-# #154: ETSI-LI JSON xval smoke test
+# #154 / #159: ETSI-LI JSON xval smoke test — GREEN (#159 done)
 add_test(NAME jer_etsi_xval
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/../asn1cpp-validation-tools/compare_json.py
             --type EncryptedPayload --count 10 --seed 42)
 set_tests_properties(jer_etsi_xval PROPERTIES
-    WILL_FAIL TRUE
     TIMEOUT   60
     LABELS    "jer")
 
