@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <string>
 #include <string_view>
 #include <vector>
 #include "../Tag.hpp"
@@ -55,6 +56,8 @@ struct TrieNode {
     size_t                next_sibling = SIZE_MAX;   ///< Index of next sibling node; SIZE_MAX = last sibling.
     size_t                field_index  = SIZE_MAX;   ///< Result-slot index; SIZE_MAX = interior node only.
     bool                  is_choice    = false;      ///< True when this node's value is a CHOICE: children are alternatives.
+                                                     ///< Always \c false on leaf nodes — leaves capture value bytes whole;
+                                                     ///< no alternative-scanning is needed regardless of the leaf's type kind.
     const TypeDescriptor* node_desc    = nullptr;    ///< TypeDescriptor at this level (used for introspection and #174).
 };
 
@@ -126,6 +129,14 @@ public:
     /// @pre \c finalize() has been called.
     size_t leaf_count() const;
 
+    /// @brief Return all registered paths, indexed by their \c FieldHandle::index.
+    ///
+    /// Duplicate paths (same path registered twice) appear only once.
+    /// The vector is stable after \c finalize(); indices match \c FieldHandle::index.
+    ///
+    /// @pre \c finalize() has been called.
+    const std::vector<std::string>& list_paths() const;
+
     /// @brief Read-only access to the flat node arena (used by \c BerProjectionResult).
     const std::vector<TrieNode>& nodes() const { return nodes_; }
 
@@ -135,6 +146,7 @@ public:
 private:
     const TypeDescriptor* root_;
     std::vector<TrieNode> nodes_;
+    std::vector<std::string> paths_;          ///< Registered paths indexed by FieldHandle::index.
     size_t                root_first_child_{SIZE_MAX};
     size_t                leaf_count_{0};
     bool                  finalized_{false};

@@ -57,6 +57,9 @@ FieldHandle BerProjection::add_path(std::string_view path) {
     if (path.empty())
         throw std::runtime_error("BerProjection::add_path: empty path");
 
+    // Save original path before the parsing loop consumes it.
+    std::string original_path{path};
+
     const TypeDescriptor* cur_desc = root_;
     size_t parent_idx = SIZE_MAX;
 
@@ -123,8 +126,21 @@ FieldHandle BerProjection::add_path(std::string_view path) {
             cur_desc   = child_desc;
         } else {
             // Leaf: assign a result-slot index if this path is new.
-            if (nodes_[node_idx].field_index == SIZE_MAX)
+            //
+            // CHOICE-typed leaves: supported.  When child_desc->choice_spec != nullptr
+            // the captured value bytes will contain the active alternative's full TLV,
+            // which can be decoded as the CHOICE type via leaf_descriptor.  is_choice
+            // is NOT set on leaf nodes — BerProjectionResult captures bytes wholesale
+            // at a leaf; no alternative-scanning is needed regardless of type kind.
+            //
+            // Unsupported: registering the same field as both a leaf ("beta") and an
+            // interior node ("beta/left") simultaneously.  That would produce a trie
+            // node with field_index != SIZE_MAX and first_child != SIZE_MAX, whose
+            // BerProjectionResult semantics are undefined.  Detected at apply() time.
+            if (nodes_[node_idx].field_index == SIZE_MAX) {
                 nodes_[node_idx].field_index = leaf_count_++;
+                paths_.push_back(std::move(original_path));
+            }
             return FieldHandle{nodes_[node_idx].field_index, child_desc};
         }
     }
@@ -141,6 +157,11 @@ void BerProjection::finalize() {
 size_t BerProjection::leaf_count() const {
     assert(finalized_ && "BerProjection::leaf_count() called before finalize()");
     return leaf_count_;
+}
+
+const std::vector<std::string>& BerProjection::list_paths() const {
+    assert(finalized_ && "BerProjection::list_paths() called before finalize()");
+    return paths_;
 }
 
 } // namespace asn1
