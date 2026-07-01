@@ -1,5 +1,10 @@
 enable_testing()
 
+# ---- BerCursor / BerLayer / BerMutableCursor tests -------------------------
+add_executable(test_ber_cursor ber/test_ber_cursor.cpp)
+target_link_libraries(test_ber_cursor PRIVATE asn1cpp_runtime)
+add_test(NAME ber_cursor COMMAND test_ber_cursor)
+
 # ---- Asn1Optional<T> layout tests ------------------------------------------
 add_executable(test_asn1_optional ber/test_asn1_optional.cpp)
 target_link_libraries(test_asn1_optional PRIVATE asn1cpp_runtime)
