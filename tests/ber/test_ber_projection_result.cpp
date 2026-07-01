@@ -1,44 +1,13 @@
 // Tests for BerProjectionResult — bind, apply, load, commit.
 //
-// Uses the same hand-crafted TypeDescriptor tables as test_ber_projection_trie.cpp:
-//
+// Schema (same as test_ber_projection_trie.cpp):
 //   Root ::= SEQUENCE {
-//       alpha  [0] IMPLICIT SEQUENCE {
-//           x  [0] IMPLICIT INTEGER,
-//           y  [1] IMPLICIT VisibleString
-//       },
-//       beta   [1] IMPLICIT CHOICE {
-//           left  [0] IMPLICIT INTEGER,
-//           right [1] IMPLICIT OctetString
-//       }
+//       alpha  [0] IMPLICIT SEQUENCE { x [0] IMPLICIT INTEGER, y [1] IMPLICIT VisibleString },
+//       beta   [1] IMPLICIT CHOICE   { left [0] IMPLICIT INTEGER, right [1] IMPLICIT OctetString }
 //   }
 //
-// Hand-crafted BER frame (frame1):
-//   30 10                              -- Root SEQUENCE, 16 bytes
-//     A0 07                            -- alpha (ctx[0] IMPLICIT SEQUENCE), 7 bytes
-//       80 01 2A                       -- x = 42
-//       81 02 68 69                    -- y = "hi"
-//     A1 05                            -- beta (ctx[1] IMPLICIT CHOICE), 5 bytes
-//       80 03 31 32 33                 -- left = INTEGER 0x313233... wait
-//
-// Actually encode integer simply:
-//   x = 42  → 80 01 2A
-//   y = "hi"→ 81 02 68 69
-//   beta/left = 7 → 80 01 07
-//
-// frame1 = 30 0F A0 07 80 01 2A 81 02 68 69 A1 03 80 01 07
-// frame2 = 30 13 A0 07 80 01 63 81 02 42 00 A1 07 81 05 68 65 6C 6C 6F
-//          (x=99, y="\x42\x00" as VisibleString, beta/right="hello")
-//
-// Wait, VisibleString must be printable. Use y="BX" for frame2.
-// frame2: x=99, y="BX" (0x42 0x58), beta/right=OctetString{0x01,0x02,0x03,0x04,0x05}
-//   x: 80 01 63
-//   y: 81 02 42 58
-//   alpha: A0 05 80 01 63 81 02 42 58 → A0 07 80 01 63 81 02 42 58
-//   right: 81 05 01 02 03 04 05
-//   beta:  A1 07 81 05 01 02 03 04 05
-//   root members: 9 + 9 = 18 bytes
-//   frame2 = 30 12 A0 07 80 01 63 81 02 42 58 A1 07 81 05 01 02 03 04 05
+// frame1: x=42 y="hi"  beta/left=7
+// frame2: x=99 y="BX"  beta/right={0x01,0x02,0x03}
 
 #include <cstdio>
 #include <cstdlib>
@@ -142,35 +111,6 @@ static const uint8_t frame2_bytes[] = {
     0xA1, 0x05,              //   beta [1] IMPLICIT CHOICE, 5 bytes
     0x81, 0x03, 0x01, 0x02, 0x03,  // right [1] IMPLICIT OCTET STRING = {1,2,3}
 };
-
-// ── Shared projection (startup once) ────────────────────────────────────────
-
-static BerProjection& make_proj() {
-    static BerProjection proj{root_def};
-    static bool done = false;
-    if (!done) {
-        proj.add_path("alpha/x");
-        proj.add_path("alpha/y");
-        proj.add_path("beta/left");
-        proj.add_path("beta/right");
-        proj.finalize();
-        done = true;
-    }
-    return proj;
-}
-
-static FieldHandle h_x;
-static FieldHandle h_y;
-static FieldHandle h_left;
-static FieldHandle h_right;
-
-static void init_handles() {
-    BerProjection& proj = make_proj();
-    h_x     = proj.add_path("alpha/x");
-    h_y     = proj.add_path("alpha/y");
-    h_left  = proj.add_path("beta/left");
-    h_right = proj.add_path("beta/right");
-}
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 

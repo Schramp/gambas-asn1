@@ -287,9 +287,7 @@ private:
 
     const BerProjection* proj_;
     std::vector<Slot>    slots_;         ///< indexed by FieldHandle::index
-    size_t               bound_count_ = 0;
     const uint8_t*       frame_base_  = nullptr;  ///< set by apply(); used by load()
-    size_t               frame_size_  = 0;
     uint8_t*             mut_frame_   = nullptr;  ///< non-null only after mutable apply()
     std::vector<uint8_t> encode_buf_;   ///< scratch buffer for commit(); reused across calls
 };

@@ -186,7 +186,6 @@ void BerProjectionResult::bind_impl(FieldHandle          h,
            "BerProjectionResult::bind: T does not match the registered path type");
 
     Slot& s = slots_[h.index];
-    if (!s.binding) ++bound_count_;  // first binding for this slot
     s.binding = &target;
 }
 
@@ -198,6 +197,8 @@ void BerProjectionResult::walk(std::span<const uint8_t> buf,
     const auto& nodes = proj_->nodes();
     const size_t total = proj_->leaf_count();
 
+    // Use leaf_count() (not bound_count_) as the exit threshold so that unbound
+    // slots still get their value_off/value_len recorded — load() needs them.
     BerCursor c(buf);
     while (c.valid() && found < total) {
         // Scan trie siblings for a tag matching this TLV
@@ -231,7 +232,6 @@ void BerProjectionResult::walk(std::span<const uint8_t> buf,
 void BerProjectionResult::apply(std::span<const uint8_t> frame)
 {
     frame_base_ = frame.data();
-    frame_size_ = frame.size();
     mut_frame_  = nullptr;
 
     for (auto& s : slots_) {
@@ -251,7 +251,6 @@ void BerProjectionResult::apply(std::span<const uint8_t> frame)
 void BerProjectionResult::apply(std::span<uint8_t> frame)
 {
     frame_base_ = frame.data();
-    frame_size_ = frame.size();
     mut_frame_  = frame.data();
 
     for (auto& s : slots_) {
