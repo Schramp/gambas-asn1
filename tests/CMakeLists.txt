@@ -1,5 +1,10 @@
 enable_testing()
 
+# ---- BerProjection trie tests -----------------------------------------------
+add_executable(test_ber_projection_trie ber/test_ber_projection_trie.cpp)
+target_link_libraries(test_ber_projection_trie PRIVATE asn1cpp_runtime)
+add_test(NAME ber_projection_trie COMMAND test_ber_projection_trie)
+
 # ---- BerCursor / BerLayer / BerMutableCursor tests -------------------------
 add_executable(test_ber_cursor ber/test_ber_cursor.cpp)
 target_link_libraries(test_ber_cursor PRIVATE asn1cpp_runtime)
