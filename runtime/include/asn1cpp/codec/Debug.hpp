@@ -6,12 +6,13 @@ namespace asn1 {
 // Debug bitmask — set ASN1CPP_DEBUG=<hex> at runtime to enable traces.
 // The value is read once on first call; subsequent calls return the cached result.
 enum DebugFlag : unsigned {
-    DBG_BER_CHOICE = 1u << 0,   // CHOICE tag miss / alternative dispatch (decode)
-    DBG_BER_SEQ    = 1u << 1,   // SEQUENCE EXPLICIT wrap/unwrap, tag mismatches (decode)
-    DBG_XER        = 1u << 2,   // XER parse / emit
-    DBG_PER        = 1u << 3,   // PER bit-level ops
-    DBG_BER_WRITE  = 1u << 4,   // BER encode: each member/alt written — name, tag, explicit/implicit, byte count
-    DBG_NO_VALIDATE = 1u << 5,  // Suppress validate() at runtime even if ASN1CPP_VALIDATE=1 (lets caller generate intentionally invalid ASN.1)
+    DBG_BER_CHOICE  = 1u << 0,  // CHOICE tag miss / alternative dispatch (decode)
+    DBG_BER_SEQ     = 1u << 1,  // SEQUENCE EXPLICIT wrap/unwrap, tag mismatches (decode)
+    DBG_XER         = 1u << 2,  // XER parse / emit
+    DBG_PER         = 1u << 3,  // PER bit-level ops
+    DBG_BER_WRITE   = 1u << 4,  // BER encode: each member/alt written — name, tag, explicit/implicit, byte count
+    DBG_NO_VALIDATE = 1u << 5,  // Suppress validate() at runtime even if ASN1CPP_VALIDATE=1
+    DBG_VALIDATE_TRACE = 1u << 6,  // Constraint validation failures — type name, delta, codec (all encodings)
 };
 
 inline unsigned debug_flags() {
