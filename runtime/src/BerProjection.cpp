@@ -1,7 +1,12 @@
 #include <asn1cpp/codec/BerProjection.hpp>
+#include <asn1cpp/codec/BerCursor.hpp>
+#include <asn1cpp/codec/BerCodec.hpp>
+#include <asn1cpp/codec/BerWriter.hpp>
 #include <cassert>
+#include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace asn1 {
 
@@ -162,6 +167,148 @@ size_t BerProjection::leaf_count() const {
 const std::vector<std::string>& BerProjection::list_paths() const {
     assert(finalized_ && "BerProjection::list_paths() called before finalize()");
     return paths_;
+}
+
+// ── BerProjectionResult ───────────────────────────────────────────────────────
+
+BerProjectionResult::BerProjectionResult(const BerProjection& proj)
+    : proj_(&proj)
+{
+    slots_.resize(proj.leaf_count());  // asserts finalized() internally
+}
+
+void BerProjectionResult::bind_impl(FieldHandle          h,
+                                     Asn1OptionalBase&    target,
+                                     const TypeDescriptor* desc)
+{
+    assert(h.index < slots_.size() && "BerProjectionResult::bind: handle out of range");
+    assert(h.leaf_descriptor == desc &&
+           "BerProjectionResult::bind: T does not match the registered path type");
+
+    Slot& s = slots_[h.index];
+    if (!s.binding) ++bound_count_;  // first binding for this slot
+    s.binding = &target;
+}
+
+void BerProjectionResult::walk(std::span<const uint8_t> buf,
+                                size_t                   trie_first,
+                                const uint8_t*           frame_base,
+                                size_t&                  found)
+{
+    const auto& nodes = proj_->nodes();
+    const size_t total = proj_->leaf_count();
+
+    BerCursor c(buf);
+    while (c.valid() && found < total) {
+        // Scan trie siblings for a tag matching this TLV
+        size_t ni = trie_first;
+        while (ni != SIZE_MAX) {
+            const TrieNode& node = nodes[ni];
+            if (tag_matches(node.tag, c.tag())) {
+                if (node.field_index != SIZE_MAX) {
+                    // Leaf: record location and optionally decode into binding
+                    Slot& s = slots_[node.field_index];
+                    s.value_off = static_cast<size_t>(c.value().data() - frame_base);
+                    s.value_len = c.length();
+                    if (s.binding) {
+                        auto ok = BerCodec::instance().decode_value(
+                            c.value(), *s.binding->desc, s.binding->value_ptr);
+                        s.binding->found = ok.has_value();
+                    }
+                    ++found;
+                } else {
+                    // Interior: recurse into children
+                    walk(c.value(), node.first_child, frame_base, found);
+                }
+                break;  // this TLV consumed by one trie node
+            }
+            ni = node.next_sibling;
+        }
+        c.next();
+    }
+}
+
+void BerProjectionResult::apply(std::span<const uint8_t> frame)
+{
+    frame_base_ = frame.data();
+    frame_size_ = frame.size();
+    mut_frame_  = nullptr;
+
+    for (auto& s : slots_) {
+        s.value_off = SIZE_MAX;
+        s.value_len = 0;
+        if (s.binding) s.binding->found = false;
+    }
+
+    // Enter the root TLV to reach the root type's members
+    BerCursor root_c(frame);
+    if (!root_c.valid()) return;
+
+    size_t found = 0;
+    walk(root_c.value(), proj_->root_first_child(), frame.data(), found);
+}
+
+void BerProjectionResult::apply(std::span<uint8_t> frame)
+{
+    frame_base_ = frame.data();
+    frame_size_ = frame.size();
+    mut_frame_  = frame.data();
+
+    for (auto& s : slots_) {
+        s.value_off = SIZE_MAX;
+        s.value_len = 0;
+        if (s.binding) s.binding->found = false;
+    }
+
+    BerCursor root_c(frame);
+    if (!root_c.valid()) return;
+
+    size_t found = 0;
+    walk(root_c.value(), proj_->root_first_child(), frame.data(), found);
+}
+
+void BerProjectionResult::load_impl(FieldHandle          h,
+                                     Asn1OptionalBase&    target,
+                                     const TypeDescriptor* desc)
+{
+    assert(h.index < slots_.size() && "BerProjectionResult::load: handle out of range");
+    assert(h.leaf_descriptor == desc &&
+           "BerProjectionResult::load: T does not match the registered path type");
+    assert(frame_base_ != nullptr && "BerProjectionResult::load: called before apply()");
+
+    const Slot& s = slots_[h.index];
+    target.found = false;
+    if (s.value_off == SIZE_MAX) return;  // field absent in last apply()
+
+    auto val = std::span<const uint8_t>(frame_base_ + s.value_off, s.value_len);
+    auto ok  = BerCodec::instance().decode_value(val, *desc, target.value_ptr);
+    target.found = ok.has_value();
+}
+
+bool BerProjectionResult::commit(FieldHandle h)
+{
+    assert(mut_frame_ != nullptr &&
+           "BerProjectionResult::commit: requires mutable apply()");
+    assert(h.index < slots_.size() && "BerProjectionResult::commit: handle out of range");
+
+    const Slot& s = slots_[h.index];
+    if (!s.binding || !s.binding->found || s.value_off == SIZE_MAX) return false;
+
+    // Encode the current value into the scratch buffer (reused across commit() calls)
+    encode_buf_.clear();
+    BerWriter w{encode_buf_};
+    BerEncodeStream es{w};
+    BerCodec::instance().encode(es, *s.binding->desc, s.binding->value_ptr);
+
+    // Extract value bytes (strip outer TLV header from the encoded output)
+    BerCursor enc_c(std::span<const uint8_t>(encode_buf_.data(), encode_buf_.size()));
+    if (!enc_c.valid()) return false;
+    auto enc_val = enc_c.value();  // value bytes only (no tag+length header)
+
+    if (enc_val.size() != s.value_len) return false;
+
+    std::memcpy(mut_frame_ + s.value_off, enc_val.data(), s.value_len);
+    return true;
 }
 
 } // namespace asn1
