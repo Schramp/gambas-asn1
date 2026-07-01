@@ -198,6 +198,26 @@ static void test_leaf_count_before_finalize() {
     check("leaf_count_after_finalize", proj.leaf_count() == 1);
 }
 
+static void test_list_paths() {
+    BerProjection proj{root_def};
+    auto h_x    = proj.add_path("alpha/x");
+    auto h_y    = proj.add_path("alpha/y");
+    auto h_left = proj.add_path("beta/left");
+    // Duplicate — must not appear twice.
+    auto h_x2   = proj.add_path("alpha/x");
+    proj.finalize();
+
+    const auto& paths = proj.list_paths();
+    check("list_paths_count",       paths.size() == 3);
+    check("list_paths_hx_idx",      h_x.index == 0);
+    check("list_paths_hx_path",     paths[h_x.index]    == "alpha/x");
+    check("list_paths_hy_path",     paths[h_y.index]    == "alpha/y");
+    check("list_paths_hleft_path",  paths[h_left.index] == "beta/left");
+    check("list_paths_dup_same",    h_x2.index == h_x.index);
+    // Duplicate must not push a second entry.
+    check("list_paths_dup_count",   paths.size() == 3);
+}
+
 static void test_trie_structure() {
     // Verify node linkage for two shared-prefix paths
     BerProjection proj{root_def};
@@ -251,6 +271,9 @@ int main() {
 
     printf("=== Leaf count ===\n");
     test_leaf_count_before_finalize();
+
+    printf("=== list_paths ===\n");
+    test_list_paths();
 
     printf("=== Trie structure ===\n");
     test_trie_structure();
