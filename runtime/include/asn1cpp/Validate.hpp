@@ -31,6 +31,13 @@
 
 namespace asn1 {
 
+/// @brief Check @p obj against the SIZE / value-range / alphabet constraints in @p def.
+/// @param def  TypeDescriptor carrying the Constraints and type-specific spec pointers.
+/// @param obj  The value to check (must be the concrete type described by @p def).
+/// @return 0 if valid (or no constraint); otherwise a signed delta to the nearest bound.
+///         Positive delta: value/size below lower bound.
+///         Negative delta: value/size above upper bound (caller sees magnitude as excess).
+/// @see X.680 §47 — SubtypeConstraint; X.690 §8 — BER encoding rules for constrained types.
 inline int64_t validate(const TypeDescriptor& def, const Asn1Object* obj) {
     if (def.enum_spec)
         return def.enum_spec->validate(static_cast<const EnumValue*>(obj)->value());

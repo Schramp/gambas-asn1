@@ -109,13 +109,20 @@ public:
     const char* name() const override { return "JER"; }
 
     /// @brief JER-encode @p src as JSON into the std::ostream wrapped by @p dst.
-    /// @param dst  Must be a JerEncodeStream wrapping a std::ostream.
+    /// @param dst   Must be a JerEncodeStream wrapping a std::ostream.
+    /// @param def   TypeDescriptor of the value being encoded.
+    /// @param src   Pointer to the value to encode (must match @p def).
+    /// @see X.697 §8–11 — primitive and composite JER encodings.
     void encode(IEncodeStream& dst,
                 const TypeDescriptor& def,
                 const Asn1Object* src) const override;
 
     /// @brief JER-decode from the JSON text wrapped by @p src into @p dest.
-    /// @param src  Must be a JerDecodeStream holding the full JSON text.
+    /// @param src   Must be a JerDecodeStream holding the full JSON text.
+    /// @param def   TypeDescriptor of the expected value.
+    /// @param dest  Output object; populated on success, partial on failure.
+    /// @return Empty Expected on success; DecodeError on parse or type mismatch.
+    /// @see X.697 §8–11 — primitive and composite JER decodings.
     DecodeResult decode(IDecodeStream& src,
                         const TypeDescriptor& def,
                         Asn1Object* dest) const override;
