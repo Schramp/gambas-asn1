@@ -43,6 +43,7 @@ The value is read once on first call to `asn1::debug_flags()`; no rebuild needed
 | `0x04` | `DBG_XER` | XER parse / emit (reserved, not yet wired) |
 | `0x08` | `DBG_PER` | PER bit-level ops (reserved, not yet wired) |
 | `0x10` | `DBG_BER_WRITE` | BER encode: each member/alt written — name, tag class+number, EXPLICIT/IMPLICIT, byte count; absent optional members; SEQUENCE-OF element counts; out-of-range CHOICE index |
+| `0x40` | `DBG_VALIDATE_TRACE` | Constraint violations on encode or decode — type name, delta, codec (BER/JER/…). Failures are **silent** without this flag; `record_validate_fail`/`bump_validate_fail` always fire. |
 
 ```bash
 # Trace BER encoding:

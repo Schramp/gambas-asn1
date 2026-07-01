@@ -708,6 +708,7 @@ Set before running any binary linked against `libasn1cpp_runtime`:
 | `0x02` | `DBG_BER_SEQ` | SEQUENCE EXPLICIT wrap/unwrap — outer tag + first byte |
 | `0x08` | `DBG_PER` | PER bit-level ops — every `put_bits`/`get_bits` with offset and value |
 | `0x10` | `DBG_BER_WRITE` | BER encode — member name, tag, EXPLICIT/IMPLICIT, byte count |
+| `0x40` | `DBG_VALIDATE_TRACE` | Constraint violations — type name, delta, codec (all encodings) |
 
 ```bash
 # Trace BER encoding:
@@ -719,6 +720,19 @@ ASN1CPP_DEBUG=0x01 ./my-decoder input.ber
 # Enable all:
 ASN1CPP_DEBUG=0xff ./my-tool input.ber
 ```
+
+#### Validation output vs. validation reporting
+
+Constraint failures have two independent channels:
+
+| Channel | Controlled by | Purpose |
+|---------|--------------|---------|
+| **Counter** (`validate_fail_count`) | always active when `ASN1CPP_VALIDATE=1` | machine-readable; poll after encode/decode to detect violations |
+| **Report** (`ValidationReport`) | `ASN1CPP_VALIDATE_REPORT=1` + `ValidationReportScope` | structured per-failure records with type name, delta, path, and encode/decode direction; used by application code |
+| **stderr trace** | `ASN1CPP_DEBUG=0x40` (`DBG_VALIDATE_TRACE`) | human-readable line per failure; includes type name, delta, codec tag, and (for BER) the ASN.1 tag class+number; for debugging only |
+
+Validation failures are **silent on output** unless `DBG_VALIDATE_TRACE` is set.
+`record_validate_fail` and `bump_validate_fail` always fire regardless of debug flags.
 
 ### Validation API
 

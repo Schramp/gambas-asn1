@@ -1043,6 +1043,9 @@ void JerCodec::encode(IEncodeStream& dst,
         if (delta != 0) {
             bump_validate_fail();
             record_validate_fail(def.name, delta, /*on_decode=*/false);
+            if (debug_flags() & DBG_VALIDATE_TRACE)
+                std::fprintf(stderr, "[VALIDATE-ENC][JER] %s delta=%lld\n",
+                    def.name, static_cast<long long>(delta));
         }
     }
 #endif
@@ -1069,6 +1072,9 @@ DecodeResult JerCodec::decode(IDecodeStream& src,
         if (delta != 0) {
             bump_validate_fail();
             record_validate_fail(def.name, delta, /*on_decode=*/true);
+            if (debug_flags() & DBG_VALIDATE_TRACE)
+                std::fprintf(stderr, "[VALIDATE-DEC][JER] %s delta=%lld\n",
+                    def.name, static_cast<long long>(delta));
         }
     }
 #endif
