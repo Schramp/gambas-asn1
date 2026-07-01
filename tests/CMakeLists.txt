@@ -10,6 +10,11 @@ add_executable(test_ber_projection_result ber/test_ber_projection_result.cpp)
 target_link_libraries(test_ber_projection_result PRIVATE asn1cpp_runtime)
 add_test(NAME ber_projection_result COMMAND test_ber_projection_result)
 
+# ---- BerInspect tests (#174) ------------------------------------------------
+add_executable(test_ber_inspect ber/test_ber_inspect.cpp)
+target_link_libraries(test_ber_inspect PRIVATE asn1cpp_runtime)
+add_test(NAME ber_inspect COMMAND test_ber_inspect)
+
 # ---- BerCursor / BerLayer / BerMutableCursor tests -------------------------
 add_executable(test_ber_cursor ber/test_ber_cursor.cpp)
 target_link_libraries(test_ber_cursor PRIVATE asn1cpp_runtime)
