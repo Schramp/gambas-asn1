@@ -73,6 +73,7 @@ inline int64_t validate(const TypeDescriptor& def, const Asn1Object* obj) {
         return static_cast<const BmpString*>(obj)->validate(c);
     case UniversalTag::ObjectDescriptor:
         return static_cast<const ObjectDescriptor*>(obj)->validate(c);
+    // TODO #160: add case UniversalTag::Real (tag 9) — check finite, optional bounds
     default:
         return 0;
     }

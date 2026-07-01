@@ -1037,6 +1037,7 @@ void JerCodec::encode(IEncodeStream& dst,
         prim_dispatch_[def.tag.number]->encode(*this, s, def, src);
     else
         comp_dispatch_[(int)def.kind]->encode(*this, s, def, src);
+    // TODO #160: add validate() call here under ASN1CPP_VALIDATE guards (mirrors BerCodec::encode)
 }
 
 DecodeResult JerCodec::decode(IDecodeStream& src,
@@ -1044,9 +1045,11 @@ DecodeResult JerCodec::decode(IDecodeStream& src,
                                Asn1Object* dest) const
 {
     auto& s = static_cast<JerDecodeStream&>(src);
-    if (def.kind == TypeKind::Primitive)
-        return prim_dispatch_[def.tag.number]->decode(*this, s, def, dest);
-    return comp_dispatch_[(int)def.kind]->decode(*this, s, def, dest);
+    DecodeResult res = def.kind == TypeKind::Primitive
+        ? prim_dispatch_[def.tag.number]->decode(*this, s, def, dest)
+        : comp_dispatch_[(int)def.kind]->decode(*this, s, def, dest);
+    // TODO #160: add validate() call on res.has_value() under ASN1CPP_VALIDATE guards (mirrors BerCodec::decode)
+    return res;
 }
 
 } // namespace asn1
