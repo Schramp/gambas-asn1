@@ -1136,8 +1136,14 @@ add_test(NAME pdu_filter_absent
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_file_absent.cmake)
 set_tests_properties(pdu_filter_absent PROPERTIES DEPENDS pdu_filter)
 
+# ---- JER basic-type unit test (#156) ----------------------------------------
+add_executable(test_jer_basic jer/test_jer_basic.cpp)
+target_link_libraries(test_jer_basic PRIVATE asn1cpp_runtime)
+add_test(NAME jer_basic COMMAND test_jer_basic)
+set_tests_properties(jer_basic PROPERTIES TIMEOUT 30 LABELS "jer")
+
 # ---- JER test harness (#154 / #155) ----------------------------------------
-# Both tests are expected to fail until asn1cpp JER is implemented (#156+).
+# Both tests are expected to fail until asn1cpp JER tools are implemented (#156+).
 # #155: type-bundle round-trip (JER→XER vs asn1c XER fixture)
 add_test(NAME jer_bundle_roundtrip
     COMMAND ${Python3_EXECUTABLE}

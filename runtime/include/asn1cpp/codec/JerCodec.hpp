@@ -98,6 +98,8 @@ struct IJerTypeHandler {
 ///
 /// @see X.697 — JSON Encoding Rules (JER).
 class JerCodec : public ICodec {
+    static const IJerTypeHandler* const prim_dispatch_[32]; ///< Indexed by universal tag number.
+    static const IJerTypeHandler* const comp_dispatch_[6];  ///< Indexed by (int)TypeKind.
 public:
     static JerCodec& instance() {
         static JerCodec inst;
