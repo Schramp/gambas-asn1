@@ -18,6 +18,7 @@
 #include <asn1cpp/types/Integer.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
 #include <asn1cpp/EnumValue.hpp>
+#include <asn1cpp/SeqOfBase.hpp>
 
 namespace asn1 {
 
@@ -295,6 +296,46 @@ static std::string parse_hex_str(std::string_view sv) {
     for (std::size_t i = 0; i + 1 < sv.size(); i += 2)
         out += (char)((hex_val(sv[i]) << 4) | hex_val(sv[i+1]));
     return out;
+}
+
+// Skip any JSON value (string, number, object, array, literal) without decoding it.
+static DecodeResult skip_json_value(JerDecodeStream& s) {
+    skip_ws(s);
+    if (s.at_end()) return decode_err(DecodeError("JER: unexpected end in value"));
+    char first = s.data()[0];
+    if (first == '"') {
+        std::string dummy;
+        return read_json_string(s, dummy);
+    }
+    if (first == '{' || first == '[') {
+        char close = (first == '{') ? '}' : ']';
+        int depth = 0;
+        bool in_str = false, esc = false;
+        while (!s.at_end()) {
+            char c = s.data()[0]; s.advance(1);
+            if (esc) { esc = false; continue; }
+            if (c == '\\' && in_str) { esc = true; continue; }
+            if (c == '"') { in_str = !in_str; continue; }
+            if (!in_str) {
+                if (c == first) ++depth;
+                else if (c == close) { --depth; if (depth == 0) return decode_ok(); }
+            }
+        }
+        return decode_err(DecodeError("JER: unterminated object/array"));
+    }
+    // number, true, false, null
+    while (!s.at_end()) {
+        char c = s.data()[0];
+        if (c == ',' || c == '}' || c == ']' || is_ws(static_cast<unsigned char>(c))) break;
+        s.advance(1);
+    }
+    return decode_ok();
+}
+
+// Peek next non-whitespace character without consuming it. Returns 0 at end.
+static char peek_char(JerDecodeStream& s) {
+    skip_ws(s);
+    return s.at_end() ? '\0' : s.data()[0];
 }
 
 } // namespace jer_detail
@@ -752,51 +793,163 @@ struct EnumeratedJerHandler final : IJerTypeHandler {
     }
 };
 
-// SEQUENCE OF / SET OF → json: array [...] (X.697 §10) — stub until #158
+// SEQUENCE OF / SET OF → json: [...] (X.697 §10)
 struct SeqOfJerHandler final : IJerTypeHandler {
-    void encode(const JerCodec&, JerEncodeStream& s,
-                const TypeDescriptor& def, const Asn1Object*) const override {
-        (void)s; (void)def;
-        // TODO #158: implement SEQUENCE OF JER encode
-        s.os() << "[]";
+    void encode(const JerCodec& codec, JerEncodeStream& s,
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        auto& os = s.os();
+        const auto& spec = *def.seq_of_spec;
+        const TypeDescriptor& edef = *spec.element;
+        const SeqOfBase& seq = *static_cast<const SeqOfBase*>(src);
+        std::size_t n = seq.count();
+        os << '[';
+        for (std::size_t i = 0; i < n; ++i) {
+            if (i > 0) os << ',';
+            JerEncodeStream es{os, s.depth() + 1};
+            codec.encode(es, edef, seq.get_const(i));
+        }
+        os << ']';
     }
-    DecodeResult decode(const JerCodec&, JerDecodeStream& s,
-                        const TypeDescriptor& def, Asn1Object*) const override {
-        (void)def;
-        // TODO #158: implement SEQUENCE OF JER decode
-        return decode_err(DecodeError("JER: SEQUENCE OF not yet implemented (see #158)"));
+    DecodeResult decode(const JerCodec& codec, JerDecodeStream& s,
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
+        if (auto r = jer_detail::expect_char(s, '['); !r) return r;
+        const auto& spec = *def.seq_of_spec;
+        const TypeDescriptor& edef = *spec.element;
+        SeqOfBase& seq = *static_cast<SeqOfBase*>(dest);
+        seq.resize(0);
+        std::size_t count = 0;
+        for (;;) {
+            char pk = jer_detail::peek_char(s);
+            if (pk == ']') { s.advance(1); break; }
+            if (pk == '\0') return decode_err(DecodeError("JER: unexpected end in array"));
+            if (pk == ',') { s.advance(1); continue; }
+            seq.resize(++count);
+            if (auto r = codec.decode(s, edef, seq.get_mut(count - 1)); !r) return r;
+        }
+        return decode_ok();
     }
 };
 
-// SEQUENCE / SET → json: object {...} (X.697 §9) — stub until #157
+// SEQUENCE / SET → json: {...} (X.697 §9)
 struct SequenceJerHandler final : IJerTypeHandler {
-    void encode(const JerCodec&, JerEncodeStream& s,
-                const TypeDescriptor& def, const Asn1Object*) const override {
-        (void)def;
-        // TODO #157: implement SEQUENCE JER encode
-        s.os() << "{}";
+    void encode(const JerCodec& codec, JerEncodeStream& s,
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        auto& os = s.os();
+        const auto& spec = *def.sequence_spec;
+        os << '{';
+        bool first = true;
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& mbr = spec.members[i];
+            if (!mbr.type_descriptor) continue;
+            if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
+            if (!first) os << ',';
+            first = false;
+            const Asn1Object* mptr = mbr.optional_ops.member_ptr(src, mbr.offset);
+            TypeDescriptor mdef = *mbr.type_descriptor;
+            mdef.name = mbr.name;
+            os << '"' << mbr.name << "\":";
+            JerEncodeStream ms{os, s.depth() + 1};
+            codec.encode(ms, mdef, mptr);
+        }
+        os << '}';
     }
-    DecodeResult decode(const JerCodec&, JerDecodeStream& s,
-                        const TypeDescriptor& def, Asn1Object*) const override {
-        (void)def;
-        // TODO #157: implement SEQUENCE JER decode
-        return decode_err(DecodeError("JER: SEQUENCE not yet implemented (see #157)"));
+    DecodeResult decode(const JerCodec& codec, JerDecodeStream& s,
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
+        if (auto r = jer_detail::expect_char(s, '{'); !r) return r;
+        const auto& spec = *def.sequence_spec;
+        // Track which members were decoded
+        std::vector<bool> seen(spec.count, false);
+        // Default-absent all optional members before reading
+        for (int i = 0; i < spec.count; ++i)
+            if (spec.members[i].optional)
+                spec.members[i].optional_ops.set_present(dest, false);
+        for (;;) {
+            char pk = jer_detail::peek_char(s);
+            if (pk == '}') { s.advance(1); break; }
+            if (pk == '\0') return decode_err(DecodeError("JER: unexpected end in object"));
+            if (pk == ',') { s.advance(1); continue; }
+            // Read key
+            std::string key;
+            if (auto r = jer_detail::read_json_string(s, key); !r) return r;
+            if (auto r = jer_detail::expect_char(s, ':'); !r) return r;
+            // Find matching member
+            int found = -1;
+            for (int i = 0; i < spec.count; ++i)
+                if (key == spec.members[i].name) { found = i; break; }
+            if (found < 0) {
+                // Unknown key: skip value
+                if (auto r = jer_detail::skip_json_value(s); !r) return r;
+                continue;
+            }
+            const auto& mbr = spec.members[found];
+            if (!mbr.type_descriptor) {
+                if (auto r = jer_detail::skip_json_value(s); !r) return r;
+                continue;
+            }
+            if (mbr.optional)
+                mbr.optional_ops.set_present(dest, true);
+            Asn1Object* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
+            TypeDescriptor mdef = *mbr.type_descriptor;
+            mdef.name = mbr.name;
+            if (auto r = codec.decode(s, mdef, mptr); !r) return r;
+            seen[found] = true;
+        }
+        // Required members not seen → error
+        for (int i = 0; i < spec.count; ++i) {
+            if (!seen[i] && !spec.members[i].optional && spec.members[i].type_descriptor)
+                return decode_err(DecodeError(
+                    std::string("JER: missing required member: ") + spec.members[i].name));
+        }
+        return decode_ok();
     }
 };
 
-// CHOICE → json: {"alternative": value} (X.697 §11) — stub until #157
+// CHOICE → json: {"alternativeName": value} (X.697 §11)
 struct ChoiceJerHandler final : IJerTypeHandler {
-    void encode(const JerCodec&, JerEncodeStream& s,
-                const TypeDescriptor& def, const Asn1Object*) const override {
-        (void)def;
-        // TODO #157: implement CHOICE JER encode
-        s.os() << "{}";
+    void encode(const JerCodec& codec, JerEncodeStream& s,
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        auto& os = s.os();
+        const auto& spec = *def.choice_spec;
+        const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
+        int pr = ch->_present;
+        if (pr <= 0 || pr > spec.count) { os << "{}"; return; }
+        const auto& alt = spec.alternatives[pr - 1];
+        if (!alt.type_descriptor) { os << "{}"; return; }
+        TypeDescriptor adef = *alt.type_descriptor;
+        adef.name = alt.name;
+        const Asn1Object* mptr = alt.get_const_fn(ch);
+        os << "{\"" << alt.name << "\":";
+        JerEncodeStream as{os, s.depth() + 1};
+        codec.encode(as, adef, mptr);
+        os << '}';
     }
-    DecodeResult decode(const JerCodec&, JerDecodeStream& s,
-                        const TypeDescriptor& def, Asn1Object*) const override {
-        (void)def;
-        // TODO #157: implement CHOICE JER decode
-        return decode_err(DecodeError("JER: CHOICE not yet implemented (see #157)"));
+    DecodeResult decode(const JerCodec& codec, JerDecodeStream& s,
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
+        if (auto r = jer_detail::expect_char(s, '{'); !r) return r;
+        const auto& spec = *def.choice_spec;
+        ChoiceInterface* ch = static_cast<ChoiceInterface*>(dest);
+        // Read the single key
+        std::string key;
+        if (auto r = jer_detail::read_json_string(s, key); !r) return r;
+        if (auto r = jer_detail::expect_char(s, ':'); !r) return r;
+        // Find matching alternative
+        for (int i = 0; i < spec.count; ++i) {
+            const auto& alt = spec.alternatives[i];
+            if (key != alt.name) continue;
+            if (!alt.type_descriptor)
+                return decode_err(DecodeError(
+                    std::string("JER: CHOICE: no descriptor for ") + alt.name));
+            TypeDescriptor adef = *alt.type_descriptor;
+            adef.name = alt.name;
+            if (ch->_present != i + 1)
+                ch->emplace_alt(alt);
+            Asn1Object* mptr = alt.get_mut_fn(ch);
+            if (auto r = codec.decode(s, adef, mptr); !r) return r;
+            ch->_present = i + 1;
+            if (auto r = jer_detail::expect_char(s, '}'); !r) return r;
+            return decode_ok();
+        }
+        return decode_err(DecodeError("JER: CHOICE: unknown alternative: " + key));
     }
 };
 
