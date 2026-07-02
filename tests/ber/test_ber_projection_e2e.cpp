@@ -3,7 +3,7 @@
 // Usage: test_ber_projection_e2e <path-to-file.etsi>
 //
 // Reads the first PS_PDU BER TLV from the file, then:
-//  1. Full BerCodec::decode<PS_PDU>()  — establishes reference LIID and seqNum
+//  1. Full BerCodec::instance().decode(s, PS_PDU::asn_DEF, &full)  — establishes reference LIID and seqNum
 //  2. BerProjection apply()            — must produce identical values
 //  3. In-place LIID patch via commit() + re-decode  — verifies round-trip
 //
