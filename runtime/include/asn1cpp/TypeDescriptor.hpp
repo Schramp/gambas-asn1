@@ -331,6 +331,7 @@ struct TypeDescriptor {
 ///@{
 extern const TypeDescriptor asn_DEF_Any;
 extern const TypeDescriptor asn_DEF_Integer;
+extern const TypeDescriptor asn_DEF_UInteger;
 extern const TypeDescriptor asn_DEF_Boolean;
 extern const TypeDescriptor asn_DEF_Null;
 extern const TypeDescriptor asn_DEF_Real;
