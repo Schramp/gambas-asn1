@@ -207,8 +207,10 @@ public:
 
     /// @brief Link field handle \p h to target optional \p target.
     ///
-    /// Asserts that the TypeDescriptor of \p T matches the leaf descriptor
-    /// registered at \p h (type mismatch caught at bind time, not per-frame).
+    /// Asserts that \p T is type-compatible with the leaf registered at \p h:
+    /// either the same \c TypeDescriptor pointer, or the same non-null
+    /// \c ber_handler (catches pointer mismatch for generated per-member
+    /// descriptors that describe the same primitive type as the generic one).
     /// May be called multiple times; each call replaces any prior binding for \p h.
     ///
     /// @tparam T  Generated ASN.1 type inheriting \c Asn1Object and carrying \c asn_DEF.
