@@ -11,15 +11,25 @@ namespace {
 // ---------------------------------------------------------------------------
 // Static helpers (not needed in header)
 
-static constexpr char k_hex_upper[] = "0123456789ABCDEF";
+// 256-entry table: hex_pair[b] = { high-nibble-char, low-nibble-char }.
+// One table lookup gives both hex digits; avoids two shift+mask+index ops per byte.
+static constexpr auto make_hex_pair_table() {
+    constexpr char h[] = "0123456789ABCDEF";
+    std::array<uint16_t, 256> t{};
+    for (int i = 0; i < 256; ++i)
+        // LE layout: low byte → first output char (high nibble), high byte → second (low nibble)
+        t[i] = static_cast<uint16_t>(h[i >> 4] | (h[i & 0xF] << 8));
+    return t;
+}
+static constexpr auto k_hex_pairs = make_hex_pair_table();
 
-// Write raw bytes as uppercase hex directly into an ostream, 128-byte buffered.
+// Write raw bytes as uppercase hex into an ostream, 4 KB buffered.
 static void write_hex_bytes(std::ostream& os, std::span<const uint8_t> bytes) {
-    char buf[128];
+    char buf[4096];
     std::size_t pos = 0;
     for (uint8_t b : bytes) {
-        buf[pos++] = k_hex_upper[b >> 4];
-        buf[pos++] = k_hex_upper[b & 0xF];
+        std::memcpy(&buf[pos], &k_hex_pairs[b], 2);
+        pos += 2;
         if (pos == sizeof(buf)) { os.write(buf, pos); pos = 0; }
     }
     if (pos) os.write(buf, pos);
@@ -31,9 +41,9 @@ static std::string format_hex_bytes(std::string_view sv) {
     out.reserve(sv.size() * 3);
     for (std::size_t i = 0; i < sv.size(); ++i) {
         if (i) out += ' ';
-        uint8_t b = static_cast<uint8_t>(sv[i]);
-        out += k_hex_upper[b >> 4];
-        out += k_hex_upper[b & 0xF];
+        uint16_t p = k_hex_pairs[static_cast<uint8_t>(sv[i])];
+        out += static_cast<char>(p & 0xFF);
+        out += static_cast<char>(p >> 8);
     }
     return out;
 }
