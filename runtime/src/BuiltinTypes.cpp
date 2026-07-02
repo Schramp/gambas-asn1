@@ -139,6 +139,7 @@ const TypeLifecycleOps ChoiceInterface::k_noop_lifecycle{
 
 const TypeDescriptor asn_DEF_Any           = { "ANY",              Tag::universal( 4, false), nullptr, nullptr, nullptr, nullptr, {}, true,  TypeKind::Any,      &per_any_handler,         &ber_any_handler,         TypeLifecycleOps(TypeTag<OctetString>{}) };
 const TypeDescriptor asn_DEF_Integer       = { "INTEGER",          Tag::universal( 2, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_integer_handler,     &ber_integer_handler,     TypeLifecycleOps(TypeTag<Integer>{}) };
+const TypeDescriptor asn_DEF_UInteger      = { "INTEGER",          Tag::universal( 2, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_uinteger_handler,    &ber_uinteger_handler,    TypeLifecycleOps(TypeTag<UInteger>{}) };
 const TypeDescriptor asn_DEF_Boolean       = { "BOOLEAN",          Tag::universal( 1, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_boolean_handler,     &ber_boolean_handler,     TypeLifecycleOps(TypeTag<Boolean>{}) };
 const TypeDescriptor asn_DEF_Null          = { "NULL",             Tag::universal( 5, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_null_handler,        &ber_null_handler,        TypeLifecycleOps(TypeTag<Null>{}) };
 const TypeDescriptor asn_DEF_Real          = { "REAL",             Tag::universal( 9, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_real_handler,        &ber_real_handler,        TypeLifecycleOps(TypeTag<Real>{}) };
@@ -167,7 +168,7 @@ const TypeDescriptor asn_DEF_ObjectDescriptor={ "ObjectDescriptor",Tag::universa
 // ── static asn_DEF members on primitive types — aliases to the globals above ──
 
 const TypeDescriptor& Integer::asn_DEF       = asn_DEF_Integer;
-const TypeDescriptor& UInteger::asn_DEF      = asn_DEF_Integer;
+const TypeDescriptor& UInteger::asn_DEF      = asn_DEF_UInteger;
 const TypeDescriptor& Boolean::asn_DEF       = asn_DEF_Boolean;
 const TypeDescriptor& Null::asn_DEF          = asn_DEF_Null;
 const TypeDescriptor& Real::asn_DEF          = asn_DEF_Real;
