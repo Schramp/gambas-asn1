@@ -10,6 +10,7 @@ namespace asn1 {
 /// @see X.680 §23 — NULL type; X.690 §8.8 — BER encoding (empty value field).
 struct Null : public Asn1Object {
     bool operator==(const Null&) const = default;
+    static const TypeDescriptor& asn_DEF;
 };
 
 template<>

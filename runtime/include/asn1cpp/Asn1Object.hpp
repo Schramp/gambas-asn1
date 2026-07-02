@@ -2,6 +2,8 @@
 
 namespace asn1 {
 
+struct TypeDescriptor;  // forward declaration — full definition in TypeDescriptor.hpp
+
 /// @brief Non-virtual marker base for every runtime ASN.1 type and every generated struct.
 ///
 /// Allows codec handlers to hold \c Asn1Object* instead of \c void*, making all

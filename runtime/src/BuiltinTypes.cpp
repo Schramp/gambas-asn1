@@ -139,6 +139,7 @@ const TypeLifecycleOps ChoiceInterface::k_noop_lifecycle{
 
 const TypeDescriptor asn_DEF_Any           = { "ANY",              Tag::universal( 4, false), nullptr, nullptr, nullptr, nullptr, {}, true,  TypeKind::Any,      &per_any_handler,         &ber_any_handler,         TypeLifecycleOps(TypeTag<OctetString>{}) };
 const TypeDescriptor asn_DEF_Integer       = { "INTEGER",          Tag::universal( 2, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_integer_handler,     &ber_integer_handler,     TypeLifecycleOps(TypeTag<Integer>{}) };
+const TypeDescriptor asn_DEF_UInteger      = { "INTEGER",          Tag::universal( 2, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_uinteger_handler,    &ber_uinteger_handler,    TypeLifecycleOps(TypeTag<UInteger>{}) };
 const TypeDescriptor asn_DEF_Boolean       = { "BOOLEAN",          Tag::universal( 1, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_boolean_handler,     &ber_boolean_handler,     TypeLifecycleOps(TypeTag<Boolean>{}) };
 const TypeDescriptor asn_DEF_Null          = { "NULL",             Tag::universal( 5, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_null_handler,        &ber_null_handler,        TypeLifecycleOps(TypeTag<Null>{}) };
 const TypeDescriptor asn_DEF_Real          = { "REAL",             Tag::universal( 9, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_real_handler,        &ber_real_handler,        TypeLifecycleOps(TypeTag<Real>{}) };
@@ -163,5 +164,32 @@ const TypeDescriptor asn_DEF_UniversalString={ "UniversalString",  Tag::universa
 const TypeDescriptor asn_DEF_BmpString     = { "BMPString",        Tag::universal(30, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_string_handler,      &ber_string_handler,      TypeLifecycleOps(TypeTag<BmpString>{}) };
 const TypeDescriptor asn_DEF_VideotexString= { "VideotexString",   Tag::universal(21, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_string_handler,      &ber_string_handler,      TypeLifecycleOps(TypeTag<VideotexString>{}) };
 const TypeDescriptor asn_DEF_ObjectDescriptor={ "ObjectDescriptor",Tag::universal( 7, false), nullptr, nullptr, nullptr, nullptr, {}, false, TypeKind::Primitive, &per_string_handler,      &ber_string_handler,      TypeLifecycleOps(TypeTag<ObjectDescriptor>{}) };
+
+// ── static asn_DEF members on primitive types — aliases to the globals above ──
+
+const TypeDescriptor& Integer::asn_DEF       = asn_DEF_Integer;
+const TypeDescriptor& UInteger::asn_DEF      = asn_DEF_UInteger;
+const TypeDescriptor& Boolean::asn_DEF       = asn_DEF_Boolean;
+const TypeDescriptor& Null::asn_DEF          = asn_DEF_Null;
+const TypeDescriptor& Real::asn_DEF          = asn_DEF_Real;
+const TypeDescriptor& BitString::asn_DEF     = asn_DEF_BitString;
+const TypeDescriptor& OctetString::asn_DEF   = asn_DEF_OctetString;
+const TypeDescriptor& Oid::asn_DEF           = asn_DEF_Oid;
+const TypeDescriptor& RelativeOid::asn_DEF   = asn_DEF_RelativeOid;
+const TypeDescriptor& UtcTime::asn_DEF       = asn_DEF_UtcTime;
+const TypeDescriptor& GeneralizedTime::asn_DEF = asn_DEF_GeneralizedTime;
+
+template<> const TypeDescriptor& AsnString<UniversalTag::Utf8String>::asn_DEF       = asn_DEF_Utf8String;
+template<> const TypeDescriptor& AsnString<UniversalTag::NumericString>::asn_DEF    = asn_DEF_NumericString;
+template<> const TypeDescriptor& AsnString<UniversalTag::PrintableString>::asn_DEF  = asn_DEF_PrintableString;
+template<> const TypeDescriptor& AsnString<UniversalTag::T61String>::asn_DEF        = asn_DEF_T61String;
+template<> const TypeDescriptor& AsnString<UniversalTag::VideotexString>::asn_DEF   = asn_DEF_VideotexString;
+template<> const TypeDescriptor& AsnString<UniversalTag::Ia5String>::asn_DEF        = asn_DEF_Ia5String;
+template<> const TypeDescriptor& AsnString<UniversalTag::GraphicString>::asn_DEF    = asn_DEF_GraphicString;
+template<> const TypeDescriptor& AsnString<UniversalTag::VisibleString>::asn_DEF    = asn_DEF_VisibleString;
+template<> const TypeDescriptor& AsnString<UniversalTag::GeneralString>::asn_DEF    = asn_DEF_GeneralString;
+template<> const TypeDescriptor& AsnString<UniversalTag::UniversalString>::asn_DEF  = asn_DEF_UniversalString;
+template<> const TypeDescriptor& AsnString<UniversalTag::BmpString>::asn_DEF        = asn_DEF_BmpString;
+template<> const TypeDescriptor& AsnString<UniversalTag::ObjectDescriptor>::asn_DEF = asn_DEF_ObjectDescriptor;
 
 } // namespace asn1

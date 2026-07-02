@@ -11,13 +11,39 @@ namespace {
 // ---------------------------------------------------------------------------
 // Static helpers (not needed in header)
 
+// 256-entry table: hex_pair[b] = { high-nibble-char, low-nibble-char }.
+// One table lookup gives both hex digits; avoids two shift+mask+index ops per byte.
+static constexpr auto make_hex_pair_table() {
+    constexpr char h[] = "0123456789ABCDEF";
+    std::array<uint16_t, 256> t{};
+    for (int i = 0; i < 256; ++i)
+        // LE layout: low byte → first output char (high nibble), high byte → second (low nibble)
+        t[i] = static_cast<uint16_t>(h[i >> 4] | (h[i & 0xF] << 8));
+    return t;
+}
+static constexpr auto k_hex_pairs = make_hex_pair_table();
+
+// Write raw bytes as uppercase hex into an ostream, 4 KB buffered.
+static void write_hex_bytes(std::ostream& os, std::span<const uint8_t> bytes) {
+    char buf[4096];
+    std::size_t pos = 0;
+    for (uint8_t b : bytes) {
+        std::memcpy(&buf[pos], &k_hex_pairs[b], 2);
+        pos += 2;
+        if (pos == sizeof(buf)) { os.write(buf, pos); pos = 0; }
+    }
+    if (pos) os.write(buf, pos);
+}
+
+// Build a spaced uppercase hex string (used for BIT STRING / [BASE64] text).
 static std::string format_hex_bytes(std::string_view sv) {
     std::string out;
-    char hex[3];
+    out.reserve(sv.size() * 3);
     for (std::size_t i = 0; i < sv.size(); ++i) {
         if (i) out += ' ';
-        std::snprintf(hex, sizeof(hex), "%02X", (uint8_t)sv[i]);
-        out += hex;
+        uint16_t p = k_hex_pairs[static_cast<uint8_t>(sv[i])];
+        out += static_cast<char>(p & 0xFF);
+        out += static_cast<char>(p >> 8);
     }
     return out;
 }
@@ -326,11 +352,7 @@ struct OctetStringXerHandler final : IXerTypeHandler {
                 reinterpret_cast<const uint8_t*>(v.bytes().data()), v.bytes().size());
             os << base64_encode(sp);
         } else {
-            char hex[3];
-            for (uint8_t b : v.bytes()) {
-                std::snprintf(hex, sizeof(hex), "%02X", b);
-                os << hex;
-            }
+            write_hex_bytes(os, v.bytes());
         }
         os << "</" << def.name << ">\n";
     }
