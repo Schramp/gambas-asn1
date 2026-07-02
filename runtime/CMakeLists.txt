@@ -29,6 +29,9 @@ endif()
 # ---- Object library (compiled once, used by both paths below) --------------
 
 add_library(asn1cpp_runtime_objs OBJECT
+    src/BerCursor.cpp
+    src/BerProjection.cpp
+    src/BerInspect.cpp
     src/BerCodec.cpp
     src/XerCodec.cpp
     src/JerCodec.cpp

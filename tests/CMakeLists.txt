@@ -1,5 +1,49 @@
 enable_testing()
 
+# ---- BerProjection trie tests -----------------------------------------------
+add_executable(test_ber_projection_trie ber/test_ber_projection_trie.cpp)
+target_link_libraries(test_ber_projection_trie PRIVATE asn1cpp_runtime)
+add_test(NAME ber_projection_trie COMMAND test_ber_projection_trie)
+
+# ---- BerProjectionResult tests (#173) ----------------------------------------
+add_executable(test_ber_projection_result ber/test_ber_projection_result.cpp)
+target_link_libraries(test_ber_projection_result PRIVATE asn1cpp_runtime)
+add_test(NAME ber_projection_result COMMAND test_ber_projection_result)
+
+# ---- BerInspect tests (#174) ------------------------------------------------
+add_executable(test_ber_inspect ber/test_ber_inspect.cpp)
+target_link_libraries(test_ber_inspect PRIVATE asn1cpp_runtime)
+add_test(NAME ber_inspect COMMAND test_ber_inspect)
+
+# ---- BerProjectionResult stress test (#175) ---------------------------------
+add_executable(test_ber_projection_stress ber/test_ber_projection_stress.cpp)
+target_link_libraries(test_ber_projection_stress PRIVATE asn1cpp_runtime)
+add_test(NAME ber_projection_stress COMMAND test_ber_projection_stress)
+
+# ---- BerProjection end-to-end test with real PS_PDU (#175) -----------------
+set(ETSI_E2E_FRAME "${CMAKE_SOURCE_DIR}/../pdu-00000001.etsi")
+if(EXISTS "${ETSI_E2E_FRAME}")
+    set(ETSI_GEN_DIR "${CMAKE_SOURCE_DIR}/examples/sample.source.ETSI-LI-PS-PDU/gen")
+    set(ETSI_LIB     "${CMAKE_SOURCE_DIR}/examples/sample.source.ETSI-LI-PS-PDU/lib/libasn1cpp_etsi.a")
+    if(EXISTS "${ETSI_LIB}")
+        add_executable(test_ber_projection_e2e ber/test_ber_projection_e2e.cpp)
+        target_include_directories(test_ber_projection_e2e PRIVATE ${ETSI_GEN_DIR})
+        target_link_libraries(test_ber_projection_e2e PRIVATE asn1cpp_runtime ${ETSI_LIB})
+        add_test(NAME ber_projection_e2e
+            COMMAND test_ber_projection_e2e "${ETSI_E2E_FRAME}")
+    endif()
+endif()
+
+# ---- BerCursor / BerLayer / BerMutableCursor tests -------------------------
+add_executable(test_ber_cursor ber/test_ber_cursor.cpp)
+target_link_libraries(test_ber_cursor PRIVATE asn1cpp_runtime)
+add_test(NAME ber_cursor COMMAND test_ber_cursor)
+
+# ---- Asn1Optional<T> layout tests ------------------------------------------
+add_executable(test_asn1_optional ber/test_asn1_optional.cpp)
+target_link_libraries(test_asn1_optional PRIVATE asn1cpp_runtime)
+add_test(NAME asn1_optional COMMAND test_asn1_optional)
+
 # ---- BER primitive unit tests ----------------------------------------------
 add_executable(test_ber_primitives ber/test_primitives.cpp)
 target_link_libraries(test_ber_primitives PRIVATE asn1cpp_runtime)

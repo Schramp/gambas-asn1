@@ -45,6 +45,8 @@ public:
     }
 
     bool operator==(const Oid&) const = default;
+
+    static const TypeDescriptor& asn_DEF;
 };
 
 /// @brief ASN.1 RELATIVE-OID — like \c Oid but without the first-two-arc encoding trick.
@@ -59,6 +61,8 @@ public:
     /// @brief Access the arc list.
     const std::vector<uint32_t>& arcs() const { return arcs_; }
     bool operator==(const RelativeOid&) const = default;
+
+    static const TypeDescriptor& asn_DEF;
 };
 
 namespace detail {
