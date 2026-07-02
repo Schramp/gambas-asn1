@@ -11,13 +11,29 @@ namespace {
 // ---------------------------------------------------------------------------
 // Static helpers (not needed in header)
 
+static constexpr char k_hex_upper[] = "0123456789ABCDEF";
+
+// Write raw bytes as uppercase hex directly into an ostream, 128-byte buffered.
+static void write_hex_bytes(std::ostream& os, std::span<const uint8_t> bytes) {
+    char buf[128];
+    std::size_t pos = 0;
+    for (uint8_t b : bytes) {
+        buf[pos++] = k_hex_upper[b >> 4];
+        buf[pos++] = k_hex_upper[b & 0xF];
+        if (pos == sizeof(buf)) { os.write(buf, pos); pos = 0; }
+    }
+    if (pos) os.write(buf, pos);
+}
+
+// Build a spaced uppercase hex string (used for BIT STRING / [BASE64] text).
 static std::string format_hex_bytes(std::string_view sv) {
     std::string out;
-    char hex[3];
+    out.reserve(sv.size() * 3);
     for (std::size_t i = 0; i < sv.size(); ++i) {
         if (i) out += ' ';
-        std::snprintf(hex, sizeof(hex), "%02X", (uint8_t)sv[i]);
-        out += hex;
+        uint8_t b = static_cast<uint8_t>(sv[i]);
+        out += k_hex_upper[b >> 4];
+        out += k_hex_upper[b & 0xF];
     }
     return out;
 }
@@ -326,11 +342,7 @@ struct OctetStringXerHandler final : IXerTypeHandler {
                 reinterpret_cast<const uint8_t*>(v.bytes().data()), v.bytes().size());
             os << base64_encode(sp);
         } else {
-            char hex[3];
-            for (uint8_t b : v.bytes()) {
-                std::snprintf(hex, sizeof(hex), "%02X", b);
-                os << hex;
-            }
+            write_hex_bytes(os, v.bytes());
         }
         os << "</" << def.name << ">\n";
     }
