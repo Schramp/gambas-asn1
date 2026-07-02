@@ -182,7 +182,12 @@ void BerProjectionResult::bind_impl(FieldHandle          h,
                                      const TypeDescriptor* desc)
 {
     assert(h.index < slots_.size() && "BerProjectionResult::bind: handle out of range");
-    assert(h.leaf_descriptor == desc &&
+    // Accept exact-same descriptor OR same non-null ber_handler (same wire type,
+    // different descriptor instance — common with generated per-member descriptors).
+    assert((h.leaf_descriptor == desc
+            || (h.leaf_descriptor && desc
+                && h.leaf_descriptor->ber_handler != nullptr
+                && h.leaf_descriptor->ber_handler == desc->ber_handler)) &&
            "BerProjectionResult::bind: T does not match the registered path type");
 
     Slot& s = slots_[h.index];
@@ -271,7 +276,10 @@ void BerProjectionResult::load_impl(FieldHandle          h,
                                      const TypeDescriptor* desc)
 {
     assert(h.index < slots_.size() && "BerProjectionResult::load: handle out of range");
-    assert(h.leaf_descriptor == desc &&
+    assert((h.leaf_descriptor == desc
+            || (h.leaf_descriptor && desc
+                && h.leaf_descriptor->ber_handler != nullptr
+                && h.leaf_descriptor->ber_handler == desc->ber_handler)) &&
            "BerProjectionResult::load: T does not match the registered path type");
     assert(frame_base_ != nullptr && "BerProjectionResult::load: called before apply()");
 
