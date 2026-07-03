@@ -9,14 +9,14 @@
 // 256-entry table: hex_pairs[b] encodes byte b as two uppercase hex chars
 // packed little-endian in a uint16_t (low byte = high nibble, high byte = low nibble).
 // One table lookup gives both output chars; avoids two shift+mask+index ops per byte.
-static constexpr auto make_hex_pair_table() {
+inline constexpr std::array<uint16_t, 256> make_hex_pair_table() {
     constexpr char h[] = "0123456789ABCDEF";
     std::array<uint16_t, 256> t{};
     for (int i = 0; i < 256; ++i)
         t[i] = static_cast<uint16_t>(h[i >> 4] | (h[i & 0xF] << 8));
     return t;
 }
-static constexpr auto k_hex_pairs = make_hex_pair_table();
+inline constexpr auto k_hex_pairs = make_hex_pair_table();
 
 // Write raw bytes as uppercase hex into an ostream, 4 KB buffered.
 inline void write_hex_bytes(std::ostream& os, std::span<const uint8_t> bytes) {
