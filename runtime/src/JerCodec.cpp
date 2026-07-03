@@ -14,6 +14,7 @@
 #include <limits>
 #include <span>
 #include <asn1cpp/codec/JerCodec.hpp>
+#include "HexEncoder.hpp"
 #include <asn1cpp/codec/XerCodec.hpp>    // for xer_detail::format_arcs / parse_arcs
 #include <asn1cpp/codec/Debug.hpp>
 #include <asn1cpp/codec/Validation.hpp>
@@ -267,14 +268,8 @@ static std::string json_escape(std::string_view sv) {
 
 // Hex helpers (uppercase, no spaces — X.697 §8.9 / §8.8)
 static std::string to_hex_upper(std::string_view sv) {
-    std::string out;
-    out.reserve(sv.size() * 2);
-    char buf[3];
-    for (unsigned char b : sv) {
-        std::snprintf(buf, sizeof(buf), "%02X", b);
-        out += buf;
-    }
-    return out;
+    return hex_encode_upper(
+        std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(sv.data()), sv.size()));
 }
 
 static std::string from_hex(std::string_view sv) {
@@ -547,10 +542,10 @@ struct OctetStringJerHandler final : IJerTypeHandler {
     void encode(const JerCodec&, JerEncodeStream& s,
                 const TypeDescriptor&, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
-        auto bytes = v.bytes();
-        std::string hex = jer_detail::to_hex_upper(
-            std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
-        s.os() << '"' << hex << '"';
+        auto& os = s.os();
+        os << '"';
+        write_hex_bytes(os, v.bytes());
+        os << '"';
     }
     DecodeResult decode(const JerCodec&, JerDecodeStream& s,
                         const TypeDescriptor&, Asn1Object* dest) const override {
