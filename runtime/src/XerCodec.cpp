@@ -1,5 +1,4 @@
 #include <cassert>
-#include <array>
 #include <asn1cpp/codec/XerCodec.hpp>
 #include <asn1cpp/types/Integer.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
