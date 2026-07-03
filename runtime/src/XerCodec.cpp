@@ -1,8 +1,10 @@
 #include <cassert>
+#include <array>
 #include <asn1cpp/codec/XerCodec.hpp>
 #include <asn1cpp/types/Integer.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
 #include <asn1cpp/EnumValue.hpp>
+#include "HexEncoder.hpp"
 
 namespace asn1 {
 
@@ -10,30 +12,6 @@ namespace {
 
 // ---------------------------------------------------------------------------
 // Static helpers (not needed in header)
-
-// 256-entry table: hex_pair[b] = { high-nibble-char, low-nibble-char }.
-// One table lookup gives both hex digits; avoids two shift+mask+index ops per byte.
-static constexpr auto make_hex_pair_table() {
-    constexpr char h[] = "0123456789ABCDEF";
-    std::array<uint16_t, 256> t{};
-    for (int i = 0; i < 256; ++i)
-        // LE layout: low byte → first output char (high nibble), high byte → second (low nibble)
-        t[i] = static_cast<uint16_t>(h[i >> 4] | (h[i & 0xF] << 8));
-    return t;
-}
-static constexpr auto k_hex_pairs = make_hex_pair_table();
-
-// Write raw bytes as uppercase hex into an ostream, 4 KB buffered.
-static void write_hex_bytes(std::ostream& os, std::span<const uint8_t> bytes) {
-    char buf[4096];
-    std::size_t pos = 0;
-    for (uint8_t b : bytes) {
-        std::memcpy(&buf[pos], &k_hex_pairs[b], 2);
-        pos += 2;
-        if (pos == sizeof(buf)) { os.write(buf, pos); pos = 0; }
-    }
-    if (pos) os.write(buf, pos);
-}
 
 // Build a spaced uppercase hex string (used for BIT STRING / [BASE64] text).
 static std::string format_hex_bytes(std::string_view sv) {
