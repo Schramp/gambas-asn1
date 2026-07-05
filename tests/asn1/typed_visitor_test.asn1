@@ -1,0 +1,31 @@
+-- TypedVisitor traversal test schema.
+-- Exercises: a target type (Coord) appearing at multiple tree depths —
+-- as a plain member, as a CHOICE alternative, and inside a SEQUENCE OF —
+-- plus a second registered type (Item) for multi-type single-pass walks.
+
+TypedVisitorTest DEFINITIONS ::= BEGIN
+
+    Coord ::= SEQUENCE {
+        lat   INTEGER,
+        lon   INTEGER
+    }
+
+    Payload ::= CHOICE {
+        raw   OCTET STRING,
+        loc   Coord
+    }
+
+    Item ::= SEQUENCE {
+        id        INTEGER,
+        where     Coord,
+        payload   Payload
+    }
+
+    ItemList ::= SEQUENCE OF Item
+
+    Container ::= SEQUENCE {
+        home    Coord,
+        items   ItemList
+    }
+
+END
