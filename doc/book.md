@@ -880,6 +880,54 @@ The benefit is proportional to schema size. A schema with 300 types generates 30
 say, strict DER ordering — means changing one file in the runtime, not touching 300
 generated files.
 
+### Limitations
+
+#### Owning value types — decode copies, objects are self-contained
+
+Every leaf type owns its data: `OctetString` and the restricted string types hold a
+`std::string`, `Integer` holds an `int64_t`, and generated SEQUENCE/CHOICE structs embed
+these by value. Decoding a primitive therefore **copies** its value bytes out of the input
+buffer into the object's own storage (e.g. `OctetString::set()` does `bytes_.assign(...)`).
+
+This is a deliberate choice, not an oversight. The payoff is a simple, safe lifetime
+contract: **a decoded object is fully self-contained and outlives the buffer it was decoded
+from.** You can free or reuse the input immediately after `decode()` returns; the object
+keeps working. That is what makes streaming loops trivial — e.g. `PspduStream` decodes each
+PDU into a reused byte buffer, and the decoded object remains valid because it copied
+everything it needs. Accessors like `OctetString::bytes()` then return a zero-copy
+`std::span` **view into the owned storage**, so reading is free; the copy happened once, at
+decode time.
+
+The cost is that decode is copy- and allocation-heavy: one `std::string` per string/octet
+field per object. For a value nested inside an encryption container this happens twice — the
+container's `encryptedPayload` is copied on the outer decode, and the inner value again on the
+inner decode. At current throughput (hundreds of MB/s) this is not the bottleneck, but it is
+the reason decode dominates the profile.
+
+#### Not implemented: borrowing decode (view-backed leaves)
+
+When the caller can guarantee the input buffer outlives the decoded object — as
+`etsi-pcap` can — those copies are avoidable. That path is **not implemented**. Three shapes
+were considered:
+
+- **Full shadow / ownership-templated types** — a parallel `…View` family (or every generated
+  type templated on an ownership policy). Rejected: it forks both the codec and the generated
+  code into two families for a niche gain.
+- **Projection / cursor (available today)** — `BerProjection` and `BerCursor` sidestep the
+  issue by never building owning objects: they hand back `std::span`s into the frame on demand,
+  zero-copy and zero-allocation. The trade-off is navigation by path/tag instead of typed field
+  access. This is the supported zero-copy route for hot scan/extract paths.
+- **Hybrid owning-or-view leaves (the plausible future option)** — give only the relevant leaf
+  types (OCTET STRING, the large string types, `ANY`) an internal "owned `std::string` *or*
+  borrowed `span`" mode, selected by a decode flag; scalars and generated code stay unchanged,
+  and `bytes()` returns a span either way. This would delete the decode copies (and, more
+  significantly, the per-field allocations). It is non-trivial because: the lifetime contract
+  inverts (the whole object then borrows from the frame, needing enforcement or a debug guard);
+  constructed/segmented BER strings are not contiguous and must fall back to owning; and a
+  borrowed value is read-only until a `set()` transitions it to owned. Whether it is worth the
+  complexity is gated on measuring how much of decode time is allocation versus traversal — if
+  allocation dominates, this becomes attractive; if not, the owning default stands.
+
 ---
 
 ## 11. How asn1cpp Was Built
