@@ -651,27 +651,41 @@ each node of a registered type — no matter where in the tree it sits, and
 without a second decode or a manual cast. Register one or more types; each match
 delivers a typed `const T&`.
 
+Each callback is a lambda that **captures the surrounding (outer) scope**, so it
+collects results straight into your own container — no global state, no return
+plumbing through the walk. Capture by reference (`[&]`) to accumulate:
+
 ```cpp
 #include <asn1cpp/codec/TypedVisitor.hpp>
 
 PS_PDU pdu = /* ...decoded... */;
 
+std::vector<const CCPayload*> cc_units;   // collector in the outer scope
+int location_count = 0;
+
 asn1::TypedVisitor v;
-v.on<CCPayload>([&](const CCPayload& cc) {
-    // cc.payloadDirection, cc.timeStamp, cc.cCContents are directly usable
-    return asn1::VisitControl::Continue;
-});
-v.on<Location>([&](const Location& loc) {
-    dump(loc);
-    return asn1::VisitControl::Continue;   // or SkipChildren / Stop
+v.on<CCPayload>([&](const CCPayload& cc) {         // [&] captures cc_units
+    cc_units.push_back(&cc);                       // cc.payloadDirection,
+    return asn1::VisitControl::Continue;           // cc.timeStamp, cc.cCContents
+});                                                //   are directly usable
+v.on<Location>([&](const Location& loc) {          // [&] captures location_count
+    ++location_count;
+    return asn1::VisitControl::Continue;           // or SkipChildren / Stop
 });
 v.visit(pdu);   // single pass, both callbacks fire in document order
+// cc_units and location_count are now populated.
 ```
 
-Matching is by descriptor identity (`&T::asn_DEF`). The walk descends SEQUENCE,
-SET, CHOICE (active alternative only), and SEQUENCE OF / SET OF elements —
-including through recursively-typed schemas. A matched node is still descended
-into unless the callback returns `SkipChildren`; `Stop` aborts the whole walk.
+The collected pointers stay valid as long as `pdu` lives (the walk hands out
+references into the object, it never copies). Matching is by descriptor identity
+(`&T::asn_DEF`). The walk descends SEQUENCE, SET, CHOICE (active alternative
+only), and SEQUENCE OF / SET OF elements — including through recursively-typed
+schemas. A matched node is still descended into unless the callback returns
+`SkipChildren`; `Stop` aborts the whole walk.
+
+A `TypedVisitor` holds no per-walk state, so once all callbacks are registered
+it may be reused across many objects — and shared read-only across threads to
+walk different objects concurrently.
 
 `TypedMutator` is the mutable sibling: callbacks receive `T&` and may modify
 fields in place, so you can find-and-edit (e.g. redact every matching field)
