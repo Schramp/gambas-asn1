@@ -280,7 +280,8 @@ struct OctetStringBerHandler final : IBerTypeHandler {
                         const TypeDescriptor&, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
-        static_cast<OctetString*>(dest)->set(tlv->value);
+        if (r.borrow()) static_cast<OctetString*>(dest)->borrow(tlv->value);
+        else            static_cast<OctetString*>(dest)->set(tlv->value);
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
