@@ -644,6 +644,48 @@ for (auto& fail : report.failures())
     std::cerr << fail.path << ": " << fail.type_name << "\n";
 ```
 
+### Traversing a Decoded Object by Type
+
+`TypedVisitor` walks a fully-decoded object tree once and fires a callback for
+each node of a registered type — no matter where in the tree it sits, and
+without a second decode or a manual cast. Register one or more types; each match
+delivers a typed `const T&`.
+
+```cpp
+#include <asn1cpp/codec/TypedVisitor.hpp>
+
+PS_PDU pdu = /* ...decoded... */;
+
+asn1::TypedVisitor v;
+v.on<CCPayload>([&](const CCPayload& cc) {
+    // cc.payloadDirection, cc.timeStamp, cc.cCContents are directly usable
+    return asn1::VisitControl::Continue;
+});
+v.on<Location>([&](const Location& loc) {
+    dump(loc);
+    return asn1::VisitControl::Continue;   // or SkipChildren / Stop
+});
+v.visit(pdu);   // single pass, both callbacks fire in document order
+```
+
+Matching is by descriptor identity (`&T::asn_DEF`). The walk descends SEQUENCE,
+SET, CHOICE (active alternative only), and SEQUENCE OF / SET OF elements —
+including through recursively-typed schemas. A matched node is still descended
+into unless the callback returns `SkipChildren`; `Stop` aborts the whole walk.
+
+`TypedMutator` is the mutable sibling: callbacks receive `T&` and may modify
+fields in place, so you can find-and-edit (e.g. redact every matching field)
+then re-encode the object.
+
+```cpp
+asn1::TypedMutator m;
+m.on<Location>([](Location& loc) {
+    loc = Location{};                // redact in place
+    return asn1::VisitControl::Continue;
+});
+m.visit(pdu);
+```
+
 ---
 
 ## 9. gambas-asn1 CLI Reference
