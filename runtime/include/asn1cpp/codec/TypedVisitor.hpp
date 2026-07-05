@@ -39,10 +39,30 @@ enum class VisitControl {
 namespace detail {
 
 /// @brief Shared traversal core for \c TypedVisitor / \c TypedMutator.
-/// @tparam Ptr  Either \c const Asn1Object* (visitor) or \c Asn1Object* (mutator).
+///
+/// @tparam Ptr  Either \c const Asn1Object* (visitor) or \c Asn1Object* (mutator);
+///              constrained to a (possibly const) pointer-to-\c Asn1Object.
+///
+/// @par Thread safety
+/// Registration (\c on<T>) mutates \c handlers_ and is not thread-safe: register
+/// all callbacks first. Once registration is done the object is effectively
+/// immutable — \c walk / \c visit only read \c handlers_ — so a single visitor
+/// may be shared read-only across threads to walk different objects
+/// concurrently. \c TypedMutator additionally mutates the walked object, so two
+/// threads must not mutate the same object. All traversal state is on the stack
+/// (the \c walk recursion), never in the object.
+///
+/// @par Handler storage
+/// \c handlers_ is keyed by \c TypeDescriptor pointer identity. The registered
+/// set is tiny (one entry per registered type — typically a handful), so an
+/// ordered \c std::map lookup per node is already negligible; a specialised
+/// index (trie/hash over the pointer) would add complexity without a measurable
+/// win at this cardinality.
 template<typename Ptr>
 class TypedWalkerBase {
-    static_assert(std::is_pointer_v<Ptr>, "Ptr must be a pointer type");
+    static_assert(
+        std::is_same_v<std::remove_const_t<std::remove_pointer_t<Ptr>>, Asn1Object>,
+        "Ptr must be Asn1Object* or const Asn1Object*");
     static constexpr bool kMutable = !std::is_const_v<std::remove_pointer_t<Ptr>>;
 
 protected:
