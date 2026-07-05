@@ -147,6 +147,48 @@ int main() {
               "roots=" + std::to_string(roots));
     }
 
+    // 7. Pruning (default on) yields identical results to a full traversal.
+    {
+        Container c = make_container();
+        auto count_coords = [&](bool prune) {
+            int n = 0;
+            TypedVisitor v;
+            v.set_pruning(prune);
+            v.on<Coord>([&](const Coord&) { ++n; return VisitControl::Continue; });
+            v.visit(c);
+            return n;
+        };
+        int pruned = count_coords(true);
+        int full   = count_coords(false);
+        check("pruning matches full traversal (Coord)", pruned == 4 && full == 4,
+              "pruned=" + std::to_string(pruned) + " full=" + std::to_string(full));
+    }
+
+    // 8. prepare() warms the cache; visit still correct afterwards.
+    {
+        Container c = make_container();
+        int items = 0;
+        TypedVisitor v;
+        v.on<Item>([&](const Item&) { ++items; return VisitControl::Continue; });
+        v.prepare<Container>();   // build reachability up front
+        v.visit(c);
+        check("prepare() then visit fires correctly", items == 2,
+              "items=" + std::to_string(items));
+    }
+
+    // 9. Registering an unreachable type never fires and prunes everything.
+    {
+        Container c = make_container();
+        int payloads = 0;
+        TypedVisitor v;
+        // Payload IS reachable (Item.payload), so it should still fire; use it to
+        // confirm a CHOICE-nested target survives pruning.
+        v.on<Payload>([&](const Payload&) { ++payloads; return VisitControl::Continue; });
+        v.visit(c);
+        check("CHOICE-nested target reached under pruning (Payload x2)", payloads == 2,
+              "payloads=" + std::to_string(payloads));
+    }
+
     printf(failures ? "\n%d failure(s)\n" : "\nAll tests passed\n", failures);
     return failures ? 1 : 0;
 }
