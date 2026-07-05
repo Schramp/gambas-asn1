@@ -75,6 +75,32 @@ target_include_directories(test_seq_simple PRIVATE ${SIMPLE_SEQ_GEN_DIR})
 target_link_libraries(test_seq_simple PRIVATE asn1cpp_runtime)
 add_test(NAME seq_simple COMMAND test_seq_simple)
 
+# ---- TypedVisitor / TypedMutator (object-tree callback walker) --------------
+set(TYPED_VISITOR_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_typed_visitor)
+add_custom_command(
+    OUTPUT  ${TYPED_VISITOR_GEN_DIR}/Coord.hpp     ${TYPED_VISITOR_GEN_DIR}/Coord.cpp
+            ${TYPED_VISITOR_GEN_DIR}/Payload.hpp   ${TYPED_VISITOR_GEN_DIR}/Payload.cpp
+            ${TYPED_VISITOR_GEN_DIR}/Item.hpp      ${TYPED_VISITOR_GEN_DIR}/Item.cpp
+            ${TYPED_VISITOR_GEN_DIR}/ItemList.hpp  ${TYPED_VISITOR_GEN_DIR}/ItemList.cpp
+            ${TYPED_VISITOR_GEN_DIR}/Container.hpp ${TYPED_VISITOR_GEN_DIR}/Container.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${TYPED_VISITOR_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/typed_visitor_test.asn1
+                                   -o ${TYPED_VISITOR_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/typed_visitor_test.asn1
+    COMMENT "Generating C++ from typed_visitor_test.asn1"
+)
+add_executable(test_typed_visitor
+    ber/test_typed_visitor.cpp
+    ${TYPED_VISITOR_GEN_DIR}/Coord.cpp
+    ${TYPED_VISITOR_GEN_DIR}/Payload.cpp
+    ${TYPED_VISITOR_GEN_DIR}/Item.cpp
+    ${TYPED_VISITOR_GEN_DIR}/ItemList.cpp
+    ${TYPED_VISITOR_GEN_DIR}/Container.cpp
+)
+target_include_directories(test_typed_visitor PRIVATE ${TYPED_VISITOR_GEN_DIR})
+target_link_libraries(test_typed_visitor PRIVATE asn1cpp_runtime)
+add_test(NAME typed_visitor COMMAND test_typed_visitor)
+
 # ---- EXPLICIT tagging on non-CHOICE ----------------------------------------
 set(EXPLICIT_TAG_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_explicit_tag_test)
 add_custom_command(
