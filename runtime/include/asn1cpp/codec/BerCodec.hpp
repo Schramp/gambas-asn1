@@ -130,4 +130,14 @@ private:
     static const IBerTypeHandler* const prim_dispatch_[32];  // indexed by tag.number
 };
 
+/// @brief EXPERIMENTAL zero-copy decode toggle (thread-local, default off).
+///
+/// When enabled, OCTET STRING decode installs a non-owning \c span view into the
+/// input buffer instead of copying. The decoded object then borrows from that
+/// buffer, which must outlive it — no use-after-free protection. Set around a
+/// decode call; the flag propagates through the whole decode tree (unlike a
+/// per-reader flag, it reaches the IMPLICIT-member \c decode_value path too).
+void set_ber_decode_borrow(bool on);
+bool ber_decode_borrow();
+
 } // namespace asn1

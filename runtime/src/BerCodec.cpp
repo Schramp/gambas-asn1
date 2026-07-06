@@ -280,13 +280,14 @@ struct OctetStringBerHandler final : IBerTypeHandler {
                         const TypeDescriptor&, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
-        if (r.borrow()) static_cast<OctetString*>(dest)->borrow(tlv->value);
-        else            static_cast<OctetString*>(dest)->set(tlv->value);
+        if (ber_decode_borrow()) static_cast<OctetString*>(dest)->borrow(tlv->value);
+        else                     static_cast<OctetString*>(dest)->set(tlv->value);
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, std::span<const uint8_t> value,
                               const TypeDescriptor&, Asn1Object* dest) const override {
-        static_cast<OctetString*>(dest)->set(value);
+        if (ber_decode_borrow()) static_cast<OctetString*>(dest)->borrow(value);
+        else                     static_cast<OctetString*>(dest)->set(value);
         return decode_ok();
     }
 };
@@ -1009,5 +1010,12 @@ DecodeResult BerCodec::decode_value(std::span<const uint8_t> value,
                                      Asn1Object* dest) const {
     return def.ber_handler->decode_value(*this, value, def, dest);
 }
+
+// EXPERIMENTAL zero-copy decode toggle (thread-local).
+// used/retain: only called from outside the runtime lib, so LTO partial-linking
+// would otherwise drop these symbols from the archive.
+static thread_local bool g_ber_decode_borrow = false;
+[[gnu::used, gnu::retain]] void set_ber_decode_borrow(bool on) { g_ber_decode_borrow = on; }
+[[gnu::used, gnu::retain]] bool ber_decode_borrow() { return g_ber_decode_borrow; }
 
 } // namespace asn1

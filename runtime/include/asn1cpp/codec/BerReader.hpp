@@ -28,19 +28,11 @@ namespace asn1 {
 class BerReader {
     std::span<const uint8_t> data_;
     std::size_t pos_{0};
-    bool borrow_{false};
 
 public:
     /// @brief Construct a reader over \p data.
     /// @param data  Byte span to read from; must outlive this object.
     explicit BerReader(std::span<const uint8_t> data) : data_(data) {}
-
-    /// @brief EXPERIMENTAL: zero-copy decode mode. When set, primitive byte
-    /// types (OCTET STRING) store a \c span view into \p data instead of copying.
-    /// The decoded object then borrows from this reader's buffer, which must
-    /// outlive it. No use-after-free protection — caller owns the contract.
-    void set_borrow(bool b) { borrow_ = b; }
-    bool borrow() const { return borrow_; }
 
     /// @brief Return true when all input has been consumed.
     bool at_end()  const { return pos_ >= data_.size(); }
