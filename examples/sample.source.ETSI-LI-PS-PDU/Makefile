@@ -49,7 +49,12 @@ PCH_WRAP    := $(PCH_DIR)/pch.hpp
 PCH_GCH     := $(PCH_WRAP).gch
 OPT        ?= -O3 -flto=auto
 BASE_FLAGS  := -std=c++20 $(OPT) -I$(GEN_DIR) -I$(RUNTIME_INC)
-CXXFLAGS    := $(BASE_FLAGS) -include $(PCH_WRAP)
+# -MMD -MP: emit a .d file per .o recording every header it #included (runtime
+# headers in particular). Without this, make has no way to know a .o is stale
+# after a runtime header changes — only its own .cpp's mtime is tracked, so a
+# stale .a can silently link against a newer runtime and produce an ODR
+# mismatch (see gambas-asn1 #207).
+CXXFLAGS    := $(BASE_FLAGS) -include $(PCH_WRAP) -MMD -MP
 
 .DEFAULT_GOAL := all
 
@@ -95,6 +100,11 @@ OBJ_FILES := $(patsubst $(GEN_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(GEN_SRCS))
 $(OBJ_DIR)/%.o: $(GEN_DIR)/%.cpp $(PCH_GCH) | $(GEN_DIR)/sources.mk
 	@echo "[CXX]  $(<F)"
 	@ulimit -s unlimited && $(CXX) $(CXXFLAGS) -c -o $@ $<
+
+# Pull in the per-.o header dependency files generated above (-MMD -MP), so a
+# runtime header change correctly marks the affected .o (and hence $(LIBRARY))
+# stale on the next plain `make` — no `regen`/`clean` needed for header-only edits.
+-include $(OBJ_FILES:.o=.d)
 
 # ---------------------------------------------------------------------------
 # Phase 3 — archive
