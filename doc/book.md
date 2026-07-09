@@ -1272,24 +1272,35 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 
 ## 16. Performance Figures
 
+Benchmarks run on an AMD system under WSL2, Release build (`-O3`), using
+randomly generated `EncryptedPayload` records (BER, seed=42, `etsitools/asn1cpp/perf/perf_ber`
+and `etsitools/asn1c/perf/perf_ber_c`).
 
-Benchmarks run on an AMD system under WSL2, Release build (`-O3 -flto`), using
-randomly generated ETSI LI PS-PDU records (BER, seed=1).
-
-### asn1cpp vs asn1c (1,000 records, ~1.55 MB)
+### asn1cpp vs asn1c (10,000 records, 15.57 MB)
 
 | Operation | asn1cpp | asn1c | Ratio |
 |-----------|---------|-------|-------|
-| BER decode | ~57 MB/s | ~48 MB/s | 1.2× faster |
-| BER decode (object reuse) | ~61 MB/s | — | — |
-| BER encode | ~53 MB/s | ~5 MB/s | 10× faster |
-| XER encode | ~175 MB/s | — | — |
-| XER decode | ~200 MB/s | — | — |
+| BER decode | 72.5 MB/s | 46.4 MB/s | 1.6× faster |
+| BER decode (object reuse) | 78.8 MB/s | — | — |
+| BER encode | 148.6 MB/s | 5.0 MB/s | ~30× faster |
+| XER encode | 326.8 MB/s | — | — |
+| XER decode | 200.8 MB/s | — | — |
+| JER encode | 182.2 MB/s | 165.9 MB/s | 1.1× faster |
+| JER decode | 86.7 MB/s | 56.3 MB/s | 1.5× faster |
 
 asn1c BER encode is slow because it generates a temporary buffer per nested construct
 and uses repeated `realloc`. gambas-asn1's reserve-and-patch approach avoids this.
 
-### Real-World Throughput (perf_pspdu, Colt ETSI data)
+### BerProjection vs full decode/encode (perf_projection, 706,270 PS-PDU frames, 208 MB)
+
+| Path | Throughput | Records/s |
+|------|-----------|-----------|
+| Full decode + encode | 222.1 MB/s | 753,719 |
+| BerProjection (lazy field access) | 1,048.2 MB/s | 3,556,692 |
+
+4.7× speedup for selective field reads that avoid materialising the full object tree.
+
+### Real-World Throughput (perf_pspdu, operator-captured ETSI LI data)
 
 Processing real operator-captured ETSI LI files (4,761 records, 1.57 MB per pass):
 
@@ -1304,10 +1315,12 @@ Deep copy throughput reflects the `TypeDescriptor`-driven deep copy path, which 
 
 ### Notes on Measurement
 
-WSL2 introduces 15–30% run-to-run timing variance. All figures above are medians
-over 8 rounds. Small optimisations (< 10% expected gain) are not reliably distinguishable
-from noise in this environment. The figures should be treated as order-of-magnitude
-characterisations, not precise benchmarks.
+WSL2 introduces 15–30% run-to-run timing variance. The `asn1cpp` vs `asn1c` and
+`perf_projection` figures above are single runs (`make perf-run`, runtime rebuilt with
+`-DCMAKE_BUILD_TYPE=Release`); the real-world `perf_pspdu` figures are medians over 8
+rounds from an earlier session. Small optimisations (< 10% expected gain) are not
+reliably distinguishable from noise in this environment. The figures should be treated
+as order-of-magnitude characterisations, not precise benchmarks.
 
 For rigorous measurement, rebuild the runtime with `-DCMAKE_BUILD_TYPE=Release` and
 run on native Linux.
