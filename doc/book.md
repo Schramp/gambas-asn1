@@ -1317,10 +1317,10 @@ is built for. Fields not on a projected path are left untouched in the wire
 bytes; the rest of the PS-PDU tree (payload, CHOICE alternatives, nested
 SEQUENCE OFs) is never decoded at all.
 
-| Path | Throughput | Records/s |
-|------|-----------|-----------|
-| Full decode + encode | 222.1 MB/s | 753,719 |
-| BerProjection (lazy field access) | 1,048.2 MB/s | 3,556,692 |
+| Path                               | Throughput   | Records/s |
+|-------------------------------------|--------------|-----------|
+| Full decode + encode               | 222.1 MB/s   | 753,719   |
+| BerProjection (lazy field access)  | 1,048.2 MB/s | 3,556,692 |
 
 4.7× speedup for selective field reads/rewrites that avoid materialising the
 full object tree. The gain scales with how much of the record is *not* on a
