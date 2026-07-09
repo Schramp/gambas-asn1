@@ -41,7 +41,7 @@ The value is read once on first call to `asn1::debug_flags()`; no rebuild needed
 | `0x01` | `DBG_BER_CHOICE` | CHOICE tag misses — prints type name, peek tag, all alternative tags (decode) |
 | `0x02` | `DBG_BER_SEQ` | SEQUENCE EXPLICIT wrap/unwrap — outer tag + first value byte (decode) |
 | `0x04` | `DBG_XER` | XER parse / emit (reserved, not yet wired) |
-| `0x08` | `DBG_PER` | PER bit-level ops (reserved, not yet wired) |
+| `0x08` | `DBG_PER` | PER bit-level ops — per-field bit position, width, value on encode/decode |
 | `0x10` | `DBG_BER_WRITE` | BER encode: each member/alt written — name, tag class+number, EXPLICIT/IMPLICIT, byte count; absent optional members; SEQUENCE-OF element counts; out-of-range CHOICE index |
 | `0x40` | `DBG_VALIDATE_TRACE` | Constraint violations on encode or decode — type name, delta, codec (BER/JER/…). Failures are **silent** without this flag; `record_validate_fail`/`bump_validate_fail` always fire. |
 
@@ -142,8 +142,8 @@ Concrete implementations:
 |-------|----------|--------|-------|
 | `BerCodec` | BER / DER | implemented | `codec/BerCodec.{hpp,cpp}` |
 | `XerCodec` | XER (XML) | implemented | `codec/XerCodec.{hpp,cpp}` |
-| `JerCodec` | JER (JSON) | stub — returns `not_implemented` | `codec/JerCodec.hpp` |
-| `PerCodec` | PER / UPER | empty stub — see PER architecture section | `codec/PerCodec.hpp` |
+| `JerCodec` | JER (JSON) | implemented | `codec/JerCodec.{hpp,cpp}` |
+| `PerCodec` | PER / UPER | implemented (unaligned) — see PER architecture section | `codec/PerCodec.{hpp,cpp}` |
 
 `BerCodec` and `XerCodec` use `IEncodeStream`/`IDecodeStream` subclasses that wrap
 `BerWriter`/`BerReader` and a simple XML writer/reader respectively. The generic logic
@@ -161,13 +161,15 @@ auto ok = asn1::BerCodec::instance().decode(s, asn_DEF_MySeq, &result);
 
 ### PER architecture
 
-PER has its own codec class — `PerCodec` in `codec/PerCodec.hpp` (currently a stub).
+PER has its own codec class — `PerCodec` in `codec/PerCodec.{hpp,cpp}` (implemented,
+unaligned PER / uPER — see `per_integer`/`per_ext`/`per_size_range` ctest coverage).
 It is completely separate from `BerCodec`. The `BerCodec` neither includes nor references
 PER logic; it ignores all PER-specific fields in the descriptor tables.
 
 The descriptor structs in `TypeDescriptor.hpp` carry PER *metadata* as nullable/zero
-fields so that generated tables don't need to be regenerated when `PerCodec` is
-eventually implemented. `BerCodec` and `XerCodec` skip these fields entirely.
+fields, added ahead of the codec implementation so generated tables didn't need
+regenerating once `PerCodec` landed. `BerCodec` and `XerCodec` skip these fields
+entirely.
 
 PER is fundamentally different from BER/XER and forces richer descriptor tables.
 This was validated by reading `constr_SEQUENCE_aper.c`, `constr_CHOICE_aper.c`, and
@@ -263,7 +265,7 @@ struct PerConstraints {
 
 #### PER codec implementation complexity
 
-`PerCodec` (stub for now) will eventually need:
+`PerCodec` implements:
 1. Read/write `roms_count`-bit preamble bitmap before any SEQUENCE member
 2. For each optional root member: check bitmap bit, skip if absent
 3. If extension flag set: read extension bitmap (length-prefixed), then per-present
