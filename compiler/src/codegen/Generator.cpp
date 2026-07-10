@@ -1143,47 +1143,32 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
         std::any_of(sm_root.begin(), sm_root.end(),
                     [](const ast::TypeDef* m){ return m->is_optional(); });
 
-    // class — optional members use unique_ptr (forward-decl compatible, matches asn1c semantics)
-    os << std::format("class {} : public asn1::SequenceBase<{}> {{\npublic:\n", cname, cname);
-    if (has_optional_members) {
-        // All special members declared (not defaulted) so unique_ptr<T> destructor/assignment
-        // has complete T in the .cpp where they are defined = default.
-        // Copy ctor delegates to the default ctor (ensuring all members are constructed)
-        // then calls deep_copy to reproduce the source's state field-by-field.
-        os << std::format("    {0}();\n", cname);
-        os << std::format("    ~{0}();\n", cname);
-        os << std::format("    {0}(const {0}& o);\n", cname);
-        os << std::format("    {0}& operator=(const {0}& o);\n", cname);
-        os << std::format("    {0}({0}&&) noexcept;\n", cname);
-        os << std::format("    {0}& operator=({0}&&) noexcept;\n", cname);
-    }
-    for (auto* m : sm_root) {
-        std::string mtype = cpp_type_for(*m);
-        std::string mname = backend_.member_name(m->name);
-        if (m->is_optional())
-            os << std::format("    std::unique_ptr<{}> {};\n", mtype, mname);
-        else
-            os << std::format("    {} {}{{}};\n", mtype, mname);
-    }
-    for (auto* m : sm_ext) {
-        os << std::format("    std::unique_ptr<{}> {};\n",
-                          cpp_type_for(*m), backend_.member_name(m->name));
-    }
-    // set_<member> declarations for non-optional root members only
-    for (auto* m : sm_root) {
-        if (m->is_optional()) continue;
-        auto si = classify_member_setter(*m);
-        if (si.param_type.empty()) continue;
-        os << std::format("    void set_{}({} val);\n",
-                          backend_.member_name(m->name), si.param_type);
-    }
-    if (mcount > 0) {
-        os << std::format("    static const asn1::MemberDescriptor s_members[{}];\n", mcount);
-        os << "    static const int s_member_count;\n";
-    }
-    os << "    static const asn1::SequenceSpec   asn_SPC;\n";
-    os << "    static const asn1::TypeDescriptor asn_DEF;\n";
-    os << "};\n\n";
+    // Build the backend-agnostic decision: field storage (unique_ptr vs plain)
+    // and setter declarations only need mtype/mname/optional/setter_* — the
+    // other SequenceMemberSpec fields (tag, ops, descriptor refs, ...) are
+    // only computed in emit_sequence_cpp's pass, left default here.
+    SequenceSpec spec;
+    spec.type_name = cname;
+    spec.has_optional_members = has_optional_members;
+    spec.mcount = mcount;
+    auto add_member_decl = [&](const ast::TypeDef& m, bool optional) {
+        SequenceMemberSpec row;
+        row.mtype = cpp_type_for(m);
+        row.mname = backend_.member_name(m.name);
+        row.optional = optional;
+        if (!optional) {
+            auto si = classify_member_setter(m);
+            row.setter_param_type = si.param_type;
+            row.setter_is_move = si.is_move;
+            row.setter_is_int_alias = si.is_int_alias;
+            row.setter_is_uint_alias = si.is_uint_alias;
+        }
+        spec.members.push_back(std::move(row));
+    };
+    for (auto* m : sm_root) add_member_decl(*m, m->is_optional());
+    for (auto* m : sm_ext)  add_member_decl(*m, /*optional=*/true);
+
+    backend_.emit_sequence_hpp(spec, os);
 
     // Self-referential SeqOf includes: deferred until class is complete.
     // post_ns_os_ routes them after `} // namespace` in namespace mode.
@@ -1237,6 +1222,8 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         if (emitted_extra) { auto& nl_os = pre_ns_os_ ? *pre_ns_os_ : os; nl_os << "\n"; }
 
         // All special members defined here where unique_ptr<T> has complete T.
+        // Must be written before Ops aliases / member table below (original
+        // ordering) — pure text, no per-member decision content.
         os << std::format("{0}::{0}() = default;\n", cname);
         os << std::format("{0}::~{0}() = default;\n", cname);
         os << std::format("{0}::{0}(const {0}& o) : {0}() {{ asn1::deep_copy(asn_DEF, this, &o); }}\n", cname);
@@ -1251,9 +1238,22 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         std::count_if(sm_root.begin(), sm_root.end(),
                       [](const ast::TypeDef* m){ return m->is_optional(); }));
 
+    // Determine if AUTOMATIC TAGS applies: module is AUTOMATIC TAGS and none of the
+    // ComponentTypes in any ComponentTypeList has an explicit tag (X.680 §24.8).
+    bool apply_auto_tags = should_apply_auto_tags(def);
+
+    SequenceSpec spec;
+    spec.type_name = cname;
+    spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.has_optional_members = has_optional_members;
+    spec.mcount = mcount;
+    spec.ext_at = ext_at;
+    spec.roms_count = roms_count;
+    spec.is_set = is_set;
+
     // Type aliases for optional member callbacks — one per optional member.
-    // Optional members: UniquePtrOps (check/set/get_ptr through unique_ptr).
-    // Required members: use offsetof (no alias needed).
+    // Must be written before the collect() pass below: emit_default_setter's
+    // generated static functions reference these types directly by name.
     for (auto* m : sm_root) {
         if (!m->is_optional()) continue;
         os << std::format("using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
@@ -1265,116 +1265,47 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     }
     os << "\n";
 
-    // Determine if AUTOMATIC TAGS applies: module is AUTOMATIC TAGS and none of the
-    // ComponentTypes in any ComponentTypeList has an explicit tag (X.680 §24.8).
-    bool apply_auto_tags = should_apply_auto_tags(def);
-
-    // Per-member row data — hoisted so setter definitions can reference it after
-    // the descriptor table block.
-    struct MbrRow {
-        std::string name, eff_tag, mname, ops, tdref, def_setter, offset_expr;
-        bool optional, is_explicit, has_default;
-        MemberSetterInfo setter;
+    // Collect per-row data; emits any static per-member TypeDescriptors/
+    // default-setter pairs as a side effect (before the member table, which
+    // references them — can't have declarations inside an initializer list).
+    // atag continues across root→ext so auto-tagging numbers extensions
+    // after root members.
+    int atag = 0;
+    auto collect = [&](const ast::TypeDef& m, bool optional) {
+        SequenceMemberSpec row;
+        row.asn1_name = m.name;
+        row.mname = backend_.member_name(m.name);
+        row.mtype = cpp_type_for(m);
+        row.optional = optional;
+        auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
+        row.eff_tag = tag_result.tag_literal;
+        row.is_explicit = tag_result.is_explicit;
+        row.ops = optional
+            ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, row.mname)
+            : "{ nullptr, nullptr, nullptr }";
+        row.tdref = emit_member_type_descriptor(m, cname, row.mname, os);
+        row.def_setter = emit_default_setter(m, cname, row.mname, os);
+        row.has_default = (m.marker == ast::Marker::Default);
+        if (!optional) {
+            auto si = classify_member_setter(m);
+            row.setter_param_type = si.param_type;
+            row.setter_is_move = si.is_move;
+            row.setter_is_int_alias = si.is_int_alias;
+            row.setter_is_uint_alias = si.is_uint_alias;
+        }
+        // Required members use offset arithmetic; optional use get_ptr (offset unused).
+        // Sentinel kInvalidMemberOffset for optional: accidental use crashes immediately.
+        row.offset_expr = optional ? "asn1::kInvalidMemberOffset"
+            : std::format("ASN1CPP_OFFSETOF({}, {})", cname, row.mname);
+        spec.members.push_back(std::move(row));
+        ++atag;
     };
-    std::vector<MbrRow> rows;
-
-    // Member descriptor table
     if (mcount > 0) {
-        // Pass 1: collect per-row data and emit any static per-member TypeDescriptors
-        // before the array opening brace (can't have declarations inside initializer lists).
-        // atag continues across root→ext so auto-tagging numbers extensions after root members.
-        {
-            int atag = 0;
-            auto collect = [&](const ast::TypeDef& m, bool optional) {
-                std::string mname = backend_.member_name(m.name);
-                auto [eff_tag, is_explicit] = compute_member_tag(m, apply_auto_tags, atag);
-                std::string ops = optional
-                    ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, mname)
-                    : "{ nullptr, nullptr, nullptr }";
-                std::string tdref = emit_member_type_descriptor(m, cname, mname, os);
-                std::string def_setter = emit_default_setter(m, cname, mname, os);
-                bool has_default = (m.marker == ast::Marker::Default);
-                auto setter = optional ? MemberSetterInfo{} : classify_member_setter(m);
-                // Required members use offset arithmetic; optional use get_ptr (offset unused).
-                // Sentinel kInvalidMemberOffset for optional: accidental use crashes immediately.
-                std::string offset_expr = optional ? "asn1::kInvalidMemberOffset"
-                    : std::format("ASN1CPP_OFFSETOF({}, {})", cname, mname);
-                rows.push_back({ m.name, eff_tag, mname, ops, tdref, def_setter, offset_expr,
-                                 optional, is_explicit, has_default, std::move(setter) });
-                ++atag;
-            };
-            for (auto* m : sm_root) collect(*m, m->is_optional());
-            for (auto* m : sm_ext)  collect(*m, /*optional=*/true);
-        }
-        // Pass 2: emit the array (as class static member definition)
-        os << std::format("const asn1::MemberDescriptor {}::s_members[] = {{\n", cname);
-        for (const auto& r : rows) {
-            // Emit &_isdef_… reference only when the default-value helper
-            // pair was actually emitted. emit_default_setter() returns
-            // "nullptr" (no _setdef_/_isdef_ generated) for default-value
-            // forms it doesn't understand yet — INTEGER with named values,
-            // arbitrary IntegerLiteral, etc. Without this gate the member
-            // table would reference an undefined _isdef_ symbol.
-            std::string def_cmp = (r.has_default && r.def_setter != "nullptr")
-                ? std::format("&_isdef_{}_{}", cname, r.mname)
-                : "nullptr";
-            os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {}, {} }},\n",
-                r.name, r.eff_tag,
-                r.optional ? "true" : "false",
-                r.has_default ? "true" : "false",
-                r.offset_expr,
-                r.tdref, r.ops,
-                r.is_explicit ? "true" : "false",
-                r.def_setter, def_cmp);
-        }
-        os << "};\n";
-        os << std::format("const int {}::s_member_count = {};\n\n", cname, mcount);
+        for (auto* m : sm_root) collect(*m, m->is_optional());
+        for (auto* m : sm_ext)  collect(*m, /*optional=*/true);
     }
 
-    // SequenceSpec
-    os << std::format("const asn1::SequenceSpec {}::asn_SPC = {{\n", cname);
-    if (mcount > 0)
-        os << std::format("    {}::s_members,\n", cname);
-    else
-        os << "    nullptr,\n";
-    os << std::format("    {},\n", mcount);
-    os << std::format("    {}, /* ext_at */\n", ext_at);
-    os << std::format("    {}, 0, nullptr /* PER: roms_count, aoms_count, oms */\n", roms_count);
-    os << "};\n\n";
-
-    // TypeDescriptor
-    emit_type_descriptor(os, cname,
-        def.xer_name.empty() ? def.name : def.xer_name,
-        std::format("asn1::Tag::universal({}, true)", tag_num),
-        false, true, false, false, "asn1::TypeKind::Sequence",
-        "&asn1::per_sequence_handler", "&asn1::ber_sequence_handler",
-        /*use_class_scope=*/true);
-
-    // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
-    for (const auto& r : rows) {
-            if (r.setter.param_type.empty()) continue;
-            // tdref is "&asn_DEF_Foo" or "&asn_TYP_Parent_member"; strip leading &
-            std::string tdname = (r.tdref.size() > 1 && r.tdref[0] == '&')
-                ? r.tdref.substr(1) : r.tdref;
-            std::string assign = r.setter.is_move
-                ? std::format("{} = std::move(val);", r.mname)
-                : (r.setter.is_int_alias || r.setter.is_uint_alias
-                    ? std::format("{} = val;", r.mname)
-                    : std::format("{}.set(val);", r.mname));
-            std::string validate_expr = r.setter.is_int_alias
-                ? std::format("asn1::Integer{{{}}}.validate({}.constraints)", r.mname, tdname)
-                : r.setter.is_uint_alias
-                    ? std::format("asn1::UInteger{{{}}}.validate({}.constraints)", r.mname, tdname)
-                    : std::format("{}.validate({}.constraints)", r.mname, tdname);
-            os << std::format("void {}::set_{}({} val) {{\n", cname, r.mname, r.setter.param_type);
-            os << std::format("    {}\n", assign);
-            os << "#if defined(ASN1CPP_VALIDATE_ON_SET) && defined(ASN1CPP_VALIDATE)\n";
-            os << std::format("    if ({}) asn1::bump_validate_fail();\n", validate_expr);
-            os << "#endif\n";
-            os << "}\n";
-    }
-    if (!rows.empty()) os << "\n";
-
+    backend_.emit_sequence_cpp(spec, os);
 }
 
 // ---------------------------------------------------------------------------

@@ -123,6 +123,8 @@ public:
                               std::ostream& os) const override;
     void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const override;
     void emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const override;
+    void emit_sequence_hpp(const SequenceSpec& spec, std::ostream& os) const override;
+    void emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) const override;
 };
 
 } // namespace asn1::codegen

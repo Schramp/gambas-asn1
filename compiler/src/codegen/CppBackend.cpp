@@ -628,4 +628,122 @@ void CppBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const 
         "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler");
 }
 
+void CppBackend::emit_sequence_hpp(const SequenceSpec& spec, std::ostream& os) const {
+    const std::string& cname = spec.type_name;
+
+    // class — optional members use unique_ptr (forward-decl compatible, matches asn1c semantics)
+    os << std::format("class {} : public asn1::SequenceBase<{}> {{\npublic:\n", cname, cname);
+    if (spec.has_optional_members) {
+        // All special members declared (not defaulted) so unique_ptr<T> destructor/assignment
+        // has complete T in the .cpp where they are defined = default.
+        // Copy ctor delegates to the default ctor (ensuring all members are constructed)
+        // then calls deep_copy to reproduce the source's state field-by-field.
+        os << std::format("    {0}();\n", cname);
+        os << std::format("    ~{0}();\n", cname);
+        os << std::format("    {0}(const {0}& o);\n", cname);
+        os << std::format("    {0}& operator=(const {0}& o);\n", cname);
+        os << std::format("    {0}({0}&&) noexcept;\n", cname);
+        os << std::format("    {0}& operator=({0}&&) noexcept;\n", cname);
+    }
+    for (const auto& r : spec.members) {
+        if (r.optional)
+            os << std::format("    std::unique_ptr<{}> {};\n", r.mtype, r.mname);
+        else
+            os << std::format("    {} {}{{}};\n", r.mtype, r.mname);
+    }
+    // set_<member> declarations for non-optional members only
+    for (const auto& r : spec.members) {
+        if (r.optional || r.setter_param_type.empty()) continue;
+        os << std::format("    void set_{}({} val);\n", r.mname, r.setter_param_type);
+    }
+    if (spec.mcount > 0) {
+        os << std::format("    static const asn1::MemberDescriptor s_members[{}];\n", spec.mcount);
+        os << "    static const int s_member_count;\n";
+    }
+    os << "    static const asn1::SequenceSpec   asn_SPC;\n";
+    os << "    static const asn1::TypeDescriptor asn_DEF;\n";
+    os << "};\n\n";
+}
+
+void CppBackend::emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) const {
+    const std::string& cname = spec.type_name;
+
+    // Special member function definitions and Ops type aliases were already
+    // emitted by Generator::emit_sequence_cpp (before this call) — both must
+    // precede the member table below (emit_default_setter's generated
+    // static functions reference the Ops aliases by name), and neither
+    // needs any per-member decision content.
+
+    // Member descriptor table
+    if (spec.mcount > 0) {
+        os << std::format("const asn1::MemberDescriptor {}::s_members[] = {{\n", cname);
+        for (const auto& r : spec.members) {
+            // Emit &_isdef_… reference only when the default-value helper
+            // pair was actually emitted. emit_default_setter() returns
+            // "nullptr" (no _setdef_/_isdef_ generated) for default-value
+            // forms it doesn't understand yet — INTEGER with named values,
+            // arbitrary IntegerLiteral, etc. Without this gate the member
+            // table would reference an undefined _isdef_ symbol.
+            std::string def_cmp = (r.has_default && r.def_setter != "nullptr")
+                ? std::format("&_isdef_{}_{}", cname, r.mname)
+                : "nullptr";
+            os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {}, {} }},\n",
+                r.asn1_name, r.eff_tag,
+                r.optional ? "true" : "false",
+                r.has_default ? "true" : "false",
+                r.offset_expr,
+                r.tdref, r.ops,
+                r.is_explicit ? "true" : "false",
+                r.def_setter, def_cmp);
+        }
+        os << "};\n";
+        os << std::format("const int {}::s_member_count = {};\n\n", cname, spec.mcount);
+    }
+
+    // SequenceSpec
+    os << std::format("const asn1::SequenceSpec {}::asn_SPC = {{\n", cname);
+    if (spec.mcount > 0)
+        os << std::format("    {}::s_members,\n", cname);
+    else
+        os << "    nullptr,\n";
+    os << std::format("    {},\n", spec.mcount);
+    os << std::format("    {}, /* ext_at */\n", spec.ext_at);
+    os << std::format("    {}, 0, nullptr /* PER: roms_count, aoms_count, oms */\n", spec.roms_count);
+    os << "};\n\n";
+
+    // TypeDescriptor
+    uint32_t tag_num = spec.is_set ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
+    emit_type_descriptor(os, cname,
+        spec.xer_name,
+        std::format("asn1::Tag::universal({}, true)", tag_num),
+        false, true, false, false, "asn1::TypeKind::Sequence",
+        "&asn1::per_sequence_handler", "&asn1::ber_sequence_handler",
+        /*use_class_scope=*/true);
+
+    // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
+    for (const auto& r : spec.members) {
+        if (r.setter_param_type.empty()) continue;
+        // tdref is "&asn_DEF_Foo" or "&asn_TYP_Parent_member"; strip leading &
+        std::string tdname = (r.tdref.size() > 1 && r.tdref[0] == '&')
+            ? r.tdref.substr(1) : r.tdref;
+        std::string assign = r.setter_is_move
+            ? std::format("{} = std::move(val);", r.mname)
+            : (r.setter_is_int_alias || r.setter_is_uint_alias
+                ? std::format("{} = val;", r.mname)
+                : std::format("{}.set(val);", r.mname));
+        std::string validate_expr = r.setter_is_int_alias
+            ? std::format("asn1::Integer{{{}}}.validate({}.constraints)", r.mname, tdname)
+            : r.setter_is_uint_alias
+                ? std::format("asn1::UInteger{{{}}}.validate({}.constraints)", r.mname, tdname)
+                : std::format("{}.validate({}.constraints)", r.mname, tdname);
+        os << std::format("void {}::set_{}({} val) {{\n", cname, r.mname, r.setter_param_type);
+        os << std::format("    {}\n", assign);
+        os << "#if defined(ASN1CPP_VALIDATE_ON_SET) && defined(ASN1CPP_VALIDATE)\n";
+        os << std::format("    if ({}) asn1::bump_validate_fail();\n", validate_expr);
+        os << "#endif\n";
+        os << "}\n";
+    }
+    if (!spec.members.empty()) os << "\n";
+}
+
 } // namespace asn1::codegen
