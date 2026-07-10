@@ -206,9 +206,9 @@ struct SeqOfSpec {
     std::string type_name;
     std::string xer_name;
     std::string elem_ref;        // reference expression to the element's TypeDescriptor
-    int         flags;
     int         range_bits;
-    int64_t     size_lower, size_upper;
+    int64_t     size_lower;
+    std::optional<int64_t> size_upper; // present = finite upper bound; absent = semi-constrained/unconstrained
     std::optional<std::string> elem_xer_name; // X.693 §12: element's declared identifier, if any
     bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
 };

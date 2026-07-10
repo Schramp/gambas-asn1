@@ -2008,8 +2008,9 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // SIZE constraint on collection length
     auto sc = compute_size_constraint(extract_size_range(def));
-    spec.flags = sc.flags; spec.range_bits = sc.range_bits;
-    spec.size_lower = sc.lower; spec.size_upper = sc.upper;
+    spec.range_bits = sc.range_bits;
+    spec.size_lower = sc.lower;
+    if (sc.flags & asn1::Constraints::SIZE_CONSTRAINED) spec.size_upper = sc.upper;
 
     // When the element is an inline-constrained builtin, emit a per-element
     // TypeDescriptor that carries the constraint; otherwise reuse the natural descriptor.
