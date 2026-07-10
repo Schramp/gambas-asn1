@@ -273,9 +273,9 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
 void RustBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const {
     std::string fname = escape(to_snake_case(spec.type_name) + "_size_ok");
     os << std::format("pub fn {}<T>(v: &Vec<T>) -> bool {{\n", fname);
-    if (spec.size_bounded) {
+    if (spec.size_upper) {
         os << std::format("    (v.len() as i64) >= {} && (v.len() as i64) <= {}\n",
-                           spec.size_lower, spec.size_upper);
+                           spec.size_lower, *spec.size_upper);
     } else {
         os << std::format("    (v.len() as i64) >= {} // semi-constrained or unconstrained, no upper cap\n",
                            spec.size_lower);
