@@ -7,6 +7,7 @@
 #include <vector>
 #include <cstdint>
 #include <optional>
+#include <asn1cpp/compat/format.hpp>
 #include "../ast/TypeDef.hpp"
 #include "../ast/Tag.hpp"
 
@@ -132,28 +133,67 @@ struct DefaultValueSpec {
     std::string   enum_name;   // Kind::EnumRef — ASN.1 name of the named value
 };
 
+/// @brief Escape a raw byte string for embedding in a quoted string literal.
+///        Backslash, double-quote, and all control characters — identical
+///        escaping rules in C++ and Rust string literal syntax (both use
+///        `\\`, `\"`, `\n`, `\r`, `\t`, `\xHH`), so this one implementation
+///        serves both backends' `emit_default_setter`.
+/// @param raw Unescaped bytes (e.g. DefaultValueSpec::string_val).
+/// @return Escaped text, without surrounding quotes — the caller wraps it
+///         in its own language's string literal syntax.
+inline std::string escape_string_literal(const std::string& raw) {
+    std::string esc;
+    for (unsigned char c : raw) {
+        if      (c == '\\') esc += "\\\\";
+        else if (c == '"')  esc += "\\\"";
+        else if (c == '\n') esc += "\\n";
+        else if (c == '\r') esc += "\\r";
+        else if (c == '\t') esc += "\\t";
+        else if (c < 0x20 || c == 0x7f)
+            esc += std::format("\\x{:02x}", c);
+        else
+            esc += static_cast<char>(c);
+    }
+    return esc;
+}
+
 /// @brief Backend-agnostic decision for one inline-constrained SEQUENCE/
 ///        CHOICE member's per-member TypeDescriptor (X.691 §26.5 character
 ///        string constraints; X.680 §19 INTEGER value range). Built only
 ///        when the member carries an inline constraint or non-default XER
 ///        encoding; Generator::emit_member_type_descriptor falls back to a
 ///        plain type-descriptor reference otherwise (no spec built). No C++/
-///        Rust/etc. syntax — `constraints_init` is pre-built via the shared
-///        text-formatting helpers (make_integer_pc / make_string_constraints_init)
-///        since those already take fully-resolved parameters and produce
-///        target-agnostic-shaped text; only the surrounding TypeDescriptor
-///        aggregate and FROM-alphabet array emission are backend-specific.
+///        Rust/etc. syntax — all constraint fields are raw resolved data
+///        (same convention as IntegerSpec/BuiltinAliasSpec); each backend
+///        formats its own initializer/validator from them. `kind` selects
+///        which field group is meaningful (INTEGER value range vs SIZE-able
+///        primitive SIZE/FROM-alphabet constraints).
 struct MemberTypeDescriptorSpec {
-    std::string tname;            // static variable name, e.g. "asn_TYP_Parent_member"
+    enum class Kind { Integer, Sizeable } kind;
+    std::string tname;            // static variable / synthetic identifier base, e.g. "asn_TYP_Parent_member"
+
+    // Kind::Integer — mirrors IntegerSpec's constraint fields.
+    IntStorageKind storage_kind;
+    bool     extensible;
+    bool     semi_constrained;    // true -> upper endpoint was MAX; no upper cap
+    bool     hi_is_large;         // true -> upper was a positive literal > INT64_MAX
+    int      range_bits;          // -1 when semi_constrained
+    int64_t  lower_s64, upper_s64;
+    uint64_t lower_u64, upper_u64;
+
+    // Kind::Sizeable — mirrors BuiltinAliasSpec's SIZE/FROM-alphabet fields.
+    ast::BuiltinType      builtin_type;
+    std::vector<uint8_t>  alphabet;      // empty = no FROM-alphabet constraint
+    std::string           alpha_prefix;  // empty = no FROM-alphabet arrays needed
+    bool     has_size_constraint; // true if a SIZE constraint is present at all
+    bool     size_bounded;        // true iff the SIZE constraint has a finite upper bound
+    int      size_range_bits;
+    int64_t  size_lower, size_upper; // size_upper meaningful only when size_bounded
+    bool     needs_xer;           // non-default XER encoding (e.g. Base64) requested
+
+    // Both kinds — target-agnostic BER/XER facts (X.690/X.693), not code.
     std::string xer_type_name;    // e.g. "INTEGER", "OCTET_STRING"
     int         universal_tag;    // asn1::UniversalTag::* value
-    std::string constraints_init; // pre-built Constraints{...} initializer text
-    std::string per_handler;      // e.g. "&asn1::per_integer_handler"
-    std::string ber_handler;      // e.g. "&asn1::ber_integer_handler"
-    std::string cpp_type;         // TypeLifecycleOps<T> storage type
-    std::string xer_tail;         // ", asn1::XerEncoding::Base64" or ""
-    std::string alpha_prefix;     // empty = no FROM-alphabet arrays needed
-    std::vector<uint8_t> alphabet; // paired with alpha_prefix
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE OF / SET OF type
