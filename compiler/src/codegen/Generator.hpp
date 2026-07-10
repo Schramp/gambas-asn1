@@ -100,13 +100,9 @@ inline std::string to_value_name(std::string_view s) {
     return out;
 }
 
-// Storage class for INTEGER types — chosen at codegen time from constraint analysis.
-enum class IntStorageKind {
-    S64,       // int64_t  — asn1::Integer (default; constrained or signed ranges)
-    U64,       // uint64_t — asn1::UInteger (non-negative semi-constrained or large unsigned)
-    I128,      // __int128  — asn1::BigInteger (stub; future)
-    ARBITRARY, // vector<uint8_t> — asn1::ArbitraryInteger (stub; unconstrained crypto keys)
-};
+// IntStorageKind now lives in Backend.hpp (moved for #227 — IntegerSpec needs
+// it there, and Backend.hpp can't include Generator.hpp without a cycle).
+// Included transitively via the Backend.hpp include above.
 
 // Backend-agnostic BER tag decision (X.690 §8.1) — class, number, and encoding
 // form (constructed vs primitive). No C++ syntax; a backend formats this into
@@ -235,6 +231,12 @@ private:
     void emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os);
     void emit_integer_hpp(const ast::TypeDef& def, std::ostream& os);
     void emit_integer_cpp(const ast::TypeDef& def, std::ostream& os);
+    /// @brief Decide the resolved IntegerSpec for a named INTEGER type —
+    ///        storage kind, named constants, and constraint bounds. Needs
+    ///        Generator state (extract_integer_range uses resolver_ for
+    ///        named-value references), so unlike build_enumerated_spec this
+    ///        is a member, not a free function.
+    IntegerSpec build_integer_spec(const ast::TypeDef& def, const std::string& type_name) const;
     void emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os);
     void emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os);
     void emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os);

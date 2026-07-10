@@ -1,6 +1,8 @@
 #include "CppBackend.hpp"
 #include "asn1cpp/Tag.hpp"
+#include "asn1cpp/codec/Constraints.hpp"
 #include <algorithm>
+#include <limits>
 
 namespace asn1::codegen {
 
@@ -107,6 +109,109 @@ void CppBackend::emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& o
         true, false, false, false, "asn1::TypeKind::Enumerated",
         "&asn1::per_enumerated_handler", "&asn1::ber_enumerated_handler",
         /*use_class_scope=*/true);
+}
+
+// Build a Constraints designated-initializer literal for an INTEGER
+// constraint. Moved from Generator.cpp (was `static`, file-local) —
+// gambas-asn1#227. Declared (not `static`) in CppBackend.hpp since
+// Generator.cpp's emit_member_type_descriptor still needs it for inline-
+// constrained-member INTEGER handling, not yet migrated. Uses designated
+// initializers (C++20) so struct field additions don't require updating
+// every call site.
+std::string make_integer_pc(int flags, int range_bits, int int_kind,
+                             int64_t lower_s64, int64_t upper_s64,
+                             uint64_t lower_u64, uint64_t upper_u64) {
+    return std::format(
+        "{{ .flags={}, .range_bits={}, .int_kind={}, "
+        ".lower_bound={}, .upper_bound={}, "
+        ".lower_u64={:#x}u, .upper_u64={:#x}u, "
+        ".lower_hi=0, .lower_lo=0, .upper_hi=0, .upper_lo=0 }}",
+        flags, range_bits, int_kind,
+        lower_s64, upper_s64,
+        lower_u64, upper_u64);
+}
+
+// Moved from Generator::emit_integer_hpp (gambas-asn1#227) — same output,
+// now driven by the backend-agnostic IntegerSpec instead of ast::TypeDef.
+// Note: the alias storage type here (__int128/std::vector<uint8_t> for
+// I128/ARBITRARY) deliberately differs from native_int_type()'s
+// asn1::BigInteger/asn1::ArbitraryInteger — those wrapper classes have
+// deleted constructors (stub, "not yet implemented"), so aliasing a named
+// top-level type to one of them would make the alias unusable. This
+// distinction is pre-existing behavior, preserved as-is, not introduced by
+// this move.
+void CppBackend::emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) const {
+    const std::string& cname = spec.type_name;
+
+    std::string cpp_storage;
+    switch (spec.storage_kind) {
+        case IntStorageKind::U64:       cpp_storage = "asn1::UInteger"; break;
+        case IntStorageKind::I128:      cpp_storage = "__int128"; break;
+        case IntStorageKind::ARBITRARY: cpp_storage = "std::vector<uint8_t>"; break;
+        default:                        cpp_storage = "asn1::Integer"; break;
+    }
+    os << std::format("using {} = {};\n\n", cname, cpp_storage);
+
+    for (const auto& v : spec.named_values)
+        os << std::format("inline constexpr int64_t {}_{} = {};\n",
+                           cname, value_name(v.asn1_name), v.value);
+    if (!spec.named_values.empty()) os << "\n";
+
+    os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
+}
+
+// Moved from Generator::emit_integer_cpp (gambas-asn1#227) — same output,
+// now driven by the backend-agnostic IntegerSpec instead of ast::TypeDef /
+// Generator::extract_integer_range(). Hand-rolls its own TypeDescriptor
+// emission (doesn't reuse emit_type_descriptor) because INTEGER's
+// `.constraints` field holds a real populated Constraints value, not the
+// enum/seq/choice/seqof sub-descriptor pointers emit_type_descriptor emits.
+void CppBackend::emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) const {
+    const std::string& cname = spec.type_name;
+
+    int ik = (spec.storage_kind == IntStorageKind::U64)       ? asn1::Constraints::INT_U64
+           : (spec.storage_kind == IntStorageKind::I128)      ? asn1::Constraints::INT_I128
+           : (spec.storage_kind == IntStorageKind::ARBITRARY) ? asn1::Constraints::INT_ARBITRARY
+           : asn1::Constraints::INT_S64;
+
+    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
+    os << std::format("    \"{}\",\n", spec.xer_name);
+    os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Integer);
+    os << "    nullptr, nullptr, nullptr, nullptr,\n";
+    if (spec.has_constraint) {
+        if (spec.semi_constrained) {
+            int flags = asn1::Constraints::SEMI_CONSTRAINED
+                      | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+            os << std::format("    {} /* constraints — semi-constrained */,\n",
+                make_integer_pc(flags, -1, ik, spec.lower_s64, 0,
+                    spec.lower_u64, std::numeric_limits<uint64_t>::max()));
+        } else if (spec.hi_is_large) {
+            int flags = asn1::Constraints::CONSTRAINED
+                      | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+            os << std::format("    {} /* constraints — constrained large (up to UINT64_MAX) */,\n",
+                make_integer_pc(flags, spec.range_bits, ik, spec.lower_s64, spec.upper_s64,
+                    spec.lower_u64, spec.upper_u64));
+        } else {
+            int flags = asn1::Constraints::CONSTRAINED
+                      | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+            os << std::format("    {} /* constraints */,\n",
+                make_integer_pc(flags, spec.range_bits, ik, spec.lower_s64, spec.upper_s64,
+                    spec.lower_u64, spec.upper_u64));
+        }
+    } else {
+        os << "    {} /* constraints — unconstrained */,\n";
+    }
+    const char* per_h = (ik == asn1::Constraints::INT_U64)
+        ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
+    const char* ber_h = (ik == asn1::Constraints::INT_U64)
+        ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
+    const char* cpp_t = (ik == asn1::Constraints::INT_U64)
+        ? "asn1::UInteger" : "asn1::Integer";
+    os << std::format("    false, asn1::TypeKind::Primitive,\n");
+    os << std::format("    {} /* per_handler */,\n", per_h);
+    os << std::format("    {} /* ber_handler */,\n", ber_h);
+    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cpp_t);
+    os << "};\n";
 }
 
 } // namespace asn1::codegen
