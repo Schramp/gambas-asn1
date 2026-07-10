@@ -102,4 +102,73 @@ void RustBackend::emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) co
     os << "}\n\n";
 }
 
+/// @brief Map a builtin type to its Rust native type.
+/// @param bt Built-in type tag (never SEQUENCE/CHOICE/TypeRef/INTEGER/
+///           ENUMERATED — same precondition as CppBackend's equivalent).
+/// @return Rust type name, e.g. `"Vec<u8>"`, `"String"`, `"bool"`.
+/// @note Deliberately simple mappings (`String` for every text type
+///       regardless of alphabet, `Vec<u8>` for OCTET STRING/BIT STRING/OID/
+///       Any, `String` for UtcTime/GeneralizedTime rather than a real
+///       timestamp type) — matches this pairing's scope (compiles as real
+///       Rust, no runtime wiring yet). A real BER/PER runtime would likely
+///       want tighter types (e.g. `[u32]` arcs for OID); revisit then.
+static std::string native_builtin_type(ast::BuiltinType bt) {
+    using BT = ast::BuiltinType;
+    switch (bt) {
+    case BT::Boolean:          return "bool";
+    case BT::Real:             return "f64";
+    case BT::Null:             return "()";
+    case BT::BitString:        return "Vec<u8>";
+    case BT::OctetString:      return "Vec<u8>";
+    case BT::ObjectIdentifier: return "Vec<u64>";
+    case BT::RelativeOid:      return "Vec<u64>";
+    case BT::Utf8String:       return "String";
+    case BT::NumericString:    return "String";
+    case BT::PrintableString:  return "String";
+    case BT::T61String:        return "String";
+    case BT::Ia5String:        return "String";
+    case BT::VisibleString:    return "String";
+    case BT::GeneralString:    return "String";
+    case BT::GraphicString:    return "String";
+    case BT::UniversalString:  return "String";
+    case BT::BmpString:        return "String";
+    case BT::VideotexString:   return "String";
+    case BT::ObjectDescriptor: return "String";
+    case BT::UtcTime:          return "String";
+    case BT::GeneralizedTime:  return "String";
+    case BT::Any:              return "Vec<u8>";
+    default:                   return "Vec<u8>";  // Integer/Enumerated: unreachable here
+    }
+}
+
+// Rust builtin-alias emission — pairs with CppBackend::emit_builtin_alias_cpp.
+//
+// Only one emit method exists on Backend for this construct (no separate
+// hpp/cpp split, matching the C++ side: the alias itself is a one-line
+// type declaration, not worth two methods). Emits the type alias, plus a
+// size-check function when a SIZE constraint is present — the Rust
+// analogue of the bounds baked into C++'s Constraints struct. FROM-alphabet
+// constraints are not validated by the generated function (same "no
+// runtime wiring yet" scope as the INTEGER pairing's hi_is_large note).
+void RustBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
+    const std::string& tname = spec.type_name;
+
+    os << std::format("pub type {} = {};\n\n", tname, native_builtin_type(spec.builtin_type));
+
+    if (!spec.has_size_constraint) return;
+
+    std::string fname = escape(to_snake_case(tname) + "_size_ok");
+    os << std::format("pub fn {}(v: &{}) -> bool {{\n", fname, native_builtin_type(spec.builtin_type));
+    if (spec.size_bounded) {
+        os << std::format("    (v.len() as i64) >= {} && (v.len() as i64) <= {}\n",
+                           spec.size_lower, spec.size_upper);
+    } else {
+        // Semi-constrained (SIZE(n..MAX)) — no upper cap, same rationale as
+        // IntegerSpec's semi_constrained handling.
+        os << std::format("    (v.len() as i64) >= {} // semi-constrained, no upper cap\n",
+                           spec.size_lower);
+    }
+    os << "}\n\n";
+}
+
 } // namespace asn1::codegen
