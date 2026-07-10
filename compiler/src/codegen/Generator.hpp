@@ -115,6 +115,18 @@ struct TagSpec {
     bool          constructed;
 };
 
+// Backend-agnostic DEFAULT value decision (X.680 §25.1) — which value applies
+// to a DEFAULT member, not how a backend spells it as a literal. No C++
+// syntax; a backend formats this into its own literal/initializer syntax.
+// See Generator::default_value_spec_for / format_default_value_literal.
+struct DefaultValueSpec {
+    enum class Kind { None, Bool, Int, String, EnumRef } kind = Kind::None;
+    bool          bool_val = false;
+    int64_t       int_val  = 0;
+    std::string   string_val;  // Kind::String — raw (unescaped) value
+    std::string   enum_name;   // Kind::EnumRef — ASN.1 name of the named value
+};
+
 class Generator {
     fs::path                out_dir_;
     sema::Resolver&         resolver_;
@@ -282,6 +294,17 @@ private:
     // optional and writes the DEFAULT value. Returns "&_setdef_..." or "nullptr".
     std::string emit_default_setter(const ast::TypeDef& m, const std::string& parent_cname,
                                     const std::string& mname, std::ostream& os);
+    /// @brief Decide which DEFAULT value (X.680 §25.1) applies to a member, if any.
+    /// @param m Member to inspect.
+    /// @return The decision as plain data. `Kind::None` covers: no DEFAULT
+    ///         marker, no default_value set, or a NamedValueRef on a
+    ///         non-ENUMERATED base (not supported as a literal today).
+    /// @note Backend-agnostic: no C++ syntax. `emit_default_setter()` uses this
+    ///       plus format_default_value_literal() (C++-specific emission) for
+    ///       the value half of its output; the static-function wrapper it
+    ///       emits around that value is itself a C++ codegen pattern, out of
+    ///       scope for this decision/emission split.
+    DefaultValueSpec default_value_spec_for(const ast::TypeDef& m) const;
     IntRange extract_integer_range(const ast::TypeDef& def) const;
 
     // Info for generating typed set_<member>() helpers on SEQUENCE/SET classes.
