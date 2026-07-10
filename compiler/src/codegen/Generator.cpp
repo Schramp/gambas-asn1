@@ -758,26 +758,48 @@ static const ast::TypeDef* resolve_underlying(const ast::TypeDef& m,
     return cur;
 }
 
-std::string Generator::emit_default_setter(
-    const ast::TypeDef& m, const std::string& parent_cname,
-    const std::string& mname, std::ostream& os)
-{
-    if (m.marker != ast::Marker::Default) return "nullptr";
-    if (std::holds_alternative<std::monostate>(m.default_value)) return "nullptr";
+/// @brief Decide which DEFAULT value (X.680 §25.1) applies to a member, if any.
+/// @param m Member to inspect.
+/// @return The decision as plain data — see header for the `Kind::None` cases.
+DefaultValueSpec Generator::default_value_spec_for(const ast::TypeDef& m) const {
+    if (m.marker != ast::Marker::Default) return {};
+    if (std::holds_alternative<std::monostate>(m.default_value)) return {};
 
-    std::string mtype = cpp_type_for(m);
-    const ast::TypeDef* base = resolve_underlying(m, resolver_);
+    if (auto* b = std::get_if<bool>(&m.default_value))
+        return { DefaultValueSpec::Kind::Bool, *b, 0, "", "" };
+    if (auto* i = std::get_if<int64_t>(&m.default_value))
+        return { DefaultValueSpec::Kind::Int, false, *i, "", "" };
+    if (auto* s = std::get_if<std::string>(&m.default_value))
+        return { DefaultValueSpec::Kind::String, false, 0, *s, "" };
+    if (auto* nr = std::get_if<ast::NamedValueRef>(&m.default_value)) {
+        // ENUMERATED named ref → EnumType::name; unsupported for other bases.
+        const ast::TypeDef* base = resolve_underlying(m, resolver_);
+        bool is_enum = base
+            && std::holds_alternative<ast::BuiltinType>(base->body)
+            && std::get<ast::BuiltinType>(base->body) == ast::BuiltinType::Enumerated;
+        if (!is_enum) return {};
+        return { DefaultValueSpec::Kind::EnumRef, false, 0, "", nr->name };
+    }
+    return {};
+}
 
-    std::string literal;
-    if (auto* b = std::get_if<bool>(&m.default_value)) {
-        literal = std::format("{}{{{}}}", mtype, *b ? "true" : "false");
-    } else if (auto* i = std::get_if<int64_t>(&m.default_value)) {
-        literal = std::format("{}{{{}}}", mtype, *i);
-    } else if (auto* s = std::get_if<std::string>(&m.default_value)) {
-        // String literal default (IA5String/VisibleString/PrintableString/etc.)
+/// @brief Format a DEFAULT value decision as a C++ initializer expression.
+/// @param mtype C++ type name to construct/qualify.
+/// @param spec  The decision to format (see Generator::default_value_spec_for).
+/// @return e.g. `"MyType{true}"`, `"MyType{\"esc\\\"aped\"}"`, `"MyEnum::Foo"`,
+///         or "" for `Kind::None`.
+static std::string format_default_value_literal(const std::string& mtype,
+                                                  const DefaultValueSpec& spec) {
+    using Kind = DefaultValueSpec::Kind;
+    switch (spec.kind) {
+    case Kind::Bool:
+        return std::format("{}{{{}}}", mtype, spec.bool_val ? "true" : "false");
+    case Kind::Int:
+        return std::format("{}{{{}}}", mtype, spec.int_val);
+    case Kind::String: {
         // Full C escape: backslash, quote, and all control characters.
         std::string esc;
-        for (unsigned char c : *s) {
+        for (unsigned char c : spec.string_val) {
             if      (c == '\\') esc += "\\\\";
             else if (c == '"')  esc += "\\\"";
             else if (c == '\n') esc += "\\n";
@@ -788,17 +810,25 @@ std::string Generator::emit_default_setter(
             else
                 esc += static_cast<char>(c);
         }
-        literal = std::format("{}{{\"{}\"}}", mtype, esc);
-    } else if (auto* nr = std::get_if<ast::NamedValueRef>(&m.default_value)) {
-        // ENUMERATED named ref → EnumType::name
-        bool is_enum = base
-            && std::holds_alternative<ast::BuiltinType>(base->body)
-            && std::get<ast::BuiltinType>(base->body) == ast::BuiltinType::Enumerated;
-        if (!is_enum) return "nullptr";
-        literal = std::format("{}::{}", mtype, safe_cpp_name(to_cpp_name(nr->name)));
-    } else {
-        return "nullptr";
+        return std::format("{}{{\"{}\"}}", mtype, esc);
     }
+    case Kind::EnumRef:
+        return std::format("{}::{}", mtype, safe_cpp_name(to_cpp_name(spec.enum_name)));
+    case Kind::None:
+    default:
+        return "";
+    }
+}
+
+std::string Generator::emit_default_setter(
+    const ast::TypeDef& m, const std::string& parent_cname,
+    const std::string& mname, std::ostream& os)
+{
+    auto spec = default_value_spec_for(m);
+    if (spec.kind == DefaultValueSpec::Kind::None) return "nullptr";
+
+    std::string mtype = cpp_type_for(m);
+    std::string literal = format_default_value_literal(mtype, spec);
 
     std::string fname = std::format("_setdef_{}_{}", parent_cname, mname);
     std::string cname2 = std::format("_isdef_{}_{}", parent_cname, mname);
