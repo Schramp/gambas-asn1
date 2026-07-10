@@ -569,8 +569,8 @@ void CppBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const 
     os << std::format("    {},\n", spec.elem_ref);
     os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
                       spec.flags, spec.range_bits, spec.size_lower, spec.size_upper);
-    if (spec.has_declared_elem_name)
-        os << std::format("    \"{}\",\n", spec.elem_xer_name);
+    if (spec.elem_xer_name)
+        os << std::format("    \"{}\",\n", *spec.elem_xer_name);
     os << "};\n\n";
 
     uint32_t of_tag = spec.is_set_of ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;

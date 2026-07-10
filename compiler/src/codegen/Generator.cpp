@@ -2038,8 +2038,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     // X.693 §12: declared element identifier overrides the XER tag at the use site.
     // Exception: asn1c uses <NULL/> for NULL-typed elements regardless of declared name.
     // Similarly, ANY keeps is_any=true semantics and must not be renamed.
-    spec.has_declared_elem_name = !elem_node.name.empty();
-    if (spec.has_declared_elem_name) {
+    if (!elem_node.name.empty()) {
         using BT = ast::BuiltinType;
         bool is_null_or_any = false;
         if (auto* bt = std::get_if<BT>(&elem_node.body)) {
@@ -2050,8 +2049,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
                     is_null_or_any = (*rbt == BT::Null || *rbt == BT::Any);
             }
         }
-        if (is_null_or_any) spec.has_declared_elem_name = false;
-        else spec.elem_xer_name = elem_node.name;
+        if (!is_null_or_any) spec.elem_xer_name = elem_node.name;
     }
 
     backend_.emit_seq_of_cpp(spec, os);

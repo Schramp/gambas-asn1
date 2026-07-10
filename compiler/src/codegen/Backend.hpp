@@ -169,8 +169,7 @@ struct SeqOfSpec {
     int         flags;
     int         range_bits;
     int64_t     size_lower, size_upper;
-    bool        has_declared_elem_name; // X.693 §12: element carries a declared identifier
-    std::string elem_xer_name;          // meaningful only when has_declared_elem_name
+    std::optional<std::string> elem_xer_name; // X.693 §12: element's declared identifier, if any
     bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
 };
 
