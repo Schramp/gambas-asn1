@@ -7,7 +7,9 @@
 
 namespace asn1::codegen {
 
-// Moved from Generator.cpp (was `static`, file-local). No behavior change.
+/// @brief Format a tag decision as a C++ `asn1::Tag{...}` literal string.
+/// @param tag_spec The decision to format (class, number, encoding form).
+/// @return A C++ expression string, e.g. `"asn1::Tag{asn1::TagClass::Context, 1, false}"`.
 std::string format_tag_literal(const TagSpec& tag_spec) {
     std::string tag_class_literal;
     switch (tag_spec.cls) {
@@ -27,9 +29,12 @@ static int compute_alphabet_bits(int n) {
     return (bits == 0) ? 1 : bits;
 }
 
-// Moved from Generator.cpp (was `static`, file-local). No behavior change.
-// Declared (not `static`) in CppBackend.hpp: Generator.cpp's
-// emit_member_type_descriptor still calls it directly.
+/// @brief Returns the name of the global `asn_DEF_*` descriptor for a
+///        restricted built-in string type, or nullptr for types without a
+///        fixed alphabet (UTF8String, etc.).
+/// @param bt  Built-in type tag.
+/// @return Pointer to a string literal such as `"asn_DEF_NumericString"`, or nullptr.
+/// @see X.680 §41 — restricted character string types and their canonical alphabets.
 const char* builtin_def_name(ast::BuiltinType bt) {
     using BT = ast::BuiltinType;
     switch (bt) {
@@ -61,7 +66,12 @@ static std::string builtin_alphabet_refs(ast::BuiltinType bt) {
         def_name);
 }
 
-// Moved from Generator.cpp (was `static`, file-local). No behavior change.
+/// @brief Emit static FROM-alphabet lookup tables (decode + encode arrays)
+///        into a generated `.cpp` file.
+/// @param os       Output stream for the generated `.cpp` file.
+/// @param prefix   Name prefix used for the static arrays (e.g. `"asn_FROM_MyStr"`).
+/// @param alphabet Sorted FROM-alphabet character values (non-empty).
+/// @see X.691 §26.5 — known-multiplier character string PER encoding.
 void emit_from_alphabet_arrays(std::ostream& os, const std::string& prefix,
                                 const std::vector<uint8_t>& alphabet) {
     // Decode table: alphabet[constrained_idx] → char value (sorted, same as input).
@@ -86,7 +96,19 @@ void emit_from_alphabet_arrays(std::ostream& os, const std::string& prefix,
     os << "\n};\n";
 }
 
-// Moved from Generator.cpp (was `static`, file-local). No behavior change.
+/// @brief Return a `Constraints` aggregate-initializer string for a character string type.
+/// @param flags         Constraints::flags bitmask (SIZE_CONSTRAINED, EXTENSIBLE, …).
+/// @param sc_range_bits Bits needed for SIZE range encoding.
+/// @param sc_lower      SIZE lower bound.
+/// @param sc_upper      SIZE upper bound.
+/// @param alphabet      Sorted FROM-alphabet character values; empty = no FROM constraint.
+/// @param alpha_prefix  Name prefix of the static arrays emitted by emit_from_alphabet_arrays;
+///                      empty when alphabet is empty.
+/// @param builtin_bt    Base string type whose global `asn_DEF_*` descriptor carries the
+///                      alphabet tables; used to inherit alphabet_bits/alphabet/encode_table
+///                      when there is a SIZE constraint but no FROM constraint. nullopt = skip.
+/// @return Initializer string, e.g. `"{ .flags=8, .size_lower=6, .size_upper=6, … }"`.
+/// @see X.691 §26.5 (character string PER encoding); X.691 §12 (size constraints).
 std::string make_string_constraints_init(
     int flags, int sc_range_bits, int64_t sc_lower, int64_t sc_upper,
     const std::vector<uint8_t>& alphabet,
@@ -330,11 +352,14 @@ void CppBackend::emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) con
     os << "};\n";
 }
 
-// Maps a builtin type (never SEQUENCE/CHOICE/TypeRef — BuiltinAliasSpec is
-// only built for plain ast::BuiltinType bodies) to its C++ runtime type, for
-// TypeLifecycleOps<T>. A small, self-contained subset of what
-// Generator::cpp_type_for computes for the general case (which also handles
-// SEQUENCE/CHOICE/TypeRef/SEQUENCE OF — out of scope here).
+/// @brief Map a builtin type to its C++ runtime type, for `TypeLifecycleOps<T>`.
+/// @param bt Built-in type tag (never SEQUENCE/CHOICE/TypeRef/INTEGER/
+///           ENUMERATED — `BuiltinAliasSpec` is only built for plain
+///           `ast::BuiltinType` bodies other than those two).
+/// @return C++ runtime type name, e.g. `"asn1::OctetString"`.
+/// @note A small, self-contained subset of what `Generator::cpp_type_for`
+///       computes for the general case (which also handles SEQUENCE/CHOICE/
+///       TypeRef/SEQUENCE OF — out of scope here).
 static std::string native_builtin_type(ast::BuiltinType bt) {
     using BT = ast::BuiltinType;
     switch (bt) {
@@ -364,8 +389,9 @@ static std::string native_builtin_type(ast::BuiltinType bt) {
     }
 }
 
-// Moved from Generator::emit_builtin_alias_cpp — same output, now driven by
-// the backend-agnostic BuiltinAliasSpec instead of ast::TypeDef.
+/// @brief Emit the `.cpp` TypeDescriptor for a builtin-alias type.
+/// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).
+/// @param os   Output stream to write to.
 void CppBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 

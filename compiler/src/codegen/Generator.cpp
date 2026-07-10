@@ -1992,9 +1992,12 @@ static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
     return chars;
 }
 
-/// @brief Emit the `.cpp` body for a top-level builtin string/octet/bit-string type alias.
-/// @param def  ASN.1 type assignment that resolves to a sizeable primitive (e.g. `MyStr ::= IA5String (SIZE(1..32) FROM("A".."Z"))`).
-/// @param os   Output stream for the generated `.cpp` file.
+/// @brief Decide the resolved BuiltinAliasSpec for a top-level builtin
+///        string/octet/bit-string type alias (e.g.
+///        `MyStr ::= IA5String (SIZE(1..32) FROM("A".."Z"))`).
+/// @param def       ASN.1 type assignment that resolves to a sizeable primitive.
+/// @param type_name Final backend-resolved type identifier.
+/// @return The decision as plain data — see BuiltinAliasSpec.
 /// @see X.691 §26.5 (character string PER constraints); X.690 §8.7 (OCTET STRING BER encoding).
 BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
                                                        const std::string& type_name) const {
@@ -2023,6 +2026,11 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     return spec;
 }
 
+/// @brief Emit the `.cpp` body for a top-level builtin type alias.
+/// @param def ASN.1 type assignment (must resolve to a plain builtin type,
+///            not INTEGER/ENUMERATED — those have their own emit_integer_cpp/
+///            emit_enumerated_cpp).
+/// @param os  Output stream for the generated `.cpp` file.
 void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os) {
     auto spec = build_builtin_alias_spec(def, effective_cpp_name(def.name, current_module_));
     backend_.emit_builtin_alias_cpp(spec, os);

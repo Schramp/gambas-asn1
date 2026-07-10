@@ -12,15 +12,16 @@
 
 namespace asn1::codegen {
 
-// Backend-agnostic BER tag decision (X.690 §8.1) — class, number, and
-// encoding form (constructed vs primitive). No C++ syntax; a backend
-// formats this into its own literal syntax. Lives here, not Generator.hpp,
-// for the same reason as IntStorageKind: BuiltinAliasSpec (below) needs it
-// and Backend.hpp can't include Generator.hpp without a cycle.
+/// @brief Backend-agnostic BER tag decision (X.690 §8.1) — class, number,
+///        and encoding form. No C++/Rust/etc. syntax; a backend formats
+///        this into its own literal syntax (see CppBackend::format_tag_literal).
+/// @note Lives here, not Generator.hpp, for the same reason as
+///       IntStorageKind: BuiltinAliasSpec (below) needs it, and Backend.hpp
+///       can't include Generator.hpp without a cycle.
 struct TagSpec {
-    ast::TagClass cls;
-    int64_t       number;
-    bool          constructed;
+    ast::TagClass cls;          ///< Tag class (Universal/Application/Context/Private).
+    int64_t       number;       ///< Tag number within the class.
+    bool          constructed;  ///< True for constructed encoding form.
 };
 
 // Storage class for INTEGER types — chosen at codegen time from constraint
