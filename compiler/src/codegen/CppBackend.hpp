@@ -6,10 +6,10 @@ namespace asn1::codegen {
 
 /// @brief Emit a `const asn1::TypeDescriptor ... = {...};` initializer.
 ///        Pure C++ text formatting from already-resolved parameters — no
-///        decision logic, no Generator state. Shared across every emit_*
-///        family that produces a TypeDescriptor (ENUMERATED here; INTEGER/
-///        SEQUENCE/CHOICE still call it from Generator.cpp until their own
-///        gambas-asn1#225 migrations land). Defined in CppBackend.cpp.
+///        decision logic, no Generator state. Used by CppBackend's
+///        ENUMERATED emission here; SEQUENCE/CHOICE still call it from
+///        Generator.cpp (INTEGER hand-rolls its own — see
+///        CppBackend::emit_integer_cpp's note). Defined in CppBackend.cpp.
 /// @param use_class_scope true for types that generate a C++ class
 ///        (ENUMERATED, SEQUENCE, CHOICE — descriptor is `Type::asn_DEF`);
 ///        false for free-standing `asn_DEF_Type` (aliases).
@@ -28,8 +28,7 @@ void emit_type_descriptor(std::ostream& os,
 ///        constraint. Pure C++ text formatting from already-resolved
 ///        parameters — shared between CppBackend::emit_integer_cpp and
 ///        Generator.cpp's inline-constrained-member INTEGER handling
-///        (emit_member_type_descriptor, not yet migrated — SEQUENCE/CHOICE's
-///        gambas-asn1#225 migration). Defined in CppBackend.cpp.
+///        (emit_member_type_descriptor). Defined in CppBackend.cpp.
 std::string make_integer_pc(int flags, int range_bits, int int_kind,
                              int64_t lower_s64, int64_t upper_s64,
                              uint64_t lower_u64, uint64_t upper_u64);
@@ -37,8 +36,7 @@ std::string make_integer_pc(int flags, int range_bits, int int_kind,
 /// @brief C++ backend: the only `Backend` implementation today.
 ///
 /// Wraps the pre-existing naming free functions (`Generator.hpp`) as the
-/// `Backend` interface — no new logic, this is the seam extraction
-/// (gambas-asn1#216), not a behavior change.
+/// `Backend` interface.
 class CppBackend : public Backend {
 public:
     std::string type_name(std::string_view asn1_name) const override {
@@ -73,8 +71,8 @@ public:
         }
     }
 
-    // Defined in CppBackend.cpp — real emission logic (moved from Generator.cpp,
-    // gambas-asn1#226/#227), not a one-liner like the naming methods above.
+    // Defined in CppBackend.cpp — real emission logic, not a one-liner
+    // like the naming methods above.
     void emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& os) const override;
     void emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& os) const override;
     void emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) const override;

@@ -6,8 +6,8 @@
 
 namespace asn1::codegen {
 
-// Moved verbatim from Generator.cpp (was `static`, file-local) —
-// gambas-asn1#226. No behavior change: same parameters, same output.
+// Moved verbatim from Generator.cpp (was `static`, file-local). No
+// behavior change: same parameters, same output.
 void emit_type_descriptor(std::ostream& os,
                            const std::string& cname,
                            const std::string& xer_name,
@@ -38,8 +38,8 @@ void emit_type_descriptor(std::ostream& os,
     os << "};\n\n";
 }
 
-// Moved from Generator::emit_enumerated_hpp (gambas-asn1#226) — same output,
-// now driven by the backend-agnostic EnumeratedSpec instead of ast::TypeDef.
+// Moved from Generator::emit_enumerated_hpp — same output, now driven by
+// the backend-agnostic EnumeratedSpec instead of ast::TypeDef.
 void CppBackend::emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
@@ -71,8 +71,8 @@ void CppBackend::emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& o
     os << "};\n\n";
 }
 
-// Moved from Generator::emit_enumerated_cpp (gambas-asn1#226) — same output,
-// now driven by the backend-agnostic EnumeratedSpec instead of ast::TypeDef.
+// Moved from Generator::emit_enumerated_cpp — same output, now driven by
+// the backend-agnostic EnumeratedSpec instead of ast::TypeDef.
 void CppBackend::emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
@@ -112,12 +112,11 @@ void CppBackend::emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& o
 }
 
 // Build a Constraints designated-initializer literal for an INTEGER
-// constraint. Moved from Generator.cpp (was `static`, file-local) —
-// gambas-asn1#227. Declared (not `static`) in CppBackend.hpp since
-// Generator.cpp's emit_member_type_descriptor still needs it for inline-
-// constrained-member INTEGER handling, not yet migrated. Uses designated
-// initializers (C++20) so struct field additions don't require updating
-// every call site.
+// constraint. Moved from Generator.cpp (was `static`, file-local).
+// Declared (not `static`) in CppBackend.hpp since Generator.cpp's
+// emit_member_type_descriptor still needs it for inline-constrained-member
+// INTEGER handling, not yet migrated. Uses designated initializers (C++20)
+// so struct field additions don't require updating every call site.
 std::string make_integer_pc(int flags, int range_bits, int int_kind,
                              int64_t lower_s64, int64_t upper_s64,
                              uint64_t lower_u64, uint64_t upper_u64) {
@@ -131,8 +130,8 @@ std::string make_integer_pc(int flags, int range_bits, int int_kind,
         lower_u64, upper_u64);
 }
 
-// Moved from Generator::emit_integer_hpp (gambas-asn1#227) — same output,
-// now driven by the backend-agnostic IntegerSpec instead of ast::TypeDef.
+// Moved from Generator::emit_integer_hpp — same output, now driven by the
+// backend-agnostic IntegerSpec instead of ast::TypeDef.
 // Note: the alias storage type here (__int128/std::vector<uint8_t> for
 // I128/ARBITRARY) deliberately differs from native_int_type()'s
 // asn1::BigInteger/asn1::ArbitraryInteger — those wrapper classes have
@@ -160,8 +159,8 @@ void CppBackend::emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) con
     os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
 }
 
-// Moved from Generator::emit_integer_cpp (gambas-asn1#227) — same output,
-// now driven by the backend-agnostic IntegerSpec instead of ast::TypeDef /
+// Moved from Generator::emit_integer_cpp — same output, now driven by the
+// backend-agnostic IntegerSpec instead of ast::TypeDef /
 // Generator::extract_integer_range(). Hand-rolls its own TypeDescriptor
 // emission (doesn't reuse emit_type_descriptor) because INTEGER's
 // `.constraints` field holds a real populated Constraints value, not the
