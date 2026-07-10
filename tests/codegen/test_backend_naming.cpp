@@ -85,9 +85,9 @@ int main() {
           r.synthetic_name("Parent", "member") == "ParentMember",
           r.synthetic_name("Parent", "member"));
 
-    // emit_enumerated_hpp/cpp: first real construct pair (#226 C++ / #234
-    // Rust). Same EnumeratedSpec, two genuinely different real outputs —
-    // not a stub/placeholder on either side.
+    // emit_enumerated_hpp/cpp: first real construct pair. Same
+    // EnumeratedSpec, two genuinely different real outputs — not a
+    // stub/placeholder on either side.
     {
         EnumeratedSpec spec;
         spec.type_name = "MyEnum";
@@ -119,6 +119,52 @@ int main() {
         check("emit_enumerated_cpp: Rust produces a value-lookup impl",
               rust_cpp.str().find("impl std::convert::TryFrom<i64> for MyEnum") != std::string::npos &&
               rust_cpp.str().find("0 => Ok(MyEnum::Foo)") != std::string::npos,
+              rust_cpp.str());
+    }
+
+    // emit_integer_hpp/cpp: second real construct pair. Constrained INTEGER
+    // (0..100), U64 storage — exercises native_int_type() too.
+    {
+        IntegerSpec spec;
+        spec.type_name = "MyInt";
+        spec.xer_name  = "MyInt";
+        spec.storage_kind = IntStorageKind::U64;
+        spec.named_values = {{"zero", 0}};
+        spec.has_constraint = true;
+        spec.extensible = false;
+        spec.semi_constrained = false;
+        spec.hi_is_large = false;
+        spec.range_bits = 7;
+        spec.lower_s64 = 0;
+        spec.upper_s64 = 100;
+        spec.lower_u64 = 0;
+        spec.upper_u64 = 100;
+
+        std::ostringstream cpp_hpp, cpp_cpp, rust_hpp, rust_cpp;
+        c.emit_integer_hpp(spec, cpp_hpp);
+        c.emit_integer_cpp(spec, cpp_cpp);
+        r.emit_integer_hpp(spec, rust_hpp);
+        r.emit_integer_cpp(spec, rust_cpp);
+
+        check("native_int_type: C++ maps U64 to asn1::UInteger",
+              c.native_int_type(IntStorageKind::U64) == "asn1::UInteger",
+              c.native_int_type(IntStorageKind::U64));
+        check("native_int_type: Rust maps U64 to u64",
+              r.native_int_type(IntStorageKind::U64) == "u64",
+              r.native_int_type(IntStorageKind::U64));
+        check("emit_integer_hpp: C++ produces a using-alias to asn1::UInteger",
+              cpp_hpp.str().find("using MyInt = asn1::UInteger;") != std::string::npos,
+              cpp_hpp.str());
+        check("emit_integer_hpp: Rust produces a real type alias (not a stub)",
+              rust_hpp.str().find("pub type MyInt = u64;") != std::string::npos,
+              rust_hpp.str());
+        check("emit_integer_cpp: C++ produces a Constraints-bearing TypeDescriptor",
+              cpp_cpp.str().find("asn_DEF_MyInt") != std::string::npos &&
+              cpp_cpp.str().find(".range_bits=7") != std::string::npos,
+              cpp_cpp.str());
+        check("emit_integer_cpp: Rust produces a real range-check function",
+              rust_cpp.str().find("pub fn my_int_in_range(v: i64) -> bool {") != std::string::npos &&
+              rust_cpp.str().find("v >= 0 && v <= 100") != std::string::npos,
               rust_cpp.str());
     }
 
