@@ -2015,11 +2015,13 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     spec.alphabet = extract_from_alphabet(def);
     auto size_range = extract_size_range(def);
     spec.has_size_constraint = size_range.has_value();
+    spec.size_bounded = size_range.has_value()
+        && size_range->second != std::numeric_limits<int64_t>::max();
     if (size_range) {
         auto sc = compute_size_constraint(size_range);
         spec.size_range_bits = sc.range_bits;
         spec.size_lower = sc.lower;
-        spec.size_upper = sc.upper;
+        spec.size_upper = sc.upper;  // meaningless when !size_bounded (semi-constrained)
     }
     spec.extensible = is_constraint_extensible(def);
     spec.xer_base64 = (def.xer_encoding == ast::XerEncoding::Base64);

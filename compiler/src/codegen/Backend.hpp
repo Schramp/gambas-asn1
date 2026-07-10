@@ -104,9 +104,14 @@ struct BuiltinAliasSpec {
                                          // builtin-alias types are never CHOICE, the only case
                                          // natural-tag resolution returns nullopt for
     std::vector<uint8_t>   alphabet;    // FROM-alphabet constraint (restricted string types); empty = none
-    bool     has_size_constraint;
+    bool     has_size_constraint;       // true if a SIZE constraint is present at all (bounded or semi-constrained)
+    bool     size_bounded;              // true iff the SIZE constraint has a finite upper bound;
+                                         // false for SIZE(n..MAX) — semi-constrained, no upper cap.
+                                         // Distinct from has_size_constraint: a semi-constrained
+                                         // SIZE is still "present" (has_size_constraint=true) but
+                                         // not "bounded" (size_upper is meaningless when false).
     int      size_range_bits;
-    int64_t  size_lower, size_upper;    // meaningful iff has_size_constraint
+    int64_t  size_lower, size_upper;    // size_upper meaningful only when size_bounded
     bool     extensible;
     bool     xer_base64;                // true -> XER encoding uses base64 (X.693, OCTET STRING option)
 };

@@ -469,7 +469,7 @@ void CppBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostre
 
     if (needs_per) {
         int flags = asn1::Constraints::CONSTRAINED
-                  | (spec.has_size_constraint ? asn1::Constraints::SIZE_CONSTRAINED : 0)
+                  | (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
                   | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
         std::optional<ast::BuiltinType> bbt = spec.alphabet.empty()
             ? std::optional{spec.builtin_type} : std::nullopt;
