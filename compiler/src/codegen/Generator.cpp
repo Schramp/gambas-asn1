@@ -701,44 +701,13 @@ DefaultValueSpec Generator::default_value_spec_for(const ast::TypeDef& m) const 
     return {};
 }
 
-/// @brief Format a DEFAULT value decision as a C++ initializer expression.
-/// @param mtype C++ type name to construct/qualify.
-/// @param spec  The decision to format (see Generator::default_value_spec_for).
-/// @return e.g. `"MyType{true}"`, `"MyType{\"esc\\\"aped\"}"`, `"MyEnum::Foo"`,
-///         or "" for `Kind::None`.
-static std::string format_default_value_literal(const std::string& mtype,
-                                                  const DefaultValueSpec& spec,
-                                                  const Backend& backend) {
-    using Kind = DefaultValueSpec::Kind;
-    switch (spec.kind) {
-    case Kind::Bool:
-        return std::format("{}{{{}}}", mtype, spec.bool_val ? "true" : "false");
-    case Kind::Int:
-        return std::format("{}{{{}}}", mtype, spec.int_val);
-    case Kind::String: {
-        // Full C escape: backslash, quote, and all control characters.
-        std::string esc;
-        for (unsigned char c : spec.string_val) {
-            if      (c == '\\') esc += "\\\\";
-            else if (c == '"')  esc += "\\\"";
-            else if (c == '\n') esc += "\\n";
-            else if (c == '\r') esc += "\\r";
-            else if (c == '\t') esc += "\\t";
-            else if (c < 0x20 || c == 0x7f)
-                esc += std::format("\\x{:02x}", c);
-            else
-                esc += static_cast<char>(c);
-        }
-        return std::format("{}{{\"{}\"}}", mtype, esc);
-    }
-    case Kind::EnumRef:
-        return std::format("{}::{}", mtype, backend.escape(backend.type_name(spec.enum_name)));
-    case Kind::None:
-    default:
-        return "";
-    }
-}
-
+/// @brief Emit the DEFAULT-value setter/checker pair for a member, delegating
+///        text emission to the backend.
+/// @param m            Member carrying a DEFAULT value (see default_value_spec_for).
+/// @param parent_cname C++ name of the enclosing SEQUENCE/SET type.
+/// @param mname        Sanitised C++ member name.
+/// @param os           Output stream for the generated `.cpp` file.
+/// @return "&_setdef_<parent>_<member>", or "nullptr" if `m` has no DEFAULT.
 std::string Generator::emit_default_setter(
     const ast::TypeDef& m, const std::string& parent_cname,
     const std::string& mname, std::ostream& os)
@@ -747,25 +716,8 @@ std::string Generator::emit_default_setter(
     if (spec.kind == DefaultValueSpec::Kind::None) return "nullptr";
 
     std::string mtype = cpp_type_for(m);
-    std::string literal = format_default_value_literal(mtype, spec, backend_);
-
-    std::string fname = std::format("_setdef_{}_{}", parent_cname, mname);
-    std::string cname2 = std::format("_isdef_{}_{}", parent_cname, mname);
-    os << std::format(
-        "static void {0}(asn1::Asn1Object* p) {{\n"
-        "    using Ops = _Ops_{1}_{2};\n"
-        "    Ops::set(p, true);\n"
-        "    *static_cast<{3}*>(Ops::get(p)) = {4};\n"
-        "}}\n",
-        fname, parent_cname, mname, mtype, literal);
-    os << std::format(
-        "static bool {0}(const asn1::Asn1Object* p) {{\n"
-        "    using Ops = _Ops_{1}_{2};\n"
-        "    if (!Ops::check(p)) return false;\n"
-        "    return *static_cast<const {3}*>(Ops::get(const_cast<asn1::Asn1Object*>(p))) == ({4});\n"
-        "}}\n",
-        cname2, parent_cname, mname, mtype, literal);
-    return "&" + fname;
+    backend_.emit_default_setter(spec, mtype, parent_cname, mname, os);
+    return std::format("&_setdef_{}_{}", parent_cname, mname);
 }
 
 // True if any top-level constraint carries a trailing '...'.
@@ -887,20 +839,48 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
 /// @param os            Output stream for the generated `.cpp` file.
 /// @return A C++ expression referencing the descriptor (e.g. `"&asn_TYP_Foo_bar"`).
 /// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
+/// @brief Emit the static per-member TypeDescriptor when the member carries
+///        inline constraints, delegating the decision to
+///        build_member_type_descriptor_spec() and text emission to the backend.
+/// @param m             Member type definition (may carry value-range, SIZE, or FROM constraints).
+/// @param parent_cname  C++ name of the enclosing SEQUENCE/CHOICE type.
+/// @param mname         Sanitised C++ member name used as the descriptor variable suffix.
+/// @param os            Output stream for the generated `.cpp` file.
+/// @return A C++ expression referencing the descriptor (e.g. `"&asn_TYP_Foo_bar"`).
 std::string Generator::emit_member_type_descriptor(
     const ast::TypeDef& m, const std::string& parent_cname,
     const std::string& mname, std::ostream& os)
 {
+    auto spec = build_member_type_descriptor_spec(m, parent_cname, mname);
+    if (!spec) return type_descriptor_ref_for(m);
+    backend_.emit_member_type_descriptor(*spec, os);
+    return "&" + spec->tname;
+}
+
+/// @brief Decide the resolved MemberTypeDescriptorSpec for an inline-
+///        constrained SEQUENCE/CHOICE member — INTEGER value range or
+///        SIZE-able-primitive (string family, OctetString, BitString)
+///        constraints.
+/// @param m             Member type definition (may carry value-range, SIZE, or FROM constraints).
+/// @param parent_cname  C++ name of the enclosing SEQUENCE/CHOICE type.
+/// @param mname         Sanitised C++ member name used as the descriptor variable suffix.
+/// @return nullopt when the member has no inline constraint worth a dedicated
+///         descriptor — caller falls back to type_descriptor_ref_for().
+/// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
+std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_spec(
+    const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname)
+{
     using BT = ast::BuiltinType;
     auto* bt = std::get_if<BT>(&m.body);
     bool needs_xer = m.xer_encoding != ast::XerEncoding::Default;
-    if (!bt || (m.constraints.empty() && !needs_xer)) return type_descriptor_ref_for(m);
+    if (!bt || (m.constraints.empty() && !needs_xer)) return std::nullopt;
 
     // INTEGER value range
     if (*bt == BT::Integer) {
         auto ir = extract_integer_range(m);
         if (ir.has_value) {
-            std::string tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
+            MemberTypeDescriptorSpec spec;
+            spec.tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
             int64_t lo = ir.lo, hi = ir.hi;
             bool ext = is_constraint_extensible(m);
             auto kind = classify_integer_storage(m);
@@ -908,12 +888,11 @@ std::string Generator::emit_member_type_descriptor(
                    : (kind == IntStorageKind::I128)      ? asn1::Constraints::INT_I128
                    : (kind == IntStorageKind::ARBITRARY) ? asn1::Constraints::INT_ARBITRARY
                    : asn1::Constraints::INT_S64;
-            std::string pc;
             if (ir.truly_max) {
                 // Truly semi-constrained (..MAX): no upper cap.
                 int flags = asn1::Constraints::SEMI_CONSTRAINED
                           | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-                pc = make_integer_pc(flags, -1, ik, lo, 0,
+                spec.constraints_init = make_integer_pc(flags, -1, ik, lo, 0,
                     static_cast<uint64_t>(lo >= 0 ? lo : 0),
                     std::numeric_limits<uint64_t>::max());
             } else if (ir.hi_is_large) {
@@ -925,7 +904,7 @@ std::string Generator::emit_member_type_descriptor(
                 if (rb == 0) for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
                 int flags = asn1::Constraints::CONSTRAINED
                           | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-                pc = make_integer_pc(flags, rb, ik, lo, hi, u_lo, ir.hi_u64);
+                spec.constraints_init = make_integer_pc(flags, rb, ik, lo, hi, u_lo, ir.hi_u64);
             } else {
                 int64_t rc = hi - lo + 1;
                 int rb = 0;
@@ -934,21 +913,17 @@ std::string Generator::emit_member_type_descriptor(
                           | (ext ? asn1::Constraints::EXTENSIBLE : 0);
                 uint64_t u_lo = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
                 uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
-                pc = make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi);
+                spec.constraints_init = make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi);
             }
-            const char* per_h = (kind == IntStorageKind::U64)
+            spec.per_handler = (kind == IntStorageKind::U64)
                 ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
-            const char* ber_h = (kind == IntStorageKind::U64)
+            spec.ber_handler = (kind == IntStorageKind::U64)
                 ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
-            const char* cpp_t = (kind == IntStorageKind::U64)
+            spec.cpp_type = (kind == IntStorageKind::U64)
                 ? "asn1::UInteger" : "asn1::Integer";
-            os << std::format(
-                "static const asn1::TypeDescriptor {} = "
-                "{{ \"INTEGER\", asn1::Tag::universal({}, false), "
-                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
-                "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) }};\n",
-                tname, asn1::UniversalTag::Integer, pc, per_h, ber_h, cpp_t);
-            return "&" + tname;
+            spec.xer_type_name = "INTEGER";
+            spec.universal_tag = asn1::UniversalTag::Integer;
+            return spec;
         }
     }
 
@@ -980,6 +955,7 @@ std::string Generator::emit_member_type_descriptor(
         // FROM constraints on it are not enforced in PER encoding — drop alphabet.
         if (*bt == BT::Utf8String) alphabet.clear();
         if (sr || !alphabet.empty() || needs_xer) {
+            MemberTypeDescriptorSpec spec;
             // Compute SIZE constraint fields.
             int     sc_flags = 0, sc_range_bits = 0;
             int64_t sc_lower = 0, sc_upper = 0;
@@ -998,16 +974,15 @@ std::string Generator::emit_member_type_descriptor(
                 });
             }
             int  all_flags = sc_flags | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-            std::string alpha_prefix;
             if (!alphabet.empty()) {
-                alpha_prefix = std::format("asn_FROM_{}_{}", parent_cname, mname);
-                emit_from_alphabet_arrays(os, alpha_prefix, alphabet);
+                spec.alpha_prefix = std::format("asn_FROM_{}_{}", parent_cname, mname);
+                spec.alphabet = alphabet;
             }
             std::optional<ast::BuiltinType> bbt = alphabet.empty() ? std::optional{*bt} : std::nullopt;
-            std::string pc = (!sr && alphabet.empty() && (!bbt || !builtin_def_name(*bbt)))
+            spec.constraints_init = (!sr && alphabet.empty() && (!bbt || !builtin_def_name(*bbt)))
                 ? "{}"
                 : make_string_constraints_init(all_flags, sc_range_bits, sc_lower, sc_upper,
-                                               alphabet, alpha_prefix, bbt);
+                                               alphabet, spec.alpha_prefix, bbt);
             // Use the matching asn_DEF_*'s public name as the XER tag name —
             // BerCodec / XerCodec consult it for primitive type names.
             const char* tn = nullptr;
@@ -1028,26 +1003,22 @@ std::string Generator::emit_member_type_descriptor(
             case BT::ObjectDescriptor: tn = "ObjectDescriptor";   break;
             default: break;
             }
-            std::string tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
-            const char* per_h = "&asn1::per_string_handler";
-            if (*bt == BT::BitString)   per_h = "&asn1::per_bitstring_handler";
-            if (*bt == BT::OctetString) per_h = "&asn1::per_octetstring_handler";
-            const char* ber_h = "&asn1::ber_string_handler";
-            if (*bt == BT::BitString)   ber_h = "&asn1::ber_bitstring_handler";
-            if (*bt == BT::OctetString) ber_h = "&asn1::ber_octetstring_handler";
-            std::string cpp_t = cpp_type_for(m);
-            std::string xer_tail = needs_xer ? ", asn1::XerEncoding::Base64" : "";
-            os << std::format(
-                "static const asn1::TypeDescriptor {} = "
-                "{{ \"{}\", asn1::Tag::universal({}, false), "
-                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
-                "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}){}}};\n",
-                tname, tn, *utag, pc, per_h, ber_h, cpp_t, xer_tail);
-            return "&" + tname;
+            spec.tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
+            spec.xer_type_name = tn;
+            spec.universal_tag = *utag;
+            spec.per_handler = "&asn1::per_string_handler";
+            if (*bt == BT::BitString)   spec.per_handler = "&asn1::per_bitstring_handler";
+            if (*bt == BT::OctetString) spec.per_handler = "&asn1::per_octetstring_handler";
+            spec.ber_handler = "&asn1::ber_string_handler";
+            if (*bt == BT::BitString)   spec.ber_handler = "&asn1::ber_bitstring_handler";
+            if (*bt == BT::OctetString) spec.ber_handler = "&asn1::ber_octetstring_handler";
+            spec.cpp_type = cpp_type_for(m);
+            spec.xer_tail = needs_xer ? ", asn1::XerEncoding::Base64" : "";
+            return spec;
         }
     }
 
-    return type_descriptor_ref_for(m);
+    return std::nullopt;
 }
 
 // ---------------------------------------------------------------------------
