@@ -257,4 +257,30 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     os << "}\n\n";
 }
 
+/// @brief Emit a Rust size-check function for a SEQUENCE OF / SET OF type's
+///        collection SIZE constraint (X.680 §25/26).
+/// @param spec Resolved, backend-agnostic decision (see SeqOfSpec).
+/// @param os   Output stream to write to.
+/// @note `spec.elem_ref` is a C++ TypeDescriptor reference expression (not
+///       usable by any other backend) and `spec.elem_xer_name` only matters
+///       to a BER/XER runtime, so neither is used here — the emitted
+///       function is generic over the element type (`Vec<T>`), matching
+///       this issue's "likely Vec<T>" scoping note, and needs no element
+///       type information to compile. Same "no runtime wiring yet" bar as
+///       the other Rust pairings: always emitted (even when unconstrained,
+///       where it degenerates to a trivial `>= 0` check) rather than
+///       introducing a has-constraint field SeqOfSpec doesn't otherwise need.
+void RustBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const {
+    std::string fname = escape(to_snake_case(spec.type_name) + "_size_ok");
+    os << std::format("pub fn {}<T>(v: &Vec<T>) -> bool {{\n", fname);
+    if (spec.size_upper) {
+        os << std::format("    (v.len() as i64) >= {} && (v.len() as i64) <= {}\n",
+                           spec.size_lower, *spec.size_upper);
+    } else {
+        os << std::format("    (v.len() as i64) >= {} // semi-constrained or unconstrained, no upper cap\n",
+                           spec.size_lower);
+    }
+    os << "}\n\n";
+}
+
 } // namespace asn1::codegen
