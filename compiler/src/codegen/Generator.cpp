@@ -204,39 +204,49 @@ std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) const 
     return format_tag_literal(*spec);
 }
 
-// Returns the natural (universal) tag for a member def's underlying type.
-// For types with an outer [N] tag, the outer tag IS the wire-level tag.
-std::string Generator::natural_tag_for(const ast::TypeDef& def) const {
+/// @brief Decide the natural (universal) BER tag for a member def's
+///        underlying type — see Generator::natural_tag_spec_for in the header
+///        for the full contract. Plain data, no C++ syntax.
+std::optional<TagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& def) const {
     if (def.tag.present()) {
         bool is_constr = def.is_sequence() || def.is_choice() ||
                          def.is_seq_of()   || def.is_set_of() || def.is_set();
         bool is_exp = member_is_explicit(def.tag, def);
-        return tag_literal(def.tag, is_exp || is_constr);
+        return tag_spec_for(def.tag, is_exp || is_constr);
     }
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
         if (*bt == BT::Any)
             // ANY is stored as raw BER bytes at runtime; codegen uses OCTET STRING tag.
             // sema treats ANY as tag-less (no fixed universal tag), so builtin_universal_tag returns 0.
-            return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::OctetString);
+            return TagSpec{ast::TagClass::Universal, asn1::UniversalTag::OctetString, false};
         uint32_t n = sema::builtin_universal_tag(*bt);
-        if (n) return std::format("asn1::Tag::universal({}, false)", n);
+        if (n) return TagSpec{ast::TagClass::Universal, n, false};
     }
     if (def.is_sequence())
-        return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Sequence);
+        return TagSpec{ast::TagClass::Universal, asn1::UniversalTag::Sequence, true};
     if (def.is_set())
-        return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Set);
+        return TagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
     if (def.is_choice())
-        return "";  // CHOICE has no universal tag
+        return std::nullopt;  // CHOICE has no universal tag
     if (def.is_seq_of())
-        return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Sequence);
+        return TagSpec{ast::TagClass::Universal, asn1::UniversalTag::Sequence, true};
     if (def.is_set_of())
-        return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Set);
+        return TagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto base = resolver_.resolve_ref(*tr);
-        if (base) return natural_tag_for(*base);
+        if (base) return natural_tag_spec_for(*base);
     }
-    return "asn1::Tag::universal(4, false)";  // fallback: OCTET STRING
+    return TagSpec{ast::TagClass::Universal, 4, false};  // fallback: OCTET STRING
+}
+
+/// @brief Returns the natural (universal) tag for a member def's underlying type.
+/// @param def Member or referenced type to compute the natural tag for.
+/// @return C++ literal string, or "" for CHOICE (no universal tag).
+std::string Generator::natural_tag_for(const ast::TypeDef& def) const {
+    auto spec = natural_tag_spec_for(def);
+    if (!spec) return "";
+    return format_tag_literal(*spec);
 }
 
 // ---------------------------------------------------------------------------

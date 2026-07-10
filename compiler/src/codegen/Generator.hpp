@@ -242,7 +242,21 @@ private:
     ///       wrapper — tag_spec_for() decides, format_tag_literal() emits. A
     ///       future non-C++ backend consumes tag_spec_for() directly.
     std::optional<TagSpec> tag_spec_for(const ast::Tag& tag, bool constructed) const;
+    /// @brief Returns the natural (universal) tag for a member def's underlying
+    ///        type. For types with an outer [N] tag, the outer tag IS the
+    ///        wire-level tag.
+    /// @param def Member or referenced type to compute the natural tag for.
+    /// @return C++ `asn1::Tag{...}`/`asn1::Tag::universal(...)` literal, or ""
+    ///         for CHOICE (no universal tag).
     std::string natural_tag_for(const ast::TypeDef& def) const;
+    /// @brief Decide the natural (universal) BER tag for a member def's
+    ///        underlying type — the decision half of natural_tag_for().
+    /// @param def Member or referenced type to compute the natural tag for.
+    /// @return The tag decision as plain data, or nullopt for CHOICE (no
+    ///         universal tag).
+    /// @note Backend-agnostic: no C++ syntax. `natural_tag_for()` is now a
+    ///       thin wrapper — this decides, format_tag_literal() emits.
+    std::optional<TagSpec> natural_tag_spec_for(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
     // alt_idx: 0-based index of the alternative in its parent CHOICE.
     // Appends {tag_literal, alt_idx} pairs; recurses if alt resolves to untagged CHOICE.
