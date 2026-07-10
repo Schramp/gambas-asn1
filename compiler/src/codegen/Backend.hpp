@@ -116,6 +116,46 @@ struct BuiltinAliasSpec {
     bool     xer_base64;                // true -> XER encoding uses base64 (X.693, OCTET STRING option)
 };
 
+/// @brief Backend-agnostic DEFAULT value decision (X.680 §25.1) — which value
+///        applies to a DEFAULT member, not how a backend spells it as a
+///        literal. No C++/Rust/etc. syntax; a backend formats this into its
+///        own literal/initializer syntax.
+/// @note Lives here, not Generator.hpp, for the same reason as TagSpec:
+///       Backend::emit_default_setter (below) needs it, and Backend.hpp
+///       can't include Generator.hpp without a cycle.
+/// @see Generator::default_value_spec_for.
+struct DefaultValueSpec {
+    enum class Kind { None, Bool, Int, String, EnumRef } kind = Kind::None;
+    bool          bool_val = false;
+    int64_t       int_val  = 0;
+    std::string   string_val;  // Kind::String — raw (unescaped) value
+    std::string   enum_name;   // Kind::EnumRef — ASN.1 name of the named value
+};
+
+/// @brief Backend-agnostic decision for one inline-constrained SEQUENCE/
+///        CHOICE member's per-member TypeDescriptor (X.691 §26.5 character
+///        string constraints; X.680 §19 INTEGER value range). Built only
+///        when the member carries an inline constraint or non-default XER
+///        encoding; Generator::emit_member_type_descriptor falls back to a
+///        plain type-descriptor reference otherwise (no spec built). No C++/
+///        Rust/etc. syntax — `constraints_init` is pre-built via the shared
+///        text-formatting helpers (make_integer_pc / make_string_constraints_init)
+///        since those already take fully-resolved parameters and produce
+///        target-agnostic-shaped text; only the surrounding TypeDescriptor
+///        aggregate and FROM-alphabet array emission are backend-specific.
+struct MemberTypeDescriptorSpec {
+    std::string tname;            // static variable name, e.g. "asn_TYP_Parent_member"
+    std::string xer_type_name;    // e.g. "INTEGER", "OCTET_STRING"
+    int         universal_tag;    // asn1::UniversalTag::* value
+    std::string constraints_init; // pre-built Constraints{...} initializer text
+    std::string per_handler;      // e.g. "&asn1::per_integer_handler"
+    std::string ber_handler;      // e.g. "&asn1::ber_integer_handler"
+    std::string cpp_type;         // TypeLifecycleOps<T> storage type
+    std::string xer_tail;         // ", asn1::XerEncoding::Base64" or ""
+    std::string alpha_prefix;     // empty = no FROM-alphabet arrays needed
+    std::vector<uint8_t> alphabet; // paired with alpha_prefix
+};
+
 /// @brief Confines identifier-escaping and naming-convention decisions that
 ///        are inherently target-language-specific.
 ///
@@ -224,6 +264,34 @@ public:
     virtual void emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
         throw std::logic_error("emit_builtin_alias_cpp: not implemented for this backend");
+    }
+
+    /// @brief Emit the static setter/checker pair for a SEQUENCE/SET member's
+    ///        DEFAULT value (X.680 §25.1).
+    /// @param spec        Resolved, backend-agnostic decision (see DefaultValueSpec).
+    /// @param type_name   Target-language storage type for the member.
+    /// @param parent_name Enclosing SEQUENCE/SET type identifier.
+    /// @param member_name Member identifier.
+    /// @param os          Output stream to write to.
+    /// @note Default throws — same rationale as emit_enumerated_hpp. The
+    ///       caller (Generator::emit_default_setter) derives the returned
+    ///       reference string itself (deterministic from parent_name/
+    ///       member_name), so this method is void, not string-returning.
+    virtual void emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
+                                      const std::string& parent_name, const std::string& member_name,
+                                      std::ostream& os) const {
+        (void)spec; (void)type_name; (void)parent_name; (void)member_name; (void)os;
+        throw std::logic_error("emit_default_setter: not implemented for this backend");
+    }
+
+    /// @brief Emit the static per-member TypeDescriptor for an inline-
+    ///        constrained SEQUENCE/CHOICE member.
+    /// @param spec Resolved, backend-agnostic decision (see MemberTypeDescriptorSpec).
+    /// @param os   Output stream to write to.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_member_type_descriptor: not implemented for this backend");
     }
 };
 
