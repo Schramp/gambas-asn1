@@ -167,18 +167,33 @@ bool Generator::member_is_explicit(const ast::Tag& tag, const ast::TypeDef& memb
     return member_type_is_choice(member_type) || member_type_is_any(member_type);
 }
 
-// Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
-std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) const {
-    if (!tag.present()) return "";
+// Decision: does this member carry an explicit BER tag override, and if so
+// what class/number/encoding-form applies? Plain data, no C++ syntax —
+// separated from format_tag_literal() so a future backend can consume the
+// decision without going through C++ text formatting.
+std::optional<TagSpec> Generator::tag_spec_for(const ast::Tag& tag, bool constructed) const {
+    if (!tag.present()) return std::nullopt;
+    return TagSpec{tag.cls, tag.number, constructed};
+}
+
+// C++-specific emission: TagSpec -> "asn1::Tag{...}" literal string.
+static std::string format_tag_literal(const TagSpec& t) {
     std::string cls;
-    switch (tag.cls) {
+    switch (t.cls) {
     case ast::TagClass::Universal:   cls = "asn1::TagClass::Universal";   break;
     case ast::TagClass::Application: cls = "asn1::TagClass::Application"; break;
     case ast::TagClass::Private:     cls = "asn1::TagClass::Private";     break;
     default:                         cls = "asn1::TagClass::Context";     break;
     }
-    return std::format("asn1::Tag{{{}, {}, {}}}", cls, tag.number,
-                        constructed ? "true" : "false");
+    return std::format("asn1::Tag{{{}, {}, {}}}", cls, t.number,
+                        t.constructed ? "true" : "false");
+}
+
+// Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
+std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) const {
+    auto spec = tag_spec_for(tag, constructed);
+    if (!spec) return "";
+    return format_tag_literal(*spec);
 }
 
 // Returns the natural (universal) tag for a member def's underlying type.
