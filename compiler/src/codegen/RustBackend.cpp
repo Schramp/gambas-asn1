@@ -283,4 +283,43 @@ void RustBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const
     os << "}\n\n";
 }
 
+/// @brief Emit the Rust struct declaration for a SEQUENCE/SET type.
+/// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
+/// @param os   Output stream to write to.
+/// @note `spec.members[i].mtype` is treated as an opaque, already-Rust-
+///       shaped type name string — the same "supplied by the caller"
+///       contract as CppBackend's own consumer today: real Generator ->
+///       RustBackend wiring (a from-Generator::cpp_type_for() value) doesn't
+///       exist yet (no `--target=rust` CLI flag, #245), so nothing in this
+///       pairing can verify a *real* schema's field types compile as Rust —
+///       only that the emitted struct shape is correct for whatever type
+///       strings arrive. `ops`/`tdref`/`def_setter`/`offset_expr` are
+///       C++-runtime-only (per SequenceMemberSpec's own doc) and unused
+///       here; optional members become `Option<T>` rather than C++'s
+///       `unique_ptr<T>`, Rust's natural equivalent.
+void RustBackend::emit_sequence_hpp(const SequenceSpec& spec, std::ostream& os) const {
+    os << "#[derive(Debug, Clone, Default, PartialEq)]\n";
+    os << std::format("pub struct {} {{\n", spec.type_name);
+    for (const auto& m : spec.members) {
+        os << std::format("    pub {}: {},\n", m.mname,
+                           m.optional ? std::format("Option<{}>", m.mtype) : m.mtype);
+    }
+    os << "}\n\n";
+}
+
+/// @brief Emit an inherent `impl` block for a SEQUENCE/SET type.
+/// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
+/// @param os   Output stream to write to.
+/// @note Scope is "struct + fields" per this pairing — no setter/validation
+///       machinery (Rust's `pub` fields + `Option<T>` don't need C++'s
+///       unique_ptr-based setter dance); a real `new()` that just delegates
+///       to the struct's own `#[derive(Default)]`, not a stub.
+void RustBackend::emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) const {
+    os << std::format("impl {} {{\n", spec.type_name);
+    os << "    pub fn new() -> Self {\n";
+    os << "        Self::default()\n";
+    os << "    }\n";
+    os << "}\n\n";
+}
+
 } // namespace asn1::codegen

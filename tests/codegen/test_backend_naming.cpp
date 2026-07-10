@@ -320,6 +320,66 @@ int main() {
               rust_os.str());
     }
 
+    // emit_sequence_hpp/cpp: seventh real construct pair (SEQUENCE, #231/#239).
+    // One required INTEGER member, one optional String member.
+    {
+        SequenceSpec spec;
+        spec.type_name = "MySeq";
+        spec.xer_name  = "MySeq";
+        spec.has_optional_members = true;
+        spec.mcount = 2;
+        spec.ext_at = -1;
+        spec.roms_count = 1;
+        spec.is_set = false;
+
+        SequenceMemberSpec req;
+        req.asn1_name = "count";
+        req.mtype = "int64_t";
+        req.mname = "count";
+        req.eff_tag = "asn1::Tag::universal(2, false)";
+        req.optional = false;
+        req.tdref = "&asn_DEF_MyInt";
+        req.def_setter = "nullptr";
+        req.offset_expr = "ASN1CPP_OFFSETOF(MySeq, count)";
+        req.ops = "{ nullptr, nullptr, nullptr }";
+        spec.members.push_back(req);
+
+        SequenceMemberSpec opt;
+        opt.asn1_name = "label";
+        opt.mtype = "String";
+        opt.mname = "label";
+        opt.eff_tag = "asn1::Tag::universal(12, false)";
+        opt.optional = true;
+        opt.tdref = "&asn_DEF_Utf8String";
+        opt.def_setter = "nullptr";
+        opt.offset_expr = "asn1::kInvalidMemberOffset";
+        opt.ops = "{ &_Ops_MySeq_label::check, &_Ops_MySeq_label::set, &_Ops_MySeq_label::get }";
+        spec.members.push_back(opt);
+
+        std::ostringstream cpp_hpp, cpp_cpp, rust_hpp, rust_cpp;
+        c.emit_sequence_hpp(spec, cpp_hpp);
+        c.emit_sequence_cpp(spec, cpp_cpp);
+        r.emit_sequence_hpp(spec, rust_hpp);
+        r.emit_sequence_cpp(spec, rust_cpp);
+
+        check("emit_sequence_hpp: C++ produces a class with a unique_ptr optional member",
+              cpp_hpp.str().find("class MySeq : public asn1::SequenceBase<MySeq>") != std::string::npos &&
+              cpp_hpp.str().find("std::unique_ptr<String> label;") != std::string::npos,
+              cpp_hpp.str());
+        check("emit_sequence_cpp: C++ produces a member descriptor table",
+              cpp_cpp.str().find("const asn1::MemberDescriptor MySeq::s_members[]") != std::string::npos,
+              cpp_cpp.str());
+        check("emit_sequence_hpp: Rust produces a real struct with Option<T> for the optional member",
+              rust_hpp.str().find("pub struct MySeq {") != std::string::npos &&
+              rust_hpp.str().find("pub count: int64_t,") != std::string::npos &&
+              rust_hpp.str().find("pub label: Option<String>,") != std::string::npos,
+              rust_hpp.str());
+        check("emit_sequence_cpp: Rust produces a real impl block with new()",
+              rust_cpp.str().find("impl MySeq {") != std::string::npos &&
+              rust_cpp.str().find("Self::default()") != std::string::npos,
+              rust_cpp.str());
+    }
+
     // Generator accepts an injected Backend (not just the default CppBackend)
     // — proves the seam #216 built is real, not just declared. Construction
     // only (no generate() call — that still hardcodes C++ text emission
