@@ -4,6 +4,46 @@
 
 namespace asn1::codegen {
 
+/// @brief Format a tag decision as a C++ `asn1::Tag{...}` literal string.
+/// @param tag_spec The decision to format (class, number, encoding form).
+/// @return A C++ expression string, e.g. `"asn1::Tag{asn1::TagClass::Context, 1, false}"`.
+/// @note Shared by Generator::tag_literal/natural_tag_for (not yet
+///       migrated — used throughout SEQUENCE/CHOICE emission) and
+///       CppBackend::emit_builtin_alias_cpp. Defined in CppBackend.cpp.
+std::string format_tag_literal(const TagSpec& tag_spec);
+
+/// @brief Returns the name of the global `asn_DEF_*` descriptor for a
+///        restricted built-in string type, or nullptr for types without a
+///        fixed alphabet (UTF8String, etc.). Pure text lookup — shared
+///        between CppBackend::make_string_constraints_init's helpers and
+///        Generator.cpp's emit_member_type_descriptor. Defined in
+///        CppBackend.cpp.
+/// @see X.680 §41 — restricted character string types and their canonical alphabets.
+const char* builtin_def_name(ast::BuiltinType bt);
+
+/// @brief Emit static FROM-alphabet lookup tables (decode + encode arrays)
+///        into a generated `.cpp` file. Pure C++ text formatting — shared
+///        between CppBackend::emit_builtin_alias_cpp and Generator.cpp's
+///        inline-constrained-member handling (emit_member_type_descriptor).
+///        Defined in CppBackend.cpp.
+/// @param prefix   Name prefix for the static arrays (e.g. `"asn_FROM_MyStr"`).
+/// @param alphabet Sorted FROM-alphabet character values (non-empty).
+void emit_from_alphabet_arrays(std::ostream& os, const std::string& prefix,
+                                const std::vector<uint8_t>& alphabet);
+
+/// @brief Build a `Constraints` aggregate-initializer string for a
+///        character string type. Pure C++ text formatting — shared between
+///        CppBackend::emit_builtin_alias_cpp and Generator.cpp's
+///        inline-constrained-member handling (emit_member_type_descriptor).
+///        Defined in CppBackend.cpp.
+/// @see The original Generator::make_string_constraints_init docs (moved
+///      here) for the parameter-by-parameter contract — unchanged.
+std::string make_string_constraints_init(
+    int flags, int sc_range_bits, int64_t sc_lower, int64_t sc_upper,
+    const std::vector<uint8_t>& alphabet,
+    const std::string& alpha_prefix = "",
+    std::optional<ast::BuiltinType> builtin_bt = std::nullopt);
+
 /// @brief Emit a `const asn1::TypeDescriptor ... = {...};` initializer.
 ///        Pure C++ text formatting from already-resolved parameters — no
 ///        decision logic, no Generator state. Used by CppBackend's
@@ -77,6 +117,7 @@ public:
     void emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& os) const override;
     void emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) const override;
     void emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) const override;
+    void emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const override;
 };
 
 } // namespace asn1::codegen
