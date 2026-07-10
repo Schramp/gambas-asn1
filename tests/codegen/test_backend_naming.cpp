@@ -245,6 +245,55 @@ int main() {
               rust_os.str());
     }
 
+    // emit_default_setter / emit_member_type_descriptor: fifth real
+    // construct pair (shared member-emission helpers, #229/#237).
+    {
+        DefaultValueSpec spec;
+        spec.kind = DefaultValueSpec::Kind::Int;
+        spec.int_val = 42;
+
+        std::ostringstream cpp_os, rust_os;
+        c.emit_default_setter(spec, "int64_t", "MySeq", "myField", cpp_os);
+        r.emit_default_setter(spec, "i64", "MySeq", "myField", rust_os);
+
+        check("emit_default_setter: C++ produces a setter/checker pair",
+              cpp_os.str().find("_setdef_MySeq_myField") != std::string::npos &&
+              cpp_os.str().find("_isdef_MySeq_myField") != std::string::npos,
+              cpp_os.str());
+        check("emit_default_setter: Rust produces a real accessor function (not a stub)",
+              rust_os.str().find("pub fn my_seq_myField_default() -> i64 {") != std::string::npos &&
+              rust_os.str().find("42") != std::string::npos,
+              rust_os.str());
+    }
+    {
+        MemberTypeDescriptorSpec spec;
+        spec.kind = MemberTypeDescriptorSpec::Kind::Integer;
+        spec.tname = "asn_TYP_MySeq_myField";
+        spec.storage_kind = IntStorageKind::S64;
+        spec.extensible = false;
+        spec.semi_constrained = false;
+        spec.hi_is_large = false;
+        spec.range_bits = 7;
+        spec.lower_s64 = 0;
+        spec.upper_s64 = 100;
+        spec.lower_u64 = 0;
+        spec.upper_u64 = 100;
+        spec.xer_type_name = "INTEGER";
+        spec.universal_tag = 2;
+
+        std::ostringstream cpp_os, rust_os;
+        c.emit_member_type_descriptor(spec, cpp_os);
+        r.emit_member_type_descriptor(spec, rust_os);
+
+        check("emit_member_type_descriptor: C++ produces a TypeDescriptor",
+              cpp_os.str().find("asn_TYP_MySeq_myField") != std::string::npos,
+              cpp_os.str());
+        check("emit_member_type_descriptor: Rust produces a real range-check function",
+              rust_os.str().find("pub fn asn_t_y_p_my_seq_my_field_in_range(v: i64) -> bool {") != std::string::npos &&
+              rust_os.str().find("v >= 0 && v <= 100") != std::string::npos,
+              rust_os.str());
+    }
+
     // Generator accepts an injected Backend (not just the default CppBackend)
     // — proves the seam #216 built is real, not just declared. Construction
     // only (no generate() call — that still hardcodes C++ text emission

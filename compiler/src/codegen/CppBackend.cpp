@@ -553,15 +553,60 @@ void CppBackend::emit_default_setter(const DefaultValueSpec& spec, const std::st
 }
 
 void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const {
-    if (!spec.alpha_prefix.empty())
-        emit_from_alphabet_arrays(os, spec.alpha_prefix, spec.alphabet);
+    using Kind = MemberTypeDescriptorSpec::Kind;
+    std::string pc, per_h, ber_h, cpp_t, xer_tail;
+
+    if (spec.kind == Kind::Integer) {
+        int ik = (spec.storage_kind == IntStorageKind::U64)       ? asn1::Constraints::INT_U64
+               : (spec.storage_kind == IntStorageKind::I128)      ? asn1::Constraints::INT_I128
+               : (spec.storage_kind == IntStorageKind::ARBITRARY) ? asn1::Constraints::INT_ARBITRARY
+               : asn1::Constraints::INT_S64;
+        if (spec.semi_constrained) {
+            int flags = asn1::Constraints::SEMI_CONSTRAINED
+                      | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+            pc = make_integer_pc(flags, -1, ik, spec.lower_s64, 0,
+                                  spec.lower_u64, std::numeric_limits<uint64_t>::max());
+        } else {
+            int flags = asn1::Constraints::CONSTRAINED
+                      | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+            pc = make_integer_pc(flags, spec.range_bits, ik, spec.lower_s64, spec.upper_s64,
+                                  spec.lower_u64, spec.upper_u64);
+        }
+        per_h = (spec.storage_kind == IntStorageKind::U64)
+            ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
+        ber_h = (spec.storage_kind == IntStorageKind::U64)
+            ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
+        cpp_t = (spec.storage_kind == IntStorageKind::U64) ? "asn1::UInteger" : "asn1::Integer";
+    } else {
+        if (!spec.alpha_prefix.empty())
+            emit_from_alphabet_arrays(os, spec.alpha_prefix, spec.alphabet);
+        int all_flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
+                       | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+        std::optional<ast::BuiltinType> bbt = spec.alphabet.empty()
+            ? std::optional{spec.builtin_type} : std::nullopt;
+        bool use_default = !spec.has_size_constraint && spec.alphabet.empty()
+                          && (!bbt || !builtin_def_name(*bbt));
+        pc = use_default
+            ? "{}"
+            : make_string_constraints_init(all_flags, spec.size_range_bits, spec.size_lower,
+                                            spec.size_upper, spec.alphabet, spec.alpha_prefix, bbt);
+        per_h = "&asn1::per_string_handler";
+        if (spec.builtin_type == ast::BuiltinType::BitString)   per_h = "&asn1::per_bitstring_handler";
+        if (spec.builtin_type == ast::BuiltinType::OctetString) per_h = "&asn1::per_octetstring_handler";
+        ber_h = "&asn1::ber_string_handler";
+        if (spec.builtin_type == ast::BuiltinType::BitString)   ber_h = "&asn1::ber_bitstring_handler";
+        if (spec.builtin_type == ast::BuiltinType::OctetString) ber_h = "&asn1::ber_octetstring_handler";
+        cpp_t = native_builtin_type(spec.builtin_type);
+        xer_tail = spec.needs_xer ? ", asn1::XerEncoding::Base64" : "";
+    }
+
     os << std::format(
         "static const asn1::TypeDescriptor {} = "
         "{{ \"{}\", asn1::Tag::universal({}, false), "
         "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
         "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}){}}};\n",
-        spec.tname, spec.xer_type_name, spec.universal_tag, spec.constraints_init,
-        spec.per_handler, spec.ber_handler, spec.cpp_type, spec.xer_tail);
+        spec.tname, spec.xer_type_name, spec.universal_tag, pc,
+        per_h, ber_h, cpp_t, xer_tail);
 }
 
 void CppBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const {
