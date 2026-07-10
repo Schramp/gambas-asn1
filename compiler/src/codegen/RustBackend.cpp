@@ -201,23 +201,10 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
         rust_type = type_name;
         literal = std::format("{}", spec.int_val);
         break;
-    case Kind::String: {
+    case Kind::String:
         rust_type = "String";
-        std::string esc;
-        for (unsigned char c : spec.string_val) {
-            if      (c == '\\') esc += "\\\\";
-            else if (c == '"')  esc += "\\\"";
-            else if (c == '\n') esc += "\\n";
-            else if (c == '\r') esc += "\\r";
-            else if (c == '\t') esc += "\\t";
-            else if (c < 0x20 || c == 0x7f)
-                esc += std::format("\\x{:02x}", c);
-            else
-                esc += static_cast<char>(c);
-        }
-        literal = std::format("\"{}\".to_string()", esc);
+        literal = std::format("\"{}\".to_string()", escape_string_literal(spec.string_val));
         break;
-    }
     case Kind::EnumRef:
         rust_type = type_name;
         literal = std::format("{}::{}", type_name, variant_name(*this, spec.enum_name));
