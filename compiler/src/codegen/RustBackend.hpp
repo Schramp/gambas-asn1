@@ -103,6 +103,7 @@ public:
     void emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& os) const override;
     void emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) const override;
     void emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) const override;
+    void emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const override;
 };
 
 } // namespace asn1::codegen

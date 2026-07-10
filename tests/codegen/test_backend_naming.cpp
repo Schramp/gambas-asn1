@@ -168,6 +168,83 @@ int main() {
               rust_cpp.str());
     }
 
+    // Regression: BuiltinAliasSpec must distinguish "has a SIZE constraint at
+    // all" (has_size_constraint) from "has a finite upper bound"
+    // (size_bounded) — SIZE(5..MAX) is semi-constrained, has_size_constraint
+    // but not size_bounded. A prior version conflated the two and always set
+    // SIZE_CONSTRAINED whenever a SIZE clause was present at all, even
+    // semi-constrained ones (caught while designing the Rust builtin-alias
+    // pairing, before it was exercised by any real schema).
+    {
+        BuiltinAliasSpec bounded;
+        bounded.type_name = "Bounded";
+        bounded.xer_name  = "Bounded";
+        bounded.builtin_type = asn1::ast::BuiltinType::OctetString;
+        bounded.has_size_constraint = true;
+        bounded.size_bounded = true;
+        bounded.size_range_bits = 4;
+        bounded.size_lower = 1;
+        bounded.size_upper = 10;
+        bounded.extensible = false;
+        bounded.xer_base64 = false;
+
+        BuiltinAliasSpec semi = bounded;
+        semi.type_name = "Semi";
+        semi.xer_name  = "Semi";
+        semi.size_bounded = false;
+        // size_upper deliberately left at the bounded value (10) here to
+        // prove the fix checks size_bounded, not size_upper's value.
+
+        std::ostringstream bounded_os, semi_os;
+        c.emit_builtin_alias_cpp(bounded, bounded_os);
+        c.emit_builtin_alias_cpp(semi, semi_os);
+
+        // Extract the ".flags=N" integer from each TypeDescriptor's constraints line.
+        auto extract_flags = [](const std::string& s) -> std::string {
+            auto pos = s.find(".flags=");
+            if (pos == std::string::npos) return "";
+            pos += 7;
+            auto end = s.find_first_of(",}", pos);
+            return s.substr(pos, end - pos);
+        };
+        std::string bounded_flags = extract_flags(bounded_os.str());
+        std::string semi_flags    = extract_flags(semi_os.str());
+        check("BuiltinAliasSpec: bounded vs semi-constrained SIZE produce different flags",
+              !bounded_flags.empty() && !semi_flags.empty() && bounded_flags != semi_flags,
+              "bounded=" + bounded_flags + " semi=" + semi_flags);
+    }
+
+    // emit_builtin_alias_cpp: fourth real construct pair (builtin-alias).
+    // Bounded SIZE constraint on an OCTET STRING.
+    {
+        BuiltinAliasSpec spec;
+        spec.type_name = "MyBytes";
+        spec.xer_name  = "MyBytes";
+        spec.builtin_type = asn1::ast::BuiltinType::OctetString;
+        spec.has_size_constraint = true;
+        spec.size_bounded = true;
+        spec.size_range_bits = 4;
+        spec.size_lower = 1;
+        spec.size_upper = 10;
+        spec.extensible = false;
+        spec.xer_base64 = false;
+
+        std::ostringstream cpp_os, rust_os;
+        c.emit_builtin_alias_cpp(spec, cpp_os);
+        r.emit_builtin_alias_cpp(spec, rust_os);
+
+        check("native_int_type is unrelated; emit_builtin_alias_cpp: C++ produces a TypeDescriptor",
+              cpp_os.str().find("asn_DEF_MyBytes") != std::string::npos,
+              cpp_os.str());
+        check("emit_builtin_alias_cpp: Rust produces a real type alias (not a stub)",
+              rust_os.str().find("pub type MyBytes = Vec<u8>;") != std::string::npos,
+              rust_os.str());
+        check("emit_builtin_alias_cpp: Rust produces a real size-check function",
+              rust_os.str().find("pub fn my_bytes_size_ok(v: &Vec<u8>) -> bool {") != std::string::npos &&
+              rust_os.str().find("(v.len() as i64) >= 1 && (v.len() as i64) <= 10") != std::string::npos,
+              rust_os.str());
+    }
+
     // Generator accepts an injected Backend (not just the default CppBackend)
     // — proves the seam #216 built is real, not just declared. Construction
     // only (no generate() call — that still hardcodes C++ text emission
