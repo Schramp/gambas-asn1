@@ -874,21 +874,20 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
         auto ir = extract_integer_range(m);
         if (ir.has_value) {
             MemberTypeDescriptorSpec spec;
+            spec.kind = MemberTypeDescriptorSpec::Kind::Integer;
             spec.tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
             int64_t lo = ir.lo, hi = ir.hi;
-            bool ext = is_constraint_extensible(m);
-            auto kind = classify_integer_storage(m);
-            int ik = (kind == IntStorageKind::U64)       ? asn1::Constraints::INT_U64
-                   : (kind == IntStorageKind::I128)      ? asn1::Constraints::INT_I128
-                   : (kind == IntStorageKind::ARBITRARY) ? asn1::Constraints::INT_ARBITRARY
-                   : asn1::Constraints::INT_S64;
+            spec.extensible = is_constraint_extensible(m);
+            spec.storage_kind = classify_integer_storage(m);
+            spec.semi_constrained = ir.truly_max;
+            spec.hi_is_large = ir.hi_is_large;
+            spec.lower_s64 = lo;
             if (ir.truly_max) {
                 // Truly semi-constrained (..MAX): no upper cap.
-                int flags = asn1::Constraints::SEMI_CONSTRAINED
-                          | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-                spec.constraints_init = make_integer_pc(flags, -1, ik, lo, 0,
-                    static_cast<uint64_t>(lo >= 0 ? lo : 0),
-                    std::numeric_limits<uint64_t>::max());
+                spec.range_bits = -1;
+                spec.upper_s64 = 0;
+                spec.lower_u64 = static_cast<uint64_t>(lo >= 0 ? lo : 0);
+                spec.upper_u64 = std::numeric_limits<uint64_t>::max();
             } else if (ir.hi_is_large) {
                 // TOK_number_large upper bound (e.g. UINT64_MAX).
                 uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
@@ -896,25 +895,19 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
                 int rb = (range_count_m1 == std::numeric_limits<uint64_t>::max())
                     ? 64 : 0;
                 if (rb == 0) for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
-                int flags = asn1::Constraints::CONSTRAINED
-                          | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-                spec.constraints_init = make_integer_pc(flags, rb, ik, lo, hi, u_lo, ir.hi_u64);
+                spec.range_bits = rb;
+                spec.upper_s64 = hi;
+                spec.lower_u64 = u_lo;
+                spec.upper_u64 = ir.hi_u64;
             } else {
                 int64_t rc = hi - lo + 1;
                 int rb = 0;
                 if (rc > 1) for (int64_t v = rc - 1; v > 0; v >>= 1) ++rb;
-                int flags = asn1::Constraints::CONSTRAINED
-                          | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-                uint64_t u_lo = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
-                uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
-                spec.constraints_init = make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi);
+                spec.range_bits = rb;
+                spec.upper_s64 = hi;
+                spec.lower_u64 = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
+                spec.upper_u64 = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
             }
-            spec.per_handler = (kind == IntStorageKind::U64)
-                ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
-            spec.ber_handler = (kind == IntStorageKind::U64)
-                ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
-            spec.cpp_type = (kind == IntStorageKind::U64)
-                ? "asn1::UInteger" : "asn1::Integer";
             spec.xer_type_name = "INTEGER";
             spec.universal_tag = asn1::UniversalTag::Integer;
             return spec;
@@ -950,33 +943,30 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
         if (*bt == BT::Utf8String) alphabet.clear();
         if (sr || !alphabet.empty() || needs_xer) {
             MemberTypeDescriptorSpec spec;
+            spec.kind = MemberTypeDescriptorSpec::Kind::Sizeable;
+            spec.builtin_type = *bt;
             // Compute SIZE constraint fields.
-            int     sc_flags = 0, sc_range_bits = 0;
-            int64_t sc_lower = 0, sc_upper = 0;
+            spec.has_size_constraint = sr.has_value();
+            spec.size_bounded = sr.has_value()
+                && sr->second != std::numeric_limits<int64_t>::max();
             if (sr) {
                 auto sc = compute_size_constraint(sr, is_constraint_extensible(m));
-                sc_flags = sc.flags; sc_range_bits = sc.range_bits;
-                sc_lower = sc.lower; sc_upper = sc.upper;
+                spec.size_range_bits = sc.range_bits;
+                spec.size_lower = sc.lower; spec.size_upper = sc.upper;
             }
-            bool ext = is_constraint_extensible(m);
+            spec.extensible = is_constraint_extensible(m);
             // FROM("A".."Z",...) has the extension marker inside the FromConstraint;
             // is_constraint_extensible only checks the outer Constraint::extensible.
-            if (!ext && !alphabet.empty()) {
+            if (!spec.extensible && !alphabet.empty()) {
                 walk_type_constraints(m, [&](const ast::ConstraintBody& body) {
                     auto* fc = std::get_if<ast::FromConstraint>(&body);
-                    if (fc && fc->inner && fc->inner->extensible) ext = true;
+                    if (fc && fc->inner && fc->inner->extensible) spec.extensible = true;
                 });
             }
-            int  all_flags = sc_flags | (ext ? asn1::Constraints::EXTENSIBLE : 0);
             if (!alphabet.empty()) {
                 spec.alpha_prefix = std::format("asn_FROM_{}_{}", parent_cname, mname);
                 spec.alphabet = alphabet;
             }
-            std::optional<ast::BuiltinType> bbt = alphabet.empty() ? std::optional{*bt} : std::nullopt;
-            spec.constraints_init = (!sr && alphabet.empty() && (!bbt || !builtin_def_name(*bbt)))
-                ? "{}"
-                : make_string_constraints_init(all_flags, sc_range_bits, sc_lower, sc_upper,
-                                               alphabet, spec.alpha_prefix, bbt);
             // Use the matching asn_DEF_*'s public name as the XER tag name —
             // BerCodec / XerCodec consult it for primitive type names.
             const char* tn = nullptr;
@@ -1000,14 +990,7 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
             spec.tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
             spec.xer_type_name = tn;
             spec.universal_tag = *utag;
-            spec.per_handler = "&asn1::per_string_handler";
-            if (*bt == BT::BitString)   spec.per_handler = "&asn1::per_bitstring_handler";
-            if (*bt == BT::OctetString) spec.per_handler = "&asn1::per_octetstring_handler";
-            spec.ber_handler = "&asn1::ber_string_handler";
-            if (*bt == BT::BitString)   spec.ber_handler = "&asn1::ber_bitstring_handler";
-            if (*bt == BT::OctetString) spec.ber_handler = "&asn1::ber_octetstring_handler";
-            spec.cpp_type = cpp_type_for(m);
-            spec.xer_tail = needs_xer ? ", asn1::XerEncoding::Base64" : "";
+            spec.needs_xer = needs_xer;
             return spec;
         }
     }
