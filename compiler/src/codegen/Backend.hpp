@@ -213,6 +213,50 @@ struct SeqOfSpec {
     bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
 };
 
+/// @brief Backend-agnostic decision for one SEQUENCE/SET member. Several
+///        fields are pre-formatted C++ expression text (`ops`, `tdref`,
+///        `def_setter`, `offset_expr`) rather than raw data — same
+///        rationale as SeqOfSpec::elem_ref: they reference C++-runtime-only
+///        constructs (UniquePtrOps aliases, static TypeDescriptor
+///        variables, offsetof macros) that only CppBackend's own emitted
+///        text can resolve. This issue's scope (#231) is moving the
+///        existing C++ emission verbatim off Generator, not redesigning
+///        SEQUENCE for a second backend — that's #239's job.
+/// @note Used identically for both the `.hpp` and `.cpp` passes; the `.hpp`
+///       pass only reads `mtype`/`mname`/`optional`/`setter_*` and leaves
+///       the rest default-constructed (never read by emit_sequence_hpp).
+struct SequenceMemberSpec {
+    std::string asn1_name;      // raw ASN.1 name — MemberDescriptor "name" field
+    std::string mtype;          // C++ storage type
+    std::string mname;          // member identifier
+    std::string eff_tag;        // pre-formatted tag literal expression
+    bool        optional = false;
+    bool        is_explicit = false;
+    bool        has_default = false;
+    std::string ops;            // pre-formatted Ops initializer, e.g. "{ &_Ops_X_Y::check, ... }"
+    std::string tdref;          // reference expression to the member's TypeDescriptor
+    std::string def_setter;     // "&_setdef_Parent_member" or "nullptr"
+    std::string offset_expr;    // "ASN1CPP_OFFSETOF(...)" or "asn1::kInvalidMemberOffset"
+    std::string setter_param_type;   // empty = no set_<member>() emitted
+    bool        setter_is_move = false;
+    bool        setter_is_int_alias = false;
+    bool        setter_is_uint_alias = false;
+};
+
+/// @brief Backend-agnostic decision for one SEQUENCE/SET type (X.680 §24/25).
+///        See SequenceMemberSpec's note on why several fields stay
+///        pre-formatted C++ text for this issue's scope.
+struct SequenceSpec {
+    std::string type_name;
+    std::string xer_name;
+    bool        has_optional_members;
+    int         mcount;
+    int         ext_at;
+    int         roms_count;
+    bool        is_set;         // true -> natural tag is SET, else SEQUENCE
+    std::vector<SequenceMemberSpec> members; // root members first, then extension members
+};
+
 /// @brief Confines identifier-escaping and naming-convention decisions that
 ///        are inherently target-language-specific.
 ///
@@ -358,6 +402,24 @@ public:
     virtual void emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
         throw std::logic_error("emit_seq_of_cpp: not implemented for this backend");
+    }
+
+    /// @brief Emit the class/type declaration for a SEQUENCE/SET type.
+    /// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
+    /// @param os   Output stream to write to.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_sequence_hpp(const SequenceSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_sequence_hpp: not implemented for this backend");
+    }
+
+    /// @brief Emit the implementation/definition for a SEQUENCE/SET type.
+    /// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
+    /// @param os   Output stream to write to.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_sequence_cpp: not implemented for this backend");
     }
 };
 
