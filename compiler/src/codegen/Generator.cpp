@@ -832,21 +832,15 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
 // Inline-constrained member TypeDescriptor helpers
 // ---------------------------------------------------------------------------
 
-/// @brief Emit a static per-member TypeDescriptor when the member carries inline constraints.
-/// @param m             Member type definition (may carry value-range, SIZE, or FROM constraints).
-/// @param parent_cname  C++ name of the enclosing SEQUENCE/CHOICE type.
-/// @param mname         Sanitised C++ member name used as the descriptor variable suffix.
-/// @param os            Output stream for the generated `.cpp` file.
-/// @return A C++ expression referencing the descriptor (e.g. `"&asn_TYP_Foo_bar"`).
-/// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
 /// @brief Emit the static per-member TypeDescriptor when the member carries
 ///        inline constraints, delegating the decision to
 ///        build_member_type_descriptor_spec() and text emission to the backend.
 /// @param m             Member type definition (may carry value-range, SIZE, or FROM constraints).
 /// @param parent_cname  C++ name of the enclosing SEQUENCE/CHOICE type.
 /// @param mname         Sanitised C++ member name used as the descriptor variable suffix.
-/// @param os            Output stream for the generated `.cpp` file.
-/// @return A C++ expression referencing the descriptor (e.g. `"&asn_TYP_Foo_bar"`).
+/// @param os            Output stream to write the generated descriptor to.
+/// @return A reference expression to the descriptor (e.g. `"&asn_TYP_Foo_bar"`).
+/// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
 std::string Generator::emit_member_type_descriptor(
     const ast::TypeDef& m, const std::string& parent_cname,
     const std::string& mname, std::ostream& os)
