@@ -12,8 +12,8 @@ namespace asn1::codegen {
 // Storage class for INTEGER types — chosen at codegen time from constraint
 // analysis (Generator::classify_integer_storage). Backend-agnostic: a
 // backend maps each kind to its own native storage type (see
-// Backend::native_int_type). Moved here from Generator.hpp for #227 —
-// IntegerSpec (below) needs it, and Backend.hpp can't include Generator.hpp
+// Backend::native_int_type). Lives here, not Generator.hpp, because
+// IntegerSpec (below) needs it and Backend.hpp can't include Generator.hpp
 // without a cycle (Generator.hpp already includes Backend.hpp).
 enum class IntStorageKind {
     S64,       // int64_t  — asn1::Integer (default; constrained or signed ranges)
@@ -79,7 +79,7 @@ struct IntegerSpec {
 /// a `Backend` to turn ASN.1 names into valid identifiers for its target
 /// language. `CppBackend` is the only implementation today; a future Rust
 /// backend implements the same interface with its own keyword list and
-/// naming conventions (part of gambas-asn1#214/#216).
+/// naming conventions.
 class Backend {
 public:
     virtual ~Backend() = default;
@@ -119,9 +119,9 @@ public:
     ///        `asn1::UInteger` in C++). Distinct from the top-level named-type
     ///        alias target `emit_integer_hpp` picks — see its note.
     /// @note Default throws — same rationale as emit_enumerated_hpp: a
-    ///       backend without INTEGER support yet (gambas-asn1#225's
-    ///       pairwise migration) stays valid and instantiable, just can't
-    ///       be used for INTEGER-typed members until it overrides this.
+    ///       backend without INTEGER support yet stays valid and
+    ///       instantiable, just can't be used for INTEGER-typed members
+    ///       until it overrides this.
     virtual std::string native_int_type(IntStorageKind kind) const {
         (void)kind;
         throw std::logic_error("native_int_type: not implemented for this backend");
@@ -131,10 +131,9 @@ public:
     /// @param spec Resolved, backend-agnostic decision (see EnumeratedSpec).
     /// @param os   Output stream to write to.
     /// @note Default throws — a backend that hasn't implemented this
-    ///       construct yet (gambas-asn1#225's pairwise migration) stays a
-    ///       valid, instantiable Backend; it just can't be used for
-    ///       ENUMERATED types until it overrides this. Loud failure beats
-    ///       silently emitting the wrong language's syntax.
+    ///       construct yet stays a valid, instantiable Backend; it just
+    ///       can't be used for ENUMERATED types until it overrides this.
+    ///       Loud failure beats silently emitting the wrong language's syntax.
     virtual void emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
         throw std::logic_error("emit_enumerated_hpp: not implemented for this backend");

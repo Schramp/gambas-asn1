@@ -100,9 +100,7 @@ inline std::string to_value_name(std::string_view s) {
     return out;
 }
 
-// IntStorageKind now lives in Backend.hpp (moved for #227 — IntegerSpec needs
-// it there, and Backend.hpp can't include Generator.hpp without a cycle).
-// Included transitively via the Backend.hpp include above.
+// IntStorageKind lives in Backend.hpp, included transitively above.
 
 // Backend-agnostic BER tag decision (X.690 §8.1) — class, number, and encoding
 // form (constructed vs primitive). No C++ syntax; a backend formats this into

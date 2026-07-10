@@ -546,8 +546,11 @@ IntStorageKind Generator::classify_integer_storage(const ast::TypeDef& def) cons
     return IntStorageKind::S64;
 }
 
-// Forward decl: defined later in this file (is_constraint_extensible), needed
-// by build_integer_spec below.
+/// @brief True if any top-level constraint on `def` carries a trailing '...'.
+/// @param def Type definition to inspect.
+/// @return Whether `def` is constraint-extensible (X.680 §49.3).
+/// @note Forward-declared here; defined later in this file. build_integer_spec
+///       below needs it before its definition point.
 static bool is_constraint_extensible(const ast::TypeDef& def);
 
 IntegerSpec Generator::build_integer_spec(const ast::TypeDef& def, const std::string& type_name) const {
