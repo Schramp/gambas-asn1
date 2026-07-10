@@ -118,6 +118,10 @@ public:
     void emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) const override;
     void emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) const override;
     void emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const override;
+    void emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
+                              const std::string& parent_name, const std::string& member_name,
+                              std::ostream& os) const override;
+    void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const override;
 };
 
 } // namespace asn1::codegen
