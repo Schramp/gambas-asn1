@@ -614,8 +614,9 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
 void CppBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const {
     os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", spec.type_name);
     os << std::format("    {},\n", spec.elem_ref);
+    int flags = spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0;
     os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
-                      spec.flags, spec.range_bits, spec.size_lower, spec.size_upper);
+                      flags, spec.range_bits, spec.size_lower, spec.size_upper);
     if (spec.elem_xer_name)
         os << std::format("    \"{}\",\n", *spec.elem_xer_name);
     os << "};\n\n";

@@ -206,9 +206,9 @@ struct SeqOfSpec {
     std::string type_name;
     std::string xer_name;
     std::string elem_ref;        // reference expression to the element's TypeDescriptor
-    int         flags;
+    bool        size_bounded;    // true iff the collection SIZE constraint has a finite upper bound
     int         range_bits;
-    int64_t     size_lower, size_upper;
+    int64_t     size_lower, size_upper; // size_upper meaningful only when size_bounded
     std::optional<std::string> elem_xer_name; // X.693 §12: element's declared identifier, if any
     bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
 };
