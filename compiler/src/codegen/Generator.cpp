@@ -2007,33 +2007,38 @@ void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os
 // Emit SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------------
 
+/// @brief Decide the resolved SeqOfSpec, emit the element's own inline-
+///        constrained descriptor (if any) as a side effect, then delegate
+///        the SeqOfSpec + TypeDescriptor text to the backend.
+/// @param def SEQUENCE OF / SET OF type definition.
+/// @param os  Output stream for the generated `.cpp` file.
 void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
     const auto& elem_node = def.is_seq_of()
         ? *std::get<ast::SequenceOfType>(def.body).element
         : *std::get<ast::SetOfType>(def.body).element;
 
+    SeqOfSpec spec;
+    spec.type_name = cname;
+    spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.is_set_of = def.is_set_of();
+
     // SIZE constraint on collection length
     auto sc = compute_size_constraint(extract_size_range(def));
+    spec.flags = sc.flags; spec.range_bits = sc.range_bits;
+    spec.size_lower = sc.lower; spec.size_upper = sc.upper;
 
-    // SeqOfSpec — when the element is an inline-constrained builtin emit a per-element
+    // When the element is an inline-constrained builtin, emit a per-element
     // TypeDescriptor that carries the constraint; otherwise reuse the natural descriptor.
-    // When the element has a declared identifier (X.693 §12), emit a renamed TypeDescriptor
-    // so that XerCodec sees the right tag via edef.name without any runtime rename.
     std::ostringstream elem_decl;
-    bool has_declared_name = !elem_node.name.empty();
-    std::string elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", elem_decl);
+    spec.elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", elem_decl);
     // Flush any per-element constrained descriptor before the SeqOfSpec.
     if (!elem_decl.str().empty()) os << elem_decl.str();
 
-    os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", cname);
-    os << std::format("    {},\n", elem_ref);
-    os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
-                      sc.flags, sc.range_bits, sc.lower, sc.upper);
     // X.693 §12: declared element identifier overrides the XER tag at the use site.
     // Exception: asn1c uses <NULL/> for NULL-typed elements regardless of declared name.
     // Similarly, ANY keeps is_any=true semantics and must not be renamed.
-    if (has_declared_name) {
+    if (!elem_node.name.empty()) {
         using BT = ast::BuiltinType;
         bool is_null_or_any = false;
         if (auto* bt = std::get_if<BT>(&elem_node.body)) {
@@ -2044,18 +2049,10 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
                     is_null_or_any = (*rbt == BT::Null || *rbt == BT::Any);
             }
         }
-        if (!is_null_or_any)
-            os << std::format("    \"{}\",\n", elem_node.name);
+        if (!is_null_or_any) spec.elem_xer_name = elem_node.name;
     }
-    os << "};\n\n";
 
-    // TypeDescriptor
-    uint32_t of_tag = def.is_set_of() ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
-    emit_type_descriptor(os, cname,
-        def.xer_name.empty() ? def.name : def.xer_name,
-        std::format("asn1::Tag::universal({}, true)", of_tag),
-        false, false, false, true, "asn1::TypeKind::SeqOf",
-        "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler");
+    backend_.emit_seq_of_cpp(spec, os);
 }
 
 void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
