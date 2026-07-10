@@ -501,144 +501,42 @@ split_members(const ast::TypeDef& def)
 }
 
 // ---------------------------------------------------------------------------
-// Shared TypeDescriptor emitter
-// ---------------------------------------------------------------------------
-
-static void emit_type_descriptor(std::ostream& os,
-                                 const std::string& cname,
-                                 const std::string& xer_name,
-                                 const std::string& tag_expr,
-                                 bool has_enum, bool has_seq,
-                                 bool has_choice, bool has_seqof,
-                                 const std::string& kind,
-                                 const std::string& per_handler = "nullptr",
-                                 const std::string& ber_handler = "nullptr",
-                                 bool use_class_scope = false) {
-    auto sp = [&](bool h) -> std::string {
-        if (!h) return "nullptr";
-        return use_class_scope ? std::format("&{}::asn_SPC", cname)
-                               : std::format("&asn_SPC_{}", cname);
-    };
-    if (use_class_scope)
-        os << std::format("const asn1::TypeDescriptor {}::asn_DEF = {{\n", cname);
-    else
-        os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", xer_name);
-    os << std::format("    {},\n", tag_expr);
-    os << std::format("    {}, {}, {}, {}, {{}} /* constraints */,\n",
-                      sp(has_enum), sp(has_seq), sp(has_choice), sp(has_seqof));
-    os << std::format("    false, {} /* kind */,\n", kind);
-    os << std::format("    {} /* per_handler */,\n", per_handler);
-    os << std::format("    {} /* ber_handler */,\n", ber_handler);
-    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cname);
-    os << "};\n\n";
-}
-
-// ---------------------------------------------------------------------------
 // Emit ENUMERATED
 // ---------------------------------------------------------------------------
 
-void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
+/// @brief Decide the resolved value list for an ENUMERATED type — automatic
+///        numbering (X.680 §20.6) applied, root and extension values in one
+///        continuous sequence. Backend-agnostic: shared by both
+///        emit_enumerated_hpp and emit_enumerated_cpp (previously each
+///        recomputed this — now computed once).
+static EnumeratedSpec build_enumerated_spec(const ast::TypeDef& def,
+                                            const std::string& type_name) {
+    EnumeratedSpec spec;
+    spec.type_name = type_name;
+    spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.extensible = false;
+    spec.root_count  = 0;
 
-    // Count non-extension enum values
-    int count = 0;
-    bool extensible = false;
-    for (const auto& ev : def.enum_values) {
-        if (ev.name == "...") { extensible = true; continue; }
-        ++count;
-    }
-
-    // class inheriting EnumValue — plain inner enum so values leak into class scope
-    os << std::format("class {} : public asn1::EnumValue {{\npublic:\n", cname);
-    // Enum values are plain enum (not enum class) — they inject into class scope.
-    // Reserve all generated method names so values can't clash with them.
-    os << "    enum Enm : long {\n";
     long auto_val = 0;
+    bool past_ext = false;
     for (const auto& ev : def.enum_values) {
-        if (ev.name == "...") { continue; }
+        if (ev.name == "...") { spec.extensible = true; past_ext = true; continue; }
         long v = static_cast<long>(ev.number.value_or(auto_val));
-        os << std::format("        {} = {},\n",
-            backend_.escape(backend_.type_name(ev.name),
-                {"present", "value_", "value", "set", "Enm"}), v);
+        spec.values.push_back({ev.name, v});
         auto_val = v + 1;
+        if (!past_ext) ++spec.root_count;
     }
-    if (extensible)
-        os << "        /* extensible */\n";
-    os << "    };\n";
-    os << std::format("    {}() = default;\n", cname);
-    os << std::format("    {}(Enm v) {{ value_ = static_cast<long>(v); }}\n", cname);
-    os << std::format("    {}& operator=(Enm v) {{ value_ = static_cast<long>(v); return *this; }}\n", cname);
-    os << std::format("    Enm present() const {{ return static_cast<Enm>(value_); }}\n");
-    os << std::format("    bool operator==(Enm v) const {{ return value_ == static_cast<long>(v); }}\n");
-    os << std::format("    bool operator!=(Enm v) const {{ return value_ != static_cast<long>(v); }}\n");
-    os << "    using asn1::EnumValue::operator==;\n";
-    os << "    using asn1::EnumValue::operator!=;\n";
-    os << std::format("    static const asn1::EnumEntry    asn_MAP_value2enum[{}];\n", count);
-    os << "    static const asn1::EnumSpec     asn_SPC;\n";
-    os << "    static const asn1::TypeDescriptor asn_DEF;\n";
-    os << "};\n\n";
+    return spec;
+}
 
+void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
+    auto spec = build_enumerated_spec(def, effective_cpp_name(def.name, current_module_));
+    backend_.emit_enumerated_hpp(spec, os);
 }
 
 void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
-
-    // Collect root values (before first "...")
-    bool extensible = false;
-    int ext_root_count = 0;
-    long auto_val = 0;
-    struct EV { long value; std::string name; };
-    std::vector<EV> root_values;
-
-    for (const auto& ev : def.enum_values) {
-        if (ev.name == "...") { extensible = true; break; }
-        long v = static_cast<long>(ev.number.value_or(auto_val));
-        root_values.push_back({v, ev.name});
-        auto_val = v + 1;
-        ++ext_root_count;
-    }
-    // Also collect extension values (auto-numbering continues from last root value)
-    bool past_ext = false;
-    for (const auto& ev : def.enum_values) {
-        if (!past_ext) { if (ev.name == "...") past_ext = true; continue; }
-        long v = static_cast<long>(ev.number.value_or(auto_val));
-        root_values.push_back({v, ev.name});
-        auto_val = v + 1;
-    }
-
-    // value2enum table (sorted by value for binary search)
-    auto sorted = root_values;
-    std::sort(sorted.begin(), sorted.end(), [](const EV& a, const EV& b){ return a.value < b.value; });
-
-    os << std::format("const asn1::EnumEntry {}::asn_MAP_value2enum[] = {{\n", cname);
-    for (const auto& ev : sorted)
-        os << std::format("    {{ {}, \"{}\" }},\n", ev.value, ev.name);
-    os << "};\n\n";
-
-    // PER: root values in definition order (ordinal → value mapping). File-local — not in header.
-    os << std::format("static const long asn_PER_{}_value_order[] = {{\n", cname);
-    for (int i = 0; i < ext_root_count; ++i)
-        os << std::format("    {},\n", root_values[i].value);
-    os << "};\n\n";
-
-    // EnumSpec
-    os << std::format("const asn1::EnumSpec {}::asn_SPC = {{\n", cname);
-    os << std::format("    {}::asn_MAP_value2enum,\n", cname);
-    os << std::format("    {},\n", (int)sorted.size());
-    os << std::format("    {}, /* extensible */\n", extensible ? "true" : "false");
-    os << std::format("    {}, /* root_count */\n", ext_root_count);
-    os << std::format("    asn_PER_{}_value_order\n", cname);
-    os << "};\n\n";
-
-    // TypeDescriptor
-    emit_type_descriptor(os, cname,
-        def.xer_name.empty() ? def.name : def.xer_name,
-        std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Enumerated),
-        true, false, false, false, "asn1::TypeKind::Enumerated",
-        "&asn1::per_enumerated_handler", "&asn1::ber_enumerated_handler",
-        /*use_class_scope=*/true);
-
+    auto spec = build_enumerated_spec(def, effective_cpp_name(def.name, current_module_));
+    backend_.emit_enumerated_cpp(spec, os);
 }
 
 // ---------------------------------------------------------------------------

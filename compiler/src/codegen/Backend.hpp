@@ -2,8 +2,33 @@
 #include <string>
 #include <string_view>
 #include <initializer_list>
+#include <ostream>
+#include <stdexcept>
+#include <vector>
 
 namespace asn1::codegen {
+
+/// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —
+///        which named values apply, in declaration order, with automatic
+///        numbering (X.680 §20.6) already resolved. No C++/Rust/etc. syntax.
+/// @note `type_name` is already resolved via Generator's module-collision
+///       logic (itself backend-agnostic — any target needs the same
+///       cross-module disambiguation) and backend naming (Backend::type_name),
+///       so it's a final identifier, not a raw ASN.1 name. Each `Value::asn1_name`
+///       is deliberately left raw: a backend's `emit_enumerated_*` decides its
+///       own identifier escaping/reserved-name set (e.g. CppBackend guards
+///       against colliding with its own generated method names; a Rust
+///       backend's needs will differ since Rust enum variants live in a
+///       separate namespace from methods).
+struct EnumeratedSpec {
+    struct Value { std::string asn1_name; long value; };
+
+    std::string       type_name;   // final type identifier (see note above)
+    std::string       xer_name;    // XER tag name (X.693) — not an identifier, no escaping needed
+    std::vector<Value> values;     // declaration order, auto-numbering resolved
+    bool              extensible;  // true if def.enum_values contained "..."
+    int               root_count;  // count of values before the first extension marker
+};
 
 /// @brief Confines identifier-escaping and naming-convention decisions that
 ///        are inherently target-language-specific.
@@ -47,6 +72,28 @@ public:
     ///        member name.
     virtual std::string synthetic_name(const std::string& parent,
                                         const std::string& member_name) const = 0;
+
+    /// @brief Emit the header/type-declaration half of an ENUMERATED type.
+    /// @param spec Resolved, backend-agnostic decision (see EnumeratedSpec).
+    /// @param os   Output stream to write to.
+    /// @note Default throws — a backend that hasn't implemented this
+    ///       construct yet (gambas-asn1#225's pairwise migration) stays a
+    ///       valid, instantiable Backend; it just can't be used for
+    ///       ENUMERATED types until it overrides this. Loud failure beats
+    ///       silently emitting the wrong language's syntax.
+    virtual void emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_enumerated_hpp: not implemented for this backend");
+    }
+
+    /// @brief Emit the implementation/definition half of an ENUMERATED type.
+    /// @param spec Resolved, backend-agnostic decision (see EnumeratedSpec).
+    /// @param os   Output stream to write to.
+    /// @note See emit_enumerated_hpp — same default-throws rationale.
+    virtual void emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_enumerated_cpp: not implemented for this backend");
+    }
 };
 
 } // namespace asn1::codegen
