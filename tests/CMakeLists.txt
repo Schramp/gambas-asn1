@@ -1270,10 +1270,11 @@ set_tests_properties(jer_etsi_xval PROPERTIES
     TIMEOUT   60
     LABELS    "jer")
 
-# ---- Backend naming interface: CppBackend vs RustBackend (#216/#217/#226) --
+# ---- Backend naming interface: CppBackend vs RustBackend (#216/#217/#226/#234) --
 add_executable(test_backend_naming
     codegen/test_backend_naming.cpp
-    ${CMAKE_SOURCE_DIR}/compiler/src/codegen/CppBackend.cpp)
+    ${CMAKE_SOURCE_DIR}/compiler/src/codegen/CppBackend.cpp
+    ${CMAKE_SOURCE_DIR}/compiler/src/codegen/RustBackend.cpp)
 target_include_directories(test_backend_naming PRIVATE
     ${CMAKE_SOURCE_DIR}/compiler/src
     ${CMAKE_SOURCE_DIR}/runtime/include)
