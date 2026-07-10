@@ -106,6 +106,15 @@ enum class IntStorageKind {
     ARBITRARY, // vector<uint8_t> — asn1::ArbitraryInteger (stub; unconstrained crypto keys)
 };
 
+// Backend-agnostic BER tag decision (X.690 §8.1) — class, number, and encoding
+// form (constructed vs primitive). No C++ syntax; a backend formats this into
+// its own literal syntax. See Generator::tag_spec_for / format_tag_literal.
+struct TagSpec {
+    ast::TagClass cls;
+    int64_t       number;
+    bool          constructed;
+};
+
 class Generator {
     fs::path                out_dir_;
     sema::Resolver&         resolver_;
@@ -221,6 +230,11 @@ private:
     std::string emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
                                             const std::string& mname, std::ostream& os);
     std::string tag_literal(const ast::Tag& tag, bool constructed) const;
+    // Backend-agnostic tag decision (X.690 §8.1: class + number + encoding form),
+    // extracted from `tag_literal`'s C++-literal-string formatting. `tag_literal`
+    // is now a thin wrapper: tag_spec_for() decides, format_tag_literal() emits.
+    // A future non-C++ backend consumes tag_spec_for() directly.
+    std::optional<TagSpec> tag_spec_for(const ast::Tag& tag, bool constructed) const;
     std::string natural_tag_for(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
     // alt_idx: 0-based index of the alternative in its parent CHOICE.
