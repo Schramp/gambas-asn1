@@ -100,19 +100,7 @@ inline std::string to_value_name(std::string_view s) {
     return out;
 }
 
-// IntStorageKind and TagSpec live in Backend.hpp, included transitively above.
-
-// Backend-agnostic DEFAULT value decision (X.680 §25.1) — which value applies
-// to a DEFAULT member, not how a backend spells it as a literal. No C++
-// syntax; a backend formats this into its own literal/initializer syntax.
-// See Generator::default_value_spec_for / format_default_value_literal.
-struct DefaultValueSpec {
-    enum class Kind { None, Bool, Int, String, EnumRef } kind = Kind::None;
-    bool          bool_val = false;
-    int64_t       int_val  = 0;
-    std::string   string_val;  // Kind::String — raw (unescaped) value
-    std::string   enum_name;   // Kind::EnumRef — ASN.1 name of the named value
-};
+// IntStorageKind, TagSpec, and DefaultValueSpec live in Backend.hpp, included transitively above.
 
 class Generator {
     fs::path                out_dir_;
@@ -246,6 +234,15 @@ private:
     bool        member_is_explicit(const ast::Tag& tag, const ast::TypeDef& member_type) const;
     std::string emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
                                             const std::string& mname, std::ostream& os);
+    /// @brief Decide the resolved MemberTypeDescriptorSpec for an inline-
+    ///        constrained SEQUENCE/CHOICE member — INTEGER value range or
+    ///        SIZE-able-primitive constraints. Needs Generator state
+    ///        (extract_integer_range/extract_size_range/classify_integer_storage
+    ///        use resolver_-backed decisions), so a member like build_integer_spec.
+    /// @return nullopt when the member has no inline constraint worth a
+    ///         dedicated descriptor — caller falls back to type_descriptor_ref_for().
+    std::optional<MemberTypeDescriptorSpec> build_member_type_descriptor_spec(
+        const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname);
     /// @brief Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
     /// @param tag         The member's (possibly absent) tag override.
     /// @param constructed True if the encoding form is constructed, not primitive.

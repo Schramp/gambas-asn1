@@ -492,4 +492,76 @@ void CppBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostre
     os << "};\n";
 }
 
+/// @brief Format a DEFAULT value decision as a C++ initializer expression.
+/// @param mtype C++ type name to construct/qualify.
+/// @param spec  The decision to format (see Generator::default_value_spec_for).
+/// @return e.g. `"MyType{true}"`, `"MyType{\"esc\\\"aped\"}"`, `"MyEnum::Foo"`,
+///         or "" for `Kind::None`.
+static std::string format_default_value_literal(const std::string& mtype,
+                                                  const DefaultValueSpec& spec,
+                                                  const Backend& backend) {
+    using Kind = DefaultValueSpec::Kind;
+    switch (spec.kind) {
+    case Kind::Bool:
+        return std::format("{}{{{}}}", mtype, spec.bool_val ? "true" : "false");
+    case Kind::Int:
+        return std::format("{}{{{}}}", mtype, spec.int_val);
+    case Kind::String: {
+        // Full C escape: backslash, quote, and all control characters.
+        std::string esc;
+        for (unsigned char c : spec.string_val) {
+            if      (c == '\\') esc += "\\\\";
+            else if (c == '"')  esc += "\\\"";
+            else if (c == '\n') esc += "\\n";
+            else if (c == '\r') esc += "\\r";
+            else if (c == '\t') esc += "\\t";
+            else if (c < 0x20 || c == 0x7f)
+                esc += std::format("\\x{:02x}", c);
+            else
+                esc += static_cast<char>(c);
+        }
+        return std::format("{}{{\"{}\"}}", mtype, esc);
+    }
+    case Kind::EnumRef:
+        return std::format("{}::{}", mtype, backend.escape(backend.type_name(spec.enum_name)));
+    case Kind::None:
+    default:
+        return "";
+    }
+}
+
+void CppBackend::emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
+                                      const std::string& parent_name, const std::string& member_name,
+                                      std::ostream& os) const {
+    std::string literal = format_default_value_literal(type_name, spec, *this);
+    std::string fname  = std::format("_setdef_{}_{}", parent_name, member_name);
+    std::string cname2 = std::format("_isdef_{}_{}", parent_name, member_name);
+    os << std::format(
+        "static void {0}(asn1::Asn1Object* p) {{\n"
+        "    using Ops = _Ops_{1}_{2};\n"
+        "    Ops::set(p, true);\n"
+        "    *static_cast<{3}*>(Ops::get(p)) = {4};\n"
+        "}}\n",
+        fname, parent_name, member_name, type_name, literal);
+    os << std::format(
+        "static bool {0}(const asn1::Asn1Object* p) {{\n"
+        "    using Ops = _Ops_{1}_{2};\n"
+        "    if (!Ops::check(p)) return false;\n"
+        "    return *static_cast<const {3}*>(Ops::get(const_cast<asn1::Asn1Object*>(p))) == ({4});\n"
+        "}}\n",
+        cname2, parent_name, member_name, type_name, literal);
+}
+
+void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const {
+    if (!spec.alpha_prefix.empty())
+        emit_from_alphabet_arrays(os, spec.alpha_prefix, spec.alphabet);
+    os << std::format(
+        "static const asn1::TypeDescriptor {} = "
+        "{{ \"{}\", asn1::Tag::universal({}, false), "
+        "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
+        "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}){}}};\n",
+        spec.tname, spec.xer_type_name, spec.universal_tag, spec.constraints_init,
+        spec.per_handler, spec.ber_handler, spec.cpp_type, spec.xer_tail);
+}
+
 } // namespace asn1::codegen
