@@ -6,8 +6,23 @@
 #include <stdexcept>
 #include <vector>
 #include <cstdint>
+#include <optional>
+#include "../ast/TypeDef.hpp"
+#include "../ast/Tag.hpp"
 
 namespace asn1::codegen {
+
+/// @brief Backend-agnostic BER tag decision (X.690 §8.1) — class, number,
+///        and encoding form. No C++/Rust/etc. syntax; a backend formats
+///        this into its own literal syntax (see CppBackend::format_tag_literal).
+/// @note Lives here, not Generator.hpp, for the same reason as
+///       IntStorageKind: BuiltinAliasSpec (below) needs it, and Backend.hpp
+///       can't include Generator.hpp without a cycle.
+struct TagSpec {
+    ast::TagClass cls;          ///< Tag class (Universal/Application/Context/Private).
+    int64_t       number;       ///< Tag number within the class.
+    bool          constructed;  ///< True for constructed encoding form.
+};
 
 // Storage class for INTEGER types — chosen at codegen time from constraint
 // analysis (Generator::classify_integer_storage). Backend-agnostic: a
@@ -69,6 +84,31 @@ struct IntegerSpec {
     int      range_bits;        // -1 when semi_constrained (no fixed upper -> no fixed bit width)
     int64_t  lower_s64, upper_s64;   // signed view (upper_s64 meaningless when hi_is_large)
     uint64_t lower_u64, upper_u64;   // unsigned view (exact when hi_is_large)
+};
+
+/// @brief Backend-agnostic decision for a builtin-alias type (X.680 §19) —
+///        every ASN.1 builtin type except INTEGER and ENUMERATED, which
+///        have their own IntegerSpec/EnumeratedSpec. No C++/Rust/etc.
+///        syntax; a backend maps `builtin_type` to its own runtime codec
+///        handler and native storage type.
+/// @note `builtin_type` is the resolved AST type tag, not a string — reused
+///       directly (matching the existing TagSpec::cls precedent) rather
+///       than duplicated into a parallel backend-agnostic enum: any backend
+///       needs to distinguish OCTET STRING from BOOLEAN etc. the same way,
+///       so the AST's own classification is already the right shape.
+struct BuiltinAliasSpec {
+    std::string            type_name;
+    std::string            xer_name;
+    ast::BuiltinType        builtin_type;
+    std::optional<TagSpec> tag;         // natural tag (X.690 §8.1); always present in practice —
+                                         // builtin-alias types are never CHOICE, the only case
+                                         // natural-tag resolution returns nullopt for
+    std::vector<uint8_t>   alphabet;    // FROM-alphabet constraint (restricted string types); empty = none
+    bool     has_size_constraint;
+    int      size_range_bits;
+    int64_t  size_lower, size_upper;    // meaningful iff has_size_constraint
+    bool     extensible;
+    bool     xer_base64;                // true -> XER encoding uses base64 (X.693, OCTET STRING option)
 };
 
 /// @brief Confines identifier-escaping and naming-convention decisions that
@@ -164,6 +204,21 @@ public:
     virtual void emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
         throw std::logic_error("emit_integer_cpp: not implemented for this backend");
+    }
+
+    /// @brief Emit the implementation/definition for a builtin-alias type
+    ///        (every builtin except INTEGER/ENUMERATED — those have their
+    ///        own emit_integer_*/emit_enumerated_*). Builtin-alias types
+    ///        have no separate header/type-declaration half analogous to
+    ///        emit_enumerated_hpp/emit_integer_hpp — the type alias itself
+    ///        is a one-line `using`/equivalent, generated directly by
+    ///        Generator (not yet a Backend method).
+    /// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).
+    /// @param os   Output stream to write to.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_builtin_alias_cpp: not implemented for this backend");
     }
 };
 
