@@ -167,18 +167,41 @@ bool Generator::member_is_explicit(const ast::Tag& tag, const ast::TypeDef& memb
     return member_type_is_choice(member_type) || member_type_is_any(member_type);
 }
 
-// Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
-std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) const {
-    if (!tag.present()) return "";
-    std::string cls;
-    switch (tag.cls) {
-    case ast::TagClass::Universal:   cls = "asn1::TagClass::Universal";   break;
-    case ast::TagClass::Application: cls = "asn1::TagClass::Application"; break;
-    case ast::TagClass::Private:     cls = "asn1::TagClass::Private";     break;
-    default:                         cls = "asn1::TagClass::Context";     break;
+/// @brief Decide whether a member carries an explicit BER tag override and,
+///        if so, what class/number/encoding-form applies.
+/// @param tag         The member's (possibly absent) tag override.
+/// @param constructed True if the encoding form is constructed, not primitive.
+/// @return The tag decision as plain data, or nullopt if `tag` is absent.
+/// @note Backend-agnostic: no C++ syntax. Separated from format_tag_literal()
+///       so a future non-C++ backend can consume the decision directly.
+std::optional<TagSpec> Generator::tag_spec_for(const ast::Tag& tag, bool constructed) const {
+    if (!tag.present()) return std::nullopt;
+    return TagSpec{tag.cls, tag.number, constructed};
+}
+
+/// @brief Format a tag decision as a C++ `asn1::Tag{...}` literal string.
+/// @param tag_spec The decision to format (class, number, encoding form).
+/// @return A C++ expression string, e.g. `"asn1::Tag{asn1::TagClass::Context, 1, false}"`.
+static std::string format_tag_literal(const TagSpec& tag_spec) {
+    std::string tag_class_literal;
+    switch (tag_spec.cls) {
+    case ast::TagClass::Universal:   tag_class_literal = "asn1::TagClass::Universal";   break;
+    case ast::TagClass::Application: tag_class_literal = "asn1::TagClass::Application"; break;
+    case ast::TagClass::Private:     tag_class_literal = "asn1::TagClass::Private";     break;
+    default:                         tag_class_literal = "asn1::TagClass::Context";     break;
     }
-    return std::format("asn1::Tag{{{}, {}, {}}}", cls, tag.number,
-                        constructed ? "true" : "false");
+    return std::format("asn1::Tag{{{}, {}, {}}}", tag_class_literal, tag_spec.number,
+                        tag_spec.constructed ? "true" : "false");
+}
+
+/// @brief Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
+/// @param tag         The member's (possibly absent) tag override.
+/// @param constructed True if the encoding form is constructed, not primitive.
+/// @return The C++ literal string, or "" if `tag` is absent.
+std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) const {
+    auto spec = tag_spec_for(tag, constructed);
+    if (!spec) return "";
+    return format_tag_literal(*spec);
 }
 
 // Returns the natural (universal) tag for a member def's underlying type.
