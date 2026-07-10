@@ -100,16 +100,7 @@ inline std::string to_value_name(std::string_view s) {
     return out;
 }
 
-// IntStorageKind lives in Backend.hpp, included transitively above.
-
-// Backend-agnostic BER tag decision (X.690 §8.1) — class, number, and encoding
-// form (constructed vs primitive). No C++ syntax; a backend formats this into
-// its own literal syntax. See Generator::tag_spec_for / format_tag_literal.
-struct TagSpec {
-    ast::TagClass cls;
-    int64_t       number;
-    bool          constructed;
-};
+// IntStorageKind and TagSpec live in Backend.hpp, included transitively above.
 
 // Backend-agnostic DEFAULT value decision (X.680 §25.1) — which value applies
 // to a DEFAULT member, not how a backend spells it as a literal. No C++
@@ -236,6 +227,11 @@ private:
     ///        is a member, not a free function.
     IntegerSpec build_integer_spec(const ast::TypeDef& def, const std::string& type_name) const;
     void emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os);
+    /// @brief Decide the resolved BuiltinAliasSpec for a builtin-alias type —
+    ///        natural tag, FROM-alphabet, and SIZE constraint. Needs
+    ///        Generator state (extract_size_range, resolver-backed
+    ///        constraint walking), so a member like build_integer_spec.
+    BuiltinAliasSpec build_builtin_alias_spec(const ast::TypeDef& def, const std::string& type_name) const;
     void emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os);
     void emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os);
     void emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os);

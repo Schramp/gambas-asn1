@@ -177,21 +177,6 @@ std::optional<TagSpec> Generator::tag_spec_for(const ast::Tag& tag, bool constru
     return TagSpec{tag.cls, tag.number, constructed};
 }
 
-/// @brief Format a tag decision as a C++ `asn1::Tag{...}` literal string.
-/// @param tag_spec The decision to format (class, number, encoding form).
-/// @return A C++ expression string, e.g. `"asn1::Tag{asn1::TagClass::Context, 1, false}"`.
-static std::string format_tag_literal(const TagSpec& tag_spec) {
-    std::string tag_class_literal;
-    switch (tag_spec.cls) {
-    case ast::TagClass::Universal:   tag_class_literal = "asn1::TagClass::Universal";   break;
-    case ast::TagClass::Application: tag_class_literal = "asn1::TagClass::Application"; break;
-    case ast::TagClass::Private:     tag_class_literal = "asn1::TagClass::Private";     break;
-    default:                         tag_class_literal = "asn1::TagClass::Context";     break;
-    }
-    return std::format("asn1::Tag{{{}, {}, {}}}", tag_class_literal, tag_spec.number,
-                        tag_spec.constructed ? "true" : "false");
-}
-
 /// @brief Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
 /// @param tag         The member's (possibly absent) tag override.
 /// @param constructed True if the encoding form is constructed, not primitive.
@@ -809,130 +794,6 @@ static void walk_type_constraints(const ast::TypeDef& def, F&& f) {
 // Forward decls: defined later in this file; needed by emit_member_type_descriptor.
 // (Generator member fns can resolve named value references; extract_from_alphabet is free.)
 static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def);
-
-/// @brief Returns ceil(log2(n)) clamped to [1,∞) — bits per character for an n-symbol alphabet.
-static int compute_alphabet_bits(int n) {
-    int bits = 0;
-    for (int r = n - 1; r > 0; r >>= 1) ++bits;
-    return (bits == 0) ? 1 : bits;
-}
-
-/// @brief Returns the name of the global `asn_DEF_*` descriptor for a restricted built-in
-///        string type, or nullptr for types without a fixed alphabet (UTF8String, etc.).
-/// @param bt  Built-in type tag.
-/// @return Pointer to a string literal such as `"asn_DEF_NumericString"`, or nullptr.
-/// @see X.680 §41 — restricted character string types and their canonical alphabets.
-static const char* builtin_def_name(ast::BuiltinType bt) {
-    using BT = ast::BuiltinType;
-    switch (bt) {
-    case BT::NumericString:   return "asn_DEF_NumericString";
-    case BT::PrintableString: return "asn_DEF_PrintableString";
-    case BT::Ia5String:       return "asn_DEF_Ia5String";
-    case BT::VisibleString:   return "asn_DEF_VisibleString";
-    default:                  return nullptr;
-    }
-}
-
-/// @brief Generate the three alphabet constraint fields that reference a built-in descriptor.
-///
-/// Produces a comma-prefixed fragment suitable for insertion into a Constraints initializer:
-/// `.alphabet_bits`, `.alphabet`/`.alphabet_size` (decode table), and `.encode_table`.
-/// Returns an empty string for types without a fixed alphabet (UTF8String, etc.).
-///
-/// @param bt  Built-in type whose global `asn_DEF_*` descriptor carries the alphabet tables.
-/// @return Constraint fragment, e.g. `", .alphabet_bits=…, .alphabet=…, …"`, or `""`.
-/// @see X.691 §26.5 — known-multiplier character string PER canonical index.
-static std::string builtin_alphabet_refs(ast::BuiltinType bt) {
-    const char* def_name = builtin_def_name(bt);
-    if (!def_name) return "";
-    return std::format(
-        ", .alphabet_bits=asn1::{0}.constraints.alphabet_bits"
-        ", .alphabet=asn1::{0}.constraints.alphabet"
-        ", .alphabet_size=asn1::{0}.constraints.alphabet_size"
-        ", .encode_table=asn1::{0}.constraints.encode_table",
-        def_name);
-}
-
-/// @brief Emit static FROM-alphabet lookup tables into a generated `.cpp` file.
-/// @param os          Output stream for the generated `.cpp` file.
-/// @param prefix      Name prefix used for the static arrays (e.g. `"asn_FROM_MyStr"`).
-/// @param alphabet    Sorted FROM-alphabet character values (non-empty).
-/// @see X.691 §26.5 — known-multiplier character string PER encoding.
-static void emit_from_alphabet_arrays(
-    std::ostream& os, const std::string& prefix,
-    const std::vector<uint8_t>& alphabet)
-{
-    // Decode table: alphabet[constrained_idx] → char value (sorted, same as input).
-    os << std::format("static const uint8_t {}_alpha[{}] = {{", prefix, alphabet.size());
-    for (int i = 0; i < static_cast<int>(alphabet.size()); ++i) {
-        if (i) os << ", ";
-        os << static_cast<int>(alphabet[i]);
-    }
-    os << "};\n";
-    // Encode table: encode_table[char_value] → constrained_idx, or 0xFFFF if not in alphabet.
-    std::array<uint16_t, 256> enc;
-    enc.fill(0xFFFFu);
-    for (int i = 0; i < static_cast<int>(alphabet.size()); ++i)
-        enc[alphabet[i]] = static_cast<uint16_t>(i);
-    os << std::format("static const uint16_t {}_enc[256] = {{\n", prefix);
-    for (int i = 0; i < 256; ++i) {
-        if (i % 16 == 0) os << "  ";
-        if (enc[i] == 0xFFFFu) os << "0xFFFFu";
-        else                   os << enc[i];
-        if (i < 255) os << (i % 16 == 15 ? ",\n" : ", ");
-    }
-    os << "\n};\n";
-}
-
-/// @brief Return a `Constraints` aggregate-initializer string for a character string type.
-/// @param flags         Constraints::flags bitmask (SIZE_CONSTRAINED, EXTENSIBLE, …).
-/// @param sc_range_bits Bits needed for SIZE range encoding.
-/// @param sc_lower      SIZE lower bound.
-/// @param sc_upper      SIZE upper bound.
-/// @param alphabet      Sorted FROM-alphabet character values; empty = no FROM constraint.
-/// @param alpha_prefix  Name prefix of the static arrays emitted by emit_from_alphabet_arrays;
-///                      empty when alphabet is empty.
-/// @param builtin_def   Result of builtin_def_name() for the base string type; used to
-///                      inherit alphabet_bits/alphabet/encode_table from the global descriptor
-///                      when there is a SIZE constraint but no FROM constraint.  nullptr = skip.
-/// @return Initializer string, e.g. `"{ .flags=8, .size_lower=6, .size_upper=6, … }"`.
-/// @see X.691 §26.5 (character string PER encoding); X.691 §12 (size constraints).
-static std::string make_string_constraints_init(
-    int flags, int sc_range_bits, int64_t sc_lower, int64_t sc_upper,
-    const std::vector<uint8_t>& alphabet,
-    const std::string& alpha_prefix = "",
-    std::optional<ast::BuiltinType> builtin_bt = std::nullopt)
-{
-    int val_lb      = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
-    int val_ub      = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
-    int alpha_bits  = alphabet.empty() ? 0
-        : compute_alphabet_bits(static_cast<int>(alphabet.size()));
-    // When builtin_bt is set, alphabet_bits comes from builtin_alphabet_refs — omit here
-    // to avoid emitting the designator twice (which is a C++ error even when values match).
-    std::string s;
-    if (builtin_bt) {
-        s = std::format(
-            "{{ .flags={}, .lower_bound={}, .upper_bound={}, "
-            ".size_range_bits={}, .size_lower={}, .size_upper={}",
-            flags, val_lb, val_ub, sc_range_bits, sc_lower, sc_upper);
-    } else {
-        s = std::format(
-            "{{ .flags={}, .lower_bound={}, .upper_bound={}, "
-            ".size_range_bits={}, .size_lower={}, .size_upper={}, .alphabet_bits={}",
-            flags, val_lb, val_ub, sc_range_bits, sc_lower, sc_upper, alpha_bits);
-    }
-    if (!alphabet.empty() && !alpha_prefix.empty()) {
-        // FROM constraint: emit inline static arrays.
-        s += std::format(
-            ", .alphabet={0}_alpha, .alphabet_size={1}u, .encode_table={0}_enc",
-            alpha_prefix, alphabet.size());
-    } else if (builtin_bt) {
-        // No FROM constraint but restricted type: inherit all alphabet fields from global descriptor.
-        s += builtin_alphabet_refs(*builtin_bt);
-    }
-    s += " }";
-    return s;
-}
 
 struct SizeConstraintInfo {
     int     flags      = 0;   // SIZE_CONSTRAINED | EXTENSIBLE (0 when no/semi constraint)
@@ -2135,107 +1996,36 @@ static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
 /// @param def  ASN.1 type assignment that resolves to a sizeable primitive (e.g. `MyStr ::= IA5String (SIZE(1..32) FROM("A".."Z"))`).
 /// @param os   Output stream for the generated `.cpp` file.
 /// @see X.691 §26.5 (character string PER constraints); X.690 §8.7 (OCTET STRING BER encoding).
-void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
+BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
+                                                       const std::string& type_name) const {
+    BuiltinAliasSpec spec;
+    spec.type_name = type_name;
+    spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    // Defensive fallback (unreachable in practice — this is only called from
+    // emit_cpp's dispatch after confirming def.body is a BuiltinType): if
+    // absent, fall back to Utf8String, whose LUT entries are the generic
+    // string handlers, matching the original defensive fallback.
+    auto* bt = std::get_if<ast::BuiltinType>(&def.body);
+    spec.builtin_type = bt ? *bt : ast::BuiltinType::Utf8String;
+    spec.tag = natural_tag_spec_for(def);
 
-    // Handler LUTs indexed by ast::BuiltinType (Boolean=0 .. Any=23).
-    // Integer and Enumerated are never routed here (handled by separate emit functions).
-    using BT = ast::BuiltinType;
-    static const char* const per_lut[] = {
-        "&asn1::per_boolean_handler",    // Boolean       = 0
-        "&asn1::per_integer_handler",    // Integer       = 1  (unreachable)
-        "&asn1::per_bitstring_handler",  // BitString     = 2
-        "&asn1::per_octetstring_handler",// OctetString   = 3
-        "&asn1::per_null_handler",       // Null          = 4
-        "&asn1::per_oid_handler",        // ObjectIdentifier = 5
-        "&asn1::per_reloid_handler",     // RelativeOid   = 6
-        "&asn1::per_real_handler",       // Real          = 7
-        "&asn1::per_enumerated_handler", // Enumerated    = 8  (unreachable)
-        "&asn1::per_string_handler",     // Utf8String    = 9
-        "&asn1::per_string_handler",     // NumericString = 10
-        "&asn1::per_string_handler",     // PrintableString=11
-        "&asn1::per_string_handler",     // T61String     = 12
-        "&asn1::per_string_handler",     // VideotexString= 13
-        "&asn1::per_string_handler",     // Ia5String     = 14
-        "&asn1::per_string_handler",     // GraphicString = 15
-        "&asn1::per_string_handler",     // VisibleString = 16
-        "&asn1::per_string_handler",     // GeneralString = 17
-        "&asn1::per_string_handler",     // UniversalString=18
-        "&asn1::per_string_handler",     // BmpString     = 19
-        "&asn1::per_string_handler",     // ObjectDescriptor=20
-        "&asn1::per_string_handler",     // UtcTime       = 21
-        "&asn1::per_string_handler",     // GeneralizedTime=22
-        "&asn1::per_any_handler",        // Any           = 23
-    };
-    static const char* const ber_lut[] = {
-        "&asn1::ber_boolean_handler",    // Boolean       = 0
-        "&asn1::ber_integer_handler",    // Integer       = 1  (unreachable)
-        "&asn1::ber_bitstring_handler",  // BitString     = 2
-        "&asn1::ber_octetstring_handler",// OctetString   = 3
-        "&asn1::ber_null_handler",       // Null          = 4
-        "&asn1::ber_oid_handler",        // ObjectIdentifier = 5
-        "&asn1::ber_reloid_handler",     // RelativeOid   = 6
-        "&asn1::ber_real_handler",       // Real          = 7
-        "&asn1::ber_enumerated_handler", // Enumerated    = 8  (unreachable)
-        "&asn1::ber_string_handler",     // Utf8String    = 9
-        "&asn1::ber_string_handler",     // NumericString = 10
-        "&asn1::ber_string_handler",     // PrintableString=11
-        "&asn1::ber_string_handler",     // T61String     = 12
-        "&asn1::ber_string_handler",     // VideotexString= 13
-        "&asn1::ber_string_handler",     // Ia5String     = 14
-        "&asn1::ber_string_handler",     // GraphicString = 15
-        "&asn1::ber_string_handler",     // VisibleString = 16
-        "&asn1::ber_string_handler",     // GeneralString = 17
-        "&asn1::ber_string_handler",     // UniversalString=18
-        "&asn1::ber_string_handler",     // BmpString     = 19
-        "&asn1::ber_string_handler",     // ObjectDescriptor=20
-        "&asn1::ber_utctime_handler",    // UtcTime       = 21
-        "&asn1::ber_gentime_handler",    // GeneralizedTime=22
-        "&asn1::ber_any_handler",        // Any           = 23
-    };
-    auto* bt2 = std::get_if<BT>(&def.body);
-    const char* per_h = bt2 ? per_lut[(int)*bt2] : "&asn1::per_string_handler";
-    const char* ber_h = bt2 ? ber_lut[(int)*bt2] : "&asn1::ber_string_handler";
-
-    auto alphabet   = extract_from_alphabet(def);
+    spec.alphabet = extract_from_alphabet(def);
     auto size_range = extract_size_range(def);
-
-    bool needs_per = !alphabet.empty() || size_range.has_value();
-
-    // Emit FROM-alphabet static arrays before the TypeDescriptor so they can be
-    // referenced by the Constraints initializer inside it.
-    std::string alpha_prefix;
-    if (!alphabet.empty()) {
-        alpha_prefix = std::format("asn_FROM_{}", cname);
-        emit_from_alphabet_arrays(os, alpha_prefix, alphabet);
+    spec.has_size_constraint = size_range.has_value();
+    if (size_range) {
+        auto sc = compute_size_constraint(size_range);
+        spec.size_range_bits = sc.range_bits;
+        spec.size_lower = sc.lower;
+        spec.size_upper = sc.upper;
     }
+    spec.extensible = is_constraint_extensible(def);
+    spec.xer_base64 = (def.xer_encoding == ast::XerEncoding::Base64);
+    return spec;
+}
 
-    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
-    os << std::format("    {},\n", natural_tag_for(def));
-    os << "    nullptr, nullptr, nullptr, nullptr,\n";
-
-    if (needs_per) {
-        auto sc    = compute_size_constraint(size_range);
-        int  flags = asn1::Constraints::CONSTRAINED | sc.flags
-                   | (is_constraint_extensible(def) ? asn1::Constraints::EXTENSIBLE : 0);
-        std::optional<ast::BuiltinType> bbt = (alphabet.empty() && bt2) ? std::optional{*bt2} : std::nullopt;
-        os << "    " << make_string_constraints_init(flags, sc.range_bits, sc.lower, sc.upper,
-                                                     alphabet, alpha_prefix, bbt)
-           << " /* constraints */,\n";
-    } else {
-        os << "    {} /* constraints — unconstrained */,\n";
-    }
-    std::string cpp_t = cpp_type_for(def);
-    os << std::format("    false, asn1::TypeKind::Primitive,\n");
-    os << std::format("    {} /* per_handler */,\n", per_h);
-    os << std::format("    {} /* ber_handler */,\n", ber_h);
-    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */", cpp_t);
-    if (def.xer_encoding == ast::XerEncoding::Base64)
-        os << ",\n    asn1::XerEncoding::Base64 /* xer_encoding */\n";
-    else
-        os << "\n";
-    os << "};\n";
+void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os) {
+    auto spec = build_builtin_alias_spec(def, effective_cpp_name(def.name, current_module_));
+    backend_.emit_builtin_alias_cpp(spec, os);
 }
 
 // ---------------------------------------------------------------------------
