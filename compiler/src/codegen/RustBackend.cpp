@@ -141,15 +141,18 @@ static std::string native_builtin_type(ast::BuiltinType bt) {
     }
 }
 
-// Rust builtin-alias emission — pairs with CppBackend::emit_builtin_alias_cpp.
-//
-// Only one emit method exists on Backend for this construct (no separate
-// hpp/cpp split, matching the C++ side: the alias itself is a one-line
-// type declaration, not worth two methods). Emits the type alias, plus a
-// size-check function when a SIZE constraint is present — the Rust
-// analogue of the bounds baked into C++'s Constraints struct. FROM-alphabet
-// constraints are not validated by the generated function (same "no
-// runtime wiring yet" scope as the INTEGER pairing's hi_is_large note).
+/// @brief Emit the Rust type alias (and size-check function, if constrained)
+///        for a builtin-alias type.
+/// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).
+/// @param os   Output stream to write to.
+/// @note Only one emit method exists on Backend for this construct (no
+///       separate hpp/cpp split, matching the C++ side: the alias itself is
+///       a one-line type declaration, not worth two methods). Emits the
+///       type alias, plus a size-check function when a SIZE constraint is
+///       present — the Rust analogue of the bounds baked into C++'s
+///       Constraints struct. FROM-alphabet constraints are not validated by
+///       the generated function (same "no runtime wiring yet" scope as the
+///       INTEGER pairing's hi_is_large note).
 void RustBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
