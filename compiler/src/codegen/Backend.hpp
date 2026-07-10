@@ -7,6 +7,7 @@
 #include <vector>
 #include <cstdint>
 #include <optional>
+#include <asn1cpp/compat/format.hpp>
 #include "../ast/TypeDef.hpp"
 #include "../ast/Tag.hpp"
 
@@ -131,6 +132,30 @@ struct DefaultValueSpec {
     std::string   string_val;  // Kind::String — raw (unescaped) value
     std::string   enum_name;   // Kind::EnumRef — ASN.1 name of the named value
 };
+
+/// @brief Escape a raw byte string for embedding in a quoted string literal.
+///        Backslash, double-quote, and all control characters — identical
+///        escaping rules in C++ and Rust string literal syntax (both use
+///        `\\`, `\"`, `\n`, `\r`, `\t`, `\xHH`), so this one implementation
+///        serves both backends' `emit_default_setter`.
+/// @param raw Unescaped bytes (e.g. DefaultValueSpec::string_val).
+/// @return Escaped text, without surrounding quotes — the caller wraps it
+///         in its own language's string literal syntax.
+inline std::string escape_string_literal(const std::string& raw) {
+    std::string esc;
+    for (unsigned char c : raw) {
+        if      (c == '\\') esc += "\\\\";
+        else if (c == '"')  esc += "\\\"";
+        else if (c == '\n') esc += "\\n";
+        else if (c == '\r') esc += "\\r";
+        else if (c == '\t') esc += "\\t";
+        else if (c < 0x20 || c == 0x7f)
+            esc += std::format("\\x{:02x}", c);
+        else
+            esc += static_cast<char>(c);
+    }
+    return esc;
+}
 
 /// @brief Backend-agnostic decision for one inline-constrained SEQUENCE/
 ///        CHOICE member's per-member TypeDescriptor (X.691 §26.5 character
