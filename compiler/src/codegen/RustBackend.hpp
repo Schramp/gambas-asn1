@@ -90,6 +90,11 @@ public:
                                 const std::string& member_name) const override {
         return make_synthetic_name(parent, member_name);  // same parent+CapitalizedMember strategy
     }
+
+    // Defined in RustBackend.cpp — real emission logic (#234, pairs with
+    // CppBackend's #226), not a one-liner like the naming methods above.
+    void emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& os) const override;
+    void emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& os) const override;
 };
 
 } // namespace asn1::codegen
