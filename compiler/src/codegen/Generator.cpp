@@ -61,15 +61,8 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
     if (auto* bt = std::get_if<BT>(&def.body)) {
         switch (*bt) {
         case BT::Boolean:           return "asn1::Boolean";
-        case BT::Integer: {
-            auto kind = classify_integer_storage(def);
-            switch (kind) {
-                case IntStorageKind::U64:       return "asn1::UInteger";
-                case IntStorageKind::I128:      return "asn1::BigInteger";
-                case IntStorageKind::ARBITRARY: return "asn1::ArbitraryInteger";
-                default:                        return "asn1::Integer";
-            }
-        }
+        case BT::Integer:
+            return backend_.native_int_type(classify_integer_storage(def));
         case BT::Real:              return "asn1::Real";
         case BT::Null:              return "asn1::Null";
         case BT::BitString:         return "asn1::BitString";
@@ -553,26 +546,69 @@ IntStorageKind Generator::classify_integer_storage(const ast::TypeDef& def) cons
     return IntStorageKind::S64;
 }
 
-void Generator::emit_integer_hpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
+/// @brief True if any top-level constraint on `def` carries a trailing '...'.
+/// @param def Type definition to inspect.
+/// @return Whether `def` is constraint-extensible (X.680 §49.3).
+/// @note Forward-declared here; defined later in this file. build_integer_spec
+///       below needs it before its definition point.
+static bool is_constraint_extensible(const ast::TypeDef& def);
 
-    auto kind = classify_integer_storage(def);
-    std::string cpp_storage;
-    switch (kind) {
-        case IntStorageKind::U64:       cpp_storage = "asn1::UInteger"; break;
-        case IntStorageKind::I128:      cpp_storage = "__int128"; break;
-        case IntStorageKind::ARBITRARY: cpp_storage = "std::vector<uint8_t>"; break;
-        default:                        cpp_storage = "asn1::Integer"; break;
-    }
-    os << std::format("using {} = {};\n\n", cname, cpp_storage);
-
-    // Named integer constants (INTEGER { foo(0), bar(1) } style)
+IntegerSpec Generator::build_integer_spec(const ast::TypeDef& def, const std::string& type_name) const {
+    IntegerSpec spec;
+    spec.type_name = type_name;
+    spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.storage_kind = classify_integer_storage(def);
     for (const auto& ev : def.enum_values)
-        os << std::format("inline constexpr int64_t {}_{} = {};\n",
-            cname, backend_.value_name(ev.name), ev.number.value_or(0));
-    if (!def.enum_values.empty()) os << "\n";
+        spec.named_values.push_back({ev.name, ev.number.value_or(0)});
 
-    os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
+    auto r = extract_integer_range(def);
+    spec.has_constraint = r.has_value;
+    if (!r.has_value) return spec;
+
+    int64_t lo = r.lo, hi = r.hi;
+    spec.extensible = is_constraint_extensible(def);
+    spec.semi_constrained = r.truly_max;
+    spec.hi_is_large = r.hi_is_large;
+    spec.lower_s64 = lo;
+
+    if (r.truly_max) {
+        // Truly semi-constrained (..MAX keyword): no upper cap.
+        spec.range_bits = -1;
+        spec.upper_s64 = 0;
+        spec.lower_u64 = static_cast<uint64_t>(lo >= 0 ? lo : 0);
+        spec.upper_u64 = std::numeric_limits<uint64_t>::max();
+    } else if (r.hi_is_large) {
+        // TOK_number_large upper bound (e.g. UINT64_MAX).
+        // X.691 §10.5.6 UPER: range = hi_u64 - lo + 1; compute range_bits.
+        // For the full uint64 range (lo=0, hi=UINT64_MAX), range_bits=64.
+        int rb = 0;
+        uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
+        uint64_t range_count_m1 = r.hi_u64 - u_lo; // range - 1 (exact even if range=2^64)
+        if (range_count_m1 == std::numeric_limits<uint64_t>::max()) {
+            rb = 64; // 2^64 range
+        } else {
+            for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
+        }
+        spec.range_bits = rb;
+        spec.upper_s64 = hi; // int64_t view
+        spec.lower_u64 = u_lo;
+        spec.upper_u64 = r.hi_u64;
+    } else {
+        int64_t range_count = hi - lo + 1;
+        int rb = 0;
+        if (range_count > 1)
+            for (int64_t v = range_count - 1; v > 0; v >>= 1) ++rb;
+        spec.range_bits = rb;
+        spec.upper_s64 = hi;
+        spec.lower_u64 = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
+        spec.upper_u64 = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
+    }
+    return spec;
+}
+
+void Generator::emit_integer_hpp(const ast::TypeDef& def, std::ostream& os) {
+    auto spec = build_integer_spec(def, effective_cpp_name(def.name, current_module_));
+    backend_.emit_integer_hpp(spec, os);
 }
 
 // Walk a value reference chain until a literal is reached.
@@ -974,91 +1010,9 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
     return IntRange{false, 0, 0, false, 0, false};
 }
 
-// Build a Constraints designated-initializer literal for an INTEGER constraint.
-// Uses designated initializers (C++20) so struct field additions don't require
-// updating every call site.
-static std::string make_integer_pc(int flags, int range_bits, int int_kind,
-                                   int64_t lower_s64, int64_t upper_s64,
-                                   uint64_t lower_u64, uint64_t upper_u64) {
-    return std::format(
-        "{{ .flags={}, .range_bits={}, .int_kind={}, "
-        ".lower_bound={}, .upper_bound={}, "
-        ".lower_u64={:#x}u, .upper_u64={:#x}u, "
-        ".lower_hi=0, .lower_lo=0, .upper_hi=0, .upper_lo=0 }}",
-        flags, range_bits, int_kind,
-        lower_s64, upper_s64,
-        lower_u64, upper_u64);
-}
-
 void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
-
-    auto r     = extract_integer_range(def);
-    auto kind  = classify_integer_storage(def);
-    int  ik    = (kind == IntStorageKind::U64) ? asn1::Constraints::INT_U64
-               : (kind == IntStorageKind::I128) ? asn1::Constraints::INT_I128
-               : (kind == IntStorageKind::ARBITRARY) ? asn1::Constraints::INT_ARBITRARY
-               : asn1::Constraints::INT_S64;
-
-    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
-    os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Integer);
-    os << "    nullptr, nullptr, nullptr, nullptr,\n";
-    if (r.has_value) {
-        int64_t lo = r.lo, hi = r.hi;
-        bool ext = is_constraint_extensible(def);
-        if (r.truly_max) {
-            // Truly semi-constrained (..MAX keyword): no upper cap.
-            int flags = asn1::Constraints::SEMI_CONSTRAINED
-                      | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-            os << std::format("    {} /* constraints — semi-constrained */,\n",
-                make_integer_pc(flags, -1, ik, lo, 0,
-                    static_cast<uint64_t>(lo >= 0 ? lo : 0),
-                    std::numeric_limits<uint64_t>::max()));
-        } else if (r.hi_is_large) {
-            // TOK_number_large upper bound (e.g. UINT64_MAX).
-            // X.691 §10.5.6 UPER: range = hi_u64 - lo + 1; compute range_bits.
-            // For the full uint64 range (lo=0, hi=UINT64_MAX), range_bits=64.
-            int rb = 0;
-            uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
-            // range = hi_u64 - u_lo + 1; if it wraps (full 64-bit range), rb=64.
-            uint64_t range_count_m1 = r.hi_u64 - u_lo; // range - 1 (exact even if range=2^64)
-            if (range_count_m1 == std::numeric_limits<uint64_t>::max()) {
-                rb = 64; // 2^64 range
-            } else {
-                for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
-            }
-            int flags = asn1::Constraints::CONSTRAINED
-                      | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-            os << std::format("    {} /* constraints — constrained large (up to UINT64_MAX) */,\n",
-                make_integer_pc(flags, rb, ik, lo, hi /* int64_t view */,
-                    u_lo, r.hi_u64));
-        } else {
-            int64_t range_count = hi - lo + 1;
-            int rb = 0;
-            if (range_count > 1)
-                for (int64_t v = range_count - 1; v > 0; v >>= 1) ++rb;
-            int flags = asn1::Constraints::CONSTRAINED
-                      | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-            uint64_t u_lo = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
-            uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
-            os << std::format("    {} /* constraints */,\n",
-                make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi));
-        }
-    } else {
-        os << "    {} /* constraints — unconstrained */,\n";
-    }
-    const char* per_h = (ik == asn1::Constraints::INT_U64)
-        ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
-    const char* ber_h = (ik == asn1::Constraints::INT_U64)
-        ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
-    const char* cpp_t = (ik == asn1::Constraints::INT_U64)
-        ? "asn1::UInteger" : "asn1::Integer";
-    os << std::format("    false, asn1::TypeKind::Primitive,\n");
-    os << std::format("    {} /* per_handler */,\n", per_h);
-    os << std::format("    {} /* ber_handler */,\n", ber_h);
-    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cpp_t);
-    os << "};\n";
+    auto spec = build_integer_spec(def, effective_cpp_name(def.name, current_module_));
+    backend_.emit_integer_cpp(spec, os);
 }
 
 // ---------------------------------------------------------------------------
