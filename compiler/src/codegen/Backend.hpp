@@ -156,6 +156,23 @@ struct MemberTypeDescriptorSpec {
     std::vector<uint8_t> alphabet; // paired with alpha_prefix
 };
 
+/// @brief Backend-agnostic decision for one SEQUENCE OF / SET OF type
+///        (X.680 §25/26) — element descriptor reference, collection SIZE
+///        constraint, and optional element XER tag rename (X.693 §12). No
+///        C++/Rust/etc. syntax; `elem_ref` is already a fully-formatted
+///        reference expression since it comes from the (already
+///        backend-delegated) emit_member_type_descriptor call.
+struct SeqOfSpec {
+    std::string type_name;
+    std::string xer_name;
+    std::string elem_ref;        // reference expression to the element's TypeDescriptor
+    int         flags;
+    int         range_bits;
+    int64_t     size_lower, size_upper;
+    std::optional<std::string> elem_xer_name; // X.693 §12: element's declared identifier, if any
+    bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
+};
+
 /// @brief Confines identifier-escaping and naming-convention decisions that
 ///        are inherently target-language-specific.
 ///
@@ -292,6 +309,15 @@ public:
     virtual void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
         throw std::logic_error("emit_member_type_descriptor: not implemented for this backend");
+    }
+
+    /// @brief Emit the implementation/definition for a SEQUENCE OF / SET OF type.
+    /// @param spec Resolved, backend-agnostic decision (see SeqOfSpec).
+    /// @param os   Output stream to write to.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_seq_of_cpp: not implemented for this backend");
     }
 };
 

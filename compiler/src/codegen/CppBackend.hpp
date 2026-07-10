@@ -122,6 +122,7 @@ public:
                               const std::string& parent_name, const std::string& member_name,
                               std::ostream& os) const override;
     void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const override;
+    void emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const override;
 };
 
 } // namespace asn1::codegen
