@@ -392,12 +392,16 @@ static std::string native_builtin_type(ast::BuiltinType bt) {
 /// @brief Emit the `.cpp` TypeDescriptor for a builtin-alias type.
 /// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).
 /// @param os   Output stream to write to.
-void CppBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
-    const std::string& cname = spec.type_name;
-
-    // Handler LUTs indexed by ast::BuiltinType (Boolean=0 .. Any=23).
-    // Integer and Enumerated are never routed here (handled by separate emit functions).
-    static const char* const per_lut[] = {
+/// @brief PER codec-handler LUT indexed by ast::BuiltinType (Boolean=0 ..
+///        Any=23). Integer and Enumerated entries are never looked up
+///        (those builtins are handled by separate emit functions) — kept
+///        for direct index alignment with the enum.
+/// @note Shared between emit_builtin_alias_cpp (top-level builtin-alias
+///       types) and emit_member_type_descriptor (inline-constrained
+///       SIZE-able members) — both need the same builtin-type -> handler
+///       mapping.
+static const char* per_handler_for_builtin(ast::BuiltinType bt) {
+    static const char* const lut[] = {
         "&asn1::per_boolean_handler",    // Boolean       = 0
         "&asn1::per_integer_handler",    // Integer       = 1  (unreachable)
         "&asn1::per_bitstring_handler",  // BitString     = 2
@@ -423,7 +427,13 @@ void CppBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostre
         "&asn1::per_string_handler",     // GeneralizedTime=22
         "&asn1::per_any_handler",        // Any           = 23
     };
-    static const char* const ber_lut[] = {
+    return lut[static_cast<int>(bt)];
+}
+
+/// @brief BER codec-handler LUT indexed by ast::BuiltinType. See
+///        per_handler_for_builtin's note — same sharing rationale.
+static const char* ber_handler_for_builtin(ast::BuiltinType bt) {
+    static const char* const lut[] = {
         "&asn1::ber_boolean_handler",    // Boolean       = 0
         "&asn1::ber_integer_handler",    // Integer       = 1  (unreachable)
         "&asn1::ber_bitstring_handler",  // BitString     = 2
@@ -449,8 +459,14 @@ void CppBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostre
         "&asn1::ber_gentime_handler",    // GeneralizedTime=22
         "&asn1::ber_any_handler",        // Any           = 23
     };
-    const char* per_h = per_lut[static_cast<int>(spec.builtin_type)];
-    const char* ber_h = ber_lut[static_cast<int>(spec.builtin_type)];
+    return lut[static_cast<int>(bt)];
+}
+
+void CppBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
+    const std::string& cname = spec.type_name;
+
+    const char* per_h = per_handler_for_builtin(spec.builtin_type);
+    const char* ber_h = ber_handler_for_builtin(spec.builtin_type);
 
     bool needs_per = !spec.alphabet.empty() || spec.has_size_constraint;
 
@@ -506,22 +522,8 @@ static std::string format_default_value_literal(const std::string& mtype,
         return std::format("{}{{{}}}", mtype, spec.bool_val ? "true" : "false");
     case Kind::Int:
         return std::format("{}{{{}}}", mtype, spec.int_val);
-    case Kind::String: {
-        // Full C escape: backslash, quote, and all control characters.
-        std::string esc;
-        for (unsigned char c : spec.string_val) {
-            if      (c == '\\') esc += "\\\\";
-            else if (c == '"')  esc += "\\\"";
-            else if (c == '\n') esc += "\\n";
-            else if (c == '\r') esc += "\\r";
-            else if (c == '\t') esc += "\\t";
-            else if (c < 0x20 || c == 0x7f)
-                esc += std::format("\\x{:02x}", c);
-            else
-                esc += static_cast<char>(c);
-        }
-        return std::format("{}{{\"{}\"}}", mtype, esc);
-    }
+    case Kind::String:
+        return std::format("{}{{\"{}\"}}", mtype, escape_string_literal(spec.string_val));
     case Kind::EnumRef:
         return std::format("{}::{}", mtype, backend.escape(backend.type_name(spec.enum_name)));
     case Kind::None:
@@ -553,15 +555,60 @@ void CppBackend::emit_default_setter(const DefaultValueSpec& spec, const std::st
 }
 
 void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const {
-    if (!spec.alpha_prefix.empty())
-        emit_from_alphabet_arrays(os, spec.alpha_prefix, spec.alphabet);
+    using Kind = MemberTypeDescriptorSpec::Kind;
+    std::string pc, per_h, ber_h, cpp_t, xer_tail;
+
+    if (spec.kind == Kind::Integer) {
+        // int_kind LUT indexed by IntStorageKind (S64=0, U64=1, I128=2, ARBITRARY=3).
+        static const int int_kind_lut[] = {
+            asn1::Constraints::INT_S64, asn1::Constraints::INT_U64,
+            asn1::Constraints::INT_I128, asn1::Constraints::INT_ARBITRARY,
+        };
+        int ik = int_kind_lut[static_cast<int>(spec.storage_kind)];
+        if (spec.semi_constrained) {
+            int flags = asn1::Constraints::SEMI_CONSTRAINED
+                      | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+            pc = make_integer_pc(flags, -1, ik, spec.lower_s64, 0,
+                                  spec.lower_u64, std::numeric_limits<uint64_t>::max());
+        } else {
+            int flags = asn1::Constraints::CONSTRAINED
+                      | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+            pc = make_integer_pc(flags, spec.range_bits, ik, spec.lower_s64, spec.upper_s64,
+                                  spec.lower_u64, spec.upper_u64);
+        }
+        bool is_u64 = spec.storage_kind == IntStorageKind::U64;
+        per_h = is_u64 ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
+        ber_h = is_u64 ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
+        cpp_t = is_u64 ? "asn1::UInteger" : "asn1::Integer";
+    } else {
+        if (!spec.alpha_prefix.empty())
+            emit_from_alphabet_arrays(os, spec.alpha_prefix, spec.alphabet);
+        int all_flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
+                       | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+        std::optional<ast::BuiltinType> bbt = spec.alphabet.empty()
+            ? std::optional{spec.builtin_type} : std::nullopt;
+        bool use_default = !spec.has_size_constraint && spec.alphabet.empty()
+                          && (!bbt || !builtin_def_name(*bbt));
+        pc = use_default
+            ? "{}"
+            : make_string_constraints_init(all_flags, spec.size_range_bits, spec.size_lower,
+                                            spec.size_upper, spec.alphabet, spec.alpha_prefix, bbt);
+        // Same builtin-type -> handler LUTs as emit_builtin_alias_cpp; every
+        // type reachable here (string family, OctetString, BitString) maps
+        // identically whether it's a top-level alias or an inline member.
+        per_h = per_handler_for_builtin(spec.builtin_type);
+        ber_h = ber_handler_for_builtin(spec.builtin_type);
+        cpp_t = native_builtin_type(spec.builtin_type);
+        xer_tail = spec.needs_xer ? ", asn1::XerEncoding::Base64" : "";
+    }
+
     os << std::format(
         "static const asn1::TypeDescriptor {} = "
         "{{ \"{}\", asn1::Tag::universal({}, false), "
         "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
         "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}){}}};\n",
-        spec.tname, spec.xer_type_name, spec.universal_tag, spec.constraints_init,
-        spec.per_handler, spec.ber_handler, spec.cpp_type, spec.xer_tail);
+        spec.tname, spec.xer_type_name, spec.universal_tag, pc,
+        per_h, ber_h, cpp_t, xer_tail);
 }
 
 void CppBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const {

@@ -174,4 +174,87 @@ void RustBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostr
     os << "}\n\n";
 }
 
+/// @brief Emit a Rust default-value accessor function for a SEQUENCE/SET
+///        member's DEFAULT value (X.680 §25.1).
+/// @param spec        Resolved, backend-agnostic decision (see DefaultValueSpec).
+/// @param type_name   Storage type computed by Generator::cpp_type_for().
+/// @param parent_name Enclosing SEQUENCE/SET type identifier.
+/// @param member_name Member identifier (already backend-dispatched — snake_case).
+/// @param os          Output stream to write to.
+/// @note `type_name` is only genuinely backend-dispatched for Kind::Int
+///       (via native_int_type) and Kind::EnumRef (via type_name()) — both
+///       reused here directly. For Kind::Bool/Kind::String,
+///       Generator::cpp_type_for() hardcodes a C++ runtime wrapper type
+///       ("asn1::Boolean"/"asn1::Ia5String" etc.), so those two cases ignore
+///       it and use "bool"/"String" instead.
+void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
+                                       const std::string& parent_name, const std::string& member_name,
+                                       std::ostream& os) const {
+    using Kind = DefaultValueSpec::Kind;
+    std::string rust_type, literal;
+    switch (spec.kind) {
+    case Kind::Bool:
+        rust_type = "bool";
+        literal = spec.bool_val ? "true" : "false";
+        break;
+    case Kind::Int:
+        rust_type = type_name;
+        literal = std::format("{}", spec.int_val);
+        break;
+    case Kind::String:
+        rust_type = "String";
+        literal = std::format("\"{}\".to_string()", escape_string_literal(spec.string_val));
+        break;
+    case Kind::EnumRef:
+        rust_type = type_name;
+        literal = std::format("{}::{}", type_name, variant_name(*this, spec.enum_name));
+        break;
+    case Kind::None:
+    default:
+        return;
+    }
+    std::string fname = escape(to_snake_case(parent_name) + "_" + member_name + "_default");
+    os << std::format("pub fn {}() -> {} {{\n    {}\n}}\n\n", fname, rust_type, literal);
+}
+
+/// @brief Emit a Rust bounds-check function for an inline-constrained
+///        SEQUENCE/CHOICE member — INTEGER value range or SIZE-able-
+///        primitive SIZE constraint.
+/// @param spec Resolved, backend-agnostic decision (see MemberTypeDescriptorSpec).
+/// @param os   Output stream to write to.
+/// @note FROM-alphabet-only members and members whose only constraint is a
+///       non-default XER encoding produce no Rust output — same "no runtime
+///       wiring yet" scope as emit_builtin_alias_cpp. `spec.tname` follows
+///       CppBackend's static-variable naming convention
+///       ("asn_TYP_Parent_member"); reused as the Rust fn name base via
+///       to_snake_case, same coincidental-overlap rationale as type_name/
+///       synthetic_name.
+void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const {
+    using Kind = MemberTypeDescriptorSpec::Kind;
+    std::string base = escape(to_snake_case(spec.tname));
+    if (spec.kind == Kind::Integer) {
+        os << std::format("pub fn {}_in_range(v: i64) -> bool {{\n", base);
+        if (spec.semi_constrained || spec.hi_is_large) {
+            os << std::format("    v >= {} // {}\n", spec.lower_s64,
+                               spec.hi_is_large ? "upper bound exceeds i64 range, not checked"
+                                                 : "semi-constrained, no upper cap");
+        } else {
+            os << std::format("    v >= {} && v <= {}\n", spec.lower_s64, spec.upper_s64);
+        }
+        os << "}\n\n";
+        return;
+    }
+    if (!spec.has_size_constraint) return;
+    std::string rust_type = native_builtin_type(spec.builtin_type);
+    os << std::format("pub fn {}_size_ok(v: &{}) -> bool {{\n", base, rust_type);
+    if (spec.size_bounded) {
+        os << std::format("    (v.len() as i64) >= {} && (v.len() as i64) <= {}\n",
+                           spec.size_lower, spec.size_upper);
+    } else {
+        os << std::format("    (v.len() as i64) >= {} // semi-constrained, no upper cap\n",
+                           spec.size_lower);
+    }
+    os << "}\n\n";
+}
+
 } // namespace asn1::codegen
