@@ -24,6 +24,16 @@ void emit_type_descriptor(std::ostream& os,
                            const std::string& ber_handler = "nullptr",
                            bool use_class_scope = false);
 
+/// @brief Build a Constraints designated-initializer literal for an INTEGER
+///        constraint. Pure C++ text formatting from already-resolved
+///        parameters — shared between CppBackend::emit_integer_cpp and
+///        Generator.cpp's inline-constrained-member INTEGER handling
+///        (emit_member_type_descriptor, not yet migrated — SEQUENCE/CHOICE's
+///        gambas-asn1#225 migration). Defined in CppBackend.cpp.
+std::string make_integer_pc(int flags, int range_bits, int int_kind,
+                             int64_t lower_s64, int64_t upper_s64,
+                             uint64_t lower_u64, uint64_t upper_u64);
+
 /// @brief C++ backend: the only `Backend` implementation today.
 ///
 /// Wraps the pre-existing naming free functions (`Generator.hpp`) as the
@@ -54,10 +64,21 @@ public:
         return make_synthetic_name(parent, member_name);
     }
 
+    std::string native_int_type(IntStorageKind kind) const override {
+        switch (kind) {
+            case IntStorageKind::U64:       return "asn1::UInteger";
+            case IntStorageKind::I128:      return "asn1::BigInteger";
+            case IntStorageKind::ARBITRARY: return "asn1::ArbitraryInteger";
+            default:                        return "asn1::Integer";
+        }
+    }
+
     // Defined in CppBackend.cpp — real emission logic (moved from Generator.cpp,
-    // gambas-asn1#226), not a one-liner like the naming methods above.
+    // gambas-asn1#226/#227), not a one-liner like the naming methods above.
     void emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& os) const override;
     void emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& os) const override;
+    void emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) const override;
+    void emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) const override;
 };
 
 } // namespace asn1::codegen

@@ -5,8 +5,22 @@
 #include <ostream>
 #include <stdexcept>
 #include <vector>
+#include <cstdint>
 
 namespace asn1::codegen {
+
+// Storage class for INTEGER types — chosen at codegen time from constraint
+// analysis (Generator::classify_integer_storage). Backend-agnostic: a
+// backend maps each kind to its own native storage type (see
+// Backend::native_int_type). Moved here from Generator.hpp for #227 —
+// IntegerSpec (below) needs it, and Backend.hpp can't include Generator.hpp
+// without a cycle (Generator.hpp already includes Backend.hpp).
+enum class IntStorageKind {
+    S64,       // int64_t  — asn1::Integer (default; constrained or signed ranges)
+    U64,       // uint64_t — asn1::UInteger (non-negative semi-constrained or large unsigned)
+    I128,      // __int128  — asn1::BigInteger (stub; future)
+    ARBITRARY, // vector<uint8_t> — asn1::ArbitraryInteger (stub; unconstrained crypto keys)
+};
 
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —
 ///        which named values apply, in declaration order, with automatic
@@ -28,6 +42,33 @@ struct EnumeratedSpec {
     std::vector<Value> values;     // declaration order, auto-numbering resolved
     bool              extensible;  // true if def.enum_values contained "..."
     int               root_count;  // count of values before the first extension marker
+};
+
+/// @brief Backend-agnostic decision for one named INTEGER type (X.680 §19) —
+///        storage class, named constants, and constraint bounds. No C++/
+///        Rust/etc. syntax; a backend maps `storage_kind` to its own native
+///        type and formats the constraint bounds into its own runtime API.
+/// @note The constraint fields mirror Generator::IntRange
+///       (`extract_integer_range`) already resolved into the shape a
+///       TypeDescriptor needs — `range_bits` in particular is a PER-encoding
+///       fact (X.691 §10.5.6), not a C++ concept: any backend implementing
+///       PER needs the identical value, so it's computed once here rather
+///       than re-derived per backend.
+struct IntegerSpec {
+    struct NamedValue { std::string asn1_name; int64_t value; };
+
+    std::string       type_name;
+    std::string       xer_name;
+    IntStorageKind    storage_kind;
+    std::vector<NamedValue> named_values;  // INTEGER { foo(0), bar(1) } style constants
+
+    bool     has_constraint;    // false -> unconstrained; all fields below are meaningless
+    bool     extensible;
+    bool     semi_constrained;  // true -> upper endpoint was MAX (X.680 semi-constrained); no upper cap
+    bool     hi_is_large;       // true -> upper was a positive literal > INT64_MAX
+    int      range_bits;        // -1 when semi_constrained (no fixed upper -> no fixed bit width)
+    int64_t  lower_s64, upper_s64;   // signed view (upper_s64 meaningless when hi_is_large)
+    uint64_t lower_u64, upper_u64;   // unsigned view (exact when hi_is_large)
 };
 
 /// @brief Confines identifier-escaping and naming-convention decisions that
@@ -73,6 +114,19 @@ public:
     virtual std::string synthetic_name(const std::string& parent,
                                         const std::string& member_name) const = 0;
 
+    /// @brief Map an INTEGER storage-class decision to this backend's native
+    ///        type for an *inline member* of that INTEGER type (e.g.
+    ///        `asn1::UInteger` in C++). Distinct from the top-level named-type
+    ///        alias target `emit_integer_hpp` picks — see its note.
+    /// @note Default throws — same rationale as emit_enumerated_hpp: a
+    ///       backend without INTEGER support yet (gambas-asn1#225's
+    ///       pairwise migration) stays valid and instantiable, just can't
+    ///       be used for INTEGER-typed members until it overrides this.
+    virtual std::string native_int_type(IntStorageKind kind) const {
+        (void)kind;
+        throw std::logic_error("native_int_type: not implemented for this backend");
+    }
+
     /// @brief Emit the header/type-declaration half of an ENUMERATED type.
     /// @param spec Resolved, backend-agnostic decision (see EnumeratedSpec).
     /// @param os   Output stream to write to.
@@ -93,6 +147,24 @@ public:
     virtual void emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
         throw std::logic_error("emit_enumerated_cpp: not implemented for this backend");
+    }
+
+    /// @brief Emit the header/type-declaration half of a named INTEGER type.
+    /// @param spec Resolved, backend-agnostic decision (see IntegerSpec).
+    /// @param os   Output stream to write to.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_integer_hpp: not implemented for this backend");
+    }
+
+    /// @brief Emit the implementation/definition half of a named INTEGER type.
+    /// @param spec Resolved, backend-agnostic decision (see IntegerSpec).
+    /// @param os   Output stream to write to.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_integer_cpp: not implemented for this backend");
     }
 };
 
