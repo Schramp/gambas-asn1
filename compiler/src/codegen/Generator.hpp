@@ -12,8 +12,10 @@
 #include "../ast/TypeDef.hpp"
 #include "../ast/Tag.hpp"
 #include "../sema/Resolver.hpp"
+#include "Backend.hpp"
 #include <optional>
 #include <limits>
+#include <memory>
 
 namespace asn1::codegen {
 
@@ -141,10 +143,17 @@ class Generator {
     std::ostream*           post_ns_os_{nullptr}; // when set, deferred post-class includes write here (after namespace close)
     std::set<std::string>   pdu_roots_;           // ASN.1 names of -pdu= root types (empty = generate all)
     std::set<std::string>   reachable_asn_names_; // populated by compute_reachable(); ASN.1 names
+    std::unique_ptr<Backend> owned_backend_;      // set only when no external Backend is supplied
+    Backend&                 backend_;            // naming/escaping — see Backend.hpp
 
 public:
-    Generator(fs::path out_dir, sema::Resolver& res)
-        : out_dir_(std::move(out_dir)), resolver_(res) {}
+    /// @brief Construct with the default backend (CppBackend). Defined in
+    ///        Generator.cpp to avoid a Generator.hpp <-> CppBackend.hpp cycle
+    ///        (CppBackend.hpp includes Generator.hpp for the naming free functions).
+    Generator(fs::path out_dir, sema::Resolver& res);
+    /// @brief Construct with an explicit backend (e.g. a future Rust backend, #217).
+    Generator(fs::path out_dir, sema::Resolver& res, Backend& backend)
+        : out_dir_(std::move(out_dir)), resolver_(res), backend_(backend) {}
 
     void set_default_int_kind(IntStorageKind k) { default_int_kind_ = k; }
     void set_namespace(std::string ns)           { namespace_ = std::move(ns); }
@@ -163,7 +172,7 @@ public:
         for (const auto& mod : pr.modules)
             for (const auto& def : mod->assignments)
                 if (!def->name.empty() && !def->is_extension_marker) {
-                    auto cpp = to_cpp_name(def->name);
+                    auto cpp = backend_.type_name(def->name);
                     auto [it, inserted] = first_module.emplace(cpp, mod->name);
                     if (!inserted && it->second != mod->name)
                         collision_types_.insert(cpp);
@@ -187,30 +196,30 @@ public:
     // Returns the C++ name to use for a type, prefixing with module when colliding.
     std::string effective_cpp_name(const std::string& asn_name,
                                    const std::string& mod_name) const {
-        auto cname = to_cpp_name(asn_name);
+        auto cname = backend_.type_name(asn_name);
         if (!collision_types_.count(cname))
             return cname;
-        return to_cpp_name(mod_name) + cname;
+        return backend_.type_name(mod_name) + cname;
     }
 
     // Returns the C++ name for a TypeRef encountered in `from_module`.
     std::string cpp_name_for_ref(const std::string& type_name,
                                  const std::string& from_module) const {
-        auto cname = to_cpp_name(type_name);
+        auto cname = backend_.type_name(type_name);
         if (!collision_types_.count(cname))
             return cname;
         std::string def_mod = resolver_.module_of(type_name, from_module);
         if (def_mod.empty()) return cname;
-        return to_cpp_name(def_mod) + cname;
+        return backend_.type_name(def_mod) + cname;
     }
 
     // Returns the C++ name for a fully qualified TypeRef.
     // When module_name is set and the type is a collision type, uses module_name
     // directly instead of resolving through from_module imports.
     std::string cpp_name_for_typeref(const ast::TypeRef& tr) const {
-        auto cname = to_cpp_name(tr.type_name);
+        auto cname = backend_.type_name(tr.type_name);
         if (!tr.module_name.empty() && collision_types_.count(cname))
-            return to_cpp_name(tr.module_name) + cname;
+            return backend_.type_name(tr.module_name) + cname;
         return cpp_name_for_ref(tr.type_name, current_module_);
     }
 
