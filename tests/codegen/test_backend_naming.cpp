@@ -294,6 +294,33 @@ int main() {
               rust_os.str());
     }
 
+    // emit_seq_of_cpp: sixth real construct pair (SEQUENCE OF, #230/#238).
+    // Bounded SIZE(1..10) collection.
+    {
+        SeqOfSpec spec;
+        spec.type_name = "MyList";
+        spec.xer_name  = "MyList";
+        spec.elem_ref  = "&asn_DEF_Elem";
+        spec.size_bounded = true;
+        spec.range_bits = 4;
+        spec.size_lower = 1;
+        spec.size_upper = 10;
+        spec.is_set_of = false;
+
+        std::ostringstream cpp_os, rust_os;
+        c.emit_seq_of_cpp(spec, cpp_os);
+        r.emit_seq_of_cpp(spec, rust_os);
+
+        check("emit_seq_of_cpp: C++ produces a SeqOfSpec + TypeDescriptor",
+              cpp_os.str().find("asn_SPC_MyList") != std::string::npos &&
+              cpp_os.str().find("asn_DEF_MyList") != std::string::npos,
+              cpp_os.str());
+        check("emit_seq_of_cpp: Rust produces a real generic size-check function",
+              rust_os.str().find("pub fn my_list_size_ok<T>(v: &Vec<T>) -> bool {") != std::string::npos &&
+              rust_os.str().find("(v.len() as i64) >= 1 && (v.len() as i64) <= 10") != std::string::npos,
+              rust_os.str());
+    }
+
     // Generator accepts an injected Backend (not just the default CppBackend)
     // — proves the seam #216 built is real, not just declared. Construction
     // only (no generate() call — that still hardcodes C++ text emission
