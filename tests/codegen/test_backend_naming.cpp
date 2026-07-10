@@ -1,12 +1,12 @@
 // Proves the Backend interface (gambas-asn1#216) is genuinely
 // language-agnostic by exercising two real implementations — CppBackend and
 // RustBackend (#217) — against the same ASN.1 names and checking that
-// language-appropriate naming conventions diverge correctly. No emit_*
-// methods exist on Backend yet (that's #225, added incrementally, pairwise
-// with CppBackend) — this covers only the naming/identifier-escaping
-// surface #216 actually delivered.
+// language-appropriate naming conventions diverge correctly. Also exercises
+// the first real emit_* pair (ENUMERATED, #226/#234): both backends produce
+// real, distinct output for the same EnumeratedSpec.
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
 #include "codegen/Backend.hpp"
 #include "codegen/CppBackend.hpp"
 #include "codegen/RustBackend.hpp"
@@ -84,6 +84,43 @@ int main() {
     check("synthetic_name: Rust matches C++ (same PascalCase strategy)",
           r.synthetic_name("Parent", "member") == "ParentMember",
           r.synthetic_name("Parent", "member"));
+
+    // emit_enumerated_hpp/cpp: first real construct pair (#226 C++ / #234
+    // Rust). Same EnumeratedSpec, two genuinely different real outputs —
+    // not a stub/placeholder on either side.
+    {
+        EnumeratedSpec spec;
+        spec.type_name = "MyEnum";
+        spec.xer_name  = "MyEnum";
+        spec.values    = {{"foo", 0}, {"bar", 1}};
+        spec.extensible = false;
+        spec.root_count  = 2;
+
+        std::ostringstream cpp_hpp, cpp_cpp, rust_hpp, rust_cpp;
+        c.emit_enumerated_hpp(spec, cpp_hpp);
+        c.emit_enumerated_cpp(spec, cpp_cpp);
+        r.emit_enumerated_hpp(spec, rust_hpp);
+        r.emit_enumerated_cpp(spec, rust_cpp);
+
+        check("emit_enumerated_hpp: C++ produces a class",
+              cpp_hpp.str().find("class MyEnum") != std::string::npos,
+              cpp_hpp.str());
+        check("emit_enumerated_hpp: Rust produces a real enum (not a stub)",
+              rust_hpp.str().find("pub enum MyEnum") != std::string::npos,
+              rust_hpp.str());
+        check("emit_enumerated_hpp: Rust variants use declared values, UpperCamelCase",
+              rust_hpp.str().find("Foo = 0") != std::string::npos &&
+              rust_hpp.str().find("Bar = 1") != std::string::npos,
+              rust_hpp.str());
+        check("emit_enumerated_cpp: C++ produces EnumSpec + TypeDescriptor",
+              cpp_cpp.str().find("asn_SPC") != std::string::npos &&
+              cpp_cpp.str().find("asn_DEF") != std::string::npos,
+              cpp_cpp.str());
+        check("emit_enumerated_cpp: Rust produces a value-lookup impl",
+              rust_cpp.str().find("impl std::convert::TryFrom<i64> for MyEnum") != std::string::npos &&
+              rust_cpp.str().find("0 => Ok(MyEnum::Foo)") != std::string::npos,
+              rust_cpp.str());
+    }
 
     // Generator accepts an injected Backend (not just the default CppBackend)
     // — proves the seam #216 built is real, not just declared. Construction
