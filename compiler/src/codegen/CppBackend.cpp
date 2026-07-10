@@ -564,4 +564,20 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
         spec.per_handler, spec.ber_handler, spec.cpp_type, spec.xer_tail);
 }
 
+void CppBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const {
+    os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", spec.type_name);
+    os << std::format("    {},\n", spec.elem_ref);
+    os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
+                      spec.flags, spec.range_bits, spec.size_lower, spec.size_upper);
+    if (spec.has_declared_elem_name)
+        os << std::format("    \"{}\",\n", spec.elem_xer_name);
+    os << "};\n\n";
+
+    uint32_t of_tag = spec.is_set_of ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
+    emit_type_descriptor(os, spec.type_name, spec.xer_name,
+        std::format("asn1::Tag::universal({}, true)", of_tag),
+        false, false, false, true, "asn1::TypeKind::SeqOf",
+        "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler");
+}
+
 } // namespace asn1::codegen
