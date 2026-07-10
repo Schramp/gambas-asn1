@@ -229,11 +229,18 @@ private:
     bool        member_is_explicit(const ast::Tag& tag, const ast::TypeDef& member_type) const;
     std::string emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
                                             const std::string& mname, std::ostream& os);
+    /// @brief Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
+    /// @param tag         The member's (possibly absent) tag override.
+    /// @param constructed True if the encoding form is constructed, not primitive.
     std::string tag_literal(const ast::Tag& tag, bool constructed) const;
-    // Backend-agnostic tag decision (X.690 §8.1: class + number + encoding form),
-    // extracted from `tag_literal`'s C++-literal-string formatting. `tag_literal`
-    // is now a thin wrapper: tag_spec_for() decides, format_tag_literal() emits.
-    // A future non-C++ backend consumes tag_spec_for() directly.
+    /// @brief Decide whether a member carries an explicit BER tag override and,
+    ///        if so, what class/number/encoding-form applies (X.690 §8.1).
+    /// @param tag         The member's (possibly absent) tag override.
+    /// @param constructed True if the encoding form is constructed, not primitive.
+    /// @return The tag decision as plain data, or nullopt if `tag` is absent.
+    /// @note Backend-agnostic: no C++ syntax. `tag_literal()` is now a thin
+    ///       wrapper — tag_spec_for() decides, format_tag_literal() emits. A
+    ///       future non-C++ backend consumes tag_spec_for() directly.
     std::optional<TagSpec> tag_spec_for(const ast::Tag& tag, bool constructed) const;
     std::string natural_tag_for(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
