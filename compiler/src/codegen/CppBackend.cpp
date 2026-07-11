@@ -177,9 +177,9 @@ void emit_type_descriptor(std::ostream& os,
     os << "};\n\n";
 }
 
-// Moved from Generator::emit_enumerated_hpp — same output, now driven by
+// Moved from Generator::emit_enumerated_declaration — same output, now driven by
 // the backend-agnostic EnumeratedSpec instead of ast::TypeDef.
-void CppBackend::emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& os) const {
+void CppBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
     // class inheriting EnumValue — plain inner enum so values leak into class scope
@@ -210,9 +210,9 @@ void CppBackend::emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& o
     os << "};\n\n";
 }
 
-// Moved from Generator::emit_enumerated_cpp — same output, now driven by
+// Moved from Generator::emit_enumerated_definition — same output, now driven by
 // the backend-agnostic EnumeratedSpec instead of ast::TypeDef.
-void CppBackend::emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& os) const {
+void CppBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
     // value2enum table (sorted by value for binary search)
@@ -269,7 +269,7 @@ std::string make_integer_pc(int flags, int range_bits, int int_kind,
         lower_u64, upper_u64);
 }
 
-// Moved from Generator::emit_integer_hpp — same output, now driven by the
+// Moved from Generator::emit_integer_declaration — same output, now driven by the
 // backend-agnostic IntegerSpec instead of ast::TypeDef.
 // Note: the alias storage type here (__int128/std::vector<uint8_t> for
 // I128/ARBITRARY) deliberately differs from native_int_type()'s
@@ -278,7 +278,7 @@ std::string make_integer_pc(int flags, int range_bits, int int_kind,
 // top-level type to one of them would make the alias unusable. This
 // distinction is pre-existing behavior, preserved as-is, not introduced by
 // this move.
-void CppBackend::emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) const {
+void CppBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
     std::string cpp_storage;
@@ -298,13 +298,13 @@ void CppBackend::emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) con
     os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
 }
 
-// Moved from Generator::emit_integer_cpp — same output, now driven by the
+// Moved from Generator::emit_integer_definition — same output, now driven by the
 // backend-agnostic IntegerSpec instead of ast::TypeDef /
 // Generator::extract_integer_range(). Hand-rolls its own TypeDescriptor
 // emission (doesn't reuse emit_type_descriptor) because INTEGER's
 // `.constraints` field holds a real populated Constraints value, not the
 // enum/seq/choice/seqof sub-descriptor pointers emit_type_descriptor emits.
-void CppBackend::emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) const {
+void CppBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
     int ik = (spec.storage_kind == IntStorageKind::U64)       ? asn1::Constraints::INT_U64
@@ -396,7 +396,7 @@ static std::string native_builtin_type(ast::BuiltinType bt) {
 ///        Any=23). Integer and Enumerated entries are never looked up
 ///        (those builtins are handled by separate emit functions) — kept
 ///        for direct index alignment with the enum.
-/// @note Shared between emit_builtin_alias_cpp (top-level builtin-alias
+/// @note Shared between emit_builtin_alias_definition (top-level builtin-alias
 ///       types) and emit_member_type_descriptor (inline-constrained
 ///       SIZE-able members) — both need the same builtin-type -> handler
 ///       mapping.
@@ -462,7 +462,7 @@ static const char* ber_handler_for_builtin(ast::BuiltinType bt) {
     return lut[static_cast<int>(bt)];
 }
 
-void CppBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
+void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
     const char* per_h = per_handler_for_builtin(spec.builtin_type);
@@ -593,7 +593,7 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
             ? "{}"
             : make_string_constraints_init(all_flags, spec.size_range_bits, spec.size_lower,
                                             spec.size_upper, spec.alphabet, spec.alpha_prefix, bbt);
-        // Same builtin-type -> handler LUTs as emit_builtin_alias_cpp; every
+        // Same builtin-type -> handler LUTs as emit_builtin_alias_definition; every
         // type reachable here (string family, OctetString, BitString) maps
         // identically whether it's a top-level alias or an inline member.
         per_h = per_handler_for_builtin(spec.builtin_type);
@@ -611,7 +611,7 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
         per_h, ber_h, cpp_t, xer_tail);
 }
 
-void CppBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const {
+void CppBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
     os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", spec.type_name);
     os << std::format("    {},\n", spec.elem_ref);
     int flags = spec.size_upper ? asn1::Constraints::SIZE_CONSTRAINED : 0;
@@ -628,7 +628,7 @@ void CppBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const 
         "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler");
 }
 
-void CppBackend::emit_sequence_hpp(const SequenceSpec& spec, std::ostream& os) const {
+void CppBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
     // class — optional members use unique_ptr (forward-decl compatible, matches asn1c semantics)
@@ -665,11 +665,11 @@ void CppBackend::emit_sequence_hpp(const SequenceSpec& spec, std::ostream& os) c
     os << "};\n\n";
 }
 
-void CppBackend::emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) const {
+void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
     // Special member function definitions and Ops type aliases were already
-    // emitted by Generator::emit_sequence_cpp (before this call) — both must
+    // emitted by Generator::emit_sequence_definition (before this call) — both must
     // precede the member table below (emit_default_setter's generated
     // static functions reference the Ops aliases by name), and neither
     // needs any per-member decision content.
@@ -772,7 +772,7 @@ void CppBackend::emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) c
 ///   active_lifecycle — pointer into TypeDescriptor::lifecycle of the current alternative;
 ///   set by ChoiceInterface::emplace_alt. destroy/move ops reached via one pointer deref.
 ///   std::launder is required on every read-back after placement-new (C++17 §6.8.4).
-void CppBackend::emit_choice_hpp(const ChoiceSpec& spec, std::ostream& os) const {
+void CppBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
     os << std::format("class {} : public asn1::ChoiceInterface {{\npublic:\n", cname);
@@ -851,7 +851,7 @@ void CppBackend::emit_choice_hpp(const ChoiceSpec& spec, std::ostream& os) const
 /// @brief Emit the implementation/definition for a CHOICE type.
 /// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
 /// @param os   Output stream to write to.
-void CppBackend::emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const {
+void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
     if (!spec.alternatives.empty()) {
@@ -930,7 +930,7 @@ void CppBackend::emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const
         /*use_class_scope=*/true);
 }
 
-void CppBackend::emit_hpp_preamble(const std::string& module_comment, std::ostream& os) const {
+void CppBackend::emit_declaration_preamble(const std::string& module_comment, std::ostream& os) const {
     os << "// Module: " << module_comment << "\n";
     os << "#pragma once\n";
     os << "#include <memory>\n";
@@ -940,8 +940,8 @@ void CppBackend::emit_hpp_preamble(const std::string& module_comment, std::ostre
     os << "#include <asn1cpp/asn1cpp_gen.hpp>\n\n";
 }
 
-void CppBackend::emit_cpp_preamble(const std::string& header_filename, std::ostream& os) const {
-    os << std::format("#include \"{}.hpp\"\n", header_filename);
+void CppBackend::emit_definition_preamble(const std::string& declaration_filename, std::ostream& os) const {
+    os << std::format("#include \"{}.hpp\"\n", declaration_filename);
     os << "#include <asn1cpp/codec/PerHandlers.hpp>\n";
     os << "#include <asn1cpp/codec/BerHandlers.hpp>\n";
     // __builtin_offsetof is well-defined for all types without virtual functions
@@ -960,18 +960,18 @@ void CppBackend::emit_namespace_close(const std::string& name, std::ostream& os)
     os << "\n} // namespace " << name << "\n";
 }
 
-void CppBackend::emit_builtin_alias_hpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
+void CppBackend::emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, std::ostream& os) const {
     os << std::format("using {} = {};\n\n", spec.type_name, native_builtin_type(spec.builtin_type));
     os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", spec.type_name);
 }
 
-void CppBackend::emit_seq_of_hpp(const SeqOfSpec& spec, std::ostream& os) const {
+void CppBackend::emit_seq_of_declaration(const SeqOfSpec& spec, std::ostream& os) const {
     os << std::format("using {} = asn1::VectorSeqOf<{}>;\n\n", spec.type_name, spec.elem_type);
     os << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", spec.type_name);
     os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", spec.type_name);
 }
 
-void CppBackend::emit_typeref_alias_hpp(const std::string& type_name, const std::string& target_type,
+void CppBackend::emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
                                          std::ostream& os) const {
     os << std::format("using {} = {};\n", type_name, target_type);
 }

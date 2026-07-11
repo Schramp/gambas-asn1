@@ -228,7 +228,7 @@ struct SeqOfSpec {
 ///        SEQUENCE for a second backend — that's #239's job.
 /// @note Used identically for both the `.hpp` and `.cpp` passes; the `.hpp`
 ///       pass only reads `mtype`/`mname`/`optional`/`setter_*` and leaves
-///       the rest default-constructed (never read by emit_sequence_hpp).
+///       the rest default-constructed (never read by emit_sequence_declaration).
 struct SequenceMemberSpec {
     std::string asn1_name;      // raw ASN.1 name — MemberDescriptor "name" field
     std::string mtype;          // C++ storage type
@@ -264,8 +264,8 @@ struct SequenceSpec {
 /// @brief Backend-agnostic decision for one CHOICE alternative. Field
 ///        groups are pass-specific (see SequenceMemberSpec's note on the
 ///        same pattern): `mtype`/`accessor_name`/`pr_name` are read by
-///        emit_choice_hpp; `asn1_name`/`eff_tag`/`tdref`/`is_explicit` by
-///        emit_choice_cpp. `mtype` is shared by both (same value, computed
+///        emit_choice_declaration; `asn1_name`/`eff_tag`/`tdref`/`is_explicit` by
+///        emit_choice_definition. `mtype` is shared by both (same value, computed
 ///        once): the accessor return type in the header, and the
 ///        `ChoiceOps<T>` template parameter in the alternatives table.
 struct ChoiceAlternativeSpec {
@@ -352,8 +352,8 @@ public:
     /// @brief Map an INTEGER storage-class decision to this backend's native
     ///        type for an *inline member* of that INTEGER type (e.g.
     ///        `asn1::UInteger` in C++). Distinct from the top-level named-type
-    ///        alias target `emit_integer_hpp` picks — see its note.
-    /// @note Default throws — same rationale as emit_enumerated_hpp: a
+    ///        alias target `emit_integer_declaration` picks — see its note.
+    /// @note Default throws — same rationale as emit_enumerated_declaration: a
     ///       backend without INTEGER support yet stays valid and
     ///       instantiable, just can't be used for INTEGER-typed members
     ///       until it overrides this.
@@ -369,51 +369,51 @@ public:
     ///       construct yet stays a valid, instantiable Backend; it just
     ///       can't be used for ENUMERATED types until it overrides this.
     ///       Loud failure beats silently emitting the wrong language's syntax.
-    virtual void emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& os) const {
+    virtual void emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
-        throw std::logic_error("emit_enumerated_hpp: not implemented for this backend");
+        throw std::logic_error("emit_enumerated_declaration: not implemented for this backend");
     }
 
     /// @brief Emit the implementation/definition half of an ENUMERATED type.
     /// @param spec Resolved, backend-agnostic decision (see EnumeratedSpec).
     /// @param os   Output stream to write to.
-    /// @note See emit_enumerated_hpp — same default-throws rationale.
-    virtual void emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& os) const {
+    /// @note See emit_enumerated_declaration — same default-throws rationale.
+    virtual void emit_enumerated_definition(const EnumeratedSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
-        throw std::logic_error("emit_enumerated_cpp: not implemented for this backend");
+        throw std::logic_error("emit_enumerated_definition: not implemented for this backend");
     }
 
     /// @brief Emit the header/type-declaration half of a named INTEGER type.
     /// @param spec Resolved, backend-agnostic decision (see IntegerSpec).
     /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) const {
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_integer_declaration(const IntegerSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
-        throw std::logic_error("emit_integer_hpp: not implemented for this backend");
+        throw std::logic_error("emit_integer_declaration: not implemented for this backend");
     }
 
     /// @brief Emit the implementation/definition half of a named INTEGER type.
     /// @param spec Resolved, backend-agnostic decision (see IntegerSpec).
     /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) const {
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_integer_definition(const IntegerSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
-        throw std::logic_error("emit_integer_cpp: not implemented for this backend");
+        throw std::logic_error("emit_integer_definition: not implemented for this backend");
     }
 
     /// @brief Emit the implementation/definition for a builtin-alias type
     ///        (every builtin except INTEGER/ENUMERATED — those have their
     ///        own emit_integer_*/emit_enumerated_*). Builtin-alias types
     ///        have no separate header/type-declaration half analogous to
-    ///        emit_enumerated_hpp/emit_integer_hpp — the type alias itself
+    ///        emit_enumerated_declaration/emit_integer_declaration — the type alias itself
     ///        is a one-line `using`/equivalent, generated directly by
     ///        Generator (not yet a Backend method).
     /// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).
     /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
-        throw std::logic_error("emit_builtin_alias_cpp: not implemented for this backend");
+        throw std::logic_error("emit_builtin_alias_definition: not implemented for this backend");
     }
 
     /// @brief Emit the static setter/checker pair for a SEQUENCE/SET member's
@@ -423,7 +423,7 @@ public:
     /// @param parent_name Enclosing SEQUENCE/SET type identifier.
     /// @param member_name Member identifier.
     /// @param os          Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_hpp. The
+    /// @note Default throws — same rationale as emit_enumerated_declaration. The
     ///       caller (Generator::emit_default_setter) derives the returned
     ///       reference string itself (deterministic from parent_name/
     ///       member_name), so this method is void, not string-returning.
@@ -438,7 +438,7 @@ public:
     ///        constrained SEQUENCE/CHOICE member.
     /// @param spec Resolved, backend-agnostic decision (see MemberTypeDescriptorSpec).
     /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
     virtual void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
         throw std::logic_error("emit_member_type_descriptor: not implemented for this backend");
@@ -447,46 +447,46 @@ public:
     /// @brief Emit the implementation/definition for a SEQUENCE OF / SET OF type.
     /// @param spec Resolved, backend-agnostic decision (see SeqOfSpec).
     /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const {
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
-        throw std::logic_error("emit_seq_of_cpp: not implemented for this backend");
+        throw std::logic_error("emit_seq_of_definition: not implemented for this backend");
     }
 
     /// @brief Emit the class/type declaration for a SEQUENCE/SET type.
     /// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
     /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_sequence_hpp(const SequenceSpec& spec, std::ostream& os) const {
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_sequence_declaration(const SequenceSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
-        throw std::logic_error("emit_sequence_hpp: not implemented for this backend");
+        throw std::logic_error("emit_sequence_declaration: not implemented for this backend");
     }
 
     /// @brief Emit the implementation/definition for a SEQUENCE/SET type.
     /// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
     /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) const {
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_sequence_definition(const SequenceSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
-        throw std::logic_error("emit_sequence_cpp: not implemented for this backend");
+        throw std::logic_error("emit_sequence_definition: not implemented for this backend");
     }
 
     /// @brief Emit the class/type declaration for a CHOICE type.
     /// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
     /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_choice_hpp(const ChoiceSpec& spec, std::ostream& os) const {
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
-        throw std::logic_error("emit_choice_hpp: not implemented for this backend");
+        throw std::logic_error("emit_choice_declaration: not implemented for this backend");
     }
 
     /// @brief Emit the implementation/definition for a CHOICE type.
     /// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
     /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const {
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
-        throw std::logic_error("emit_choice_cpp: not implemented for this backend");
+        throw std::logic_error("emit_choice_definition: not implemented for this backend");
     }
 
     /// @brief Emit the file preamble for a generated header (module comment,
@@ -495,54 +495,54 @@ public:
     ///        content, no comment-syntax applied; the backend wraps it in
     ///        its own comment syntax.
     /// @param os Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_hpp_preamble(const std::string& module_comment, std::ostream& os) const {
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_declaration_preamble(const std::string& module_comment, std::ostream& os) const {
         (void)module_comment; (void)os;
-        throw std::logic_error("emit_hpp_preamble: not implemented for this backend");
+        throw std::logic_error("emit_declaration_preamble: not implemented for this backend");
     }
 
     /// @brief Emit the file preamble for a generated implementation file.
-    /// @param header_filename The corresponding header's filename, without extension.
+    /// @param declaration_filename The corresponding declaration file's filename, without extension.
     /// @param os Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_cpp_preamble(const std::string& header_filename, std::ostream& os) const {
-        (void)header_filename; (void)os;
-        throw std::logic_error("emit_cpp_preamble: not implemented for this backend");
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_definition_preamble(const std::string& declaration_filename, std::ostream& os) const {
+        (void)declaration_filename; (void)os;
+        throw std::logic_error("emit_definition_preamble: not implemented for this backend");
     }
 
     /// @brief Emit the opening of a namespace/module wrapper (X: `-fprefix`).
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
     virtual void emit_namespace_open(const std::string& name, std::ostream& os) const {
         (void)name; (void)os;
         throw std::logic_error("emit_namespace_open: not implemented for this backend");
     }
 
     /// @brief Emit the closing of a namespace/module wrapper.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
     virtual void emit_namespace_close(const std::string& name, std::ostream& os) const {
         (void)name; (void)os;
         throw std::logic_error("emit_namespace_close: not implemented for this backend");
     }
 
     /// @brief Emit the header-side type declaration for a builtin-alias type
-    ///        (the `.hpp` counterpart to emit_builtin_alias_cpp — see its
+    ///        (the `.hpp` counterpart to emit_builtin_alias_definition — see its
     ///        note on why builtin-alias has no separate hpp/cpp split for
     ///        the definition itself; this is just the forward-visible alias
     ///        + extern descriptor declaration).
     /// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_builtin_alias_hpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
-        throw std::logic_error("emit_builtin_alias_hpp: not implemented for this backend");
+        throw std::logic_error("emit_builtin_alias_declaration: not implemented for this backend");
     }
 
     /// @brief Emit the header-side type declaration for a SEQUENCE OF / SET
-    ///        OF type (the `.hpp` counterpart to emit_seq_of_cpp).
+    ///        OF type (the `.hpp` counterpart to emit_seq_of_definition).
     /// @param spec Resolved, backend-agnostic decision (see SeqOfSpec).
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_seq_of_hpp(const SeqOfSpec& spec, std::ostream& os) const {
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_seq_of_declaration(const SeqOfSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
-        throw std::logic_error("emit_seq_of_hpp: not implemented for this backend");
+        throw std::logic_error("emit_seq_of_declaration: not implemented for this backend");
     }
 
     /// @brief Emit a plain type-reference alias (`MyType ::= OtherType`,
@@ -551,22 +551,22 @@ public:
     ///        constraint/tag decisions of its own.
     /// @param type_name   This type's own final identifier.
     /// @param target_type The referenced type's final identifier.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
-    virtual void emit_typeref_alias_hpp(const std::string& type_name, const std::string& target_type,
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    virtual void emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
                                          std::ostream& os) const {
         (void)type_name; (void)target_type; (void)os;
-        throw std::logic_error("emit_typeref_alias_hpp: not implemented for this backend");
+        throw std::logic_error("emit_typeref_alias_declaration: not implemented for this backend");
     }
 
     /// @brief Output file extension (no leading dot) for a type's
-    ///        declaration half (the content `emit_hpp` produces).
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    ///        declaration half (the content `emit_declaration` produces).
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
     virtual std::string declaration_extension() const {
         throw std::logic_error("declaration_extension: not implemented for this backend");
     }
 
     /// @brief Output file extension (no leading dot) for a type's
-    ///        definition half (the content `emit_cpp` produces).
+    ///        definition half (the content `emit_definition` produces).
     ///
     /// gambas-asn1#262: file identity used to be hardcoded ".hpp"/".cpp" in
     /// Generator, baking C++'s header+impl split into the whole pipeline.
@@ -576,7 +576,7 @@ public:
     /// definition_extension(), so returning the same value as
     /// declaration_extension() (as a single-file backend would) is itself
     /// the complete "combine into one file" decision.
-    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    /// @note Default throws — same rationale as emit_enumerated_declaration.
     virtual std::string definition_extension() const {
         throw std::logic_error("definition_extension: not implemented for this backend");
     }
