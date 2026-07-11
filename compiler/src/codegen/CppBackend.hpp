@@ -135,6 +135,9 @@ public:
     void emit_seq_of_hpp(const SeqOfSpec& spec, std::ostream& os) const override;
     void emit_typeref_alias_hpp(const std::string& type_name, const std::string& target_type,
                                  std::ostream& os) const override;
+
+    std::string declaration_extension() const override { return "hpp"; }
+    std::string definition_extension() const override { return "cpp"; }
 };
 
 } // namespace asn1::codegen
