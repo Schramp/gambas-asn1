@@ -380,6 +380,58 @@ int main() {
               rust_cpp.str());
     }
 
+    // emit_choice_hpp/cpp: eighth real construct pair (CHOICE, #232/#240).
+    // Two alternatives: an INTEGER and a String.
+    {
+        ChoiceSpec spec;
+        spec.type_name = "MyChoice";
+        spec.xer_name  = "MyChoice";
+        spec.count = 2;
+        spec.ext_at = -1;
+
+        ChoiceAlternativeSpec num;
+        num.mtype = "int64_t";
+        num.accessor_name = "num";
+        num.pr_name = "Num";
+        num.asn1_name = "num";
+        num.eff_tag = "asn1::Tag::universal(2, false)";
+        num.tdref = "&asn_DEF_MyInt";
+        spec.alternatives.push_back(num);
+
+        ChoiceAlternativeSpec label;
+        label.mtype = "String";
+        label.accessor_name = "label";
+        label.pr_name = "Label";
+        label.asn1_name = "label";
+        label.eff_tag = "asn1::Tag::universal(12, false)";
+        label.tdref = "&asn_DEF_Utf8String";
+        spec.alternatives.push_back(label);
+
+        std::ostringstream cpp_hpp, cpp_cpp, rust_hpp, rust_cpp;
+        c.emit_choice_hpp(spec, cpp_hpp);
+        c.emit_choice_cpp(spec, cpp_cpp);
+        r.emit_choice_hpp(spec, rust_hpp);
+        r.emit_choice_cpp(spec, rust_cpp);
+
+        check("emit_choice_hpp: C++ produces a ChoiceInterface-derived class",
+              cpp_hpp.str().find("class MyChoice : public asn1::ChoiceInterface") != std::string::npos &&
+              cpp_hpp.str().find("enum class PR : int { NOTHING = 0, Num = 1, Label = 2 };") != std::string::npos,
+              cpp_hpp.str());
+        check("emit_choice_cpp: C++ produces an alternatives table",
+              cpp_cpp.str().find("const asn1::MemberDescriptor MyChoice::s_alternatives[]") != std::string::npos,
+              cpp_cpp.str());
+        check("emit_choice_hpp: Rust produces a real enum with variant payloads (not a stub)",
+              rust_hpp.str().find("pub enum MyChoice {") != std::string::npos &&
+              rust_hpp.str().find("Num(int64_t),") != std::string::npos &&
+              rust_hpp.str().find("Label(String),") != std::string::npos,
+              rust_hpp.str());
+        check("emit_choice_cpp: Rust produces real exhaustive-match accessor functions",
+              rust_cpp.str().find("pub fn my_choice_get_num(x: &mut MyChoice) -> &mut int64_t {") != std::string::npos &&
+              rust_cpp.str().find("match x { MyChoice::Num(v) => v, _ => panic!(\"wrong variant\") }") != std::string::npos &&
+              rust_cpp.str().find("pub fn my_choice_get_label(x: &mut MyChoice) -> &mut String {") != std::string::npos,
+              rust_cpp.str());
+    }
+
     // Generator accepts an injected Backend (not just the default CppBackend)
     // — proves the seam #216 built is real, not just declared. Construction
     // only (no generate() call — that still hardcodes C++ text emission

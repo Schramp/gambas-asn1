@@ -322,4 +322,44 @@ void RustBackend::emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) 
     os << "}\n\n";
 }
 
+/// @brief Emit the Rust enum declaration for a CHOICE type.
+/// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
+/// @param os   Output stream to write to.
+/// @note Deliberately does NOT port the C++ side's raw-buffer/`alignas`/
+///       `std::launder`/`ChoiceOps<T>` storage design (see design note on
+///       gambas-asn1#240) — that design exists only to dodge
+///       `std::variant`'s O(N²) template-instantiation blowup on large
+///       CHOICEs, a C++-template-specific failure mode. Rust's `enum` is a
+///       native tagged union, not template-recursive, so the natural
+///       mapping has no equivalent problem. No `#[derive(Default)]`: unlike
+///       a struct, a CHOICE has no natural default variant.
+void RustBackend::emit_choice_hpp(const ChoiceSpec& spec, std::ostream& os) const {
+    os << "#[derive(Debug, Clone, PartialEq)]\n";
+    os << std::format("pub enum {} {{\n", spec.type_name);
+    for (const auto& a : spec.alternatives)
+        os << std::format("    {}({}),\n", a.pr_name, a.mtype);
+    os << "}\n\n";
+}
+
+/// @brief Emit per-alternative accessor functions for a CHOICE type.
+/// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
+/// @param os   Output stream to write to.
+/// @note Free functions doing an exhaustive `match`, not methods — the
+///       Rust analogue of the C++ side's offset-based accessor methods
+///       (see design note on gambas-asn1#240), but compiler-checked
+///       (exhaustive match) rather than an unchecked `reinterpret_cast`:
+///       worst case on a mismatched variant is a controlled panic, not UB.
+///       `tag_index_table`/`ber_tags` (BER wire-dispatch specific) are
+///       unused here — no runtime wiring yet, same as every prior pairing.
+void RustBackend::emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const {
+    std::string prefix = escape(to_snake_case(spec.type_name));
+    for (const auto& a : spec.alternatives) {
+        std::string fname = escape(std::format("{}_get_{}", prefix, a.accessor_name));
+        os << std::format("pub fn {}(x: &mut {}) -> &mut {} {{\n", fname, spec.type_name, a.mtype);
+        os << std::format("    match x {{ {}::{}(v) => v, _ => panic!(\"wrong variant\") }}\n",
+                           spec.type_name, a.pr_name);
+        os << "}\n\n";
+    }
+}
+
 } // namespace asn1::codegen
