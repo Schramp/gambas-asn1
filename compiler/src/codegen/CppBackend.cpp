@@ -250,6 +250,11 @@ void CppBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::ost
         /*use_class_scope=*/true);
 }
 
+void CppBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const {
+    emit_enumerated_declaration(spec, session.buffer(declaration_extension()));
+    emit_enumerated_definition(spec, session.buffer(definition_extension()));
+}
+
 // Build a Constraints designated-initializer literal for an INTEGER
 // constraint. Moved from Generator.cpp (was `static`, file-local).
 // Declared (not `static`) in CppBackend.hpp since Generator.cpp's
@@ -350,6 +355,11 @@ void CppBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& 
     os << std::format("    {} /* ber_handler */,\n", ber_h);
     os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cpp_t);
     os << "};\n";
+}
+
+void CppBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const {
+    emit_integer_declaration(spec, session.buffer(declaration_extension()));
+    emit_integer_definition(spec, session.buffer(definition_extension()));
 }
 
 /// @brief Map a builtin type to its C++ runtime type, for `TypeLifecycleOps<T>`.
@@ -508,6 +518,11 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
     os << "};\n";
 }
 
+void CppBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSession& session) const {
+    emit_builtin_alias_declaration(spec, session.buffer(declaration_extension()));
+    emit_builtin_alias_definition(spec, session.buffer(definition_extension()));
+}
+
 /// @brief Format a DEFAULT value decision as a C++ initializer expression.
 /// @param mtype C++ type name to construct/qualify.
 /// @param spec  The decision to format (see Generator::default_value_spec_for).
@@ -534,7 +549,8 @@ static std::string format_default_value_literal(const std::string& mtype,
 
 void CppBackend::emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
                                       const std::string& parent_name, const std::string& member_name,
-                                      std::ostream& os) const {
+                                      TypeOutputSession& session) const {
+    std::ostream& os = session.buffer(definition_extension());
     std::string literal = format_default_value_literal(type_name, spec, *this);
     std::string fname  = std::format("_setdef_{}_{}", parent_name, member_name);
     std::string cname2 = std::format("_isdef_{}_{}", parent_name, member_name);
@@ -554,7 +570,8 @@ void CppBackend::emit_default_setter(const DefaultValueSpec& spec, const std::st
         cname2, parent_name, member_name, type_name, literal);
 }
 
-void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const {
+void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
+    std::ostream& os = session.buffer(definition_extension());
     using Kind = MemberTypeDescriptorSpec::Kind;
     std::string pc, per_h, ber_h, cpp_t, xer_tail;
 
@@ -626,6 +643,11 @@ void CppBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os)
         std::format("asn1::Tag::universal({}, true)", of_tag),
         false, false, false, true, "asn1::TypeKind::SeqOf",
         "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler");
+}
+
+void CppBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const {
+    emit_seq_of_declaration(spec, session.buffer(declaration_extension()));
+    emit_seq_of_definition(spec, session.buffer(definition_extension()));
 }
 
 void CppBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostream& os) const {
@@ -744,6 +766,11 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
         os << "}\n";
     }
     if (!spec.members.empty()) os << "\n";
+}
+
+void CppBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const {
+    emit_sequence_declaration(spec, session.buffer(declaration_extension()));
+    emit_sequence_definition(spec, session.buffer(definition_extension()));
 }
 
 /// @brief Emit the class declaration for a CHOICE type.
@@ -930,7 +957,13 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
         /*use_class_scope=*/true);
 }
 
-void CppBackend::emit_declaration_preamble(const std::string& module_comment, std::ostream& os) const {
+void CppBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const {
+    emit_choice_declaration(spec, session.buffer(declaration_extension()));
+    emit_choice_definition(spec, session.buffer(definition_extension()));
+}
+
+void CppBackend::emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const {
+    std::ostream& os = session.buffer(declaration_extension());
     os << "// Module: " << module_comment << "\n";
     os << "#pragma once\n";
     os << "#include <memory>\n";
@@ -940,7 +973,8 @@ void CppBackend::emit_declaration_preamble(const std::string& module_comment, st
     os << "#include <asn1cpp/asn1cpp_gen.hpp>\n\n";
 }
 
-void CppBackend::emit_definition_preamble(const std::string& declaration_filename, std::ostream& os) const {
+void CppBackend::emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const {
+    std::ostream& os = session.buffer(definition_extension());
     os << std::format("#include \"{}.hpp\"\n", declaration_filename);
     os << "#include <asn1cpp/codec/PerHandlers.hpp>\n";
     os << "#include <asn1cpp/codec/BerHandlers.hpp>\n";
@@ -952,12 +986,16 @@ void CppBackend::emit_definition_preamble(const std::string& declaration_filenam
     os << "#endif\n\n";
 }
 
-void CppBackend::emit_namespace_open(const std::string& name, std::ostream& os) const {
-    os << "namespace " << name << " {\n\n";
+void CppBackend::emit_namespace_open(const std::string& name, TypeOutputSession& session) const {
+    session.buffer(declaration_extension()) << "namespace " << name << " {\n\n";
+    if (definition_extension() != declaration_extension())
+        session.buffer(definition_extension()) << "namespace " << name << " {\n\n";
 }
 
-void CppBackend::emit_namespace_close(const std::string& name, std::ostream& os) const {
-    os << "\n} // namespace " << name << "\n";
+void CppBackend::emit_namespace_close(const std::string& name, TypeOutputSession& session) const {
+    session.buffer(declaration_extension()) << "\n} // namespace " << name << "\n";
+    if (definition_extension() != declaration_extension())
+        session.buffer(definition_extension()) << "\n} // namespace " << name << "\n";
 }
 
 void CppBackend::emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, std::ostream& os) const {
@@ -972,8 +1010,8 @@ void CppBackend::emit_seq_of_declaration(const SeqOfSpec& spec, std::ostream& os
 }
 
 void CppBackend::emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
-                                         std::ostream& os) const {
-    os << std::format("using {} = {};\n", type_name, target_type);
+                                         TypeOutputSession& session) const {
+    session.buffer(declaration_extension()) << std::format("using {} = {};\n", type_name, target_type);
 }
 
 } // namespace asn1::codegen

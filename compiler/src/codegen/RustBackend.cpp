@@ -57,6 +57,11 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
     os << "}\n\n";
 }
 
+void RustBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const {
+    emit_enumerated_declaration(spec, session.buffer(declaration_extension()));
+    emit_enumerated_definition(spec, session.buffer(definition_extension()));
+}
+
 // Rust INTEGER emission — pairs with CppBackend::emit_integer_declaration/cpp.
 //
 // Unlike CppBackend, native_int_type() is reused directly for the top-level
@@ -100,6 +105,11 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
         os << std::format("    v >= {} && v <= {}\n", spec.lower_s64, spec.upper_s64);
     }
     os << "}\n\n";
+}
+
+void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const {
+    emit_integer_declaration(spec, session.buffer(declaration_extension()));
+    emit_integer_definition(spec, session.buffer(definition_extension()));
 }
 
 /// @brief Map a builtin type to its Rust native type.
@@ -189,7 +199,8 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
 ///       it and use "bool"/"String" instead.
 void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
                                        const std::string& parent_name, const std::string& member_name,
-                                       std::ostream& os) const {
+                                       TypeOutputSession& session) const {
+    std::ostream& os = session.buffer(definition_extension());
     using Kind = DefaultValueSpec::Kind;
     std::string rust_type, literal;
     switch (spec.kind) {
@@ -229,7 +240,8 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
 ///       ("asn_TYP_Parent_member"); reused as the Rust fn name base via
 ///       to_snake_case, same coincidental-overlap rationale as type_name/
 ///       synthetic_name.
-void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const {
+void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
+    std::ostream& os = session.buffer(definition_extension());
     using Kind = MemberTypeDescriptorSpec::Kind;
     std::string base = escape(to_snake_case(spec.tname));
     if (spec.kind == Kind::Integer) {
@@ -322,6 +334,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     os << "}\n\n";
 }
 
+void RustBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const {
+    emit_sequence_declaration(spec, session.buffer(declaration_extension()));
+    emit_sequence_definition(spec, session.buffer(definition_extension()));
+}
+
 /// @brief Emit the Rust enum declaration for a CHOICE type.
 /// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
 /// @param os   Output stream to write to.
@@ -362,6 +379,11 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     }
 }
 
+void RustBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const {
+    emit_choice_declaration(spec, session.buffer(declaration_extension()));
+    emit_choice_definition(spec, session.buffer(definition_extension()));
+}
+
 /// @brief Emit the file-level doc comment for a generated module's
 ///        declaration output.
 /// @param module_comment Pre-formatted "Module: X { oid }" text.
@@ -376,8 +398,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
 ///       the existing two-call contract, not redesigning that contract
 ///       (needs actual file/stream-ownership requirements from a real
 ///       --target=rust CLI wiring, gambas-asn1#245, which doesn't exist yet).
-void RustBackend::emit_declaration_preamble(const std::string& module_comment, std::ostream& os) const {
-    os << "//! Module: " << module_comment << "\n\n";
+void RustBackend::emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const {
+    session.buffer(declaration_extension()) << "//! Module: " << module_comment << "\n\n";
 }
 
 /// @brief Emit the file-level preamble for a generated module's
@@ -387,22 +409,26 @@ void RustBackend::emit_declaration_preamble(const std::string& module_comment, s
 ///       note — this is the concrete symptom of the two-file-model
 ///       mismatch flagged in #241's design note, left unresolved by design
 ///       for this pairing.
-void RustBackend::emit_definition_preamble(const std::string& declaration_filename, std::ostream& os) const {
+void RustBackend::emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const {
     (void)declaration_filename;
-    (void)os;
+    (void)session;
 }
 
 /// @brief Emit the opening of a `-fprefix` module wrapper.
 /// @note Rust's module system (`mod`) is the natural analogue of C++'s
 ///       `namespace` here — real syntax, not a placeholder.
-void RustBackend::emit_namespace_open(const std::string& name, std::ostream& os) const {
-    os << std::format("pub mod {} {{\n\n", name);
+void RustBackend::emit_namespace_open(const std::string& name, TypeOutputSession& session) const {
+    session.buffer(declaration_extension()) << std::format("pub mod {} {{\n\n", name);
+    if (definition_extension() != declaration_extension())
+        session.buffer(definition_extension()) << std::format("pub mod {} {{\n\n", name);
 }
 
 /// @brief Emit the closing of a `-fprefix` module wrapper.
-void RustBackend::emit_namespace_close(const std::string& name, std::ostream& os) const {
+void RustBackend::emit_namespace_close(const std::string& name, TypeOutputSession& session) const {
     (void)name;
-    os << "\n}\n";
+    session.buffer(declaration_extension()) << "\n}\n";
+    if (definition_extension() != declaration_extension())
+        session.buffer(definition_extension()) << "\n}\n";
 }
 
 /// @brief Emit the declaration half of a builtin-alias type.
@@ -417,6 +443,11 @@ void RustBackend::emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, s
     (void)os;
 }
 
+void RustBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSession& session) const {
+    emit_builtin_alias_declaration(spec, session.buffer(declaration_extension()));
+    emit_builtin_alias_definition(spec, session.buffer(definition_extension()));
+}
+
 /// @brief Emit the declaration half of a SEQUENCE OF / SET OF type: a real
 ///        `pub type X = Vec<ElemType>;` alias.
 /// @note `spec.elem_type` is treated as an opaque, already-Rust-shaped type
@@ -427,10 +458,15 @@ void RustBackend::emit_seq_of_declaration(const SeqOfSpec& spec, std::ostream& o
     os << std::format("pub type {} = Vec<{}>;\n\n", spec.type_name, spec.elem_type);
 }
 
+void RustBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const {
+    emit_seq_of_declaration(spec, session.buffer(declaration_extension()));
+    emit_seq_of_definition(spec, session.buffer(definition_extension()));
+}
+
 /// @brief Emit a plain type-reference alias (`MyType ::= OtherType`, X.680 §17).
 void RustBackend::emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
-                                          std::ostream& os) const {
-    os << std::format("pub type {} = {};\n", type_name, target_type);
+                                          TypeOutputSession& session) const {
+    session.buffer(declaration_extension()) << std::format("pub type {} = {};\n", type_name, target_type);
 }
 
 } // namespace asn1::codegen

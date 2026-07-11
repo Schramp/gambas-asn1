@@ -113,31 +113,43 @@ public:
 
     // Defined in CppBackend.cpp — real emission logic, not a one-liner
     // like the naming methods above.
-    void emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const override;
-    void emit_enumerated_definition(const EnumeratedSpec& spec, std::ostream& os) const override;
-    void emit_integer_declaration(const IntegerSpec& spec, std::ostream& os) const override;
-    void emit_integer_definition(const IntegerSpec& spec, std::ostream& os) const override;
-    void emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std::ostream& os) const override;
+    void emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const override;
+    void emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const override;
+    void emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSession& session) const override;
     void emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
                               const std::string& parent_name, const std::string& member_name,
-                              std::ostream& os) const override;
-    void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const override;
-    void emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const override;
-    void emit_sequence_declaration(const SequenceSpec& spec, std::ostream& os) const override;
-    void emit_sequence_definition(const SequenceSpec& spec, std::ostream& os) const override;
-    void emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const override;
-    void emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const override;
-    void emit_declaration_preamble(const std::string& module_comment, std::ostream& os) const override;
-    void emit_definition_preamble(const std::string& declaration_filename, std::ostream& os) const override;
-    void emit_namespace_open(const std::string& name, std::ostream& os) const override;
-    void emit_namespace_close(const std::string& name, std::ostream& os) const override;
-    void emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, std::ostream& os) const override;
-    void emit_seq_of_declaration(const SeqOfSpec& spec, std::ostream& os) const override;
+                              TypeOutputSession& session) const override;
+    void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const override;
+    void emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const override;
+    void emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const override;
+    void emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const override;
+    void emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const override;
+    void emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const override;
+    void emit_namespace_open(const std::string& name, TypeOutputSession& session) const override;
+    void emit_namespace_close(const std::string& name, TypeOutputSession& session) const override;
     void emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
-                                 std::ostream& os) const override;
+                                 TypeOutputSession& session) const override;
 
     std::string declaration_extension() const override { return "hpp"; }
     std::string definition_extension() const override { return "cpp"; }
+
+private:
+    // Split declaration/definition halves — kept as private helpers so the
+    // (substantial) per-construct emission bodies don't need reshaping;
+    // the public emit_* overrides above just call both in sequence
+    // (gambas-asn1#265: combine the pair into one call taking both streams).
+    void emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const;
+    void emit_enumerated_definition(const EnumeratedSpec& spec, std::ostream& os) const;
+    void emit_integer_declaration(const IntegerSpec& spec, std::ostream& os) const;
+    void emit_integer_definition(const IntegerSpec& spec, std::ostream& os) const;
+    void emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, std::ostream& os) const;
+    void emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std::ostream& os) const;
+    void emit_seq_of_declaration(const SeqOfSpec& spec, std::ostream& os) const;
+    void emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const;
+    void emit_sequence_declaration(const SequenceSpec& spec, std::ostream& os) const;
+    void emit_sequence_definition(const SequenceSpec& spec, std::ostream& os) const;
+    void emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const;
+    void emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const;
 };
 
 } // namespace asn1::codegen

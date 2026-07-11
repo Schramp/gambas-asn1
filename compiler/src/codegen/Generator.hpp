@@ -233,44 +233,78 @@ private:
     void collect_type_refs(const ast::TypeDef& def, std::vector<std::string>& worklist);
     void generate_type(const ast::TypeDef& def, const ast::Module& mod);
     void generate_inline_types(const ast::TypeDef& def, const ast::Module& mod);
-    void emit_declaration(const ast::TypeDef& def, const ast::Module& mod, std::ostream& os);
-    void emit_definition(const ast::TypeDef& def, std::ostream& os);
     /// @brief Write the output file(s) for one type definition, driven by a
     ///        TypeOutputSession (gambas-asn1#262) instead of hardcoding a
     ///        ".hpp"/".cpp" pair.
+    /// @param def  Type definition to emit.
+    /// @param mod  Owning module (provides tag default and OID for the file header comment).
+    /// @param session The type's output session (already created by the caller).
+    /// @note gambas-asn1#265: used to be two separate top-level functions
+    ///       (emit_declaration/emit_definition) called back-to-back by
+    ///       emit_type_files, one call per stream. Merged into one so each
+    ///       per-construct dispatch branch can make a single combined
+    ///       backend_.emit_*() call instead of two. Always dispatches both
+    ///       halves; the definition half decides for itself whether a
+    ///       definition exists (e.g. none for a plain TypeRef alias) rather
+    ///       than relying on a separately-computed flag, and any buffer left
+    ///       empty afterward — including a backend's genuinely-empty
+    ///       declaration half — is simply not written.
+    void emit_type_body(const ast::TypeDef& def, const ast::Module& mod, TypeOutputSession& session);
+    /// @brief Create the type's TypeOutputSession, call emit_type_body, then
+    ///        write any non-empty resulting buffer to disk.
     /// @param name Final identifier used for the filename (via filename_for()).
     /// @param def  Type definition to emit.
-    /// @param mod  Owning module (passed through to emit_declaration).
-    /// @note Always calls both emit_declaration and emit_definition; emit_definition decides for
-    ///       itself whether a definition exists (e.g. none for a plain
-    ///       TypeRef alias) rather than relying on a separately-computed
-    ///       flag, and any buffer left empty afterward — including a
-    ///       backend's genuinely-empty declaration half — is simply not
-    ///       written.
+    /// @param mod  Owning module (passed through to emit_type_body).
     void emit_type_files(const std::string& name, const ast::TypeDef& def,
                           const ast::Module& mod);
 
-    void emit_enumerated_declaration(const ast::TypeDef& def, std::ostream& os);
-    void emit_enumerated_definition(const ast::TypeDef& def, std::ostream& os);
-    void emit_integer_declaration(const ast::TypeDef& def, std::ostream& os);
-    void emit_integer_definition(const ast::TypeDef& def, std::ostream& os);
+    /// @brief build_enumerated_spec/build_integer_spec/build_builtin_alias_spec
+    ///        already feed both the declaration and definition halves from
+    ///        one call — these three wrappers just do that and hand the spec
+    ///        straight to the combined backend_.emit_*() call.
+    void emit_enumerated(const ast::TypeDef& def, TypeOutputSession& session);
+    void emit_integer(const ast::TypeDef& def, TypeOutputSession& session);
     /// @brief Decide the resolved IntegerSpec for a named INTEGER type —
     ///        storage kind, named constants, and constraint bounds. Needs
     ///        Generator state (extract_integer_range uses resolver_ for
     ///        named-value references), so unlike build_enumerated_spec this
     ///        is a member, not a free function.
     IntegerSpec build_integer_spec(const ast::TypeDef& def, const std::string& type_name) const;
-    void emit_builtin_alias_definition(const ast::TypeDef& def, std::ostream& os);
+    void emit_builtin_alias(const ast::TypeDef& def, TypeOutputSession& session);
     /// @brief Decide the resolved BuiltinAliasSpec for a builtin-alias type —
     ///        natural tag, FROM-alphabet, and SIZE constraint. Needs
     ///        Generator state (extract_size_range, resolver-backed
     ///        constraint walking), so a member like build_integer_spec.
     BuiltinAliasSpec build_builtin_alias_spec(const ast::TypeDef& def, const std::string& type_name) const;
-    void emit_sequence_declaration(const ast::TypeDef& def, std::ostream& os);
-    void emit_sequence_definition(const ast::TypeDef& def, std::ostream& os);
-    void emit_seq_of_definition(const ast::TypeDef& def, std::ostream& os);
-    void emit_choice_declaration(const ast::TypeDef& def, std::ostream& os);
-    void emit_choice_definition(const ast::TypeDef& def, std::ostream& os);
+
+    /// @brief SEQUENCE/SET: emit_sequence_declaration writes only the
+    ///        declaration-side #include/forward-decl lines (no side content
+    ///        beyond that — the class body itself is backend-emitted from
+    ///        the spec emit_sequence_definition returns, which is a strict
+    ///        superset of what the declaration side needs). Combined into
+    ///        one backend_.emit_sequence() call by emit_sequence.
+    void emit_sequence(const ast::TypeDef& def, TypeOutputSession& session);
+    std::vector<std::string> emit_sequence_declaration(const ast::TypeDef& def, std::ostream& os);
+    SequenceSpec emit_sequence_definition(const ast::TypeDef& def, TypeOutputSession& session);
+
+    /// @brief SEQUENCE OF / SET OF: declaration and definition each
+    ///        contribute disjoint SeqOfSpec fields (elem_type vs. xer_name/
+    ///        size constraints/etc.) — emit_seq_of merges both into one
+    ///        spec before the combined backend_.emit_seq_of() call.
+    void emit_seq_of(const ast::TypeDef& def, TypeOutputSession& session);
+    SeqOfSpec emit_seq_of_declaration(const ast::TypeDef& def, std::ostream& os);
+    SeqOfSpec emit_seq_of_definition(const ast::TypeDef& def, TypeOutputSession& session);
+
+    /// @brief CHOICE: declaration and definition compute their alternative
+    ///        lists via genuinely different passes (canonical_choice_members()
+    ///        vs. a separate tag-sort of `rows`) that are documented/relied-on
+    ///        to produce the same canonical order — emit_choice zips
+    ///        the declaration-only fields (mtype/accessor_name/pr_name) onto
+    ///        the definition-built ChoiceSpec by index before the combined
+    ///        backend_.emit_choice() call.
+    void emit_choice(const ast::TypeDef& def, TypeOutputSession& session);
+    std::vector<ChoiceAlternativeSpec> emit_choice_declaration(const ast::TypeDef& def, std::ostream& os);
+    ChoiceSpec emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session);
 
     std::string cpp_type_for(const ast::TypeDef& def);
     std::string type_descriptor_ref_for(const ast::TypeDef& def);
@@ -279,7 +313,7 @@ private:
     bool        member_type_is_any(const ast::TypeDef& m) const;
     bool        member_is_explicit(const ast::Tag& tag, const ast::TypeDef& member_type) const;
     std::string emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
-                                            const std::string& mname, std::ostream& os);
+                                            const std::string& mname, TypeOutputSession& session);
     /// @brief Decide the resolved MemberTypeDescriptorSpec for an inline-
     ///        constrained SEQUENCE/CHOICE member — INTEGER value range or
     ///        SIZE-able-primitive constraints. Needs Generator state
@@ -341,7 +375,7 @@ private:
     // For DEFAULT members in SEQUENCE/SET: emits a static helper that sets the
     // optional and writes the DEFAULT value. Returns "&_setdef_..." or "nullptr".
     std::string emit_default_setter(const ast::TypeDef& m, const std::string& parent_cname,
-                                    const std::string& mname, std::ostream& os);
+                                    const std::string& mname, TypeOutputSession& session);
     /// @brief Decide which DEFAULT value (X.680 §25.1) applies to a member, if any.
     /// @param m Member to inspect.
     /// @return The decision as plain data. `Kind::None` covers: no DEFAULT
