@@ -1280,6 +1280,15 @@ target_include_directories(test_backend_naming PRIVATE
     ${CMAKE_SOURCE_DIR}/runtime/include)
 add_test(NAME backend_naming COMMAND test_backend_naming)
 
+# ---- RustBackend output compile-check (gambas-asn1#258) --------------------
+if(WITH_RUST_COMPILE_CHECK)
+    add_test(NAME rust_compile_check
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/run_rust_tests.py
+                --rustc ${RUSTC_EXECUTABLE})
+    set_tests_properties(rust_compile_check PROPERTIES TIMEOUT 60 LABELS "rust")
+endif()
+
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
 # Enable with: cmake -DWITH_SMOKE_MATRIX=ON  (default OFF; see Release Testing in doc/book.md)
 if(WITH_SMOKE_MATRIX)
