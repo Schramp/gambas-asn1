@@ -465,4 +465,18 @@ void RustBackend::emit_typeref_alias_declaration(const std::string& type_name, c
     session.buffer(declaration_extension()) << std::format("pub type {} = {};\n", type_name, target_type);
 }
 
+/// @brief Reference another generated type via its crate-relative module
+///        path — assumes a generated crate root (main.cpp, --target=rust)
+///        declares `pub mod <filename>;` for every generated file, one
+///        module per file, module name == filename (gambas-asn1#266).
+std::string RustBackend::format_type_reference(const std::string& type_name, const std::string& filename) const {
+    return std::format("use crate::{}::{};\n", filename, type_name);
+}
+
+/// @brief Rust has no forward-declaration concept — a type is visible
+///        regardless of declaration order once its module is `use`d.
+std::string RustBackend::format_forward_declaration(const std::string&) const {
+    return "";
+}
+
 } // namespace asn1::codegen
