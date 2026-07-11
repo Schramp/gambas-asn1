@@ -1413,108 +1413,23 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     }
     if (count > 0) os << "\n";
 
-    // Storage strategy: raw byte buffer sized/aligned to the largest alternative.
-    //
-    // Why not std::variant<T1, T2, ..., TN>?
-    //   std::variant is implemented via recursive template specialisations.
-    //   std::get<K> descends K levels of template recursion.  With N alternatives and
-    //   N different get<K> calls, GCC instantiates O(N²) templates.  For a CHOICE
-    //   with 198 alternatives (e.g. XIRIContents in the ETSI LI schema) this
-    //   consumes ~5 GB RSS and kills the build.
-    //
-    // Why a char buffer instead of a typed union?
-    //   A union { T1 a; T2 b; ... } still needs per-member access syntax and doesn't
-    //   help with the destructor/copy dispatch problem.  A raw char[] + placement new
-    //   lets the _emplace_* functions in the .cpp carry all type knowledge, keeping
-    //   the header O(N) in both parse and instantiation cost.
-    //
-    // How it works:
-    //   alignas(max_align) char val_[max_size]   — in-place storage, no heap
-    //     max_size  = std::max({sizeof(T1), ..., sizeof(TN)})   — constexpr O(N) scan
-    //     max_align = std::max({alignof(T1), ..., alignof(TN)}) — constexpr O(N) scan
-    //   active_lifecycle — pointer into TypeDescriptor::lifecycle of the current alternative;
-    //   set by ChoiceInterface::emplace_alt. destroy/move ops reached via one pointer deref.
-    //   std::launder is required on every read-back after placement-new (C++17 §6.8.4).
-
-    os << std::format("class {} : public asn1::ChoiceInterface {{\npublic:\n", cname);
     bool apply_auto_tags_hpp = should_apply_auto_tags(def);
     auto canon_members = canonical_choice_members(def, apply_auto_tags_hpp);
-    os << "    enum class PR : int { NOTHING = 0";
-    int pr_idx = 1;
-    for (const auto* m : canon_members)
-        os << std::format(", {} = {}",
-            backend_.escape(backend_.type_name(m->name), {"NOTHING"}), pr_idx++);
-    os << " };\n";
 
-    // val_storage_: raw byte buffer sized/aligned to the largest alternative.
-    // val_ (in ChoiceInterface base) points here — set once in the constructor.
-    os << "    alignas(std::max({";
-    { bool first = true;
-      for (const auto* m : canon_members) {
-        if (!first) os << ", ";
-        os << std::format("alignof({})", cpp_type_for(*m));
-        first = false;
-      }
-      if (count > 0) os << ", ";
-      os << "size_t(1)})) char val_storage_[std::max({";
-    }
-    { bool first = true;
-      for (const auto* m : canon_members) {
-        if (!first) os << ", ";
-        os << std::format("sizeof({})", cpp_type_for(*m));
-        first = false;
-      }
-      if (count > 0) os << ", ";
-      os << "size_t(1)})] {};\n";
-    }
-
-    // Special members.
-    // Constructor sets val_ to val_storage_ so ChoiceInterface::emplace_alt / accessors work.
-    os << std::format("    {0}() {{ val_ = val_storage_; }}\n", cname);
-    os << std::format(
-        "    ~{0}() {{ active_lifecycle->destroy(val_); }}\n", cname);
-    os << std::format("    {0}(const {0}& o);\n", cname);
-    os << std::format("    {0}& operator=(const {0}& o);\n", cname);
-    os << std::format(
-        "    {0}({0}&& o) noexcept {{"
-        " val_ = val_storage_;"
-        " _present = o._present; o._present = 0;"
-        " active_lifecycle = o.active_lifecycle;"
-        " o.active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;"
-        " active_lifecycle->move(val_, o.val_); }}\n", cname);
-    os << std::format(
-        "    {0}& operator=({0}&& o) noexcept {{"
-        " if (this != &o) {{"
-        " active_lifecycle->destroy(val_);"
-        " _present = o._present; o._present = 0;"
-        " active_lifecycle = o.active_lifecycle;"
-        " o.active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;"
-        " active_lifecycle->move(val_, o.val_);"
-        " }} return *this; }}\n", cname);
-
-    os << "    PR present() const { return static_cast<PR>(_present); }\n";
-    // set_present delegates to emplace_alt (ChoiceInterface) — defined in .cpp.
-    os << "    void set_present(PR p);\n";
-
+    ChoiceSpec spec;
+    spec.type_name = cname;
+    spec.count = count;
     for (const auto* m : canon_members) {
-        std::string t = cpp_type_for(*m);
-        std::string n = backend_.member_name(m->name,
+        ChoiceAlternativeSpec alt;
+        alt.mtype = cpp_type_for(*m);
+        alt.accessor_name = backend_.member_name(m->name,
             {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
              "s_alternatives", "s_alternative_count"});
-        os << std::format(
-            "    {0}& {1}() {{ return *std::launder(reinterpret_cast<{0}*>(val_)); }}\n", t, n);
-        os << std::format(
-            "    const {0}& {1}() const"
-            " {{ return *std::launder(reinterpret_cast<const {0}*>(val_)); }}\n", t, n);
+        alt.pr_name = backend_.escape(backend_.type_name(m->name), {"NOTHING"});
+        spec.alternatives.push_back(std::move(alt));
     }
-    if (count > 0) {
-        os << std::format("    static const asn1::MemberDescriptor s_alternatives[{}];\n", count);
-        os << "    static const int s_alternative_count;\n";
-    }
-    os << "    static const asn1::ChoiceSpec     asn_SPC;\n";
-    os << "    static const asn1::TypeDescriptor asn_DEF;\n";
-    os << "};\n\n";
 
+    backend_.emit_choice_hpp(spec, os);
 }
 
 void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
@@ -1525,10 +1440,18 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
     bool has_tag_index = false;
     int  tag_index_base = 0, tag_index_size = 0;
 
+    ChoiceSpec spec;
+    spec.type_name = cname;
+    spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.count = count;
+    spec.ext_at = ext_at;
+
+    std::ostringstream extra_tables;
+
     // Alternative descriptor table
     if (count > 0) {
         struct AltRow {
-            std::string name, eff_tag, mname, tdref, alt_type;
+            std::string name, eff_tag, tdref, alt_type;
             bool is_explicit;
             int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
             ast::Tag full_tag;      // for canonical sort
@@ -1552,7 +1475,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             } else if (m->tag.present() && m->tag.cls == ast::TagClass::Context) {
                 tag_ctx_num = m->tag.number;
             }
-            rows.push_back({ m->name, eff_tag, mname, tdref, alt_type, is_explicit,
+            rows.push_back({ m->name, eff_tag, tdref, alt_type, is_explicit,
                              tag_ctx_num, full_tag });
             ++auto_tag_num;
           }
@@ -1578,42 +1501,16 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
               r.tag_cls_int = (r.full_tag.present() && r.full_tag.cls == ast::TagClass::Context)
                               ? r.full_tag.number : -1;
         }
-        // Pass 2 removed: _get_mut_T_alt / _get_const_T_alt / _emplace_T_alt named free
-        // functions replaced by ChoiceOps<AltT>::get_mut / get_const (single-type-param
-        // template in ChoiceInterface.hpp) and ChoiceInterface::emplace_alt (generic).
 
-        // Pass 3: emit array (as class static member definition).
-        os << std::format("const asn1::MemberDescriptor {}::s_alternatives[] = {{\n", cname);
-        { for (const auto& r : rows) {
-            os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, nullptr, nullptr,\n",
-                r.name, r.eff_tag, r.tdref, r.is_explicit ? "true" : "false");
-            os << std::format("      &asn1::ChoiceOps<{0}>::get_mut, &asn1::ChoiceOps<{0}>::get_const }},\n",
-                r.alt_type);
-          }
+        for (const auto& r : rows) {
+            ChoiceAlternativeSpec alt;
+            alt.mtype = r.alt_type;
+            alt.asn1_name = r.name;
+            alt.eff_tag = r.eff_tag;
+            alt.tdref = r.tdref;
+            alt.is_explicit = r.is_explicit;
+            spec.alternatives.push_back(std::move(alt));
         }
-        os << "};\n";
-        os << std::format("const int {}::s_alternative_count = {};\n\n", cname, count);
-
-        // set_present: resets the active alternative then activates the requested one.
-        // emplace_alt (generic in ChoiceInterface) handles construction via TypeDescriptor::lifecycle.
-        os << std::format(
-            "void {0}::set_present(PR p) {{\n"
-            "    active_lifecycle->destroy(val_);\n"
-            "    active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;\n"
-            "    _present = 0;\n"
-            "    if (p == PR::NOTHING) return;\n"
-            "    int idx = static_cast<int>(p) - 1;\n"
-            "    if (idx >= 0 && idx < s_alternative_count)\n"
-            "        emplace_alt(s_alternatives[idx]);\n"
-            "    _present = static_cast<int>(p);\n"
-            "}}\n\n", cname);
-
-        // Copy constructor: initialise as NOTHING (val_ = val_storage_), then deep-copy.
-        os << std::format(
-            "{0}::{0}(const {0}& o) {{ val_ = val_storage_; asn1::deep_copy(asn_DEF, this, &o); }}\n", cname);
-        os << std::format(
-            "{0}& {0}::operator=(const {0}& o) {{ if (this != &o) asn1::deep_copy(asn_DEF, this, &o); return *this; }}\n\n",
-            cname);
 
         // O(1) context-tag dispatch table — emit when ALL alternatives carry a context tag.
         // Density threshold: only emit if range <= 4× count (avoids huge sparse arrays).
@@ -1632,10 +1529,10 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             std::vector<int16_t> idx_table(range, -1);
             for (int i = 0; i < (int)rows.size(); ++i)
                 idx_table[rows[i].tag_cls_int - min_tag] = (int16_t)i;
-            os << std::format("static const int16_t asn_TAGIDX_{}[] = {{", cname);
+            extra_tables << std::format("static const int16_t asn_TAGIDX_{}[] = {{", cname);
             for (int i = 0; i < range; ++i)
-                os << (i ? ", " : "") << idx_table[i];
-            os << "};\n\n";
+                extra_tables << (i ? ", " : "") << idx_table[i];
+            extra_tables << "};\n\n";
         }
     }
 
@@ -1656,38 +1553,24 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         }
     }
     if (needs_ber_table && !ber_tags.empty()) {
-        os << std::format("static const asn1::ChoiceTagEntry asn_BER_{}[] = {{\n", cname);
+        extra_tables << std::format("static const asn1::ChoiceTagEntry asn_BER_{}[] = {{\n", cname);
         for (const auto& [tag_lit, idx] : ber_tags)
-            os << std::format("    {{ {}, {} }},\n", tag_lit, idx);
-        os << "};\n\n";
+            extra_tables << std::format("    {{ {}, {} }},\n", tag_lit, idx);
+        extra_tables << "};\n\n";
     }
+    spec.extra_tables = extra_tables.str();
 
-    // ChoiceSpec
-    os << std::format("const asn1::ChoiceSpec {}::asn_SPC = {{\n", cname);
-    if (count > 0)
-        os << std::format("    {}::s_alternatives,\n", cname);
-    else
-        os << "    nullptr,\n";
-    os << std::format("    {},\n", count);
-    os << std::format("    {}, /* ext_at */\n", ext_at);
-    os << "    {} /* PER: constraints */\n";
+    std::ostringstream tail;
     if (needs_ber_table && !ber_tags.empty())
-        os << std::format("    , asn_BER_{0}, {1} /* ber_tags */\n", cname, (int)ber_tags.size());
+        tail << std::format("    , asn_BER_{0}, {1} /* ber_tags */\n", cname, (int)ber_tags.size());
     else if (has_tag_index)
-        os << "    , nullptr, 0 /* ber_tags */\n";
+        tail << "    , nullptr, 0 /* ber_tags */\n";
     if (has_tag_index)
-        os << std::format("    , asn_TAGIDX_{0}, {1}, {2} /* tag_index */\n",
-                          cname, tag_index_base, tag_index_size);
-    os << "};\n\n";
+        tail << std::format("    , asn_TAGIDX_{0}, {1}, {2} /* tag_index */\n",
+                            cname, tag_index_base, tag_index_size);
+    spec.choice_spec_tail = tail.str();
 
-    // TypeDescriptor — CHOICE tag is a transparent placeholder (no fixed universal tag)
-    emit_type_descriptor(os, cname,
-        def.xer_name.empty() ? def.name : def.xer_name,
-        "asn1::Tag{asn1::TagClass::Context, 0, false}",
-        false, false, true, false, "asn1::TypeKind::Choice",
-        "&asn1::per_choice_handler", "&asn1::ber_choice_handler",
-        /*use_class_scope=*/true);
-
+    backend_.emit_choice_cpp(spec, os);
 }
 
 // ---------------------------------------------------------------------------

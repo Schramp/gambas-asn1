@@ -746,4 +746,168 @@ void CppBackend::emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) c
     if (!spec.members.empty()) os << "\n";
 }
 
+/// @brief Emit the class declaration for a CHOICE type.
+/// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
+/// @param os   Output stream to write to.
+///
+/// Storage strategy: raw byte buffer sized/aligned to the largest alternative.
+///
+/// Why not std::variant<T1, T2, ..., TN>?
+///   std::variant is implemented via recursive template specialisations.
+///   std::get<K> descends K levels of template recursion.  With N alternatives and
+///   N different get<K> calls, GCC instantiates O(N²) templates.  For a CHOICE
+///   with 198 alternatives (e.g. XIRIContents in the ETSI LI schema) this
+///   consumes ~5 GB RSS and kills the build.
+///
+/// Why a char buffer instead of a typed union?
+///   A union { T1 a; T2 b; ... } still needs per-member access syntax and doesn't
+///   help with the destructor/copy dispatch problem.  A raw char[] + placement new
+///   lets the ChoiceOps<T> template carry all type knowledge, keeping the header
+///   O(N) in both parse and instantiation cost.
+///
+/// How it works:
+///   alignas(max_align) char val_[max_size]   — in-place storage, no heap
+///     max_size  = std::max({sizeof(T1), ..., sizeof(TN)})   — constexpr O(N) scan
+///     max_align = std::max({alignof(T1), ..., alignof(TN)}) — constexpr O(N) scan
+///   active_lifecycle — pointer into TypeDescriptor::lifecycle of the current alternative;
+///   set by ChoiceInterface::emplace_alt. destroy/move ops reached via one pointer deref.
+///   std::launder is required on every read-back after placement-new (C++17 §6.8.4).
+void CppBackend::emit_choice_hpp(const ChoiceSpec& spec, std::ostream& os) const {
+    const std::string& cname = spec.type_name;
+
+    os << std::format("class {} : public asn1::ChoiceInterface {{\npublic:\n", cname);
+    os << "    enum class PR : int { NOTHING = 0";
+    int pr_idx = 1;
+    for (const auto& a : spec.alternatives)
+        os << std::format(", {} = {}", a.pr_name, pr_idx++);
+    os << " };\n";
+
+    // val_storage_: raw byte buffer sized/aligned to the largest alternative.
+    // val_ (in ChoiceInterface base) points here — set once in the constructor.
+    os << "    alignas(std::max({";
+    { bool first = true;
+      for (const auto& a : spec.alternatives) {
+        if (!first) os << ", ";
+        os << std::format("alignof({})", a.mtype);
+        first = false;
+      }
+      if (spec.count > 0) os << ", ";
+      os << "size_t(1)})) char val_storage_[std::max({";
+    }
+    { bool first = true;
+      for (const auto& a : spec.alternatives) {
+        if (!first) os << ", ";
+        os << std::format("sizeof({})", a.mtype);
+        first = false;
+      }
+      if (spec.count > 0) os << ", ";
+      os << "size_t(1)})] {};\n";
+    }
+
+    // Special members.
+    // Constructor sets val_ to val_storage_ so ChoiceInterface::emplace_alt / accessors work.
+    os << std::format("    {0}() {{ val_ = val_storage_; }}\n", cname);
+    os << std::format(
+        "    ~{0}() {{ active_lifecycle->destroy(val_); }}\n", cname);
+    os << std::format("    {0}(const {0}& o);\n", cname);
+    os << std::format("    {0}& operator=(const {0}& o);\n", cname);
+    os << std::format(
+        "    {0}({0}&& o) noexcept {{"
+        " val_ = val_storage_;"
+        " _present = o._present; o._present = 0;"
+        " active_lifecycle = o.active_lifecycle;"
+        " o.active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;"
+        " active_lifecycle->move(val_, o.val_); }}\n", cname);
+    os << std::format(
+        "    {0}& operator=({0}&& o) noexcept {{"
+        " if (this != &o) {{"
+        " active_lifecycle->destroy(val_);"
+        " _present = o._present; o._present = 0;"
+        " active_lifecycle = o.active_lifecycle;"
+        " o.active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;"
+        " active_lifecycle->move(val_, o.val_);"
+        " }} return *this; }}\n", cname);
+
+    os << "    PR present() const { return static_cast<PR>(_present); }\n";
+    // set_present delegates to emplace_alt (ChoiceInterface) — defined in .cpp.
+    os << "    void set_present(PR p);\n";
+
+    for (const auto& a : spec.alternatives) {
+        os << std::format(
+            "    {0}& {1}() {{ return *std::launder(reinterpret_cast<{0}*>(val_)); }}\n", a.mtype, a.accessor_name);
+        os << std::format(
+            "    const {0}& {1}() const"
+            " {{ return *std::launder(reinterpret_cast<const {0}*>(val_)); }}\n", a.mtype, a.accessor_name);
+    }
+    if (spec.count > 0) {
+        os << std::format("    static const asn1::MemberDescriptor s_alternatives[{}];\n", spec.count);
+        os << "    static const int s_alternative_count;\n";
+    }
+    os << "    static const asn1::ChoiceSpec     asn_SPC;\n";
+    os << "    static const asn1::TypeDescriptor asn_DEF;\n";
+    os << "};\n\n";
+}
+
+/// @brief Emit the implementation/definition for a CHOICE type.
+/// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
+/// @param os   Output stream to write to.
+void CppBackend::emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const {
+    const std::string& cname = spec.type_name;
+
+    if (!spec.alternatives.empty()) {
+        // Emit array (as class static member definition).
+        os << std::format("const asn1::MemberDescriptor {}::s_alternatives[] = {{\n", cname);
+        for (const auto& r : spec.alternatives) {
+            os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, nullptr, nullptr,\n",
+                r.asn1_name, r.eff_tag, r.tdref, r.is_explicit ? "true" : "false");
+            os << std::format("      &asn1::ChoiceOps<{0}>::get_mut, &asn1::ChoiceOps<{0}>::get_const }},\n",
+                r.mtype);
+        }
+        os << "};\n";
+        os << std::format("const int {}::s_alternative_count = {};\n\n", cname, spec.count);
+
+        // set_present: resets the active alternative then activates the requested one.
+        // emplace_alt (generic in ChoiceInterface) handles construction via TypeDescriptor::lifecycle.
+        os << std::format(
+            "void {0}::set_present(PR p) {{\n"
+            "    active_lifecycle->destroy(val_);\n"
+            "    active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;\n"
+            "    _present = 0;\n"
+            "    if (p == PR::NOTHING) return;\n"
+            "    int idx = static_cast<int>(p) - 1;\n"
+            "    if (idx >= 0 && idx < s_alternative_count)\n"
+            "        emplace_alt(s_alternatives[idx]);\n"
+            "    _present = static_cast<int>(p);\n"
+            "}}\n\n", cname);
+
+        // Copy constructor: initialise as NOTHING (val_ = val_storage_), then deep-copy.
+        os << std::format(
+            "{0}::{0}(const {0}& o) {{ val_ = val_storage_; asn1::deep_copy(asn_DEF, this, &o); }}\n", cname);
+        os << std::format(
+            "{0}& {0}::operator=(const {0}& o) {{ if (this != &o) asn1::deep_copy(asn_DEF, this, &o); return *this; }}\n\n",
+            cname);
+    }
+
+    os << spec.extra_tables;
+
+    // ChoiceSpec
+    os << std::format("const asn1::ChoiceSpec {}::asn_SPC = {{\n", cname);
+    if (spec.count > 0)
+        os << std::format("    {}::s_alternatives,\n", cname);
+    else
+        os << "    nullptr,\n";
+    os << std::format("    {},\n", spec.count);
+    os << std::format("    {}, /* ext_at */\n", spec.ext_at);
+    os << "    {} /* PER: constraints */\n";
+    os << spec.choice_spec_tail;
+    os << "};\n\n";
+
+    // TypeDescriptor — CHOICE tag is a transparent placeholder (no fixed universal tag)
+    emit_type_descriptor(os, cname, spec.xer_name,
+        "asn1::Tag{asn1::TagClass::Context, 0, false}",
+        false, false, true, false, "asn1::TypeKind::Choice",
+        "&asn1::per_choice_handler", "&asn1::ber_choice_handler",
+        /*use_class_scope=*/true);
+}
+
 } // namespace asn1::codegen

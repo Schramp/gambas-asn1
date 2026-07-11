@@ -257,6 +257,45 @@ struct SequenceSpec {
     std::vector<SequenceMemberSpec> members; // root members first, then extension members
 };
 
+/// @brief Backend-agnostic decision for one CHOICE alternative. Field
+///        groups are pass-specific (see SequenceMemberSpec's note on the
+///        same pattern): `mtype`/`accessor_name`/`pr_name` are read by
+///        emit_choice_hpp; `asn1_name`/`eff_tag`/`tdref`/`is_explicit` by
+///        emit_choice_cpp. `mtype` is shared by both (same value, computed
+///        once): the accessor return type in the header, and the
+///        `ChoiceOps<T>` template parameter in the alternatives table.
+struct ChoiceAlternativeSpec {
+    std::string mtype;
+    std::string accessor_name;
+    std::string pr_name;
+
+    std::string asn1_name;
+    std::string eff_tag;
+    std::string tdref;
+    bool        is_explicit = false;
+};
+
+/// @brief Backend-agnostic decision for one CHOICE type (X.680 §28). The
+///        `.hpp` and `.cpp` passes build independent `alternatives` lists
+///        (mirroring the original code's independent canonical-ordering
+///        computations for each — not unified here, to avoid any risk of
+///        introducing a reordering divergence between the two).
+/// @note `extra_tables`/`choice_spec_tail` stay pre-formatted C++ text —
+///       same rationale as SequenceMemberSpec's C++-runtime-only fields:
+///       the O(1) context-tag dispatch table and flattened BER dispatch
+///       table are computed by Generator's existing density-heuristic /
+///       tag-flattening decision logic (untouched by this issue's scope).
+struct ChoiceSpec {
+    std::string type_name;
+    std::string xer_name;
+    int count;
+    int ext_at;
+    std::vector<ChoiceAlternativeSpec> alternatives;
+
+    std::string extra_tables;     // pre-formatted asn_TAGIDX_X[]/asn_BER_X[] static arrays, or ""
+    std::string choice_spec_tail; // pre-formatted trailing ber_tags/tag_index fields for the ChoiceSpec aggregate, or ""
+};
+
 /// @brief Confines identifier-escaping and naming-convention decisions that
 ///        are inherently target-language-specific.
 ///
@@ -420,6 +459,24 @@ public:
     virtual void emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
         throw std::logic_error("emit_sequence_cpp: not implemented for this backend");
+    }
+
+    /// @brief Emit the class/type declaration for a CHOICE type.
+    /// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
+    /// @param os   Output stream to write to.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_choice_hpp(const ChoiceSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_choice_hpp: not implemented for this backend");
+    }
+
+    /// @brief Emit the implementation/definition for a CHOICE type.
+    /// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
+    /// @param os   Output stream to write to.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_choice_cpp: not implemented for this backend");
     }
 };
 
