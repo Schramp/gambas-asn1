@@ -233,15 +233,15 @@ private:
     void collect_type_refs(const ast::TypeDef& def, std::vector<std::string>& worklist);
     void generate_type(const ast::TypeDef& def, const ast::Module& mod);
     void generate_inline_types(const ast::TypeDef& def, const ast::Module& mod);
-    void emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::ostream& os);
-    void emit_cpp(const ast::TypeDef& def, std::ostream& os);
+    void emit_declaration(const ast::TypeDef& def, const ast::Module& mod, std::ostream& os);
+    void emit_definition(const ast::TypeDef& def, std::ostream& os);
     /// @brief Write the output file(s) for one type definition, driven by a
     ///        TypeOutputSession (gambas-asn1#262) instead of hardcoding a
     ///        ".hpp"/".cpp" pair.
     /// @param name Final identifier used for the filename (via filename_for()).
     /// @param def  Type definition to emit.
-    /// @param mod  Owning module (passed through to emit_hpp).
-    /// @note Always calls both emit_hpp and emit_cpp; emit_cpp decides for
+    /// @param mod  Owning module (passed through to emit_declaration).
+    /// @note Always calls both emit_declaration and emit_definition; emit_definition decides for
     ///       itself whether a definition exists (e.g. none for a plain
     ///       TypeRef alias) rather than relying on a separately-computed
     ///       flag, and any buffer left empty afterward — including a
@@ -250,27 +250,27 @@ private:
     void emit_type_files(const std::string& name, const ast::TypeDef& def,
                           const ast::Module& mod);
 
-    void emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os);
-    void emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os);
-    void emit_integer_hpp(const ast::TypeDef& def, std::ostream& os);
-    void emit_integer_cpp(const ast::TypeDef& def, std::ostream& os);
+    void emit_enumerated_declaration(const ast::TypeDef& def, std::ostream& os);
+    void emit_enumerated_definition(const ast::TypeDef& def, std::ostream& os);
+    void emit_integer_declaration(const ast::TypeDef& def, std::ostream& os);
+    void emit_integer_definition(const ast::TypeDef& def, std::ostream& os);
     /// @brief Decide the resolved IntegerSpec for a named INTEGER type —
     ///        storage kind, named constants, and constraint bounds. Needs
     ///        Generator state (extract_integer_range uses resolver_ for
     ///        named-value references), so unlike build_enumerated_spec this
     ///        is a member, not a free function.
     IntegerSpec build_integer_spec(const ast::TypeDef& def, const std::string& type_name) const;
-    void emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os);
+    void emit_builtin_alias_definition(const ast::TypeDef& def, std::ostream& os);
     /// @brief Decide the resolved BuiltinAliasSpec for a builtin-alias type —
     ///        natural tag, FROM-alphabet, and SIZE constraint. Needs
     ///        Generator state (extract_size_range, resolver-backed
     ///        constraint walking), so a member like build_integer_spec.
     BuiltinAliasSpec build_builtin_alias_spec(const ast::TypeDef& def, const std::string& type_name) const;
-    void emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os);
-    void emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os);
-    void emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os);
-    void emit_choice_hpp(const ast::TypeDef& def, std::ostream& os);
-    void emit_choice_cpp(const ast::TypeDef& def, std::ostream& os);
+    void emit_sequence_declaration(const ast::TypeDef& def, std::ostream& os);
+    void emit_sequence_definition(const ast::TypeDef& def, std::ostream& os);
+    void emit_seq_of_definition(const ast::TypeDef& def, std::ostream& os);
+    void emit_choice_declaration(const ast::TypeDef& def, std::ostream& os);
+    void emit_choice_definition(const ast::TypeDef& def, std::ostream& os);
 
     std::string cpp_type_for(const ast::TypeDef& def);
     std::string type_descriptor_ref_for(const ast::TypeDef& def);
