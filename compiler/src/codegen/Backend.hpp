@@ -315,6 +315,12 @@ struct ChoiceSpec {
 /// language. `CppBackend` is the only implementation today; a future Rust
 /// backend implements the same interface with its own keyword list and
 /// naming conventions.
+/// @brief Forward declaration — full definition below, after Backend. Only a
+///        reference to it appears in Backend's own method signatures, so a
+///        forward declaration is enough here; the .cpp files that call
+///        `session.buffer(...)` see the full definition via this same header.
+class TypeOutputSession;
+
 class Backend {
 public:
     virtual ~Backend() = default;
@@ -362,58 +368,46 @@ public:
         throw std::logic_error("native_int_type: not implemented for this backend");
     }
 
-    /// @brief Emit the header/type-declaration half of an ENUMERATED type.
-    /// @param spec Resolved, backend-agnostic decision (see EnumeratedSpec).
-    /// @param os   Output stream to write to.
+    /// @brief Emit both halves of an ENUMERATED type: declaration then definition.
+    /// @param spec    Resolved, backend-agnostic decision (see EnumeratedSpec).
+    /// @param session Per-type output session (gambas-asn1#262) — the override
+    ///                pulls its own declaration/definition streams via
+    ///                `session.buffer(declaration_extension())` /
+    ///                `session.buffer(definition_extension())`.
+    /// @note gambas-asn1#265: declaration/definition used to be two separate
+    ///       virtuals, but every override called them back-to-back with the
+    ///       same spec — combined into one call. Takes the session (not two
+    ///       raw streams) because the two streams are already grouped there;
+    ///       a single-file backend (declaration_extension() ==
+    ///       definition_extension(), e.g. Rust) then makes exactly one
+    ///       `session.buffer()` call instead of acquiring the same stream
+    ///       under two different parameter names.
     /// @note Default throws — a backend that hasn't implemented this
     ///       construct yet stays a valid, instantiable Backend; it just
     ///       can't be used for ENUMERATED types until it overrides this.
     ///       Loud failure beats silently emitting the wrong language's syntax.
-    virtual void emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
-        throw std::logic_error("emit_enumerated_declaration: not implemented for this backend");
+    virtual void emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const {
+        (void)spec; (void)session;
+        throw std::logic_error("emit_enumerated: not implemented for this backend");
     }
 
-    /// @brief Emit the implementation/definition half of an ENUMERATED type.
-    /// @param spec Resolved, backend-agnostic decision (see EnumeratedSpec).
-    /// @param os   Output stream to write to.
-    /// @note See emit_enumerated_declaration — same default-throws rationale.
-    virtual void emit_enumerated_definition(const EnumeratedSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
-        throw std::logic_error("emit_enumerated_definition: not implemented for this backend");
+    /// @brief Emit both halves of a named INTEGER type: declaration then definition.
+    /// @param spec    Resolved, backend-agnostic decision (see IntegerSpec).
+    /// @param session Per-type output session — see emit_enumerated's note.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const {
+        (void)spec; (void)session;
+        throw std::logic_error("emit_integer: not implemented for this backend");
     }
 
-    /// @brief Emit the header/type-declaration half of a named INTEGER type.
-    /// @param spec Resolved, backend-agnostic decision (see IntegerSpec).
-    /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_integer_declaration(const IntegerSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
-        throw std::logic_error("emit_integer_declaration: not implemented for this backend");
-    }
-
-    /// @brief Emit the implementation/definition half of a named INTEGER type.
-    /// @param spec Resolved, backend-agnostic decision (see IntegerSpec).
-    /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_integer_definition(const IntegerSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
-        throw std::logic_error("emit_integer_definition: not implemented for this backend");
-    }
-
-    /// @brief Emit the implementation/definition for a builtin-alias type
-    ///        (every builtin except INTEGER/ENUMERATED — those have their
-    ///        own emit_integer_*/emit_enumerated_*). Builtin-alias types
-    ///        have no separate header/type-declaration half analogous to
-    ///        emit_enumerated_declaration/emit_integer_declaration — the type alias itself
-    ///        is a one-line `using`/equivalent, generated directly by
-    ///        Generator (not yet a Backend method).
-    /// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).
-    /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
-        throw std::logic_error("emit_builtin_alias_definition: not implemented for this backend");
+    /// @brief Emit both halves of a builtin-alias type (every builtin except
+    ///        INTEGER/ENUMERATED — those have their own emit_integer/emit_enumerated).
+    /// @param spec    Resolved, backend-agnostic decision (see BuiltinAliasSpec).
+    /// @param session Per-type output session — see emit_enumerated's note.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSession& session) const {
+        (void)spec; (void)session;
+        throw std::logic_error("emit_builtin_alias: not implemented for this backend");
     }
 
     /// @brief Emit the static setter/checker pair for a SEQUENCE/SET member's
@@ -422,71 +416,59 @@ public:
     /// @param type_name   Target-language storage type for the member.
     /// @param parent_name Enclosing SEQUENCE/SET type identifier.
     /// @param member_name Member identifier.
-    /// @param os          Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_declaration. The
+    /// @param session     Per-type output session — always writes into
+    ///                    `session.buffer(definition_extension())`; a
+    ///                    DEFAULT setter is definition-only content, so
+    ///                    there's no declaration-side counterpart to pick
+    ///                    between.
+    /// @note Default throws — same rationale as emit_enumerated. The
     ///       caller (Generator::emit_default_setter) derives the returned
     ///       reference string itself (deterministic from parent_name/
     ///       member_name), so this method is void, not string-returning.
     virtual void emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
                                       const std::string& parent_name, const std::string& member_name,
-                                      std::ostream& os) const {
-        (void)spec; (void)type_name; (void)parent_name; (void)member_name; (void)os;
+                                      TypeOutputSession& session) const {
+        (void)spec; (void)type_name; (void)parent_name; (void)member_name; (void)session;
         throw std::logic_error("emit_default_setter: not implemented for this backend");
     }
 
     /// @brief Emit the static per-member TypeDescriptor for an inline-
     ///        constrained SEQUENCE/CHOICE member.
-    /// @param spec Resolved, backend-agnostic decision (see MemberTypeDescriptorSpec).
-    /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
+    /// @param spec    Resolved, backend-agnostic decision (see MemberTypeDescriptorSpec).
+    /// @param session Per-type output session — always writes into
+    ///                `session.buffer(definition_extension())`, same
+    ///                rationale as emit_default_setter.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
+        (void)spec; (void)session;
         throw std::logic_error("emit_member_type_descriptor: not implemented for this backend");
     }
 
-    /// @brief Emit the implementation/definition for a SEQUENCE OF / SET OF type.
-    /// @param spec Resolved, backend-agnostic decision (see SeqOfSpec).
-    /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
-        throw std::logic_error("emit_seq_of_definition: not implemented for this backend");
+    /// @brief Emit both halves of a SEQUENCE OF / SET OF type: declaration then definition.
+    /// @param spec    Resolved, backend-agnostic decision (see SeqOfSpec).
+    /// @param session Per-type output session — see emit_enumerated's note.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const {
+        (void)spec; (void)session;
+        throw std::logic_error("emit_seq_of: not implemented for this backend");
     }
 
-    /// @brief Emit the class/type declaration for a SEQUENCE/SET type.
-    /// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
-    /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_sequence_declaration(const SequenceSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
-        throw std::logic_error("emit_sequence_declaration: not implemented for this backend");
+    /// @brief Emit both halves of a SEQUENCE/SET type: declaration then definition.
+    /// @param spec    Resolved, backend-agnostic decision (see SequenceSpec).
+    /// @param session Per-type output session — see emit_enumerated's note.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const {
+        (void)spec; (void)session;
+        throw std::logic_error("emit_sequence: not implemented for this backend");
     }
 
-    /// @brief Emit the implementation/definition for a SEQUENCE/SET type.
-    /// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
-    /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_sequence_definition(const SequenceSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
-        throw std::logic_error("emit_sequence_definition: not implemented for this backend");
-    }
-
-    /// @brief Emit the class/type declaration for a CHOICE type.
-    /// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
-    /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
-        throw std::logic_error("emit_choice_declaration: not implemented for this backend");
-    }
-
-    /// @brief Emit the implementation/definition for a CHOICE type.
-    /// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
-    /// @param os   Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
-        throw std::logic_error("emit_choice_definition: not implemented for this backend");
+    /// @brief Emit both halves of a CHOICE type: declaration then definition.
+    /// @param spec    Resolved, backend-agnostic decision (see ChoiceSpec).
+    /// @param session Per-type output session — see emit_enumerated's note.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const {
+        (void)spec; (void)session;
+        throw std::logic_error("emit_choice: not implemented for this backend");
     }
 
     /// @brief Emit the file preamble for a generated header (module comment,
@@ -494,55 +476,49 @@ public:
     /// @param module_comment Pre-formatted "Module: X { oid }" text — plain
     ///        content, no comment-syntax applied; the backend wraps it in
     ///        its own comment syntax.
-    /// @param os Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_declaration_preamble(const std::string& module_comment, std::ostream& os) const {
-        (void)module_comment; (void)os;
+    /// @param session Per-type output session — writes into
+    ///                `session.buffer(declaration_extension())`.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const {
+        (void)module_comment; (void)session;
         throw std::logic_error("emit_declaration_preamble: not implemented for this backend");
     }
 
     /// @brief Emit the file preamble for a generated implementation file.
     /// @param declaration_filename The corresponding declaration file's filename, without extension.
-    /// @param os Output stream to write to.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_definition_preamble(const std::string& declaration_filename, std::ostream& os) const {
-        (void)declaration_filename; (void)os;
+    /// @param session Per-type output session — writes into
+    ///                `session.buffer(definition_extension())`.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const {
+        (void)declaration_filename; (void)session;
         throw std::logic_error("emit_definition_preamble: not implemented for this backend");
     }
 
-    /// @brief Emit the opening of a namespace/module wrapper (X: `-fprefix`).
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_namespace_open(const std::string& name, std::ostream& os) const {
-        (void)name; (void)os;
+    /// @brief Emit the opening of a namespace/module wrapper (X: `-fprefix`)
+    ///        into both the declaration and definition buffers.
+    /// @param session Per-type output session — writes into
+    ///                `session.buffer(declaration_extension())` and, when
+    ///                `definition_extension()` names a distinct buffer, into
+    ///                that one too (a single-file backend, where they're the
+    ///                same buffer, only wraps once).
+    /// @note Known limitation, not yet hit in practice: for a construct with
+    ///       no definition half (a plain TypeRef alias), this still touches
+    ///       the definition buffer, which would then be written as a
+    ///       near-empty file — no schema exercised by the `-fprefix` ctests
+    ///       combines a TypeRef alias with namespace wrapping today. Revisit
+    ///       if that combination occurs.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_namespace_open(const std::string& name, TypeOutputSession& session) const {
+        (void)name; (void)session;
         throw std::logic_error("emit_namespace_open: not implemented for this backend");
     }
 
-    /// @brief Emit the closing of a namespace/module wrapper.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_namespace_close(const std::string& name, std::ostream& os) const {
-        (void)name; (void)os;
+    /// @brief Emit the closing of a namespace/module wrapper, mirroring emit_namespace_open.
+    /// @param session Per-type output session — see emit_namespace_open's note.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_namespace_close(const std::string& name, TypeOutputSession& session) const {
+        (void)name; (void)session;
         throw std::logic_error("emit_namespace_close: not implemented for this backend");
-    }
-
-    /// @brief Emit the header-side type declaration for a builtin-alias type
-    ///        (the `.hpp` counterpart to emit_builtin_alias_definition — see its
-    ///        note on why builtin-alias has no separate hpp/cpp split for
-    ///        the definition itself; this is just the forward-visible alias
-    ///        + extern descriptor declaration).
-    /// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
-        throw std::logic_error("emit_builtin_alias_declaration: not implemented for this backend");
-    }
-
-    /// @brief Emit the header-side type declaration for a SEQUENCE OF / SET
-    ///        OF type (the `.hpp` counterpart to emit_seq_of_definition).
-    /// @param spec Resolved, backend-agnostic decision (see SeqOfSpec).
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
-    virtual void emit_seq_of_declaration(const SeqOfSpec& spec, std::ostream& os) const {
-        (void)spec; (void)os;
-        throw std::logic_error("emit_seq_of_declaration: not implemented for this backend");
     }
 
     /// @brief Emit a plain type-reference alias (`MyType ::= OtherType`,
@@ -551,16 +527,19 @@ public:
     ///        constraint/tag decisions of its own.
     /// @param type_name   This type's own final identifier.
     /// @param target_type The referenced type's final identifier.
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    /// @param session     Per-type output session — writes into
+    ///                    `session.buffer(declaration_extension())` (a
+    ///                    TypeRef alias has no definition half).
+    /// @note Default throws — same rationale as emit_enumerated.
     virtual void emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
-                                         std::ostream& os) const {
-        (void)type_name; (void)target_type; (void)os;
+                                         TypeOutputSession& session) const {
+        (void)type_name; (void)target_type; (void)session;
         throw std::logic_error("emit_typeref_alias_declaration: not implemented for this backend");
     }
 
     /// @brief Output file extension (no leading dot) for a type's
     ///        declaration half (the content `emit_declaration` produces).
-    /// @note Default throws — same rationale as emit_enumerated_declaration.
+    /// @note Default throws — same rationale as emit_enumerated.
     virtual std::string declaration_extension() const {
         throw std::logic_error("declaration_extension: not implemented for this backend");
     }
@@ -593,13 +572,31 @@ public:
 ///       any backend — only *which* extensions get requested varies, and
 ///       that's already captured by declaration_extension()/definition_extension().
 class TypeOutputSession {
+    std::vector<std::pair<std::string, std::ostream*>>                     external_;
     std::vector<std::pair<std::string, std::unique_ptr<std::ostringstream>>> buffers_;
 public:
+    /// @brief Pre-bind `ext` to an already-existing stream instead of an
+    ///        internally-owned ostringstream. Used by Generator when the
+    ///        real per-construct destination isn't the session's own file
+    ///        buffer — e.g. under `-fprefix` namespace wrapping, where
+    ///        construct dispatch must write into a temporary body buffer
+    ///        that gets wrapped in `namespace X { ... }` afterward, not
+    ///        directly into the file. A second seed() with the same `ext`
+    ///        replaces the binding (last write wins).
+    void seed(const std::string& ext, std::ostream& target) {
+        for (auto& [e, s] : external_) if (e == ext) { s = &target; return; }
+        external_.emplace_back(ext, &target);
+    }
+
     /// @brief Returns a persistent stream for `ext`, creating it on first
     ///        use. A second call with the same `ext` returns the same
     ///        stream — this is how a single-file backend merges
-    ///        declaration and definition content into one buffer.
+    ///        declaration and definition content into one buffer. An
+    ///        ext seeded via seed() takes priority over the internally-owned
+    ///        buffer and is never collected by finish().
     std::ostream& buffer(const std::string& ext) {
+        for (auto& [e, s] : external_)
+            if (e == ext) return *s;
         for (auto& [e, buf] : buffers_)
             if (e == ext) return *buf;
         buffers_.emplace_back(ext, std::make_unique<std::ostringstream>());
@@ -607,7 +604,10 @@ public:
     }
 
     /// @brief Finalize the session: {extension, content} pairs in
-    ///        first-requested order.
+    ///        first-requested order. Only internally-owned buffers are
+    ///        collected — seeded (externally-owned) streams already write
+    ///        straight to their real destination, so there's nothing to
+    ///        hand back for them.
     std::vector<std::pair<std::string, std::string>> finish() {
         std::vector<std::pair<std::string, std::string>> out;
         for (auto& [e, buf] : buffers_) out.emplace_back(e, buf->str());
