@@ -930,4 +930,50 @@ void CppBackend::emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const
         /*use_class_scope=*/true);
 }
 
+void CppBackend::emit_hpp_preamble(const std::string& module_comment, std::ostream& os) const {
+    os << "// Module: " << module_comment << "\n";
+    os << "#pragma once\n";
+    os << "#include <memory>\n";
+    os << "#include <optional>\n";
+    os << "#include <vector>\n";
+    os << "#include <span>\n";
+    os << "#include <asn1cpp/asn1cpp_gen.hpp>\n\n";
+}
+
+void CppBackend::emit_cpp_preamble(const std::string& header_filename, std::ostream& os) const {
+    os << std::format("#include \"{}.hpp\"\n", header_filename);
+    os << "#include <asn1cpp/codec/PerHandlers.hpp>\n";
+    os << "#include <asn1cpp/codec/BerHandlers.hpp>\n";
+    // __builtin_offsetof is well-defined for all types without virtual functions
+    // on GCC/Clang, including non-standard-layout types (conditionally supported
+    // per C++ standard). Suppress the pedantic diagnostic in generated files.
+    os << "#ifdef __GNUC__\n";
+    os << "#pragma GCC diagnostic ignored \"-Winvalid-offsetof\"\n";
+    os << "#endif\n\n";
+}
+
+void CppBackend::emit_namespace_open(const std::string& name, std::ostream& os) const {
+    os << "namespace " << name << " {\n\n";
+}
+
+void CppBackend::emit_namespace_close(const std::string& name, std::ostream& os) const {
+    os << "\n} // namespace " << name << "\n";
+}
+
+void CppBackend::emit_builtin_alias_hpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
+    os << std::format("using {} = {};\n\n", spec.type_name, native_builtin_type(spec.builtin_type));
+    os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", spec.type_name);
+}
+
+void CppBackend::emit_seq_of_hpp(const SeqOfSpec& spec, std::ostream& os) const {
+    os << std::format("using {} = asn1::VectorSeqOf<{}>;\n\n", spec.type_name, spec.elem_type);
+    os << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", spec.type_name);
+    os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", spec.type_name);
+}
+
+void CppBackend::emit_typeref_alias_hpp(const std::string& type_name, const std::string& target_type,
+                                         std::ostream& os) const {
+    os << std::format("using {} = {};\n", type_name, target_type);
+}
+
 } // namespace asn1::codegen
