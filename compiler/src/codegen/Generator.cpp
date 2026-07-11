@@ -1555,21 +1555,27 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
 /// @note Merging is implicit: when backend_.declaration_extension() ==
 ///       backend_.definition_extension(), the session hands emit_hpp and
 ///       emit_cpp the *same* stream, so they naturally combine into one
-///       file with no separate branch here. Known limitation (not yet hit
-///       in practice — no backend combines single-file output with
-///       -fprefix namespace wrapping today): each of emit_hpp/emit_cpp
-///       independently wraps its own body in
+///       file with no separate branch here. Always calls both emit_hpp and
+///       emit_cpp — emit_cpp itself decides whether a definition exists
+///       (returns without writing anything for a plain TypeRef alias), so
+///       there's no separately-computed "needs a definition" flag to keep
+///       in sync with emit_cpp's own dispatch. Buffers that end up empty
+///       (that decision, or a backend's genuinely-empty declaration half —
+///       e.g. RustBackend's emit_builtin_alias_hpp) are simply not written.
+///       Known limitation (not yet hit in practice — no backend combines
+///       single-file output with -fprefix namespace wrapping today): each
+///       of emit_hpp/emit_cpp independently wraps its own body in
 ///       backend_.emit_namespace_open/close when namespace_ is set, which
 ///       would produce two conflicting module blocks of the same name in
 ///       one file. Revisit if/when that combination occurs.
 void Generator::emit_type_files(const std::string& name, const ast::TypeDef& def,
-                                 const ast::Module& mod, bool needs_cpp) {
+                                 const ast::Module& mod) {
     std::string base = filename_for(name);
     TypeOutputSession session;
     emit_hpp(def, mod, session.buffer(backend_.declaration_extension()));
-    if (needs_cpp)
-        emit_cpp(def, session.buffer(backend_.definition_extension()));
+    emit_cpp(def, session.buffer(backend_.definition_extension()));
     for (auto& [ext, content] : session.finish()) {
+        if (content.empty()) continue;
         fs::path path = out_dir_ / (base + "." + ext);
         known_files_.insert(path);
         write_if_changed(path, content);
@@ -1848,6 +1854,15 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
 
 void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
+    // A plain TypeRef alias (`MyType ::= OtherType`) has no definition half —
+    // matches exactly the set of dispatch branches below. Returning early
+    // (writing nothing) lets emit_type_files() skip creating a definition
+    // file without needing a separately-computed "needs_cpp" flag.
+    bool has_definition = def.is_sequence() || def.is_set() || def.is_choice()
+        || def.is_seq_of() || def.is_set_of()
+        || std::holds_alternative<ast::BuiltinType>(def.body);
+    if (!has_definition) return;
+
     backend_.emit_cpp_preamble(filename_for(cname), os);
 
     // When namespace wrapping is active, member-type includes (e.g. for optional members
@@ -1913,7 +1928,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 }
                 generate_inline_types(*synthetic, mod);
                 current_type_ = synth_name;
-                emit_type_files(synth_name, *synthetic, mod, /*needs_cpp=*/true);
+                emit_type_files(synth_name, *synthetic, mod);
             }
         }
         return;
@@ -1948,7 +1963,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                     }
                     generate_inline_types(*synthetic, mod);
                     current_type_ = elem_type_name;
-                    emit_type_files(elem_type_name, *synthetic, mod, /*needs_cpp=*/true);
+                    emit_type_files(elem_type_name, *synthetic, mod);
                 }
             } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body);
                        ebt && *ebt == ast::BuiltinType::Enumerated && !elem.enum_values.empty()) {
@@ -1959,7 +1974,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
                     synthetic->name = elem_type_name;
                     current_type_ = elem_type_name;
-                    emit_type_files(elem_type_name, *synthetic, mod, /*needs_cpp=*/true);
+                    emit_type_files(elem_type_name, *synthetic, mod);
                 }
             }
             // Generate synthetic SeqOf wrapper descriptor type named parent + MemberCamel.
@@ -1979,7 +1994,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                         seqof_td->body = ast::SetOfType{named_elem};
                 }
                 current_type_ = seqof_name;
-                emit_type_files(seqof_name, *seqof_td, mod, /*needs_cpp=*/true);
+                emit_type_files(seqof_name, *seqof_td, mod);
             }
             continue;
         }
@@ -2000,7 +2015,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
         generate_inline_types(*synthetic, mod);
 
         current_type_ = synth_name;
-        emit_type_files(synth_name, *synthetic, mod, /*needs_cpp=*/true);
+        emit_type_files(synth_name, *synthetic, mod);
     }
 }
 
@@ -2032,27 +2047,13 @@ void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
                 synthetic->name = elem_name;
                 auto save = current_type_;
                 current_type_ = elem_name;
-                emit_type_files(elem_name, *synthetic, mod, /*needs_cpp=*/true);
+                emit_type_files(elem_name, *synthetic, mod);
                 current_type_ = save;
             }
         }
     }
 
-    auto bt_is = [&](ast::BuiltinType t) {
-        auto* bt = std::get_if<ast::BuiltinType>(&def.body);
-        return bt && *bt == t;
-    };
-    auto is_named_builtin_alias = [&]() {
-        auto* bt = std::get_if<ast::BuiltinType>(&def.body);
-        if (!bt) return false;
-        return *bt != ast::BuiltinType::Enumerated && *bt != ast::BuiltinType::Integer;
-    };
-    bool needs_cpp = def.is_sequence() || def.is_set() || def.is_choice()
-        || def.is_seq_of() || def.is_set_of()
-        || bt_is(ast::BuiltinType::Enumerated)
-        || bt_is(ast::BuiltinType::Integer)
-        || is_named_builtin_alias();
-    emit_type_files(cname, def, mod, needs_cpp);
+    emit_type_files(cname, def, mod);
 }
 
 /// @brief Append to `worklist` all ASN.1 type names directly referenced by `def`.
