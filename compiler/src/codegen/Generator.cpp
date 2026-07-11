@@ -1075,10 +1075,10 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
 
     auto emit_inc = [&](const std::string& cn) {
         auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-        inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
+        inc_os << backend_.format_type_reference(cn, filename_for(cn));
     };
     auto emit_fwd = [&](const std::string& cn) {
-        os << std::format("class {};\n", cn);
+        os << backend_.format_forward_declaration(cn);
     };
     auto emit_member_include = [&](const ast::TypeDef& m, bool optional) {
         if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
@@ -1163,13 +1163,13 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
                 if (is_class_type(m)) {
                     auto cn = cpp_name_for_typeref(*tr);
                     auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-                    inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
+                    inc_os << backend_.format_type_reference(cn, filename_for(cn));
                     emitted_extra = true;
                 }
             } else if ((m.is_sequence() || m.is_choice() || m.is_set()) && !m.name.empty()) {
                 auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-                inc_os << std::format("#include \"{}.hpp\"\n",
-                                      filename_for(backend_.synthetic_name(cname, m.name)));
+                auto synth = backend_.synthetic_name(cname, m.name);
+                inc_os << backend_.format_type_reference(synth, filename_for(synth));
                 emitted_extra = true;
             }
         };
@@ -1278,7 +1278,7 @@ void Generator::emit_sequence(const ast::TypeDef& def, TypeOutputSession& sessio
     if (!post_class_includes.empty()) {
         auto& inc_os = post_ns_os_ ? *post_ns_os_ : decl_os;
         for (const auto& sinc : post_class_includes) {
-            inc_os << std::format("#include \"{}.hpp\"\n", filename_for(sinc));
+            inc_os << backend_.format_type_reference(sinc, filename_for(sinc));
         }
         inc_os << "\n";
     }
@@ -1368,7 +1368,7 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
         if (m->is_extension_marker) continue;
         auto emit_inc = [&](const std::string& cn) {
             auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-            inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
+            inc_os << backend_.format_type_reference(cn, filename_for(cn));
         };
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
             emit_inc(cpp_name_for_typeref(*tr));
@@ -1671,7 +1671,7 @@ void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, 
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto inc = cpp_name_for_typeref(*tr);
         auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : decl_body;
-        inc_os << std::format("#include \"{}.hpp\"\n", filename_for(inc));
+        inc_os << backend_.format_type_reference(inc, filename_for(inc));
         backend_.emit_typeref_alias_declaration(cname, inc, dispatch);
     }
 
@@ -1843,14 +1843,14 @@ SeqOfSpec Generator::emit_seq_of_declaration(const ast::TypeDef& def, std::ostre
     auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
     if (auto* tr = std::get_if<ast::TypeRef>(&elem->body)) {
         auto inc = cpp_name_for_typeref(*tr);
-        inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(inc));
+        inc_os << backend_.format_type_reference(inc, filename_for(inc)) << "\n";
     } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
         auto synth = backend_.synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name);
-        inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
+        inc_os << backend_.format_type_reference(synth, filename_for(synth)) << "\n";
     } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem->body);
                ebt && *ebt == ast::BuiltinType::Enumerated && !elem->enum_values.empty()) {
         auto synth = backend_.synthetic_name(cname, elem->name.empty() ? "Enum" : elem->name);
-        inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
+        inc_os << backend_.format_type_reference(synth, filename_for(synth)) << "\n";
     }
     SeqOfSpec spec;
     spec.type_name = cname;

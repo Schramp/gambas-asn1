@@ -115,6 +115,8 @@ public:
     void emit_namespace_close(const std::string& name, TypeOutputSession& session) const override;
     void emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
                                  TypeOutputSession& session) const override;
+    std::string format_type_reference(const std::string& type_name, const std::string& filename) const override;
+    std::string format_forward_declaration(const std::string& type_name) const override;
 
     // Single-file mode (gambas-asn1#262): Rust has no header/impl split.
     // Returning the same extension from both methods makes

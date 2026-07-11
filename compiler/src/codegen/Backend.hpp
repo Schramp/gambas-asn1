@@ -537,6 +537,42 @@ public:
         throw std::logic_error("emit_typeref_alias_declaration: not implemented for this backend");
     }
 
+    /// @brief Format a dependency declaration for a reference to another
+    ///        generated type from the current file (X.680 §17-ish notion of
+    ///        "this file needs that other type to be visible").
+    /// @param type_name Final identifier of the referenced type, as used
+    ///                  elsewhere in this file's generated code.
+    /// @param filename  The referenced type's on-disk filename, no
+    ///                  extension (Generator::filename_for's result) —
+    ///                  usually equals type_name; differs only when
+    ///                  collision-prefixed with a module name.
+    /// @return Formatted reference text ending in a newline — Generator
+    ///         writes it directly into whichever stream it already chose
+    ///         (declaration body, pre-namespace redirect, deferred
+    ///         post-namespace includes, ...); this method only owns the
+    ///         *text*, not stream selection.
+    /// @note gambas-asn1#266: previously hardcoded `#include "X.hpp"\n` at
+    ///       9 call sites in Generator.cpp regardless of backend — broke
+    ///       RustBackend on any schema with cross-type references.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual std::string format_type_reference(const std::string& type_name,
+                                               const std::string& filename) const {
+        (void)type_name; (void)filename;
+        throw std::logic_error("format_type_reference: not implemented for this backend");
+    }
+
+    /// @brief Format a forward declaration for a type this file only needs
+    ///        as an incomplete type (e.g. an optional member stored behind
+    ///        a pointer, to break a circular #include). Backends with no
+    ///        forward-declaration concept — a type is visible regardless of
+    ///        declaration order once imported — return an empty string.
+    /// @param type_name Final identifier of the type being forward-declared.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual std::string format_forward_declaration(const std::string& type_name) const {
+        (void)type_name;
+        throw std::logic_error("format_forward_declaration: not implemented for this backend");
+    }
+
     /// @brief Output file extension (no leading dot) for a type's
     ///        declaration half (the content `emit_declaration` produces).
     /// @note Default throws — same rationale as emit_enumerated.
