@@ -9,8 +9,8 @@ namespace asn1::codegen {
 //
 // C++'s hpp/cpp split doesn't map cleanly onto Rust (no header/impl
 // separation) — kept anyway for interface symmetry with CppBackend:
-// emit_enumerated_hpp emits the `enum` type itself (the primary artifact,
-// analogous to C++'s class declaration); emit_enumerated_cpp emits the
+// emit_enumerated_declaration emits the `enum` type itself (the primary artifact,
+// analogous to C++'s class declaration); emit_enumerated_definition emits the
 // value-lookup `impl TryFrom<i64>` (analogous to C++'s
 // EnumSpec::asn_MAP_value2enum — the piece a future BER/PER decoder needs
 // to turn a wire value back into a variant).
@@ -23,7 +23,7 @@ static std::string variant_name(const RustBackend& backend, const std::string& a
     return backend.escape(capitalize_first(backend.type_name(asn1_name)));
 }
 
-void RustBackend::emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& os) const {
+void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
     os << "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n";
@@ -37,7 +37,7 @@ void RustBackend::emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& 
     os << "}\n\n";
 }
 
-void RustBackend::emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& os) const {
+void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
     // Fully-qualified path, not `use`d — keeps this edition-agnostic
@@ -57,21 +57,26 @@ void RustBackend::emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& 
     os << "}\n\n";
 }
 
-// Rust INTEGER emission — pairs with CppBackend::emit_integer_hpp/cpp.
+void RustBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const {
+    emit_enumerated_declaration(spec, session.buffer(declaration_extension()));
+    emit_enumerated_definition(spec, session.buffer(definition_extension()));
+}
+
+// Rust INTEGER emission — pairs with CppBackend::emit_integer_declaration/cpp.
 //
 // Unlike CppBackend, native_int_type() is reused directly for the top-level
 // type alias here: Rust's i128 is a real primitive (no C++-style stub with
 // a deleted constructor blocking its use), and Vec<u8> works fine as an
 // alias target too, so there's no need for CppBackend's dual-mapping
-// workaround (see its emit_integer_hpp note).
+// workaround (see its emit_integer_declaration note).
 //
-// emit_integer_hpp emits the type alias + named constants (i64, matching
+// emit_integer_declaration emits the type alias + named constants (i64, matching
 // CppBackend's constant type regardless of storage_kind — same convention,
-// carried over). emit_integer_cpp emits a range-check function using the
+// carried over). emit_integer_definition emits a range-check function using the
 // resolved constraint bounds — the Rust analogue of the bounds baked into
 // C++'s Constraints struct, and the piece a future decoder would call to
 // validate a wire value before accepting it.
-void RustBackend::emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) const {
+void RustBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
     os << std::format("pub type {} = {};\n\n", tname, native_int_type(spec.storage_kind));
@@ -81,7 +86,7 @@ void RustBackend::emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) co
     if (!spec.named_values.empty()) os << "\n";
 }
 
-void RustBackend::emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) const {
+void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
     std::string fname = escape(to_snake_case(tname) + "_in_range");
 
@@ -100,6 +105,11 @@ void RustBackend::emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) co
         os << std::format("    v >= {} && v <= {}\n", spec.lower_s64, spec.upper_s64);
     }
     os << "}\n\n";
+}
+
+void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const {
+    emit_integer_declaration(spec, session.buffer(declaration_extension()));
+    emit_integer_definition(spec, session.buffer(definition_extension()));
 }
 
 /// @brief Map a builtin type to its Rust native type.
@@ -153,7 +163,7 @@ static std::string native_builtin_type(ast::BuiltinType bt) {
 ///       Constraints struct. FROM-alphabet constraints are not validated by
 ///       the generated function (same "no runtime wiring yet" scope as the
 ///       INTEGER pairing's hi_is_large note).
-void RustBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
+void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
     os << std::format("pub type {} = {};\n\n", tname, native_builtin_type(spec.builtin_type));
@@ -189,7 +199,8 @@ void RustBackend::emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostr
 ///       it and use "bool"/"String" instead.
 void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
                                        const std::string& parent_name, const std::string& member_name,
-                                       std::ostream& os) const {
+                                       TypeOutputSession& session) const {
+    std::ostream& os = session.buffer(definition_extension());
     using Kind = DefaultValueSpec::Kind;
     std::string rust_type, literal;
     switch (spec.kind) {
@@ -224,12 +235,13 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
 /// @param os   Output stream to write to.
 /// @note FROM-alphabet-only members and members whose only constraint is a
 ///       non-default XER encoding produce no Rust output — same "no runtime
-///       wiring yet" scope as emit_builtin_alias_cpp. `spec.tname` follows
+///       wiring yet" scope as emit_builtin_alias_definition. `spec.tname` follows
 ///       CppBackend's static-variable naming convention
 ///       ("asn_TYP_Parent_member"); reused as the Rust fn name base via
 ///       to_snake_case, same coincidental-overlap rationale as type_name/
 ///       synthetic_name.
-void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const {
+void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
+    std::ostream& os = session.buffer(definition_extension());
     using Kind = MemberTypeDescriptorSpec::Kind;
     std::string base = escape(to_snake_case(spec.tname));
     if (spec.kind == Kind::Integer) {
@@ -270,7 +282,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
 ///       the other Rust pairings: always emitted (even when unconstrained,
 ///       where it degenerates to a trivial `>= 0` check) rather than
 ///       introducing a has-constraint field SeqOfSpec doesn't otherwise need.
-void RustBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const {
+void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
     std::string fname = escape(to_snake_case(spec.type_name) + "_size_ok");
     os << std::format("pub fn {}<T>(v: &Vec<T>) -> bool {{\n", fname);
     if (spec.size_upper) {
@@ -297,7 +309,7 @@ void RustBackend::emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const
 ///       C++-runtime-only (per SequenceMemberSpec's own doc) and unused
 ///       here; optional members become `Option<T>` rather than C++'s
 ///       `unique_ptr<T>`, Rust's natural equivalent.
-void RustBackend::emit_sequence_hpp(const SequenceSpec& spec, std::ostream& os) const {
+void RustBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostream& os) const {
     os << "#[derive(Debug, Clone, Default, PartialEq)]\n";
     os << std::format("pub struct {} {{\n", spec.type_name);
     for (const auto& m : spec.members) {
@@ -314,12 +326,17 @@ void RustBackend::emit_sequence_hpp(const SequenceSpec& spec, std::ostream& os) 
 ///       machinery (Rust's `pub` fields + `Option<T>` don't need C++'s
 ///       unique_ptr-based setter dance); a real `new()` that just delegates
 ///       to the struct's own `#[derive(Default)]`, not a stub.
-void RustBackend::emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) const {
+void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream& os) const {
     os << std::format("impl {} {{\n", spec.type_name);
     os << "    pub fn new() -> Self {\n";
     os << "        Self::default()\n";
     os << "    }\n";
     os << "}\n\n";
+}
+
+void RustBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const {
+    emit_sequence_declaration(spec, session.buffer(declaration_extension()));
+    emit_sequence_definition(spec, session.buffer(definition_extension()));
 }
 
 /// @brief Emit the Rust enum declaration for a CHOICE type.
@@ -333,7 +350,7 @@ void RustBackend::emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) 
 ///       native tagged union, not template-recursive, so the natural
 ///       mapping has no equivalent problem. No `#[derive(Default)]`: unlike
 ///       a struct, a CHOICE has no natural default variant.
-void RustBackend::emit_choice_hpp(const ChoiceSpec& spec, std::ostream& os) const {
+void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const {
     os << "#[derive(Debug, Clone, PartialEq)]\n";
     os << std::format("pub enum {} {{\n", spec.type_name);
     for (const auto& a : spec.alternatives)
@@ -351,7 +368,7 @@ void RustBackend::emit_choice_hpp(const ChoiceSpec& spec, std::ostream& os) cons
 ///       worst case on a mismatched variant is a controlled panic, not UB.
 ///       `tag_index_table`/`ber_tags` (BER wire-dispatch specific) are
 ///       unused here — no runtime wiring yet, same as every prior pairing.
-void RustBackend::emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const {
+void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const {
     std::string prefix = escape(to_snake_case(spec.type_name));
     for (const auto& a : spec.alternatives) {
         std::string fname = escape(std::format("{}_get_{}", prefix, a.accessor_name));
@@ -362,12 +379,17 @@ void RustBackend::emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) cons
     }
 }
 
+void RustBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const {
+    emit_choice_declaration(spec, session.buffer(declaration_extension()));
+    emit_choice_definition(spec, session.buffer(definition_extension()));
+}
+
 /// @brief Emit the file-level doc comment for a generated module's
 ///        declaration output.
 /// @param module_comment Pre-formatted "Module: X { oid }" text.
 /// @param os Output stream to write to.
 /// @note Rust has no include-guard/`#include` concept to replicate here —
-///       unlike CppBackend's emit_hpp_preamble, this is a doc comment and
+///       unlike CppBackend's emit_declaration_preamble, this is a doc comment and
 ///       nothing else. See the design note on gambas-asn1#241: the
 ///       two-call (hpp preamble / cpp preamble) split this method is part
 ///       of bakes in C++'s header+impl file model, which doesn't fit Rust
@@ -376,61 +398,71 @@ void RustBackend::emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) cons
 ///       the existing two-call contract, not redesigning that contract
 ///       (needs actual file/stream-ownership requirements from a real
 ///       --target=rust CLI wiring, gambas-asn1#245, which doesn't exist yet).
-void RustBackend::emit_hpp_preamble(const std::string& module_comment, std::ostream& os) const {
-    os << "//! Module: " << module_comment << "\n\n";
+void RustBackend::emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const {
+    session.buffer(declaration_extension()) << "//! Module: " << module_comment << "\n\n";
 }
 
 /// @brief Emit the file-level preamble for a generated module's
 ///        implementation output.
 /// @note Deliberately empty: Rust has nothing analogous to C++'s
-///       `#include "X.hpp"` + GCC pragma pair here. See emit_hpp_preamble's
+///       `#include "X.hpp"` + GCC pragma pair here. See emit_declaration_preamble's
 ///       note — this is the concrete symptom of the two-file-model
 ///       mismatch flagged in #241's design note, left unresolved by design
 ///       for this pairing.
-void RustBackend::emit_cpp_preamble(const std::string& header_filename, std::ostream& os) const {
-    (void)header_filename;
-    (void)os;
+void RustBackend::emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const {
+    (void)declaration_filename;
+    (void)session;
 }
 
 /// @brief Emit the opening of a `-fprefix` module wrapper.
 /// @note Rust's module system (`mod`) is the natural analogue of C++'s
 ///       `namespace` here — real syntax, not a placeholder.
-void RustBackend::emit_namespace_open(const std::string& name, std::ostream& os) const {
-    os << std::format("pub mod {} {{\n\n", name);
+void RustBackend::emit_namespace_open(const std::string& name, TypeOutputSession& session) const {
+    write_to_both(session, std::format("pub mod {} {{\n\n", name));
 }
 
 /// @brief Emit the closing of a `-fprefix` module wrapper.
-void RustBackend::emit_namespace_close(const std::string& name, std::ostream& os) const {
+void RustBackend::emit_namespace_close(const std::string& name, TypeOutputSession& session) const {
     (void)name;
-    os << "\n}\n";
+    write_to_both(session, "\n}\n");
 }
 
 /// @brief Emit the declaration half of a builtin-alias type.
-/// @note Deliberately empty: RustBackend's emit_builtin_alias_cpp (#236)
+/// @note Deliberately empty: RustBackend's emit_builtin_alias_definition (#236)
 ///       already emits the complete `pub type X = ...;` alias plus any
 ///       size-check function in one call — there is no separate
 ///       declaration/definition split on the Rust side for this
-///       construct (documented on emit_builtin_alias_cpp itself). Emitting
+///       construct (documented on emit_builtin_alias_definition itself). Emitting
 ///       anything here would duplicate that output.
-void RustBackend::emit_builtin_alias_hpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
+void RustBackend::emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, std::ostream& os) const {
     (void)spec;
     (void)os;
+}
+
+void RustBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSession& session) const {
+    emit_builtin_alias_declaration(spec, session.buffer(declaration_extension()));
+    emit_builtin_alias_definition(spec, session.buffer(definition_extension()));
 }
 
 /// @brief Emit the declaration half of a SEQUENCE OF / SET OF type: a real
 ///        `pub type X = Vec<ElemType>;` alias.
 /// @note `spec.elem_type` is treated as an opaque, already-Rust-shaped type
 ///       string — same "supplied by the caller" contract as every other
-///       pairing (see e.g. emit_sequence_hpp's note): real Generator ->
+///       pairing (see e.g. emit_sequence_declaration's note): real Generator ->
 ///       RustBackend wiring doesn't exist yet (#245).
-void RustBackend::emit_seq_of_hpp(const SeqOfSpec& spec, std::ostream& os) const {
+void RustBackend::emit_seq_of_declaration(const SeqOfSpec& spec, std::ostream& os) const {
     os << std::format("pub type {} = Vec<{}>;\n\n", spec.type_name, spec.elem_type);
 }
 
+void RustBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const {
+    emit_seq_of_declaration(spec, session.buffer(declaration_extension()));
+    emit_seq_of_definition(spec, session.buffer(definition_extension()));
+}
+
 /// @brief Emit a plain type-reference alias (`MyType ::= OtherType`, X.680 §17).
-void RustBackend::emit_typeref_alias_hpp(const std::string& type_name, const std::string& target_type,
-                                          std::ostream& os) const {
-    os << std::format("pub type {} = {};\n", type_name, target_type);
+void RustBackend::emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
+                                          TypeOutputSession& session) const {
+    session.buffer(declaration_extension()) << std::format("pub type {} = {};\n", type_name, target_type);
 }
 
 } // namespace asn1::codegen
