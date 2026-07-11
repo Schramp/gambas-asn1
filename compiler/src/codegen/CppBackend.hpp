@@ -125,6 +125,8 @@ public:
     void emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const override;
     void emit_sequence_hpp(const SequenceSpec& spec, std::ostream& os) const override;
     void emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) const override;
+    void emit_choice_hpp(const ChoiceSpec& spec, std::ostream& os) const override;
+    void emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const override;
 };
 
 } // namespace asn1::codegen
