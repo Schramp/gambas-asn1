@@ -506,6 +506,37 @@ int main() {
               rust_tr_hpp.str());
     }
 
+    // declaration_extension/definition_extension (#262): Backend decides
+    // file identity — CppBackend keeps the two-file hpp/cpp split;
+    // RustBackend returns the same extension for both, which merges them
+    // into one file via TypeOutputSession (no separate merge flag).
+    {
+        check("declaration_extension/definition_extension: C++ requests a two-file hpp/cpp split",
+              c.declaration_extension() == "hpp" && c.definition_extension() == "cpp",
+              c.declaration_extension() + " / " + c.definition_extension());
+        check("declaration_extension/definition_extension: Rust requests the same extension for both (merges)",
+              r.declaration_extension() == "rs" && r.definition_extension() == "rs",
+              r.declaration_extension() + " / " + r.definition_extension());
+
+        TypeOutputSession session;
+        session.buffer("rs") << "decl content ";
+        session.buffer("rs") << "def content";
+        auto merged = session.finish();
+        check("TypeOutputSession: same extension merges into one buffer",
+              merged.size() == 1 && merged[0].first == "rs" &&
+              merged[0].second == "decl content def content",
+              merged.empty() ? "" : merged[0].second);
+
+        TypeOutputSession session2;
+        session2.buffer("hpp") << "decl";
+        session2.buffer("cpp") << "def";
+        auto split = session2.finish();
+        check("TypeOutputSession: different extensions stay separate",
+              split.size() == 2 && split[0].first == "hpp" && split[0].second == "decl" &&
+              split[1].first == "cpp" && split[1].second == "def",
+              std::to_string(split.size()));
+    }
+
     // Generator accepts an injected Backend (not just the default CppBackend)
     // — proves the seam #216 built is real, not just declared. Construction
     // only (no generate() call — that still hardcodes C++ text emission

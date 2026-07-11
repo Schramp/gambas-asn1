@@ -121,6 +121,14 @@ public:
     void emit_seq_of_hpp(const SeqOfSpec& spec, std::ostream& os) const override;
     void emit_typeref_alias_hpp(const std::string& type_name, const std::string& target_type,
                                  std::ostream& os) const override;
+
+    // Single-file mode (gambas-asn1#262): Rust has no header/impl split.
+    // Returning the same extension from both methods makes
+    // TypeOutputSession::buffer() hand back the same stream for
+    // emit_hpp's and emit_cpp's content, merging them into one "<Type>.rs"
+    // file instead of a ".hpp"/".cpp" pair — no separate merge flag needed.
+    std::string declaration_extension() const override { return "rs"; }
+    std::string definition_extension() const override { return "rs"; }
 };
 
 } // namespace asn1::codegen

@@ -116,6 +116,14 @@ class Generator {
     std::ostream*           post_ns_os_{nullptr}; // when set, deferred post-class includes write here (after namespace close)
     std::set<std::string>   pdu_roots_;           // ASN.1 names of -pdu= root types (empty = generate all)
     std::set<std::string>   reachable_asn_names_; // populated by compute_reachable(); ASN.1 names
+    std::set<fs::path>      known_files_;         // every path emit_type_files() intended to (re)write
+                                                    // this run, whether or not its content actually changed —
+                                                    // used to remove now-stale generated files (gambas-asn1#262
+                                                    // follow-up: file count/extension is backend-owned and can
+                                                    // now vary per type/backend, e.g. a SEQUENCE turning into a
+                                                    // plain alias drops its .cpp file, or a schema regenerated
+                                                    // under a single-file backend drops the .cpp/.hpp split
+                                                    // entirely — neither used to be cleaned up).
     std::unique_ptr<Backend> owned_backend_;      // set only when no external Backend is supplied
     Backend&                 backend_;            // naming/escaping — see Backend.hpp
 
@@ -164,6 +172,30 @@ public:
                     generate_type(*def, *mod);
                 }
         }
+
+        remove_stale_files();
+    }
+
+    /// @brief Delete generated files left over from a previous run that no
+    ///        longer correspond to any type this run produced — e.g. a
+    ///        SEQUENCE that became a plain alias (drops its `.cpp` file),
+    ///        or the backend's declaration/definition extensions changing
+    ///        (e.g. switching backends between a two-file and single-file
+    ///        layout).
+    /// @note Only considers files directly in out_dir_ whose extension
+    ///       matches backend_.declaration_extension()/definition_extension()
+    ///       — never touches unrelated files (e.g. a hand-maintained
+    ///       sources.mk) or subdirectories.
+    void remove_stale_files() const {
+        std::set<std::string> exts{"." + backend_.declaration_extension(),
+                                    "." + backend_.definition_extension()};
+        if (!fs::exists(out_dir_)) return;
+        for (const auto& entry : fs::directory_iterator(out_dir_)) {
+            if (!entry.is_regular_file()) continue;
+            if (!exts.count(entry.path().extension().string())) continue;
+            if (known_files_.count(entry.path())) continue;
+            fs::remove(entry.path());
+        }
     }
 
     // Returns the C++ name to use for a type, prefixing with module when colliding.
@@ -203,6 +235,20 @@ private:
     void generate_inline_types(const ast::TypeDef& def, const ast::Module& mod);
     void emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::ostream& os);
     void emit_cpp(const ast::TypeDef& def, std::ostream& os);
+    /// @brief Write the output file(s) for one type definition, driven by a
+    ///        TypeOutputSession (gambas-asn1#262) instead of hardcoding a
+    ///        ".hpp"/".cpp" pair.
+    /// @param name Final identifier used for the filename (via filename_for()).
+    /// @param def  Type definition to emit.
+    /// @param mod  Owning module (passed through to emit_hpp).
+    /// @note Always calls both emit_hpp and emit_cpp; emit_cpp decides for
+    ///       itself whether a definition exists (e.g. none for a plain
+    ///       TypeRef alias) rather than relying on a separately-computed
+    ///       flag, and any buffer left empty afterward — including a
+    ///       backend's genuinely-empty declaration half — is simply not
+    ///       written.
+    void emit_type_files(const std::string& name, const ast::TypeDef& def,
+                          const ast::Module& mod);
 
     void emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os);
     void emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os);

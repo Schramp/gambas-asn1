@@ -7,6 +7,9 @@
 #include <vector>
 #include <cstdint>
 #include <optional>
+#include <memory>
+#include <sstream>
+#include <utility>
 #include <asn1cpp/compat/format.hpp>
 #include "../ast/TypeDef.hpp"
 #include "../ast/Tag.hpp"
@@ -553,6 +556,62 @@ public:
                                          std::ostream& os) const {
         (void)type_name; (void)target_type; (void)os;
         throw std::logic_error("emit_typeref_alias_hpp: not implemented for this backend");
+    }
+
+    /// @brief Output file extension (no leading dot) for a type's
+    ///        declaration half (the content `emit_hpp` produces).
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual std::string declaration_extension() const {
+        throw std::logic_error("declaration_extension: not implemented for this backend");
+    }
+
+    /// @brief Output file extension (no leading dot) for a type's
+    ///        definition half (the content `emit_cpp` produces).
+    ///
+    /// gambas-asn1#262: file identity used to be hardcoded ".hpp"/".cpp" in
+    /// Generator, baking C++'s header+impl split into the whole pipeline.
+    /// Now Backend decides both extensions; merging is implicit rather than
+    /// a separate flag Generator has to consult — TypeOutputSession::buffer()
+    /// returns the *same* stream when declaration_extension() ==
+    /// definition_extension(), so returning the same value as
+    /// declaration_extension() (as a single-file backend would) is itself
+    /// the complete "combine into one file" decision.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual std::string definition_extension() const {
+        throw std::logic_error("definition_extension: not implemented for this backend");
+    }
+};
+
+/// @brief Per-type output session (gambas-asn1#262). Backend decides file
+///        identity via declaration_extension()/definition_extension();
+///        Generator drives emission by requesting named buffers and, once
+///        done, collects their content via finish() to write to disk (file
+///        naming and the write-if-changed diffing stay Generator's job —
+///        generic build hygiene, not backend-specific).
+/// @note Concrete, not virtual: the buffering mechanics (one ostringstream
+///       per distinct extension, first-requested order) are identical for
+///       any backend — only *which* extensions get requested varies, and
+///       that's already captured by declaration_extension()/definition_extension().
+class TypeOutputSession {
+    std::vector<std::pair<std::string, std::unique_ptr<std::ostringstream>>> buffers_;
+public:
+    /// @brief Returns a persistent stream for `ext`, creating it on first
+    ///        use. A second call with the same `ext` returns the same
+    ///        stream — this is how a single-file backend merges
+    ///        declaration and definition content into one buffer.
+    std::ostream& buffer(const std::string& ext) {
+        for (auto& [e, buf] : buffers_)
+            if (e == ext) return *buf;
+        buffers_.emplace_back(ext, std::make_unique<std::ostringstream>());
+        return *buffers_.back().second;
+    }
+
+    /// @brief Finalize the session: {extension, content} pairs in
+    ///        first-requested order.
+    std::vector<std::pair<std::string, std::string>> finish() {
+        std::vector<std::pair<std::string, std::string>> out;
+        for (auto& [e, buf] : buffers_) out.emplace_back(e, buf->str());
+        return out;
     }
 };
 
