@@ -235,19 +235,20 @@ private:
     void generate_inline_types(const ast::TypeDef& def, const ast::Module& mod);
     void emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::ostream& os);
     void emit_cpp(const ast::TypeDef& def, std::ostream& os);
-    /// @brief Write the output file(s) for one type definition, honoring
-    ///        backend_.output_extensions() (gambas-asn1#262) instead of
-    ///        hardcoding a ".hpp"/".cpp" pair.
-    /// @param name      Final identifier used for the filename (via filename_for()).
-    /// @param def       Type definition to emit.
-    /// @param mod       Owning module (passed through to emit_hpp).
-    /// @param needs_cpp False for a plain TypeRef alias with no separate
-    ///                  definition half; true otherwise. Two-extension
-    ///                  backends skip the second file entirely when false;
-    ///                  single-extension backends just skip appending the
-    ///                  (empty) emit_cpp content.
+    /// @brief Write the output file(s) for one type definition, driven by a
+    ///        TypeOutputSession (gambas-asn1#262) instead of hardcoding a
+    ///        ".hpp"/".cpp" pair.
+    /// @param name Final identifier used for the filename (via filename_for()).
+    /// @param def  Type definition to emit.
+    /// @param mod  Owning module (passed through to emit_hpp).
+    /// @note Always calls both emit_hpp and emit_cpp; emit_cpp decides for
+    ///       itself whether a definition exists (e.g. none for a plain
+    ///       TypeRef alias) rather than relying on a separately-computed
+    ///       flag, and any buffer left empty afterward — including a
+    ///       backend's genuinely-empty declaration half — is simply not
+    ///       written.
     void emit_type_files(const std::string& name, const ast::TypeDef& def,
-                          const ast::Module& mod, bool needs_cpp);
+                          const ast::Module& mod);
 
     void emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os);
     void emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os);
