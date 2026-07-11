@@ -362,4 +362,75 @@ void RustBackend::emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) cons
     }
 }
 
+/// @brief Emit the file-level doc comment for a generated module's
+///        declaration output.
+/// @param module_comment Pre-formatted "Module: X { oid }" text.
+/// @param os Output stream to write to.
+/// @note Rust has no include-guard/`#include` concept to replicate here —
+///       unlike CppBackend's emit_hpp_preamble, this is a doc comment and
+///       nothing else. See the design note on gambas-asn1#241: the
+///       two-call (hpp preamble / cpp preamble) split this method is part
+///       of bakes in C++'s header+impl file model, which doesn't fit Rust
+///       (no split at all). Not resolved here — this pairing's scope is
+///       proving each Backend method produces real, compiling output under
+///       the existing two-call contract, not redesigning that contract
+///       (needs actual file/stream-ownership requirements from a real
+///       --target=rust CLI wiring, gambas-asn1#245, which doesn't exist yet).
+void RustBackend::emit_hpp_preamble(const std::string& module_comment, std::ostream& os) const {
+    os << "//! Module: " << module_comment << "\n\n";
+}
+
+/// @brief Emit the file-level preamble for a generated module's
+///        implementation output.
+/// @note Deliberately empty: Rust has nothing analogous to C++'s
+///       `#include "X.hpp"` + GCC pragma pair here. See emit_hpp_preamble's
+///       note — this is the concrete symptom of the two-file-model
+///       mismatch flagged in #241's design note, left unresolved by design
+///       for this pairing.
+void RustBackend::emit_cpp_preamble(const std::string& header_filename, std::ostream& os) const {
+    (void)header_filename;
+    (void)os;
+}
+
+/// @brief Emit the opening of a `-fprefix` module wrapper.
+/// @note Rust's module system (`mod`) is the natural analogue of C++'s
+///       `namespace` here — real syntax, not a placeholder.
+void RustBackend::emit_namespace_open(const std::string& name, std::ostream& os) const {
+    os << std::format("pub mod {} {{\n\n", name);
+}
+
+/// @brief Emit the closing of a `-fprefix` module wrapper.
+void RustBackend::emit_namespace_close(const std::string& name, std::ostream& os) const {
+    (void)name;
+    os << "\n}\n";
+}
+
+/// @brief Emit the declaration half of a builtin-alias type.
+/// @note Deliberately empty: RustBackend's emit_builtin_alias_cpp (#236)
+///       already emits the complete `pub type X = ...;` alias plus any
+///       size-check function in one call — there is no separate
+///       declaration/definition split on the Rust side for this
+///       construct (documented on emit_builtin_alias_cpp itself). Emitting
+///       anything here would duplicate that output.
+void RustBackend::emit_builtin_alias_hpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
+    (void)spec;
+    (void)os;
+}
+
+/// @brief Emit the declaration half of a SEQUENCE OF / SET OF type: a real
+///        `pub type X = Vec<ElemType>;` alias.
+/// @note `spec.elem_type` is treated as an opaque, already-Rust-shaped type
+///       string — same "supplied by the caller" contract as every other
+///       pairing (see e.g. emit_sequence_hpp's note): real Generator ->
+///       RustBackend wiring doesn't exist yet (#245).
+void RustBackend::emit_seq_of_hpp(const SeqOfSpec& spec, std::ostream& os) const {
+    os << std::format("pub type {} = Vec<{}>;\n\n", spec.type_name, spec.elem_type);
+}
+
+/// @brief Emit a plain type-reference alias (`MyType ::= OtherType`, X.680 §17).
+void RustBackend::emit_typeref_alias_hpp(const std::string& type_name, const std::string& target_type,
+                                          std::ostream& os) const {
+    os << std::format("pub type {} = {};\n", type_name, target_type);
+}
+
 } // namespace asn1::codegen

@@ -432,11 +432,85 @@ int main() {
               rust_cpp.str());
     }
 
+    // emit_hpp_preamble/emit_cpp_preamble/emit_namespace_open/close +
+    // emit_builtin_alias_hpp/emit_seq_of_hpp/emit_typeref_alias_hpp: ninth
+    // real construct pair (top-level dispatch, #233/#241) — closes out the
+    // Rust side of #225.
+    {
+        std::ostringstream cpp_hpp_pre, cpp_cpp_pre, rust_hpp_pre, rust_cpp_pre;
+        c.emit_hpp_preamble("MyModule { 1 2 3 }", cpp_hpp_pre);
+        c.emit_cpp_preamble("MyType", cpp_cpp_pre);
+        r.emit_hpp_preamble("MyModule { 1 2 3 }", rust_hpp_pre);
+        r.emit_cpp_preamble("MyType", rust_cpp_pre);
+
+        check("emit_hpp_preamble: C++ produces a module comment + pragma once",
+              cpp_hpp_pre.str().find("// Module: MyModule { 1 2 3 }") != std::string::npos &&
+              cpp_hpp_pre.str().find("#pragma once") != std::string::npos,
+              cpp_hpp_pre.str());
+        check("emit_hpp_preamble: Rust produces a real doc comment (not a stub)",
+              rust_hpp_pre.str().find("//! Module: MyModule { 1 2 3 }") != std::string::npos,
+              rust_hpp_pre.str());
+        check("emit_cpp_preamble: C++ produces an #include for the paired header",
+              cpp_cpp_pre.str().find("#include \"MyType.hpp\"") != std::string::npos,
+              cpp_cpp_pre.str());
+
+        std::ostringstream cpp_ns_open, cpp_ns_close, rust_ns_open, rust_ns_close;
+        c.emit_namespace_open("myns", cpp_ns_open);
+        c.emit_namespace_close("myns", cpp_ns_close);
+        r.emit_namespace_open("myns", rust_ns_open);
+        r.emit_namespace_close("myns", rust_ns_close);
+
+        check("emit_namespace_open/close: C++ produces a namespace block",
+              cpp_ns_open.str().find("namespace myns {") != std::string::npos &&
+              cpp_ns_close.str().find("} // namespace myns") != std::string::npos,
+              cpp_ns_open.str() + " / " + cpp_ns_close.str());
+        check("emit_namespace_open/close: Rust produces a real mod block (not a stub)",
+              rust_ns_open.str().find("pub mod myns {") != std::string::npos,
+              rust_ns_open.str());
+
+        BuiltinAliasSpec alias_spec;
+        alias_spec.type_name = "MyBytes2";
+        alias_spec.builtin_type = asn1::ast::BuiltinType::OctetString;
+        std::ostringstream cpp_alias_hpp, rust_alias_hpp;
+        c.emit_builtin_alias_hpp(alias_spec, cpp_alias_hpp);
+        r.emit_builtin_alias_hpp(alias_spec, rust_alias_hpp);
+        check("emit_builtin_alias_hpp: C++ produces a using-alias + extern descriptor",
+              cpp_alias_hpp.str().find("using MyBytes2 = asn1::OctetString;") != std::string::npos &&
+              cpp_alias_hpp.str().find("extern const asn1::TypeDescriptor asn_DEF_MyBytes2;") != std::string::npos,
+              cpp_alias_hpp.str());
+        check("emit_builtin_alias_hpp: Rust deliberately empty (unified with emit_builtin_alias_cpp)",
+              rust_alias_hpp.str().empty(),
+              rust_alias_hpp.str());
+
+        SeqOfSpec seqof_spec;
+        seqof_spec.type_name = "MyList2";
+        seqof_spec.elem_type = "i64";
+        std::ostringstream cpp_seqof_hpp, rust_seqof_hpp;
+        c.emit_seq_of_hpp(seqof_spec, cpp_seqof_hpp);
+        r.emit_seq_of_hpp(seqof_spec, rust_seqof_hpp);
+        check("emit_seq_of_hpp: C++ produces a VectorSeqOf using-alias",
+              cpp_seqof_hpp.str().find("using MyList2 = asn1::VectorSeqOf<i64>;") != std::string::npos,
+              cpp_seqof_hpp.str());
+        check("emit_seq_of_hpp: Rust produces a real Vec<T> type alias (not a stub)",
+              rust_seqof_hpp.str().find("pub type MyList2 = Vec<i64>;") != std::string::npos,
+              rust_seqof_hpp.str());
+
+        std::ostringstream cpp_tr_hpp, rust_tr_hpp;
+        c.emit_typeref_alias_hpp("MyAlias", "OtherType", cpp_tr_hpp);
+        r.emit_typeref_alias_hpp("MyAlias", "OtherType", rust_tr_hpp);
+        check("emit_typeref_alias_hpp: C++ produces a using-alias",
+              cpp_tr_hpp.str() == "using MyAlias = OtherType;\n",
+              cpp_tr_hpp.str());
+        check("emit_typeref_alias_hpp: Rust produces a real pub type alias (not a stub)",
+              rust_tr_hpp.str() == "pub type MyAlias = OtherType;\n",
+              rust_tr_hpp.str());
+    }
+
     // Generator accepts an injected Backend (not just the default CppBackend)
     // — proves the seam #216 built is real, not just declared. Construction
     // only (no generate() call — that still hardcodes C++ text emission
-    // until #225's pairwise migration lands; calling it with RustBackend
-    // today would produce misleading non-Rust output).
+    // until #245's CLI backend-selection flag lands; calling it with
+    // RustBackend today would produce misleading non-Rust output).
     {
         asn1::sema::Resolver resolver;
         asn1::codegen::Generator gen("/tmp/rust_backend_stub_unused", resolver, rust);
