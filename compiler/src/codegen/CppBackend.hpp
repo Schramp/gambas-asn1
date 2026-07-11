@@ -127,6 +127,14 @@ public:
     void emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) const override;
     void emit_choice_hpp(const ChoiceSpec& spec, std::ostream& os) const override;
     void emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const override;
+    void emit_hpp_preamble(const std::string& module_comment, std::ostream& os) const override;
+    void emit_cpp_preamble(const std::string& header_filename, std::ostream& os) const override;
+    void emit_namespace_open(const std::string& name, std::ostream& os) const override;
+    void emit_namespace_close(const std::string& name, std::ostream& os) const override;
+    void emit_builtin_alias_hpp(const BuiltinAliasSpec& spec, std::ostream& os) const override;
+    void emit_seq_of_hpp(const SeqOfSpec& spec, std::ostream& os) const override;
+    void emit_typeref_alias_hpp(const std::string& type_name, const std::string& target_type,
+                                 std::ostream& os) const override;
 };
 
 } // namespace asn1::codegen

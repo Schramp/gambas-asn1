@@ -1564,24 +1564,17 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
     std::string cname = effective_cpp_name(def.name, mod.name);
 
     // Module header comment with OID if present
-    os << "// Module: " << mod.name;
+    std::string module_comment = mod.name;
     if (!mod.oid.arcs.empty()) {
-        os << " {";
+        module_comment += " {";
         for (const auto& arc : mod.oid.arcs) {
-            os << " ";
-            if (arc.number >= 0) os << arc.number;
-            else os << arc.name;
+            module_comment += " ";
+            if (arc.number >= 0) module_comment += std::to_string(arc.number);
+            else module_comment += arc.name;
         }
-        os << " }";
+        module_comment += " }";
     }
-    os << "\n";
-
-    os << "#pragma once\n";
-    os << "#include <memory>\n";
-    os << "#include <optional>\n";
-    os << "#include <vector>\n";
-    os << "#include <span>\n";
-    os << "#include <asn1cpp/asn1cpp_gen.hpp>\n\n";
+    backend_.emit_hpp_preamble(module_comment, os);
 
     // When namespace wrapping is active, cross-type #include "X.hpp" directives must land
     // BEFORE the namespace opens (each peer .hpp already wraps itself in the namespace).
@@ -1609,8 +1602,8 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
         } else if (*bt == ast::BuiltinType::Integer) {
             emit_integer_hpp(def, body);
         } else {
-            body << std::format("using {} = {};\n\n", cname, cpp_type_for(def));
-            body << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
+            auto spec = build_builtin_alias_spec(def, cname);
+            backend_.emit_builtin_alias_hpp(spec, body);
         }
     } else if (def.is_seq_of() || def.is_set_of()) {
         current_type_ = cname;
@@ -1630,22 +1623,23 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
             auto synth = backend_.synthetic_name(cname, elem->name.empty() ? "Enum" : elem->name);
             inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
         }
-        body << std::format("using {} = asn1::VectorSeqOf<{}>;\n\n", cname, cpp_type_for(*elem));
-        body << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", cname);
-        body << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
+        SeqOfSpec spec;
+        spec.type_name = cname;
+        spec.elem_type = cpp_type_for(*elem);
+        backend_.emit_seq_of_hpp(spec, body);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto inc = cpp_name_for_typeref(*tr);
         auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : body;
         inc_os << std::format("#include \"{}.hpp\"\n", filename_for(inc));
-        body << std::format("using {} = {};\n", cname, inc);
+        backend_.emit_typeref_alias_hpp(cname, inc, body);
     }
 
     pre_ns_os_  = nullptr;
     post_ns_os_ = nullptr;
     if (!namespace_.empty()) {
-        os << "namespace " << namespace_ << " {\n\n";
+        backend_.emit_namespace_open(namespace_, os);
         os << body_ns.str();
-        os << "\n} // namespace " << namespace_ << "\n";
+        backend_.emit_namespace_close(namespace_, os);
         auto post = post_ns_ss.str();
         if (!post.empty()) os << "\n" << post;
     }
@@ -1834,15 +1828,7 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
 
 void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
-    os << std::format("#include \"{}.hpp\"\n", filename_for(cname));
-    os << "#include <asn1cpp/codec/PerHandlers.hpp>\n";
-    os << "#include <asn1cpp/codec/BerHandlers.hpp>\n";
-    // __builtin_offsetof is well-defined for all types without virtual functions
-    // on GCC/Clang, including non-standard-layout types (conditionally supported
-    // per C++ standard). Suppress the pedantic diagnostic in generated files.
-    os << "#ifdef __GNUC__\n";
-    os << "#pragma GCC diagnostic ignored \"-Winvalid-offsetof\"\n";
-    os << "#endif\n\n";
+    backend_.emit_cpp_preamble(filename_for(cname), os);
 
     // When namespace wrapping is active, member-type includes (e.g. for optional members
     // that need a complete type in the .cpp) must precede the namespace opener.
@@ -1870,9 +1856,9 @@ void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     pre_ns_os_ = nullptr;
     if (!namespace_.empty()) {
-        os << "namespace " << namespace_ << " {\n\n";
+        backend_.emit_namespace_open(namespace_, os);
         os << body_ns_cpp.str();
-        os << "\n} // namespace " << namespace_ << "\n";
+        backend_.emit_namespace_close(namespace_, os);
     }
 }
 
