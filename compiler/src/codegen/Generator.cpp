@@ -1437,16 +1437,12 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     auto [count, ext_at] = count_members(def);
     bool apply_auto_tags = should_apply_auto_tags(def);
-    bool has_tag_index = false;
-    int  tag_index_base = 0, tag_index_size = 0;
 
     ChoiceSpec spec;
     spec.type_name = cname;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
     spec.count = count;
     spec.ext_at = ext_at;
-
-    std::ostringstream extra_tables;
 
     // Alternative descriptor table
     if (count > 0) {
@@ -1523,16 +1519,12 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         }
         int range = all_ctx ? (max_tag - min_tag + 1) : 0;
         if (all_ctx && count > 1 && range <= 4 * count) {
-            has_tag_index = true;
-            tag_index_base = min_tag;
-            tag_index_size = range;
             std::vector<int16_t> idx_table(range, -1);
             for (int i = 0; i < (int)rows.size(); ++i)
                 idx_table[rows[i].tag_cls_int - min_tag] = (int16_t)i;
-            extra_tables << std::format("static const int16_t asn_TAGIDX_{}[] = {{", cname);
-            for (int i = 0; i < range; ++i)
-                extra_tables << (i ? ", " : "") << idx_table[i];
-            extra_tables << "};\n\n";
+            spec.has_tag_index = true;
+            spec.tag_index_base = min_tag;
+            spec.tag_index_table = std::move(idx_table);
         }
     }
 
@@ -1553,22 +1545,9 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         }
     }
     if (needs_ber_table && !ber_tags.empty()) {
-        extra_tables << std::format("static const asn1::ChoiceTagEntry asn_BER_{}[] = {{\n", cname);
-        for (const auto& [tag_lit, idx] : ber_tags)
-            extra_tables << std::format("    {{ {}, {} }},\n", tag_lit, idx);
-        extra_tables << "};\n\n";
+        spec.has_ber_table = true;
+        spec.ber_tags = std::move(ber_tags);
     }
-    spec.extra_tables = extra_tables.str();
-
-    std::ostringstream tail;
-    if (needs_ber_table && !ber_tags.empty())
-        tail << std::format("    , asn_BER_{0}, {1} /* ber_tags */\n", cname, (int)ber_tags.size());
-    else if (has_tag_index)
-        tail << "    , nullptr, 0 /* ber_tags */\n";
-    if (has_tag_index)
-        tail << std::format("    , asn_TAGIDX_{0}, {1}, {2} /* tag_index */\n",
-                            cname, tag_index_base, tag_index_size);
-    spec.choice_spec_tail = tail.str();
 
     backend_.emit_choice_cpp(spec, os);
 }

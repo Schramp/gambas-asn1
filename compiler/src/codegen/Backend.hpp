@@ -280,11 +280,11 @@ struct ChoiceAlternativeSpec {
 ///        (mirroring the original code's independent canonical-ordering
 ///        computations for each — not unified here, to avoid any risk of
 ///        introducing a reordering divergence between the two).
-/// @note `extra_tables`/`choice_spec_tail` stay pre-formatted C++ text —
-///       same rationale as SequenceMemberSpec's C++-runtime-only fields:
-///       the O(1) context-tag dispatch table and flattened BER dispatch
-///       table are computed by Generator's existing density-heuristic /
-///       tag-flattening decision logic (untouched by this issue's scope).
+/// @note `tag_index_table`/`ber_tags` are raw resolved data (same
+///       convention as every other spec) — Generator's existing
+///       density-heuristic / tag-flattening decision logic (X.691 §22.6)
+///       decides *whether* and *what*; CppBackend formats the resulting
+///       arrays and ChoiceSpec aggregate fields into C++ text.
 struct ChoiceSpec {
     std::string type_name;
     std::string xer_name;
@@ -292,8 +292,14 @@ struct ChoiceSpec {
     int ext_at;
     std::vector<ChoiceAlternativeSpec> alternatives;
 
-    std::string extra_tables;     // pre-formatted asn_TAGIDX_X[]/asn_BER_X[] static arrays, or ""
-    std::string choice_spec_tail; // pre-formatted trailing ber_tags/tag_index fields for the ChoiceSpec aggregate, or ""
+    // O(1) context-tag dispatch table (density-heuristic gated).
+    bool                  has_tag_index = false;
+    int                   tag_index_base = 0;
+    std::vector<int16_t>  tag_index_table; // -1 = no alternative at this tag; size == range
+
+    // Flattened BER dispatch table (untagged-CHOICE-alternative case).
+    bool                                     has_ber_table = false;
+    std::vector<std::pair<std::string,int>>  ber_tags; // {pre-formatted tag literal, alt index}
 };
 
 /// @brief Confines identifier-escaping and naming-convention decisions that

@@ -888,7 +888,21 @@ void CppBackend::emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const
             cname);
     }
 
-    os << spec.extra_tables;
+    // O(1) context-tag dispatch table.
+    if (spec.has_tag_index) {
+        os << std::format("static const int16_t asn_TAGIDX_{}[] = {{", cname);
+        for (std::size_t i = 0; i < spec.tag_index_table.size(); ++i)
+            os << (i ? ", " : "") << spec.tag_index_table[i];
+        os << "};\n\n";
+    }
+
+    // Flattened BER dispatch table.
+    if (spec.has_ber_table) {
+        os << std::format("static const asn1::ChoiceTagEntry asn_BER_{}[] = {{\n", cname);
+        for (const auto& [tag_lit, idx] : spec.ber_tags)
+            os << std::format("    {{ {}, {} }},\n", tag_lit, idx);
+        os << "};\n\n";
+    }
 
     // ChoiceSpec
     os << std::format("const asn1::ChoiceSpec {}::asn_SPC = {{\n", cname);
@@ -899,7 +913,13 @@ void CppBackend::emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const
     os << std::format("    {},\n", spec.count);
     os << std::format("    {}, /* ext_at */\n", spec.ext_at);
     os << "    {} /* PER: constraints */\n";
-    os << spec.choice_spec_tail;
+    if (spec.has_ber_table)
+        os << std::format("    , asn_BER_{0}, {1} /* ber_tags */\n", cname, (int)spec.ber_tags.size());
+    else if (spec.has_tag_index)
+        os << "    , nullptr, 0 /* ber_tags */\n";
+    if (spec.has_tag_index)
+        os << std::format("    , asn_TAGIDX_{0}, {1}, {2} /* tag_index */\n",
+                          cname, spec.tag_index_base, (int)spec.tag_index_table.size());
     os << "};\n\n";
 
     // TypeDescriptor — CHOICE tag is a transparent placeholder (no fixed universal tag)
