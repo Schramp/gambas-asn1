@@ -12,6 +12,8 @@
 #include "ast/Module.hpp"
 #include "sema/Resolver.hpp"
 #include "codegen/Generator.hpp"
+#include "codegen/CppBackend.hpp"
+#include "codegen/RustBackend.hpp"
 
 namespace fs = std::filesystem;
 
@@ -22,6 +24,7 @@ static const struct option long_opts[] = {
     {"fprefix",              required_argument, nullptr, 'P'},
     {"pdu",                  required_argument, nullptr, 'D'},
     {"integer-type",         required_argument, nullptr, 'I'},
+    {"target",               required_argument, nullptr, 'T'},
     {nullptr, 0, nullptr, 0}
 };
 
@@ -44,7 +47,9 @@ static void print_help(const char* prog) {
         "                              Without -pdu, all types in all modules are generated.\n"
         "                              -pdu=all is accepted as an alias for the default.\n"
         "  --integer-type=<kind>       Integer storage: int64 (default), uint64,\n"
-        "                              int128 (unimplemented), arbitrary (unimplemented)\n";
+        "                              int128 (unimplemented), arbitrary (unimplemented)\n"
+        "  --target=<lang>             Output language: cpp (default) or rust (WIP,\n"
+        "                              gambas-asn1#214).\n";
 }
 
 static void usage(const char* prog) {
@@ -52,6 +57,7 @@ static void usage(const char* prog) {
               << " [-E] [-o outdir] [-fallow-newer-modules] [-fbless-SIZE]"
                  " [-fprefix=<name>] [-pdu=<TypeName>]"
                  " [--integer-type=int64|uint64|int128|arbitrary]"
+                 " [--target=cpp|rust]"
                  " file.asn1 [file2.asn1 ...]\n"
                  "Try '" << prog << " --help' for more information.\n";
     std::exit(1);
@@ -65,6 +71,7 @@ int main(int argc, char** argv) {
     bool bless_size = false;
     bool parse_only = false;
     asn1::codegen::IntStorageKind default_int_kind = asn1::codegen::IntStorageKind::S64;
+    std::string target = "cpp";
     std::vector<std::string> input_files;
 
     int opt;
@@ -101,6 +108,13 @@ int main(int argc, char** argv) {
             }
             break;
         }
+        case 'T':
+            target = optarg;
+            if (target != "cpp" && target != "rust") {
+                std::cerr << "error: unknown --target value '" << target << "' (expected cpp or rust)\n";
+                usage(argv[0]);
+            }
+            break;
         default: usage(argv[0]);
         }
     }
@@ -117,7 +131,7 @@ int main(int argc, char** argv) {
             });
         };
         if (!valid_id(ns_prefix)) {
-            std::cerr << "error: -fprefix value '" << ns_prefix << "' is not a valid C++ identifier\n";
+            std::cerr << "error: -fprefix value '" << ns_prefix << "' is not a valid identifier\n";
             return 1;
         }
     }
@@ -165,12 +179,18 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    asn1::codegen::Generator gen(out_dir, resolver);
+    asn1::codegen::CppBackend cpp_backend;
+    asn1::codegen::RustBackend rust_backend;
+    asn1::codegen::Backend& backend = (target == "rust")
+        ? static_cast<asn1::codegen::Backend&>(rust_backend)
+        : static_cast<asn1::codegen::Backend&>(cpp_backend);
+
+    asn1::codegen::Generator gen(out_dir, resolver, backend);
     gen.set_default_int_kind(default_int_kind);
     if (!ns_prefix.empty()) gen.set_namespace(ns_prefix);
     for (const auto& t : pdu_types) gen.add_pdu_type(t);
     gen.generate(pr);
 
-    std::cout << "Generated C++ code in: " << out_dir << "/\n";
+    std::cout << "Generated " << (target == "rust" ? "Rust" : "C++") << " code in: " << out_dir << "/\n";
     return 0;
 }

@@ -34,6 +34,7 @@ add_executable(asn1cpp
     ${REFLEX_LEXER_SRC}
     src/codegen/Generator.cpp
     src/codegen/CppBackend.cpp
+    src/codegen/RustBackend.cpp
     src/main.cpp
 )
 
