@@ -206,6 +206,7 @@ struct SeqOfSpec {
     std::string type_name;
     std::string xer_name;
     std::string elem_ref;        // reference expression to the element's TypeDescriptor
+    std::string elem_type;       // element's native storage type (hpp `using X = VectorSeqOf<elem_type>` only)
     int         range_bits;
     int64_t     size_lower;
     std::optional<int64_t> size_upper; // present = finite upper bound; absent = semi-constrained/unconstrained
@@ -483,6 +484,75 @@ public:
     virtual void emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const {
         (void)spec; (void)os;
         throw std::logic_error("emit_choice_cpp: not implemented for this backend");
+    }
+
+    /// @brief Emit the file preamble for a generated header (module comment,
+    ///        include guard, standard includes).
+    /// @param module_comment Pre-formatted "Module: X { oid }" text — plain
+    ///        content, no comment-syntax applied; the backend wraps it in
+    ///        its own comment syntax.
+    /// @param os Output stream to write to.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_hpp_preamble(const std::string& module_comment, std::ostream& os) const {
+        (void)module_comment; (void)os;
+        throw std::logic_error("emit_hpp_preamble: not implemented for this backend");
+    }
+
+    /// @brief Emit the file preamble for a generated implementation file.
+    /// @param header_filename The corresponding header's filename, without extension.
+    /// @param os Output stream to write to.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_cpp_preamble(const std::string& header_filename, std::ostream& os) const {
+        (void)header_filename; (void)os;
+        throw std::logic_error("emit_cpp_preamble: not implemented for this backend");
+    }
+
+    /// @brief Emit the opening of a namespace/module wrapper (X: `-fprefix`).
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_namespace_open(const std::string& name, std::ostream& os) const {
+        (void)name; (void)os;
+        throw std::logic_error("emit_namespace_open: not implemented for this backend");
+    }
+
+    /// @brief Emit the closing of a namespace/module wrapper.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_namespace_close(const std::string& name, std::ostream& os) const {
+        (void)name; (void)os;
+        throw std::logic_error("emit_namespace_close: not implemented for this backend");
+    }
+
+    /// @brief Emit the header-side type declaration for a builtin-alias type
+    ///        (the `.hpp` counterpart to emit_builtin_alias_cpp — see its
+    ///        note on why builtin-alias has no separate hpp/cpp split for
+    ///        the definition itself; this is just the forward-visible alias
+    ///        + extern descriptor declaration).
+    /// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_builtin_alias_hpp(const BuiltinAliasSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_builtin_alias_hpp: not implemented for this backend");
+    }
+
+    /// @brief Emit the header-side type declaration for a SEQUENCE OF / SET
+    ///        OF type (the `.hpp` counterpart to emit_seq_of_cpp).
+    /// @param spec Resolved, backend-agnostic decision (see SeqOfSpec).
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_seq_of_hpp(const SeqOfSpec& spec, std::ostream& os) const {
+        (void)spec; (void)os;
+        throw std::logic_error("emit_seq_of_hpp: not implemented for this backend");
+    }
+
+    /// @brief Emit a plain type-reference alias (`MyType ::= OtherType`,
+    ///        X.680 §17) — the only construct with no dedicated Spec struct,
+    ///        since a type alias to another named type carries no
+    ///        constraint/tag decisions of its own.
+    /// @param type_name   This type's own final identifier.
+    /// @param target_type The referenced type's final identifier.
+    /// @note Default throws — same rationale as emit_enumerated_hpp.
+    virtual void emit_typeref_alias_hpp(const std::string& type_name, const std::string& target_type,
+                                         std::ostream& os) const {
+        (void)type_name; (void)target_type; (void)os;
+        throw std::logic_error("emit_typeref_alias_hpp: not implemented for this backend");
     }
 };
 
