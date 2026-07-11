@@ -418,17 +418,13 @@ void RustBackend::emit_definition_preamble(const std::string& declaration_filena
 /// @note Rust's module system (`mod`) is the natural analogue of C++'s
 ///       `namespace` here — real syntax, not a placeholder.
 void RustBackend::emit_namespace_open(const std::string& name, TypeOutputSession& session) const {
-    session.buffer(declaration_extension()) << std::format("pub mod {} {{\n\n", name);
-    if (definition_extension() != declaration_extension())
-        session.buffer(definition_extension()) << std::format("pub mod {} {{\n\n", name);
+    write_to_both(session, std::format("pub mod {} {{\n\n", name));
 }
 
 /// @brief Emit the closing of a `-fprefix` module wrapper.
 void RustBackend::emit_namespace_close(const std::string& name, TypeOutputSession& session) const {
     (void)name;
-    session.buffer(declaration_extension()) << "\n}\n";
-    if (definition_extension() != declaration_extension())
-        session.buffer(definition_extension()) << "\n}\n";
+    write_to_both(session, "\n}\n");
 }
 
 /// @brief Emit the declaration half of a builtin-alias type.

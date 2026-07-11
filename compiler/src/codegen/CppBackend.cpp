@@ -987,15 +987,11 @@ void CppBackend::emit_definition_preamble(const std::string& declaration_filenam
 }
 
 void CppBackend::emit_namespace_open(const std::string& name, TypeOutputSession& session) const {
-    session.buffer(declaration_extension()) << "namespace " << name << " {\n\n";
-    if (definition_extension() != declaration_extension())
-        session.buffer(definition_extension()) << "namespace " << name << " {\n\n";
+    write_to_both(session, std::format("namespace {} {{\n\n", name));
 }
 
 void CppBackend::emit_namespace_close(const std::string& name, TypeOutputSession& session) const {
-    session.buffer(declaration_extension()) << "\n} // namespace " << name << "\n";
-    if (definition_extension() != declaration_extension())
-        session.buffer(definition_extension()) << "\n} // namespace " << name << "\n";
+    write_to_both(session, std::format("\n}} // namespace {}\n", name));
 }
 
 void CppBackend::emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, std::ostream& os) const {

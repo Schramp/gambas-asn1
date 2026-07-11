@@ -1,6 +1,7 @@
 #include "Generator.hpp"
 #include "CppBackend.hpp"
 #include <algorithm>
+#include <cassert>
 #include <functional>
 #include <iostream>
 #include <limits>
@@ -1399,6 +1400,10 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
             {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
              "s_alternatives", "s_alternative_count"});
         alt.pr_name = backend_.escape(backend_.type_name(m->name), {"NOTHING"});
+        // Not otherwise needed by the declaration side — carried along
+        // purely so emit_choice's zip can assert the two independently
+        // computed canonical orderings actually agree, index by index.
+        alt.asn1_name = m->name;
         alts.push_back(std::move(alt));
     }
     return alts;
@@ -1536,7 +1541,16 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
 void Generator::emit_choice(const ast::TypeDef& def, TypeOutputSession& session) {
     auto decl_alts = emit_choice_declaration(def, session.buffer(backend_.declaration_extension()));
     auto spec = emit_choice_definition(def, session);
+    assert(spec.alternatives.size() == decl_alts.size() &&
+           "emit_choice_declaration/emit_choice_definition disagree on alternative count");
     for (std::size_t i = 0; i < spec.alternatives.size() && i < decl_alts.size(); ++i) {
+        // Both sides compute canonical PER tag order independently (see the
+        // header note on emit_choice_declaration/emit_choice_definition) —
+        // assert they actually agree index-by-index before trusting the
+        // zip; a silent divergence here would attach the wrong accessor
+        // name to the wrong alternative rather than crash.
+        assert(spec.alternatives[i].asn1_name == decl_alts[i].asn1_name &&
+               "emit_choice_declaration/emit_choice_definition canonical order mismatch");
         spec.alternatives[i].mtype = decl_alts[i].mtype;
         spec.alternatives[i].accessor_name = decl_alts[i].accessor_name;
         spec.alternatives[i].pr_name = decl_alts[i].pr_name;
@@ -1668,6 +1682,17 @@ void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, 
         decl_os << body_ns.str();
         if (has_definition) def_os << body_ns_definition.str();
         backend_.emit_namespace_close(namespace_, session);
+        if (!has_definition && def_ext != decl_ext) {
+            // A plain TypeRef alias has no definition half, but
+            // emit_namespace_open/close above still wrote open/close
+            // markers into def_os unconditionally (gambas-asn1#265) —
+            // reset it back to empty now that both have run, so the stray
+            // markers don't turn into a near-empty file at write time.
+            // Guarded on def_ext != decl_ext: for a single-file backend
+            // def_os *is* decl_os, and clearing it would wipe the real
+            // declaration content too.
+            static_cast<std::ostringstream&>(def_os).str("");
+        }
         auto post = post_ns_ss.str();
         if (!post.empty()) decl_os << "\n" << post;
     }
@@ -1893,7 +1918,6 @@ void Generator::emit_seq_of(const ast::TypeDef& def, TypeOutputSession& session)
     spec.elem_type = decl_spec.elem_type;
     backend_.emit_seq_of(spec, session);
 }
-
 
 // ---------------------------------------------------------------------------
 // Inline type pre-generation
