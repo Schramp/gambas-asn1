@@ -501,12 +501,12 @@ public:
     ///                `definition_extension()` names a distinct buffer, into
     ///                that one too (a single-file backend, where they're the
     ///                same buffer, only wraps once).
-    /// @note Known limitation, not yet hit in practice: for a construct with
-    ///       no definition half (a plain TypeRef alias), this still touches
-    ///       the definition buffer, which would then be written as a
-    ///       near-empty file — no schema exercised by the `-fprefix` ctests
-    ///       combines a TypeRef alias with namespace wrapping today. Revisit
-    ///       if that combination occurs.
+    /// @note Unconditionally touches both buffers even for a construct with
+    ///       no definition half (a plain TypeRef alias) — the two-sided
+    ///       wrap is simpler than threading a "does this side exist" flag
+    ///       through every backend. Generator::emit_type_body resets the
+    ///       definition buffer back to empty afterward when there's no
+    ///       definition, so this doesn't produce a stray near-empty file.
     /// @note Default throws — same rationale as emit_enumerated.
     virtual void emit_namespace_open(const std::string& name, TypeOutputSession& session) const {
         (void)name; (void)session;
@@ -559,6 +559,17 @@ public:
     virtual std::string definition_extension() const {
         throw std::logic_error("definition_extension: not implemented for this backend");
     }
+
+protected:
+    /// @brief Write `text` into both the declaration and definition
+    ///        buffers — shared by every backend's emit_namespace_open/close,
+    ///        which otherwise duplicate this exact dedup-when-merged logic.
+    ///        Defined out-of-line below, after TypeOutputSession's full
+    ///        definition (only forward-declared at this point in the file).
+    /// @param text Already-formatted output for this backend's syntax
+    ///             (e.g. `"namespace X {\n\n"` for C++, `"pub mod X {\n\n"`
+    ///             for Rust) — same string goes to both buffers.
+    void write_to_both(TypeOutputSession& session, const std::string& text) const;
 };
 
 /// @brief Per-type output session (gambas-asn1#262). Backend decides file
@@ -614,5 +625,11 @@ public:
         return out;
     }
 };
+
+inline void Backend::write_to_both(TypeOutputSession& session, const std::string& text) const {
+    session.buffer(declaration_extension()) << text;
+    if (definition_extension() != declaration_extension())
+        session.buffer(definition_extension()) << text;
+}
 
 } // namespace asn1::codegen
