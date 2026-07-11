@@ -1,6 +1,7 @@
 #include "Generator.hpp"
 #include "CppBackend.hpp"
 #include <algorithm>
+#include <cassert>
 #include <functional>
 #include <iostream>
 #include <limits>
@@ -477,7 +478,7 @@ split_members(const ast::TypeDef& def)
 /// @brief Decide the resolved value list for an ENUMERATED type — automatic
 ///        numbering (X.680 §20.6) applied, root and extension values in one
 ///        continuous sequence. Backend-agnostic: shared by both
-///        emit_enumerated_hpp and emit_enumerated_cpp (previously each
+///        emit_enumerated_declaration and emit_enumerated_definition (previously each
 ///        recomputed this — now computed once).
 static EnumeratedSpec build_enumerated_spec(const ast::TypeDef& def,
                                             const std::string& type_name) {
@@ -499,14 +500,9 @@ static EnumeratedSpec build_enumerated_spec(const ast::TypeDef& def,
     return spec;
 }
 
-void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
+void Generator::emit_enumerated(const ast::TypeDef& def, TypeOutputSession& session) {
     auto spec = build_enumerated_spec(def, effective_cpp_name(def.name, current_module_));
-    backend_.emit_enumerated_hpp(spec, os);
-}
-
-void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
-    auto spec = build_enumerated_spec(def, effective_cpp_name(def.name, current_module_));
-    backend_.emit_enumerated_cpp(spec, os);
+    backend_.emit_enumerated(spec, session);
 }
 
 // ---------------------------------------------------------------------------
@@ -583,9 +579,9 @@ IntegerSpec Generator::build_integer_spec(const ast::TypeDef& def, const std::st
     return spec;
 }
 
-void Generator::emit_integer_hpp(const ast::TypeDef& def, std::ostream& os) {
+void Generator::emit_integer(const ast::TypeDef& def, TypeOutputSession& session) {
     auto spec = build_integer_spec(def, effective_cpp_name(def.name, current_module_));
-    backend_.emit_integer_hpp(spec, os);
+    backend_.emit_integer(spec, session);
 }
 
 // Walk a value reference chain until a literal is reached.
@@ -702,13 +698,13 @@ DefaultValueSpec Generator::default_value_spec_for(const ast::TypeDef& m) const 
 /// @return "&_setdef_<parent>_<member>", or "nullptr" if `m` has no DEFAULT.
 std::string Generator::emit_default_setter(
     const ast::TypeDef& m, const std::string& parent_cname,
-    const std::string& mname, std::ostream& os)
+    const std::string& mname, TypeOutputSession& session)
 {
     auto spec = default_value_spec_for(m);
     if (spec.kind == DefaultValueSpec::Kind::None) return "nullptr";
 
     std::string mtype = cpp_type_for(m);
-    backend_.emit_default_setter(spec, mtype, parent_cname, mname, os);
+    backend_.emit_default_setter(spec, mtype, parent_cname, mname, session);
     return std::format("&_setdef_{}_{}", parent_cname, mname);
 }
 
@@ -815,11 +811,6 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
     return IntRange{false, 0, 0, false, 0, false};
 }
 
-void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
-    auto spec = build_integer_spec(def, effective_cpp_name(def.name, current_module_));
-    backend_.emit_integer_cpp(spec, os);
-}
-
 // ---------------------------------------------------------------------------
 // Inline-constrained member TypeDescriptor helpers
 // ---------------------------------------------------------------------------
@@ -835,11 +826,11 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
 /// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
 std::string Generator::emit_member_type_descriptor(
     const ast::TypeDef& m, const std::string& parent_cname,
-    const std::string& mname, std::ostream& os)
+    const std::string& mname, TypeOutputSession& session)
 {
     auto spec = build_member_type_descriptor_spec(m, parent_cname, mname);
     if (!spec) return type_descriptor_ref_for(m);
-    backend_.emit_member_type_descriptor(*spec, os);
+    backend_.emit_member_type_descriptor(*spec, session);
     return "&" + spec->tname;
 }
 
@@ -1062,7 +1053,7 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
 /// @param def  ASN.1 type definition (must satisfy is_sequence() or is_set()).
 /// @param os   Output stream for the generated header.
 /// @see X.680 §24 (SEQUENCE), §26 (SET); X.690 §8.9 (BER SEQUENCE encoding).
-void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
+std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
     // Count non-extension members
@@ -1130,54 +1121,27 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
     for (auto* m : sm_ext)  emit_member_include(*m, /*optional=*/true);
     if (mcount > 0) os << "\n";
 
-    // Determine if any optional members exist — they will use unique_ptr.
-    bool has_optional_members = !sm_ext.empty() ||
-        std::any_of(sm_root.begin(), sm_root.end(),
-                    [](const ast::TypeDef* m){ return m->is_optional(); });
-
-    // Build the backend-agnostic decision: field storage (unique_ptr vs plain)
-    // and setter declarations only need mtype/mname/optional/setter_* — the
-    // other SequenceMemberSpec fields (tag, ops, descriptor refs, ...) are
-    // only computed in emit_sequence_cpp's pass, left default here.
-    SequenceSpec spec;
-    spec.type_name = cname;
-    spec.has_optional_members = has_optional_members;
-    spec.mcount = mcount;
-    auto add_member_decl = [&](const ast::TypeDef& m, bool optional) {
-        SequenceMemberSpec row;
-        row.mtype = cpp_type_for(m);
-        row.mname = backend_.member_name(m.name);
-        row.optional = optional;
-        if (!optional) {
-            auto si = classify_member_setter(m);
-            row.setter_param_type = si.param_type;
-            row.setter_is_move = si.is_move;
-            row.setter_is_int_alias = si.is_int_alias;
-            row.setter_is_uint_alias = si.is_uint_alias;
-        }
-        spec.members.push_back(std::move(row));
-    };
-    for (auto* m : sm_root) add_member_decl(*m, m->is_optional());
-    for (auto* m : sm_ext)  add_member_decl(*m, /*optional=*/true);
-
-    backend_.emit_sequence_hpp(spec, os);
-
-    // Self-referential SeqOf includes: deferred until class is complete.
-    // post_ns_os_ routes them after `} // namespace` in namespace mode.
-    if (!post_class_includes.empty()) {
-        auto& inc_os = post_ns_os_ ? *post_ns_os_ : os;
-        for (const auto& sinc : post_class_includes) {
-            inc_os << std::format("#include \"{}.hpp\"\n", filename_for(sinc));
-        }
-        inc_os << "\n";
-    }
+    // Field storage (unique_ptr vs plain) and setter declarations — the rest
+    // of SequenceSpec (tag, ops, descriptor refs, ...) is only computed in
+    // emit_sequence_definition's pass; that pass's member rows are a strict
+    // superset of what this declaration side needs (same mtype/mname/
+    // optional/setter_* computation), so emit_sequence (the combined
+    // wrapper) uses emit_sequence_definition's spec for both halves instead
+    // of building a second, redundant one here.
+    //
+    // Self-referential SeqOf includes are deferred until the class is
+    // complete — returned so emit_sequence can emit them after the combined
+    // backend_.emit_sequence() call (post_ns_os_ routes them after
+    // `} // namespace` in namespace mode).
+    return post_class_includes;
 }
 
 /// @brief Emit the .cpp-side definitions for a generated SEQUENCE type.
 /// @param def  The SEQUENCE TypeDef from the AST.
 /// @param os   Output stream for the generated .cpp source file.
 /// @see X.680 §24 — SEQUENCE type.
-void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
+SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOutputSession& session) {
+    std::ostream& os = session.buffer(backend_.definition_extension());
     std::string cname = effective_cpp_name(def.name, current_module_);
     bool is_set = def.is_set();
     uint32_t tag_num = is_set ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
@@ -1275,8 +1239,8 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         row.ops = optional
             ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, row.mname)
             : "{ nullptr, nullptr, nullptr }";
-        row.tdref = emit_member_type_descriptor(m, cname, row.mname, os);
-        row.def_setter = emit_default_setter(m, cname, row.mname, os);
+        row.tdref = emit_member_type_descriptor(m, cname, row.mname, session);
+        row.def_setter = emit_default_setter(m, cname, row.mname, session);
         row.has_default = (m.marker == ast::Marker::Default);
         if (!optional) {
             auto si = classify_member_setter(m);
@@ -1297,7 +1261,27 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         for (auto* m : sm_ext)  collect(*m, /*optional=*/true);
     }
 
-    backend_.emit_sequence_cpp(spec, os);
+    return spec;
+}
+
+/// @brief Emit a SEQUENCE/SET type's declaration+definition.
+/// @param def     SEQUENCE/SET TypeDef.
+/// @param session Per-type output session.
+void Generator::emit_sequence(const ast::TypeDef& def, TypeOutputSession& session) {
+    std::ostream& decl_os = session.buffer(backend_.declaration_extension());
+    auto post_class_includes = emit_sequence_declaration(def, decl_os);
+    auto spec = emit_sequence_definition(def, session);
+    backend_.emit_sequence(spec, session);
+
+    // Self-referential SeqOf includes: deferred until class is complete.
+    // post_ns_os_ routes them after `} // namespace` in namespace mode.
+    if (!post_class_includes.empty()) {
+        auto& inc_os = post_ns_os_ ? *post_ns_os_ : decl_os;
+        for (const auto& sinc : post_class_includes) {
+            inc_os << std::format("#include \"{}.hpp\"\n", filename_for(sinc));
+        }
+        inc_os << "\n";
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1374,7 +1358,7 @@ static std::vector<const ast::TypeDef*> canonical_choice_members(
 /// @param def  ASN.1 type definition (must satisfy is_choice()).
 /// @param os   Output stream for the generated header.
 /// @see X.680 §28 (CHOICE); X.690 §8.13 (BER CHOICE encoding); X.691 §22 (PER CHOICE).
-void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
+std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
     auto [count, ext_at] = count_members(def);
@@ -1408,9 +1392,7 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     bool apply_auto_tags_hpp = should_apply_auto_tags(def);
     auto canon_members = canonical_choice_members(def, apply_auto_tags_hpp);
 
-    ChoiceSpec spec;
-    spec.type_name = cname;
-    spec.count = count;
+    std::vector<ChoiceAlternativeSpec> alts;
     for (const auto* m : canon_members) {
         ChoiceAlternativeSpec alt;
         alt.mtype = cpp_type_for(*m);
@@ -1418,13 +1400,16 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
             {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
              "s_alternatives", "s_alternative_count"});
         alt.pr_name = backend_.escape(backend_.type_name(m->name), {"NOTHING"});
-        spec.alternatives.push_back(std::move(alt));
+        // Not otherwise needed by the declaration side — carried along
+        // purely so emit_choice's zip can assert the two independently
+        // computed canonical orderings actually agree, index by index.
+        alt.asn1_name = m->name;
+        alts.push_back(std::move(alt));
     }
-
-    backend_.emit_choice_hpp(spec, os);
+    return alts;
 }
 
-void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
+ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
     auto [count, ext_at] = count_members(def);
@@ -1452,7 +1437,7 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             if (m->is_extension_marker) continue;
             std::string mname = backend_.member_name(m->name);
             auto [eff_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
-            std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
+            std::string tdref = emit_member_type_descriptor(*m, cname, mname, session);
             std::string alt_type = cpp_type_for(*m);
             int tag_ctx_num = -1;
             ast::Tag full_tag = m->tag;
@@ -1541,11 +1526,40 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         spec.ber_tags = std::move(ber_tags);
     }
 
-    backend_.emit_choice_cpp(spec, os);
+    return spec;
+}
+
+/// @brief Emit a CHOICE type's declaration+definition.
+/// @param def     CHOICE TypeDef.
+/// @param session Per-type output session.
+/// @note Zips the declaration-only fields (mtype/accessor_name/pr_name) from
+///       emit_choice_declaration onto the definition-built ChoiceSpec by
+///       index — see the class-level note on emit_choice_declaration/
+///       emit_choice_definition for why this is safe (both compute the same
+///       canonical order; the runtime already depends on that invariant
+///       today via the generated enum vs. alternatives table).
+void Generator::emit_choice(const ast::TypeDef& def, TypeOutputSession& session) {
+    auto decl_alts = emit_choice_declaration(def, session.buffer(backend_.declaration_extension()));
+    auto spec = emit_choice_definition(def, session);
+    assert(spec.alternatives.size() == decl_alts.size() &&
+           "emit_choice_declaration/emit_choice_definition disagree on alternative count");
+    for (std::size_t i = 0; i < spec.alternatives.size() && i < decl_alts.size(); ++i) {
+        // Both sides compute canonical PER tag order independently (see the
+        // header note on emit_choice_declaration/emit_choice_definition) —
+        // assert they actually agree index-by-index before trusting the
+        // zip; a silent divergence here would attach the wrong accessor
+        // name to the wrong alternative rather than crash.
+        assert(spec.alternatives[i].asn1_name == decl_alts[i].asn1_name &&
+               "emit_choice_declaration/emit_choice_definition canonical order mismatch");
+        spec.alternatives[i].mtype = decl_alts[i].mtype;
+        spec.alternatives[i].accessor_name = decl_alts[i].accessor_name;
+        spec.alternatives[i].pr_name = decl_alts[i].pr_name;
+    }
+    backend_.emit_choice(spec, session);
 }
 
 // ---------------------------------------------------------------------------
-// Top-level emit_hpp / emit_cpp dispatch
+// Top-level emit_declaration / emit_definition dispatch
 // ---------------------------------------------------------------------------
 
 /// @brief Write the output file(s) for one type definition, driven by a
@@ -1553,18 +1567,18 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
 ///        ".hpp"/".cpp" pair — see Generator.hpp's declaration for the
 ///        parameter contract.
 /// @note Merging is implicit: when backend_.declaration_extension() ==
-///       backend_.definition_extension(), the session hands emit_hpp and
-///       emit_cpp the *same* stream, so they naturally combine into one
-///       file with no separate branch here. Always calls both emit_hpp and
-///       emit_cpp — emit_cpp itself decides whether a definition exists
+///       backend_.definition_extension(), the session hands emit_declaration and
+///       emit_definition the *same* stream, so they naturally combine into one
+///       file with no separate branch here. Always calls both emit_declaration and
+///       emit_definition — emit_definition itself decides whether a definition exists
 ///       (returns without writing anything for a plain TypeRef alias), so
 ///       there's no separately-computed "needs a definition" flag to keep
-///       in sync with emit_cpp's own dispatch. Buffers that end up empty
+///       in sync with emit_definition's own dispatch. Buffers that end up empty
 ///       (that decision, or a backend's genuinely-empty declaration half —
-///       e.g. RustBackend's emit_builtin_alias_hpp) are simply not written.
+///       e.g. RustBackend's emit_builtin_alias_declaration) are simply not written.
 ///       Known limitation (not yet hit in practice — no backend combines
 ///       single-file output with -fprefix namespace wrapping today): each
-///       of emit_hpp/emit_cpp independently wraps its own body in
+///       of emit_declaration/emit_definition independently wraps its own body in
 ///       backend_.emit_namespace_open/close when namespace_ is set, which
 ///       would produce two conflicting module blocks of the same name in
 ///       one file. Revisit if/when that combination occurs.
@@ -1572,8 +1586,7 @@ void Generator::emit_type_files(const std::string& name, const ast::TypeDef& def
                                  const ast::Module& mod) {
     std::string base = filename_for(name);
     TypeOutputSession session;
-    emit_hpp(def, mod, session.buffer(backend_.declaration_extension()));
-    emit_cpp(def, session.buffer(backend_.definition_extension()));
+    emit_type_body(def, mod, session);
     for (auto& [ext, content] : session.finish()) {
         if (content.empty()) continue;
         fs::path path = out_dir_ / (base + "." + ext);
@@ -1582,12 +1595,16 @@ void Generator::emit_type_files(const std::string& name, const ast::TypeDef& def
     }
 }
 
-/// @brief Emit the `.hpp` file for any top-level type definition.
-/// @param def  ASN.1 type definition to generate.
-/// @param mod  Owning module (provides tag default and OID for the file header comment).
-/// @param os   Output stream for the generated header.
-void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::ostream& os) {
+/// @brief Emit both output files for any top-level type definition.
+/// @param def     ASN.1 type definition to generate.
+/// @param mod     Owning module (provides tag default and OID for the file header comment).
+/// @param session The type's real output session (backing the final files).
+void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, TypeOutputSession& session) {
     std::string cname = effective_cpp_name(def.name, mod.name);
+    const std::string decl_ext = backend_.declaration_extension();
+    const std::string def_ext  = backend_.definition_extension();
+    std::ostream& decl_os = session.buffer(decl_ext);
+    std::ostream& def_os  = session.buffer(def_ext);   // == decl_os when merged (e.g. Rust)
 
     // Module header comment with OID if present
     std::string module_comment = mod.name;
@@ -1600,74 +1617,84 @@ void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::o
         }
         module_comment += " }";
     }
-    backend_.emit_hpp_preamble(module_comment, os);
+    backend_.emit_declaration_preamble(module_comment, session);
+
+    bool has_definition = def.is_sequence() || def.is_set() || def.is_choice()
+        || def.is_seq_of() || def.is_set_of()
+        || std::holds_alternative<ast::BuiltinType>(def.body);
+    if (has_definition) backend_.emit_definition_preamble(filename_for(cname), session);
 
     // When namespace wrapping is active, cross-type #include "X.hpp" directives must land
     // BEFORE the namespace opens (each peer .hpp already wraps itself in the namespace).
     // Forward declarations (class X;) and the class body go inside the namespace.
-    // Use a body stringstream; set pre_ns_os_ so emit_inc() writes to os directly.
-    // Deferred self-referential includes (post_class_includes from emit_sequence_hpp)
-    // must land AFTER the closing `} // namespace` brace — use post_ns_ss for that.
-    std::ostringstream body_ns;
-    std::ostringstream post_ns_ss;
-    std::ostream& body = namespace_.empty() ? os : static_cast<std::ostream&>(body_ns);
+    // Dispatch writes into temporary body buffers instead of the real streams;
+    // pre_ns_os_ routes includes discovered during dispatch to the real decl_os
+    // directly. Deferred self-referential includes (post_class_includes from
+    // emit_sequence_declaration) must land AFTER the closing `} // namespace`
+    // brace — use post_ns_ss for that.
+    std::ostringstream body_ns, body_ns_definition, post_ns_ss;
+    std::ostream& decl_body = namespace_.empty() ? decl_os : static_cast<std::ostream&>(body_ns);
+    std::ostream& def_body  = namespace_.empty() ? def_os  : static_cast<std::ostream&>(body_ns_definition);
     if (!namespace_.empty()) {
-        pre_ns_os_  = &os;
+        pre_ns_os_  = &decl_os;
         post_ns_os_ = &post_ns_ss;
     }
 
+    // Dispatch session: rebinds declaration_extension()/definition_extension()
+    // to the body targets above (real streams with no namespace, temporary
+    // buffers otherwise) so the combined backend_.emit_*() calls write into
+    // the right place either way. A single seed() when merged (decl_ext ==
+    // def_ext) — dispatch.buffer(def_ext) then finds the same binding as
+    // dispatch.buffer(decl_ext), so both halves land in decl_body in write
+    // order, exactly like the un-wrapped single-file case.
+    TypeOutputSession dispatch;
+    dispatch.seed(decl_ext, decl_body);
+    if (def_ext != decl_ext) dispatch.seed(def_ext, def_body);
+
     if (def.is_sequence() || def.is_set()) {
         current_type_ = cname;
-        emit_sequence_hpp(def, body);
+        emit_sequence(def, dispatch);
     } else if (def.is_choice()) {
         current_type_ = cname;
-        emit_choice_hpp(def, body);
+        emit_choice(def, dispatch);
     } else if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
         if (*bt == ast::BuiltinType::Enumerated) {
-            emit_enumerated_hpp(def, body);
+            emit_enumerated(def, dispatch);
         } else if (*bt == ast::BuiltinType::Integer) {
-            emit_integer_hpp(def, body);
+            emit_integer(def, dispatch);
         } else {
-            auto spec = build_builtin_alias_spec(def, cname);
-            backend_.emit_builtin_alias_hpp(spec, body);
+            emit_builtin_alias(def, dispatch);
         }
     } else if (def.is_seq_of() || def.is_set_of()) {
         current_type_ = cname;
-        const auto& elem = def.is_seq_of()
-            ? std::get<ast::SequenceOfType>(def.body).element
-            : std::get<ast::SetOfType>(def.body).element;
-        // SeqOf element includes go before the namespace (each .hpp wraps itself).
-        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : body;
-        if (auto* tr = std::get_if<ast::TypeRef>(&elem->body)) {
-            auto inc = cpp_name_for_typeref(*tr);
-            inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(inc));
-        } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
-            auto synth = backend_.synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name);
-            inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
-        } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem->body);
-                   ebt && *ebt == ast::BuiltinType::Enumerated && !elem->enum_values.empty()) {
-            auto synth = backend_.synthetic_name(cname, elem->name.empty() ? "Enum" : elem->name);
-            inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
-        }
-        SeqOfSpec spec;
-        spec.type_name = cname;
-        spec.elem_type = cpp_type_for(*elem);
-        backend_.emit_seq_of_hpp(spec, body);
+        emit_seq_of(def, dispatch);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto inc = cpp_name_for_typeref(*tr);
-        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : body;
+        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : decl_body;
         inc_os << std::format("#include \"{}.hpp\"\n", filename_for(inc));
-        backend_.emit_typeref_alias_hpp(cname, inc, body);
+        backend_.emit_typeref_alias_declaration(cname, inc, dispatch);
     }
 
     pre_ns_os_  = nullptr;
     post_ns_os_ = nullptr;
     if (!namespace_.empty()) {
-        backend_.emit_namespace_open(namespace_, os);
-        os << body_ns.str();
-        backend_.emit_namespace_close(namespace_, os);
+        backend_.emit_namespace_open(namespace_, session);
+        decl_os << body_ns.str();
+        if (has_definition) def_os << body_ns_definition.str();
+        backend_.emit_namespace_close(namespace_, session);
+        if (!has_definition && def_ext != decl_ext) {
+            // A plain TypeRef alias has no definition half, but
+            // emit_namespace_open/close above still wrote open/close
+            // markers into def_os unconditionally (gambas-asn1#265) —
+            // reset it back to empty now that both have run, so the stray
+            // markers don't turn into a near-empty file at write time.
+            // Guarded on def_ext != decl_ext: for a single-file backend
+            // def_os *is* decl_os, and clearing it would wipe the real
+            // declaration content too.
+            static_cast<std::ostringstream&>(def_os).str("");
+        }
         auto post = post_ns_ss.str();
-        if (!post.empty()) os << "\n" << post;
+        if (!post.empty()) decl_os << "\n" << post;
     }
 }
 
@@ -1766,7 +1793,7 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     spec.type_name = type_name;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
     // Defensive fallback (unreachable in practice — this is only called from
-    // emit_cpp's dispatch after confirming def.body is a BuiltinType): if
+    // emit_definition's dispatch after confirming def.body is a BuiltinType): if
     // absent, fall back to Utf8String, whose LUT entries are the generic
     // string handlers, matching the original defensive fallback.
     auto* bt = std::get_if<ast::BuiltinType>(&def.body);
@@ -1789,26 +1816,54 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     return spec;
 }
 
-/// @brief Emit the `.cpp` body for a top-level builtin type alias.
+/// @brief Emit a builtin-alias type's declaration+definition.
 /// @param def ASN.1 type assignment (must resolve to a plain builtin type,
-///            not INTEGER/ENUMERATED — those have their own emit_integer_cpp/
-///            emit_enumerated_cpp).
-/// @param os  Output stream for the generated `.cpp` file.
-void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os) {
+///            not INTEGER/ENUMERATED — those have their own emit_integer/
+///            emit_enumerated).
+/// @param session Per-type output session.
+void Generator::emit_builtin_alias(const ast::TypeDef& def, TypeOutputSession& session) {
     auto spec = build_builtin_alias_spec(def, effective_cpp_name(def.name, current_module_));
-    backend_.emit_builtin_alias_cpp(spec, os);
+    backend_.emit_builtin_alias(spec, session);
 }
 
 // ---------------------------------------------------------------------------
 // Emit SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------------
 
-/// @brief Decide the resolved SeqOfSpec, emit the element's own inline-
-///        constrained descriptor (if any) as a side effect, then delegate
-///        the SeqOfSpec + TypeDescriptor text to the backend.
+/// @brief Emit the declaration-side element include (if any) and return the
+///        declaration-only SeqOfSpec fields (type_name/elem_type).
 /// @param def SEQUENCE OF / SET OF type definition.
-/// @param os  Output stream for the generated `.cpp` file.
-void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
+/// @param os  Output stream for the generated declaration file.
+SeqOfSpec Generator::emit_seq_of_declaration(const ast::TypeDef& def, std::ostream& os) {
+    std::string cname = effective_cpp_name(def.name, current_module_);
+    const auto& elem = def.is_seq_of()
+        ? std::get<ast::SequenceOfType>(def.body).element
+        : std::get<ast::SetOfType>(def.body).element;
+    // SeqOf element includes go before the namespace (each .hpp wraps itself).
+    auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+    if (auto* tr = std::get_if<ast::TypeRef>(&elem->body)) {
+        auto inc = cpp_name_for_typeref(*tr);
+        inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(inc));
+    } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
+        auto synth = backend_.synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name);
+        inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
+    } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem->body);
+               ebt && *ebt == ast::BuiltinType::Enumerated && !elem->enum_values.empty()) {
+        auto synth = backend_.synthetic_name(cname, elem->name.empty() ? "Enum" : elem->name);
+        inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
+    }
+    SeqOfSpec spec;
+    spec.type_name = cname;
+    spec.elem_type = cpp_type_for(*elem);
+    return spec;
+}
+
+/// @brief Decide the resolved SeqOfSpec, emit the element's own inline-
+///        constrained descriptor (if any) as a side effect, then return
+///        the SeqOfSpec for the combined backend call.
+/// @param def     SEQUENCE OF / SET OF type definition.
+/// @param session Per-type output session.
+SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputSession& session) {
     std::string cname = effective_cpp_name(def.name, current_module_);
     const auto& elem_node = def.is_seq_of()
         ? *std::get<ast::SequenceOfType>(def.body).element
@@ -1827,10 +1882,9 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     // When the element is an inline-constrained builtin, emit a per-element
     // TypeDescriptor that carries the constraint; otherwise reuse the natural descriptor.
-    std::ostringstream elem_decl;
-    spec.elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", elem_decl);
-    // Flush any per-element constrained descriptor before the SeqOfSpec.
-    if (!elem_decl.str().empty()) os << elem_decl.str();
+    // Writes directly into `os` (== session.buffer(definition_extension())),
+    // before the SeqOfSpec it's referenced from is emitted later.
+    spec.elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", session);
 
     // X.693 §12: declared element identifier overrides the XER tag at the use site.
     // Exception: asn1c uses <NULL/> for NULL-typed elements regardless of declared name.
@@ -1849,52 +1903,20 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
         if (!is_null_or_any) spec.elem_xer_name = elem_node.name;
     }
 
-    backend_.emit_seq_of_cpp(spec, os);
+    return spec;
 }
 
-void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
-    // A plain TypeRef alias (`MyType ::= OtherType`) has no definition half —
-    // matches exactly the set of dispatch branches below. Returning early
-    // (writing nothing) lets emit_type_files() skip creating a definition
-    // file without needing a separately-computed "needs_cpp" flag.
-    bool has_definition = def.is_sequence() || def.is_set() || def.is_choice()
-        || def.is_seq_of() || def.is_set_of()
-        || std::holds_alternative<ast::BuiltinType>(def.body);
-    if (!has_definition) return;
-
-    backend_.emit_cpp_preamble(filename_for(cname), os);
-
-    // When namespace wrapping is active, member-type includes (e.g. for optional members
-    // that need a complete type in the .cpp) must precede the namespace opener.
-    std::ostringstream body_ns_cpp;
-    std::ostream& body = namespace_.empty() ? os : static_cast<std::ostream&>(body_ns_cpp);
-    if (!namespace_.empty()) pre_ns_os_ = &os;
-
-    if (def.is_sequence() || def.is_set()) {
-        current_type_ = cname;
-        emit_sequence_cpp(def, body);
-    } else if (def.is_choice()) {
-        current_type_ = cname;
-        emit_choice_cpp(def, body);
-    } else if (def.is_seq_of() || def.is_set_of()) {
-        current_type_ = cname;
-        emit_seq_of_cpp(def, body);
-    } else if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
-        if (*bt == ast::BuiltinType::Enumerated)
-            emit_enumerated_cpp(def, body);
-        else if (*bt == ast::BuiltinType::Integer)
-            emit_integer_cpp(def, body);
-        else
-            emit_builtin_alias_cpp(def, body);
-    }
-
-    pre_ns_os_ = nullptr;
-    if (!namespace_.empty()) {
-        backend_.emit_namespace_open(namespace_, os);
-        os << body_ns_cpp.str();
-        backend_.emit_namespace_close(namespace_, os);
-    }
+/// @brief Emit a SEQUENCE OF / SET OF type's declaration+definition.
+/// @param def     SEQUENCE OF / SET OF TypeDef.
+/// @param session Per-type output session.
+/// @note Declaration and definition each contribute disjoint SeqOfSpec
+///       fields (elem_type vs. everything else) — merge decl_spec.elem_type
+///       onto def_spec before the combined backend_.emit_seq_of() call.
+void Generator::emit_seq_of(const ast::TypeDef& def, TypeOutputSession& session) {
+    auto decl_spec = emit_seq_of_declaration(def, session.buffer(backend_.declaration_extension()));
+    auto spec = emit_seq_of_definition(def, session);
+    spec.elem_type = decl_spec.elem_type;
+    backend_.emit_seq_of(spec, session);
 }
 
 // ---------------------------------------------------------------------------
@@ -1979,7 +2001,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
             }
             // Generate synthetic SeqOf wrapper descriptor type named parent + MemberCamel.
             // If element was anonymous inline, replace it with a TypeRef to the named element
-            // type so emit_hpp uses the correct name and include path.
+            // type so emit_declaration uses the correct name and include path.
             // (seqof_name already computed above)
             if (!generated_names_.count(seqof_name)) {
                 generated_names_.insert(seqof_name);

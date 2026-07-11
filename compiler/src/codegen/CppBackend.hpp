@@ -9,7 +9,7 @@ namespace asn1::codegen {
 /// @return A C++ expression string, e.g. `"asn1::Tag{asn1::TagClass::Context, 1, false}"`.
 /// @note Shared by Generator::tag_literal/natural_tag_for (not yet
 ///       migrated — used throughout SEQUENCE/CHOICE emission) and
-///       CppBackend::emit_builtin_alias_cpp. Defined in CppBackend.cpp.
+///       CppBackend::emit_builtin_alias_definition. Defined in CppBackend.cpp.
 std::string format_tag_literal(const TagSpec& tag_spec);
 
 /// @brief Returns the name of the global `asn_DEF_*` descriptor for a
@@ -23,7 +23,7 @@ const char* builtin_def_name(ast::BuiltinType bt);
 
 /// @brief Emit static FROM-alphabet lookup tables (decode + encode arrays)
 ///        into a generated `.cpp` file. Pure C++ text formatting — shared
-///        between CppBackend::emit_builtin_alias_cpp and Generator.cpp's
+///        between CppBackend::emit_builtin_alias_definition and Generator.cpp's
 ///        inline-constrained-member handling (emit_member_type_descriptor).
 ///        Defined in CppBackend.cpp.
 /// @param prefix   Name prefix for the static arrays (e.g. `"asn_FROM_MyStr"`).
@@ -33,7 +33,7 @@ void emit_from_alphabet_arrays(std::ostream& os, const std::string& prefix,
 
 /// @brief Build a `Constraints` aggregate-initializer string for a
 ///        character string type. Pure C++ text formatting — shared between
-///        CppBackend::emit_builtin_alias_cpp and Generator.cpp's
+///        CppBackend::emit_builtin_alias_definition and Generator.cpp's
 ///        inline-constrained-member handling (emit_member_type_descriptor).
 ///        Defined in CppBackend.cpp.
 /// @see The original Generator::make_string_constraints_init docs (moved
@@ -49,7 +49,7 @@ std::string make_string_constraints_init(
 ///        decision logic, no Generator state. Used by CppBackend's
 ///        ENUMERATED emission here; SEQUENCE/CHOICE still call it from
 ///        Generator.cpp (INTEGER hand-rolls its own — see
-///        CppBackend::emit_integer_cpp's note). Defined in CppBackend.cpp.
+///        CppBackend::emit_integer_definition's note). Defined in CppBackend.cpp.
 /// @param use_class_scope true for types that generate a C++ class
 ///        (ENUMERATED, SEQUENCE, CHOICE — descriptor is `Type::asn_DEF`);
 ///        false for free-standing `asn_DEF_Type` (aliases).
@@ -66,7 +66,7 @@ void emit_type_descriptor(std::ostream& os,
 
 /// @brief Build a Constraints designated-initializer literal for an INTEGER
 ///        constraint. Pure C++ text formatting from already-resolved
-///        parameters — shared between CppBackend::emit_integer_cpp and
+///        parameters — shared between CppBackend::emit_integer_definition and
 ///        Generator.cpp's inline-constrained-member INTEGER handling
 ///        (emit_member_type_descriptor). Defined in CppBackend.cpp.
 std::string make_integer_pc(int flags, int range_bits, int int_kind,
@@ -113,31 +113,43 @@ public:
 
     // Defined in CppBackend.cpp — real emission logic, not a one-liner
     // like the naming methods above.
-    void emit_enumerated_hpp(const EnumeratedSpec& spec, std::ostream& os) const override;
-    void emit_enumerated_cpp(const EnumeratedSpec& spec, std::ostream& os) const override;
-    void emit_integer_hpp(const IntegerSpec& spec, std::ostream& os) const override;
-    void emit_integer_cpp(const IntegerSpec& spec, std::ostream& os) const override;
-    void emit_builtin_alias_cpp(const BuiltinAliasSpec& spec, std::ostream& os) const override;
+    void emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const override;
+    void emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const override;
+    void emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSession& session) const override;
     void emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
                               const std::string& parent_name, const std::string& member_name,
-                              std::ostream& os) const override;
-    void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, std::ostream& os) const override;
-    void emit_seq_of_cpp(const SeqOfSpec& spec, std::ostream& os) const override;
-    void emit_sequence_hpp(const SequenceSpec& spec, std::ostream& os) const override;
-    void emit_sequence_cpp(const SequenceSpec& spec, std::ostream& os) const override;
-    void emit_choice_hpp(const ChoiceSpec& spec, std::ostream& os) const override;
-    void emit_choice_cpp(const ChoiceSpec& spec, std::ostream& os) const override;
-    void emit_hpp_preamble(const std::string& module_comment, std::ostream& os) const override;
-    void emit_cpp_preamble(const std::string& header_filename, std::ostream& os) const override;
-    void emit_namespace_open(const std::string& name, std::ostream& os) const override;
-    void emit_namespace_close(const std::string& name, std::ostream& os) const override;
-    void emit_builtin_alias_hpp(const BuiltinAliasSpec& spec, std::ostream& os) const override;
-    void emit_seq_of_hpp(const SeqOfSpec& spec, std::ostream& os) const override;
-    void emit_typeref_alias_hpp(const std::string& type_name, const std::string& target_type,
-                                 std::ostream& os) const override;
+                              TypeOutputSession& session) const override;
+    void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const override;
+    void emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const override;
+    void emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const override;
+    void emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const override;
+    void emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const override;
+    void emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const override;
+    void emit_namespace_open(const std::string& name, TypeOutputSession& session) const override;
+    void emit_namespace_close(const std::string& name, TypeOutputSession& session) const override;
+    void emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
+                                 TypeOutputSession& session) const override;
 
     std::string declaration_extension() const override { return "hpp"; }
     std::string definition_extension() const override { return "cpp"; }
+
+private:
+    // Split declaration/definition halves — kept as private helpers so the
+    // (substantial) per-construct emission bodies don't need reshaping;
+    // the public emit_* overrides above just call both in sequence
+    // (gambas-asn1#265: combine the pair into one call taking both streams).
+    void emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const;
+    void emit_enumerated_definition(const EnumeratedSpec& spec, std::ostream& os) const;
+    void emit_integer_declaration(const IntegerSpec& spec, std::ostream& os) const;
+    void emit_integer_definition(const IntegerSpec& spec, std::ostream& os) const;
+    void emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, std::ostream& os) const;
+    void emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std::ostream& os) const;
+    void emit_seq_of_declaration(const SeqOfSpec& spec, std::ostream& os) const;
+    void emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const;
+    void emit_sequence_declaration(const SequenceSpec& spec, std::ostream& os) const;
+    void emit_sequence_definition(const SequenceSpec& spec, std::ostream& os) const;
+    void emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const;
+    void emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const;
 };
 
 } // namespace asn1::codegen

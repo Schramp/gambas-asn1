@@ -16,6 +16,12 @@ using namespace asn1::codegen;
 
 static int failures = 0;
 
+// TypeOutputSession::buffer() returns std::ostream&; every internal buffer
+// is actually an ostringstream, so this is safe.
+static std::string buf_str(TypeOutputSession& s, const std::string& ext) {
+    return static_cast<std::ostringstream&>(s.buffer(ext)).str();
+}
+
 static void check(const char* name, bool cond, const std::string& detail = "") {
     if (cond) {
         printf("  \033[32mPASS\033[0m  %s\n", name);
@@ -85,7 +91,7 @@ int main() {
           r.synthetic_name("Parent", "member") == "ParentMember",
           r.synthetic_name("Parent", "member"));
 
-    // emit_enumerated_hpp/cpp: first real construct pair. Same
+    // emit_enumerated_declaration/cpp: first real construct pair. Same
     // EnumeratedSpec, two genuinely different real outputs — not a
     // stub/placeholder on either side.
     {
@@ -96,33 +102,35 @@ int main() {
         spec.extensible = false;
         spec.root_count  = 2;
 
-        std::ostringstream cpp_hpp, cpp_cpp, rust_hpp, rust_cpp;
-        c.emit_enumerated_hpp(spec, cpp_hpp);
-        c.emit_enumerated_cpp(spec, cpp_cpp);
-        r.emit_enumerated_hpp(spec, rust_hpp);
-        r.emit_enumerated_cpp(spec, rust_cpp);
+        TypeOutputSession cpp_session, rust_session;
+        c.emit_enumerated(spec, cpp_session);
+        r.emit_enumerated(spec, rust_session);
+        std::string cpp_hpp = buf_str(cpp_session, c.declaration_extension());
+        std::string cpp_cpp = buf_str(cpp_session, c.definition_extension());
+        std::string rust_hpp = buf_str(rust_session, r.declaration_extension());
+        std::string rust_cpp = buf_str(rust_session, r.definition_extension());
 
-        check("emit_enumerated_hpp: C++ produces a class",
-              cpp_hpp.str().find("class MyEnum") != std::string::npos,
-              cpp_hpp.str());
-        check("emit_enumerated_hpp: Rust produces a real enum (not a stub)",
-              rust_hpp.str().find("pub enum MyEnum") != std::string::npos,
-              rust_hpp.str());
-        check("emit_enumerated_hpp: Rust variants use declared values, UpperCamelCase",
-              rust_hpp.str().find("Foo = 0") != std::string::npos &&
-              rust_hpp.str().find("Bar = 1") != std::string::npos,
-              rust_hpp.str());
-        check("emit_enumerated_cpp: C++ produces EnumSpec + TypeDescriptor",
-              cpp_cpp.str().find("asn_SPC") != std::string::npos &&
-              cpp_cpp.str().find("asn_DEF") != std::string::npos,
-              cpp_cpp.str());
-        check("emit_enumerated_cpp: Rust produces a value-lookup impl",
-              rust_cpp.str().find("impl std::convert::TryFrom<i64> for MyEnum") != std::string::npos &&
-              rust_cpp.str().find("0 => Ok(MyEnum::Foo)") != std::string::npos,
-              rust_cpp.str());
+        check("emit_enumerated: C++ produces a class",
+              cpp_hpp.find("class MyEnum") != std::string::npos,
+              cpp_hpp);
+        check("emit_enumerated: Rust produces a real enum (not a stub)",
+              rust_hpp.find("pub enum MyEnum") != std::string::npos,
+              rust_hpp);
+        check("emit_enumerated: Rust variants use declared values, UpperCamelCase",
+              rust_hpp.find("Foo = 0") != std::string::npos &&
+              rust_hpp.find("Bar = 1") != std::string::npos,
+              rust_hpp);
+        check("emit_enumerated: C++ produces EnumSpec + TypeDescriptor",
+              cpp_cpp.find("asn_SPC") != std::string::npos &&
+              cpp_cpp.find("asn_DEF") != std::string::npos,
+              cpp_cpp);
+        check("emit_enumerated: Rust produces a value-lookup impl",
+              rust_cpp.find("impl std::convert::TryFrom<i64> for MyEnum") != std::string::npos &&
+              rust_cpp.find("0 => Ok(MyEnum::Foo)") != std::string::npos,
+              rust_cpp);
     }
 
-    // emit_integer_hpp/cpp: second real construct pair. Constrained INTEGER
+    // emit_integer_declaration/cpp: second real construct pair. Constrained INTEGER
     // (0..100), U64 storage — exercises native_int_type() too.
     {
         IntegerSpec spec;
@@ -140,11 +148,13 @@ int main() {
         spec.lower_u64 = 0;
         spec.upper_u64 = 100;
 
-        std::ostringstream cpp_hpp, cpp_cpp, rust_hpp, rust_cpp;
-        c.emit_integer_hpp(spec, cpp_hpp);
-        c.emit_integer_cpp(spec, cpp_cpp);
-        r.emit_integer_hpp(spec, rust_hpp);
-        r.emit_integer_cpp(spec, rust_cpp);
+        TypeOutputSession cpp_session, rust_session;
+        c.emit_integer(spec, cpp_session);
+        r.emit_integer(spec, rust_session);
+        std::string cpp_hpp = buf_str(cpp_session, c.declaration_extension());
+        std::string cpp_cpp = buf_str(cpp_session, c.definition_extension());
+        std::string rust_hpp = buf_str(rust_session, r.declaration_extension());
+        std::string rust_cpp = buf_str(rust_session, r.definition_extension());
 
         check("native_int_type: C++ maps U64 to asn1::UInteger",
               c.native_int_type(IntStorageKind::U64) == "asn1::UInteger",
@@ -152,20 +162,20 @@ int main() {
         check("native_int_type: Rust maps U64 to u64",
               r.native_int_type(IntStorageKind::U64) == "u64",
               r.native_int_type(IntStorageKind::U64));
-        check("emit_integer_hpp: C++ produces a using-alias to asn1::UInteger",
-              cpp_hpp.str().find("using MyInt = asn1::UInteger;") != std::string::npos,
-              cpp_hpp.str());
-        check("emit_integer_hpp: Rust produces a real type alias (not a stub)",
-              rust_hpp.str().find("pub type MyInt = u64;") != std::string::npos,
-              rust_hpp.str());
-        check("emit_integer_cpp: C++ produces a Constraints-bearing TypeDescriptor",
-              cpp_cpp.str().find("asn_DEF_MyInt") != std::string::npos &&
-              cpp_cpp.str().find(".range_bits=7") != std::string::npos,
-              cpp_cpp.str());
-        check("emit_integer_cpp: Rust produces a real range-check function",
-              rust_cpp.str().find("pub fn my_int_in_range(v: i64) -> bool {") != std::string::npos &&
-              rust_cpp.str().find("v >= 0 && v <= 100") != std::string::npos,
-              rust_cpp.str());
+        check("emit_integer: C++ produces a using-alias to asn1::UInteger",
+              cpp_hpp.find("using MyInt = asn1::UInteger;") != std::string::npos,
+              cpp_hpp);
+        check("emit_integer: Rust produces a real type alias (not a stub)",
+              rust_hpp.find("pub type MyInt = u64;") != std::string::npos,
+              rust_hpp);
+        check("emit_integer: C++ produces a Constraints-bearing TypeDescriptor",
+              cpp_cpp.find("asn_DEF_MyInt") != std::string::npos &&
+              cpp_cpp.find(".range_bits=7") != std::string::npos,
+              cpp_cpp);
+        check("emit_integer: Rust produces a real range-check function",
+              rust_cpp.find("pub fn my_int_in_range(v: i64) -> bool {") != std::string::npos &&
+              rust_cpp.find("v >= 0 && v <= 100") != std::string::npos,
+              rust_cpp);
     }
 
     // Regression: BuiltinAliasSpec must distinguish "has a SIZE constraint at
@@ -195,9 +205,11 @@ int main() {
         // size_upper deliberately left at the bounded value (10) here to
         // prove the fix checks size_bounded, not size_upper's value.
 
-        std::ostringstream bounded_os, semi_os;
-        c.emit_builtin_alias_cpp(bounded, bounded_os);
-        c.emit_builtin_alias_cpp(semi, semi_os);
+        TypeOutputSession bounded_session, semi_session;
+        c.emit_builtin_alias(bounded, bounded_session);
+        c.emit_builtin_alias(semi, semi_session);
+        std::string bounded_os = buf_str(bounded_session, c.definition_extension());
+        std::string semi_os = buf_str(semi_session, c.definition_extension());
 
         // Extract the ".flags=N" integer from each TypeDescriptor's constraints line.
         auto extract_flags = [](const std::string& s) -> std::string {
@@ -207,14 +219,14 @@ int main() {
             auto end = s.find_first_of(",}", pos);
             return s.substr(pos, end - pos);
         };
-        std::string bounded_flags = extract_flags(bounded_os.str());
-        std::string semi_flags    = extract_flags(semi_os.str());
+        std::string bounded_flags = extract_flags(bounded_os);
+        std::string semi_flags    = extract_flags(semi_os);
         check("BuiltinAliasSpec: bounded vs semi-constrained SIZE produce different flags",
               !bounded_flags.empty() && !semi_flags.empty() && bounded_flags != semi_flags,
               "bounded=" + bounded_flags + " semi=" + semi_flags);
     }
 
-    // emit_builtin_alias_cpp: fourth real construct pair (builtin-alias).
+    // emit_builtin_alias_definition: fourth real construct pair (builtin-alias).
     // Bounded SIZE constraint on an OCTET STRING.
     {
         BuiltinAliasSpec spec;
@@ -229,20 +241,22 @@ int main() {
         spec.extensible = false;
         spec.xer_base64 = false;
 
-        std::ostringstream cpp_os, rust_os;
-        c.emit_builtin_alias_cpp(spec, cpp_os);
-        r.emit_builtin_alias_cpp(spec, rust_os);
+        TypeOutputSession cpp_session, rust_session;
+        c.emit_builtin_alias(spec, cpp_session);
+        r.emit_builtin_alias(spec, rust_session);
+        std::string cpp_os = buf_str(cpp_session, c.definition_extension());
+        std::string rust_os = buf_str(rust_session, r.definition_extension());
 
-        check("native_int_type is unrelated; emit_builtin_alias_cpp: C++ produces a TypeDescriptor",
-              cpp_os.str().find("asn_DEF_MyBytes") != std::string::npos,
-              cpp_os.str());
-        check("emit_builtin_alias_cpp: Rust produces a real type alias (not a stub)",
-              rust_os.str().find("pub type MyBytes = Vec<u8>;") != std::string::npos,
-              rust_os.str());
-        check("emit_builtin_alias_cpp: Rust produces a real size-check function",
-              rust_os.str().find("pub fn my_bytes_size_ok(v: &Vec<u8>) -> bool {") != std::string::npos &&
-              rust_os.str().find("(v.len() as i64) >= 1 && (v.len() as i64) <= 10") != std::string::npos,
-              rust_os.str());
+        check("native_int_type is unrelated; emit_builtin_alias: C++ produces a TypeDescriptor",
+              cpp_os.find("asn_DEF_MyBytes") != std::string::npos,
+              cpp_os);
+        check("emit_builtin_alias: Rust produces a real type alias (not a stub)",
+              rust_os.find("pub type MyBytes = Vec<u8>;") != std::string::npos,
+              rust_os);
+        check("emit_builtin_alias: Rust produces a real size-check function",
+              rust_os.find("pub fn my_bytes_size_ok(v: &Vec<u8>) -> bool {") != std::string::npos &&
+              rust_os.find("(v.len() as i64) >= 1 && (v.len() as i64) <= 10") != std::string::npos,
+              rust_os);
     }
 
     // emit_default_setter / emit_member_type_descriptor: fifth real
@@ -252,18 +266,20 @@ int main() {
         spec.kind = DefaultValueSpec::Kind::Int;
         spec.int_val = 42;
 
-        std::ostringstream cpp_os, rust_os;
-        c.emit_default_setter(spec, "int64_t", "MySeq", "myField", cpp_os);
-        r.emit_default_setter(spec, "i64", "MySeq", "myField", rust_os);
+        TypeOutputSession cpp_session, rust_session;
+        c.emit_default_setter(spec, "int64_t", "MySeq", "myField", cpp_session);
+        r.emit_default_setter(spec, "i64", "MySeq", "myField", rust_session);
+        std::string cpp_os = buf_str(cpp_session, c.definition_extension());
+        std::string rust_os = buf_str(rust_session, r.definition_extension());
 
         check("emit_default_setter: C++ produces a setter/checker pair",
-              cpp_os.str().find("_setdef_MySeq_myField") != std::string::npos &&
-              cpp_os.str().find("_isdef_MySeq_myField") != std::string::npos,
-              cpp_os.str());
+              cpp_os.find("_setdef_MySeq_myField") != std::string::npos &&
+              cpp_os.find("_isdef_MySeq_myField") != std::string::npos,
+              cpp_os);
         check("emit_default_setter: Rust produces a real accessor function (not a stub)",
-              rust_os.str().find("pub fn my_seq_myField_default() -> i64 {") != std::string::npos &&
-              rust_os.str().find("42") != std::string::npos,
-              rust_os.str());
+              rust_os.find("pub fn my_seq_myField_default() -> i64 {") != std::string::npos &&
+              rust_os.find("42") != std::string::npos,
+              rust_os);
     }
     {
         MemberTypeDescriptorSpec spec;
@@ -281,46 +297,51 @@ int main() {
         spec.xer_type_name = "INTEGER";
         spec.universal_tag = 2;
 
-        std::ostringstream cpp_os, rust_os;
-        c.emit_member_type_descriptor(spec, cpp_os);
-        r.emit_member_type_descriptor(spec, rust_os);
+        TypeOutputSession cpp_session, rust_session;
+        c.emit_member_type_descriptor(spec, cpp_session);
+        r.emit_member_type_descriptor(spec, rust_session);
+        std::string cpp_os = buf_str(cpp_session, c.definition_extension());
+        std::string rust_os = buf_str(rust_session, r.definition_extension());
 
         check("emit_member_type_descriptor: C++ produces a TypeDescriptor",
-              cpp_os.str().find("asn_TYP_MySeq_myField") != std::string::npos,
-              cpp_os.str());
+              cpp_os.find("asn_TYP_MySeq_myField") != std::string::npos,
+              cpp_os);
         check("emit_member_type_descriptor: Rust produces a real range-check function",
-              rust_os.str().find("pub fn asn_t_y_p_my_seq_my_field_in_range(v: i64) -> bool {") != std::string::npos &&
-              rust_os.str().find("v >= 0 && v <= 100") != std::string::npos,
-              rust_os.str());
+              rust_os.find("pub fn asn_t_y_p_my_seq_my_field_in_range(v: i64) -> bool {") != std::string::npos &&
+              rust_os.find("v >= 0 && v <= 100") != std::string::npos,
+              rust_os);
     }
 
-    // emit_seq_of_cpp: sixth real construct pair (SEQUENCE OF, #230/#238).
+    // emit_seq_of_definition: sixth real construct pair (SEQUENCE OF, #230/#238).
     // Bounded SIZE(1..10) collection.
     {
         SeqOfSpec spec;
         spec.type_name = "MyList";
         spec.xer_name  = "MyList";
+        spec.elem_type = "Elem";
         spec.elem_ref  = "&asn_DEF_Elem";
         spec.range_bits = 4;
         spec.size_lower = 1;
         spec.size_upper = 10;
         spec.is_set_of = false;
 
-        std::ostringstream cpp_os, rust_os;
-        c.emit_seq_of_cpp(spec, cpp_os);
-        r.emit_seq_of_cpp(spec, rust_os);
+        TypeOutputSession cpp_session, rust_session;
+        c.emit_seq_of(spec, cpp_session);
+        r.emit_seq_of(spec, rust_session);
+        std::string cpp_os = buf_str(cpp_session, c.definition_extension());
+        std::string rust_os = buf_str(rust_session, r.definition_extension());
 
-        check("emit_seq_of_cpp: C++ produces a SeqOfSpec + TypeDescriptor",
-              cpp_os.str().find("asn_SPC_MyList") != std::string::npos &&
-              cpp_os.str().find("asn_DEF_MyList") != std::string::npos,
-              cpp_os.str());
-        check("emit_seq_of_cpp: Rust produces a real generic size-check function",
-              rust_os.str().find("pub fn my_list_size_ok<T>(v: &Vec<T>) -> bool {") != std::string::npos &&
-              rust_os.str().find("(v.len() as i64) >= 1 && (v.len() as i64) <= 10") != std::string::npos,
-              rust_os.str());
+        check("emit_seq_of: C++ produces a SeqOfSpec + TypeDescriptor",
+              cpp_os.find("asn_SPC_MyList") != std::string::npos &&
+              cpp_os.find("asn_DEF_MyList") != std::string::npos,
+              cpp_os);
+        check("emit_seq_of: Rust produces a real generic size-check function",
+              rust_os.find("pub fn my_list_size_ok<T>(v: &Vec<T>) -> bool {") != std::string::npos &&
+              rust_os.find("(v.len() as i64) >= 1 && (v.len() as i64) <= 10") != std::string::npos,
+              rust_os);
     }
 
-    // emit_sequence_hpp/cpp: seventh real construct pair (SEQUENCE, #231/#239).
+    // emit_sequence_declaration/cpp: seventh real construct pair (SEQUENCE, #231/#239).
     // One required INTEGER member, one optional String member.
     {
         SequenceSpec spec;
@@ -356,31 +377,33 @@ int main() {
         opt.ops = "{ &_Ops_MySeq_label::check, &_Ops_MySeq_label::set, &_Ops_MySeq_label::get }";
         spec.members.push_back(opt);
 
-        std::ostringstream cpp_hpp, cpp_cpp, rust_hpp, rust_cpp;
-        c.emit_sequence_hpp(spec, cpp_hpp);
-        c.emit_sequence_cpp(spec, cpp_cpp);
-        r.emit_sequence_hpp(spec, rust_hpp);
-        r.emit_sequence_cpp(spec, rust_cpp);
+        TypeOutputSession cpp_session, rust_session;
+        c.emit_sequence(spec, cpp_session);
+        r.emit_sequence(spec, rust_session);
+        std::string cpp_hpp = buf_str(cpp_session, c.declaration_extension());
+        std::string cpp_cpp = buf_str(cpp_session, c.definition_extension());
+        std::string rust_hpp = buf_str(rust_session, r.declaration_extension());
+        std::string rust_cpp = buf_str(rust_session, r.definition_extension());
 
-        check("emit_sequence_hpp: C++ produces a class with a unique_ptr optional member",
-              cpp_hpp.str().find("class MySeq : public asn1::SequenceBase<MySeq>") != std::string::npos &&
-              cpp_hpp.str().find("std::unique_ptr<String> label;") != std::string::npos,
-              cpp_hpp.str());
-        check("emit_sequence_cpp: C++ produces a member descriptor table",
-              cpp_cpp.str().find("const asn1::MemberDescriptor MySeq::s_members[]") != std::string::npos,
-              cpp_cpp.str());
-        check("emit_sequence_hpp: Rust produces a real struct with Option<T> for the optional member",
-              rust_hpp.str().find("pub struct MySeq {") != std::string::npos &&
-              rust_hpp.str().find("pub count: int64_t,") != std::string::npos &&
-              rust_hpp.str().find("pub label: Option<String>,") != std::string::npos,
-              rust_hpp.str());
-        check("emit_sequence_cpp: Rust produces a real impl block with new()",
-              rust_cpp.str().find("impl MySeq {") != std::string::npos &&
-              rust_cpp.str().find("Self::default()") != std::string::npos,
-              rust_cpp.str());
+        check("emit_sequence: C++ produces a class with a unique_ptr optional member",
+              cpp_hpp.find("class MySeq : public asn1::SequenceBase<MySeq>") != std::string::npos &&
+              cpp_hpp.find("std::unique_ptr<String> label;") != std::string::npos,
+              cpp_hpp);
+        check("emit_sequence: C++ produces a member descriptor table",
+              cpp_cpp.find("const asn1::MemberDescriptor MySeq::s_members[]") != std::string::npos,
+              cpp_cpp);
+        check("emit_sequence: Rust produces a real struct with Option<T> for the optional member",
+              rust_hpp.find("pub struct MySeq {") != std::string::npos &&
+              rust_hpp.find("pub count: int64_t,") != std::string::npos &&
+              rust_hpp.find("pub label: Option<String>,") != std::string::npos,
+              rust_hpp);
+        check("emit_sequence: Rust produces a real impl block with new()",
+              rust_cpp.find("impl MySeq {") != std::string::npos &&
+              rust_cpp.find("Self::default()") != std::string::npos,
+              rust_cpp);
     }
 
-    // emit_choice_hpp/cpp: eighth real construct pair (CHOICE, #232/#240).
+    // emit_choice_declaration/cpp: eighth real construct pair (CHOICE, #232/#240).
     // Two alternatives: an INTEGER and a String.
     {
         ChoiceSpec spec;
@@ -407,103 +430,112 @@ int main() {
         label.tdref = "&asn_DEF_Utf8String";
         spec.alternatives.push_back(label);
 
-        std::ostringstream cpp_hpp, cpp_cpp, rust_hpp, rust_cpp;
-        c.emit_choice_hpp(spec, cpp_hpp);
-        c.emit_choice_cpp(spec, cpp_cpp);
-        r.emit_choice_hpp(spec, rust_hpp);
-        r.emit_choice_cpp(spec, rust_cpp);
+        TypeOutputSession cpp_session, rust_session;
+        c.emit_choice(spec, cpp_session);
+        r.emit_choice(spec, rust_session);
+        std::string cpp_hpp = buf_str(cpp_session, c.declaration_extension());
+        std::string cpp_cpp = buf_str(cpp_session, c.definition_extension());
+        std::string rust_hpp = buf_str(rust_session, r.declaration_extension());
+        std::string rust_cpp = buf_str(rust_session, r.definition_extension());
 
-        check("emit_choice_hpp: C++ produces a ChoiceInterface-derived class",
-              cpp_hpp.str().find("class MyChoice : public asn1::ChoiceInterface") != std::string::npos &&
-              cpp_hpp.str().find("enum class PR : int { NOTHING = 0, Num = 1, Label = 2 };") != std::string::npos,
-              cpp_hpp.str());
-        check("emit_choice_cpp: C++ produces an alternatives table",
-              cpp_cpp.str().find("const asn1::MemberDescriptor MyChoice::s_alternatives[]") != std::string::npos,
-              cpp_cpp.str());
-        check("emit_choice_hpp: Rust produces a real enum with variant payloads (not a stub)",
-              rust_hpp.str().find("pub enum MyChoice {") != std::string::npos &&
-              rust_hpp.str().find("Num(int64_t),") != std::string::npos &&
-              rust_hpp.str().find("Label(String),") != std::string::npos,
-              rust_hpp.str());
-        check("emit_choice_cpp: Rust produces real exhaustive-match accessor functions",
-              rust_cpp.str().find("pub fn my_choice_get_num(x: &mut MyChoice) -> &mut int64_t {") != std::string::npos &&
-              rust_cpp.str().find("match x { MyChoice::Num(v) => v, _ => panic!(\"wrong variant\") }") != std::string::npos &&
-              rust_cpp.str().find("pub fn my_choice_get_label(x: &mut MyChoice) -> &mut String {") != std::string::npos,
-              rust_cpp.str());
+        check("emit_choice: C++ produces a ChoiceInterface-derived class",
+              cpp_hpp.find("class MyChoice : public asn1::ChoiceInterface") != std::string::npos &&
+              cpp_hpp.find("enum class PR : int { NOTHING = 0, Num = 1, Label = 2 };") != std::string::npos,
+              cpp_hpp);
+        check("emit_choice: C++ produces an alternatives table",
+              cpp_cpp.find("const asn1::MemberDescriptor MyChoice::s_alternatives[]") != std::string::npos,
+              cpp_cpp);
+        check("emit_choice: Rust produces a real enum with variant payloads (not a stub)",
+              rust_hpp.find("pub enum MyChoice {") != std::string::npos &&
+              rust_hpp.find("Num(int64_t),") != std::string::npos &&
+              rust_hpp.find("Label(String),") != std::string::npos,
+              rust_hpp);
+        check("emit_choice: Rust produces real exhaustive-match accessor functions",
+              rust_cpp.find("pub fn my_choice_get_num(x: &mut MyChoice) -> &mut int64_t {") != std::string::npos &&
+              rust_cpp.find("match x { MyChoice::Num(v) => v, _ => panic!(\"wrong variant\") }") != std::string::npos &&
+              rust_cpp.find("pub fn my_choice_get_label(x: &mut MyChoice) -> &mut String {") != std::string::npos,
+              rust_cpp);
     }
 
-    // emit_hpp_preamble/emit_cpp_preamble/emit_namespace_open/close +
-    // emit_builtin_alias_hpp/emit_seq_of_hpp/emit_typeref_alias_hpp: ninth
+    // emit_declaration_preamble/emit_definition_preamble/emit_namespace_open/close +
+    // emit_builtin_alias_declaration/emit_seq_of_declaration/emit_typeref_alias_declaration: ninth
     // real construct pair (top-level dispatch, #233/#241) — closes out the
     // Rust side of #225.
     {
-        std::ostringstream cpp_hpp_pre, cpp_cpp_pre, rust_hpp_pre, rust_cpp_pre;
-        c.emit_hpp_preamble("MyModule { 1 2 3 }", cpp_hpp_pre);
-        c.emit_cpp_preamble("MyType", cpp_cpp_pre);
-        r.emit_hpp_preamble("MyModule { 1 2 3 }", rust_hpp_pre);
-        r.emit_cpp_preamble("MyType", rust_cpp_pre);
+        TypeOutputSession cpp_pre, rust_pre;
+        c.emit_declaration_preamble("MyModule { 1 2 3 }", cpp_pre);
+        c.emit_definition_preamble("MyType", cpp_pre);
+        r.emit_declaration_preamble("MyModule { 1 2 3 }", rust_pre);
+        r.emit_definition_preamble("MyType", rust_pre);
+        std::string cpp_hpp_pre = buf_str(cpp_pre, c.declaration_extension());
+        std::string cpp_cpp_pre = buf_str(cpp_pre, c.definition_extension());
+        std::string rust_hpp_pre = buf_str(rust_pre, r.declaration_extension());
 
-        check("emit_hpp_preamble: C++ produces a module comment + pragma once",
-              cpp_hpp_pre.str().find("// Module: MyModule { 1 2 3 }") != std::string::npos &&
-              cpp_hpp_pre.str().find("#pragma once") != std::string::npos,
-              cpp_hpp_pre.str());
-        check("emit_hpp_preamble: Rust produces a real doc comment (not a stub)",
-              rust_hpp_pre.str().find("//! Module: MyModule { 1 2 3 }") != std::string::npos,
-              rust_hpp_pre.str());
-        check("emit_cpp_preamble: C++ produces an #include for the paired header",
-              cpp_cpp_pre.str().find("#include \"MyType.hpp\"") != std::string::npos,
-              cpp_cpp_pre.str());
+        check("emit_declaration_preamble: C++ produces a module comment + pragma once",
+              cpp_hpp_pre.find("// Module: MyModule { 1 2 3 }") != std::string::npos &&
+              cpp_hpp_pre.find("#pragma once") != std::string::npos,
+              cpp_hpp_pre);
+        check("emit_declaration_preamble: Rust produces a real doc comment (not a stub)",
+              rust_hpp_pre.find("//! Module: MyModule { 1 2 3 }") != std::string::npos,
+              rust_hpp_pre);
+        check("emit_definition_preamble: C++ produces an #include for the paired header",
+              cpp_cpp_pre.find("#include \"MyType.hpp\"") != std::string::npos,
+              cpp_cpp_pre);
 
-        std::ostringstream cpp_ns_open, cpp_ns_close, rust_ns_open, rust_ns_close;
-        c.emit_namespace_open("myns", cpp_ns_open);
-        c.emit_namespace_close("myns", cpp_ns_close);
-        r.emit_namespace_open("myns", rust_ns_open);
-        r.emit_namespace_close("myns", rust_ns_close);
+        TypeOutputSession cpp_ns, rust_ns;
+        c.emit_namespace_open("myns", cpp_ns);
+        c.emit_namespace_close("myns", cpp_ns);
+        r.emit_namespace_open("myns", rust_ns);
+        r.emit_namespace_close("myns", rust_ns);
+        std::string cpp_ns_hpp = buf_str(cpp_ns, c.declaration_extension());
+        std::string rust_ns_hpp = buf_str(rust_ns, r.declaration_extension());
 
         check("emit_namespace_open/close: C++ produces a namespace block",
-              cpp_ns_open.str().find("namespace myns {") != std::string::npos &&
-              cpp_ns_close.str().find("} // namespace myns") != std::string::npos,
-              cpp_ns_open.str() + " / " + cpp_ns_close.str());
+              cpp_ns_hpp.find("namespace myns {") != std::string::npos &&
+              cpp_ns_hpp.find("} // namespace myns") != std::string::npos,
+              cpp_ns_hpp);
         check("emit_namespace_open/close: Rust produces a real mod block (not a stub)",
-              rust_ns_open.str().find("pub mod myns {") != std::string::npos,
-              rust_ns_open.str());
+              rust_ns_hpp.find("pub mod myns {") != std::string::npos,
+              rust_ns_hpp);
 
         BuiltinAliasSpec alias_spec;
         alias_spec.type_name = "MyBytes2";
         alias_spec.builtin_type = asn1::ast::BuiltinType::OctetString;
-        std::ostringstream cpp_alias_hpp, rust_alias_hpp;
-        c.emit_builtin_alias_hpp(alias_spec, cpp_alias_hpp);
-        r.emit_builtin_alias_hpp(alias_spec, rust_alias_hpp);
-        check("emit_builtin_alias_hpp: C++ produces a using-alias + extern descriptor",
-              cpp_alias_hpp.str().find("using MyBytes2 = asn1::OctetString;") != std::string::npos &&
-              cpp_alias_hpp.str().find("extern const asn1::TypeDescriptor asn_DEF_MyBytes2;") != std::string::npos,
-              cpp_alias_hpp.str());
-        check("emit_builtin_alias_hpp: Rust deliberately empty (unified with emit_builtin_alias_cpp)",
-              rust_alias_hpp.str().empty(),
-              rust_alias_hpp.str());
+        TypeOutputSession cpp_alias, rust_alias;
+        c.emit_builtin_alias(alias_spec, cpp_alias);
+        r.emit_builtin_alias(alias_spec, rust_alias);
+        std::string cpp_alias_hpp = buf_str(cpp_alias, c.declaration_extension());
+        check("emit_builtin_alias: C++ declaration half produces a using-alias + extern descriptor",
+              cpp_alias_hpp.find("using MyBytes2 = asn1::OctetString;") != std::string::npos &&
+              cpp_alias_hpp.find("extern const asn1::TypeDescriptor asn_DEF_MyBytes2;") != std::string::npos,
+              cpp_alias_hpp);
 
         SeqOfSpec seqof_spec;
         seqof_spec.type_name = "MyList2";
         seqof_spec.elem_type = "i64";
-        std::ostringstream cpp_seqof_hpp, rust_seqof_hpp;
-        c.emit_seq_of_hpp(seqof_spec, cpp_seqof_hpp);
-        r.emit_seq_of_hpp(seqof_spec, rust_seqof_hpp);
-        check("emit_seq_of_hpp: C++ produces a VectorSeqOf using-alias",
-              cpp_seqof_hpp.str().find("using MyList2 = asn1::VectorSeqOf<i64>;") != std::string::npos,
-              cpp_seqof_hpp.str());
-        check("emit_seq_of_hpp: Rust produces a real Vec<T> type alias (not a stub)",
-              rust_seqof_hpp.str().find("pub type MyList2 = Vec<i64>;") != std::string::npos,
-              rust_seqof_hpp.str());
+        TypeOutputSession cpp_seqof, rust_seqof;
+        c.emit_seq_of(seqof_spec, cpp_seqof);
+        r.emit_seq_of(seqof_spec, rust_seqof);
+        std::string cpp_seqof_hpp = buf_str(cpp_seqof, c.declaration_extension());
+        std::string rust_seqof_hpp = buf_str(rust_seqof, r.declaration_extension());
+        check("emit_seq_of: C++ declaration half produces a VectorSeqOf using-alias",
+              cpp_seqof_hpp.find("using MyList2 = asn1::VectorSeqOf<i64>;") != std::string::npos,
+              cpp_seqof_hpp);
+        check("emit_seq_of: Rust declaration half produces a real Vec<T> type alias (not a stub)",
+              rust_seqof_hpp.find("pub type MyList2 = Vec<i64>;") != std::string::npos,
+              rust_seqof_hpp);
 
-        std::ostringstream cpp_tr_hpp, rust_tr_hpp;
-        c.emit_typeref_alias_hpp("MyAlias", "OtherType", cpp_tr_hpp);
-        r.emit_typeref_alias_hpp("MyAlias", "OtherType", rust_tr_hpp);
-        check("emit_typeref_alias_hpp: C++ produces a using-alias",
-              cpp_tr_hpp.str() == "using MyAlias = OtherType;\n",
-              cpp_tr_hpp.str());
-        check("emit_typeref_alias_hpp: Rust produces a real pub type alias (not a stub)",
-              rust_tr_hpp.str() == "pub type MyAlias = OtherType;\n",
-              rust_tr_hpp.str());
+        TypeOutputSession cpp_tr, rust_tr;
+        c.emit_typeref_alias_declaration("MyAlias", "OtherType", cpp_tr);
+        r.emit_typeref_alias_declaration("MyAlias", "OtherType", rust_tr);
+        std::string cpp_tr_hpp = buf_str(cpp_tr, c.declaration_extension());
+        std::string rust_tr_hpp = buf_str(rust_tr, r.declaration_extension());
+        check("emit_typeref_alias_declaration: C++ produces a using-alias",
+              cpp_tr_hpp == "using MyAlias = OtherType;\n",
+              cpp_tr_hpp);
+        check("emit_typeref_alias_declaration: Rust produces a real pub type alias (not a stub)",
+              rust_tr_hpp == "pub type MyAlias = OtherType;\n",
+              rust_tr_hpp);
     }
 
     // declaration_extension/definition_extension (#262): Backend decides
