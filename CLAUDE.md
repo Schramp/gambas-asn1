@@ -31,9 +31,13 @@ Run compiler:
 ./build/compiler/asn1cpp <file.asn1> -o <outdir>
 ```
 
-Rust BER runtime (`rust-runtime/ber/`, gambas-asn1#218) — standalone crate, not part of
-the CMake build. `rust-runtime/` is the umbrella directory for one crate per wire
-encoding (`ber/` today; a future `per/`/`jer/` would be siblings, not modules inside `ber`):
+Rust BER/XER runtime (`rust-runtime/ber/`, gambas-asn1#218/#280) — standalone crate, not
+part of the CMake build. Despite the crate name, BER and XER both live here: table-driven
+codegen means one `SequenceSpec<T>`/`MemberDescriptor<T>` table per type drives every wire
+encoding (`Asn1Value` carries both a `ber_*` and an `xer_*` leg per type), so XER only
+needed new tag-parsing primitives (`src/xer.rs`), not a separate table or crate. `per/`
+is still expected to be a genuine sibling crate under the `rust-runtime/` umbrella — PER's
+bit-level, non-self-delimiting framing needs different stream primitives entirely:
 ```bash
 cd rust-runtime/ber && cargo test
 ```

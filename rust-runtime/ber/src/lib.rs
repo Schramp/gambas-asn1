@@ -15,20 +15,25 @@
 //! Definite-length only; indefinite-length (X.690 §8.1.3.2) isn't
 //! implemented (see `reader` module docs).
 //!
-//! ## This crate is BER-only, by design and by location
+//! ## XER lives in this crate too (revised, gambas-asn1#280)
 //!
-//! The C++ runtime keeps each wire encoding as its own codec class —
-//! `BerCodec`, `PerCodec`, `XerCodec`, `JerCodec` — deliberately separate
-//! (see `CLAUDE.md`'s PER architecture section: "`PerCodec` ... completely
-//! separate from `BerCodec`"). This crate mirrors that separation at the
-//! *crate* boundary instead of the class boundary: `rust-runtime/ber/` (this
-//! crate, package name `asn1cpp-ber`) covers BER only. A future PER runtime
-//! is a sibling crate at `rust-runtime/per/` (`asn1cpp-per`), not a module
-//! added in here — so a construct's BER logic (`src/choice.rs`,
-//! `src/sequence.rs`, ...) never has to share a file, or a name, with that
-//! same construct's PER logic. Each encoding gets its own crate, its own
-//! module tree, its own `Cargo.toml`, under the shared `rust-runtime/`
-//! umbrella directory (a Cargo workspace once there's more than one).
+//! Originally this crate was meant to be BER-only, with a future XER runtime
+//! as a sibling crate (mirroring the C++ side's separate `BerCodec`/
+//! `XerCodec` classes). Revised once the table-driven direction (#278) was
+//! set: the whole point of `SequenceSpec<T>`/`MemberDescriptor<T>` is that
+//! *one* table drives every wire encoding of a type, same as the C++ side's
+//! `TypeDescriptor` — `BerCodec`/`XerCodec` there are separate *codec
+//! classes* that both read the *same* generated table, not separate
+//! generated tables. Splitting XER into a sibling crate would force either
+//! duplicating the table types or a cross-crate dependency for no benefit;
+//! `xer.rs` lives alongside `sequence.rs`/`value.rs` instead, and
+//! `Asn1Value` carries both a BER leg and an XER leg per type (see `value`
+//! module doc). A future PER runtime is still expected to be a genuinely
+//! separate sibling crate at `rust-runtime/per/` (`asn1cpp-per`) — PER's
+//! bit-level, non-self-delimiting framing needs different stream primitives
+//! entirely (`get_bits`/`align`, no TLV), unlike XER which only needed new
+//! tag-parsing/escaping primitives (`xer.rs`) while reusing the exact same
+//! member tables.
 
 pub mod choice;
 pub mod integer;
@@ -38,6 +43,7 @@ pub mod sequence;
 pub mod tag;
 pub mod value;
 pub mod writer;
+pub mod xer;
 
 pub use choice::Choice;
 pub use reader::{DecodeError, Reader, Tlv};
