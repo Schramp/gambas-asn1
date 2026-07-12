@@ -134,6 +134,10 @@ public:
                                  TypeOutputSession& session) const override;
     void emit_type_reference(const std::string& type_name, const std::string& filename,
                               TypeOutputSession& session) const override;
+    // gambas-asn1#300: `use crate::X::X;` has no #include-guard equivalent —
+    // a duplicate is a hard compile error (E0252), unlike CppBackend's
+    // harmlessly-idempotent duplicate #include.
+    bool dedupe_type_references() const override { return true; }
     void emit_forward_declaration(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_special_members(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_optional_member_ops(const std::string& type_name, const std::string& member_name,
