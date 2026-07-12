@@ -388,16 +388,25 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         default:                            return nullptr;  // not yet covered by Asn1Value
         }
     };
-    // Asn1Value's XER leg (gambas-asn1#280/#281) is only real for i64 so
-    // far — bool/Vec<u8>/String (#282) fall back to the trait's default
-    // unimplemented!()/error bodies until #283. Gating encode_xer()/
-    // decode_xer() emission on this (separately from BER coverage) matters:
-    // without it, a type like Widget would get a public encode_xer() that
-    // compiles clean and panics at runtime the first time it's called —
-    // found in review on this same PR.
+    // Asn1Value's XER leg now covers the same four kinds the BER leg does
+    // (gambas-asn1#283: bool/Vec<u8>/String got real xer_encode/
+    // xer_decode_into overrides, replacing #282's trait-default
+    // unimplemented!()/error stand-ins). Kept as its own gate (not just
+    // reusing rust_member_ber_tag's coverage set) rather than assuming the
+    // two always match — encode_xer()/decode_xer() must never be emitted
+    // for a member type whose Asn1Value XER leg is still the default, or
+    // the emitted method panics at runtime (found in #282's review).
     auto rust_member_xer_ready = [](const SequenceMemberSpec& m) -> bool {
         if (!m.mbuiltin) return m.mtype == "i64";
-        return *m.mbuiltin == ast::BuiltinType::Integer;
+        switch (*m.mbuiltin) {
+        case ast::BuiltinType::Integer:
+        case ast::BuiltinType::Boolean:
+        case ast::BuiltinType::OctetString:
+        case ast::BuiltinType::Ia5String:
+            return true;
+        default:
+            return false;
+        }
     };
     bool all_covered = !spec.members.empty() &&
         std::all_of(spec.members.begin(), spec.members.end(),
