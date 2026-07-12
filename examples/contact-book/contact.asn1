@@ -14,8 +14,8 @@ ContactBook DEFINITIONS IMPLICIT TAGS ::= BEGIN
     Contact ::= SEQUENCE {
         name     UTF8String (SIZE (1..100)),
         email    IA5String (SIZE (0..254))  OPTIONAL,
-        phone    PhoneNumber                OPTIONAL,
-        address  Address                    OPTIONAL
+        phone    [0] PhoneNumber            OPTIONAL,
+        address  [1] Address                OPTIONAL
     }
 
     ContactList ::= SEQUENCE OF Contact
