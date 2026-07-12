@@ -569,6 +569,36 @@ int main() {
               std::to_string(split.size()));
     }
 
+    // gambas-asn1#290: format_tag_literal used to be a CppBackend-only free
+    // function Generator called unconditionally — RustBackend must produce
+    // real Rust syntax here, not throw, or every SEQUENCE/CHOICE member's
+    // eff_tag computation breaks under --target=rust.
+    {
+        TagSpec universal{asn1::ast::TagClass::Universal, 2, false};
+        check("format_tag_literal: CppBackend universal tag",
+              c.format_tag_literal(universal) == "asn1::Tag{asn1::TagClass::Universal, 2, false}",
+              c.format_tag_literal(universal));
+        check("format_tag_literal: RustBackend universal tag",
+              r.format_tag_literal(universal) ==
+                  "asn1cpp_ber::tag::Tag { class: asn1cpp_ber::tag::TagClass::Universal, number: 2, constructed: false }",
+              r.format_tag_literal(universal));
+
+        TagSpec context_explicit{asn1::ast::TagClass::Context, 1, true};
+        check("format_tag_literal: CppBackend context/constructed tag",
+              c.format_tag_literal(context_explicit) == "asn1::Tag{asn1::TagClass::Context, 1, true}",
+              c.format_tag_literal(context_explicit));
+        check("format_tag_literal: RustBackend context/constructed tag",
+              r.format_tag_literal(context_explicit) ==
+                  "asn1cpp_ber::tag::Tag { class: asn1cpp_ber::tag::TagClass::Context, number: 1, constructed: true }",
+              r.format_tag_literal(context_explicit));
+
+        TagSpec application{asn1::ast::TagClass::Application, 5, false};
+        check("format_tag_literal: CppBackend and RustBackend diverge (different syntax, same info)",
+              c.format_tag_literal(application) != r.format_tag_literal(application) &&
+              c.format_tag_literal(application).find("Application") != std::string::npos &&
+              r.format_tag_literal(application).find("Application") != std::string::npos);
+    }
+
     // Generator accepts an injected Backend (not just the default CppBackend)
     // — proves the seam #216 built is real, not just declared. Construction
     // only (no generate() call — that still hardcodes C++ text emission

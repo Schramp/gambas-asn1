@@ -10,7 +10,7 @@ namespace asn1::codegen {
 /// @brief Format a tag decision as a C++ `asn1::Tag{...}` literal string.
 /// @param tag_spec The decision to format (class, number, encoding form).
 /// @return A C++ expression string, e.g. `"asn1::Tag{asn1::TagClass::Context, 1, false}"`.
-std::string format_tag_literal(const TagSpec& tag_spec) {
+std::string CppBackend::format_tag_literal(const TagSpec& tag_spec) const {
     std::string tag_class_literal;
     switch (tag_spec.cls) {
     case ast::TagClass::Universal:   tag_class_literal = "asn1::TagClass::Universal";   break;
