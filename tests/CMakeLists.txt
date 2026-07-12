@@ -1300,16 +1300,30 @@ endif()
 # ---- codegen -> asn1cpp-ber roundtrip (gambas-asn1#219) --------------------
 #   Real asn1cpp --target=rust output (Point, from simple_seq.asn1) compiled
 #   and roundtrip-tested against the real asn1cpp-ber crate — not a hand-
-#   written stand-in. Needs both the rustc compile-check gate and the cargo
-#   gate (compiles via cargo, so CARGO_EXECUTABLE is what actually matters).
+#   written stand-in. Reuses the exact same generation pattern as
+#   SIMPLE_SEQ_GEN_DIR/test_seq_simple above (add_custom_command running the
+#   compiler, output consumed by an ALL target so `cmake --build` always
+#   keeps it current) and the same cross-validated BER test vectors as
+#   seq/test_seq_simple.cpp — same schema, same test data, both languages.
+set(RUST_SIMPLE_SEQ_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_simple_seq)
+add_custom_command(
+    OUTPUT  ${RUST_SIMPLE_SEQ_GEN_DIR}/Point.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_SIMPLE_SEQ_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1
+                                   -o ${RUST_SIMPLE_SEQ_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1
+    COMMENT "Generating Rust from simple_seq.asn1"
+)
+add_custom_target(gen_rust_simple_seq ALL DEPENDS ${RUST_SIMPLE_SEQ_GEN_DIR}/Point.rs)
+
 if(WITH_BER_RUNTIME_TEST)
     add_test(NAME rust_roundtrip_test
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/rust/roundtrip/run_roundtrip_test.py
-                --compiler $<TARGET_FILE:asn1cpp>
-                --cargo ${CARGO_EXECUTABLE}
-                --schema ${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1)
-    set_tests_properties(rust_roundtrip_test PROPERTIES TIMEOUT 60 LABELS "rust")
+        COMMAND ${CARGO_EXECUTABLE} test --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/roundtrip/Cargo.toml)
+    set_tests_properties(rust_roundtrip_test PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIMPLE_SEQ_GEN_DIR}")
 endif()
 
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
