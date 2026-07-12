@@ -347,6 +347,14 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // SEQUENCE OF/other string or time members, ...) still gets only the
     // struct shape. Broadening further member-type/tag coverage is real
     // follow-on work, not this issue's scope.
+    // mbuiltin is unset for TypeRef members (named INTEGER subtype aliases,
+    // e.g. `MyByte ::= INTEGER (0..255)` used as a member type) — Generator
+    // only populates it from the member's own AST node when that node
+    // directly holds a builtin type (`std::get_if<ast::BuiltinType>`), not
+    // for a reference that *resolves* to one. Such aliases still map to
+    // Rust "i64" via native_int_type's default storage kind, so the mtype
+    // fallback below (not just a defensive no-op) is what makes an aliased
+    // INTEGER member participate in the descriptor table at all.
     auto rust_member_ber_tag = [](const SequenceMemberSpec& m) -> const char* {
         if (!m.mbuiltin) return m.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
         switch (*m.mbuiltin) {
@@ -357,9 +365,22 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         default:                            return nullptr;  // not yet covered by Asn1Value
         }
     };
+    // Asn1Value's XER leg (gambas-asn1#280/#281) is only real for i64 so
+    // far — bool/Vec<u8>/String (#282) fall back to the trait's default
+    // unimplemented!()/error bodies until #283. Gating encode_xer()/
+    // decode_xer() emission on this (separately from BER coverage) matters:
+    // without it, a type like Widget would get a public encode_xer() that
+    // compiles clean and panics at runtime the first time it's called —
+    // found in review on this same PR.
+    auto rust_member_xer_ready = [](const SequenceMemberSpec& m) -> bool {
+        if (!m.mbuiltin) return m.mtype == "i64";
+        return *m.mbuiltin == ast::BuiltinType::Integer;
+    };
     bool all_covered = !spec.members.empty() &&
         std::all_of(spec.members.begin(), spec.members.end(),
                      [&](const SequenceMemberSpec& m) { return !m.optional && rust_member_ber_tag(m) != nullptr; });
+    bool all_xer_ready = all_covered &&
+        std::all_of(spec.members.begin(), spec.members.end(), rust_member_xer_ready);
     if (all_covered) {
         std::string members_ident = std::format("{}_MEMBERS", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
@@ -391,13 +412,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    }\n\n";
         os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_ber::DecodeError> {\n";
         os << std::format("        asn1cpp_ber::sequence::decode_sequence(&{}, data)\n", spec_ident);
-        os << "    }\n\n";
-        os << "    pub fn encode_xer(&self) -> String {\n";
-        os << std::format("        asn1cpp_ber::xer::encode_sequence_xer(&{}, self)\n", spec_ident);
-        os << "    }\n\n";
-        os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_ber::DecodeError> {\n";
-        os << std::format("        asn1cpp_ber::xer::decode_sequence_xer(&{}, xml)\n", spec_ident);
         os << "    }\n";
+        if (all_xer_ready) {
+            os << "\n";
+            os << "    pub fn encode_xer(&self) -> String {\n";
+            os << std::format("        asn1cpp_ber::xer::encode_sequence_xer(&{}, self)\n", spec_ident);
+            os << "    }\n\n";
+            os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_ber::DecodeError> {\n";
+            os << std::format("        asn1cpp_ber::xer::decode_sequence_xer(&{}, xml)\n", spec_ident);
+            os << "    }\n";
+        }
         os << "}\n\n";
     }
 }
