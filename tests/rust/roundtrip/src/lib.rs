@@ -8,8 +8,16 @@
 //! Test cases mirror `tests/ber/seq/test_seq_simple.cpp`'s BER section
 //! exactly (same schema, same values, same asn1c-cross-validated wire
 //! bytes) — one schema, both languages, directly comparable.
+//!
+//! `widget_generated.rs` (gambas-asn1#282) is the mixed-type broaden-past-
+//! INTEGER counterpart — `Widget` from `tests/asn1/rust_wide_types_test.asn1`
+//! (`INTEGER`/`BOOLEAN`/`OCTET STRING`/`IA5String` members). Its expected
+//! wire bytes were captured from the real C++ runtime (`BerCodec` encoding
+//! the equivalent C++ `Widget` value), not hand-derived, the same
+//! ground-truth cross-check done ad hoc for XER in #281.
 
 include!(concat!(env!("OUT_DIR"), "/point_generated.rs"));
+include!(concat!(env!("OUT_DIR"), "/widget_generated.rs"));
 
 #[cfg(test)]
 mod tests {
@@ -61,5 +69,46 @@ mod tests {
     fn rejects_wrong_tag() {
         let data = [0x02, 0x01, 0x05]; // INTEGER tag, not SEQUENCE
         assert!(Point::decode(&data).is_err());
+    }
+
+    use super::Widget;
+
+    fn widget(id: i64, flag: bool, data: &[u8], label: &str) -> Widget {
+        Widget { id, flag, data: data.to_vec(), label: label.to_string() }
+    }
+
+    #[test]
+    fn widget_encodes_as_ground_truth_from_the_cpp_runtime() {
+        // Captured by encoding the equivalent C++ Widget value via
+        // BerCodec::instance().encode() directly (see module doc).
+        let expected = [
+            0x30, 0x0e, 0x02, 0x01, 0x07, 0x01, 0x01, 0xff, 0x04, 0x02, 0x68, 0x69, 0x16, 0x02,
+            0x68, 0x69,
+        ];
+        assert_eq!(widget(7, true, b"hi", "hi").encode(), expected);
+    }
+
+    #[test]
+    fn widget_round_trip() {
+        let w = widget(7, true, b"hi", "hi");
+        assert_eq!(Widget::decode(&w.encode()).unwrap(), w);
+    }
+
+    #[test]
+    fn widget_false_and_empty_round_trip() {
+        let w = widget(0, false, b"", "");
+        assert_eq!(Widget::decode(&w.encode()).unwrap(), w);
+    }
+
+    #[test]
+    fn widget_negative_id_round_trip() {
+        let w = widget(-42, true, b"\x00\xff", "abc");
+        assert_eq!(Widget::decode(&w.encode()).unwrap(), w);
+    }
+
+    #[test]
+    fn widget_rejects_wrong_tag() {
+        let data = [0x02, 0x01, 0x05]; // INTEGER tag, not SEQUENCE
+        assert!(Widget::decode(&data).is_err());
     }
 }
