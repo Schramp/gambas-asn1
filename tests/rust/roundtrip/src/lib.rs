@@ -15,9 +15,15 @@
 //! wire bytes (BER and, since gambas-asn1#283, XER) were captured from the
 //! real C++ runtime (`BerCodec`/`XerCodec` encoding the equivalent C++
 //! `Widget` value), not hand-derived.
+//!
+//! `selector_generated.rs` (gambas-asn1#284) is the first table-driven
+//! CHOICE — `Selector` from `tests/asn1/rust_choice_test.asn1`, same four
+//! alternative kinds `Widget` covers for SEQUENCE. Expected wire bytes
+//! captured from the real C++ runtime the same way.
 
 include!(concat!(env!("OUT_DIR"), "/point_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/widget_generated.rs"));
+include!(concat!(env!("OUT_DIR"), "/selector_generated.rs"));
 
 #[cfg(test)]
 mod tests {
@@ -144,5 +150,51 @@ mod tests {
     #[test]
     fn widget_xer_rejects_wrong_outer_tag() {
         assert!(Widget::decode_xer("<NotWidget></NotWidget>").is_err());
+    }
+
+    use super::Selector;
+
+    #[test]
+    fn selector_num_encodes_as_ground_truth_from_the_cpp_runtime() {
+        assert_eq!(Selector::Num(7).encode(), vec![0x02, 0x01, 0x07]);
+    }
+
+    #[test]
+    fn selector_flag_encodes_as_ground_truth_from_the_cpp_runtime() {
+        assert_eq!(Selector::Flag(true).encode(), vec![0x01, 0x01, 0xff]);
+    }
+
+    #[test]
+    fn selector_data_encodes_as_ground_truth_from_the_cpp_runtime() {
+        assert_eq!(Selector::Data(vec![0x68, 0x69]).encode(), vec![0x04, 0x02, 0x68, 0x69]);
+    }
+
+    #[test]
+    fn selector_label_encodes_as_ground_truth_from_the_cpp_runtime() {
+        assert_eq!(Selector::Label("hi".to_string()).encode(), vec![0x16, 0x02, 0x68, 0x69]);
+    }
+
+    #[test]
+    fn selector_round_trips_every_alternative() {
+        for s in [
+            Selector::Num(-42),
+            Selector::Flag(false),
+            Selector::Data(vec![0xAA, 0xBB]),
+            Selector::Label("round-trip".to_string()),
+        ] {
+            let bytes = s.encode();
+            assert_eq!(Selector::decode(&bytes).unwrap(), s);
+        }
+    }
+
+    #[test]
+    fn selector_rejects_unrecognized_tag() {
+        let data = [0x30, 0x00]; // SEQUENCE tag — not a Selector alternative
+        assert!(Selector::decode(&data).is_err());
+    }
+
+    #[test]
+    fn selector_rejects_empty_input() {
+        assert!(Selector::decode(&[]).is_err());
     }
 }
