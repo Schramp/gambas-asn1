@@ -258,6 +258,16 @@ private:
     void emit_type_files(const std::string& name, const ast::TypeDef& def,
                           const ast::Module& mod);
 
+    /// @brief Route a cross-type reference through backend_.emit_type_reference,
+    ///        seeding a throwaway session so Backend never touches `target`
+    ///        directly (gambas-asn1#266 review) — Generator picks the real
+    ///        stream (declaration body, pre-namespace redirect, deferred
+    ///        post-namespace includes, a `.cpp`-side include, ...), Backend
+    ///        only owns the reference text.
+    void write_type_reference(const std::string& type_name, std::ostream& target);
+    /// @brief Same wiring as write_type_reference, for forward declarations.
+    void write_forward_declaration(const std::string& type_name, std::ostream& target);
+
     /// @brief build_enumerated_spec/build_integer_spec/build_builtin_alias_spec
     ///        already feed both the declaration and definition halves from
     ///        one call — these three wrappers just do that and hand the spec

@@ -1,4 +1,6 @@
 #include "RustBackend.hpp"
+#include <filesystem>
+#include <fstream>
 
 namespace asn1::codegen {
 
@@ -469,14 +471,29 @@ void RustBackend::emit_typeref_alias_declaration(const std::string& type_name, c
 ///        path — assumes a generated crate root (main.cpp, --target=rust)
 ///        declares `pub mod <filename>;` for every generated file, one
 ///        module per file, module name == filename (gambas-asn1#266).
-std::string RustBackend::format_type_reference(const std::string& type_name, const std::string& filename) const {
-    return std::format("use crate::{}::{};\n", filename, type_name);
+void RustBackend::emit_type_reference(const std::string& type_name, const std::string& filename,
+                                       TypeOutputSession& session) const {
+    session.buffer(declaration_extension()) << std::format("use crate::{}::{};\n", filename, type_name);
 }
 
 /// @brief Rust has no forward-declaration concept — a type is visible
 ///        regardless of declaration order once its module is `use`d.
-std::string RustBackend::format_forward_declaration(const std::string&) const {
-    return "";
+void RustBackend::emit_forward_declaration(const std::string&, TypeOutputSession&) const {
+}
+
+/// @brief Write the crate root: one `pub mod <filename>;` per generated
+///        `.rs` file, so the `use crate::<filename>::<Type>;` paths
+///        emit_type_reference emits actually resolve (gambas-asn1#266).
+///        WIP (#214): flat mod-per-file list, no module tree mirroring
+///        ASN.1 modules.
+void RustBackend::finalize_output(const std::string& out_dir) const {
+    namespace fs = std::filesystem;
+    fs::path lib_rs = fs::path(out_dir) / "lib.rs";
+    std::ofstream lib(lib_rs);
+    for (const auto& entry : fs::directory_iterator(out_dir)) {
+        if (entry.path().extension() != ".rs" || entry.path() == lib_rs) continue;
+        lib << "pub mod " << entry.path().stem().string() << ";\n";
+    }
 }
 
 } // namespace asn1::codegen

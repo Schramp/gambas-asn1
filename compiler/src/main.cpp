@@ -190,20 +190,7 @@ int main(int argc, char** argv) {
     if (!ns_prefix.empty()) gen.set_namespace(ns_prefix);
     for (const auto& t : pdu_types) gen.add_pdu_type(t);
     gen.generate(pr);
-
-    if (target == "rust") {
-        // Rust cross-type references (RustBackend::format_type_reference,
-        // gambas-asn1#266) assume `crate::<filename>::<Type>` paths — write
-        // the crate root declaring one `pub mod <filename>;` per generated
-        // file so those paths actually resolve. WIP (#214): no attempt at a
-        // module tree mirroring ASN.1 modules, just a flat mod-per-file list.
-        fs::path lib_rs = fs::path(out_dir) / "lib.rs";
-        std::ofstream lib(lib_rs);
-        for (const auto& entry : fs::directory_iterator(out_dir)) {
-            if (entry.path().extension() != ".rs" || entry.path() == lib_rs) continue;
-            lib << "pub mod " << entry.path().stem().string() << ";\n";
-        }
-    }
+    backend.finalize_output(out_dir);
 
     std::cout << "Generated " << (target == "rust" ? "Rust" : "C++") << " code in: " << out_dir << "/\n";
     return 0;
