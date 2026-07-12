@@ -370,6 +370,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << std::format(
             "static {}: asn1cpp_ber::sequence::SequenceSpec<{}> = asn1cpp_ber::sequence::SequenceSpec {{\n",
             spec_ident, spec.type_name);
+        os << std::format("    name: \"{}\",\n", spec.type_name);
         os << "    tag: asn1cpp_ber::sequence::SEQUENCE_TAG,\n";
         os << std::format("    members: &{},\n", members_ident);
         os << "};\n\n";
@@ -380,6 +381,12 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    }\n\n";
         os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_ber::DecodeError> {\n";
         os << std::format("        asn1cpp_ber::sequence::decode_sequence(&{}, data)\n", spec_ident);
+        os << "    }\n\n";
+        os << "    pub fn encode_xer(&self) -> String {\n";
+        os << std::format("        asn1cpp_ber::xer::encode_sequence_xer(&{}, self)\n", spec_ident);
+        os << "    }\n\n";
+        os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_ber::DecodeError> {\n";
+        os << std::format("        asn1cpp_ber::xer::decode_sequence_xer(&{}, xml)\n", spec_ident);
         os << "    }\n";
         os << "}\n\n";
     }
