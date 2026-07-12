@@ -1,0 +1,15 @@
+-- gambas-asn1#284: table-driven Rust CHOICE codegen. Flat CHOICE mixing
+-- all four member kinds the Rust Asn1Value trait's BER leg covers
+-- (rust-runtime/ber/src/value.rs) — same coverage set rust_wide_types_test.asn1
+-- exercises for SEQUENCE (#282).
+
+RustChoiceTest DEFINITIONS ::= BEGIN
+
+    Selector ::= CHOICE {
+        num     INTEGER,
+        flag    BOOLEAN,
+        data    OCTET STRING,
+        label   IA5String
+    }
+
+END

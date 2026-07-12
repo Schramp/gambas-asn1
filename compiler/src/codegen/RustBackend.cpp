@@ -475,10 +475,23 @@ void RustBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
 ///       mapping has no equivalent problem. No `#[derive(Default)]`: unlike
 ///       a struct, a CHOICE has no natural default variant.
 void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const {
+    // gambas-asn1#284: variant names use variant_name(), not the raw
+    // a.pr_name — found while building #284's fixture. a.pr_name is
+    // Generator's backend-agnostic "PR" name (mirrors the C++ side's
+    // `enum class PR { NOTHING, num, flag, ... }`, ASN.1 member-name
+    // casing verbatim — fine for C++, which has no naming-convention lint
+    // on enum members). Real generated Rust CHOICEs almost always have
+    // lowercase-first ASN.1 member names (X.680 §11.2's convention), so
+    // using a.pr_name directly would emit e.g. `Selector::num(i64)` —
+    // compiles, but rustc's non_camel_case_types lint flags it (a warning
+    // by default; tests/rust/run_rust_tests.py's `-D warnings` would turn
+    // it into a hard failure the moment that harness compiles real codegen
+    // output instead of hand-written mirrors). Same fix ENUMERATED already
+    // needed (variant_name(), just above emit_enumerated_declaration).
     os << "#[derive(Debug, Clone, PartialEq)]\n";
     os << std::format("pub enum {} {{\n", spec.type_name);
     for (const auto& a : spec.alternatives)
-        os << std::format("    {}({}),\n", a.pr_name, a.mtype);
+        os << std::format("    {}({}),\n", variant_name(*this, a.asn1_name), a.mtype);
     os << "}\n\n";
 }
 
@@ -498,7 +511,69 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         std::string fname = escape(std::format("{}_get_{}", prefix, a.accessor_name));
         os << std::format("pub fn {}(x: &mut {}) -> &mut {} {{\n", fname, spec.type_name, a.mtype);
         os << std::format("    match x {{ {}::{}(v) => v, _ => panic!(\"wrong variant\") }}\n",
-                           spec.type_name, a.pr_name);
+                           spec.type_name, variant_name(*this, a.asn1_name));
+        os << "}\n\n";
+    }
+
+    // gambas-asn1#284: table-driven, mirroring emit_sequence_definition's
+    // approach (#278/#282) and the generic runtime walker
+    // (encode_choice/decode_choice, rust-runtime/ber/src/choice.rs) instead
+    // of a per-type match/if chain. Same scope restriction as SEQUENCE:
+    // only CHOICEs whose every alternative has a real Asn1Value BER impl
+    // (INTEGER, BOOLEAN, OCTET STRING, IA5String) get a real descriptor
+    // table + encode()/decode(); anything else still gets only the enum +
+    // accessor functions above.
+    auto rust_alt_ber_tag = [](const ChoiceAlternativeSpec& a) -> const char* {
+        if (!a.mbuiltin) return a.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
+        switch (*a.mbuiltin) {
+        case ast::BuiltinType::Integer:     return "asn1cpp_ber::integer::INTEGER_TAG";
+        case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
+        case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
+        case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
+        default:                            return nullptr;  // not yet covered by Asn1Value
+        }
+    };
+    bool all_covered = !spec.alternatives.empty() &&
+        std::all_of(spec.alternatives.begin(), spec.alternatives.end(),
+                     [&](const ChoiceAlternativeSpec& a) { return rust_alt_ber_tag(a) != nullptr; });
+    if (all_covered) {
+        std::string alts_ident = std::format("{}_ALTERNATIVES", to_screaming_snake_case(spec.type_name));
+        std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
+
+        os << std::format("static {}: [asn1cpp_ber::choice::AlternativeSpec<{}>; {}] = [\n",
+                          alts_ident, spec.type_name, spec.alternatives.size());
+        for (const auto& a : spec.alternatives) {
+            std::string vname = variant_name(*this, a.asn1_name);
+            os << "    asn1cpp_ber::choice::AlternativeSpec {\n";
+            os << std::format("        name: \"{}\",\n", a.asn1_name);
+            os << std::format("        tag: {},\n", rust_alt_ber_tag(a));
+            os << std::format("        encode: |x, out| if let {}::{}(v) = x {{\n",
+                              spec.type_name, vname);
+            os << "            asn1cpp_ber::value::Asn1Value::ber_encode(v, out);\n";
+            os << "            true\n";
+            os << "        } else { false },\n";
+            os << "        decode_into: |r| {\n";
+            os << std::format("            let mut v: {} = Default::default();\n", a.mtype);
+            os << "            asn1cpp_ber::value::Asn1Value::ber_decode_into(&mut v, r)?;\n";
+            os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+            os << "        },\n";
+            os << "    },\n";
+        }
+        os << "];\n\n";
+
+        os << std::format(
+            "static {}: asn1cpp_ber::choice::ChoiceSpec<{}> = asn1cpp_ber::choice::ChoiceSpec {{\n",
+            spec_ident, spec.type_name);
+        os << std::format("    alternatives: &{},\n", alts_ident);
+        os << "};\n\n";
+
+        os << std::format("impl {} {{\n", spec.type_name);
+        os << "    pub fn encode(&self) -> Vec<u8> {\n";
+        os << std::format("        asn1cpp_ber::choice::encode_choice(&{}, self)\n", spec_ident);
+        os << "    }\n\n";
+        os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_ber::DecodeError> {\n";
+        os << std::format("        asn1cpp_ber::choice::decode_choice(&{}, data)\n", spec_ident);
+        os << "    }\n";
         os << "}\n\n";
     }
 }

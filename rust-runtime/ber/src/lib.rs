@@ -8,9 +8,8 @@
 //!
 //! Scope (per gambas-asn1#218): TLV primitives, plus encode/decode for
 //! INTEGER, OCTET STRING, SEQUENCE, and CHOICE — the four constructs the
-//! issue named. SEQUENCE is table-driven (gambas-asn1#278, see
-//! `sequence`/`value` module docs); CHOICE is still one hand-written example
-//! (`Choice`) — table-driving it is real follow-on scope, not done here.
+//! issue named. Both SEQUENCE (gambas-asn1#278) and CHOICE (#284) are
+//! table-driven — see `sequence`/`choice`/`value` module docs.
 //!
 //! Definite-length only; indefinite-length (X.690 §8.1.3.2) isn't
 //! implemented (see `reader` module docs).
