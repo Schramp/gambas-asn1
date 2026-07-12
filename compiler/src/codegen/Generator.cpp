@@ -1073,14 +1073,41 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
                 const auto& seqof_elem = m.is_seq_of()
                     ? std::get<ast::SequenceOfType>(m.body).element
                     : std::get<ast::SetOfType>(m.body).element;
-                bool self_ref = false;
-                if (auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body))
-                    self_ref = (backend_.type_name(tr_elem->type_name) == backend_.type_name(def.name));
+                auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body);
+                bool self_ref = tr_elem &&
+                    (backend_.type_name(tr_elem->type_name) == backend_.type_name(def.name));
                 auto synth = backend_.synthetic_name(cname, m.name);
-                if (self_ref)
+                if (self_ref) {
                     post_class_includes.push_back(synth); // defer: needs current class complete
-                else
+                } else {
                     emit_inc(synth);
+                    // gambas-asn1#301: cpp_type_for's SEQUENCE OF branch uses
+                    // the element type directly (wrap_collection_type(cpp_type_for(elem)))
+                    // when the element is a plain TypeRef — it only falls
+                    // back to the synthetic name above for an *anonymous*
+                    // inline element. CppBackend gets away with including
+                    // only the synthetic wrapper header because that header
+                    // itself #includes the element's header, and #include is
+                    // transitive; Rust's `use` only brings the one named
+                    // symbol into scope, not whatever *that* module itself
+                    // `use`d — so a field typed `Vec<CallId>` with no direct
+                    // `use crate::CallId::CallId;` failed to compile
+                    // (E0425), the second-largest error category on the real
+                    // ETSI LI PS-PDU schema (#299/#301).
+                    if (tr_elem) {
+                        emit_inc(cpp_name_for_typeref(*tr_elem));
+                    } else if (seqof_elem->is_sequence() || seqof_elem->is_choice() || seqof_elem->is_set()) {
+                        // Anonymous inline element: cpp_type_for's SEQUENCE
+                        // OF branch names the field type with a *second*,
+                        // "Anon"-suffixed synthetic name layered on top of
+                        // `synth` (synthetic_name(synth, "Anon")) — a real
+                        // generated type distinct from `synth` itself
+                        // (`synth` is just a `pub type X = Vec<...>;` alias
+                        // in Rust). Same missing-import shape as the
+                        // plain-TypeRef case above, different root name.
+                        emit_inc(backend_.synthetic_name(synth, "Anon"));
+                    }
+                }
             } else {
                 const auto& elem = m.is_seq_of()
                     ? std::get<ast::SequenceOfType>(m.body).element
@@ -1355,6 +1382,21 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
             // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
             auto cn2 = cpp_name_for_ref(backend_.synthetic_name(cname, m->name), current_module_);
             emit_inc(cn2);
+            // gambas-asn1#301: also include the actual element type directly
+            // when it's a plain TypeRef — see the matching fix (and its
+            // rationale) in Generator::emit_type_files's emit_member_include
+            // lambda, same bug, independently duplicated here for CHOICE.
+            const auto& seqof_elem = m->is_seq_of()
+                ? std::get<ast::SequenceOfType>(m->body).element
+                : std::get<ast::SetOfType>(m->body).element;
+            if (auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body)) {
+                emit_inc(cpp_name_for_typeref(*tr_elem));
+            } else if (seqof_elem->is_sequence() || seqof_elem->is_choice() || seqof_elem->is_set()) {
+                // Anonymous inline element — see the matching fix in
+                // emit_member_include for the "Anon"-suffixed doubly-nested
+                // synthetic name rationale.
+                emit_inc(backend_.synthetic_name(backend_.synthetic_name(cname, m->name), "Anon"));
+            }
         } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
             auto synth = backend_.synthetic_name(cname, m->name);
             emit_inc(synth);
