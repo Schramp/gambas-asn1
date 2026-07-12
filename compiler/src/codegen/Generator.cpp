@@ -1206,6 +1206,8 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         row.asn1_name = m.name;
         row.mname = backend_.member_name(m.name);
         row.mtype = cpp_type_for(m);
+        if (auto* bt = std::get_if<ast::BuiltinType>(&m.body))
+            row.mbuiltin = *bt;
         row.optional = optional;
         auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
         row.eff_tag = tag_result.tag_literal;

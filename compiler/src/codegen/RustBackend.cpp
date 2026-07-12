@@ -340,17 +340,27 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // generic SequenceBerHandler dispatch (runtime/src/BerCodec.cpp) instead
     // of #219's straight-line per-type encode()/decode() bodies. Scoped
     // narrowly on purpose, same as #219 before it — only SEQUENCEs whose
-    // every member is a plain required INTEGER (native_int_type's S64
-    // default, "i64") get a real descriptor table + encode()/decode();
-    // anything else (OPTIONAL members, CHOICE/SEQUENCE OF/string members,
-    // ...) still gets only the struct shape. Broadening member-type/tag
-    // coverage is real follow-on work, not this issue's scope — the point
-    // here is the *shape* (table + accessor functions + generic runtime
-    // walker), not covering every construct.
-    bool integer_only = !spec.members.empty() &&
+    // every member is a plain required member of a type with a real
+    // Asn1Value BER impl (gambas-asn1#282: INTEGER, BOOLEAN, OCTET STRING,
+    // IA5String — see rust_member_ber_tag below) get a real descriptor
+    // table + encode()/decode(); anything else (OPTIONAL members, CHOICE/
+    // SEQUENCE OF/other string or time members, ...) still gets only the
+    // struct shape. Broadening further member-type/tag coverage is real
+    // follow-on work, not this issue's scope.
+    auto rust_member_ber_tag = [](const SequenceMemberSpec& m) -> const char* {
+        if (!m.mbuiltin) return m.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
+        switch (*m.mbuiltin) {
+        case ast::BuiltinType::Integer:     return "asn1cpp_ber::integer::INTEGER_TAG";
+        case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
+        case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
+        case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
+        default:                            return nullptr;  // not yet covered by Asn1Value
+        }
+    };
+    bool all_covered = !spec.members.empty() &&
         std::all_of(spec.members.begin(), spec.members.end(),
-                     [](const SequenceMemberSpec& m) { return !m.optional && m.mtype == "i64"; });
-    if (integer_only) {
+                     [&](const SequenceMemberSpec& m) { return !m.optional && rust_member_ber_tag(m) != nullptr; });
+    if (all_covered) {
         std::string members_ident = std::format("{}_MEMBERS", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
 
@@ -359,7 +369,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         for (const auto& m : spec.members) {
             os << "    asn1cpp_ber::sequence::MemberDescriptor {\n";
             os << std::format("        name: \"{}\",\n", m.asn1_name);
-            os << "        tag: asn1cpp_ber::integer::INTEGER_TAG,\n";
+            os << std::format("        tag: {},\n", rust_member_ber_tag(m));
             os << "        optional: false,\n";
             os << std::format("        get: |v| &v.{},\n", m.mname);
             os << std::format("        get_mut: |v| &mut v.{},\n", m.mname);

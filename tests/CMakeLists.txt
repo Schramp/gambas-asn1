@@ -1315,7 +1315,30 @@ add_custom_command(
     DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1
     COMMENT "Generating Rust from simple_seq.asn1"
 )
-add_custom_target(gen_rust_simple_seq ALL DEPENDS ${RUST_SIMPLE_SEQ_GEN_DIR}/Point.rs)
+
+# gambas-asn1#282: broaden Rust SEQUENCE codegen past INTEGER-only (Point) to
+# a mixed-type flat SEQUENCE (bool/OCTET STRING/IA5String members). Own
+# output directory, not RUST_SIMPLE_SEQ_GEN_DIR — each asn1cpp invocation
+# deletes any .rs file in its out-dir that its own run didn't produce
+# (Generator::remove_stale_files, keeps generated dirs free of orphans from
+# renamed/removed types); two separate compiler invocations sharing one
+# out-dir would race to delete each other's output. build.rs
+# (tests/rust/roundtrip) copies Point.rs from RUST_SIMPLE_SEQ_GEN_DIR and
+# Widget.rs from this directory separately.
+set(RUST_WIDE_TYPES_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_wide_types)
+add_custom_command(
+    OUTPUT  ${RUST_WIDE_TYPES_GEN_DIR}/Widget.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_WIDE_TYPES_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_wide_types_test.asn1
+                                   -o ${RUST_WIDE_TYPES_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_wide_types_test.asn1
+    COMMENT "Generating Rust from rust_wide_types_test.asn1"
+)
+
+add_custom_target(gen_rust_simple_seq ALL DEPENDS
+    ${RUST_SIMPLE_SEQ_GEN_DIR}/Point.rs
+    ${RUST_WIDE_TYPES_GEN_DIR}/Widget.rs)
 
 if(WITH_BER_RUNTIME_TEST)
     add_test(NAME rust_roundtrip_test
@@ -1323,7 +1346,7 @@ if(WITH_BER_RUNTIME_TEST)
                 ${CMAKE_CURRENT_SOURCE_DIR}/rust/roundtrip/Cargo.toml)
     set_tests_properties(rust_roundtrip_test PROPERTIES
         TIMEOUT 60 LABELS "rust"
-        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIMPLE_SEQ_GEN_DIR}")
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIMPLE_SEQ_GEN_DIR};ASN1CPP_RUST_WIDE_GEN_DIR=${RUST_WIDE_TYPES_GEN_DIR}")
 endif()
 
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
