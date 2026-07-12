@@ -429,6 +429,13 @@ private:
                                  int auto_tag_num) const;
 
     bool is_class_type(const ast::TypeDef& m) const;
+
+    // gambas-asn1#303: cycle detection for RustBackend's Box<T> decision —
+    // see SequenceMemberSpec::member_type_in_cycle's doc (Backend.hpp) for
+    // the full rationale.
+    bool type_reaches(const ast::TypeDef& from, const std::string& target,
+                       std::set<std::string>& visited) const;
+    bool member_type_in_cycle(const ast::TypeDef& m, const std::string& enclosing_name) const;
 };
 
 } // namespace asn1::codegen

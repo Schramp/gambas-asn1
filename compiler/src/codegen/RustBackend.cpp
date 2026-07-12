@@ -339,8 +339,18 @@ void RustBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostre
     os << "#[derive(Debug, Clone, Default, PartialEq)]\n";
     os << std::format("pub struct {} {{\n", spec.type_name);
     for (const auto& m : spec.members) {
+        // gambas-asn1#303: a member whose class type cycles back to this
+        // enclosing type needs `Box<T>` — Rust (unlike C++'s
+        // pointer-by-default unique_ptr) gives a plain `T`/`Option<T>`
+        // field no heap indirection at all, so a genuine ASN.1
+        // self-referential/mutually-recursive type chain is an
+        // infinite-size struct without it. Not applied to every class-typed
+        // member (see SequenceMemberSpec::member_type_in_cycle's doc,
+        // Backend.hpp, for why unconditional boxing — mirroring C++'s own
+        // unrelated unique_ptr-everywhere convention — was rejected).
+        std::string ftype = m.member_type_in_cycle ? std::format("Box<{}>", m.mtype) : m.mtype;
         os << std::format("    pub {}: {},\n", m.mname,
-                           m.optional ? std::format("Option<{}>", m.mtype) : m.mtype);
+                           m.optional ? std::format("Option<{}>", ftype) : ftype);
     }
     os << "}\n\n";
 }
