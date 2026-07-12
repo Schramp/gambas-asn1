@@ -1075,10 +1075,10 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
 
     auto emit_inc = [&](const std::string& cn) {
         auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-        inc_os << backend_.format_type_reference(cn, filename_for(cn));
+        write_type_reference(cn, inc_os);
     };
     auto emit_fwd = [&](const std::string& cn) {
-        os << backend_.format_forward_declaration(cn);
+        write_forward_declaration(cn, os);
     };
     auto emit_member_include = [&](const ast::TypeDef& m, bool optional) {
         if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
@@ -1163,13 +1163,13 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
                 if (is_class_type(m)) {
                     auto cn = cpp_name_for_typeref(*tr);
                     auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-                    inc_os << backend_.format_type_reference(cn, filename_for(cn));
+                    write_type_reference(cn, inc_os);
                     emitted_extra = true;
                 }
             } else if ((m.is_sequence() || m.is_choice() || m.is_set()) && !m.name.empty()) {
                 auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
                 auto synth = backend_.synthetic_name(cname, m.name);
-                inc_os << backend_.format_type_reference(synth, filename_for(synth));
+                write_type_reference(synth, inc_os);
                 emitted_extra = true;
             }
         };
@@ -1278,7 +1278,7 @@ void Generator::emit_sequence(const ast::TypeDef& def, TypeOutputSession& sessio
     if (!post_class_includes.empty()) {
         auto& inc_os = post_ns_os_ ? *post_ns_os_ : decl_os;
         for (const auto& sinc : post_class_includes) {
-            inc_os << backend_.format_type_reference(sinc, filename_for(sinc));
+            write_type_reference(sinc, inc_os);
         }
         inc_os << "\n";
     }
@@ -1368,7 +1368,7 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
         if (m->is_extension_marker) continue;
         auto emit_inc = [&](const std::string& cn) {
             auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-            inc_os << backend_.format_type_reference(cn, filename_for(cn));
+            write_type_reference(cn, inc_os);
         };
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
             emit_inc(cpp_name_for_typeref(*tr));
@@ -1595,6 +1595,18 @@ void Generator::emit_type_files(const std::string& name, const ast::TypeDef& def
     }
 }
 
+void Generator::write_type_reference(const std::string& type_name, std::ostream& target) {
+    TypeOutputSession ref;
+    ref.seed(backend_.declaration_extension(), target);
+    backend_.emit_type_reference(type_name, filename_for(type_name), ref);
+}
+
+void Generator::write_forward_declaration(const std::string& type_name, std::ostream& target) {
+    TypeOutputSession ref;
+    ref.seed(backend_.declaration_extension(), target);
+    backend_.emit_forward_declaration(type_name, ref);
+}
+
 /// @brief Emit both output files for any top-level type definition.
 /// @param def     ASN.1 type definition to generate.
 /// @param mod     Owning module (provides tag default and OID for the file header comment).
@@ -1671,7 +1683,7 @@ void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, 
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto inc = cpp_name_for_typeref(*tr);
         auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : decl_body;
-        inc_os << backend_.format_type_reference(inc, filename_for(inc));
+        write_type_reference(inc, inc_os);
         backend_.emit_typeref_alias_declaration(cname, inc, dispatch);
     }
 
@@ -1843,14 +1855,17 @@ SeqOfSpec Generator::emit_seq_of_declaration(const ast::TypeDef& def, std::ostre
     auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
     if (auto* tr = std::get_if<ast::TypeRef>(&elem->body)) {
         auto inc = cpp_name_for_typeref(*tr);
-        inc_os << backend_.format_type_reference(inc, filename_for(inc)) << "\n";
+        write_type_reference(inc, inc_os);
+        inc_os << "\n";
     } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
         auto synth = backend_.synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name);
-        inc_os << backend_.format_type_reference(synth, filename_for(synth)) << "\n";
+        write_type_reference(synth, inc_os);
+        inc_os << "\n";
     } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem->body);
                ebt && *ebt == ast::BuiltinType::Enumerated && !elem->enum_values.empty()) {
         auto synth = backend_.synthetic_name(cname, elem->name.empty() ? "Enum" : elem->name);
-        inc_os << backend_.format_type_reference(synth, filename_for(synth)) << "\n";
+        write_type_reference(synth, inc_os);
+        inc_os << "\n";
     }
     SeqOfSpec spec;
     spec.type_name = cname;
