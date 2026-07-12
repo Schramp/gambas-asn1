@@ -12,9 +12,9 @@
 //! `widget_generated.rs` (gambas-asn1#282) is the mixed-type broaden-past-
 //! INTEGER counterpart — `Widget` from `tests/asn1/rust_wide_types_test.asn1`
 //! (`INTEGER`/`BOOLEAN`/`OCTET STRING`/`IA5String` members). Its expected
-//! wire bytes were captured from the real C++ runtime (`BerCodec` encoding
-//! the equivalent C++ `Widget` value), not hand-derived, the same
-//! ground-truth cross-check done ad hoc for XER in #281.
+//! wire bytes (BER and, since gambas-asn1#283, XER) were captured from the
+//! real C++ runtime (`BerCodec`/`XerCodec` encoding the equivalent C++
+//! `Widget` value), not hand-derived.
 
 include!(concat!(env!("OUT_DIR"), "/point_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/widget_generated.rs"));
@@ -110,5 +110,39 @@ mod tests {
     fn widget_rejects_wrong_tag() {
         let data = [0x02, 0x01, 0x05]; // INTEGER tag, not SEQUENCE
         assert!(Widget::decode(&data).is_err());
+    }
+
+    #[test]
+    fn widget_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
+        // Captured by encoding the equivalent C++ Widget value via
+        // XerCodec::instance().encode() directly (see module doc).
+        let expected =
+            "<Widget>\n    <id>7</id>\n    <flag><true/></flag>\n    <data>6869</data>\n    <label>hi</label>\n</Widget>\n";
+        assert_eq!(widget(7, true, b"hi", "hi").encode_xer(), expected);
+    }
+
+    #[test]
+    fn widget_xer_round_trip() {
+        let w = widget(7, true, b"hi", "hi");
+        assert_eq!(Widget::decode_xer(&w.encode_xer()).unwrap(), w);
+    }
+
+    #[test]
+    fn widget_xer_false_and_empty_round_trip() {
+        let w = widget(0, false, b"", "");
+        assert_eq!(Widget::decode_xer(&w.encode_xer()).unwrap(), w);
+    }
+
+    #[test]
+    fn widget_xer_escapes_label() {
+        let w = widget(1, true, b"\x00", "a<b>&c");
+        let xml = w.encode_xer();
+        assert!(xml.contains("<label>a&lt;b&gt;&amp;c</label>"));
+        assert_eq!(Widget::decode_xer(&xml).unwrap(), w);
+    }
+
+    #[test]
+    fn widget_xer_rejects_wrong_outer_tag() {
+        assert!(Widget::decode_xer("<NotWidget></NotWidget>").is_err());
     }
 }

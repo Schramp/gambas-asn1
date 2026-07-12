@@ -11,7 +11,10 @@
 //! on top of these primitives, using each member's own `name` as the element
 //! tag (BER's `Asn1Value::ber_encode` writes its own tag because BER tags
 //! are type-derived; XER tags are *field*-derived, so the walker — not
-//! `Asn1Value` — owns tag wrapping).
+//! `Asn1Value` — owns tag wrapping). `decode_sequence_xer` hands each
+//! member's `Asn1Value::xer_decode_into` the `XerReader` directly (revised
+//! in gambas-asn1#283 — see `value.rs`'s trait doc for why a pre-extracted
+//! `&str` doesn't work for every BASIC-XER content shape, e.g. BOOLEAN).
 //!
 //! Definite in-memory document only (mirrors `XerDecodeStream`, no
 //! streaming parser) — matches the C++ side's own scope note.
@@ -258,8 +261,7 @@ pub fn decode_sequence_xer<T: Default>(spec: &SequenceSpec<T>, xml: &str) -> Res
     let mut result = T::default();
     for m in spec.members {
         r.consume_open_tag(m.name)?;
-        let text = r.read_text_content();
-        (m.get_mut)(&mut result).xer_decode_into(text)?;
+        (m.get_mut)(&mut result).xer_decode_into(&mut r)?;
         r.consume_close_tag(m.name)?;
     }
     r.consume_close_tag(spec.name)?;
