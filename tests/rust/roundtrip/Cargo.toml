@@ -3,7 +3,8 @@ name = "roundtrip-test"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "gambas-asn1#219: real codegen -> asn1cpp-ber roundtrip check. Not meant to be built directly with `cargo build` — src/point_generated.rs is produced by run_roundtrip_test.py before each `cargo test` and isn't committed."
+build = "build.rs"
+description = "gambas-asn1#219: real codegen -> asn1cpp-ber roundtrip check. build.rs pulls in the compiler-generated Point.rs from the directory named by ASN1CPP_RUST_GEN_DIR (set by tests/CMakeLists.txt's rust_roundtrip_test) — needs that env var set, so this isn't meant to be built with a bare `cargo build`."
 
 [lib]
 path = "src/lib.rs"
