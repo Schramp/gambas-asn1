@@ -515,14 +515,25 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "}\n\n";
     }
 
-    // gambas-asn1#284: table-driven, mirroring emit_sequence_definition's
+    // gambas-asn1#284/#285: table-driven, mirroring emit_sequence_definition's
     // approach (#278/#282) and the generic runtime walker
-    // (encode_choice/decode_choice, rust-runtime/ber/src/choice.rs) instead
-    // of a per-type match/if chain. Same scope restriction as SEQUENCE:
-    // only CHOICEs whose every alternative has a real Asn1Value BER impl
-    // (INTEGER, BOOLEAN, OCTET STRING, IA5String) get a real descriptor
-    // table + encode()/decode(); anything else still gets only the enum +
-    // accessor functions above.
+    // (encode_choice/decode_choice/encode_choice_xer/decode_choice_xer,
+    // rust-runtime/ber/src/choice.rs) instead of a per-type match/if chain.
+    // Same scope restriction as SEQUENCE: only CHOICEs whose every
+    // alternative has a real Asn1Value BER impl (INTEGER, BOOLEAN, OCTET
+    // STRING, IA5String) get a real descriptor table + encode()/decode();
+    // anything else still gets only the enum + accessor functions above.
+    //
+    // Unlike SEQUENCE, BER and XER coverage aren't gated separately here:
+    // AlternativeSpec<T>'s xer_encode/xer_decode_into are struct fields, not
+    // a separate trait-dispatched leg, so the table can't be constructed at
+    // all without them — there's no way to emit a "BER-only" CHOICE table
+    // the way emit_sequence_definition can emit BER-only encode()/decode()
+    // and skip encode_xer()/decode_xer(). Not a live gap today: every
+    // builtin type covered here already has both legs (Asn1Value's XER leg
+    // landed for all four in #283, before this issue). Would need
+    // revisiting if a future BER-only type is added to rust_alt_ber_tag's
+    // switch before its XER leg lands.
     auto rust_alt_ber_tag = [](const ChoiceAlternativeSpec& a) -> const char* {
         if (!a.mbuiltin) return a.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
         switch (*a.mbuiltin) {
@@ -557,6 +568,16 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             os << "            asn1cpp_ber::value::Asn1Value::ber_decode_into(&mut v, r)?;\n";
             os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
             os << "        },\n";
+            os << std::format("        xer_encode: |x, out| if let {}::{}(v) = x {{\n",
+                              spec.type_name, vname);
+            os << "            asn1cpp_ber::value::Asn1Value::xer_encode(v, out);\n";
+            os << "            true\n";
+            os << "        } else { false },\n";
+            os << "        xer_decode_into: |r| {\n";
+            os << std::format("            let mut v: {} = Default::default();\n", a.mtype);
+            os << "            asn1cpp_ber::value::Asn1Value::xer_decode_into(&mut v, r)?;\n";
+            os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+            os << "        },\n";
             os << "    },\n";
         }
         os << "];\n\n";
@@ -573,6 +594,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "    }\n\n";
         os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_ber::DecodeError> {\n";
         os << std::format("        asn1cpp_ber::choice::decode_choice(&{}, data)\n", spec_ident);
+        os << "    }\n\n";
+        os << "    pub fn encode_xer(&self) -> String {\n";
+        os << std::format("        asn1cpp_ber::choice::encode_choice_xer(&{}, self)\n", spec_ident);
+        os << "    }\n\n";
+        os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_ber::DecodeError> {\n";
+        os << std::format("        asn1cpp_ber::choice::decode_choice_xer(&{}, xml)\n", spec_ident);
         os << "    }\n";
         os << "}\n\n";
     }
