@@ -1568,6 +1568,7 @@ void Generator::emit_choice(const ast::TypeDef& def, TypeOutputSession& session)
 void Generator::emit_type_files(const std::string& name, const ast::TypeDef& def,
                                  const ast::Module& mod) {
     std::string base = filename_for(name);
+    emitted_type_refs_.clear();
     TypeOutputSession session;
     emit_type_body(def, mod, session);
     for (auto& [ext, content] : session.finish()) {
@@ -1579,6 +1580,16 @@ void Generator::emit_type_files(const std::string& name, const ast::TypeDef& def
 }
 
 void Generator::write_type_reference(const std::string& type_name, std::ostream& target) {
+    // gambas-asn1#300: skip a reference this type's declaration output has
+    // already written — gated on backend_.dedupe_type_references() so
+    // CppBackend's generated output (verified byte-identical throughout
+    // this whole Rust-backend effort) stays untouched; #include is
+    // idempotent there, so the existing duplicate-#include behavior is
+    // harmless, just not worth risking a byte-diff to also clean up.
+    // RustBackend's `use crate::X::X;` has no such guard — a duplicate is a
+    // hard compile error (E0252), found on the real ETSI LI PS-PDU schema
+    // (#299/#300).
+    if (backend_.dedupe_type_references() && !emitted_type_refs_.insert(type_name).second) return;
     TypeOutputSession ref;
     ref.seed(backend_.declaration_extension(), target);
     backend_.emit_type_reference(type_name, filename_for(type_name), ref);

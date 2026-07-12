@@ -641,6 +641,24 @@ public:
         throw std::logic_error("emit_type_reference: not implemented for this backend");
     }
 
+    /// @brief Whether `Generator::write_type_reference` should skip a call
+    ///        to `emit_type_reference` for a type this file already
+    ///        referenced once (gambas-asn1#300).
+    /// @note Default `false` (CppBackend): `#include` is idempotent, so
+    ///       today's duplicate `#include "X.hpp"` lines (one per member/
+    ///       alternative referencing the same type — a real, pre-existing
+    ///       pattern in generated output, confirmed on the real ETSI LI
+    ///       PS-PDU schema) are harmless. Deduping them too would be a
+    ///       strict improvement but was deliberately left alone here to
+    ///       avoid changing a single byte of CppBackend's output, which has
+    ///       been verified byte-identical through every prior step of the
+    ///       Rust-backend effort (#214) — not worth the risk for a cosmetic
+    ///       win. RustBackend overrides this to `true`: `use crate::X::X;`
+    ///       has no such guard: a duplicate is a hard compile error
+    ///       (E0252), the single largest error category found running the
+    ///       ETSI schema through `--target=rust` (#299).
+    virtual bool dedupe_type_references() const { return false; }
+
     /// @brief Emit a forward declaration for a type this file only needs as
     ///        an incomplete type (e.g. an optional member stored behind a
     ///        pointer, to break a circular #include). Backends with no
