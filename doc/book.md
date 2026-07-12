@@ -506,8 +506,8 @@ ContactBook DEFINITIONS IMPLICIT TAGS ::= BEGIN
     Contact ::= SEQUENCE {
         name     UTF8String (SIZE (1..100)),
         email    IA5String (SIZE (0..254))  OPTIONAL,
-        phone    PhoneNumber                OPTIONAL,
-        address  Address                    OPTIONAL
+        phone    [0] PhoneNumber            OPTIONAL,
+        address  [1] Address                OPTIONAL
     }
 
     ContactList ::= SEQUENCE OF Contact
@@ -516,7 +516,10 @@ END
 ```
 
 This schema defines four types. `Contact` has one mandatory field (`name`) and three
-optional fields. `ContactList` is an unbounded list of contacts.
+optional fields. `ContactList` is an unbounded list of contacts. `phone` and `address`
+need the explicit `[0]`/`[1]` tags: both are OPTIONAL SEQUENCE-typed fields, so without a
+tag of their own they'd both carry the same UNIVERSAL SEQUENCE tag — the decoder would
+have no way to tell, from the wire tag alone, which optional field (if either) is present.
 
 Generate C++ code:
 
