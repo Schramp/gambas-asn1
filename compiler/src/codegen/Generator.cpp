@@ -271,6 +271,57 @@ bool Generator::is_class_type(const ast::TypeDef& m) const {
     return false;
 }
 
+// gambas-asn1#303: is `target` (an ASN.1 type name) reachable from `from`
+// by following further class-typed member references? DFS over the
+// resolved-type graph, bounded by `visited` (finite — one entry per
+// distinct named class type actually reachable, plus one per anonymous
+// inline member visited along the way).
+bool Generator::type_reaches(const ast::TypeDef& from, const std::string& target,
+                              std::set<std::string>& visited) const {
+    for (const auto& m : from.members) {
+        if (!m || m->is_extension_marker) continue;
+        const ast::TypeDef* member_def = nullptr;
+        std::string member_key;
+        if (m->is_sequence() || m->is_choice() || m->is_set()) {
+            // Anonymous inline class-typed member — no independent ASN.1
+            // name to compare against `target`, but still needs a unique
+            // `visited` key so a cycle purely among anonymous members
+            // terminates.
+            member_def = m.get();
+            member_key = std::format("$anon:{}", static_cast<const void*>(m.get()));
+        } else if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
+            auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
+            if (direct && (direct->is_sequence() || direct->is_choice() || direct->is_set())) {
+                member_def = direct.get();
+                member_key = tr->type_name;
+            }
+        }
+        if (!member_def) continue;
+        if (member_key == target) return true;
+        if (!visited.insert(member_key).second) continue; // already visited, not a new cycle path
+        if (type_reaches(*member_def, target, visited)) return true;
+    }
+    return false;
+}
+
+// gambas-asn1#303: does member `m`'s class type eventually reference
+// `enclosing_name` again (a real ASN.1 type-reference cycle)? Only
+// meaningful when `m` is itself class-typed (caller should check
+// is_class_type(m) first, or accept the always-false short-circuit below).
+bool Generator::member_type_in_cycle(const ast::TypeDef& m, const std::string& enclosing_name) const {
+    const ast::TypeDef* member_def = nullptr;
+    if (m.is_sequence() || m.is_choice() || m.is_set()) {
+        member_def = &m;
+    } else if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+        auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
+        if (direct && (direct->is_sequence() || direct->is_choice() || direct->is_set()))
+            member_def = direct.get();
+    }
+    if (!member_def) return false;
+    std::set<std::string> visited;
+    return type_reaches(*member_def, enclosing_name, visited);
+}
+
 // Collect flattened BER dispatch tags for one CHOICE alternative (X.690 §8.13,
 // X.680 §24.6). If the alternative has its own BER tag, add one entry.
 // If it resolves to an untagged CHOICE (empty natural tag), recurse into its
@@ -1238,6 +1289,8 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         row.mtype = cpp_type_for(m);
         if (auto* bt = std::get_if<ast::BuiltinType>(&m.body))
             row.mbuiltin = *bt;
+        if (is_class_type(m))
+            row.member_type_in_cycle = member_type_in_cycle(m, def.name);
         row.optional = optional;
         auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
         row.eff_tag = tag_result.tag_literal;

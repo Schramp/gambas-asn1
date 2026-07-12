@@ -248,6 +248,28 @@ struct SequenceMemberSpec {
     // a backend the real discriminant to dispatch on; unset (nullopt) for
     // TypeRef/SEQUENCE/CHOICE/SEQUENCE OF/ENUMERATED members.
     std::optional<ast::BuiltinType> mbuiltin;
+    // gambas-asn1#303: true when this member's class type (direct
+    // SEQUENCE/CHOICE/SET, or a TypeRef resolving to one) is reachable back
+    // to the *enclosing* type by following further class-typed member
+    // chains — i.e. this member sits on a real ASN.1 type-reference cycle
+    // (Generator::member_type_in_cycle). RustBackend uses this to decide
+    // `Box<T>` vs plain `T` inside the field's `Option<...>` (a
+    // self-referential/mutually-recursive struct has no finite size in Rust
+    // without heap indirection somewhere in the cycle — X.680 places no
+    // restriction against a type referencing itself, so real schemas do
+    // this; found on the ETSI LI PS-PDU schema, #299).
+    //
+    // Deliberately NOT "is this member class-typed" alone: C++ boxes every
+    // OPTIONAL member unconditionally via `std::unique_ptr<T>`
+    // (CppBackend.cpp: "matches asn1c semantics", a lifecycle/forward-decl
+    // convention unrelated to recursion), but that's C++'s own reason, not
+    // a recursion requirement — Rust's `Option<T>` needs no heap indirection
+    // at all for the overwhelming majority of optional members (1 real
+    // cycle found across ~1044 types on the real schema), so boxing
+    // everything to mirror C++ would be needless indirection with no
+    // upside. Only cycle-participating members get boxed.
+    bool        member_type_in_cycle = false;
+    bool        is_class_type = false;
     bool        optional = false;
     bool        is_explicit = false;
     bool        has_default = false;
