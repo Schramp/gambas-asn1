@@ -291,6 +291,13 @@ struct ChoiceAlternativeSpec {
     std::string eff_tag;
     std::string tdref;
     bool        is_explicit = false;
+
+    // gambas-asn1#284: same rationale as SequenceMemberSpec::mbuiltin
+    // (see that field's comment) — a real backend-agnostic discriminant
+    // for per-alternative BER tag selection, since `mtype` collapses
+    // distinct ASN.1 types and `eff_tag` is C++-only text. Unset for
+    // TypeRef/SEQUENCE/CHOICE/SEQUENCE OF/ENUMERATED alternatives.
+    std::optional<ast::BuiltinType> mbuiltin;
 };
 
 /// @brief Backend-agnostic decision for one CHOICE type (X.680 §28). The
