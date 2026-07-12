@@ -58,6 +58,24 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
     os << "        }\n";
     os << "    }\n";
     os << "}\n\n";
+
+    // gambas-asn1#311: a manual Default impl (not #[derive(Default)] — no
+    // stable "pick this variant" attribute exists for a plain fieldless
+    // enum without unstable features) picking the first declared value, so
+    // a SEQUENCE with a *required* (non-OPTIONAL) member of this type can
+    // still derive Default itself. X.680 has no "default enumeration value"
+    // concept to defer to (unlike a member's own DEFAULT clause, handled
+    // separately by emit_default_setter) — first-declared is an arbitrary
+    // but deterministic, harmless choice, same spirit as C's "first enum
+    // constant is the zero value" convention. Skipped only if `values` is
+    // empty, which isn't valid ASN.1 ENUMERATED syntax (X.680 §20.1
+    // requires at least one enumeration) — defensive, not a real case.
+    if (!spec.values.empty()) {
+        os << std::format("impl Default for {} {{\n", tname);
+        os << std::format("    fn default() -> Self {{ {}::{} }}\n",
+                           tname, variant_name(*this, spec.values.front().asn1_name));
+        os << "}\n\n";
+    }
 }
 
 void RustBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const {
@@ -522,6 +540,25 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << std::format("pub fn {}(x: &mut {}) -> &mut {} {{\n", fname, spec.type_name, a.mtype);
         os << std::format("    match x {{ {}::{}(v) => v, _ => panic!(\"wrong variant\") }}\n",
                            spec.type_name, variant_name(*this, a.asn1_name));
+        os << "}\n\n";
+    }
+
+    // gambas-asn1#311: manual Default impl, first-declared alternative with
+    // its own type's Default value — same rationale as ENUMERATED's Default
+    // impl just above this call in the file (emit_enumerated_definition):
+    // X.680 CHOICE (§28) has no "default alternative" concept at all (even
+    // less than ENUMERATED's arbitrary-but-defensible "first value"), but
+    // without *some* Default a SEQUENCE with a required (non-OPTIONAL)
+    // CHOICE-typed member can't derive Default itself — the actual bug
+    // found on the real ETSI LI PS-PDU schema (193 compile errors, #299).
+    // Requires the first alternative's own mtype to implement Default,
+    // which recursively holds for every type this backend generates
+    // (primitives, String, Vec<T>, and now every ENUMERATED/CHOICE too).
+    if (!spec.alternatives.empty()) {
+        const auto& first = spec.alternatives.front();
+        os << std::format("impl Default for {} {{\n", spec.type_name);
+        os << std::format("    fn default() -> Self {{ {}::{}(Default::default()) }}\n",
+                           spec.type_name, variant_name(*this, first.asn1_name));
         os << "}\n\n";
     }
 
