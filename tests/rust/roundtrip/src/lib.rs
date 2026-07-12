@@ -16,10 +16,10 @@
 //! real C++ runtime (`BerCodec`/`XerCodec` encoding the equivalent C++
 //! `Widget` value), not hand-derived.
 //!
-//! `selector_generated.rs` (gambas-asn1#284) is the first table-driven
-//! CHOICE — `Selector` from `tests/asn1/rust_choice_test.asn1`, same four
-//! alternative kinds `Widget` covers for SEQUENCE. Expected wire bytes
-//! captured from the real C++ runtime the same way.
+//! `selector_generated.rs` (gambas-asn1#284 BER, #285 XER) is the first
+//! table-driven CHOICE — `Selector` from `tests/asn1/rust_choice_test.asn1`,
+//! same four alternative kinds `Widget` covers for SEQUENCE. Expected wire
+//! bytes (both formats) captured from the real C++ runtime the same way.
 
 include!(concat!(env!("OUT_DIR"), "/point_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/widget_generated.rs"));
@@ -196,5 +196,48 @@ mod tests {
     #[test]
     fn selector_rejects_empty_input() {
         assert!(Selector::decode(&[]).is_err());
+    }
+
+    #[test]
+    fn selector_num_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
+        assert_eq!(Selector::Num(7).encode_xer(), "\n    <num>7</num>");
+    }
+
+    #[test]
+    fn selector_flag_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
+        assert_eq!(Selector::Flag(true).encode_xer(), "\n    <flag><true/></flag>");
+    }
+
+    #[test]
+    fn selector_data_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
+        assert_eq!(Selector::Data(vec![0x68, 0x69]).encode_xer(), "\n    <data>6869</data>");
+    }
+
+    #[test]
+    fn selector_label_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
+        assert_eq!(Selector::Label("hi".to_string()).encode_xer(), "\n    <label>hi</label>");
+    }
+
+    #[test]
+    fn selector_xer_round_trips_every_alternative() {
+        for s in [
+            Selector::Num(-42),
+            Selector::Flag(false),
+            Selector::Data(vec![0xAA, 0xBB]),
+            Selector::Label("round-trip".to_string()),
+        ] {
+            let xml = s.encode_xer();
+            assert_eq!(Selector::decode_xer(&xml).unwrap(), s);
+        }
+    }
+
+    #[test]
+    fn selector_xer_rejects_unrecognized_element() {
+        assert!(Selector::decode_xer("<nope>1</nope>").is_err());
+    }
+
+    #[test]
+    fn selector_xer_rejects_empty_input() {
+        assert!(Selector::decode_xer("").is_err());
     }
 }
