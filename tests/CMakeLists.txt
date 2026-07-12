@@ -1289,6 +1289,14 @@ if(WITH_RUST_COMPILE_CHECK)
     set_tests_properties(rust_compile_check PROPERTIES TIMEOUT 60 LABELS "rust")
 endif()
 
+# ---- rust-runtime/ber cargo test (gambas-asn1#218) -------------------------
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME ber_runtime_cargo_test
+        COMMAND ${CARGO_EXECUTABLE} test --manifest-path
+                ${CMAKE_SOURCE_DIR}/rust-runtime/ber/Cargo.toml)
+    set_tests_properties(ber_runtime_cargo_test PROPERTIES TIMEOUT 120 LABELS "rust")
+endif()
+
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
 # Enable with: cmake -DWITH_SMOKE_MATRIX=ON  (default OFF; see Release Testing in doc/book.md)
 if(WITH_SMOKE_MATRIX)
