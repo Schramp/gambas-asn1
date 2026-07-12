@@ -336,42 +336,50 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     os << "    }\n";
     os << "}\n\n";
 
-    // gambas-asn1#219: first real codegen -> asn1cpp-ber roundtrip. Scoped
-    // narrowly on purpose — only SEQUENCEs whose every member is a plain
-    // required INTEGER (native_int_type's S64 default, "i64") get real
-    // encode()/decode(); anything else (OPTIONAL members, CHOICE/SEQUENCE
-    // OF/string members, ...) still gets only the struct shape, same as
-    // before this issue. A general table-driven Rust codec (mirroring the
-    // C++ side's asn_MBR_/asn_SPC_/asn_DEF_ descriptor tables) is real
-    // follow-on work, not "prove the pipeline once" scope.
+    // gambas-asn1#278: table-driven, mirroring asn_MBR_/asn_SPC_ + the
+    // generic SequenceBerHandler dispatch (runtime/src/BerCodec.cpp) instead
+    // of #219's straight-line per-type encode()/decode() bodies. Scoped
+    // narrowly on purpose, same as #219 before it — only SEQUENCEs whose
+    // every member is a plain required INTEGER (native_int_type's S64
+    // default, "i64") get a real descriptor table + encode()/decode();
+    // anything else (OPTIONAL members, CHOICE/SEQUENCE OF/string members,
+    // ...) still gets only the struct shape. Broadening member-type/tag
+    // coverage is real follow-on work, not this issue's scope — the point
+    // here is the *shape* (table + accessor functions + generic runtime
+    // walker), not covering every construct.
     bool integer_only = !spec.members.empty() &&
         std::all_of(spec.members.begin(), spec.members.end(),
                      [](const SequenceMemberSpec& m) { return !m.optional && m.mtype == "i64"; });
     if (integer_only) {
+        std::string members_ident = std::format("{}_MEMBERS", to_screaming_snake_case(spec.type_name));
+        std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
+
+        os << std::format("static {}: [asn1cpp_ber::sequence::MemberDescriptor<{}>; {}] = [\n",
+                          members_ident, spec.type_name, spec.members.size());
+        for (const auto& m : spec.members) {
+            os << "    asn1cpp_ber::sequence::MemberDescriptor {\n";
+            os << std::format("        name: \"{}\",\n", m.asn1_name);
+            os << "        tag: asn1cpp_ber::integer::INTEGER_TAG,\n";
+            os << "        optional: false,\n";
+            os << std::format("        get: |v| &v.{},\n", m.mname);
+            os << std::format("        get_mut: |v| &mut v.{},\n", m.mname);
+            os << "    },\n";
+        }
+        os << "];\n\n";
+
+        os << std::format(
+            "static {}: asn1cpp_ber::sequence::SequenceSpec<{}> = asn1cpp_ber::sequence::SequenceSpec {{\n",
+            spec_ident, spec.type_name);
+        os << "    tag: asn1cpp_ber::sequence::SEQUENCE_TAG,\n";
+        os << std::format("    members: &{},\n", members_ident);
+        os << "};\n\n";
+
         os << std::format("impl {} {{\n", spec.type_name);
         os << "    pub fn encode(&self) -> Vec<u8> {\n";
-        os << "        let mut content = Vec::new();\n";
-        for (const auto& m : spec.members)
-            os << std::format("        asn1cpp_ber::integer::write_integer(&mut content, self.{});\n", m.mname);
-        os << "        let mut out = Vec::new();\n";
-        os << "        asn1cpp_ber::writer::write_constructed(&mut out, asn1cpp_ber::sequence::SEQUENCE_TAG, &content);\n";
-        os << "        out\n";
+        os << std::format("        asn1cpp_ber::sequence::encode_sequence(&{}, self)\n", spec_ident);
         os << "    }\n\n";
         os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_ber::DecodeError> {\n";
-        os << "        let mut r = asn1cpp_ber::Reader::new(data);\n";
-        os << "        let tlv = r.read_tlv()?;\n";
-        os << "        if tlv.tag != asn1cpp_ber::sequence::SEQUENCE_TAG {\n";
-        os << std::format(
-            "            return Err(asn1cpp_ber::DecodeError {{ message: format!(\"expected SEQUENCE tag, got {{:?}}\", tlv.tag), pos: r.pos() }});\n");
-        os << "        }\n";
-        os << "        let mut inner = asn1cpp_ber::Reader::new(tlv.value);\n";
-        for (const auto& m : spec.members)
-            os << std::format("        let {} = asn1cpp_ber::integer::read_integer(&mut inner)?;\n", m.mname);
-        os << std::format("        Ok({} {{ {} }})\n", spec.type_name, [&spec] {
-            std::string fields;
-            for (const auto& m : spec.members) fields += m.mname + ", ";
-            return fields;
-        }());
+        os << std::format("        asn1cpp_ber::sequence::decode_sequence(&{}, data)\n", spec_ident);
         os << "    }\n";
         os << "}\n\n";
     }

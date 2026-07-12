@@ -8,9 +8,9 @@
 //!
 //! Scope (per gambas-asn1#218): TLV primitives, plus encode/decode for
 //! INTEGER, OCTET STRING, SEQUENCE, and CHOICE — the four constructs the
-//! issue named. SEQUENCE and CHOICE are one hand-written example type each
-//! (`Point`, `Choice`), not table-driven — wiring real generated types to
-//! this runtime is gambas-asn1#219's job, not this crate's.
+//! issue named. SEQUENCE is table-driven (gambas-asn1#278, see
+//! `sequence`/`value` module docs); CHOICE is still one hand-written example
+//! (`Choice`) — table-driving it is real follow-on scope, not done here.
 //!
 //! Definite-length only; indefinite-length (X.690 §8.1.3.2) isn't
 //! implemented (see `reader` module docs).
@@ -36,6 +36,7 @@ pub mod octet_string;
 pub mod reader;
 pub mod sequence;
 pub mod tag;
+pub mod value;
 pub mod writer;
 
 pub use choice::Choice;
