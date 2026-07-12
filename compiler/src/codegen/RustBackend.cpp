@@ -416,10 +416,21 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // Rust "i64" via native_int_type's default storage kind, so the mtype
     // fallback below (not just a defensive no-op) is what makes an aliased
     // INTEGER member participate in the descriptor table at all.
+    // gambas-asn1#315: `mbuiltin == Integer` only says the member *is* an
+    // INTEGER, not which Rust storage type classify_integer_storage/
+    // native_int_type actually picked for it (i64 default; u64/i128/
+    // Vec<u8> for wider constrained ranges — same IntStorageKind the C++
+    // side also branches on). Asn1Value is only implemented for i64
+    // (rust-runtime/ber/src/value.rs), so the INTEGER case must check
+    // `mtype == "i64"` same as the `!mbuiltin` fallback does one line
+    // below — found on the real ETSI LI PS-PDU schema (#299), where a
+    // semi-constrained-wide INTEGER member picked u64 storage and the old
+    // unconditional `case Integer:` still emitted a table row for it,
+    // producing `the trait bound u64: Asn1Value is not satisfied`.
     auto rust_member_ber_tag = [](const SequenceMemberSpec& m) -> const char* {
         if (!m.mbuiltin) return m.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
         switch (*m.mbuiltin) {
-        case ast::BuiltinType::Integer:     return "asn1cpp_ber::integer::INTEGER_TAG";
+        case ast::BuiltinType::Integer:     return m.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
         case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
         case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
         case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
@@ -437,7 +448,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     auto rust_member_xer_ready = [](const SequenceMemberSpec& m) -> bool {
         if (!m.mbuiltin) return m.mtype == "i64";
         switch (*m.mbuiltin) {
-        case ast::BuiltinType::Integer:
+        case ast::BuiltinType::Integer:     return m.mtype == "i64";  // #315: same gate as BER
         case ast::BuiltinType::Boolean:
         case ast::BuiltinType::OctetString:
         case ast::BuiltinType::Ia5String:
@@ -591,10 +602,13 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // landed for all four in #283, before this issue). Would need
     // revisiting if a future BER-only type is added to rust_alt_ber_tag's
     // switch before its XER leg lands.
+    // gambas-asn1#315: same u64/i128-vs-i64 storage gate as
+    // emit_sequence_definition's rust_member_ber_tag — see that lambda's
+    // comment for the full rationale.
     auto rust_alt_ber_tag = [](const ChoiceAlternativeSpec& a) -> const char* {
         if (!a.mbuiltin) return a.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
         switch (*a.mbuiltin) {
-        case ast::BuiltinType::Integer:     return "asn1cpp_ber::integer::INTEGER_TAG";
+        case ast::BuiltinType::Integer:     return a.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
         case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
         case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
         case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
