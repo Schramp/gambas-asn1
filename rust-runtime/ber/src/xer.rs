@@ -6,18 +6,18 @@
 //! (`runtime/include/asn1cpp/codec/XerCodec.hpp`) — same escaping rules
 //! (only `<`/`>`/`&` on encode; `&lt;`/`&gt;`/`&amp;`/`&quot;`/`&apos;` plus
 //! numeric character references `&#NN;`/`&#xNN;` on decode), same
-//! whitespace-tolerant tag grammar. No table-driven usage yet — that's
-//! gambas-asn1#281, which will call `write_open_tag`/`write_close_tag`/
-//! `XerReader::consume_open_tag`/`consume_close_tag`/`read_text_content` from
-//! a generic `SequenceSpec<T>`-driven walker using each member's own `name`
-//! as the element tag (BER's `Asn1Value::ber_encode` writes its own tag
-//! because BER tags are type-derived; XER tags are *field*-derived, so the
-//! walker — not `Asn1Value` — owns tag wrapping).
+//! whitespace-tolerant tag grammar. `encode_sequence_xer`/
+//! `decode_sequence_xer` (gambas-asn1#281) are the table-driven walker built
+//! on top of these primitives, using each member's own `name` as the element
+//! tag (BER's `Asn1Value::ber_encode` writes its own tag because BER tags
+//! are type-derived; XER tags are *field*-derived, so the walker — not
+//! `Asn1Value` — owns tag wrapping).
 //!
 //! Definite in-memory document only (mirrors `XerDecodeStream`, no
 //! streaming parser) — matches the C++ side's own scope note.
 
 use crate::reader::DecodeError;
+use crate::sequence::SequenceSpec;
 
 /// Append `s` to `out` with XER's three encode-time escapes (X.693 §8.2).
 /// Mirrors `xer_detail::xer_escape`.
@@ -220,6 +220,50 @@ pub fn write_close_tag(out: &mut String, name: &str) {
     out.push_str("</");
     out.push_str(name);
     out.push('>');
+}
+
+/// Generic SEQUENCE XER encoder — the XER analogue of
+/// `encode_sequence` (`sequence.rs`) and the Rust equivalent of
+/// `SequenceXerHandler::encode` (`runtime/src/XerCodec.cpp`). Walks the
+/// *same* `SequenceSpec<T>`/`MemberDescriptor<T>` table `encode_sequence`
+/// already uses — one table drives both wire formats (gambas-asn1#280's
+/// crate doc). Output shape matches the C++ side for a flat (non-nested)
+/// SEQUENCE: `<Name>\n    <member>text</member>\n...</Name>\n`, 4-space
+/// member indent. No OPTIONAL suppression / nested-SEQUENCE indent tracking
+/// yet — out of scope until a member type needing it lands (matches
+/// `encode_sequence`'s own scope note).
+pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
+    let mut out = String::new();
+    write_open_tag(&mut out, spec.name);
+    out.push('\n');
+    for m in spec.members {
+        out.push_str("    ");
+        write_open_tag(&mut out, m.name);
+        (m.get)(value).xer_encode(&mut out);
+        write_close_tag(&mut out, m.name);
+        out.push('\n');
+    }
+    write_close_tag(&mut out, spec.name);
+    out.push('\n');
+    out
+}
+
+/// Generic SEQUENCE XER decoder — the XER analogue of `decode_sequence`
+/// (`sequence.rs`) and the Rust equivalent of `SequenceXerHandler::decode`.
+/// `T::default()` provides the initial value, each member is decoded in
+/// table order directly into its field.
+pub fn decode_sequence_xer<T: Default>(spec: &SequenceSpec<T>, xml: &str) -> Result<T, DecodeError> {
+    let mut r = XerReader::new(xml);
+    r.consume_open_tag(spec.name)?;
+    let mut result = T::default();
+    for m in spec.members {
+        r.consume_open_tag(m.name)?;
+        let text = r.read_text_content();
+        (m.get_mut)(&mut result).xer_decode_into(text)?;
+        r.consume_close_tag(m.name)?;
+    }
+    r.consume_close_tag(spec.name)?;
+    Ok(result)
 }
 
 #[cfg(test)]
