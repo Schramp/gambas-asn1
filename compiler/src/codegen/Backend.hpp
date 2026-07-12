@@ -382,6 +382,28 @@ public:
         throw std::logic_error("native_int_type: not implemented for this backend");
     }
 
+    /// @brief Format a resolved `TagSpec` (class/number/constructed — see
+    ///        struct doc, already backend-agnostic data) as this backend's
+    ///        tag-literal syntax, e.g. `"asn1::Tag{...}"` in C++.
+    /// @param tag_spec Resolved tag decision (`Generator::tag_spec_for`/
+    ///        `natural_tag_spec_for`).
+    /// @note gambas-asn1#290: previously a plain namespace-level free
+    ///       function (`format_tag_literal` in `CppBackend.cpp`) called
+    ///       directly by `Generator::tag_literal()`/`natural_tag_for()`
+    ///       regardless of the active backend — always produced C++ syntax,
+    ///       leaking into `SequenceMemberSpec::eff_tag`/
+    ///       `ChoiceAlternativeSpec::eff_tag` even under `--target=rust`.
+    ///       Found on #282 review; not yet load-bearing there (RustBackend
+    ///       computes its own tags via `mbuiltin`), but #284/#285's
+    ///       table-driven CHOICE needs real EXPLICIT/IMPLICIT/auto-tag
+    ///       literals for tagged alternatives, same as this field already
+    ///       provides for C++.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual std::string format_tag_literal(const TagSpec& tag_spec) const {
+        (void)tag_spec;
+        throw std::logic_error("format_tag_literal: not implemented for this backend");
+    }
+
     /// @brief Map a plain builtin type (never INTEGER or ENUMERATED — those
     ///        have their own dispatch, `native_int_type` and a
     ///        backend-computed synthetic name respectively) to this

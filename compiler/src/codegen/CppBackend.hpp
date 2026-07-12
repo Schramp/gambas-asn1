@@ -4,14 +4,6 @@
 
 namespace asn1::codegen {
 
-/// @brief Format a tag decision as a C++ `asn1::Tag{...}` literal string.
-/// @param tag_spec The decision to format (class, number, encoding form).
-/// @return A C++ expression string, e.g. `"asn1::Tag{asn1::TagClass::Context, 1, false}"`.
-/// @note Shared by Generator::tag_literal/natural_tag_for (not yet
-///       migrated — used throughout SEQUENCE/CHOICE emission) and
-///       CppBackend::emit_builtin_alias_definition. Defined in CppBackend.cpp.
-std::string format_tag_literal(const TagSpec& tag_spec);
-
 /// @brief Returns the name of the global `asn_DEF_*` descriptor for a
 ///        restricted built-in string type, or nullptr for types without a
 ///        fixed alphabet (UTF8String, etc.). Pure text lookup — shared
@@ -110,6 +102,12 @@ public:
             default:                        return "asn1::Integer";
         }
     }
+
+    // gambas-asn1#290: was a plain namespace-level free function, called
+    // directly by Generator.cpp regardless of active backend. Defined in
+    // CppBackend.cpp (body unchanged from the free function — verified
+    // byte-identical regen).
+    std::string format_tag_literal(const TagSpec& tag_spec) const override;
 
     std::string native_builtin_type(ast::BuiltinType bt) const override {
         using BT = ast::BuiltinType;
