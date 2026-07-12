@@ -1297,6 +1297,21 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(ber_runtime_cargo_test PROPERTIES TIMEOUT 120 LABELS "rust")
 endif()
 
+# ---- codegen -> asn1cpp-ber roundtrip (gambas-asn1#219) --------------------
+#   Real asn1cpp --target=rust output (Point, from simple_seq.asn1) compiled
+#   and roundtrip-tested against the real asn1cpp-ber crate — not a hand-
+#   written stand-in. Needs both the rustc compile-check gate and the cargo
+#   gate (compiles via cargo, so CARGO_EXECUTABLE is what actually matters).
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_roundtrip_test
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/roundtrip/run_roundtrip_test.py
+                --compiler $<TARGET_FILE:asn1cpp>
+                --cargo ${CARGO_EXECUTABLE}
+                --schema ${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1)
+    set_tests_properties(rust_roundtrip_test PROPERTIES TIMEOUT 60 LABELS "rust")
+endif()
+
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
 # Enable with: cmake -DWITH_SMOKE_MATRIX=ON  (default OFF; see Release Testing in doc/book.md)
 if(WITH_SMOKE_MATRIX)
