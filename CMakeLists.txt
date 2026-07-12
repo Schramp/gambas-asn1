@@ -60,6 +60,25 @@ else()
     message(STATUS "Rust compile-check: OFF (rustc not found)")
 endif()
 
+# ---------------------------------------------------------------------------
+# Optional: rust-runtime/ber cargo test (gambas-asn1#218)
+#   Standalone Rust crate, not a CMake target — this just wires `cargo test`
+#   into the same `ctest` run everything else uses, so `ctest --test-dir
+#   build/tests` is still the one command that exercises the whole tree.
+#   No FFI/link dependency on the C++ build either direction.
+# ---------------------------------------------------------------------------
+find_program(CARGO_EXECUTABLE cargo
+    DOC "cargo (optional — enables rust-runtime/ber cargo test via ctest)")
+cmake_dependent_option(WITH_BER_RUNTIME_TEST
+    "Run rust-runtime/ber's cargo test via ctest"
+    ON "CARGO_EXECUTABLE" OFF)
+
+if(WITH_BER_RUNTIME_TEST)
+    message(STATUS "rust-runtime/ber cargo test: ON  (${CARGO_EXECUTABLE})")
+else()
+    message(STATUS "rust-runtime/ber cargo test: OFF (cargo not found)")
+endif()
+
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 # ---------------------------------------------------------------------------
