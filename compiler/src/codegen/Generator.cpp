@@ -1407,6 +1407,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             bool is_explicit;
             int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
             ast::Tag full_tag;      // for canonical sort
+            std::optional<ast::BuiltinType> mbuiltin;
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1427,8 +1428,10 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             } else if (m->tag.present() && m->tag.cls == ast::TagClass::Context) {
                 tag_ctx_num = m->tag.number;
             }
+            std::optional<ast::BuiltinType> mbuiltin;
+            if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) mbuiltin = *bt;
             rows.push_back({ m->name, eff_tag, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag });
+                             tag_ctx_num, full_tag, mbuiltin });
             ++auto_tag_num;
           }
         }
@@ -1461,6 +1464,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.eff_tag = r.eff_tag;
             alt.tdref = r.tdref;
             alt.is_explicit = r.is_explicit;
+            alt.mbuiltin = r.mbuiltin;
             spec.alternatives.push_back(std::move(alt));
         }
 

@@ -1336,9 +1336,24 @@ add_custom_command(
     COMMENT "Generating Rust from rust_wide_types_test.asn1"
 )
 
+# gambas-asn1#284: table-driven Rust CHOICE codegen. Own output directory,
+# same reason as RUST_WIDE_TYPES_GEN_DIR above (separate compiler
+# invocations can't share one out-dir).
+set(RUST_CHOICE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_choice)
+add_custom_command(
+    OUTPUT  ${RUST_CHOICE_GEN_DIR}/Selector.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_CHOICE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_choice_test.asn1
+                                   -o ${RUST_CHOICE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_choice_test.asn1
+    COMMENT "Generating Rust from rust_choice_test.asn1"
+)
+
 add_custom_target(gen_rust_simple_seq ALL DEPENDS
     ${RUST_SIMPLE_SEQ_GEN_DIR}/Point.rs
-    ${RUST_WIDE_TYPES_GEN_DIR}/Widget.rs)
+    ${RUST_WIDE_TYPES_GEN_DIR}/Widget.rs
+    ${RUST_CHOICE_GEN_DIR}/Selector.rs)
 
 if(WITH_BER_RUNTIME_TEST)
     add_test(NAME rust_roundtrip_test
@@ -1346,7 +1361,7 @@ if(WITH_BER_RUNTIME_TEST)
                 ${CMAKE_CURRENT_SOURCE_DIR}/rust/roundtrip/Cargo.toml)
     set_tests_properties(rust_roundtrip_test PROPERTIES
         TIMEOUT 60 LABELS "rust"
-        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIMPLE_SEQ_GEN_DIR};ASN1CPP_RUST_WIDE_GEN_DIR=${RUST_WIDE_TYPES_GEN_DIR}")
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIMPLE_SEQ_GEN_DIR};ASN1CPP_RUST_WIDE_GEN_DIR=${RUST_WIDE_TYPES_GEN_DIR};ASN1CPP_RUST_CHOICE_GEN_DIR=${RUST_CHOICE_GEN_DIR}")
 endif()
 
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
