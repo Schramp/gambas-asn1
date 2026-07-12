@@ -53,15 +53,8 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
         switch (*bt) {
-        case BT::Boolean:           return "asn1::Boolean";
         case BT::Integer:
             return backend_.native_int_type(classify_integer_storage(def));
-        case BT::Real:              return "asn1::Real";
-        case BT::Null:              return "asn1::Null";
-        case BT::BitString:         return "asn1::BitString";
-        case BT::OctetString:       return "asn1::OctetString";
-        case BT::ObjectIdentifier:  return "asn1::Oid";
-        case BT::RelativeOid:       return "asn1::RelativeOid";
         case BT::Enumerated: {
             auto n = capitalize_first(backend_.type_name(def.name.empty() ? "Enum" : def.name));
             // Inline ENUMERATED member (has enum values, not top-level)
@@ -69,21 +62,8 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
                 return current_type_ + n;
             return n;
         }
-        case BT::Utf8String:        return "asn1::Utf8String";
-        case BT::NumericString:     return "asn1::NumericString";
-        case BT::PrintableString:   return "asn1::PrintableString";
-        case BT::T61String:         return "asn1::T61String";
-        case BT::Ia5String:         return "asn1::Ia5String";
-        case BT::VisibleString:     return "asn1::VisibleString";
-        case BT::GeneralString:     return "asn1::GeneralString";
-        case BT::GraphicString:     return "asn1::GraphicString";
-        case BT::UniversalString:   return "asn1::UniversalString";
-        case BT::BmpString:         return "asn1::BmpString";
-        case BT::VideotexString:    return "asn1::VideotexString";
-        case BT::ObjectDescriptor:  return "asn1::ObjectDescriptor";
-        case BT::UtcTime:           return "asn1::UtcTime";
-        case BT::GeneralizedTime:   return "asn1::GeneralizedTime";
-        case BT::Any:               return "asn1::OctetString";
+        default:
+            return backend_.native_builtin_type(*bt);
         }
     }
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body))
@@ -92,21 +72,21 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         const auto& sof = std::get<ast::SequenceOfType>(def.body);
         const auto& elem = *sof.element;
         if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
-            return std::format("asn1::VectorSeqOf<{}>",
+            return backend_.wrap_collection_type(
                                backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Anon"));
-        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(elem));
+        return backend_.wrap_collection_type(cpp_type_for(elem));
     }
     if (def.is_set_of()) {
         const auto& sof = std::get<ast::SetOfType>(def.body);
         const auto& elem = *sof.element;
         if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
-            return std::format("asn1::VectorSeqOf<{}>",
+            return backend_.wrap_collection_type(
                                backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Anon"));
-        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(elem));
+        return backend_.wrap_collection_type(cpp_type_for(elem));
     }
     if (def.is_sequence() || def.is_choice() || def.is_set())
         return backend_.synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
-    return "asn1::OctetString";
+    return backend_.native_builtin_type(BT::OctetString);
 }
 
 // Returns true if the member encodes as a constructed TLV (SEQUENCE, SET, CHOICE, OF).

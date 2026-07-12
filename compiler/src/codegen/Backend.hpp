@@ -368,6 +368,38 @@ public:
         throw std::logic_error("native_int_type: not implemented for this backend");
     }
 
+    /// @brief Map a plain builtin type (never INTEGER or ENUMERATED — those
+    ///        have their own dispatch, `native_int_type` and a
+    ///        backend-computed synthetic name respectively) to this
+    ///        backend's native storage type for a *member/alternative/
+    ///        element* of that type (e.g. `asn1::Boolean` in C++, `bool` in
+    ///        Rust).
+    /// @param bt Built-in type tag.
+    /// @note gambas-asn1#270: previously a hardcoded switch inside
+    ///       Generator::cpp_type_for, unconditionally returning C++ runtime
+    ///       wrapper type names — broke RustBackend on any SEQUENCE/CHOICE/
+    ///       SEQUENCE OF containing a plain builtin (BOOLEAN, OCTET STRING,
+    ///       etc.) member/alternative/element.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual std::string native_builtin_type(ast::BuiltinType bt) const {
+        (void)bt;
+        throw std::logic_error("native_builtin_type: not implemented for this backend");
+    }
+
+    /// @brief Wrap an already-resolved element type in this backend's
+    ///        native collection type, for a SEQUENCE OF / SET OF that
+    ///        appears as a *member/alternative* type (not a top-level named
+    ///        type — those go through emit_seq_of's own SeqOfSpec::elem_type
+    ///        instead). E.g. `asn1::VectorSeqOf<T>` in C++, `Vec<T>` in Rust.
+    /// @param elem_type Already-resolved native type of the collection's element.
+    /// @note gambas-asn1#270: previously a hardcoded `"asn1::VectorSeqOf<{}>"`
+    ///       format string inside Generator::cpp_type_for.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual std::string wrap_collection_type(const std::string& elem_type) const {
+        (void)elem_type;
+        throw std::logic_error("wrap_collection_type: not implemented for this backend");
+    }
+
     /// @brief Emit both halves of an ENUMERATED type: declaration then definition.
     /// @param spec    Resolved, backend-agnostic decision (see EnumeratedSpec).
     /// @param session Per-type output session (gambas-asn1#262) — the override
