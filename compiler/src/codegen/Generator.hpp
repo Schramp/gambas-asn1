@@ -119,10 +119,9 @@ class Generator {
     std::set<fs::path>      known_files_;         // every path emit_type_files() intended to (re)write
     // gambas-asn1#300: type names already write_type_reference()'d for the
     // current type's declaration output. Cleared at the start of each
-    // emit_type_files() call (one type's generation pass). Only consulted
-    // when backend_.dedupe_type_references() is true (RustBackend) — see
-    // that method's doc for why CppBackend deliberately keeps its existing
-    // (harmless, #include-guarded) duplicate-#include behavior unchanged.
+    // emit_type_files() call (one type's generation pass). Consulted when
+    // backend_.dedupe_type_references() is true (the default — see that
+    // method's doc, Backend.hpp).
     std::set<std::string>   emitted_type_refs_;
                                                     // this run, whether or not its content actually changed —
                                                     // used to remove now-stale generated files (gambas-asn1#262
