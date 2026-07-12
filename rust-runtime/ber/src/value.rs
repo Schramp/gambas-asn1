@@ -32,12 +32,29 @@ use crate::reader::{DecodeError, Reader};
 /// derived (`MemberDescriptor::name`), not type-derived like BER tags, so
 /// tag wrapping is the table-driven walker's job (gambas-asn1#281), not
 /// `Asn1Value`'s. See `xer.rs`'s module doc for the full split rationale.
+///
+/// `xer_encode`/`xer_decode_into` have default bodies (panic / "not yet
+/// implemented" error) so a type can get its BER leg wired (gambas-asn1#282)
+/// without being forced to add a real XER leg in the same change — the
+/// paired follow-up issue (#283) removes the default by adding a real
+/// override, same BER-then-XER pairing every step in this baby-step
+/// sequence (#214) uses. `i64` overrides both (its XER leg landed in #280);
+/// `bool`/`Vec<u8>`/`String` (added in #282) only override the BER leg for
+/// now.
 pub trait Asn1Value {
     fn ber_encode(&self, out: &mut Vec<u8>);
     fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError>;
 
-    fn xer_encode(&self, out: &mut String);
-    fn xer_decode_into(&mut self, text: &str) -> Result<(), DecodeError>;
+    fn xer_encode(&self, _out: &mut String) {
+        unimplemented!("XER leg not yet wired for this type (see gambas-asn1#283)")
+    }
+
+    fn xer_decode_into(&mut self, _text: &str) -> Result<(), DecodeError> {
+        Err(DecodeError::new(
+            "XER leg not yet wired for this type (see gambas-asn1#283)".to_string(),
+            0,
+        ))
+    }
 }
 
 impl Asn1Value for i64 {
@@ -58,6 +75,47 @@ impl Asn1Value for i64 {
         *self = text.trim().parse::<i64>().map_err(|_| {
             DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
         })?;
+        Ok(())
+    }
+}
+
+/// BER leg only (gambas-asn1#282) — XER leg is #283, uses the trait default
+/// (`unimplemented!`/error) until then.
+impl Asn1Value for bool {
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        crate::boolean::write_boolean(out, *self);
+    }
+
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        *self = crate::boolean::read_boolean(r)?;
+        Ok(())
+    }
+}
+
+/// BER leg only (gambas-asn1#282) — XER leg is #283. Maps ASN.1 OCTET
+/// STRING (`native_builtin_type`'s `Vec<u8>` choice, `RustBackend.cpp`).
+impl Asn1Value for Vec<u8> {
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        crate::octet_string::write_octet_string(out, self);
+    }
+
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        *self = crate::octet_string::read_octet_string(r)?.to_vec();
+        Ok(())
+    }
+}
+
+/// BER leg only (gambas-asn1#282) — XER leg is #283. Maps `IA5String`
+/// (`native_builtin_type`'s `String` choice covers all 12 string kinds;
+/// this impl is scoped to IA5String's wire tag specifically, see
+/// `strings.rs`'s module doc on widening to the others).
+impl Asn1Value for String {
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        crate::strings::write_ia5_string(out, self);
+    }
+
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        *self = crate::strings::read_ia5_string(r)?;
         Ok(())
     }
 }
@@ -112,5 +170,47 @@ mod tests {
     fn i64_xer_invalid_text_is_error() {
         let mut got: i64 = 0;
         assert!(got.xer_decode_into("not-a-number").is_err());
+    }
+
+    #[test]
+    fn bool_ber_round_trips_through_the_trait() {
+        let mut out = Vec::new();
+        true.ber_encode(&mut out);
+        assert_eq!(out, vec![0x01, 0x01, 0xFF]);
+
+        let mut r = Reader::new(&out);
+        let mut got = false;
+        got.ber_decode_into(&mut r).unwrap();
+        assert!(got);
+    }
+
+    #[test]
+    fn bool_xer_leg_is_not_yet_implemented() {
+        let mut got = false;
+        assert!(got.xer_decode_into("true").is_err());
+    }
+
+    #[test]
+    fn vec_u8_ber_round_trips_through_the_trait() {
+        let mut out = Vec::new();
+        vec![0x68u8, 0x69].ber_encode(&mut out);
+        assert_eq!(out, vec![0x04, 0x02, 0x68, 0x69]);
+
+        let mut r = Reader::new(&out);
+        let mut got: Vec<u8> = Vec::new();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, vec![0x68, 0x69]);
+    }
+
+    #[test]
+    fn string_ber_round_trips_through_the_trait() {
+        let mut out = Vec::new();
+        "hi".to_string().ber_encode(&mut out);
+        assert_eq!(out, vec![0x16, 0x02, 0x68, 0x69]);
+
+        let mut r = Reader::new(&out);
+        let mut got = String::new();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, "hi");
     }
 }

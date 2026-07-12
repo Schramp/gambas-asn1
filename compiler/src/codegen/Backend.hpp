@@ -233,7 +233,21 @@ struct SequenceMemberSpec {
     std::string asn1_name;      // raw ASN.1 name — MemberDescriptor "name" field
     std::string mtype;          // C++ storage type
     std::string mname;          // member identifier
-    std::string eff_tag;        // pre-formatted tag literal expression
+    std::string eff_tag;        // pre-formatted tag literal expression (C++ syntax only — see note below)
+    // Backend-agnostic builtin-type discriminant, set only when the member
+    // is a direct (non-TypeRef, non-SEQUENCE/CHOICE) builtin type. `mtype`
+    // alone can't drive correct per-member BER tag selection for a second
+    // backend: it deliberately collapses distinct ASN.1 types with the same
+    // native representation (e.g. RustBackend::native_builtin_type maps
+    // OCTET STRING/BIT STRING/OBJECT IDENTIFIER/Any all to "Vec<u8>", and
+    // all 12 string kinds plus UtcTime/GeneralizedTime to "String" — see
+    // that function's doc). `eff_tag` doesn't help either: it's produced by
+    // `format_tag_literal`, a free function that unconditionally emits C++
+    // syntax regardless of the active backend (a real gap, same category as
+    // gambas-asn1#266/#268/#270, out of scope to fix here). `mbuiltin` gives
+    // a backend the real discriminant to dispatch on; unset (nullopt) for
+    // TypeRef/SEQUENCE/CHOICE/SEQUENCE OF/ENUMERATED members.
+    std::optional<ast::BuiltinType> mbuiltin;
     bool        optional = false;
     bool        is_explicit = false;
     bool        has_default = false;

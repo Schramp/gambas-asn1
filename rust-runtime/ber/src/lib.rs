@@ -35,11 +35,13 @@
 //! tag-parsing/escaping primitives (`xer.rs`) while reusing the exact same
 //! member tables.
 
+pub mod boolean;
 pub mod choice;
 pub mod integer;
 pub mod octet_string;
 pub mod reader;
 pub mod sequence;
+pub mod strings;
 pub mod tag;
 pub mod value;
 pub mod writer;
