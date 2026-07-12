@@ -154,6 +154,29 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     }
 }
 
+/// @brief Format a resolved `TagSpec` as an `asn1cpp_ber::tag::Tag` struct
+///        literal. gambas-asn1#290: mirrors `CppBackend::format_tag_literal`
+///        — same input (backend-agnostic `TagSpec`), Rust struct-literal
+///        syntax instead of C++'s. `Tag`/`TagClass` are both `pub` with
+///        `pub` fields (`rust-runtime/ber/src/tag.rs`), constructible this
+///        way from outside the crate; no named constant lookup needed
+///        (unlike `rust_member_ber_tag` in `emit_sequence_definition`,
+///        which picks a specific `..._TAG` constant per builtin type for
+///        *natural* tags) since this covers arbitrary class/number/
+///        constructed combinations, including EXPLICIT/IMPLICIT/auto-tag
+///        context tags that have no named constant.
+std::string RustBackend::format_tag_literal(const TagSpec& tag_spec) const {
+    const char* tag_class_literal;
+    switch (tag_spec.cls) {
+    case ast::TagClass::Universal:   tag_class_literal = "asn1cpp_ber::tag::TagClass::Universal";   break;
+    case ast::TagClass::Application: tag_class_literal = "asn1cpp_ber::tag::TagClass::Application"; break;
+    case ast::TagClass::Private:     tag_class_literal = "asn1cpp_ber::tag::TagClass::Private";     break;
+    default:                         tag_class_literal = "asn1cpp_ber::tag::TagClass::Context";     break;
+    }
+    return std::format("asn1cpp_ber::tag::Tag {{ class: {}, number: {}, constructed: {} }}",
+                        tag_class_literal, tag_spec.number, tag_spec.constructed ? "true" : "false");
+}
+
 /// @brief Emit the Rust type alias (and size-check function, if constrained)
 ///        for a builtin-alias type.
 /// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).

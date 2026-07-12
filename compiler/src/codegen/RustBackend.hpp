@@ -103,6 +103,13 @@ public:
     // Generator::cpp_type_for, not just RustBackend's own emit_* methods).
     std::string native_builtin_type(ast::BuiltinType bt) const override;
 
+    // gambas-asn1#290: Generator::tag_literal()/natural_tag_for() call this
+    // unconditionally (populates SequenceMemberSpec::eff_tag/
+    // ChoiceAlternativeSpec::eff_tag for every SEQUENCE/CHOICE member,
+    // regardless of active backend) — must be real, not a stub, or Rust
+    // codegen throws on every SEQUENCE/CHOICE. Defined in RustBackend.cpp.
+    std::string format_tag_literal(const TagSpec& tag_spec) const override;
+
     std::string wrap_collection_type(const std::string& elem_type) const override {
         return std::format("Vec<{}>", elem_type);
     }
