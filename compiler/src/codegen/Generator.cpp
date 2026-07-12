@@ -1180,12 +1180,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         // All special members defined here where unique_ptr<T> has complete T.
         // Must be written before Ops aliases / member table below (original
         // ordering) — pure text, no per-member decision content.
-        os << std::format("{0}::{0}() = default;\n", cname);
-        os << std::format("{0}::~{0}() = default;\n", cname);
-        os << std::format("{0}::{0}(const {0}& o) : {0}() {{ asn1::deep_copy(asn_DEF, this, &o); }}\n", cname);
-        os << std::format("{0}& {0}::operator=(const {0}& o) {{ if (this != &o) asn1::deep_copy(asn_DEF, this, &o); return *this; }}\n", cname);
-        os << std::format("{0}::{0}({0}&&) noexcept = default;\n", cname);
-        os << std::format("{0}& {0}::operator=({0}&&) noexcept = default;\n\n", cname);
+        backend_.emit_special_members(cname, session);
     }
 
     // Count root-only optional members (for PER preamble bitmap width).
@@ -1207,17 +1202,16 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
     spec.roms_count = roms_count;
     spec.is_set = is_set;
 
-    // Type aliases for optional member callbacks — one per optional member.
-    // Must be written before the collect() pass below: emit_default_setter's
-    // generated static functions reference these types directly by name.
+    // Storage-ops helper for optional member callbacks — one per optional
+    // member. Must be written before the collect() pass below:
+    // emit_default_setter's generated static functions reference these
+    // types directly by name.
     for (auto* m : sm_root) {
         if (!m->is_optional()) continue;
-        os << std::format("using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
-                          cname, backend_.member_name(m->name), cpp_type_for(*m));
+        backend_.emit_optional_member_ops(cname, backend_.member_name(m->name), cpp_type_for(*m), session);
     }
     for (auto* m : sm_ext) {
-        os << std::format("using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
-                          cname, backend_.member_name(m->name), cpp_type_for(*m));
+        backend_.emit_optional_member_ops(cname, backend_.member_name(m->name), cpp_type_for(*m), session);
     }
     os << "\n";
 

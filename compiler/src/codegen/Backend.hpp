@@ -582,6 +582,45 @@ public:
         throw std::logic_error("emit_forward_declaration: not implemented for this backend");
     }
 
+    /// @brief Emit the special member functions (default ctor, dtor, copy,
+    ///        move) a SEQUENCE/SET needs when it has optional members whose
+    ///        backend-specific storage requires them defined where the
+    ///        storage type is complete (C++: `unique_ptr<T>`'s deep-copy
+    ///        semantics need the special members out-of-line, in the `.cpp`,
+    ///        not defaulted in the class body). Backends whose optional
+    ///        storage doesn't need this (Rust: `Option<T>` needs nothing
+    ///        special) write nothing.
+    /// @param type_name Final identifier of the SEQUENCE/SET type.
+    /// @param session   Per-type output session — writes into
+    ///                  `session.buffer(definition_extension())`.
+    /// @note gambas-asn1#268: previously hardcoded directly in
+    ///       Generator::emit_sequence_definition regardless of backend —
+    ///       broke RustBackend on any SEQUENCE/SET with an optional member.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_special_members(const std::string& type_name, TypeOutputSession& session) const {
+        (void)type_name; (void)session;
+        throw std::logic_error("emit_special_members: not implemented for this backend");
+    }
+
+    /// @brief Emit the optional-member storage-ops helper for one optional
+    ///        member (C++: the `UniquePtrOps<T>` `using`-alias that
+    ///        `emit_default_setter`'s generated functions reference by
+    ///        name). Backends whose optional storage needs no such helper
+    ///        type write nothing.
+    /// @param type_name   Final identifier of the enclosing SEQUENCE/SET type.
+    /// @param member_name Sanitised member identifier.
+    /// @param member_type Member's storage type.
+    /// @param session     Per-type output session — writes into
+    ///                    `session.buffer(definition_extension())`.
+    /// @note gambas-asn1#268: same root cause as emit_special_members —
+    ///       previously hardcoded unconditionally in Generator.cpp.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_optional_member_ops(const std::string& type_name, const std::string& member_name,
+                                           const std::string& member_type, TypeOutputSession& session) const {
+        (void)type_name; (void)member_name; (void)member_type; (void)session;
+        throw std::logic_error("emit_optional_member_ops: not implemented for this backend");
+    }
+
     /// @brief Output file extension (no leading dot) for a type's
     ///        declaration half (the content `emit_declaration` produces).
     /// @note Default throws — same rationale as emit_enumerated.
