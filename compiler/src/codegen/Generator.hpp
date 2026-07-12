@@ -117,6 +117,12 @@ class Generator {
     std::set<std::string>   pdu_roots_;           // ASN.1 names of -pdu= root types (empty = generate all)
     std::set<std::string>   reachable_asn_names_; // populated by compute_reachable(); ASN.1 names
     std::set<fs::path>      known_files_;         // every path emit_type_files() intended to (re)write
+    // gambas-asn1#300: type names already write_type_reference()'d for the
+    // current type's declaration output. Cleared at the start of each
+    // emit_type_files() call (one type's generation pass). Consulted when
+    // backend_.dedupe_type_references() is true (the default — see that
+    // method's doc, Backend.hpp).
+    std::set<std::string>   emitted_type_refs_;
                                                     // this run, whether or not its content actually changed —
                                                     // used to remove now-stale generated files (gambas-asn1#262
                                                     // follow-up: file count/extension is backend-owned and can
