@@ -36,12 +36,34 @@ pub struct MemberDescriptor<T: 'static> {
 }
 
 /// SEQUENCE/SET member table — mirrors `SequenceSpec` (`TypeDescriptor.hpp`).
+///
 /// `name` is the XER element tag for the whole SEQUENCE (mirrors
 /// `TypeDescriptor::name`, used by `SequenceXerHandler` — X.693's outer
 /// element is the *type* name, unlike each member's own tag which is
 /// *field*-name-derived). BER doesn't need it (BER dispatch is by `tag`
 /// alone), but one table drives both encodings (see `lib.rs`'s XER module
 /// doc), so it lives here rather than in a second, XER-only struct.
+///
+/// **Deliberate layering divergence from both C++ codebases** (checked on
+/// review, gambas-asn1#281): in `runtime/include/asn1cpp/TypeDescriptor.hpp`
+/// `name` lives on the outer `TypeDescriptor`, a sibling to
+/// `sequence_spec`/`choice_spec`/`enum_spec` — never inside `SequenceSpec`
+/// itself. Same split in asn1c (`asn_TYPE_descriptor_s::name` vs.
+/// `asn_SEQUENCE_specifics_s`, which carries no name at all). That layer
+/// exists in both C++ codebases because their dispatch is runtime
+/// polymorphic — one `TypeDescriptor*`/`asn_TYPE_descriptor_t*` has to
+/// carry `name` regardless of *which* construct (`SEQUENCE`/`CHOICE`/
+/// `ENUMERATED`) it points at, since the codec picks the handler at
+/// runtime via `TypeKind`/`tag2el`. Rust's design has no such layer:
+/// dispatch is by generic parameter (`SequenceSpec<T>`) resolved at compile
+/// time, so there is no shared runtime "type descriptor" object for `name`
+/// to live on once, and introducing one here would only exist to satisfy
+/// field-sharing, not to do anything. Each construct-specific spec (this
+/// one; a future `ChoiceSpec<T>` for gambas-asn1#284/#285) carries its own
+/// `name` — cheap (`&'static str`, one word, no allocation), and avoids
+/// inventing indirection with no other purpose. Documented here so the
+/// repetition in the eventual `ChoiceSpec<T>` reads as intentional, not a
+/// copy-paste that forgot to deduplicate.
 pub struct SequenceSpec<T: 'static> {
     pub name: &'static str,
     pub tag: Tag,
