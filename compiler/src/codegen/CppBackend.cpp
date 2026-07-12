@@ -1019,4 +1019,22 @@ void CppBackend::emit_forward_declaration(const std::string& type_name, TypeOutp
     session.buffer(declaration_extension()) << std::format("class {};\n", type_name);
 }
 
+void CppBackend::emit_special_members(const std::string& type_name, TypeOutputSession& session) const {
+    std::ostream& os = session.buffer(definition_extension());
+    const std::string& cname = type_name;
+    os << std::format("{0}::{0}() = default;\n", cname);
+    os << std::format("{0}::~{0}() = default;\n", cname);
+    os << std::format("{0}::{0}(const {0}& o) : {0}() {{ asn1::deep_copy(asn_DEF, this, &o); }}\n", cname);
+    os << std::format("{0}& {0}::operator=(const {0}& o) {{ if (this != &o) asn1::deep_copy(asn_DEF, this, &o); return *this; }}\n", cname);
+    os << std::format("{0}::{0}({0}&&) noexcept = default;\n", cname);
+    os << std::format("{0}& {0}::operator=({0}&&) noexcept = default;\n\n", cname);
+}
+
+void CppBackend::emit_optional_member_ops(const std::string& type_name, const std::string& member_name,
+                                           const std::string& member_type, TypeOutputSession& session) const {
+    session.buffer(definition_extension()) << std::format(
+        "using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
+        type_name, member_name, member_type);
+}
+
 } // namespace asn1::codegen

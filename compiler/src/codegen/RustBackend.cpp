@@ -481,6 +481,17 @@ void RustBackend::emit_type_reference(const std::string& type_name, const std::s
 void RustBackend::emit_forward_declaration(const std::string&, TypeOutputSession&) const {
 }
 
+/// @brief Rust's `Option<T>` needs no special member functions — no
+///        equivalent of C++'s unique_ptr-deep-copy dance (gambas-asn1#268).
+void RustBackend::emit_special_members(const std::string&, TypeOutputSession&) const {
+}
+
+/// @brief Rust's `Option<T>` needs no storage-ops helper type — same
+///        rationale as emit_special_members.
+void RustBackend::emit_optional_member_ops(const std::string&, const std::string&,
+                                            const std::string&, TypeOutputSession&) const {
+}
+
 /// @brief Write the crate root: one `pub mod <filename>;` per generated
 ///        `.rs` file, so the `use crate::<filename>::<Type>;` paths
 ///        emit_type_reference emits actually resolve (gambas-asn1#266).

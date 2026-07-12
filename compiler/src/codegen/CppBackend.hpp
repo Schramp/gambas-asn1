@@ -132,6 +132,9 @@ public:
     void emit_type_reference(const std::string& type_name, const std::string& filename,
                               TypeOutputSession& session) const override;
     void emit_forward_declaration(const std::string& type_name, TypeOutputSession& session) const override;
+    void emit_special_members(const std::string& type_name, TypeOutputSession& session) const override;
+    void emit_optional_member_ops(const std::string& type_name, const std::string& member_name,
+                                   const std::string& member_type, TypeOutputSession& session) const override;
 
     std::string declaration_extension() const override { return "hpp"; }
     std::string definition_extension() const override { return "cpp"; }
