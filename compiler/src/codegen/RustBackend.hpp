@@ -118,6 +118,9 @@ public:
     void emit_type_reference(const std::string& type_name, const std::string& filename,
                               TypeOutputSession& session) const override;
     void emit_forward_declaration(const std::string& type_name, TypeOutputSession& session) const override;
+    void emit_special_members(const std::string& type_name, TypeOutputSession& session) const override;
+    void emit_optional_member_ops(const std::string& type_name, const std::string& member_name,
+                                   const std::string& member_type, TypeOutputSession& session) const override;
     void finalize_output(const std::string& out_dir) const override;
 
     // Single-file mode (gambas-asn1#262): Rust has no header/impl split.
