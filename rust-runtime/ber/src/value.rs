@@ -20,6 +20,7 @@
 //! done via a trait object instead of inheritance.
 
 use crate::reader::{DecodeError, Reader};
+use crate::xer::XerReader;
 
 /// A BER/XER-encodable/decodable value reachable through a
 /// `MemberDescriptor` accessor function. `*_decode_into` (not a
@@ -27,33 +28,41 @@ use crate::reader::{DecodeError, Reader};
 /// needs no `Self` in its signature) — the field already exists (struct
 /// built via `Default`), decode overwrites it in place.
 ///
-/// `xer_encode`/`xer_decode_into` write/read only the element's *text
-/// content* (e.g. `3`, not `<x>3</x>`) — XER element tags are field-name-
-/// derived (`MemberDescriptor::name`), not type-derived like BER tags, so
-/// tag wrapping is the table-driven walker's job (gambas-asn1#281), not
-/// `Asn1Value`'s. See `xer.rs`'s module doc for the full split rationale.
+/// `xer_encode` writes only the element's *inner content* (e.g. `3` for
+/// `<x>3</x>`, but also `<true/>` for `<flag><true/></flag>` — BOOLEAN's
+/// BASIC-XER form is itself a nested tag, not plain text, see the `bool`
+/// impl below) — XER element tags are field-name-derived
+/// (`MemberDescriptor::name`), not type-derived like BER tags, so the
+/// *outer* tag wrapping is the table-driven walker's job (gambas-asn1#281),
+/// not `Asn1Value`'s.
+///
+/// `xer_decode_into` takes a `&mut XerReader` positioned right after the
+/// member's open tag, not a pre-extracted `&str` (revised in gambas-asn1#283
+/// from #280/#281's original `&str` signature) — discovered necessary
+/// because `bool`'s content isn't text at all, it's a nested `<true/>`/
+/// `<false/>` tag, which `XerReader::read_text_content` (stops at the next
+/// `<`) can't hand back as a string. Giving every impl the reader directly
+/// lets each type consume exactly the inner grammar BASIC-XER defines for
+/// it (plain escaped text for INTEGER/OCTET-STRING/IA5String, a nested tag
+/// for BOOLEAN) and leaves the reader positioned at the member's close tag,
+/// which the walker consumes afterward.
 ///
 /// `xer_encode`/`xer_decode_into` have default bodies (panic / "not yet
-/// implemented" error) so a type can get its BER leg wired (gambas-asn1#282)
-/// without being forced to add a real XER leg in the same change — the
-/// paired follow-up issue (#283) removes the default by adding a real
-/// override, same BER-then-XER pairing every step in this baby-step
-/// sequence (#214) uses. `i64` overrides both (its XER leg landed in #280);
-/// `bool`/`Vec<u8>`/`String` (added in #282) only override the BER leg for
-/// now.
+/// implemented" error) so a type can get its BER leg wired without being
+/// forced to add a real XER leg in the same change (gambas-asn1#282 landed
+/// BER-only for `bool`/`Vec<u8>`/`String`; gambas-asn1#283 removes the
+/// default here by adding real overrides) — same BER-then-XER pairing every
+/// step in this baby-step sequence (#214) uses.
 pub trait Asn1Value {
     fn ber_encode(&self, out: &mut Vec<u8>);
     fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError>;
 
     fn xer_encode(&self, _out: &mut String) {
-        unimplemented!("XER leg not yet wired for this type (see gambas-asn1#283)")
+        unimplemented!("XER leg not yet wired for this type")
     }
 
-    fn xer_decode_into(&mut self, _text: &str) -> Result<(), DecodeError> {
-        Err(DecodeError::new(
-            "XER leg not yet wired for this type (see gambas-asn1#283)".to_string(),
-            0,
-        ))
+    fn xer_decode_into(&mut self, _r: &mut XerReader) -> Result<(), DecodeError> {
+        Err(DecodeError::new("XER leg not yet wired for this type".to_string(), 0))
     }
 }
 
@@ -71,7 +80,8 @@ impl Asn1Value for i64 {
         out.push_str(&self.to_string());
     }
 
-    fn xer_decode_into(&mut self, text: &str) -> Result<(), DecodeError> {
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        let text = r.read_text_content();
         *self = text.trim().parse::<i64>().map_err(|_| {
             DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
         })?;
@@ -79,8 +89,12 @@ impl Asn1Value for i64 {
     }
 }
 
-/// BER leg only (gambas-asn1#282) — XER leg is #283, uses the trait default
-/// (`unimplemented!`/error) until then.
+/// Mirrors `BooleanXerHandler` (`runtime/src/XerCodec.cpp`) — BASIC-XER's
+/// `EmptyElementBoolean` form: content is a nested self-closing `<true/>`/
+/// `<false/>` tag, not text (X.693 §8.2's default form; the lenient
+/// text-content alternative `XerDecodeMode::Lenient` allows on the C++ side
+/// isn't implemented here, matching this crate's strict-by-default scope
+/// elsewhere).
 impl Asn1Value for bool {
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::boolean::write_boolean(out, *self);
@@ -90,10 +104,30 @@ impl Asn1Value for bool {
         *self = crate::boolean::read_boolean(r)?;
         Ok(())
     }
+
+    fn xer_encode(&self, out: &mut String) {
+        out.push_str(if *self { "<true/>" } else { "<false/>" });
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        let ti = r.consume_tag();
+        if ti.self_closing && ti.name == "true" {
+            *self = true;
+            Ok(())
+        } else if ti.self_closing && ti.name == "false" {
+            *self = false;
+            Ok(())
+        } else {
+            Err(DecodeError::new("XER BOOLEAN: expected <true/> or <false/>".to_string(), 0))
+        }
+    }
 }
 
-/// BER leg only (gambas-asn1#282) — XER leg is #283. Maps ASN.1 OCTET
-/// STRING (`native_builtin_type`'s `Vec<u8>` choice, `RustBackend.cpp`).
+/// Maps ASN.1 OCTET STRING (`native_builtin_type`'s `Vec<u8>` choice,
+/// `RustBackend.cpp`). Mirrors `OctetStringXerHandler`'s default (non-Base64)
+/// encoding: unspaced uppercase hex pairs (`write_hex_bytes`,
+/// `runtime/src/HexEncoder.hpp`) — distinct from BIT STRING/hex-string
+/// types' *spaced* hex (`format_hex_bytes`), not implemented by this crate.
 impl Asn1Value for Vec<u8> {
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::octet_string::write_octet_string(out, self);
@@ -103,12 +137,39 @@ impl Asn1Value for Vec<u8> {
         *self = crate::octet_string::read_octet_string(r)?.to_vec();
         Ok(())
     }
+
+    fn xer_encode(&self, out: &mut String) {
+        for b in self {
+            out.push_str(&format!("{b:02X}"));
+        }
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        let text = r.read_text_content();
+        // Mirrors parse_hex_bytes (runtime/src/XerCodec.cpp): skip
+        // whitespace between pairs, stop silently (not an error) at the
+        // first non-hex-pair remainder — lenient by design on the C++ side,
+        // matched here rather than diverging into stricter validation.
+        let mut bytes = Vec::new();
+        let trimmed = text.trim();
+        let mut chars = trimmed.chars().filter(|c| !c.is_whitespace()).peekable();
+        while let (Some(hi), Some(lo)) = (chars.next(), chars.next()) {
+            let byte_str: String = [hi, lo].iter().collect();
+            match u8::from_str_radix(&byte_str, 16) {
+                Ok(b) => bytes.push(b),
+                Err(_) => break,
+            }
+        }
+        *self = bytes;
+        Ok(())
+    }
 }
 
-/// BER leg only (gambas-asn1#282) — XER leg is #283. Maps `IA5String`
-/// (`native_builtin_type`'s `String` choice covers all 12 string kinds;
-/// this impl is scoped to IA5String's wire tag specifically, see
-/// `strings.rs`'s module doc on widening to the others).
+/// Maps `IA5String` (`native_builtin_type`'s `String` choice covers all 12
+/// string kinds; this impl is scoped to IA5String's wire tag specifically,
+/// see `strings.rs`'s module doc on widening to the others). Mirrors
+/// `XerStringHandler`: escaped text content, via the same `xer::escape`/
+/// `xer::unescape` gambas-asn1#280 already built.
 impl Asn1Value for String {
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::strings::write_ia5_string(out, self);
@@ -116,6 +177,16 @@ impl Asn1Value for String {
 
     fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
         *self = crate::strings::read_ia5_string(r)?;
+        Ok(())
+    }
+
+    fn xer_encode(&self, out: &mut String) {
+        crate::xer::escape(self, out);
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        let text = r.read_text_content();
+        *self = crate::xer::unescape(text);
         Ok(())
     }
 }
@@ -138,7 +209,7 @@ mod tests {
 
     #[test]
     fn i64_xer_round_trips_wrapped_by_hand() {
-        use crate::xer::{write_close_tag, write_open_tag, XerReader};
+        use crate::xer::{write_close_tag, write_open_tag};
 
         let mut out = String::new();
         write_open_tag(&mut out, "x");
@@ -148,9 +219,8 @@ mod tests {
 
         let mut r = XerReader::new(&out);
         r.consume_open_tag("x").unwrap();
-        let text = r.read_text_content();
         let mut got: i64 = 0;
-        got.xer_decode_into(text).unwrap();
+        got.xer_decode_into(&mut r).unwrap();
         r.consume_close_tag("x").unwrap();
         assert_eq!(got, 1);
     }
@@ -161,15 +231,17 @@ mod tests {
         (-42i64).xer_encode(&mut out);
         assert_eq!(out, "-42");
 
+        let mut r = XerReader::new("  -42  ");
         let mut got: i64 = 0;
-        got.xer_decode_into("  -42  ").unwrap();
+        got.xer_decode_into(&mut r).unwrap();
         assert_eq!(got, -42);
     }
 
     #[test]
     fn i64_xer_invalid_text_is_error() {
+        let mut r = XerReader::new("not-a-number");
         let mut got: i64 = 0;
-        assert!(got.xer_decode_into("not-a-number").is_err());
+        assert!(got.xer_decode_into(&mut r).is_err());
     }
 
     #[test]
@@ -185,9 +257,40 @@ mod tests {
     }
 
     #[test]
-    fn bool_xer_leg_is_not_yet_implemented() {
+    fn bool_xer_round_trips_wrapped_by_hand() {
+        use crate::xer::{write_close_tag, write_open_tag};
+
+        let mut out = String::new();
+        write_open_tag(&mut out, "flag");
+        true.xer_encode(&mut out);
+        write_close_tag(&mut out, "flag");
+        assert_eq!(out, "<flag><true/></flag>");
+
+        let mut r = XerReader::new(&out);
+        r.consume_open_tag("flag").unwrap();
         let mut got = false;
-        assert!(got.xer_decode_into("true").is_err());
+        got.xer_decode_into(&mut r).unwrap();
+        r.consume_close_tag("flag").unwrap();
+        assert!(got);
+    }
+
+    #[test]
+    fn bool_xer_false_round_trips() {
+        let mut out = String::new();
+        false.xer_encode(&mut out);
+        assert_eq!(out, "<false/>");
+
+        let mut r = XerReader::new("<false/>");
+        let mut got = true;
+        got.xer_decode_into(&mut r).unwrap();
+        assert!(!got);
+    }
+
+    #[test]
+    fn bool_xer_rejects_non_empty_element_form() {
+        let mut r = XerReader::new("true");
+        let mut got = false;
+        assert!(got.xer_decode_into(&mut r).is_err());
     }
 
     #[test]
@@ -212,5 +315,65 @@ mod tests {
         let mut got = String::new();
         got.ber_decode_into(&mut r).unwrap();
         assert_eq!(got, "hi");
+    }
+
+    #[test]
+    fn vec_u8_xer_encodes_unspaced_uppercase_hex() {
+        let mut out = String::new();
+        vec![0x68u8, 0x69].xer_encode(&mut out);
+        assert_eq!(out, "6869");
+    }
+
+    #[test]
+    fn vec_u8_xer_round_trips_wrapped_by_hand() {
+        use crate::xer::{write_close_tag, write_open_tag};
+
+        let mut out = String::new();
+        write_open_tag(&mut out, "data");
+        vec![0x68u8, 0x69].xer_encode(&mut out);
+        write_close_tag(&mut out, "data");
+        assert_eq!(out, "<data>6869</data>");
+
+        let mut r = XerReader::new(&out);
+        r.consume_open_tag("data").unwrap();
+        let mut got: Vec<u8> = Vec::new();
+        got.xer_decode_into(&mut r).unwrap();
+        r.consume_close_tag("data").unwrap();
+        assert_eq!(got, vec![0x68, 0x69]);
+    }
+
+    #[test]
+    fn vec_u8_xer_empty_round_trips() {
+        let mut r = XerReader::new("");
+        let mut got: Vec<u8> = Vec::new();
+        got.xer_decode_into(&mut r).unwrap();
+        assert_eq!(got, Vec::<u8>::new());
+    }
+
+    #[test]
+    fn vec_u8_xer_odd_trailing_nibble_is_dropped_leniently() {
+        // Matches parse_hex_bytes's lenient truncation, not an error.
+        let mut r = XerReader::new("686");
+        let mut got: Vec<u8> = Vec::new();
+        got.xer_decode_into(&mut r).unwrap();
+        assert_eq!(got, vec![0x68]);
+    }
+
+    #[test]
+    fn string_xer_escapes_and_round_trips() {
+        use crate::xer::{write_close_tag, write_open_tag};
+
+        let mut out = String::new();
+        write_open_tag(&mut out, "label");
+        "a<b>&c".to_string().xer_encode(&mut out);
+        write_close_tag(&mut out, "label");
+        assert_eq!(out, "<label>a&lt;b&gt;&amp;c</label>");
+
+        let mut r = XerReader::new(&out);
+        r.consume_open_tag("label").unwrap();
+        let mut got = String::new();
+        got.xer_decode_into(&mut r).unwrap();
+        r.consume_close_tag("label").unwrap();
+        assert_eq!(got, "a<b>&c");
     }
 }
