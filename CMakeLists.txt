@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.20)
 project(asn1cpp VERSION 0.1.0 LANGUAGES CXX)
 
+# Must be called here (top-level scope), not just in tests/CMakeLists.txt —
+# CMake only emits build/CTestTestfile.cmake (what `ctest --test-dir build`
+# needs) when enable_testing() runs at the scope ctest is invoked from.
+# Calling it only inside tests/ produces build/tests/CTestTestfile.cmake,
+# which is why `ctest --test-dir build/tests` has always worked while
+# `ctest --test-dir build` (used by .github/workflows/ci.yml) silently found
+# zero tests — masked because ctest with no tests still exits 0.
+enable_testing()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
