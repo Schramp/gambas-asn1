@@ -21,12 +21,13 @@
 //!
 //! Each alternative needs two things a `MemberDescriptor<T>` row doesn't:
 //! CHOICE is a sum type, so there's no single storage slot for `get`/
-//! `get_mut` to point at. `encode: fn(&T, &mut Vec<u8>) -> bool` pattern-
-//! matches whether `T` is *this* variant (returns whether it matched and,
-//! if so, encoded); `decode_into: fn(&mut Reader) -> Result<T, DecodeError>`
-//! builds the right variant from scratch (no `T::default()` pre-existing
-//! value to write into, unlike `MemberDescriptor::get_mut` — a CHOICE value
-//! doesn't exist yet until decode picks which alternative it is).
+//! `get_mut` to point at. `ber_encode: fn(&T, &mut Vec<u8>) -> bool`
+//! pattern-matches whether `T` is *this* variant (returns whether it
+//! matched and, if so, encoded); `ber_decode_into: fn(&mut Reader) ->
+//! Result<T, DecodeError>` builds the right variant from scratch (no
+//! `T::default()` pre-existing value to write into, unlike
+//! `MemberDescriptor::get_mut` — a CHOICE value doesn't exist yet until
+//! decode picks which alternative it is).
 //!
 //! `Choice` below is both the worked example and this module's own test
 //! subject (dogfooding, same role `Point` plays for `sequence.rs`) — real
@@ -44,23 +45,26 @@ use crate::xer::{write_close_tag, write_open_tag, XerReader};
 /// codegen simply doesn't emit alternatives needing them yet, same
 /// incremental principle as every other gambas-asn1#214 sub-issue).
 ///
-/// `xer_encode`/`xer_decode_into` (gambas-asn1#285) mirror `encode`/
-/// `decode_into`'s shape for XER: `xer_encode` writes the alternative's
-/// *inner* content (via `Asn1Value::xer_encode`, same split rationale as
-/// `MemberDescriptor` — see `value.rs`'s trait doc) and reports whether it
-/// matched; `xer_decode_into` consumes inner content from a reader
-/// positioned right after the alternative's own open tag. The *outer*
-/// `<name>...</name>` wrapping is the generic walker's job
-/// (`encode_choice_xer`/`decode_choice_xer` below) — XER dispatches CHOICE
-/// alternatives by *element name*, not by wire tag the way BER does
-/// (`ChoiceXerHandler`, `runtime/src/XerCodec.cpp`, peeks the tag *name*,
-/// not a `Tag{class,number}`), which is why `decode_choice_xer` doesn't
-/// reuse `tag` at all.
+/// `xer_encode`/`xer_decode_into` (gambas-asn1#285) mirror `ber_encode`/
+/// `ber_decode_into`'s shape for XER (field names symmetric since
+/// gambas-asn1#297 — originally just `encode`/`decode_into`, ambiguous once
+/// the `xer_*` pair existed alongside them, found on #285's review):
+/// `xer_encode` writes the alternative's *inner* content (via
+/// `Asn1Value::xer_encode`, same split rationale as `MemberDescriptor` —
+/// see `value.rs`'s trait doc) and reports whether it matched;
+/// `xer_decode_into` consumes inner content from a reader positioned right
+/// after the alternative's own open tag. The *outer* `<name>...</name>`
+/// wrapping is the generic walker's job (`encode_choice_xer`/
+/// `decode_choice_xer` below) — XER dispatches CHOICE alternatives by
+/// *element name*, not by wire tag the way BER does (`ChoiceXerHandler`,
+/// `runtime/src/XerCodec.cpp`, peeks the tag *name*, not a
+/// `Tag{class,number}`), which is why `decode_choice_xer` doesn't reuse
+/// `tag` at all.
 pub struct AlternativeSpec<T: 'static> {
     pub name: &'static str,
     pub tag: Tag,
-    pub encode: fn(&T, &mut Vec<u8>) -> bool,
-    pub decode_into: fn(&mut Reader) -> Result<T, DecodeError>,
+    pub ber_encode: fn(&T, &mut Vec<u8>) -> bool,
+    pub ber_decode_into: fn(&mut Reader) -> Result<T, DecodeError>,
     pub xer_encode: fn(&T, &mut String) -> bool,
     pub xer_decode_into: fn(&mut XerReader) -> Result<T, DecodeError>,
 }
@@ -75,7 +79,7 @@ pub struct ChoiceSpec<T: 'static> {
 }
 
 /// Generic CHOICE encoder — the Rust analogue of `ChoiceBerHandler::encode`.
-/// Tries each alternative's `encode` in table order; the first one that
+/// Tries each alternative's `ber_encode` in table order; the first one that
 /// reports a match wins. Panics if no alternative matches — cannot happen
 /// for a real generated `T` (every variant of a codegen'd CHOICE enum has a
 /// corresponding table row by construction), so this is a codegen-bug
@@ -83,7 +87,7 @@ pub struct ChoiceSpec<T: 'static> {
 pub fn encode_choice<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
     for alt in spec.alternatives {
         let mut out = Vec::new();
-        if (alt.encode)(value, &mut out) {
+        if (alt.ber_encode)(value, &mut out) {
             return out;
         }
     }
@@ -93,13 +97,13 @@ pub fn encode_choice<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
 /// Generic CHOICE decoder — the Rust analogue of `ChoiceBerHandler::decode`.
 /// CHOICE has no outer tag of its own (see module doc): peek the wire tag,
 /// linear-scan `spec.alternatives` for the row whose `tag` matches, and
-/// delegate to that row's `decode_into`.
+/// delegate to that row's `ber_decode_into`.
 pub fn decode_choice<T>(spec: &ChoiceSpec<T>, data: &[u8]) -> Result<T, DecodeError> {
     let mut r = Reader::new(data);
     let tag = r.peek_tag().ok_or_else(|| DecodeError::new("empty CHOICE input".to_string(), 0))?;
     for alt in spec.alternatives {
         if alt.tag == tag {
-            return (alt.decode_into)(&mut r);
+            return (alt.ber_decode_into)(&mut r);
         }
     }
     Err(DecodeError::new(format!("unrecognized CHOICE alternative tag {tag:?}"), 0))
@@ -159,7 +163,7 @@ static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
     AlternativeSpec {
         name: "num",
         tag: crate::integer::INTEGER_TAG,
-        encode: |x, out| {
+        ber_encode: |x, out| {
             if let Choice::Num(v) = x {
                 v.ber_encode(out);
                 true
@@ -167,7 +171,7 @@ static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
                 false
             }
         },
-        decode_into: |r| {
+        ber_decode_into: |r| {
             let mut v: i64 = Default::default();
             v.ber_decode_into(r)?;
             Ok(Choice::Num(v))
@@ -189,7 +193,7 @@ static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
     AlternativeSpec {
         name: "data",
         tag: crate::octet_string::OCTET_STRING_TAG,
-        encode: |x, out| {
+        ber_encode: |x, out| {
             if let Choice::Data(v) = x {
                 v.ber_encode(out);
                 true
@@ -197,7 +201,7 @@ static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
                 false
             }
         },
-        decode_into: |r| {
+        ber_decode_into: |r| {
             let mut v: Vec<u8> = Default::default();
             v.ber_decode_into(r)?;
             Ok(Choice::Data(v))

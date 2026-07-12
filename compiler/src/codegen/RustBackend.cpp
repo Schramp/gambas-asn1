@@ -558,12 +558,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             os << "    asn1cpp_ber::choice::AlternativeSpec {\n";
             os << std::format("        name: \"{}\",\n", a.asn1_name);
             os << std::format("        tag: {},\n", rust_alt_ber_tag(a));
-            os << std::format("        encode: |x, out| if let {}::{}(v) = x {{\n",
+            os << std::format("        ber_encode: |x, out| if let {}::{}(v) = x {{\n",
                               spec.type_name, vname);
             os << "            asn1cpp_ber::value::Asn1Value::ber_encode(v, out);\n";
             os << "            true\n";
             os << "        } else { false },\n";
-            os << "        decode_into: |r| {\n";
+            os << "        ber_decode_into: |r| {\n";
             os << std::format("            let mut v: {} = Default::default();\n", a.mtype);
             os << "            asn1cpp_ber::value::Asn1Value::ber_decode_into(&mut v, r)?;\n";
             os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
