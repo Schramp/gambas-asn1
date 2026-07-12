@@ -31,10 +31,11 @@ Run compiler:
 ./build/compiler/asn1cpp <file.asn1> -o <outdir>
 ```
 
-Rust BER runtime (`rust-runtime/`, gambas-asn1#218) — standalone crate, not part of the
-CMake build:
+Rust BER runtime (`rust-runtime/ber/`, gambas-asn1#218) — standalone crate, not part of
+the CMake build. `rust-runtime/` is the umbrella directory for one crate per wire
+encoding (`ber/` today; a future `per/`/`jer/` would be siblings, not modules inside `ber`):
 ```bash
-cd rust-runtime && cargo test
+cd rust-runtime/ber && cargo test
 ```
 
 ## Runtime debug logging
@@ -88,8 +89,10 @@ asn1cpp/
   tests/
     ber/                  # BER round-trip unit tests
   examples/               # shared ASN.1 example files (also used by asn1c sibling project)
-  rust-runtime/           # native Rust BER codec (gambas-asn1#214/#218) — standalone
-                          # crate, no FFI to runtime/; not yet wired to codegen (#219)
+  rust-runtime/           # umbrella dir, one crate per wire encoding (gambas-asn1#214)
+    ber/                  # native Rust BER codec (#218) — standalone crate, no FFI to
+                          # runtime/; not yet wired to codegen (#219). per/, jer/ would
+                          # be sibling crates here, not modules inside ber/
 ```
 
 ### Compiler pipeline
