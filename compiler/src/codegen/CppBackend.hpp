@@ -111,6 +111,39 @@ public:
         }
     }
 
+    std::string native_builtin_type(ast::BuiltinType bt) const override {
+        using BT = ast::BuiltinType;
+        switch (bt) {
+        case BT::Boolean:          return "asn1::Boolean";
+        case BT::Real:             return "asn1::Real";
+        case BT::Null:             return "asn1::Null";
+        case BT::BitString:        return "asn1::BitString";
+        case BT::OctetString:      return "asn1::OctetString";
+        case BT::ObjectIdentifier: return "asn1::Oid";
+        case BT::RelativeOid:      return "asn1::RelativeOid";
+        case BT::Utf8String:       return "asn1::Utf8String";
+        case BT::NumericString:    return "asn1::NumericString";
+        case BT::PrintableString:  return "asn1::PrintableString";
+        case BT::T61String:        return "asn1::T61String";
+        case BT::Ia5String:        return "asn1::Ia5String";
+        case BT::VisibleString:    return "asn1::VisibleString";
+        case BT::GeneralString:    return "asn1::GeneralString";
+        case BT::GraphicString:    return "asn1::GraphicString";
+        case BT::UniversalString:  return "asn1::UniversalString";
+        case BT::BmpString:        return "asn1::BmpString";
+        case BT::VideotexString:   return "asn1::VideotexString";
+        case BT::ObjectDescriptor: return "asn1::ObjectDescriptor";
+        case BT::UtcTime:          return "asn1::UtcTime";
+        case BT::GeneralizedTime:  return "asn1::GeneralizedTime";
+        case BT::Any:              return "asn1::OctetString";
+        default:                   return "asn1::OctetString";  // Integer/Enumerated: unreachable here
+        }
+    }
+
+    std::string wrap_collection_type(const std::string& elem_type) const override {
+        return std::format("asn1::VectorSeqOf<{}>", elem_type);
+    }
+
     // Defined in CppBackend.cpp — real emission logic, not a one-liner
     // like the naming methods above.
     void emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const override;
