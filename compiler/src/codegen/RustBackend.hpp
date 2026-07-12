@@ -134,6 +134,8 @@ public:
                                  TypeOutputSession& session) const override;
     void emit_type_reference(const std::string& type_name, const std::string& filename,
                               TypeOutputSession& session) const override;
+    // gambas-asn1#300: dedupe_type_references() default (Backend.hpp) is
+    // true and covers RustBackend's need — no override necessary here.
     void emit_forward_declaration(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_special_members(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_optional_member_ops(const std::string& type_name, const std::string& member_name,
