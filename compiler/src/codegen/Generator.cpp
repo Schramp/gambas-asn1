@@ -150,14 +150,16 @@ std::optional<TagSpec> Generator::tag_spec_for(const ast::Tag& tag, bool constru
     return TagSpec{tag.cls, tag.number, constructed};
 }
 
-/// @brief Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
+/// @brief Returns the backend's tag-literal syntax for a tag override, empty
+///        string if absent (gambas-asn1#290: `backend_.format_tag_literal`,
+///        not a hardcoded C++ free function).
 /// @param tag         The member's (possibly absent) tag override.
 /// @param constructed True if the encoding form is constructed, not primitive.
-/// @return The C++ literal string, or "" if `tag` is absent.
+/// @return The backend's literal string, or "" if `tag` is absent.
 std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) const {
     auto spec = tag_spec_for(tag, constructed);
     if (!spec) return "";
-    return format_tag_literal(*spec);
+    return backend_.format_tag_literal(*spec);
 }
 
 /// @brief Decide the natural (universal) BER tag for a member def's
@@ -196,13 +198,14 @@ std::optional<TagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& def) 
     return TagSpec{ast::TagClass::Universal, 4, false};  // fallback: OCTET STRING
 }
 
-/// @brief Returns the natural (universal) tag for a member def's underlying type.
+/// @brief Returns the natural (universal) tag for a member def's underlying
+///        type, in the active backend's literal syntax.
 /// @param def Member or referenced type to compute the natural tag for.
-/// @return C++ literal string, or "" for CHOICE (no universal tag).
+/// @return The backend's literal string, or "" for CHOICE (no universal tag).
 std::string Generator::natural_tag_for(const ast::TypeDef& def) const {
     auto spec = natural_tag_spec_for(def);
     if (!spec) return "";
-    return format_tag_literal(*spec);
+    return backend_.format_tag_literal(*spec);
 }
 
 // ---------------------------------------------------------------------------
