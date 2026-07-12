@@ -1261,14 +1261,14 @@ set_tests_properties(jer_bundle_roundtrip PROPERTIES
     TIMEOUT   60
     LABELS    "jer")
 
-# #154 / #159: ETSI-LI JSON xval smoke test — GREEN (#159 done)
-add_test(NAME jer_etsi_xval
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/../asn1cpp-validation-tools/compare_json.py
-            --type EncryptedPayload --count 10 --seed 42)
-set_tests_properties(jer_etsi_xval PROPERTIES
-    TIMEOUT   60
-    LABELS    "jer")
+# #154 / #159: ETSI-LI JSON xval smoke test — was GREEN (#159) in local dev
+# only. Removed from ctest (#292): compare_json.py lives at
+# ${CMAKE_SOURCE_DIR}/../asn1cpp-validation-tools/, a sibling directory
+# outside this repo that only exists in the local umbrella `etsi/` checkout
+# — CI checks out gambas-asn1 alone, so this path never existed there and
+# the test failed unconditionally in every CI run. #292 tracks re-adding it
+# in a CI-compatible way (vendor the script, or check out the sibling repo
+# in CI, or guard registration behind a path-exists check).
 
 # ---- Backend naming interface: CppBackend vs RustBackend (#216/#217/#226/#234) --
 add_executable(test_backend_naming
