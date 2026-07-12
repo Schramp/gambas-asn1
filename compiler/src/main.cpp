@@ -190,6 +190,7 @@ int main(int argc, char** argv) {
     if (!ns_prefix.empty()) gen.set_namespace(ns_prefix);
     for (const auto& t : pdu_types) gen.add_pdu_type(t);
     gen.generate(pr);
+    backend.finalize_output(out_dir);
 
     std::cout << "Generated " << (target == "rust" ? "Rust" : "C++") << " code in: " << out_dir << "/\n";
     return 0;

@@ -537,6 +537,51 @@ public:
         throw std::logic_error("emit_typeref_alias_declaration: not implemented for this backend");
     }
 
+    /// @brief Emit a dependency declaration for a reference to another
+    ///        generated type from the current file (X.680 §17-ish notion of
+    ///        "this file needs that other type to be visible").
+    /// @param type_name Final identifier of the referenced type, as used
+    ///                  elsewhere in this file's generated code.
+    /// @param filename  The referenced type's on-disk filename, no
+    ///                  extension (Generator::filename_for's result) —
+    ///                  usually equals type_name; differs only when
+    ///                  collision-prefixed with a module name.
+    /// @param session   Per-call output session — always writes into
+    ///                  `session.buffer(declaration_extension())`. Callers
+    ///                  needing this reference to land somewhere other than
+    ///                  the real per-type declaration buffer (a `.cpp`-side
+    ///                  include, a pre-namespace redirect, a deferred
+    ///                  post-namespace include, ...) pass a throwaway
+    ///                  session with that key `seed()`-ed to the real
+    ///                  target stream instead — Backend only owns the
+    ///                  *text*, never touches a raw stream directly, and
+    ///                  never needs to know which real file it ends up in.
+    /// @note gambas-asn1#266: previously hardcoded `#include "X.hpp"\n` at
+    ///       9 call sites in Generator.cpp regardless of backend — broke
+    ///       RustBackend on any schema with cross-type references.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_type_reference(const std::string& type_name,
+                                      const std::string& filename, TypeOutputSession& session) const {
+        (void)type_name; (void)filename; (void)session;
+        throw std::logic_error("emit_type_reference: not implemented for this backend");
+    }
+
+    /// @brief Emit a forward declaration for a type this file only needs as
+    ///        an incomplete type (e.g. an optional member stored behind a
+    ///        pointer, to break a circular #include). Backends with no
+    ///        forward-declaration concept — a type is visible regardless of
+    ///        declaration order once imported — write nothing. Always the
+    ///        declaration side (a forward declaration only ever appears in
+    ///        header-equivalent content).
+    /// @param type_name Final identifier of the type being forward-declared.
+    /// @param session   Per-call output session — writes into
+    ///                  `session.buffer(declaration_extension())`.
+    /// @note Default throws — same rationale as emit_enumerated.
+    virtual void emit_forward_declaration(const std::string& type_name, TypeOutputSession& session) const {
+        (void)type_name; (void)session;
+        throw std::logic_error("emit_forward_declaration: not implemented for this backend");
+    }
+
     /// @brief Output file extension (no leading dot) for a type's
     ///        declaration half (the content `emit_declaration` produces).
     /// @note Default throws — same rationale as emit_enumerated.
@@ -558,6 +603,16 @@ public:
     /// @note Default throws — same rationale as emit_enumerated_declaration.
     virtual std::string definition_extension() const {
         throw std::logic_error("definition_extension: not implemented for this backend");
+    }
+
+    /// @brief Called once, after every type has been generated, to do any
+    ///        whole-output-directory bookkeeping the backend needs (e.g. a
+    ///        crate root). Default is a no-op — most backends (CppBackend:
+    ///        each `.hpp`/`.cpp` pair is independently `#include`-able,
+    ///        nothing to tie together) don't need this.
+    /// @param out_dir Directory every generated file was written into.
+    virtual void finalize_output(const std::string& out_dir) const {
+        (void)out_dir;
     }
 
 protected:

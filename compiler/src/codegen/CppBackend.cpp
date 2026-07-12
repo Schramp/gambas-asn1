@@ -1010,4 +1010,13 @@ void CppBackend::emit_typeref_alias_declaration(const std::string& type_name, co
     session.buffer(declaration_extension()) << std::format("using {} = {};\n", type_name, target_type);
 }
 
+void CppBackend::emit_type_reference(const std::string&, const std::string& filename,
+                                      TypeOutputSession& session) const {
+    session.buffer(declaration_extension()) << std::format("#include \"{}.hpp\"\n", filename);
+}
+
+void CppBackend::emit_forward_declaration(const std::string& type_name, TypeOutputSession& session) const {
+    session.buffer(declaration_extension()) << std::format("class {};\n", type_name);
+}
+
 } // namespace asn1::codegen
