@@ -3,3 +3,4 @@ generated/
 *.o
 *.a
 target/
+tests/rust/roundtrip/src/point_generated.rs

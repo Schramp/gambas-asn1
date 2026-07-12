@@ -1,0 +1,12 @@
+[package]
+name = "roundtrip-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "gambas-asn1#219: real codegen -> asn1cpp-ber roundtrip check. Not meant to be built directly with `cargo build` — src/point_generated.rs is produced by run_roundtrip_test.py before each `cargo test` and isn't committed."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+asn1cpp-ber = { path = "../../../rust-runtime/ber" }
