@@ -48,7 +48,17 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
     // explicit path regardless, so this works everywhere).
     os << std::format("impl std::convert::TryFrom<i64> for {} {{\n", tname);
     os << "    type Error = ();\n";
-    os << "    fn try_from(v: i64) -> Result<Self, Self::Error> {\n";
+    // gambas-asn1#304: `()` written out directly, not `Self::Error` — an
+    // ASN.1 ENUMERATED value literally named `Error` (real case on the
+    // ETSI LI PS-PDU schema, #299) makes `Self::Error` ambiguous: it could
+    // mean either the enum variant `Self::Error` (i.e. `TypeName::Error`)
+    // or the trait's own associated type. `type Error = ();` two lines up
+    // is a fixed literal this backend always emits, never derived from
+    // anything ASN.1-name-dependent, so there's no reason to look it up via
+    // path at all — writing `()` directly sidesteps the ambiguity instead
+    // of needing fully-qualified syntax (`<Self as
+    // std::convert::TryFrom<i64>>::Error`) to resolve it.
+    os << "    fn try_from(v: i64) -> Result<Self, ()> {\n";
     os << "        match v {\n";
     for (const auto& v : spec.values) {
         os << std::format("            {} => Ok({}::{}),\n",
