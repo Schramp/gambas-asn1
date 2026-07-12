@@ -124,7 +124,7 @@ void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
 ///       timestamp type) — matches this pairing's scope (compiles as real
 ///       Rust, no runtime wiring yet). A real BER/PER runtime would likely
 ///       want tighter types (e.g. `[u32]` arcs for OID); revisit then.
-static std::string native_builtin_type(ast::BuiltinType bt) {
+std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     using BT = ast::BuiltinType;
     switch (bt) {
     case BT::Boolean:          return "bool";

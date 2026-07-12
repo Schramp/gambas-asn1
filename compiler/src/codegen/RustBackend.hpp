@@ -97,6 +97,16 @@ public:
         }
     }
 
+    // Defined in RustBackend.cpp — reuses the same mapping as the file-local
+    // native_builtin_type() free function every other Rust construct pairing
+    // already calls internally (gambas-asn1#270: now also reachable from
+    // Generator::cpp_type_for, not just RustBackend's own emit_* methods).
+    std::string native_builtin_type(ast::BuiltinType bt) const override;
+
+    std::string wrap_collection_type(const std::string& elem_type) const override {
+        return std::format("Vec<{}>", elem_type);
+    }
+
     // Defined in RustBackend.cpp — real emission logic, not a one-liner
     // like the naming methods above.
     void emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const override;
