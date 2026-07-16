@@ -47,12 +47,23 @@ pub fn decode_integer_bytes(bytes: &[u8]) -> Result<i64, DecodeError> {
 }
 
 pub fn write_integer(out: &mut Vec<u8>, n: i64) {
-    write_primitive(out, INTEGER_TAG, &encode_integer_bytes(n));
+    write_integer_tagged(out, INTEGER_TAG, n);
 }
 
 pub fn read_integer(r: &mut Reader) -> Result<i64, DecodeError> {
+    read_integer_tagged(r, INTEGER_TAG)
+}
+
+/// gambas-asn1#332: IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
+/// doc for the general rationale (X.690 §8.14). Same minimal two's-complement
+/// content bytes, different tag octets.
+pub fn write_integer_tagged(out: &mut Vec<u8>, tag: Tag, n: i64) {
+    write_primitive(out, tag, &encode_integer_bytes(n));
+}
+
+pub fn read_integer_tagged(r: &mut Reader, tag: Tag) -> Result<i64, DecodeError> {
     let tlv = r.read_tlv()?;
-    if tlv.tag != INTEGER_TAG {
+    if tlv.tag != tag {
         return Err(DecodeError::new(
             format!("expected INTEGER tag, got {:?}", tlv.tag),
             r.pos(),
@@ -114,5 +125,15 @@ mod tests {
         let data = [0x04, 0x01, 0x05]; // OCTET STRING tag, not INTEGER
         let mut r = Reader::new(&data);
         assert!(read_integer(&mut r).is_err());
+    }
+
+    #[test]
+    fn tagged_uses_the_given_tag_not_the_natural_one() {
+        let context_0 = Tag::context(0, false);
+        let mut buf = Vec::new();
+        write_integer_tagged(&mut buf, context_0, 5);
+        assert_eq!(buf, vec![0x80, 0x01, 0x05]); // context primitive 0, not 0x02 (universal INTEGER)
+        let mut r = Reader::new(&buf);
+        assert_eq!(read_integer_tagged(&mut r, context_0).unwrap(), 5);
     }
 }

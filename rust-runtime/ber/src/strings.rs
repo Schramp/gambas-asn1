@@ -57,16 +57,19 @@ pub fn read_ia5_string(r: &mut Reader) -> Result<String, DecodeError> {
         .map_err(|_| DecodeError::new("IA5String: invalid UTF-8".to_string(), r.pos()))
 }
 
-/// Shared bytes-in/bytes-out logic for every non-`IA5String` character
-/// string kind — the analogue of `AsnStringBerHandler`'s single runtime
-/// singleton, parameterized by `tag` instead of dispatched on it (Rust's
-/// per-kind newtypes carry the tag at the type level, so no runtime
-/// dispatch is needed here at all).
-fn write_char_string(out: &mut Vec<u8>, tag: Tag, value: &str) {
+/// Shared bytes-in/bytes-out logic for every character string kind — the
+/// analogue of `AsnStringBerHandler`'s single runtime singleton,
+/// parameterized by `tag` instead of dispatched on it. Used both for each
+/// `char_string_type!`-generated newtype's own natural tag, and (`pub`,
+/// gambas-asn1#332) directly by codegen for a member whose real resolved
+/// tag differs from its natural one (IMPLICIT tagging, X.690 §8.14) —
+/// same shape `boolean`/`integer`/`octet_string`'s `*_tagged` functions
+/// give those kinds.
+pub fn write_char_string(out: &mut Vec<u8>, tag: Tag, value: &str) {
     write_primitive(out, tag, value.as_bytes());
 }
 
-fn read_char_string(r: &mut Reader, tag: Tag, kind: &str) -> Result<String, DecodeError> {
+pub fn read_char_string(r: &mut Reader, tag: Tag, kind: &str) -> Result<String, DecodeError> {
     let tlv = r.read_tlv()?;
     if tlv.tag != tag {
         return Err(DecodeError::new(format!("expected {kind} tag, got {:?}", tlv.tag), r.pos()));
