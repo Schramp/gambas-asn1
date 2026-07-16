@@ -240,19 +240,31 @@ pub fn write_close_tag(out: &mut String, name: &str) {
 /// walker's own responsibility, not something `Option<V>::xer_encode` can
 /// suppress by itself.
 pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
+    use crate::sequence::MemberAccess;
     let mut out = String::new();
     write_open_tag(&mut out, spec.name);
     out.push('\n');
     for m in spec.members {
-        let val = (m.get)(value);
-        if !val.is_present() {
-            continue;
+        match &m.access {
+            MemberAccess::Scalar { get, .. } => {
+                let val = get(value);
+                if !val.is_present() {
+                    continue;
+                }
+                out.push_str("    ");
+                write_open_tag(&mut out, m.name);
+                val.xer_encode(&mut out);
+                write_close_tag(&mut out, m.name);
+                out.push('\n');
+            }
+            MemberAccess::SeqOf { xer_encode, .. } => {
+                out.push_str("    ");
+                write_open_tag(&mut out, m.name);
+                xer_encode(value, &mut out);
+                write_close_tag(&mut out, m.name);
+                out.push('\n');
+            }
         }
-        out.push_str("    ");
-        write_open_tag(&mut out, m.name);
-        val.xer_encode(&mut out);
-        write_close_tag(&mut out, m.name);
-        out.push('\n');
     }
     write_close_tag(&mut out, spec.name);
     out.push('\n');
@@ -270,6 +282,7 @@ pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
 /// consumed, same linear-scan/canonical-order assumption `decode_sequence`'s
 /// BER leg documents.
 pub fn decode_sequence_xer<T: Default>(spec: &SequenceSpec<T>, xml: &str) -> Result<T, DecodeError> {
+    use crate::sequence::MemberAccess;
     let mut r = XerReader::new(xml);
     r.consume_open_tag(spec.name)?;
     let mut result = T::default();
@@ -281,7 +294,10 @@ pub fn decode_sequence_xer<T: Default>(spec: &SequenceSpec<T>, xml: &str) -> Res
             }
         }
         r.consume_open_tag(m.name)?;
-        (m.get_mut)(&mut result).xer_decode_into(&mut r)?;
+        match &m.access {
+            MemberAccess::Scalar { get_mut, .. } => get_mut(&mut result).xer_decode_into(&mut r)?,
+            MemberAccess::SeqOf { xer_decode_into, .. } => xer_decode_into(&mut result, &mut r)?,
+        }
         r.consume_close_tag(m.name)?;
     }
     r.consume_close_tag(spec.name)?;

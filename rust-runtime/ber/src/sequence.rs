@@ -18,6 +18,7 @@ use crate::reader::{DecodeError, Reader};
 use crate::tag::{universal, Tag};
 use crate::value::Asn1Value;
 use crate::writer::write_constructed;
+use crate::xer::XerReader;
 
 pub const SEQUENCE_TAG: Tag = Tag::universal(universal::SEQUENCE, true);
 
@@ -40,8 +41,101 @@ pub struct MemberDescriptor<T: 'static> {
     pub name: &'static str,
     pub tag: Tag,
     pub optional: bool,
-    pub get: fn(&T) -> &dyn Asn1Value,
-    pub get_mut: fn(&mut T) -> &mut dyn Asn1Value,
+    pub access: MemberAccess<T>,
+}
+
+/// gambas-asn1#331: how a member's value is reached and (de)serialized.
+///
+/// `Scalar` is the original, and by far the most common, shape: the member
+/// is one field whose own concrete type already implements `Asn1Value`
+/// (`i64`, `bool`, `Vec<u8>`, `String`, an `Option<V>`/newtype-string —
+/// every kind `rust_member_ber_tag` currently covers), reached via the same
+/// accessor-function pair the crate has always used (`value.rs`'s module
+/// doc explains why a function, not an `offsetof`-equivalent).
+///
+/// `SeqOf` is new: a SEQUENCE OF member's field type is `Vec<ElementType>`,
+/// which — deliberately — does *not* implement `Asn1Value` itself (unlike
+/// `Option<V>`, gambas-asn1#326's blanket impl): `Vec<u8>` already has its
+/// own *concrete* `Asn1Value` impl for OCTET STRING content, and Rust's
+/// coherence rules forbid also giving `Vec<u8>` an overlapping instantiation
+/// of a generic `impl<V: Asn1Value> Asn1Value for Vec<V>` (the compiler
+/// can't rule out some future crate adding `impl Asn1Value for u8`, so it
+/// rejects the ambiguity up front, not just when it would actually occur).
+/// `SeqOf`'s four closures encode/decode the whole `Vec<ElementType>` field
+/// directly instead — same closure-over-the-concrete-type shape
+/// `ChoiceAlternativeSpec` (`choice.rs`) already established for a
+/// structurally different reason (multiple types sharing one table).
+pub enum MemberAccess<T: 'static> {
+    Scalar {
+        get: fn(&T) -> &dyn Asn1Value,
+        get_mut: fn(&mut T) -> &mut dyn Asn1Value,
+    },
+    SeqOf {
+        ber_encode: fn(&T, &mut Vec<u8>),
+        ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
+        xer_encode: fn(&T, &mut String),
+        xer_decode_into: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
+    },
+}
+
+/// Shared SEQUENCE-OF wire logic — one outer `SEQUENCE_TAG` TLV wrapping
+/// zero or more inner element TLVs (X.690 §8.9), used by every codegen'd
+/// `MemberAccess::SeqOf::ber_encode`/`ber_decode_into` closure regardless of
+/// element type (mirrors `write_char_string`/`read_char_string` in
+/// `strings.rs` — one generic function, many thin per-type call sites).
+pub fn encode_seq_of<V: Asn1Value>(out: &mut Vec<u8>, items: &[V]) {
+    let mut content = Vec::new();
+    for item in items {
+        item.ber_encode(&mut content);
+    }
+    write_constructed(out, SEQUENCE_TAG, &content);
+}
+
+pub fn decode_seq_of<V: Asn1Value + Default>(r: &mut Reader) -> Result<Vec<V>, DecodeError> {
+    let tlv = r.read_tlv()?;
+    if tlv.tag != SEQUENCE_TAG {
+        return Err(DecodeError::new(format!("expected SEQUENCE OF tag, got {:?}", tlv.tag), r.pos()));
+    }
+    let mut inner = Reader::new(tlv.value);
+    let mut result = Vec::new();
+    while !inner.at_end() {
+        let mut item = V::default();
+        item.ber_decode_into(&mut inner)?;
+        result.push(item);
+    }
+    Ok(result)
+}
+
+/// XER SEQUENCE-OF content: X.693 §12 wraps each element in a tag named
+/// after the *element's own type*, all nested directly inside the member's
+/// own `<name>...</name>` (no extra container) — mirrors `SeqOfXerHandler`
+/// (`runtime/src/XerCodec.cpp`). `elem_name` is that per-element tag
+/// (codegen supplies the element type's own ASN.1 name), not the member's.
+pub fn encode_seq_of_xer<V: Asn1Value>(out: &mut String, items: &[V], elem_name: &str) {
+    for item in items {
+        crate::xer::write_open_tag(out, elem_name);
+        item.xer_encode(out);
+        crate::xer::write_close_tag(out, elem_name);
+    }
+}
+
+pub fn decode_seq_of_xer<V: Asn1Value + Default>(
+    r: &mut XerReader,
+    elem_name: &str,
+) -> Result<Vec<V>, DecodeError> {
+    let mut result = Vec::new();
+    loop {
+        let peeked = r.peek_tag();
+        if peeked.name != elem_name || peeked.closing {
+            break;
+        }
+        r.consume_open_tag(elem_name)?;
+        let mut item = V::default();
+        item.xer_decode_into(r)?;
+        r.consume_close_tag(elem_name)?;
+        result.push(item);
+    }
+    Ok(result)
 }
 
 /// SEQUENCE/SET member table — mirrors `SequenceSpec` (`TypeDescriptor.hpp`).
@@ -89,7 +183,10 @@ pub struct SequenceSpec<T: 'static> {
 pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
     let mut content = Vec::new();
     for m in spec.members {
-        (m.get)(value).ber_encode(&mut content);
+        match &m.access {
+            MemberAccess::Scalar { get, .. } => get(value).ber_encode(&mut content),
+            MemberAccess::SeqOf { ber_encode, .. } => ber_encode(value, &mut content),
+        }
     }
     let mut out = Vec::new();
     write_constructed(&mut out, spec.tag, &content);
@@ -121,12 +218,19 @@ pub fn decode_sequence<T: Default>(spec: &SequenceSpec<T>, data: &[u8]) -> Resul
     let mut inner = Reader::new(tlv.value);
     let mut result = T::default();
     for m in spec.members {
-        if m.optional {
-            if inner.peek_tag() == Some(m.tag) {
-                (m.get_mut)(&mut result).ber_decode_into(&mut inner)?;
+        match &m.access {
+            MemberAccess::Scalar { get_mut, .. } => {
+                if m.optional {
+                    if inner.peek_tag() == Some(m.tag) {
+                        get_mut(&mut result).ber_decode_into(&mut inner)?;
+                    }
+                } else {
+                    get_mut(&mut result).ber_decode_into(&mut inner)?;
+                }
             }
-        } else {
-            (m.get_mut)(&mut result).ber_decode_into(&mut inner)?;
+            MemberAccess::SeqOf { ber_decode_into, .. } => {
+                ber_decode_into(&mut result, &mut inner)?;
+            }
         }
     }
     Ok(result)
@@ -144,15 +248,13 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         name: "x",
         tag: crate::integer::INTEGER_TAG,
         optional: false,
-        get: |v| &v.x,
-        get_mut: |v| &mut v.x,
+        access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
     },
     MemberDescriptor {
         name: "y",
         tag: crate::integer::INTEGER_TAG,
         optional: false,
-        get: |v| &v.y,
-        get_mut: |v| &mut v.y,
+        access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
     },
 ];
 
@@ -191,15 +293,13 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         name: "x",
         tag: crate::integer::INTEGER_TAG,
         optional: false,
-        get: |v| &v.x,
-        get_mut: |v| &mut v.x,
+        access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
     },
     MemberDescriptor {
         name: "y",
         tag: crate::integer::INTEGER_TAG,
         optional: true,
-        get: |v| &v.y,
-        get_mut: |v| &mut v.y,
+        access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
     },
 ];
 
@@ -221,6 +321,65 @@ impl OptPoint {
 
     pub fn decode_xer(xml: &str) -> Result<OptPoint, DecodeError> {
         crate::xer::decode_sequence_xer(&OPT_POINT_SPEC, xml)
+    }
+}
+
+/// `Coords ::= SEQUENCE { values SEQUENCE OF INTEGER }` — worked example +
+/// test subject for SEQUENCE OF member support (gambas-asn1#331), same role
+/// `Point`/`OptPoint` play for their own features.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Coords {
+    pub values: Vec<i64>,
+}
+
+fn coords_values_ber_encode(v: &Coords, out: &mut Vec<u8>) {
+    encode_seq_of(out, &v.values);
+}
+
+fn coords_values_ber_decode_into(v: &mut Coords, r: &mut Reader) -> Result<(), DecodeError> {
+    v.values = decode_seq_of(r)?;
+    Ok(())
+}
+
+fn coords_values_xer_encode(v: &Coords, out: &mut String) {
+    encode_seq_of_xer(out, &v.values, "INTEGER");
+}
+
+fn coords_values_xer_decode_into(v: &mut Coords, r: &mut XerReader) -> Result<(), DecodeError> {
+    v.values = decode_seq_of_xer(r, "INTEGER")?;
+    Ok(())
+}
+
+static COORDS_MEMBERS: [MemberDescriptor<Coords>; 1] = [MemberDescriptor {
+    name: "values",
+    tag: SEQUENCE_TAG,
+    optional: false,
+    access: MemberAccess::SeqOf {
+        ber_encode: coords_values_ber_encode,
+        ber_decode_into: coords_values_ber_decode_into,
+        xer_encode: coords_values_xer_encode,
+        xer_decode_into: coords_values_xer_decode_into,
+    },
+}];
+
+static COORDS_SPEC: SequenceSpec<Coords> =
+    SequenceSpec { name: "Coords", tag: SEQUENCE_TAG, members: &COORDS_MEMBERS };
+
+impl Coords {
+    pub fn encode(&self) -> Vec<u8> {
+        encode_sequence(&COORDS_SPEC, self)
+    }
+
+    pub fn decode(data: &[u8]) -> Result<Coords, DecodeError> {
+        decode_sequence(&COORDS_SPEC, data)
+    }
+
+    pub fn encode_xer(&self) -> String {
+        crate::xer::encode_sequence_xer(&COORDS_SPEC, self)
+    }
+
+    pub fn decode_xer(xml: &str) -> Result<Coords, DecodeError> {
+        crate::xer::decode_sequence_xer(&COORDS_SPEC, xml)
     }
 }
 
@@ -342,15 +501,13 @@ mod tests {
                 name: "x",
                 tag: crate::integer::INTEGER_TAG,
                 optional: false,
-                get: |v| &v.x,
-                get_mut: |v| &mut v.x,
+                access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
             },
             MemberDescriptor {
                 name: "y",
                 tag: crate::integer::INTEGER_TAG,
                 optional: false,
-                get: |v| &v.y,
-                get_mut: |v| &mut v.y,
+                access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
             },
         ];
         static A_SET_SPEC: SequenceSpec<Point> =
@@ -367,5 +524,51 @@ mod tests {
         // proof the two tags are actually being distinguished, not just
         // cosmetically different constants.
         assert!(Point::decode(&bytes).is_err());
+    }
+
+    // ---- SEQUENCE OF members (gambas-asn1#331) ------------------------------
+
+    #[test]
+    fn seq_of_ber_round_trips() {
+        let c = Coords { values: vec![1, 2, 3] };
+        let bytes = c.encode();
+        // Outer SEQUENCE (0x30) wraps the member's own SEQUENCE (0x30) of
+        // three INTEGER TLVs.
+        assert_eq!(
+            bytes,
+            vec![
+                0x30, 0x0B, // outer SEQUENCE, len 11
+                0x30, 0x09, // inner SEQUENCE OF, len 9
+                0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03,
+            ]
+        );
+        assert_eq!(Coords::decode(&bytes).unwrap(), c);
+    }
+
+    #[test]
+    fn seq_of_empty_ber_round_trips() {
+        let c = Coords { values: vec![] };
+        let bytes = c.encode();
+        assert_eq!(bytes, vec![0x30, 0x02, 0x30, 0x00]);
+        assert_eq!(Coords::decode(&bytes).unwrap(), c);
+    }
+
+    #[test]
+    fn seq_of_xer_round_trips() {
+        let c = Coords { values: vec![1, 2, 3] };
+        let xml = c.encode_xer();
+        assert_eq!(
+            xml,
+            "<Coords>\n    <values><INTEGER>1</INTEGER><INTEGER>2</INTEGER><INTEGER>3</INTEGER></values>\n</Coords>\n"
+        );
+        assert_eq!(Coords::decode_xer(&xml).unwrap(), c);
+    }
+
+    #[test]
+    fn seq_of_empty_xer_round_trips() {
+        let c = Coords { values: vec![] };
+        let xml = c.encode_xer();
+        assert_eq!(xml, "<Coords>\n    <values></values>\n</Coords>\n");
+        assert_eq!(Coords::decode_xer(&xml).unwrap(), c);
     }
 }
