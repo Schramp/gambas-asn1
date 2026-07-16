@@ -57,8 +57,9 @@ pub mod universal {
     pub const INTEGER: u32 = 2;
     pub const OCTET_STRING: u32 = 4;
     pub const OBJECT_DESCRIPTOR: u32 = 7;
-    pub const SEQUENCE: u32 = 16;
     pub const UTF8_STRING: u32 = 12;
+    pub const SEQUENCE: u32 = 16;
+    pub const SET: u32 = 17;
     pub const NUMERIC_STRING: u32 = 18;
     pub const PRINTABLE_STRING: u32 = 19;
     pub const T61_STRING: u32 = 20;

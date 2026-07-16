@@ -528,7 +528,12 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             "static {}: asn1cpp_ber::sequence::SequenceSpec<{}> = asn1cpp_ber::sequence::SequenceSpec {{\n",
             spec_ident, spec.type_name);
         os << std::format("    name: \"{}\",\n", spec.type_name);
-        os << "    tag: asn1cpp_ber::sequence::SEQUENCE_TAG,\n";
+        // gambas-asn1#326: SET's own natural tag (universal 17), not
+        // SEQUENCE's (16) — same distinction CppBackend's own
+        // emit_sequence_definition already makes (spec.is_set), just never
+        // threaded through here before now.
+        os << std::format("    tag: asn1cpp_ber::sequence::{},\n",
+                          spec.is_set ? "SET_TAG" : "SEQUENCE_TAG");
         os << std::format("    members: &{},\n", members_ident);
         os << "};\n\n";
 

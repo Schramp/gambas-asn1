@@ -21,6 +21,15 @@ use crate::writer::write_constructed;
 
 pub const SEQUENCE_TAG: Tag = Tag::universal(universal::SEQUENCE, true);
 
+/// gambas-asn1#326: SET's own natural tag (X.680 §26, universal 17,
+/// constructed) — a SET-typed `SequenceSpec<T>` must use this instead of
+/// `SEQUENCE_TAG`. `encode_sequence`/`decode_sequence` don't otherwise
+/// distinguish SET from SEQUENCE (same TLV shape, same member walk; X.690
+/// §8.11/§8.12 SET encoding is canonically member-tag-ordered on the wire,
+/// which this crate doesn't enforce — same simplifying scope note
+/// `decode_sequence`'s own doc already makes for member ordering generally).
+pub const SET_TAG: Tag = Tag::universal(universal::SET, true);
+
 /// One row in a `SequenceSpec<T>` table — mirrors `MemberDescriptor`
 /// (`TypeDescriptor.hpp`), minus everything not yet needed by this crate's
 /// scope (DEFAULT values, EXPLICIT/IMPLICIT tagging beyond the member's own
@@ -316,5 +325,47 @@ mod tests {
         // No <y> element at all when absent.
         assert_eq!(xml, "<OptPoint>\n    <x>1</x>\n</OptPoint>\n");
         assert_eq!(OptPoint::decode_xer(&xml).unwrap(), p);
+    }
+
+    // ---- SET vs SEQUENCE outer tag (gambas-asn1#326) ------------------------
+
+    #[test]
+    fn set_tag_is_seventeen_constructed() {
+        assert_eq!(SET_TAG, Tag::universal(17, true));
+        assert_ne!(SET_TAG, SEQUENCE_TAG);
+    }
+
+    #[test]
+    fn set_uses_its_own_tag_not_sequences() {
+        static SET_MEMBERS: [MemberDescriptor<Point>; 2] = [
+            MemberDescriptor {
+                name: "x",
+                tag: crate::integer::INTEGER_TAG,
+                optional: false,
+                get: |v| &v.x,
+                get_mut: |v| &mut v.x,
+            },
+            MemberDescriptor {
+                name: "y",
+                tag: crate::integer::INTEGER_TAG,
+                optional: false,
+                get: |v| &v.y,
+                get_mut: |v| &mut v.y,
+            },
+        ];
+        static A_SET_SPEC: SequenceSpec<Point> =
+            SequenceSpec { name: "APointSet", tag: SET_TAG, members: &SET_MEMBERS };
+
+        let p = Point { x: 1, y: 2 };
+        let bytes = encode_sequence(&A_SET_SPEC, &p);
+        // 0x31 = constructed (0x20) | SET's own tag number (17 = 0x11),
+        // not 0x30 (SEQUENCE, universal 16).
+        assert_eq!(bytes[0], 0x31);
+        assert_eq!(decode_sequence(&A_SET_SPEC, &bytes).unwrap(), p);
+
+        // A SEQUENCE-tagged decode of the same bytes must reject them —
+        // proof the two tags are actually being distinguished, not just
+        // cosmetically different constants.
+        assert!(Point::decode(&bytes).is_err());
     }
 }
