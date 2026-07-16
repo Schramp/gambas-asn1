@@ -56,8 +56,19 @@ pub mod universal {
     pub const BOOLEAN: u32 = 1;
     pub const INTEGER: u32 = 2;
     pub const OCTET_STRING: u32 = 4;
+    pub const OBJECT_DESCRIPTOR: u32 = 7;
     pub const SEQUENCE: u32 = 16;
+    pub const UTF8_STRING: u32 = 12;
+    pub const NUMERIC_STRING: u32 = 18;
+    pub const PRINTABLE_STRING: u32 = 19;
+    pub const T61_STRING: u32 = 20;
+    pub const VIDEOTEX_STRING: u32 = 21;
     pub const IA5_STRING: u32 = 22;
+    pub const GRAPHIC_STRING: u32 = 25;
+    pub const VISIBLE_STRING: u32 = 26;
+    pub const GENERAL_STRING: u32 = 27;
+    pub const UNIVERSAL_STRING: u32 = 28;
+    pub const BMP_STRING: u32 = 30;
 }
 
 /// Encode and append the identifier octets for `t` — short-form

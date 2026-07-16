@@ -4,29 +4,43 @@
 //!
 //! Mirrors `AsnStringBerHandler` (`runtime/src/BerCodec.cpp`): value octets
 //! are the raw string bytes, no escaping at the BER layer (escaping is an
-//! XER-only concern, see `xer.rs`). Scoped to `IA5String` for now
-//! (gambas-asn1#282) — the other 11 string kinds share this exact shape,
-//! differing only in universal tag number, so widening later is adding a
-//! tag constant, not new logic.
+//! XER-only concern, see `xer.rs`).
+//!
+//! **`IA5String` is `String` itself** (`Asn1Value for String`, `value.rs`) —
+//! kept as the one exception, unchanged since gambas-asn1#282, because a
+//! generated field's Rust type must stay a plain `String` for the earliest,
+//! most common case (ergonomics: no `.0` unwrapping, matches every already-
+//! generated/tested `IA5String` member). **The other 11 string kinds
+//! (gambas-asn1#326) are newtype wrappers** (`NumericString(pub String)`
+//! etc., via the `char_string_type!` macro below) — a plain `String` can't
+//! carry more than one `Asn1Value` impl (Rust allows only one trait impl per
+//! concrete type), so `NumericString`'s member can't reuse `IA5String`'s
+//! `String` impl even though the wire shape is identical; they'd fight over
+//! which tag to check/write. This mirrors the C++ runtime's own solution to
+//! the same problem — `AsnString<N>` (`asn1cpp/CLAUDE.md`'s "tag-indexed
+//! dispatch tables carry type information" decision record): a distinct
+//! type per string *kind*, sharing one non-virtual base for the common
+//! bytes-in/bytes-out logic. `char_string_type!` is that shared logic here;
+//! each generated newtype is the Rust analogue of one `AsnString<N>`
+//! instantiation.
 //!
 //! **Known divergence from ground truth (found on review, gambas-asn1#282):**
 //! `AsnStringBerHandler::decode` copies value octets into `std::string`
 //! unconditionally — no charset validation at all, C++ accepts *any* byte
-//! sequence as IA5String content. `read_ia5_string` below requires valid
-//! UTF-8 (`String::from_utf8`), because the field's Rust type is `String`,
-//! which can't hold arbitrary bytes. A malformed/fuzzed IA5String (e.g. raw
-//! high bytes that aren't valid UTF-8) that C++ decodes successfully will
-//! be *rejected* here. Left as-is for this issue's scope — flagging so it
-//! isn't rediscovered as a surprise during #286 (randgen cross-validation
-//! against asn1c), where such inputs are exactly what a corruption-mode
-//! fuzz run would produce. A real fix would need either a lossy
-//! from_utf8_lossy substitution (changes the decoded value, still not
-//! byte-identical to C++) or a non-`String` field representation for text
-//! types (bigger scope than this issue).
+//! sequence as string content, for every kind. Every impl here (including
+//! the newtypes) requires valid UTF-8 (`String::from_utf8`), because the
+//! underlying storage is `String`, which can't hold arbitrary bytes. A
+//! malformed/fuzzed string member (e.g. raw high bytes that aren't valid
+//! UTF-8) that C++ decodes successfully will be *rejected* here. Left as-is
+//! for this issue's scope — flagging so it isn't rediscovered as a surprise
+//! during #286 (randgen cross-validation against asn1c), where such inputs
+//! are exactly what a corruption-mode fuzz run would produce.
 
 use crate::reader::{DecodeError, Reader};
 use crate::tag::{universal, Tag};
+use crate::value::Asn1Value;
 use crate::writer::write_primitive;
+use crate::xer::XerReader;
 
 pub const IA5_STRING_TAG: Tag = Tag::universal(universal::IA5_STRING, false);
 
@@ -42,6 +56,90 @@ pub fn read_ia5_string(r: &mut Reader) -> Result<String, DecodeError> {
     String::from_utf8(tlv.value.to_vec())
         .map_err(|_| DecodeError::new("IA5String: invalid UTF-8".to_string(), r.pos()))
 }
+
+/// Shared bytes-in/bytes-out logic for every non-`IA5String` character
+/// string kind — the analogue of `AsnStringBerHandler`'s single runtime
+/// singleton, parameterized by `tag` instead of dispatched on it (Rust's
+/// per-kind newtypes carry the tag at the type level, so no runtime
+/// dispatch is needed here at all).
+fn write_char_string(out: &mut Vec<u8>, tag: Tag, value: &str) {
+    write_primitive(out, tag, value.as_bytes());
+}
+
+fn read_char_string(r: &mut Reader, tag: Tag, kind: &str) -> Result<String, DecodeError> {
+    let tlv = r.read_tlv()?;
+    if tlv.tag != tag {
+        return Err(DecodeError::new(format!("expected {kind} tag, got {:?}", tlv.tag), r.pos()));
+    }
+    String::from_utf8(tlv.value.to_vec())
+        .map_err(|_| DecodeError::new(format!("{kind}: invalid UTF-8"), r.pos()))
+}
+
+/// Define one restricted-character-string newtype: its tag constant, the
+/// struct itself (`Debug`/`Clone`/`Default`/`PartialEq`/`Eq`, same derives
+/// `Point`'s own fields get), its `Asn1Value` impl (BER via
+/// `write_char_string`/`read_char_string`; XER: escaped text content, same
+/// as `String`'s own impl — X.693 doesn't distinguish string kinds in
+/// BASIC-XER form), and `Deref`/`DerefMut` to `String` — so a member of this
+/// type still supports every `String` method call site already generated
+/// for plain-`String` members (e.g. `.len()` in a SIZE-constraint check
+/// function, `emit_string_definition`) without each of those call sites
+/// needing to know or care that the value is wrapped.
+macro_rules! char_string_type {
+    ($name:ident, $tag_const:ident, $tag_num:expr, $asn1_name:expr) => {
+        #[doc = concat!("`", $asn1_name, "` — X.680 §41. Newtype over `String`; see the module doc for why.")]
+        pub const $tag_const: Tag = Tag::universal($tag_num, false);
+
+        #[derive(Debug, Clone, Default, PartialEq, Eq)]
+        pub struct $name(pub String);
+
+        impl std::ops::Deref for $name {
+            type Target = String;
+            fn deref(&self) -> &String {
+                &self.0
+            }
+        }
+
+        impl std::ops::DerefMut for $name {
+            fn deref_mut(&mut self) -> &mut String {
+                &mut self.0
+            }
+        }
+
+        impl Asn1Value for $name {
+            fn ber_encode(&self, out: &mut Vec<u8>) {
+                write_char_string(out, $tag_const, &self.0);
+            }
+
+            fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+                self.0 = read_char_string(r, $tag_const, $asn1_name)?;
+                Ok(())
+            }
+
+            fn xer_encode(&self, out: &mut String) {
+                crate::xer::escape(&self.0, out);
+            }
+
+            fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+                let text = r.read_text_content();
+                self.0 = crate::xer::unescape(text);
+                Ok(())
+            }
+        }
+    };
+}
+
+char_string_type!(Utf8String, UTF8_STRING_TAG, universal::UTF8_STRING, "UTF8String");
+char_string_type!(NumericString, NUMERIC_STRING_TAG, universal::NUMERIC_STRING, "NumericString");
+char_string_type!(PrintableString, PRINTABLE_STRING_TAG, universal::PRINTABLE_STRING, "PrintableString");
+char_string_type!(T61String, T61_STRING_TAG, universal::T61_STRING, "T61String");
+char_string_type!(VideotexString, VIDEOTEX_STRING_TAG, universal::VIDEOTEX_STRING, "VideotexString");
+char_string_type!(VisibleString, VISIBLE_STRING_TAG, universal::VISIBLE_STRING, "VisibleString");
+char_string_type!(GraphicString, GRAPHIC_STRING_TAG, universal::GRAPHIC_STRING, "GraphicString");
+char_string_type!(GeneralString, GENERAL_STRING_TAG, universal::GENERAL_STRING, "GeneralString");
+char_string_type!(UniversalString, UNIVERSAL_STRING_TAG, universal::UNIVERSAL_STRING, "UniversalString");
+char_string_type!(BmpString, BMP_STRING_TAG, universal::BMP_STRING, "BMPString");
+char_string_type!(ObjectDescriptor, OBJECT_DESCRIPTOR_TAG, universal::OBJECT_DESCRIPTOR, "ObjectDescriptor");
 
 #[cfg(test)]
 mod tests {
@@ -85,5 +183,42 @@ mod tests {
         let data = [0x16, 0x01, 0xFF];
         let mut r = Reader::new(&data);
         assert!(read_ia5_string(&mut r).is_err());
+    }
+
+    // ---- restricted-string newtypes (gambas-asn1#326) -----------------------
+
+    #[test]
+    fn numeric_string_ber_round_trips_and_uses_its_own_tag() {
+        let mut buf = Vec::new();
+        NumericString("12345".to_string()).ber_encode(&mut buf);
+        // NUMERIC_STRING tag (0x12), not IA5String's (0x16).
+        assert_eq!(buf, vec![0x12, 0x05, b'1', b'2', b'3', b'4', b'5']);
+
+        let mut r = Reader::new(&buf);
+        let mut got = NumericString::default();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, NumericString("12345".to_string()));
+    }
+
+    #[test]
+    fn numeric_string_rejects_ia5_string_tag() {
+        // A member typed NumericString must not silently accept an
+        // IA5String-tagged TLV, even though both store a String underneath.
+        let data = [0x16, 0x02, b'h', b'i'];
+        let mut r = Reader::new(&data);
+        let mut got = NumericString::default();
+        assert!(got.ber_decode_into(&mut r).is_err());
+    }
+
+    #[test]
+    fn printable_string_xer_round_trips() {
+        let mut out = String::new();
+        PrintableString("a<b".to_string()).xer_encode(&mut out);
+        assert_eq!(out, "a&lt;b");
+
+        let mut r = XerReader::new(&out);
+        let mut got = PrintableString::default();
+        got.xer_decode_into(&mut r).unwrap();
+        assert_eq!(got, PrintableString("a<b".to_string()));
     }
 }
