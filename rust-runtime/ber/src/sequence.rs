@@ -73,9 +73,10 @@ pub struct SequenceSpec<T: 'static> {
 /// Generic SEQUENCE encoder — the Rust analogue of
 /// `SequenceBerHandler::encode`. Iterates `spec.members` in order, writing
 /// each member's own complete TLV into the constructed SEQUENCE content.
-/// No OPTIONAL/DEFAULT suppression yet (`MemberDescriptor::optional` is
-/// carried in the table already, ready for that once decode needs it too —
-/// see the module doc's scope note).
+/// OPTIONAL suppression (gambas-asn1#326) needs no special-casing here: an
+/// absent `Option<V>::None` member's `ber_encode` (the blanket
+/// `Asn1Value for Option<V>` impl, `value.rs`) already writes nothing. No
+/// DEFAULT-value suppression yet — a real gap, not silently dropped.
 pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
     let mut content = Vec::new();
     for m in spec.members {
@@ -91,6 +92,17 @@ pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
 /// initial value (matching every generated struct's `#[derive(Default)]`);
 /// each member is decoded in table order directly into its field via
 /// `ber_decode_into`, no intermediate allocation per member.
+///
+/// OPTIONAL members (gambas-asn1#326): tag-presence detection, same model
+/// `asn1cpp/CLAUDE.md`'s BER-vs-PER table documents ("OPTIONAL detection:
+/// Tag present/absent in stream"). Peek before deciding whether to call
+/// `ber_decode_into` at all — an absent optional member's tag belongs to
+/// whatever comes *next* (the following member, or nothing), so the reader
+/// must not be advanced past it if this member isn't present. Only a linear
+/// scan (each optional member checked once, in table order) — correct for
+/// SEQUENCE's canonical member ordering (X.690 §8.9), same simplifying
+/// assumption `MemberDescriptor`'s module doc already documents this crate
+/// making elsewhere (no DEFAULT values, no out-of-order OPTIONAL members).
 pub fn decode_sequence<T: Default>(spec: &SequenceSpec<T>, data: &[u8]) -> Result<T, DecodeError> {
     let mut r = Reader::new(data);
     let tlv = r.read_tlv()?;
@@ -100,7 +112,13 @@ pub fn decode_sequence<T: Default>(spec: &SequenceSpec<T>, data: &[u8]) -> Resul
     let mut inner = Reader::new(tlv.value);
     let mut result = T::default();
     for m in spec.members {
-        (m.get_mut)(&mut result).ber_decode_into(&mut inner)?;
+        if m.optional {
+            if inner.peek_tag() == Some(m.tag) {
+                (m.get_mut)(&mut result).ber_decode_into(&mut inner)?;
+            }
+        } else {
+            (m.get_mut)(&mut result).ber_decode_into(&mut inner)?;
+        }
     }
     Ok(result)
 }
@@ -147,6 +165,53 @@ impl Point {
 
     pub fn decode_xer(xml: &str) -> Result<Point, DecodeError> {
         crate::xer::decode_sequence_xer(&POINT_SPEC, xml)
+    }
+}
+
+/// `OptPoint ::= SEQUENCE { x INTEGER, y INTEGER OPTIONAL }` — worked
+/// example + test subject for OPTIONAL member support (gambas-asn1#326),
+/// same role `Point` plays for required-only members.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OptPoint {
+    pub x: i64,
+    pub y: Option<i64>,
+}
+
+static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
+    MemberDescriptor {
+        name: "x",
+        tag: crate::integer::INTEGER_TAG,
+        optional: false,
+        get: |v| &v.x,
+        get_mut: |v| &mut v.x,
+    },
+    MemberDescriptor {
+        name: "y",
+        tag: crate::integer::INTEGER_TAG,
+        optional: true,
+        get: |v| &v.y,
+        get_mut: |v| &mut v.y,
+    },
+];
+
+static OPT_POINT_SPEC: SequenceSpec<OptPoint> =
+    SequenceSpec { name: "OptPoint", tag: SEQUENCE_TAG, members: &OPT_POINT_MEMBERS };
+
+impl OptPoint {
+    pub fn encode(&self) -> Vec<u8> {
+        encode_sequence(&OPT_POINT_SPEC, self)
+    }
+
+    pub fn decode(data: &[u8]) -> Result<OptPoint, DecodeError> {
+        decode_sequence(&OPT_POINT_SPEC, data)
+    }
+
+    pub fn encode_xer(&self) -> String {
+        crate::xer::encode_sequence_xer(&OPT_POINT_SPEC, self)
+    }
+
+    pub fn decode_xer(xml: &str) -> Result<OptPoint, DecodeError> {
+        crate::xer::decode_sequence_xer(&OPT_POINT_SPEC, xml)
     }
 }
 
@@ -215,5 +280,41 @@ mod tests {
     #[test]
     fn xer_truncated_is_error() {
         assert!(Point::decode_xer("<Point>\n    <x>3</x>\n</Point>\n").is_err());
+    }
+
+    // ---- OPTIONAL member support (gambas-asn1#326) -------------------------
+
+    #[test]
+    fn opt_present_ber_round_trips() {
+        let p = OptPoint { x: 1, y: Some(2) };
+        let bytes = p.encode();
+        assert_eq!(bytes, vec![0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02]);
+        assert_eq!(OptPoint::decode(&bytes).unwrap(), p);
+    }
+
+    #[test]
+    fn opt_absent_ber_round_trips() {
+        let p = OptPoint { x: 1, y: None };
+        let bytes = p.encode();
+        // Only the required member's TLV — no trace of y at all.
+        assert_eq!(bytes, vec![0x30, 0x03, 0x02, 0x01, 0x01]);
+        assert_eq!(OptPoint::decode(&bytes).unwrap(), p);
+    }
+
+    #[test]
+    fn opt_present_xer_round_trips() {
+        let p = OptPoint { x: 1, y: Some(2) };
+        let xml = p.encode_xer();
+        assert_eq!(xml, "<OptPoint>\n    <x>1</x>\n    <y>2</y>\n</OptPoint>\n");
+        assert_eq!(OptPoint::decode_xer(&xml).unwrap(), p);
+    }
+
+    #[test]
+    fn opt_absent_xer_round_trips() {
+        let p = OptPoint { x: 1, y: None };
+        let xml = p.encode_xer();
+        // No <y> element at all when absent.
+        assert_eq!(xml, "<OptPoint>\n    <x>1</x>\n</OptPoint>\n");
+        assert_eq!(OptPoint::decode_xer(&xml).unwrap(), p);
     }
 }

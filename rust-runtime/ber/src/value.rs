@@ -64,6 +64,60 @@ pub trait Asn1Value {
     fn xer_decode_into(&mut self, _r: &mut XerReader) -> Result<(), DecodeError> {
         Err(DecodeError::new("XER leg not yet wired for this type".to_string(), 0))
     }
+
+    /// Whether this value should appear on the wire at all — always `true`
+    /// except for `Option<V>::None` (see the blanket impl below). Lets the
+    /// generic SEQUENCE walkers (`encode_sequence_xer`'s outer-tag wrapping;
+    /// `encode_sequence`'s BER leg needs no equivalent check, since
+    /// `Option<V>::ber_encode` already writes nothing for `None`) decide
+    /// whether to emit an OPTIONAL member without downcasting out of the
+    /// trait object.
+    fn is_present(&self) -> bool {
+        true
+    }
+}
+
+/// gambas-asn1#326: OPTIONAL member support. An `Option<V>` field (what
+/// `RustBackend` emits for an OPTIONAL member, mirroring C++'s
+/// `std::optional<T>`/`unique_ptr<T>`) becomes wire-absent exactly when
+/// `None` — encoding is `if let Some(v) = self { v.ber_encode/xer_encode }`,
+/// nothing otherwise. Decoding always assumes presence (`ber_decode_into`/
+/// `xer_decode_into` unconditionally produce `Some`): the *decision* of
+/// whether to call it at all belongs to the generic walker
+/// (`decode_sequence`/`decode_sequence_xer`), which peeks the member's tag
+/// first and only invokes this impl when the tag/element actually matches —
+/// same tag-presence-detection model `asn1cpp/CLAUDE.md`'s PER table
+/// documents for BER (bitmap in PER; tag-present-or-absent in BER).
+impl<V: Asn1Value + Default> Asn1Value for Option<V> {
+    fn is_present(&self) -> bool {
+        self.is_some()
+    }
+
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        if let Some(v) = self {
+            v.ber_encode(out);
+        }
+    }
+
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        let mut v = V::default();
+        v.ber_decode_into(r)?;
+        *self = Some(v);
+        Ok(())
+    }
+
+    fn xer_encode(&self, out: &mut String) {
+        if let Some(v) = self {
+            v.xer_encode(out);
+        }
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        let mut v = V::default();
+        v.xer_decode_into(r)?;
+        *self = Some(v);
+        Ok(())
+    }
 }
 
 impl Asn1Value for i64 {

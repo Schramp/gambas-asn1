@@ -457,9 +457,17 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return false;
         }
     };
+    // gambas-asn1#326: OPTIONAL members are now table-covered too — an
+    // OPTIONAL member's own field type (rust-runtime/ber's blanket
+    // `Asn1Value for Option<V>` impl, value.rs) handles wire-absence
+    // entirely on its own; the `get`/`get_mut` closures below are identical
+    // whether the field is `T` or `Option<T>` (Rust doesn't care, and the
+    // `&dyn Asn1Value` coercion works for both). Coverage is purely about
+    // whether the member's *type* has a real Asn1Value BER impl
+    // (rust_member_ber_tag) — no more blanket `!m.optional` exclusion.
     bool all_covered = !spec.members.empty() &&
         std::all_of(spec.members.begin(), spec.members.end(),
-                     [&](const SequenceMemberSpec& m) { return !m.optional && rust_member_ber_tag(m) != nullptr; });
+                     [&](const SequenceMemberSpec& m) { return rust_member_ber_tag(m) != nullptr; });
     bool all_xer_ready = all_covered &&
         std::all_of(spec.members.begin(), spec.members.end(), rust_member_xer_ready);
     if (all_covered) {
@@ -472,7 +480,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             os << "    asn1cpp_ber::sequence::MemberDescriptor {\n";
             os << std::format("        name: \"{}\",\n", m.asn1_name);
             os << std::format("        tag: {},\n", rust_member_ber_tag(m));
-            os << "        optional: false,\n";
+            os << std::format("        optional: {},\n", m.optional ? "true" : "false");
             os << std::format("        get: |v| &v.{},\n", m.mname);
             os << std::format("        get_mut: |v| &mut v.{},\n", m.mname);
             os << "    },\n";
