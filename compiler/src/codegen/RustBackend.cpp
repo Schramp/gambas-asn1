@@ -147,12 +147,20 @@ void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
 /// @param bt Built-in type tag (never SEQUENCE/CHOICE/TypeRef/INTEGER/
 ///           ENUMERATED — same precondition as CppBackend's equivalent).
 /// @return Rust type name, e.g. `"Vec<u8>"`, `"String"`, `"bool"`.
-/// @note Deliberately simple mappings (`String` for every text type
-///       regardless of alphabet, `Vec<u8>` for OCTET STRING/BIT STRING/OID/
-///       Any, `String` for UtcTime/GeneralizedTime rather than a real
-///       timestamp type) — matches this pairing's scope (compiles as real
-///       Rust, no runtime wiring yet). A real BER/PER runtime would likely
-///       want tighter types (e.g. `[u32]` arcs for OID); revisit then.
+/// @note `Ia5String` alone maps to plain `String` — it has its own
+///       `Asn1Value for String` impl (`rust-runtime/ber/src/value.rs`,
+///       gambas-asn1#282), kept as-is for ergonomics/backward compatibility.
+///       The other 11 restricted-character-string kinds
+///       (gambas-asn1#326) map to their own `rust-runtime/ber::strings`
+///       newtype (`NumericString`, `PrintableString`, ...) — a plain
+///       `String` can only carry one `Asn1Value` impl, so a second string
+///       kind can't reuse `Ia5String`'s without fighting over which tag to
+///       check/write (see `strings.rs`'s module doc). `Vec<u8>` for OCTET
+///       STRING/BIT STRING/OID/Any, `String` for UtcTime/GeneralizedTime
+///       rather than a real timestamp type — matches this pairing's scope
+///       (compiles as real Rust, no runtime wiring yet for those). A real
+///       BER/PER runtime would likely want tighter types (e.g. `[u32]` arcs
+///       for OID); revisit then.
 std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     using BT = ast::BuiltinType;
     switch (bt) {
@@ -163,18 +171,18 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     case BT::OctetString:      return "Vec<u8>";
     case BT::ObjectIdentifier: return "Vec<u64>";
     case BT::RelativeOid:      return "Vec<u64>";
-    case BT::Utf8String:       return "String";
-    case BT::NumericString:    return "String";
-    case BT::PrintableString:  return "String";
-    case BT::T61String:        return "String";
+    case BT::Utf8String:       return "asn1cpp_ber::strings::Utf8String";
+    case BT::NumericString:    return "asn1cpp_ber::strings::NumericString";
+    case BT::PrintableString:  return "asn1cpp_ber::strings::PrintableString";
+    case BT::T61String:        return "asn1cpp_ber::strings::T61String";
     case BT::Ia5String:        return "String";
-    case BT::VisibleString:    return "String";
-    case BT::GeneralString:    return "String";
-    case BT::GraphicString:    return "String";
-    case BT::UniversalString:  return "String";
-    case BT::BmpString:        return "String";
-    case BT::VideotexString:   return "String";
-    case BT::ObjectDescriptor: return "String";
+    case BT::VisibleString:    return "asn1cpp_ber::strings::VisibleString";
+    case BT::GeneralString:    return "asn1cpp_ber::strings::GeneralString";
+    case BT::GraphicString:    return "asn1cpp_ber::strings::GraphicString";
+    case BT::UniversalString:  return "asn1cpp_ber::strings::UniversalString";
+    case BT::BmpString:        return "asn1cpp_ber::strings::BmpString";
+    case BT::VideotexString:   return "asn1cpp_ber::strings::VideotexString";
+    case BT::ObjectDescriptor: return "asn1cpp_ber::strings::ObjectDescriptor";
     case BT::UtcTime:          return "String";
     case BT::GeneralizedTime:  return "String";
     case BT::Any:              return "Vec<u8>";
@@ -434,6 +442,21 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
         case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
         case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
+        // gambas-asn1#326: the other 11 restricted-character-string kinds
+        // (native_builtin_type maps each to its own rust-runtime/ber::strings
+        // newtype, not plain String) — each newtype's Asn1Value impl checks
+        // its own tag, matching the constant named here.
+        case ast::BuiltinType::Utf8String:       return "asn1cpp_ber::strings::UTF8_STRING_TAG";
+        case ast::BuiltinType::NumericString:    return "asn1cpp_ber::strings::NUMERIC_STRING_TAG";
+        case ast::BuiltinType::PrintableString:  return "asn1cpp_ber::strings::PRINTABLE_STRING_TAG";
+        case ast::BuiltinType::T61String:        return "asn1cpp_ber::strings::T61_STRING_TAG";
+        case ast::BuiltinType::VisibleString:    return "asn1cpp_ber::strings::VISIBLE_STRING_TAG";
+        case ast::BuiltinType::GeneralString:    return "asn1cpp_ber::strings::GENERAL_STRING_TAG";
+        case ast::BuiltinType::GraphicString:    return "asn1cpp_ber::strings::GRAPHIC_STRING_TAG";
+        case ast::BuiltinType::UniversalString:  return "asn1cpp_ber::strings::UNIVERSAL_STRING_TAG";
+        case ast::BuiltinType::BmpString:        return "asn1cpp_ber::strings::BMP_STRING_TAG";
+        case ast::BuiltinType::VideotexString:   return "asn1cpp_ber::strings::VIDEOTEX_STRING_TAG";
+        case ast::BuiltinType::ObjectDescriptor: return "asn1cpp_ber::strings::OBJECT_DESCRIPTOR_TAG";
         default:                            return nullptr;  // not yet covered by Asn1Value
         }
     };
@@ -452,6 +475,20 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         case ast::BuiltinType::Boolean:
         case ast::BuiltinType::OctetString:
         case ast::BuiltinType::Ia5String:
+        // gambas-asn1#326: every char_string_type! newtype gets the same
+        // escaped-text XER leg String's own impl uses (X.693 BASIC-XER
+        // doesn't distinguish string kinds), so all 11 are XER-ready too.
+        case ast::BuiltinType::Utf8String:
+        case ast::BuiltinType::NumericString:
+        case ast::BuiltinType::PrintableString:
+        case ast::BuiltinType::T61String:
+        case ast::BuiltinType::VisibleString:
+        case ast::BuiltinType::GeneralString:
+        case ast::BuiltinType::GraphicString:
+        case ast::BuiltinType::UniversalString:
+        case ast::BuiltinType::BmpString:
+        case ast::BuiltinType::VideotexString:
+        case ast::BuiltinType::ObjectDescriptor:
             return true;
         default:
             return false;
@@ -620,6 +657,19 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
         case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
         case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
+        // gambas-asn1#326: same newtype widening as emit_sequence_definition's
+        // rust_member_ber_tag — see that lambda's comment.
+        case ast::BuiltinType::Utf8String:       return "asn1cpp_ber::strings::UTF8_STRING_TAG";
+        case ast::BuiltinType::NumericString:    return "asn1cpp_ber::strings::NUMERIC_STRING_TAG";
+        case ast::BuiltinType::PrintableString:  return "asn1cpp_ber::strings::PRINTABLE_STRING_TAG";
+        case ast::BuiltinType::T61String:        return "asn1cpp_ber::strings::T61_STRING_TAG";
+        case ast::BuiltinType::VisibleString:    return "asn1cpp_ber::strings::VISIBLE_STRING_TAG";
+        case ast::BuiltinType::GeneralString:    return "asn1cpp_ber::strings::GENERAL_STRING_TAG";
+        case ast::BuiltinType::GraphicString:    return "asn1cpp_ber::strings::GRAPHIC_STRING_TAG";
+        case ast::BuiltinType::UniversalString:  return "asn1cpp_ber::strings::UNIVERSAL_STRING_TAG";
+        case ast::BuiltinType::BmpString:        return "asn1cpp_ber::strings::BMP_STRING_TAG";
+        case ast::BuiltinType::VideotexString:   return "asn1cpp_ber::strings::VIDEOTEX_STRING_TAG";
+        case ast::BuiltinType::ObjectDescriptor: return "asn1cpp_ber::strings::OBJECT_DESCRIPTOR_TAG";
         default:                            return nullptr;  // not yet covered by Asn1Value
         }
     };
