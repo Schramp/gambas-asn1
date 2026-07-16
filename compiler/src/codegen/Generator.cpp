@@ -1223,9 +1223,18 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
                 if (is_class_type(m)) {
                     auto cn = cpp_name_for_typeref(*tr);
-                    auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-                    write_type_reference(cn, inc_os);
-                    emitted_extra = true;
+                    // Self-referential member (e.g. `next Node OPTIONAL` inside
+                    // Node itself): the enclosing type's own definition file
+                    // already has full visibility of itself, so re-including/
+                    // re-`use`ing it here is at best redundant (harmless under
+                    // C++'s #pragma once) and at worst a self-import (Rust:
+                    // declaration+definition share one file, unlike C++'s
+                    // .hpp/.cpp split — E0255, gambas-asn1#320).
+                    if (cn != cname) {
+                        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+                        write_type_reference(cn, inc_os);
+                        emitted_extra = true;
+                    }
                 }
             } else if ((m.is_sequence() || m.is_choice() || m.is_set()) && !m.name.empty()) {
                 auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
