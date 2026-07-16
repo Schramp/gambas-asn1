@@ -270,6 +270,18 @@ struct SequenceMemberSpec {
     // upside. Only cycle-participating members get boxed.
     bool        member_type_in_cycle = false;
     bool        is_class_type = false;
+    // gambas-asn1#331: SEQUENCE OF member support. Set only for a member
+    // whose body is ast::SequenceOfType (never ast::SetOfType — SET OF is a
+    // separate, not-yet-covered follow-up) with a *direct* builtin-type
+    // element (same "direct only, not TypeRef-resolved" precedent
+    // `mbuiltin` above already establishes) — `elem_builtin`/`elem_mtype`
+    // are the element's own discriminant/native-storage-type, the same
+    // pairing `mbuiltin`/`mtype` are for a plain scalar member, just one
+    // level down. A backend without SEQUENCE OF table support can ignore
+    // all three fields; `is_seq_of` false leaves them meaningless.
+    bool        is_seq_of = false;
+    std::optional<ast::BuiltinType> elem_builtin;
+    std::string elem_mtype;      // element's own native storage type (backend-specific)
     bool        optional = false;
     bool        is_explicit = false;
     bool        has_default = false;

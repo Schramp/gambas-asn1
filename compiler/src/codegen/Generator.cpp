@@ -1298,6 +1298,13 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         row.mtype = cpp_type_for(m);
         if (auto* bt = std::get_if<ast::BuiltinType>(&m.body))
             row.mbuiltin = *bt;
+        if (m.is_seq_of()) {
+            row.is_seq_of = true;
+            const auto& elem = *std::get<ast::SequenceOfType>(m.body).element;
+            row.elem_mtype = cpp_type_for(elem);
+            if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body))
+                row.elem_builtin = *ebt;
+        }
         if (is_class_type(m))
             row.member_type_in_cycle = member_type_in_cycle(m, def.name);
         row.optional = optional;

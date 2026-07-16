@@ -435,10 +435,15 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // semi-constrained-wide INTEGER member picked u64 storage and the old
     // unconditional `case Integer:` still emitted a table row for it,
     // producing `the trait bound u64: Asn1Value is not satisfied`.
-    auto rust_member_ber_tag = [](const SequenceMemberSpec& m) -> const char* {
-        if (!m.mbuiltin) return m.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
-        switch (*m.mbuiltin) {
-        case ast::BuiltinType::Integer:     return m.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
+    // gambas-asn1#331: factored out of rust_member_ber_tag so the same
+    // per-builtin-kind coverage decision drives both a direct member
+    // (mbuiltin/mtype) and a SEQUENCE OF member's *element* type
+    // (elem_builtin/elem_mtype) — two different SequenceMemberSpec field
+    // pairs, same underlying question ("does this builtin kind have a real
+    // Asn1Value BER impl, and which tag").
+    auto builtin_ber_tag = [](ast::BuiltinType bt, const std::string& mtype) -> const char* {
+        switch (bt) {
+        case ast::BuiltinType::Integer:     return mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
         case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
         case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
         case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
@@ -460,24 +465,18 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         default:                            return nullptr;  // not yet covered by Asn1Value
         }
     };
-    // Asn1Value's XER leg now covers the same four kinds the BER leg does
-    // (gambas-asn1#283: bool/Vec<u8>/String got real xer_encode/
-    // xer_decode_into overrides, replacing #282's trait-default
-    // unimplemented!()/error stand-ins). Kept as its own gate (not just
-    // reusing rust_member_ber_tag's coverage set) rather than assuming the
-    // two always match — encode_xer()/decode_xer() must never be emitted
-    // for a member type whose Asn1Value XER leg is still the default, or
-    // the emitted method panics at runtime (found in #282's review).
-    auto rust_member_xer_ready = [](const SequenceMemberSpec& m) -> bool {
-        if (!m.mbuiltin) return m.mtype == "i64";
-        switch (*m.mbuiltin) {
-        case ast::BuiltinType::Integer:     return m.mtype == "i64";  // #315: same gate as BER
+    // Asn1Value's XER leg now covers the same kinds the BER leg does
+    // (gambas-asn1#283/#326). Kept as its own gate (not just reusing
+    // builtin_ber_tag's coverage set) rather than assuming the two always
+    // match — encode_xer()/decode_xer() must never be emitted for a member
+    // type whose Asn1Value XER leg is still the default, or the emitted
+    // method panics at runtime (found in #282's review).
+    auto builtin_xer_ready = [](ast::BuiltinType bt, const std::string& mtype) -> bool {
+        switch (bt) {
+        case ast::BuiltinType::Integer:     return mtype == "i64";  // #315: same gate as BER
         case ast::BuiltinType::Boolean:
         case ast::BuiltinType::OctetString:
         case ast::BuiltinType::Ia5String:
-        // gambas-asn1#326: every char_string_type! newtype gets the same
-        // escaped-text XER leg String's own impl uses (X.693 BASIC-XER
-        // doesn't distinguish string kinds), so all 11 are XER-ready too.
         case ast::BuiltinType::Utf8String:
         case ast::BuiltinType::NumericString:
         case ast::BuiltinType::PrintableString:
@@ -494,6 +493,57 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return false;
         }
     };
+    // gambas-asn1#331: element type's own ASN.1 keyword, used as the
+    // per-element XER tag inside a SEQUENCE OF member's own `<name>...
+    // </name>` wrapper (X.693 §12 / `SeqOfXerHandler`,
+    // `runtime/src/XerCodec.cpp` — no declared element identifier means the
+    // element's own type name is the tag). "OCTET STRING"/"OBJECT
+    // IDENTIFIER" contain spaces (invalid XML tag names) — hyphenated here;
+    // never actually reachable today since OctetString/ObjectIdentifier
+    // aren't emitted by builtin_ber_tag as seq-of *element* candidates
+    // requiring XER (BER-only elements still get a table, just no
+    // encode_xer()/decode_xer() on the enclosing type — same as any other
+    // not-XER-ready member).
+    auto builtin_xer_name = [](ast::BuiltinType bt) -> const char* {
+        switch (bt) {
+        case ast::BuiltinType::Integer:           return "INTEGER";
+        case ast::BuiltinType::Boolean:            return "BOOLEAN";
+        case ast::BuiltinType::OctetString:        return "OCTET-STRING";
+        case ast::BuiltinType::Ia5String:          return "IA5String";
+        case ast::BuiltinType::Utf8String:         return "UTF8String";
+        case ast::BuiltinType::NumericString:      return "NumericString";
+        case ast::BuiltinType::PrintableString:    return "PrintableString";
+        case ast::BuiltinType::T61String:          return "T61String";
+        case ast::BuiltinType::VisibleString:      return "VisibleString";
+        case ast::BuiltinType::GeneralString:      return "GeneralString";
+        case ast::BuiltinType::GraphicString:      return "GraphicString";
+        case ast::BuiltinType::UniversalString:    return "UniversalString";
+        case ast::BuiltinType::BmpString:          return "BMPString";
+        case ast::BuiltinType::VideotexString:     return "VideotexString";
+        case ast::BuiltinType::ObjectDescriptor:   return "ObjectDescriptor";
+        default:                                    return "Value";
+        }
+    };
+    auto rust_member_ber_tag = [&](const SequenceMemberSpec& m) -> const char* {
+        if (!m.mbuiltin) return m.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
+        return builtin_ber_tag(*m.mbuiltin, m.mtype);
+    };
+    auto rust_member_xer_ready = [&](const SequenceMemberSpec& m) -> bool {
+        if (!m.mbuiltin) return m.mtype == "i64";
+        return builtin_xer_ready(*m.mbuiltin, m.mtype);
+    };
+    // gambas-asn1#331: a SEQUENCE OF member is covered only when it's
+    // required (this PR's scope stops short of OPTIONAL SEQUENCE OF —
+    // absent-vs-empty-list presence detection needs its own design pass,
+    // not folded silently into this one) and its element type is itself
+    // covered by builtin_ber_tag/builtin_xer_ready.
+    auto rust_seqof_ber_tag = [&](const SequenceMemberSpec& m) -> const char* {
+        if (!m.is_seq_of || m.optional || !m.elem_builtin) return nullptr;
+        return builtin_ber_tag(*m.elem_builtin, m.elem_mtype);
+    };
+    auto rust_seqof_xer_ready = [&](const SequenceMemberSpec& m) -> bool {
+        return rust_seqof_ber_tag(m) != nullptr && builtin_xer_ready(*m.elem_builtin, m.elem_mtype);
+    };
     // gambas-asn1#326: OPTIONAL members are now table-covered too — an
     // OPTIONAL member's own field type (rust-runtime/ber's blanket
     // `Asn1Value for Option<V>` impl, value.rs) handles wire-absence
@@ -502,11 +552,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // `&dyn Asn1Value` coercion works for both). Coverage is purely about
     // whether the member's *type* has a real Asn1Value BER impl
     // (rust_member_ber_tag) — no more blanket `!m.optional` exclusion.
+    auto rust_member_covered = [&](const SequenceMemberSpec& m) -> bool {
+        return m.is_seq_of ? rust_seqof_ber_tag(m) != nullptr : rust_member_ber_tag(m) != nullptr;
+    };
+    auto rust_member_covered_xer_ready = [&](const SequenceMemberSpec& m) -> bool {
+        return m.is_seq_of ? rust_seqof_xer_ready(m) : rust_member_xer_ready(m);
+    };
     bool all_covered = !spec.members.empty() &&
-        std::all_of(spec.members.begin(), spec.members.end(),
-                     [&](const SequenceMemberSpec& m) { return rust_member_ber_tag(m) != nullptr; });
+        std::all_of(spec.members.begin(), spec.members.end(), rust_member_covered);
     bool all_xer_ready = all_covered &&
-        std::all_of(spec.members.begin(), spec.members.end(), rust_member_xer_ready);
+        std::all_of(spec.members.begin(), spec.members.end(), rust_member_covered_xer_ready);
     if (all_covered) {
         std::string members_ident = std::format("{}_MEMBERS", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
@@ -516,10 +571,28 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         for (const auto& m : spec.members) {
             os << "    asn1cpp_ber::sequence::MemberDescriptor {\n";
             os << std::format("        name: \"{}\",\n", m.asn1_name);
-            os << std::format("        tag: {},\n", rust_member_ber_tag(m));
-            os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-            os << std::format("        get: |v| &v.{},\n", m.mname);
-            os << std::format("        get_mut: |v| &mut v.{},\n", m.mname);
+            if (m.is_seq_of) {
+                // gambas-asn1#331: the descriptor's own `tag` is the OUTER
+                // SEQUENCE-OF container tag — decode_sequence's SeqOf branch
+                // never actually consults it (no OPTIONAL presence-peek for
+                // this PR's required-only scope), kept only so the struct
+                // literal has a real value, same role SEQUENCE_TAG plays on
+                // SequenceSpec itself for a member that happens to be a
+                // nested collection.
+                os << "        tag: asn1cpp_ber::sequence::SEQUENCE_TAG,\n";
+                os << "        optional: false,\n";
+                const char* elem_xer_name = builtin_xer_name(*m.elem_builtin);
+                os << "        access: asn1cpp_ber::sequence::MemberAccess::SeqOf {\n";
+                os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of(out, &v.{}),\n", m.mname);
+                os << std::format("            ber_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of(r)?; Ok(()) }},\n", m.mname);
+                os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}, \"{}\"),\n", m.mname, elem_xer_name);
+                os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
+                os << "        },\n";
+            } else {
+                os << std::format("        tag: {},\n", rust_member_ber_tag(m));
+                os << std::format("        optional: {},\n", m.optional ? "true" : "false");
+                os << std::format("        access: asn1cpp_ber::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
+            }
             os << "    },\n";
         }
         os << "];\n\n";
