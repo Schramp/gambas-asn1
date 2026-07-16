@@ -1364,6 +1364,25 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIMPLE_SEQ_GEN_DIR};ASN1CPP_RUST_WIDE_GEN_DIR=${RUST_WIDE_TYPES_GEN_DIR};ASN1CPP_RUST_CHOICE_GEN_DIR=${RUST_CHOICE_GEN_DIR}")
 endif()
 
+# gambas-asn1#309: Rust-codegen sweep across tests/asn1/*.asn1 — the Rust
+# equivalent of validate_parser.py's C++ parser-conformance sweep (that one
+# lives outside this repo, asn1cpp-validation-tools/, because it also needs
+# asn1c; this one only needs asn1cpp + cargo, so it's wired into this repo's
+# own ctest like every other Rust check here). No requirement that every
+# fixture passes — validate_rust_codegen.py itself only exits non-zero on a
+# real codegen crash, never on a "construct not yet supported" compile
+# failure, so this test stays green as coverage gaps get found and fixed
+# incrementally rather than gating the build on 100% coverage.
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_codegen_sweep
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/validate_rust_codegen.py
+                --asn1cpp-bin $<TARGET_FILE:asn1cpp>
+                --cargo ${CARGO_EXECUTABLE})
+    set_tests_properties(rust_codegen_sweep PROPERTIES
+        TIMEOUT 300 LABELS "rust")
+endif()
+
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
 # Enable with: cmake -DWITH_SMOKE_MATRIX=ON  (default OFF; see Release Testing in doc/book.md)
 if(WITH_SMOKE_MATRIX)
