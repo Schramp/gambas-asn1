@@ -232,17 +232,25 @@ pub fn write_close_tag(out: &mut String, name: &str) {
 /// already uses — one table drives both wire formats (gambas-asn1#280's
 /// crate doc). Output shape matches the C++ side for a flat (non-nested)
 /// SEQUENCE: `<Name>\n    <member>text</member>\n...</Name>\n`, 4-space
-/// member indent. No OPTIONAL suppression / nested-SEQUENCE indent tracking
-/// yet — out of scope until a member type needing it lands (matches
-/// `encode_sequence`'s own scope note).
+/// member indent. No nested-SEQUENCE indent tracking yet — out of scope
+/// until a member type needing it lands (matches `encode_sequence`'s own
+/// scope note). OPTIONAL suppression (gambas-asn1#326): an absent member is
+/// skipped entirely (no `<member></member>` pair), via
+/// `Asn1Value::is_present` — unlike BER, XER's outer element tag is this
+/// walker's own responsibility, not something `Option<V>::xer_encode` can
+/// suppress by itself.
 pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
     let mut out = String::new();
     write_open_tag(&mut out, spec.name);
     out.push('\n');
     for m in spec.members {
+        let val = (m.get)(value);
+        if !val.is_present() {
+            continue;
+        }
         out.push_str("    ");
         write_open_tag(&mut out, m.name);
-        (m.get)(value).xer_encode(&mut out);
+        val.xer_encode(&mut out);
         write_close_tag(&mut out, m.name);
         out.push('\n');
     }
@@ -255,11 +263,23 @@ pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
 /// (`sequence.rs`) and the Rust equivalent of `SequenceXerHandler::decode`.
 /// `T::default()` provides the initial value, each member is decoded in
 /// table order directly into its field.
+///
+/// OPTIONAL members (gambas-asn1#326): peek the next open tag's name before
+/// consuming it — if it doesn't match this member's own element name, the
+/// member is absent (leave it at its `Default`, i.e. `None`) and nothing is
+/// consumed, same linear-scan/canonical-order assumption `decode_sequence`'s
+/// BER leg documents.
 pub fn decode_sequence_xer<T: Default>(spec: &SequenceSpec<T>, xml: &str) -> Result<T, DecodeError> {
     let mut r = XerReader::new(xml);
     r.consume_open_tag(spec.name)?;
     let mut result = T::default();
     for m in spec.members {
+        if m.optional {
+            let peeked = r.peek_tag();
+            if peeked.closing || peeked.name != m.name {
+                continue;
+            }
+        }
         r.consume_open_tag(m.name)?;
         (m.get_mut)(&mut result).xer_decode_into(&mut r)?;
         r.consume_close_tag(m.name)?;
