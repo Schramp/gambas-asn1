@@ -58,7 +58,14 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     case ast::BuiltinType::BmpString:        return "asn1cpp_ber::strings::BMP_STRING_TAG";
     case ast::BuiltinType::VideotexString:   return "asn1cpp_ber::strings::VIDEOTEX_STRING_TAG";
     case ast::BuiltinType::ObjectDescriptor: return "asn1cpp_ber::strings::OBJECT_DESCRIPTOR_TAG";
-    default:                                 return nullptr;  // not yet covered by Asn1Value
+    // Not yet covered — no Asn1Value impl in rust-runtime/ber for these
+    // kinds yet, so a member of any of them falls back to struct-shape-only
+    // codegen (no encode()/decode() at all if any member is uncovered).
+    // BitString/Null/ObjectIdentifier/RelativeOid/Real/UtcTime/
+    // GeneralizedTime: gambas-asn1#349. Any: gambas-asn1#330 (separate,
+    // pre-existing issue). Enumerated never reaches this switch — routed
+    // through the wholly separate emit_enumerated/EnumeratedSpec path.
+    default:                                 return nullptr;
     }
 }
 
@@ -101,6 +108,10 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
     case ast::BuiltinType::BmpString:          return "BMPString";
     case ast::BuiltinType::VideotexString:     return "VideotexString";
     case ast::BuiltinType::ObjectDescriptor:   return "ObjectDescriptor";
+    // Same uncovered set as builtin_ber_tag's default (gambas-asn1#349/
+    // #330) — this fallback name is never actually reached in practice
+    // since builtin_xer_name is only called for kinds builtin_ber_tag
+    // already confirmed are covered (see call sites).
     default:                                    return "Value";
     }
 }
@@ -135,8 +146,13 @@ static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, cons
     case ast::BuiltinType::VideotexString:
     case ast::BuiltinType::ObjectDescriptor:
         return TaggedKind::CharString;
+    // Same uncovered set as builtin_ber_tag's default (gambas-asn1#349/
+    // #330) — a tagged member/alternative of one of these kinds falls back
+    // to the natural-tag path, which itself has no coverage either, so the
+    // enclosing SEQUENCE/CHOICE gets no table at all (all_covered gates on
+    // rust_member_ber_tag/rust_alt_ber_tag, not tagged_kind_for).
     default:
-        return TaggedKind::None;  // e.g. real/null/OID — no *_tagged primitive yet
+        return TaggedKind::None;
     }
 }
 
