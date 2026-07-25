@@ -1,0 +1,32 @@
+-- gambas-asn1#339: a top-level type's own [n] IMPLICIT/EXPLICIT tag must
+-- reach its standalone TypeDescriptor (asn_DEF_<Name>), not just the member
+-- table entry of a SEQUENCE/SET that embeds it. Confirmed against asn1c
+-- ground truth: asn_DEF_MyInt's canonical tag is context-5, not universal-2
+-- (asn1c's tags[] array: canonical count drops the trailing universal
+-- fallback entry, all_tags keeps both).
+TopLevelTagTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+    MyInt ::= [5] IMPLICIT INTEGER
+
+    MyEnum ::= [6] IMPLICIT ENUMERATED { a, b, c }
+
+    MySeq ::= [7] IMPLICIT SEQUENCE { x INTEGER }
+
+    MySeqOf ::= [8] IMPLICIT SEQUENCE OF INTEGER
+
+    Wrapper ::= SEQUENCE {
+        i MyInt,
+        e MyEnum,
+        s MySeq,
+        so MySeqOf,
+        -- Anonymous inline SET OF member with its own [n] tag: codegen builds a
+        -- synthetic wrapper type by copying this member's AST node, which drags
+        -- the member's own [10] tag onto the synthetic type's .tag field. That
+        -- field must not be mistaken for the synthetic type's own top-level
+        -- declared tag (it isn't one — it's the member's tag), or BerCodec's
+        -- is_set_of() detection (which keys off the type's own natural Set tag)
+        -- silently breaks and DER canonical sorting (X.690 §11.6) never runs.
+        tso [10] SET OF INTEGER OPTIONAL
+    }
+
+END
