@@ -217,6 +217,54 @@ struct SeqOfSpec {
     bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
 };
 
+/// @brief Backend-agnostic tag-bearing fields shared by every construct that
+///        can carry an ASN.1 tag on its own TLV (X.690 §8.1) — a SEQUENCE/SET
+///        member, a CHOICE alternative, and (should it ever need one) a
+///        SEQUENCE OF/SET OF element. gambas-asn1#338: factored out of
+///        SequenceMemberSpec after #332 added `resolved_tag` there but a
+///        sibling struct (`ChoiceAlternativeSpec`) kept an independent,
+///        stale-prone copy of `eff_tag`/`is_explicit`/`mbuiltin` with no
+///        `resolved_tag` at all (gambas-asn1#336's bug: CHOICE alternatives
+///        never got their real IMPLICIT tag override, because the field
+///        allowing one simply didn't exist there) — the exact failure mode a
+///        shared base makes structurally harder to reintroduce (adding a
+///        field here updates every derived construct, not just whichever
+///        one a given PR happened to touch).
+/// @note Pure field consolidation, no behavior change: every derived struct
+///       still owns its own construct-specific fields (`asn1_name`, `tdref`,
+///       etc. are *not* pulled up here even though both current derived
+///       structs happen to have identically-named/typed copies — see this
+///       issue's own filing for why that's left for a possible future pass,
+///       not decided here).
+struct TaggedMemberSpec {
+    std::string eff_tag;        // pre-formatted tag literal expression (C++ syntax only — see note below)
+    // gambas-asn1#332: backend-agnostic counterpart to eff_tag — see
+    // Generator::TagResult's doc comment. nullopt means the member's own
+    // natural tag applies (a backend's per-builtin-kind lookup, e.g.
+    // RustBackend::rust_member_ber_tag, is already correct); set means the
+    // member has its own explicit/AUTOMATIC-assigned tag that *replaces*
+    // the natural one on the wire for IMPLICIT tagging (X.690 §8.14) — used
+    // by RustBackend to pick MemberAccess::TaggedScalar over Scalar.
+    std::optional<TagSpec> resolved_tag;
+    bool        is_explicit = false;
+    // Backend-agnostic builtin-type discriminant, set only when the member
+    // is a direct (non-TypeRef, non-SEQUENCE/CHOICE) builtin type. `mtype`
+    // (declared per-derived-struct, not here — its native storage type
+    // string means different things per construct) alone can't drive
+    // correct per-member BER tag selection for a second backend: it
+    // deliberately collapses distinct ASN.1 types with the same native
+    // representation (e.g. RustBackend::native_builtin_type maps
+    // OCTET STRING/BIT STRING/OBJECT IDENTIFIER/Any all to "Vec<u8>", and
+    // all 12 string kinds plus UtcTime/GeneralizedTime to "String" — see
+    // that function's doc). `eff_tag` doesn't help either: it's produced by
+    // `format_tag_literal`, a free function that unconditionally emits C++
+    // syntax regardless of the active backend (a real gap, same category as
+    // gambas-asn1#266/#268/#270, out of scope to fix here). `mbuiltin` gives
+    // a backend the real discriminant to dispatch on; unset (nullopt) for
+    // TypeRef/SEQUENCE/CHOICE/SEQUENCE OF/ENUMERATED members/alternatives.
+    std::optional<ast::BuiltinType> mbuiltin;
+};
+
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. Several
 ///        fields are pre-formatted C++ expression text (`ops`, `tdref`,
 ///        `def_setter`, `offset_expr`) rather than raw data — same
@@ -229,33 +277,10 @@ struct SeqOfSpec {
 /// @note Used identically for both the `.hpp` and `.cpp` passes; the `.hpp`
 ///       pass only reads `mtype`/`mname`/`optional`/`setter_*` and leaves
 ///       the rest default-constructed (never read by emit_sequence_declaration).
-struct SequenceMemberSpec {
+struct SequenceMemberSpec : TaggedMemberSpec {
     std::string asn1_name;      // raw ASN.1 name — MemberDescriptor "name" field
     std::string mtype;          // C++ storage type
     std::string mname;          // member identifier
-    std::string eff_tag;        // pre-formatted tag literal expression (C++ syntax only — see note below)
-    // gambas-asn1#332: backend-agnostic counterpart to eff_tag — see
-    // Generator::TagResult's doc comment. nullopt means the member's own
-    // natural tag applies (a backend's per-builtin-kind lookup, e.g.
-    // RustBackend::rust_member_ber_tag, is already correct); set means the
-    // member has its own explicit/AUTOMATIC-assigned tag that *replaces*
-    // the natural one on the wire for IMPLICIT tagging (X.690 §8.14) — used
-    // by RustBackend to pick MemberAccess::TaggedScalar over Scalar.
-    std::optional<TagSpec> resolved_tag;
-    // Backend-agnostic builtin-type discriminant, set only when the member
-    // is a direct (non-TypeRef, non-SEQUENCE/CHOICE) builtin type. `mtype`
-    // alone can't drive correct per-member BER tag selection for a second
-    // backend: it deliberately collapses distinct ASN.1 types with the same
-    // native representation (e.g. RustBackend::native_builtin_type maps
-    // OCTET STRING/BIT STRING/OBJECT IDENTIFIER/Any all to "Vec<u8>", and
-    // all 12 string kinds plus UtcTime/GeneralizedTime to "String" — see
-    // that function's doc). `eff_tag` doesn't help either: it's produced by
-    // `format_tag_literal`, a free function that unconditionally emits C++
-    // syntax regardless of the active backend (a real gap, same category as
-    // gambas-asn1#266/#268/#270, out of scope to fix here). `mbuiltin` gives
-    // a backend the real discriminant to dispatch on; unset (nullopt) for
-    // TypeRef/SEQUENCE/CHOICE/SEQUENCE OF/ENUMERATED members.
-    std::optional<ast::BuiltinType> mbuiltin;
     // gambas-asn1#303: true when this member's class type (direct
     // SEQUENCE/CHOICE/SET, or a TypeRef resolving to one) is reachable back
     // to the *enclosing* type by following further class-typed member
@@ -291,7 +316,6 @@ struct SequenceMemberSpec {
     std::optional<ast::BuiltinType> elem_builtin;
     std::string elem_mtype;      // element's own native storage type (backend-specific)
     bool        optional = false;
-    bool        is_explicit = false;
     bool        has_default = false;
     std::string ops;            // pre-formatted Ops initializer, e.g. "{ &_Ops_X_Y::check, ... }"
     std::string tdref;          // reference expression to the member's TypeDescriptor
@@ -324,22 +348,19 @@ struct SequenceSpec {
 ///        emit_choice_definition. `mtype` is shared by both (same value, computed
 ///        once): the accessor return type in the header, and the
 ///        `ChoiceOps<T>` template parameter in the alternatives table.
-struct ChoiceAlternativeSpec {
+struct ChoiceAlternativeSpec : TaggedMemberSpec {
     std::string mtype;
     std::string accessor_name;
     std::string pr_name;
 
     std::string asn1_name;
-    std::string eff_tag;
     std::string tdref;
-    bool        is_explicit = false;
-
-    // gambas-asn1#284: same rationale as SequenceMemberSpec::mbuiltin
-    // (see that field's comment) — a real backend-agnostic discriminant
-    // for per-alternative BER tag selection, since `mtype` collapses
-    // distinct ASN.1 types and `eff_tag` is C++-only text. Unset for
-    // TypeRef/SEQUENCE/CHOICE/SEQUENCE OF/ENUMERATED alternatives.
-    std::optional<ast::BuiltinType> mbuiltin;
+    // gambas-asn1#338: resolved_tag (inherited from TaggedMemberSpec) exists
+    // structurally here now but is NOT yet populated by Generator — see
+    // emit_choice_definition's `(void)resolved_tag_unused` discard. Wiring
+    // it up (and consuming it in RustBackend, mirroring #332's
+    // MemberAccess::TaggedScalar) is gambas-asn1#336's job, not this one:
+    // this issue is pure field consolidation, no behavior change.
 };
 
 /// @brief Backend-agnostic decision for one CHOICE type (X.680 §28). The
