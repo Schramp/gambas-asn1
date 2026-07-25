@@ -26,6 +26,120 @@ static std::string variant_name(const RustBackend& backend, const std::string& a
     return backend.escape(capitalize_first(backend.type_name(asn1_name)));
 }
 
+// gambas-asn1#344: per-builtin-kind lookup tables shared by
+// emit_sequence_definition (SEQUENCE members, SEQUENCE OF elements) and
+// emit_choice_definition (CHOICE alternatives) — previously three separate
+// near-identical switches over ast::BuiltinType per function (six total).
+// Hoisted to file scope so there's exactly one switch per question asked,
+// not one per caller.
+
+/// @brief Per-builtin-kind BER tag constant. See TaggedMemberSpec::mbuiltin's
+///        doc comment (Backend.hpp) for why native storage type alone can't
+///        drive this (e.g. OCTET STRING/BIT STRING/OBJECT IDENTIFIER/Any all
+///        map to "Vec<u8>", but need different tags).
+static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype) {
+    switch (bt) {
+    case ast::BuiltinType::Integer:     return mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
+    case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
+    case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
+    case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
+    // gambas-asn1#326: the other 11 restricted-character-string kinds
+    // (native_builtin_type maps each to its own rust-runtime/ber::strings
+    // newtype, not plain String) — each newtype's Asn1Value impl checks its
+    // own tag, matching the constant named here.
+    case ast::BuiltinType::Utf8String:       return "asn1cpp_ber::strings::UTF8_STRING_TAG";
+    case ast::BuiltinType::NumericString:    return "asn1cpp_ber::strings::NUMERIC_STRING_TAG";
+    case ast::BuiltinType::PrintableString:  return "asn1cpp_ber::strings::PRINTABLE_STRING_TAG";
+    case ast::BuiltinType::T61String:        return "asn1cpp_ber::strings::T61_STRING_TAG";
+    case ast::BuiltinType::VisibleString:    return "asn1cpp_ber::strings::VISIBLE_STRING_TAG";
+    case ast::BuiltinType::GeneralString:    return "asn1cpp_ber::strings::GENERAL_STRING_TAG";
+    case ast::BuiltinType::GraphicString:    return "asn1cpp_ber::strings::GRAPHIC_STRING_TAG";
+    case ast::BuiltinType::UniversalString:  return "asn1cpp_ber::strings::UNIVERSAL_STRING_TAG";
+    case ast::BuiltinType::BmpString:        return "asn1cpp_ber::strings::BMP_STRING_TAG";
+    case ast::BuiltinType::VideotexString:   return "asn1cpp_ber::strings::VIDEOTEX_STRING_TAG";
+    case ast::BuiltinType::ObjectDescriptor: return "asn1cpp_ber::strings::OBJECT_DESCRIPTOR_TAG";
+    default:                                 return nullptr;  // not yet covered by Asn1Value
+    }
+}
+
+/// @brief Same lookup as builtin_ber_tag, but for a member/alternative whose
+///        own type may be a TypeRef alias rather than a direct builtin
+///        (mbuiltin == nullopt) — the i64-native-INTEGER-alias case still
+///        needs a tag despite carrying no mbuiltin.
+static const char* rust_tag_for_builtin_or_alias(std::optional<ast::BuiltinType> mbuiltin,
+                                                  const std::string& mtype) {
+    if (!mbuiltin) return mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
+    return builtin_ber_tag(*mbuiltin, mtype);
+}
+
+/// @brief Element type's own ASN.1 keyword, used as the per-element XER tag
+///        inside a SEQUENCE OF member's own `<name>...</name>` wrapper
+///        (X.693 §12 / SeqOfXerHandler, runtime/src/XerCodec.cpp — no
+///        declared element identifier means the element's own type name is
+///        the tag). "OCTET STRING"/"OBJECT IDENTIFIER" contain spaces
+///        (invalid XML tag names) — hyphenated here; never actually
+///        reachable today since OctetString/ObjectIdentifier aren't emitted
+///        by builtin_ber_tag as seq-of *element* candidates requiring XER
+///        (BER-only elements still get a table, just no encode_xer()/
+///        decode_xer() on the enclosing type — same as any other
+///        not-XER-ready member). Also doubles as the *_tagged primitives'
+///        string-kind name parameter (read_char_string's error-message kind).
+static const char* builtin_xer_name(ast::BuiltinType bt) {
+    switch (bt) {
+    case ast::BuiltinType::Integer:           return "INTEGER";
+    case ast::BuiltinType::Boolean:            return "BOOLEAN";
+    case ast::BuiltinType::OctetString:        return "OCTET-STRING";
+    case ast::BuiltinType::Ia5String:          return "IA5String";
+    case ast::BuiltinType::Utf8String:         return "UTF8String";
+    case ast::BuiltinType::NumericString:      return "NumericString";
+    case ast::BuiltinType::PrintableString:    return "PrintableString";
+    case ast::BuiltinType::T61String:          return "T61String";
+    case ast::BuiltinType::VisibleString:      return "VisibleString";
+    case ast::BuiltinType::GeneralString:      return "GeneralString";
+    case ast::BuiltinType::GraphicString:      return "GraphicString";
+    case ast::BuiltinType::UniversalString:    return "UniversalString";
+    case ast::BuiltinType::BmpString:          return "BMPString";
+    case ast::BuiltinType::VideotexString:     return "VideotexString";
+    case ast::BuiltinType::ObjectDescriptor:   return "ObjectDescriptor";
+    default:                                    return "Value";
+    }
+}
+
+/// @brief Which *_tagged runtime primitive family (if any) covers a given
+///        builtin kind — the shared dispatch rust_tagged_ops/
+///        rust_alt_tagged_ops both switch on. Deliberately stops short of
+///        generating the closure bodies themselves: SEQUENCE members access
+///        the value via `v.{mname}` (a struct field, possibly wrapped in
+///        Option<T> for OPTIONAL) while CHOICE alternatives work with a
+///        fresh local `v` (pattern-matched out of `x` on encode, built from
+///        scratch on decode) — genuinely different code shapes, not worth
+///        forcing through one closure-body generator (gambas-asn1#344).
+enum class TaggedKind { None, Boolean, Integer, OctetString, CharString };
+
+static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, const std::string& mtype) {
+    if (!mbuiltin) return TaggedKind::None;
+    switch (*mbuiltin) {
+    case ast::BuiltinType::Boolean:     return TaggedKind::Boolean;
+    case ast::BuiltinType::Integer:     return mtype == "i64" ? TaggedKind::Integer : TaggedKind::None;
+    case ast::BuiltinType::OctetString: return TaggedKind::OctetString;
+    case ast::BuiltinType::Ia5String:
+    case ast::BuiltinType::Utf8String:
+    case ast::BuiltinType::NumericString:
+    case ast::BuiltinType::PrintableString:
+    case ast::BuiltinType::T61String:
+    case ast::BuiltinType::VisibleString:
+    case ast::BuiltinType::GeneralString:
+    case ast::BuiltinType::GraphicString:
+    case ast::BuiltinType::UniversalString:
+    case ast::BuiltinType::BmpString:
+    case ast::BuiltinType::VideotexString:
+    case ast::BuiltinType::ObjectDescriptor:
+        return TaggedKind::CharString;
+    default:
+        return TaggedKind::None;  // e.g. real/null/OID — no *_tagged primitive yet
+    }
+}
+
 void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
@@ -435,36 +549,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // semi-constrained-wide INTEGER member picked u64 storage and the old
     // unconditional `case Integer:` still emitted a table row for it,
     // producing `the trait bound u64: Asn1Value is not satisfied`.
-    // gambas-asn1#331: factored out of rust_member_ber_tag so the same
-    // per-builtin-kind coverage decision drives both a direct member
-    // (mbuiltin/mtype) and a SEQUENCE OF member's *element* type
-    // (elem_builtin/elem_mtype) — two different SequenceMemberSpec field
-    // pairs, same underlying question ("does this builtin kind have a real
-    // Asn1Value BER impl, and which tag").
-    auto builtin_ber_tag = [](ast::BuiltinType bt, const std::string& mtype) -> const char* {
-        switch (bt) {
-        case ast::BuiltinType::Integer:     return mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
-        case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
-        case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
-        case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
-        // gambas-asn1#326: the other 11 restricted-character-string kinds
-        // (native_builtin_type maps each to its own rust-runtime/ber::strings
-        // newtype, not plain String) — each newtype's Asn1Value impl checks
-        // its own tag, matching the constant named here.
-        case ast::BuiltinType::Utf8String:       return "asn1cpp_ber::strings::UTF8_STRING_TAG";
-        case ast::BuiltinType::NumericString:    return "asn1cpp_ber::strings::NUMERIC_STRING_TAG";
-        case ast::BuiltinType::PrintableString:  return "asn1cpp_ber::strings::PRINTABLE_STRING_TAG";
-        case ast::BuiltinType::T61String:        return "asn1cpp_ber::strings::T61_STRING_TAG";
-        case ast::BuiltinType::VisibleString:    return "asn1cpp_ber::strings::VISIBLE_STRING_TAG";
-        case ast::BuiltinType::GeneralString:    return "asn1cpp_ber::strings::GENERAL_STRING_TAG";
-        case ast::BuiltinType::GraphicString:    return "asn1cpp_ber::strings::GRAPHIC_STRING_TAG";
-        case ast::BuiltinType::UniversalString:  return "asn1cpp_ber::strings::UNIVERSAL_STRING_TAG";
-        case ast::BuiltinType::BmpString:        return "asn1cpp_ber::strings::BMP_STRING_TAG";
-        case ast::BuiltinType::VideotexString:   return "asn1cpp_ber::strings::VIDEOTEX_STRING_TAG";
-        case ast::BuiltinType::ObjectDescriptor: return "asn1cpp_ber::strings::OBJECT_DESCRIPTOR_TAG";
-        default:                            return nullptr;  // not yet covered by Asn1Value
-        }
-    };
     // Asn1Value's XER leg now covers the same kinds the BER leg does
     // (gambas-asn1#283/#326). Kept as its own gate (not just reusing
     // builtin_ber_tag's coverage set) rather than assuming the two always
@@ -493,40 +577,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return false;
         }
     };
-    // gambas-asn1#331: element type's own ASN.1 keyword, used as the
-    // per-element XER tag inside a SEQUENCE OF member's own `<name>...
-    // </name>` wrapper (X.693 §12 / `SeqOfXerHandler`,
-    // `runtime/src/XerCodec.cpp` — no declared element identifier means the
-    // element's own type name is the tag). "OCTET STRING"/"OBJECT
-    // IDENTIFIER" contain spaces (invalid XML tag names) — hyphenated here;
-    // never actually reachable today since OctetString/ObjectIdentifier
-    // aren't emitted by builtin_ber_tag as seq-of *element* candidates
-    // requiring XER (BER-only elements still get a table, just no
-    // encode_xer()/decode_xer() on the enclosing type — same as any other
-    // not-XER-ready member).
-    auto builtin_xer_name = [](ast::BuiltinType bt) -> const char* {
-        switch (bt) {
-        case ast::BuiltinType::Integer:           return "INTEGER";
-        case ast::BuiltinType::Boolean:            return "BOOLEAN";
-        case ast::BuiltinType::OctetString:        return "OCTET-STRING";
-        case ast::BuiltinType::Ia5String:          return "IA5String";
-        case ast::BuiltinType::Utf8String:         return "UTF8String";
-        case ast::BuiltinType::NumericString:      return "NumericString";
-        case ast::BuiltinType::PrintableString:    return "PrintableString";
-        case ast::BuiltinType::T61String:          return "T61String";
-        case ast::BuiltinType::VisibleString:      return "VisibleString";
-        case ast::BuiltinType::GeneralString:      return "GeneralString";
-        case ast::BuiltinType::GraphicString:      return "GraphicString";
-        case ast::BuiltinType::UniversalString:    return "UniversalString";
-        case ast::BuiltinType::BmpString:          return "BMPString";
-        case ast::BuiltinType::VideotexString:     return "VideotexString";
-        case ast::BuiltinType::ObjectDescriptor:   return "ObjectDescriptor";
-        default:                                    return "Value";
-        }
-    };
-    auto rust_member_ber_tag = [&](const SequenceMemberSpec& m) -> const char* {
-        if (!m.mbuiltin) return m.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
-        return builtin_ber_tag(*m.mbuiltin, m.mtype);
+    auto rust_member_ber_tag = [](const SequenceMemberSpec& m) -> const char* {
+        return rust_tag_for_builtin_or_alias(m.mbuiltin, m.mtype);
     };
     // gambas-asn1#332: IMPLICIT tag override closures — see
     // MemberAccess::TaggedScalar's doc comment (rust-runtime/ber/src/
@@ -538,9 +590,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // same natural-tag-only limitation they already had).
     auto rust_tagged_ops = [&](const SequenceMemberSpec& m, const std::string& tag_lit)
             -> std::optional<std::pair<std::string, std::string>> {
-        if (!m.mbuiltin) return std::nullopt;
-        switch (*m.mbuiltin) {
-        case ast::BuiltinType::Boolean:
+        switch (tagged_kind_for(m.mbuiltin, m.mtype)) {
+        case TaggedKind::None:
+            return std::nullopt;
+        case TaggedKind::Boolean:
             if (m.optional)
                 return std::make_pair(
                     std::format("|v, out| {{ if let Some(x) = v.{0} {{ asn1cpp_ber::boolean::write_boolean_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
@@ -548,8 +601,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::boolean::write_boolean_tagged(out, {1}, v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::boolean::read_boolean_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
-        case ast::BuiltinType::Integer:
-            if (m.mtype != "i64") return std::nullopt;
+        case TaggedKind::Integer:
             if (m.optional)
                 return std::make_pair(
                     std::format("|v, out| {{ if let Some(x) = v.{0} {{ asn1cpp_ber::integer::write_integer_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
@@ -557,7 +609,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::integer::write_integer_tagged(out, {1}, v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::integer::read_integer_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
-        case ast::BuiltinType::OctetString:
+        case TaggedKind::OctetString:
             if (m.optional)
                 return std::make_pair(
                     std::format("|v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::octet_string::write_octet_string_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
@@ -565,18 +617,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::octet_string::write_octet_string_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::octet_string::read_octet_string_tagged(r, {1})?.to_vec(); Ok(()) }}", m.mname, tag_lit));
-        case ast::BuiltinType::Ia5String:
-        case ast::BuiltinType::Utf8String:
-        case ast::BuiltinType::NumericString:
-        case ast::BuiltinType::PrintableString:
-        case ast::BuiltinType::T61String:
-        case ast::BuiltinType::VisibleString:
-        case ast::BuiltinType::GeneralString:
-        case ast::BuiltinType::GraphicString:
-        case ast::BuiltinType::UniversalString:
-        case ast::BuiltinType::BmpString:
-        case ast::BuiltinType::VideotexString:
-        case ast::BuiltinType::ObjectDescriptor: {
+        case TaggedKind::CharString: {
             // IA5String's field is plain String (no wrapper); the other 11
             // kinds are a `char_string_type!` newtype (m.mtype is that
             // newtype's own name, e.g. "asn1cpp_ber::strings::NumericString")
@@ -598,9 +639,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 std::format("|v, r| {{ v.{0} = {2}asn1cpp_ber::strings::read_char_string(r, {1}, \"{3}\")?{4}; Ok(()) }}",
                              m.mname, tag_lit, ctor_open, kind_name, ctor_close));
         }
-        default:
-            return std::nullopt;  // e.g. real/null/OID — no *_tagged primitive yet
         }
+        return std::nullopt;  // unreachable: switch is exhaustive over TaggedKind
     };
     auto rust_member_xer_ready = [&](const SequenceMemberSpec& m) -> bool {
         if (!m.mbuiltin) return m.mtype == "i64";
@@ -840,60 +880,13 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // and skip encode_xer()/decode_xer(). Not a live gap today: every
     // builtin type covered here already has both legs (Asn1Value's XER leg
     // landed for all four in #283, before this issue). Would need
-    // revisiting if a future BER-only type is added to rust_alt_ber_tag's
+    // revisiting if a future BER-only type is added to builtin_ber_tag's
     // switch before its XER leg lands.
     // gambas-asn1#315: same u64/i128-vs-i64 storage gate as
     // emit_sequence_definition's rust_member_ber_tag — see that lambda's
     // comment for the full rationale.
     auto rust_alt_ber_tag = [](const ChoiceAlternativeSpec& a) -> const char* {
-        if (!a.mbuiltin) return a.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
-        switch (*a.mbuiltin) {
-        case ast::BuiltinType::Integer:     return a.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
-        case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
-        case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
-        case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
-        // gambas-asn1#326: same newtype widening as emit_sequence_definition's
-        // rust_member_ber_tag — see that lambda's comment.
-        case ast::BuiltinType::Utf8String:       return "asn1cpp_ber::strings::UTF8_STRING_TAG";
-        case ast::BuiltinType::NumericString:    return "asn1cpp_ber::strings::NUMERIC_STRING_TAG";
-        case ast::BuiltinType::PrintableString:  return "asn1cpp_ber::strings::PRINTABLE_STRING_TAG";
-        case ast::BuiltinType::T61String:        return "asn1cpp_ber::strings::T61_STRING_TAG";
-        case ast::BuiltinType::VisibleString:    return "asn1cpp_ber::strings::VISIBLE_STRING_TAG";
-        case ast::BuiltinType::GeneralString:    return "asn1cpp_ber::strings::GENERAL_STRING_TAG";
-        case ast::BuiltinType::GraphicString:    return "asn1cpp_ber::strings::GRAPHIC_STRING_TAG";
-        case ast::BuiltinType::UniversalString:  return "asn1cpp_ber::strings::UNIVERSAL_STRING_TAG";
-        case ast::BuiltinType::BmpString:        return "asn1cpp_ber::strings::BMP_STRING_TAG";
-        case ast::BuiltinType::VideotexString:   return "asn1cpp_ber::strings::VIDEOTEX_STRING_TAG";
-        case ast::BuiltinType::ObjectDescriptor: return "asn1cpp_ber::strings::OBJECT_DESCRIPTOR_TAG";
-        default:                            return nullptr;  // not yet covered by Asn1Value
-        }
-    };
-    // Same string-kind-name table as emit_sequence_definition's
-    // builtin_xer_name — duplicated here, same as rust_alt_ber_tag already
-    // duplicates rust_member_ber_tag's shape. Three near-identical
-    // per-builtin-kind switches across this file now (this one, the two
-    // *_ber_tag lambdas, and the two *_tagged_ops lambdas) — tracked as a
-    // refactor to hoist these to file scope, not treated as settled:
-    // gambas-asn1#344.
-    auto builtin_xer_name = [](ast::BuiltinType bt) -> const char* {
-        switch (bt) {
-        case ast::BuiltinType::Integer:           return "INTEGER";
-        case ast::BuiltinType::Boolean:            return "BOOLEAN";
-        case ast::BuiltinType::OctetString:        return "OCTET-STRING";
-        case ast::BuiltinType::Ia5String:          return "IA5String";
-        case ast::BuiltinType::Utf8String:         return "UTF8String";
-        case ast::BuiltinType::NumericString:      return "NumericString";
-        case ast::BuiltinType::PrintableString:    return "PrintableString";
-        case ast::BuiltinType::T61String:          return "T61String";
-        case ast::BuiltinType::VisibleString:      return "VisibleString";
-        case ast::BuiltinType::GeneralString:      return "GeneralString";
-        case ast::BuiltinType::GraphicString:      return "GraphicString";
-        case ast::BuiltinType::UniversalString:    return "UniversalString";
-        case ast::BuiltinType::BmpString:          return "BMPString";
-        case ast::BuiltinType::VideotexString:     return "VideotexString";
-        case ast::BuiltinType::ObjectDescriptor:   return "ObjectDescriptor";
-        default:                                    return "Value";
-        }
+        return rust_tag_for_builtin_or_alias(a.mbuiltin, a.mtype);
     };
     // gambas-asn1#336: IMPLICIT tag override for a CHOICE alternative — same
     // reasoning as emit_sequence_definition's rust_tagged_ops (#332), adapted
@@ -904,40 +897,29 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // — same coverage limit rust_tagged_ops documents.
     auto rust_alt_tagged_ops = [&](const ChoiceAlternativeSpec& a, const std::string& tag_lit)
             -> std::optional<std::pair<std::string, std::string>> {
-        if (!a.mbuiltin) return std::nullopt;
         std::string vname = variant_name(*this, a.asn1_name);
         auto variant_ctor = [&](const std::string& expr) {
             return std::format("Ok({}::{}({}))", spec.type_name, vname, expr);
         };
-        switch (*a.mbuiltin) {
-        case ast::BuiltinType::Boolean:
+        switch (tagged_kind_for(a.mbuiltin, a.mtype)) {
+        case TaggedKind::None:
+            return std::nullopt;
+        case TaggedKind::Boolean:
             return std::make_pair(
                 std::format("asn1cpp_ber::boolean::write_boolean_tagged(out, {}, *v);", tag_lit),
                 std::format("let v = asn1cpp_ber::boolean::read_boolean_tagged(r, {})?; {}",
                              tag_lit, variant_ctor("v")));
-        case ast::BuiltinType::Integer:
-            if (a.mtype != "i64") return std::nullopt;
+        case TaggedKind::Integer:
             return std::make_pair(
                 std::format("asn1cpp_ber::integer::write_integer_tagged(out, {}, *v);", tag_lit),
                 std::format("let v = asn1cpp_ber::integer::read_integer_tagged(r, {})?; {}",
                              tag_lit, variant_ctor("v")));
-        case ast::BuiltinType::OctetString:
+        case TaggedKind::OctetString:
             return std::make_pair(
                 std::format("asn1cpp_ber::octet_string::write_octet_string_tagged(out, {}, v);", tag_lit),
                 std::format("let v = asn1cpp_ber::octet_string::read_octet_string_tagged(r, {})?.to_vec(); {}",
                              tag_lit, variant_ctor("v")));
-        case ast::BuiltinType::Ia5String:
-        case ast::BuiltinType::Utf8String:
-        case ast::BuiltinType::NumericString:
-        case ast::BuiltinType::PrintableString:
-        case ast::BuiltinType::T61String:
-        case ast::BuiltinType::VisibleString:
-        case ast::BuiltinType::GeneralString:
-        case ast::BuiltinType::GraphicString:
-        case ast::BuiltinType::UniversalString:
-        case ast::BuiltinType::BmpString:
-        case ast::BuiltinType::VideotexString:
-        case ast::BuiltinType::ObjectDescriptor: {
+        case TaggedKind::CharString: {
             // Same IA5String-is-plain-String-vs-newtype split as
             // rust_tagged_ops — see that lambda's comment.
             bool is_plain_string = (*a.mbuiltin == ast::BuiltinType::Ia5String);
@@ -950,9 +932,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 std::format("let s = asn1cpp_ber::strings::read_char_string(r, {}, \"{}\")?; let v = {}s{}; {}",
                              tag_lit, kind_name, ctor_open, ctor_close, variant_ctor("v")));
         }
-        default:
-            return std::nullopt;  // e.g. real/null/OID — no *_tagged primitive yet
         }
+        return std::nullopt;  // unreachable: switch is exhaustive over TaggedKind
     };
     bool all_covered = !spec.alternatives.empty() &&
         std::all_of(spec.alternatives.begin(), spec.alternatives.end(),
