@@ -76,6 +76,27 @@ pub enum MemberAccess<T: 'static> {
         xer_encode: fn(&T, &mut String),
         xer_decode_into: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
     },
+    /// gambas-asn1#332: IMPLICIT tag override (X.690 §8.14). A member
+    /// declared with its own `[n]` tag (explicit-in-the-schema, or an
+    /// AUTOMATIC TAGS-assigned one) has that tag *replace* its type's
+    /// natural one on the wire — but every `Asn1Value` impl's
+    /// `ber_encode`/`ber_decode_into` hardcodes its own natural tag
+    /// internally (`bool`'s always writes/expects `BOOLEAN_TAG`, etc.), so
+    /// going through `Scalar`'s `get`/`get_mut` can't express an override.
+    /// `ber_encode`/`ber_decode_into` here call the type's own `*_tagged`
+    /// primitive (`boolean::write_boolean_tagged`, `integer::
+    /// write_integer_tagged`, `octet_string::write_octet_string_tagged`,
+    /// `strings::write_char_string`, ...) with the member's real resolved
+    /// tag instead. XER is unaffected — XER element tags are always
+    /// field-name-derived, never type-derived (`xer.rs`'s module doc), so
+    /// `get`/`get_mut` (reused here, identical to `Scalar`) are still
+    /// correct for the XER leg.
+    TaggedScalar {
+        ber_encode: fn(&T, &mut Vec<u8>),
+        ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
+        get: fn(&T) -> &dyn Asn1Value,
+        get_mut: fn(&mut T) -> &mut dyn Asn1Value,
+    },
 }
 
 /// Shared SEQUENCE-OF wire logic — one outer `SEQUENCE_TAG` TLV wrapping
@@ -186,6 +207,7 @@ pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
         match &m.access {
             MemberAccess::Scalar { get, .. } => get(value).ber_encode(&mut content),
             MemberAccess::SeqOf { ber_encode, .. } => ber_encode(value, &mut content),
+            MemberAccess::TaggedScalar { ber_encode, .. } => ber_encode(value, &mut content),
         }
     }
     let mut out = Vec::new();
@@ -230,6 +252,15 @@ pub fn decode_sequence<T: Default>(spec: &SequenceSpec<T>, data: &[u8]) -> Resul
             }
             MemberAccess::SeqOf { ber_decode_into, .. } => {
                 ber_decode_into(&mut result, &mut inner)?;
+            }
+            MemberAccess::TaggedScalar { ber_decode_into, .. } => {
+                if m.optional {
+                    if inner.peek_tag() == Some(m.tag) {
+                        ber_decode_into(&mut result, &mut inner)?;
+                    }
+                } else {
+                    ber_decode_into(&mut result, &mut inner)?;
+                }
             }
         }
     }

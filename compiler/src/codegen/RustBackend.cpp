@@ -528,6 +528,80 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         if (!m.mbuiltin) return m.mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
         return builtin_ber_tag(*m.mbuiltin, m.mtype);
     };
+    // gambas-asn1#332: IMPLICIT tag override closures — see
+    // MemberAccess::TaggedScalar's doc comment (rust-runtime/ber/src/
+    // sequence.rs) for why `Scalar`'s get/get_mut can't express this.
+    // Returns (ber_encode closure body, ber_decode_into closure body) for a
+    // member whose real resolved tag differs from its natural one, or
+    // nullopt if this builtin kind has no `*_tagged` runtime primitive yet
+    // (only direct builtins — TypeRef-aliased members fall back to Scalar,
+    // same natural-tag-only limitation they already had).
+    auto rust_tagged_ops = [&](const SequenceMemberSpec& m, const std::string& tag_lit)
+            -> std::optional<std::pair<std::string, std::string>> {
+        if (!m.mbuiltin) return std::nullopt;
+        switch (*m.mbuiltin) {
+        case ast::BuiltinType::Boolean:
+            if (m.optional)
+                return std::make_pair(
+                    std::format("|v, out| {{ if let Some(x) = v.{0} {{ asn1cpp_ber::boolean::write_boolean_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
+                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::boolean::read_boolean_tagged(r, {1})?); Ok(()) }}", m.mname, tag_lit));
+            return std::make_pair(
+                std::format("|v, out| asn1cpp_ber::boolean::write_boolean_tagged(out, {1}, v.{0})", m.mname, tag_lit),
+                std::format("|v, r| {{ v.{0} = asn1cpp_ber::boolean::read_boolean_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
+        case ast::BuiltinType::Integer:
+            if (m.mtype != "i64") return std::nullopt;
+            if (m.optional)
+                return std::make_pair(
+                    std::format("|v, out| {{ if let Some(x) = v.{0} {{ asn1cpp_ber::integer::write_integer_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
+                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::integer::read_integer_tagged(r, {1})?); Ok(()) }}", m.mname, tag_lit));
+            return std::make_pair(
+                std::format("|v, out| asn1cpp_ber::integer::write_integer_tagged(out, {1}, v.{0})", m.mname, tag_lit),
+                std::format("|v, r| {{ v.{0} = asn1cpp_ber::integer::read_integer_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
+        case ast::BuiltinType::OctetString:
+            if (m.optional)
+                return std::make_pair(
+                    std::format("|v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::octet_string::write_octet_string_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
+                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::octet_string::read_octet_string_tagged(r, {1})?.to_vec()); Ok(()) }}", m.mname, tag_lit));
+            return std::make_pair(
+                std::format("|v, out| asn1cpp_ber::octet_string::write_octet_string_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
+                std::format("|v, r| {{ v.{0} = asn1cpp_ber::octet_string::read_octet_string_tagged(r, {1})?.to_vec(); Ok(()) }}", m.mname, tag_lit));
+        case ast::BuiltinType::Ia5String:
+        case ast::BuiltinType::Utf8String:
+        case ast::BuiltinType::NumericString:
+        case ast::BuiltinType::PrintableString:
+        case ast::BuiltinType::T61String:
+        case ast::BuiltinType::VisibleString:
+        case ast::BuiltinType::GeneralString:
+        case ast::BuiltinType::GraphicString:
+        case ast::BuiltinType::UniversalString:
+        case ast::BuiltinType::BmpString:
+        case ast::BuiltinType::VideotexString:
+        case ast::BuiltinType::ObjectDescriptor: {
+            // IA5String's field is plain String (no wrapper); the other 11
+            // kinds are a `char_string_type!` newtype (m.mtype is that
+            // newtype's own name, e.g. "asn1cpp_ber::strings::NumericString")
+            // whose inner String lives at `.0` (strings.rs).
+            bool is_plain_string = (*m.mbuiltin == ast::BuiltinType::Ia5String);
+            const char* kind_name = builtin_xer_name(*m.mbuiltin);
+            std::string ctor_open  = is_plain_string ? "" : m.mtype + "(";
+            std::string ctor_close = is_plain_string ? "" : ")";
+            std::string enc_ref = is_plain_string ? "x" : "&x.0";
+            if (m.optional)
+                return std::make_pair(
+                    std::format("|v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::strings::write_char_string(out, {1}, {2}); }} }}",
+                                 m.mname, tag_lit, enc_ref),
+                    std::format("|v, r| {{ v.{0} = Some({2}asn1cpp_ber::strings::read_char_string(r, {1}, \"{3}\")?{4}); Ok(()) }}",
+                                 m.mname, tag_lit, ctor_open, kind_name, ctor_close));
+            std::string enc_ref_req = is_plain_string ? std::format("&v.{}", m.mname) : std::format("&v.{}.0", m.mname);
+            return std::make_pair(
+                std::format("|v, out| asn1cpp_ber::strings::write_char_string(out, {1}, {2})", m.mname, tag_lit, enc_ref_req),
+                std::format("|v, r| {{ v.{0} = {2}asn1cpp_ber::strings::read_char_string(r, {1}, \"{3}\")?{4}; Ok(()) }}",
+                             m.mname, tag_lit, ctor_open, kind_name, ctor_close));
+        }
+        default:
+            return std::nullopt;  // e.g. real/null/OID — no *_tagged primitive yet
+        }
+    };
     auto rust_member_xer_ready = [&](const SequenceMemberSpec& m) -> bool {
         if (!m.mbuiltin) return m.mtype == "i64";
         return builtin_xer_ready(*m.mbuiltin, m.mtype);
@@ -589,9 +663,29 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
                 os << "        },\n";
             } else {
-                os << std::format("        tag: {},\n", rust_member_ber_tag(m));
-                os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                os << std::format("        access: asn1cpp_ber::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
+                // gambas-asn1#332: prefer the member's real resolved tag
+                // (IMPLICIT override) over its natural one whenever one
+                // applies and this builtin kind has a *_tagged primitive —
+                // EXPLICIT-tagged members (m.is_explicit) aren't handled
+                // yet (different wire shape, nested wrapper, not a tag
+                // substitution — out of this fix's scope) and keep using
+                // the natural-tag Scalar path, same as before.
+                std::optional<std::pair<std::string, std::string>> tagged_ops;
+                if (m.resolved_tag && !m.is_explicit)
+                    tagged_ops = rust_tagged_ops(m, format_tag_literal(*m.resolved_tag));
+                if (tagged_ops) {
+                    os << std::format("        tag: {},\n", format_tag_literal(*m.resolved_tag));
+                    os << std::format("        optional: {},\n", m.optional ? "true" : "false");
+                    os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedScalar {\n";
+                    os << std::format("            ber_encode: {},\n", tagged_ops->first);
+                    os << std::format("            ber_decode_into: {},\n", tagged_ops->second);
+                    os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
+                    os << "        },\n";
+                } else {
+                    os << std::format("        tag: {},\n", rust_member_ber_tag(m));
+                    os << std::format("        optional: {},\n", m.optional ? "true" : "false");
+                    os << std::format("        access: asn1cpp_ber::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
+                }
             }
             os << "    },\n";
         }

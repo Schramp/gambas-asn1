@@ -235,10 +235,15 @@ Generator::TagResult Generator::compute_member_tag(const ast::TypeDef& m,
                                                     int auto_tag_num) const {
     std::string eff_tag;
     bool is_explicit = false;
+    std::optional<TagSpec> resolved_tag;
     if (m.tag.present()) {
         is_explicit = member_is_explicit(m.tag, m);
         // EXPLICIT wrapper is always constructed (X.690 §8.14.3); IMPLICIT inherits.
-        eff_tag = tag_literal(m.tag, is_explicit || member_is_constructed(m));
+        bool constructed = is_explicit || member_is_constructed(m);
+        eff_tag = tag_literal(m.tag, constructed);
+        // gambas-asn1#332: backend-agnostic counterpart of eff_tag — see
+        // TagResult's doc comment (Generator.hpp).
+        resolved_tag = TagSpec{ m.tag.cls, m.tag.number, constructed };
     } else if (apply_auto_tags) {
         // X.680 §24.9 / §28.2: untagged CHOICE in AUTOMATIC TAGS gets EXPLICIT.
         bool is_choice = member_type_is_choice(m);
@@ -246,8 +251,10 @@ Generator::TagResult Generator::compute_member_tag(const ast::TypeDef& m,
         auto_tag.cls    = ast::TagClass::Context;
         auto_tag.number = auto_tag_num;
         auto_tag.mode   = is_choice ? ast::TagMode::Explicit : ast::TagMode::Implicit;
-        eff_tag    = tag_literal(auto_tag, is_choice || member_is_constructed(m));
+        bool constructed = is_choice || member_is_constructed(m);
+        eff_tag = tag_literal(auto_tag, constructed);
         is_explicit = is_choice;
+        resolved_tag = TagSpec{ auto_tag.cls, auto_tag.number, constructed };
     } else {
         eff_tag = natural_tag_for(m);
         if (eff_tag.empty()) eff_tag = "asn1::Tag{}";
@@ -258,8 +265,10 @@ Generator::TagResult Generator::compute_member_tag(const ast::TypeDef& m,
             if (base && base->tag.present())
                 is_explicit = member_is_explicit(base->tag, *base);
         }
+        // resolved_tag stays nullopt: the member's own natural tag applies,
+        // which a backend's own per-builtin-kind lookup already gets right.
     }
-    return { std::move(eff_tag), is_explicit };
+    return { std::move(eff_tag), is_explicit, resolved_tag };
 }
 
 bool Generator::is_class_type(const ast::TypeDef& m) const {
@@ -1311,6 +1320,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
         row.eff_tag = tag_result.tag_literal;
         row.is_explicit = tag_result.is_explicit;
+        row.resolved_tag = tag_result.resolved_tag;
         row.ops = optional
             ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, row.mname)
             : "{ nullptr, nullptr, nullptr }";
@@ -1527,7 +1537,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
           for (const auto& m : def.members) {
             if (m->is_extension_marker) continue;
             std::string mname = backend_.member_name(m->name);
-            auto [eff_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
+            auto [eff_tag, is_explicit, resolved_tag_unused] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
+            (void)resolved_tag_unused;  // CHOICE alternatives don't use resolved_tag yet (#332 scoped to SEQUENCE members)
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, session);
             std::string alt_type = cpp_type_for(*m);
             int tag_ctx_num = -1;

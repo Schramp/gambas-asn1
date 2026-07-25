@@ -246,7 +246,10 @@ pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
     out.push('\n');
     for m in spec.members {
         match &m.access {
-            MemberAccess::Scalar { get, .. } => {
+            // TaggedScalar (gambas-asn1#332) reuses Scalar's get here: XER
+            // element tags are always field-name-derived, never
+            // type-derived, so the BER-only tag override doesn't apply.
+            MemberAccess::Scalar { get, .. } | MemberAccess::TaggedScalar { get, .. } => {
                 let val = get(value);
                 if !val.is_present() {
                     continue;
@@ -295,7 +298,8 @@ pub fn decode_sequence_xer<T: Default>(spec: &SequenceSpec<T>, xml: &str) -> Res
         }
         r.consume_open_tag(m.name)?;
         match &m.access {
-            MemberAccess::Scalar { get_mut, .. } => get_mut(&mut result).xer_decode_into(&mut r)?,
+            MemberAccess::Scalar { get_mut, .. } | MemberAccess::TaggedScalar { get_mut, .. } =>
+                get_mut(&mut result).xer_decode_into(&mut r)?,
             MemberAccess::SeqOf { xer_decode_into, .. } => xer_decode_into(&mut result, &mut r)?,
         }
         r.consume_close_tag(m.name)?;
