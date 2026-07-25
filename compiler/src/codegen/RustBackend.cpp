@@ -646,6 +646,24 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             os << "    asn1cpp_ber::sequence::MemberDescriptor {\n";
             os << std::format("        name: \"{}\",\n", m.asn1_name);
             if (m.is_seq_of) {
+                const char* elem_xer_name = builtin_xer_name(*m.elem_builtin);
+                // gambas-asn1#337: prefer the member's real resolved tag
+                // (IMPLICIT override) over SEQUENCE-OF's natural SEQUENCE_TAG,
+                // same TaggedScalar-vs-Scalar branch used below for scalar
+                // members. EXPLICIT-tagged members aren't handled yet (out
+                // of scope, same as the scalar case) and keep the natural-tag
+                // SeqOf path.
+                if (m.resolved_tag && !m.is_explicit) {
+                    std::string tag_lit = format_tag_literal(*m.resolved_tag);
+                    os << std::format("        tag: {},\n", tag_lit);
+                    os << "        optional: false,\n";
+                    os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedSeqOf {\n";
+                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_tagged(out, {}, &v.{}),\n", tag_lit, m.mname);
+                    os << std::format("            ber_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_tagged(r, {})?; Ok(()) }},\n", m.mname, tag_lit);
+                    os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}, \"{}\"),\n", m.mname, elem_xer_name);
+                    os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
+                    os << "        },\n";
+                } else {
                 // gambas-asn1#331: the descriptor's own `tag` is the OUTER
                 // SEQUENCE-OF container tag — decode_sequence's SeqOf branch
                 // never actually consults it (no OPTIONAL presence-peek for
@@ -655,13 +673,13 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // nested collection.
                 os << "        tag: asn1cpp_ber::sequence::SEQUENCE_TAG,\n";
                 os << "        optional: false,\n";
-                const char* elem_xer_name = builtin_xer_name(*m.elem_builtin);
                 os << "        access: asn1cpp_ber::sequence::MemberAccess::SeqOf {\n";
                 os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of(out, &v.{}),\n", m.mname);
                 os << std::format("            ber_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of(r)?; Ok(()) }},\n", m.mname);
                 os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}, \"{}\"),\n", m.mname, elem_xer_name);
                 os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
                 os << "        },\n";
+                }
             } else {
                 // gambas-asn1#332: prefer the member's real resolved tag
                 // (IMPLICIT override) over its natural one whenever one

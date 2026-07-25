@@ -260,7 +260,9 @@ pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
                 write_close_tag(&mut out, m.name);
                 out.push('\n');
             }
-            MemberAccess::SeqOf { xer_encode, .. } => {
+            // TaggedSeqOf (gambas-asn1#337) reuses SeqOf's xer_encode here,
+            // same field-name-derived-tag reasoning as TaggedScalar above.
+            MemberAccess::SeqOf { xer_encode, .. } | MemberAccess::TaggedSeqOf { xer_encode, .. } => {
                 out.push_str("    ");
                 write_open_tag(&mut out, m.name);
                 xer_encode(value, &mut out);
@@ -300,7 +302,8 @@ pub fn decode_sequence_xer<T: Default>(spec: &SequenceSpec<T>, xml: &str) -> Res
         match &m.access {
             MemberAccess::Scalar { get_mut, .. } | MemberAccess::TaggedScalar { get_mut, .. } =>
                 get_mut(&mut result).xer_decode_into(&mut r)?,
-            MemberAccess::SeqOf { xer_decode_into, .. } => xer_decode_into(&mut result, &mut r)?,
+            MemberAccess::SeqOf { xer_decode_into, .. } | MemberAccess::TaggedSeqOf { xer_decode_into, .. } =>
+                xer_decode_into(&mut result, &mut r)?,
         }
         r.consume_close_tag(m.name)?;
     }
