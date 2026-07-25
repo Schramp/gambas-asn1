@@ -1214,7 +1214,6 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
     std::ostream& os = session.buffer(backend_.definition_extension());
     std::string cname = effective_cpp_name(def.name, current_module_);
     bool is_set = def.is_set();
-    uint32_t tag_num = is_set ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
 
     auto [mcount, ext_at] = count_members(def);
 
@@ -2136,6 +2135,11 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 generated_names_.insert(seqof_name);
                 auto seqof_td = std::make_shared<ast::TypeDef>(*m);
                 seqof_td->name = seqof_name;
+                // The member's own [n] tag (X.680's per-member tagging) is not the
+                // synthetic wrapper TYPE's own declared tag — clear it so
+                // natural_tag_for() doesn't mistake the copied member tag for a
+                // top-level [n] IMPLICIT/EXPLICIT declaration on this type itself.
+                seqof_td->tag = ast::Tag{};
                 if (!elem_type_name.empty()) {
                     auto named_elem = std::make_shared<ast::TypeDef>();
                     named_elem->body = ast::TypeRef{"", elem_type_name, {}};
@@ -2162,6 +2166,9 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
 
         auto synthetic = std::make_shared<ast::TypeDef>(*m);
         synthetic->name = synth_name;
+        // Same reasoning as the SeqOf wrapper above: the member's own [n] tag must
+        // not be mistaken for this synthetic type's own top-level declared tag.
+        synthetic->tag = ast::Tag{};
 
         generate_inline_types(*synthetic, mod);
 
