@@ -11,6 +11,11 @@ use crate::writer::write_primitive;
 
 pub const BOOLEAN_TAG: Tag = Tag::universal(universal::BOOLEAN, false);
 
+/// X.690 §8.2.2 DER-strict encode value: `TRUE`.
+const DER_TRUE: u8 = 0xFF;
+/// X.690 §8.2.2 DER-strict encode value: `FALSE`.
+const DER_FALSE: u8 = 0x00;
+
 pub fn write_boolean(out: &mut Vec<u8>, value: bool) {
     write_boolean_tagged(out, BOOLEAN_TAG, value);
 }
@@ -28,7 +33,7 @@ pub fn read_boolean(r: &mut Reader) -> Result<bool, DecodeError> {
 /// real resolved tag, whenever one applies (`RustBackend`'s per-member
 /// closure emission, `emit_sequence_definition`).
 pub fn write_boolean_tagged(out: &mut Vec<u8>, tag: Tag, value: bool) {
-    write_primitive(out, tag, &[if value { 0xFF } else { 0x00 }]);
+    write_primitive(out, tag, &[if value { DER_TRUE } else { DER_FALSE }]);
 }
 
 pub fn read_boolean_tagged(r: &mut Reader, tag: Tag) -> Result<bool, DecodeError> {
@@ -50,11 +55,11 @@ mod tests {
     fn encodes_der_strict() {
         let mut buf = Vec::new();
         write_boolean(&mut buf, true);
-        assert_eq!(buf, vec![0x01, 0x01, 0xFF]);
+        assert_eq!(buf, vec![0x01, 0x01, DER_TRUE]);
 
         buf.clear();
         write_boolean(&mut buf, false);
-        assert_eq!(buf, vec![0x01, 0x01, 0x00]);
+        assert_eq!(buf, vec![0x01, 0x01, DER_FALSE]);
     }
 
     #[test]
@@ -91,7 +96,7 @@ mod tests {
         let context_5 = Tag::context(5, false);
         let mut buf = Vec::new();
         write_boolean_tagged(&mut buf, context_5, true);
-        assert_eq!(buf, vec![0x85, 0x01, 0xFF]); // context primitive 5, not 0x01 (universal BOOLEAN)
+        assert_eq!(buf, vec![0x85, 0x01, DER_TRUE]); // context primitive 5, not 0x01 (universal BOOLEAN)
         let mut r = Reader::new(&buf);
         assert!(read_boolean_tagged(&mut r, context_5).unwrap());
     }
