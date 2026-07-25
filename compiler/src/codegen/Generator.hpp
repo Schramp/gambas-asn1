@@ -423,7 +423,14 @@ private:
 
     bool should_apply_auto_tags(const ast::TypeDef& def) const;
 
-    struct TagResult { std::string tag_literal; bool is_explicit; };
+    // gambas-asn1#332: resolved_tag is the backend-agnostic (TagSpec)
+    // counterpart to tag_literal (which is C++-syntax-only, see
+    // SequenceMemberSpec::eff_tag's doc comment). Populated whenever the
+    // member's actual wire tag differs from its type's natural one
+    // (explicit `[n]` tag, or an AUTOMATIC TAGS-assigned one) — nullopt
+    // when the natural tag applies (a backend's own natural-tag lookup,
+    // e.g. RustBackend::rust_member_ber_tag, is already correct then).
+    struct TagResult { std::string tag_literal; bool is_explicit; std::optional<TagSpec> resolved_tag; };
     TagResult compute_member_tag(const ast::TypeDef& m,
                                  bool apply_auto_tags,
                                  int auto_tag_num) const;

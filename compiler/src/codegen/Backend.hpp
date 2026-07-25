@@ -234,6 +234,14 @@ struct SequenceMemberSpec {
     std::string mtype;          // C++ storage type
     std::string mname;          // member identifier
     std::string eff_tag;        // pre-formatted tag literal expression (C++ syntax only — see note below)
+    // gambas-asn1#332: backend-agnostic counterpart to eff_tag — see
+    // Generator::TagResult's doc comment. nullopt means the member's own
+    // natural tag applies (a backend's per-builtin-kind lookup, e.g.
+    // RustBackend::rust_member_ber_tag, is already correct); set means the
+    // member has its own explicit/AUTOMATIC-assigned tag that *replaces*
+    // the natural one on the wire for IMPLICIT tagging (X.690 §8.14) — used
+    // by RustBackend to pick MemberAccess::TaggedScalar over Scalar.
+    std::optional<TagSpec> resolved_tag;
     // Backend-agnostic builtin-type discriminant, set only when the member
     // is a direct (non-TypeRef, non-SEQUENCE/CHOICE) builtin type. `mtype`
     // alone can't drive correct per-member BER tag selection for a second
