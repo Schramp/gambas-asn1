@@ -635,4 +635,27 @@ mod tests {
         assert_eq!(xml, "<Coords>\n    <values></values>\n</Coords>\n");
         assert_eq!(Coords::decode_xer(&xml).unwrap(), c);
     }
+
+    // ---- SEQUENCE OF/SET OF IMPLICIT tag override (gambas-asn1#337) -------
+
+    #[test]
+    fn tagged_seq_of_uses_the_given_tag_not_the_natural_one() {
+        let context_3 = Tag::context(3, true);
+        let mut buf = Vec::new();
+        encode_seq_of_tagged(&mut buf, context_3, &[1i64, 2i64]);
+        // context constructed 3 (0xA3), not 0x30 (universal SEQUENCE).
+        assert_eq!(buf, vec![0xA3, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02]);
+        let mut r = Reader::new(&buf);
+        let decoded: Vec<i64> = decode_seq_of_tagged(&mut r, context_3).unwrap();
+        assert_eq!(decoded, vec![1, 2]);
+    }
+
+    #[test]
+    fn tagged_seq_of_rejects_the_natural_tag() {
+        let mut buf = Vec::new();
+        encode_seq_of(&mut buf, &[1i64]); // natural SEQUENCE_TAG
+        let mut r = Reader::new(&buf);
+        let result: Result<Vec<i64>, _> = decode_seq_of_tagged(&mut r, Tag::context(3, true));
+        assert!(result.is_err());
+    }
 }

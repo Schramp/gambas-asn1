@@ -656,6 +656,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 if (m.resolved_tag && !m.is_explicit) {
                     std::string tag_lit = format_tag_literal(*m.resolved_tag);
                     os << std::format("        tag: {},\n", tag_lit);
+                    // optional: false here (not m.optional) inherits #331's
+                    // scope limit below — OPTIONAL SEQUENCE OF isn't handled
+                    // by either SeqOf path yet (no presence-peek in
+                    // decode_sequence's SeqOf/TaggedSeqOf arms), not something
+                    // this fix introduces or narrows.
                     os << "        optional: false,\n";
                     os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedSeqOf {\n";
                     os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_tagged(out, {}, &v.{}),\n", tag_lit, m.mname);
@@ -664,21 +669,21 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
                     os << "        },\n";
                 } else {
-                // gambas-asn1#331: the descriptor's own `tag` is the OUTER
-                // SEQUENCE-OF container tag — decode_sequence's SeqOf branch
-                // never actually consults it (no OPTIONAL presence-peek for
-                // this PR's required-only scope), kept only so the struct
-                // literal has a real value, same role SEQUENCE_TAG plays on
-                // SequenceSpec itself for a member that happens to be a
-                // nested collection.
-                os << "        tag: asn1cpp_ber::sequence::SEQUENCE_TAG,\n";
-                os << "        optional: false,\n";
-                os << "        access: asn1cpp_ber::sequence::MemberAccess::SeqOf {\n";
-                os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of(out, &v.{}),\n", m.mname);
-                os << std::format("            ber_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of(r)?; Ok(()) }},\n", m.mname);
-                os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}, \"{}\"),\n", m.mname, elem_xer_name);
-                os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
-                os << "        },\n";
+                    // gambas-asn1#331: the descriptor's own `tag` is the OUTER
+                    // SEQUENCE-OF container tag — decode_sequence's SeqOf branch
+                    // never actually consults it (no OPTIONAL presence-peek for
+                    // this PR's required-only scope), kept only so the struct
+                    // literal has a real value, same role SEQUENCE_TAG plays on
+                    // SequenceSpec itself for a member that happens to be a
+                    // nested collection.
+                    os << "        tag: asn1cpp_ber::sequence::SEQUENCE_TAG,\n";
+                    os << "        optional: false,\n";
+                    os << "        access: asn1cpp_ber::sequence::MemberAccess::SeqOf {\n";
+                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of(out, &v.{}),\n", m.mname);
+                    os << std::format("            ber_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of(r)?; Ok(()) }},\n", m.mname);
+                    os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}, \"{}\"),\n", m.mname, elem_xer_name);
+                    os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
+                    os << "        },\n";
                 }
             } else {
                 // gambas-asn1#332: prefer the member's real resolved tag
