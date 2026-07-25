@@ -125,6 +125,34 @@ target_include_directories(test_explicit_tag PRIVATE ${EXPLICIT_TAG_GEN_DIR})
 target_link_libraries(test_explicit_tag PRIVATE asn1cpp_runtime)
 add_test(NAME explicit_tag COMMAND test_explicit_tag)
 
+# ---- Top-level type's own [N] IMPLICIT tag (gambas-asn1#339) --------------
+set(TOPLEVEL_TAG_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_toplevel_tag_test)
+add_custom_command(
+    OUTPUT  ${TOPLEVEL_TAG_GEN_DIR}/MyInt.hpp    ${TOPLEVEL_TAG_GEN_DIR}/MyInt.cpp
+            ${TOPLEVEL_TAG_GEN_DIR}/MyEnum.hpp   ${TOPLEVEL_TAG_GEN_DIR}/MyEnum.cpp
+            ${TOPLEVEL_TAG_GEN_DIR}/MySeq.hpp    ${TOPLEVEL_TAG_GEN_DIR}/MySeq.cpp
+            ${TOPLEVEL_TAG_GEN_DIR}/MySeqOf.hpp  ${TOPLEVEL_TAG_GEN_DIR}/MySeqOf.cpp
+            ${TOPLEVEL_TAG_GEN_DIR}/Wrapper.hpp  ${TOPLEVEL_TAG_GEN_DIR}/Wrapper.cpp
+            ${TOPLEVEL_TAG_GEN_DIR}/WrapperTso.hpp ${TOPLEVEL_TAG_GEN_DIR}/WrapperTso.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${TOPLEVEL_TAG_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/toplevel_tag_test.asn1
+                                   -o ${TOPLEVEL_TAG_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/toplevel_tag_test.asn1
+    COMMENT "Generating C++ from toplevel_tag_test.asn1"
+)
+add_executable(test_toplevel_tag
+    seq/test_toplevel_tag.cpp
+    ${TOPLEVEL_TAG_GEN_DIR}/MyInt.cpp
+    ${TOPLEVEL_TAG_GEN_DIR}/MyEnum.cpp
+    ${TOPLEVEL_TAG_GEN_DIR}/MySeq.cpp
+    ${TOPLEVEL_TAG_GEN_DIR}/MySeqOf.cpp
+    ${TOPLEVEL_TAG_GEN_DIR}/Wrapper.cpp
+    ${TOPLEVEL_TAG_GEN_DIR}/WrapperTso.cpp
+)
+target_include_directories(test_toplevel_tag PRIVATE ${TOPLEVEL_TAG_GEN_DIR})
+target_link_libraries(test_toplevel_tag PRIVATE asn1cpp_runtime)
+add_test(NAME toplevel_tag COMMAND test_toplevel_tag)
+
 # ---- NULL member BER tests -------------------------------------------------
 set(NULL_TEST_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_null_test)
 add_custom_command(

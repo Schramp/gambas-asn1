@@ -602,7 +602,7 @@ void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
     // TypeDescriptor
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
-        std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Enumerated),
+        natural_tag_for(def),
         true, false, false, false, "asn1::TypeKind::Enumerated",
         "&asn1::per_enumerated_handler", "&asn1::ber_enumerated_handler",
         /*use_class_scope=*/true);
@@ -1041,7 +1041,7 @@ void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
 
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
-    os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Integer);
+    os << std::format("    {},\n", natural_tag_for(def));
     os << "    nullptr, nullptr, nullptr, nullptr,\n";
     if (r.has_value) {
         int64_t lo = r.lo, hi = r.hi;
@@ -1478,8 +1478,6 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
 /// @see X.680 §24 — SEQUENCE type.
 void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
-    bool is_set = def.is_set();
-    uint32_t tag_num = is_set ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
 
     auto [mcount, ext_at] = count_members(def);
 
@@ -1621,7 +1619,7 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
     // TypeDescriptor
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
-        std::format("asn1::Tag::universal({}, true)", tag_num),
+        natural_tag_for(def),
         false, true, false, false, "asn1::TypeKind::Sequence",
         "&asn1::per_sequence_handler", "&asn1::ber_sequence_handler",
         /*use_class_scope=*/true);
@@ -2370,10 +2368,9 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
     os << "};\n\n";
 
     // TypeDescriptor
-    uint32_t of_tag = def.is_set_of() ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
     emit_type_descriptor(os, cname,
         def.xer_name.empty() ? def.name : def.xer_name,
-        std::format("asn1::Tag::universal({}, true)", of_tag),
+        natural_tag_for(def),
         false, false, false, true, "asn1::TypeKind::SeqOf",
         "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler");
 }
@@ -2513,6 +2510,11 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 generated_names_.insert(seqof_name);
                 auto seqof_td = std::make_shared<ast::TypeDef>(*m);
                 seqof_td->name = seqof_name;
+                // The member's own [n] tag (X.680's per-member tagging) is not the
+                // synthetic wrapper TYPE's own declared tag — clear it so
+                // natural_tag_for() doesn't mistake the copied member tag for a
+                // top-level [n] IMPLICIT/EXPLICIT declaration on this type itself.
+                seqof_td->tag = ast::Tag{};
                 if (!elem_type_name.empty()) {
                     auto named_elem = std::make_shared<ast::TypeDef>();
                     named_elem->body = ast::TypeRef{"", elem_type_name, {}};
@@ -2540,6 +2542,9 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
 
         auto synthetic = std::make_shared<ast::TypeDef>(*m);
         synthetic->name = synth_name;
+        // Same reasoning as the SeqOf wrapper above: the member's own [n] tag must
+        // not be mistaken for this synthetic type's own top-level declared tag.
+        synthetic->tag = ast::Tag{};
 
         generate_inline_types(*synthetic, mod);
 
