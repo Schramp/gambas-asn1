@@ -1,0 +1,27 @@
+-- gambas-asn1#336: CHOICE alternatives must use their own real IMPLICIT tag
+-- on the wire, not the natural tag of their underlying builtin type.
+--
+-- TwoOctets deliberately has two alternatives of the *same* builtin kind
+-- (OCTET STRING) — legal ASN.1 only because their explicit [n] tags make
+-- them distinguishable on the wire (X.680 requires distinguishable tags
+-- for an untagged CHOICE; two same-kind alternatives without tags would be
+-- illegal). This is exactly the worst-case scenario #336's issue body
+-- describes: if the codegen'd Rust wire tag falls back to each
+-- alternative's natural tag (both OCTET_STRING_TAG), the two alternatives
+-- become indistinguishable and CHOICE dispatch silently breaks.
+ChoiceTaggedAltTest DEFINITIONS ::= BEGIN
+
+    TwoOctets ::= CHOICE {
+        first  [1] IMPLICIT OCTET STRING,
+        second [2] IMPLICIT OCTET STRING
+    }
+
+    -- Context tags are scoped per CHOICE/SEQUENCE construct, not per module —
+    -- Mixed's alternatives restart at [1] independently of TwoOctets's own.
+    Mixed ::= CHOICE {
+        num   [1] IMPLICIT INTEGER,
+        flag  [2] IMPLICIT BOOLEAN,
+        label [3] IMPLICIT IA5String
+    }
+
+END

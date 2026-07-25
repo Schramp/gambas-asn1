@@ -355,12 +355,12 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
 
     std::string asn1_name;
     std::string tdref;
-    // gambas-asn1#338: resolved_tag (inherited from TaggedMemberSpec) exists
-    // structurally here now but is NOT yet populated by Generator — see
-    // emit_choice_definition's `(void)resolved_tag_unused` discard. Wiring
-    // it up (and consuming it in RustBackend, mirroring #332's
-    // MemberAccess::TaggedScalar) is gambas-asn1#336's job, not this one:
-    // this issue is pure field consolidation, no behavior change.
+    // gambas-asn1#336: resolved_tag (inherited from TaggedMemberSpec) is now
+    // populated by Generator::emit_choice_definition, same as
+    // SequenceMemberSpec::resolved_tag — nullopt means the alternative's own
+    // natural tag applies; set means an explicit/AUTOMATIC-assigned tag
+    // overrides it (X.690 §8.14). Consumed by RustBackend's CHOICE analogue
+    // of MemberAccess::TaggedScalar.
 };
 
 /// @brief Backend-agnostic decision for one CHOICE type (X.680 §28). The

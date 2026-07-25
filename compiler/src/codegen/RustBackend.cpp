@@ -868,6 +868,92 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         default:                            return nullptr;  // not yet covered by Asn1Value
         }
     };
+    // Same string-kind-name table as emit_sequence_definition's
+    // builtin_xer_name — duplicated here, same as rust_alt_ber_tag already
+    // duplicates rust_member_ber_tag's shape. Three near-identical
+    // per-builtin-kind switches across this file now (this one, the two
+    // *_ber_tag lambdas, and the two *_tagged_ops lambdas) — tracked as a
+    // refactor to hoist these to file scope, not treated as settled:
+    // gambas-asn1#344.
+    auto builtin_xer_name = [](ast::BuiltinType bt) -> const char* {
+        switch (bt) {
+        case ast::BuiltinType::Integer:           return "INTEGER";
+        case ast::BuiltinType::Boolean:            return "BOOLEAN";
+        case ast::BuiltinType::OctetString:        return "OCTET-STRING";
+        case ast::BuiltinType::Ia5String:          return "IA5String";
+        case ast::BuiltinType::Utf8String:         return "UTF8String";
+        case ast::BuiltinType::NumericString:      return "NumericString";
+        case ast::BuiltinType::PrintableString:    return "PrintableString";
+        case ast::BuiltinType::T61String:          return "T61String";
+        case ast::BuiltinType::VisibleString:      return "VisibleString";
+        case ast::BuiltinType::GeneralString:      return "GeneralString";
+        case ast::BuiltinType::GraphicString:      return "GraphicString";
+        case ast::BuiltinType::UniversalString:    return "UniversalString";
+        case ast::BuiltinType::BmpString:          return "BMPString";
+        case ast::BuiltinType::VideotexString:     return "VideotexString";
+        case ast::BuiltinType::ObjectDescriptor:   return "ObjectDescriptor";
+        default:                                    return "Value";
+        }
+    };
+    // gambas-asn1#336: IMPLICIT tag override for a CHOICE alternative — same
+    // reasoning as emit_sequence_definition's rust_tagged_ops (#332), adapted
+    // to a fresh local `v` (pattern-matched out of `x`/decoded from scratch)
+    // instead of a struct member access. Returns the encode/decode body
+    // fragments (statements ending in the variant construction/`out` write),
+    // or nullopt if this builtin kind has no `*_tagged` runtime primitive yet
+    // — same coverage limit rust_tagged_ops documents.
+    auto rust_alt_tagged_ops = [&](const ChoiceAlternativeSpec& a, const std::string& tag_lit)
+            -> std::optional<std::pair<std::string, std::string>> {
+        if (!a.mbuiltin) return std::nullopt;
+        std::string vname = variant_name(*this, a.asn1_name);
+        auto variant_ctor = [&](const std::string& expr) {
+            return std::format("Ok({}::{}({}))", spec.type_name, vname, expr);
+        };
+        switch (*a.mbuiltin) {
+        case ast::BuiltinType::Boolean:
+            return std::make_pair(
+                std::format("asn1cpp_ber::boolean::write_boolean_tagged(out, {}, *v);", tag_lit),
+                std::format("let v = asn1cpp_ber::boolean::read_boolean_tagged(r, {})?; {}",
+                             tag_lit, variant_ctor("v")));
+        case ast::BuiltinType::Integer:
+            if (a.mtype != "i64") return std::nullopt;
+            return std::make_pair(
+                std::format("asn1cpp_ber::integer::write_integer_tagged(out, {}, *v);", tag_lit),
+                std::format("let v = asn1cpp_ber::integer::read_integer_tagged(r, {})?; {}",
+                             tag_lit, variant_ctor("v")));
+        case ast::BuiltinType::OctetString:
+            return std::make_pair(
+                std::format("asn1cpp_ber::octet_string::write_octet_string_tagged(out, {}, v);", tag_lit),
+                std::format("let v = asn1cpp_ber::octet_string::read_octet_string_tagged(r, {})?.to_vec(); {}",
+                             tag_lit, variant_ctor("v")));
+        case ast::BuiltinType::Ia5String:
+        case ast::BuiltinType::Utf8String:
+        case ast::BuiltinType::NumericString:
+        case ast::BuiltinType::PrintableString:
+        case ast::BuiltinType::T61String:
+        case ast::BuiltinType::VisibleString:
+        case ast::BuiltinType::GeneralString:
+        case ast::BuiltinType::GraphicString:
+        case ast::BuiltinType::UniversalString:
+        case ast::BuiltinType::BmpString:
+        case ast::BuiltinType::VideotexString:
+        case ast::BuiltinType::ObjectDescriptor: {
+            // Same IA5String-is-plain-String-vs-newtype split as
+            // rust_tagged_ops — see that lambda's comment.
+            bool is_plain_string = (*a.mbuiltin == ast::BuiltinType::Ia5String);
+            const char* kind_name = builtin_xer_name(*a.mbuiltin);
+            std::string enc_ref = is_plain_string ? "v" : "&v.0";
+            std::string ctor_open  = is_plain_string ? "" : a.mtype + "(";
+            std::string ctor_close = is_plain_string ? "" : ")";
+            return std::make_pair(
+                std::format("asn1cpp_ber::strings::write_char_string(out, {}, {});", tag_lit, enc_ref),
+                std::format("let s = asn1cpp_ber::strings::read_char_string(r, {}, \"{}\")?; let v = {}s{}; {}",
+                             tag_lit, kind_name, ctor_open, ctor_close, variant_ctor("v")));
+        }
+        default:
+            return std::nullopt;  // e.g. real/null/OID — no *_tagged primitive yet
+        }
+    };
     bool all_covered = !spec.alternatives.empty() &&
         std::all_of(spec.alternatives.begin(), spec.alternatives.end(),
                      [&](const ChoiceAlternativeSpec& a) { return rust_alt_ber_tag(a) != nullptr; });
@@ -879,19 +965,42 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                           alts_ident, spec.type_name, spec.alternatives.size());
         for (const auto& a : spec.alternatives) {
             std::string vname = variant_name(*this, a.asn1_name);
+            std::optional<std::pair<std::string, std::string>> tagged_ops;
+            std::string tag_lit;
+            // !a.is_explicit: an EXPLICIT-tagged alternative needs a
+            // constructed outer TLV wrapping the natural-tag inner value
+            // (X.690 §8.14.3), not a tag substitution — falls through to the
+            // natural-tag path below, same as #332/#337's IMPLICIT-only
+            // scope. Not yet handled by either path: gambas-asn1#346.
+            if (a.resolved_tag && !a.is_explicit) {
+                tag_lit = format_tag_literal(*a.resolved_tag);
+                tagged_ops = rust_alt_tagged_ops(a, tag_lit);
+            }
             os << "    asn1cpp_ber::choice::AlternativeSpec {\n";
             os << std::format("        name: \"{}\",\n", a.asn1_name);
-            os << std::format("        tag: {},\n", rust_alt_ber_tag(a));
-            os << std::format("        ber_encode: |x, out| if let {}::{}(v) = x {{\n",
-                              spec.type_name, vname);
-            os << "            asn1cpp_ber::value::Asn1Value::ber_encode(v, out);\n";
-            os << "            true\n";
-            os << "        } else { false },\n";
-            os << "        ber_decode_into: |r| {\n";
-            os << std::format("            let mut v: {} = Default::default();\n", a.mtype);
-            os << "            asn1cpp_ber::value::Asn1Value::ber_decode_into(&mut v, r)?;\n";
-            os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
-            os << "        },\n";
+            if (tagged_ops) {
+                os << std::format("        tag: {},\n", tag_lit);
+                os << std::format("        ber_encode: |x, out| if let {}::{}(v) = x {{\n",
+                                  spec.type_name, vname);
+                os << std::format("            {}\n", tagged_ops->first);
+                os << "            true\n";
+                os << "        } else { false },\n";
+                os << "        ber_decode_into: |r| {\n";
+                os << std::format("            {}\n", tagged_ops->second);
+                os << "        },\n";
+            } else {
+                os << std::format("        tag: {},\n", rust_alt_ber_tag(a));
+                os << std::format("        ber_encode: |x, out| if let {}::{}(v) = x {{\n",
+                                  spec.type_name, vname);
+                os << "            asn1cpp_ber::value::Asn1Value::ber_encode(v, out);\n";
+                os << "            true\n";
+                os << "        } else { false },\n";
+                os << "        ber_decode_into: |r| {\n";
+                os << std::format("            let mut v: {} = Default::default();\n", a.mtype);
+                os << "            asn1cpp_ber::value::Asn1Value::ber_decode_into(&mut v, r)?;\n";
+                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+                os << "        },\n";
+            }
             os << std::format("        xer_encode: |x, out| if let {}::{}(v) = x {{\n",
                               spec.type_name, vname);
             os << "            asn1cpp_ber::value::Asn1Value::xer_encode(v, out);\n";
