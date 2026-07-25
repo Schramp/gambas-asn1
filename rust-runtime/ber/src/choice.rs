@@ -304,4 +304,89 @@ mod tests {
     fn xer_empty_input_is_error() {
         assert!(Choice::decode_xer("").is_err());
     }
+
+    // ---- EXPLICIT tag disambiguation (gambas-asn1#346) ---------------------
+
+    /// Regression guard for the exact worst-case scenario #346 was filed
+    /// for (mirrors `tests/asn1/choice_tagged_alt_test.asn1`'s
+    /// `TwoOctetsExplicit`, exercised here at the runtime layer directly
+    /// since this crate has no codegen wired in): two alternatives of the
+    /// *same* builtin kind, disambiguated only by their EXPLICIT outer
+    /// tags. Before #346's fix both would have used the natural
+    /// `OCTET_STRING_TAG` and been wire-indistinguishable, so
+    /// `decode_choice`'s linear tag scan would misdecode one into the
+    /// other.
+    enum TwoOctetsExplicit {
+        First(Vec<u8>),
+        Second(Vec<u8>),
+    }
+
+    const TAG_1: Tag = Tag::context(1, true);
+    const TAG_2: Tag = Tag::context(2, true);
+
+    static TWO_OCTETS_EXPLICIT_ALTERNATIVES: [AlternativeSpec<TwoOctetsExplicit>; 2] = [
+        AlternativeSpec {
+            name: "first",
+            tag: TAG_1,
+            ber_encode: |x, out| {
+                if let TwoOctetsExplicit::First(v) = x {
+                    crate::value::encode_explicit(out, TAG_1, v);
+                    true
+                } else {
+                    false
+                }
+            },
+            ber_decode_into: |r| {
+                let v: Vec<u8> = crate::value::decode_explicit(r, TAG_1)?;
+                Ok(TwoOctetsExplicit::First(v))
+            },
+            xer_encode: |_, _| false,
+            xer_decode_into: |_| Err(DecodeError::new("xer not exercised in this test", 0)),
+        },
+        AlternativeSpec {
+            name: "second",
+            tag: TAG_2,
+            ber_encode: |x, out| {
+                if let TwoOctetsExplicit::Second(v) = x {
+                    crate::value::encode_explicit(out, TAG_2, v);
+                    true
+                } else {
+                    false
+                }
+            },
+            ber_decode_into: |r| {
+                let v: Vec<u8> = crate::value::decode_explicit(r, TAG_2)?;
+                Ok(TwoOctetsExplicit::Second(v))
+            },
+            xer_encode: |_, _| false,
+            xer_decode_into: |_| Err(DecodeError::new("xer not exercised in this test", 0)),
+        },
+    ];
+
+    static TWO_OCTETS_EXPLICIT_SPEC: ChoiceSpec<TwoOctetsExplicit> =
+        ChoiceSpec { alternatives: &TWO_OCTETS_EXPLICIT_ALTERNATIVES };
+
+    #[test]
+    fn explicit_disambiguates_two_alternatives_of_the_same_builtin_kind() {
+        let first = TwoOctetsExplicit::First(vec![0xAA]);
+        let second = TwoOctetsExplicit::Second(vec![0xAA]); // same content, different alternative
+
+        let enc_first = encode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &first);
+        let enc_second = encode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &second);
+
+        // [1]/[2] EXPLICIT (0xA1/0xA2) wrapping OCTET STRING 0xAA (0x04 0x01 0xAA) —
+        // must be wire-distinguishable, unlike the pre-fix natural-tag collision.
+        assert_eq!(enc_first, vec![0xA1, 0x03, 0x04, 0x01, 0xAA]);
+        assert_eq!(enc_second, vec![0xA2, 0x03, 0x04, 0x01, 0xAA]);
+        assert_ne!(enc_first, enc_second);
+
+        match decode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &enc_first).unwrap() {
+            TwoOctetsExplicit::First(v) => assert_eq!(v, vec![0xAA]),
+            TwoOctetsExplicit::Second(_) => panic!("misdecoded First as Second"),
+        }
+        match decode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &enc_second).unwrap() {
+            TwoOctetsExplicit::Second(v) => assert_eq!(v, vec![0xAA]),
+            TwoOctetsExplicit::First(_) => panic!("misdecoded Second as First"),
+        }
+    }
 }

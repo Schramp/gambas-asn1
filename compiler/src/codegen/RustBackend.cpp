@@ -713,6 +713,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // tag-substituting _tagged variant) in an outer TLV.
                     std::string tag_lit = format_tag_literal(*m.resolved_tag);
                     os << std::format("        tag: {},\n", tag_lit);
+                    // optional: false here (not m.optional) inherits the
+                    // same #331 scope limit as the IMPLICIT TaggedSeqOf/
+                    // SeqOf branches below — OPTIONAL SEQUENCE OF isn't
+                    // handled by any SeqOf path yet (no presence-peek in
+                    // decode_sequence's SeqOf-family arms).
                     os << "        optional: false,\n";
                     os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedSeqOf {\n";
                     os << std::format("            ber_encode: |v, out| asn1cpp_ber::writer::write_explicit(out, {1}, |inner| asn1cpp_ber::sequence::encode_seq_of(inner, &v.{0})),\n", m.mname, tag_lit);
