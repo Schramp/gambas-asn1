@@ -24,4 +24,13 @@ ChoiceTaggedAltTest DEFINITIONS ::= BEGIN
         label [3] IMPLICIT IA5String
     }
 
+    -- gambas-asn1#346: same worst-case scenario as TwoOctets above, but
+    -- EXPLICIT instead of IMPLICIT — the outer tag must still disambiguate
+    -- the two same-builtin-kind alternatives, this time via a wrapped outer
+    -- TLV rather than a tag substitution.
+    TwoOctetsExplicit ::= CHOICE {
+        first  [1] EXPLICIT OCTET STRING,
+        second [2] EXPLICIT OCTET STRING
+    }
+
 END
