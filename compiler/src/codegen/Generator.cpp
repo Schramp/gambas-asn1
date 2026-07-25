@@ -545,6 +545,7 @@ static EnumeratedSpec build_enumerated_spec(const ast::TypeDef& def,
 
 void Generator::emit_enumerated(const ast::TypeDef& def, TypeOutputSession& session) {
     auto spec = build_enumerated_spec(def, effective_cpp_name(def.name, current_module_));
+    spec.tag = natural_tag_spec_for(def);
     backend_.emit_enumerated(spec, session);
 }
 
@@ -574,6 +575,7 @@ IntegerSpec Generator::build_integer_spec(const ast::TypeDef& def, const std::st
     spec.type_name = type_name;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
     spec.storage_kind = classify_integer_storage(def);
+    spec.tag = natural_tag_spec_for(def);
     for (const auto& ev : def.enum_values)
         spec.named_values.push_back({ev.name, ev.number.value_or(0)});
 
@@ -1279,6 +1281,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
     spec.ext_at = ext_at;
     spec.roms_count = roms_count;
     spec.is_set = is_set;
+    spec.tag = natural_tag_spec_for(def);
 
     // Storage-ops helper for optional member callbacks — one per optional
     // member. Must be written before the collect() pass below:
@@ -2002,6 +2005,7 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     spec.type_name = cname;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
     spec.is_set_of = def.is_set_of();
+    spec.tag = natural_tag_spec_for(def);
 
     // SIZE constraint on collection length
     auto sc = compute_size_constraint(extract_size_range(def));

@@ -61,6 +61,15 @@ struct EnumeratedSpec {
     std::vector<Value> values;     // declaration order, auto-numbering resolved
     bool              extensible;  // true if def.enum_values contained "..."
     int               root_count;  // count of values before the first extension marker
+    // gambas-asn1#342: the type's own top-level [n] IMPLICIT/EXPLICIT tag
+    // (X.690 §8.14), reaching this type's *standalone* TypeDescriptor —
+    // distinct from a member's own tag override (TaggedMemberSpec::
+    // resolved_tag), which already worked before this field existed.
+    // nullopt means the natural ENUMERATED tag applies (a backend's own
+    // universal-tag constant); set means this type assignment carries its
+    // own declared tag, same TagSpec/format_tag_literal contract as
+    // BuiltinAliasSpec::tag above.
+    std::optional<TagSpec> tag;
 };
 
 /// @brief Backend-agnostic decision for one named INTEGER type (X.680 §19) —
@@ -88,6 +97,9 @@ struct IntegerSpec {
     int      range_bits;        // -1 when semi_constrained (no fixed upper -> no fixed bit width)
     int64_t  lower_s64, upper_s64;   // signed view (upper_s64 meaningless when hi_is_large)
     uint64_t lower_u64, upper_u64;   // unsigned view (exact when hi_is_large)
+    // gambas-asn1#342: see EnumeratedSpec::tag's doc comment — same
+    // top-level-tag-on-standalone-TypeDescriptor contract, applied here.
+    std::optional<TagSpec> tag;
 };
 
 /// @brief Backend-agnostic decision for a builtin-alias type (X.680 §19) —
@@ -215,6 +227,9 @@ struct SeqOfSpec {
     std::optional<int64_t> size_upper; // present = finite upper bound; absent = semi-constrained/unconstrained
     std::optional<std::string> elem_xer_name; // X.693 §12: element's declared identifier, if any
     bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
+    // gambas-asn1#342: see EnumeratedSpec::tag's doc comment — same
+    // top-level-tag-on-standalone-TypeDescriptor contract, applied here.
+    std::optional<TagSpec> tag;
 };
 
 /// @brief Backend-agnostic tag-bearing fields shared by every construct that
@@ -339,6 +354,9 @@ struct SequenceSpec {
     int         roms_count;
     bool        is_set;         // true -> natural tag is SET, else SEQUENCE
     std::vector<SequenceMemberSpec> members; // root members first, then extension members
+    // gambas-asn1#342: see EnumeratedSpec::tag's doc comment — same
+    // top-level-tag-on-standalone-TypeDescriptor contract, applied here.
+    std::optional<TagSpec> tag;
 };
 
 /// @brief Backend-agnostic decision for one CHOICE alternative. Field
