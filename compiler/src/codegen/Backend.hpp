@@ -28,6 +28,27 @@ struct TagSpec {
     bool          constructed;  ///< True for constructed encoding form.
 };
 
+/// @brief Backend-agnostic tag-bearing field shared by every construct that
+///        can carry its own top-level [n] IMPLICIT/EXPLICIT tag (X.690 §8.14)
+///        on its *standalone* TypeDescriptor — same base-class consolidation
+///        gambas-asn1#338 already did for member-level tags
+///        (TaggedMemberSpec), applied here at the type level after #342
+///        found the field independently duplicated across EnumeratedSpec/
+///        IntegerSpec/SequenceSpec/SeqOfSpec/BuiltinAliasSpec (raised on
+///        #342's own review).
+/// @note nullopt means the type's natural tag applies (a backend's own
+///       per-kind universal-tag constant); set means this type assignment
+///       carries its own declared tag, overriding the natural one on the
+///       wire for a *standalone* encode/decode of this type (as opposed to
+///       TaggedMemberSpec::resolved_tag, which covers the same override but
+///       for a member/alternative referencing this type from inside another
+///       construct — the two are independent: a member can override a
+///       type's tag without that type's own standalone descriptor changing,
+///       and vice versa).
+struct TaggedTypeSpec {
+    std::optional<TagSpec> tag;
+};
+
 // Storage class for INTEGER types — chosen at codegen time from constraint
 // analysis (Generator::classify_integer_storage). Backend-agnostic: a
 // backend maps each kind to its own native storage type (see
@@ -53,7 +74,7 @@ enum class IntStorageKind {
 ///       against colliding with its own generated method names; a Rust
 ///       backend's needs will differ since Rust enum variants live in a
 ///       separate namespace from methods).
-struct EnumeratedSpec {
+struct EnumeratedSpec : TaggedTypeSpec {
     struct Value { std::string asn1_name; long value; };
 
     std::string       type_name;   // final type identifier (see note above)
@@ -73,7 +94,7 @@ struct EnumeratedSpec {
 ///       fact (X.691 §10.5.6), not a C++ concept: any backend implementing
 ///       PER needs the identical value, so it's computed once here rather
 ///       than re-derived per backend.
-struct IntegerSpec {
+struct IntegerSpec : TaggedTypeSpec {
     struct NamedValue { std::string asn1_name; int64_t value; };
 
     std::string       type_name;
@@ -100,13 +121,13 @@ struct IntegerSpec {
 ///       than duplicated into a parallel backend-agnostic enum: any backend
 ///       needs to distinguish OCTET STRING from BOOLEAN etc. the same way,
 ///       so the AST's own classification is already the right shape.
-struct BuiltinAliasSpec {
+struct BuiltinAliasSpec : TaggedTypeSpec {
     std::string            type_name;
     std::string            xer_name;
     ast::BuiltinType        builtin_type;
-    std::optional<TagSpec> tag;         // natural tag (X.690 §8.1); always present in practice —
-                                         // builtin-alias types are never CHOICE, the only case
-                                         // natural-tag resolution returns nullopt for
+    // tag (inherited): natural tag (X.690 §8.1); always present in practice —
+    // builtin-alias types are never CHOICE, the only case natural-tag
+    // resolution returns nullopt for.
     std::vector<uint8_t>   alphabet;    // FROM-alphabet constraint (restricted string types); empty = none
     bool     has_size_constraint;       // true if a SIZE constraint is present at all (bounded or semi-constrained)
     bool     size_bounded;              // true iff the SIZE constraint has a finite upper bound;
@@ -205,7 +226,7 @@ struct MemberTypeDescriptorSpec {
 ///        C++/Rust/etc. syntax; `elem_ref` is already a fully-formatted
 ///        reference expression since it comes from the (already
 ///        backend-delegated) emit_member_type_descriptor call.
-struct SeqOfSpec {
+struct SeqOfSpec : TaggedTypeSpec {
     std::string type_name;
     std::string xer_name;
     std::string elem_ref;        // reference expression to the element's TypeDescriptor
@@ -330,7 +351,7 @@ struct SequenceMemberSpec : TaggedMemberSpec {
 /// @brief Backend-agnostic decision for one SEQUENCE/SET type (X.680 §24/25).
 ///        See SequenceMemberSpec's note on why several fields stay
 ///        pre-formatted C++ text for this issue's scope.
-struct SequenceSpec {
+struct SequenceSpec : TaggedTypeSpec {
     std::string type_name;
     std::string xer_name;
     bool        has_optional_members;

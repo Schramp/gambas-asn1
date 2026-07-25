@@ -243,8 +243,12 @@ void CppBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::ost
     os << "};\n\n";
 
     // TypeDescriptor
+    // gambas-asn1#342: honor a top-level [n] IMPLICIT/EXPLICIT tag on this
+    // type assignment itself (X.690 §8.14) — nullopt only for CHOICE
+    // (natural_tag_spec_for), never for ENUMERATED, so the fallback is
+    // defensive, not a live case.
     emit_type_descriptor(os, cname, spec.xer_name,
-        std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::Enumerated),
+        spec.tag ? format_tag_literal(*spec.tag) : "asn1::Tag{}",
         true, false, false, false, "asn1::TypeKind::Enumerated",
         "&asn1::per_enumerated_handler", "&asn1::ber_enumerated_handler",
         /*use_class_scope=*/true);
@@ -319,7 +323,10 @@ void CppBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& 
 
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", spec.xer_name);
-    os << std::format("    asn1::Tag::universal({}, false),\n", asn1::UniversalTag::Integer);
+    // gambas-asn1#342: honor a top-level [n] IMPLICIT/EXPLICIT tag on this
+    // type assignment itself (X.690 §8.14) — see emit_enumerated_definition's
+    // matching comment.
+    os << std::format("    {},\n", spec.tag ? format_tag_literal(*spec.tag) : "asn1::Tag{}");
     os << "    nullptr, nullptr, nullptr, nullptr,\n";
     if (spec.has_constraint) {
         if (spec.semi_constrained) {
@@ -638,9 +645,11 @@ void CppBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os)
         os << std::format("    \"{}\",\n", *spec.elem_xer_name);
     os << "};\n\n";
 
-    uint32_t of_tag = spec.is_set_of ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
+    // gambas-asn1#342: honor a top-level [n] IMPLICIT/EXPLICIT tag on this
+    // type assignment itself (X.690 §8.14) — see emit_enumerated_definition's
+    // matching comment.
     emit_type_descriptor(os, spec.type_name, spec.xer_name,
-        std::format("asn1::Tag::universal({}, true)", of_tag),
+        spec.tag ? format_tag_literal(*spec.tag) : "asn1::Tag{}",
         false, false, false, true, "asn1::TypeKind::SeqOf",
         "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler");
 }
@@ -734,10 +743,12 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
     os << "};\n\n";
 
     // TypeDescriptor
-    uint32_t tag_num = spec.is_set ? asn1::UniversalTag::Set : asn1::UniversalTag::Sequence;
+    // gambas-asn1#342: honor a top-level [n] IMPLICIT/EXPLICIT tag on this
+    // type assignment itself (X.690 §8.14) — see emit_enumerated_definition's
+    // matching comment.
     emit_type_descriptor(os, cname,
         spec.xer_name,
-        std::format("asn1::Tag::universal({}, true)", tag_num),
+        spec.tag ? format_tag_literal(*spec.tag) : "asn1::Tag{}",
         false, true, false, false, "asn1::TypeKind::Sequence",
         "&asn1::per_sequence_handler", "&asn1::ber_sequence_handler",
         /*use_class_scope=*/true);
