@@ -49,6 +49,21 @@ pub fn write_constructed(out: &mut Vec<u8>, t: Tag, content: &[u8]) {
     out.extend_from_slice(content);
 }
 
+/// gambas-asn1#346: EXPLICIT tagging (X.690 §8.14.3) — a constructed outer
+/// TLV (the declared `[n]` tag, always constructed regardless of the inner
+/// type) wrapping the inner value's complete natural-tag encoding
+/// unchanged. Distinct from IMPLICIT (`*_tagged` primitives in
+/// `boolean.rs`/`integer.rs`/`octet_string.rs`/`strings.rs`, `encode_seq_of_tagged`
+/// in `sequence.rs`), which *replaces* the natural tag rather than wrapping
+/// it — generic over the inner type since EXPLICIT wrapping only cares
+/// about the already-encoded bytes, not what produced them (mirrors the
+/// C++ runtime's `ber_encode_explicit_tagged`, `BerCodec.cpp`).
+pub fn write_explicit(out: &mut Vec<u8>, tag: Tag, inner_encode: impl FnOnce(&mut Vec<u8>)) {
+    let mut content = Vec::new();
+    inner_encode(&mut content);
+    write_constructed(out, tag, &content);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,5 +97,17 @@ mod tests {
         let content = vec![0x02, 0x01, 0x05];
         write_constructed(&mut buf, Tag::universal(universal::SEQUENCE, true), &content);
         assert_eq!(buf, vec![0x30, 0x03, 0x02, 0x01, 0x05]);
+    }
+
+    #[test]
+    fn explicit_wraps_the_inner_encoding_in_an_outer_constructed_tlv() {
+        let mut buf = Vec::new();
+        let context_5 = Tag::context(5, true);
+        write_explicit(&mut buf, context_5, |inner| {
+            write_primitive(inner, Tag::universal(universal::INTEGER, false), &[0x2A]);
+        });
+        // [5] EXPLICIT (0xA5), len 3, wrapping INTEGER 42 (0x02 0x01 0x2A) —
+        // not a tag substitution: the inner universal INTEGER tag survives.
+        assert_eq!(buf, vec![0xA5, 0x03, 0x02, 0x01, 0x2A]);
     }
 }

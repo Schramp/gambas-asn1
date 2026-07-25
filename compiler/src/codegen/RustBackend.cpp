@@ -706,10 +706,26 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // gambas-asn1#337: prefer the member's real resolved tag
                 // (IMPLICIT override) over SEQUENCE-OF's natural SEQUENCE_TAG,
                 // same TaggedScalar-vs-Scalar branch used below for scalar
-                // members. EXPLICIT-tagged members aren't handled yet (out
-                // of scope, same as the scalar case) and keep the natural-tag
-                // SeqOf path.
-                if (m.resolved_tag && !m.is_explicit) {
+                // members.
+                if (m.resolved_tag && m.is_explicit) {
+                    // gambas-asn1#346: EXPLICIT — wrap the natural SeqOf
+                    // encoding (encode_seq_of/decode_seq_of, not the
+                    // tag-substituting _tagged variant) in an outer TLV.
+                    std::string tag_lit = format_tag_literal(*m.resolved_tag);
+                    os << std::format("        tag: {},\n", tag_lit);
+                    // optional: false here (not m.optional) inherits the
+                    // same #331 scope limit as the IMPLICIT TaggedSeqOf/
+                    // SeqOf branches below — OPTIONAL SEQUENCE OF isn't
+                    // handled by any SeqOf path yet (no presence-peek in
+                    // decode_sequence's SeqOf-family arms).
+                    os << "        optional: false,\n";
+                    os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedSeqOf {\n";
+                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::writer::write_explicit(out, {1}, |inner| asn1cpp_ber::sequence::encode_seq_of(inner, &v.{0})),\n", m.mname, tag_lit);
+                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::reader::read_explicit(r, {1}, |inner| asn1cpp_ber::sequence::decode_seq_of(inner))?; Ok(()) }},\n", m.mname, tag_lit);
+                    os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}, \"{}\"),\n", m.mname, elem_xer_name);
+                    os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
+                    os << "        },\n";
+                } else if (m.resolved_tag && !m.is_explicit) {
                     std::string tag_lit = format_tag_literal(*m.resolved_tag);
                     os << std::format("        tag: {},\n", tag_lit);
                     // optional: false here (not m.optional) inherits #331's
@@ -741,14 +757,32 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
                     os << "        },\n";
                 }
+            } else if (m.resolved_tag && m.is_explicit) {
+                // gambas-asn1#346: EXPLICIT tagging (X.690 §8.14.3) — wrap
+                // the member's natural (untagged) Asn1Value encoding in a
+                // constructed outer TLV via value::encode_explicit/
+                // decode_explicit, rather than substituting the tag like
+                // the IMPLICIT (TaggedScalar via rust_tagged_ops) branch
+                // below. Generic over Asn1Value (unlike the *_tagged
+                // primitives IMPLICIT needs), so it covers every member the
+                // natural Scalar path already covers with one runtime pair.
+                std::string tag_lit = format_tag_literal(*m.resolved_tag);
+                os << std::format("        tag: {},\n", tag_lit);
+                os << std::format("        optional: {},\n", m.optional ? "true" : "false");
+                os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedScalar {\n";
+                if (m.optional) {
+                    os << std::format("            ber_encode: |v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::value::encode_explicit(out, {1}, x); }} }},\n", m.mname, tag_lit);
+                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::value::decode_explicit(r, {1})?); Ok(()) }},\n", m.mname, tag_lit);
+                } else {
+                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::value::encode_explicit(out, {1}, &v.{0}),\n", m.mname, tag_lit);
+                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::value::decode_explicit(r, {1})?; Ok(()) }},\n", m.mname, tag_lit);
+                }
+                os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
+                os << "        },\n";
             } else {
                 // gambas-asn1#332: prefer the member's real resolved tag
                 // (IMPLICIT override) over its natural one whenever one
-                // applies and this builtin kind has a *_tagged primitive —
-                // EXPLICIT-tagged members (m.is_explicit) aren't handled
-                // yet (different wire shape, nested wrapper, not a tag
-                // substitution — out of this fix's scope) and keep using
-                // the natural-tag Scalar path, same as before.
+                // applies and this builtin kind has a *_tagged primitive.
                 std::optional<std::pair<std::string, std::string>> tagged_ops;
                 if (m.resolved_tag && !m.is_explicit)
                     tagged_ops = rust_tagged_ops(m, format_tag_literal(*m.resolved_tag));
@@ -968,18 +1002,30 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             std::string vname = variant_name(*this, a.asn1_name);
             std::optional<std::pair<std::string, std::string>> tagged_ops;
             std::string tag_lit;
-            // !a.is_explicit: an EXPLICIT-tagged alternative needs a
-            // constructed outer TLV wrapping the natural-tag inner value
-            // (X.690 §8.14.3), not a tag substitution — falls through to the
-            // natural-tag path below, same as #332/#337's IMPLICIT-only
-            // scope. Not yet handled by either path: gambas-asn1#346.
             if (a.resolved_tag && !a.is_explicit) {
                 tag_lit = format_tag_literal(*a.resolved_tag);
                 tagged_ops = rust_alt_tagged_ops(a, tag_lit);
             }
             os << "    asn1cpp_ber::choice::AlternativeSpec {\n";
             os << std::format("        name: \"{}\",\n", a.asn1_name);
-            if (tagged_ops) {
+            if (a.resolved_tag && a.is_explicit) {
+                // gambas-asn1#346: EXPLICIT — wrap the alternative's natural
+                // Asn1Value encoding in an outer TLV via value::
+                // encode_explicit/decode_explicit, generic over the
+                // alternative's type (same reasoning as the SEQUENCE scalar
+                // EXPLICIT branch above).
+                std::string etag = format_tag_literal(*a.resolved_tag);
+                os << std::format("        tag: {},\n", etag);
+                os << std::format("        ber_encode: |x, out| if let {}::{}(v) = x {{\n",
+                                  spec.type_name, vname);
+                os << std::format("            asn1cpp_ber::value::encode_explicit(out, {}, v);\n", etag);
+                os << "            true\n";
+                os << "        } else { false },\n";
+                os << "        ber_decode_into: |r| {\n";
+                os << std::format("            let v: {} = asn1cpp_ber::value::decode_explicit(r, {})?;\n", a.mtype, etag);
+                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+                os << "        },\n";
+            } else if (tagged_ops) {
                 os << std::format("        tag: {},\n", tag_lit);
                 os << std::format("        ber_encode: |x, out| if let {}::{}(v) = x {{\n",
                                   spec.type_name, vname);

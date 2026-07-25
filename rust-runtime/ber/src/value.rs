@@ -77,6 +77,27 @@ pub trait Asn1Value {
     }
 }
 
+/// gambas-asn1#346: EXPLICIT tagging (X.690 §8.14.3), generic over any
+/// `Asn1Value` — wraps the value's own natural encoding in an outer TLV via
+/// `writer::write_explicit`/`reader::read_explicit`. The generic
+/// counterpart to each type's own `*_tagged` functions (IMPLICIT —
+/// `boolean::write_boolean_tagged`, `integer::write_integer_tagged`, etc.):
+/// those substitute the tag and need a per-kind primitive because the wire
+/// *shape* differs per kind; EXPLICIT only ever adds one outer wrapper
+/// around whatever the natural encoding already is, so one generic pair
+/// covers every `Asn1Value` impl instead of needing one per kind.
+pub fn encode_explicit<T: Asn1Value>(out: &mut Vec<u8>, tag: crate::tag::Tag, value: &T) {
+    crate::writer::write_explicit(out, tag, |inner| value.ber_encode(inner));
+}
+
+pub fn decode_explicit<T: Asn1Value + Default>(r: &mut Reader, tag: crate::tag::Tag) -> Result<T, DecodeError> {
+    crate::reader::read_explicit(r, tag, |inner| {
+        let mut tmp = T::default();
+        tmp.ber_decode_into(inner)?;
+        Ok(tmp)
+    })
+}
+
 /// gambas-asn1#326: OPTIONAL member support. An `Option<V>` field (what
 /// `RustBackend` emits for an OPTIONAL member, mirroring C++'s
 /// `std::optional<T>`/`unique_ptr<T>`) becomes wire-absent exactly when
@@ -429,5 +450,18 @@ mod tests {
         got.xer_decode_into(&mut r).unwrap();
         r.consume_close_tag("label").unwrap();
         assert_eq!(got, "a<b>&c");
+    }
+
+    #[test]
+    fn explicit_generic_wraps_and_round_trips_any_asn1value() {
+        let mut buf = Vec::new();
+        encode_explicit(&mut buf, crate::tag::Tag::context(7, true), &42i64);
+        // [7] EXPLICIT (0xA7), wrapping the natural INTEGER encoding
+        // (0x02 0x01 0x2A) unchanged — not a tag substitution.
+        assert_eq!(buf, vec![0xA7, 0x03, 0x02, 0x01, 0x2A]);
+
+        let mut r = Reader::new(&buf);
+        let got: i64 = decode_explicit(&mut r, crate::tag::Tag::context(7, true)).unwrap();
+        assert_eq!(got, 42);
     }
 }
