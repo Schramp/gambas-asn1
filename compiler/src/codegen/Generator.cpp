@@ -1528,6 +1528,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
             ast::Tag full_tag;      // for canonical sort
             std::optional<ast::BuiltinType> mbuiltin;
+            std::optional<TagSpec> resolved_tag;  // gambas-asn1#336
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1536,8 +1537,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
           for (const auto& m : def.members) {
             if (m->is_extension_marker) continue;
             std::string mname = backend_.member_name(m->name);
-            auto [eff_tag, is_explicit, resolved_tag_unused] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
-            (void)resolved_tag_unused;  // CHOICE alternatives don't use resolved_tag yet (#332 scoped to SEQUENCE members)
+            auto [eff_tag, is_explicit, resolved_tag] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, session);
             std::string alt_type = cpp_type_for(*m);
             int tag_ctx_num = -1;
@@ -1552,7 +1552,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::optional<ast::BuiltinType> mbuiltin;
             if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) mbuiltin = *bt;
             rows.push_back({ m->name, eff_tag, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag, mbuiltin });
+                             tag_ctx_num, full_tag, mbuiltin, resolved_tag });
             ++auto_tag_num;
           }
         }
@@ -1586,6 +1586,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.tdref = r.tdref;
             alt.is_explicit = r.is_explicit;
             alt.mbuiltin = r.mbuiltin;
+            alt.resolved_tag = r.resolved_tag;
             spec.alternatives.push_back(std::move(alt));
         }
 
