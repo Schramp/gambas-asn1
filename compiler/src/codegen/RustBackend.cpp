@@ -967,6 +967,11 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             std::string vname = variant_name(*this, a.asn1_name);
             std::optional<std::pair<std::string, std::string>> tagged_ops;
             std::string tag_lit;
+            // !a.is_explicit: an EXPLICIT-tagged alternative needs a
+            // constructed outer TLV wrapping the natural-tag inner value
+            // (X.690 §8.14.3), not a tag substitution — falls through to the
+            // natural-tag path below, same as #332/#337's IMPLICIT-only
+            // scope. Not yet handled by either path: gambas-asn1#346.
             if (a.resolved_tag && !a.is_explicit) {
                 tag_lit = format_tag_literal(*a.resolved_tag);
                 tagged_ops = rust_alt_tagged_ops(a, tag_lit);
