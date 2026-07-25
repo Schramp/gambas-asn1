@@ -116,6 +116,24 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// gambas-asn1#346: EXPLICIT tagging (X.690 §8.14.3) decode — read the
+/// constructed outer TLV, check its tag, then decode the inner value from a
+/// sub-`Reader` over the outer TLV's content (the complete inner natural-tag
+/// encoding, unchanged). See `writer::write_explicit`'s doc comment for the
+/// encode side and the IMPLICIT-vs-EXPLICIT distinction.
+pub fn read_explicit<T>(
+    r: &mut Reader,
+    tag: Tag,
+    inner_decode: impl FnOnce(&mut Reader) -> Result<T, DecodeError>,
+) -> Result<T, DecodeError> {
+    let tlv = r.read_tlv()?;
+    if tlv.tag != tag {
+        return Err(DecodeError::new(format!("expected EXPLICIT tag, got {:?}", tlv.tag), r.pos()));
+    }
+    let mut inner = Reader::new(tlv.value);
+    inner_decode(&mut inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +178,30 @@ mod tests {
         let data = [0x30, 0x80, 0x00, 0x00];
         let mut r = Reader::new(&data);
         assert!(r.read_tlv().is_err());
+    }
+
+    #[test]
+    fn explicit_unwraps_the_outer_tlv_and_decodes_the_inner_natural_tag() {
+        // [5] EXPLICIT wrapping INTEGER 42 — same bytes writer.rs's
+        // explicit_wraps_the_inner_encoding_in_an_outer_constructed_tlv test produces.
+        let data = [0xA5, 0x03, 0x02, 0x01, 0x2A];
+        let mut r = Reader::new(&data);
+        let v = read_explicit(&mut r, Tag::context(5, true), |inner| {
+            let tlv = inner.read_tlv()?;
+            Ok(tlv.value[0] as i64)
+        })
+        .unwrap();
+        assert_eq!(v, 42);
+    }
+
+    #[test]
+    fn explicit_rejects_the_wrong_outer_tag() {
+        let data = [0xA5, 0x03, 0x02, 0x01, 0x2A];
+        let mut r = Reader::new(&data);
+        let result = read_explicit(&mut r, Tag::context(6, true), |inner| {
+            let tlv = inner.read_tlv()?;
+            Ok(tlv.value[0] as i64)
+        });
+        assert!(result.is_err());
     }
 }
