@@ -778,8 +778,12 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         // SEQUENCE's (16) — same distinction CppBackend's own
         // emit_sequence_definition already makes (spec.is_set), just never
         // threaded through here before now.
-        os << std::format("    tag: asn1cpp_ber::sequence::{},\n",
-                          spec.is_set ? "SET_TAG" : "SEQUENCE_TAG");
+        // gambas-asn1#342: honor a top-level [n] IMPLICIT/EXPLICIT tag on
+        // this type assignment itself (X.690 §8.14) — same fix CppBackend
+        // already has for this same case.
+        os << std::format("    tag: {},\n",
+                          spec.tag ? format_tag_literal(*spec.tag)
+                                   : std::format("asn1cpp_ber::sequence::{}", spec.is_set ? "SET_TAG" : "SEQUENCE_TAG"));
         os << std::format("    members: &{},\n", members_ident);
         os << "};\n\n";
 
