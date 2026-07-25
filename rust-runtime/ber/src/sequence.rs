@@ -97,6 +97,19 @@ pub enum MemberAccess<T: 'static> {
         get: fn(&T) -> &dyn Asn1Value,
         get_mut: fn(&mut T) -> &mut dyn Asn1Value,
     },
+    /// gambas-asn1#337: `SeqOf`'s analogue of `TaggedScalar` — a SEQUENCE OF/
+    /// SET OF member declared with its own `[n]` tag. `ber_encode`/
+    /// `ber_decode_into` call `encode_seq_of_tagged`/`decode_seq_of_tagged`
+    /// with the member's real resolved tag instead of `SeqOf`'s hardcoded
+    /// `SEQUENCE_TAG`. XER is unaffected (reuses `SeqOf`'s `xer_encode`/
+    /// `xer_decode_into` unchanged — same field-name-derived-tag reasoning
+    /// as `TaggedScalar`).
+    TaggedSeqOf {
+        ber_encode: fn(&T, &mut Vec<u8>),
+        ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
+        xer_encode: fn(&T, &mut String),
+        xer_decode_into: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
+    },
 }
 
 /// Shared SEQUENCE-OF wire logic — one outer `SEQUENCE_TAG` TLV wrapping
@@ -105,16 +118,32 @@ pub enum MemberAccess<T: 'static> {
 /// element type (mirrors `write_char_string`/`read_char_string` in
 /// `strings.rs` — one generic function, many thin per-type call sites).
 pub fn encode_seq_of<V: Asn1Value>(out: &mut Vec<u8>, items: &[V]) {
+    encode_seq_of_tagged(out, SEQUENCE_TAG, items);
+}
+
+pub fn decode_seq_of<V: Asn1Value + Default>(r: &mut Reader) -> Result<Vec<V>, DecodeError> {
+    decode_seq_of_tagged(r, SEQUENCE_TAG)
+}
+
+/// gambas-asn1#337: IMPLICIT tag override for a SEQUENCE OF/SET OF member,
+/// same reasoning as `boolean::write_boolean_tagged`/`read_boolean_tagged`
+/// (gambas-asn1#332) — a member declared with its own `[n]` tag replaces the
+/// natural `SEQUENCE_TAG`/`SET_TAG` on the *outer* TLV only; element
+/// encoding/decoding is unaffected (elements keep their own natural tags).
+pub fn encode_seq_of_tagged<V: Asn1Value>(out: &mut Vec<u8>, tag: Tag, items: &[V]) {
     let mut content = Vec::new();
     for item in items {
         item.ber_encode(&mut content);
     }
-    write_constructed(out, SEQUENCE_TAG, &content);
+    write_constructed(out, tag, &content);
 }
 
-pub fn decode_seq_of<V: Asn1Value + Default>(r: &mut Reader) -> Result<Vec<V>, DecodeError> {
+pub fn decode_seq_of_tagged<V: Asn1Value + Default>(
+    r: &mut Reader,
+    tag: Tag,
+) -> Result<Vec<V>, DecodeError> {
     let tlv = r.read_tlv()?;
-    if tlv.tag != SEQUENCE_TAG {
+    if tlv.tag != tag {
         return Err(DecodeError::new(format!("expected SEQUENCE OF tag, got {:?}", tlv.tag), r.pos()));
     }
     let mut inner = Reader::new(tlv.value);
@@ -208,6 +237,7 @@ pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
             MemberAccess::Scalar { get, .. } => get(value).ber_encode(&mut content),
             MemberAccess::SeqOf { ber_encode, .. } => ber_encode(value, &mut content),
             MemberAccess::TaggedScalar { ber_encode, .. } => ber_encode(value, &mut content),
+            MemberAccess::TaggedSeqOf { ber_encode, .. } => ber_encode(value, &mut content),
         }
     }
     let mut out = Vec::new();
@@ -261,6 +291,9 @@ pub fn decode_sequence<T: Default>(spec: &SequenceSpec<T>, data: &[u8]) -> Resul
                 } else {
                     ber_decode_into(&mut result, &mut inner)?;
                 }
+            }
+            MemberAccess::TaggedSeqOf { ber_decode_into, .. } => {
+                ber_decode_into(&mut result, &mut inner)?;
             }
         }
     }
@@ -601,5 +634,28 @@ mod tests {
         let xml = c.encode_xer();
         assert_eq!(xml, "<Coords>\n    <values></values>\n</Coords>\n");
         assert_eq!(Coords::decode_xer(&xml).unwrap(), c);
+    }
+
+    // ---- SEQUENCE OF/SET OF IMPLICIT tag override (gambas-asn1#337) -------
+
+    #[test]
+    fn tagged_seq_of_uses_the_given_tag_not_the_natural_one() {
+        let context_3 = Tag::context(3, true);
+        let mut buf = Vec::new();
+        encode_seq_of_tagged(&mut buf, context_3, &[1i64, 2i64]);
+        // context constructed 3 (0xA3), not 0x30 (universal SEQUENCE).
+        assert_eq!(buf, vec![0xA3, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02]);
+        let mut r = Reader::new(&buf);
+        let decoded: Vec<i64> = decode_seq_of_tagged(&mut r, context_3).unwrap();
+        assert_eq!(decoded, vec![1, 2]);
+    }
+
+    #[test]
+    fn tagged_seq_of_rejects_the_natural_tag() {
+        let mut buf = Vec::new();
+        encode_seq_of(&mut buf, &[1i64]); // natural SEQUENCE_TAG
+        let mut r = Reader::new(&buf);
+        let result: Result<Vec<i64>, _> = decode_seq_of_tagged(&mut r, Tag::context(3, true));
+        assert!(result.is_err());
     }
 }
