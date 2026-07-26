@@ -34,6 +34,7 @@
 //! tag-parsing/escaping primitives (`xer.rs`) while reusing the exact same
 //! member tables.
 
+pub mod bit_string;
 pub mod boolean;
 pub mod choice;
 pub mod integer;
