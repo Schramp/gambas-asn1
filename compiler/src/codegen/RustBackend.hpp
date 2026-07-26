@@ -29,6 +29,31 @@ inline std::string to_screaming_snake_case(std::string_view s) {
     return out;
 }
 
+// gambas-asn1#305: real word-split UpperCamelCase conversion, unlike
+// capitalize_first (which only uppercases the first character of the whole
+// string). X.680 §11.2 identifiers are hyphen-separated lowercase words
+// (e.g. "eight-bit-binary") — capitalize_first(to_cpp_name(...)) turns the
+// hyphen into a literal underscore first, so multi-word ASN.1 value names
+// came out "Eight_bit_binary" (fails rustc's non_camel_case_types lint), not
+// "EightBitBinary". Splits on '-' (the only word separator X.680 allows in
+// an identifier) and capitalizes the first letter of every segment, joining
+// with no separator; single-word names behave identically to the old
+// capitalize_first(to_cpp_name(...)) path.
+inline std::string to_upper_camel_case(std::string_view s) {
+    std::string out;
+    bool new_word = true;
+    for (char c : s) {
+        if (c == '-') { new_word = true; continue; }
+        if (new_word) {
+            out += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            new_word = false;
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
 // Escape an identifier that collides with a Rust 2021 keyword or any name in
 // `extra`, using a raw identifier (`r#...`) — matches the convention rustc
 // itself uses for keyword-colliding names from external sources.

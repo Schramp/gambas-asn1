@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
+#include <unordered_map>
 
 namespace asn1::codegen {
 
@@ -22,8 +24,14 @@ namespace asn1::codegen {
 // worth doing idiomatically since it's free: ASN.1 ENUMERATED value names
 // are lowercase-first by convention, X.680 §11.2, so this needs an explicit
 // capitalize where CppBackend's C++ constant-in-class-scope style doesn't).
+// gambas-asn1#305: to_upper_camel_case (real word-split conversion), not
+// capitalize_first(type_name(...)) — the latter routes through
+// to_cpp_name's hyphen->underscore substitution first, so a hyphenated
+// multi-word value name (e.g. "eight-bit-binary") came out "Eight_bit_binary"
+// instead of "EightBitBinary". Operates on the raw ASN.1 name directly,
+// bypassing type_name(), so the hyphen is available to split on.
 static std::string variant_name(const RustBackend& backend, const std::string& asn1_name) {
-    return backend.escape(capitalize_first(backend.type_name(asn1_name)));
+    return backend.escape(to_upper_camel_case(asn1_name));
 }
 
 // gambas-asn1#344: per-builtin-kind lookup tables shared by
@@ -162,8 +170,21 @@ void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::o
     os << "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n";
     os << "#[repr(i64)]\n";
     os << std::format("pub enum {} {{\n", tname);
+    // gambas-asn1#305: variant_name's word-split conversion discards
+    // whichever separator distinguished two ASN.1 value names (e.g. "a-b"
+    // and "ab" both become "Ab") — a collision sema's own duplicate check
+    // never catches, since that only compares the raw ASN.1 identifiers.
+    // Guard locally (Rust only needs uniqueness within one enum) rather
+    // than let two values silently emit the same variant (E0428).
+    std::unordered_map<std::string, std::string> seen_variants;  // variant name -> first asn1_name
     for (const auto& v : spec.values) {
-        os << std::format("    {} = {},\n", variant_name(*this, v.asn1_name), v.value);
+        std::string vname = variant_name(*this, v.asn1_name);
+        auto [it, inserted] = seen_variants.emplace(vname, v.asn1_name);
+        if (!inserted)
+            throw std::runtime_error(std::format(
+                "RustBackend: ENUMERATED '{}' — values '{}' and '{}' both map to Rust variant '{}'",
+                tname, it->second, v.asn1_name, vname));
+        os << std::format("    {} = {},\n", vname, v.value);
     }
     if (spec.extensible)
         os << "    // extensible\n";
@@ -873,8 +894,19 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
     // needed (variant_name(), just above emit_enumerated_declaration).
     os << "#[derive(Debug, Clone, PartialEq)]\n";
     os << std::format("pub enum {} {{\n", spec.type_name);
-    for (const auto& a : spec.alternatives)
-        os << std::format("    {}({}),\n", variant_name(*this, a.asn1_name), a.mtype);
+    // gambas-asn1#305: same collision guard as emit_enumerated_declaration —
+    // variant_name's word-split conversion can map two distinct alternative
+    // names onto the same Rust variant (e.g. "a-b"/"ab" both -> "Ab").
+    std::unordered_map<std::string, std::string> seen_variants;  // variant name -> first asn1_name
+    for (const auto& a : spec.alternatives) {
+        std::string vname = variant_name(*this, a.asn1_name);
+        auto [it, inserted] = seen_variants.emplace(vname, a.asn1_name);
+        if (!inserted)
+            throw std::runtime_error(std::format(
+                "RustBackend: CHOICE '{}' — alternatives '{}' and '{}' both map to Rust variant '{}'",
+                spec.type_name, it->second, a.asn1_name, vname));
+        os << std::format("    {}({}),\n", vname, a.mtype);
+    }
     os << "}\n\n";
 }
 
