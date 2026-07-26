@@ -806,6 +806,24 @@ public:
     ///       element type directly, or the doubly-suffixed "Anon" type).
     ///       80 `unused_imports` warnings on the real ETSI LI PS-PDU schema
     ///       (gambas-asn1#312).
+    /// @note A plain bool, not a new emit_*() virtual mirroring
+    ///       emit_type_reference — this is one of potentially several such
+    ///       per-backend "does this schema-derived reference even apply to
+    ///       you" questions as more backends (Java, Python, ...) join,
+    ///       and Generator's *writing* path (write_type_reference: dedup via
+    ///       emitted_type_refs_, filename_for, session-seeding) must not
+    ///       fork per question — one write path, N boolean answers, not N
+    ///       parallel write_*/emit_* method pairs to keep in sync forever.
+    /// @note Provisional, not a permanent "Rust never needs this" claim
+    ///       (raised on #312's own review) — "unused today" tracks Rust
+    ///       having no codec dispatch tables wired at all yet, not a
+    ///       structural fact about the wrapper type. The moment Rust grows
+    ///       its own equivalent of `tdref`/`asn_DEF_<wrapper>` (a per-member
+    ///       BER/XER table entry needing the wrapper's descriptor, the same
+    ///       reason CppBackend needs it), `RustBackend::needs_seqof_wrapper_
+    ///       reference()` should very possibly flip back to `true` — revisit
+    ///       this override whenever that table wiring lands, don't assume
+    ///       it's settled.
     virtual bool needs_seqof_wrapper_reference() const { return true; }
 
     /// @brief Emit a forward declaration for a type this file only needs as
