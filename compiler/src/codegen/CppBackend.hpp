@@ -107,7 +107,11 @@ public:
     // directly by Generator.cpp regardless of active backend. Defined in
     // CppBackend.cpp (body unchanged from the free function — verified
     // byte-identical regen).
-    std::string format_tag_literal(const TagSpec& tag_spec) const override;
+    std::string format_tag_literal(const TypeTagSpec& tag_spec) const override;
+
+    // gambas-asn1#347: same C++ literal Generator.cpp used to hardcode
+    // directly before this method existed.
+    std::string format_no_tag_literal() const override { return "asn1::Tag{}"; }
 
     std::string native_builtin_type(ast::BuiltinType bt) const override {
         using BT = ast::BuiltinType;

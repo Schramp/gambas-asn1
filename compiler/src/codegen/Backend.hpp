@@ -19,13 +19,36 @@ namespace asn1::codegen {
 /// @brief Backend-agnostic BER tag decision (X.690 §8.1) — class, number,
 ///        and encoding form. No C++/Rust/etc. syntax; a backend formats
 ///        this into its own literal syntax (see CppBackend::format_tag_literal).
+///        Pure wire-tag-*shape* data, deliberately minimal: reused
+///        identically for a type's own top-level tag (TaggedTypeSpec,
+///        below) and as the base of a member's resolved tag
+///        (MemberTagSpec, below it) — a type never has an "is this an
+///        override" concept (there's no member involved), so that fact
+///        lives only in MemberTagSpec, not here.
 /// @note Lives here, not Generator.hpp, for the same reason as
 ///       IntStorageKind: BuiltinAliasSpec (below) needs it, and Backend.hpp
 ///       can't include Generator.hpp without a cycle.
-struct TagSpec {
+struct TypeTagSpec {
     ast::TagClass cls;          ///< Tag class (Universal/Application/Context/Private).
     int64_t       number;       ///< Tag number within the class.
     bool          constructed;  ///< True for constructed encoding form.
+};
+
+/// @brief A member/alternative's resolved wire tag (gambas-asn1#347) —
+///        TypeTagSpec's shape plus the one extra fact only a member (not a
+///        standalone type) can have: whether this tag came from the
+///        member's own override (`[n]`/AUTOMATIC) or is simply the type's
+///        natural tag passed through unchanged. Inheriting TypeTagSpec
+///        (rather than a sibling `bool tag_is_override` field next to a
+///        plain `std::optional<TypeTagSpec>`) makes "override without an
+///        actual tag" unrepresentable — the flag only exists bundled with
+///        a real tag.
+/// @note resolved_tag (TaggedMemberSpec, below) is always populated except
+///       for the one case a member's type genuinely has no tag at all (an
+///       untagged CHOICE — X.680 §28, no universal tag) — see
+///       Generator::TagResult's doc comment for how it's computed.
+struct MemberTagSpec : TypeTagSpec {
+    bool tag_is_override;  ///< True: member's own `[n]`/AUTOMATIC tag. False: type's natural tag, passed through.
 };
 
 /// @brief Backend-agnostic tag-bearing field shared by every construct that
@@ -46,7 +69,7 @@ struct TagSpec {
 ///       type's tag without that type's own standalone descriptor changing,
 ///       and vice versa).
 struct TaggedTypeSpec {
-    std::optional<TagSpec> tag;
+    std::optional<TypeTagSpec> tag;
 };
 
 // Storage class for INTEGER types — chosen at codegen time from constraint
@@ -258,15 +281,16 @@ struct SeqOfSpec : TaggedTypeSpec {
 ///       issue's own filing for why that's left for a possible future pass,
 ///       not decided here).
 struct TaggedMemberSpec {
-    std::string eff_tag;        // pre-formatted tag literal expression (C++ syntax only — see note below)
-    // gambas-asn1#332: backend-agnostic counterpart to eff_tag — see
-    // Generator::TagResult's doc comment. nullopt means the member's own
-    // natural tag applies (a backend's per-builtin-kind lookup, e.g.
-    // RustBackend::rust_member_ber_tag, is already correct); set means the
-    // member has its own explicit/AUTOMATIC-assigned tag that *replaces*
-    // the natural one on the wire for IMPLICIT tagging (X.690 §8.14) — used
-    // by RustBackend to pick MemberAccess::TaggedScalar over Scalar.
-    std::optional<TagSpec> resolved_tag;
+    // gambas-asn1#347: always populated except when this member's type has
+    // no tag at all (an untagged CHOICE — X.680 §28). No pre-formatted
+    // string lives here anymore (the old eff_tag, C++-syntax-only, is
+    // gone) — each backend calls its own format_tag_literal/
+    // format_no_tag_literal on this structured data at the point of use.
+    // MemberTagSpec::tag_is_override (not resolved_tag's mere presence)
+    // is what a backend checks to decide whether the wire tag differs from
+    // the member's natural one — used by RustBackend to pick
+    // MemberAccess::TaggedScalar over Scalar.
+    std::optional<MemberTagSpec> resolved_tag;
     bool        is_explicit = false;
     // Backend-agnostic builtin-type discriminant, set only when the member
     // is a direct (non-TypeRef, non-SEQUENCE/CHOICE) builtin type. `mtype`
@@ -277,12 +301,9 @@ struct TaggedMemberSpec {
     // representation (e.g. RustBackend::native_builtin_type maps
     // OCTET STRING/BIT STRING/OBJECT IDENTIFIER/Any all to "Vec<u8>", and
     // all 12 string kinds plus UtcTime/GeneralizedTime to "String" — see
-    // that function's doc). `eff_tag` doesn't help either: it's produced by
-    // `format_tag_literal`, a free function that unconditionally emits C++
-    // syntax regardless of the active backend (a real gap, same category as
-    // gambas-asn1#266/#268/#270, out of scope to fix here). `mbuiltin` gives
-    // a backend the real discriminant to dispatch on; unset (nullopt) for
-    // TypeRef/SEQUENCE/CHOICE/SEQUENCE OF/ENUMERATED members/alternatives.
+    // that function's doc). `mbuiltin` gives a backend the real
+    // discriminant to dispatch on; unset (nullopt) for TypeRef/SEQUENCE/
+    // CHOICE/SEQUENCE OF/ENUMERATED members/alternatives.
     std::optional<ast::BuiltinType> mbuiltin;
 };
 
@@ -490,9 +511,29 @@ public:
     ///       literals for tagged alternatives, same as this field already
     ///       provides for C++.
     /// @note Default throws — same rationale as emit_enumerated.
-    virtual std::string format_tag_literal(const TagSpec& tag_spec) const {
+    virtual std::string format_tag_literal(const TypeTagSpec& tag_spec) const {
         (void)tag_spec;
         throw std::logic_error("format_tag_literal: not implemented for this backend");
+    }
+
+    /// @brief Format the placeholder used when a member's own natural tag
+    ///        is absent entirely (an untagged CHOICE-typed member — X.680
+    ///        §28, CHOICE has no universal tag of its own; `natural_tag_for`/
+    ///        `natural_tag_spec_for` return an absent/empty result only for
+    ///        this one case). Backend-agnostic counterpart to the C++-only
+    ///        `"asn1::Tag{}"` string `Generator::compute_member_tag` used to
+    ///        hardcode directly (gambas-asn1#347) — this method exists so
+    ///        that hardcoding lives in each backend's own file instead of in
+    ///        shared `Generator.cpp`.
+    /// @note `eff_tag` is populated for every member unconditionally,
+    ///       regardless of whether a particular backend's own coverage
+    ///       gating (e.g. RustBackend's `all_covered`) would end up using
+    ///       that member's row at all — so this must return a real,
+    ///       syntactically valid placeholder, not throw, even on a backend
+    ///       where the untagged-CHOICE-member case is otherwise unreachable
+    ///       in covered output today.
+    virtual std::string format_no_tag_literal() const {
+        throw std::logic_error("format_no_tag_literal: not implemented for this backend");
     }
 
     /// @brief Map a plain builtin type (never INTEGER or ENUMERATED — those
