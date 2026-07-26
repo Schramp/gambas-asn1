@@ -227,6 +227,11 @@ public:
                               TypeOutputSession& session) const override;
     // gambas-asn1#300: dedupe_type_references() default (Backend.hpp) is
     // true and covers RustBackend's need — no override necessary here.
+    // gambas-asn1#312: needs_seqof_wrapper_reference() default (Backend.hpp)
+    // is true, tied to CppBackend's tdref/asn_DEF_<wrapper> descriptor
+    // usage — RustBackend has no such table wiring yet, so the wrapper
+    // reference is always dead weight (unused_imports).
+    bool needs_seqof_wrapper_reference() const override { return false; }
     void emit_forward_declaration(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_special_members(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_optional_member_ops(const std::string& type_name, const std::string& member_name,

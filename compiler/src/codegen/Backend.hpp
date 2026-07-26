@@ -784,6 +784,30 @@ public:
     ///       through `--target=rust` (#299).
     virtual bool dedupe_type_references() const { return true; }
 
+    /// @brief Whether a named SEQUENCE OF/SET OF member needs a reference to
+    ///        its own synthetic SeqOf wrapper type (e.g. `X` in
+    ///        `pub type X = Vec<Elem>;`/`using X = std::vector<Elem>;`), on
+    ///        top of the deeper element-type reference gambas-asn1#301
+    ///        already adds.
+    /// @note Default `true`. CppBackend needs it unconditionally:
+    ///       `Generator::type_descriptor_ref_for`'s SEQUENCE-OF branch
+    ///       (Generator.cpp) always points a member's `tdref` at
+    ///       `&asn_DEF_<wrapper>` — the wrapper's *descriptor*, declared in
+    ///       its own header — regardless of whether the field's C++ type
+    ///       text itself names the wrapper or inlines
+    ///       `std::vector<Elem>` directly. RustBackend doesn't have this:
+    ///       confirmed by grep, nothing in RustBackend.cpp ever reads
+    ///       `SequenceMemberSpec::tdref`/`ChoiceAlternativeSpec::tdref` (no
+    ///       codec table wiring yet) — so for Rust the wrapper reference is
+    ///       always genuinely unused, in both the plain-TypeRef-element case
+    ///       gambas-asn1#301 originally covered and the anonymous-inline-
+    ///       element case (`cpp_type_for`'s SEQUENCE OF branch never emits
+    ///       the bare wrapper name as a field type either way — only the
+    ///       element type directly, or the doubly-suffixed "Anon" type).
+    ///       80 `unused_imports` warnings on the real ETSI LI PS-PDU schema
+    ///       (gambas-asn1#312).
+    virtual bool needs_seqof_wrapper_reference() const { return true; }
+
     /// @brief Emit a forward declaration for a type this file only needs as
     ///        an incomplete type (e.g. an optional member stored behind a
     ///        pointer, to break a circular #include). Backends with no

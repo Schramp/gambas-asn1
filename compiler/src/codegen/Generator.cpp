@@ -1142,7 +1142,14 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
                 if (self_ref) {
                     post_class_includes.push_back(synth); // defer: needs current class complete
                 } else {
-                    emit_inc(synth);
+                    // gambas-asn1#312: wrapper reference itself is only
+                    // needed by a backend whose member descriptor table
+                    // points at the wrapper's own asn_DEF_<synth> (CppBackend
+                    // — see Backend::needs_seqof_wrapper_reference's doc
+                    // comment); the field's own type text never names the
+                    // bare wrapper either way (below: element type directly,
+                    // or the doubly-suffixed "Anon" type).
+                    if (backend_.needs_seqof_wrapper_reference()) emit_inc(synth);
                     // gambas-asn1#301: cpp_type_for's SEQUENCE OF branch uses
                     // the element type directly (wrap_collection_type(cpp_type_for(elem)))
                     // when the element is a plain TypeRef — it only falls
@@ -1459,9 +1466,15 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
             emit_inc(cpp_name_for_typeref(*tr));
         } else if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
-            // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
-            auto cn2 = cpp_name_for_ref(backend_.synthetic_name(cname, m->name), current_module_);
-            emit_inc(cn2);
+            // Named SEQUENCE OF alternative — include the synthetic SeqOf
+            // wrapper header. gambas-asn1#312: only when the active backend
+            // actually needs it (CppBackend's tdref points at the wrapper's
+            // own descriptor; RustBackend has no such table wiring yet — see
+            // Backend::needs_seqof_wrapper_reference's doc comment).
+            if (backend_.needs_seqof_wrapper_reference()) {
+                auto cn2 = cpp_name_for_ref(backend_.synthetic_name(cname, m->name), current_module_);
+                emit_inc(cn2);
+            }
             // gambas-asn1#301: also include the actual element type directly
             // when it's a plain TypeRef — see the matching fix (and its
             // rationale) in Generator::emit_type_files's emit_member_include
