@@ -1205,11 +1205,18 @@ void RustBackend::emit_typeref_alias_declaration(const std::string& type_name, c
 
 /// @brief Reference another generated type via its crate-relative module
 ///        path — assumes a generated crate root (main.cpp, --target=rust)
-///        declares `pub mod <filename>;` for every generated file, one
-///        module per file, module name == filename (gambas-asn1#266).
+///        declares one module per generated file (gambas-asn1#266).
+/// @note gambas-asn1#306: the module *identifier* is snake_case
+///       (to_snake_case(filename)), not the raw filename — see
+///       finalize_output's own `#[path = ...]` module declaration. `filename`
+///       here is still the on-disk file stem (PascalCase, matching
+///       `type_name`), so it must be re-derived into the same snake_case
+///       identifier finalize_output declared the module under, or this
+///       `use` path wouldn't resolve.
 void RustBackend::emit_type_reference(const std::string& type_name, const std::string& filename,
                                        TypeOutputSession& session) const {
-    session.buffer(declaration_extension()) << std::format("use crate::{}::{};\n", filename, type_name);
+    session.buffer(declaration_extension())
+        << std::format("use crate::{}::{};\n", to_snake_case(filename), type_name);
 }
 
 /// @brief Rust has no forward-declaration concept — a type is visible
@@ -1228,18 +1235,29 @@ void RustBackend::emit_optional_member_ops(const std::string&, const std::string
                                             const std::string&, TypeOutputSession&) const {
 }
 
-/// @brief Write the crate root: one `pub mod <filename>;` per generated
-///        `.rs` file, so the `use crate::<filename>::<Type>;` paths
+/// @brief Write the crate root: one module declaration per generated `.rs`
+///        file, so the `use crate::<module>::<Type>;` paths
 ///        emit_type_reference emits actually resolve (gambas-asn1#266).
 ///        WIP (#214): flat mod-per-file list, no module tree mirroring
 ///        ASN.1 modules.
+/// @note gambas-asn1#306: module *identifier* is snake_case
+///       (`pub mod contact_list;`), not the PascalCase file stem — Rust
+///       convention wants snake_case module names even though the type
+///       inside is (correctly) PascalCase; a bare `pub mod ContactList;`
+///       fails rustc's non_snake_case lint. `#[path = "ContactList.rs"]`
+///       keeps the on-disk filename PascalCase (matching `type_name`/
+///       `filename_for`) while giving the module itself a snake_case Rust
+///       identifier — emit_type_reference's `use` paths re-derive the same
+///       to_snake_case(filename) so the two stay in sync without a second
+///       source of truth.
 void RustBackend::finalize_output(const std::string& out_dir) const {
     namespace fs = std::filesystem;
     fs::path lib_rs = fs::path(out_dir) / "lib.rs";
     std::ofstream lib(lib_rs);
     for (const auto& entry : fs::directory_iterator(out_dir)) {
         if (entry.path().extension() != ".rs" || entry.path() == lib_rs) continue;
-        lib << "pub mod " << entry.path().stem().string() << ";\n";
+        std::string stem = entry.path().stem().string();
+        lib << std::format("#[path = \"{}.rs\"] pub mod {};\n", stem, to_snake_case(stem));
     }
 }
 
