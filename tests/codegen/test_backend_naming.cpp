@@ -357,7 +357,7 @@ int main() {
         req.asn1_name = "count";
         req.mtype = "int64_t";
         req.mname = "count";
-        req.eff_tag = "asn1::Tag::universal(2, false)";
+        req.resolved_tag = MemberTagSpec{ TypeTagSpec{asn1::ast::TagClass::Universal, 2, false}, false };
         req.optional = false;
         req.tdref = "&asn_DEF_MyInt";
         req.def_setter = "nullptr";
@@ -369,7 +369,7 @@ int main() {
         opt.asn1_name = "label";
         opt.mtype = "String";
         opt.mname = "label";
-        opt.eff_tag = "asn1::Tag::universal(12, false)";
+        opt.resolved_tag = MemberTagSpec{ TypeTagSpec{asn1::ast::TagClass::Universal, 12, false}, false };
         opt.optional = true;
         opt.tdref = "&asn_DEF_Utf8String";
         opt.def_setter = "nullptr";
@@ -417,7 +417,7 @@ int main() {
         num.accessor_name = "num";
         num.pr_name = "Num";
         num.asn1_name = "num";
-        num.eff_tag = "asn1::Tag::universal(2, false)";
+        num.resolved_tag = MemberTagSpec{ TypeTagSpec{asn1::ast::TagClass::Universal, 2, false}, false };
         num.tdref = "&asn_DEF_MyInt";
         spec.alternatives.push_back(num);
 
@@ -426,7 +426,7 @@ int main() {
         label.accessor_name = "label";
         label.pr_name = "Label";
         label.asn1_name = "label";
-        label.eff_tag = "asn1::Tag::universal(12, false)";
+        label.resolved_tag = MemberTagSpec{ TypeTagSpec{asn1::ast::TagClass::Universal, 12, false}, false };
         label.tdref = "&asn_DEF_Utf8String";
         spec.alternatives.push_back(label);
 
@@ -574,7 +574,7 @@ int main() {
     // real Rust syntax here, not throw, or every SEQUENCE/CHOICE member's
     // eff_tag computation breaks under --target=rust.
     {
-        TagSpec universal{asn1::ast::TagClass::Universal, 2, false};
+        TypeTagSpec universal{asn1::ast::TagClass::Universal, 2, false};
         check("format_tag_literal: CppBackend universal tag",
               c.format_tag_literal(universal) == "asn1::Tag{asn1::TagClass::Universal, 2, false}",
               c.format_tag_literal(universal));
@@ -583,7 +583,7 @@ int main() {
                   "asn1cpp_ber::tag::Tag { class: asn1cpp_ber::tag::TagClass::Universal, number: 2, constructed: false }",
               r.format_tag_literal(universal));
 
-        TagSpec context_explicit{asn1::ast::TagClass::Context, 1, true};
+        TypeTagSpec context_explicit{asn1::ast::TagClass::Context, 1, true};
         check("format_tag_literal: CppBackend context/constructed tag",
               c.format_tag_literal(context_explicit) == "asn1::Tag{asn1::TagClass::Context, 1, true}",
               c.format_tag_literal(context_explicit));
@@ -592,7 +592,7 @@ int main() {
                   "asn1cpp_ber::tag::Tag { class: asn1cpp_ber::tag::TagClass::Context, number: 1, constructed: true }",
               r.format_tag_literal(context_explicit));
 
-        TagSpec application{asn1::ast::TagClass::Application, 5, false};
+        TypeTagSpec application{asn1::ast::TagClass::Application, 5, false};
         check("format_tag_literal: CppBackend and RustBackend diverge (different syntax, same info)",
               c.format_tag_literal(application) != r.format_tag_literal(application) &&
               c.format_tag_literal(application).find("Application") != std::string::npos &&

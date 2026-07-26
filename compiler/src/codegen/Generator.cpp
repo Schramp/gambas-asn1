@@ -145,9 +145,9 @@ bool Generator::member_is_explicit(const ast::Tag& tag, const ast::TypeDef& memb
 /// @return The tag decision as plain data, or nullopt if `tag` is absent.
 /// @note Backend-agnostic: no C++ syntax. Separated from format_tag_literal()
 ///       so a future non-C++ backend can consume the decision directly.
-std::optional<TagSpec> Generator::tag_spec_for(const ast::Tag& tag, bool constructed) const {
+std::optional<TypeTagSpec> Generator::tag_spec_for(const ast::Tag& tag, bool constructed) const {
     if (!tag.present()) return std::nullopt;
-    return TagSpec{tag.cls, tag.number, constructed};
+    return TypeTagSpec{tag.cls, tag.number, constructed};
 }
 
 /// @brief Returns the backend's tag-literal syntax for a tag override, empty
@@ -165,7 +165,7 @@ std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) const 
 /// @brief Decide the natural (universal) BER tag for a member def's
 ///        underlying type — see Generator::natural_tag_spec_for in the header
 ///        for the full contract. Plain data, no C++ syntax.
-std::optional<TagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& def) const {
+std::optional<TypeTagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& def) const {
     if (def.tag.present()) {
         bool is_constr = def.is_sequence() || def.is_choice() ||
                          def.is_seq_of()   || def.is_set_of() || def.is_set();
@@ -177,25 +177,25 @@ std::optional<TagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& def) 
         if (*bt == BT::Any)
             // ANY is stored as raw BER bytes at runtime; codegen uses OCTET STRING tag.
             // sema treats ANY as tag-less (no fixed universal tag), so builtin_universal_tag returns 0.
-            return TagSpec{ast::TagClass::Universal, asn1::UniversalTag::OctetString, false};
+            return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::OctetString, false};
         uint32_t n = sema::builtin_universal_tag(*bt);
-        if (n) return TagSpec{ast::TagClass::Universal, n, false};
+        if (n) return TypeTagSpec{ast::TagClass::Universal, n, false};
     }
     if (def.is_sequence())
-        return TagSpec{ast::TagClass::Universal, asn1::UniversalTag::Sequence, true};
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Sequence, true};
     if (def.is_set())
-        return TagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
     if (def.is_choice())
         return std::nullopt;  // CHOICE has no universal tag
     if (def.is_seq_of())
-        return TagSpec{ast::TagClass::Universal, asn1::UniversalTag::Sequence, true};
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Sequence, true};
     if (def.is_set_of())
-        return TagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto base = resolver_.resolve_ref(*tr);
         if (base) return natural_tag_spec_for(*base);
     }
-    return TagSpec{ast::TagClass::Universal, 4, false};  // fallback: OCTET STRING
+    return TypeTagSpec{ast::TagClass::Universal, 4, false};  // fallback: OCTET STRING
 }
 
 /// @brief Returns the natural (universal) tag for a member def's underlying
@@ -233,17 +233,14 @@ bool Generator::should_apply_auto_tags(const ast::TypeDef& def) const {
 Generator::TagResult Generator::compute_member_tag(const ast::TypeDef& m,
                                                     bool apply_auto_tags,
                                                     int auto_tag_num) const {
-    std::string eff_tag;
     bool is_explicit = false;
-    std::optional<TagSpec> resolved_tag;
+    std::optional<MemberTagSpec> resolved_tag;
     if (m.tag.present()) {
         is_explicit = member_is_explicit(m.tag, m);
         // EXPLICIT wrapper is always constructed (X.690 §8.14.3); IMPLICIT inherits.
         bool constructed = is_explicit || member_is_constructed(m);
-        eff_tag = tag_literal(m.tag, constructed);
-        // gambas-asn1#332: backend-agnostic counterpart of eff_tag — see
-        // TagResult's doc comment (Generator.hpp).
-        resolved_tag = TagSpec{ m.tag.cls, m.tag.number, constructed };
+        resolved_tag = MemberTagSpec{ TypeTagSpec{ m.tag.cls, m.tag.number, constructed },
+                                      /*tag_is_override=*/true };
     } else if (apply_auto_tags) {
         // X.680 §24.9 / §28.2: untagged CHOICE in AUTOMATIC TAGS gets EXPLICIT.
         bool is_choice = member_type_is_choice(m);
@@ -252,12 +249,17 @@ Generator::TagResult Generator::compute_member_tag(const ast::TypeDef& m,
         auto_tag.number = auto_tag_num;
         auto_tag.mode   = is_choice ? ast::TagMode::Explicit : ast::TagMode::Implicit;
         bool constructed = is_choice || member_is_constructed(m);
-        eff_tag = tag_literal(auto_tag, constructed);
         is_explicit = is_choice;
-        resolved_tag = TagSpec{ auto_tag.cls, auto_tag.number, constructed };
+        resolved_tag = MemberTagSpec{ TypeTagSpec{ auto_tag.cls, auto_tag.number, constructed },
+                                      /*tag_is_override=*/true };
     } else {
-        eff_tag = natural_tag_for(m);
-        if (eff_tag.empty()) eff_tag = "asn1::Tag{}";
+        // gambas-asn1#347: structured natural tag, not a pre-rendered
+        // string — absent (resolved_tag stays nullopt) only for the one
+        // case a member's type has no tag at all (an untagged CHOICE —
+        // X.680 §28, no universal tag). Each backend formats this itself
+        // at the point of use.
+        if (auto natural = natural_tag_spec_for(m))
+            resolved_tag = MemberTagSpec{ *natural, /*tag_is_override=*/false };
         // If the tag came from a referenced type's outer context tag, propagate is_explicit.
         // e.g. s4 T4 where T4 ::= [53] CHOICE — CHOICE always forces EXPLICIT.
         if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
@@ -265,10 +267,8 @@ Generator::TagResult Generator::compute_member_tag(const ast::TypeDef& m,
             if (base && base->tag.present())
                 is_explicit = member_is_explicit(base->tag, *base);
         }
-        // resolved_tag stays nullopt: the member's own natural tag applies,
-        // which a backend's own per-builtin-kind lookup already gets right.
     }
-    return { std::move(eff_tag), is_explicit, resolved_tag };
+    return { resolved_tag, is_explicit };
 }
 
 bool Generator::is_class_type(const ast::TypeDef& m) const {
@@ -1320,7 +1320,6 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             row.member_type_in_cycle = member_type_in_cycle(m, def.name);
         row.optional = optional;
         auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
-        row.eff_tag = tag_result.tag_literal;
         row.is_explicit = tag_result.is_explicit;
         row.resolved_tag = tag_result.resolved_tag;
         row.ops = optional
@@ -1526,12 +1525,12 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
     // Alternative descriptor table
     if (count > 0) {
         struct AltRow {
-            std::string name, eff_tag, tdref, alt_type;
+            std::string name, tdref, alt_type;
             bool is_explicit;
             int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
             ast::Tag full_tag;      // for canonical sort
             std::optional<ast::BuiltinType> mbuiltin;
-            std::optional<TagSpec> resolved_tag;  // gambas-asn1#336
+            std::optional<MemberTagSpec> resolved_tag;  // gambas-asn1#336/#347
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1540,7 +1539,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
           for (const auto& m : def.members) {
             if (m->is_extension_marker) continue;
             std::string mname = backend_.member_name(m->name);
-            auto [eff_tag, is_explicit, resolved_tag] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
+            auto [resolved_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, session);
             std::string alt_type = cpp_type_for(*m);
             int tag_ctx_num = -1;
@@ -1554,7 +1553,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             }
             std::optional<ast::BuiltinType> mbuiltin;
             if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) mbuiltin = *bt;
-            rows.push_back({ m->name, eff_tag, tdref, alt_type, is_explicit,
+            rows.push_back({ m->name, tdref, alt_type, is_explicit,
                              tag_ctx_num, full_tag, mbuiltin, resolved_tag });
             ++auto_tag_num;
           }
@@ -1585,7 +1584,6 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             ChoiceAlternativeSpec alt;
             alt.mtype = r.alt_type;
             alt.asn1_name = r.name;
-            alt.eff_tag = r.eff_tag;
             alt.tdref = r.tdref;
             alt.is_explicit = r.is_explicit;
             alt.mbuiltin = r.mbuiltin;

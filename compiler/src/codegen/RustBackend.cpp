@@ -331,7 +331,7 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
 ///        *natural* tags) since this covers arbitrary class/number/
 ///        constructed combinations, including EXPLICIT/IMPLICIT/auto-tag
 ///        context tags that have no named constant.
-std::string RustBackend::format_tag_literal(const TagSpec& tag_spec) const {
+std::string RustBackend::format_tag_literal(const TypeTagSpec& tag_spec) const {
     const char* tag_class_literal;
     switch (tag_spec.cls) {
     case ast::TagClass::Universal:   tag_class_literal = "asn1cpp_ber::tag::TagClass::Universal";   break;
@@ -725,7 +725,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}, \"{}\"),\n", m.mname, elem_xer_name);
                     os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
                     os << "        },\n";
-                } else if (m.resolved_tag && !m.is_explicit) {
+                } else if (m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit) {
                     std::string tag_lit = format_tag_literal(*m.resolved_tag);
                     os << std::format("        tag: {},\n", tag_lit);
                     // optional: false here (not m.optional) inherits #331's
@@ -784,7 +784,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // (IMPLICIT override) over its natural one whenever one
                 // applies and this builtin kind has a *_tagged primitive.
                 std::optional<std::pair<std::string, std::string>> tagged_ops;
-                if (m.resolved_tag && !m.is_explicit)
+                if (m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit)
                     tagged_ops = rust_tagged_ops(m, format_tag_literal(*m.resolved_tag));
                 if (tagged_ops) {
                     os << std::format("        tag: {},\n", format_tag_literal(*m.resolved_tag));
@@ -1002,7 +1002,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             std::string vname = variant_name(*this, a.asn1_name);
             std::optional<std::pair<std::string, std::string>> tagged_ops;
             std::string tag_lit;
-            if (a.resolved_tag && !a.is_explicit) {
+            if (a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit) {
                 tag_lit = format_tag_literal(*a.resolved_tag);
                 tagged_ops = rust_alt_tagged_ops(a, tag_lit);
             }
