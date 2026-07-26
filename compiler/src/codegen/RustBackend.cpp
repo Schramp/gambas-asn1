@@ -57,6 +57,7 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
     case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
     case ast::BuiltinType::Null:        return "asn1cpp_ber::null::NULL_TAG";  // gambas-asn1#349
+    case ast::BuiltinType::BitString:   return "asn1cpp_ber::bit_string::BIT_STRING_TAG";  // gambas-asn1#349
     case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
     // gambas-asn1#326: the other 11 restricted-character-string kinds
     // (native_builtin_type maps each to its own rust-runtime/ber::strings
@@ -76,8 +77,8 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     // Not yet covered — no Asn1Value impl in rust-runtime/ber for these
     // kinds yet, so a member of any of them falls back to struct-shape-only
     // codegen (no encode()/decode() at all if any member is uncovered).
-    // BitString/ObjectIdentifier/RelativeOid/Real/UtcTime/GeneralizedTime:
-    // gambas-asn1#349 (Null done, same issue). Any: gambas-asn1#330
+    // ObjectIdentifier/RelativeOid/Real/UtcTime/GeneralizedTime:
+    // gambas-asn1#349 (Null/BitString done, same issue). Any: gambas-asn1#330
     // (separate, pre-existing issue). Enumerated never reaches this switch
     // — routed through the wholly separate emit_enumerated/EnumeratedSpec path.
     default:                                 return nullptr;
@@ -124,6 +125,7 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
     case ast::BuiltinType::Integer:           return "INTEGER";
     case ast::BuiltinType::Boolean:            return "BOOLEAN";
     case ast::BuiltinType::Null:               return "NULL";  // gambas-asn1#349
+    case ast::BuiltinType::BitString:          return "BIT-STRING";  // gambas-asn1#349
     case ast::BuiltinType::OctetString:        return "OCTET-STRING";
     case ast::BuiltinType::Ia5String:          return "IA5String";
     case ast::BuiltinType::Utf8String:         return "UTF8String";
@@ -154,7 +156,7 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
 ///        fresh local `v` (pattern-matched out of `x` on encode, built from
 ///        scratch on decode) — genuinely different code shapes, not worth
 ///        forcing through one closure-body generator (gambas-asn1#344).
-enum class TaggedKind { None, Boolean, Integer, Null, OctetString, CharString };
+enum class TaggedKind { None, Boolean, Integer, Null, OctetString, BitString, CharString };
 
 // gambas-asn1#350: takes storage_kind, not mtype — only ever called with
 // member/alt-level data (never elem_builtin/elem_mtype), so unlike
@@ -167,6 +169,7 @@ static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, IntS
     case ast::BuiltinType::Null:        return TaggedKind::Null;  // gambas-asn1#349
     case ast::BuiltinType::Integer:     return storage_kind == IntStorageKind::S64 ? TaggedKind::Integer : TaggedKind::None;
     case ast::BuiltinType::OctetString: return TaggedKind::OctetString;
+    case ast::BuiltinType::BitString:   return TaggedKind::BitString;  // gambas-asn1#349
     case ast::BuiltinType::Ia5String:
     case ast::BuiltinType::Utf8String:
     case ast::BuiltinType::NumericString:
@@ -188,6 +191,22 @@ static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, IntS
     default:
         return TaggedKind::None;
     }
+}
+
+// gambas-asn1#349: SIZE-check function generators (emit_builtin_alias_
+// definition, emit_member_type_descriptor) generically emitted `v.len()`
+// for every SIZE-constrained builtin type, assuming a `Vec<T>`/`String`-
+// like native storage type. BitString's own native type (`bit_string::
+// BitString`) has no `.len()` — and even if it exposed one via `.bytes`,
+// X.680's SIZE constraint on BIT STRING counts *bits*, not bytes
+// (`asn1::BitString::validate` on the C++ side compares against
+// `bit_count()`, never raw byte length) — so the expression itself has to
+// differ, not just its spelling. Every other currently-SIZE-constrainable
+// covered kind (OCTET STRING, the character-string kinds) genuinely does
+// mean "length of the native storage" for its own native type, so `.len()`
+// stays their correct expression.
+static const char* size_check_len_expr(ast::BuiltinType bt) {
+    return bt == ast::BuiltinType::BitString ? "v.bit_count()" : "v.len()";
 }
 
 void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
@@ -333,8 +352,11 @@ void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
 ///       `String` can only carry one `Asn1Value` impl, so a second string
 ///       kind can't reuse `Ia5String`'s without fighting over which tag to
 ///       check/write (see `strings.rs`'s module doc). `Vec<u8>` for OCTET
-///       STRING/BIT STRING/OID/Any, `String` for UtcTime/GeneralizedTime
-///       rather than a real timestamp type — matches this pairing's scope
+///       STRING/OID/Any (gambas-asn1#349: BIT STRING moved to its own
+///       `bit_string::BitString` struct — same single-impl-per-concrete-
+///       type conflict, plus `Vec<u8>` alone can't carry the unused-bits
+///       count), `String` for UtcTime/GeneralizedTime rather than a real
+///       timestamp type — matches this pairing's scope
 ///       (compiles as real Rust, no runtime wiring yet for those). A real
 ///       BER/PER runtime would likely want tighter types (e.g. `[u32]` arcs
 ///       for OID); revisit then.
@@ -344,7 +366,7 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     case BT::Boolean:          return "bool";
     case BT::Real:             return "f64";
     case BT::Null:             return "()";
-    case BT::BitString:        return "Vec<u8>";
+    case BT::BitString:        return "asn1cpp_ber::bit_string::BitString";  // gambas-asn1#349
     case BT::OctetString:      return "Vec<u8>";
     case BT::ObjectIdentifier: return "Vec<u64>";
     case BT::RelativeOid:      return "Vec<u64>";
@@ -410,15 +432,16 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     if (!spec.has_size_constraint) return;
 
     std::string fname = escape(to_snake_case(tname) + "_size_ok");
+    const char* len_expr = size_check_len_expr(spec.builtin_type);
     os << std::format("pub fn {}(v: &{}) -> bool {{\n", fname, native_builtin_type(spec.builtin_type));
     if (spec.size_bounded) {
-        os << std::format("    (v.len() as i64) >= {} && (v.len() as i64) <= {}\n",
-                           spec.size_lower, spec.size_upper);
+        os << std::format("    ({0} as i64) >= {1} && ({0} as i64) <= {2}\n",
+                           len_expr, spec.size_lower, spec.size_upper);
     } else {
         // Semi-constrained (SIZE(n..MAX)) — no upper cap, same rationale as
         // IntegerSpec's semi_constrained handling.
-        os << std::format("    (v.len() as i64) >= {} // semi-constrained, no upper cap\n",
-                           spec.size_lower);
+        os << std::format("    ({} as i64) >= {} // semi-constrained, no upper cap\n",
+                           len_expr, spec.size_lower);
     }
     os << "}\n\n";
 }
@@ -497,13 +520,14 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     }
     if (!spec.has_size_constraint) return;
     std::string rust_type = native_builtin_type(spec.builtin_type);
+    const char* len_expr = size_check_len_expr(spec.builtin_type);
     os << std::format("pub fn {}_size_ok(v: &{}) -> bool {{\n", base, rust_type);
     if (spec.size_bounded) {
-        os << std::format("    (v.len() as i64) >= {} && (v.len() as i64) <= {}\n",
-                           spec.size_lower, spec.size_upper);
+        os << std::format("    ({0} as i64) >= {1} && ({0} as i64) <= {2}\n",
+                           len_expr, spec.size_lower, spec.size_upper);
     } else {
-        os << std::format("    (v.len() as i64) >= {} // semi-constrained, no upper cap\n",
-                           spec.size_lower);
+        os << std::format("    ({} as i64) >= {} // semi-constrained, no upper cap\n",
+                           len_expr, spec.size_lower);
     }
     os << "}\n\n";
 }
@@ -632,6 +656,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         case ast::BuiltinType::Integer:     return mtype == "i64";  // element-level path only (#350)
         case ast::BuiltinType::Boolean:
         case ast::BuiltinType::Null:        // gambas-asn1#349
+        case ast::BuiltinType::BitString:   // gambas-asn1#349
         case ast::BuiltinType::OctetString:
         case ast::BuiltinType::Ia5String:
         case ast::BuiltinType::Utf8String:
@@ -701,6 +726,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::octet_string::write_octet_string_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::octet_string::read_octet_string_tagged(r, {1})?.to_vec(); Ok(()) }}", m.mname, tag_lit));
+        // gambas-asn1#349: read_bit_string_tagged already returns an owned
+        // BitString (unlike octet_string's &[u8] needing .to_vec()).
+        case TaggedKind::BitString:
+            if (m.optional)
+                return std::make_pair(
+                    std::format("|v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::bit_string::write_bit_string_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
+                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::bit_string::read_bit_string_tagged(r, {1})?); Ok(()) }}", m.mname, tag_lit));
+            return std::make_pair(
+                std::format("|v, out| asn1cpp_ber::bit_string::write_bit_string_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
+                std::format("|v, r| {{ v.{0} = asn1cpp_ber::bit_string::read_bit_string_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
         case TaggedKind::CharString: {
             // IA5String's field is plain String (no wrapper); the other 11
             // kinds are a `char_string_type!` newtype (m.mtype is that
@@ -1062,6 +1097,13 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             return std::make_pair(
                 std::format("asn1cpp_ber::octet_string::write_octet_string_tagged(out, {}, v);", tag_lit),
                 std::format("let v = asn1cpp_ber::octet_string::read_octet_string_tagged(r, {})?.to_vec(); {}",
+                             tag_lit, variant_ctor("v")));
+        // gambas-asn1#349: read_bit_string_tagged already returns an owned
+        // BitString (unlike octet_string's &[u8] needing .to_vec()).
+        case TaggedKind::BitString:
+            return std::make_pair(
+                std::format("asn1cpp_ber::bit_string::write_bit_string_tagged(out, {}, v);", tag_lit),
+                std::format("let v = asn1cpp_ber::bit_string::read_bit_string_tagged(r, {})?; {}",
                              tag_lit, variant_ctor("v")));
         case TaggedKind::CharString: {
             // Same IA5String-is-plain-String-vs-newtype split as

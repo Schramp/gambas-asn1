@@ -268,6 +268,71 @@ impl Asn1Value for Vec<u8> {
     }
 }
 
+/// Maps ASN.1 BIT STRING (gambas-asn1#349) — `native_builtin_type`'s
+/// `bit_string::BitString` choice, `RustBackend.cpp` (not `Vec<u8>`: see
+/// that struct's own module doc for why it can't be a plain-`Vec<u8>`
+/// newtype like OCTET STRING). Mirrors `BitStringXerHandler`'s content
+/// model (`runtime/src/XerCodec.cpp`): a string of '0'/'1' characters, one
+/// per bit, MSB first within each byte (X.680 §21's XMLBitStringValue
+/// grammar) — C++'s writer additionally pretty-prints this across
+/// indented 64-character lines, which is cosmetic only (its own decoder
+/// skips whitespace), so this impl emits the same bit sequence unspaced,
+/// on one line, and accepts (skips) any whitespace on decode. The
+/// non-standard lenient hex-string decode extension C++ also accepts is
+/// not implemented here — matches this crate's strict-by-default scope
+/// elsewhere (see `strings.rs`'s own noted divergence).
+impl Asn1Value for crate::bit_string::BitString {
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        crate::bit_string::write_bit_string(out, self);
+    }
+
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        *self = crate::bit_string::read_bit_string(r)?;
+        Ok(())
+    }
+
+    fn xer_encode(&self, out: &mut String) {
+        let total = self.bit_count();
+        for i in 0..total {
+            let bit = (self.bytes[i / 8] >> (7 - (i % 8))) & 1;
+            out.push(if bit == 1 { '1' } else { '0' });
+        }
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        let text = r.read_text_content();
+        let mut bytes = Vec::new();
+        let mut cur = 0u8;
+        let mut bit_count = 0usize;
+        for c in text.chars() {
+            if c.is_whitespace() {
+                continue;
+            }
+            let bit = match c {
+                '0' => 0u8,
+                '1' => 1u8,
+                _ => return Err(DecodeError::new(format!("XER: invalid BIT STRING character '{c}'"), 0)),
+            };
+            cur = (cur << 1) | bit;
+            bit_count += 1;
+            if bit_count % 8 == 0 {
+                bytes.push(cur);
+                cur = 0;
+            }
+        }
+        let unused_bits = if bit_count % 8 == 0 {
+            0
+        } else {
+            let pad = 8 - (bit_count % 8);
+            cur <<= pad;
+            bytes.push(cur);
+            pad as u8
+        };
+        *self = crate::bit_string::BitString { bytes, unused_bits };
+        Ok(())
+    }
+}
+
 /// Maps `IA5String` (`native_builtin_type`'s `String` choice covers all 12
 /// string kinds; this impl is scoped to IA5String's wire tag specifically,
 /// see `strings.rs`'s module doc on widening to the others). Mirrors
@@ -387,6 +452,66 @@ mod tests {
         got.xer_decode_into(&mut r).unwrap();
         r.consume_close_tag("flag").unwrap();
         assert_eq!(got, ());
+    }
+
+    #[test]
+    fn bit_string_ber_round_trips_through_the_trait() {
+        use crate::bit_string::BitString;
+
+        let v = BitString { bytes: vec![0b1010_1000], unused_bits: 4 };
+        let mut out = Vec::new();
+        v.ber_encode(&mut out);
+        assert_eq!(out, vec![0x03, 0x02, 0x04, 0b1010_1000]);
+
+        let mut r = Reader::new(&out);
+        let mut got = BitString::default();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn bit_string_xer_round_trips_wrapped_by_hand() {
+        use crate::bit_string::BitString;
+        use crate::xer::{write_close_tag, write_open_tag};
+
+        // 1010 0000, 4 unused bits -> logical bits "1010" (bit_count=4).
+        // Padding bits are zero here deliberately: XER only carries the
+        // logical bit sequence (bit_count), zero-filling padding on decode
+        // (X.680's XMLBitStringValue captures no padding-bit-value
+        // information) — a fixture with *non-zero* padding wouldn't
+        // round-trip byte-for-byte through XER, which is expected, not a bug.
+        let v = BitString { bytes: vec![0b1010_0000], unused_bits: 4 };
+        let mut out = String::new();
+        write_open_tag(&mut out, "flags");
+        v.xer_encode(&mut out);
+        write_close_tag(&mut out, "flags");
+        assert_eq!(out, "<flags>1010</flags>");
+
+        let mut r = XerReader::new(&out);
+        r.consume_open_tag("flags").unwrap();
+        let mut got = BitString::default();
+        got.xer_decode_into(&mut r).unwrap();
+        r.consume_close_tag("flags").unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn bit_string_xer_empty_round_trips() {
+        use crate::bit_string::BitString;
+
+        let mut r = XerReader::new("");
+        let mut got = BitString { bytes: vec![0xFF], unused_bits: 0 };
+        got.xer_decode_into(&mut r).unwrap();
+        assert_eq!(got, BitString::default());
+    }
+
+    #[test]
+    fn bit_string_xer_rejects_invalid_character() {
+        use crate::bit_string::BitString;
+
+        let mut r = XerReader::new("102");
+        let mut got = BitString::default();
+        assert!(got.xer_decode_into(&mut r).is_err());
     }
 
     #[test]
