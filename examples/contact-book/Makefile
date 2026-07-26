@@ -62,7 +62,27 @@ all: $(BINARY)
 run: $(BINARY)
 	./$(BINARY)
 
+# gambas-asn1#299: best-effort --target=rust build of the book-tutorial
+# schema — smaller/faster companion probe to the ETSI one, and covers
+# OPTIONAL members / nested SEQUENCE / SEQUENCE OF (contact.asn1 uses all
+# three), none of which RustBackend's table-driven SEQUENCE emission
+# supports yet. Expected to fail; not wired into ctest/CI.
+RUST_PROBE_DIR := rust-probe
+RUST_PROBE_SRC := $(RUST_PROBE_DIR)/src
+
+rust-probe: $(ASN1_FILE) $(ASNCPP)
+	@rm -rf $(RUST_PROBE_SRC)
+	@mkdir -p $(RUST_PROBE_SRC)
+	$(ASNCPP) $(ASN1_FILE) --target=rust -o $(RUST_PROBE_SRC)
+	@echo "[GEN]  $$(ls $(RUST_PROBE_SRC)/*.rs | wc -l) .rs files written"
+	@echo "[CARGO] building $(RUST_PROBE_DIR) ..."
+	-cd $(RUST_PROBE_DIR) && cargo build 2>&1 | tee build.log
+	@echo "[REPORT] $$(grep -c '^error' $(RUST_PROBE_DIR)/build.log || echo 0) compile errors, $$(grep -c '^warning:' $(RUST_PROBE_DIR)/build.log || echo 0) warnings"
+
 clean:
 	rm -rf $(GEN_DIR) $(OBJ_DIR) $(BINARY)
 
-.PHONY: all run clean
+clean-rust-probe:
+	rm -rf $(RUST_PROBE_SRC) $(RUST_PROBE_DIR)/target $(RUST_PROBE_DIR)/Cargo.lock $(RUST_PROBE_DIR)/build.log
+
+.PHONY: all run clean rust-probe clean-rust-probe
