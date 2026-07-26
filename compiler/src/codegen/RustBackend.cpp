@@ -45,6 +45,12 @@ static std::string variant_name(const RustBackend& backend, const std::string& a
 ///        doc comment (Backend.hpp) for why native storage type alone can't
 ///        drive this (e.g. OCTET STRING/BIT STRING/OBJECT IDENTIFIER/Any all
 ///        map to "Vec<u8>", but need different tags).
+/// @note gambas-asn1#350: `mtype` (not `storage_kind`) for the Integer case
+///       specifically because this function is also called for SEQUENCE OF
+///       *element* coverage (elem_builtin/elem_mtype — no storage_kind
+///       counterpart, out of #350's scope); the member/alt-level callers
+///       (rust_tag_for_builtin_or_alias) intercept Integer via storage_kind
+///       before ever reaching this switch.
 static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype) {
     switch (bt) {
     case ast::BuiltinType::Integer:     return mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
@@ -81,9 +87,22 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
 ///        own type may be a TypeRef alias rather than a direct builtin
 ///        (mbuiltin == nullopt) — the i64-native-INTEGER-alias case still
 ///        needs a tag despite carrying no mbuiltin.
+/// @note gambas-asn1#350: the direct-builtin Integer case is intercepted
+///       here via `storage_kind` (a real enum, not a string coincidence)
+///       before ever reaching builtin_ber_tag's own `case Integer` —
+///       builtin_ber_tag itself keeps taking `mtype` unchanged (still needed
+///       string-based there for SEQUENCE OF *element* coverage, elem_builtin/
+///       elem_mtype, which has no storage_kind counterpart — out of this
+///       issue's scope). The `!mbuiltin` TypeRef-alias fallback below is
+///       untouched too: SequenceMemberSpec/ChoiceAlternativeSpec have no
+///       storage_kind for that case either (mbuiltin itself is unset), so
+///       there's nothing to thread through — same pre-existing string check.
 static const char* rust_tag_for_builtin_or_alias(std::optional<ast::BuiltinType> mbuiltin,
+                                                  IntStorageKind storage_kind,
                                                   const std::string& mtype) {
     if (!mbuiltin) return mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
+    if (*mbuiltin == ast::BuiltinType::Integer)
+        return storage_kind == IntStorageKind::S64 ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
     return builtin_ber_tag(*mbuiltin, mtype);
 }
 
@@ -135,11 +154,15 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
 ///        forcing through one closure-body generator (gambas-asn1#344).
 enum class TaggedKind { None, Boolean, Integer, OctetString, CharString };
 
-static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, const std::string& mtype) {
+// gambas-asn1#350: takes storage_kind, not mtype — only ever called with
+// member/alt-level data (never elem_builtin/elem_mtype), so unlike
+// builtin_ber_tag/builtin_xer_ready there's no shared elem-level caller to
+// keep a string-based signature for.
+static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, IntStorageKind storage_kind) {
     if (!mbuiltin) return TaggedKind::None;
     switch (*mbuiltin) {
     case ast::BuiltinType::Boolean:     return TaggedKind::Boolean;
-    case ast::BuiltinType::Integer:     return mtype == "i64" ? TaggedKind::Integer : TaggedKind::None;
+    case ast::BuiltinType::Integer:     return storage_kind == IntStorageKind::S64 ? TaggedKind::Integer : TaggedKind::None;
     case ast::BuiltinType::OctetString: return TaggedKind::OctetString;
     case ast::BuiltinType::Ia5String:
     case ast::BuiltinType::Utf8String:
@@ -571,21 +594,30 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // e.g. `MyByte ::= INTEGER (0..255)` used as a member type) — Generator
     // only populates it from the member's own AST node when that node
     // directly holds a builtin type (`std::get_if<ast::BuiltinType>`), not
-    // for a reference that *resolves* to one. Such aliases still map to
-    // Rust "i64" via native_int_type's default storage kind, so the mtype
-    // fallback below (not just a defensive no-op) is what makes an aliased
-    // INTEGER member participate in the descriptor table at all.
+    // for a reference that *resolves* to one. The `mtype == "i64"` fallback
+    // a few lines below (rust_member_xer_ready) is meant to cover this case
+    // too, but doesn't in practice: cpp_type_for's TypeRef branch returns the
+    // alias's own type name (e.g. "MyByte"), never the resolved native type
+    // — so `mtype` is never literally "i64" for an aliased member, and the
+    // fallback is currently dead. Pre-existing gap, not introduced or fixed
+    // here — filed separately (gambas-asn1#361).
     // gambas-asn1#315: `mbuiltin == Integer` only says the member *is* an
     // INTEGER, not which Rust storage type classify_integer_storage/
     // native_int_type actually picked for it (i64 default; u64/i128/
     // Vec<u8> for wider constrained ranges — same IntStorageKind the C++
     // side also branches on). Asn1Value is only implemented for i64
-    // (rust-runtime/ber/src/value.rs), so the INTEGER case must check
-    // `mtype == "i64"` same as the `!mbuiltin` fallback does one line
-    // below — found on the real ETSI LI PS-PDU schema (#299), where a
-    // semi-constrained-wide INTEGER member picked u64 storage and the old
-    // unconditional `case Integer:` still emitted a table row for it,
-    // producing `the trait bound u64: Asn1Value is not satisfied`.
+    // (rust-runtime/ber/src/value.rs), so the INTEGER case must be gated on
+    // that storage kind — found on the real ETSI LI PS-PDU schema (#299),
+    // where a semi-constrained-wide INTEGER member picked u64 storage and
+    // the old unconditional `case Integer:` still emitted a table row for
+    // it, producing `the trait bound u64: Asn1Value is not satisfied`.
+    // gambas-asn1#350: that gate is now `storage_kind == IntStorageKind::S64`
+    // (a real enum, checked by rust_member_xer_ready/rust_member_ber_tag's
+    // callers before ever reaching this function) rather than `mtype ==
+    // "i64"` — this function's own `case Integer` below still takes `mtype`
+    // because it's also called for SEQUENCE OF *element* coverage
+    // (elem_builtin/elem_mtype has no storage_kind counterpart, out of
+    // #350's scope), so it keeps the original string check for that path.
     // Asn1Value's XER leg now covers the same kinds the BER leg does
     // (gambas-asn1#283/#326). Kept as its own gate (not just reusing
     // builtin_ber_tag's coverage set) rather than assuming the two always
@@ -594,7 +626,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // method panics at runtime (found in #282's review).
     auto builtin_xer_ready = [](ast::BuiltinType bt, const std::string& mtype) -> bool {
         switch (bt) {
-        case ast::BuiltinType::Integer:     return mtype == "i64";  // #315: same gate as BER
+        case ast::BuiltinType::Integer:     return mtype == "i64";  // element-level path only (#350)
         case ast::BuiltinType::Boolean:
         case ast::BuiltinType::OctetString:
         case ast::BuiltinType::Ia5String:
@@ -615,7 +647,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         }
     };
     auto rust_member_ber_tag = [](const SequenceMemberSpec& m) -> const char* {
-        return rust_tag_for_builtin_or_alias(m.mbuiltin, m.mtype);
+        return rust_tag_for_builtin_or_alias(m.mbuiltin, m.storage_kind, m.mtype);
     };
     // gambas-asn1#332: IMPLICIT tag override closures — see
     // MemberAccess::TaggedScalar's doc comment (rust-runtime/ber/src/
@@ -627,7 +659,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // same natural-tag-only limitation they already had).
     auto rust_tagged_ops = [&](const SequenceMemberSpec& m, const std::string& tag_lit)
             -> std::optional<std::pair<std::string, std::string>> {
-        switch (tagged_kind_for(m.mbuiltin, m.mtype)) {
+        switch (tagged_kind_for(m.mbuiltin, m.storage_kind)) {
         case TaggedKind::None:
             return std::nullopt;
         case TaggedKind::Boolean:
@@ -681,6 +713,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     };
     auto rust_member_xer_ready = [&](const SequenceMemberSpec& m) -> bool {
         if (!m.mbuiltin) return m.mtype == "i64";
+        // gambas-asn1#350: storage_kind, not mtype=="i64" — same interception
+        // as rust_tag_for_builtin_or_alias, before builtin_xer_ready's own
+        // (still string-based, still shared with SEQUENCE OF elements) check.
+        if (*m.mbuiltin == ast::BuiltinType::Integer) return m.storage_kind == IntStorageKind::S64;
         return builtin_xer_ready(*m.mbuiltin, m.mtype);
     };
     // gambas-asn1#331: a SEQUENCE OF member is covered only when it's
@@ -972,7 +1008,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // emit_sequence_definition's rust_member_ber_tag — see that lambda's
     // comment for the full rationale.
     auto rust_alt_ber_tag = [](const ChoiceAlternativeSpec& a) -> const char* {
-        return rust_tag_for_builtin_or_alias(a.mbuiltin, a.mtype);
+        return rust_tag_for_builtin_or_alias(a.mbuiltin, a.storage_kind, a.mtype);
     };
     // gambas-asn1#336: IMPLICIT tag override for a CHOICE alternative — same
     // reasoning as emit_sequence_definition's rust_tagged_ops (#332), adapted
@@ -987,7 +1023,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         auto variant_ctor = [&](const std::string& expr) {
             return std::format("Ok({}::{}({}))", spec.type_name, vname, expr);
         };
-        switch (tagged_kind_for(a.mbuiltin, a.mtype)) {
+        switch (tagged_kind_for(a.mbuiltin, a.storage_kind)) {
         case TaggedKind::None:
             return std::nullopt;
         case TaggedKind::Boolean:
