@@ -198,6 +198,34 @@ impl Asn1Value for bool {
     }
 }
 
+/// Maps ASN.1 NULL (gambas-asn1#349) — `native_builtin_type`'s `()` choice,
+/// `RustBackend.cpp`. Mirrors `NullXerHandler`'s named-wrapper form
+/// (`runtime/src/XerCodec.cpp`): empty content inside the member's own
+/// `<name></name>` tag, e.g. `<flag></flag>` — the self-closing `<NULL/>`
+/// form that same handler emits only applies when the *type's own name* is
+/// literally "NULL" (a raw top-level/SEQUENCE-OF-element descriptor, an
+/// asn1c-compat quirk), never a member's field-name-derived tag, so
+/// `Asn1Value` (member-embedded content only, per this trait's own doc
+/// comment) never needs that branch.
+impl Asn1Value for () {
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        crate::null::write_null(out);
+    }
+
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        crate::null::read_null(r)
+    }
+
+    fn xer_encode(&self, _out: &mut String) {
+        // Empty content — nothing to write.
+    }
+
+    fn xer_decode_into(&mut self, _r: &mut XerReader) -> Result<(), DecodeError> {
+        // Empty content — nothing to consume.
+        Ok(())
+    }
+}
+
 /// Maps ASN.1 OCTET STRING (`native_builtin_type`'s `Vec<u8>` choice,
 /// `RustBackend.cpp`). Mirrors `OctetStringXerHandler`'s default (non-Base64)
 /// encoding: unspaced uppercase hex pairs (`write_hex_bytes`,
@@ -329,6 +357,36 @@ mod tests {
         let mut got = false;
         got.ber_decode_into(&mut r).unwrap();
         assert!(got);
+    }
+
+    #[test]
+    fn unit_ber_round_trips_through_the_trait() {
+        let mut out = Vec::new();
+        ().ber_encode(&mut out);
+        assert_eq!(out, vec![0x05, 0x00]);
+
+        let mut r = Reader::new(&out);
+        let mut got = ();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, ());
+    }
+
+    #[test]
+    fn unit_xer_round_trips_wrapped_by_hand() {
+        use crate::xer::{write_close_tag, write_open_tag};
+
+        let mut out = String::new();
+        write_open_tag(&mut out, "flag");
+        ().xer_encode(&mut out);
+        write_close_tag(&mut out, "flag");
+        assert_eq!(out, "<flag></flag>");
+
+        let mut r = XerReader::new(&out);
+        r.consume_open_tag("flag").unwrap();
+        let mut got = ();
+        got.xer_decode_into(&mut r).unwrap();
+        r.consume_close_tag("flag").unwrap();
+        assert_eq!(got, ());
     }
 
     #[test]

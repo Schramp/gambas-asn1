@@ -56,6 +56,7 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     case ast::BuiltinType::Integer:     return mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
     case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
     case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
+    case ast::BuiltinType::Null:        return "asn1cpp_ber::null::NULL_TAG";  // gambas-asn1#349
     case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
     // gambas-asn1#326: the other 11 restricted-character-string kinds
     // (native_builtin_type maps each to its own rust-runtime/ber::strings
@@ -75,10 +76,10 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     // Not yet covered — no Asn1Value impl in rust-runtime/ber for these
     // kinds yet, so a member of any of them falls back to struct-shape-only
     // codegen (no encode()/decode() at all if any member is uncovered).
-    // BitString/Null/ObjectIdentifier/RelativeOid/Real/UtcTime/
-    // GeneralizedTime: gambas-asn1#349. Any: gambas-asn1#330 (separate,
-    // pre-existing issue). Enumerated never reaches this switch — routed
-    // through the wholly separate emit_enumerated/EnumeratedSpec path.
+    // BitString/ObjectIdentifier/RelativeOid/Real/UtcTime/GeneralizedTime:
+    // gambas-asn1#349 (Null done, same issue). Any: gambas-asn1#330
+    // (separate, pre-existing issue). Enumerated never reaches this switch
+    // — routed through the wholly separate emit_enumerated/EnumeratedSpec path.
     default:                                 return nullptr;
     }
 }
@@ -122,6 +123,7 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
     switch (bt) {
     case ast::BuiltinType::Integer:           return "INTEGER";
     case ast::BuiltinType::Boolean:            return "BOOLEAN";
+    case ast::BuiltinType::Null:               return "NULL";  // gambas-asn1#349
     case ast::BuiltinType::OctetString:        return "OCTET-STRING";
     case ast::BuiltinType::Ia5String:          return "IA5String";
     case ast::BuiltinType::Utf8String:         return "UTF8String";
@@ -152,7 +154,7 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
 ///        fresh local `v` (pattern-matched out of `x` on encode, built from
 ///        scratch on decode) — genuinely different code shapes, not worth
 ///        forcing through one closure-body generator (gambas-asn1#344).
-enum class TaggedKind { None, Boolean, Integer, OctetString, CharString };
+enum class TaggedKind { None, Boolean, Integer, Null, OctetString, CharString };
 
 // gambas-asn1#350: takes storage_kind, not mtype — only ever called with
 // member/alt-level data (never elem_builtin/elem_mtype), so unlike
@@ -162,6 +164,7 @@ static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, IntS
     if (!mbuiltin) return TaggedKind::None;
     switch (*mbuiltin) {
     case ast::BuiltinType::Boolean:     return TaggedKind::Boolean;
+    case ast::BuiltinType::Null:        return TaggedKind::Null;  // gambas-asn1#349
     case ast::BuiltinType::Integer:     return storage_kind == IntStorageKind::S64 ? TaggedKind::Integer : TaggedKind::None;
     case ast::BuiltinType::OctetString: return TaggedKind::OctetString;
     case ast::BuiltinType::Ia5String:
@@ -628,6 +631,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         switch (bt) {
         case ast::BuiltinType::Integer:     return mtype == "i64";  // element-level path only (#350)
         case ast::BuiltinType::Boolean:
+        case ast::BuiltinType::Null:        // gambas-asn1#349
         case ast::BuiltinType::OctetString:
         case ast::BuiltinType::Ia5String:
         case ast::BuiltinType::Utf8String:
@@ -678,6 +682,17 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::integer::write_integer_tagged(out, {1}, v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::integer::read_integer_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
+        // gambas-asn1#349: NULL carries no data — encode only checks presence
+        // (Option case) or writes unconditionally (required case); `v` is
+        // unused on encode (`_v`) since there's nothing to read from the field.
+        case TaggedKind::Null:
+            if (m.optional)
+                return std::make_pair(
+                    std::format("|v, out| {{ if v.{0}.is_some() {{ asn1cpp_ber::null::write_null_tagged(out, {1}); }} }}", m.mname, tag_lit),
+                    std::format("|v, r| {{ asn1cpp_ber::null::read_null_tagged(r, {1})?; v.{0} = Some(()); Ok(()) }}", m.mname, tag_lit));
+            return std::make_pair(
+                std::format("|_v, out| asn1cpp_ber::null::write_null_tagged(out, {0})", tag_lit),
+                std::format("|v, r| {{ asn1cpp_ber::null::read_null_tagged(r, {0})?; v.{1} = (); Ok(()) }}", tag_lit, m.mname));
         case TaggedKind::OctetString:
             if (m.optional)
                 return std::make_pair(
@@ -1036,6 +1051,13 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 std::format("asn1cpp_ber::integer::write_integer_tagged(out, {}, *v);", tag_lit),
                 std::format("let v = asn1cpp_ber::integer::read_integer_tagged(r, {})?; {}",
                              tag_lit, variant_ctor("v")));
+        // gambas-asn1#349: NULL's payload (`()`) carries no data — `let _ =
+        // v;` explicitly discards the `if let`-bound match (still needed to
+        // destructure the enum) so rustc's unused_variables lint stays quiet.
+        case TaggedKind::Null:
+            return std::make_pair(
+                std::format("let _ = v; asn1cpp_ber::null::write_null_tagged(out, {});", tag_lit),
+                std::format("asn1cpp_ber::null::read_null_tagged(r, {})?; {}", tag_lit, variant_ctor("()")));
         case TaggedKind::OctetString:
             return std::make_pair(
                 std::format("asn1cpp_ber::octet_string::write_octet_string_tagged(out, {}, v);", tag_lit),

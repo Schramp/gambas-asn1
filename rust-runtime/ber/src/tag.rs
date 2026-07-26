@@ -56,6 +56,7 @@ pub mod universal {
     pub const BOOLEAN: u32 = 1;
     pub const INTEGER: u32 = 2;
     pub const OCTET_STRING: u32 = 4;
+    pub const NULL: u32 = 5;
     pub const OBJECT_DESCRIPTOR: u32 = 7;
     pub const UTF8_STRING: u32 = 12;
     pub const SEQUENCE: u32 = 16;
