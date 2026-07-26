@@ -227,6 +227,15 @@ public:
                               TypeOutputSession& session) const override;
     // gambas-asn1#300: dedupe_type_references() default (Backend.hpp) is
     // true and covers RustBackend's need — no override necessary here.
+    // gambas-asn1#312: needs_seqof_wrapper_reference() default (Backend.hpp)
+    // is true, tied to CppBackend's tdref/asn_DEF_<wrapper> descriptor
+    // usage — RustBackend has no such table wiring yet, so the wrapper
+    // reference is dead weight (unused_imports) today. Provisional, not a
+    // structural "Rust never needs this" fact — see Backend::needs_seqof_
+    // wrapper_reference's own doc comment. Revisit this override once Rust
+    // grows real BER/XER dispatch tables for SEQUENCE OF/SET OF members.
+    bool needs_seqof_wrapper_reference() const override { return false; }
+
     void emit_forward_declaration(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_special_members(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_optional_member_ops(const std::string& type_name, const std::string& member_name,
