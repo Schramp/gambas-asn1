@@ -38,14 +38,16 @@ int main() {
     const Backend& c = cpp;
     const Backend& r = rust;
 
-    // type_name: both replace hyphens with underscores (ASN.1 and Rust
-    // struct/enum naming conventions coincide here) — same output, not a
-    // divergence bug.
+    // type_name: C++ replaces hyphens with underscores; Rust (gambas-asn1#306)
+    // wants a real word-split PascalCase instead — no underscore at all
+    // (rustc's non_camel_case_types lint flags the literal underscore, not
+    // acronym-style internal casing) — this is a real divergence, not the
+    // coincidental overlap it used to be before #306.
     check("type_name: C++ hyphens -> underscores",
           c.type_name("My-Type") == "My_Type",
           c.type_name("My-Type"));
-    check("type_name: Rust matches C++ (coincidental overlap, not laziness)",
-          r.type_name("My-Type") == "My_Type",
+    check("type_name: Rust real PascalCase, no underscore (gambas-asn1#306)",
+          r.type_name("My-Type") == "MyType",
           r.type_name("My-Type"));
 
     // member_name: C++ wants lowerCamelCase, Rust wants snake_case — this is
@@ -307,7 +309,7 @@ int main() {
               cpp_os.find("asn_TYP_MySeq_myField") != std::string::npos,
               cpp_os);
         check("emit_member_type_descriptor: Rust produces a real range-check function",
-              rust_os.find("pub fn asn_t_y_p_my_seq_my_field_in_range(v: i64) -> bool {") != std::string::npos &&
+              rust_os.find("pub fn asn_typ_my_seq_my_field_in_range(v: i64) -> bool {") != std::string::npos &&
               rust_os.find("v >= 0 && v <= 100") != std::string::npos,
               rust_os);
     }

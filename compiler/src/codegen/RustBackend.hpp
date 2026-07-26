@@ -6,18 +6,49 @@
 
 namespace asn1::codegen {
 
-// snake_case conversion shared by member_name/value_name: insert '_' before
-// each uppercase letter (except the first char) and lower-case everything.
-// "myMember" -> "my_member"; "MyType" -> "my_type"; "already_snake" unchanged.
-inline std::string to_snake_case(std::string_view s) {
-    std::string out;
+// gambas-asn1#306: acronym-aware word splitter — the naive "insert '_'
+// before every uppercase letter" rule (to_snake_case's old body) splits a
+// run of consecutive uppercase letters one at a time ("TYP" -> "t_y_p"
+// instead of "typ"), because it treats every individual uppercase letter as
+// its own word start rather than recognizing a whole acronym run as one
+// word. Standard rule instead: '-' or '_' is always a hard word break
+// (X.680's own identifier separator, plus the literal underscores already
+// present in CppBackend-convention synthetic names like "asn_TYP_Parent_
+// member" that also get routed through to_snake_case); a lowercase/digit ->
+// uppercase transition starts a new word; a run of 2+ uppercase letters
+// followed by a lowercase letter keeps the run together except its *last*
+// letter, which starts the next word ("HTTPServer" -> ["HTTP", "Server"],
+// not one letter per word). Not purely cosmetic scope creep: this is the
+// same word-splitting problem #305's to_upper_camel_case solves in the
+// opposite case direction — see gambas-asn1#356 (tracked follow-up to
+// unify both under one shared tokenizer instead of near-duplicate logic).
+inline std::vector<std::string> split_words(std::string_view s) {
+    std::vector<std::string> words;
+    std::string cur;
+    auto flush = [&]() { if (!cur.empty()) { words.push_back(cur); cur.clear(); } };
     for (std::size_t i = 0; i < s.size(); ++i) {
         char c = s[i];
-        if (c == '-') { out += '_'; continue; }
-        if (std::isupper(static_cast<unsigned char>(c)) && i != 0 &&
-            !(out.size() && out.back() == '_'))
-            out += '_';
-        out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (c == '-' || c == '_') { flush(); continue; }
+        if (std::isupper(static_cast<unsigned char>(c)) && !cur.empty()) {
+            bool prev_upper = std::isupper(static_cast<unsigned char>(cur.back()));
+            bool next_lower = (i + 1 < s.size()) && std::islower(static_cast<unsigned char>(s[i + 1]));
+            if (!prev_upper || next_lower) flush();
+        }
+        cur += c;
+    }
+    flush();
+    return words;
+}
+
+// snake_case conversion shared by member_name/value_name — word-split via
+// split_words(), each word lower-cased and joined with '_'.
+// "myMember" -> "my_member"; "MyType" -> "my_type"; "HTTPServer" ->
+// "http_server" (not "h_t_t_p_server"); "already_snake" unchanged.
+inline std::string to_snake_case(std::string_view s) {
+    std::string out;
+    for (const auto& w : split_words(s)) {
+        if (!out.empty()) out += '_';
+        for (char c : w) out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return out;
 }
@@ -90,8 +121,20 @@ inline std::string rust_escape(std::string n,
 /// coincidental, not an assumption baked into the interface.
 class RustBackend : public Backend {
 public:
+    // gambas-asn1#306: to_upper_camel_case (real word-split PascalCase,
+    // shared with #305's variant_name), not to_cpp_name (hyphen->underscore
+    // only, no case normalization) — an ASN.1 type name written
+    // ALL-CAPS-WITH-HYPHENS (e.g. "TARGETACTIVITYMONITOR-1") or
+    // mixed-case-with-hyphens (e.g. "EpsHI2OperationsGA-PointWithUnCertainty")
+    // used to keep its hyphen as a literal underscore in the generated Rust
+    // identifier ("TARGETACTIVITYMONITOR_1"), which fails rustc's
+    // non_camel_case_types lint — the lint only checks for a literal
+    // underscore in the identifier, not internal acronym casing, so simply
+    // not reintroducing the hyphen as an underscore is enough (confirmed
+    // empirically: an all-caps identifier with no underscore, e.g.
+    // "TARGETACTIVITYMONITOR1", does not warn).
     std::string type_name(std::string_view asn1_name) const override {
-        return to_cpp_name(asn1_name);  // PascalCase strip-hyphens — same convention as Rust structs/enums
+        return to_upper_camel_case(asn1_name);
     }
 
     std::string member_name(std::string_view asn1_name,
@@ -108,9 +151,21 @@ public:
         return rust_escape(std::move(name), extra);
     }
 
+    // gambas-asn1#306: parent + to_upper_camel_case(member_name), not
+    // make_synthetic_name's capitalize_first(to_cpp_name(...)) — must match
+    // Generator::cpp_type_for's own inline-ENUMERATED-member calculation
+    // (`current_type_ + capitalize_first(backend_.type_name(name))`,
+    // Generator.cpp), the *other* independent place that computes this same
+    // synthetic type's name when referencing it from a field/generic
+    // position. Both sides agreed by coincidence while type_name() was
+    // to_cpp_name too; diverged the moment type_name() became a real
+    // word-split PascalCase conversion, producing an
+    // undefined-type-reference compile error on any real-world schema with
+    // hyphenated inline SEQUENCE/CHOICE/ENUMERATED member names (confirmed
+    // on the ETSI LI PS-PDU schema, #299/#355).
     std::string synthetic_name(const std::string& parent,
                                 const std::string& member_name) const override {
-        return make_synthetic_name(parent, member_name);  // same parent+CapitalizedMember strategy
+        return parent + to_upper_camel_case(member_name);
     }
 
     std::string native_int_type(IntStorageKind kind) const override {
