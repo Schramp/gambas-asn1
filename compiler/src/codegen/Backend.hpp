@@ -305,6 +305,16 @@ struct TaggedMemberSpec {
     // discriminant to dispatch on; unset (nullopt) for TypeRef/SEQUENCE/
     // CHOICE/SEQUENCE OF/ENUMERATED members/alternatives.
     std::optional<ast::BuiltinType> mbuiltin;
+    // gambas-asn1#350: only meaningful when mbuiltin == ast::BuiltinType::
+    // Integer (default S64 otherwise, harmlessly unused) — mirrors
+    // IntegerSpec::storage_kind, one level down. Before this field existed,
+    // the only way to ask "is this member's storage the one Asn1Value
+    // supports" was `mtype == "i64"`, a string literal coincidentally
+    // matching what `native_int_type(IntStorageKind::S64)` returns rather
+    // than a real reference to it — fragile (a silent, uncaught mismatch if
+    // that mapping ever changed), not a bug today. Real enum comparison
+    // instead: `storage_kind == IntStorageKind::S64`.
+    IntStorageKind storage_kind = IntStorageKind::S64;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. Several

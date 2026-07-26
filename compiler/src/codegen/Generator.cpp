@@ -1317,8 +1317,13 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         row.asn1_name = m.name;
         row.mname = backend_.member_name(m.name);
         row.mtype = cpp_type_for(m);
-        if (auto* bt = std::get_if<ast::BuiltinType>(&m.body))
+        if (auto* bt = std::get_if<ast::BuiltinType>(&m.body)) {
             row.mbuiltin = *bt;
+            // gambas-asn1#350: same decision cpp_type_for's own Integer
+            // branch already made to produce row.mtype above — threaded
+            // through as structured data too, not re-derived from mtype text.
+            if (*bt == ast::BuiltinType::Integer) row.storage_kind = classify_integer_storage(m);
+        }
         if (m.is_seq_of()) {
             row.is_seq_of = true;
             const auto& elem = *std::get<ast::SequenceOfType>(m.body).element;
