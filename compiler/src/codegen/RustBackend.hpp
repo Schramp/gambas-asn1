@@ -108,7 +108,18 @@ public:
     // ChoiceAlternativeSpec::eff_tag for every SEQUENCE/CHOICE member,
     // regardless of active backend) — must be real, not a stub, or Rust
     // codegen throws on every SEQUENCE/CHOICE. Defined in RustBackend.cpp.
-    std::string format_tag_literal(const TagSpec& tag_spec) const override;
+    std::string format_tag_literal(const TypeTagSpec& tag_spec) const override;
+
+    // gambas-asn1#347: same reasoning as format_tag_literal's own comment —
+    // eff_tag is populated unconditionally for every member, so this must
+    // return real Rust syntax, not throw. Dead in practice today (no
+    // RustBackend.cpp call site ever reads SequenceMemberSpec::eff_tag/
+    // ChoiceAlternativeSpec::eff_tag — confirmed by grep — RustBackend
+    // computes its own tags via mbuiltin/resolved_tag instead), but must
+    // stay valid Rust in case that changes (e.g. CHOICE-member coverage).
+    std::string format_no_tag_literal() const override {
+        return "asn1cpp_ber::tag::Tag { class: asn1cpp_ber::tag::TagClass::Context, number: 0, constructed: false }";
+    }
 
     std::string wrap_collection_type(const std::string& elem_type) const override {
         return std::format("Vec<{}>", elem_type);

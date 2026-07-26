@@ -10,7 +10,7 @@ namespace asn1::codegen {
 /// @brief Format a tag decision as a C++ `asn1::Tag{...}` literal string.
 /// @param tag_spec The decision to format (class, number, encoding form).
 /// @return A C++ expression string, e.g. `"asn1::Tag{asn1::TagClass::Context, 1, false}"`.
-std::string CppBackend::format_tag_literal(const TagSpec& tag_spec) const {
+std::string CppBackend::format_tag_literal(const TypeTagSpec& tag_spec) const {
     std::string tag_class_literal;
     switch (tag_spec.cls) {
     case ast::TagClass::Universal:   tag_class_literal = "asn1::TagClass::Universal";   break;
@@ -719,7 +719,7 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
                 ? std::format("&_isdef_{}_{}", cname, r.mname)
                 : "nullptr";
             os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {}, {} }},\n",
-                r.asn1_name, r.eff_tag,
+                r.asn1_name, (r.resolved_tag ? format_tag_literal(*r.resolved_tag) : format_no_tag_literal()),
                 r.optional ? "true" : "false",
                 r.has_default ? "true" : "false",
                 r.offset_expr,
@@ -897,7 +897,8 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
         os << std::format("const asn1::MemberDescriptor {}::s_alternatives[] = {{\n", cname);
         for (const auto& r : spec.alternatives) {
             os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, nullptr, nullptr,\n",
-                r.asn1_name, r.eff_tag, r.tdref, r.is_explicit ? "true" : "false");
+                r.asn1_name, (r.resolved_tag ? format_tag_literal(*r.resolved_tag) : format_no_tag_literal()),
+                r.tdref, r.is_explicit ? "true" : "false");
             os << std::format("      &asn1::ChoiceOps<{0}>::get_mut, &asn1::ChoiceOps<{0}>::get_const }},\n",
                 r.mtype);
         }

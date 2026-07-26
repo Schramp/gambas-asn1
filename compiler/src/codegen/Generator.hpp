@@ -100,7 +100,7 @@ inline std::string to_value_name(std::string_view s) {
     return out;
 }
 
-// IntStorageKind, TagSpec, and DefaultValueSpec live in Backend.hpp, included transitively above.
+// IntStorageKind, TypeTagSpec, MemberTagSpec, and DefaultValueSpec live in Backend.hpp, included transitively above.
 
 class Generator {
     fs::path                out_dir_;
@@ -351,7 +351,7 @@ private:
     /// @note Backend-agnostic: no C++ syntax. `tag_literal()` is now a thin
     ///       wrapper — tag_spec_for() decides, format_tag_literal() emits. A
     ///       future non-C++ backend consumes tag_spec_for() directly.
-    std::optional<TagSpec> tag_spec_for(const ast::Tag& tag, bool constructed) const;
+    std::optional<TypeTagSpec> tag_spec_for(const ast::Tag& tag, bool constructed) const;
     /// @brief Returns the natural (universal) tag for a member def's underlying
     ///        type. For types with an outer [N] tag, the outer tag IS the
     ///        wire-level tag.
@@ -366,7 +366,7 @@ private:
     ///         universal tag).
     /// @note Backend-agnostic: no C++ syntax. `natural_tag_for()` is now a
     ///       thin wrapper — this decides, format_tag_literal() emits.
-    std::optional<TagSpec> natural_tag_spec_for(const ast::TypeDef& def) const;
+    std::optional<TypeTagSpec> natural_tag_spec_for(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
     // alt_idx: 0-based index of the alternative in its parent CHOICE.
     // Appends {tag_literal, alt_idx} pairs; recurses if alt resolves to untagged CHOICE.
@@ -423,14 +423,17 @@ private:
 
     bool should_apply_auto_tags(const ast::TypeDef& def) const;
 
-    // gambas-asn1#332: resolved_tag is the backend-agnostic (TagSpec)
-    // counterpart to tag_literal (which is C++-syntax-only, see
-    // SequenceMemberSpec::eff_tag's doc comment). Populated whenever the
-    // member's actual wire tag differs from its type's natural one
-    // (explicit `[n]` tag, or an AUTOMATIC TAGS-assigned one) — nullopt
-    // when the natural tag applies (a backend's own natural-tag lookup,
-    // e.g. RustBackend::rust_member_ber_tag, is already correct then).
-    struct TagResult { std::string tag_literal; bool is_explicit; std::optional<TagSpec> resolved_tag; };
+    // gambas-asn1#347: resolved_tag is always populated with the member's
+    // final effective wire tag (MemberTagSpec — Backend.hpp) — computed via
+    // natural_tag_spec_for whether it comes from an override (explicit
+    // `[n]`/AUTOMATIC, MemberTagSpec::tag_is_override true) or the type's
+    // own natural tag (tag_is_override false). nullopt only for the one
+    // case a member's type genuinely has no tag at all (an untagged
+    // CHOICE — X.680 §28, no universal tag). No backend-specific string is
+    // computed here anymore (gambas-asn1#290/#347's eff_tag is gone) — each
+    // backend calls its own format_tag_literal/format_no_tag_literal on
+    // this structured data at the point of use.
+    struct TagResult { std::optional<MemberTagSpec> resolved_tag; bool is_explicit; };
     TagResult compute_member_tag(const ast::TypeDef& m,
                                  bool apply_auto_tags,
                                  int auto_tag_num) const;
