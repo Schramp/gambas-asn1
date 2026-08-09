@@ -375,6 +375,49 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
     }
 }
 
+/// Maps ASN.1 RELATIVE-OID (gambas-asn1#349) — `native_builtin_type`'s
+/// `relative_oid::RelativeOid` choice, `RustBackend.cpp`. Mirrors
+/// `RelOidXerHandler`'s content model (same `format_arcs`/`parse_arcs` OID
+/// itself uses — X.680 §33's XML grammar for RELATIVE-OID is the same
+/// dotted-decimal-arcs shape, just without OID's first-two-arc rule, which
+/// is purely a BER encoding concern anyway): dotted-decimal arcs, e.g.
+/// `8571.1`.
+impl Asn1Value for crate::relative_oid::RelativeOid {
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        crate::relative_oid::write_relative_oid(out, self);
+    }
+
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        *self = crate::relative_oid::read_relative_oid(r)?;
+        Ok(())
+    }
+
+    fn xer_encode(&self, out: &mut String) {
+        for (i, arc) in self.0.iter().enumerate() {
+            if i > 0 {
+                out.push('.');
+            }
+            out.push_str(&arc.to_string());
+        }
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        let text = r.read_text_content();
+        let mut arcs = Vec::new();
+        for part in text.trim().split('.') {
+            if part.is_empty() {
+                break;
+            }
+            match part.parse::<u64>() {
+                Ok(v) => arcs.push(v),
+                Err(_) => break,
+            }
+        }
+        *self = crate::relative_oid::RelativeOid(arcs);
+        Ok(())
+    }
+}
+
 /// Maps `IA5String` (`native_builtin_type`'s `String` choice covers all 12
 /// string kinds; this impl is scoped to IA5String's wire tag specifically,
 /// see `strings.rs`'s module doc on widening to the others). Mirrors
@@ -609,6 +652,51 @@ mod tests {
         let mut got = ObjectIdentifier(vec![1, 2, 3]);
         got.xer_decode_into(&mut r).unwrap();
         assert_eq!(got, ObjectIdentifier::default());
+    }
+
+    #[test]
+    fn relative_oid_ber_round_trips_through_the_trait() {
+        use crate::relative_oid::RelativeOid;
+
+        let v = RelativeOid(vec![8571, 1]);
+        let mut out = Vec::new();
+        v.ber_encode(&mut out);
+        assert_eq!(out, vec![0x0D, 0x03, 0xC2, 0x7B, 0x01]);
+
+        let mut r = Reader::new(&out);
+        let mut got = RelativeOid::default();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn relative_oid_xer_round_trips_wrapped_by_hand() {
+        use crate::relative_oid::RelativeOid;
+        use crate::xer::{write_close_tag, write_open_tag};
+
+        let v = RelativeOid(vec![8571, 1]);
+        let mut out = String::new();
+        write_open_tag(&mut out, "roid");
+        v.xer_encode(&mut out);
+        write_close_tag(&mut out, "roid");
+        assert_eq!(out, "<roid>8571.1</roid>");
+
+        let mut r = XerReader::new(&out);
+        r.consume_open_tag("roid").unwrap();
+        let mut got = RelativeOid::default();
+        got.xer_decode_into(&mut r).unwrap();
+        r.consume_close_tag("roid").unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn relative_oid_xer_empty_round_trips() {
+        use crate::relative_oid::RelativeOid;
+
+        let mut r = XerReader::new("");
+        let mut got = RelativeOid(vec![1, 2]);
+        got.xer_decode_into(&mut r).unwrap();
+        assert_eq!(got, RelativeOid::default());
     }
 
     #[test]
