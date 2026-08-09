@@ -42,6 +42,7 @@ pub mod null;
 pub mod octet_string;
 pub mod oid;
 pub mod reader;
+pub mod real;
 pub mod relative_oid;
 pub mod sequence;
 pub mod strings;

@@ -418,6 +418,75 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
     }
 }
 
+/// Maps ASN.1 REAL (gambas-asn1#349) — `native_builtin_type`'s `f64`
+/// choice, `RustBackend.cpp`. Mirrors `RealXerHandler`'s content model
+/// (`runtime/src/XerCodec.cpp`): special values as nested self-closing
+/// tags (`<PLUS-INFINITY/>`/`<MINUS-INFINITY/>`/`<NOT-A-NUMBER/>` — same
+/// shape as `bool`'s `<true/>`/`<false/>`), `0`/`-0` as the literal text
+/// `"0"`, everything else as `%.15f` with trailing zeros trimmed (keeping
+/// at least one digit after the decimal point).
+impl Asn1Value for f64 {
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        crate::real::write_real(out, *self);
+    }
+
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        *self = crate::real::read_real(r)?;
+        Ok(())
+    }
+
+    fn xer_encode(&self, out: &mut String) {
+        if self.is_nan() {
+            out.push_str("<NOT-A-NUMBER/>");
+        } else if self.is_infinite() {
+            out.push_str(if *self > 0.0 { "<PLUS-INFINITY/>" } else { "<MINUS-INFINITY/>" });
+        } else if *self == 0.0 {
+            out.push('0');
+        } else {
+            let mut buf = format!("{self:.15}");
+            if let Some(dot) = buf.find('.') {
+                let mut last = buf.len() - 1;
+                while last > dot + 1 && buf.as_bytes()[last] == b'0' {
+                    last -= 1;
+                }
+                buf.truncate(last + 1);
+            }
+            out.push_str(&buf);
+        }
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        let peek = r.peek_tag();
+        if !peek.name.is_empty() {
+            let ti = r.consume_tag();
+            *self = match ti.name.as_str() {
+                "PLUS-INFINITY" => f64::INFINITY,
+                "MINUS-INFINITY" => f64::NEG_INFINITY,
+                "NOT-A-NUMBER" => f64::NAN,
+                _ => {
+                    return Err(DecodeError::new(
+                        format!("XER: unknown REAL special value: {}", ti.name),
+                        0,
+                    ))
+                }
+            };
+            if !ti.self_closing {
+                let close = r.consume_tag();
+                if !close.closing || close.name != ti.name {
+                    return Err(DecodeError::new("XER: malformed REAL special value".to_string(), 0));
+                }
+            }
+            return Ok(());
+        }
+        let text = r.read_text_content();
+        let trimmed = text.trim();
+        *self = trimmed
+            .parse::<f64>()
+            .map_err(|_| DecodeError::new(format!("XER: invalid REAL value: {trimmed}"), 0))?;
+        Ok(())
+    }
+}
+
 /// Maps `IA5String` (`native_builtin_type`'s `String` choice covers all 12
 /// string kinds; this impl is scoped to IA5String's wire tag specifically,
 /// see `strings.rs`'s module doc on widening to the others). Mirrors
@@ -697,6 +766,80 @@ mod tests {
         let mut got = RelativeOid(vec![1, 2]);
         got.xer_decode_into(&mut r).unwrap();
         assert_eq!(got, RelativeOid::default());
+    }
+
+    #[test]
+    fn f64_ber_round_trips_through_the_trait() {
+        let mut out = Vec::new();
+        1.5f64.ber_encode(&mut out);
+
+        let mut r = Reader::new(&out);
+        let mut got: f64 = 0.0;
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, 1.5);
+    }
+
+    #[test]
+    fn f64_xer_round_trips_wrapped_by_hand() {
+        use crate::xer::{write_close_tag, write_open_tag};
+
+        let mut out = String::new();
+        write_open_tag(&mut out, "x");
+        1.5f64.xer_encode(&mut out);
+        write_close_tag(&mut out, "x");
+        assert_eq!(out, "<x>1.5</x>");
+
+        let mut r = XerReader::new(&out);
+        r.consume_open_tag("x").unwrap();
+        let mut got: f64 = 0.0;
+        got.xer_decode_into(&mut r).unwrap();
+        r.consume_close_tag("x").unwrap();
+        assert_eq!(got, 1.5);
+    }
+
+    #[test]
+    fn f64_xer_zero_encodes_as_bare_zero() {
+        let mut out = String::new();
+        0.0f64.xer_encode(&mut out);
+        assert_eq!(out, "0");
+
+        let mut out2 = String::new();
+        (-0.0f64).xer_encode(&mut out2);
+        assert_eq!(out2, "0");
+    }
+
+    #[test]
+    fn f64_xer_special_values_round_trip() {
+        for v in [f64::INFINITY, f64::NEG_INFINITY] {
+            let mut out = String::new();
+            v.xer_encode(&mut out);
+            let mut r = XerReader::new(&out);
+            let mut got: f64 = 0.0;
+            got.xer_decode_into(&mut r).unwrap();
+            assert_eq!(got, v);
+        }
+
+        let mut out = String::new();
+        f64::NAN.xer_encode(&mut out);
+        assert_eq!(out, "<NOT-A-NUMBER/>");
+        let mut r = XerReader::new(&out);
+        let mut got: f64 = 0.0;
+        got.xer_decode_into(&mut r).unwrap();
+        assert!(got.is_nan());
+    }
+
+    #[test]
+    fn f64_xer_trims_trailing_zeros_but_keeps_one_digit() {
+        let mut out = String::new();
+        2.0f64.xer_encode(&mut out);
+        assert_eq!(out, "2.0");
+    }
+
+    #[test]
+    fn f64_xer_invalid_text_is_error() {
+        let mut r = XerReader::new("not-a-number");
+        let mut got: f64 = 0.0;
+        assert!(got.xer_decode_into(&mut r).is_err());
     }
 
     #[test]
