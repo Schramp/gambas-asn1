@@ -40,6 +40,7 @@ pub mod choice;
 pub mod integer;
 pub mod null;
 pub mod octet_string;
+pub mod oid;
 pub mod reader;
 pub mod sequence;
 pub mod strings;
