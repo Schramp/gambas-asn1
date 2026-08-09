@@ -1,6 +1,6 @@
 //! CHOICE encode/decode — X.680 §29, X.690 §8.13.
 //!
-//! Table-driven (gambas-asn1#284 BER, #285 XER), mirroring
+//! Table-driven, mirroring
 //! `MemberDescriptor<T>`/`SequenceSpec<T>` (`sequence.rs`) and the C++
 //! side's `ChoiceSpec`/`ChoiceBerHandler`/`ChoiceXerHandler`
 //! (`runtime/src/BerCodec.cpp`/`XerCodec.cpp`): `encode_choice`/
@@ -15,9 +15,9 @@
 //! same is true in XER (encodes/decodes using the *alternative's* name as
 //! the element tag, never the CHOICE type's own name — there's no `<Choice>`
 //! wrapper the way `SequenceXerHandler` wraps every member in `<Widget>`).
-//! So this isn't a case of the "shared type-meta abstraction" review
-//! feedback from gambas-asn1#281 (PR #288) applying and being skipped —
-//! there is no second `name` field to share or duplicate here at all.
+//! So this isn't a case of "shared type-meta abstraction" review
+//! feedback applying and being skipped — there is no second `name` field
+//! to share or duplicate here at all.
 //!
 //! Each alternative needs two things a `MemberDescriptor<T>` row doesn't:
 //! CHOICE is a sum type, so there's no single storage slot for `get`/
@@ -39,16 +39,22 @@ use crate::value::Asn1Value;
 use crate::xer::{write_close_tag, write_open_tag, XerReader};
 
 /// One CHOICE alternative — mirrors `ChoiceAlternativeSpec`
-/// (`compiler/src/codegen/Backend.hpp`), minus everything not yet needed by
-/// this crate's scope (EXPLICIT/IMPLICIT tag wrapping beyond the
-/// alternative's own natural tag, extension alternatives — real gaps,
-/// codegen simply doesn't emit alternatives needing them yet, same
-/// incremental principle as every other gambas-asn1#214 sub-issue).
+/// (`compiler/src/codegen/Backend.hpp`), minus extension alternatives and
+/// the PER/tag-index dispatch-optimization fields (see `ChoiceSpec`'s own
+/// doc below) — real gaps, codegen simply doesn't emit alternatives needing
+/// them yet. EXPLICIT/IMPLICIT tag override *is* covered: `tag` already
+/// carries the alternative's real resolved tag, and `ber_encode`/
+/// `ber_decode_into` already call whichever primitive that override needs
+/// (`value::encode_explicit`/`decode_explicit` generically for EXPLICIT, or
+/// the type's own `*_tagged` function for IMPLICIT) — no separate variant
+/// needed the way `MemberAccess::TaggedScalar` exists for SEQUENCE, since a
+/// CHOICE alternative's closures are already per-alternative, not shared
+/// across a `Scalar`/`TaggedScalar` split.
 ///
-/// `xer_encode`/`xer_decode_into` (gambas-asn1#285) mirror `ber_encode`/
-/// `ber_decode_into`'s shape for XER (field names symmetric since
-/// gambas-asn1#297 — originally just `encode`/`decode_into`, ambiguous once
-/// the `xer_*` pair existed alongside them, found on #285's review):
+/// `xer_encode`/`xer_decode_into` mirror `ber_encode`/
+/// `ber_decode_into`'s shape for XER (`xer_*` naming used throughout,
+/// not `encode`/`decode_into`, to stay unambiguous once both wire formats
+/// exist side by side):
 /// `xer_encode` writes the alternative's *inner* content (via
 /// `Asn1Value::xer_encode`, same split rationale as `MemberDescriptor` —
 /// see `value.rs`'s trait doc) and reports whether it matched;
@@ -305,7 +311,7 @@ mod tests {
         assert!(Choice::decode_xer("").is_err());
     }
 
-    // ---- EXPLICIT tag disambiguation (gambas-asn1#346) ---------------------
+    // ---- EXPLICIT tag disambiguation ---------------------
 
     /// Regression guard for the exact worst-case scenario #346 was filed
     /// for (mirrors `tests/asn1/choice_tagged_alt_test.asn1`'s

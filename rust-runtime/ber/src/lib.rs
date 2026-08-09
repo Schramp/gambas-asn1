@@ -1,4 +1,4 @@
-//! Native Rust BER codec primitives (gambas-asn1#218).
+//! Native Rust BER codec primitives.
 //!
 //! Standalone — no FFI to the C++ runtime (`runtime/` at the repo root).
 //! Ground truth for wire semantics is `runtime/src/BerCodec.cpp` and
@@ -6,19 +6,18 @@
 //! against X.690 (`asn1-docs/`) — same references the C++ runtime was built
 //! against, not a port of the C++ code itself.
 //!
-//! Scope (per gambas-asn1#218): TLV primitives, plus encode/decode for
-//! INTEGER, OCTET STRING, SEQUENCE, and CHOICE — the four constructs the
-//! issue named. Both SEQUENCE (gambas-asn1#278) and CHOICE (#284) are
+//! Scope: TLV primitives, plus encode/decode for INTEGER, OCTET STRING,
+//! SEQUENCE, and CHOICE. Both SEQUENCE and CHOICE are
 //! table-driven — see `sequence`/`choice`/`value` module docs.
 //!
 //! Definite-length only; indefinite-length (X.690 §8.1.3.2) isn't
 //! implemented (see `reader` module docs).
 //!
-//! ## XER lives in this crate too (revised, gambas-asn1#280)
+//! ## XER lives in this crate too
 //!
 //! Originally this crate was meant to be BER-only, with a future XER runtime
 //! as a sibling crate (mirroring the C++ side's separate `BerCodec`/
-//! `XerCodec` classes). Revised once the table-driven direction (#278) was
+//! `XerCodec` classes). Revised once the table-driven direction was
 //! set: the whole point of `SequenceSpec<T>`/`MemberDescriptor<T>` is that
 //! *one* table drives every wire encoding of a type, same as the C++ side's
 //! `TypeDescriptor` — `BerCodec`/`XerCodec` there are separate *codec

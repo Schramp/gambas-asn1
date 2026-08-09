@@ -1,5 +1,5 @@
 //! XER (X.693 BASIC-XER) element-tag primitives — escape/unescape and
-//! open/close/self-closing element-tag parse+write, gambas-asn1#280.
+//! open/close/self-closing element-tag parse+write.
 //!
 //! Ports `xer_detail::xer_escape`/`xer_unescape`/`parse_tag`/`consume_tag`/
 //! `consume_open_tag`/`consume_close_tag`/`read_text_content`
@@ -7,14 +7,14 @@
 //! (only `<`/`>`/`&` on encode; `&lt;`/`&gt;`/`&amp;`/`&quot;`/`&apos;` plus
 //! numeric character references `&#NN;`/`&#xNN;` on decode), same
 //! whitespace-tolerant tag grammar. `encode_sequence_xer`/
-//! `decode_sequence_xer` (gambas-asn1#281) are the table-driven walker built
+//! `decode_sequence_xer` are the table-driven walker built
 //! on top of these primitives, using each member's own `name` as the element
 //! tag (BER's `Asn1Value::ber_encode` writes its own tag because BER tags
 //! are type-derived; XER tags are *field*-derived, so the walker — not
 //! `Asn1Value` — owns tag wrapping). `decode_sequence_xer` hands each
-//! member's `Asn1Value::xer_decode_into` the `XerReader` directly (revised
-//! in gambas-asn1#283 — see `value.rs`'s trait doc for why a pre-extracted
-//! `&str` doesn't work for every BASIC-XER content shape, e.g. BOOLEAN).
+//! member's `Asn1Value::xer_decode_into` the `XerReader` directly — see
+//! `value.rs`'s trait doc for why a pre-extracted
+//! `&str` doesn't work for every BASIC-XER content shape, e.g. BOOLEAN.
 //!
 //! Definite in-memory document only (mirrors `XerDecodeStream`, no
 //! streaming parser) — matches the C++ side's own scope note.
@@ -209,8 +209,8 @@ impl<'a> XerReader<'a> {
     }
 }
 
-/// Append `<name>` to `out`. Field-name-derived — callers (the future
-/// table-driven walker, gambas-asn1#281) supply `name` from
+/// Append `<name>` to `out`. Field-name-derived — callers (the
+/// table-driven walker, `encode_sequence_xer` below) supply `name` from
 /// `MemberDescriptor::name`, not from the value's own type.
 pub fn write_open_tag(out: &mut String, name: &str) {
     out.push('<');
@@ -229,12 +229,12 @@ pub fn write_close_tag(out: &mut String, name: &str) {
 /// `encode_sequence` (`sequence.rs`) and the Rust equivalent of
 /// `SequenceXerHandler::encode` (`runtime/src/XerCodec.cpp`). Walks the
 /// *same* `SequenceSpec<T>`/`MemberDescriptor<T>` table `encode_sequence`
-/// already uses — one table drives both wire formats (gambas-asn1#280's
+/// already uses — one table drives both wire formats (see `lib.rs`'s
 /// crate doc). Output shape matches the C++ side for a flat (non-nested)
 /// SEQUENCE: `<Name>\n    <member>text</member>\n...</Name>\n`, 4-space
 /// member indent. No nested-SEQUENCE indent tracking yet — out of scope
 /// until a member type needing it lands (matches `encode_sequence`'s own
-/// scope note). OPTIONAL suppression (gambas-asn1#326): an absent member is
+/// scope note). OPTIONAL suppression: an absent member is
 /// skipped entirely (no `<member></member>` pair), via
 /// `Asn1Value::is_present` — unlike BER, XER's outer element tag is this
 /// walker's own responsibility, not something `Option<V>::xer_encode` can
@@ -246,7 +246,7 @@ pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
     out.push('\n');
     for m in spec.members {
         match &m.access {
-            // TaggedScalar (gambas-asn1#332) reuses Scalar's get here: XER
+            // TaggedScalar reuses Scalar's get here: XER
             // element tags are always field-name-derived, never
             // type-derived, so the BER-only tag override doesn't apply.
             MemberAccess::Scalar { get, .. } | MemberAccess::TaggedScalar { get, .. } => {
@@ -260,7 +260,7 @@ pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
                 write_close_tag(&mut out, m.name);
                 out.push('\n');
             }
-            // TaggedSeqOf (gambas-asn1#337) reuses SeqOf's xer_encode here,
+            // TaggedSeqOf reuses SeqOf's xer_encode here,
             // same field-name-derived-tag reasoning as TaggedScalar above.
             MemberAccess::SeqOf { xer_encode, .. } | MemberAccess::TaggedSeqOf { xer_encode, .. } => {
                 out.push_str("    ");
@@ -281,7 +281,7 @@ pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
 /// `T::default()` provides the initial value, each member is decoded in
 /// table order directly into its field.
 ///
-/// OPTIONAL members (gambas-asn1#326): peek the next open tag's name before
+/// OPTIONAL members: peek the next open tag's name before
 /// consuming it — if it doesn't match this member's own element name, the
 /// member is absent (leave it at its `Default`, i.e. `None`) and nothing is
 /// consumed, same linear-scan/canonical-order assumption `decode_sequence`'s

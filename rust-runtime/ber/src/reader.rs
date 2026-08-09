@@ -2,8 +2,7 @@
 //!
 //! Mirrors `BerReader` (`runtime/include/asn1cpp/codec/BerReader.hpp`):
 //! same `read_tlv`/`peek_tag` entry points, same definite-length-only scope
-//! (indefinite-length, X.690 §8.1.3.2, isn't implemented here — out of scope
-//! for gambas-asn1#218's "core primitives" goal; the C++ reader's
+//! (indefinite-length, X.690 §8.1.3.2, isn't implemented here; the C++ reader's
 //! `read_tlv()` slow path handles it, this doesn't yet).
 
 use crate::tag::{read_tag, Tag};
@@ -116,7 +115,7 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// gambas-asn1#346: EXPLICIT tagging (X.690 §8.14.3) decode — read the
+/// EXPLICIT tagging (X.690 §8.14.3) decode — read the
 /// constructed outer TLV, check its tag, then decode the inner value from a
 /// sub-`Reader` over the outer TLV's content (the complete inner natural-tag
 /// encoding, unchanged). See `writer::write_explicit`'s doc comment for the

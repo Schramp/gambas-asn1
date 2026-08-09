@@ -54,7 +54,7 @@ pub fn read_integer(r: &mut Reader) -> Result<i64, DecodeError> {
     read_integer_tagged(r, INTEGER_TAG)
 }
 
-/// gambas-asn1#332: IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
+/// IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
 /// doc for the general rationale (X.690 §8.14). Same minimal two's-complement
 /// content bytes, different tag octets.
 pub fn write_integer_tagged(out: &mut Vec<u8>, tag: Tag, n: i64) {
