@@ -76,11 +76,13 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     case ast::BuiltinType::BmpString:        return "asn1cpp_ber::strings::BMP_STRING_TAG";
     case ast::BuiltinType::VideotexString:   return "asn1cpp_ber::strings::VIDEOTEX_STRING_TAG";
     case ast::BuiltinType::ObjectDescriptor: return "asn1cpp_ber::strings::OBJECT_DESCRIPTOR_TAG";
+    case ast::BuiltinType::UtcTime:          return "asn1cpp_ber::strings::UTC_TIME_TAG";  // gambas-asn1#349
+    case ast::BuiltinType::GeneralizedTime:  return "asn1cpp_ber::strings::GENERALIZED_TIME_TAG";  // gambas-asn1#349
     // Not yet covered — no Asn1Value impl in rust-runtime/ber for these
     // kinds yet, so a member of any of them falls back to struct-shape-only
     // codegen (no encode()/decode() at all if any member is uncovered).
-    // Real/UtcTime/GeneralizedTime: gambas-asn1#349 (Null/BitString/
-    // ObjectIdentifier/RelativeOid done, same issue). Any: gambas-asn1#330
+    // Real: gambas-asn1#349 (Null/BitString/ObjectIdentifier/RelativeOid/
+    // UtcTime/GeneralizedTime done, same issue). Any: gambas-asn1#330
     // (separate, pre-existing issue). Enumerated never reaches this switch
     // — routed through the wholly separate emit_enumerated/EnumeratedSpec path.
     default:                                 return nullptr;
@@ -143,6 +145,8 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
     case ast::BuiltinType::BmpString:          return "BMPString";
     case ast::BuiltinType::VideotexString:     return "VideotexString";
     case ast::BuiltinType::ObjectDescriptor:   return "ObjectDescriptor";
+    case ast::BuiltinType::UtcTime:            return "UTCTime";  // gambas-asn1#349
+    case ast::BuiltinType::GeneralizedTime:    return "GeneralizedTime";  // gambas-asn1#349
     // Same uncovered set as builtin_ber_tag's default (gambas-asn1#349/
     // #330) — this fallback name is never actually reached in practice
     // since builtin_xer_name is only called for kinds builtin_ber_tag
@@ -188,6 +192,8 @@ static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, IntS
     case ast::BuiltinType::BmpString:
     case ast::BuiltinType::VideotexString:
     case ast::BuiltinType::ObjectDescriptor:
+    case ast::BuiltinType::UtcTime:       // gambas-asn1#349
+    case ast::BuiltinType::GeneralizedTime:  // gambas-asn1#349
         return TaggedKind::CharString;
     // Same uncovered set as builtin_ber_tag's default (gambas-asn1#349/
     // #330) — a tagged member/alternative of one of these kinds falls back
@@ -365,12 +371,16 @@ void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
 ///       carry BIT STRING's unused-bits count, and OID/RELATIVE-OID would
 ///       fight over one `Vec<u64>` impl since they have different wire
 ///       encodings — same "distinct type per ASN.1 kind" convention as the
-///       string newtypes, not primitive reuse), `String` for UtcTime/
-///       GeneralizedTime rather than a real timestamp type — matches this
-///       pairing's scope
-///       (compiles as real Rust, no runtime wiring yet for those). A real
-///       BER/PER runtime would likely want tighter types (e.g. `[u32]` arcs
-///       for OID); revisit then.
+///       string newtypes, not primitive reuse). `UtcTime`/`GeneralizedTime`
+///       (gambas-asn1#349) are also `strings.rs` newtypes now, via the same
+///       `char_string_type!` macro — X.691 §23's own "character string
+///       types" definition includes them, and their BER/XER wire shape is
+///       byte-for-byte identical to any other string kind (see
+///       `strings.rs`'s module doc); not real parsed timestamp types, just
+///       the raw ASN.1 string (matches this pairing's scope — compiles as
+///       real Rust, no runtime wiring yet for actual date/time semantics).
+///       A real BER/PER runtime would likely want tighter types (e.g.
+///       `[u32]` arcs for OID, an actual date/time type here); revisit then.
 std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     using BT = ast::BuiltinType;
     switch (bt) {
@@ -393,8 +403,8 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     case BT::BmpString:        return "asn1cpp_ber::strings::BmpString";
     case BT::VideotexString:   return "asn1cpp_ber::strings::VideotexString";
     case BT::ObjectDescriptor: return "asn1cpp_ber::strings::ObjectDescriptor";
-    case BT::UtcTime:          return "String";
-    case BT::GeneralizedTime:  return "String";
+    case BT::UtcTime:          return "asn1cpp_ber::strings::UtcTime";  // gambas-asn1#349
+    case BT::GeneralizedTime:  return "asn1cpp_ber::strings::GeneralizedTime";  // gambas-asn1#349
     case BT::Any:              return "Vec<u8>";
     default:                   return "Vec<u8>";  // Integer/Enumerated: unreachable here
     }
@@ -683,6 +693,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         case ast::BuiltinType::BmpString:
         case ast::BuiltinType::VideotexString:
         case ast::BuiltinType::ObjectDescriptor:
+        case ast::BuiltinType::UtcTime:       // gambas-asn1#349
+        case ast::BuiltinType::GeneralizedTime:  // gambas-asn1#349
             return true;
         default:
             return false;
