@@ -1057,11 +1057,25 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
 ///       unused here — no runtime wiring yet, same as every prior pairing.
 void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const {
     std::string prefix = escape(to_snake_case(spec.type_name));
+    // gambas-asn1#313: a CHOICE with exactly one alternative makes every
+    // "does x match this variant" pattern provably always true — rustc
+    // correctly flags a `_ => panic!(...)` wildcard arm as unreachable in
+    // that case (and, below, an `if let` as irrefutable). Special-cased
+    // per this issue's own preferred fix (correct-by-construction output
+    // over suppressing real compiler signal): a single-alternative CHOICE
+    // uses a plain irrefutable `let` pattern instead of `match`/`if let`,
+    // which needs no wildcard/`else` arm at all and warns on neither.
+    bool single_alt = spec.alternatives.size() == 1;
     for (const auto& a : spec.alternatives) {
         std::string fname = escape(std::format("{}_get_{}", prefix, a.accessor_name));
         os << std::format("pub fn {}(x: &mut {}) -> &mut {} {{\n", fname, spec.type_name, a.mtype);
-        os << std::format("    match x {{ {}::{}(v) => v, _ => panic!(\"wrong variant\") }}\n",
-                           spec.type_name, variant_name(*this, a.asn1_name));
+        if (single_alt) {
+            os << std::format("    let {}::{}(v) = x;\n    v\n",
+                               spec.type_name, variant_name(*this, a.asn1_name));
+        } else {
+            os << std::format("    match x {{ {}::{}(v) => v, _ => panic!(\"wrong variant\") }}\n",
+                               spec.type_name, variant_name(*this, a.asn1_name));
+        }
         os << "}\n\n";
     }
 
@@ -1199,6 +1213,26 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                           alts_ident, spec.type_name, spec.alternatives.size());
         for (const auto& a : spec.alternatives) {
             std::string vname = variant_name(*this, a.asn1_name);
+            // gambas-asn1#313: same single-alternative special-case as
+            // emit_choice_definition's accessor functions above — an
+            // `if let ... = x { ... } else { false }` is irrefutable when
+            // `Type` has exactly one variant (rustc flags it), so emit a
+            // plain `let` (no `else` arm needed, matches unconditionally)
+            // instead in that case.
+            auto emit_encode_closure = [&](const char* field, const std::string& body_line) {
+                os << std::format("        {}: |x, out| ", field);
+                if (single_alt) {
+                    os << std::format("{{\n            let {}::{}(v) = x;\n", spec.type_name, vname);
+                    os << std::format("            {}\n", body_line);
+                    os << "            true\n";
+                    os << "        },\n";
+                } else {
+                    os << std::format("if let {}::{}(v) = x {{\n", spec.type_name, vname);
+                    os << std::format("            {}\n", body_line);
+                    os << "            true\n";
+                    os << "        } else { false },\n";
+                }
+            };
             std::optional<std::pair<std::string, std::string>> tagged_ops;
             std::string tag_lit;
             if (a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit) {
@@ -1215,43 +1249,27 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // EXPLICIT branch above).
                 std::string etag = format_tag_literal(*a.resolved_tag);
                 os << std::format("        tag: {},\n", etag);
-                os << std::format("        ber_encode: |x, out| if let {}::{}(v) = x {{\n",
-                                  spec.type_name, vname);
-                os << std::format("            asn1cpp_ber::value::encode_explicit(out, {}, v);\n", etag);
-                os << "            true\n";
-                os << "        } else { false },\n";
+                emit_encode_closure("ber_encode", std::format("asn1cpp_ber::value::encode_explicit(out, {}, v);", etag));
                 os << "        ber_decode_into: |r| {\n";
                 os << std::format("            let v: {} = asn1cpp_ber::value::decode_explicit(r, {})?;\n", a.mtype, etag);
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
             } else if (tagged_ops) {
                 os << std::format("        tag: {},\n", tag_lit);
-                os << std::format("        ber_encode: |x, out| if let {}::{}(v) = x {{\n",
-                                  spec.type_name, vname);
-                os << std::format("            {}\n", tagged_ops->first);
-                os << "            true\n";
-                os << "        } else { false },\n";
+                emit_encode_closure("ber_encode", tagged_ops->first);
                 os << "        ber_decode_into: |r| {\n";
                 os << std::format("            {}\n", tagged_ops->second);
                 os << "        },\n";
             } else {
                 os << std::format("        tag: {},\n", rust_alt_ber_tag(a));
-                os << std::format("        ber_encode: |x, out| if let {}::{}(v) = x {{\n",
-                                  spec.type_name, vname);
-                os << "            asn1cpp_ber::value::Asn1Value::ber_encode(v, out);\n";
-                os << "            true\n";
-                os << "        } else { false },\n";
+                emit_encode_closure("ber_encode", "asn1cpp_ber::value::Asn1Value::ber_encode(v, out);");
                 os << "        ber_decode_into: |r| {\n";
                 os << std::format("            let mut v: {} = Default::default();\n", a.mtype);
                 os << "            asn1cpp_ber::value::Asn1Value::ber_decode_into(&mut v, r)?;\n";
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
             }
-            os << std::format("        xer_encode: |x, out| if let {}::{}(v) = x {{\n",
-                              spec.type_name, vname);
-            os << "            asn1cpp_ber::value::Asn1Value::xer_encode(v, out);\n";
-            os << "            true\n";
-            os << "        } else { false },\n";
+            emit_encode_closure("xer_encode", "asn1cpp_ber::value::Asn1Value::xer_encode(v, out);");
             os << "        xer_decode_into: |r| {\n";
             os << std::format("            let mut v: {} = Default::default();\n", a.mtype);
             os << "            asn1cpp_ber::value::Asn1Value::xer_decode_into(&mut v, r)?;\n";
