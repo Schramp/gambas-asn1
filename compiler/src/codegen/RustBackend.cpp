@@ -57,6 +57,7 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
     case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
     case ast::BuiltinType::Null:        return "asn1cpp_ber::null::NULL_TAG";  // gambas-asn1#349
+    case ast::BuiltinType::Real:        return "asn1cpp_ber::real::REAL_TAG";  // gambas-asn1#349
     case ast::BuiltinType::BitString:   return "asn1cpp_ber::bit_string::BIT_STRING_TAG";  // gambas-asn1#349
     case ast::BuiltinType::ObjectIdentifier: return "asn1cpp_ber::oid::OBJECT_IDENTIFIER_TAG";  // gambas-asn1#349
     case ast::BuiltinType::RelativeOid: return "asn1cpp_ber::relative_oid::RELATIVE_OID_TAG";  // gambas-asn1#349
@@ -81,8 +82,8 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     // Not yet covered — no Asn1Value impl in rust-runtime/ber for these
     // kinds yet, so a member of any of them falls back to struct-shape-only
     // codegen (no encode()/decode() at all if any member is uncovered).
-    // Real: gambas-asn1#349 (Null/BitString/ObjectIdentifier/RelativeOid/
-    // UtcTime/GeneralizedTime done, same issue). Any: gambas-asn1#330
+    // gambas-asn1#349 fully landed (Null/BitString/ObjectIdentifier/
+    // RelativeOid/UtcTime/GeneralizedTime/Real all done). Any: gambas-asn1#330
     // (separate, pre-existing issue). Enumerated never reaches this switch
     // — routed through the wholly separate emit_enumerated/EnumeratedSpec path.
     default:                                 return nullptr;
@@ -129,6 +130,7 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
     case ast::BuiltinType::Integer:           return "INTEGER";
     case ast::BuiltinType::Boolean:            return "BOOLEAN";
     case ast::BuiltinType::Null:               return "NULL";  // gambas-asn1#349
+    case ast::BuiltinType::Real:               return "REAL";  // gambas-asn1#349
     case ast::BuiltinType::BitString:          return "BIT-STRING";  // gambas-asn1#349
     case ast::BuiltinType::ObjectIdentifier:   return "OBJECT-IDENTIFIER";  // gambas-asn1#349
     case ast::BuiltinType::RelativeOid:        return "RELATIVE-OID";  // gambas-asn1#349
@@ -164,7 +166,7 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
 ///        fresh local `v` (pattern-matched out of `x` on encode, built from
 ///        scratch on decode) — genuinely different code shapes, not worth
 ///        forcing through one closure-body generator (gambas-asn1#344).
-enum class TaggedKind { None, Boolean, Integer, Null, OctetString, BitString, ObjectIdentifier, RelativeOid, CharString };
+enum class TaggedKind { None, Boolean, Integer, Real, Null, OctetString, BitString, ObjectIdentifier, RelativeOid, CharString };
 
 // gambas-asn1#350: takes storage_kind, not mtype — only ever called with
 // member/alt-level data (never elem_builtin/elem_mtype), so unlike
@@ -175,6 +177,7 @@ static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, IntS
     switch (*mbuiltin) {
     case ast::BuiltinType::Boolean:     return TaggedKind::Boolean;
     case ast::BuiltinType::Null:        return TaggedKind::Null;  // gambas-asn1#349
+    case ast::BuiltinType::Real:        return TaggedKind::Real;  // gambas-asn1#349
     case ast::BuiltinType::Integer:     return storage_kind == IntStorageKind::S64 ? TaggedKind::Integer : TaggedKind::None;
     case ast::BuiltinType::OctetString: return TaggedKind::OctetString;
     case ast::BuiltinType::BitString:   return TaggedKind::BitString;  // gambas-asn1#349
@@ -677,6 +680,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         case ast::BuiltinType::Integer:     return mtype == "i64";  // element-level path only (#350)
         case ast::BuiltinType::Boolean:
         case ast::BuiltinType::Null:        // gambas-asn1#349
+        case ast::BuiltinType::Real:        // gambas-asn1#349
         case ast::BuiltinType::BitString:   // gambas-asn1#349
         case ast::BuiltinType::ObjectIdentifier:  // gambas-asn1#349
         case ast::BuiltinType::RelativeOid:  // gambas-asn1#349
@@ -732,6 +736,15 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::integer::write_integer_tagged(out, {1}, v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::integer::read_integer_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
+        // gambas-asn1#349: same shape as Integer — f64 is Copy.
+        case TaggedKind::Real:
+            if (m.optional)
+                return std::make_pair(
+                    std::format("|v, out| {{ if let Some(x) = v.{0} {{ asn1cpp_ber::real::write_real_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
+                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::real::read_real_tagged(r, {1})?); Ok(()) }}", m.mname, tag_lit));
+            return std::make_pair(
+                std::format("|v, out| asn1cpp_ber::real::write_real_tagged(out, {1}, v.{0})", m.mname, tag_lit),
+                std::format("|v, r| {{ v.{0} = asn1cpp_ber::real::read_real_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
         // gambas-asn1#349: NULL carries no data — encode only checks presence
         // (Option case) or writes unconditionally (required case); `v` is
         // unused on encode (`_v`) since there's nothing to read from the field.
@@ -1129,6 +1142,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             return std::make_pair(
                 std::format("asn1cpp_ber::integer::write_integer_tagged(out, {}, *v);", tag_lit),
                 std::format("let v = asn1cpp_ber::integer::read_integer_tagged(r, {})?; {}",
+                             tag_lit, variant_ctor("v")));
+        // gambas-asn1#349: same shape as Integer — f64 is Copy.
+        case TaggedKind::Real:
+            return std::make_pair(
+                std::format("asn1cpp_ber::real::write_real_tagged(out, {}, *v);", tag_lit),
+                std::format("let v = asn1cpp_ber::real::read_real_tagged(r, {})?; {}",
                              tag_lit, variant_ctor("v")));
         // gambas-asn1#349: NULL's payload (`()`) carries no data — `let _ =
         // v;` explicitly discards the `if let`-bound match (still needed to
