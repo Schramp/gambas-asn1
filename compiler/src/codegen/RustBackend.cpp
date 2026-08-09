@@ -58,6 +58,7 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
     case ast::BuiltinType::Null:        return "asn1cpp_ber::null::NULL_TAG";  // gambas-asn1#349
     case ast::BuiltinType::BitString:   return "asn1cpp_ber::bit_string::BIT_STRING_TAG";  // gambas-asn1#349
+    case ast::BuiltinType::ObjectIdentifier: return "asn1cpp_ber::oid::OBJECT_IDENTIFIER_TAG";  // gambas-asn1#349
     case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
     // gambas-asn1#326: the other 11 restricted-character-string kinds
     // (native_builtin_type maps each to its own rust-runtime/ber::strings
@@ -77,8 +78,9 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     // Not yet covered — no Asn1Value impl in rust-runtime/ber for these
     // kinds yet, so a member of any of them falls back to struct-shape-only
     // codegen (no encode()/decode() at all if any member is uncovered).
-    // ObjectIdentifier/RelativeOid/Real/UtcTime/GeneralizedTime:
-    // gambas-asn1#349 (Null/BitString done, same issue). Any: gambas-asn1#330
+    // RelativeOid/Real/UtcTime/GeneralizedTime:
+    // gambas-asn1#349 (Null/BitString/ObjectIdentifier done, same issue).
+    // Any: gambas-asn1#330
     // (separate, pre-existing issue). Enumerated never reaches this switch
     // — routed through the wholly separate emit_enumerated/EnumeratedSpec path.
     default:                                 return nullptr;
@@ -126,6 +128,7 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
     case ast::BuiltinType::Boolean:            return "BOOLEAN";
     case ast::BuiltinType::Null:               return "NULL";  // gambas-asn1#349
     case ast::BuiltinType::BitString:          return "BIT-STRING";  // gambas-asn1#349
+    case ast::BuiltinType::ObjectIdentifier:   return "OBJECT-IDENTIFIER";  // gambas-asn1#349
     case ast::BuiltinType::OctetString:        return "OCTET-STRING";
     case ast::BuiltinType::Ia5String:          return "IA5String";
     case ast::BuiltinType::Utf8String:         return "UTF8String";
@@ -156,7 +159,7 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
 ///        fresh local `v` (pattern-matched out of `x` on encode, built from
 ///        scratch on decode) — genuinely different code shapes, not worth
 ///        forcing through one closure-body generator (gambas-asn1#344).
-enum class TaggedKind { None, Boolean, Integer, Null, OctetString, BitString, CharString };
+enum class TaggedKind { None, Boolean, Integer, Null, OctetString, BitString, ObjectIdentifier, CharString };
 
 // gambas-asn1#350: takes storage_kind, not mtype — only ever called with
 // member/alt-level data (never elem_builtin/elem_mtype), so unlike
@@ -170,6 +173,7 @@ static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, IntS
     case ast::BuiltinType::Integer:     return storage_kind == IntStorageKind::S64 ? TaggedKind::Integer : TaggedKind::None;
     case ast::BuiltinType::OctetString: return TaggedKind::OctetString;
     case ast::BuiltinType::BitString:   return TaggedKind::BitString;  // gambas-asn1#349
+    case ast::BuiltinType::ObjectIdentifier: return TaggedKind::ObjectIdentifier;  // gambas-asn1#349
     case ast::BuiltinType::Ia5String:
     case ast::BuiltinType::Utf8String:
     case ast::BuiltinType::NumericString:
@@ -352,11 +356,14 @@ void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
 ///       `String` can only carry one `Asn1Value` impl, so a second string
 ///       kind can't reuse `Ia5String`'s without fighting over which tag to
 ///       check/write (see `strings.rs`'s module doc). `Vec<u8>` for OCTET
-///       STRING/OID/Any (gambas-asn1#349: BIT STRING moved to its own
-///       `bit_string::BitString` struct — same single-impl-per-concrete-
-///       type conflict, plus `Vec<u8>` alone can't carry the unused-bits
-///       count), `String` for UtcTime/GeneralizedTime rather than a real
-///       timestamp type — matches this pairing's scope
+///       STRING/Any (gambas-asn1#349: BIT STRING and OBJECT IDENTIFIER
+///       moved to their own `bit_string::BitString`/`oid::ObjectIdentifier`
+///       structs — same single-impl-per-concrete-type conflict: `Vec<u8>`
+///       alone can't carry BIT STRING's unused-bits count, and OID/
+///       RELATIVE-OID would fight over the one `Vec<u64>` impl since they
+///       have different wire encodings), `String` for UtcTime/
+///       GeneralizedTime rather than a real timestamp type — matches this
+///       pairing's scope
 ///       (compiles as real Rust, no runtime wiring yet for those). A real
 ///       BER/PER runtime would likely want tighter types (e.g. `[u32]` arcs
 ///       for OID); revisit then.
@@ -368,7 +375,7 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     case BT::Null:             return "()";
     case BT::BitString:        return "asn1cpp_ber::bit_string::BitString";  // gambas-asn1#349
     case BT::OctetString:      return "Vec<u8>";
-    case BT::ObjectIdentifier: return "Vec<u64>";
+    case BT::ObjectIdentifier: return "asn1cpp_ber::oid::ObjectIdentifier";  // gambas-asn1#349
     case BT::RelativeOid:      return "Vec<u64>";
     case BT::Utf8String:       return "asn1cpp_ber::strings::Utf8String";
     case BT::NumericString:    return "asn1cpp_ber::strings::NumericString";
@@ -657,6 +664,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         case ast::BuiltinType::Boolean:
         case ast::BuiltinType::Null:        // gambas-asn1#349
         case ast::BuiltinType::BitString:   // gambas-asn1#349
+        case ast::BuiltinType::ObjectIdentifier:  // gambas-asn1#349
         case ast::BuiltinType::OctetString:
         case ast::BuiltinType::Ia5String:
         case ast::BuiltinType::Utf8String:
@@ -736,6 +744,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::bit_string::write_bit_string_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::bit_string::read_bit_string_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
+        // gambas-asn1#349: same shape as BitString — read_object_identifier_tagged
+        // already returns an owned ObjectIdentifier.
+        case TaggedKind::ObjectIdentifier:
+            if (m.optional)
+                return std::make_pair(
+                    std::format("|v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::oid::write_object_identifier_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
+                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::oid::read_object_identifier_tagged(r, {1})?); Ok(()) }}", m.mname, tag_lit));
+            return std::make_pair(
+                std::format("|v, out| asn1cpp_ber::oid::write_object_identifier_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
+                std::format("|v, r| {{ v.{0} = asn1cpp_ber::oid::read_object_identifier_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
         case TaggedKind::CharString: {
             // IA5String's field is plain String (no wrapper); the other 11
             // kinds are a `char_string_type!` newtype (m.mtype is that
@@ -1104,6 +1122,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             return std::make_pair(
                 std::format("asn1cpp_ber::bit_string::write_bit_string_tagged(out, {}, v);", tag_lit),
                 std::format("let v = asn1cpp_ber::bit_string::read_bit_string_tagged(r, {})?; {}",
+                             tag_lit, variant_ctor("v")));
+        // gambas-asn1#349: same shape as BitString.
+        case TaggedKind::ObjectIdentifier:
+            return std::make_pair(
+                std::format("asn1cpp_ber::oid::write_object_identifier_tagged(out, {}, v);", tag_lit),
+                std::format("let v = asn1cpp_ber::oid::read_object_identifier_tagged(r, {})?; {}",
                              tag_lit, variant_ctor("v")));
         case TaggedKind::CharString: {
             // Same IA5String-is-plain-String-vs-newtype split as
