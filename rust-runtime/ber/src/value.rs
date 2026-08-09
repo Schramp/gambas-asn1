@@ -1,4 +1,4 @@
-//! Type-erasure trait for table-driven member access (gambas-asn1#278).
+//! Type-erasure trait for table-driven member access.
 //!
 //! C++'s generic `SequenceBerHandler` (`runtime/src/BerCodec.cpp`) reaches
 //! a member two ways: `offsetof` pointer arithmetic for required members,
@@ -33,12 +33,10 @@ use crate::xer::XerReader;
 /// BASIC-XER form is itself a nested tag, not plain text, see the `bool`
 /// impl below) — XER element tags are field-name-derived
 /// (`MemberDescriptor::name`), not type-derived like BER tags, so the
-/// *outer* tag wrapping is the table-driven walker's job (gambas-asn1#281),
-/// not `Asn1Value`'s.
+/// *outer* tag wrapping is the table-driven walker's job, not `Asn1Value`'s.
 ///
 /// `xer_decode_into` takes a `&mut XerReader` positioned right after the
-/// member's open tag, not a pre-extracted `&str` (revised in gambas-asn1#283
-/// from #280/#281's original `&str` signature) — discovered necessary
+/// member's open tag, not a pre-extracted `&str` — necessary
 /// because `bool`'s content isn't text at all, it's a nested `<true/>`/
 /// `<false/>` tag, which `XerReader::read_text_content` (stops at the next
 /// `<`) can't hand back as a string. Giving every impl the reader directly
@@ -49,10 +47,8 @@ use crate::xer::XerReader;
 ///
 /// `xer_encode`/`xer_decode_into` have default bodies (panic / "not yet
 /// implemented" error) so a type can get its BER leg wired without being
-/// forced to add a real XER leg in the same change (gambas-asn1#282 landed
-/// BER-only for `bool`/`Vec<u8>`/`String`; gambas-asn1#283 removes the
-/// default here by adding real overrides) — same BER-then-XER pairing every
-/// step in this baby-step sequence (#214) uses.
+/// forced to add a real XER leg in the same change — same BER-then-XER
+/// incremental pairing this crate uses throughout.
 pub trait Asn1Value {
     fn ber_encode(&self, out: &mut Vec<u8>);
     fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError>;
@@ -77,7 +73,7 @@ pub trait Asn1Value {
     }
 }
 
-/// gambas-asn1#346: EXPLICIT tagging (X.690 §8.14.3), generic over any
+/// EXPLICIT tagging (X.690 §8.14.3), generic over any
 /// `Asn1Value` — wraps the value's own natural encoding in an outer TLV via
 /// `writer::write_explicit`/`reader::read_explicit`. The generic
 /// counterpart to each type's own `*_tagged` functions (IMPLICIT —
@@ -98,7 +94,7 @@ pub fn decode_explicit<T: Asn1Value + Default>(r: &mut Reader, tag: crate::tag::
     })
 }
 
-/// gambas-asn1#326: OPTIONAL member support. An `Option<V>` field (what
+/// OPTIONAL member support. An `Option<V>` field (what
 /// `RustBackend` emits for an OPTIONAL member, mirroring C++'s
 /// `std::optional<T>`/`unique_ptr<T>`) becomes wire-absent exactly when
 /// `None` — encoding is `if let Some(v) = self { v.ber_encode/xer_encode }`,
@@ -198,7 +194,7 @@ impl Asn1Value for bool {
     }
 }
 
-/// Maps ASN.1 NULL (gambas-asn1#349) — `native_builtin_type`'s `()` choice,
+/// Maps ASN.1 NULL — `native_builtin_type`'s `()` choice,
 /// `RustBackend.cpp`. Mirrors `NullXerHandler`'s named-wrapper form
 /// (`runtime/src/XerCodec.cpp`): empty content inside the member's own
 /// `<name></name>` tag, e.g. `<flag></flag>` — the self-closing `<NULL/>`
@@ -268,7 +264,7 @@ impl Asn1Value for Vec<u8> {
     }
 }
 
-/// Maps ASN.1 BIT STRING (gambas-asn1#349) — `native_builtin_type`'s
+/// Maps ASN.1 BIT STRING — `native_builtin_type`'s
 /// `bit_string::BitString` choice, `RustBackend.cpp` (not `Vec<u8>`: see
 /// that struct's own module doc for why it can't be a plain-`Vec<u8>`
 /// newtype like OCTET STRING). Mirrors `BitStringXerHandler`'s content
@@ -333,7 +329,7 @@ impl Asn1Value for crate::bit_string::BitString {
     }
 }
 
-/// Maps ASN.1 OBJECT IDENTIFIER (gambas-asn1#349) — `native_builtin_type`'s
+/// Maps ASN.1 OBJECT IDENTIFIER — `native_builtin_type`'s
 /// `oid::ObjectIdentifier` choice, `RustBackend.cpp` (not plain `Vec<u64>`:
 /// see that struct's own module doc on the OID/RELATIVE-OID single-impl
 /// conflict). Mirrors `OidXerHandler`'s content model
@@ -375,7 +371,7 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
     }
 }
 
-/// Maps ASN.1 RELATIVE-OID (gambas-asn1#349) — `native_builtin_type`'s
+/// Maps ASN.1 RELATIVE-OID — `native_builtin_type`'s
 /// `relative_oid::RelativeOid` choice, `RustBackend.cpp`. Mirrors
 /// `RelOidXerHandler`'s content model (same `format_arcs`/`parse_arcs` OID
 /// itself uses — X.680 §33's XML grammar for RELATIVE-OID is the same
@@ -418,7 +414,7 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
     }
 }
 
-/// Maps ASN.1 REAL (gambas-asn1#349) — `native_builtin_type`'s `f64`
+/// Maps ASN.1 REAL — `native_builtin_type`'s `f64`
 /// choice, `RustBackend.cpp`. Mirrors `RealXerHandler`'s content model
 /// (`runtime/src/XerCodec.cpp`): special values as nested self-closing
 /// tags (`<PLUS-INFINITY/>`/`<MINUS-INFINITY/>`/`<NOT-A-NUMBER/>` — same
@@ -490,8 +486,7 @@ impl Asn1Value for f64 {
 /// Maps `IA5String` (`native_builtin_type`'s `String` choice covers all 12
 /// string kinds; this impl is scoped to IA5String's wire tag specifically,
 /// see `strings.rs`'s module doc on widening to the others). Mirrors
-/// `XerStringHandler`: escaped text content, via the same `xer::escape`/
-/// `xer::unescape` gambas-asn1#280 already built.
+/// `XerStringHandler`: escaped text content, via `xer::escape`/`xer::unescape`.
 impl Asn1Value for String {
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::strings::write_ia5_string(out, self);

@@ -24,7 +24,7 @@ pub fn read_boolean(r: &mut Reader) -> Result<bool, DecodeError> {
     read_boolean_tagged(r, BOOLEAN_TAG)
 }
 
-/// gambas-asn1#332: IMPLICIT tag override. A member declared with its own
+/// IMPLICIT tag override. A member declared with its own
 /// `[n]` context/application/private tag (or an AUTOMATIC TAGS-assigned
 /// one) replaces BOOLEAN's natural universal tag entirely on the wire
 /// (X.690 §8.14, IMPLICIT tagging) — same content bytes, different tag

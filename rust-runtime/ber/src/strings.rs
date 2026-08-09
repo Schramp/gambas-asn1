@@ -7,11 +7,11 @@
 //! XER-only concern, see `xer.rs`).
 //!
 //! **`IA5String` is `String` itself** (`Asn1Value for String`, `value.rs`) —
-//! kept as the one exception, unchanged since gambas-asn1#282, because a
+//! kept as the one exception, because a
 //! generated field's Rust type must stay a plain `String` for the earliest,
 //! most common case (ergonomics: no `.0` unwrapping, matches every already-
 //! generated/tested `IA5String` member). **The other 11 string kinds
-//! (gambas-asn1#326) are newtype wrappers** (`NumericString(pub String)`
+//! are newtype wrappers** (`NumericString(pub String)`
 //! etc., via the `char_string_type!` macro below) — a plain `String` can't
 //! carry more than one `Asn1Value` impl (Rust allows only one trait impl per
 //! concrete type), so `NumericString`'s member can't reuse `IA5String`'s
@@ -24,7 +24,7 @@
 //! each generated newtype is the Rust analogue of one `AsnString<N>`
 //! instantiation.
 //!
-//! **Known divergence from ground truth (found on review, gambas-asn1#282):**
+//! **Known divergence from ground truth:**
 //! `AsnStringBerHandler::decode` copies value octets into `std::string`
 //! unconditionally — no charset validation at all, C++ accepts *any* byte
 //! sequence as string content, for every kind. Every impl here (including
@@ -36,7 +36,7 @@
 //! during #286 (randgen cross-validation against asn1c), where such inputs
 //! are exactly what a corruption-mode fuzz run would produce.
 //!
-//! **UtcTime/GeneralizedTime also live here (gambas-asn1#349)**, via the
+//! **UtcTime/GeneralizedTime also live here**, via the
 //! same `char_string_type!` macro, even though they're semantically time
 //! values, not character strings — X.691 §23's own definition of
 //! "character string types" explicitly includes them (same raw-bytes BER
@@ -72,8 +72,8 @@ pub fn read_ia5_string(r: &mut Reader) -> Result<String, DecodeError> {
 /// Shared bytes-in/bytes-out logic for every character string kind — the
 /// analogue of `AsnStringBerHandler`'s single runtime singleton,
 /// parameterized by `tag` instead of dispatched on it. Used both for each
-/// `char_string_type!`-generated newtype's own natural tag, and (`pub`,
-/// gambas-asn1#332) directly by codegen for a member whose real resolved
+/// `char_string_type!`-generated newtype's own natural tag, and (`pub`)
+/// directly by codegen for a member whose real resolved
 /// tag differs from its natural one (IMPLICIT tagging, X.690 §8.14) —
 /// same shape `boolean`/`integer`/`octet_string`'s `*_tagged` functions
 /// give those kinds.
@@ -202,7 +202,7 @@ mod tests {
         assert!(read_ia5_string(&mut r).is_err());
     }
 
-    // ---- restricted-string newtypes (gambas-asn1#326) -----------------------
+    // ---- restricted-string newtypes -----------------------
 
     #[test]
     fn numeric_string_ber_round_trips_and_uses_its_own_tag() {
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(got, PrintableString("a<b".to_string()));
     }
 
-    // ---- UtcTime/GeneralizedTime (gambas-asn1#349) --------------------------
+    // ---- UtcTime/GeneralizedTime --------------------------
 
     #[test]
     fn utc_time_ber_round_trips_and_uses_its_own_tag() {

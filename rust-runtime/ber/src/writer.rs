@@ -49,7 +49,7 @@ pub fn write_constructed(out: &mut Vec<u8>, t: Tag, content: &[u8]) {
     out.extend_from_slice(content);
 }
 
-/// gambas-asn1#346: EXPLICIT tagging (X.690 §8.14.3) — a constructed outer
+/// EXPLICIT tagging (X.690 §8.14.3) — a constructed outer
 /// TLV (the declared `[n]` tag, always constructed regardless of the inner
 /// type) wrapping the inner value's complete natural-tag encoding
 /// unchanged. Distinct from IMPLICIT (`*_tagged` primitives in
