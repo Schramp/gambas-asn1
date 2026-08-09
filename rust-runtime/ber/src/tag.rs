@@ -69,6 +69,8 @@ pub mod universal {
     pub const T61_STRING: u32 = 20;
     pub const VIDEOTEX_STRING: u32 = 21;
     pub const IA5_STRING: u32 = 22;
+    pub const UTC_TIME: u32 = 23;
+    pub const GENERALIZED_TIME: u32 = 24;
     pub const GRAPHIC_STRING: u32 = 25;
     pub const VISIBLE_STRING: u32 = 26;
     pub const GENERAL_STRING: u32 = 27;

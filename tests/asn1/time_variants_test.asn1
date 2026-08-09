@@ -1,0 +1,35 @@
+-- gambas-asn1#349: UTCTime/GeneralizedTime coverage beyond the minimal
+-- required-member case time_test.asn1 already exercises (OPTIONAL member,
+-- CHOICE alternative, and an IMPLICIT-tagged member) — each takes a
+-- different RustBackend.cpp code path (MemberAccess::Scalar vs
+-- TaggedScalar, AlternativeSpec).
+
+TimeVariantsTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+    HasOptionalUtcTime ::= SEQUENCE {
+        ts  UTCTime OPTIONAL
+    }
+
+    UtcTimeOrInt ::= CHOICE {
+        ts   UTCTime,
+        num  INTEGER
+    }
+
+    HasTaggedUtcTime ::= SEQUENCE {
+        ts  [3] UTCTime
+    }
+
+    HasOptionalGeneralizedTime ::= SEQUENCE {
+        ts  GeneralizedTime OPTIONAL
+    }
+
+    GeneralizedTimeOrInt ::= CHOICE {
+        ts   GeneralizedTime,
+        num  INTEGER
+    }
+
+    HasTaggedGeneralizedTime ::= SEQUENCE {
+        ts  [3] GeneralizedTime
+    }
+
+END
