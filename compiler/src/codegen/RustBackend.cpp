@@ -24,7 +24,7 @@ namespace asn1::codegen {
 // worth doing idiomatically since it's free: ASN.1 ENUMERATED value names
 // are lowercase-first by convention, X.680 §11.2, so this needs an explicit
 // capitalize where CppBackend's C++ constant-in-class-scope style doesn't).
-// gambas-asn1#305: to_upper_camel_case (real word-split conversion), not
+// to_upper_camel_case (real word-split conversion), not
 // capitalize_first(type_name(...)) — the latter routes through
 // to_cpp_name's hyphen->underscore substitution first, so a hyphenated
 // multi-word value name (e.g. "eight-bit-binary") came out "Eight_bit_binary"
@@ -34,7 +34,7 @@ static std::string variant_name(const RustBackend& backend, const std::string& a
     return backend.escape(to_upper_camel_case(asn1_name));
 }
 
-// gambas-asn1#344: per-builtin-kind lookup tables shared by
+// Per-builtin-kind lookup tables shared by
 // emit_sequence_definition (SEQUENCE members, SEQUENCE OF elements) and
 // emit_choice_definition (CHOICE alternatives) — previously three separate
 // near-identical switches over ast::BuiltinType per function (six total).
@@ -45,10 +45,10 @@ static std::string variant_name(const RustBackend& backend, const std::string& a
 ///        doc comment (Backend.hpp) for why native storage type alone can't
 ///        drive this (e.g. OCTET STRING/BIT STRING/OBJECT IDENTIFIER/Any all
 ///        map to "Vec<u8>", but need different tags).
-/// @note gambas-asn1#350: `mtype` (not `storage_kind`) for the Integer case
+/// @note `mtype` (not `storage_kind`) for the Integer case
 ///       specifically because this function is also called for SEQUENCE OF
 ///       *element* coverage (elem_builtin/elem_mtype — no storage_kind
-///       counterpart, out of #350's scope); the member/alt-level callers
+///       counterpart); the member/alt-level callers
 ///       (rust_tag_for_builtin_or_alias) intercept Integer via storage_kind
 ///       before ever reaching this switch.
 static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype) {
@@ -56,13 +56,13 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     case ast::BuiltinType::Integer:     return mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
     case ast::BuiltinType::Boolean:     return "asn1cpp_ber::boolean::BOOLEAN_TAG";
     case ast::BuiltinType::OctetString: return "asn1cpp_ber::octet_string::OCTET_STRING_TAG";
-    case ast::BuiltinType::Null:        return "asn1cpp_ber::null::NULL_TAG";  // gambas-asn1#349
-    case ast::BuiltinType::Real:        return "asn1cpp_ber::real::REAL_TAG";  // gambas-asn1#349
-    case ast::BuiltinType::BitString:   return "asn1cpp_ber::bit_string::BIT_STRING_TAG";  // gambas-asn1#349
-    case ast::BuiltinType::ObjectIdentifier: return "asn1cpp_ber::oid::OBJECT_IDENTIFIER_TAG";  // gambas-asn1#349
-    case ast::BuiltinType::RelativeOid: return "asn1cpp_ber::relative_oid::RELATIVE_OID_TAG";  // gambas-asn1#349
+    case ast::BuiltinType::Null:        return "asn1cpp_ber::null::NULL_TAG";
+    case ast::BuiltinType::Real:        return "asn1cpp_ber::real::REAL_TAG";
+    case ast::BuiltinType::BitString:   return "asn1cpp_ber::bit_string::BIT_STRING_TAG";
+    case ast::BuiltinType::ObjectIdentifier: return "asn1cpp_ber::oid::OBJECT_IDENTIFIER_TAG";
+    case ast::BuiltinType::RelativeOid: return "asn1cpp_ber::relative_oid::RELATIVE_OID_TAG";
     case ast::BuiltinType::Ia5String:   return "asn1cpp_ber::strings::IA5_STRING_TAG";
-    // gambas-asn1#326: the other 11 restricted-character-string kinds
+    // The other 11 restricted-character-string kinds
     // (native_builtin_type maps each to its own rust-runtime/ber::strings
     // newtype, not plain String) — each newtype's Asn1Value impl checks its
     // own tag, matching the constant named here.
@@ -77,15 +77,14 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     case ast::BuiltinType::BmpString:        return "asn1cpp_ber::strings::BMP_STRING_TAG";
     case ast::BuiltinType::VideotexString:   return "asn1cpp_ber::strings::VIDEOTEX_STRING_TAG";
     case ast::BuiltinType::ObjectDescriptor: return "asn1cpp_ber::strings::OBJECT_DESCRIPTOR_TAG";
-    case ast::BuiltinType::UtcTime:          return "asn1cpp_ber::strings::UTC_TIME_TAG";  // gambas-asn1#349
-    case ast::BuiltinType::GeneralizedTime:  return "asn1cpp_ber::strings::GENERALIZED_TIME_TAG";  // gambas-asn1#349
+    case ast::BuiltinType::UtcTime:          return "asn1cpp_ber::strings::UTC_TIME_TAG";
+    case ast::BuiltinType::GeneralizedTime:  return "asn1cpp_ber::strings::GENERALIZED_TIME_TAG";
     // Not yet covered — no Asn1Value impl in rust-runtime/ber for these
     // kinds yet, so a member of any of them falls back to struct-shape-only
     // codegen (no encode()/decode() at all if any member is uncovered).
-    // gambas-asn1#349 fully landed (Null/BitString/ObjectIdentifier/
-    // RelativeOid/UtcTime/GeneralizedTime/Real all done). Any: gambas-asn1#330
-    // (separate, pre-existing issue). Enumerated never reaches this switch
-    // — routed through the wholly separate emit_enumerated/EnumeratedSpec path.
+    // Only ANY remains uncovered here (gambas-asn1#330 — separate, still
+    // open). Enumerated never reaches this switch — routed through the
+    // wholly separate emit_enumerated/EnumeratedSpec path.
     default:                                 return nullptr;
     }
 }
@@ -94,7 +93,7 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
 ///        own type may be a TypeRef alias rather than a direct builtin
 ///        (mbuiltin == nullopt) — the i64-native-INTEGER-alias case still
 ///        needs a tag despite carrying no mbuiltin.
-/// @note gambas-asn1#350: the direct-builtin Integer case is intercepted
+/// @note The direct-builtin Integer case is intercepted
 ///       here via `storage_kind` (a real enum, not a string coincidence)
 ///       before ever reaching builtin_ber_tag's own `case Integer` —
 ///       builtin_ber_tag itself keeps taking `mtype` unchanged (still needed
@@ -129,11 +128,11 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
     switch (bt) {
     case ast::BuiltinType::Integer:           return "INTEGER";
     case ast::BuiltinType::Boolean:            return "BOOLEAN";
-    case ast::BuiltinType::Null:               return "NULL";  // gambas-asn1#349
-    case ast::BuiltinType::Real:               return "REAL";  // gambas-asn1#349
-    case ast::BuiltinType::BitString:          return "BIT-STRING";  // gambas-asn1#349
-    case ast::BuiltinType::ObjectIdentifier:   return "OBJECT-IDENTIFIER";  // gambas-asn1#349
-    case ast::BuiltinType::RelativeOid:        return "RELATIVE-OID";  // gambas-asn1#349
+    case ast::BuiltinType::Null:               return "NULL";
+    case ast::BuiltinType::Real:               return "REAL";
+    case ast::BuiltinType::BitString:          return "BIT-STRING";
+    case ast::BuiltinType::ObjectIdentifier:   return "OBJECT-IDENTIFIER";
+    case ast::BuiltinType::RelativeOid:        return "RELATIVE-OID";
     case ast::BuiltinType::OctetString:        return "OCTET-STRING";
     case ast::BuiltinType::Ia5String:          return "IA5String";
     case ast::BuiltinType::Utf8String:         return "UTF8String";
@@ -147,10 +146,10 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
     case ast::BuiltinType::BmpString:          return "BMPString";
     case ast::BuiltinType::VideotexString:     return "VideotexString";
     case ast::BuiltinType::ObjectDescriptor:   return "ObjectDescriptor";
-    case ast::BuiltinType::UtcTime:            return "UTCTime";  // gambas-asn1#349
-    case ast::BuiltinType::GeneralizedTime:    return "GeneralizedTime";  // gambas-asn1#349
-    // Same uncovered set as builtin_ber_tag's default (gambas-asn1#349/
-    // #330) — this fallback name is never actually reached in practice
+    case ast::BuiltinType::UtcTime:            return "UTCTime";
+    case ast::BuiltinType::GeneralizedTime:    return "GeneralizedTime";
+    // Same uncovered set as builtin_ber_tag's default (only Any,
+    // gambas-asn1#330) — this fallback name is never actually reached in practice
     // since builtin_xer_name is only called for kinds builtin_ber_tag
     // already confirmed are covered (see call sites).
     default:                                    return "Value";
@@ -165,10 +164,10 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
 ///        Option<T> for OPTIONAL) while CHOICE alternatives work with a
 ///        fresh local `v` (pattern-matched out of `x` on encode, built from
 ///        scratch on decode) — genuinely different code shapes, not worth
-///        forcing through one closure-body generator (gambas-asn1#344).
+///        forcing through one closure-body generator.
 enum class TaggedKind { None, Boolean, Integer, Real, Null, OctetString, BitString, ObjectIdentifier, RelativeOid, CharString };
 
-// gambas-asn1#350: takes storage_kind, not mtype — only ever called with
+// Takes storage_kind, not mtype — only ever called with
 // member/alt-level data (never elem_builtin/elem_mtype), so unlike
 // builtin_ber_tag/builtin_xer_ready there's no shared elem-level caller to
 // keep a string-based signature for.
@@ -176,13 +175,13 @@ static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, IntS
     if (!mbuiltin) return TaggedKind::None;
     switch (*mbuiltin) {
     case ast::BuiltinType::Boolean:     return TaggedKind::Boolean;
-    case ast::BuiltinType::Null:        return TaggedKind::Null;  // gambas-asn1#349
-    case ast::BuiltinType::Real:        return TaggedKind::Real;  // gambas-asn1#349
+    case ast::BuiltinType::Null:        return TaggedKind::Null;
+    case ast::BuiltinType::Real:        return TaggedKind::Real;
     case ast::BuiltinType::Integer:     return storage_kind == IntStorageKind::S64 ? TaggedKind::Integer : TaggedKind::None;
     case ast::BuiltinType::OctetString: return TaggedKind::OctetString;
-    case ast::BuiltinType::BitString:   return TaggedKind::BitString;  // gambas-asn1#349
-    case ast::BuiltinType::ObjectIdentifier: return TaggedKind::ObjectIdentifier;  // gambas-asn1#349
-    case ast::BuiltinType::RelativeOid: return TaggedKind::RelativeOid;  // gambas-asn1#349
+    case ast::BuiltinType::BitString:   return TaggedKind::BitString;
+    case ast::BuiltinType::ObjectIdentifier: return TaggedKind::ObjectIdentifier;
+    case ast::BuiltinType::RelativeOid: return TaggedKind::RelativeOid;
     case ast::BuiltinType::Ia5String:
     case ast::BuiltinType::Utf8String:
     case ast::BuiltinType::NumericString:
@@ -195,11 +194,11 @@ static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, IntS
     case ast::BuiltinType::BmpString:
     case ast::BuiltinType::VideotexString:
     case ast::BuiltinType::ObjectDescriptor:
-    case ast::BuiltinType::UtcTime:       // gambas-asn1#349
-    case ast::BuiltinType::GeneralizedTime:  // gambas-asn1#349
+    case ast::BuiltinType::UtcTime:
+    case ast::BuiltinType::GeneralizedTime:
         return TaggedKind::CharString;
-    // Same uncovered set as builtin_ber_tag's default (gambas-asn1#349/
-    // #330) — a tagged member/alternative of one of these kinds falls back
+    // Same uncovered set as builtin_ber_tag's default (only Any,
+    // gambas-asn1#330) — a tagged member/alternative of one of these kinds falls back
     // to the natural-tag path, which itself has no coverage either, so the
     // enclosing SEQUENCE/CHOICE gets no table at all (all_covered gates on
     // rust_member_ber_tag/rust_alt_ber_tag, not tagged_kind_for).
@@ -208,8 +207,8 @@ static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, IntS
     }
 }
 
-// gambas-asn1#349: SIZE-check function generators (emit_builtin_alias_
-// definition, emit_member_type_descriptor) generically emitted `v.len()`
+// SIZE-check function generators (emit_builtin_alias_
+// definition, emit_member_type_descriptor) generically emit `v.len()`
 // for every SIZE-constrained builtin type, assuming a `Vec<T>`/`String`-
 // like native storage type. BitString's own native type (`bit_string::
 // BitString`) has no `.len()` — and even if it exposed one via `.bytes`,
@@ -230,7 +229,7 @@ void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::o
     os << "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n";
     os << "#[repr(i64)]\n";
     os << std::format("pub enum {} {{\n", tname);
-    // gambas-asn1#305: variant_name's word-split conversion discards
+    // variant_name's word-split conversion discards
     // whichever separator distinguished two ASN.1 value names (e.g. "a-b"
     // and "ab" both become "Ab") — a collision sema's own duplicate check
     // never catches, since that only compares the raw ASN.1 identifiers.
@@ -259,9 +258,9 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
     // explicit path regardless, so this works everywhere).
     os << std::format("impl std::convert::TryFrom<i64> for {} {{\n", tname);
     os << "    type Error = ();\n";
-    // gambas-asn1#304: `()` written out directly, not `Self::Error` — an
+    // `()` written out directly, not `Self::Error` — an
     // ASN.1 ENUMERATED value literally named `Error` (real case on the
-    // ETSI LI PS-PDU schema, #299) makes `Self::Error` ambiguous: it could
+    // ETSI LI PS-PDU schema) makes `Self::Error` ambiguous: it could
     // mean either the enum variant `Self::Error` (i.e. `TypeName::Error`)
     // or the trait's own associated type. `type Error = ();` two lines up
     // is a fixed literal this backend always emits, never derived from
@@ -280,7 +279,7 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
     os << "    }\n";
     os << "}\n\n";
 
-    // gambas-asn1#311: a manual Default impl (not #[derive(Default)] — no
+    // A manual Default impl (not #[derive(Default)] — no
     // stable "pick this variant" attribute exists for a plain fieldless
     // enum without unstable features) picking the first declared value, so
     // a SEQUENCE with a *required* (non-OPTIONAL) member of this type can
@@ -359,28 +358,28 @@ void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
 ///           ENUMERATED — same precondition as CppBackend's equivalent).
 /// @return Rust type name, e.g. `"Vec<u8>"`, `"String"`, `"bool"`.
 /// @note `Ia5String` alone maps to plain `String` — it has its own
-///       `Asn1Value for String` impl (`rust-runtime/ber/src/value.rs`,
-///       gambas-asn1#282), kept as-is for ergonomics/backward compatibility.
+///       `Asn1Value for String` impl (`rust-runtime/ber/src/value.rs`),
+///       kept as-is for ergonomics/backward compatibility.
 ///       The other 11 restricted-character-string kinds
-///       (gambas-asn1#326) map to their own `rust-runtime/ber::strings`
+///       map to their own `rust-runtime/ber::strings`
 ///       newtype (`NumericString`, `PrintableString`, ...) — a plain
 ///       `String` can only carry one `Asn1Value` impl, so a second string
 ///       kind can't reuse `Ia5String`'s without fighting over which tag to
 ///       check/write (see `strings.rs`'s module doc). `Vec<u8>` for OCTET
-///       STRING/Any (gambas-asn1#349: BIT STRING/OBJECT IDENTIFIER/
-///       RELATIVE-OID each moved to their own `bit_string::BitString`/
-///       `oid::ObjectIdentifier`/`relative_oid::RelativeOid` structs — same
+///       STRING/Any. BIT STRING/OBJECT IDENTIFIER/RELATIVE-OID each have
+///       their own `bit_string::BitString`/`oid::ObjectIdentifier`/
+///       `relative_oid::RelativeOid` structs — same
 ///       single-impl-per-concrete-type conflict: `Vec<u8>` alone can't
 ///       carry BIT STRING's unused-bits count, and OID/RELATIVE-OID would
 ///       fight over one `Vec<u64>` impl since they have different wire
 ///       encodings — same "distinct type per ASN.1 kind" convention as the
-///       string newtypes, not primitive reuse). `UtcTime`/`GeneralizedTime`
-///       (gambas-asn1#349) are also `strings.rs` newtypes now, via the same
+///       string newtypes, not primitive reuse. `UtcTime`/`GeneralizedTime`
+///       are also `strings.rs` newtypes, via the same
 ///       `char_string_type!` macro — X.691 §23's own "character string
 ///       types" definition includes them, and their BER/XER wire shape is
 ///       byte-for-byte identical to any other string kind (see
 ///       `strings.rs`'s module doc); not real parsed timestamp types, just
-///       the raw ASN.1 string (matches this pairing's scope — compiles as
+///       the raw ASN.1 string (compiles as
 ///       real Rust, no runtime wiring yet for actual date/time semantics).
 ///       A real BER/PER runtime would likely want tighter types (e.g.
 ///       `[u32]` arcs for OID, an actual date/time type here); revisit then.
@@ -390,10 +389,10 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     case BT::Boolean:          return "bool";
     case BT::Real:             return "f64";
     case BT::Null:             return "()";
-    case BT::BitString:        return "asn1cpp_ber::bit_string::BitString";  // gambas-asn1#349
+    case BT::BitString:        return "asn1cpp_ber::bit_string::BitString";
     case BT::OctetString:      return "Vec<u8>";
-    case BT::ObjectIdentifier: return "asn1cpp_ber::oid::ObjectIdentifier";  // gambas-asn1#349
-    case BT::RelativeOid:      return "asn1cpp_ber::relative_oid::RelativeOid";  // gambas-asn1#349
+    case BT::ObjectIdentifier: return "asn1cpp_ber::oid::ObjectIdentifier";
+    case BT::RelativeOid:      return "asn1cpp_ber::relative_oid::RelativeOid";
     case BT::Utf8String:       return "asn1cpp_ber::strings::Utf8String";
     case BT::NumericString:    return "asn1cpp_ber::strings::NumericString";
     case BT::PrintableString:  return "asn1cpp_ber::strings::PrintableString";
@@ -406,15 +405,15 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     case BT::BmpString:        return "asn1cpp_ber::strings::BmpString";
     case BT::VideotexString:   return "asn1cpp_ber::strings::VideotexString";
     case BT::ObjectDescriptor: return "asn1cpp_ber::strings::ObjectDescriptor";
-    case BT::UtcTime:          return "asn1cpp_ber::strings::UtcTime";  // gambas-asn1#349
-    case BT::GeneralizedTime:  return "asn1cpp_ber::strings::GeneralizedTime";  // gambas-asn1#349
+    case BT::UtcTime:          return "asn1cpp_ber::strings::UtcTime";
+    case BT::GeneralizedTime:  return "asn1cpp_ber::strings::GeneralizedTime";
     case BT::Any:              return "Vec<u8>";
     default:                   return "Vec<u8>";  // Integer/Enumerated: unreachable here
     }
 }
 
 /// @brief Format a resolved `TagSpec` as an `asn1cpp_ber::tag::Tag` struct
-///        literal. gambas-asn1#290: mirrors `CppBackend::format_tag_literal`
+///        literal. Mirrors `CppBackend::format_tag_literal`
 ///        — same input (backend-agnostic `TagSpec`), Rust struct-literal
 ///        syntax instead of C++'s. `Tag`/`TagClass` are both `pub` with
 ///        `pub` fields (`rust-runtime/ber/src/tag.rs`), constructible this
@@ -586,13 +585,8 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
 /// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
 /// @param os   Output stream to write to.
 /// @note `spec.members[i].mtype` is treated as an opaque, already-Rust-
-///       shaped type name string — the same "supplied by the caller"
-///       contract as CppBackend's own consumer today: real Generator ->
-///       RustBackend wiring (a from-Generator::cpp_type_for() value) doesn't
-///       exist yet (no `--target=rust` CLI flag, #245), so nothing in this
-///       pairing can verify a *real* schema's field types compile as Rust —
-///       only that the emitted struct shape is correct for whatever type
-///       strings arrive. `ops`/`tdref`/`def_setter`/`offset_expr` are
+///       shaped type name string, always a real `Generator::cpp_type_for()`
+///       value under `--target=rust`. `ops`/`tdref`/`def_setter`/`offset_expr` are
 ///       C++-runtime-only (per SequenceMemberSpec's own doc) and unused
 ///       here; optional members become `Option<T>` rather than C++'s
 ///       `unique_ptr<T>`, Rust's natural equivalent.
@@ -600,7 +594,7 @@ void RustBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostre
     os << "#[derive(Debug, Clone, Default, PartialEq)]\n";
     os << std::format("pub struct {} {{\n", spec.type_name);
     for (const auto& m : spec.members) {
-        // gambas-asn1#303: a member whose class type cycles back to this
+        // A member whose class type cycles back to this
         // enclosing type needs `Box<T>` — Rust (unlike C++'s
         // pointer-by-default unique_ptr) gives a plain `T`/`Option<T>`
         // field no heap indirection at all, so a genuine ASN.1
@@ -630,17 +624,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     os << "    }\n";
     os << "}\n\n";
 
-    // gambas-asn1#278: table-driven, mirroring asn_MBR_/asn_SPC_ + the
+    // Table-driven, mirroring asn_MBR_/asn_SPC_ + the
     // generic SequenceBerHandler dispatch (runtime/src/BerCodec.cpp) instead
-    // of #219's straight-line per-type encode()/decode() bodies. Scoped
-    // narrowly on purpose, same as #219 before it — only SEQUENCEs whose
+    // of a straight-line per-type encode()/decode() body. Scoped
+    // narrowly on purpose — only SEQUENCEs whose
     // every member is a plain required member of a type with a real
-    // Asn1Value BER impl (gambas-asn1#282: INTEGER, BOOLEAN, OCTET STRING,
-    // IA5String — see rust_member_ber_tag below) get a real descriptor
-    // table + encode()/decode(); anything else (OPTIONAL members, CHOICE/
-    // SEQUENCE OF/other string or time members, ...) still gets only the
+    // Asn1Value BER impl (see rust_member_ber_tag below for the currently-
+    // covered set) get a real descriptor
+    // table + encode()/decode(); anything else still gets only the
     // struct shape. Broadening further member-type/tag coverage is real
-    // follow-on work, not this issue's scope.
+    // follow-on work.
     // mbuiltin is unset for TypeRef members (named INTEGER subtype aliases,
     // e.g. `MyByte ::= INTEGER (0..255)` used as a member type) — Generator
     // only populates it from the member's own AST node when that node
@@ -652,38 +645,38 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // — so `mtype` is never literally "i64" for an aliased member, and the
     // fallback is currently dead. Pre-existing gap, not introduced or fixed
     // here — filed separately (gambas-asn1#361).
-    // gambas-asn1#315: `mbuiltin == Integer` only says the member *is* an
+    // `mbuiltin == Integer` only says the member *is* an
     // INTEGER, not which Rust storage type classify_integer_storage/
     // native_int_type actually picked for it (i64 default; u64/i128/
     // Vec<u8> for wider constrained ranges — same IntStorageKind the C++
     // side also branches on). Asn1Value is only implemented for i64
     // (rust-runtime/ber/src/value.rs), so the INTEGER case must be gated on
-    // that storage kind — found on the real ETSI LI PS-PDU schema (#299),
+    // that storage kind — found on the real ETSI LI PS-PDU schema,
     // where a semi-constrained-wide INTEGER member picked u64 storage and
     // the old unconditional `case Integer:` still emitted a table row for
     // it, producing `the trait bound u64: Asn1Value is not satisfied`.
-    // gambas-asn1#350: that gate is now `storage_kind == IntStorageKind::S64`
+    // That gate is now `storage_kind == IntStorageKind::S64`
     // (a real enum, checked by rust_member_xer_ready/rust_member_ber_tag's
     // callers before ever reaching this function) rather than `mtype ==
     // "i64"` — this function's own `case Integer` below still takes `mtype`
     // because it's also called for SEQUENCE OF *element* coverage
-    // (elem_builtin/elem_mtype has no storage_kind counterpart, out of
-    // #350's scope), so it keeps the original string check for that path.
+    // (elem_builtin/elem_mtype has no storage_kind counterpart,
+    // out of scope here), so it keeps the original string check for that path.
     // Asn1Value's XER leg now covers the same kinds the BER leg does
-    // (gambas-asn1#283/#326). Kept as its own gate (not just reusing
+    // Kept as its own gate (not just reusing
     // builtin_ber_tag's coverage set) rather than assuming the two always
     // match — encode_xer()/decode_xer() must never be emitted for a member
     // type whose Asn1Value XER leg is still the default, or the emitted
-    // method panics at runtime (found in #282's review).
+    // method panics at runtime.
     auto builtin_xer_ready = [](ast::BuiltinType bt, const std::string& mtype) -> bool {
         switch (bt) {
-        case ast::BuiltinType::Integer:     return mtype == "i64";  // element-level path only (#350)
+        case ast::BuiltinType::Integer:     return mtype == "i64";  // element-level path only
         case ast::BuiltinType::Boolean:
-        case ast::BuiltinType::Null:        // gambas-asn1#349
-        case ast::BuiltinType::Real:        // gambas-asn1#349
-        case ast::BuiltinType::BitString:   // gambas-asn1#349
-        case ast::BuiltinType::ObjectIdentifier:  // gambas-asn1#349
-        case ast::BuiltinType::RelativeOid:  // gambas-asn1#349
+        case ast::BuiltinType::Null:
+        case ast::BuiltinType::Real:
+        case ast::BuiltinType::BitString:
+        case ast::BuiltinType::ObjectIdentifier:
+        case ast::BuiltinType::RelativeOid:
         case ast::BuiltinType::OctetString:
         case ast::BuiltinType::Ia5String:
         case ast::BuiltinType::Utf8String:
@@ -697,8 +690,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         case ast::BuiltinType::BmpString:
         case ast::BuiltinType::VideotexString:
         case ast::BuiltinType::ObjectDescriptor:
-        case ast::BuiltinType::UtcTime:       // gambas-asn1#349
-        case ast::BuiltinType::GeneralizedTime:  // gambas-asn1#349
+        case ast::BuiltinType::UtcTime:
+        case ast::BuiltinType::GeneralizedTime:
             return true;
         default:
             return false;
@@ -707,7 +700,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     auto rust_member_ber_tag = [](const SequenceMemberSpec& m) -> const char* {
         return rust_tag_for_builtin_or_alias(m.mbuiltin, m.storage_kind, m.mtype);
     };
-    // gambas-asn1#332: IMPLICIT tag override closures — see
+    // IMPLICIT tag override closures — see
     // MemberAccess::TaggedScalar's doc comment (rust-runtime/ber/src/
     // sequence.rs) for why `Scalar`'s get/get_mut can't express this.
     // Returns (ber_encode closure body, ber_decode_into closure body) for a
@@ -736,7 +729,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::integer::write_integer_tagged(out, {1}, v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::integer::read_integer_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
-        // gambas-asn1#349: same shape as Integer — f64 is Copy.
+        // same shape as Integer — f64 is Copy.
         case TaggedKind::Real:
             if (m.optional)
                 return std::make_pair(
@@ -745,7 +738,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::real::write_real_tagged(out, {1}, v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::real::read_real_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
-        // gambas-asn1#349: NULL carries no data — encode only checks presence
+        // NULL carries no data — encode only checks presence
         // (Option case) or writes unconditionally (required case); `v` is
         // unused on encode (`_v`) since there's nothing to read from the field.
         case TaggedKind::Null:
@@ -764,7 +757,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::octet_string::write_octet_string_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::octet_string::read_octet_string_tagged(r, {1})?.to_vec(); Ok(()) }}", m.mname, tag_lit));
-        // gambas-asn1#349: read_bit_string_tagged already returns an owned
+        // read_bit_string_tagged already returns an owned
         // BitString (unlike octet_string's &[u8] needing .to_vec()).
         case TaggedKind::BitString:
             if (m.optional)
@@ -774,7 +767,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::bit_string::write_bit_string_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::bit_string::read_bit_string_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
-        // gambas-asn1#349: same shape as BitString — read_object_identifier_tagged
+        // same shape as BitString — read_object_identifier_tagged
         // already returns an owned ObjectIdentifier.
         case TaggedKind::ObjectIdentifier:
             if (m.optional)
@@ -784,7 +777,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::oid::write_object_identifier_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::oid::read_object_identifier_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
-        // gambas-asn1#349: same shape as ObjectIdentifier.
+        // same shape as ObjectIdentifier.
         case TaggedKind::RelativeOid:
             if (m.optional)
                 return std::make_pair(
@@ -820,13 +813,13 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     };
     auto rust_member_xer_ready = [&](const SequenceMemberSpec& m) -> bool {
         if (!m.mbuiltin) return m.mtype == "i64";
-        // gambas-asn1#350: storage_kind, not mtype=="i64" — same interception
+        // storage_kind, not mtype=="i64" — same interception
         // as rust_tag_for_builtin_or_alias, before builtin_xer_ready's own
         // (still string-based, still shared with SEQUENCE OF elements) check.
         if (*m.mbuiltin == ast::BuiltinType::Integer) return m.storage_kind == IntStorageKind::S64;
         return builtin_xer_ready(*m.mbuiltin, m.mtype);
     };
-    // gambas-asn1#331: a SEQUENCE OF member is covered only when it's
+    // A SEQUENCE OF member is covered only when it's
     // required (this PR's scope stops short of OPTIONAL SEQUENCE OF —
     // absent-vs-empty-list presence detection needs its own design pass,
     // not folded silently into this one) and its element type is itself
@@ -838,7 +831,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     auto rust_seqof_xer_ready = [&](const SequenceMemberSpec& m) -> bool {
         return rust_seqof_ber_tag(m) != nullptr && builtin_xer_ready(*m.elem_builtin, m.elem_mtype);
     };
-    // gambas-asn1#326: OPTIONAL members are now table-covered too — an
+    // OPTIONAL members are table-covered too — an
     // OPTIONAL member's own field type (rust-runtime/ber's blanket
     // `Asn1Value for Option<V>` impl, value.rs) handles wire-absence
     // entirely on its own; the `get`/`get_mut` closures below are identical
@@ -867,18 +860,18 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             os << std::format("        name: \"{}\",\n", m.asn1_name);
             if (m.is_seq_of) {
                 const char* elem_xer_name = builtin_xer_name(*m.elem_builtin);
-                // gambas-asn1#337: prefer the member's real resolved tag
+                // Prefer the member's real resolved tag
                 // (IMPLICIT override) over SEQUENCE-OF's natural SEQUENCE_TAG,
                 // same TaggedScalar-vs-Scalar branch used below for scalar
                 // members.
                 if (m.resolved_tag && m.is_explicit) {
-                    // gambas-asn1#346: EXPLICIT — wrap the natural SeqOf
+                    // EXPLICIT — wrap the natural SeqOf
                     // encoding (encode_seq_of/decode_seq_of, not the
                     // tag-substituting _tagged variant) in an outer TLV.
                     std::string tag_lit = format_tag_literal(*m.resolved_tag);
                     os << std::format("        tag: {},\n", tag_lit);
                     // optional: false here (not m.optional) inherits the
-                    // same #331 scope limit as the IMPLICIT TaggedSeqOf/
+                    // same scope limit as the IMPLICIT TaggedSeqOf/
                     // SeqOf branches below — OPTIONAL SEQUENCE OF isn't
                     // handled by any SeqOf path yet (no presence-peek in
                     // decode_sequence's SeqOf-family arms).
@@ -892,7 +885,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 } else if (m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit) {
                     std::string tag_lit = format_tag_literal(*m.resolved_tag);
                     os << std::format("        tag: {},\n", tag_lit);
-                    // optional: false here (not m.optional) inherits #331's
+                    // optional: false here (not m.optional) inherits the
                     // scope limit below — OPTIONAL SEQUENCE OF isn't handled
                     // by either SeqOf path yet (no presence-peek in
                     // decode_sequence's SeqOf/TaggedSeqOf arms), not something
@@ -905,7 +898,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
                     os << "        },\n";
                 } else {
-                    // gambas-asn1#331: the descriptor's own `tag` is the OUTER
+                    // The descriptor's own `tag` is the OUTER
                     // SEQUENCE-OF container tag — decode_sequence's SeqOf branch
                     // never actually consults it (no OPTIONAL presence-peek for
                     // this PR's required-only scope), kept only so the struct
@@ -922,7 +915,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << "        },\n";
                 }
             } else if (m.resolved_tag && m.is_explicit) {
-                // gambas-asn1#346: EXPLICIT tagging (X.690 §8.14.3) — wrap
+                // EXPLICIT tagging (X.690 §8.14.3) — wrap
                 // the member's natural (untagged) Asn1Value encoding in a
                 // constructed outer TLV via value::encode_explicit/
                 // decode_explicit, rather than substituting the tag like
@@ -944,7 +937,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
                 os << "        },\n";
             } else {
-                // gambas-asn1#332: prefer the member's real resolved tag
+                // Prefer the member's real resolved tag
                 // (IMPLICIT override) over its natural one whenever one
                 // applies and this builtin kind has a *_tagged primitive.
                 std::optional<std::pair<std::string, std::string>> tagged_ops;
@@ -972,11 +965,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             "static {}: asn1cpp_ber::sequence::SequenceSpec<{}> = asn1cpp_ber::sequence::SequenceSpec {{\n",
             spec_ident, spec.type_name);
         os << std::format("    name: \"{}\",\n", spec.type_name);
-        // gambas-asn1#326: SET's own natural tag (universal 17), not
+        // SET's own natural tag (universal 17), not
         // SEQUENCE's (16) — same distinction CppBackend's own
         // emit_sequence_definition already makes (spec.is_set), just never
         // threaded through here before now.
-        // gambas-asn1#342: honor a top-level [n] IMPLICIT/EXPLICIT tag on
+        // Honor a top-level [n] IMPLICIT/EXPLICIT tag on
         // this type assignment itself (X.690 §8.14) — same fix CppBackend
         // already has for this same case.
         os << std::format("    tag: {},\n",
@@ -1014,16 +1007,15 @@ void RustBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
 /// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
 /// @param os   Output stream to write to.
 /// @note Deliberately does NOT port the C++ side's raw-buffer/`alignas`/
-///       `std::launder`/`ChoiceOps<T>` storage design (see design note on
-///       gambas-asn1#240) — that design exists only to dodge
+///       `std::launder`/`ChoiceOps<T>` storage design — that design exists only to dodge
 ///       `std::variant`'s O(N²) template-instantiation blowup on large
 ///       CHOICEs, a C++-template-specific failure mode. Rust's `enum` is a
 ///       native tagged union, not template-recursive, so the natural
 ///       mapping has no equivalent problem. No `#[derive(Default)]`: unlike
 ///       a struct, a CHOICE has no natural default variant.
 void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const {
-    // gambas-asn1#284: variant names use variant_name(), not the raw
-    // a.pr_name — found while building #284's fixture. a.pr_name is
+    // Variant names use variant_name(), not the raw
+    // a.pr_name. a.pr_name is
     // Generator's backend-agnostic "PR" name (mirrors the C++ side's
     // `enum class PR { NOTHING, num, flag, ... }`, ASN.1 member-name
     // casing verbatim — fine for C++, which has no naming-convention lint
@@ -1037,7 +1029,7 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
     // needed (variant_name(), just above emit_enumerated_declaration).
     os << "#[derive(Debug, Clone, PartialEq)]\n";
     os << std::format("pub enum {} {{\n", spec.type_name);
-    // gambas-asn1#305: same collision guard as emit_enumerated_declaration —
+    // Same collision guard as emit_enumerated_declaration —
     // variant_name's word-split conversion can map two distinct alternative
     // names onto the same Rust variant (e.g. "a-b"/"ab" both -> "Ab").
     std::unordered_map<std::string, std::string> seen_variants;  // variant name -> first asn1_name
@@ -1057,8 +1049,8 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
 /// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
 /// @param os   Output stream to write to.
 /// @note Free functions doing an exhaustive `match`, not methods — the
-///       Rust analogue of the C++ side's offset-based accessor methods
-///       (see design note on gambas-asn1#240), but compiler-checked
+///       Rust analogue of the C++ side's offset-based accessor methods,
+///       but compiler-checked
 ///       (exhaustive match) rather than an unchecked `reinterpret_cast`:
 ///       worst case on a mismatched variant is a controlled panic, not UB.
 ///       `tag_index_table`/`ber_tags` (BER wire-dispatch specific) are
@@ -1073,14 +1065,14 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "}\n\n";
     }
 
-    // gambas-asn1#311: manual Default impl, first-declared alternative with
+    // Manual Default impl, first-declared alternative with
     // its own type's Default value — same rationale as ENUMERATED's Default
     // impl just above this call in the file (emit_enumerated_definition):
     // X.680 CHOICE (§28) has no "default alternative" concept at all (even
     // less than ENUMERATED's arbitrary-but-defensible "first value"), but
     // without *some* Default a SEQUENCE with a required (non-OPTIONAL)
     // CHOICE-typed member can't derive Default itself — the actual bug
-    // found on the real ETSI LI PS-PDU schema (193 compile errors, #299).
+    // found on the real ETSI LI PS-PDU schema (193 compile errors).
     // Requires the first alternative's own mtype to implement Default,
     // which recursively holds for every type this backend generates
     // (primitives, String, Vec<T>, and now every ENUMERATED/CHOICE too).
@@ -1092,8 +1084,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "}\n\n";
     }
 
-    // gambas-asn1#284/#285: table-driven, mirroring emit_sequence_definition's
-    // approach (#278/#282) and the generic runtime walker
+    // Table-driven, mirroring emit_sequence_definition's
+    // approach and the generic runtime walker
     // (encode_choice/decode_choice/encode_choice_xer/decode_choice_xer,
     // rust-runtime/ber/src/choice.rs) instead of a per-type match/if chain.
     // Same scope restriction as SEQUENCE: only CHOICEs whose every
@@ -1108,17 +1100,17 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // the way emit_sequence_definition can emit BER-only encode()/decode()
     // and skip encode_xer()/decode_xer(). Not a live gap today: every
     // builtin type covered here already has both legs (Asn1Value's XER leg
-    // landed for all four in #283, before this issue). Would need
+    // landed for all four builtin kinds). Would need
     // revisiting if a future BER-only type is added to builtin_ber_tag's
     // switch before its XER leg lands.
-    // gambas-asn1#315: same u64/i128-vs-i64 storage gate as
+    // Same u64/i128-vs-i64 storage gate as
     // emit_sequence_definition's rust_member_ber_tag — see that lambda's
     // comment for the full rationale.
     auto rust_alt_ber_tag = [](const ChoiceAlternativeSpec& a) -> const char* {
         return rust_tag_for_builtin_or_alias(a.mbuiltin, a.storage_kind, a.mtype);
     };
-    // gambas-asn1#336: IMPLICIT tag override for a CHOICE alternative — same
-    // reasoning as emit_sequence_definition's rust_tagged_ops (#332), adapted
+    // IMPLICIT tag override for a CHOICE alternative — same
+    // reasoning as emit_sequence_definition's rust_tagged_ops, adapted
     // to a fresh local `v` (pattern-matched out of `x`/decoded from scratch)
     // instead of a struct member access. Returns the encode/decode body
     // fragments (statements ending in the variant construction/`out` write),
@@ -1143,13 +1135,13 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 std::format("asn1cpp_ber::integer::write_integer_tagged(out, {}, *v);", tag_lit),
                 std::format("let v = asn1cpp_ber::integer::read_integer_tagged(r, {})?; {}",
                              tag_lit, variant_ctor("v")));
-        // gambas-asn1#349: same shape as Integer — f64 is Copy.
+        // same shape as Integer — f64 is Copy.
         case TaggedKind::Real:
             return std::make_pair(
                 std::format("asn1cpp_ber::real::write_real_tagged(out, {}, *v);", tag_lit),
                 std::format("let v = asn1cpp_ber::real::read_real_tagged(r, {})?; {}",
                              tag_lit, variant_ctor("v")));
-        // gambas-asn1#349: NULL's payload (`()`) carries no data — `let _ =
+        // NULL's payload (`()`) carries no data — `let _ =
         // v;` explicitly discards the `if let`-bound match (still needed to
         // destructure the enum) so rustc's unused_variables lint stays quiet.
         case TaggedKind::Null:
@@ -1161,20 +1153,20 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 std::format("asn1cpp_ber::octet_string::write_octet_string_tagged(out, {}, v);", tag_lit),
                 std::format("let v = asn1cpp_ber::octet_string::read_octet_string_tagged(r, {})?.to_vec(); {}",
                              tag_lit, variant_ctor("v")));
-        // gambas-asn1#349: read_bit_string_tagged already returns an owned
+        // read_bit_string_tagged already returns an owned
         // BitString (unlike octet_string's &[u8] needing .to_vec()).
         case TaggedKind::BitString:
             return std::make_pair(
                 std::format("asn1cpp_ber::bit_string::write_bit_string_tagged(out, {}, v);", tag_lit),
                 std::format("let v = asn1cpp_ber::bit_string::read_bit_string_tagged(r, {})?; {}",
                              tag_lit, variant_ctor("v")));
-        // gambas-asn1#349: same shape as BitString.
+        // same shape as BitString.
         case TaggedKind::ObjectIdentifier:
             return std::make_pair(
                 std::format("asn1cpp_ber::oid::write_object_identifier_tagged(out, {}, v);", tag_lit),
                 std::format("let v = asn1cpp_ber::oid::read_object_identifier_tagged(r, {})?; {}",
                              tag_lit, variant_ctor("v")));
-        // gambas-asn1#349: same shape as ObjectIdentifier.
+        // same shape as ObjectIdentifier.
         case TaggedKind::RelativeOid:
             return std::make_pair(
                 std::format("asn1cpp_ber::relative_oid::write_relative_oid_tagged(out, {}, v);", tag_lit),
@@ -1216,7 +1208,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             os << "    asn1cpp_ber::choice::AlternativeSpec {\n";
             os << std::format("        name: \"{}\",\n", a.asn1_name);
             if (a.resolved_tag && a.is_explicit) {
-                // gambas-asn1#346: EXPLICIT — wrap the alternative's natural
+                // EXPLICIT — wrap the alternative's natural
                 // Asn1Value encoding in an outer TLV via value::
                 // encode_explicit/decode_explicit, generic over the
                 // alternative's type (same reasoning as the SEQUENCE scalar
@@ -1303,14 +1295,12 @@ void RustBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
 /// @param os Output stream to write to.
 /// @note Rust has no include-guard/`#include` concept to replicate here —
 ///       unlike CppBackend's emit_declaration_preamble, this is a doc comment and
-///       nothing else. See the design note on gambas-asn1#241: the
-///       two-call (hpp preamble / cpp preamble) split this method is part
-///       of bakes in C++'s header+impl file model, which doesn't fit Rust
-///       (no split at all). Not resolved here — this pairing's scope is
-///       proving each Backend method produces real, compiling output under
-///       the existing two-call contract, not redesigning that contract
-///       (needs actual file/stream-ownership requirements from a real
-///       --target=rust CLI wiring, gambas-asn1#245, which doesn't exist yet).
+///       nothing else. The two-call (hpp preamble / cpp preamble) split this
+///       method is part of bakes in C++'s header+impl file model, which
+///       doesn't fit Rust — left as-is rather than redesigned, since
+///       `declaration_extension()`/`definition_extension()` both resolving
+///       to `"rs"` already makes both calls land in the same stream/file
+///       for Rust, satisfying the contract without needing a separate split.
 void RustBackend::emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const {
     session.buffer(declaration_extension()) << "//! Module: " << module_comment << "\n\n";
 }
@@ -1320,7 +1310,7 @@ void RustBackend::emit_declaration_preamble(const std::string& module_comment, T
 /// @note Deliberately empty: Rust has nothing analogous to C++'s
 ///       `#include "X.hpp"` + GCC pragma pair here. See emit_declaration_preamble's
 ///       note — this is the concrete symptom of the two-file-model
-///       mismatch flagged in #241's design note, left unresolved by design
+///       mismatch, left unresolved by design
 ///       for this pairing.
 void RustBackend::emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const {
     (void)declaration_filename;
@@ -1341,7 +1331,7 @@ void RustBackend::emit_namespace_close(const std::string& name, TypeOutputSessio
 }
 
 /// @brief Emit the declaration half of a builtin-alias type.
-/// @note Deliberately empty: RustBackend's emit_builtin_alias_definition (#236)
+/// @note Deliberately empty: RustBackend's emit_builtin_alias_definition
 ///       already emits the complete `pub type X = ...;` alias plus any
 ///       size-check function in one call — there is no separate
 ///       declaration/definition split on the Rust side for this
@@ -1361,8 +1351,7 @@ void RustBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSes
 ///        `pub type X = Vec<ElemType>;` alias.
 /// @note `spec.elem_type` is treated as an opaque, already-Rust-shaped type
 ///       string — same "supplied by the caller" contract as every other
-///       pairing (see e.g. emit_sequence_declaration's note): real Generator ->
-///       RustBackend wiring doesn't exist yet (#245).
+///       pairing (see e.g. emit_sequence_declaration's note).
 void RustBackend::emit_seq_of_declaration(const SeqOfSpec& spec, std::ostream& os) const {
     os << std::format("pub type {} = Vec<{}>;\n\n", spec.type_name, spec.elem_type);
 }
@@ -1380,8 +1369,8 @@ void RustBackend::emit_typeref_alias_declaration(const std::string& type_name, c
 
 /// @brief Reference another generated type via its crate-relative module
 ///        path — assumes a generated crate root (main.cpp, --target=rust)
-///        declares one module per generated file (gambas-asn1#266).
-/// @note gambas-asn1#306: the module *identifier* is snake_case
+///        declares one module per generated file.
+/// @note module *identifier* is snake_case
 ///       (to_snake_case(filename)), not the raw filename — see
 ///       finalize_output's own `#[path = ...]` module declaration. `filename`
 ///       here is still the on-disk file stem (PascalCase, matching
@@ -1400,7 +1389,7 @@ void RustBackend::emit_forward_declaration(const std::string&, TypeOutputSession
 }
 
 /// @brief Rust's `Option<T>` needs no special member functions — no
-///        equivalent of C++'s unique_ptr-deep-copy dance (gambas-asn1#268).
+///        equivalent of C++'s unique_ptr-deep-copy dance.
 void RustBackend::emit_special_members(const std::string&, TypeOutputSession&) const {
 }
 
@@ -1412,10 +1401,10 @@ void RustBackend::emit_optional_member_ops(const std::string&, const std::string
 
 /// @brief Write the crate root: one module declaration per generated `.rs`
 ///        file, so the `use crate::<module>::<Type>;` paths
-///        emit_type_reference emits actually resolve (gambas-asn1#266).
+///        emit_type_reference emits actually resolve.
 ///        WIP (#214): flat mod-per-file list, no module tree mirroring
 ///        ASN.1 modules.
-/// @note gambas-asn1#306: module *identifier* is snake_case
+/// @note module *identifier* is snake_case
 ///       (`pub mod contact_list;`), not the PascalCase file stem — Rust
 ///       convention wants snake_case module names even though the type
 ///       inside is (correctly) PascalCase; a bare `pub mod ContactList;`

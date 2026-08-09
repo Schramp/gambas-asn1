@@ -25,7 +25,7 @@ pub fn read_real(r: &mut Reader) -> Result<f64, DecodeError> {
     read_real_tagged(r, REAL_TAG)
 }
 
-/// gambas-asn1#332: IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
+/// IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
 /// doc comment for the general rationale.
 pub fn write_real_tagged(out: &mut Vec<u8>, tag: Tag, value: f64) {
     if value == 0.0 {

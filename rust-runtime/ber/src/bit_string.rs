@@ -6,7 +6,7 @@
 //! `Vec<u8>` newtype like OCTET STRING/the restricted-character-string kinds
 //! — `Vec<u8>` alone can't carry the unused-bits count, and even if it
 //! could, `RustBackend::native_builtin_type` already maps OCTET STRING to
-//! plain `Vec<u8>` (gambas-asn1#282), so a second, different `Asn1Value`
+//! plain `Vec<u8>`, so a second, different `Asn1Value`
 //! impl for the same concrete type would conflict (Rust allows only one
 //! trait impl per concrete type — same reasoning `strings.rs`'s module doc
 //! gives for the 11 restricted-character-string newtypes).
@@ -45,7 +45,7 @@ pub fn read_bit_string(r: &mut Reader) -> Result<BitString, DecodeError> {
     read_bit_string_tagged(r, BIT_STRING_TAG)
 }
 
-/// gambas-asn1#332: IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
+/// IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
 /// doc comment for the general rationale.
 pub fn write_bit_string_tagged(out: &mut Vec<u8>, tag: Tag, value: &BitString) {
     let mut val = Vec::with_capacity(1 + value.bytes.len());
