@@ -333,6 +333,48 @@ impl Asn1Value for crate::bit_string::BitString {
     }
 }
 
+/// Maps ASN.1 OBJECT IDENTIFIER (gambas-asn1#349) — `native_builtin_type`'s
+/// `oid::ObjectIdentifier` choice, `RustBackend.cpp` (not plain `Vec<u64>`:
+/// see that struct's own module doc on the OID/RELATIVE-OID single-impl
+/// conflict). Mirrors `OidXerHandler`'s content model
+/// (`runtime/include/asn1cpp/codec/XerCodec.hpp`'s `format_arcs`/
+/// `parse_arcs`): dotted-decimal arcs, e.g. `2.5.4.3`.
+impl Asn1Value for crate::oid::ObjectIdentifier {
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        crate::oid::write_object_identifier(out, self);
+    }
+
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        *self = crate::oid::read_object_identifier(r)?;
+        Ok(())
+    }
+
+    fn xer_encode(&self, out: &mut String) {
+        for (i, arc) in self.0.iter().enumerate() {
+            if i > 0 {
+                out.push('.');
+            }
+            out.push_str(&arc.to_string());
+        }
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        let text = r.read_text_content();
+        let mut arcs = Vec::new();
+        for part in text.trim().split('.') {
+            if part.is_empty() {
+                break;
+            }
+            match part.parse::<u64>() {
+                Ok(v) => arcs.push(v),
+                Err(_) => break,
+            }
+        }
+        *self = crate::oid::ObjectIdentifier(arcs);
+        Ok(())
+    }
+}
+
 /// Maps `IA5String` (`native_builtin_type`'s `String` choice covers all 12
 /// string kinds; this impl is scoped to IA5String's wire tag specifically,
 /// see `strings.rs`'s module doc on widening to the others). Mirrors
@@ -512,6 +554,61 @@ mod tests {
         let mut r = XerReader::new("102");
         let mut got = BitString::default();
         assert!(got.xer_decode_into(&mut r).is_err());
+    }
+
+    #[test]
+    fn oid_ber_round_trips_through_the_trait() {
+        use crate::oid::ObjectIdentifier;
+
+        let v = ObjectIdentifier(vec![2, 5, 4, 3]);
+        let mut out = Vec::new();
+        v.ber_encode(&mut out);
+        assert_eq!(out, vec![0x06, 0x03, 0x55, 0x04, 0x03]);
+
+        let mut r = Reader::new(&out);
+        let mut got = ObjectIdentifier::default();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn oid_xer_round_trips_wrapped_by_hand() {
+        use crate::oid::ObjectIdentifier;
+        use crate::xer::{write_close_tag, write_open_tag};
+
+        let v = ObjectIdentifier(vec![2, 5, 4, 3]);
+        let mut out = String::new();
+        write_open_tag(&mut out, "oid");
+        v.xer_encode(&mut out);
+        write_close_tag(&mut out, "oid");
+        assert_eq!(out, "<oid>2.5.4.3</oid>");
+
+        let mut r = XerReader::new(&out);
+        r.consume_open_tag("oid").unwrap();
+        let mut got = ObjectIdentifier::default();
+        got.xer_decode_into(&mut r).unwrap();
+        r.consume_close_tag("oid").unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn oid_xer_single_arc_round_trips() {
+        use crate::oid::ObjectIdentifier;
+
+        let mut r = XerReader::new("2");
+        let mut got = ObjectIdentifier::default();
+        got.xer_decode_into(&mut r).unwrap();
+        assert_eq!(got, ObjectIdentifier(vec![2]));
+    }
+
+    #[test]
+    fn oid_xer_empty_round_trips() {
+        use crate::oid::ObjectIdentifier;
+
+        let mut r = XerReader::new("");
+        let mut got = ObjectIdentifier(vec![1, 2, 3]);
+        got.xer_decode_into(&mut r).unwrap();
+        assert_eq!(got, ObjectIdentifier::default());
     }
 
     #[test]
