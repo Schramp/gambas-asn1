@@ -35,6 +35,18 @@
 //! for this issue's scope — flagging so it isn't rediscovered as a surprise
 //! during #286 (randgen cross-validation against asn1c), where such inputs
 //! are exactly what a corruption-mode fuzz run would produce.
+//!
+//! **UtcTime/GeneralizedTime also live here (gambas-asn1#349)**, via the
+//! same `char_string_type!` macro, even though they're semantically time
+//! values, not character strings — X.691 §23's own definition of
+//! "character string types" explicitly includes them (same raw-bytes BER
+//! shape, `runtime/include/asn1cpp/types/Time.hpp`'s `BerTraits<UtcTime>`/
+//! `BerTraits<GeneralizedTime>` are byte-for-byte identical to
+//! `AsnStringBerHandler`, and their XER handlers use the same escaped-text
+//! form as every other string kind — `runtime/include/asn1cpp/codec/
+//! XerCodec.hpp`'s `decode_time_string`/`encode_text_element`). No
+//! separate `time.rs` module or macro duplication for what the standard
+//! itself already classifies as the same kind of thing.
 
 use crate::reader::{DecodeError, Reader};
 use crate::tag::{universal, Tag};
@@ -143,6 +155,8 @@ char_string_type!(GeneralString, GENERAL_STRING_TAG, universal::GENERAL_STRING, 
 char_string_type!(UniversalString, UNIVERSAL_STRING_TAG, universal::UNIVERSAL_STRING, "UniversalString");
 char_string_type!(BmpString, BMP_STRING_TAG, universal::BMP_STRING, "BMPString");
 char_string_type!(ObjectDescriptor, OBJECT_DESCRIPTOR_TAG, universal::OBJECT_DESCRIPTOR, "ObjectDescriptor");
+char_string_type!(UtcTime, UTC_TIME_TAG, universal::UTC_TIME, "UTCTime");
+char_string_type!(GeneralizedTime, GENERALIZED_TIME_TAG, universal::GENERALIZED_TIME, "GeneralizedTime");
 
 #[cfg(test)]
 mod tests {
@@ -223,5 +237,67 @@ mod tests {
         let mut got = PrintableString::default();
         got.xer_decode_into(&mut r).unwrap();
         assert_eq!(got, PrintableString("a<b".to_string()));
+    }
+
+    // ---- UtcTime/GeneralizedTime (gambas-asn1#349) --------------------------
+
+    #[test]
+    fn utc_time_ber_round_trips_and_uses_its_own_tag() {
+        let mut buf = Vec::new();
+        UtcTime("240115143000Z".to_string()).ber_encode(&mut buf);
+        // UTCTime tag (0x17), not IA5String's (0x16) or GeneralizedTime's (0x18).
+        assert_eq!(buf[0], 0x17);
+        assert_eq!(buf.len(), 2 + "240115143000Z".len());
+
+        let mut r = Reader::new(&buf);
+        let mut got = UtcTime::default();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, UtcTime("240115143000Z".to_string()));
+    }
+
+    #[test]
+    fn generalized_time_ber_round_trips_and_uses_its_own_tag() {
+        let mut buf = Vec::new();
+        GeneralizedTime("20240115143000Z".to_string()).ber_encode(&mut buf);
+        assert_eq!(buf[0], 0x18);
+
+        let mut r = Reader::new(&buf);
+        let mut got = GeneralizedTime::default();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, GeneralizedTime("20240115143000Z".to_string()));
+    }
+
+    #[test]
+    fn utc_time_rejects_generalized_time_tag() {
+        // A member typed UtcTime must not silently accept a
+        // GeneralizedTime-tagged TLV, even though both store a String underneath.
+        let data = [0x18, 0x02, b'h', b'i'];
+        let mut r = Reader::new(&data);
+        let mut got = UtcTime::default();
+        assert!(got.ber_decode_into(&mut r).is_err());
+    }
+
+    #[test]
+    fn utc_time_xer_round_trips() {
+        let mut out = String::new();
+        UtcTime("240115143000Z".to_string()).xer_encode(&mut out);
+        assert_eq!(out, "240115143000Z");
+
+        let mut r = XerReader::new(&out);
+        let mut got = UtcTime::default();
+        got.xer_decode_into(&mut r).unwrap();
+        assert_eq!(got, UtcTime("240115143000Z".to_string()));
+    }
+
+    #[test]
+    fn generalized_time_xer_round_trips() {
+        let mut out = String::new();
+        GeneralizedTime("20240115143000Z".to_string()).xer_encode(&mut out);
+        assert_eq!(out, "20240115143000Z");
+
+        let mut r = XerReader::new(&out);
+        let mut got = GeneralizedTime::default();
+        got.xer_decode_into(&mut r).unwrap();
+        assert_eq!(got, GeneralizedTime("20240115143000Z".to_string()));
     }
 }
