@@ -68,7 +68,7 @@ pub fn read_relative_oid(r: &mut Reader) -> Result<RelativeOid, DecodeError> {
     read_relative_oid_tagged(r, RELATIVE_OID_TAG)
 }
 
-/// gambas-asn1#332: IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
+/// IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
 /// doc comment for the general rationale.
 pub fn write_relative_oid_tagged(out: &mut Vec<u8>, tag: Tag, value: &RelativeOid) {
     let mut val = Vec::new();

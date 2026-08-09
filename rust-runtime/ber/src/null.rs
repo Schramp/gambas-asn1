@@ -21,7 +21,7 @@ pub fn read_null(r: &mut Reader) -> Result<(), DecodeError> {
     read_null_tagged(r, NULL_TAG)
 }
 
-/// gambas-asn1#332: IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
+/// IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
 /// doc comment for the general rationale. NULL's own natural tag never
 /// substitutes any content bytes (there are none), so this differs from
 /// every other `*_tagged` primitive only in writing an empty value.

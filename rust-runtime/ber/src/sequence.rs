@@ -1,6 +1,6 @@
 //! SEQUENCE encode/decode — X.680 §24, X.690 §8.9.
 //!
-//! Table-driven (gambas-asn1#278), mirroring `SequenceBerHandler`
+//! Table-driven, mirroring `SequenceBerHandler`
 //! (`runtime/src/BerCodec.cpp`) and `SequenceSpec`/`MemberDescriptor`
 //! (`runtime/include/asn1cpp/TypeDescriptor.hpp`): `encode_sequence`/
 //! `decode_sequence` are generic, driven entirely by a `SequenceSpec<T>`
@@ -22,7 +22,7 @@ use crate::xer::XerReader;
 
 pub const SEQUENCE_TAG: Tag = Tag::universal(universal::SEQUENCE, true);
 
-/// gambas-asn1#326: SET's own natural tag (X.680 §26, universal 17,
+/// SET's own natural tag (X.680 §26, universal 17,
 /// constructed) — a SET-typed `SequenceSpec<T>` must use this instead of
 /// `SEQUENCE_TAG`. `encode_sequence`/`decode_sequence` don't otherwise
 /// distinguish SET from SEQUENCE (same TLV shape, same member walk; X.690
@@ -35,8 +35,7 @@ pub const SET_TAG: Tag = Tag::universal(universal::SET, true);
 /// (`TypeDescriptor.hpp`), minus everything not yet needed by this crate's
 /// scope (DEFAULT values, EXPLICIT/IMPLICIT tagging beyond the member's own
 /// natural tag, CHOICE alternative dispatch — all real gaps, not silently
-/// dropped: `Backend`/codegen simply doesn't emit members needing them yet,
-/// same incremental principle as every other gambas-asn1#214 sub-issue).
+/// dropped: `Backend`/codegen simply doesn't emit members needing them yet).
 pub struct MemberDescriptor<T: 'static> {
     pub name: &'static str,
     pub tag: Tag,
@@ -44,7 +43,7 @@ pub struct MemberDescriptor<T: 'static> {
     pub access: MemberAccess<T>,
 }
 
-/// gambas-asn1#331: how a member's value is reached and (de)serialized.
+/// How a member's value is reached and (de)serialized.
 ///
 /// `Scalar` is the original, and by far the most common, shape: the member
 /// is one field whose own concrete type already implements `Asn1Value`
@@ -55,7 +54,7 @@ pub struct MemberDescriptor<T: 'static> {
 ///
 /// `SeqOf` is new: a SEQUENCE OF member's field type is `Vec<ElementType>`,
 /// which — deliberately — does *not* implement `Asn1Value` itself (unlike
-/// `Option<V>`, gambas-asn1#326's blanket impl): `Vec<u8>` already has its
+/// `Option<V>`'s blanket impl): `Vec<u8>` already has its
 /// own *concrete* `Asn1Value` impl for OCTET STRING content, and Rust's
 /// coherence rules forbid also giving `Vec<u8>` an overlapping instantiation
 /// of a generic `impl<V: Asn1Value> Asn1Value for Vec<V>` (the compiler
@@ -76,7 +75,7 @@ pub enum MemberAccess<T: 'static> {
         xer_encode: fn(&T, &mut String),
         xer_decode_into: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
     },
-    /// gambas-asn1#332: IMPLICIT tag override (X.690 §8.14). A member
+    /// IMPLICIT tag override (X.690 §8.14). A member
     /// declared with its own `[n]` tag (explicit-in-the-schema, or an
     /// AUTOMATIC TAGS-assigned one) has that tag *replace* its type's
     /// natural one on the wire — but every `Asn1Value` impl's
@@ -97,7 +96,7 @@ pub enum MemberAccess<T: 'static> {
         get: fn(&T) -> &dyn Asn1Value,
         get_mut: fn(&mut T) -> &mut dyn Asn1Value,
     },
-    /// gambas-asn1#337: `SeqOf`'s analogue of `TaggedScalar` — a SEQUENCE OF/
+    /// `SeqOf`'s analogue of `TaggedScalar` — a SEQUENCE OF/
     /// SET OF member declared with its own `[n]` tag. `ber_encode`/
     /// `ber_decode_into` call `encode_seq_of_tagged`/`decode_seq_of_tagged`
     /// with the member's real resolved tag instead of `SeqOf`'s hardcoded
@@ -125,9 +124,9 @@ pub fn decode_seq_of<V: Asn1Value + Default>(r: &mut Reader) -> Result<Vec<V>, D
     decode_seq_of_tagged(r, SEQUENCE_TAG)
 }
 
-/// gambas-asn1#337: IMPLICIT tag override for a SEQUENCE OF/SET OF member,
+/// IMPLICIT tag override for a SEQUENCE OF/SET OF member,
 /// same reasoning as `boolean::write_boolean_tagged`/`read_boolean_tagged`
-/// (gambas-asn1#332) — a member declared with its own `[n]` tag replaces the
+/// — a member declared with its own `[n]` tag replaces the
 /// natural `SEQUENCE_TAG`/`SET_TAG` on the *outer* TLV only; element
 /// encoding/decoding is unaffected (elements keep their own natural tags).
 pub fn encode_seq_of_tagged<V: Asn1Value>(out: &mut Vec<u8>, tag: Tag, items: &[V]) {
@@ -197,8 +196,8 @@ pub fn decode_seq_of_xer<V: Asn1Value + Default>(
 /// alone), but one table drives both encodings (see `lib.rs`'s XER module
 /// doc), so it lives here rather than in a second, XER-only struct.
 ///
-/// **Deliberate layering divergence from both C++ codebases** (checked on
-/// review, gambas-asn1#281): in `runtime/include/asn1cpp/TypeDescriptor.hpp`
+/// **Deliberate layering divergence from both C++ codebases**: in
+/// `runtime/include/asn1cpp/TypeDescriptor.hpp`
 /// `name` lives on the outer `TypeDescriptor`, a sibling to
 /// `sequence_spec`/`choice_spec`/`enum_spec` — never inside `SequenceSpec`
 /// itself. Same split in asn1c (`asn_TYPE_descriptor_s::name` vs.
@@ -212,10 +211,10 @@ pub fn decode_seq_of_xer<V: Asn1Value + Default>(
 /// time, so there is no shared runtime "type descriptor" object for `name`
 /// to live on once, and introducing one here would only exist to satisfy
 /// field-sharing, not to do anything. Each construct-specific spec (this
-/// one; a future `ChoiceSpec<T>` for gambas-asn1#284/#285) carries its own
+/// one, and `ChoiceSpec<T>` in `choice.rs`) carries its own
 /// `name` — cheap (`&'static str`, one word, no allocation), and avoids
 /// inventing indirection with no other purpose. Documented here so the
-/// repetition in the eventual `ChoiceSpec<T>` reads as intentional, not a
+/// repetition in `ChoiceSpec<T>` reads as intentional, not a
 /// copy-paste that forgot to deduplicate.
 pub struct SequenceSpec<T: 'static> {
     pub name: &'static str,
@@ -226,7 +225,7 @@ pub struct SequenceSpec<T: 'static> {
 /// Generic SEQUENCE encoder — the Rust analogue of
 /// `SequenceBerHandler::encode`. Iterates `spec.members` in order, writing
 /// each member's own complete TLV into the constructed SEQUENCE content.
-/// OPTIONAL suppression (gambas-asn1#326) needs no special-casing here: an
+/// OPTIONAL suppression needs no special-casing here: an
 /// absent `Option<V>::None` member's `ber_encode` (the blanket
 /// `Asn1Value for Option<V>` impl, `value.rs`) already writes nothing. No
 /// DEFAULT-value suppression yet — a real gap, not silently dropped.
@@ -251,7 +250,7 @@ pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
 /// each member is decoded in table order directly into its field via
 /// `ber_decode_into`, no intermediate allocation per member.
 ///
-/// OPTIONAL members (gambas-asn1#326): tag-presence detection, same model
+/// OPTIONAL members: tag-presence detection, same model
 /// `asn1cpp/CLAUDE.md`'s BER-vs-PER table documents ("OPTIONAL detection:
 /// Tag present/absent in stream"). Peek before deciding whether to call
 /// `ber_decode_into` at all — an absent optional member's tag belongs to
@@ -344,7 +343,7 @@ impl Point {
 }
 
 /// `OptPoint ::= SEQUENCE { x INTEGER, y INTEGER OPTIONAL }` — worked
-/// example + test subject for OPTIONAL member support (gambas-asn1#326),
+/// example + test subject for OPTIONAL member support,
 /// same role `Point` plays for required-only members.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct OptPoint {
@@ -389,7 +388,7 @@ impl OptPoint {
 }
 
 /// `Coords ::= SEQUENCE { values SEQUENCE OF INTEGER }` — worked example +
-/// test subject for SEQUENCE OF member support (gambas-asn1#331), same role
+/// test subject for SEQUENCE OF member support, same role
 /// `Point`/`OptPoint` play for their own features.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Coords {
@@ -514,7 +513,7 @@ mod tests {
         assert!(Point::decode_xer("<Point>\n    <x>3</x>\n</Point>\n").is_err());
     }
 
-    // ---- OPTIONAL member support (gambas-asn1#326) -------------------------
+    // ---- OPTIONAL member support -------------------------
 
     #[test]
     fn opt_present_ber_round_trips() {
@@ -550,7 +549,7 @@ mod tests {
         assert_eq!(OptPoint::decode_xer(&xml).unwrap(), p);
     }
 
-    // ---- SET vs SEQUENCE outer tag (gambas-asn1#326) ------------------------
+    // ---- SET vs SEQUENCE outer tag ------------------------
 
     #[test]
     fn set_tag_is_seventeen_constructed() {
@@ -590,7 +589,7 @@ mod tests {
         assert!(Point::decode(&bytes).is_err());
     }
 
-    // ---- SEQUENCE OF members (gambas-asn1#331) ------------------------------
+    // ---- SEQUENCE OF members ------------------------------
 
     #[test]
     fn seq_of_ber_round_trips() {
@@ -636,7 +635,7 @@ mod tests {
         assert_eq!(Coords::decode_xer(&xml).unwrap(), c);
     }
 
-    // ---- SEQUENCE OF/SET OF IMPLICIT tag override (gambas-asn1#337) -------
+    // ---- SEQUENCE OF/SET OF IMPLICIT tag override -------
 
     #[test]
     fn tagged_seq_of_uses_the_given_tag_not_the_natural_one() {

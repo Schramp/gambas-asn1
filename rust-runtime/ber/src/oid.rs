@@ -6,15 +6,14 @@
 //! `first*40 + second` (X.680 §32.3) and every arc base-128-encoded
 //! (X.690 §8.19.2).
 //!
-//! Not a `Vec<u64>` type alias — `native_builtin_type` maps both
-//! OBJECT IDENTIFIER and RELATIVE-OID to `Vec<u64>` (arcs), and the two
-//! have different wire encodings (OID's first-two-arc combining trick,
-//! RELATIVE-OID has none — X.680 §33), so at most one of them can be a
-//! plain-`Vec<u64>` `Asn1Value` impl (Rust allows only one trait impl per
+//! Not a `Vec<u64>` type alias — OBJECT IDENTIFIER and RELATIVE-OID have
+//! different wire encodings (OID's first-two-arc combining trick,
+//! RELATIVE-OID has none — X.680 §33), so they can't share one plain
+//! `Vec<u64>` `Asn1Value` impl (Rust allows only one trait impl per
 //! concrete type — same reasoning `bit_string.rs`'s module doc gives for
-//! not reusing OCTET STRING's `Vec<u8>`). This crate gives the newtype to
-//! OID (it lands first); RELATIVE-OID's own future coverage (gambas-asn1#349)
-//! can use plain `Vec<u64>` directly.
+//! not reusing OCTET STRING's `Vec<u8>`). RELATIVE-OID gets its own
+//! newtype too (`relative_oid::RelativeOid`), same "distinct type per
+//! ASN.1 kind" convention as every other kind in this crate.
 
 use crate::reader::{DecodeError, Reader};
 use crate::tag::{universal, Tag};
@@ -72,7 +71,7 @@ pub fn read_object_identifier(r: &mut Reader) -> Result<ObjectIdentifier, Decode
     read_object_identifier_tagged(r, OBJECT_IDENTIFIER_TAG)
 }
 
-/// gambas-asn1#332: IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
+/// IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
 /// doc comment for the general rationale.
 pub fn write_object_identifier_tagged(out: &mut Vec<u8>, tag: Tag, value: &ObjectIdentifier) {
     let arcs = &value.0;
