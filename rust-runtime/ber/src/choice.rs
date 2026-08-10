@@ -36,13 +36,22 @@
 use crate::reader::{DecodeError, Reader};
 use crate::tag::Tag;
 use crate::value::Asn1Value;
+use crate::writer::write_primitive;
 use crate::xer::{write_close_tag, write_open_tag, XerReader};
 
 /// One CHOICE alternative — mirrors `ChoiceAlternativeSpec`
-/// (`compiler/src/codegen/Backend.hpp`), minus extension alternatives and
-/// the PER/tag-index dispatch-optimization fields (see `ChoiceSpec`'s own
-/// doc below) — real gaps, codegen simply doesn't emit alternatives needing
-/// them yet. EXPLICIT/IMPLICIT tag override *is* covered: `tag` already
+/// (`compiler/src/codegen/Backend.hpp`), minus the PER/tag-index
+/// dispatch-optimization fields (see `ChoiceSpec`'s own doc below) — a
+/// real gap, codegen simply doesn't emit alternatives needing it yet. A
+/// schema-declared extension alternative (after `...`) is *not* a gap
+/// here — it gets a normal `AlternativeSpec` row like any root
+/// alternative, same tag-based dispatch either way (BER doesn't
+/// distinguish root from extension the way PER's bitmap does). What's
+/// genuinely uncovered is an alternative some *future* schema revision
+/// might add that this compiler run was never told about — see
+/// `ChoiceSpec::unknown_extension`.
+///
+/// EXPLICIT/IMPLICIT tag override *is* covered: `tag` already
 /// carries the alternative's real resolved tag, and `ber_encode`/
 /// `ber_decode_into` already call whichever primitive that override needs
 /// (`value::encode_explicit`/`decode_explicit` generically for EXPLICIT, or
@@ -75,6 +84,30 @@ pub struct AlternativeSpec<T: 'static> {
     pub xer_decode_into: fn(&mut XerReader) -> Result<T, DecodeError>,
 }
 
+/// Construct/extract a value for the not-yet-defined "unknown extension"
+/// case (X.680 §29.6 extensibility — a `...`-marked CHOICE promises a
+/// *future* schema revision may add alternatives this compiler run never
+/// saw). Captures the raw tag and value bytes of whatever TLV didn't match
+/// any known `AlternativeSpec`, so decode->re-encode round-trips
+/// byte-identically even for content this crate can't interpret — `Tag`
+/// alone already carries the primitive/constructed bit `write_primitive`
+/// needs, so one write path covers both encoding forms (see
+/// `writer::write_primitive`'s own body: primitive and constructed TLVs
+/// are written identically, the distinction is purely which helper the
+/// *caller* reaches for elsewhere).
+///
+/// BER/decode-side only. XER has no raw-bytes escape hatch the way BER's
+/// self-delimiting TLV framing does (X.693 needs to know an element's
+/// structure to parse it at all) — `encode_choice_xer`/`decode_choice_xer`
+/// don't consult this; a value holding captured unknown-extension content
+/// can't be XER-encoded (panics, same as the "no alternative matched"
+/// codegen-bug backstop, since from XER's perspective there genuinely is
+/// no matching alternative).
+pub struct UnknownExtensionOps<T: 'static> {
+    pub construct: fn(Tag, Vec<u8>) -> T,
+    pub extract: fn(&T) -> Option<(Tag, &[u8])>,
+}
+
 /// CHOICE alternative table — mirrors `ChoiceSpec` (`Backend.hpp`), minus
 /// `name` (see module doc) and the PER/tag-index dispatch-optimization
 /// fields (`tag_index_table`/`ber_tags` — follow-on work, not needed for
@@ -82,18 +115,33 @@ pub struct AlternativeSpec<T: 'static> {
 /// `sequence.rs`'s scope note makes for its own follow-on optimizations).
 pub struct ChoiceSpec<T: 'static> {
     pub alternatives: &'static [AlternativeSpec<T>],
+    /// `Some` when the schema has a `...` extension marker (X.680 §29.6),
+    /// regardless of how many real extension alternatives are declared
+    /// after it — `None` for a fully closed CHOICE, where an unrecognized
+    /// tag is (correctly) a genuine decode error, not a forward-compat gap.
+    pub unknown_extension: Option<UnknownExtensionOps<T>>,
 }
 
 /// Generic CHOICE encoder — the Rust analogue of `ChoiceBerHandler::encode`.
 /// Tries each alternative's `ber_encode` in table order; the first one that
-/// reports a match wins. Panics if no alternative matches — cannot happen
-/// for a real generated `T` (every variant of a codegen'd CHOICE enum has a
-/// corresponding table row by construction), so this is a codegen-bug
-/// backstop, not a reachable runtime error path.
+/// reports a match wins. Falls back to `unknown_extension` (if present) for
+/// a value holding captured not-yet-defined-extension content — writes the
+/// raw captured tag+bytes back out unchanged. Panics if neither matches:
+/// cannot happen for a real generated `T` (every variant of a codegen'd
+/// CHOICE enum is either a known alternative's row or, when the schema is
+/// extensible, the `unknown_extension` variant, by construction), so this
+/// is a codegen-bug backstop, not a reachable runtime error path.
 pub fn encode_choice<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
     for alt in spec.alternatives {
         let mut out = Vec::new();
         if (alt.ber_encode)(value, &mut out) {
+            return out;
+        }
+    }
+    if let Some(ops) = &spec.unknown_extension {
+        if let Some((tag, bytes)) = (ops.extract)(value) {
+            let mut out = Vec::new();
+            write_primitive(&mut out, tag, bytes);
             return out;
         }
     }
@@ -103,7 +151,12 @@ pub fn encode_choice<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
 /// Generic CHOICE decoder — the Rust analogue of `ChoiceBerHandler::decode`.
 /// CHOICE has no outer tag of its own (see module doc): peek the wire tag,
 /// linear-scan `spec.alternatives` for the row whose `tag` matches, and
-/// delegate to that row's `ber_decode_into`.
+/// delegate to that row's `ber_decode_into`. Falls back to
+/// `unknown_extension` (if present) when no known alternative's tag
+/// matches — captures the whole TLV (tag + value bytes) rather than
+/// erroring, honoring the schema's own `...` forward-compatibility promise
+/// instead of failing to decode a message using an alternative added in a
+/// schema revision newer than whatever this compiler run knew about.
 pub fn decode_choice<T>(spec: &ChoiceSpec<T>, data: &[u8]) -> Result<T, DecodeError> {
     let mut r = Reader::new(data);
     let tag = r.peek_tag().ok_or_else(|| DecodeError::new("empty CHOICE input".to_string(), 0))?;
@@ -111,6 +164,10 @@ pub fn decode_choice<T>(spec: &ChoiceSpec<T>, data: &[u8]) -> Result<T, DecodeEr
         if alt.tag == tag {
             return (alt.ber_decode_into)(&mut r);
         }
+    }
+    if let Some(ops) = &spec.unknown_extension {
+        let tlv = r.read_tlv()?;
+        return Ok((ops.construct)(tlv.tag, tlv.value.to_vec()));
     }
     Err(DecodeError::new(format!("unrecognized CHOICE alternative tag {tag:?}"), 0))
 }
@@ -228,7 +285,7 @@ static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
     },
 ];
 
-static CHOICE_SPEC: ChoiceSpec<Choice> = ChoiceSpec { alternatives: &CHOICE_ALTERNATIVES };
+static CHOICE_SPEC: ChoiceSpec<Choice> = ChoiceSpec { alternatives: &CHOICE_ALTERNATIVES, unknown_extension: None };
 
 impl Choice {
     pub fn encode(&self) -> Vec<u8> {
@@ -370,7 +427,7 @@ mod tests {
     ];
 
     static TWO_OCTETS_EXPLICIT_SPEC: ChoiceSpec<TwoOctetsExplicit> =
-        ChoiceSpec { alternatives: &TWO_OCTETS_EXPLICIT_ALTERNATIVES };
+        ChoiceSpec { alternatives: &TWO_OCTETS_EXPLICIT_ALTERNATIVES, unknown_extension: None };
 
     #[test]
     fn explicit_disambiguates_two_alternatives_of_the_same_builtin_kind() {
@@ -394,5 +451,89 @@ mod tests {
             TwoOctetsExplicit::Second(v) => assert_eq!(v, vec![0xAA]),
             TwoOctetsExplicit::First(_) => panic!("misdecoded Second as First"),
         }
+    }
+
+    // ---- unknown_extension ---------------------------------------------
+
+    /// `ExtChoice ::= CHOICE { num INTEGER, ... }` — mirrors a real schema
+    /// pattern (e.g. the ETSI LI PS-PDU schema's `AdditionalSignalling`/
+    /// `PstnIsdnIRIContents`, both `CHOICE { <one alternative>, ... }` with
+    /// nothing declared after the marker yet): today's compiler run only
+    /// knows about `Num`, but the `...` promises a future revision may add
+    /// more.
+    #[derive(Debug, Clone, PartialEq)]
+    enum ExtChoice {
+        Num(i64),
+        UnknownExtension(Tag, Vec<u8>),
+    }
+
+    const NUM_TAG: Tag = Tag::context(0, false);
+
+    static EXT_CHOICE_ALTERNATIVES: [AlternativeSpec<ExtChoice>; 1] = [AlternativeSpec {
+        name: "num",
+        tag: NUM_TAG,
+        ber_encode: |x, out| {
+            if let ExtChoice::Num(v) = x {
+                crate::integer::write_integer_tagged(out, NUM_TAG, *v);
+                true
+            } else {
+                false
+            }
+        },
+        ber_decode_into: |r| {
+            let v = crate::integer::read_integer_tagged(r, NUM_TAG)?;
+            Ok(ExtChoice::Num(v))
+        },
+        xer_encode: |_, _| false,
+        xer_decode_into: |_| Err(DecodeError::new("xer not exercised in this test", 0)),
+    }];
+
+    static EXT_CHOICE_SPEC: ChoiceSpec<ExtChoice> = ChoiceSpec {
+        alternatives: &EXT_CHOICE_ALTERNATIVES,
+        unknown_extension: Some(UnknownExtensionOps {
+            construct: |tag, bytes| ExtChoice::UnknownExtension(tag, bytes),
+            extract: |x| match x {
+                ExtChoice::UnknownExtension(tag, bytes) => Some((*tag, bytes.as_slice())),
+                _ => None,
+            },
+        }),
+    };
+
+    #[test]
+    fn known_alternative_still_decodes_normally() {
+        let v = ExtChoice::Num(42);
+        let enc = encode_choice(&EXT_CHOICE_SPEC, &v);
+        assert_eq!(decode_choice(&EXT_CHOICE_SPEC, &enc).unwrap(), v);
+    }
+
+    #[test]
+    fn unrecognized_tag_captured_instead_of_erroring() {
+        // A hypothetical future alternative, tag [1], that EXT_CHOICE_SPEC's
+        // table has never heard of.
+        let future_tag = Tag::context(1, false);
+        let mut wire = Vec::new();
+        write_primitive(&mut wire, future_tag, &[0xDE, 0xAD, 0xBE, 0xEF]);
+
+        let decoded = decode_choice(&EXT_CHOICE_SPEC, &wire).unwrap();
+        assert_eq!(decoded, ExtChoice::UnknownExtension(future_tag, vec![0xDE, 0xAD, 0xBE, 0xEF]));
+    }
+
+    #[test]
+    fn unrecognized_tag_round_trips_byte_identically() {
+        let future_tag = Tag::context(5, true); // constructed, to prove the tag's own bit round-trips too
+        let mut wire = Vec::new();
+        write_primitive(&mut wire, future_tag, &[0x01, 0x02, 0x03]);
+
+        let decoded = decode_choice(&EXT_CHOICE_SPEC, &wire).unwrap();
+        let re_encoded = encode_choice(&EXT_CHOICE_SPEC, &decoded);
+        assert_eq!(re_encoded, wire);
+    }
+
+    #[test]
+    fn closed_choice_without_unknown_extension_still_errors_on_unrecognized_tag() {
+        // TWO_OCTETS_EXPLICIT_SPEC has unknown_extension: None — confirms the
+        // fallback is opt-in, not a silent behavior change for every CHOICE.
+        let data = [0x85, 0x01, 0x00]; // context primitive 5, matches neither TAG_1 nor TAG_2
+        assert!(decode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &data).is_err());
     }
 }
