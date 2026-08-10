@@ -350,6 +350,30 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << std::format("    fn default() -> Self {{ {}::{} }}\n",
                            tname, variant_name(*this, spec.values.front().asn1_name));
         os << "}\n\n";
+
+        // BER leg only (matches every other Asn1Value impl this backend
+        // emits — xer_encode/xer_decode_into keep the trait's default
+        // panicking body). Makes this type usable as a SEQUENCE/CHOICE
+        // member the same way i64/bool/etc already are (registered as
+        // RustTypeKind::Enumerated in covered_type_names_ once emitted —
+        // see sequence_member_ber_covered's doc) — `as i64`/TryFrom<i64>
+        // convert through the shared wire
+        // representation (enumerated::write_enumerated_tagged/
+        // read_enumerated_tagged, X.690 §8.4).
+        os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", tname);
+        os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
+        os << "        asn1cpp_ber::enumerated::write_enumerated_tagged(out, asn1cpp_ber::enumerated::ENUMERATED_TAG, *self as i64);\n";
+        os << "    }\n\n";
+        os << "    fn ber_decode_into(&mut self, r: &mut asn1cpp_ber::Reader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << "        let raw = asn1cpp_ber::enumerated::read_enumerated_tagged(r, asn1cpp_ber::enumerated::ENUMERATED_TAG)?;\n";
+        os << std::format("        *self = <Self as std::convert::TryFrom<i64>>::try_from(raw)\n"
+                           "            .map_err(|_| asn1cpp_ber::DecodeError::new(format!(\"invalid {} value: {{raw}}\"), 0))?;\n",
+                           tname);
+        os << "        Ok(())\n";
+        os << "    }\n";
+        os << "}\n\n";
+
+        covered_type_names_[tname] = RustTypeKind::Enumerated;
     }
 }
 
@@ -647,27 +671,26 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
 ///       `unique_ptr<T>`, Rust's natural equivalent.
 /// @brief Is `m` covered by this backend's wire (BER) encoding — the single
 ///        source of truth `emit_sequence_definition`'s own member-table gate.
-/// @note A class-typed member is coverable when its target type has
-///       *already* been confirmed to have `impl Asn1Value`
-///       (`composite_covered_types_` — populated by
-///       emit_sequence_definition/emit_choice_definition themselves as each
-///       type is processed) — `Asn1Value` is object-safe, so a member row
-///       referencing `T: Asn1Value` compiles fine regardless of what `T`
-///       contains, *once T's own impl actually exists*; it can't be assumed
-///       unconditionally, though — an ENUMERATED-typed member has no
-///       Asn1Value impl at all yet (ENUMERATED has no BER wiring in this
-///       backend currently, a separate real gap), so a type containing one
-///       never gets its own impl, and anything optimistically assuming it
-///       did would cascade into hundreds of "trait bound not satisfied"
-///       errors on the real schema (confirmed empirically). A member
+/// @note `mbuiltin` unset means the member's type is a TypeRef to
+///       something else entirely — SEQUENCE/SET/CHOICE, ENUMERATED, or a
+///       plain INTEGER subtype alias (gambas-asn1#361, separate, unrelated
+///       gap). `covered_type_names_` is the only source of truth for which
+///       of those actually have a real `Asn1Value` impl: `Asn1Value` is
+///       object-safe, so a member row referencing `T: Asn1Value` compiles
+///       fine regardless of what `T` contains, *once T's own impl actually
+///       exists* — but it can't be assumed unconditionally (confirmed
+///       empirically: optimistically assuming every such reference is
+///       covered produced over a thousand cascading "trait bound not
+///       satisfied" errors on the real schema, rooted in ENUMERATED having
+///       no Asn1Value impl before that gap was closed). A member
 ///       referencing a type Generator hasn't emitted yet in this run
 ///       (declared later in the same module) conservatively gets no
-///       composite coverage — not a regression, just not maximally complete.
+///       coverage — not a regression, just not maximally complete.
 bool RustBackend::sequence_member_ber_covered(const SequenceMemberSpec& m) const {
     if (m.is_seq_of)
         return !m.optional && m.elem_builtin && builtin_ber_tag(*m.elem_builtin, m.elem_mtype) != nullptr;
-    if (m.is_class_type) {
-        if (!composite_covered_types_.count(m.mtype)) return false;
+    if (!m.mbuiltin) {
+        if (!covered_type_names_.count(m.mtype)) return false;
         // A required member's MemberDescriptor.tag is never consulted at
         // decode time (decode_sequence's Scalar/TaggedScalar branches only
         // peek it for OPTIONAL presence detection) — so a required member
@@ -683,12 +706,13 @@ bool RustBackend::sequence_member_ber_covered(const SequenceMemberSpec& m) const
 /// @brief CHOICE alternative analogue of sequence_member_ber_covered.
 /// @note Unlike a SEQUENCE member, `decode_choice` compares *every*
 ///       alternative's tag against the wire tag (no positional/blind
-///       decode) — so a class-typed alternative needs a real resolved tag
-///       unconditionally, required or not (CHOICE alternatives have no
-///       OPTIONAL concept in the first place, X.680 §28).
+///       decode) — so an alternative referencing another generated type
+///       needs a real resolved tag unconditionally, required or not
+///       (CHOICE alternatives have no OPTIONAL concept in the first place,
+///       X.680 §28).
 bool RustBackend::choice_alternative_ber_covered(const ChoiceAlternativeSpec& a) const {
-    if (a.is_class_type)
-        return composite_covered_types_.count(a.mtype) > 0 && a.resolved_tag.has_value();
+    if (!a.mbuiltin)
+        return covered_type_names_.count(a.mtype) > 0 && a.resolved_tag.has_value();
     return rust_tag_for_builtin_or_alias(a.mbuiltin, a.storage_kind, a.mtype) != nullptr;
 }
 
@@ -930,14 +954,14 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // otherwise panic at runtime the first time the containing type's
     // encode_xer() actually reached it.
     auto rust_member_covered_xer_ready = [&](const SequenceMemberSpec& m) -> bool {
-        if (m.is_class_type) return false;
+        if (!m.mbuiltin && !m.is_seq_of) return false;
         return m.is_seq_of ? rust_seqof_xer_ready(m) : rust_member_xer_ready(m);
     };
     bool all_covered = !spec.members.empty() &&
         std::all_of(spec.members.begin(), spec.members.end(), rust_member_covered);
     bool all_xer_ready = all_covered &&
         std::all_of(spec.members.begin(), spec.members.end(), rust_member_covered_xer_ready);
-    if (all_covered) composite_covered_types_.insert(spec.type_name);
+    if (all_covered) covered_type_names_[spec.type_name] = RustTypeKind::SequenceOrSet;
     if (all_covered) {
         std::string members_ident = std::format("{}_MEMBERS", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
@@ -1025,7 +1049,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 }
                 os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
                 os << "        },\n";
-            } else if (m.is_class_type && m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit) {
+            } else if (!m.mbuiltin && m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit &&
+                       covered_type_names_.count(m.mtype) &&
+                       covered_type_names_.at(m.mtype) == RustTypeKind::SequenceOrSet) {
                 // IMPLICIT retag (X.690 §8.14.2) of a
                 // composite (SEQUENCE/SET-typed — CHOICE members are always
                 // EXPLICIT, see member_is_explicit) member: same content,
@@ -1053,12 +1079,37 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 }
                 os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
                 os << "        },\n";
+            } else if (!m.mbuiltin && m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit &&
+                       covered_type_names_.count(m.mtype) &&
+                       covered_type_names_.at(m.mtype) == RustTypeKind::Enumerated) {
+                // IMPLICIT retag of an ENUMERATED-typed member — X.680 §22.3
+                // permits it (unlike CHOICE/ANY). No shared table to
+                // reference (ENUMERATED has no SequenceSpec-style table,
+                // just a per-type Asn1Value impl going through `as i64`/
+                // TryFrom<i64>), so the override tag substitutes directly
+                // in the same write_enumerated_tagged/read_enumerated_tagged
+                // pair the type's own Asn1Value impl uses internally
+                // (emit_enumerated_definition) with ENUMERATED_TAG fixed —
+                // here the *_tagged pair takes the override tag instead.
+                std::string tag_lit = format_tag_literal(*m.resolved_tag);
+                os << std::format("        tag: {},\n", tag_lit);
+                os << std::format("        optional: {},\n", m.optional ? "true" : "false");
+                os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedScalar {\n";
+                if (m.optional) {
+                    os << std::format("            ber_encode: |v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::enumerated::write_enumerated_tagged(out, {1}, x as i64); }} }},\n", m.mname, tag_lit);
+                    os << std::format("            ber_decode_into: |v, r| {{ let raw = asn1cpp_ber::enumerated::read_enumerated_tagged(r, {1})?; v.{0} = Some(<{2} as std::convert::TryFrom<i64>>::try_from(raw).map_err(|_| asn1cpp_ber::DecodeError::new(format!(\"invalid {2} value: {{raw}}\"), 0))?); Ok(()) }},\n", m.mname, tag_lit, m.mtype);
+                } else {
+                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::enumerated::write_enumerated_tagged(out, {1}, v.{0} as i64),\n", m.mname, tag_lit);
+                    os << std::format("            ber_decode_into: |v, r| {{ let raw = asn1cpp_ber::enumerated::read_enumerated_tagged(r, {1})?; v.{0} = <{2} as std::convert::TryFrom<i64>>::try_from(raw).map_err(|_| asn1cpp_ber::DecodeError::new(format!(\"invalid {2} value: {{raw}}\"), 0))?; Ok(()) }},\n", m.mname, tag_lit, m.mtype);
+                }
+                os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
+                os << "        },\n";
             } else {
                 // Prefer the member's real resolved tag
                 // (IMPLICIT override) over its natural one whenever one
                 // applies and this builtin kind has a *_tagged primitive.
                 std::optional<std::pair<std::string, std::string>> tagged_ops;
-                if (!m.is_class_type && m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit)
+                if (m.mbuiltin && m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit)
                     tagged_ops = rust_tagged_ops(m, format_tag_literal(*m.resolved_tag));
                 if (tagged_ops) {
                     os << std::format("        tag: {},\n", format_tag_literal(*m.resolved_tag));
@@ -1069,17 +1120,18 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
                     os << "        },\n";
                 } else {
-                    // A class-typed member reaches here
-                    // either with its natural tag (SEQUENCE_TAG/SET_TAG, or
-                    // an EXPLICIT-forced CHOICE tag already handled above)
-                    // or — required-only, per sequence_member_ber_covered —
+                    // A member whose type is a TypeRef (mbuiltin unset)
+                    // reaches here either with its natural tag
+                    // (SEQUENCE_TAG/SET_TAG/ENUMERATED_TAG, or an
+                    // EXPLICIT-forced CHOICE tag already handled above) or —
+                    // required-only, per sequence_member_ber_covered —
                     // genuinely tagless (an untagged CHOICE, X.680 §28: no
                     // AUTOMATIC TAGS, no universal tag). A required member's
                     // MemberDescriptor.tag is never consulted at decode time
                     // (only OPTIONAL presence-peek reads it), so the
                     // placeholder in that last case is inert, not a claim
                     // this member actually carries tag [0].
-                    std::string tag_text = m.is_class_type
+                    std::string tag_text = !m.mbuiltin
                         ? (m.resolved_tag ? format_tag_literal(*m.resolved_tag)
                                            : "asn1cpp_ber::sequence::SEQUENCE_TAG /* untagged CHOICE member: no fixed tag, inert for required members */")
                         : rust_member_ber_tag(m);
@@ -1391,7 +1443,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     };
     bool all_covered = !spec.alternatives.empty() &&
         std::all_of(spec.alternatives.begin(), spec.alternatives.end(), rust_alt_covered);
-    if (all_covered) composite_covered_types_.insert(spec.type_name);
+    if (all_covered) covered_type_names_[spec.type_name] = RustTypeKind::Choice;
     // XER coverage is no longer implied by BER coverage now that composite
     // alternatives (BER-only — no real XER support yet) and wide-storage
     // INTEGER (U64/I128, also BER-only) are both included in all_covered —
@@ -1403,8 +1455,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // when all_xer_ready is false, since encode_xer()/decode_xer() are
     // the only callers and this gate withholds them.
     auto rust_alt_xer_ready = [](const ChoiceAlternativeSpec& a) -> bool {
-        if (a.is_class_type) return false;
-        if (!a.mbuiltin) return a.mtype == "i64";
+        if (!a.mbuiltin) return false;
         if (*a.mbuiltin == ast::BuiltinType::Integer) return a.storage_kind == IntStorageKind::S64;
         return builtin_xer_ready(*a.mbuiltin, a.mtype);
     };
@@ -1459,7 +1510,9 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << std::format("            let v: {} = asn1cpp_ber::value::decode_explicit(r, {})?;\n", a.mtype, etag);
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
-            } else if (a.is_class_type && a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit) {
+            } else if (!a.mbuiltin && a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit &&
+                       covered_type_names_.count(a.mtype) &&
+                       covered_type_names_.at(a.mtype) == RustTypeKind::SequenceOrSet) {
                 // IMPLICIT retag (X.690 §8.14.2) of a composite
                 // (SEQUENCE/SET-typed — CHOICE targets are always EXPLICIT,
                 // X.680 §30.6) alternative: same shape as
@@ -1478,6 +1531,21 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                                    a.mtype, target_spec, tag_lit2);
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
+            } else if (!a.mbuiltin && a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit &&
+                       covered_type_names_.count(a.mtype) &&
+                       covered_type_names_.at(a.mtype) == RustTypeKind::Enumerated) {
+                // IMPLICIT retag of an ENUMERATED-typed alternative — same
+                // reasoning as emit_sequence_definition's Enumerated retag
+                // branch (X.680 §22.3 permits it).
+                std::string tag_lit2 = format_tag_literal(*a.resolved_tag);
+                os << std::format("        tag: {},\n", tag_lit2);
+                emit_encode_closure("ber_encode",
+                    std::format("asn1cpp_ber::enumerated::write_enumerated_tagged(out, {}, *v as i64);", tag_lit2));
+                os << "        ber_decode_into: |r| {\n";
+                os << std::format("            let raw = asn1cpp_ber::enumerated::read_enumerated_tagged(r, {})?;\n", tag_lit2);
+                os << std::format("            let v = <{0} as std::convert::TryFrom<i64>>::try_from(raw).map_err(|_| asn1cpp_ber::DecodeError::new(format!(\"invalid {0} value: {{raw}}\"), 0))?;\n", a.mtype);
+                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+                os << "        },\n";
             } else if (tagged_ops) {
                 os << std::format("        tag: {},\n", tag_lit);
                 emit_encode_closure("ber_encode", tagged_ops->first);
@@ -1485,12 +1553,13 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << std::format("            {}\n", tagged_ops->second);
                 os << "        },\n";
             } else {
-                // A class-typed alternative reaching here has its target's
-                // own natural tag (SEQUENCE_TAG/SET_TAG) — EXPLICIT-forced
+                // An alternative whose type is a TypeRef (mbuiltin unset)
+                // reaching here has its target's own natural tag
+                // (SEQUENCE_TAG/SET_TAG/ENUMERATED_TAG) — EXPLICIT-forced
                 // CHOICE targets and IMPLICIT overrides are both already
                 // handled above; choice_alternative_ber_covered guarantees
-                // resolved_tag is present whenever is_class_type is true.
-                std::string tag_text = a.is_class_type
+                // resolved_tag is present whenever mbuiltin is unset.
+                std::string tag_text = !a.mbuiltin
                     ? format_tag_literal(*a.resolved_tag)
                     : rust_alt_ber_tag(a);
                 os << std::format("        tag: {},\n", tag_text);

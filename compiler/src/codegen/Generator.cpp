@@ -1331,10 +1331,8 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body))
                 row.elem_builtin = *ebt;
         }
-        if (is_class_type(m)) {
-            row.is_class_type = true;
+        if (is_class_type(m))
             row.member_type_in_cycle = member_type_in_cycle(m, def.name);
-        }
         row.optional = optional;
         auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
         row.is_explicit = tag_result.is_explicit;
@@ -1555,7 +1553,6 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind storage_kind = IntStorageKind::S64;
             std::optional<MemberTagSpec> resolved_tag;  // gambas-asn1#336/#347
-            bool is_class_type = false;
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1582,10 +1579,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                 mbuiltin = *bt;
                 if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
             }
-            bool alt_is_class_type = is_class_type(*m);
             rows.push_back({ m->name, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag,
-                             alt_is_class_type });
+                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag });
             ++auto_tag_num;
           }
         }
@@ -1620,7 +1615,6 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.mbuiltin = r.mbuiltin;
             alt.storage_kind = r.storage_kind;
             alt.resolved_tag = r.resolved_tag;
-            alt.is_class_type = r.is_class_type;
             spec.alternatives.push_back(std::move(alt));
         }
 

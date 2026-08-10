@@ -61,6 +61,7 @@ pub mod universal {
     pub const OBJECT_IDENTIFIER: u32 = 6;
     pub const OBJECT_DESCRIPTOR: u32 = 7;
     pub const REAL: u32 = 9;
+    pub const ENUMERATED: u32 = 10;
     pub const UTF8_STRING: u32 = 12;
     pub const RELATIVE_OID: u32 = 13;
     pub const SEQUENCE: u32 = 16;

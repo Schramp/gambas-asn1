@@ -17,7 +17,13 @@ pub struct DecodeError {
 }
 
 impl DecodeError {
-    pub(crate) fn new(message: impl Into<String>, pos: usize) -> DecodeError {
+    // pub, not pub(crate): both fields are already public (a caller could
+    // always construct one via struct-literal syntax), and generated code
+    // (e.g. RustBackend's ENUMERATED decode closures, "invalid <Type> value:
+    // <n>") legitimately needs to raise a DecodeError of its own from
+    // outside this crate — restricting just the constructor bought no real
+    // encapsulation.
+    pub fn new(message: impl Into<String>, pos: usize) -> DecodeError {
         DecodeError { message: message.into(), pos }
     }
 }
