@@ -78,19 +78,31 @@ pub enum MemberAccess<T: 'static> {
     /// IMPLICIT tag override (X.690 §8.14). A member
     /// declared with its own `[n]` tag (explicit-in-the-schema, or an
     /// AUTOMATIC TAGS-assigned one) has that tag *replace* its type's
-    /// natural one on the wire — but every `Asn1Value` impl's
-    /// `ber_encode`/`ber_decode_into` hardcodes its own natural tag
-    /// internally (`bool`'s always writes/expects `BOOLEAN_TAG`, etc.), so
-    /// going through `Scalar`'s `get`/`get_mut` can't express an override.
-    /// `ber_encode`/`ber_decode_into` here call the type's own `*_tagged`
-    /// primitive (`boolean::write_boolean_tagged`, `integer::
-    /// write_integer_tagged`, `octet_string::write_octet_string_tagged`,
-    /// `strings::write_char_string`, ...) with the member's real resolved
-    /// tag instead. XER is unaffected — XER element tags are always
-    /// field-name-derived, never type-derived (`xer.rs`'s module doc), so
-    /// `get`/`get_mut` (reused here, identical to `Scalar`) are still
-    /// correct for the XER leg.
+    /// natural one on the wire. Same shape as `Scalar` (`get`/`get_mut`,
+    /// no closures) — the walker (`encode_sequence_content`/
+    /// `decode_sequence_content` below) calls `Asn1Value::
+    /// ber_encode_tagged`/`ber_decode_into_tagged` with the member's own
+    /// `tag` field instead of the plain `ber_encode`/`ber_decode_into`
+    /// `Scalar` uses; one generic trait method (`value.rs`) covers every
+    /// kind, so no per-kind `*_tagged` primitive selection is needed here
+    /// (or in codegen) at all. XER is unaffected either way — XER element
+    /// tags are always field-name-derived, never type-derived (`xer.rs`'s
+    /// module doc), so `get`/`get_mut` alone are already correct for that leg.
     TaggedScalar {
+        get: fn(&T) -> &dyn Asn1Value,
+        get_mut: fn(&mut T) -> &mut dyn Asn1Value,
+    },
+    /// EXPLICIT tagging (X.690 §8.14.3) — wraps the member's natural
+    /// encoding in an outer TLV, rather than substituting the tag like
+    /// `TaggedScalar`. Needs its own closures, unlike `TaggedScalar`:
+    /// `value::decode_explicit` *constructs* a fresh value
+    /// (`T: Asn1Value + Default`, monomorphized on the member's concrete
+    /// type), it can't decode in place through a `&mut dyn Asn1Value`
+    /// trait object the way `ber_decode_into_tagged` does — a trait object
+    /// has no way to hand back a concrete, constructible `Self`. `get`/
+    /// `get_mut` are carried too, XER-only (same field-name-derived-tag
+    /// reasoning as `TaggedScalar` — EXPLICIT is purely a BER concept).
+    ExplicitScalar {
         ber_encode: fn(&T, &mut Vec<u8>),
         ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
         get: fn(&T) -> &dyn Asn1Value,
@@ -231,8 +243,9 @@ fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &mut V
     for m in spec.members {
         match &m.access {
             MemberAccess::Scalar { get, .. } => get(value).ber_encode(content),
+            MemberAccess::TaggedScalar { get, .. } => get(value).ber_encode_tagged(m.tag, content),
+            MemberAccess::ExplicitScalar { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::SeqOf { ber_encode, .. } => ber_encode(value, content),
-            MemberAccess::TaggedScalar { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::TaggedSeqOf { ber_encode, .. } => ber_encode(value, content),
         }
     }
@@ -302,7 +315,16 @@ fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut Reade
             MemberAccess::SeqOf { ber_decode_into, .. } => {
                 ber_decode_into(&mut result, inner)?;
             }
-            MemberAccess::TaggedScalar { ber_decode_into, .. } => {
+            MemberAccess::TaggedScalar { get_mut, .. } => {
+                if m.optional {
+                    if inner.peek_tag() == Some(m.tag) {
+                        get_mut(&mut result).ber_decode_into_tagged(inner, m.tag)?;
+                    }
+                } else {
+                    get_mut(&mut result).ber_decode_into_tagged(inner, m.tag)?;
+                }
+            }
+            MemberAccess::ExplicitScalar { ber_decode_into, .. } => {
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {
                         ber_decode_into(&mut result, inner)?;

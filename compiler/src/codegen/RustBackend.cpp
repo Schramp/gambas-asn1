@@ -208,60 +208,6 @@ static const char* builtin_xer_name(ast::BuiltinType bt) {
     }
 }
 
-/// @brief Which *_tagged runtime primitive family (if any) covers a given
-///        builtin kind — the shared dispatch rust_tagged_ops/
-///        rust_alt_tagged_ops both switch on. Deliberately stops short of
-///        generating the closure bodies themselves: SEQUENCE members access
-///        the value via `v.{mname}` (a struct field, possibly wrapped in
-///        Option<T> for OPTIONAL) while CHOICE alternatives work with a
-///        fresh local `v` (pattern-matched out of `x` on encode, built from
-///        scratch on decode) — genuinely different code shapes, not worth
-///        forcing through one closure-body generator.
-enum class TaggedKind { None, Boolean, Integer, Real, Null, OctetString, BitString, ObjectIdentifier, RelativeOid, CharString };
-
-// Takes storage_kind, not mtype — only ever called with
-// member/alt-level data (never elem_builtin/elem_mtype), so unlike
-// builtin_ber_tag/builtin_xer_ready there's no shared elem-level caller to
-// keep a string-based signature for.
-static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, IntStorageKind storage_kind) {
-    if (!mbuiltin) return TaggedKind::None;
-    switch (*mbuiltin) {
-    case ast::BuiltinType::Boolean:     return TaggedKind::Boolean;
-    case ast::BuiltinType::Null:        return TaggedKind::Null;
-    case ast::BuiltinType::Real:        return TaggedKind::Real;
-    case ast::BuiltinType::Integer:
-        return (storage_kind == IntStorageKind::S64 || storage_kind == IntStorageKind::U64 ||
-                storage_kind == IntStorageKind::I128)
-            ? TaggedKind::Integer : TaggedKind::None;
-    case ast::BuiltinType::OctetString: return TaggedKind::OctetString;
-    case ast::BuiltinType::BitString:   return TaggedKind::BitString;
-    case ast::BuiltinType::ObjectIdentifier: return TaggedKind::ObjectIdentifier;
-    case ast::BuiltinType::RelativeOid: return TaggedKind::RelativeOid;
-    case ast::BuiltinType::Ia5String:
-    case ast::BuiltinType::Utf8String:
-    case ast::BuiltinType::NumericString:
-    case ast::BuiltinType::PrintableString:
-    case ast::BuiltinType::T61String:
-    case ast::BuiltinType::VisibleString:
-    case ast::BuiltinType::GeneralString:
-    case ast::BuiltinType::GraphicString:
-    case ast::BuiltinType::UniversalString:
-    case ast::BuiltinType::BmpString:
-    case ast::BuiltinType::VideotexString:
-    case ast::BuiltinType::ObjectDescriptor:
-    case ast::BuiltinType::UtcTime:
-    case ast::BuiltinType::GeneralizedTime:
-        return TaggedKind::CharString;
-    // Same uncovered set as builtin_ber_tag's default (only Any,
-    // gambas-asn1#330) — a tagged member/alternative of one of these kinds falls back
-    // to the natural-tag path, which itself has no coverage either, so the
-    // enclosing SEQUENCE/CHOICE gets no table at all (all_covered gates on
-    // rust_member_ber_tag/rust_alt_ber_tag, not tagged_kind_for).
-    default:
-        return TaggedKind::None;
-    }
-}
-
 // SIZE-check function generators (emit_builtin_alias_
 // definition, emit_member_type_descriptor) generically emit `v.len()`
 // for every SIZE-constrained builtin type, assuming a `Vec<T>`/`String`-
@@ -371,13 +317,16 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // EnumeratedXerHandler's member-embedded form,
         // runtime/src/XerCodec.cpp). Makes this type usable as a
         // SEQUENCE/CHOICE member the same way i64/bool/etc already are
-        // (registered as RustTypeKind::Enumerated in covered_type_names_
-        // once emitted — see sequence_member_ber_covered's doc). `as i64`/
+        // (registered in covered_type_names_ once emitted — see
+        // sequence_member_ber_covered's doc). `as i64`/
         // TryFrom<i64> convert through the shared wire representation
         // (X.690 §8.4); the XER leg goes through {map_ident} instead —
         // BER's wire value and XER's value *name* are different
         // representations of the same table, not two independent lookups.
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", tname);
+        os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
+        os << "        asn1cpp_ber::enumerated::ENUMERATED_TAG\n";
+        os << "    }\n\n";
         os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
         os << "        asn1cpp_ber::enumerated::write_enumerated_tagged(out, asn1cpp_ber::enumerated::ENUMERATED_TAG, *self as i64);\n";
         os << "    }\n\n";
@@ -394,7 +343,7 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "    }\n";
         os << "}\n\n";
 
-        covered_type_names_[tname] = {RustTypeKind::Enumerated, true};
+        covered_type_names_[tname] = {true};
     }
 }
 
@@ -437,7 +386,7 @@ void RustBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream
     // before it can be registered here.
     if (spec.storage_kind != IntStorageKind::ARBITRARY) {
         bool xer_ready = spec.storage_kind == IntStorageKind::S64;
-        covered_type_names_[tname] = {RustTypeKind::IntegerAlias, xer_ready, spec.storage_kind};
+        covered_type_names_[tname] = {xer_ready};
     }
 }
 
@@ -801,10 +750,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // for a reference that *resolves* to one — cpp_type_for's TypeRef branch
     // returns the alias's own type name ("MyByte"), never the resolved
     // native type, so a plain `mtype == "i64"` string check can never match
-    // it. Handled instead via covered_type_names_
-    // (RustTypeKind::IntegerAlias, populated by emit_integer_declaration for
-    // every `pub type X = i64/u64/i128;` it emits) — see
-    // sequence_member_ber_covered's `!m.mbuiltin` branch below.
+    // it. Handled instead via covered_type_names_ (populated by
+    // emit_integer_declaration for every `pub type X = i64/u64/i128;` it
+    // emits) — see sequence_member_ber_covered's `!m.mbuiltin` branch below.
     // `mbuiltin == Integer` only says the member *is* an
     // INTEGER, not which Rust storage type classify_integer_storage/
     // native_int_type actually picked for it (i64 default; u64/i128/
@@ -824,129 +772,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // out of scope here), so it keeps the original string check for that path.
     auto rust_member_ber_tag = [](const SequenceMemberSpec& m) -> const char* {
         return rust_tag_for_builtin_or_alias(m.mbuiltin, m.storage_kind, m.mtype);
-    };
-    // IMPLICIT tag override closures — see
-    // MemberAccess::TaggedScalar's doc comment (rust-runtime/ber/src/
-    // sequence.rs) for why `Scalar`'s get/get_mut can't express this.
-    // Returns (ber_encode closure body, ber_decode_into closure body) for a
-    // member whose real resolved tag differs from its natural one, or
-    // nullopt if this builtin kind has no `*_tagged` runtime primitive yet
-    // (only direct builtins — TypeRef-aliased members fall back to Scalar,
-    // same natural-tag-only limitation they already had).
-    auto rust_tagged_ops = [&](const SequenceMemberSpec& m, const std::string& tag_lit)
-            -> std::optional<std::pair<std::string, std::string>> {
-        switch (tagged_kind_for(m.mbuiltin, m.storage_kind)) {
-        case TaggedKind::None:
-            return std::nullopt;
-        case TaggedKind::Boolean:
-            if (m.optional)
-                return std::make_pair(
-                    std::format("|v, out| {{ if let Some(x) = v.{0} {{ asn1cpp_ber::boolean::write_boolean_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
-                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::boolean::read_boolean_tagged(r, {1})?); Ok(()) }}", m.mname, tag_lit));
-            return std::make_pair(
-                std::format("|v, out| asn1cpp_ber::boolean::write_boolean_tagged(out, {1}, v.{0})", m.mname, tag_lit),
-                std::format("|v, r| {{ v.{0} = asn1cpp_ber::boolean::read_boolean_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
-        case TaggedKind::Integer: {
-            // Same tag (INTEGER is INTEGER regardless of storage width),
-            // different *_tagged primitive per Rust storage type
-            // (integer.rs has one pair per width — no generic-over-width
-            // helper, since BER's minimal-two's-complement trimming differs
-            // between signed and unsigned encodings).
-            const char* fn = m.storage_kind == IntStorageKind::U64  ? "write_integer_u64_tagged"
-                            : m.storage_kind == IntStorageKind::I128 ? "write_integer_i128_tagged"
-                                                                      : "write_integer_tagged";
-            const char* rfn = m.storage_kind == IntStorageKind::U64  ? "read_integer_u64_tagged"
-                             : m.storage_kind == IntStorageKind::I128 ? "read_integer_i128_tagged"
-                                                                       : "read_integer_tagged";
-            if (m.optional)
-                return std::make_pair(
-                    std::format("|v, out| {{ if let Some(x) = v.{0} {{ asn1cpp_ber::integer::{2}(out, {1}, x); }} }}", m.mname, tag_lit, fn),
-                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::integer::{2}(r, {1})?); Ok(()) }}", m.mname, tag_lit, rfn));
-            return std::make_pair(
-                std::format("|v, out| asn1cpp_ber::integer::{2}(out, {1}, v.{0})", m.mname, tag_lit, fn),
-                std::format("|v, r| {{ v.{0} = asn1cpp_ber::integer::{2}(r, {1})?; Ok(()) }}", m.mname, tag_lit, rfn));
-        }
-        // same shape as Integer — f64 is Copy.
-        case TaggedKind::Real:
-            if (m.optional)
-                return std::make_pair(
-                    std::format("|v, out| {{ if let Some(x) = v.{0} {{ asn1cpp_ber::real::write_real_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
-                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::real::read_real_tagged(r, {1})?); Ok(()) }}", m.mname, tag_lit));
-            return std::make_pair(
-                std::format("|v, out| asn1cpp_ber::real::write_real_tagged(out, {1}, v.{0})", m.mname, tag_lit),
-                std::format("|v, r| {{ v.{0} = asn1cpp_ber::real::read_real_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
-        // NULL carries no data — encode only checks presence
-        // (Option case) or writes unconditionally (required case); `v` is
-        // unused on encode (`_v`) since there's nothing to read from the field.
-        case TaggedKind::Null:
-            if (m.optional)
-                return std::make_pair(
-                    std::format("|v, out| {{ if v.{0}.is_some() {{ asn1cpp_ber::null::write_null_tagged(out, {1}); }} }}", m.mname, tag_lit),
-                    std::format("|v, r| {{ asn1cpp_ber::null::read_null_tagged(r, {1})?; v.{0} = Some(()); Ok(()) }}", m.mname, tag_lit));
-            return std::make_pair(
-                std::format("|_v, out| asn1cpp_ber::null::write_null_tagged(out, {0})", tag_lit),
-                std::format("|v, r| {{ asn1cpp_ber::null::read_null_tagged(r, {0})?; v.{1} = (); Ok(()) }}", tag_lit, m.mname));
-        case TaggedKind::OctetString:
-            if (m.optional)
-                return std::make_pair(
-                    std::format("|v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::octet_string::write_octet_string_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
-                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::octet_string::read_octet_string_tagged(r, {1})?.to_vec()); Ok(()) }}", m.mname, tag_lit));
-            return std::make_pair(
-                std::format("|v, out| asn1cpp_ber::octet_string::write_octet_string_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
-                std::format("|v, r| {{ v.{0} = asn1cpp_ber::octet_string::read_octet_string_tagged(r, {1})?.to_vec(); Ok(()) }}", m.mname, tag_lit));
-        // read_bit_string_tagged already returns an owned
-        // BitString (unlike octet_string's &[u8] needing .to_vec()).
-        case TaggedKind::BitString:
-            if (m.optional)
-                return std::make_pair(
-                    std::format("|v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::bit_string::write_bit_string_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
-                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::bit_string::read_bit_string_tagged(r, {1})?); Ok(()) }}", m.mname, tag_lit));
-            return std::make_pair(
-                std::format("|v, out| asn1cpp_ber::bit_string::write_bit_string_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
-                std::format("|v, r| {{ v.{0} = asn1cpp_ber::bit_string::read_bit_string_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
-        // same shape as BitString — read_object_identifier_tagged
-        // already returns an owned ObjectIdentifier.
-        case TaggedKind::ObjectIdentifier:
-            if (m.optional)
-                return std::make_pair(
-                    std::format("|v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::oid::write_object_identifier_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
-                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::oid::read_object_identifier_tagged(r, {1})?); Ok(()) }}", m.mname, tag_lit));
-            return std::make_pair(
-                std::format("|v, out| asn1cpp_ber::oid::write_object_identifier_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
-                std::format("|v, r| {{ v.{0} = asn1cpp_ber::oid::read_object_identifier_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
-        // same shape as ObjectIdentifier.
-        case TaggedKind::RelativeOid:
-            if (m.optional)
-                return std::make_pair(
-                    std::format("|v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::relative_oid::write_relative_oid_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
-                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::relative_oid::read_relative_oid_tagged(r, {1})?); Ok(()) }}", m.mname, tag_lit));
-            return std::make_pair(
-                std::format("|v, out| asn1cpp_ber::relative_oid::write_relative_oid_tagged(out, {1}, &v.{0})", m.mname, tag_lit),
-                std::format("|v, r| {{ v.{0} = asn1cpp_ber::relative_oid::read_relative_oid_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
-        case TaggedKind::CharString: {
-            // IA5String's field is plain String (no wrapper); the other 11
-            // kinds are a `char_string_type!` newtype (m.mtype is that
-            // newtype's own name, e.g. "asn1cpp_ber::strings::NumericString")
-            // whose inner String lives at `.0` (strings.rs).
-            bool is_plain_string = (*m.mbuiltin == ast::BuiltinType::Ia5String);
-            const char* kind_name = builtin_xer_name(*m.mbuiltin);
-            std::string ctor_open  = is_plain_string ? "" : m.mtype + "(";
-            std::string ctor_close = is_plain_string ? "" : ")";
-            std::string enc_ref = is_plain_string ? "x" : "&x.0";
-            if (m.optional)
-                return std::make_pair(
-                    std::format("|v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::strings::write_char_string(out, {1}, {2}); }} }}",
-                                 m.mname, tag_lit, enc_ref),
-                    std::format("|v, r| {{ v.{0} = Some({2}asn1cpp_ber::strings::read_char_string(r, {1}, \"{3}\")?{4}); Ok(()) }}",
-                                 m.mname, tag_lit, ctor_open, kind_name, ctor_close));
-            std::string enc_ref_req = is_plain_string ? std::format("&v.{}", m.mname) : std::format("&v.{}.0", m.mname);
-            return std::make_pair(
-                std::format("|v, out| asn1cpp_ber::strings::write_char_string(out, {1}, {2})", m.mname, tag_lit, enc_ref_req),
-                std::format("|v, r| {{ v.{0} = {2}asn1cpp_ber::strings::read_char_string(r, {1}, \"{3}\")?{4}; Ok(()) }}",
-                             m.mname, tag_lit, ctor_open, kind_name, ctor_close));
-        }
-        }
-        return std::nullopt;  // unreachable: switch is exhaustive over TaggedKind
     };
     // Only ever called with m.mbuiltin set — a TypeRef member (mbuiltin
     // unset) is routed to covered_type_names_ instead by
@@ -1000,7 +825,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         std::all_of(spec.members.begin(), spec.members.end(), rust_member_covered);
     bool all_xer_ready = all_covered &&
         std::all_of(spec.members.begin(), spec.members.end(), rust_member_covered_xer_ready);
-    if (all_covered) covered_type_names_[spec.type_name] = {RustTypeKind::SequenceOrSet, all_xer_ready};
+    if (all_covered) covered_type_names_[spec.type_name] = {all_xer_ready};
     if (all_covered) {
         std::string members_ident = std::format("{}_MEMBERS", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
@@ -1067,18 +892,17 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << "        },\n";
                 }
             } else if (m.resolved_tag && m.is_explicit) {
-                // EXPLICIT tagging (X.690 §8.14.3) — wrap
-                // the member's natural (untagged) Asn1Value encoding in a
-                // constructed outer TLV via value::encode_explicit/
-                // decode_explicit, rather than substituting the tag like
-                // the IMPLICIT (TaggedScalar via rust_tagged_ops) branch
-                // below. Generic over Asn1Value (unlike the *_tagged
-                // primitives IMPLICIT needs), so it covers every member the
-                // natural Scalar path already covers with one runtime pair.
+                // EXPLICIT tagging (X.690 §8.14.3) — wraps
+                // the member's natural Asn1Value encoding in a constructed
+                // outer TLV via value::encode_explicit/decode_explicit,
+                // rather than substituting the tag like the IMPLICIT
+                // branch below. Generic over Asn1Value, so it covers every
+                // member the natural Scalar path already covers with one
+                // runtime pair.
                 std::string tag_lit = format_tag_literal(*m.resolved_tag);
                 os << std::format("        tag: {},\n", tag_lit);
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedScalar {\n";
+                os << "        access: asn1cpp_ber::sequence::MemberAccess::ExplicitScalar {\n";
                 if (m.optional) {
                     os << std::format("            ber_encode: |v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::value::encode_explicit(out, {1}, x); }} }},\n", m.mname, tag_lit);
                     os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::value::decode_explicit(r, {1})?); Ok(()) }},\n", m.mname, tag_lit);
@@ -1088,127 +912,39 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 }
                 os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
                 os << "        },\n";
-            } else if (!m.mbuiltin && m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit &&
-                       covered_type_names_.count(m.mtype) &&
-                       covered_type_names_.at(m.mtype).kind == RustTypeKind::SequenceOrSet) {
-                // IMPLICIT retag (X.690 §8.14.2) of a
-                // composite (SEQUENCE/SET-typed — CHOICE members are always
-                // EXPLICIT, see member_is_explicit) member: same content,
-                // different outer tag, via the target type's own SPEC and
-                // the generic encode_sequence_tagged/decode_sequence_tagged
-                // pair (no per-builtin-kind *_tagged primitive needed, this
-                // works for any SequenceSpec<T>).
-                std::string tag_lit = format_tag_literal(*m.resolved_tag);
-                // Fully-qualified, not a bare identifier — this member's
-                // enclosing type and the composite target's SPEC constant
-                // live in different generated modules/files (same
-                // convention as the `use crate::<snake_case>::<Type>;`
-                // import already emitted for the field's own type).
-                std::string target_spec = std::format("crate::{}::{}_SPEC",
-                    to_snake_case(m.mtype), to_screaming_snake_case(m.mtype));
-                os << std::format("        tag: {},\n", tag_lit);
-                os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedScalar {\n";
-                if (m.optional) {
-                    os << std::format("            ber_encode: |v, out| {{ if let Some(x) = &v.{0} {{ out.extend_from_slice(&asn1cpp_ber::sequence::encode_sequence_tagged(&{1}, x, {2})); }} }},\n", m.mname, target_spec, tag_lit);
-                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::sequence::decode_sequence_tagged(&{1}, r, {2})?); Ok(()) }},\n", m.mname, target_spec, tag_lit);
-                } else {
-                    os << std::format("            ber_encode: |v, out| out.extend_from_slice(&asn1cpp_ber::sequence::encode_sequence_tagged(&{1}, &v.{0}, {2})),\n", m.mname, target_spec, tag_lit);
-                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::sequence::decode_sequence_tagged(&{1}, r, {2})?; Ok(()) }},\n", m.mname, target_spec, tag_lit);
-                }
-                os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
-                os << "        },\n";
-            } else if (!m.mbuiltin && m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit &&
-                       covered_type_names_.count(m.mtype) &&
-                       covered_type_names_.at(m.mtype).kind == RustTypeKind::Enumerated) {
-                // IMPLICIT retag of an ENUMERATED-typed member — X.680 §22.3
-                // permits it (unlike CHOICE/ANY). No shared table to
-                // reference (ENUMERATED has no SequenceSpec-style table,
-                // just a per-type Asn1Value impl going through `as i64`/
-                // TryFrom<i64>), so the override tag substitutes directly
-                // in the same write_enumerated_tagged/read_enumerated_tagged
-                // pair the type's own Asn1Value impl uses internally
-                // (emit_enumerated_definition) with ENUMERATED_TAG fixed —
-                // here the *_tagged pair takes the override tag instead.
+            } else if (m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit) {
+                // IMPLICIT retag (X.690 §8.14.2) — same content,
+                // different outer tag. `MemberAccess::TaggedScalar` has no
+                // closures of its own (unlike before this comment): the
+                // walker (encode_sequence_content/decode_sequence_content,
+                // sequence.rs) calls `Asn1Value::ber_encode_tagged`/
+                // `ber_decode_into_tagged` generically using this row's own
+                // `tag` field — one runtime method covers every kind
+                // (builtin scalar, SEQUENCE/SET, ENUMERATED, TypeRef-aliased
+                // INTEGER), no per-kind dispatch needed in codegen at all.
                 std::string tag_lit = format_tag_literal(*m.resolved_tag);
                 os << std::format("        tag: {},\n", tag_lit);
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedScalar {\n";
-                if (m.optional) {
-                    os << std::format("            ber_encode: |v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::enumerated::write_enumerated_tagged(out, {1}, x as i64); }} }},\n", m.mname, tag_lit);
-                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::enumerated::read_enumerated_tagged::<{2}>(r, {1})?); Ok(()) }},\n", m.mname, tag_lit, m.mtype);
-                } else {
-                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::enumerated::write_enumerated_tagged(out, {1}, v.{0} as i64),\n", m.mname, tag_lit);
-                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::enumerated::read_enumerated_tagged::<{2}>(r, {1})?; Ok(()) }},\n", m.mname, tag_lit, m.mtype);
-                }
-                os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
-                os << "        },\n";
-            } else if (!m.mbuiltin && m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit &&
-                       covered_type_names_.count(m.mtype) &&
-                       covered_type_names_.at(m.mtype).kind == RustTypeKind::IntegerAlias) {
-                // IMPLICIT retag of a TypeRef-aliased INTEGER member
-                // (`MyByte ::= INTEGER (0..255)`) — `MyByte`
-                // is a real Rust type alias for i64/u64/i128 (emit_integer),
-                // not a newtype, so the member field already *is* that
-                // native type: no as-cast/TryFrom needed, just the same
-                // write/read_integer*_tagged primitive a *direct* Integer
-                // member's own TaggedKind::Integer case (rust_tagged_ops)
-                // uses, picked from the alias's own storage_kind.
-                IntStorageKind sk = covered_type_names_.at(m.mtype).storage_kind;
-                const char* wfn = sk == IntStorageKind::U64  ? "write_integer_u64_tagged"
-                                 : sk == IntStorageKind::I128 ? "write_integer_i128_tagged"
-                                                               : "write_integer_tagged";
-                const char* rfn = sk == IntStorageKind::U64  ? "read_integer_u64_tagged"
-                                 : sk == IntStorageKind::I128 ? "read_integer_i128_tagged"
-                                                               : "read_integer_tagged";
-                std::string tag_lit = format_tag_literal(*m.resolved_tag);
-                os << std::format("        tag: {},\n", tag_lit);
-                os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedScalar {\n";
-                if (m.optional) {
-                    os << std::format("            ber_encode: |v, out| {{ if let Some(x) = v.{0} {{ asn1cpp_ber::integer::{2}(out, {1}, x); }} }},\n", m.mname, tag_lit, wfn);
-                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::integer::{2}(r, {1})?); Ok(()) }},\n", m.mname, tag_lit, rfn);
-                } else {
-                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::integer::{2}(out, {1}, v.{0}),\n", m.mname, tag_lit, wfn);
-                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::integer::{2}(r, {1})?; Ok(()) }},\n", m.mname, tag_lit, rfn);
-                }
-                os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
-                os << "        },\n";
+                os << std::format("        access: asn1cpp_ber::sequence::MemberAccess::TaggedScalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
             } else {
-                // Prefer the member's real resolved tag
-                // (IMPLICIT override) over its natural one whenever one
-                // applies and this builtin kind has a *_tagged primitive.
-                std::optional<std::pair<std::string, std::string>> tagged_ops;
-                if (m.mbuiltin && m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit)
-                    tagged_ops = rust_tagged_ops(m, format_tag_literal(*m.resolved_tag));
-                if (tagged_ops) {
-                    os << std::format("        tag: {},\n", format_tag_literal(*m.resolved_tag));
-                    os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                    os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedScalar {\n";
-                    os << std::format("            ber_encode: {},\n", tagged_ops->first);
-                    os << std::format("            ber_decode_into: {},\n", tagged_ops->second);
-                    os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
-                    os << "        },\n";
-                } else {
-                    // A member whose type is a TypeRef (mbuiltin unset)
-                    // reaches here either with its natural tag
-                    // (SEQUENCE_TAG/SET_TAG/ENUMERATED_TAG, or an
-                    // EXPLICIT-forced CHOICE tag already handled above) or —
-                    // required-only, per sequence_member_ber_covered —
-                    // genuinely tagless (an untagged CHOICE, X.680 §28: no
-                    // AUTOMATIC TAGS, no universal tag). A required member's
-                    // MemberDescriptor.tag is never consulted at decode time
-                    // (only OPTIONAL presence-peek reads it), so the
-                    // placeholder in that last case is inert, not a claim
-                    // this member actually carries tag [0].
-                    std::string tag_text = !m.mbuiltin
-                        ? (m.resolved_tag ? format_tag_literal(*m.resolved_tag)
-                                           : "asn1cpp_ber::sequence::SEQUENCE_TAG /* untagged CHOICE member: no fixed tag, inert for required members */")
-                        : rust_member_ber_tag(m);
-                    os << std::format("        tag: {},\n", tag_text);
-                    os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                    os << std::format("        access: asn1cpp_ber::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
-                }
+                // A member whose type is a TypeRef (mbuiltin unset)
+                // reaches here either with its natural tag
+                // (SEQUENCE_TAG/SET_TAG/ENUMERATED_TAG, or an
+                // EXPLICIT-forced CHOICE tag already handled above) or —
+                // required-only, per sequence_member_ber_covered —
+                // genuinely tagless (an untagged CHOICE, X.680 §28: no
+                // AUTOMATIC TAGS, no universal tag). A required member's
+                // MemberDescriptor.tag is never consulted at decode time
+                // (only OPTIONAL presence-peek reads it), so the
+                // placeholder in that last case is inert, not a claim
+                // this member actually carries tag [0].
+                std::string tag_text = !m.mbuiltin
+                    ? (m.resolved_tag ? format_tag_literal(*m.resolved_tag)
+                                       : "asn1cpp_ber::sequence::SEQUENCE_TAG /* untagged CHOICE member: no fixed tag, inert for required members */")
+                    : rust_member_ber_tag(m);
+                os << std::format("        tag: {},\n", tag_text);
+                os << std::format("        optional: {},\n", m.optional ? "true" : "false");
+                os << std::format("        access: asn1cpp_ber::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
             }
             os << "    },\n";
         }
@@ -1265,6 +1001,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         // checks covered_type_names_'s xer_ready flag before ever routing
         // through it (rust_member_covered_xer_ready/rust_alt_xer_ready).
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", spec.type_name);
+        os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
+        os << std::format("        {}.tag\n", spec_ident);
+        os << "    }\n\n";
         os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
         os << std::format("        asn1cpp_ber::sequence::encode_sequence_into(&{}, self, out);\n", spec_ident);
         os << "    }\n\n";
@@ -1433,95 +1172,6 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     auto rust_alt_covered = [&](const ChoiceAlternativeSpec& a) -> bool {
         return choice_alternative_ber_covered(a);
     };
-    auto rust_alt_ber_tag = [](const ChoiceAlternativeSpec& a) -> const char* {
-        return rust_tag_for_builtin_or_alias(a.mbuiltin, a.storage_kind, a.mtype);
-    };
-    // IMPLICIT tag override for a CHOICE alternative — same
-    // reasoning as emit_sequence_definition's rust_tagged_ops, adapted
-    // to a fresh local `v` (pattern-matched out of `x`/decoded from scratch)
-    // instead of a struct member access. Returns the encode/decode body
-    // fragments (statements ending in the variant construction/`out` write),
-    // or nullopt if this builtin kind has no `*_tagged` runtime primitive yet
-    // — same coverage limit rust_tagged_ops documents.
-    auto rust_alt_tagged_ops = [&](const ChoiceAlternativeSpec& a, const std::string& tag_lit)
-            -> std::optional<std::pair<std::string, std::string>> {
-        std::string vname = variant_name(*this, a.asn1_name);
-        auto variant_ctor = [&](const std::string& expr) {
-            return std::format("Ok({}::{}({}))", spec.type_name, vname, expr);
-        };
-        switch (tagged_kind_for(a.mbuiltin, a.storage_kind)) {
-        case TaggedKind::None:
-            return std::nullopt;
-        case TaggedKind::Boolean:
-            return std::make_pair(
-                std::format("asn1cpp_ber::boolean::write_boolean_tagged(out, {}, *v);", tag_lit),
-                std::format("let v = asn1cpp_ber::boolean::read_boolean_tagged(r, {})?; {}",
-                             tag_lit, variant_ctor("v")));
-        case TaggedKind::Integer: {
-            const char* fn = a.storage_kind == IntStorageKind::U64  ? "write_integer_u64_tagged"
-                            : a.storage_kind == IntStorageKind::I128 ? "write_integer_i128_tagged"
-                                                                      : "write_integer_tagged";
-            const char* rfn = a.storage_kind == IntStorageKind::U64  ? "read_integer_u64_tagged"
-                             : a.storage_kind == IntStorageKind::I128 ? "read_integer_i128_tagged"
-                                                                       : "read_integer_tagged";
-            return std::make_pair(
-                std::format("asn1cpp_ber::integer::{}(out, {}, *v);", fn, tag_lit),
-                std::format("let v = asn1cpp_ber::integer::{}(r, {})?; {}",
-                             rfn, tag_lit, variant_ctor("v")));
-        }
-        // same shape as Integer — f64 is Copy.
-        case TaggedKind::Real:
-            return std::make_pair(
-                std::format("asn1cpp_ber::real::write_real_tagged(out, {}, *v);", tag_lit),
-                std::format("let v = asn1cpp_ber::real::read_real_tagged(r, {})?; {}",
-                             tag_lit, variant_ctor("v")));
-        // NULL's payload (`()`) carries no data — `let _ =
-        // v;` explicitly discards the `if let`-bound match (still needed to
-        // destructure the enum) so rustc's unused_variables lint stays quiet.
-        case TaggedKind::Null:
-            return std::make_pair(
-                std::format("let _ = v; asn1cpp_ber::null::write_null_tagged(out, {});", tag_lit),
-                std::format("asn1cpp_ber::null::read_null_tagged(r, {})?; {}", tag_lit, variant_ctor("()")));
-        case TaggedKind::OctetString:
-            return std::make_pair(
-                std::format("asn1cpp_ber::octet_string::write_octet_string_tagged(out, {}, v);", tag_lit),
-                std::format("let v = asn1cpp_ber::octet_string::read_octet_string_tagged(r, {})?.to_vec(); {}",
-                             tag_lit, variant_ctor("v")));
-        // read_bit_string_tagged already returns an owned
-        // BitString (unlike octet_string's &[u8] needing .to_vec()).
-        case TaggedKind::BitString:
-            return std::make_pair(
-                std::format("asn1cpp_ber::bit_string::write_bit_string_tagged(out, {}, v);", tag_lit),
-                std::format("let v = asn1cpp_ber::bit_string::read_bit_string_tagged(r, {})?; {}",
-                             tag_lit, variant_ctor("v")));
-        // same shape as BitString.
-        case TaggedKind::ObjectIdentifier:
-            return std::make_pair(
-                std::format("asn1cpp_ber::oid::write_object_identifier_tagged(out, {}, v);", tag_lit),
-                std::format("let v = asn1cpp_ber::oid::read_object_identifier_tagged(r, {})?; {}",
-                             tag_lit, variant_ctor("v")));
-        // same shape as ObjectIdentifier.
-        case TaggedKind::RelativeOid:
-            return std::make_pair(
-                std::format("asn1cpp_ber::relative_oid::write_relative_oid_tagged(out, {}, v);", tag_lit),
-                std::format("let v = asn1cpp_ber::relative_oid::read_relative_oid_tagged(r, {})?; {}",
-                             tag_lit, variant_ctor("v")));
-        case TaggedKind::CharString: {
-            // Same IA5String-is-plain-String-vs-newtype split as
-            // rust_tagged_ops — see that lambda's comment.
-            bool is_plain_string = (*a.mbuiltin == ast::BuiltinType::Ia5String);
-            const char* kind_name = builtin_xer_name(*a.mbuiltin);
-            std::string enc_ref = is_plain_string ? "v" : "&v.0";
-            std::string ctor_open  = is_plain_string ? "" : a.mtype + "(";
-            std::string ctor_close = is_plain_string ? "" : ")";
-            return std::make_pair(
-                std::format("asn1cpp_ber::strings::write_char_string(out, {}, {});", tag_lit, enc_ref),
-                std::format("let s = asn1cpp_ber::strings::read_char_string(r, {}, \"{}\")?; let v = {}s{}; {}",
-                             tag_lit, kind_name, ctor_open, ctor_close, variant_ctor("v")));
-        }
-        }
-        return std::nullopt;  // unreachable: switch is exhaustive over TaggedKind
-    };
     bool all_covered = !spec.alternatives.empty() &&
         std::all_of(spec.alternatives.begin(), spec.alternatives.end(), rust_alt_covered);
     // XER coverage is no longer implied by BER coverage now that composite
@@ -1545,7 +1195,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     };
     bool all_xer_ready = all_covered &&
         std::all_of(spec.alternatives.begin(), spec.alternatives.end(), rust_alt_xer_ready);
-    if (all_covered) covered_type_names_[spec.type_name] = {RustTypeKind::Choice, all_xer_ready};
+    if (all_covered) covered_type_names_[spec.type_name] = {all_xer_ready};
     if (all_covered) {
         std::string alts_ident = std::format("{}_ALTERNATIVES", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
@@ -1574,12 +1224,6 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     os << "        } else { false },\n";
                 }
             };
-            std::optional<std::pair<std::string, std::string>> tagged_ops;
-            std::string tag_lit;
-            if (a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit) {
-                tag_lit = format_tag_literal(*a.resolved_tag);
-                tagged_ops = rust_alt_tagged_ops(a, tag_lit);
-            }
             os << "    asn1cpp_ber::choice::AlternativeSpec {\n";
             os << std::format("        name: \"{}\",\n", a.asn1_name);
             if (a.resolved_tag && a.is_explicit) {
@@ -1595,85 +1239,28 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << std::format("            let v: {} = asn1cpp_ber::value::decode_explicit(r, {})?;\n", a.mtype, etag);
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
-            } else if (!a.mbuiltin && a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit &&
-                       covered_type_names_.count(a.mtype) &&
-                       covered_type_names_.at(a.mtype).kind == RustTypeKind::SequenceOrSet) {
-                // IMPLICIT retag (X.690 §8.14.2) of a composite
-                // (SEQUENCE/SET-typed — CHOICE targets are always EXPLICIT,
-                // X.680 §30.6) alternative: same shape as
-                // emit_sequence_definition's composite TaggedScalar branch,
-                // via the target's own SPEC and the generic
-                // encode_sequence_tagged/decode_sequence_tagged pair.
-                std::string tag_lit2 = format_tag_literal(*a.resolved_tag);
-                std::string target_spec = std::format("crate::{}::{}_SPEC",
-                    to_snake_case(a.mtype), to_screaming_snake_case(a.mtype));
-                os << std::format("        tag: {},\n", tag_lit2);
-                emit_encode_closure("ber_encode",
-                    std::format("out.extend_from_slice(&asn1cpp_ber::sequence::encode_sequence_tagged(&{}, v, {}));",
-                                 target_spec, tag_lit2));
-                os << "        ber_decode_into: |r| {\n";
-                os << std::format("            let v: {} = asn1cpp_ber::sequence::decode_sequence_tagged(&{}, r, {})?;\n",
-                                   a.mtype, target_spec, tag_lit2);
-                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
-                os << "        },\n";
-            } else if (!a.mbuiltin && a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit &&
-                       covered_type_names_.count(a.mtype) &&
-                       covered_type_names_.at(a.mtype).kind == RustTypeKind::Enumerated) {
-                // IMPLICIT retag of an ENUMERATED-typed alternative — same
-                // reasoning as emit_sequence_definition's Enumerated retag
-                // branch (X.680 §22.3 permits it).
-                std::string tag_lit2 = format_tag_literal(*a.resolved_tag);
-                os << std::format("        tag: {},\n", tag_lit2);
-                emit_encode_closure("ber_encode",
-                    std::format("asn1cpp_ber::enumerated::write_enumerated_tagged(out, {}, *v as i64);", tag_lit2));
-                os << "        ber_decode_into: |r| {\n";
-                os << std::format("            let v = asn1cpp_ber::enumerated::read_enumerated_tagged::<{}>(r, {})?;\n", a.mtype, tag_lit2);
-                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
-                os << "        },\n";
-            } else if (!a.mbuiltin && a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit &&
-                       covered_type_names_.count(a.mtype) &&
-                       covered_type_names_.at(a.mtype).kind == RustTypeKind::IntegerAlias) {
-                // IMPLICIT retag of a TypeRef-aliased INTEGER alternative —
-                // same reasoning as emit_sequence_definition's IntegerAlias
-                // retag branch: the
-                // alias type already *is* i64/u64/i128, no cast/TryFrom
-                // needed, just the storage_kind-selected *_tagged primitive.
-                IntStorageKind sk = covered_type_names_.at(a.mtype).storage_kind;
-                const char* wfn = sk == IntStorageKind::U64  ? "write_integer_u64_tagged"
-                                 : sk == IntStorageKind::I128 ? "write_integer_i128_tagged"
-                                                               : "write_integer_tagged";
-                const char* rfn = sk == IntStorageKind::U64  ? "read_integer_u64_tagged"
-                                 : sk == IntStorageKind::I128 ? "read_integer_i128_tagged"
-                                                               : "read_integer_tagged";
-                std::string tag_lit2 = format_tag_literal(*a.resolved_tag);
-                os << std::format("        tag: {},\n", tag_lit2);
-                emit_encode_closure("ber_encode",
-                    std::format("asn1cpp_ber::integer::{}(out, {}, *v);", wfn, tag_lit2));
-                os << "        ber_decode_into: |r| {\n";
-                os << std::format("            let v = asn1cpp_ber::integer::{}(r, {})?;\n", rfn, tag_lit2);
-                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
-                os << "        },\n";
-            } else if (tagged_ops) {
-                os << std::format("        tag: {},\n", tag_lit);
-                emit_encode_closure("ber_encode", tagged_ops->first);
-                os << "        ber_decode_into: |r| {\n";
-                os << std::format("            {}\n", tagged_ops->second);
-                os << "        },\n";
             } else {
-                // An alternative whose type is a TypeRef (mbuiltin unset)
-                // reaching here has its target's own natural tag
-                // (SEQUENCE_TAG/SET_TAG/ENUMERATED_TAG) — EXPLICIT-forced
-                // CHOICE targets and IMPLICIT overrides are both already
-                // handled above; choice_alternative_ber_covered guarantees
-                // resolved_tag is present whenever mbuiltin is unset.
-                std::string tag_text = !a.mbuiltin
-                    ? format_tag_literal(*a.resolved_tag)
-                    : rust_alt_ber_tag(a);
-                os << std::format("        tag: {},\n", tag_text);
-                emit_encode_closure("ber_encode", "asn1cpp_ber::value::Asn1Value::ber_encode(v, out);");
+                // Every non-EXPLICIT alternative — whether IMPLICIT-retagged
+                // or using its own natural tag — dispatches through one
+                // generic pair, `Asn1Value::ber_encode_tagged`/
+                // `ber_decode_into_tagged` (value.rs), using this
+                // alternative's own resolved tag whatever it is: the
+                // natural-tag case is indistinguishable from an override at
+                // this level (ber_encode_tagged's fast path makes them
+                // produce identical bytes when the two coincide), so no
+                // per-kind or override-vs-natural branching is needed here
+                // at all. choice_alternative_ber_covered guarantees
+                // resolved_tag is always present for a covered alternative
+                // (every builtin/composite/ENUMERATED type has a real
+                // natural tag; the one case that wouldn't — a genuinely
+                // untagged nested CHOICE alternative, X.680 §28 — is
+                // already excluded from coverage there).
+                std::string tag_lit = format_tag_literal(*a.resolved_tag);
+                os << std::format("        tag: {},\n", tag_lit);
+                emit_encode_closure("ber_encode", std::format("asn1cpp_ber::value::Asn1Value::ber_encode_tagged(v, {}, out);", tag_lit));
                 os << "        ber_decode_into: |r| {\n";
                 os << std::format("            let mut v: {} = Default::default();\n", a.mtype);
-                os << "            asn1cpp_ber::value::Asn1Value::ber_decode_into(&mut v, r)?;\n";
+                os << std::format("            asn1cpp_ber::value::Asn1Value::ber_decode_into_tagged(&mut v, r, {})?;\n", tag_lit);
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
             }
@@ -1735,6 +1322,9 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         // the content-only cores of encode_choice_xer/decode_choice_xer,
         // choice.rs).
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", spec.type_name);
+        os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
+        os << "        unreachable!(\"CHOICE has no natural tag (X.680 §28) — never invoked, a CHOICE-typed member/alternative is always EXPLICIT-wrapped when tagged (X.680 §30.6)\")\n";
+        os << "    }\n\n";
         os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
         os << std::format("        asn1cpp_ber::choice::encode_choice_into(&{}, self, out);\n", spec_ident);
         os << "    }\n\n";
