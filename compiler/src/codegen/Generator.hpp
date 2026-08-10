@@ -446,6 +446,34 @@ private:
     bool type_reaches(const ast::TypeDef& from, const std::string& target,
                        std::set<std::string>& visited) const;
     bool member_type_in_cycle(const ast::TypeDef& m, const std::string& enclosing_name) const;
+
+    // Composite (nested SEQUENCE/CHOICE-typed) member wire
+    // coverage. `resolve_class_type_target` is `is_class_type`'s own lookup,
+    // exposed as a pointer instead of a bool — `m` itself for an inline
+    // class-typed member, the resolved TypeRef target otherwise, nullptr if
+    // `m` isn't class-typed at all.
+    const ast::TypeDef* resolve_class_type_target(const ast::TypeDef& m) const;
+
+    // Does `def` (a SEQUENCE/SET/CHOICE TypeDef) qualify for a real Rust
+    // `impl Asn1Value` — every one of its own members recursively resolves
+    // to a wire-covered builtin/SEQUENCE-OF-of-builtin/non-cyclic composite
+    // member, per RustBackend::sequence_member_ber_covered /
+    // choice_alternative_ber_covered (the single source of truth for the
+    // actual coverage rules; this method's own job is only to build the
+    // same member-shape facts collect() builds later during real emission,
+    // early enough to answer the question before that emission happens —
+    // Generator processes top-level type assignments in schema-declaration
+    // order, not dependency order, so a member can reference a type
+    // declared *later* in the same module; a type's own coverage can't
+    // depend on emission having already happened for whatever it
+    // references). Memoized per TypeDef (`rust_wire_eligible_cache_`);
+    // `visiting` breaks cycles the `member_type_in_cycle` check upstream of
+    // each recursive call doesn't already rule out. Backend-agnostic in
+    // principle (delegates all Rust-specific coverage rules to `backend_`),
+    // but only ever consulted by RustBackend today — CppBackend covers
+    // every member unconditionally, so nothing calls this on that path.
+    bool rust_wire_eligible(const ast::TypeDef& def, std::set<const ast::TypeDef*>& visiting);
+    std::unordered_map<const ast::TypeDef*, bool> rust_wire_eligible_cache_;
 };
 
 } // namespace asn1::codegen

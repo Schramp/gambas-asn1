@@ -222,6 +222,43 @@ pub struct SequenceSpec<T: 'static> {
     pub members: &'static [MemberDescriptor<T>],
 }
 
+/// Member-loop content of a SEQUENCE encoding, without the outer TLV —
+/// shared by `encode_sequence_tagged` (the top-level tag) and, once a
+/// generated SEQUENCE/SET type has its own `Asn1Value` impl, by whatever
+/// tag a *containing* type's member override applies (X.690 §8.14 IMPLICIT
+/// retagging replaces the outer tag only, content is unchanged).
+fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &mut Vec<u8>) {
+    for m in spec.members {
+        match &m.access {
+            MemberAccess::Scalar { get, .. } => get(value).ber_encode(content),
+            MemberAccess::SeqOf { ber_encode, .. } => ber_encode(value, content),
+            MemberAccess::TaggedScalar { ber_encode, .. } => ber_encode(value, content),
+            MemberAccess::TaggedSeqOf { ber_encode, .. } => ber_encode(value, content),
+        }
+    }
+}
+
+/// SEQUENCE encoding under an explicit tag override — the runtime
+/// counterpart of a composite (SEQUENCE/SET-typed) member declared with its
+/// own IMPLICIT `[n]` tag (X.690 §8.14.2): same content as `encode_sequence`,
+/// different outer tag. Generic over any `SequenceSpec<T>`, so codegen needs
+/// no per-type wiring beyond passing the member's resolved tag.
+pub fn encode_sequence_tagged<T>(spec: &SequenceSpec<T>, value: &T, tag: Tag) -> Vec<u8> {
+    let mut content = Vec::new();
+    encode_sequence_content(spec, value, &mut content);
+    let mut out = Vec::new();
+    write_constructed(&mut out, tag, &content);
+    out
+}
+
+/// Appends a SEQUENCE's complete TLV (its own natural tag) to an existing
+/// buffer — the shape `Asn1Value::ber_encode` needs (writes into a
+/// caller-owned `out`, not a fresh `Vec`) so a generated SEQUENCE/SET type
+/// can implement that trait and become usable as a nested composite member.
+pub fn encode_sequence_into<T>(spec: &SequenceSpec<T>, value: &T, out: &mut Vec<u8>) {
+    out.extend_from_slice(&encode_sequence_tagged(spec, value, spec.tag));
+}
+
 /// Generic SEQUENCE encoder — the Rust analogue of
 /// `SequenceBerHandler::encode`. Iterates `spec.members` in order, writing
 /// each member's own complete TLV into the constructed SEQUENCE content.
@@ -230,18 +267,7 @@ pub struct SequenceSpec<T: 'static> {
 /// `Asn1Value for Option<V>` impl, `value.rs`) already writes nothing. No
 /// DEFAULT-value suppression yet — a real gap, not silently dropped.
 pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
-    let mut content = Vec::new();
-    for m in spec.members {
-        match &m.access {
-            MemberAccess::Scalar { get, .. } => get(value).ber_encode(&mut content),
-            MemberAccess::SeqOf { ber_encode, .. } => ber_encode(value, &mut content),
-            MemberAccess::TaggedScalar { ber_encode, .. } => ber_encode(value, &mut content),
-            MemberAccess::TaggedSeqOf { ber_encode, .. } => ber_encode(value, &mut content),
-        }
-    }
-    let mut out = Vec::new();
-    write_constructed(&mut out, spec.tag, &content);
-    out
+    encode_sequence_tagged(spec, value, spec.tag)
 }
 
 /// Generic SEQUENCE decoder — the Rust analogue of
@@ -260,43 +286,62 @@ pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
 /// SEQUENCE's canonical member ordering (X.690 §8.9), same simplifying
 /// assumption `MemberDescriptor`'s module doc already documents this crate
 /// making elsewhere (no DEFAULT values, no out-of-order OPTIONAL members).
-pub fn decode_sequence<T: Default>(spec: &SequenceSpec<T>, data: &[u8]) -> Result<T, DecodeError> {
-    let mut r = Reader::new(data);
-    let tlv = r.read_tlv()?;
-    if tlv.tag != spec.tag {
-        return Err(DecodeError::new(format!("expected SEQUENCE tag, got {:?}", tlv.tag), r.pos()));
-    }
-    let mut inner = Reader::new(tlv.value);
+fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut Reader) -> Result<T, DecodeError> {
     let mut result = T::default();
     for m in spec.members {
         match &m.access {
             MemberAccess::Scalar { get_mut, .. } => {
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {
-                        get_mut(&mut result).ber_decode_into(&mut inner)?;
+                        get_mut(&mut result).ber_decode_into(inner)?;
                     }
                 } else {
-                    get_mut(&mut result).ber_decode_into(&mut inner)?;
+                    get_mut(&mut result).ber_decode_into(inner)?;
                 }
             }
             MemberAccess::SeqOf { ber_decode_into, .. } => {
-                ber_decode_into(&mut result, &mut inner)?;
+                ber_decode_into(&mut result, inner)?;
             }
             MemberAccess::TaggedScalar { ber_decode_into, .. } => {
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {
-                        ber_decode_into(&mut result, &mut inner)?;
+                        ber_decode_into(&mut result, inner)?;
                     }
                 } else {
-                    ber_decode_into(&mut result, &mut inner)?;
+                    ber_decode_into(&mut result, inner)?;
                 }
             }
             MemberAccess::TaggedSeqOf { ber_decode_into, .. } => {
-                ber_decode_into(&mut result, &mut inner)?;
+                ber_decode_into(&mut result, inner)?;
             }
         }
     }
     Ok(result)
+}
+
+/// SEQUENCE decoding under an explicit tag override — the decode
+/// counterpart of `encode_sequence_tagged`.
+pub fn decode_sequence_tagged<T: Default>(spec: &SequenceSpec<T>, r: &mut Reader, tag: Tag) -> Result<T, DecodeError> {
+    let tlv = r.read_tlv()?;
+    if tlv.tag != tag {
+        return Err(DecodeError::new(format!("expected SEQUENCE tag, got {:?}", tlv.tag), r.pos()));
+    }
+    let mut inner = Reader::new(tlv.value);
+    decode_sequence_content(spec, &mut inner)
+}
+
+/// Reads a SEQUENCE (its own natural tag) from the caller's current stream
+/// position — the shape `Asn1Value::ber_decode_into` needs (reads the next
+/// TLV from a shared `Reader`, not a standalone buffer) so a generated
+/// SEQUENCE/SET type can implement that trait and become usable as a nested
+/// composite member.
+pub fn decode_sequence_from<T: Default>(spec: &SequenceSpec<T>, r: &mut Reader) -> Result<T, DecodeError> {
+    decode_sequence_tagged(spec, r, spec.tag)
+}
+
+pub fn decode_sequence<T: Default>(spec: &SequenceSpec<T>, data: &[u8]) -> Result<T, DecodeError> {
+    let mut r = Reader::new(data);
+    decode_sequence_from(spec, &mut r)
 }
 
 /// `Point ::= SEQUENCE { x INTEGER, y INTEGER }`

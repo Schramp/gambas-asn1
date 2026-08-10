@@ -217,6 +217,8 @@ public:
     void emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const override;
     void emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const override;
     void emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const override;
+    bool sequence_member_ber_covered(const SequenceMemberSpec& m) const override;
+    bool choice_alternative_ber_covered(const ChoiceAlternativeSpec& a) const override;
     void emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const override;
     void emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const override;
     void emit_namespace_open(const std::string& name, TypeOutputSession& session) const override;
