@@ -2,6 +2,7 @@
 #include "Backend.hpp"
 #include "Generator.hpp"  // to_cpp_name / make_synthetic_name — reused where PascalCase overlaps with Rust (see class comment)
 #include <cctype>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace asn1::codegen {
@@ -266,6 +267,53 @@ private:
     void emit_sequence_definition(const SequenceSpec& spec, std::ostream& os) const;
     void emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const;
     void emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const;
+
+    // Coverage predicates for emit_sequence_definition/emit_choice_definition's
+    // own member-table gate — see their definitions (RustBackend.cpp) for
+    // the full rationale. Rust-only concerns (this backend's own trait-object
+    // dispatch model), so they live here rather than on the shared Backend
+    // interface/Generator.
+    bool sequence_member_ber_covered(const SequenceMemberSpec& m) const;
+    bool choice_alternative_ber_covered(const ChoiceAlternativeSpec& a) const;
+
+    // What shape of Rust item a name in covered_type_names_ refers to — the
+    // IMPLICIT-retag emission (rust-runtime/ber/src/sequence.rs's
+    // encode_sequence_tagged/decode_sequence_tagged, SEQUENCE/SET-only)
+    // needs to know this; the plain-Scalar and EXPLICIT paths don't (they
+    // dispatch through the generic Asn1Value trait regardless of kind).
+    enum class RustTypeKind { SequenceOrSet, Choice, Enumerated };
+
+    // BER coverage always implies a real `impl Asn1Value::ber_encode/
+    // ber_decode_into`; `xer_ready` records whether the *same* type's
+    // xer_encode/xer_decode_into legs are also real (not the trait's
+    // default panicking body) — independent, because a type can have every
+    // member BER-covered while one member still lacks XER (e.g. a wide
+    // INTEGER, or — before ENUMERATED's own XER leg landed — an ENUMERATED
+    // member). A member referencing this type only gets XER coverage
+    // itself when `xer_ready` is true here.
+    struct CoveredType { RustTypeKind kind; bool xer_ready; };
+
+    // Rust type names (SequenceSpec::type_name/ChoiceSpec::type_name/
+    // EnumeratedSpec::type_name) that have already been confirmed, in this
+    // compiler run, to have a real `impl Asn1Value` — populated by
+    // emit_sequence_definition/emit_choice_definition/
+    // emit_enumerated_definition themselves the moment each decides its own
+    // type gets one, consulted by sequence_member_ber_covered/
+    // choice_alternative_ber_covered for any member whose type isn't a
+    // direct builtin (`mbuiltin` unset). Entirely internal to this backend
+    // (Generator never reads or writes it, and carries no equivalent field
+    // for this at all — see those two methods' own doc for why no advance
+    // prediction is needed, and why assuming coverage unconditionally isn't
+    // safe: ENUMERATED and a TypeRef-aliased INTEGER both also reach here
+    // with `mbuiltin` unset, and only entries actually in this map are
+    // confirmed covered). `mutable`: emit_sequence/emit_choice/
+    // emit_enumerated are const per the Backend interface, but need to
+    // record what they just decided. Only benefits a member referencing a
+    // type Generator has already processed earlier in this run — a forward
+    // reference (to a type declared later in the same module) conservatively
+    // gets no coverage, same as before this mechanism existed; not a
+    // regression, just not (yet) as complete as it could be.
+    mutable std::unordered_map<std::string, CoveredType> covered_type_names_;
 };
 
 } // namespace asn1::codegen

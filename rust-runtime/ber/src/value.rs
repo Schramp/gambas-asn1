@@ -160,6 +160,34 @@ impl Asn1Value for i64 {
     }
 }
 
+/// Wide-range INTEGER storage (a constrained range whose bound exceeds
+/// i64::MAX/MIN — `IntStorageKind::U64`/`I128`, `RustBackend::native_int_type`).
+/// BER leg only — XER leg stays the trait default (`unimplemented!()`); no
+/// generated code calls it (rust_member_xer_ready/rust_seqof_xer_ready gate
+/// XER coverage on `mtype == "i64"`, unaffected by this addition).
+impl Asn1Value for u64 {
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        crate::integer::write_integer_u64(out, *self);
+    }
+
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        *self = crate::integer::read_integer_u64(r)?;
+        Ok(())
+    }
+}
+
+/// i128 analogue of the `u64` impl above — same BER-only scope.
+impl Asn1Value for i128 {
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        crate::integer::write_integer_i128(out, *self);
+    }
+
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        *self = crate::integer::read_integer_i128(r)?;
+        Ok(())
+    }
+}
+
 /// Mirrors `BooleanXerHandler` (`runtime/src/XerCodec.cpp`) — BASIC-XER's
 /// `EmptyElementBoolean` form: content is a nested self-closing `<true/>`/
 /// `<false/>` tag, not text (X.693 §8.2's default form; the lenient

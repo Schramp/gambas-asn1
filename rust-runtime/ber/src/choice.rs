@@ -148,6 +148,14 @@ pub fn encode_choice<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
     panic!("encode_choice: no alternative matched — codegen/table mismatch");
 }
 
+/// Appends a CHOICE's encoding (whichever alternative's own tag+content —
+/// CHOICE has no outer wrapper, see module doc) to an existing buffer — the
+/// shape `Asn1Value::ber_encode` needs, so a generated CHOICE type can
+/// implement that trait and become usable as a nested composite member.
+pub fn encode_choice_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut Vec<u8>) {
+    out.extend_from_slice(&encode_choice(spec, value));
+}
+
 /// Generic CHOICE decoder — the Rust analogue of `ChoiceBerHandler::decode`.
 /// CHOICE has no outer tag of its own (see module doc): peek the wire tag,
 /// linear-scan `spec.alternatives` for the row whose `tag` matches, and
@@ -159,10 +167,18 @@ pub fn encode_choice<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
 /// schema revision newer than whatever this compiler run knew about.
 pub fn decode_choice<T>(spec: &ChoiceSpec<T>, data: &[u8]) -> Result<T, DecodeError> {
     let mut r = Reader::new(data);
+    decode_choice_from(spec, &mut r)
+}
+
+/// Reads a CHOICE from the caller's current stream position — the shape
+/// `Asn1Value::ber_decode_into` needs (reads the next TLV from a shared
+/// `Reader`, not a standalone buffer) so a generated CHOICE type can
+/// implement that trait and become usable as a nested composite member.
+pub fn decode_choice_from<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, DecodeError> {
     let tag = r.peek_tag().ok_or_else(|| DecodeError::new("empty CHOICE input".to_string(), 0))?;
     for alt in spec.alternatives {
         if alt.tag == tag {
-            return (alt.ber_decode_into)(&mut r);
+            return (alt.ber_decode_into)(r);
         }
     }
     if let Some(ops) = &spec.unknown_extension {
@@ -181,19 +197,32 @@ pub fn decode_choice<T>(spec: &ChoiceSpec<T>, data: &[u8]) -> Result<T, DecodeEr
 /// trailing newline) — verified against the real C++ runtime, not derived
 /// from reading the handler alone.
 pub fn encode_choice_xer<T>(spec: &ChoiceSpec<T>, value: &T) -> String {
+    let mut out = String::new();
+    out.push('\n');
+    out.push_str("    ");
+    encode_choice_xer_into(spec, value, &mut out);
+    out
+}
+
+/// Appends a CHOICE's XER content (whichever alternative's own
+/// `<name>value</name>` — CHOICE has no outer wrapper, see module doc) to
+/// an existing buffer, with no leading newline/indent — the shape
+/// `Asn1Value::xer_encode` needs (content only, the *member's* own wrapper
+/// tag and any indentation is the caller's job) so a generated CHOICE type
+/// can implement that trait leg and become usable as a nested composite
+/// member. `encode_choice_xer` (above) is the top-level, human-formatted
+/// entry point; this is its content-only core.
+pub fn encode_choice_xer_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut String) {
     for alt in spec.alternatives {
         let mut inner = String::new();
         if (alt.xer_encode)(value, &mut inner) {
-            let mut out = String::new();
-            out.push('\n');
-            out.push_str("    ");
-            write_open_tag(&mut out, alt.name);
+            write_open_tag(out, alt.name);
             out.push_str(&inner);
-            write_close_tag(&mut out, alt.name);
-            return out;
+            write_close_tag(out, alt.name);
+            return;
         }
     }
-    panic!("encode_choice_xer: no alternative matched — codegen/table mismatch");
+    panic!("encode_choice_xer_into: no alternative matched — codegen/table mismatch");
 }
 
 /// Generic CHOICE XER decoder — the Rust analogue of
@@ -203,11 +232,19 @@ pub fn encode_choice_xer<T>(spec: &ChoiceSpec<T>, value: &T) -> String {
 /// open/close tags around its `xer_decode_into`.
 pub fn decode_choice_xer<T>(spec: &ChoiceSpec<T>, xml: &str) -> Result<T, DecodeError> {
     let mut r = XerReader::new(xml);
+    decode_choice_xer_from(spec, &mut r)
+}
+
+/// Reads a CHOICE from the caller's current XER reader position — the
+/// shape `Asn1Value::xer_decode_into` needs, so a generated CHOICE type
+/// can implement that trait leg and become usable as a nested composite
+/// member, same role `choice::decode_choice_from` plays for the BER leg.
+pub fn decode_choice_xer_from<T>(spec: &ChoiceSpec<T>, r: &mut XerReader) -> Result<T, DecodeError> {
     let ti = r.peek_tag();
     for alt in spec.alternatives {
         if ti.name == alt.name {
             r.consume_open_tag(alt.name)?;
-            let result = (alt.xer_decode_into)(&mut r)?;
+            let result = (alt.xer_decode_into)(r)?;
             r.consume_close_tag(alt.name)?;
             return Ok(result);
         }
