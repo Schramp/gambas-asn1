@@ -36,6 +36,7 @@
 pub mod bit_string;
 pub mod boolean;
 pub mod choice;
+pub mod enumerated;
 pub mod integer;
 pub mod null;
 pub mod octet_string;

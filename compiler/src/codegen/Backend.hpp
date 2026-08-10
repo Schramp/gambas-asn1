@@ -354,7 +354,6 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // everything to mirror C++ would be needless indirection with no
     // upside. Only cycle-participating members get boxed.
     bool        member_type_in_cycle = false;
-    bool        is_class_type = false;
     // gambas-asn1#331: SEQUENCE OF member support. Set only for a member
     // whose body is ast::SequenceOfType (never ast::SetOfType — SET OF is a
     // separate, not-yet-covered follow-up) with a *direct* builtin-type

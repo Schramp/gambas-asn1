@@ -1551,6 +1551,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
             ast::Tag full_tag;      // for canonical sort
             std::optional<ast::BuiltinType> mbuiltin;
+            IntStorageKind storage_kind = IntStorageKind::S64;
             std::optional<MemberTagSpec> resolved_tag;  // gambas-asn1#336/#347
         };
         std::vector<AltRow> rows;
@@ -1573,9 +1574,13 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                 tag_ctx_num = m->tag.number;
             }
             std::optional<ast::BuiltinType> mbuiltin;
-            if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) mbuiltin = *bt;
+            IntStorageKind alt_storage_kind = IntStorageKind::S64;
+            if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
+                mbuiltin = *bt;
+                if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
+            }
             rows.push_back({ m->name, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag, mbuiltin, resolved_tag });
+                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag });
             ++auto_tag_num;
           }
         }
@@ -1608,6 +1613,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.tdref = r.tdref;
             alt.is_explicit = r.is_explicit;
             alt.mbuiltin = r.mbuiltin;
+            alt.storage_kind = r.storage_kind;
             alt.resolved_tag = r.resolved_tag;
             spec.alternatives.push_back(std::move(alt));
         }
