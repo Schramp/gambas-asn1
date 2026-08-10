@@ -5,10 +5,14 @@
 //! defers to §8.3's INTEGER rules directly), only the tag differs
 //! (universal 10, not 2). Every generated ENUMERATED type shares this
 //! crate's `i64` wire representation regardless of its own Rust
-//! `#[repr(i64)]` enum discriminant — codegen emits a per-type
-//! `impl Asn1Value` converting through `i64` via `as i64` (encode) /
-//! `TryFrom<i64>` (decode, already generated for every ENUMERATED type by
-//! `emit_enumerated_definition`).
+//! `#[repr(i64)]` enum discriminant — `read_enumerated_tagged`/
+//! `xer_decode_enum` are generic over `T: TryFrom<i64>` and do the
+//! raw-i64-to-variant conversion themselves (via the `TryFrom<i64>` impl
+//! `emit_enumerated_definition` generates for every ENUMERATED type), so
+//! generated `Asn1Value::ber_decode_into`/`xer_decode_into` bodies stay a
+//! single call — the conversion-error-mapping logic lives here once, not
+//! copy-pasted at every call site (member decode, IMPLICIT-retag decode,
+//! the type's own base impl).
 
 use crate::integer::{decode_integer_bytes, encode_integer_bytes};
 use crate::reader::{DecodeError, Reader};
@@ -22,12 +26,13 @@ pub fn write_enumerated_tagged(out: &mut Vec<u8>, tag: Tag, n: i64) {
     write_primitive(out, tag, &encode_integer_bytes(n));
 }
 
-pub fn read_enumerated_tagged(r: &mut Reader, tag: Tag) -> Result<i64, DecodeError> {
+pub fn read_enumerated_tagged<T: TryFrom<i64>>(r: &mut Reader, tag: Tag) -> Result<T, DecodeError> {
     let tlv = r.read_tlv()?;
     if tlv.tag != tag {
         return Err(DecodeError::new(format!("expected ENUMERATED tag, got {:?}", tlv.tag), r.pos()));
     }
-    decode_integer_bytes(tlv.value)
+    let raw = decode_integer_bytes(tlv.value)?;
+    T::try_from(raw).map_err(|_| DecodeError::new(format!("invalid ENUMERATED value: {raw}"), r.pos()))
 }
 
 /// One value/name pair — mirrors `EnumSpec::entries` (`TypeDescriptor.hpp`)
@@ -62,13 +67,14 @@ pub fn xer_encode_enum(out: &mut String, entries: &[EnumEntry], value: i64) {
     }
 }
 
-pub fn xer_decode_enum(r: &mut XerReader, entries: &[EnumEntry]) -> Result<i64, DecodeError> {
+pub fn xer_decode_enum<T: TryFrom<i64>>(r: &mut XerReader, entries: &[EnumEntry]) -> Result<T, DecodeError> {
     let ti = r.consume_tag();
     if !ti.self_closing {
         return Err(DecodeError::new("XER ENUMERATED: expected self-closing enum value tag".to_string(), 0));
     }
-    entries.iter().find(|e| e.name == ti.name).map(|e| e.value)
-        .ok_or_else(|| DecodeError::new(format!("XER ENUMERATED: unknown enum value: {}", ti.name), 0))
+    let raw = entries.iter().find(|e| e.name == ti.name).map(|e| e.value)
+        .ok_or_else(|| DecodeError::new(format!("XER ENUMERATED: unknown enum value: {}", ti.name), 0))?;
+    T::try_from(raw).map_err(|_| DecodeError::new(format!("invalid ENUMERATED value: {}", ti.name), 0))
 }
 
 #[cfg(test)]
@@ -87,7 +93,7 @@ mod tests {
         write_enumerated_tagged(&mut buf, ENUMERATED_TAG, 2);
         assert_eq!(buf, vec![0x0A, 0x01, 0x02]); // universal primitive 10, len 1, value 2
         let mut r = Reader::new(&buf);
-        assert_eq!(read_enumerated_tagged(&mut r, ENUMERATED_TAG).unwrap(), 2);
+        assert_eq!(read_enumerated_tagged::<i64>(&mut r, ENUMERATED_TAG).unwrap(), 2);
     }
 
     #[test]
@@ -97,14 +103,14 @@ mod tests {
         write_enumerated_tagged(&mut buf, context_0, 1);
         assert_eq!(buf, vec![0x80, 0x01, 0x01]);
         let mut r = Reader::new(&buf);
-        assert_eq!(read_enumerated_tagged(&mut r, context_0).unwrap(), 1);
+        assert_eq!(read_enumerated_tagged::<i64>(&mut r, context_0).unwrap(), 1);
     }
 
     #[test]
     fn wrong_tag_is_error() {
         let data = [0x02, 0x01, 0x02]; // INTEGER tag, not ENUMERATED
         let mut r = Reader::new(&data);
-        assert!(read_enumerated_tagged(&mut r, ENUMERATED_TAG).is_err());
+        assert!(read_enumerated_tagged::<i64>(&mut r, ENUMERATED_TAG).is_err());
     }
 
     const ENTRIES: [EnumEntry; 2] = [
@@ -124,18 +130,18 @@ mod tests {
         let mut out = String::new();
         xer_encode_enum(&mut out, &ENTRIES, 1);
         let mut r = XerReader::new(&out);
-        assert_eq!(xer_decode_enum(&mut r, &ENTRIES).unwrap(), 1);
+        assert_eq!(xer_decode_enum::<i64>(&mut r, &ENTRIES).unwrap(), 1);
     }
 
     #[test]
     fn xer_unknown_name_is_error() {
         let mut r = XerReader::new("<bogus/>");
-        assert!(xer_decode_enum(&mut r, &ENTRIES).is_err());
+        assert!(xer_decode_enum::<i64>(&mut r, &ENTRIES).is_err());
     }
 
     #[test]
     fn xer_non_self_closing_is_error() {
         let mut r = XerReader::new("<aaaFailed></aaaFailed>");
-        assert!(xer_decode_enum(&mut r, &ENTRIES).is_err());
+        assert!(xer_decode_enum::<i64>(&mut r, &ENTRIES).is_err());
     }
 }

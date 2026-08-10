@@ -382,20 +382,14 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "        asn1cpp_ber::enumerated::write_enumerated_tagged(out, asn1cpp_ber::enumerated::ENUMERATED_TAG, *self as i64);\n";
         os << "    }\n\n";
         os << "    fn ber_decode_into(&mut self, r: &mut asn1cpp_ber::Reader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
-        os << "        let raw = asn1cpp_ber::enumerated::read_enumerated_tagged(r, asn1cpp_ber::enumerated::ENUMERATED_TAG)?;\n";
-        os << std::format("        *self = <Self as std::convert::TryFrom<i64>>::try_from(raw)\n"
-                           "            .map_err(|_| asn1cpp_ber::DecodeError::new(format!(\"invalid {} value: {{raw}}\"), 0))?;\n",
-                           tname);
+        os << "        *self = asn1cpp_ber::enumerated::read_enumerated_tagged(r, asn1cpp_ber::enumerated::ENUMERATED_TAG)?;\n";
         os << "        Ok(())\n";
         os << "    }\n\n";
         os << "    fn xer_encode(&self, out: &mut String) {\n";
         os << std::format("        asn1cpp_ber::enumerated::xer_encode_enum(out, &{}, *self as i64);\n", map_ident);
         os << "    }\n\n";
         os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
-        os << std::format("        let raw = asn1cpp_ber::enumerated::xer_decode_enum(r, &{})?;\n", map_ident);
-        os << std::format("        *self = <Self as std::convert::TryFrom<i64>>::try_from(raw)\n"
-                           "            .map_err(|_| asn1cpp_ber::DecodeError::new(format!(\"invalid {} value: {{raw}}\"), 0))?;\n",
-                           tname);
+        os << std::format("        *self = asn1cpp_ber::enumerated::xer_decode_enum(r, &{})?;\n", map_ident);
         os << "        Ok(())\n";
         os << "    }\n";
         os << "}\n\n";
@@ -1127,10 +1121,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedScalar {\n";
                 if (m.optional) {
                     os << std::format("            ber_encode: |v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::enumerated::write_enumerated_tagged(out, {1}, x as i64); }} }},\n", m.mname, tag_lit);
-                    os << std::format("            ber_decode_into: |v, r| {{ let raw = asn1cpp_ber::enumerated::read_enumerated_tagged(r, {1})?; v.{0} = Some(<{2} as std::convert::TryFrom<i64>>::try_from(raw).map_err(|_| asn1cpp_ber::DecodeError::new(format!(\"invalid {2} value: {{raw}}\"), 0))?); Ok(()) }},\n", m.mname, tag_lit, m.mtype);
+                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::enumerated::read_enumerated_tagged::<{2}>(r, {1})?); Ok(()) }},\n", m.mname, tag_lit, m.mtype);
                 } else {
                     os << std::format("            ber_encode: |v, out| asn1cpp_ber::enumerated::write_enumerated_tagged(out, {1}, v.{0} as i64),\n", m.mname, tag_lit);
-                    os << std::format("            ber_decode_into: |v, r| {{ let raw = asn1cpp_ber::enumerated::read_enumerated_tagged(r, {1})?; v.{0} = <{2} as std::convert::TryFrom<i64>>::try_from(raw).map_err(|_| asn1cpp_ber::DecodeError::new(format!(\"invalid {2} value: {{raw}}\"), 0))?; Ok(()) }},\n", m.mname, tag_lit, m.mtype);
+                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::enumerated::read_enumerated_tagged::<{2}>(r, {1})?; Ok(()) }},\n", m.mname, tag_lit, m.mtype);
                 }
                 os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
                 os << "        },\n";
@@ -1587,8 +1581,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 emit_encode_closure("ber_encode",
                     std::format("asn1cpp_ber::enumerated::write_enumerated_tagged(out, {}, *v as i64);", tag_lit2));
                 os << "        ber_decode_into: |r| {\n";
-                os << std::format("            let raw = asn1cpp_ber::enumerated::read_enumerated_tagged(r, {})?;\n", tag_lit2);
-                os << std::format("            let v = <{0} as std::convert::TryFrom<i64>>::try_from(raw).map_err(|_| asn1cpp_ber::DecodeError::new(format!(\"invalid {0} value: {{raw}}\"), 0))?;\n", a.mtype);
+                os << std::format("            let v = asn1cpp_ber::enumerated::read_enumerated_tagged::<{}>(r, {})?;\n", a.mtype, tag_lit2);
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
             } else if (tagged_ops) {
