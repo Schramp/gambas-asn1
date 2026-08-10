@@ -89,6 +89,51 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     }
 }
 
+/// @brief Is `bt` (a direct builtin member/alternative/SEQUENCE-OF-element
+///        type) covered by `Asn1Value`'s XER leg? Kept as its own gate (not
+///        just reusing builtin_ber_tag's BER coverage set) rather than
+///        assuming the two always match — a member's own encode_xer()/
+///        decode_xer() must never be emitted for a type whose Asn1Value XER
+///        leg is still the trait's default, or the emitted method panics at
+///        runtime. File-scope (not a per-function local lambda) so both
+///        emit_sequence_definition's all_xer_ready and
+///        emit_choice_definition's own equivalent gate share one
+///        definition — same reasoning as builtin_ber_tag itself.
+/// @note `bt == Integer` only ever checks `mtype == "i64"` here — the
+///       direct-member callers (rust_member_xer_ready-equivalent lambdas)
+///       intercept Integer via storage_kind before ever reaching this
+///       function; only SEQUENCE OF *element* coverage (no storage_kind
+///       counterpart) still needs the string check.
+static bool builtin_xer_ready(ast::BuiltinType bt, const std::string& mtype) {
+    switch (bt) {
+    case ast::BuiltinType::Integer:     return mtype == "i64";  // element-level path only
+    case ast::BuiltinType::Boolean:
+    case ast::BuiltinType::Null:
+    case ast::BuiltinType::Real:
+    case ast::BuiltinType::BitString:
+    case ast::BuiltinType::ObjectIdentifier:
+    case ast::BuiltinType::RelativeOid:
+    case ast::BuiltinType::OctetString:
+    case ast::BuiltinType::Ia5String:
+    case ast::BuiltinType::Utf8String:
+    case ast::BuiltinType::NumericString:
+    case ast::BuiltinType::PrintableString:
+    case ast::BuiltinType::T61String:
+    case ast::BuiltinType::VisibleString:
+    case ast::BuiltinType::GeneralString:
+    case ast::BuiltinType::GraphicString:
+    case ast::BuiltinType::UniversalString:
+    case ast::BuiltinType::BmpString:
+    case ast::BuiltinType::VideotexString:
+    case ast::BuiltinType::ObjectDescriptor:
+    case ast::BuiltinType::UtcTime:
+    case ast::BuiltinType::GeneralizedTime:
+        return true;
+    default:
+        return false;
+    }
+}
+
 /// @brief Same lookup as builtin_ber_tag, but for a member/alternative whose
 ///        own type may be a TypeRef alias rather than a direct builtin
 ///        (mbuiltin == nullopt) — the i64-native-INTEGER-alias case still
@@ -108,7 +153,14 @@ static const char* rust_tag_for_builtin_or_alias(std::optional<ast::BuiltinType>
                                                   const std::string& mtype) {
     if (!mbuiltin) return mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
     if (*mbuiltin == ast::BuiltinType::Integer)
-        return storage_kind == IntStorageKind::S64 ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
+        // Same INTEGER_TAG regardless of storage width — the
+        // Rust *type* varies (i64/u64/i128), the wire tag never does.
+        // ARBITRARY (Vec<u8> storage) is excluded: collides with OCTET
+        // STRING's own Asn1Value impl for that same Rust type — needs its
+        // own newtype before it can get one (tracked separately).
+        return (storage_kind == IntStorageKind::S64 || storage_kind == IntStorageKind::U64 ||
+                storage_kind == IntStorageKind::I128)
+            ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
     return builtin_ber_tag(*mbuiltin, mtype);
 }
 
@@ -177,7 +229,10 @@ static TaggedKind tagged_kind_for(std::optional<ast::BuiltinType> mbuiltin, IntS
     case ast::BuiltinType::Boolean:     return TaggedKind::Boolean;
     case ast::BuiltinType::Null:        return TaggedKind::Null;
     case ast::BuiltinType::Real:        return TaggedKind::Real;
-    case ast::BuiltinType::Integer:     return storage_kind == IntStorageKind::S64 ? TaggedKind::Integer : TaggedKind::None;
+    case ast::BuiltinType::Integer:
+        return (storage_kind == IntStorageKind::S64 || storage_kind == IntStorageKind::U64 ||
+                storage_kind == IntStorageKind::I128)
+            ? TaggedKind::Integer : TaggedKind::None;
     case ast::BuiltinType::OctetString: return TaggedKind::OctetString;
     case ast::BuiltinType::BitString:   return TaggedKind::BitString;
     case ast::BuiltinType::ObjectIdentifier: return TaggedKind::ObjectIdentifier;
@@ -591,17 +646,28 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
 ///       here; optional members become `Option<T>` rather than C++'s
 ///       `unique_ptr<T>`, Rust's natural equivalent.
 /// @brief Is `m` covered by this backend's wire (BER) encoding — the single
-///        source of truth `emit_sequence_definition`'s own coverage gate and
-///        Generator::rust_wire_eligible's early (pre-emission) eligibility
-///        check both call, so the two decisions can never drift apart.
-/// @see MemberDescriptor's SeqOf-vs-Scalar-vs-composite shapes
-///      (rust-runtime/ber/src/sequence.rs) for what each branch here
-///      ultimately drives.
+///        source of truth `emit_sequence_definition`'s own member-table gate.
+/// @note A class-typed member is coverable when its target type has
+///       *already* been confirmed to have `impl Asn1Value`
+///       (`composite_covered_types_` — populated by
+///       emit_sequence_definition/emit_choice_definition themselves as each
+///       type is processed) — `Asn1Value` is object-safe, so a member row
+///       referencing `T: Asn1Value` compiles fine regardless of what `T`
+///       contains, *once T's own impl actually exists*; it can't be assumed
+///       unconditionally, though — an ENUMERATED-typed member has no
+///       Asn1Value impl at all yet (ENUMERATED has no BER wiring in this
+///       backend currently, a separate real gap), so a type containing one
+///       never gets its own impl, and anything optimistically assuming it
+///       did would cascade into hundreds of "trait bound not satisfied"
+///       errors on the real schema (confirmed empirically). A member
+///       referencing a type Generator hasn't emitted yet in this run
+///       (declared later in the same module) conservatively gets no
+///       composite coverage — not a regression, just not maximally complete.
 bool RustBackend::sequence_member_ber_covered(const SequenceMemberSpec& m) const {
     if (m.is_seq_of)
         return !m.optional && m.elem_builtin && builtin_ber_tag(*m.elem_builtin, m.elem_mtype) != nullptr;
     if (m.is_class_type) {
-        if (!m.class_type_wire_covered) return false;
+        if (!composite_covered_types_.count(m.mtype)) return false;
         // A required member's MemberDescriptor.tag is never consulted at
         // decode time (decode_sequence's Scalar/TaggedScalar branches only
         // peek it for OPTIONAL presence detection) — so a required member
@@ -615,22 +681,14 @@ bool RustBackend::sequence_member_ber_covered(const SequenceMemberSpec& m) const
 }
 
 /// @brief CHOICE alternative analogue of sequence_member_ber_covered.
-/// @note Deliberately does NOT extend to class-typed (composite)
-///       alternatives yet, unlike sequence_member_ber_covered — CHOICE's
-///       `AlternativeSpec::xer_encode`/`xer_decode_into` are required
-///       fields (not gated by a separate all_xer_ready the way
-///       emit_sequence_definition's encode_xer()/decode_xer() are), and
-///       every alternative type covered here today has both legs (an
-///       explicit invariant emit_choice_definition's own doc comment
-///       states). A composite target only has a BER leg in this PR's scope
-///       (see emit_sequence_definition's Asn1Value impl) — covering it here
-///       would emit an xer_encode closure that panics at runtime the first
-///       time the CHOICE is actually XER-encoded, silently breaking that
-///       invariant. Real follow-up (needs per-alternative XER-readiness
-///       gating, mirroring all_xer_ready), not a design decision that composite
-///       CHOICE alternatives are unsupportable — just out of this PR's scope.
+/// @note Unlike a SEQUENCE member, `decode_choice` compares *every*
+///       alternative's tag against the wire tag (no positional/blind
+///       decode) — so a class-typed alternative needs a real resolved tag
+///       unconditionally, required or not (CHOICE alternatives have no
+///       OPTIONAL concept in the first place, X.680 §28).
 bool RustBackend::choice_alternative_ber_covered(const ChoiceAlternativeSpec& a) const {
-    if (a.is_class_type) return false;
+    if (a.is_class_type)
+        return composite_covered_types_.count(a.mtype) > 0 && a.resolved_tag.has_value();
     return rust_tag_for_builtin_or_alias(a.mbuiltin, a.storage_kind, a.mtype) != nullptr;
 }
 
@@ -706,41 +764,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // because it's also called for SEQUENCE OF *element* coverage
     // (elem_builtin/elem_mtype has no storage_kind counterpart,
     // out of scope here), so it keeps the original string check for that path.
-    // Asn1Value's XER leg now covers the same kinds the BER leg does
-    // Kept as its own gate (not just reusing
-    // builtin_ber_tag's coverage set) rather than assuming the two always
-    // match — encode_xer()/decode_xer() must never be emitted for a member
-    // type whose Asn1Value XER leg is still the default, or the emitted
-    // method panics at runtime.
-    auto builtin_xer_ready = [](ast::BuiltinType bt, const std::string& mtype) -> bool {
-        switch (bt) {
-        case ast::BuiltinType::Integer:     return mtype == "i64";  // element-level path only
-        case ast::BuiltinType::Boolean:
-        case ast::BuiltinType::Null:
-        case ast::BuiltinType::Real:
-        case ast::BuiltinType::BitString:
-        case ast::BuiltinType::ObjectIdentifier:
-        case ast::BuiltinType::RelativeOid:
-        case ast::BuiltinType::OctetString:
-        case ast::BuiltinType::Ia5String:
-        case ast::BuiltinType::Utf8String:
-        case ast::BuiltinType::NumericString:
-        case ast::BuiltinType::PrintableString:
-        case ast::BuiltinType::T61String:
-        case ast::BuiltinType::VisibleString:
-        case ast::BuiltinType::GeneralString:
-        case ast::BuiltinType::GraphicString:
-        case ast::BuiltinType::UniversalString:
-        case ast::BuiltinType::BmpString:
-        case ast::BuiltinType::VideotexString:
-        case ast::BuiltinType::ObjectDescriptor:
-        case ast::BuiltinType::UtcTime:
-        case ast::BuiltinType::GeneralizedTime:
-            return true;
-        default:
-            return false;
-        }
-    };
     auto rust_member_ber_tag = [](const SequenceMemberSpec& m) -> const char* {
         return rust_tag_for_builtin_or_alias(m.mbuiltin, m.storage_kind, m.mtype);
     };
@@ -765,14 +788,26 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return std::make_pair(
                 std::format("|v, out| asn1cpp_ber::boolean::write_boolean_tagged(out, {1}, v.{0})", m.mname, tag_lit),
                 std::format("|v, r| {{ v.{0} = asn1cpp_ber::boolean::read_boolean_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
-        case TaggedKind::Integer:
+        case TaggedKind::Integer: {
+            // Same tag (INTEGER is INTEGER regardless of storage width),
+            // different *_tagged primitive per Rust storage type
+            // (integer.rs has one pair per width — no generic-over-width
+            // helper, since BER's minimal-two's-complement trimming differs
+            // between signed and unsigned encodings).
+            const char* fn = m.storage_kind == IntStorageKind::U64  ? "write_integer_u64_tagged"
+                            : m.storage_kind == IntStorageKind::I128 ? "write_integer_i128_tagged"
+                                                                      : "write_integer_tagged";
+            const char* rfn = m.storage_kind == IntStorageKind::U64  ? "read_integer_u64_tagged"
+                             : m.storage_kind == IntStorageKind::I128 ? "read_integer_i128_tagged"
+                                                                       : "read_integer_tagged";
             if (m.optional)
                 return std::make_pair(
-                    std::format("|v, out| {{ if let Some(x) = v.{0} {{ asn1cpp_ber::integer::write_integer_tagged(out, {1}, x); }} }}", m.mname, tag_lit),
-                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::integer::read_integer_tagged(r, {1})?); Ok(()) }}", m.mname, tag_lit));
+                    std::format("|v, out| {{ if let Some(x) = v.{0} {{ asn1cpp_ber::integer::{2}(out, {1}, x); }} }}", m.mname, tag_lit, fn),
+                    std::format("|v, r| {{ v.{0} = Some(asn1cpp_ber::integer::{2}(r, {1})?); Ok(()) }}", m.mname, tag_lit, rfn));
             return std::make_pair(
-                std::format("|v, out| asn1cpp_ber::integer::write_integer_tagged(out, {1}, v.{0})", m.mname, tag_lit),
-                std::format("|v, r| {{ v.{0} = asn1cpp_ber::integer::read_integer_tagged(r, {1})?; Ok(()) }}", m.mname, tag_lit));
+                std::format("|v, out| asn1cpp_ber::integer::{2}(out, {1}, v.{0})", m.mname, tag_lit, fn),
+                std::format("|v, r| {{ v.{0} = asn1cpp_ber::integer::{2}(r, {1})?; Ok(()) }}", m.mname, tag_lit, rfn));
+        }
         // same shape as Integer — f64 is Copy.
         case TaggedKind::Real:
             if (m.optional)
@@ -902,6 +937,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         std::all_of(spec.members.begin(), spec.members.end(), rust_member_covered);
     bool all_xer_ready = all_covered &&
         std::all_of(spec.members.begin(), spec.members.end(), rust_member_covered_xer_ready);
+    if (all_covered) composite_covered_types_.insert(spec.type_name);
     if (all_covered) {
         std::string members_ident = std::format("{}_MEMBERS", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
@@ -1095,13 +1131,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         }
         os << "}\n\n";
 
-        // Makes this type usable as a nested composite
-        // member elsewhere (Generator::rust_wire_eligible/
-        // sequence_member_ber_covered gate on this impl existing, via
-        // `class_type_wire_covered`) — BER leg only; xer_encode/
-        // xer_decode_into keep the trait's own default (panicking) body,
-        // same "BER first" incremental pairing this crate uses throughout
-        // (see value.rs's Asn1Value doc).
+        // Makes this type usable as a nested composite member
+        // elsewhere — emitted unconditionally whenever this type itself got
+        // a real member table (all_covered above), so any other type's
+        // sequence_member_ber_covered/choice_alternative_ber_covered can
+        // reference it via Asn1Value without needing to predict this in
+        // advance (see those methods' own doc for why no prediction is
+        // needed). BER leg only; xer_encode/xer_decode_into keep the
+        // trait's own default (panicking) body, same "BER first"
+        // incremental pairing this crate uses throughout (see value.rs's
+        // Asn1Value doc).
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", spec.type_name);
         os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
         os << std::format("        asn1cpp_ber::sequence::encode_sequence_into(&{}, self, out);\n", spec_ident);
@@ -1285,11 +1324,18 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 std::format("asn1cpp_ber::boolean::write_boolean_tagged(out, {}, *v);", tag_lit),
                 std::format("let v = asn1cpp_ber::boolean::read_boolean_tagged(r, {})?; {}",
                              tag_lit, variant_ctor("v")));
-        case TaggedKind::Integer:
+        case TaggedKind::Integer: {
+            const char* fn = a.storage_kind == IntStorageKind::U64  ? "write_integer_u64_tagged"
+                            : a.storage_kind == IntStorageKind::I128 ? "write_integer_i128_tagged"
+                                                                      : "write_integer_tagged";
+            const char* rfn = a.storage_kind == IntStorageKind::U64  ? "read_integer_u64_tagged"
+                             : a.storage_kind == IntStorageKind::I128 ? "read_integer_i128_tagged"
+                                                                       : "read_integer_tagged";
             return std::make_pair(
-                std::format("asn1cpp_ber::integer::write_integer_tagged(out, {}, *v);", tag_lit),
-                std::format("let v = asn1cpp_ber::integer::read_integer_tagged(r, {})?; {}",
-                             tag_lit, variant_ctor("v")));
+                std::format("asn1cpp_ber::integer::{}(out, {}, *v);", fn, tag_lit),
+                std::format("let v = asn1cpp_ber::integer::{}(r, {})?; {}",
+                             rfn, tag_lit, variant_ctor("v")));
+        }
         // same shape as Integer — f64 is Copy.
         case TaggedKind::Real:
             return std::make_pair(
@@ -1345,6 +1391,25 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     };
     bool all_covered = !spec.alternatives.empty() &&
         std::all_of(spec.alternatives.begin(), spec.alternatives.end(), rust_alt_covered);
+    if (all_covered) composite_covered_types_.insert(spec.type_name);
+    // XER coverage is no longer implied by BER coverage now that composite
+    // alternatives (BER-only — no real XER support yet) and wide-storage
+    // INTEGER (U64/I128, also BER-only) are both included in all_covered —
+    // gated separately, same all_covered-vs-all_xer_ready split
+    // emit_sequence_definition already uses. The generated AlternativeSpec
+    // rows' own xer_encode/xer_decode_into closures still exist
+    // unconditionally either way (required struct fields, not optional) —
+    // they just aren't reachable through anything this backend generates
+    // when all_xer_ready is false, since encode_xer()/decode_xer() are
+    // the only callers and this gate withholds them.
+    auto rust_alt_xer_ready = [](const ChoiceAlternativeSpec& a) -> bool {
+        if (a.is_class_type) return false;
+        if (!a.mbuiltin) return a.mtype == "i64";
+        if (*a.mbuiltin == ast::BuiltinType::Integer) return a.storage_kind == IntStorageKind::S64;
+        return builtin_xer_ready(*a.mbuiltin, a.mtype);
+    };
+    bool all_xer_ready = all_covered &&
+        std::all_of(spec.alternatives.begin(), spec.alternatives.end(), rust_alt_xer_ready);
     if (all_covered) {
         std::string alts_ident = std::format("{}_ALTERNATIVES", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
@@ -1394,6 +1459,25 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << std::format("            let v: {} = asn1cpp_ber::value::decode_explicit(r, {})?;\n", a.mtype, etag);
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
+            } else if (a.is_class_type && a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit) {
+                // IMPLICIT retag (X.690 §8.14.2) of a composite
+                // (SEQUENCE/SET-typed — CHOICE targets are always EXPLICIT,
+                // X.680 §30.6) alternative: same shape as
+                // emit_sequence_definition's composite TaggedScalar branch,
+                // via the target's own SPEC and the generic
+                // encode_sequence_tagged/decode_sequence_tagged pair.
+                std::string tag_lit2 = format_tag_literal(*a.resolved_tag);
+                std::string target_spec = std::format("crate::{}::{}_SPEC",
+                    to_snake_case(a.mtype), to_screaming_snake_case(a.mtype));
+                os << std::format("        tag: {},\n", tag_lit2);
+                emit_encode_closure("ber_encode",
+                    std::format("out.extend_from_slice(&asn1cpp_ber::sequence::encode_sequence_tagged(&{}, v, {}));",
+                                 target_spec, tag_lit2));
+                os << "        ber_decode_into: |r| {\n";
+                os << std::format("            let v: {} = asn1cpp_ber::sequence::decode_sequence_tagged(&{}, r, {})?;\n",
+                                   a.mtype, target_spec, tag_lit2);
+                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+                os << "        },\n";
             } else if (tagged_ops) {
                 os << std::format("        tag: {},\n", tag_lit);
                 emit_encode_closure("ber_encode", tagged_ops->first);
@@ -1401,7 +1485,15 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << std::format("            {}\n", tagged_ops->second);
                 os << "        },\n";
             } else {
-                os << std::format("        tag: {},\n", rust_alt_ber_tag(a));
+                // A class-typed alternative reaching here has its target's
+                // own natural tag (SEQUENCE_TAG/SET_TAG) — EXPLICIT-forced
+                // CHOICE targets and IMPLICIT overrides are both already
+                // handled above; choice_alternative_ber_covered guarantees
+                // resolved_tag is present whenever is_class_type is true.
+                std::string tag_text = a.is_class_type
+                    ? format_tag_literal(*a.resolved_tag)
+                    : rust_alt_ber_tag(a);
+                os << std::format("        tag: {},\n", tag_text);
                 emit_encode_closure("ber_encode", "asn1cpp_ber::value::Asn1Value::ber_encode(v, out);");
                 os << "        ber_decode_into: |r| {\n";
                 os << std::format("            let mut v: {} = Default::default();\n", a.mtype);
@@ -1448,13 +1540,16 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "    }\n\n";
         os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_ber::DecodeError> {\n";
         os << std::format("        asn1cpp_ber::choice::decode_choice(&{}, data)\n", spec_ident);
-        os << "    }\n\n";
-        os << "    pub fn encode_xer(&self) -> String {\n";
-        os << std::format("        asn1cpp_ber::choice::encode_choice_xer(&{}, self)\n", spec_ident);
-        os << "    }\n\n";
-        os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_ber::DecodeError> {\n";
-        os << std::format("        asn1cpp_ber::choice::decode_choice_xer(&{}, xml)\n", spec_ident);
         os << "    }\n";
+        if (all_xer_ready) {
+            os << "\n";
+            os << "    pub fn encode_xer(&self) -> String {\n";
+            os << std::format("        asn1cpp_ber::choice::encode_choice_xer(&{}, self)\n", spec_ident);
+            os << "    }\n\n";
+            os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_ber::DecodeError> {\n";
+            os << std::format("        asn1cpp_ber::choice::decode_choice_xer(&{}, xml)\n", spec_ident);
+            os << "    }\n";
+        }
         os << "}\n\n";
 
         // Makes this type usable as a nested composite

@@ -355,21 +355,6 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // upside. Only cycle-participating members get boxed.
     bool        member_type_in_cycle = false;
     bool        is_class_type = false;
-    // True when `is_class_type` and the referenced/inline class type itself
-    // qualifies for a real wire (BER) encoding — every one of ITS OWN
-    // members recursively resolves to either a covered builtin/SEQUENCE-OF
-    // element or another wire-covered class type, and this member doesn't
-    // sit on a reference cycle (`member_type_in_cycle`; cyclic composite
-    // members are conservatively excluded rather than reasoning about
-    // `Box<T>` indirection through a trait impl). Computed once by
-    // Generator::rust_wire_eligible (memoized per referenced TypeDef) and
-    // consumed by RustBackend to decide whether a SEQUENCE/CHOICE member
-    // whose own type is itself SEQUENCE/SET/CHOICE gets a real
-    // MemberDescriptor row instead of falling out of table coverage
-    // entirely. `false` (the default) is always safe — it just means this
-    // member doesn't get composite coverage, same "known gap, not a
-    // regression" scope every other coverage field in this struct uses.
-    bool        class_type_wire_covered = false;
     // gambas-asn1#331: SEQUENCE OF member support. Set only for a member
     // whose body is ast::SequenceOfType (never ast::SetOfType — SET OF is a
     // separate, not-yet-covered follow-up) with a *direct* builtin-type
@@ -428,11 +413,9 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
     // natural tag applies; set means an explicit/AUTOMATIC-assigned tag
     // overrides it (X.690 §8.14). Consumed by RustBackend's CHOICE analogue
     // of MemberAccess::TaggedScalar.
-    // Same meaning/computation as SequenceMemberSpec's identically-named
-    // fields — an alternative whose own type is itself SEQUENCE/CHOICE/SET.
+    // Same meaning as SequenceMemberSpec::is_class_type — an alternative
+    // whose own type is itself SEQUENCE/CHOICE/SET.
     bool        is_class_type = false;
-    bool        member_type_in_cycle = false;
-    bool        class_type_wire_covered = false;
 };
 
 /// @brief Backend-agnostic decision for one CHOICE type (X.680 §28). The
@@ -699,26 +682,6 @@ public:
     virtual void emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const {
         (void)spec; (void)session;
         throw std::logic_error("emit_choice: not implemented for this backend");
-    }
-
-    /// @brief Is `m` (ignoring `is_class_type`/`class_type_wire_covered`)
-    ///        coverable by this backend's wire (BER) encoding — a plain
-    ///        builtin-scalar or SEQUENCE-OF-of-builtin member? Used by
-    ///        Generator::rust_wire_eligible to decide whether a type
-    ///        qualifies as a nested composite member elsewhere, and by the
-    ///        backend's own member-table emission (single source of truth
-    ///        for both). C++ covers every member unconditionally (this
-    ///        predicate is Rust-specific — CppBackend's own emission never
-    ///        consults it), so the default is `true`.
-    virtual bool sequence_member_ber_covered(const SequenceMemberSpec& m) const {
-        (void)m;
-        return true;
-    }
-
-    /// @brief CHOICE alternative analogue of sequence_member_ber_covered.
-    virtual bool choice_alternative_ber_covered(const ChoiceAlternativeSpec& a) const {
-        (void)a;
-        return true;
     }
 
     /// @brief Emit the file preamble for a generated header (module comment,
