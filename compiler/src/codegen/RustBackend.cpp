@@ -425,6 +425,20 @@ void RustBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream
     for (const auto& v : spec.named_values)
         os << std::format("pub const {}: i64 = {};\n", value_name(v.asn1_name), v.value);
     if (!spec.named_values.empty()) os << "\n";
+
+    // `pub type X = i64/u64/i128;` is a real Rust type alias (not a
+    // newtype) — X already has Asn1Value via whichever primitive it
+    // resolves to, so a member typed via TypeRef to this type is
+    // immediately coverable (a member's own `mtype` carries the alias
+    // name, e.g. "MyByte", never the resolved native type name, so this
+    // registration is the only way a coverage check can know that).
+    // ARBITRARY storage (Vec<u8>) is excluded — collides with OCTET
+    // STRING's own Asn1Value impl for that same Rust type, needs a newtype
+    // before it can be registered here.
+    if (spec.storage_kind != IntStorageKind::ARBITRARY) {
+        bool xer_ready = spec.storage_kind == IntStorageKind::S64;
+        covered_type_names_[tname] = {RustTypeKind::IntegerAlias, xer_ready, spec.storage_kind};
+    }
 }
 
 void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& os) const {
@@ -694,8 +708,7 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
 ///        source of truth `emit_sequence_definition`'s own member-table gate.
 /// @note `mbuiltin` unset means the member's type is a TypeRef to
 ///       something else entirely — SEQUENCE/SET/CHOICE, ENUMERATED, or a
-///       plain INTEGER subtype alias (gambas-asn1#361, separate, unrelated
-///       gap). `covered_type_names_` is the only source of truth for which
+///       plain INTEGER subtype alias. `covered_type_names_` is the only source of truth for which
 ///       of those actually have a real `Asn1Value` impl: `Asn1Value` is
 ///       object-safe, so a member row referencing `T: Asn1Value` compiles
 ///       fine regardless of what `T` contains, *once T's own impl actually
@@ -785,13 +798,13 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // e.g. `MyByte ::= INTEGER (0..255)` used as a member type) — Generator
     // only populates it from the member's own AST node when that node
     // directly holds a builtin type (`std::get_if<ast::BuiltinType>`), not
-    // for a reference that *resolves* to one. The `mtype == "i64"` fallback
-    // a few lines below (rust_member_xer_ready) is meant to cover this case
-    // too, but doesn't in practice: cpp_type_for's TypeRef branch returns the
-    // alias's own type name (e.g. "MyByte"), never the resolved native type
-    // — so `mtype` is never literally "i64" for an aliased member, and the
-    // fallback is currently dead. Pre-existing gap, not introduced or fixed
-    // here — filed separately (gambas-asn1#361).
+    // for a reference that *resolves* to one — cpp_type_for's TypeRef branch
+    // returns the alias's own type name ("MyByte"), never the resolved
+    // native type, so a plain `mtype == "i64"` string check can never match
+    // it. Handled instead via covered_type_names_
+    // (RustTypeKind::IntegerAlias, populated by emit_integer_declaration for
+    // every `pub type X = i64/u64/i128;` it emits) — see
+    // sequence_member_ber_covered's `!m.mbuiltin` branch below.
     // `mbuiltin == Integer` only says the member *is* an
     // INTEGER, not which Rust storage type classify_integer_storage/
     // native_int_type actually picked for it (i64 default; u64/i128/
@@ -935,8 +948,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         }
         return std::nullopt;  // unreachable: switch is exhaustive over TaggedKind
     };
+    // Only ever called with m.mbuiltin set — a TypeRef member (mbuiltin
+    // unset) is routed to covered_type_names_ instead by
+    // rust_member_covered_xer_ready below, before this is reached.
     auto rust_member_xer_ready = [&](const SequenceMemberSpec& m) -> bool {
-        if (!m.mbuiltin) return m.mtype == "i64";
         // storage_kind, not mtype=="i64" — same interception
         // as rust_tag_for_builtin_or_alias, before builtin_xer_ready's own
         // (still string-based, still shared with SEQUENCE OF elements) check.
@@ -1125,6 +1140,37 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 } else {
                     os << std::format("            ber_encode: |v, out| asn1cpp_ber::enumerated::write_enumerated_tagged(out, {1}, v.{0} as i64),\n", m.mname, tag_lit);
                     os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::enumerated::read_enumerated_tagged::<{2}>(r, {1})?; Ok(()) }},\n", m.mname, tag_lit, m.mtype);
+                }
+                os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
+                os << "        },\n";
+            } else if (!m.mbuiltin && m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit &&
+                       covered_type_names_.count(m.mtype) &&
+                       covered_type_names_.at(m.mtype).kind == RustTypeKind::IntegerAlias) {
+                // IMPLICIT retag of a TypeRef-aliased INTEGER member
+                // (`MyByte ::= INTEGER (0..255)`) — `MyByte`
+                // is a real Rust type alias for i64/u64/i128 (emit_integer),
+                // not a newtype, so the member field already *is* that
+                // native type: no as-cast/TryFrom needed, just the same
+                // write/read_integer*_tagged primitive a *direct* Integer
+                // member's own TaggedKind::Integer case (rust_tagged_ops)
+                // uses, picked from the alias's own storage_kind.
+                IntStorageKind sk = covered_type_names_.at(m.mtype).storage_kind;
+                const char* wfn = sk == IntStorageKind::U64  ? "write_integer_u64_tagged"
+                                 : sk == IntStorageKind::I128 ? "write_integer_i128_tagged"
+                                                               : "write_integer_tagged";
+                const char* rfn = sk == IntStorageKind::U64  ? "read_integer_u64_tagged"
+                                 : sk == IntStorageKind::I128 ? "read_integer_i128_tagged"
+                                                               : "read_integer_tagged";
+                std::string tag_lit = format_tag_literal(*m.resolved_tag);
+                os << std::format("        tag: {},\n", tag_lit);
+                os << std::format("        optional: {},\n", m.optional ? "true" : "false");
+                os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedScalar {\n";
+                if (m.optional) {
+                    os << std::format("            ber_encode: |v, out| {{ if let Some(x) = v.{0} {{ asn1cpp_ber::integer::{2}(out, {1}, x); }} }},\n", m.mname, tag_lit, wfn);
+                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::integer::{2}(r, {1})?); Ok(()) }},\n", m.mname, tag_lit, rfn);
+                } else {
+                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::integer::{2}(out, {1}, v.{0}),\n", m.mname, tag_lit, wfn);
+                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::integer::{2}(r, {1})?; Ok(()) }},\n", m.mname, tag_lit, rfn);
                 }
                 os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
                 os << "        },\n";
@@ -1582,6 +1628,29 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     std::format("asn1cpp_ber::enumerated::write_enumerated_tagged(out, {}, *v as i64);", tag_lit2));
                 os << "        ber_decode_into: |r| {\n";
                 os << std::format("            let v = asn1cpp_ber::enumerated::read_enumerated_tagged::<{}>(r, {})?;\n", a.mtype, tag_lit2);
+                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+                os << "        },\n";
+            } else if (!a.mbuiltin && a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit &&
+                       covered_type_names_.count(a.mtype) &&
+                       covered_type_names_.at(a.mtype).kind == RustTypeKind::IntegerAlias) {
+                // IMPLICIT retag of a TypeRef-aliased INTEGER alternative —
+                // same reasoning as emit_sequence_definition's IntegerAlias
+                // retag branch: the
+                // alias type already *is* i64/u64/i128, no cast/TryFrom
+                // needed, just the storage_kind-selected *_tagged primitive.
+                IntStorageKind sk = covered_type_names_.at(a.mtype).storage_kind;
+                const char* wfn = sk == IntStorageKind::U64  ? "write_integer_u64_tagged"
+                                 : sk == IntStorageKind::I128 ? "write_integer_i128_tagged"
+                                                               : "write_integer_tagged";
+                const char* rfn = sk == IntStorageKind::U64  ? "read_integer_u64_tagged"
+                                 : sk == IntStorageKind::I128 ? "read_integer_i128_tagged"
+                                                               : "read_integer_tagged";
+                std::string tag_lit2 = format_tag_literal(*a.resolved_tag);
+                os << std::format("        tag: {},\n", tag_lit2);
+                emit_encode_closure("ber_encode",
+                    std::format("asn1cpp_ber::integer::{}(out, {}, *v);", wfn, tag_lit2));
+                os << "        ber_decode_into: |r| {\n";
+                os << std::format("            let v = asn1cpp_ber::integer::{}(r, {})?;\n", rfn, tag_lit2);
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
             } else if (tagged_ops) {

@@ -281,7 +281,17 @@ private:
     // encode_sequence_tagged/decode_sequence_tagged, SEQUENCE/SET-only)
     // needs to know this; the plain-Scalar and EXPLICIT paths don't (they
     // dispatch through the generic Asn1Value trait regardless of kind).
-    enum class RustTypeKind { SequenceOrSet, Choice, Enumerated };
+    // IntegerAlias: a top-level named INTEGER subtype (`MyByte ::= INTEGER
+    // (0..255)`) used as a member's type via TypeRef — `emit_integer`
+    // already emits `pub type MyByte = i64;` (a real Rust type alias, not a
+    // newtype), so a member of this type already *is* i64/u64/i128 and
+    // dispatches through that type's own Asn1Value impl directly; the only
+    // reason it needs its own RustTypeKind is IMPLICIT-retag emission,
+    // which needs to know which `write_integer*_tagged` primitive to call
+    // (storage_kind, CoveredType::storage_kind below) — same as a direct
+    // (non-aliased) INTEGER member already does via SequenceMemberSpec::
+    // storage_kind.
+    enum class RustTypeKind { SequenceOrSet, Choice, Enumerated, IntegerAlias };
 
     // BER coverage always implies a real `impl Asn1Value::ber_encode/
     // ber_decode_into`; `xer_ready` records whether the *same* type's
@@ -290,8 +300,10 @@ private:
     // member BER-covered while one member still lacks XER (e.g. a wide
     // INTEGER, or — before ENUMERATED's own XER leg landed — an ENUMERATED
     // member). A member referencing this type only gets XER coverage
-    // itself when `xer_ready` is true here.
-    struct CoveredType { RustTypeKind kind; bool xer_ready; };
+    // itself when `xer_ready` is true here. `storage_kind` is only
+    // meaningful when `kind == IntegerAlias` (S64/U64/I128 — ARBITRARY is
+    // never registered here at all, see sequence_member_ber_covered's doc).
+    struct CoveredType { RustTypeKind kind; bool xer_ready; IntStorageKind storage_kind = IntStorageKind::S64; };
 
     // Rust type names (SequenceSpec::type_name/ChoiceSpec::type_name/
     // EnumeratedSpec::type_name) that have already been confirmed, in this
