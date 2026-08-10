@@ -1042,6 +1042,23 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
                 spec.type_name, it->second, a.asn1_name, vname));
         os << std::format("    {}({}),\n", vname, a.mtype);
     }
+    // A `...`-marked CHOICE (X.680 §29.6) promises a future schema revision
+    // may add alternatives this compiler run never saw. Every real
+    // alternative declared after `...` in *this* schema version is already
+    // a normal AlternativeSpec row above — this variant covers only
+    // genuinely-unknown-to-us content, captured as a raw TLV (tag + value
+    // bytes) so decode->re-encode still round-trips byte-identically. See
+    // rust-runtime/ber/src/choice.rs's UnknownExtensionOps doc comment for
+    // the runtime side.
+    if (spec.ext_at >= 0) {
+        auto [it, inserted] = seen_variants.emplace("UnknownExtension", "...");
+        if (!inserted)
+            throw std::runtime_error(std::format(
+                "RustBackend: CHOICE '{}' — alternative '{}' collides with the reserved "
+                "'UnknownExtension' variant name",
+                spec.type_name, it->second));
+        os << std::format("    UnknownExtension(asn1cpp_ber::Tag, Vec<u8>),\n");
+    }
     os << "}\n\n";
 }
 
@@ -1065,7 +1082,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // over suppressing real compiler signal): a single-alternative CHOICE
     // uses a plain irrefutable `let` pattern instead of `match`/`if let`,
     // which needs no wildcard/`else` arm at all and warns on neither.
-    bool single_alt = spec.alternatives.size() == 1;
+    // An extensible CHOICE (spec.ext_at >= 0) always gets a
+    // second enum variant (UnknownExtension, see emit_choice_declaration) —
+    // even when spec.alternatives itself has only one row, the enum as a
+    // whole is never single-variant once extensible, so the single_alt
+    // irrefutable-pattern special-case (#313) must not fire for it.
+    bool single_alt = spec.alternatives.size() == 1 && spec.ext_at < 0;
     for (const auto& a : spec.alternatives) {
         std::string fname = escape(std::format("{}_get_{}", prefix, a.accessor_name));
         os << std::format("pub fn {}(x: &mut {}) -> &mut {} {{\n", fname, spec.type_name, a.mtype);
@@ -1283,6 +1305,23 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             "static {}: asn1cpp_ber::choice::ChoiceSpec<{}> = asn1cpp_ber::choice::ChoiceSpec {{\n",
             spec_ident, spec.type_name);
         os << std::format("    alternatives: &{},\n", alts_ident);
+        if (spec.ext_at >= 0) {
+            // Wire the UnknownExtension variant (declared
+            // in emit_choice_declaration) into the runtime's fallback path —
+            // construct captures an unrecognized-tag TLV on decode, extract
+            // hands it back to encode_choice for byte-identical re-encoding.
+            os << "    unknown_extension: Some(asn1cpp_ber::choice::UnknownExtensionOps {\n";
+            os << std::format("        construct: |tag, bytes| {}::UnknownExtension(tag, bytes),\n",
+                               spec.type_name);
+            os << "        extract: |x| match x {\n";
+            os << std::format("            {}::UnknownExtension(tag, bytes) => Some((*tag, bytes.as_slice())),\n",
+                               spec.type_name);
+            os << "            _ => None,\n";
+            os << "        },\n";
+            os << "    }),\n";
+        } else {
+            os << "    unknown_extension: None,\n";
+        }
         os << "};\n\n";
 
         os << std::format("impl {} {{\n", spec.type_name);
