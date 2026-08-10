@@ -280,86 +280,6 @@ bool Generator::is_class_type(const ast::TypeDef& m) const {
     return false;
 }
 
-const ast::TypeDef* Generator::resolve_class_type_target(const ast::TypeDef& m) const {
-    if (m.is_sequence() || m.is_choice() || m.is_set()) return &m;
-    if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
-        auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
-        if (direct && (direct->is_sequence() || direct->is_choice() || direct->is_set()))
-            return direct.get();
-    }
-    return nullptr;
-}
-
-bool Generator::rust_wire_eligible(const ast::TypeDef& def, std::set<const ast::TypeDef*>& visiting) {
-    if (auto it = rust_wire_eligible_cache_.find(&def); it != rust_wire_eligible_cache_.end())
-        return it->second;
-    if (!(def.is_sequence() || def.is_choice() || def.is_set())) return false;
-    if (!visiting.insert(&def).second) return false; // cycle not already ruled out by member_type_in_cycle — conservative
-
-    bool is_choice = def.is_choice();
-    bool apply_auto_tags = should_apply_auto_tags(def);
-    bool has_member = false;
-    bool result = true;
-    for (const auto& m : def.members) {
-        if (!m || m->is_extension_marker) continue;
-        has_member = true;
-
-        // Mirrors SequenceMemberSpec/ChoiceAlternativeSpec's own
-        // is_class_type/member_type_in_cycle/resolved_tag facts, built early
-        // (before real emission) purely to answer this eligibility question
-        // — see this method's header doc. auto_tag_num is always 0: it only
-        // affects *which* context tag number a member gets, never *whether*
-        // one applies, and coverage never depends on the number itself.
-        const ast::TypeDef* target = resolve_class_type_target(*m);
-        bool class_type_wire_covered = target &&
-            !member_type_in_cycle(*m, def.name) && rust_wire_eligible(*target, visiting);
-        auto tag_result = compute_member_tag(*m, apply_auto_tags, /*auto_tag_num=*/0);
-
-        bool covered;
-        if (is_choice) {
-            ChoiceAlternativeSpec row;
-            row.resolved_tag = tag_result.resolved_tag;
-            row.is_explicit = tag_result.is_explicit;
-            if (target) {
-                row.is_class_type = true;
-                row.class_type_wire_covered = class_type_wire_covered;
-            } else if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
-                row.mbuiltin = *bt;
-                if (*bt == ast::BuiltinType::Integer) row.storage_kind = classify_integer_storage(*m);
-                row.mtype = cpp_type_for(*m);
-            }
-            covered = backend_.choice_alternative_ber_covered(row);
-        } else {
-            SequenceMemberSpec row;
-            row.resolved_tag = tag_result.resolved_tag;
-            row.is_explicit = tag_result.is_explicit;
-            row.optional = m->is_optional();
-            if (target) {
-                row.is_class_type = true;
-                row.class_type_wire_covered = class_type_wire_covered;
-            } else if (m->is_seq_of()) {
-                row.is_seq_of = true;
-                const auto& elem = *std::get<ast::SequenceOfType>(m->body).element;
-                if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body)) {
-                    row.elem_builtin = *ebt;
-                    row.elem_mtype = cpp_type_for(elem);
-                }
-            } else if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
-                row.mbuiltin = *bt;
-                if (*bt == ast::BuiltinType::Integer) row.storage_kind = classify_integer_storage(*m);
-                row.mtype = cpp_type_for(*m);
-            }
-            covered = backend_.sequence_member_ber_covered(row);
-        }
-        if (!covered) { result = false; break; }
-    }
-    result = result && has_member;
-
-    visiting.erase(&def);
-    rust_wire_eligible_cache_[&def] = result;
-    return result;
-}
-
 // gambas-asn1#303: is `target` (an ASN.1 type name) reachable from `from`
 // by following further class-typed member references? DFS over the
 // resolved-type graph, bounded by `visited` (finite — one entry per
@@ -1414,10 +1334,6 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         if (is_class_type(m)) {
             row.is_class_type = true;
             row.member_type_in_cycle = member_type_in_cycle(m, def.name);
-            if (const ast::TypeDef* target = resolve_class_type_target(m)) {
-                std::set<const ast::TypeDef*> visiting;
-                row.class_type_wire_covered = !row.member_type_in_cycle && rust_wire_eligible(*target, visiting);
-            }
         }
         row.optional = optional;
         auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
@@ -1640,7 +1556,6 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             IntStorageKind storage_kind = IntStorageKind::S64;
             std::optional<MemberTagSpec> resolved_tag;  // gambas-asn1#336/#347
             bool is_class_type = false;
-            bool class_type_wire_covered = false;
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1667,17 +1582,10 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                 mbuiltin = *bt;
                 if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
             }
-            bool alt_is_class_type = false;
-            bool alt_class_type_wire_covered = false;
-            if (const ast::TypeDef* target = resolve_class_type_target(*m)) {
-                alt_is_class_type = true;
-                bool in_cycle = member_type_in_cycle(*m, def.name);
-                std::set<const ast::TypeDef*> visiting;
-                alt_class_type_wire_covered = !in_cycle && rust_wire_eligible(*target, visiting);
-            }
+            bool alt_is_class_type = is_class_type(*m);
             rows.push_back({ m->name, tdref, alt_type, is_explicit,
                              tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag,
-                             alt_is_class_type, alt_class_type_wire_covered });
+                             alt_is_class_type });
             ++auto_tag_num;
           }
         }
@@ -1713,7 +1621,6 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.storage_kind = r.storage_kind;
             alt.resolved_tag = r.resolved_tag;
             alt.is_class_type = r.is_class_type;
-            alt.class_type_wire_covered = r.class_type_wire_covered;
             spec.alternatives.push_back(std::move(alt));
         }
 

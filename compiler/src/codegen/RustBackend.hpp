@@ -217,8 +217,6 @@ public:
     void emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const override;
     void emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const override;
     void emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const override;
-    bool sequence_member_ber_covered(const SequenceMemberSpec& m) const override;
-    bool choice_alternative_ber_covered(const ChoiceAlternativeSpec& a) const override;
     void emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const override;
     void emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const override;
     void emit_namespace_open(const std::string& name, TypeOutputSession& session) const override;
@@ -268,6 +266,32 @@ private:
     void emit_sequence_definition(const SequenceSpec& spec, std::ostream& os) const;
     void emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const;
     void emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const;
+
+    // Coverage predicates for emit_sequence_definition/emit_choice_definition's
+    // own member-table gate — see their definitions (RustBackend.cpp) for
+    // the full rationale. Rust-only concerns (this backend's own trait-object
+    // dispatch model), so they live here rather than on the shared Backend
+    // interface/Generator.
+    bool sequence_member_ber_covered(const SequenceMemberSpec& m) const;
+    bool choice_alternative_ber_covered(const ChoiceAlternativeSpec& a) const;
+
+    // Rust type names (SequenceSpec::type_name/ChoiceSpec::type_name) that
+    // have already been confirmed, in this compiler run, to have a real
+    // `impl Asn1Value` — populated by emit_sequence_definition/
+    // emit_choice_definition themselves the moment they decide all_covered,
+    // consulted by sequence_member_ber_covered/choice_alternative_ber_covered
+    // for a class-typed member. Entirely internal to this backend (Generator
+    // never reads or writes it) — see sequence_member_ber_covered's doc for
+    // why this can't just optimistically assume every composite member's
+    // target is covered (ENUMERATED-typed members break that assumption: no
+    // Asn1Value impl exists for them yet). `mutable`: emit_sequence/
+    // emit_choice are const per the Backend interface, but need to record
+    // what they just decided. Only benefits a member referencing a type
+    // Generator has already processed earlier in this run — a forward
+    // reference (to a type declared later in the same module) conservatively
+    // gets no composite coverage, same as before this mechanism existed; not
+    // a regression, just not (yet) as complete as it could be.
+    mutable std::unordered_set<std::string> composite_covered_types_;
 };
 
 } // namespace asn1::codegen
