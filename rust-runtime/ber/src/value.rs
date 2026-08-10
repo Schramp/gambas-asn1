@@ -53,6 +53,60 @@ pub trait Asn1Value {
     fn ber_encode(&self, out: &mut Vec<u8>);
     fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError>;
 
+    /// This value's own natural BER tag (X.690 §8.1.2) — what `ber_encode`
+    /// itself writes when called directly. Required, not defaulted:
+    /// `ber_encode_tagged`/`ber_decode_into_tagged` below need it, for
+    /// every impl, to detect the (overwhelmingly common) untagged case and
+    /// to reconstruct a natural-tagged TLV on decode. CHOICE has no
+    /// natural tag at all (X.680 §28) and is never reached through the
+    /// tagged path anyway (a CHOICE member/alternative is always
+    /// EXPLICIT-wrapped when tagged, X.680 §30.6) — its own impl uses
+    /// `unreachable!()`.
+    fn ber_natural_tag(&self) -> crate::tag::Tag;
+
+    /// IMPLICIT tag override (X.690 §8.14) — write this value under `tag`
+    /// instead of its own natural one. One generic implementation for
+    /// every `Asn1Value` impl: re-tag whatever `ber_encode` already
+    /// writes (BER's tag/length/value framing is uniform regardless of
+    /// primitive vs constructed content — the shape bit lives in `tag`
+    /// itself, `writer::write_primitive` doesn't care), short-circuiting
+    /// through plain `ber_encode` when `tag` already matches the natural
+    /// one (the common case) to skip the extra copy. Replaces what used to
+    /// be a per-builtin-kind `*_tagged` primitive selected by codegen
+    /// (`TaggedKind`/`rust_tagged_ops`, `RustBackend.cpp`) — one method
+    /// here covers every kind, including generated SEQUENCE/CHOICE/
+    /// ENUMERATED types, with no codegen-side kind dispatch at all.
+    fn ber_encode_tagged(&self, tag: crate::tag::Tag, out: &mut Vec<u8>) {
+        if tag == self.ber_natural_tag() {
+            self.ber_encode(out);
+            return;
+        }
+        let mut tmp = Vec::new();
+        self.ber_encode(&mut tmp);
+        let mut r = Reader::new(&tmp);
+        let tlv = r.read_tlv().expect("ber_encode always writes exactly one valid TLV");
+        crate::writer::write_primitive(out, tag, tlv.value);
+    }
+
+    /// Decode counterpart of `ber_encode_tagged` — reads a TLV under the
+    /// caller-supplied `tag`, then re-synthesizes a natural-tagged TLV
+    /// around the same content bytes so `ber_decode_into` (which always
+    /// expects/checks its own natural tag internally) can do the actual
+    /// content parsing unchanged.
+    fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
+        if tag == self.ber_natural_tag() {
+            return self.ber_decode_into(r);
+        }
+        let tlv = r.read_tlv()?;
+        if tlv.tag != tag {
+            return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
+        }
+        let mut synth = Vec::new();
+        crate::writer::write_primitive(&mut synth, self.ber_natural_tag(), tlv.value);
+        let mut inner = Reader::new(&synth);
+        self.ber_decode_into(&mut inner)
+    }
+
     fn xer_encode(&self, _out: &mut String) {
         unimplemented!("XER leg not yet wired for this type")
     }
@@ -110,6 +164,13 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
         self.is_some()
     }
 
+    // No `V` instance to hand: a fresh `Default` costs nothing for the
+    // scalar/enum/struct kinds this is ever instantiated with, and the tag
+    // depends only on `V`'s type, never its value.
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        V::default().ber_natural_tag()
+    }
+
     fn ber_encode(&self, out: &mut Vec<u8>) {
         if let Some(v) = self {
             v.ber_encode(out);
@@ -138,6 +199,10 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
 }
 
 impl Asn1Value for i64 {
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        crate::integer::INTEGER_TAG
+    }
+
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::integer::write_integer(out, *self);
     }
@@ -166,6 +231,10 @@ impl Asn1Value for i64 {
 /// generated code calls it (rust_member_xer_ready/rust_seqof_xer_ready gate
 /// XER coverage on `mtype == "i64"`, unaffected by this addition).
 impl Asn1Value for u64 {
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        crate::integer::INTEGER_TAG
+    }
+
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::integer::write_integer_u64(out, *self);
     }
@@ -178,6 +247,10 @@ impl Asn1Value for u64 {
 
 /// i128 analogue of the `u64` impl above — same BER-only scope.
 impl Asn1Value for i128 {
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        crate::integer::INTEGER_TAG
+    }
+
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::integer::write_integer_i128(out, *self);
     }
@@ -195,6 +268,10 @@ impl Asn1Value for i128 {
 /// isn't implemented here, matching this crate's strict-by-default scope
 /// elsewhere).
 impl Asn1Value for bool {
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        crate::boolean::BOOLEAN_TAG
+    }
+
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::boolean::write_boolean(out, *self);
     }
@@ -232,6 +309,10 @@ impl Asn1Value for bool {
 /// `Asn1Value` (member-embedded content only, per this trait's own doc
 /// comment) never needs that branch.
 impl Asn1Value for () {
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        crate::null::NULL_TAG
+    }
+
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::null::write_null(out);
     }
@@ -256,6 +337,10 @@ impl Asn1Value for () {
 /// `runtime/src/HexEncoder.hpp`) — distinct from BIT STRING/hex-string
 /// types' *spaced* hex (`format_hex_bytes`), not implemented by this crate.
 impl Asn1Value for Vec<u8> {
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        crate::octet_string::OCTET_STRING_TAG
+    }
+
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::octet_string::write_octet_string(out, self);
     }
@@ -306,6 +391,10 @@ impl Asn1Value for Vec<u8> {
 /// not implemented here — matches this crate's strict-by-default scope
 /// elsewhere (see `strings.rs`'s own noted divergence).
 impl Asn1Value for crate::bit_string::BitString {
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        crate::bit_string::BIT_STRING_TAG
+    }
+
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::bit_string::write_bit_string(out, self);
     }
@@ -364,6 +453,10 @@ impl Asn1Value for crate::bit_string::BitString {
 /// (`runtime/include/asn1cpp/codec/XerCodec.hpp`'s `format_arcs`/
 /// `parse_arcs`): dotted-decimal arcs, e.g. `2.5.4.3`.
 impl Asn1Value for crate::oid::ObjectIdentifier {
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        crate::oid::OBJECT_IDENTIFIER_TAG
+    }
+
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::oid::write_object_identifier(out, self);
     }
@@ -407,6 +500,10 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
 /// is purely a BER encoding concern anyway): dotted-decimal arcs, e.g.
 /// `8571.1`.
 impl Asn1Value for crate::relative_oid::RelativeOid {
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        crate::relative_oid::RELATIVE_OID_TAG
+    }
+
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::relative_oid::write_relative_oid(out, self);
     }
@@ -450,6 +547,10 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
 /// `"0"`, everything else as `%.15f` with trailing zeros trimmed (keeping
 /// at least one digit after the decimal point).
 impl Asn1Value for f64 {
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        crate::real::REAL_TAG
+    }
+
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::real::write_real(out, *self);
     }
@@ -516,6 +617,10 @@ impl Asn1Value for f64 {
 /// see `strings.rs`'s module doc on widening to the others). Mirrors
 /// `XerStringHandler`: escaped text content, via `xer::escape`/`xer::unescape`.
 impl Asn1Value for String {
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        crate::strings::IA5_STRING_TAG
+    }
+
     fn ber_encode(&self, out: &mut Vec<u8>) {
         crate::strings::write_ia5_string(out, self);
     }
@@ -997,5 +1102,59 @@ mod tests {
         let mut r = Reader::new(&buf);
         let got: i64 = decode_explicit(&mut r, crate::tag::Tag::context(7, true)).unwrap();
         assert_eq!(got, 42);
+    }
+
+    // ---- generic IMPLICIT retagging (ber_encode_tagged/ber_decode_into_tagged) ----
+
+    #[test]
+    fn tagged_matching_natural_tag_is_identical_to_plain_encode() {
+        let mut a = Vec::new();
+        42i64.ber_encode(&mut a);
+        let mut b = Vec::new();
+        42i64.ber_encode_tagged(crate::integer::INTEGER_TAG, &mut b);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn tagged_substitutes_the_tag_for_a_scalar() {
+        let context_0 = crate::tag::Tag::context(0, false);
+        let mut out = Vec::new();
+        42i64.ber_encode_tagged(context_0, &mut out);
+        assert_eq!(out, vec![0x80, 0x01, 0x2A]); // context primitive 0, not universal INTEGER (0x02)
+
+        let mut r = Reader::new(&out);
+        let mut got: i64 = 0;
+        got.ber_decode_into_tagged(&mut r, context_0).unwrap();
+        assert_eq!(got, 42);
+    }
+
+    #[test]
+    fn tagged_substitutes_the_tag_for_a_constructed_value() {
+        // BitString isn't constructed, but exercise a real non-trivial
+        // multi-byte value to make sure content bytes survive the
+        // splice-and-resplice untouched.
+        use crate::bit_string::BitString;
+        let v = BitString { bytes: vec![0b1010_1000, 0xFF], unused_bits: 2 };
+        let context_3 = crate::tag::Tag::context(3, false);
+        let mut out = Vec::new();
+        v.ber_encode_tagged(context_3, &mut out);
+        assert_eq!(out[0], 0x83); // context primitive 3
+
+        let mut r = Reader::new(&out);
+        let mut got = BitString::default();
+        got.ber_decode_into_tagged(&mut r, context_3).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn tagged_decode_rejects_wrong_tag() {
+        let context_0 = crate::tag::Tag::context(0, false);
+        let context_1 = crate::tag::Tag::context(1, false);
+        let mut out = Vec::new();
+        42i64.ber_encode_tagged(context_0, &mut out);
+
+        let mut r = Reader::new(&out);
+        let mut got: i64 = 0;
+        assert!(got.ber_decode_into_tagged(&mut r, context_1).is_err());
     }
 }

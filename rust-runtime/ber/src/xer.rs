@@ -254,7 +254,7 @@ fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut S
             // TaggedScalar reuses Scalar's get here: XER
             // element tags are always field-name-derived, never
             // type-derived, so the BER-only tag override doesn't apply.
-            MemberAccess::Scalar { get, .. } | MemberAccess::TaggedScalar { get, .. } => {
+            MemberAccess::Scalar { get, .. } | MemberAccess::TaggedScalar { get, .. } | MemberAccess::ExplicitScalar { get, .. } => {
                 let val = get(value);
                 if !val.is_present() {
                     continue;
@@ -319,7 +319,7 @@ fn decode_sequence_xer_content<T: Default>(spec: &SequenceSpec<T>, r: &mut XerRe
         }
         r.consume_open_tag(m.name)?;
         match &m.access {
-            MemberAccess::Scalar { get_mut, .. } | MemberAccess::TaggedScalar { get_mut, .. } =>
+            MemberAccess::Scalar { get_mut, .. } | MemberAccess::TaggedScalar { get_mut, .. } | MemberAccess::ExplicitScalar { get_mut, .. } =>
                 get_mut(&mut result).xer_decode_into(r)?,
             MemberAccess::SeqOf { xer_decode_into, .. } | MemberAccess::TaggedSeqOf { xer_decode_into, .. } =>
                 xer_decode_into(&mut result, r)?,

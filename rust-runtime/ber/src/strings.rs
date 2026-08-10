@@ -122,6 +122,10 @@ macro_rules! char_string_type {
         }
 
         impl Asn1Value for $name {
+            fn ber_natural_tag(&self) -> Tag {
+                $tag_const
+            }
+
             fn ber_encode(&self, out: &mut Vec<u8>) {
                 write_char_string(out, $tag_const, &self.0);
             }

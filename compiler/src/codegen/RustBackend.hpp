@@ -276,23 +276,6 @@ private:
     bool sequence_member_ber_covered(const SequenceMemberSpec& m) const;
     bool choice_alternative_ber_covered(const ChoiceAlternativeSpec& a) const;
 
-    // What shape of Rust item a name in covered_type_names_ refers to — the
-    // IMPLICIT-retag emission (rust-runtime/ber/src/sequence.rs's
-    // encode_sequence_tagged/decode_sequence_tagged, SEQUENCE/SET-only)
-    // needs to know this; the plain-Scalar and EXPLICIT paths don't (they
-    // dispatch through the generic Asn1Value trait regardless of kind).
-    // IntegerAlias: a top-level named INTEGER subtype (`MyByte ::= INTEGER
-    // (0..255)`) used as a member's type via TypeRef — `emit_integer`
-    // already emits `pub type MyByte = i64;` (a real Rust type alias, not a
-    // newtype), so a member of this type already *is* i64/u64/i128 and
-    // dispatches through that type's own Asn1Value impl directly; the only
-    // reason it needs its own RustTypeKind is IMPLICIT-retag emission,
-    // which needs to know which `write_integer*_tagged` primitive to call
-    // (storage_kind, CoveredType::storage_kind below) — same as a direct
-    // (non-aliased) INTEGER member already does via SequenceMemberSpec::
-    // storage_kind.
-    enum class RustTypeKind { SequenceOrSet, Choice, Enumerated, IntegerAlias };
-
     // BER coverage always implies a real `impl Asn1Value::ber_encode/
     // ber_decode_into`; `xer_ready` records whether the *same* type's
     // xer_encode/xer_decode_into legs are also real (not the trait's
@@ -300,10 +283,16 @@ private:
     // member BER-covered while one member still lacks XER (e.g. a wide
     // INTEGER, or — before ENUMERATED's own XER leg landed — an ENUMERATED
     // member). A member referencing this type only gets XER coverage
-    // itself when `xer_ready` is true here. `storage_kind` is only
-    // meaningful when `kind == IntegerAlias` (S64/U64/I128 — ARBITRARY is
-    // never registered here at all, see sequence_member_ber_covered's doc).
-    struct CoveredType { RustTypeKind kind; bool xer_ready; IntStorageKind storage_kind = IntStorageKind::S64; };
+    // itself when `xer_ready` is true here.
+    //
+    // No "what shape of Rust item is this" field — IMPLICIT-retag emission
+    // used to need it (to pick which per-kind `*_tagged` primitive to call)
+    // before `Asn1Value` grew generic `ber_encode_tagged`/
+    // `ber_decode_into_tagged` (value.rs): one runtime method now covers
+    // every kind (builtin scalar, SEQUENCE/SET, CHOICE, ENUMERATED,
+    // TypeRef-aliased INTEGER) with no codegen-side dispatch at all, so
+    // there's nothing left for a kind tag to answer.
+    struct CoveredType { bool xer_ready; };
 
     // Rust type names (SequenceSpec::type_name/ChoiceSpec::type_name/
     // EnumeratedSpec::type_name) that have already been confirmed, in this
