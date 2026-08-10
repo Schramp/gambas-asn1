@@ -354,7 +354,6 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // everything to mirror C++ would be needless indirection with no
     // upside. Only cycle-participating members get boxed.
     bool        member_type_in_cycle = false;
-    bool        is_class_type = false;
     // gambas-asn1#331: SEQUENCE OF member support. Set only for a member
     // whose body is ast::SequenceOfType (never ast::SetOfType — SET OF is a
     // separate, not-yet-covered follow-up) with a *direct* builtin-type
@@ -413,9 +412,6 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
     // natural tag applies; set means an explicit/AUTOMATIC-assigned tag
     // overrides it (X.690 §8.14). Consumed by RustBackend's CHOICE analogue
     // of MemberAccess::TaggedScalar.
-    // Same meaning as SequenceMemberSpec::is_class_type — an alternative
-    // whose own type is itself SEQUENCE/CHOICE/SET.
-    bool        is_class_type = false;
 };
 
 /// @brief Backend-agnostic decision for one CHOICE type (X.680 §28). The
