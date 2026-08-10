@@ -351,15 +351,32 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
                            tname, variant_name(*this, spec.values.front().asn1_name));
         os << "}\n\n";
 
-        // BER leg only (matches every other Asn1Value impl this backend
-        // emits — xer_encode/xer_decode_into keep the trait's default
-        // panicking body). Makes this type usable as a SEQUENCE/CHOICE
-        // member the same way i64/bool/etc already are (registered as
-        // RustTypeKind::Enumerated in covered_type_names_ once emitted —
-        // see sequence_member_ber_covered's doc) — `as i64`/TryFrom<i64>
-        // convert through the shared wire
-        // representation (enumerated::write_enumerated_tagged/
-        // read_enumerated_tagged, X.690 §8.4).
+        // Value/name table — mirrors CppBackend's asn_MAP_ (EnumSpec::entries,
+        // TypeDescriptor.hpp) exactly: one static data table, consumed
+        // generically by enumerated::xer_encode_enum/xer_decode_enum below
+        // (no per-value logic in this generated file itself, table-driven
+        // same as every SEQUENCE/CHOICE member table this backend emits).
+        std::string map_ident = std::format("{}_MAP", to_screaming_snake_case(tname));
+        os << std::format("static {}: [asn1cpp_ber::enumerated::EnumEntry; {}] = [\n",
+                           map_ident, spec.values.size());
+        for (const auto& v : spec.values) {
+            os << std::format("    asn1cpp_ber::enumerated::EnumEntry {{ value: {}, name: \"{}\" }},\n",
+                               v.value, v.asn1_name);
+        }
+        os << "];\n\n";
+
+        // BER leg (matches every other Asn1Value impl this backend emits)
+        // and XER leg (BASIC-XER EmptyElementBoolean-style content, same as
+        // `bool`'s own Asn1Value impl above in this file — mirrors
+        // EnumeratedXerHandler's member-embedded form,
+        // runtime/src/XerCodec.cpp). Makes this type usable as a
+        // SEQUENCE/CHOICE member the same way i64/bool/etc already are
+        // (registered as RustTypeKind::Enumerated in covered_type_names_
+        // once emitted — see sequence_member_ber_covered's doc). `as i64`/
+        // TryFrom<i64> convert through the shared wire representation
+        // (X.690 §8.4); the XER leg goes through {map_ident} instead —
+        // BER's wire value and XER's value *name* are different
+        // representations of the same table, not two independent lookups.
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", tname);
         os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
         os << "        asn1cpp_ber::enumerated::write_enumerated_tagged(out, asn1cpp_ber::enumerated::ENUMERATED_TAG, *self as i64);\n";
@@ -370,10 +387,20 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
                            "            .map_err(|_| asn1cpp_ber::DecodeError::new(format!(\"invalid {} value: {{raw}}\"), 0))?;\n",
                            tname);
         os << "        Ok(())\n";
+        os << "    }\n\n";
+        os << "    fn xer_encode(&self, out: &mut String) {\n";
+        os << std::format("        asn1cpp_ber::enumerated::xer_encode_enum(out, &{}, *self as i64);\n", map_ident);
+        os << "    }\n\n";
+        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << std::format("        let raw = asn1cpp_ber::enumerated::xer_decode_enum(r, &{})?;\n", map_ident);
+        os << std::format("        *self = <Self as std::convert::TryFrom<i64>>::try_from(raw)\n"
+                           "            .map_err(|_| asn1cpp_ber::DecodeError::new(format!(\"invalid {} value: {{raw}}\"), 0))?;\n",
+                           tname);
+        os << "        Ok(())\n";
         os << "    }\n";
         os << "}\n\n";
 
-        covered_type_names_[tname] = RustTypeKind::Enumerated;
+        covered_type_names_[tname] = {RustTypeKind::Enumerated, true};
     }
 }
 
@@ -945,23 +972,26 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     auto rust_member_covered = [&](const SequenceMemberSpec& m) -> bool {
         return sequence_member_ber_covered(m);
     };
-    // Composite (SEQUENCE/SET/CHOICE-typed) members never
-    // contribute an XER leg in this PR's scope — see sequence_member_ber_covered's
-    // doc for the BER-only rationale. Excluding them here (rather than
-    // teaching encode_sequence_xer/decode_sequence_xer to recurse) keeps
-    // the containing type's own XER coverage decision safe: a composite
+    // A composite (SEQUENCE/SET/CHOICE/ENUMERATED-typed) member only
+    // contributes an XER leg when its own target type already has a real
+    // one (covered_type_names_'s xer_ready flag — see RustBackend.hpp's
+    // CoveredType doc) — never assumed, same reasoning
+    // sequence_member_ber_covered's own doc gives for BER: a composite
     // member whose target type has no real Asn1Value::xer_encode would
     // otherwise panic at runtime the first time the containing type's
     // encode_xer() actually reached it.
     auto rust_member_covered_xer_ready = [&](const SequenceMemberSpec& m) -> bool {
-        if (!m.mbuiltin && !m.is_seq_of) return false;
+        if (!m.mbuiltin && !m.is_seq_of) {
+            auto it = covered_type_names_.find(m.mtype);
+            return it != covered_type_names_.end() && it->second.xer_ready;
+        }
         return m.is_seq_of ? rust_seqof_xer_ready(m) : rust_member_xer_ready(m);
     };
     bool all_covered = !spec.members.empty() &&
         std::all_of(spec.members.begin(), spec.members.end(), rust_member_covered);
     bool all_xer_ready = all_covered &&
         std::all_of(spec.members.begin(), spec.members.end(), rust_member_covered_xer_ready);
-    if (all_covered) covered_type_names_[spec.type_name] = RustTypeKind::SequenceOrSet;
+    if (all_covered) covered_type_names_[spec.type_name] = {RustTypeKind::SequenceOrSet, all_xer_ready};
     if (all_covered) {
         std::string members_ident = std::format("{}_MEMBERS", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
@@ -1051,7 +1081,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 os << "        },\n";
             } else if (!m.mbuiltin && m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit &&
                        covered_type_names_.count(m.mtype) &&
-                       covered_type_names_.at(m.mtype) == RustTypeKind::SequenceOrSet) {
+                       covered_type_names_.at(m.mtype).kind == RustTypeKind::SequenceOrSet) {
                 // IMPLICIT retag (X.690 §8.14.2) of a
                 // composite (SEQUENCE/SET-typed — CHOICE members are always
                 // EXPLICIT, see member_is_explicit) member: same content,
@@ -1081,7 +1111,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 os << "        },\n";
             } else if (!m.mbuiltin && m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit &&
                        covered_type_names_.count(m.mtype) &&
-                       covered_type_names_.at(m.mtype) == RustTypeKind::Enumerated) {
+                       covered_type_names_.at(m.mtype).kind == RustTypeKind::Enumerated) {
                 // IMPLICIT retag of an ENUMERATED-typed member — X.680 §22.3
                 // permits it (unlike CHOICE/ANY). No shared table to
                 // reference (ENUMERATED has no SequenceSpec-style table,
@@ -1189,10 +1219,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         // sequence_member_ber_covered/choice_alternative_ber_covered can
         // reference it via Asn1Value without needing to predict this in
         // advance (see those methods' own doc for why no prediction is
-        // needed). BER leg only; xer_encode/xer_decode_into keep the
-        // trait's own default (panicking) body, same "BER first"
-        // incremental pairing this crate uses throughout (see value.rs's
-        // Asn1Value doc).
+        // needed). The XER leg is only real when all_xer_ready — otherwise
+        // it keeps the trait's own default (panicking) body, same as any
+        // other not-yet-XER-ready type; a member referencing this type
+        // checks covered_type_names_'s xer_ready flag before ever routing
+        // through it (rust_member_covered_xer_ready/rust_alt_xer_ready).
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", spec.type_name);
         os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
         os << std::format("        asn1cpp_ber::sequence::encode_sequence_into(&{}, self, out);\n", spec_ident);
@@ -1201,6 +1232,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << std::format("        *self = asn1cpp_ber::sequence::decode_sequence_from(&{}, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n";
+        if (all_xer_ready) {
+            os << "\n";
+            os << "    fn xer_encode(&self, out: &mut String) {\n";
+            os << std::format("        asn1cpp_ber::xer::encode_sequence_xer_into(&{}, self, out);\n", spec_ident);
+            os << "    }\n\n";
+            os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+            os << std::format("        *self = asn1cpp_ber::xer::decode_sequence_xer_from(&{}, r)?;\n", spec_ident);
+            os << "        Ok(())\n";
+            os << "    }\n";
+        }
         os << "}\n\n";
     }
 }
@@ -1443,24 +1484,28 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     };
     bool all_covered = !spec.alternatives.empty() &&
         std::all_of(spec.alternatives.begin(), spec.alternatives.end(), rust_alt_covered);
-    if (all_covered) covered_type_names_[spec.type_name] = RustTypeKind::Choice;
     // XER coverage is no longer implied by BER coverage now that composite
-    // alternatives (BER-only — no real XER support yet) and wide-storage
-    // INTEGER (U64/I128, also BER-only) are both included in all_covered —
-    // gated separately, same all_covered-vs-all_xer_ready split
-    // emit_sequence_definition already uses. The generated AlternativeSpec
-    // rows' own xer_encode/xer_decode_into closures still exist
-    // unconditionally either way (required struct fields, not optional) —
-    // they just aren't reachable through anything this backend generates
-    // when all_xer_ready is false, since encode_xer()/decode_xer() are
-    // the only callers and this gate withholds them.
-    auto rust_alt_xer_ready = [](const ChoiceAlternativeSpec& a) -> bool {
-        if (!a.mbuiltin) return false;
+    // alternatives (their target's own xer_ready flag, covered_type_names_)
+    // and wide-storage INTEGER (U64/I128, always BER-only) are both
+    // included in all_covered — gated separately, same
+    // all_covered-vs-all_xer_ready split emit_sequence_definition already
+    // uses. The generated AlternativeSpec rows' own xer_encode/
+    // xer_decode_into closures still exist unconditionally either way
+    // (required struct fields, not optional) — they just aren't reachable
+    // through anything this backend generates when all_xer_ready is false,
+    // since encode_xer()/decode_xer() are the only callers and this gate
+    // withholds them.
+    auto rust_alt_xer_ready = [&](const ChoiceAlternativeSpec& a) -> bool {
+        if (!a.mbuiltin) {
+            auto it = covered_type_names_.find(a.mtype);
+            return it != covered_type_names_.end() && it->second.xer_ready;
+        }
         if (*a.mbuiltin == ast::BuiltinType::Integer) return a.storage_kind == IntStorageKind::S64;
         return builtin_xer_ready(*a.mbuiltin, a.mtype);
     };
     bool all_xer_ready = all_covered &&
         std::all_of(spec.alternatives.begin(), spec.alternatives.end(), rust_alt_xer_ready);
+    if (all_covered) covered_type_names_[spec.type_name] = {RustTypeKind::Choice, all_xer_ready};
     if (all_covered) {
         std::string alts_ident = std::format("{}_ALTERNATIVES", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
@@ -1512,7 +1557,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << "        },\n";
             } else if (!a.mbuiltin && a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit &&
                        covered_type_names_.count(a.mtype) &&
-                       covered_type_names_.at(a.mtype) == RustTypeKind::SequenceOrSet) {
+                       covered_type_names_.at(a.mtype).kind == RustTypeKind::SequenceOrSet) {
                 // IMPLICIT retag (X.690 §8.14.2) of a composite
                 // (SEQUENCE/SET-typed — CHOICE targets are always EXPLICIT,
                 // X.680 §30.6) alternative: same shape as
@@ -1533,7 +1578,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << "        },\n";
             } else if (!a.mbuiltin && a.resolved_tag && a.resolved_tag->tag_is_override && !a.is_explicit &&
                        covered_type_names_.count(a.mtype) &&
-                       covered_type_names_.at(a.mtype) == RustTypeKind::Enumerated) {
+                       covered_type_names_.at(a.mtype).kind == RustTypeKind::Enumerated) {
                 // IMPLICIT retag of an ENUMERATED-typed alternative — same
                 // reasoning as emit_sequence_definition's Enumerated retag
                 // branch (X.680 §22.3 permits it).
@@ -1623,11 +1668,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
 
         // Makes this type usable as a nested composite
         // member elsewhere — see emit_sequence_definition's identical
-        // Asn1Value impl for the full rationale (BER leg only; xer_encode/
-        // xer_decode_into keep the trait's default panicking body —
-        // encode_choice_xer's nested-content framing hasn't been verified
-        // safe to reuse as Asn1Value::xer_encode's contract, same
-        // BER-first incremental scope as the SEQUENCE side).
+        // Asn1Value impl for the full rationale. XER leg only real when
+        // all_xer_ready (encode_choice_xer_into/decode_choice_xer_from —
+        // the content-only cores of encode_choice_xer/decode_choice_xer,
+        // choice.rs).
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", spec.type_name);
         os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
         os << std::format("        asn1cpp_ber::choice::encode_choice_into(&{}, self, out);\n", spec_ident);
@@ -1636,6 +1680,16 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << std::format("        *self = asn1cpp_ber::choice::decode_choice_from(&{}, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n";
+        if (all_xer_ready) {
+            os << "\n";
+            os << "    fn xer_encode(&self, out: &mut String) {\n";
+            os << std::format("        asn1cpp_ber::choice::encode_choice_xer_into(&{}, self, out);\n", spec_ident);
+            os << "    }\n\n";
+            os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+            os << std::format("        *self = asn1cpp_ber::choice::decode_choice_xer_from(&{}, r)?;\n", spec_ident);
+            os << "        Ok(())\n";
+            os << "    }\n";
+        }
         os << "}\n\n";
     }
 }

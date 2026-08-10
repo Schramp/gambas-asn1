@@ -283,6 +283,16 @@ private:
     // dispatch through the generic Asn1Value trait regardless of kind).
     enum class RustTypeKind { SequenceOrSet, Choice, Enumerated };
 
+    // BER coverage always implies a real `impl Asn1Value::ber_encode/
+    // ber_decode_into`; `xer_ready` records whether the *same* type's
+    // xer_encode/xer_decode_into legs are also real (not the trait's
+    // default panicking body) — independent, because a type can have every
+    // member BER-covered while one member still lacks XER (e.g. a wide
+    // INTEGER, or — before ENUMERATED's own XER leg landed — an ENUMERATED
+    // member). A member referencing this type only gets XER coverage
+    // itself when `xer_ready` is true here.
+    struct CoveredType { RustTypeKind kind; bool xer_ready; };
+
     // Rust type names (SequenceSpec::type_name/ChoiceSpec::type_name/
     // EnumeratedSpec::type_name) that have already been confirmed, in this
     // compiler run, to have a real `impl Asn1Value` — populated by
@@ -303,7 +313,7 @@ private:
     // reference (to a type declared later in the same module) conservatively
     // gets no coverage, same as before this mechanism existed; not a
     // regression, just not (yet) as complete as it could be.
-    mutable std::unordered_map<std::string, RustTypeKind> covered_type_names_;
+    mutable std::unordered_map<std::string, CoveredType> covered_type_names_;
 };
 
 } // namespace asn1::codegen

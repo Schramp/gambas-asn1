@@ -239,11 +239,16 @@ pub fn write_close_tag(out: &mut String, name: &str) {
 /// `Asn1Value::is_present` — unlike BER, XER's outer element tag is this
 /// walker's own responsibility, not something `Option<V>::xer_encode` can
 /// suppress by itself.
-pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
+/// Member-loop content of a SEQUENCE's XER encoding, without the outer
+/// `<name>`/`</name>` wrapper — shared by `encode_sequence_xer` (the type's
+/// own name) and, once a generated SEQUENCE/SET type has its own
+/// `Asn1Value` impl, by a *member*'s field-name-derived wrapper instead
+/// (XER tags are always field-derived, never type-derived — see this
+/// module's own doc — so a nested composite member's inner content is
+/// exactly this loop, wrapped in the *member's* tag by the caller, same
+/// contract `Asn1Value::xer_encode` already documents for every other type).
+fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut String) {
     use crate::sequence::MemberAccess;
-    let mut out = String::new();
-    write_open_tag(&mut out, spec.name);
-    out.push('\n');
     for m in spec.members {
         match &m.access {
             // TaggedScalar reuses Scalar's get here: XER
@@ -255,25 +260,41 @@ pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
                     continue;
                 }
                 out.push_str("    ");
-                write_open_tag(&mut out, m.name);
-                val.xer_encode(&mut out);
-                write_close_tag(&mut out, m.name);
+                write_open_tag(out, m.name);
+                val.xer_encode(out);
+                write_close_tag(out, m.name);
                 out.push('\n');
             }
             // TaggedSeqOf reuses SeqOf's xer_encode here,
             // same field-name-derived-tag reasoning as TaggedScalar above.
             MemberAccess::SeqOf { xer_encode, .. } | MemberAccess::TaggedSeqOf { xer_encode, .. } => {
                 out.push_str("    ");
-                write_open_tag(&mut out, m.name);
-                xer_encode(value, &mut out);
-                write_close_tag(&mut out, m.name);
+                write_open_tag(out, m.name);
+                xer_encode(value, out);
+                write_close_tag(out, m.name);
                 out.push('\n');
             }
         }
     }
+}
+
+pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
+    let mut out = String::new();
+    write_open_tag(&mut out, spec.name);
+    out.push('\n');
+    encode_sequence_xer_content(spec, value, &mut out);
     write_close_tag(&mut out, spec.name);
     out.push('\n');
     out
+}
+
+/// Appends a SEQUENCE's XER content (no outer wrapper) to an existing
+/// buffer — the shape `Asn1Value::xer_encode` needs (writes only inner
+/// content, wrapper is the caller's job) so a generated SEQUENCE/SET type
+/// can implement that trait leg and become usable as a nested composite
+/// member, same role `sequence::encode_sequence_into` plays for the BER leg.
+pub fn encode_sequence_xer_into<T>(spec: &SequenceSpec<T>, value: &T, out: &mut String) {
+    encode_sequence_xer_content(spec, value, out);
 }
 
 /// Generic SEQUENCE XER decoder — the XER analogue of `decode_sequence`
@@ -286,10 +307,8 @@ pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
 /// member is absent (leave it at its `Default`, i.e. `None`) and nothing is
 /// consumed, same linear-scan/canonical-order assumption `decode_sequence`'s
 /// BER leg documents.
-pub fn decode_sequence_xer<T: Default>(spec: &SequenceSpec<T>, xml: &str) -> Result<T, DecodeError> {
+fn decode_sequence_xer_content<T: Default>(spec: &SequenceSpec<T>, r: &mut XerReader) -> Result<T, DecodeError> {
     use crate::sequence::MemberAccess;
-    let mut r = XerReader::new(xml);
-    r.consume_open_tag(spec.name)?;
     let mut result = T::default();
     for m in spec.members {
         if m.optional {
@@ -301,14 +320,31 @@ pub fn decode_sequence_xer<T: Default>(spec: &SequenceSpec<T>, xml: &str) -> Res
         r.consume_open_tag(m.name)?;
         match &m.access {
             MemberAccess::Scalar { get_mut, .. } | MemberAccess::TaggedScalar { get_mut, .. } =>
-                get_mut(&mut result).xer_decode_into(&mut r)?,
+                get_mut(&mut result).xer_decode_into(r)?,
             MemberAccess::SeqOf { xer_decode_into, .. } | MemberAccess::TaggedSeqOf { xer_decode_into, .. } =>
-                xer_decode_into(&mut result, &mut r)?,
+                xer_decode_into(&mut result, r)?,
         }
         r.consume_close_tag(m.name)?;
     }
+    Ok(result)
+}
+
+pub fn decode_sequence_xer<T: Default>(spec: &SequenceSpec<T>, xml: &str) -> Result<T, DecodeError> {
+    let mut r = XerReader::new(xml);
+    r.consume_open_tag(spec.name)?;
+    let result = decode_sequence_xer_content(spec, &mut r)?;
     r.consume_close_tag(spec.name)?;
     Ok(result)
+}
+
+/// Reads a SEQUENCE's XER content (no outer wrapper — already consumed by
+/// the caller, same contract `Asn1Value::xer_decode_into` documents) from
+/// the caller's current reader position — the shape that trait leg needs
+/// so a generated SEQUENCE/SET type can implement it and become usable as
+/// a nested composite member, same role `sequence::decode_sequence_from`
+/// plays for the BER leg.
+pub fn decode_sequence_xer_from<T: Default>(spec: &SequenceSpec<T>, r: &mut XerReader) -> Result<T, DecodeError> {
+    decode_sequence_xer_content(spec, r)
 }
 
 #[cfg(test)]
