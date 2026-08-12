@@ -142,6 +142,25 @@ pub enum MemberAccess<T: 'static> {
         ber_encode: fn(&T, &mut Vec<u8>),
         ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
     },
+    /// A member whose type/tag/optionality combination genuinely has no
+    /// `Asn1Value` coverage yet in this crate. Every generated SEQUENCE/SET
+    /// always gets a real table and `Asn1Value` impl now — nothing gates
+    /// emission on every member being individually wire-representable
+    /// first — so a member that isn't (a builtin storage/tag combination
+    /// not yet implemented, or a member whose presence can't be safely
+    /// detected at all, e.g. OPTIONAL typed by an untagged CHOICE with no
+    /// tag to peek for) gets this instead: a struct containing one simply
+    /// can't be successfully encoded/decoded via the generated methods
+    /// yet, but every *other* member is unaffected, and — the actual
+    /// point — any type that merely *references* this one as a composite
+    /// member gets real coverage of its own regardless, since `Asn1Value`
+    /// is always implemented, just not always successfully callable. No
+    /// presence-detection is attempted (there's nothing safe to peek for
+    /// in the cases that reach here) — reaching this row during either
+    /// encode or decode panics unconditionally.
+    Unsupported {
+        reason: &'static str,
+    },
 }
 
 /// Shared SEQUENCE-OF wire logic — one outer `SEQUENCE_TAG` TLV wrapping
@@ -164,9 +183,7 @@ pub fn decode_seq_of<V: Asn1Value + Default>(r: &mut Reader) -> Result<Vec<V>, D
 /// encoding/decoding is unaffected (elements keep their own natural tags).
 pub fn encode_seq_of_tagged<V: Asn1Value>(out: &mut Vec<u8>, tag: Tag, items: &[V]) {
     let mut content = Vec::new();
-    for item in items {
-        item.ber_encode(&mut content);
-    }
+    encode_seq_of_content(&mut content, items);
     write_constructed(out, tag, &content);
 }
 
@@ -178,7 +195,25 @@ pub fn decode_seq_of_tagged<V: Asn1Value + Default>(
     if tlv.tag != tag {
         return Err(DecodeError::new(format!("expected SEQUENCE OF tag, got {:?}", tlv.tag), r.pos()));
     }
-    let mut inner = Reader::new(tlv.value);
+    decode_seq_of_content(tlv.value)
+}
+
+/// Content octets only (X.690 §8.9/§8.12) — the concatenation of each
+/// element's own complete encoding, no outer TLV — for a named top-level
+/// SEQUENCE OF/SET OF type's own `Asn1Value::ber_encode_content` (a real
+/// newtype, not a plain alias, so it can implement the trait itself
+/// exactly like SEQUENCE/CHOICE do — codegen wraps `Vec<V>` in
+/// `pub struct X(pub Vec<V>);` for any *named* SEQUENCE OF/SET OF, since a
+/// plain `pub type X = Vec<V>;` alias can't carry its own impl distinct
+/// from whatever other ASN.1 type might also resolve to `Vec<V>`).
+pub fn encode_seq_of_content<V: Asn1Value>(content: &mut Vec<u8>, items: &[V]) {
+    for item in items {
+        item.ber_encode(content);
+    }
+}
+
+pub fn decode_seq_of_content<V: Asn1Value + Default>(content: &[u8]) -> Result<Vec<V>, DecodeError> {
+    let mut inner = Reader::new(content);
     let mut result = Vec::new();
     while !inner.at_end() {
         let mut item = V::default();
@@ -269,6 +304,7 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
             MemberAccess::SeqOf { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::TaggedSeqOf { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::ExplicitAny { ber_encode, .. } => ber_encode(value, content),
+            MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
         }
     }
 }
@@ -367,6 +403,7 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
                     ber_decode_into(&mut result, inner)?;
                 }
             }
+            MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
         }
     }
     Ok(result)

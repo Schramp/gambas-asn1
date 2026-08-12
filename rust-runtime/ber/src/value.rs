@@ -655,6 +655,56 @@ impl Asn1Value for String {
     }
 }
 
+/// `Box<T>` forwarding — the heap indirection `RustBackend` gives a
+/// self-referential/mutually-recursive member (`SequenceMemberSpec::
+/// member_type_in_cycle`, `RustBackend.cpp`; Rust gives a plain field no
+/// indirection at all unlike C++'s pointer-by-default `unique_ptr`, so a
+/// genuine recursive ASN.1 type chain needs one explicitly or the struct
+/// has infinite size) is purely a Rust ownership/storage concern — the
+/// wire representation is identical to `T` itself, so every method just
+/// forwards through the box.
+impl<T: Asn1Value> Asn1Value for Box<T> {
+    fn is_present(&self) -> bool {
+        (**self).is_present()
+    }
+
+    fn ber_natural_tag(&self) -> crate::tag::Tag {
+        (**self).ber_natural_tag()
+    }
+
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        (**self).ber_encode_content(out)
+    }
+
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        (**self).ber_decode_content(content)
+    }
+
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        (**self).ber_encode(out)
+    }
+
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        (**self).ber_decode_into(r)
+    }
+
+    fn ber_encode_tagged(&self, tag: crate::tag::Tag, out: &mut Vec<u8>) {
+        (**self).ber_encode_tagged(tag, out)
+    }
+
+    fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
+        (**self).ber_decode_into_tagged(r, tag)
+    }
+
+    fn xer_encode(&self, out: &mut String) {
+        (**self).xer_encode(out)
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        (**self).xer_decode_into(r)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
