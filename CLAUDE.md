@@ -42,6 +42,31 @@ bit-level, non-self-delimiting framing needs different stream primitives entirel
 cd rust-runtime/ber && cargo test
 ```
 
+### Architecture symmetry with the C++ side
+
+The intended design is that C++ and Rust share the same shape: one generic,
+table-driven codec, no per-type generated codec logic. Concretely:
+
+| C++ | Rust |
+|---|---|
+| `TypeDescriptor` table | `SequenceSpec<T>`/`ChoiceSpec<T>` table |
+| `MemberDescriptor` row (offset + `type_descriptor` ptr) | `MemberDescriptor<T>` row (`get`/`get_mut` fn ptr → `&dyn Asn1Value`) |
+| `ICodec` + handler singletons (`IBerTypeHandler`, `ber_boolean_handler`, ...) | `Asn1Value` trait, default methods (`ber_encode`/`ber_decode_into`/... composed from required `ber_natural_tag`/`ber_encode_content`/`ber_decode_content`) |
+| offset + `void*` field access | generated accessor closure, unsize-coerced to `&dyn Asn1Value` (vtable lives on the fat pointer, not the data) |
+| one `ICodec` interface for BER/PER/XER/JER | one `Asn1Value` trait carrying both `ber_*` and `xer_*` legs |
+
+`BerTraits<T>` (`runtime/include/asn1cpp/codec/BerTraits.hpp` + per-type
+specializations) is the one asymmetry: a template-based static-dispatch
+layer that only BER has, never referenced by codegen (only by hand-written
+code/tests and internally by `BerCodec.cpp`/`PerCodec.cpp`/
+`RandomFiller.cpp` as an implementation detail). Rust has no equivalent —
+`Asn1Value` has always been the sole mechanism. Tracked for removal on
+`main`: gambas-asn1#380 (dead `BerTraits<bool>`/`<int64_t>`/`<uint64_t>`
+raw-primitive forwarders — zero callers) and gambas-asn1#381 (the rest of
+the template layer — confirmed removable, no structural blocker in any of
+the three internal callers). Once gone, C++'s codec surface is exactly one
+path, matching Rust's from day one.
+
 ## Runtime debug logging
 
 Set `ASN1CPP_DEBUG` to a hex bitmask before running any binary that links `libasn1cpp_runtime`.
