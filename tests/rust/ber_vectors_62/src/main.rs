@@ -42,25 +42,6 @@ fn lenient_accept() -> HashSet<&'static str> {
     .collect()
 }
 
-/// Files this crate's BER reader can't decode at all yet — indefinite-length
-/// encoding (X.690 §8.1.3.2, a length octet of 0x80), which
-/// `rust-runtime/ber/src/reader.rs`'s `Reader::read_length` explicitly
-/// rejects (documented gap, no equivalent skip needed on the C++ leg —
-/// `BerReader` already supports this form). Distinct from `lenient_accept`
-/// (asn1cpp being *more* permissive than asn1c) — this is a genuine,
-/// tracked missing feature.
-fn indefinite_length_not_supported() -> HashSet<&'static str> {
-    [
-        "data-62-24-L.ber",
-        "data-62-28-D.ber",
-        "data-62-29-L.ber",
-        "data-62-30-L.ber",
-        "data-62-31-D.ber",
-    ]
-    .into_iter()
-    .collect()
-}
-
 enum Expect {
     Ok,
     Broken,
@@ -82,16 +63,12 @@ fn classify(name: &str) -> Expect {
 }
 
 /// Returns true if this file was skipped (not counted as pass/fail).
-fn process(path: &Path, lenient: &HashSet<&str>, indefinite: &HashSet<&str>, failures: &mut i32) -> bool {
+fn process(path: &Path, lenient: &HashSet<&str>, failures: &mut i32) -> bool {
     let name = path.file_name().unwrap().to_string_lossy().to_string();
     let exp = classify(&name);
 
     if lenient.contains(name.as_str()) {
         println!("  \x1b[33mSKIP\x1b[0m  {name}  (ANY inner-TLV validation not implemented)");
-        return true;
-    }
-    if indefinite.contains(name.as_str()) {
-        println!("  \x1b[33mSKIP\x1b[0m  {name}  (indefinite-length BER not supported)");
         return true;
     }
 
@@ -150,17 +127,16 @@ fn main() {
     files.sort();
 
     let lenient = lenient_accept();
-    let indefinite = indefinite_length_not_supported();
     let processed = files.len();
     let mut failures = 0;
     let mut skipped = 0;
     for f in &files {
-        if process(f, &lenient, &indefinite, &mut failures) {
+        if process(f, &lenient, &mut failures) {
             skipped += 1;
         }
     }
 
-    println!("\n  Processed {processed} files, skipped {skipped} (ANY-leniency + indefinite-length gaps).");
+    println!("\n  Processed {processed} files, skipped {skipped} (ANY-leniency).");
     if failures != 0 {
         println!("  {failures} test(s) FAILED");
         std::process::exit(1);
