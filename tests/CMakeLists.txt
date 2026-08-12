@@ -1392,6 +1392,36 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIMPLE_SEQ_GEN_DIR};ASN1CPP_RUST_WIDE_GEN_DIR=${RUST_WIDE_TYPES_GEN_DIR};ASN1CPP_RUST_CHOICE_GEN_DIR=${RUST_CHOICE_GEN_DIR}")
 endif()
 
+# gambas-asn1#323: Rust leg of the real asn1c data-62 BER-vector fixture
+# cross-validation — same schema (62-any-OK.asn1), same real ground-truth
+# .ber files, same check-62.c pass/fail semantics as the C++
+# ber_vectors_62 test above; see tests/rust/ber_vectors_62/src/main.rs for
+# the full port. Own output directory, same reason as RUST_WIDE_TYPES_GEN_DIR
+# above (a multi-type module can't share an out-dir with another compiler
+# invocation) — BER_VEC_62_GEN_DIR (the C++ leg's own generated dir) is
+# a different language's output entirely, not reusable here regardless.
+set(RUST_BV62_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_ber_vectors_62)
+add_custom_command(
+    OUTPUT  ${RUST_BV62_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_BV62_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/62-any-OK.asn1
+                                   -o ${RUST_BV62_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/62-any-OK.asn1
+    COMMENT "Generating Rust from 62-any-OK.asn1"
+)
+add_custom_target(gen_rust_ber_vectors_62 ALL DEPENDS ${RUST_BV62_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_ber_vectors_62
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/ber_vectors_62/Cargo.toml --
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-62)
+    set_tests_properties(rust_ber_vectors_62 PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_BV62_GEN_DIR=${RUST_BV62_GEN_DIR}")
+endif()
+
 # gambas-asn1#309: Rust-codegen sweep across tests/asn1/*.asn1 — the Rust
 # equivalent of validate_parser.py's C++ parser-conformance sweep (that one
 # lives outside this repo, asn1cpp-validation-tools/, because it also needs
