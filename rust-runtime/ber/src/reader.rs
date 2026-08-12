@@ -62,6 +62,14 @@ impl<'a> Reader<'a> {
         self.pos
     }
 
+    /// All bytes from the current position to the end, unconsumed —
+    /// used for ANY's raw capture (X.208 legacy type, no fixed tag to
+    /// validate against, so decoding it is "take whatever bytes are here",
+    /// not a typed TLV read).
+    pub fn remaining(&self) -> &'a [u8] {
+        &self.data[self.pos..]
+    }
+
     /// Peek at the next TLV's tag without consuming it — used for CHOICE
     /// dispatch (inspect the tag, then decide which variant's decoder to call).
     pub fn peek_tag(&self) -> Option<Tag> {
