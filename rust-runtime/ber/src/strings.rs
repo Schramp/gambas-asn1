@@ -56,6 +56,13 @@ use crate::xer::XerReader;
 
 pub const IA5_STRING_TAG: Tag = Tag::universal(universal::IA5_STRING, false);
 
+/// Content octets only (X.690 §8.7 — the raw UTF-8 bytes) — shared by every
+/// character string kind, `IA5String` included. `kind` is only used to name
+/// the offending type in a decode error message.
+pub(crate) fn decode_string_content(content: &[u8], kind: &str) -> Result<String, DecodeError> {
+    String::from_utf8(content.to_vec()).map_err(|_| DecodeError::new(format!("{kind}: invalid UTF-8"), 0))
+}
+
 pub fn write_ia5_string(out: &mut Vec<u8>, value: &str) {
     write_primitive(out, IA5_STRING_TAG, value.as_bytes());
 }
@@ -65,8 +72,7 @@ pub fn read_ia5_string(r: &mut Reader) -> Result<String, DecodeError> {
     if tlv.tag != IA5_STRING_TAG {
         return Err(DecodeError::new(format!("expected IA5String tag, got {:?}", tlv.tag), r.pos()));
     }
-    String::from_utf8(tlv.value.to_vec())
-        .map_err(|_| DecodeError::new("IA5String: invalid UTF-8".to_string(), r.pos()))
+    decode_string_content(tlv.value, "IA5String")
 }
 
 /// Shared bytes-in/bytes-out logic for every character string kind — the
@@ -86,8 +92,7 @@ pub fn read_char_string(r: &mut Reader, tag: Tag, kind: &str) -> Result<String, 
     if tlv.tag != tag {
         return Err(DecodeError::new(format!("expected {kind} tag, got {:?}", tlv.tag), r.pos()));
     }
-    String::from_utf8(tlv.value.to_vec())
-        .map_err(|_| DecodeError::new(format!("{kind}: invalid UTF-8"), r.pos()))
+    decode_string_content(tlv.value, kind)
 }
 
 /// Define one restricted-character-string newtype: its tag constant, the
@@ -122,12 +127,16 @@ macro_rules! char_string_type {
         }
 
         impl Asn1Value for $name {
-            fn ber_encode(&self, out: &mut Vec<u8>) {
-                write_char_string(out, $tag_const, &self.0);
+            fn ber_natural_tag(&self) -> Tag {
+                $tag_const
             }
 
-            fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-                self.0 = read_char_string(r, $tag_const, $asn1_name)?;
+            fn ber_encode_content(&self, out: &mut Vec<u8>) {
+                out.extend_from_slice(self.0.as_bytes());
+            }
+
+            fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+                self.0 = decode_string_content(content, $asn1_name)?;
                 Ok(())
             }
 

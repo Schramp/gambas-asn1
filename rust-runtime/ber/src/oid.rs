@@ -71,19 +71,38 @@ pub fn read_object_identifier(r: &mut Reader) -> Result<ObjectIdentifier, Decode
     read_object_identifier_tagged(r, OBJECT_IDENTIFIER_TAG)
 }
 
+/// Content octets only (X.690 §8.19): base-128 arc encoding, first two arcs
+/// combined per the OID-specific `X*40+Y` rule.
+pub(crate) fn encode_object_identifier_content(out: &mut Vec<u8>, value: &ObjectIdentifier) {
+    let arcs = &value.0;
+    if arcs.len() >= 2 {
+        encode_arc(out, arcs[0] * 40 + arcs[1]);
+        for &a in &arcs[2..] {
+            encode_arc(out, a);
+        }
+    } else if arcs.len() == 1 {
+        encode_arc(out, arcs[0] * 40);
+    }
+}
+
+pub(crate) fn decode_object_identifier_content(content: &[u8]) -> Result<ObjectIdentifier, DecodeError> {
+    if content.is_empty() {
+        return Ok(ObjectIdentifier::default());
+    }
+    let mut idx = 0usize;
+    let first = decode_arc(content, &mut idx)?;
+    let mut arcs = vec![first / 40, first % 40];
+    while idx < content.len() {
+        arcs.push(decode_arc(content, &mut idx)?);
+    }
+    Ok(ObjectIdentifier(arcs))
+}
+
 /// IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
 /// doc comment for the general rationale.
 pub fn write_object_identifier_tagged(out: &mut Vec<u8>, tag: Tag, value: &ObjectIdentifier) {
-    let arcs = &value.0;
     let mut val = Vec::new();
-    if arcs.len() >= 2 {
-        encode_arc(&mut val, arcs[0] * 40 + arcs[1]);
-        for &a in &arcs[2..] {
-            encode_arc(&mut val, a);
-        }
-    } else if arcs.len() == 1 {
-        encode_arc(&mut val, arcs[0] * 40);
-    }
+    encode_object_identifier_content(&mut val, value);
     write_primitive(out, tag, &val);
 }
 
@@ -92,17 +111,7 @@ pub fn read_object_identifier_tagged(r: &mut Reader, tag: Tag) -> Result<ObjectI
     if tlv.tag != tag {
         return Err(DecodeError::new(format!("expected OBJECT IDENTIFIER tag, got {:?}", tlv.tag), r.pos()));
     }
-    if tlv.value.is_empty() {
-        return Ok(ObjectIdentifier::default());
-    }
-    let bytes = tlv.value;
-    let mut idx = 0usize;
-    let first = decode_arc(bytes, &mut idx)?;
-    let mut arcs = vec![first / 40, first % 40];
-    while idx < bytes.len() {
-        arcs.push(decode_arc(bytes, &mut idx)?);
-    }
-    Ok(ObjectIdentifier(arcs))
+    decode_object_identifier_content(tlv.value)
 }
 
 #[cfg(test)]

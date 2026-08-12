@@ -276,22 +276,14 @@ private:
     bool sequence_member_ber_covered(const SequenceMemberSpec& m) const;
     bool choice_alternative_ber_covered(const ChoiceAlternativeSpec& a) const;
 
-    // What shape of Rust item a name in covered_type_names_ refers to — the
-    // IMPLICIT-retag emission (rust-runtime/ber/src/sequence.rs's
-    // encode_sequence_tagged/decode_sequence_tagged, SEQUENCE/SET-only)
-    // needs to know this; the plain-Scalar and EXPLICIT paths don't (they
-    // dispatch through the generic Asn1Value trait regardless of kind).
-    enum class RustTypeKind { SequenceOrSet, Choice, Enumerated };
-
     // BER coverage always implies a real `impl Asn1Value::ber_encode/
     // ber_decode_into`; `xer_ready` records whether the *same* type's
     // xer_encode/xer_decode_into legs are also real (not the trait's
     // default panicking body) — independent, because a type can have every
     // member BER-covered while one member still lacks XER (e.g. a wide
-    // INTEGER, or — before ENUMERATED's own XER leg landed — an ENUMERATED
-    // member). A member referencing this type only gets XER coverage
+    // INTEGER). A member referencing this type only gets XER coverage
     // itself when `xer_ready` is true here.
-    struct CoveredType { RustTypeKind kind; bool xer_ready; };
+    struct CoveredType { bool xer_ready; };
 
     // Rust type names (SequenceSpec::type_name/ChoiceSpec::type_name/
     // EnumeratedSpec::type_name) that have already been confirmed, in this
