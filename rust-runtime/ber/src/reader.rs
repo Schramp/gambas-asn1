@@ -63,9 +63,14 @@ impl<'a> Reader<'a> {
     }
 
     /// All bytes from the current position to the end, unconsumed —
-    /// used for ANY's raw capture (X.208 legacy type, no fixed tag to
-    /// validate against, so decoding it is "take whatever bytes are here",
-    /// not a typed TLV read).
+    /// used for ANY's raw capture: an X.208 legacy type, not defined at
+    /// all in the current standard (X.680/X.690 don't mention it), with
+    /// X.691's own note that a legacy ANY should be treated as an open
+    /// type. No fixed tag to validate against, so decoding it is "take
+    /// whatever bytes are here", not a typed TLV read — mirrors
+    /// `AnyBerHandler::decode` (`runtime/src/BerCodec.cpp`), which reads
+    /// `r.remaining()` from whatever (already outer-tag-bounded) reader
+    /// it's handed.
     pub fn remaining(&self) -> &'a [u8] {
         &self.data[self.pos..]
     }
