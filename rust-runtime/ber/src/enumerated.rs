@@ -35,6 +35,17 @@ pub fn read_enumerated_tagged<T: TryFrom<i64>>(r: &mut Reader, tag: Tag) -> Resu
     T::try_from(raw).map_err(|_| DecodeError::new(format!("invalid ENUMERATED value: {raw}"), r.pos()))
 }
 
+/// Content octets only (X.690 §8.4, same as INTEGER's) — for
+/// `Asn1Value::ber_encode_content`/`ber_decode_content`.
+pub fn encode_enumerated_content(out: &mut Vec<u8>, n: i64) {
+    out.extend_from_slice(&encode_integer_bytes(n));
+}
+
+pub fn decode_enumerated_content<T: TryFrom<i64>>(content: &[u8]) -> Result<T, DecodeError> {
+    let raw = decode_integer_bytes(content)?;
+    T::try_from(raw).map_err(|_| DecodeError::new(format!("invalid ENUMERATED value: {raw}"), 0))
+}
+
 /// One value/name pair — mirrors `EnumSpec::entries` (`TypeDescriptor.hpp`)
 /// exactly: codegen emits one static table per ENUMERATED type
 /// (`{TYPE}_MAP`), this module supplies the one generic name<->value

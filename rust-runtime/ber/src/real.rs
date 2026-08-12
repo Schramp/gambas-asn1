@@ -25,20 +25,18 @@ pub fn read_real(r: &mut Reader) -> Result<f64, DecodeError> {
     read_real_tagged(r, REAL_TAG)
 }
 
-/// IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
-/// doc comment for the general rationale.
-pub fn write_real_tagged(out: &mut Vec<u8>, tag: Tag, value: f64) {
+/// Content octets only (X.690 §8.5) — empty for zero, one info byte for the
+/// special values, info+exponent+mantissa for everything else.
+pub(crate) fn encode_real_content(out: &mut Vec<u8>, value: f64) {
     if value == 0.0 {
-        write_primitive(out, tag, &[]);
         return;
     }
     if value.is_infinite() {
-        let b: u8 = if value > 0.0 { 0x40 } else { 0x41 };
-        write_primitive(out, tag, &[b]);
+        out.push(if value > 0.0 { 0x40 } else { 0x41 });
         return;
     }
     if value.is_nan() {
-        write_primitive(out, tag, &[0x42]);
+        out.push(0x42);
         return;
     }
 
@@ -82,11 +80,15 @@ pub fn write_real_tagged(out: &mut Vec<u8>, tag: Tag, value: f64) {
     let elen = 3 - start;
     info |= ((elen - 1) & 0x03) as u8;
 
-    let mut val = Vec::with_capacity(1 + elen + mlen);
-    val.push(info);
-    val.extend_from_slice(&ebuf_full[start..start + elen]);
-    val.extend_from_slice(&mbuf[..mlen]);
-    write_primitive(out, tag, &val);
+    out.push(info);
+    out.extend_from_slice(&ebuf_full[start..start + elen]);
+    out.extend_from_slice(&mbuf[..mlen]);
+}
+
+pub fn write_real_tagged(out: &mut Vec<u8>, tag: Tag, value: f64) {
+    let mut content = Vec::new();
+    encode_real_content(&mut content, value);
+    write_primitive(out, tag, &content);
 }
 
 pub fn read_real_tagged(r: &mut Reader, tag: Tag) -> Result<f64, DecodeError> {
@@ -97,7 +99,7 @@ pub fn read_real_tagged(r: &mut Reader, tag: Tag) -> Result<f64, DecodeError> {
     decode_real_value(tlv.value, r.pos())
 }
 
-fn decode_real_value(value: &[u8], pos: usize) -> Result<f64, DecodeError> {
+pub(crate) fn decode_real_value(value: &[u8], pos: usize) -> Result<f64, DecodeError> {
     if value.is_empty() {
         return Ok(0.0);
     }

@@ -50,61 +50,67 @@ use crate::xer::XerReader;
 /// forced to add a real XER leg in the same change — same BER-then-XER
 /// incremental pairing this crate uses throughout.
 pub trait Asn1Value {
-    fn ber_encode(&self, out: &mut Vec<u8>);
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError>;
-
-    /// This value's own natural BER tag (X.690 §8.1.2) — what `ber_encode`
-    /// itself writes when called directly. Required, not defaulted:
-    /// `ber_encode_tagged`/`ber_decode_into_tagged` below need it, for
-    /// every impl, to detect the (overwhelmingly common) untagged case and
-    /// to reconstruct a natural-tagged TLV on decode. CHOICE has no
-    /// natural tag at all (X.680 §28) and is never reached through the
-    /// tagged path anyway (a CHOICE member/alternative is always
-    /// EXPLICIT-wrapped when tagged, X.680 §30.6) — its own impl uses
-    /// `unreachable!()`.
+    /// This value's own natural BER tag (X.690 §8.1.2). CHOICE has no
+    /// natural tag at all (X.680 §28) and is never reached through any of
+    /// this trait's tag-consuming methods anyway (a CHOICE member/
+    /// alternative is always EXPLICIT-wrapped when tagged, X.680 §30.6) —
+    /// its own generated impl uses `unreachable!()`.
     fn ber_natural_tag(&self) -> crate::tag::Tag;
 
-    /// IMPLICIT tag override (X.690 §8.14) — write this value under `tag`
-    /// instead of its own natural one. One generic implementation for
-    /// every `Asn1Value` impl: re-tag whatever `ber_encode` already
-    /// writes (BER's tag/length/value framing is uniform regardless of
-    /// primitive vs constructed content — the shape bit lives in `tag`
-    /// itself, `writer::write_primitive` doesn't care), short-circuiting
-    /// through plain `ber_encode` when `tag` already matches the natural
-    /// one (the common case) to skip the extra copy. Replaces what used to
-    /// be a per-builtin-kind `*_tagged` primitive selected by codegen
-    /// (`TaggedKind`/`rust_tagged_ops`, `RustBackend.cpp`) — one method
-    /// here covers every kind, including generated SEQUENCE/CHOICE/
-    /// ENUMERATED types, with no codegen-side kind dispatch at all.
+    /// Writes *just* the TLV value octets (X.690 §8.1.3) — no tag, no
+    /// length. This is the one piece every concrete type actually supplies;
+    /// `ber_encode`/`ber_encode_tagged` below are generic wrappers built
+    /// from it plus whatever tag applies (the type's own natural one, or a
+    /// caller-supplied override) — the encoder logic lives here in the
+    /// trait's default methods, combining a *tag* (from `ber_natural_tag`
+    /// or the descriptor's own resolved tag) with *content* (this method);
+    /// individual impls never assemble a whole TLV themselves.
+    fn ber_encode_content(&self, out: &mut Vec<u8>);
+
+    /// Parses value octets already extracted from a TLV (tag/length
+    /// already consumed and checked by the caller) into `self`. Counterpart
+    /// of `ber_encode_content`.
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError>;
+
+    /// Writes this value's complete TLV under its own natural tag —
+    /// `ber_natural_tag()` + `ber_encode_content()`, combined generically;
+    /// no concrete impl needs to write this itself.
+    fn ber_encode(&self, out: &mut Vec<u8>) {
+        self.ber_encode_tagged(self.ber_natural_tag(), out);
+    }
+
+    /// Reads a complete TLV, checking it carries this value's own natural
+    /// tag, then decodes the content into `self`.
+    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        self.ber_decode_into_tagged(r, self.ber_natural_tag())
+    }
+
+    /// IMPLICIT tag override (X.690 §8.14) — write this value's content
+    /// under `tag` instead of its own natural one. One generic
+    /// implementation for every `Asn1Value` impl (BER's tag/length/value
+    /// framing is uniform regardless of primitive vs constructed content —
+    /// the shape bit lives in `tag` itself, `writer::write_primitive`
+    /// doesn't care) — replaces what used to be a per-builtin-kind
+    /// `*_tagged` primitive selected by codegen (`TaggedKind`/
+    /// `rust_tagged_ops`, `RustBackend.cpp`); this one method covers every
+    /// kind, including generated SEQUENCE/CHOICE/ENUMERATED types, with no
+    /// codegen-side kind dispatch at all.
     fn ber_encode_tagged(&self, tag: crate::tag::Tag, out: &mut Vec<u8>) {
-        if tag == self.ber_natural_tag() {
-            self.ber_encode(out);
-            return;
-        }
-        let mut tmp = Vec::new();
-        self.ber_encode(&mut tmp);
-        let mut r = Reader::new(&tmp);
-        let tlv = r.read_tlv().expect("ber_encode always writes exactly one valid TLV");
-        crate::writer::write_primitive(out, tag, tlv.value);
+        let mut content = Vec::new();
+        self.ber_encode_content(&mut content);
+        crate::writer::write_primitive(out, tag, &content);
     }
 
     /// Decode counterpart of `ber_encode_tagged` — reads a TLV under the
-    /// caller-supplied `tag`, then re-synthesizes a natural-tagged TLV
-    /// around the same content bytes so `ber_decode_into` (which always
-    /// expects/checks its own natural tag internally) can do the actual
-    /// content parsing unchanged.
+    /// caller-supplied `tag`, hands its value octets to
+    /// `ber_decode_content` directly (no re-tagging/re-parsing needed,
+    /// unlike a design built on top of the whole-TLV `ber_encode`).
     fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
-        if tag == self.ber_natural_tag() {
-            return self.ber_decode_into(r);
-        }
         let tlv = r.read_tlv()?;
         if tlv.tag != tag {
             return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
         }
-        let mut synth = Vec::new();
-        crate::writer::write_primitive(&mut synth, self.ber_natural_tag(), tlv.value);
-        let mut inner = Reader::new(&synth);
-        self.ber_decode_into(&mut inner)
+        self.ber_decode_content(tlv.value)
     }
 
     fn xer_encode(&self, _out: &mut String) {
@@ -171,15 +177,34 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
         V::default().ber_natural_tag()
     }
 
-    fn ber_encode(&self, out: &mut Vec<u8>) {
+    // Required by the trait, but never actually reached: `ber_encode_tagged`/
+    // `ber_decode_into_tagged` are overridden below (need to skip writing
+    // *any* TLV at all for `None` — content-only can't express "there is no
+    // header", only "the header wraps zero content bytes" — so the default
+    // content+tag composition never runs for `Option<V>`). Delegate to `V`
+    // as a defensive fallback should anything ever call these directly.
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
         if let Some(v) = self {
-            v.ber_encode(out);
+            v.ber_encode_content(out);
         }
     }
 
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
         let mut v = V::default();
-        v.ber_decode_into(r)?;
+        v.ber_decode_content(content)?;
+        *self = Some(v);
+        Ok(())
+    }
+
+    fn ber_encode_tagged(&self, tag: crate::tag::Tag, out: &mut Vec<u8>) {
+        if let Some(v) = self {
+            v.ber_encode_tagged(tag, out);
+        }
+    }
+
+    fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
+        let mut v = V::default();
+        v.ber_decode_into_tagged(r, tag)?;
         *self = Some(v);
         Ok(())
     }
@@ -203,12 +228,12 @@ impl Asn1Value for i64 {
         crate::integer::INTEGER_TAG
     }
 
-    fn ber_encode(&self, out: &mut Vec<u8>) {
-        crate::integer::write_integer(out, *self);
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&crate::integer::encode_integer_bytes(*self));
     }
 
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        *self = crate::integer::read_integer(r)?;
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        *self = crate::integer::decode_integer_bytes(content)?;
         Ok(())
     }
 
@@ -235,12 +260,12 @@ impl Asn1Value for u64 {
         crate::integer::INTEGER_TAG
     }
 
-    fn ber_encode(&self, out: &mut Vec<u8>) {
-        crate::integer::write_integer_u64(out, *self);
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&crate::integer::encode_integer_bytes_u64(*self));
     }
 
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        *self = crate::integer::read_integer_u64(r)?;
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        *self = crate::integer::decode_integer_bytes_u64(content)?;
         Ok(())
     }
 }
@@ -251,12 +276,12 @@ impl Asn1Value for i128 {
         crate::integer::INTEGER_TAG
     }
 
-    fn ber_encode(&self, out: &mut Vec<u8>) {
-        crate::integer::write_integer_i128(out, *self);
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&crate::integer::encode_integer_bytes_i128(*self));
     }
 
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        *self = crate::integer::read_integer_i128(r)?;
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        *self = crate::integer::decode_integer_bytes_i128(content)?;
         Ok(())
     }
 }
@@ -272,12 +297,12 @@ impl Asn1Value for bool {
         crate::boolean::BOOLEAN_TAG
     }
 
-    fn ber_encode(&self, out: &mut Vec<u8>) {
-        crate::boolean::write_boolean(out, *self);
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&crate::boolean::encode_boolean_content(*self));
     }
 
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        *self = crate::boolean::read_boolean(r)?;
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        *self = crate::boolean::decode_boolean_content(content)?;
         Ok(())
     }
 
@@ -313,12 +338,12 @@ impl Asn1Value for () {
         crate::null::NULL_TAG
     }
 
-    fn ber_encode(&self, out: &mut Vec<u8>) {
-        crate::null::write_null(out);
+    fn ber_encode_content(&self, _out: &mut Vec<u8>) {
+        // Empty content — nothing to write.
     }
 
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        crate::null::read_null(r)
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        crate::null::decode_null_content(content)
     }
 
     fn xer_encode(&self, _out: &mut String) {
@@ -341,12 +366,13 @@ impl Asn1Value for Vec<u8> {
         crate::octet_string::OCTET_STRING_TAG
     }
 
-    fn ber_encode(&self, out: &mut Vec<u8>) {
-        crate::octet_string::write_octet_string(out, self);
+    // OCTET STRING content octets *are* the value bytes — no encoding step.
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self);
     }
 
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        *self = crate::octet_string::read_octet_string(r)?.to_vec();
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        *self = content.to_vec();
         Ok(())
     }
 
@@ -395,12 +421,12 @@ impl Asn1Value for crate::bit_string::BitString {
         crate::bit_string::BIT_STRING_TAG
     }
 
-    fn ber_encode(&self, out: &mut Vec<u8>) {
-        crate::bit_string::write_bit_string(out, self);
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        crate::bit_string::encode_bit_string_content(out, self);
     }
 
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        *self = crate::bit_string::read_bit_string(r)?;
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        *self = crate::bit_string::decode_bit_string_content(content)?;
         Ok(())
     }
 
@@ -457,12 +483,12 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
         crate::oid::OBJECT_IDENTIFIER_TAG
     }
 
-    fn ber_encode(&self, out: &mut Vec<u8>) {
-        crate::oid::write_object_identifier(out, self);
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        crate::oid::encode_object_identifier_content(out, self);
     }
 
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        *self = crate::oid::read_object_identifier(r)?;
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        *self = crate::oid::decode_object_identifier_content(content)?;
         Ok(())
     }
 
@@ -504,12 +530,12 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
         crate::relative_oid::RELATIVE_OID_TAG
     }
 
-    fn ber_encode(&self, out: &mut Vec<u8>) {
-        crate::relative_oid::write_relative_oid(out, self);
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        crate::relative_oid::encode_relative_oid_content(out, self);
     }
 
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        *self = crate::relative_oid::read_relative_oid(r)?;
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        *self = crate::relative_oid::decode_relative_oid_content(content)?;
         Ok(())
     }
 
@@ -551,12 +577,12 @@ impl Asn1Value for f64 {
         crate::real::REAL_TAG
     }
 
-    fn ber_encode(&self, out: &mut Vec<u8>) {
-        crate::real::write_real(out, *self);
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        crate::real::encode_real_content(out, *self);
     }
 
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        *self = crate::real::read_real(r)?;
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        *self = crate::real::decode_real_value(content, 0)?;
         Ok(())
     }
 
@@ -621,12 +647,12 @@ impl Asn1Value for String {
         crate::strings::IA5_STRING_TAG
     }
 
-    fn ber_encode(&self, out: &mut Vec<u8>) {
-        crate::strings::write_ia5_string(out, self);
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.as_bytes());
     }
 
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        *self = crate::strings::read_ia5_string(r)?;
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        *self = crate::strings::decode_string_content(content, "IA5String")?;
         Ok(())
     }
 
@@ -1156,5 +1182,38 @@ mod tests {
         let mut r = Reader::new(&out);
         let mut got: i64 = 0;
         assert!(got.ber_decode_into_tagged(&mut r, context_1).is_err());
+    }
+
+    // ---- Option<V> through the tagged path -----------------------------
+    //
+    // A `None` optional member with an IMPLICIT tag override must write
+    // *nothing at all* — not a zero-length TLV under the override tag. This
+    // can't be expressed by the default content+tag composition (there's no
+    // way to say "write no header"), so `Option<V>` overrides
+    // `ber_encode_tagged`/`ber_decode_into_tagged` directly rather than
+    // relying on `ber_encode_content` — this test is the regression guard
+    // for that override existing at all.
+
+    #[test]
+    fn none_through_tagged_path_writes_nothing() {
+        let v: Option<i64> = None;
+        let context_0 = crate::tag::Tag::context(0, false);
+        let mut out = Vec::new();
+        v.ber_encode_tagged(context_0, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn some_through_tagged_path_round_trips() {
+        let v: Option<i64> = Some(7);
+        let context_0 = crate::tag::Tag::context(0, false);
+        let mut out = Vec::new();
+        v.ber_encode_tagged(context_0, &mut out);
+        assert_eq!(out, vec![0x80, 0x01, 0x07]); // context primitive 0, not universal INTEGER
+
+        let mut r = Reader::new(&out);
+        let mut got: Option<i64> = None;
+        got.ber_decode_into_tagged(&mut r, context_0).unwrap();
+        assert_eq!(got, Some(7));
     }
 }

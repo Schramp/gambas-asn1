@@ -239,7 +239,7 @@ pub struct SequenceSpec<T: 'static> {
 /// generated SEQUENCE/SET type has its own `Asn1Value` impl, by whatever
 /// tag a *containing* type's member override applies (X.690 §8.14 IMPLICIT
 /// retagging replaces the outer tag only, content is unchanged).
-fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &mut Vec<u8>) {
+pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &mut Vec<u8>) {
     for m in spec.members {
         match &m.access {
             MemberAccess::Scalar { get, .. } => get(value).ber_encode(content),
@@ -299,7 +299,7 @@ pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
 /// SEQUENCE's canonical member ordering (X.690 §8.9), same simplifying
 /// assumption `MemberDescriptor`'s module doc already documents this crate
 /// making elsewhere (no DEFAULT values, no out-of-order OPTIONAL members).
-fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut Reader) -> Result<T, DecodeError> {
+pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut Reader) -> Result<T, DecodeError> {
     let mut result = T::default();
     for m in spec.members {
         match &m.access {

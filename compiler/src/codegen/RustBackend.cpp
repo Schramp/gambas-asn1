@@ -327,11 +327,11 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
         os << "        asn1cpp_ber::enumerated::ENUMERATED_TAG\n";
         os << "    }\n\n";
-        os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
-        os << "        asn1cpp_ber::enumerated::write_enumerated_tagged(out, asn1cpp_ber::enumerated::ENUMERATED_TAG, *self as i64);\n";
+        os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
+        os << "        asn1cpp_ber::enumerated::encode_enumerated_content(out, *self as i64);\n";
         os << "    }\n\n";
-        os << "    fn ber_decode_into(&mut self, r: &mut asn1cpp_ber::Reader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
-        os << "        *self = asn1cpp_ber::enumerated::read_enumerated_tagged(r, asn1cpp_ber::enumerated::ENUMERATED_TAG)?;\n";
+        os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << "        *self = asn1cpp_ber::enumerated::decode_enumerated_content(content)?;\n";
         os << "        Ok(())\n";
         os << "    }\n\n";
         os << "    fn xer_encode(&self, out: &mut String) {\n";
@@ -1004,11 +1004,12 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
         os << std::format("        {}.tag\n", spec_ident);
         os << "    }\n\n";
-        os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
-        os << std::format("        asn1cpp_ber::sequence::encode_sequence_into(&{}, self, out);\n", spec_ident);
+        os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
+        os << std::format("        asn1cpp_ber::sequence::encode_sequence_content(&{}, self, out);\n", spec_ident);
         os << "    }\n\n";
-        os << "    fn ber_decode_into(&mut self, r: &mut asn1cpp_ber::Reader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
-        os << std::format("        *self = asn1cpp_ber::sequence::decode_sequence_from(&{}, r)?;\n", spec_ident);
+        os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << "        let mut r = asn1cpp_ber::Reader::new(content);\n";
+        os << std::format("        *self = asn1cpp_ber::sequence::decode_sequence_content(&{}, &mut r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n";
         if (all_xer_ready) {
@@ -1324,6 +1325,17 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", spec.type_name);
         os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
         os << "        unreachable!(\"CHOICE has no natural tag (X.680 §28) — never invoked, a CHOICE-typed member/alternative is always EXPLICIT-wrapped when tagged (X.680 §30.6)\")\n";
+        os << "    }\n\n";
+        // CHOICE has no separate content representation to hand back
+        // (its wire form already IS "whichever alternative's own tag +
+        // content", self-delimiting per X.690 §8.13) — so, like
+        // `Option<V>` in value.rs, it overrides the whole-TLV methods
+        // directly instead of composing them from natural_tag + content.
+        os << "    fn ber_encode_content(&self, _out: &mut Vec<u8>) {\n";
+        os << "        unreachable!(\"CHOICE has no content-only representation — ber_encode is overridden directly\")\n";
+        os << "    }\n\n";
+        os << "    fn ber_decode_content(&mut self, _content: &[u8]) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << "        unreachable!(\"CHOICE has no content-only representation — ber_decode_into is overridden directly\")\n";
         os << "    }\n\n";
         os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
         os << std::format("        asn1cpp_ber::choice::encode_choice_into(&{}, self, out);\n", spec_ident);
