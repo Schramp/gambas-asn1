@@ -2214,6 +2214,19 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
 /// @brief Emit `.hpp` and `.cpp` for one top-level ASN.1 type assignment.
 /// @param def  Type assignment to generate (skipped if not a type assignment).
 /// @param mod  Owning module (sets current_tag_default_ for the duration).
+void Generator::run_type_pass(const ast::ParseResult& pr) {
+    for (const auto& mod : pr.modules) {
+        current_module_ = mod->name;
+        for (const auto& def : mod->assignments)
+            if (!def->name.empty() && !def->is_extension_marker) {
+                if (!pdu_roots_.empty() && !reachable_asn_names_.count(def->name)) continue;
+                generated_names_.insert(effective_cpp_name(def->name, mod->name));
+                generate_inline_types(*def, *mod);
+                generate_type(*def, *mod);
+            }
+    }
+}
+
 void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
     if (!is_type_assignment(def)) return;
 

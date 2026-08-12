@@ -168,16 +168,13 @@ public:
         if (!pdu_roots_.empty())
             compute_reachable(pr);
 
-        for (const auto& mod : pr.modules) {
-            current_module_ = mod->name;
-            for (const auto& def : mod->assignments)
-                if (!def->name.empty() && !def->is_extension_marker) {
-                    if (!pdu_roots_.empty() && !reachable_asn_names_.count(def->name)) continue;
-                    generated_names_.insert(effective_cpp_name(def->name, mod->name));
-                    generate_inline_types(*def, *mod);
-                    generate_type(*def, *mod);
-                }
-        }
+        run_type_pass(pr);
+        // See Backend::needs_second_pass's doc for why: a backend whose
+        // per-type completeness can depend on a later-declared sibling
+        // (forward reference within a module) needs its whole type set
+        // re-evaluated once more, now that every first-pass result exists.
+        if (backend_.needs_second_pass())
+            run_type_pass(pr);
 
         remove_stale_files();
     }
@@ -235,6 +232,11 @@ public:
     }
 
 private:
+    /// @brief Walk every module's type assignments once, generating each
+    ///        reachable one. Body of generate()'s main loop, factored out
+    ///        so it can run a second time for a backend that requests it
+    ///        (Backend::needs_second_pass).
+    void run_type_pass(const ast::ParseResult& pr);
     void compute_reachable(const ast::ParseResult& pr);
     void collect_type_refs(const ast::TypeDef& def, std::vector<std::string>& worklist);
     void generate_type(const ast::TypeDef& def, const ast::Module& mod);

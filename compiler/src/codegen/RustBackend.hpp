@@ -122,6 +122,20 @@ inline std::string rust_escape(std::string n,
 /// coincidental, not an assumption baked into the interface.
 class RustBackend : public Backend {
 public:
+    // covered_type_names_ (below) is populated as a side effect of emitting
+    // each type, in declaration order — a type referencing another type
+    // declared later in the same module sees that sibling as not-yet-covered
+    // and conservatively emits a lesser (struct-only) shape. Since coverage
+    // only ever grows (never revoked), a second full pass — same types, same
+    // AST, covered_type_names_ already carrying every first-pass result —
+    // re-evaluates every type and picks up anything that only needed a
+    // forward-declared sibling to already exist. Doesn't fix a *chain* of
+    // forward references longer than one hop (A -> B -> C, all declared in
+    // that order, needs C covered before B can be, before A can be — a
+    // second pass covers B but a third would be needed for A); real-world
+    // schemas haven't been observed to need more than one hop so far.
+    bool needs_second_pass() const override { return true; }
+
     // gambas-asn1#306: to_upper_camel_case (real word-split PascalCase,
     // shared with #305's variant_name), not to_cpp_name (hyphen->underscore
     // only, no case normalization) — an ASN.1 type name written

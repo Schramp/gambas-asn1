@@ -460,6 +460,24 @@ class Backend {
 public:
     virtual ~Backend() = default;
 
+    /// @brief Whether Generator::generate() should repeat its full
+    ///        per-module type-emission loop a second time after the first
+    ///        completes. Default false (single pass, every backend's
+    ///        historical behavior). A backend whose per-type coverage/
+    ///        completeness decisions can depend on a sibling type declared
+    ///        *later* in the same module (a forward reference) needs this:
+    ///        on the first pass that sibling's own completeness isn't known
+    ///        yet, so the referencing type conservatively falls back to a
+    ///        lesser output shape; a second pass re-evaluates every type
+    ///        with the first pass's results already available, picking up
+    ///        anything that only needed the forward-declared sibling to
+    ///        exist. Safe to repeat unconditionally for any backend whose
+    ///        per-type emission is a pure function of already-parsed AST
+    ///        state plus this kind of monotonically-growing internal
+    ///        registry (once true, stays true) — a type already complete on
+    ///        pass one reaches the identical decision on pass two.
+    virtual bool needs_second_pass() const { return false; }
+
     /// @brief ASN.1 type name -> target-language type identifier.
     ///        e.g. "My-Type" -> "MyType" in C++.
     virtual std::string type_name(std::string_view asn1_name) const = 0;
