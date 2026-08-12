@@ -438,6 +438,8 @@ PRs are reviewed by Schramp and optionally by a clean Claude instance. Process r
 /// @see X.691 §22.6 — PER CHOICE index encoding.
 ```
 
+**Comment content: standard clause + role, not change history.** A comment should tell a reader who has never seen the old design what this code does and, where relevant, which ASN.1 clause it implements — not what it used to do or why a past approach was rejected. Avoid "used to be", "replaces what X did", "no longer needed because", or narrating the PR/issue that produced the current form (see also the no-issue-refs rule above). If a sentence would still make sense to someone who joined the project today with no history, keep it; if it only makes sense to someone who remembers the prior design, cut it — `git log`/`git blame` is where that belongs, not the comment.
+
 ### Issue management
 
 - Issues live on GitHub (`Schramp/gambas-asn1`) and carry priority labels.

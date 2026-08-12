@@ -51,30 +51,19 @@ use crate::xer::XerReader;
 /// incremental pairing this crate uses throughout.
 pub trait Asn1Value {
     /// This value's own natural BER tag (X.690 §8.1.2). CHOICE has no
-    /// natural tag at all (X.680 §28) and is never reached through any of
-    /// this trait's tag-consuming methods anyway (a CHOICE member/
-    /// alternative is always EXPLICIT-wrapped when tagged, X.680 §30.6) —
-    /// its own generated impl uses `unreachable!()`.
+    /// natural tag (X.680 §28); a CHOICE member/alternative is always
+    /// EXPLICIT-wrapped when tagged (X.680 §30.6), so its generated impl
+    /// uses `unreachable!()`.
     fn ber_natural_tag(&self) -> crate::tag::Tag;
 
-    /// Writes *just* the TLV value octets (X.690 §8.1.3) — no tag, no
-    /// length. This is the one piece every concrete type actually supplies;
-    /// `ber_encode`/`ber_encode_tagged` below are generic wrappers built
-    /// from it plus whatever tag applies (the type's own natural one, or a
-    /// caller-supplied override) — the encoder logic lives here in the
-    /// trait's default methods, combining a *tag* (from `ber_natural_tag`
-    /// or the descriptor's own resolved tag) with *content* (this method);
-    /// individual impls never assemble a whole TLV themselves.
+    /// Writes just the TLV value octets (X.690 §8.1.3) — no tag, no length.
     fn ber_encode_content(&self, out: &mut Vec<u8>);
 
-    /// Parses value octets already extracted from a TLV (tag/length
-    /// already consumed and checked by the caller) into `self`. Counterpart
-    /// of `ber_encode_content`.
+    /// Parses value octets already extracted from a TLV (tag/length already
+    /// consumed and checked by the caller) into `self`.
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError>;
 
-    /// Writes this value's complete TLV under its own natural tag —
-    /// `ber_natural_tag()` + `ber_encode_content()`, combined generically;
-    /// no concrete impl needs to write this itself.
+    /// Writes this value's complete TLV under its own natural tag.
     fn ber_encode(&self, out: &mut Vec<u8>) {
         self.ber_encode_tagged(self.ber_natural_tag(), out);
     }
@@ -85,26 +74,15 @@ pub trait Asn1Value {
         self.ber_decode_into_tagged(r, self.ber_natural_tag())
     }
 
-    /// IMPLICIT tag override (X.690 §8.14) — write this value's content
-    /// under `tag` instead of its own natural one. One generic
-    /// implementation for every `Asn1Value` impl (BER's tag/length/value
-    /// framing is uniform regardless of primitive vs constructed content —
-    /// the shape bit lives in `tag` itself, `writer::write_primitive`
-    /// doesn't care) — replaces what used to be a per-builtin-kind
-    /// `*_tagged` primitive selected by codegen (`TaggedKind`/
-    /// `rust_tagged_ops`, `RustBackend.cpp`); this one method covers every
-    /// kind, including generated SEQUENCE/CHOICE/ENUMERATED types, with no
-    /// codegen-side kind dispatch at all.
+    /// IMPLICIT tag override (X.690 §8.14) — writes this value's content
+    /// under `tag` instead of its own natural one.
     fn ber_encode_tagged(&self, tag: crate::tag::Tag, out: &mut Vec<u8>) {
         let mut content = Vec::new();
         self.ber_encode_content(&mut content);
         crate::writer::write_primitive(out, tag, &content);
     }
 
-    /// Decode counterpart of `ber_encode_tagged` — reads a TLV under the
-    /// caller-supplied `tag`, hands its value octets to
-    /// `ber_decode_content` directly (no re-tagging/re-parsing needed,
-    /// unlike a design built on top of the whole-TLV `ber_encode`).
+    /// Decode counterpart of `ber_encode_tagged`.
     fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
         let tlv = r.read_tlv()?;
         if tlv.tag != tag {
@@ -170,19 +148,15 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
         self.is_some()
     }
 
-    // No `V` instance to hand: a fresh `Default` costs nothing for the
-    // scalar/enum/struct kinds this is ever instantiated with, and the tag
-    // depends only on `V`'s type, never its value.
+    // The tag depends only on `V`'s type, never its value.
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         V::default().ber_natural_tag()
     }
 
-    // Required by the trait, but never actually reached: `ber_encode_tagged`/
-    // `ber_decode_into_tagged` are overridden below (need to skip writing
-    // *any* TLV at all for `None` — content-only can't express "there is no
-    // header", only "the header wraps zero content bytes" — so the default
-    // content+tag composition never runs for `Option<V>`). Delegate to `V`
-    // as a defensive fallback should anything ever call these directly.
+    // Not reached: `ber_encode_tagged`/`ber_decode_into_tagged` are
+    // overridden below, since `None` must write no TLV at all (X.690 §8.1
+    // has no "empty header" — content-only can't express "no header").
+    // Kept as a correct fallback in case anything calls these directly.
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
         if let Some(v) = self {
             v.ber_encode_content(out);

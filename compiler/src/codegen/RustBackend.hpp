@@ -281,17 +281,8 @@ private:
     // xer_encode/xer_decode_into legs are also real (not the trait's
     // default panicking body) — independent, because a type can have every
     // member BER-covered while one member still lacks XER (e.g. a wide
-    // INTEGER, or — before ENUMERATED's own XER leg landed — an ENUMERATED
-    // member). A member referencing this type only gets XER coverage
+    // INTEGER). A member referencing this type only gets XER coverage
     // itself when `xer_ready` is true here.
-    //
-    // No "what shape of Rust item is this" field — IMPLICIT-retag emission
-    // used to need it (to pick which per-kind `*_tagged` primitive to call)
-    // before `Asn1Value` grew generic `ber_encode_tagged`/
-    // `ber_decode_into_tagged` (value.rs): one runtime method now covers
-    // every kind (builtin scalar, SEQUENCE/SET, CHOICE, ENUMERATED,
-    // TypeRef-aliased INTEGER) with no codegen-side dispatch at all, so
-    // there's nothing left for a kind tag to answer.
     struct CoveredType { bool xer_ready; };
 
     // Rust type names (SequenceSpec::type_name/ChoiceSpec::type_name/
