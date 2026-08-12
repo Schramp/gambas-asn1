@@ -135,6 +135,7 @@ public:
     // second pass covers B but a third would be needed for A); real-world
     // schemas haven't been observed to need more than one hop so far.
     bool needs_second_pass() const override { return true; }
+    std::size_t coverage_progress() const override { return covered_type_names_.size(); }
 
     // gambas-asn1#306: to_upper_camel_case (real word-split PascalCase,
     // shared with #305's variant_name), not to_cpp_name (hyphen->underscore

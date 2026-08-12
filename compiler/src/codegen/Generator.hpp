@@ -171,10 +171,27 @@ public:
         run_type_pass(pr);
         // See Backend::needs_second_pass's doc for why: a backend whose
         // per-type completeness can depend on a later-declared sibling
-        // (forward reference within a module) needs its whole type set
-        // re-evaluated once more, now that every first-pass result exists.
-        if (backend_.needs_second_pass())
-            run_type_pass(pr);
+        // (forward reference within a module) needs repeat passes — not
+        // just one: a reference chain (A -> B -> C, all forward-declared in
+        // that order) needs one extra pass per link. coverage_progress()
+        // lets Generator detect the fixed point generically (repeat while
+        // the last pass changed something a further pass could still build
+        // on) without knowing what "progress" means for this backend.
+        // Bounded by total type count as a safety net against a backend
+        // whose progress counter isn't actually monotonic — should never
+        // bind in practice (a real fixed point converges in at most as many
+        // extra passes as the longest forward-reference chain).
+        if (backend_.needs_second_pass()) {
+            std::size_t total_types = 0;
+            for (const auto& mod : pr.modules) total_types += mod->assignments.size();
+            std::size_t progress = backend_.coverage_progress();
+            for (std::size_t i = 0; i < total_types; ++i) {
+                run_type_pass(pr);
+                std::size_t next = backend_.coverage_progress();
+                if (next == progress) break;
+                progress = next;
+            }
+        }
 
         remove_stale_files();
     }

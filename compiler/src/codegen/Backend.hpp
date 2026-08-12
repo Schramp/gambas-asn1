@@ -478,6 +478,16 @@ public:
     ///        pass one reaches the identical decision on pass two.
     virtual bool needs_second_pass() const { return false; }
 
+    /// @brief Opaque, monotonically non-decreasing progress counter, polled
+    ///        by Generator between repeat passes (needs_second_pass()) to
+    ///        detect a fixed point — repeats stop once a pass leaves this
+    ///        unchanged. No meaning beyond "did the last pass change
+    ///        anything a future pass could build on"; a backend that never
+    ///        requests a second pass never has this called. Default 0
+    ///        (paired with needs_second_pass()'s default false, so it's
+    ///        simply never consulted).
+    virtual std::size_t coverage_progress() const { return 0; }
+
     /// @brief ASN.1 type name -> target-language type identifier.
     ///        e.g. "My-Type" -> "MyType" in C++.
     virtual std::string type_name(std::string_view asn1_name) const = 0;
