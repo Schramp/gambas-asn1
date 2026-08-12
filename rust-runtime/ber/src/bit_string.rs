@@ -45,12 +45,31 @@ pub fn read_bit_string(r: &mut Reader) -> Result<BitString, DecodeError> {
     read_bit_string_tagged(r, BIT_STRING_TAG)
 }
 
+/// Content octets only (X.690 §8.6.2): unused-bits count byte, then payload.
+pub(crate) fn encode_bit_string_content(out: &mut Vec<u8>, value: &BitString) {
+    out.push(value.unused_bits);
+    out.extend_from_slice(&value.bytes);
+}
+
+pub(crate) fn decode_bit_string_content(content: &[u8]) -> Result<BitString, DecodeError> {
+    if content.is_empty() {
+        return Err(DecodeError::new(
+            "BIT STRING: empty value (need at least unused-bits byte)".to_string(),
+            0,
+        ));
+    }
+    let unused = content[0];
+    if unused > 7 {
+        return Err(DecodeError::new(format!("BIT STRING unused bits out of range: {unused}"), 0));
+    }
+    Ok(BitString { bytes: content[1..].to_vec(), unused_bits: unused })
+}
+
 /// IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
 /// doc comment for the general rationale.
 pub fn write_bit_string_tagged(out: &mut Vec<u8>, tag: Tag, value: &BitString) {
     let mut val = Vec::with_capacity(1 + value.bytes.len());
-    val.push(value.unused_bits);
-    val.extend_from_slice(&value.bytes);
+    encode_bit_string_content(&mut val, value);
     write_primitive(out, tag, &val);
 }
 
@@ -59,20 +78,7 @@ pub fn read_bit_string_tagged(r: &mut Reader, tag: Tag) -> Result<BitString, Dec
     if tlv.tag != tag {
         return Err(DecodeError::new(format!("expected BIT STRING tag, got {:?}", tlv.tag), r.pos()));
     }
-    if tlv.value.is_empty() {
-        return Err(DecodeError::new(
-            "BIT STRING: empty value (need at least unused-bits byte)".to_string(),
-            r.pos(),
-        ));
-    }
-    let unused = tlv.value[0];
-    if unused > 7 {
-        return Err(DecodeError::new(
-            format!("BIT STRING unused bits out of range: {unused}"),
-            r.pos(),
-        ));
-    }
-    Ok(BitString { bytes: tlv.value[1..].to_vec(), unused_bits: unused })
+    decode_bit_string_content(tlv.value)
 }
 
 #[cfg(test)]
