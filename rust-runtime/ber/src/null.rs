@@ -25,6 +25,14 @@ pub fn read_null(r: &mut Reader) -> Result<(), DecodeError> {
 /// doc comment for the general rationale. NULL's own natural tag never
 /// substitutes any content bytes (there are none), so this differs from
 /// every other `*_tagged` primitive only in writing an empty value.
+/// Content octets only — always empty.
+pub(crate) fn decode_null_content(content: &[u8]) -> Result<(), DecodeError> {
+    if !content.is_empty() {
+        return Err(DecodeError::new("NULL: expected empty value".to_string(), 0));
+    }
+    Ok(())
+}
+
 pub fn write_null_tagged(out: &mut Vec<u8>, tag: Tag) {
     write_primitive(out, tag, &[]);
 }
@@ -34,10 +42,7 @@ pub fn read_null_tagged(r: &mut Reader, tag: Tag) -> Result<(), DecodeError> {
     if tlv.tag != tag {
         return Err(DecodeError::new(format!("expected NULL tag, got {:?}", tlv.tag), r.pos()));
     }
-    if !tlv.value.is_empty() {
-        return Err(DecodeError::new("NULL: expected empty value".to_string(), r.pos()));
-    }
-    Ok(())
+    decode_null_content(tlv.value)
 }
 
 #[cfg(test)]

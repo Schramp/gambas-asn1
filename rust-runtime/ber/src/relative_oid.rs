@@ -68,13 +68,28 @@ pub fn read_relative_oid(r: &mut Reader) -> Result<RelativeOid, DecodeError> {
     read_relative_oid_tagged(r, RELATIVE_OID_TAG)
 }
 
+/// Content octets only (X.690 §8.20.2) — every arc base-128-encoded
+/// individually, no first-two-arc combining (that's OID-specific, `oid.rs`).
+pub(crate) fn encode_relative_oid_content(out: &mut Vec<u8>, value: &RelativeOid) {
+    for &arc in &value.0 {
+        encode_arc(out, arc);
+    }
+}
+
+pub(crate) fn decode_relative_oid_content(content: &[u8]) -> Result<RelativeOid, DecodeError> {
+    let mut idx = 0usize;
+    let mut arcs = Vec::new();
+    while idx < content.len() {
+        arcs.push(decode_arc(content, &mut idx)?);
+    }
+    Ok(RelativeOid(arcs))
+}
+
 /// IMPLICIT tag override — see `boolean::write_boolean_tagged`'s
 /// doc comment for the general rationale.
 pub fn write_relative_oid_tagged(out: &mut Vec<u8>, tag: Tag, value: &RelativeOid) {
     let mut val = Vec::new();
-    for &arc in &value.0 {
-        encode_arc(&mut val, arc);
-    }
+    encode_relative_oid_content(&mut val, value);
     write_primitive(out, tag, &val);
 }
 
@@ -83,13 +98,7 @@ pub fn read_relative_oid_tagged(r: &mut Reader, tag: Tag) -> Result<RelativeOid,
     if tlv.tag != tag {
         return Err(DecodeError::new(format!("expected RELATIVE-OID tag, got {:?}", tlv.tag), r.pos()));
     }
-    let bytes = tlv.value;
-    let mut idx = 0usize;
-    let mut arcs = Vec::new();
-    while idx < bytes.len() {
-        arcs.push(decode_arc(bytes, &mut idx)?);
-    }
-    Ok(RelativeOid(arcs))
+    decode_relative_oid_content(tlv.value)
 }
 
 #[cfg(test)]
