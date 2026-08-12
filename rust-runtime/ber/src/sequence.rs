@@ -121,12 +121,23 @@ pub enum MemberAccess<T: 'static> {
         xer_encode: fn(&T, &mut String),
         xer_decode_into: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
     },
-    /// A `[n] ANY` member (X.208 legacy type; always EXPLICIT-tagged, see
-    /// `value::encode_explicit_any`'s doc) — field type is `Vec<u8>`, same
-    /// as OCTET STRING, but holding raw captured TLV bytes rather than
-    /// OCTET STRING content, so it can't reuse `Vec<u8>`'s own `Asn1Value`
-    /// impl (that would wrap the capture in an extra OCTET STRING TLV).
-    /// BER-only: ANY has no defined XER form here, no `get`/`get_mut`.
+    /// A `[n] ANY` member — X.208 legacy type, not defined in the current
+    /// standard (X.680/X.690 don't mention it; X.691's own note treats a
+    /// legacy ANY as an open type). No discriminant of its own (unlike
+    /// CHOICE or a real open type keyed by a companion field) — an ANY
+    /// member is not "one of several known types", it's raw captured bytes
+    /// with no schema-visible way to know what they are. Always
+    /// EXPLICIT-tagged when tagged (see `value::encode_explicit_any`'s
+    /// doc) — field type is `Vec<u8>`, same Rust type as OCTET STRING, but
+    /// holding raw captured TLV bytes rather than OCTET STRING content, so
+    /// it can't reuse `Vec<u8>`'s own `Asn1Value` impl (that would wrap
+    /// the capture in an extra OCTET STRING TLV). Mirrors the C++ side's
+    /// `AnyBerHandler`/`asn_DEF_Any` (`runtime/src/BerCodec.cpp`/
+    /// `BuiltinTypes.cpp`), which represent ANY the same way: an
+    /// EXPLICIT-tagged member (`is_explicit = true` in the generated
+    /// `MemberDescriptor`) storing raw bytes (`TypeLifecycleOps(TypeTag<
+    /// OctetString>{})`), not a typed value. BER-only: ANY has no defined
+    /// XER form here, no `get`/`get_mut`.
     ExplicitAny {
         ber_encode: fn(&T, &mut Vec<u8>),
         ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
