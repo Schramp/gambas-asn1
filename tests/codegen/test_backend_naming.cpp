@@ -523,8 +523,8 @@ int main() {
         check("emit_seq_of: C++ declaration half produces a VectorSeqOf using-alias",
               cpp_seqof_hpp.find("using MyList2 = asn1::VectorSeqOf<i64>;") != std::string::npos,
               cpp_seqof_hpp);
-        check("emit_seq_of: Rust declaration half produces a real Vec<T> type alias (not a stub)",
-              rust_seqof_hpp.find("pub type MyList2 = Vec<i64>;") != std::string::npos,
+        check("emit_seq_of: Rust declaration half produces a real newtype wrapping Vec<T> (not a stub)",
+              rust_seqof_hpp.find("pub struct MyList2(pub Vec<i64>);") != std::string::npos,
               rust_seqof_hpp);
 
         TypeOutputSession cpp_tr, rust_tr;
