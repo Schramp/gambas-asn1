@@ -268,44 +268,41 @@ private:
     void emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const;
     void emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const;
 
-    // Coverage predicates for emit_sequence_definition/emit_choice_definition's
-    // own member-table gate — see their definitions (RustBackend.cpp) for
-    // the full rationale. Rust-only concerns (this backend's own trait-object
-    // dispatch model), so they live here rather than on the shared Backend
-    // interface/Generator.
+    // Per-row real-vs-stub predicates for emit_sequence_definition/
+    // emit_choice_definition — every generated SEQUENCE/SET/CHOICE always
+    // gets a real table and `Asn1Value` impl now (see
+    // `sequence::MemberAccess::Unsupported`'s doc, rust-runtime/ber), so
+    // these no longer gate whether a *type* gets emitted at all; they only
+    // decide whether a given member/alternative's own row is a real access
+    // closure or an `Unsupported` stub. A referenced composite type (a
+    // TypeRef to SEQUENCE/SET/CHOICE/ENUMERATED, or a TypeRef-aliased
+    // INTEGER) is always real regardless of processing order — it will
+    // have *some* `Asn1Value` impl (real or stub) by the time the crate
+    // finishes compiling either way, so referencing it is always safe; no
+    // per-run coverage bookkeeping is needed to know that in advance. The
+    // one exception is unusable_alias_names_ below — see
+    // sequence_member_ber_covered's own doc (RustBackend.cpp) for why.
+    // Rust-only concerns (this backend's own trait-object dispatch model),
+    // so they live here rather than on the shared Backend interface/Generator.
     bool sequence_member_ber_covered(const SequenceMemberSpec& m) const;
     bool choice_alternative_ber_covered(const ChoiceAlternativeSpec& a) const;
+    // Whether a CHOICE alternative has any resolved tag at all — see
+    // choice_alternative_has_tag's own doc (RustBackend.cpp) for why this
+    // is a separate, prior question from choice_alternative_ber_covered.
+    bool choice_alternative_has_tag(const ChoiceAlternativeSpec& a) const;
 
-    // BER coverage always implies a real `impl Asn1Value::ber_encode/
-    // ber_decode_into`; `xer_ready` records whether the *same* type's
-    // xer_encode/xer_decode_into legs are also real (not the trait's
-    // default panicking body) — independent, because a type can have every
-    // member BER-covered while one member still lacks XER (e.g. a wide
-    // INTEGER). A member referencing this type only gets XER coverage
-    // itself when `xer_ready` is true here.
-    struct CoveredType { bool xer_ready; };
-
-    // Rust type names (SequenceSpec::type_name/ChoiceSpec::type_name/
-    // EnumeratedSpec::type_name) that have already been confirmed, in this
-    // compiler run, to have a real `impl Asn1Value` — populated by
-    // emit_sequence_definition/emit_choice_definition/
-    // emit_enumerated_definition themselves the moment each decides its own
-    // type gets one, consulted by sequence_member_ber_covered/
-    // choice_alternative_ber_covered for any member whose type isn't a
-    // direct builtin (`mbuiltin` unset). Entirely internal to this backend
-    // (Generator never reads or writes it, and carries no equivalent field
-    // for this at all — see those two methods' own doc for why no advance
-    // prediction is needed, and why assuming coverage unconditionally isn't
-    // safe: ENUMERATED and a TypeRef-aliased INTEGER both also reach here
-    // with `mbuiltin` unset, and only entries actually in this map are
-    // confirmed covered). `mutable`: emit_sequence/emit_choice/
-    // emit_enumerated are const per the Backend interface, but need to
-    // record what they just decided. Only benefits a member referencing a
-    // type Generator has already processed earlier in this run — a forward
-    // reference (to a type declared later in the same module) conservatively
-    // gets no coverage, same as before this mechanism existed; not a
-    // regression, just not (yet) as complete as it could be.
-    mutable std::unordered_map<std::string, CoveredType> covered_type_names_;
+    // Names of type aliases known to resolve to a Rust type with no usable
+    // Asn1Value impl for member-reference purposes — an ARBITRARY-storage
+    // INTEGER alias (Vec<u8>, wrong-shaped: collides with OCTET STRING's
+    // own impl) or a named top-level SEQUENCE OF/SET OF alias (Vec<T>,
+    // T != u8: no impl at all). Populated by emit_integer_declaration/
+    // emit_seq_of_declaration, consulted by sequence_member_ber_covered/
+    // choice_alternative_ber_covered to explicitly stub a reference to one
+    // instead of assuming it's safe like every other composite reference
+    // (see those methods' own doc for the full rationale). `mutable`:
+    // populated by emit_integer/emit_seq_of, which are const per the
+    // Backend interface.
+    mutable std::unordered_set<std::string> unusable_alias_names_;
 };
 
 } // namespace asn1::codegen
