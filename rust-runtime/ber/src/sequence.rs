@@ -121,6 +121,27 @@ pub enum MemberAccess<T: 'static> {
         xer_encode: fn(&T, &mut String),
         xer_decode_into: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
     },
+    /// A `[n] ANY` member — X.208 legacy type, not defined in the current
+    /// standard (X.680/X.690 don't mention it; X.691's own note treats a
+    /// legacy ANY as an open type). No discriminant of its own (unlike
+    /// CHOICE or a real open type keyed by a companion field) — an ANY
+    /// member is not "one of several known types", it's raw captured bytes
+    /// with no schema-visible way to know what they are. Always
+    /// EXPLICIT-tagged when tagged (see `value::encode_explicit_any`'s
+    /// doc) — field type is `Vec<u8>`, same Rust type as OCTET STRING, but
+    /// holding raw captured TLV bytes rather than OCTET STRING content, so
+    /// it can't reuse `Vec<u8>`'s own `Asn1Value` impl (that would wrap
+    /// the capture in an extra OCTET STRING TLV). Mirrors the C++ side's
+    /// `AnyBerHandler`/`asn_DEF_Any` (`runtime/src/BerCodec.cpp`/
+    /// `BuiltinTypes.cpp`), which represent ANY the same way: an
+    /// EXPLICIT-tagged member (`is_explicit = true` in the generated
+    /// `MemberDescriptor`) storing raw bytes (`TypeLifecycleOps(TypeTag<
+    /// OctetString>{})`), not a typed value. BER-only: ANY has no defined
+    /// XER form here, no `get`/`get_mut`.
+    ExplicitAny {
+        ber_encode: fn(&T, &mut Vec<u8>),
+        ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
+    },
 }
 
 /// Shared SEQUENCE-OF wire logic — one outer `SEQUENCE_TAG` TLV wrapping
@@ -247,6 +268,7 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
             MemberAccess::ExplicitScalar { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::SeqOf { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::TaggedSeqOf { ber_encode, .. } => ber_encode(value, content),
+            MemberAccess::ExplicitAny { ber_encode, .. } => ber_encode(value, content),
         }
     }
 }
@@ -335,6 +357,15 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
             }
             MemberAccess::TaggedSeqOf { ber_decode_into, .. } => {
                 ber_decode_into(&mut result, inner)?;
+            }
+            MemberAccess::ExplicitAny { ber_decode_into, .. } => {
+                if m.optional {
+                    if inner.peek_tag() == Some(m.tag) {
+                        ber_decode_into(&mut result, inner)?;
+                    }
+                } else {
+                    ber_decode_into(&mut result, inner)?;
+                }
             }
         }
     }

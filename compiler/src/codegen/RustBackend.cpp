@@ -672,6 +672,14 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
 bool RustBackend::sequence_member_ber_covered(const SequenceMemberSpec& m) const {
     if (m.is_seq_of)
         return !m.optional && m.elem_builtin && builtin_ber_tag(*m.elem_builtin, m.elem_mtype) != nullptr;
+    // ANY (X.208 legacy type) has no fixed tag of its own to drive the
+    // ordinary Scalar/TaggedScalar/ExplicitScalar paths — Generator forces
+    // EXPLICIT tagging on any tagged ANY member regardless of module tag
+    // default (member_is_explicit, Generator.cpp), so that's the only shape
+    // covered: a genuinely untagged `ANY` member has no tag to peek for
+    // OPTIONAL detection or dispatch at all and stays uncovered.
+    if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any)
+        return m.resolved_tag.has_value() && m.is_explicit;
     if (!m.mbuiltin) {
         if (!covered_type_names_.count(m.mtype)) return false;
         // A required member's MemberDescriptor.tag is never consulted at
@@ -891,6 +899,25 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
                     os << "        },\n";
                 }
+            } else if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any) {
+                // `[n] ANY` — always EXPLICIT (sequence_member_ber_covered
+                // only lets this branch's precondition through when so).
+                // Raw-capture pair, not the generic Asn1Value-based
+                // ExplicitScalar path: the field is `Vec<u8>`, but holds an
+                // unparsed captured TLV, not OCTET STRING content, so it
+                // can't go through `Vec<u8>`'s own Asn1Value impl.
+                std::string tag_lit = format_tag_literal(*m.resolved_tag);
+                os << std::format("        tag: {},\n", tag_lit);
+                os << std::format("        optional: {},\n", m.optional ? "true" : "false");
+                os << "        access: asn1cpp_ber::sequence::MemberAccess::ExplicitAny {\n";
+                if (m.optional) {
+                    os << std::format("            ber_encode: |v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::value::encode_explicit_any(out, {1}, x); }} }},\n", m.mname, tag_lit);
+                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::value::decode_explicit_any(r, {1})?); Ok(()) }},\n", m.mname, tag_lit);
+                } else {
+                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::value::encode_explicit_any(out, {1}, &v.{0}),\n", m.mname, tag_lit);
+                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::value::decode_explicit_any(r, {1})?; Ok(()) }},\n", m.mname, tag_lit);
+                }
+                os << "        },\n";
             } else if (m.resolved_tag && m.is_explicit) {
                 // EXPLICIT tagging (X.690 §8.14.3) — wraps
                 // the member's natural Asn1Value encoding in a constructed
