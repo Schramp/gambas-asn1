@@ -121,6 +121,16 @@ pub enum MemberAccess<T: 'static> {
         xer_encode: fn(&T, &mut String),
         xer_decode_into: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
     },
+    /// A `[n] ANY` member (X.208 legacy type; always EXPLICIT-tagged, see
+    /// `value::encode_explicit_any`'s doc) — field type is `Vec<u8>`, same
+    /// as OCTET STRING, but holding raw captured TLV bytes rather than
+    /// OCTET STRING content, so it can't reuse `Vec<u8>`'s own `Asn1Value`
+    /// impl (that would wrap the capture in an extra OCTET STRING TLV).
+    /// BER-only: ANY has no defined XER form here, no `get`/`get_mut`.
+    ExplicitAny {
+        ber_encode: fn(&T, &mut Vec<u8>),
+        ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
+    },
 }
 
 /// Shared SEQUENCE-OF wire logic — one outer `SEQUENCE_TAG` TLV wrapping
@@ -247,6 +257,7 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
             MemberAccess::ExplicitScalar { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::SeqOf { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::TaggedSeqOf { ber_encode, .. } => ber_encode(value, content),
+            MemberAccess::ExplicitAny { ber_encode, .. } => ber_encode(value, content),
         }
     }
 }
@@ -335,6 +346,15 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
             }
             MemberAccess::TaggedSeqOf { ber_decode_into, .. } => {
                 ber_decode_into(&mut result, inner)?;
+            }
+            MemberAccess::ExplicitAny { ber_decode_into, .. } => {
+                if m.optional {
+                    if inner.peek_tag() == Some(m.tag) {
+                        ber_decode_into(&mut result, inner)?;
+                    }
+                } else {
+                    ber_decode_into(&mut result, inner)?;
+                }
             }
         }
     }
