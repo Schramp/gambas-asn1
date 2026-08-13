@@ -279,23 +279,6 @@ fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut S
                 write_close_tag(out, m.name);
                 out.push('\n');
             }
-            // TaggedSeqOf reuses SeqOf's xer_encode here,
-            // same field-name-derived-tag reasoning as TaggedScalar above.
-            // Unlike Scalar, xer_encode alone can't signal absence (it
-            // writes into a plain &mut String, no is_present() to ask) —
-            // the outer <name>...</name> wrapper is this walker's own job,
-            // so it needs is_present checked explicitly before writing it,
-            // same role MemberAccess::SeqOf::is_present's own doc describes.
-            MemberAccess::SeqOf { xer_encode, is_present, .. } | MemberAccess::TaggedSeqOf { xer_encode, is_present, .. } => {
-                if !is_present(value) {
-                    continue;
-                }
-                out.push_str("    ");
-                write_open_tag(out, m.name);
-                xer_encode(value, out);
-                write_close_tag(out, m.name);
-                out.push('\n');
-            }
             // ANY has no defined XER form here. Every generated type now
             // always gets a real xer_encode override (RustBackend.cpp no
             // longer gates emission on every member being XER-ready first —
@@ -350,8 +333,6 @@ fn decode_sequence_xer_content<T: Default>(spec: &SequenceSpec<T>, r: &mut XerRe
         match &m.access {
             MemberAccess::Scalar { get_mut, .. } | MemberAccess::TaggedScalar { get_mut, .. } | MemberAccess::ExplicitScalar { get_mut, .. } =>
                 get_mut(&mut result).xer_decode_into(r)?,
-            MemberAccess::SeqOf { xer_decode_into, .. } | MemberAccess::TaggedSeqOf { xer_decode_into, .. } =>
-                xer_decode_into(&mut result, r)?,
             MemberAccess::ExplicitAny { .. } => panic!("member '{}': ANY has no defined XER form", m.name),
             MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
         }

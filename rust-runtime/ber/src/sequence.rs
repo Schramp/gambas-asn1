@@ -47,48 +47,21 @@ pub struct MemberDescriptor<T: 'static> {
 
 /// How a member's value is reached and (de)serialized.
 ///
-/// `Scalar` is the original, and by far the most common, shape: the member
-/// is one field whose own concrete type already implements `Asn1Value`
-/// (`i64`, `bool`, `Vec<u8>`, `String`, an `Option<V>`/newtype-string —
-/// every kind `rust_member_ber_tag` currently covers), reached via the same
-/// accessor-function pair the crate has always used (`value.rs`'s module
-/// doc explains why a function, not an `offsetof`-equivalent).
-///
-/// `SeqOf` is new: a SEQUENCE OF member's field type is `Vec<ElementType>`,
-/// which — deliberately — does *not* implement `Asn1Value` itself (unlike
-/// `Option<V>`'s blanket impl): `Vec<u8>` already has its
-/// own *concrete* `Asn1Value` impl for OCTET STRING content, and Rust's
-/// coherence rules forbid also giving `Vec<u8>` an overlapping instantiation
-/// of a generic `impl<V: Asn1Value> Asn1Value for Vec<V>` (the compiler
-/// can't rule out some future crate adding `impl Asn1Value for u8`, so it
-/// rejects the ambiguity up front, not just when it would actually occur).
-/// `SeqOf`'s four closures encode/decode the whole `Vec<ElementType>` field
-/// directly instead — same closure-over-the-concrete-type shape
-/// `ChoiceAlternativeSpec` (`choice.rs`) already established for a
-/// structurally different reason (multiple types sharing one table).
+/// `Scalar` is the most common shape: the member is one field whose own
+/// concrete type already implements `Asn1Value` (`i64`, `bool`, `Vec<u8>`,
+/// `String`, an `Option<V>`/newtype-string, `SeqOf<T>`/`SetOf<T>` for a
+/// SEQUENCE OF/SET OF member — every kind `rust_member_ber_tag` currently
+/// covers), reached via the same accessor-function pair the crate has
+/// always used (`value.rs`'s module doc explains why a function, not an
+/// `offsetof`-equivalent). A SEQUENCE OF/SET OF member's field type is
+/// `SeqOf<T>`/`SetOf<T>` rather than a raw `Vec<ElementType>` precisely so
+/// it has a real `Asn1Value` impl and folds into this ordinary
+/// `Scalar`/`TaggedScalar`/`ExplicitScalar` dispatch, with no special-casing
+/// needed anywhere here.
 pub enum MemberAccess<T: 'static> {
     Scalar {
         get: fn(&T) -> &dyn Asn1Value,
         get_mut: fn(&mut T) -> &mut dyn Asn1Value,
-    },
-    SeqOf {
-        ber_encode: fn(&T, &mut Vec<u8>),
-        ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
-        xer_encode: fn(&T, &mut String),
-        xer_decode_into: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
-        /// Whether this member is present at all — always `|_v| true` for a
-        /// required member. For an OPTIONAL SEQUENCE OF/SET OF (field type
-        /// `Option<Vec<ElementType>>`), `|v| v.field.is_some()`. BER doesn't
-        /// need this: `ber_encode`/`ber_decode_into` are self-contained
-        /// (write/read nothing when the closure's own `if let Some(...)`
-        /// finds nothing — same convention `MemberAccess::ExplicitScalar`
-        /// already established), and BER decode presence is detected via
-        /// `MemberDescriptor::tag` peeking, same as every other kind. XER
-        /// does need it: unlike BER, the outer `<name>...</name>` wrapper
-        /// is added by the *walker* (`encode_sequence_xer_content`,
-        /// `xer.rs`), not by `xer_encode` itself, so the walker has to know
-        /// presence *before* deciding whether to write that wrapper at all.
-        is_present: fn(&T) -> bool,
     },
     /// IMPLICIT tag override (X.690 §8.14). A member
     /// declared with its own `[n]` tag (explicit-in-the-schema, or an
@@ -122,21 +95,6 @@ pub enum MemberAccess<T: 'static> {
         ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
         get: fn(&T) -> &dyn Asn1Value,
         get_mut: fn(&mut T) -> &mut dyn Asn1Value,
-    },
-    /// `SeqOf`'s analogue of `TaggedScalar` — a SEQUENCE OF/
-    /// SET OF member declared with its own `[n]` tag. `ber_encode`/
-    /// `ber_decode_into` call `encode_seq_of_tagged`/`decode_seq_of_tagged`
-    /// with the member's real resolved tag instead of `SeqOf`'s hardcoded
-    /// `SEQUENCE_TAG`. XER is unaffected (reuses `SeqOf`'s `xer_encode`/
-    /// `xer_decode_into` unchanged — same field-name-derived-tag reasoning
-    /// as `TaggedScalar`).
-    TaggedSeqOf {
-        ber_encode: fn(&T, &mut Vec<u8>),
-        ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
-        xer_encode: fn(&T, &mut String),
-        xer_decode_into: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
-        /// See `SeqOf::is_present`'s own doc — same role.
-        is_present: fn(&T) -> bool,
     },
     /// A `[n] ANY` member — X.208 legacy type, not defined in the current
     /// standard (X.680/X.690 don't mention it; X.691's own note treats a
@@ -181,10 +139,11 @@ pub enum MemberAccess<T: 'static> {
 }
 
 /// Shared SEQUENCE-OF wire logic — one outer `SEQUENCE_TAG` TLV wrapping
-/// zero or more inner element TLVs (X.690 §8.9), used by every codegen'd
-/// `MemberAccess::SeqOf::ber_encode`/`ber_decode_into` closure regardless of
-/// element type (mirrors `write_char_string`/`read_char_string` in
-/// `strings.rs` — one generic function, many thin per-type call sites).
+/// zero or more inner element TLVs (X.690 §8.9); `SeqOf<T>::ber_encode_content`/
+/// `ber_decode_content` (this module) delegate here, and `SetOf<T>`'s own
+/// impl reuses the same content logic under its own `SET_TAG` (mirrors
+/// `write_char_string`/`read_char_string` in `strings.rs` — one generic
+/// function, many thin per-type call sites).
 pub fn encode_seq_of<V: Asn1Value>(out: &mut Vec<u8>, items: &[V]) {
     encode_seq_of_tagged(out, SEQUENCE_TAG, items);
 }
@@ -290,25 +249,39 @@ pub fn decode_seq_of_xer_named<V: Asn1Value + Default>(r: &mut XerReader, name_o
     Ok(result)
 }
 
-/// Generic SEQUENCE OF/SET OF wrapper — gives a *named* SEQUENCE OF (or SET
-/// OF) CHOICE alternative (`RustBackend::rust_seqof_alt_mtype`,
-/// `compiler/src/codegen/RustBackend.cpp`) a concrete `Asn1Value` impl
-/// without per-occurrence codegen. A bare `Vec<T>` can't get one
-/// generically: a blanket `impl<V: Asn1Value> Asn1Value for Vec<V>` would
-/// coherence-conflict with `Vec<u8>`'s own concrete OCTET STRING impl
-/// (E0119 — at most one unconstrained blanket impl per trait per crate).
-/// `SeqOf<T>` sidesteps that by being a distinct type nothing else
-/// implements, so one blanket impl below covers every element type — no
-/// per-occurrence synthesized wrapper struct needed the way a top-level
-/// named `X ::= SEQUENCE OF Y` still gets from `emit_seq_of_definition`
-/// (that one keeps its own real ASN.1 name for XER wrapping when
-/// referenced elsewhere; a `SeqOf<T>` alternative is wrapped by its own
-/// alternative name instead, same as any other scalar alternative — never
-/// needs a name of its own, hence `ber_natural_tag`/`xer_element_name`
-/// below being generic placeholders: a CHOICE alternative always dispatches
-/// through its own resolved tag via `ber_encode_tagged`/
-/// `ber_decode_into_tagged`, never these, so SET OF's own universal 17 tag
-/// vs SEQUENCE OF's 16 is immaterial here — both shapes wrap correctly).
+/// Generic SEQUENCE OF wrapper (see `SetOf<T>` just below for the SET OF
+/// sibling) — gives a *named* SEQUENCE OF CHOICE alternative
+/// (`RustBackend::rust_seqof_alt_mtype`) or SEQUENCE/SET *member*
+/// (`RustBackend::emit_sequence_declaration`, both `compiler/src/codegen/
+/// RustBackend.cpp`) a concrete `Asn1Value` impl without per-occurrence
+/// codegen. A bare `Vec<T>` can't get one generically: a blanket
+/// `impl<V: Asn1Value> Asn1Value for Vec<V>` would coherence-conflict with
+/// `Vec<u8>`'s own concrete OCTET STRING impl (E0119 — at most one
+/// unconstrained blanket impl per trait per crate). `SeqOf<T>` sidesteps
+/// that by being a distinct type nothing else implements, so one blanket
+/// impl below covers every element type — no per-occurrence synthesized
+/// wrapper struct needed the way a top-level named `X ::= SEQUENCE OF Y`
+/// still gets from `emit_seq_of_definition` (that one keeps its own real
+/// ASN.1 name for XER wrapping when referenced elsewhere; a `SeqOf<T>`
+/// alternative/member is wrapped by its own alternative/field name
+/// instead, same as any other scalar member — never needs a name of its
+/// own, hence `xer_element_name` below being a generic placeholder).
+///
+/// `ber_natural_tag` genuinely matters here, unlike a bare CHOICE
+/// alternative (which always dispatches through its own resolved tag via
+/// `ber_encode_tagged`/`ber_decode_into_tagged`, never this method): a
+/// required SEQUENCE/SET *member* with no tag override goes through the
+/// ordinary `MemberAccess::Scalar` path, whose `ber_encode`/`ber_decode_into`
+/// (the `Asn1Value` trait's own default methods) reach for
+/// `self.ber_natural_tag()` directly — and an EXPLICIT-tagged member's
+/// inner TLV (X.690 §8.14.3: EXPLICIT wraps the value's own natural
+/// encoding unchanged) reaches it exactly the same way through
+/// `value::encode_explicit`/`decode_explicit`. `SeqOf<T>`/`SetOf<T>` being
+/// two distinct types with two different `ber_natural_tag()` values is
+/// what makes both paths correct automatically, with no separate
+/// SEQUENCE-vs-SET signal needed anywhere in the generic walker
+/// (`sequence.rs`/`xer.rs`) — RustBackend only has to pick which of the
+/// two type names to put in the struct field declaration.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SeqOf<T>(pub Vec<T>);
 
@@ -332,6 +305,57 @@ impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
 
     fn xer_element_name(&self) -> &'static str {
         "SEQUENCE-OF"
+    }
+
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        encode_seq_of_content(out, &self.0);
+    }
+
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        self.0 = decode_seq_of_content(content)?;
+        Ok(())
+    }
+
+    fn xer_encode(&self, out: &mut String) {
+        encode_seq_of_xer(out, &self.0);
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        self.0 = decode_seq_of_xer(r)?;
+        Ok(())
+    }
+}
+
+/// SET OF analogue of `SeqOf<T>` — identical shape, only `ber_natural_tag`
+/// differs (X.680 §26: SET's own universal tag 17, not SEQUENCE's 16 —
+/// see `SeqOf<T>`'s own doc for why that distinction genuinely matters
+/// here, unlike a bare CHOICE alternative). A separate type, not a
+/// generic parameter on `SeqOf<T>` itself, because `ber_natural_tag`
+/// can't vary per-instantiation of the same type — Rust has no
+/// compile-time value parameter to key it on here.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SetOf<T>(pub Vec<T>);
+
+impl<T> std::ops::Deref for SetOf<T> {
+    type Target = Vec<T>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> std::ops::DerefMut for SetOf<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T: Asn1Value + Default> Asn1Value for SetOf<T> {
+    fn ber_natural_tag(&self) -> Tag {
+        SET_TAG
+    }
+
+    fn xer_element_name(&self) -> &'static str {
+        "SET-OF"
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
@@ -399,8 +423,6 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
             MemberAccess::Scalar { get, .. } => get(value).ber_encode(content),
             MemberAccess::TaggedScalar { get, .. } => get(value).ber_encode_tagged(m.tag, content),
             MemberAccess::ExplicitScalar { ber_encode, .. } => ber_encode(value, content),
-            MemberAccess::SeqOf { ber_encode, .. } => ber_encode(value, content),
-            MemberAccess::TaggedSeqOf { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::ExplicitAny { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
         }
@@ -468,15 +490,6 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
                     get_mut(&mut result).ber_decode_into(inner)?;
                 }
             }
-            MemberAccess::SeqOf { ber_decode_into, .. } => {
-                if m.optional {
-                    if inner.peek_tag() == Some(m.tag) {
-                        ber_decode_into(&mut result, inner)?;
-                    }
-                } else {
-                    ber_decode_into(&mut result, inner)?;
-                }
-            }
             MemberAccess::TaggedScalar { get_mut, .. } => {
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {
@@ -487,15 +500,6 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
                 }
             }
             MemberAccess::ExplicitScalar { ber_decode_into, .. } => {
-                if m.optional {
-                    if inner.peek_tag() == Some(m.tag) {
-                        ber_decode_into(&mut result, inner)?;
-                    }
-                } else {
-                    ber_decode_into(&mut result, inner)?;
-                }
-            }
-            MemberAccess::TaggedSeqOf { ber_decode_into, .. } => {
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {
                         ber_decode_into(&mut result, inner)?;
@@ -638,42 +642,21 @@ impl OptPoint {
 }
 
 /// `Coords ::= SEQUENCE { values SEQUENCE OF INTEGER }` — worked example +
-/// test subject for SEQUENCE OF member support, same role
-/// `Point`/`OptPoint` play for their own features.
+/// test subject for a SEQUENCE OF member, same role `Point`/`OptPoint`
+/// play for their own features. `values` is `SeqOf<i64>`, not a raw
+/// `Vec<i64>` — a real `Asn1Value` impl, so this goes through the ordinary
+/// `MemberAccess::Scalar` path exactly like any other composite member, no
+/// dedicated SeqOf-shaped closures needed.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Coords {
-    pub values: Vec<i64>,
-}
-
-fn coords_values_ber_encode(v: &Coords, out: &mut Vec<u8>) {
-    encode_seq_of(out, &v.values);
-}
-
-fn coords_values_ber_decode_into(v: &mut Coords, r: &mut Reader) -> Result<(), DecodeError> {
-    v.values = decode_seq_of(r)?;
-    Ok(())
-}
-
-fn coords_values_xer_encode(v: &Coords, out: &mut String) {
-    encode_seq_of_xer(out, &v.values);
-}
-
-fn coords_values_xer_decode_into(v: &mut Coords, r: &mut XerReader) -> Result<(), DecodeError> {
-    v.values = decode_seq_of_xer(r)?;
-    Ok(())
+    pub values: SeqOf<i64>,
 }
 
 static COORDS_MEMBERS: [MemberDescriptor<Coords>; 1] = [MemberDescriptor {
     name: "values",
     tag: SEQUENCE_TAG,
     optional: false,
-    access: MemberAccess::SeqOf {
-        ber_encode: coords_values_ber_encode,
-        ber_decode_into: coords_values_ber_decode_into,
-        xer_encode: coords_values_xer_encode,
-        xer_decode_into: coords_values_xer_decode_into,
-        is_present: |_v| true,
-    },
+    access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
 }];
 
 static COORDS_SPEC: SequenceSpec<Coords> =
@@ -698,46 +681,21 @@ impl Coords {
 }
 
 /// `OptCoords ::= SEQUENCE { values SEQUENCE OF INTEGER OPTIONAL }` — worked
-/// example + test subject for OPTIONAL SEQUENCE OF member support
-/// (gambas-asn1#400), same role `OptPoint` plays for OPTIONAL scalars.
+/// example + test subject for OPTIONAL SEQUENCE OF member support, same
+/// role `OptPoint` plays for OPTIONAL scalars. `Option<SeqOf<i64>>` gets
+/// presence detection for free from the existing blanket
+/// `impl<V: Asn1Value + Default> Asn1Value for Option<V>` (`value.rs`) —
+/// no dedicated `is_present` closure needed.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct OptCoords {
-    pub values: Option<Vec<i64>>,
-}
-
-fn opt_coords_values_ber_encode(v: &OptCoords, out: &mut Vec<u8>) {
-    if let Some(items) = &v.values {
-        encode_seq_of(out, items);
-    }
-}
-
-fn opt_coords_values_ber_decode_into(v: &mut OptCoords, r: &mut Reader) -> Result<(), DecodeError> {
-    v.values = Some(decode_seq_of(r)?);
-    Ok(())
-}
-
-fn opt_coords_values_xer_encode(v: &OptCoords, out: &mut String) {
-    if let Some(items) = &v.values {
-        encode_seq_of_xer(out, items);
-    }
-}
-
-fn opt_coords_values_xer_decode_into(v: &mut OptCoords, r: &mut XerReader) -> Result<(), DecodeError> {
-    v.values = Some(decode_seq_of_xer(r)?);
-    Ok(())
+    pub values: Option<SeqOf<i64>>,
 }
 
 static OPT_COORDS_MEMBERS: [MemberDescriptor<OptCoords>; 1] = [MemberDescriptor {
     name: "values",
     tag: SEQUENCE_TAG,
     optional: true,
-    access: MemberAccess::SeqOf {
-        ber_encode: opt_coords_values_ber_encode,
-        ber_decode_into: opt_coords_values_ber_decode_into,
-        xer_encode: opt_coords_values_xer_encode,
-        xer_decode_into: opt_coords_values_xer_decode_into,
-        is_present: |v| v.values.is_some(),
-    },
+    access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
 }];
 
 static OPT_COORDS_SPEC: SequenceSpec<OptCoords> =
@@ -762,44 +720,22 @@ impl OptCoords {
 }
 
 /// `SetCoords ::= SEQUENCE { values SET OF INTEGER }` — worked example +
-/// test subject for a SET OF *member* (gambas-asn1#402), distinct from
-/// `Coords`'s SEQUENCE OF: the member's own natural tag is SET_TAG
+/// test subject for a SET OF *member*, distinct from `Coords`'s SEQUENCE
+/// OF: `values` is `SetOf<i64>`, whose own `ber_natural_tag()` is SET_TAG
 /// (universal 17), not SEQUENCE_TAG (universal 16) — `APointSet` below
-/// already covers a top-level SET's own tag; this is the member-level case.
+/// already covers a top-level SET's own tag; this is the member-level
+/// case. Same `MemberAccess::Scalar` path as `Coords`, just a different
+/// field type.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SetCoords {
-    pub values: Vec<i64>,
-}
-
-fn set_coords_values_ber_encode(v: &SetCoords, out: &mut Vec<u8>) {
-    encode_seq_of_tagged(out, SET_TAG, &v.values);
-}
-
-fn set_coords_values_ber_decode_into(v: &mut SetCoords, r: &mut Reader) -> Result<(), DecodeError> {
-    v.values = decode_seq_of_tagged(r, SET_TAG)?;
-    Ok(())
-}
-
-fn set_coords_values_xer_encode(v: &SetCoords, out: &mut String) {
-    encode_seq_of_xer(out, &v.values);
-}
-
-fn set_coords_values_xer_decode_into(v: &mut SetCoords, r: &mut XerReader) -> Result<(), DecodeError> {
-    v.values = decode_seq_of_xer(r)?;
-    Ok(())
+    pub values: SetOf<i64>,
 }
 
 static SET_COORDS_MEMBERS: [MemberDescriptor<SetCoords>; 1] = [MemberDescriptor {
     name: "values",
     tag: SET_TAG,
     optional: false,
-    access: MemberAccess::SeqOf {
-        ber_encode: set_coords_values_ber_encode,
-        ber_decode_into: set_coords_values_ber_decode_into,
-        xer_encode: set_coords_values_xer_encode,
-        xer_decode_into: set_coords_values_xer_decode_into,
-        is_present: |_v| true,
-    },
+    access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
 }];
 
 static SET_COORDS_SPEC: SequenceSpec<SetCoords> =
@@ -959,7 +895,7 @@ impl SetCoords {
 
     #[test]
     fn seq_of_ber_round_trips() {
-        let c = Coords { values: vec![1, 2, 3] };
+        let c = Coords { values: SeqOf(vec![1, 2, 3]) };
         let bytes = c.encode();
         // Outer SEQUENCE (0x30) wraps the member's own SEQUENCE (0x30) of
         // three INTEGER TLVs.
@@ -976,7 +912,7 @@ impl SetCoords {
 
     #[test]
     fn seq_of_empty_ber_round_trips() {
-        let c = Coords { values: vec![] };
+        let c = Coords { values: SeqOf(vec![]) };
         let bytes = c.encode();
         assert_eq!(bytes, vec![0x30, 0x02, 0x30, 0x00]);
         assert_eq!(Coords::decode(&bytes).unwrap(), c);
@@ -984,7 +920,7 @@ impl SetCoords {
 
     #[test]
     fn seq_of_xer_round_trips() {
-        let c = Coords { values: vec![1, 2, 3] };
+        let c = Coords { values: SeqOf(vec![1, 2, 3]) };
         let xml = c.encode_xer();
         assert_eq!(
             xml,
@@ -995,7 +931,7 @@ impl SetCoords {
 
     #[test]
     fn seq_of_empty_xer_round_trips() {
-        let c = Coords { values: vec![] };
+        let c = Coords { values: SeqOf(vec![]) };
         let xml = c.encode_xer();
         assert_eq!(xml, "<Coords>\n    <values></values>\n</Coords>\n");
         assert_eq!(Coords::decode_xer(&xml).unwrap(), c);
@@ -1005,7 +941,7 @@ impl SetCoords {
 
     #[test]
     fn optional_seq_of_present_ber_round_trips() {
-        let c = OptCoords { values: Some(vec![1, 2]) };
+        let c = OptCoords { values: Some(SeqOf(vec![1, 2])) };
         let bytes = c.encode();
         assert_eq!(
             bytes,
@@ -1027,7 +963,7 @@ impl SetCoords {
 
     #[test]
     fn optional_seq_of_present_but_empty_is_distinct_from_absent() {
-        let present_empty = OptCoords { values: Some(vec![]) };
+        let present_empty = OptCoords { values: Some(SeqOf(vec![])) };
         let absent = OptCoords { values: None };
         assert_ne!(present_empty.encode(), absent.encode());
         assert_eq!(present_empty.encode(), vec![0x30, 0x02, 0x30, 0x00]);
@@ -1035,7 +971,7 @@ impl SetCoords {
 
     #[test]
     fn optional_seq_of_present_xer_round_trips() {
-        let c = OptCoords { values: Some(vec![1, 2]) };
+        let c = OptCoords { values: Some(SeqOf(vec![1, 2])) };
         let xml = c.encode_xer();
         assert_eq!(
             xml,
@@ -1057,7 +993,7 @@ impl SetCoords {
 
     #[test]
     fn set_of_member_ber_round_trips() {
-        let c = SetCoords { values: vec![1, 2] };
+        let c = SetCoords { values: SetOf(vec![1, 2]) };
         let bytes = c.encode();
         // Outer SEQUENCE (0x30) wraps the member's own SET (0x31 — universal
         // constructed 17, not 0x30/SEQUENCE) of two INTEGER TLVs.
@@ -1074,7 +1010,7 @@ impl SetCoords {
         // SEQUENCE OF (0x30) instead of SET OF (0x31) at the same position
         // — confirms decode actually checks the tag, not just any
         // constructed TLV.
-        let coords_bytes = Coords { values: vec![1, 2] }.encode();
+        let coords_bytes = Coords { values: SeqOf(vec![1, 2]) }.encode();
         assert!(SetCoords::decode(&coords_bytes).is_err());
     }
 
@@ -1134,6 +1070,44 @@ impl SetCoords {
     #[test]
     fn seq_of_derefs_to_the_inner_vec() {
         let v = SeqOf(vec![1i64, 2, 3]);
+        assert_eq!(v.len(), 3);
+        assert_eq!(&v[..], &[1, 2, 3]);
+    }
+
+    #[test]
+    fn set_of_ber_round_trips_through_the_trait_with_its_own_natural_tag() {
+        let v = SetOf(vec![1i64, 2]);
+        let mut out = Vec::new();
+        v.ber_encode(&mut out);
+        // SET (0x31 — universal constructed 17), not SEQUENCE (0x30).
+        assert_eq!(out, vec![0x31, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02]);
+
+        let mut r = Reader::new(&out);
+        let mut got = SetOf::<i64>::default();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn set_of_xer_round_trips_wrapped_by_hand() {
+        let v = SetOf(vec![1i64, 2]);
+        let mut out = String::new();
+        crate::xer::write_open_tag(&mut out, "items");
+        v.xer_encode(&mut out);
+        crate::xer::write_close_tag(&mut out, "items");
+        assert_eq!(out, "<items><INTEGER>1</INTEGER><INTEGER>2</INTEGER></items>");
+
+        let mut r = XerReader::new(&out);
+        r.consume_open_tag("items").unwrap();
+        let mut got = SetOf::<i64>::default();
+        got.xer_decode_into(&mut r).unwrap();
+        r.consume_close_tag("items").unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn set_of_derefs_to_the_inner_vec() {
+        let v = SetOf(vec![1i64, 2, 3]);
         assert_eq!(v.len(), 3);
         assert_eq!(&v[..], &[1, 2, 3]);
     }
