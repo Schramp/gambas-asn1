@@ -645,16 +645,19 @@ static bool rust_mtype_is_unusable_vec(const std::string& mtype) {
 
 /// @brief A CHOICE alternative's `mtype`, rewritten to wrap a bare
 ///        `Vec<T>` — `rust_mtype_is_unusable_vec`'s own doc: the only
-///        source of that shape is `cpp_type_for`'s is_seq_of branch, so
-///        detecting the text is a sufficient, order-independent signal —
-///        in the generic `asn1cpp_ber::sequence::SeqOf<T>`
-///        (rust-runtime/ber/src/sequence.rs), whose single blanket
-///        `impl<T: Asn1Value + Default> Asn1Value for SeqOf<T>` gives it a
-///        real impl `Vec<T>` itself can't (coherence-blocked). A SEQUENCE
-///        member keeps its own raw `Vec<T>` field via `MemberAccess::SeqOf`
-///        unaffected — this only applies where `choice_alternative_covered`
-///        consults it, CHOICE alternatives. Every other mtype passes
-///        through unchanged.
+///        source of that shape is `cpp_type_for`'s is_seq_of/is_set_of
+///        branches (both format identically via `wrap_collection_type`,
+///        indistinguishable from the text alone — this covers a SET OF
+///        alternative too, not just SEQUENCE OF; harmless, since a CHOICE
+///        alternative always dispatches through its own resolved tag, see
+///        `SeqOf<T>`'s own doc) — in the generic
+///        `asn1cpp_ber::sequence::SeqOf<T>` (rust-runtime/ber/src/sequence.rs),
+///        whose single blanket `impl<T: Asn1Value + Default> Asn1Value for
+///        SeqOf<T>` gives it a real impl `Vec<T>` itself can't
+///        (coherence-blocked). A SEQUENCE member keeps its own raw `Vec<T>`
+///        field via `MemberAccess::SeqOf` unaffected — this only applies
+///        where `choice_alternative_covered` consults it, CHOICE
+///        alternatives. Every other mtype passes through unchanged.
 static std::string rust_seqof_alt_mtype(const std::string& mtype) {
     if (!rust_mtype_is_unusable_vec(mtype)) return mtype;
     return std::format("asn1cpp_ber::sequence::SeqOf<{}>", mtype.substr(4, mtype.size() - 5));
@@ -755,10 +758,11 @@ bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
 ///        even reach it at all, real or stub. Same `unusable_alias_names_`
 ///        exception as sequence_member_covered.
 bool RustBackend::choice_alternative_covered(const ChoiceAlternativeSpec& a) const {
-    // A SEQUENCE OF alternative always covers here (rust_seqof_alt_mtype's
-    // own doc): its mtype gets wrapped in SeqOf<T> at every emission site
-    // below, so the raw "Vec<T>" text rust_mtype_is_unusable_vec would
-    // otherwise flag is never actually a problem for a CHOICE alternative.
+    // A SEQUENCE OF or SET OF alternative always covers here
+    // (rust_seqof_alt_mtype's own doc — both shapes format identically):
+    // its mtype gets wrapped in SeqOf<T> at every emission site below, so
+    // the raw "Vec<T>" text rust_mtype_is_unusable_vec would otherwise flag
+    // is never actually a problem for a CHOICE alternative.
     if (rust_mtype_is_unusable_vec(a.mtype)) return true;
     if (!a.mbuiltin) return !unusable_alias_names_.count(a.mtype);
     return rust_tag_for_builtin_or_alias(a.mbuiltin, a.storage_kind, a.mtype) != nullptr;

@@ -273,20 +273,25 @@ pub fn decode_seq_of_xer_named<V: Asn1Value + Default>(r: &mut XerReader, name_o
     Ok(result)
 }
 
-/// Generic SEQUENCE OF/SET OF wrapper — gives a *named* SEQUENCE OF
-/// member/alternative (`RustBackend`'s `Generator::choice_alt_type_for`) a
-/// concrete `Asn1Value` impl without per-occurrence codegen. A bare
-/// `Vec<T>` can't get one generically: a blanket `impl<V: Asn1Value>
-/// Asn1Value for Vec<V>` would coherence-conflict with `Vec<u8>`'s own
-/// concrete OCTET STRING impl (E0119 — at most one unconstrained blanket
-/// impl per trait per crate). `SeqOf<T>` sidesteps that by being a
-/// distinct type nothing else implements, so one blanket impl below covers
-/// every element type — no per-occurrence synthesized wrapper struct
-/// needed the way a top-level named `X ::= SEQUENCE OF Y` still gets from
-/// `emit_seq_of_definition` (that one keeps its own real ASN.1 name for
-/// XER wrapping when referenced elsewhere; a `SeqOf<T>` member/alternative
-/// is wrapped by its own field/alternative name instead, same as any other
-/// scalar member — never needs a name of its own).
+/// Generic SEQUENCE OF/SET OF wrapper — gives a *named* SEQUENCE OF (or SET
+/// OF) CHOICE alternative (`RustBackend::rust_seqof_alt_mtype`,
+/// `compiler/src/codegen/RustBackend.cpp`) a concrete `Asn1Value` impl
+/// without per-occurrence codegen. A bare `Vec<T>` can't get one
+/// generically: a blanket `impl<V: Asn1Value> Asn1Value for Vec<V>` would
+/// coherence-conflict with `Vec<u8>`'s own concrete OCTET STRING impl
+/// (E0119 — at most one unconstrained blanket impl per trait per crate).
+/// `SeqOf<T>` sidesteps that by being a distinct type nothing else
+/// implements, so one blanket impl below covers every element type — no
+/// per-occurrence synthesized wrapper struct needed the way a top-level
+/// named `X ::= SEQUENCE OF Y` still gets from `emit_seq_of_definition`
+/// (that one keeps its own real ASN.1 name for XER wrapping when
+/// referenced elsewhere; a `SeqOf<T>` alternative is wrapped by its own
+/// alternative name instead, same as any other scalar alternative — never
+/// needs a name of its own, hence `ber_natural_tag`/`xer_element_name`
+/// below being generic placeholders: a CHOICE alternative always dispatches
+/// through its own resolved tag via `ber_encode_tagged`/
+/// `ber_decode_into_tagged`, never these, so SET OF's own universal 17 tag
+/// vs SEQUENCE OF's 16 is immaterial here — both shapes wrap correctly).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SeqOf<T>(pub Vec<T>);
 
