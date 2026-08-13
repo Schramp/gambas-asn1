@@ -1327,13 +1327,11 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         if (m.is_seq_of()) {
             row.is_seq_of = true;
             const auto& elem = *std::get<ast::SequenceOfType>(m.body).element;
-            row.elem_mtype = cpp_type_for(elem);
             if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body))
                 row.elem_builtin = *ebt;
         } else if (m.is_set_of()) {
             row.is_set_of = true;
             const auto& elem = *std::get<ast::SetOfType>(m.body).element;
-            row.elem_mtype = cpp_type_for(elem);
             if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body))
                 row.elem_builtin = *ebt;
         }
