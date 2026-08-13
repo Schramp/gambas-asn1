@@ -109,11 +109,25 @@ fn is_xer_ws(c: u8) -> bool {
 pub struct XerReader<'a> {
     buf: &'a str,
     pos: usize,
+    lenient: bool,
 }
 
 impl<'a> XerReader<'a> {
     pub fn new(buf: &'a str) -> XerReader<'a> {
-        XerReader { buf, pos: 0 }
+        XerReader { buf, pos: 0, lenient: false }
+    }
+
+    /// Accepts the non-standard asn1c XER extensions `XerDecodeStream`'s
+    /// `XerDecodeMode::Lenient` does (`runtime/include/asn1cpp/codec/XerCodec.hpp`):
+    /// BOOLEAN as text content `"true"`/`"false"` (EXTENDED-XER §10) in
+    /// addition to the standard empty-element form, and BIT STRING as hex
+    /// pairs in addition to the standard '0'/'1' xmlbstring form.
+    pub fn new_lenient(buf: &'a str) -> XerReader<'a> {
+        XerReader { buf, pos: 0, lenient: true }
+    }
+
+    pub fn lenient(&self) -> bool {
+        self.lenient
     }
 
     pub fn at_end(&self) -> bool {
@@ -340,6 +354,20 @@ fn decode_sequence_xer_content<T: Default>(spec: &SequenceSpec<T>, r: &mut XerRe
 
 pub fn decode_sequence_xer<T: Default>(spec: &SequenceSpec<T>, xml: &str) -> Result<T, DecodeError> {
     let mut r = XerReader::new(xml);
+    r.consume_open_tag(spec.name)?;
+    let result = decode_sequence_xer_content(spec, &mut r)?;
+    r.consume_close_tag(spec.name)?;
+    Ok(result)
+}
+
+/// `decode_sequence_xer`, but accepting the non-standard asn1c extensions
+/// `XerReader::new_lenient` does (hex BIT STRING, text BOOLEAN) — not
+/// wired into any generated type's own `decode_xer` (codegen has no way to
+/// know which callers need leniency), so callers that do reach for this
+/// directly, spec in hand (e.g. cross-validating against an asn1c-authored
+/// fixture that uses those extensions).
+pub fn decode_sequence_xer_lenient<T: Default>(spec: &SequenceSpec<T>, xml: &str) -> Result<T, DecodeError> {
+    let mut r = XerReader::new_lenient(xml);
     r.consume_open_tag(spec.name)?;
     let result = decode_sequence_xer_content(spec, &mut r)?;
     r.consume_close_tag(spec.name)?;
