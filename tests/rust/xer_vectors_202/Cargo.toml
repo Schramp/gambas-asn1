@@ -1,0 +1,14 @@
+[package]
+name = "xer-vectors-202-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "gambas-asn1#324/#392: decode the real asn1c data-202 XER fixture (asn1c-style hex BIT STRING + text BOOLEAN, lenient mode) against compiler-generated 202-XIOTCertificate-OK.asn1 types, mirroring tests/seq/test_xer_vectors_202.cpp's field assertions and BER round-trip check. build.rs pulls the generated Certificate.rs/.../lib.rs from the directory named by ASN1CPP_RUST_XV202_GEN_DIR (set by tests/CMakeLists.txt's rust_xer_vectors_202) — needs that env var set, so this isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "xer_vectors_202"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-ber = { path = "../../../rust-runtime/ber" }
