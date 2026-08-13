@@ -1553,6 +1553,11 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind storage_kind = IntStorageKind::S64;
             std::optional<MemberTagSpec> resolved_tag;  // gambas-asn1#336/#347
+            // Mirrors SequenceMemberSpec's own is_seq_of/elem_builtin/
+            // elem_mtype trio — see ChoiceAlternativeSpec's doc (Backend.hpp).
+            bool is_seq_of = false;
+            std::optional<ast::BuiltinType> elem_builtin;
+            std::string elem_mtype;
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1579,8 +1584,19 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                 mbuiltin = *bt;
                 if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
             }
+            bool alt_is_seq_of = false;
+            std::optional<ast::BuiltinType> alt_elem_builtin;
+            std::string alt_elem_mtype;
+            if (m->is_seq_of()) {
+                alt_is_seq_of = true;
+                const auto& elem = *std::get<ast::SequenceOfType>(m->body).element;
+                alt_elem_mtype = cpp_type_for(elem);
+                if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body))
+                    alt_elem_builtin = *ebt;
+            }
             rows.push_back({ m->name, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag });
+                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag,
+                             alt_is_seq_of, alt_elem_builtin, alt_elem_mtype });
             ++auto_tag_num;
           }
         }
@@ -1615,6 +1631,9 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.mbuiltin = r.mbuiltin;
             alt.storage_kind = r.storage_kind;
             alt.resolved_tag = r.resolved_tag;
+            alt.is_seq_of = r.is_seq_of;
+            alt.elem_builtin = r.elem_builtin;
+            alt.elem_mtype = r.elem_mtype;
             spec.alternatives.push_back(std::move(alt));
         }
 
