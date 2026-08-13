@@ -418,6 +418,17 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
     // natural tag applies; set means an explicit/AUTOMATIC-assigned tag
     // overrides it (X.690 §8.14). Consumed by RustBackend's CHOICE analogue
     // of MemberAccess::TaggedScalar.
+
+    // SEQUENCE OF alternative support — mirrors SequenceMemberSpec's own
+    // is_seq_of/elem_builtin/elem_mtype trio exactly (see that struct's own
+    // doc for the field-by-field rationale, unchanged here): set for an
+    // alternative whose body is ast::SequenceOfType (e.g.
+    // `iRIPayloadSequence [0] SEQUENCE OF IRIPayload` — a real, common
+    // shape on the ETSI LI PS-PDU schema's own Payload CHOICE), regardless
+    // of whether the element is a direct builtin or composite.
+    bool        is_seq_of = false;
+    std::optional<ast::BuiltinType> elem_builtin;
+    std::string elem_mtype;
 };
 
 /// @brief Backend-agnostic decision for one CHOICE type (X.680 §28). The

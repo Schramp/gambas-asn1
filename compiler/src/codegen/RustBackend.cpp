@@ -738,6 +738,13 @@ bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
 ///        even reach it at all, real or stub. Same `unusable_alias_names_`
 ///        exception as sequence_member_covered.
 bool RustBackend::choice_alternative_covered(const ChoiceAlternativeSpec& a) const {
+    if (a.is_seq_of) {
+        // Same shape as sequence_member_covered's own is_seq_of branch
+        // (SEQUENCE OF has no OPTIONAL-suppression concept here — a CHOICE
+        // alternative is never itself optional).
+        if (a.elem_builtin) return builtin_ber_tag(*a.elem_builtin, a.elem_mtype) != nullptr;
+        return !unusable_alias_names_.count(a.elem_mtype) && !rust_mtype_is_unusable_vec(a.elem_mtype);
+    }
     if (!a.mbuiltin) return !unusable_alias_names_.count(a.mtype) && !rust_mtype_is_unusable_vec(a.mtype);
     return rust_tag_for_builtin_or_alias(a.mbuiltin, a.storage_kind, a.mtype) != nullptr;
 }
@@ -1282,6 +1289,40 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << std::format("        ber_decode_into: |_r| unimplemented!(\"alternative not yet supported\"),\n");
                 emit_stub_encode_closure("xer_encode");
                 os << std::format("        xer_decode_into: |_r| unimplemented!(\"alternative not yet supported\"),\n");
+                os << "    },\n";
+                continue;
+            }
+            if (a.is_seq_of) {
+                // SEQUENCE OF alternative (e.g. Payload's own
+                // `iRIPayloadSequence [0] SEQUENCE OF IRIPayload`) — same
+                // encode_seq_of/decode_seq_of family the SEQUENCE member
+                // SeqOf/TaggedSeqOf branches above use, just operating on
+                // the CHOICE alternative's bound inner value (`v`, already
+                // `&Vec<T>`/being constructed as `Vec<T>`) instead of a
+                // named struct field. choice_alternative_covered's is_seq_of
+                // branch already ruled out an element type this backend
+                // can't represent, so encode_seq_of/decode_seq_of_xer are
+                // always real here.
+                std::string tag_lit = format_tag_literal(*a.resolved_tag);
+                os << std::format("        tag: {},\n", tag_lit);
+                if (a.is_explicit) {
+                    emit_encode_closure("ber_encode", std::format(
+                        "asn1cpp_ber::writer::write_explicit(out, {}, |inner| asn1cpp_ber::sequence::encode_seq_of(inner, v));", tag_lit));
+                    os << "        ber_decode_into: |r| {\n";
+                    os << std::format("            let v = asn1cpp_ber::reader::read_explicit(r, {}, |inner| asn1cpp_ber::sequence::decode_seq_of(inner))?;\n", tag_lit);
+                } else {
+                    emit_encode_closure("ber_encode", std::format(
+                        "asn1cpp_ber::sequence::encode_seq_of_tagged(out, {}, v);", tag_lit));
+                    os << "        ber_decode_into: |r| {\n";
+                    os << std::format("            let v = asn1cpp_ber::sequence::decode_seq_of_tagged(r, {})?;\n", tag_lit);
+                }
+                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+                os << "        },\n";
+                emit_encode_closure("xer_encode", "asn1cpp_ber::sequence::encode_seq_of_xer(out, v);");
+                os << "        xer_decode_into: |r| {\n";
+                os << "            let v = asn1cpp_ber::sequence::decode_seq_of_xer(r)?;\n";
+                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+                os << "        },\n";
                 os << "    },\n";
                 continue;
             }
