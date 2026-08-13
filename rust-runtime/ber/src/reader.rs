@@ -1,9 +1,9 @@
 //! BER input — parses TLVs from a byte slice, zero-copy.
 //!
 //! Mirrors `BerReader` (`runtime/include/asn1cpp/codec/BerReader.hpp`):
-//! same `read_tlv`/`peek_tag` entry points, same definite-length-only scope
-//! (indefinite-length, X.690 §8.1.3.2, isn't implemented here; the C++ reader's
-//! `read_tlv()` slow path handles it, this doesn't yet).
+//! same `read_tlv`/`peek_tag` entry points, same definite- and
+//! indefinite-length support (X.690 §8.1.3.2 — see `Reader::read_tlv`'s
+//! own doc for how the two forms end up producing identical `.value` bytes).
 
 use crate::tag::{read_tag, Tag};
 use std::fmt;
@@ -41,6 +41,15 @@ impl std::error::Error for DecodeError {}
 pub struct Tlv<'a> {
     pub tag: Tag,
     pub value: &'a [u8],
+}
+
+/// Decoded length octets — definite (`len` bytes) or indefinite (X.690
+/// §8.1.3.2, a lone `0x80` length octet; `len` meaningless when
+/// `indefinite` is true, actual content extent found by scanning for the
+/// matching end-of-contents octets instead, see `Reader::read_tlv`).
+struct LengthResult {
+    len: usize,
+    indefinite: bool,
 }
 
 /// Cursor over a read-only byte slice.
@@ -82,22 +91,19 @@ impl<'a> Reader<'a> {
         read_tag(self.data, &mut p)
     }
 
-    /// Read and consume the length octets of a TLV (definite form only).
+    /// Read and consume the length octets of a TLV.
     /// @see X.690 §8.1.3 — Length octets.
-    fn read_length(&mut self) -> Result<usize, DecodeError> {
+    fn read_length(&mut self) -> Result<LengthResult, DecodeError> {
         let first = *self
             .data
             .get(self.pos)
             .ok_or_else(|| DecodeError::new("unexpected end of data reading length", self.pos))?;
         self.pos += 1;
-        if first & 0x80 == 0 {
-            return Ok(first as usize);
-        }
         if first == 0x80 {
-            return Err(DecodeError::new(
-                "indefinite-length encoding not supported",
-                self.pos - 1,
-            ));
+            return Ok(LengthResult { len: 0, indefinite: true });
+        }
+        if first & 0x80 == 0 {
+            return Ok(LengthResult { len: first as usize, indefinite: false });
         }
         let n = (first & 0x7F) as usize;
         if n > 8 {
@@ -114,14 +120,69 @@ impl<'a> Reader<'a> {
             len = (len << 8) | self.data[self.pos] as usize;
             self.pos += 1;
         }
-        Ok(len)
+        Ok(LengthResult { len, indefinite: false })
     }
 
-    /// Read and consume one complete definite-length TLV.
+    /// Read and consume one complete TLV — definite or indefinite length
+    /// (X.690 §8.1.3.2). Mirrors `BerReader::read_tlv`'s slow path
+    /// (`runtime/include/asn1cpp/codec/BerReader.hpp`): an indefinite-length
+    /// TLV's content runs until the matching end-of-contents octets (`00
+    /// 00`) at the *same* nesting depth — found by walking nested TLVs
+    /// (each definite one skipped by its own length, each nested
+    /// indefinite one incrementing depth), not by a byte count. `value`
+    /// ends up holding exactly the same bytes either way (definite or
+    /// indefinite), EOC octets excluded — so everything downstream of
+    /// `read_tlv` (which only ever inspects `.value` as "N content bytes to
+    /// walk") needs no indefinite-specific handling at all; unlike the C++
+    /// `TLV` struct, no `indefinite` flag is carried on `Tlv` here, nothing
+    /// downstream needs to know which form produced these bytes.
     pub fn read_tlv(&mut self) -> Result<Tlv<'a>, DecodeError> {
         let tag = read_tag(self.data, &mut self.pos)
             .ok_or_else(|| DecodeError::new("truncated or oversized tag", self.pos))?;
-        let len = self.read_length()?;
+        let len_r = self.read_length()?;
+        if len_r.indefinite {
+            // X.690 §8.1.3.2: indefinite-length is only valid for
+            // constructed encodings — a primitive value has no TLVs nested
+            // inside it to scan for an EOC marker within.
+            if !tag.constructed {
+                return Err(DecodeError::new(
+                    "indefinite-length encoding on primitive type",
+                    self.pos - 1,
+                ));
+            }
+            let start = self.pos;
+            let mut depth = 1usize;
+            while depth > 0 {
+                if self.data.len() - self.pos < 2 {
+                    return Err(DecodeError::new("unterminated indefinite-length encoding", self.pos));
+                }
+                if self.data[self.pos] == 0x00 && self.data[self.pos + 1] == 0x00 {
+                    self.pos += 2;
+                    depth -= 1;
+                } else {
+                    let inner_tag = read_tag(self.data, &mut self.pos)
+                        .ok_or_else(|| DecodeError::new("truncated or oversized tag", self.pos))?;
+                    let inner_len = self.read_length()?;
+                    if inner_len.indefinite {
+                        if !inner_tag.constructed {
+                            return Err(DecodeError::new(
+                                "indefinite-length encoding on primitive type",
+                                self.pos - 1,
+                            ));
+                        }
+                        depth += 1;
+                    } else {
+                        if self.data.len() - self.pos < inner_len.len {
+                            return Err(DecodeError::new("truncated nested value", self.pos));
+                        }
+                        self.pos += inner_len.len;
+                    }
+                }
+            }
+            let end = self.pos - 2;
+            return Ok(Tlv { tag, value: &self.data[start..end] });
+        }
+        let len = len_r.len;
         if self.data.len() - self.pos < len {
             return Err(DecodeError::new(
                 format!("need {} bytes but only {} remain", len, self.data.len() - self.pos),
@@ -192,8 +253,55 @@ mod tests {
     }
 
     #[test]
-    fn indefinite_length_is_rejected() {
+    fn indefinite_length_empty_sequence_decodes() {
+        // SEQUENCE (0x30), indefinite length (0x80), immediately EOC (0x00 0x00).
         let data = [0x30, 0x80, 0x00, 0x00];
+        let mut r = Reader::new(&data);
+        let tlv = r.read_tlv().unwrap();
+        assert_eq!(tlv.tag, Tag::universal(universal::SEQUENCE, true));
+        assert!(tlv.value.is_empty());
+        assert!(r.at_end());
+    }
+
+    #[test]
+    fn indefinite_length_sequence_with_nested_definite_tlv_decodes() {
+        // SEQUENCE (indefinite) containing one INTEGER 42 (definite), then EOC.
+        let data = [0x30, 0x80, 0x02, 0x01, 0x2A, 0x00, 0x00];
+        let mut r = Reader::new(&data);
+        let tlv = r.read_tlv().unwrap();
+        assert_eq!(tlv.value, &[0x02, 0x01, 0x2A]);
+        assert!(r.at_end());
+
+        // The captured content re-parses as an ordinary definite-length TLV.
+        let mut inner = Reader::new(tlv.value);
+        let inner_tlv = inner.read_tlv().unwrap();
+        assert_eq!(inner_tlv.tag, crate::integer::INTEGER_TAG);
+        assert_eq!(inner_tlv.value, &[0x2A]);
+    }
+
+    #[test]
+    fn indefinite_length_nested_indefinite_tlv_decodes() {
+        // Outer SEQUENCE (indefinite) containing an inner SEQUENCE
+        // (indefinite, empty), then outer EOC — exercises depth tracking.
+        let data = [0x30, 0x80, 0x30, 0x80, 0x00, 0x00, 0x00, 0x00];
+        let mut r = Reader::new(&data);
+        let tlv = r.read_tlv().unwrap();
+        assert_eq!(tlv.value, &[0x30, 0x80, 0x00, 0x00]);
+        assert!(r.at_end());
+    }
+
+    #[test]
+    fn indefinite_length_on_primitive_type_is_rejected() {
+        // OCTET STRING (0x04, primitive) can't be indefinite-length —
+        // X.690 §8.1.3.2 restricts that form to constructed encodings.
+        let data = [0x04, 0x80, 0x00, 0x00];
+        let mut r = Reader::new(&data);
+        assert!(r.read_tlv().is_err());
+    }
+
+    #[test]
+    fn indefinite_length_unterminated_is_rejected() {
+        let data = [0x30, 0x80, 0x02, 0x01, 0x2A]; // no EOC
         let mut r = Reader::new(&data);
         assert!(r.read_tlv().is_err());
     }
