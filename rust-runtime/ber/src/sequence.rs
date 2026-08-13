@@ -226,20 +226,22 @@ pub fn decode_seq_of_content<V: Asn1Value + Default>(content: &[u8]) -> Result<V
 /// XER SEQUENCE-OF content: X.693 §12 wraps each element in a tag named
 /// after the *element's own type*, all nested directly inside the member's
 /// own `<name>...</name>` (no extra container) — mirrors `SeqOfXerHandler`
-/// (`runtime/src/XerCodec.cpp`). `elem_name` is that per-element tag
-/// (codegen supplies the element type's own ASN.1 name), not the member's.
-pub fn encode_seq_of_xer<V: Asn1Value>(out: &mut String, items: &[V], elem_name: &str) {
+/// (`runtime/src/XerCodec.cpp`) reaching `spec.element->name` on the
+/// element's own `TypeDescriptor`. The element name comes from each item's
+/// own `Asn1Value::xer_element_name()` (builtin or composite, no
+/// distinction needed here) rather than a caller-supplied parameter — no
+/// codegen decision required for this to work for any element type.
+pub fn encode_seq_of_xer<V: Asn1Value>(out: &mut String, items: &[V]) {
     for item in items {
+        let elem_name = item.xer_element_name();
         crate::xer::write_open_tag(out, elem_name);
         item.xer_encode(out);
         crate::xer::write_close_tag(out, elem_name);
     }
 }
 
-pub fn decode_seq_of_xer<V: Asn1Value + Default>(
-    r: &mut XerReader,
-    elem_name: &str,
-) -> Result<Vec<V>, DecodeError> {
+pub fn decode_seq_of_xer<V: Asn1Value + Default>(r: &mut XerReader) -> Result<Vec<V>, DecodeError> {
+    let elem_name = V::default().xer_element_name();
     let mut result = Vec::new();
     loop {
         let peeked = r.peek_tag();
@@ -540,11 +542,11 @@ fn coords_values_ber_decode_into(v: &mut Coords, r: &mut Reader) -> Result<(), D
 }
 
 fn coords_values_xer_encode(v: &Coords, out: &mut String) {
-    encode_seq_of_xer(out, &v.values, "INTEGER");
+    encode_seq_of_xer(out, &v.values);
 }
 
 fn coords_values_xer_decode_into(v: &mut Coords, r: &mut XerReader) -> Result<(), DecodeError> {
-    v.values = decode_seq_of_xer(r, "INTEGER")?;
+    v.values = decode_seq_of_xer(r)?;
     Ok(())
 }
 
