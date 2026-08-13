@@ -273,6 +273,64 @@ pub fn decode_seq_of_xer_named<V: Asn1Value + Default>(r: &mut XerReader, name_o
     Ok(result)
 }
 
+/// Generic SEQUENCE OF/SET OF wrapper — gives a *named* SEQUENCE OF
+/// member/alternative (`RustBackend`'s `Generator::choice_alt_type_for`) a
+/// concrete `Asn1Value` impl without per-occurrence codegen. A bare
+/// `Vec<T>` can't get one generically: a blanket `impl<V: Asn1Value>
+/// Asn1Value for Vec<V>` would coherence-conflict with `Vec<u8>`'s own
+/// concrete OCTET STRING impl (E0119 — at most one unconstrained blanket
+/// impl per trait per crate). `SeqOf<T>` sidesteps that by being a
+/// distinct type nothing else implements, so one blanket impl below covers
+/// every element type — no per-occurrence synthesized wrapper struct
+/// needed the way a top-level named `X ::= SEQUENCE OF Y` still gets from
+/// `emit_seq_of_definition` (that one keeps its own real ASN.1 name for
+/// XER wrapping when referenced elsewhere; a `SeqOf<T>` member/alternative
+/// is wrapped by its own field/alternative name instead, same as any other
+/// scalar member — never needs a name of its own).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SeqOf<T>(pub Vec<T>);
+
+impl<T> std::ops::Deref for SeqOf<T> {
+    type Target = Vec<T>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> std::ops::DerefMut for SeqOf<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
+    fn ber_natural_tag(&self) -> Tag {
+        SEQUENCE_TAG
+    }
+
+    fn xer_element_name(&self) -> &'static str {
+        "SEQUENCE-OF"
+    }
+
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        encode_seq_of_content(out, &self.0);
+    }
+
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        self.0 = decode_seq_of_content(content)?;
+        Ok(())
+    }
+
+    fn xer_encode(&self, out: &mut String) {
+        encode_seq_of_xer(out, &self.0);
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        self.0 = decode_seq_of_xer(r)?;
+        Ok(())
+    }
+}
+
 /// SEQUENCE/SET member table — mirrors `SequenceSpec` (`TypeDescriptor.hpp`).
 ///
 /// `name` is the XER element tag for the whole SEQUENCE (mirrors
@@ -809,5 +867,42 @@ mod tests {
         let mut r = Reader::new(&buf);
         let result: Result<Vec<i64>, _> = decode_seq_of_tagged(&mut r, Tag::context(3, true));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn seq_of_ber_round_trips_through_the_trait() {
+        let v = SeqOf(vec![1i64, 2, 3]);
+        let mut out = Vec::new();
+        v.ber_encode(&mut out);
+        assert_eq!(out, vec![0x30, 0x09, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03]);
+
+        let mut r = Reader::new(&out);
+        let mut got = SeqOf::<i64>::default();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn seq_of_xer_round_trips_wrapped_by_hand() {
+        let v = SeqOf(vec![1i64, 2]);
+        let mut out = String::new();
+        crate::xer::write_open_tag(&mut out, "items");
+        v.xer_encode(&mut out);
+        crate::xer::write_close_tag(&mut out, "items");
+        assert_eq!(out, "<items><INTEGER>1</INTEGER><INTEGER>2</INTEGER></items>");
+
+        let mut r = XerReader::new(&out);
+        r.consume_open_tag("items").unwrap();
+        let mut got = SeqOf::<i64>::default();
+        got.xer_decode_into(&mut r).unwrap();
+        r.consume_close_tag("items").unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn seq_of_derefs_to_the_inner_vec() {
+        let v = SeqOf(vec![1i64, 2, 3]);
+        assert_eq!(v.len(), 3);
+        assert_eq!(&v[..], &[1, 2, 3]);
     }
 }
