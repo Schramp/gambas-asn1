@@ -79,12 +79,14 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     case ast::BuiltinType::ObjectDescriptor: return "asn1cpp_ber::strings::OBJECT_DESCRIPTOR_TAG";
     case ast::BuiltinType::UtcTime:          return "asn1cpp_ber::strings::UTC_TIME_TAG";
     case ast::BuiltinType::GeneralizedTime:  return "asn1cpp_ber::strings::GENERALIZED_TIME_TAG";
+    // An inline `ENUMERATED { ... }` member/element sets `mbuiltin` here
+    // like any other builtin (a referenced top-level ENUMERATED type takes
+    // the separate `!mbuiltin` TypeRef path instead, unaffected).
+    case ast::BuiltinType::Enumerated:       return "asn1cpp_ber::enumerated::ENUMERATED_TAG";
     // Not yet covered — no Asn1Value impl in rust-runtime/ber for these
     // kinds yet, so a member of any of them falls back to struct-shape-only
     // codegen (no encode()/decode() at all if any member is uncovered).
-    // Only ANY remains uncovered here (gambas-asn1#330 — separate, still
-    // open). Enumerated never reaches this switch — routed through the
-    // wholly separate emit_enumerated/EnumeratedSpec path.
+    // Only ANY remains uncovered here.
     default:                                 return nullptr;
     }
 }
