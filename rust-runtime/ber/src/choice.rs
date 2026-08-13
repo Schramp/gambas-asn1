@@ -29,13 +29,15 @@
 //! `MemberDescriptor::get_mut` — a CHOICE value doesn't exist yet until
 //! decode picks which alternative it is).
 //!
-//! `Choice` below is both the worked example and this module's own test
-//! subject (dogfooding, same role `Point` plays for `sequence.rs`) — real
-//! table-driven code, generated for real ASN.1 schemas by `RustBackend`.
+//! `Choice` (in `tests` below) is both the worked example and this module's
+//! own test subject (dogfooding, same role `Point` plays for `sequence.rs`)
+//! — real table-driven code, generated for real ASN.1 schemas by
+//! `RustBackend`. Test-only (`#[cfg(test)]`, not part of this crate's
+//! public API) — a worked example doesn't need to be a permanent public
+//! type just to be readable as one.
 
 use crate::reader::{DecodeError, Reader};
 use crate::tag::Tag;
-use crate::value::Asn1Value;
 use crate::writer::write_primitive;
 use crate::xer::{write_close_tag, write_open_tag, XerReader};
 
@@ -273,6 +275,12 @@ pub fn decode_choice_xer_from<T>(spec: &ChoiceSpec<T>, r: &mut XerReader) -> Res
     Err(DecodeError::new(format!("unrecognized CHOICE alternative element <{}>", ti.name), 0))
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::Asn1Value;
+
 /// `Choice ::= CHOICE { num INTEGER, data OCTET STRING }`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Choice {
@@ -363,9 +371,6 @@ impl Choice {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
     #[test]
     fn encodes_num_alternative() {
