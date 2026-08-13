@@ -252,8 +252,12 @@ int main() {
         check("native_int_type is unrelated; emit_builtin_alias: C++ produces a TypeDescriptor",
               cpp_os.find("asn_DEF_MyBytes") != std::string::npos,
               cpp_os);
-        check("emit_builtin_alias: Rust produces a real type alias (not a stub)",
-              rust_os.find("pub type MyBytes = Vec<u8>;") != std::string::npos,
+        check("emit_builtin_alias: Rust produces a real newtype wrapper (not a plain alias)",
+              rust_os.find("pub struct MyBytes(pub Vec<u8>);") != std::string::npos,
+              rust_os);
+        check("emit_builtin_alias: Rust newtype's own Asn1Value impl reports its own XER element name",
+              rust_os.find("impl asn1cpp_ber::value::Asn1Value for MyBytes {") != std::string::npos &&
+              rust_os.find("\"MyBytes\"") != std::string::npos,
               rust_os);
         check("emit_builtin_alias: Rust produces a real size-check function",
               rust_os.find("pub fn my_bytes_size_ok(v: &Vec<u8>) -> bool {") != std::string::npos &&

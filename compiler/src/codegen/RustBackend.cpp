@@ -425,22 +425,46 @@ std::string RustBackend::format_tag_literal(const TypeTagSpec& tag_spec) const {
                         tag_class_literal, tag_spec.number, tag_spec.constructed ? "true" : "false");
 }
 
-/// @brief Emit the Rust type alias (and size-check function, if constrained)
-///        for a builtin-alias type.
+/// @brief Emit the `Asn1Value` impl for a builtin-alias newtype (see
+///        `emit_builtin_alias_declaration`'s own doc for why it's a newtype
+///        and not a plain alias), plus a size-check function if constrained.
 /// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).
 /// @param os   Output stream to write to.
-/// @note Only one emit method exists on Backend for this construct (no
-///       separate hpp/cpp split, matching the C++ side: the alias itself is
-///       a one-line type declaration, not worth two methods). Emits the
-///       type alias, plus a size-check function when a SIZE constraint is
-///       present — the Rust analogue of the bounds baked into C++'s
-///       Constraints struct. FROM-alphabet constraints are not validated by
-///       the generated function (same "no runtime wiring yet" scope as the
-///       INTEGER pairing's hi_is_large note).
+/// @note The impl delegates every method straight to the wrapped native
+///       type's own `Asn1Value` impl (`self.0.method(...)`) except
+///       `xer_element_name`, which returns this alias's own real ASN.1 name
+///       (`spec.xer_name`) instead of the native type's fixed builtin
+///       keyword — the one thing a bare `Vec<u8>`/`String`/etc. can't
+///       provide per-alias. `spec.tag` (natural tag) is always present in
+///       practice (see `BuiltinAliasSpec`'s own doc — never CHOICE). The
+///       size-check function, when a SIZE constraint is present, is the
+///       Rust analogue of the bounds baked into C++'s Constraints struct.
+///       FROM-alphabet constraints are not validated by the generated
+///       function (same "no runtime wiring yet" scope as the INTEGER
+///       pairing's hi_is_large note).
 void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
-    os << std::format("pub type {} = {};\n\n", tname, native_builtin_type(spec.builtin_type));
+    os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", tname);
+    os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
+    os << std::format("        {}\n", spec.tag ? format_tag_literal(*spec.tag) : "self.0.ber_natural_tag()");
+    os << "    }\n\n";
+    os << "    fn xer_element_name(&self) -> &'static str {\n";
+    os << std::format("        \"{}\"\n", spec.xer_name);
+    os << "    }\n\n";
+    os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
+    os << "        self.0.ber_encode_content(out);\n";
+    os << "    }\n\n";
+    os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+    os << "        self.0.ber_decode_content(content)\n";
+    os << "    }\n\n";
+    os << "    fn xer_encode(&self, out: &mut String) {\n";
+    os << "        self.0.xer_encode(out);\n";
+    os << "    }\n\n";
+    os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+    os << "        self.0.xer_decode_into(r)\n";
+    os << "    }\n";
+    os << "}\n\n";
 
     if (!spec.has_size_constraint) return;
 
@@ -1512,16 +1536,35 @@ void RustBackend::emit_namespace_close(const std::string& name, TypeOutputSessio
     write_to_both(session, "\n}\n");
 }
 
-/// @brief Emit the declaration half of a builtin-alias type.
-/// @note Deliberately empty: RustBackend's emit_builtin_alias_definition
-///       already emits the complete `pub type X = ...;` alias plus any
-///       size-check function in one call — there is no separate
-///       declaration/definition split on the Rust side for this
-///       construct (documented on emit_builtin_alias_definition itself). Emitting
-///       anything here would duplicate that output.
+/// @brief Emit the declaration half of a builtin-alias type: a real newtype
+///        wrapping the builtin's own native Rust type, not a plain `pub type
+///        X = Y;` alias.
+/// @note A plain alias is just another name for the same Rust type, and
+///       trait impls are per-*type*, not per-alias — every named alias of
+///       the same builtin (e.g. two different `::= OCTET STRING` aliases)
+///       would share `Vec<u8>`'s own single `Asn1Value` impl, whose
+///       `xer_element_name()` can only ever return one fixed string,
+///       losing each alias's own X.693 §12 per-element XER identity (found
+///       on the real ETSI LI PS-PDU schema: `ProSeUEID ::= OCTET STRING`,
+///       used as a `SET OF ProSeUEID` element, XER-encoded each element as
+///       generic `<OCTET-STRING>` instead of `<ProSeUEID>`, diverging from
+///       asn1c/C++ ground truth). A newtype is a genuinely distinct Rust
+///       type, so it gets its own impl (`emit_builtin_alias_definition`) —
+///       same reasoning `emit_seq_of_declaration`'s own doc gives for the
+///       identical problem there. `Deref`/`DerefMut` to the native type
+///       keep ergonomic access (`.len()`, indexing, ...) working without
+///       needing `.0` everywhere.
 void RustBackend::emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, std::ostream& os) const {
-    (void)spec;
-    (void)os;
+    std::string native = native_builtin_type(spec.builtin_type);
+    os << "#[derive(Debug, Clone, Default, PartialEq)]\n";
+    os << std::format("pub struct {}(pub {});\n\n", spec.type_name, native);
+    os << std::format("impl std::ops::Deref for {} {{\n", spec.type_name);
+    os << std::format("    type Target = {};\n", native);
+    os << "    fn deref(&self) -> &Self::Target { &self.0 }\n";
+    os << "}\n\n";
+    os << std::format("impl std::ops::DerefMut for {} {{\n", spec.type_name);
+    os << "    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }\n";
+    os << "}\n\n";
 }
 
 void RustBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSession& session) const {
