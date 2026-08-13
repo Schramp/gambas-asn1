@@ -122,6 +122,57 @@ pub trait Asn1Value {
     fn xer_element_name(&self) -> &'static str {
         "Value"
     }
+
+    /// Render this value as one SEQUENCE OF/SET OF element (X.693 §12/§9.3)
+    /// — mirrors the dispatch the C++ runtime's `SeqOfXerHandler` does by
+    /// inspecting the element's `TypeDescriptor` (`edef.enum_spec`,
+    /// `spec.element_xer_tag`) before calling `codec.encode` generically.
+    /// The default wraps `xer_encode`'s content in `<name>...</name>`,
+    /// `name` being `name_override` when the collection declared one
+    /// (X.693 §12 identifier, e.g. `SEQUENCE OF id INTEGER`) or else this
+    /// value's own `xer_element_name()`. ENUMERATED and CHOICE override
+    /// this to forward straight to `xer_encode` with no wrapper at all —
+    /// both already write a complete self-delimiting tag of their own
+    /// (a bare `<value-name/>`, or the chosen alternative's own tag) and
+    /// X.693 always uses that in place of any wrapper/identifier, mirroring
+    /// `SeqOfXerHandler`'s `edef.enum_spec` early-out and `ChoiceXerHandler`
+    /// having no outer wrapper either. `()` (NULL) overrides similarly:
+    /// `NullXerHandler` self-closes exactly when asked to write under the
+    /// literal name `"NULL"`, which is what an unnamed NULL element's own
+    /// `edef.name` always is — `Generator::emit_sequence_definition`
+    /// (Generator.cpp) never populates `SeqOfSpec::elem_xer_name` for a
+    /// NULL element in the first place, so `name_override` is always
+    /// `None` for NULL in practice, but the override ignores it either way
+    /// for the same reason ENUMERATED/CHOICE do.
+    fn xer_encode_seqof_element(&self, out: &mut String, name_override: Option<&str>) {
+        let name = name_override.unwrap_or_else(|| self.xer_element_name());
+        crate::xer::write_open_tag(out, name);
+        self.xer_encode(out);
+        crate::xer::write_close_tag(out, name);
+    }
+
+    /// Decode counterpart of `xer_encode_seqof_element`. Default consumes
+    /// `<name>...</name>` (`name_override` or `xer_element_name()`) around
+    /// a normal `xer_decode_into`; ENUMERATED/CHOICE/NULL override to
+    /// forward straight to `xer_decode_into`, same reasoning as the encode
+    /// leg. Callers (`sequence::decode_seq_of_xer_named`) always invoke
+    /// this on an already-`V::default()`-constructed instance, so
+    /// `self.xer_element_name()` is safe to read before `xer_decode_into`
+    /// overwrites `self` with the real decoded value.
+    fn xer_decode_into_seqof_element(&mut self, r: &mut XerReader, name_override: Option<&str>) -> Result<(), DecodeError> {
+        let owned;
+        let name = match name_override {
+            Some(n) => n,
+            None => {
+                owned = self.xer_element_name().to_string();
+                owned.as_str()
+            }
+        };
+        r.consume_open_tag(name)?;
+        self.xer_decode_into(r)?;
+        r.consume_close_tag(name)?;
+        Ok(())
+    }
 }
 
 /// EXPLICIT tagging (X.690 §8.14.3), generic over any
@@ -377,6 +428,29 @@ impl Asn1Value for () {
 
     fn xer_decode_into(&mut self, _r: &mut XerReader) -> Result<(), DecodeError> {
         // Empty content — nothing to consume.
+        Ok(())
+    }
+
+    // X.693: a NULL SEQUENCE OF/SET OF element self-closes as `<NULL/>`,
+    // ignoring any declared X.693 §12 identifier (mirrors `NullXerHandler`
+    // self-closing exactly when asked to write under the literal name
+    // `"NULL"` — see the trait default's own doc for why `name_override`
+    // is always `None` here in practice anyway).
+    fn xer_encode_seqof_element(&self, out: &mut String, _name_override: Option<&str>) {
+        out.push_str("<NULL/>");
+    }
+
+    fn xer_decode_into_seqof_element(&mut self, r: &mut XerReader, _name_override: Option<&str>) -> Result<(), DecodeError> {
+        let ti = r.consume_tag();
+        if ti.name != "NULL" || ti.closing {
+            return Err(DecodeError::new("XER: expected <NULL>".to_string(), 0));
+        }
+        if !ti.self_closing {
+            let close = r.consume_tag();
+            if !close.closing || close.name != "NULL" {
+                return Err(DecodeError::new("XER: expected </NULL>".to_string(), 0));
+            }
+        }
         Ok(())
     }
 }

@@ -253,6 +253,19 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
         os << std::format("        *self = asn1cpp_ber::enumerated::xer_decode_enum(r, &{})?;\n", map_ident);
         os << "        Ok(())\n";
+        os << "    }\n\n";
+        // X.693 §9.3: as a SEQUENCE OF/SET OF element, ENUMERATED is a bare
+        // `<value-name/>` with no type-name wrapper and no X.693 §12
+        // identifier override — `xer_encode`/`xer_decode_into` above
+        // already write/read exactly that shape (xer_encode_enum/
+        // xer_decode_enum), so the seqof leg is a direct passthrough
+        // (mirrors SeqOfXerHandler's `edef.enum_spec` early-out,
+        // runtime/src/XerCodec.cpp).
+        os << "    fn xer_encode_seqof_element(&self, out: &mut String, _name_override: std::option::Option<&str>) {\n";
+        os << "        self.xer_encode(out);\n";
+        os << "    }\n\n";
+        os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_ber::xer::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << "        self.xer_decode_into(r)\n";
         os << "    }\n";
         os << "}\n\n";
     }
@@ -588,14 +601,25 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // Always real now — encode_seq_of_xer/decode_seq_of_xer (sequence.rs)
     // derive the per-element X.693 §12 tag from each element's own
     // Asn1Value::xer_element_name() generically, same as the member-level
-    // SeqOf/TaggedSeqOf emission (see that lambda's own doc) — no longer
-    // gated on spec.elem_xer_name (that field is C++-only now, unused here).
+    // SeqOf/TaggedSeqOf emission (see that lambda's own doc). When this
+    // type declared its own X.693 §12 element identifier
+    // (`SEQUENCE OF id INTEGER`), spec.elem_xer_name carries it through to
+    // the _named variant (ignored by ENUMERATED/CHOICE/NULL elements —
+    // see Asn1Value::xer_encode_seqof_element's own doc, rust-runtime/ber).
     os << "\n";
     os << "    fn xer_encode(&self, out: &mut String) {\n";
-    os << "        asn1cpp_ber::sequence::encode_seq_of_xer(out, &self.0);\n";
+    if (spec.elem_xer_name) {
+        os << std::format("        asn1cpp_ber::sequence::encode_seq_of_xer_named(out, &self.0, Some(\"{}\"));\n", *spec.elem_xer_name);
+    } else {
+        os << "        asn1cpp_ber::sequence::encode_seq_of_xer(out, &self.0);\n";
+    }
     os << "    }\n\n";
     os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
-    os << "        self.0 = asn1cpp_ber::sequence::decode_seq_of_xer(r)?;\n";
+    if (spec.elem_xer_name) {
+        os << std::format("        self.0 = asn1cpp_ber::sequence::decode_seq_of_xer_named(r, Some(\"{}\"))?;\n", *spec.elem_xer_name);
+    } else {
+        os << "        self.0 = asn1cpp_ber::sequence::decode_seq_of_xer(r)?;\n";
+    }
     os << "        Ok(())\n";
     os << "    }\n";
     os << "}\n\n";
@@ -1372,6 +1396,18 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
         os << std::format("        *self = asn1cpp_ber::choice::decode_choice_xer_from(&{}, r)?;\n", spec_ident);
         os << "        Ok(())\n";
+        os << "    }\n\n";
+        // X.693: as a SEQUENCE OF/SET OF element, a CHOICE has no wrapper
+        // of its own — the chosen alternative's own tag already serves as
+        // the element tag (`encode_choice_xer_into`/`decode_choice_xer_from`
+        // above write/read that tag directly), so the seqof leg is a
+        // direct passthrough (mirrors `ChoiceXerHandler` never adding an
+        // outer wrapper, runtime/src/XerCodec.cpp).
+        os << "    fn xer_encode_seqof_element(&self, out: &mut String, _name_override: std::option::Option<&str>) {\n";
+        os << "        self.xer_encode(out);\n";
+        os << "    }\n\n";
+        os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_ber::xer::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << "        self.xer_decode_into(r)\n";
         os << "    }\n";
         os << "}\n\n";
     }

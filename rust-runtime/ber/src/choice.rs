@@ -216,6 +216,17 @@ pub fn encode_choice_xer_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut Stri
     for alt in spec.alternatives {
         let mut inner = String::new();
         if (alt.xer_encode)(value, &mut inner) {
+            // Always paired, never self-closing, regardless of content —
+            // matches `NullXerHandler::encode`'s literal-name special case
+            // (`def.name == "NULL"`): a CHOICE alternative's wrapper name
+            // is the alt's own declared identifier (e.g. `"a"`), never
+            // literally `"NULL"`, so a NULL alternative encodes as
+            // `<a></a>` here, same as asn1c's own reference output.
+            // `decode_choice_xer_from` still *accepts* a self-closing
+            // `<a/>` on the way in (asn1c's own decoder is lenient there
+            // too) — the asymmetry is real, not a bug: round-tripping a
+            // self-closing input through this encoder legitimately
+            // produces different (but equivalent) output.
             write_open_tag(out, alt.name);
             out.push_str(&inner);
             write_close_tag(out, alt.name);
@@ -243,9 +254,19 @@ pub fn decode_choice_xer_from<T>(spec: &ChoiceSpec<T>, r: &mut XerReader) -> Res
     let ti = r.peek_tag();
     for alt in spec.alternatives {
         if ti.name == alt.name {
-            r.consume_open_tag(alt.name)?;
+            // Tolerate a self-closing alternative tag (`<name/>`) the same
+            // way `encode_choice_xer_into` produces one for empty content —
+            // matches every C++ XER handler's `self_closing` tolerance
+            // (e.g. `NullXerHandler::decode`), applied here at the CHOICE
+            // wrap level since `alt.xer_decode_into` is content-only.
+            let open = r.consume_tag();
+            if open.name != alt.name || open.closing {
+                return Err(DecodeError::new(format!("XER: expected <{}>", alt.name), 0));
+            }
             let result = (alt.xer_decode_into)(r)?;
-            r.consume_close_tag(alt.name)?;
+            if !open.self_closing {
+                r.consume_close_tag(alt.name)?;
+            }
             return Ok(result);
         }
     }
