@@ -281,7 +281,15 @@ fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut S
             }
             // TaggedSeqOf reuses SeqOf's xer_encode here,
             // same field-name-derived-tag reasoning as TaggedScalar above.
-            MemberAccess::SeqOf { xer_encode, .. } | MemberAccess::TaggedSeqOf { xer_encode, .. } => {
+            // Unlike Scalar, xer_encode alone can't signal absence (it
+            // writes into a plain &mut String, no is_present() to ask) —
+            // the outer <name>...</name> wrapper is this walker's own job,
+            // so it needs is_present checked explicitly before writing it,
+            // same role MemberAccess::SeqOf::is_present's own doc describes.
+            MemberAccess::SeqOf { xer_encode, is_present, .. } | MemberAccess::TaggedSeqOf { xer_encode, is_present, .. } => {
+                if !is_present(value) {
+                    continue;
+                }
                 out.push_str("    ");
                 write_open_tag(out, m.name);
                 xer_encode(value, out);
