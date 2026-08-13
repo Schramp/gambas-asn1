@@ -51,9 +51,8 @@ fn known_skip() -> HashSet<&'static str> {
 }
 
 /// Rust-only skip set (the C++ leg does not skip these — they pass there).
-/// Empty now: gambas-asn1#390 and gambas-asn1#391 are both fixed. Kept as
-/// a named, empty set (rather than removed) so a future Rust-only gap has
-/// an obvious place to land, same as the C++ leg's own KNOWN_SKIP pattern.
+/// Currently empty; kept as a named place for a future Rust-only gap to
+/// land, same as the C++ leg's own KNOWN_SKIP pattern above.
 fn rust_known_skip() -> HashSet<&'static str> {
     HashSet::new()
 }
