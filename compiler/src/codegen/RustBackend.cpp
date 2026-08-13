@@ -724,7 +724,7 @@ static std::string rust_seqof_alt_mtype(const std::string& mtype) {
 ///         safer than the general case to leave open, since the previous
 ///         design had an equivalent order dependency here too.
 bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
-    if (m.is_seq_of) {
+    if (m.is_seq_of || m.is_set_of) {
         if (m.elem_builtin) return builtin_ber_tag(*m.elem_builtin, m.elem_mtype) != nullptr;
         // A composite (TypeRef) element — SEQUENCE OF GcsePartyIdentity,
         // e.g. — is always real now, same reasoning as any other composite
@@ -733,6 +733,9 @@ bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
         // (real or stub, guaranteed regardless of processing order) they
         // work unchanged. Same two exclusions as a plain scalar composite
         // reference for the same reasons (see this function's own doc).
+        // SET OF (m.is_set_of) shares this whole branch with SEQUENCE OF —
+        // the only difference is the wire tag (SET_TAG vs SEQUENCE_TAG),
+        // decided at emission time, not a coverage question.
         return !unusable_alias_names_.count(m.elem_mtype) && !rust_mtype_is_unusable_vec(m.elem_mtype);
     }
     // ANY (X.208 legacy type) has no fixed tag of its own to drive the
@@ -860,7 +863,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // Human-readable reason baked into an Unsupported row's stub panic
     // message — best-effort diagnosability, not meant to be exhaustive.
     auto stub_reason = [](const SequenceMemberSpec& m) -> const char* {
-        if (m.is_seq_of) return "SEQUENCE OF element type/tag/optionality combination not yet supported";
+        if (m.is_seq_of || m.is_set_of) return "SEQUENCE OF/SET OF element type/tag/optionality combination not yet supported";
         if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any) return "untagged ANY has no tag to detect presence";
         if (!m.mbuiltin) return "OPTIONAL member of an untagged type has no tag to detect presence";
         return "builtin type/storage combination not yet supported";
@@ -878,7 +881,30 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 os << "        tag: asn1cpp_ber::sequence::SEQUENCE_TAG,\n";
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
                 os << std::format("        access: asn1cpp_ber::sequence::MemberAccess::Unsupported {{ reason: \"{}\" }},\n", stub_reason(m));
-            } else if (m.is_seq_of) {
+            } else if (m.is_seq_of || m.is_set_of) {
+                // SET OF (m.is_set_of) uses SET's own natural tag (X.680
+                // §26, universal 17) instead of SEQUENCE OF's (universal
+                // 16) — needed here (not read from m.resolved_tag, unlike
+                // the plain/natural branch below) only for the EXPLICIT
+                // branch's *inner* TLV: X.690 §8.14.3 wraps the value's own
+                // natural encoding unchanged, but compute_member_tag
+                // (Generator.cpp) never computes that natural tag when the
+                // member has its own override tag present — resolved_tag
+                // there holds the *outer* explicit wrapper, not the inner
+                // natural one. The IMPLICIT-override branch below needs
+                // neither (already substitutes a real override tag,
+                // independent of the underlying SEQUENCE/SET nature).
+                std::string natural_tag_lit = m.is_set_of ? "asn1cpp_ber::sequence::SET_TAG" : "asn1cpp_ber::sequence::SEQUENCE_TAG";
+                auto natural_encode_call = [&](const std::string& out_var, const std::string& items_expr) {
+                    return m.is_set_of
+                        ? std::format("asn1cpp_ber::sequence::encode_seq_of_tagged({}, {}, {})", out_var, natural_tag_lit, items_expr)
+                        : std::format("asn1cpp_ber::sequence::encode_seq_of({}, {})", out_var, items_expr);
+                };
+                auto natural_decode_call = [&](const std::string& r_var) {
+                    return m.is_set_of
+                        ? std::format("asn1cpp_ber::sequence::decode_seq_of_tagged({}, {})", r_var, natural_tag_lit)
+                        : std::format("asn1cpp_ber::sequence::decode_seq_of({})", r_var);
+                };
                 // X.693 §12's per-element XER tag comes from the element's
                 // own Asn1Value::xer_element_name() at runtime now (its
                 // fixed keyword for a builtin, its real ASN.1 type name for
@@ -926,11 +952,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << std::format("        optional: {},\n", m.optional ? "true" : "false");
                     os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedSeqOf {\n";
                     if (m.optional) {
-                        os << std::format("            ber_encode: |v, out| {{ if let Some(items) = &v.{0} {{ asn1cpp_ber::writer::write_explicit(out, {1}, |inner| asn1cpp_ber::sequence::encode_seq_of(inner, items)); }} }},\n", m.mname, tag_lit);
-                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::reader::read_explicit(r, {1}, |inner| asn1cpp_ber::sequence::decode_seq_of(inner))?); Ok(()) }},\n", m.mname, tag_lit);
+                        os << std::format("            ber_encode: |v, out| {{ if let Some(items) = &v.{0} {{ asn1cpp_ber::writer::write_explicit(out, {1}, |inner| {2}); }} }},\n", m.mname, tag_lit, natural_encode_call("inner", "items"));
+                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::reader::read_explicit(r, {1}, |inner| {2})?); Ok(()) }},\n", m.mname, tag_lit, natural_decode_call("inner"));
                     } else {
-                        os << std::format("            ber_encode: |v, out| asn1cpp_ber::writer::write_explicit(out, {1}, |inner| asn1cpp_ber::sequence::encode_seq_of(inner, &v.{0})),\n", m.mname, tag_lit);
-                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::reader::read_explicit(r, {1}, |inner| asn1cpp_ber::sequence::decode_seq_of(inner))?; Ok(()) }},\n", m.mname, tag_lit);
+                        os << std::format("            ber_encode: |v, out| asn1cpp_ber::writer::write_explicit(out, {1}, |inner| {2}),\n", m.mname, tag_lit, natural_encode_call("inner", std::format("&v.{}", m.mname)));
+                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::reader::read_explicit(r, {1}, |inner| {2})?; Ok(()) }},\n", m.mname, tag_lit, natural_decode_call("inner"));
                     }
                     emit_seqof_xer();
                     emit_is_present();
@@ -952,20 +978,28 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << "        },\n";
                 } else {
                     // The descriptor's own `tag` is the member's natural
-                    // SEQUENCE_TAG on the wire (encode_seq_of/decode_seq_of's
-                    // own default) — genuinely consulted now when optional,
-                    // same OPTIONAL tag-presence peek every other
+                    // tag on the wire — Generator::compute_member_tag
+                    // (Generator.cpp) already resolved this via
+                    // natural_tag_spec_for whenever there's no override
+                    // (tag_is_override=false), so m.resolved_tag is
+                    // guaranteed present here with the correct
+                    // SEQUENCE_TAG/SET_TAG-equivalent value already —
+                    // format it directly, same as the IMPLICIT-override
+                    // branch above, rather than re-deriving it from
+                    // is_seq_of/is_set_of. Genuinely consulted now when
+                    // optional, same OPTIONAL tag-presence peek every other
                     // MemberAccess kind already uses (decode_sequence_content,
                     // sequence.rs).
-                    os << "        tag: asn1cpp_ber::sequence::SEQUENCE_TAG,\n";
+                    std::string tag_lit = format_tag_literal(*m.resolved_tag);
+                    os << std::format("        tag: {},\n", tag_lit);
                     os << std::format("        optional: {},\n", m.optional ? "true" : "false");
                     os << "        access: asn1cpp_ber::sequence::MemberAccess::SeqOf {\n";
                     if (m.optional) {
-                        os << std::format("            ber_encode: |v, out| {{ if let Some(items) = &v.{0} {{ asn1cpp_ber::sequence::encode_seq_of(out, items); }} }},\n", m.mname);
-                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::sequence::decode_seq_of(r)?); Ok(()) }},\n", m.mname);
+                        os << std::format("            ber_encode: |v, out| {{ if let Some(items) = &v.{0} {{ asn1cpp_ber::sequence::encode_seq_of_tagged(out, {1}, items); }} }},\n", m.mname, tag_lit);
+                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::sequence::decode_seq_of_tagged(r, {1})?); Ok(()) }},\n", m.mname, tag_lit);
                     } else {
-                        os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of(out, &v.{}),\n", m.mname);
-                        os << std::format("            ber_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of(r)?; Ok(()) }},\n", m.mname);
+                        os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_tagged(out, {1}, &v.{0}),\n", m.mname, tag_lit);
+                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::sequence::decode_seq_of_tagged(r, {1})?; Ok(()) }},\n", m.mname, tag_lit);
                     }
                     emit_seqof_xer();
                     emit_is_present();
