@@ -119,50 +119,6 @@ static const char* rust_tag_for_builtin_or_alias(std::optional<ast::BuiltinType>
     return builtin_ber_tag(*mbuiltin, mtype);
 }
 
-/// @brief Element type's own ASN.1 keyword, used as the per-element XER tag
-///        inside a SEQUENCE OF member's own `<name>...</name>` wrapper
-///        (X.693 §12 / SeqOfXerHandler, runtime/src/XerCodec.cpp — no
-///        declared element identifier means the element's own type name is
-///        the tag). "OCTET STRING"/"OBJECT IDENTIFIER" contain spaces
-///        (invalid XML tag names) — hyphenated here; never actually
-///        reachable today since OctetString/ObjectIdentifier aren't emitted
-///        by builtin_ber_tag as seq-of *element* candidates requiring XER
-///        (BER-only elements still get a table, just no encode_xer()/
-///        decode_xer() on the enclosing type — same as any other
-///        not-XER-ready member). Also doubles as the *_tagged primitives'
-///        string-kind name parameter (read_char_string's error-message kind).
-static const char* builtin_xer_name(ast::BuiltinType bt) {
-    switch (bt) {
-    case ast::BuiltinType::Integer:           return "INTEGER";
-    case ast::BuiltinType::Boolean:            return "BOOLEAN";
-    case ast::BuiltinType::Null:               return "NULL";
-    case ast::BuiltinType::Real:               return "REAL";
-    case ast::BuiltinType::BitString:          return "BIT-STRING";
-    case ast::BuiltinType::ObjectIdentifier:   return "OBJECT-IDENTIFIER";
-    case ast::BuiltinType::RelativeOid:        return "RELATIVE-OID";
-    case ast::BuiltinType::OctetString:        return "OCTET-STRING";
-    case ast::BuiltinType::Ia5String:          return "IA5String";
-    case ast::BuiltinType::Utf8String:         return "UTF8String";
-    case ast::BuiltinType::NumericString:      return "NumericString";
-    case ast::BuiltinType::PrintableString:    return "PrintableString";
-    case ast::BuiltinType::T61String:          return "T61String";
-    case ast::BuiltinType::VisibleString:      return "VisibleString";
-    case ast::BuiltinType::GeneralString:      return "GeneralString";
-    case ast::BuiltinType::GraphicString:      return "GraphicString";
-    case ast::BuiltinType::UniversalString:    return "UniversalString";
-    case ast::BuiltinType::BmpString:          return "BMPString";
-    case ast::BuiltinType::VideotexString:     return "VideotexString";
-    case ast::BuiltinType::ObjectDescriptor:   return "ObjectDescriptor";
-    case ast::BuiltinType::UtcTime:            return "UTCTime";
-    case ast::BuiltinType::GeneralizedTime:    return "GeneralizedTime";
-    // Same uncovered set as builtin_ber_tag's default (only Any,
-    // gambas-asn1#330) — this fallback name is never actually reached in practice
-    // since builtin_xer_name is only called for kinds builtin_ber_tag
-    // already confirmed are covered (see call sites).
-    default:                                    return "Value";
-    }
-}
-
 // SIZE-check function generators (emit_builtin_alias_
 // definition, emit_member_type_descriptor) generically emit `v.len()`
 // for every SIZE-constrained builtin type, assuming a `Vec<T>`/`String`-
@@ -280,6 +236,9 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", tname);
         os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
         os << "        asn1cpp_ber::enumerated::ENUMERATED_TAG\n";
+        os << "    }\n\n";
+        os << "    fn xer_element_name(&self) -> &'static str {\n";
+        os << std::format("        \"{}\"\n", spec.xer_name);
         os << "    }\n\n";
         os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
         os << "        asn1cpp_ber::enumerated::encode_enumerated_content(out, *self as i64);\n";
@@ -617,6 +576,9 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
     os << std::format("        {}\n", tag_expr);
     os << "    }\n\n";
+    os << "    fn xer_element_name(&self) -> &'static str {\n";
+    os << std::format("        \"{}\"\n", spec.xer_name);
+    os << "    }\n\n";
     os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
     os << "        asn1cpp_ber::sequence::encode_seq_of_content(out, &self.0);\n";
     os << "    }\n\n";
@@ -864,30 +826,17 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
                 os << std::format("        access: asn1cpp_ber::sequence::MemberAccess::Unsupported {{ reason: \"{}\" }},\n", stub_reason(m));
             } else if (m.is_seq_of) {
-                // X.693 §12's per-element XER tag: the builtin's own fixed
-                // keyword for a direct builtin element, or the element's
-                // real ASN.1 type name (elem_asn1_name — its *Rust* name,
-                // elem_mtype, may be case-converted, not necessarily the
-                // same string) for a composite (TypeRef) one. BER is
-                // always real regardless (encode_seq_of/decode_seq_of need
-                // neither) — only a genuinely anonymous inline composite
-                // element (no TypeRef, so no elem_asn1_name either) still
-                // has no valid name to use, so XER for that one row stays
-                // an explicit stub, same "not every leg has to be real
-                // together" precedent ExplicitAny/Unsupported already set
-                // elsewhere in this file.
+                // X.693 §12's per-element XER tag comes from the element's
+                // own Asn1Value::xer_element_name() at runtime now (its
+                // fixed keyword for a builtin, its real ASN.1 type name for
+                // a composite one) — encode_seq_of_xer/decode_seq_of_xer
+                // (sequence.rs) derive it internally, generic over any
+                // element type, so this row is always real for both BER
+                // and XER regardless of element kind, no per-row decision
+                // needed here at all.
                 auto emit_seqof_xer = [&]() {
-                    std::optional<std::string> elem_xer_name;
-                    if (m.elem_builtin) elem_xer_name = builtin_xer_name(*m.elem_builtin);
-                    else if (m.elem_asn1_name) elem_xer_name = *m.elem_asn1_name;
-
-                    if (elem_xer_name) {
-                        os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}, \"{}\"),\n", m.mname, *elem_xer_name);
-                        os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, *elem_xer_name);
-                    } else {
-                        os << "            xer_encode: |_, _| unimplemented!(\"XER leg not yet wired for an anonymous composite-element SEQUENCE OF/SET OF member\"),\n";
-                        os << "            xer_decode_into: |_, _| unimplemented!(\"XER leg not yet wired for an anonymous composite-element SEQUENCE OF/SET OF member\"),\n";
-                    }
+                    os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}),\n", m.mname);
+                    os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r)?; Ok(()) }},\n", m.mname);
                 };
                 // Prefer the member's real resolved tag
                 // (IMPLICIT override) over SEQUENCE-OF's natural SEQUENCE_TAG,
@@ -1065,6 +1014,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", spec.type_name);
         os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
         os << std::format("        {}.tag\n", spec_ident);
+        os << "    }\n\n";
+        os << "    fn xer_element_name(&self) -> &'static str {\n";
+        os << std::format("        \"{}\"\n", spec.xer_name);
         os << "    }\n\n";
         os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
         os << std::format("        asn1cpp_ber::sequence::encode_sequence_content(&{}, self, out);\n", spec_ident);
@@ -1390,6 +1342,9 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", spec.type_name);
         os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
         os << "        unreachable!(\"CHOICE has no natural tag (X.680 §28) — never invoked, a CHOICE-typed member/alternative is always EXPLICIT-wrapped when tagged (X.680 §30.6)\")\n";
+        os << "    }\n\n";
+        os << "    fn xer_element_name(&self) -> &'static str {\n";
+        os << std::format("        \"{}\"\n", spec.xer_name);
         os << "    }\n\n";
         // CHOICE has no separate content representation to hand back
         // (its wire form already IS "whichever alternative's own tag +

@@ -361,20 +361,17 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // simply unset (nullopt) in the composite case, same "optional
     // discriminant" shape `mbuiltin` above uses for a plain scalar member,
     // just one level down. `elem_mtype` is always populated either way
-    // (the element's own native storage type, backend-specific).
-    // `elem_asn1_name` is populated only when the element is a TypeRef to
-    // a named type (X.693 §12's per-element XER tag needs the element's
-    // *original ASN.1* name, which `elem_mtype` — a backend-specific,
-    // possibly case-converted identifier — doesn't reliably carry);
-    // nullopt for a builtin element (X.693 naming for those goes through
-    // the builtin's own fixed keyword instead) or a genuinely anonymous
-    // inline composite element (rare, not synthesized a name here). A
-    // backend without SEQUENCE OF table support can ignore all four
+    // (the element's own native storage type, backend-specific). No
+    // element-name field: a backend that needs the element's own X.693
+    // per-element XER tag gets it generically from the element *value*
+    // itself at runtime (e.g. RustBackend's Asn1Value::xer_element_name),
+    // the same way C++'s SeqOfXerHandler reaches its element's own
+    // TypeDescriptor::name — not duplicated here as extracted table data.
+    // A backend without SEQUENCE OF table support can ignore all three
     // fields; `is_seq_of` false leaves them meaningless.
     bool        is_seq_of = false;
     std::optional<ast::BuiltinType> elem_builtin;
     std::string elem_mtype;      // element's own native storage type (backend-specific)
-    std::optional<std::string> elem_asn1_name;  // element's own ASN.1 type name, TypeRef elements only
     bool        optional = false;
     bool        has_default = false;
     std::string ops;            // pre-formatted Ops initializer, e.g. "{ &_Ops_X_Y::check, ... }"

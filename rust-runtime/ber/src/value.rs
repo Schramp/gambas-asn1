@@ -109,6 +109,19 @@ pub trait Asn1Value {
     fn is_present(&self) -> bool {
         true
     }
+
+    /// This value's own X.693 §12 element name — the tag a SEQUENCE OF/SET
+    /// OF wraps each element in (`sequence::encode_seq_of_xer`/
+    /// `decode_seq_of_xer`). Mirrors C++'s `SeqOfXerHandler` reaching
+    /// `spec.element->name` on the element's own `TypeDescriptor` — the
+    /// same generic "ask the value for its own name" access, done via a
+    /// trait method here since Rust has no descriptor object to point at.
+    /// A builtin type's own fixed X.680 keyword (e.g. `"INTEGER"`) for a
+    /// direct builtin element; a generated composite type overrides this
+    /// with its own real ASN.1 type name.
+    fn xer_element_name(&self) -> &'static str {
+        "Value"
+    }
 }
 
 /// EXPLICIT tagging (X.690 §8.14.3), generic over any
@@ -167,6 +180,10 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
         V::default().ber_natural_tag()
     }
 
+    fn xer_element_name(&self) -> &'static str {
+        V::default().xer_element_name()
+    }
+
     // Not reached: `ber_encode_tagged`/`ber_decode_into_tagged` are
     // overridden below, since `None` must write no TLV at all (X.690 §8.1
     // has no "empty header" — content-only can't express "no header").
@@ -216,6 +233,10 @@ impl Asn1Value for i64 {
         crate::integer::INTEGER_TAG
     }
 
+    fn xer_element_name(&self) -> &'static str {
+        "INTEGER"
+    }
+
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&crate::integer::encode_integer_bytes(*self));
     }
@@ -248,6 +269,10 @@ impl Asn1Value for u64 {
         crate::integer::INTEGER_TAG
     }
 
+    fn xer_element_name(&self) -> &'static str {
+        "INTEGER"
+    }
+
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&crate::integer::encode_integer_bytes_u64(*self));
     }
@@ -262,6 +287,10 @@ impl Asn1Value for u64 {
 impl Asn1Value for i128 {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::integer::INTEGER_TAG
+    }
+
+    fn xer_element_name(&self) -> &'static str {
+        "INTEGER"
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
@@ -283,6 +312,10 @@ impl Asn1Value for i128 {
 impl Asn1Value for bool {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::boolean::BOOLEAN_TAG
+    }
+
+    fn xer_element_name(&self) -> &'static str {
+        "BOOLEAN"
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
@@ -326,6 +359,10 @@ impl Asn1Value for () {
         crate::null::NULL_TAG
     }
 
+    fn xer_element_name(&self) -> &'static str {
+        "NULL"
+    }
+
     fn ber_encode_content(&self, _out: &mut Vec<u8>) {
         // Empty content — nothing to write.
     }
@@ -352,6 +389,10 @@ impl Asn1Value for () {
 impl Asn1Value for Vec<u8> {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::octet_string::OCTET_STRING_TAG
+    }
+
+    fn xer_element_name(&self) -> &'static str {
+        "OCTET-STRING"
     }
 
     // OCTET STRING content octets *are* the value bytes — no encoding step.
@@ -407,6 +448,10 @@ impl Asn1Value for Vec<u8> {
 impl Asn1Value for crate::bit_string::BitString {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::bit_string::BIT_STRING_TAG
+    }
+
+    fn xer_element_name(&self) -> &'static str {
+        "BIT-STRING"
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
@@ -471,6 +516,10 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
         crate::oid::OBJECT_IDENTIFIER_TAG
     }
 
+    fn xer_element_name(&self) -> &'static str {
+        "OBJECT-IDENTIFIER"
+    }
+
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
         crate::oid::encode_object_identifier_content(out, self);
     }
@@ -518,6 +567,10 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
         crate::relative_oid::RELATIVE_OID_TAG
     }
 
+    fn xer_element_name(&self) -> &'static str {
+        "RELATIVE-OID"
+    }
+
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
         crate::relative_oid::encode_relative_oid_content(out, self);
     }
@@ -563,6 +616,10 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
 impl Asn1Value for f64 {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::real::REAL_TAG
+    }
+
+    fn xer_element_name(&self) -> &'static str {
+        "REAL"
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
@@ -635,6 +692,10 @@ impl Asn1Value for String {
         crate::strings::IA5_STRING_TAG
     }
 
+    fn xer_element_name(&self) -> &'static str {
+        "IA5String"
+    }
+
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.as_bytes());
     }
@@ -670,6 +731,10 @@ impl<T: Asn1Value> Asn1Value for Box<T> {
 
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         (**self).ber_natural_tag()
+    }
+
+    fn xer_element_name(&self) -> &'static str {
+        (**self).xer_element_name()
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
