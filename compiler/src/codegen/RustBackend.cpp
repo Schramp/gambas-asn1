@@ -643,6 +643,26 @@ static bool rust_mtype_is_unusable_vec(const std::string& mtype) {
     return mtype.rfind("Vec<", 0) == 0 && mtype != "Vec<u8>";
 }
 
+/// @brief A CHOICE alternative's `mtype`, rewritten to wrap a bare
+///        `Vec<T>` — `rust_mtype_is_unusable_vec`'s own doc: the only
+///        source of that shape is `cpp_type_for`'s is_seq_of/is_set_of
+///        branches (both format identically via `wrap_collection_type`,
+///        indistinguishable from the text alone — this covers a SET OF
+///        alternative too, not just SEQUENCE OF; harmless, since a CHOICE
+///        alternative always dispatches through its own resolved tag, see
+///        `SeqOf<T>`'s own doc) — in the generic
+///        `asn1cpp_ber::sequence::SeqOf<T>` (rust-runtime/ber/src/sequence.rs),
+///        whose single blanket `impl<T: Asn1Value + Default> Asn1Value for
+///        SeqOf<T>` gives it a real impl `Vec<T>` itself can't
+///        (coherence-blocked). A SEQUENCE member keeps its own raw `Vec<T>`
+///        field via `MemberAccess::SeqOf` unaffected — this only applies
+///        where `choice_alternative_covered` consults it, CHOICE
+///        alternatives. Every other mtype passes through unchanged.
+static std::string rust_seqof_alt_mtype(const std::string& mtype) {
+    if (!rust_mtype_is_unusable_vec(mtype)) return mtype;
+    return std::format("asn1cpp_ber::sequence::SeqOf<{}>", mtype.substr(4, mtype.size() - 5));
+}
+
 /// @brief Emit the Rust struct declaration for a SEQUENCE/SET type.
 /// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
 /// @param os   Output stream to write to.
@@ -738,7 +758,13 @@ bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
 ///        even reach it at all, real or stub. Same `unusable_alias_names_`
 ///        exception as sequence_member_covered.
 bool RustBackend::choice_alternative_covered(const ChoiceAlternativeSpec& a) const {
-    if (!a.mbuiltin) return !unusable_alias_names_.count(a.mtype) && !rust_mtype_is_unusable_vec(a.mtype);
+    // A SEQUENCE OF or SET OF alternative always covers here
+    // (rust_seqof_alt_mtype's own doc — both shapes format identically):
+    // its mtype gets wrapped in SeqOf<T> at every emission site below, so
+    // the raw "Vec<T>" text rust_mtype_is_unusable_vec would otherwise flag
+    // is never actually a problem for a CHOICE alternative.
+    if (rust_mtype_is_unusable_vec(a.mtype)) return true;
+    if (!a.mbuiltin) return !unusable_alias_names_.count(a.mtype);
     return rust_tag_for_builtin_or_alias(a.mbuiltin, a.storage_kind, a.mtype) != nullptr;
 }
 
@@ -1115,7 +1141,7 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
             throw std::runtime_error(std::format(
                 "RustBackend: CHOICE '{}' — alternatives '{}' and '{}' both map to Rust variant '{}'",
                 spec.type_name, it->second, a.asn1_name, vname));
-        os << std::format("    {}({}),\n", vname, a.mtype);
+        os << std::format("    {}({}),\n", vname, rust_seqof_alt_mtype(a.mtype));
     }
     // A `...`-marked CHOICE (X.680 §29.6) promises a future schema revision
     // may add alternatives this compiler run never saw. Every real
@@ -1165,7 +1191,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     bool single_alt = spec.alternatives.size() == 1 && spec.ext_at < 0;
     for (const auto& a : spec.alternatives) {
         std::string fname = escape(std::format("{}_get_{}", prefix, a.accessor_name));
-        os << std::format("pub fn {}(x: &mut {}) -> &mut {} {{\n", fname, spec.type_name, a.mtype);
+        os << std::format("pub fn {}(x: &mut {}) -> &mut {} {{\n", fname, spec.type_name, rust_seqof_alt_mtype(a.mtype));
         if (single_alt) {
             os << std::format("    let {}::{}(v) = x;\n    v\n",
                                spec.type_name, variant_name(*this, a.asn1_name));
@@ -1295,7 +1321,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << std::format("        tag: {},\n", etag);
                 emit_encode_closure("ber_encode", std::format("asn1cpp_ber::value::encode_explicit(out, {}, v);", etag));
                 os << "        ber_decode_into: |r| {\n";
-                os << std::format("            let v: {} = asn1cpp_ber::value::decode_explicit(r, {})?;\n", a.mtype, etag);
+                os << std::format("            let v: {} = asn1cpp_ber::value::decode_explicit(r, {})?;\n", rust_seqof_alt_mtype(a.mtype), etag);
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
             } else {
@@ -1318,14 +1344,14 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << std::format("        tag: {},\n", tag_lit);
                 emit_encode_closure("ber_encode", std::format("asn1cpp_ber::value::Asn1Value::ber_encode_tagged(v, {}, out);", tag_lit));
                 os << "        ber_decode_into: |r| {\n";
-                os << std::format("            let mut v: {} = Default::default();\n", a.mtype);
+                os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
                 os << std::format("            asn1cpp_ber::value::Asn1Value::ber_decode_into_tagged(&mut v, r, {})?;\n", tag_lit);
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
             }
             emit_encode_closure("xer_encode", "asn1cpp_ber::value::Asn1Value::xer_encode(v, out);");
             os << "        xer_decode_into: |r| {\n";
-            os << std::format("            let mut v: {} = Default::default();\n", a.mtype);
+            os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
             os << "            asn1cpp_ber::value::Asn1Value::xer_decode_into(&mut v, r)?;\n";
             os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
             os << "        },\n";
