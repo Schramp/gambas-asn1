@@ -89,25 +89,6 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
     return backend_.native_builtin_type(BT::OctetString);
 }
 
-/// @brief cpp_type_for, specialized for a CHOICE alternative — the one case
-///        where a SEQUENCE OF alternative needs a different resolved type
-///        than cpp_type_for's own generic is_seq_of handling would give it,
-///        for backends without a generic collection type to reach for
-///        (Backend::seqof_alternative_wrapper's own doc explains why; C++
-///        never takes this branch, VectorSeqOf<T> already covers it via
-///        cpp_type_for unchanged). The element's own resolved type still
-///        comes from cpp_type_for (handles a TypeRef, an anonymous inline
-///        composite, or another builtin uniformly) — only the outer
-///        collection wrapper differs.
-std::string Generator::choice_alt_type_for(const ast::TypeDef& m) {
-    if (m.is_seq_of()) {
-        const auto& elem = *std::get<ast::SequenceOfType>(m.body).element;
-        std::string wrapped = backend_.seqof_alternative_wrapper(cpp_type_for(elem));
-        if (!wrapped.empty()) return wrapped;
-    }
-    return cpp_type_for(m);
-}
-
 // Returns true if the member encodes as a constructed TLV (SEQUENCE, SET, CHOICE, OF).
 // Follows one level of TypeRef so that [n] IMPLICIT ReferencedChoice is also caught.
 bool Generator::member_is_constructed(const ast::TypeDef& m) const {
@@ -1536,7 +1517,7 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
     std::vector<ChoiceAlternativeSpec> alts;
     for (const auto* m : canon_members) {
         ChoiceAlternativeSpec alt;
-        alt.mtype = choice_alt_type_for(*m);
+        alt.mtype = cpp_type_for(*m);
         alt.accessor_name = backend_.member_name(m->name,
             {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
              "s_alternatives", "s_alternative_count"});
@@ -1582,7 +1563,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::string mname = backend_.member_name(m->name);
             auto [resolved_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, session);
-            std::string alt_type = choice_alt_type_for(*m);
+            std::string alt_type = cpp_type_for(*m);
             int tag_ctx_num = -1;
             ast::Tag full_tag = m->tag;
             if (apply_auto_tags && !m->tag.present()) {
