@@ -131,6 +131,10 @@ macro_rules! char_string_type {
                 $tag_const
             }
 
+            fn xer_element_name(&self) -> &'static str {
+                $asn1_name
+            }
+
             fn ber_encode_content(&self, out: &mut Vec<u8>) {
                 out.extend_from_slice(self.0.as_bytes());
             }

@@ -1330,8 +1330,6 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             row.elem_mtype = cpp_type_for(elem);
             if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body))
                 row.elem_builtin = *ebt;
-            else if (auto* etr = std::get_if<ast::TypeRef>(&elem.body))
-                row.elem_asn1_name = etr->type_name;
         }
         if (is_class_type(m))
             row.member_type_in_cycle = member_type_in_cycle(m, def.name);
