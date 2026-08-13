@@ -1450,6 +1450,34 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_XV70_GEN_DIR=${RUST_XV70_GEN_DIR}")
 endif()
 
+# Rust leg of the real asn1c data-202 XER-vector fixture cross-validation —
+# same schema (202-XIOTCertificate-OK.asn1), same real ground-truth s1.xer
+# fixture, same field-value/BER-round-trip assertions as the C++
+# xer_vectors_202 test above; see tests/rust/xer_vectors_202/src/main.rs for
+# the full port. Own output directory, same reasoning as RUST_XV70_GEN_DIR
+# above.
+set(RUST_XV202_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_xer_vectors_202)
+add_custom_command(
+    OUTPUT  ${RUST_XV202_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_XV202_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/202-XIOTCertificate-OK.asn1
+                                   -o ${RUST_XV202_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/202-XIOTCertificate-OK.asn1
+    COMMENT "Generating Rust from 202-XIOTCertificate-OK.asn1"
+)
+add_custom_target(gen_rust_xer_vectors_202 ALL DEPENDS ${RUST_XV202_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_xer_vectors_202
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/xer_vectors_202/Cargo.toml --
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-202)
+    set_tests_properties(rust_xer_vectors_202 PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_XV202_GEN_DIR=${RUST_XV202_GEN_DIR}")
+endif()
+
 # gambas-asn1#309: Rust-codegen sweep across tests/asn1/*.asn1 — the Rust
 # equivalent of validate_parser.py's C++ parser-conformance sweep (that one
 # lives outside this repo, asn1cpp-validation-tools/, because it also needs
