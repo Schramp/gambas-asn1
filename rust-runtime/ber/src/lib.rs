@@ -51,7 +51,5 @@ pub mod value;
 pub mod writer;
 pub mod xer;
 
-pub use choice::Choice;
 pub use reader::{DecodeError, Reader, Tlv};
-pub use sequence::Point;
 pub use tag::{Tag, TagClass};
