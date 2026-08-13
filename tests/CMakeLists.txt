@@ -1422,6 +1422,34 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_BV62_GEN_DIR=${RUST_BV62_GEN_DIR}")
 endif()
 
+# gambas-asn1#324: Rust leg of the real asn1c data-70 XER-vector fixture
+# cross-validation — same schema (70-xer-test-OK.asn1), same real
+# ground-truth .in files, same check-70.c pass/fail semantics as the C++
+# xer_vectors_70 test above; see tests/rust/xer_vectors_70/src/main.rs for
+# the full port. Own output directory, same reasoning as RUST_BV62_GEN_DIR
+# above.
+set(RUST_XV70_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_xer_vectors_70)
+add_custom_command(
+    OUTPUT  ${RUST_XV70_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_XV70_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/70-xer-test-OK.asn1
+                                   -o ${RUST_XV70_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/70-xer-test-OK.asn1
+    COMMENT "Generating Rust from 70-xer-test-OK.asn1"
+)
+add_custom_target(gen_rust_xer_vectors_70 ALL DEPENDS ${RUST_XV70_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_xer_vectors_70
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/xer_vectors_70/Cargo.toml --
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-70)
+    set_tests_properties(rust_xer_vectors_70 PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_XV70_GEN_DIR=${RUST_XV70_GEN_DIR}")
+endif()
+
 # gambas-asn1#309: Rust-codegen sweep across tests/asn1/*.asn1 — the Rust
 # equivalent of validate_parser.py's C++ parser-conformance sweep (that one
 # lives outside this repo, asn1cpp-validation-tools/, because it also needs
