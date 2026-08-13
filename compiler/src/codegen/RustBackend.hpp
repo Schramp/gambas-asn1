@@ -206,13 +206,6 @@ public:
         return std::format("Vec<{}>", elem_type);
     }
 
-    // See Backend::seqof_alternative_wrapper's own doc — Vec<T> has no
-    // Asn1Value impl to reach for a named alternative, so use the generic
-    // SeqOf<T> wrapper (rust-runtime/ber/src/sequence.rs) instead.
-    std::string seqof_alternative_wrapper(const std::string& elem_type) const override {
-        return std::format("asn1cpp_ber::sequence::SeqOf<{}>", elem_type);
-    }
-
     // Defined in RustBackend.cpp — real emission logic, not a one-liner
     // like the naming methods above.
     void emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const override;

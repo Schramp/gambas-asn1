@@ -418,14 +418,6 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
     // natural tag applies; set means an explicit/AUTOMATIC-assigned tag
     // overrides it (X.690 §8.14). Consumed by RustBackend's CHOICE analogue
     // of MemberAccess::TaggedScalar.
-    //
-    // A SEQUENCE OF alternative (e.g. `iRIPayloadSequence [0] SEQUENCE OF
-    // IRIPayload`) needs no dedicated fields here: Generator::
-    // choice_alt_type_for resolves it to a generic wrapper type
-    // (Backend::seqof_alternative_wrapper's own doc — `sequence::SeqOf<T>`
-    // on the Rust side), so `mtype` ends up naming an ordinary type with a
-    // real `Asn1Value` impl — an ordinary composite alternative through
-    // every path here, no different from a TypeRef alternative.
 };
 
 /// @brief Backend-agnostic decision for one CHOICE type (X.680 §28). The
@@ -589,28 +581,6 @@ public:
     virtual std::string wrap_collection_type(const std::string& elem_type) const {
         (void)elem_type;
         throw std::logic_error("wrap_collection_type: not implemented for this backend");
-    }
-
-    /// @brief For a *named* SEQUENCE OF CHOICE alternative
-    ///        (`Generator::choice_alt_type_for`), the backend's own generic
-    ///        wrapper type around the (already-resolved) element type —
-    ///        e.g. `asn1cpp_ber::sequence::SeqOf<{}>` in Rust — or empty to
-    ///        fall back to `cpp_type_for`'s ordinary handling.
-    /// @param elem_type Already-resolved native type of the collection's element.
-    /// @note C++ doesn't need this: `asn1::VectorSeqOf<T>` (`wrap_collection_type`)
-    ///       is already a real, generic, reusable type — one C++ template,
-    ///       any T, dispatched through the shared `TypeDescriptor`/`ICodec`
-    ///       machinery. Rust has no equivalent generic collection wrapper
-    ///       with an `Asn1Value` impl by default — a blanket `impl<V: Asn1Value>
-    ///       Asn1Value for Vec<V>` would coherence-conflict with `Vec<u8>`'s
-    ///       own concrete OCTET STRING impl (E0119) — so `rust-runtime/ber`
-    ///       defines its own generic wrapper (`sequence::SeqOf<T>`, a
-    ///       distinct type nothing else implements, one blanket impl) and
-    ///       this hook just names it.
-    /// @note Default empty — C++'s existing behavior, unchanged.
-    virtual std::string seqof_alternative_wrapper(const std::string& elem_type) const {
-        (void)elem_type;
-        return "";
     }
 
     /// @brief Emit both halves of an ENUMERATED type: declaration then definition.

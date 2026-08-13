@@ -323,7 +323,6 @@ private:
     ChoiceSpec emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session);
 
     std::string cpp_type_for(const ast::TypeDef& def);
-    std::string choice_alt_type_for(const ast::TypeDef& m);
     std::string type_descriptor_ref_for(const ast::TypeDef& def);
     bool        member_is_constructed(const ast::TypeDef& m) const;
     bool        member_type_is_choice(const ast::TypeDef& m) const;
