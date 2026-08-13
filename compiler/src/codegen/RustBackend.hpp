@@ -281,14 +281,14 @@ private:
     // finishes compiling either way, so referencing it is always safe; no
     // per-run coverage bookkeeping is needed to know that in advance. The
     // one exception is unusable_alias_names_ below — see
-    // sequence_member_ber_covered's own doc (RustBackend.cpp) for why.
+    // sequence_member_covered's own doc (RustBackend.cpp) for why.
     // Rust-only concerns (this backend's own trait-object dispatch model),
     // so they live here rather than on the shared Backend interface/Generator.
-    bool sequence_member_ber_covered(const SequenceMemberSpec& m) const;
-    bool choice_alternative_ber_covered(const ChoiceAlternativeSpec& a) const;
+    bool sequence_member_covered(const SequenceMemberSpec& m) const;
+    bool choice_alternative_covered(const ChoiceAlternativeSpec& a) const;
     // Whether a CHOICE alternative has any resolved tag at all — see
     // choice_alternative_has_tag's own doc (RustBackend.cpp) for why this
-    // is a separate, prior question from choice_alternative_ber_covered.
+    // is a separate, prior question from choice_alternative_covered.
     bool choice_alternative_has_tag(const ChoiceAlternativeSpec& a) const;
 
     // Names of type aliases known to resolve to a Rust type with no usable
@@ -296,8 +296,8 @@ private:
     // INTEGER alias (Vec<u8>, wrong-shaped: collides with OCTET STRING's
     // own impl) or a named top-level SEQUENCE OF/SET OF alias (Vec<T>,
     // T != u8: no impl at all). Populated by emit_integer_declaration/
-    // emit_seq_of_declaration, consulted by sequence_member_ber_covered/
-    // choice_alternative_ber_covered to explicitly stub a reference to one
+    // emit_seq_of_declaration, consulted by sequence_member_covered/
+    // choice_alternative_covered to explicitly stub a reference to one
     // instead of assuming it's safe like every other composite reference
     // (see those methods' own doc for the full rationale). `mutable`:
     // populated by emit_integer/emit_seq_of, which are const per the

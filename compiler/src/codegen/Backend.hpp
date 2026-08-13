@@ -354,18 +354,27 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // everything to mirror C++ would be needless indirection with no
     // upside. Only cycle-participating members get boxed.
     bool        member_type_in_cycle = false;
-    // gambas-asn1#331: SEQUENCE OF member support. Set only for a member
-    // whose body is ast::SequenceOfType (never ast::SetOfType — SET OF is a
-    // separate, not-yet-covered follow-up) with a *direct* builtin-type
-    // element (same "direct only, not TypeRef-resolved" precedent
-    // `mbuiltin` above already establishes) — `elem_builtin`/`elem_mtype`
-    // are the element's own discriminant/native-storage-type, the same
-    // pairing `mbuiltin`/`mtype` are for a plain scalar member, just one
-    // level down. A backend without SEQUENCE OF table support can ignore
-    // all three fields; `is_seq_of` false leaves them meaningless.
+    // SEQUENCE OF member support. Set for a member whose body is
+    // ast::SequenceOfType (never ast::SetOfType — SET OF is a separate,
+    // not-yet-covered follow-up), regardless of whether the element is a
+    // direct builtin or a composite (TypeRef) type — `elem_builtin` is
+    // simply unset (nullopt) in the composite case, same "optional
+    // discriminant" shape `mbuiltin` above uses for a plain scalar member,
+    // just one level down. `elem_mtype` is always populated either way
+    // (the element's own native storage type, backend-specific).
+    // `elem_asn1_name` is populated only when the element is a TypeRef to
+    // a named type (X.693 §12's per-element XER tag needs the element's
+    // *original ASN.1* name, which `elem_mtype` — a backend-specific,
+    // possibly case-converted identifier — doesn't reliably carry);
+    // nullopt for a builtin element (X.693 naming for those goes through
+    // the builtin's own fixed keyword instead) or a genuinely anonymous
+    // inline composite element (rare, not synthesized a name here). A
+    // backend without SEQUENCE OF table support can ignore all four
+    // fields; `is_seq_of` false leaves them meaningless.
     bool        is_seq_of = false;
     std::optional<ast::BuiltinType> elem_builtin;
     std::string elem_mtype;      // element's own native storage type (backend-specific)
+    std::optional<std::string> elem_asn1_name;  // element's own ASN.1 type name, TypeRef elements only
     bool        optional = false;
     bool        has_default = false;
     std::string ops;            // pre-formatted Ops initializer, e.g. "{ &_Ops_X_Y::check, ... }"
