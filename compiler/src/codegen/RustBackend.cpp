@@ -1002,7 +1002,15 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << std::format(
             "pub static {}: asn1cpp_ber::sequence::SequenceSpec<{}> = asn1cpp_ber::sequence::SequenceSpec {{\n",
             spec_ident, spec.type_name);
-        os << std::format("    name: \"{}\",\n", spec.type_name);
+        // The real ASN.1/XER element name (spec.xer_name — may contain
+        // hyphens the Rust identifier spec.type_name had to strip, e.g.
+        // "PS-PDU"), not the Rust type name: this `name` field is the XER
+        // wrapper tag text (encode_sequence_xer/decode_sequence_xer,
+        // xer.rs), the same string Asn1Value::xer_element_name() already
+        // reports for this type when nested as a composite member
+        // elsewhere — using spec.type_name here diverged from that and
+        // produced the wrong wrapper tag for any hyphenated ASN.1 name.
+        os << std::format("    name: \"{}\",\n", spec.xer_name);
         // SET's own natural tag (universal 17), not
         // SEQUENCE's (16) — same distinction CppBackend's own
         // emit_sequence_definition already makes (spec.is_set), just never
