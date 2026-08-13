@@ -93,16 +93,18 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
 ///        where a SEQUENCE OF alternative needs a different resolved type
 ///        than cpp_type_for's own generic is_seq_of handling would give it,
 ///        for backends without a generic collection type to reach for
-///        (Backend::use_synthetic_seqof_member_type's own doc explains why;
-///        C++ never takes this branch, VectorSeqOf<T> already covers it via
-///        cpp_type_for unchanged). `generate_inline_types` already emits a
-///        real named wrapper type for any named SEQUENCE OF member/alternative
-///        (same synthesis every other anonymous inline construct gets) —
-///        this just points such a backend at that existing type instead of
-///        a bare `Vec<T>` with nothing to implement Asn1Value for it.
+///        (Backend::seqof_alternative_wrapper's own doc explains why; C++
+///        never takes this branch, VectorSeqOf<T> already covers it via
+///        cpp_type_for unchanged). The element's own resolved type still
+///        comes from cpp_type_for (handles a TypeRef, an anonymous inline
+///        composite, or another builtin uniformly) — only the outer
+///        collection wrapper differs.
 std::string Generator::choice_alt_type_for(const ast::TypeDef& m) {
-    if (m.is_seq_of() && backend_.use_synthetic_seqof_member_type())
-        return backend_.synthetic_name(current_type_, m.name);
+    if (m.is_seq_of()) {
+        const auto& elem = *std::get<ast::SequenceOfType>(m.body).element;
+        std::string wrapped = backend_.seqof_alternative_wrapper(cpp_type_for(elem));
+        if (!wrapped.empty()) return wrapped;
+    }
     return cpp_type_for(m);
 }
 
@@ -1497,42 +1499,23 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
             emit_inc(cpp_name_for_typeref(*tr));
         } else if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
-            // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header.
-            // Unconditional (not emit_wrapper_inc/needs_seqof_wrapper_reference)
-            // when choice_alt_type_for actually made this the alternative's
-            // own resolved type (use_synthetic_seqof_member_type): the header
-            // is then a hard dependency, not the optional context
-            // needs_seqof_wrapper_reference gates for a SEQUENCE member
-            // (which still uses its own native collection type directly,
-            // never the wrapper name — is_set_of alternatives too, out of
-            // choice_alt_type_for's scope same as SequenceMemberSpec's own).
+            // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
             auto cn2 = cpp_name_for_ref(backend_.synthetic_name(cname, m->name), current_module_);
-            bool uses_wrapper_as_own_type = m->is_seq_of() && backend_.use_synthetic_seqof_member_type();
-            if (uses_wrapper_as_own_type)
-                emit_inc(cn2);
-            else
-                emit_wrapper_inc(cn2);
+            emit_wrapper_inc(cn2);
             // gambas-asn1#301: also include the actual element type directly
             // when it's a plain TypeRef — see the matching fix (and its
             // rationale) in Generator::emit_type_files's emit_member_include
             // lambda, same bug, independently duplicated here for CHOICE.
-            // Skipped when the alternative's own resolved type IS the
-            // wrapper (uses_wrapper_as_own_type): the alternative only
-            // names the wrapper type then, never the raw element type
-            // directly — the wrapper's own generated file already imports
-            // it for its own Asn1Value impl.
-            if (!uses_wrapper_as_own_type) {
-                const auto& seqof_elem = m->is_seq_of()
-                    ? std::get<ast::SequenceOfType>(m->body).element
-                    : std::get<ast::SetOfType>(m->body).element;
-                if (auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body)) {
-                    emit_inc(cpp_name_for_typeref(*tr_elem));
-                } else if (seqof_elem->is_sequence() || seqof_elem->is_choice() || seqof_elem->is_set()) {
-                    // Anonymous inline element — see the matching fix in
-                    // emit_member_include for the "Anon"-suffixed doubly-nested
-                    // synthetic name rationale.
-                    emit_inc(backend_.synthetic_name(backend_.synthetic_name(cname, m->name), "Anon"));
-                }
+            const auto& seqof_elem = m->is_seq_of()
+                ? std::get<ast::SequenceOfType>(m->body).element
+                : std::get<ast::SetOfType>(m->body).element;
+            if (auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body)) {
+                emit_inc(cpp_name_for_typeref(*tr_elem));
+            } else if (seqof_elem->is_sequence() || seqof_elem->is_choice() || seqof_elem->is_set()) {
+                // Anonymous inline element — see the matching fix in
+                // emit_member_include for the "Anon"-suffixed doubly-nested
+                // synthetic name rationale.
+                emit_inc(backend_.synthetic_name(backend_.synthetic_name(cname, m->name), "Anon"));
             }
         } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
             auto synth = backend_.synthetic_name(cname, m->name);
