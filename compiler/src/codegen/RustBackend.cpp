@@ -1210,17 +1210,38 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // exists, just unreachable via the generated encode()/decode() —
     // `encode_choice`'s own "no alternative matched" panic already covers
     // that, same as any other codegen/table mismatch).
-    std::vector<const ChoiceAlternativeSpec*> taggable;
-    for (const auto& a : spec.alternatives)
-        if (choice_alternative_has_tag(a)) taggable.push_back(&a);
-    if (!taggable.empty()) {
+    // `spec.has_ber_table`/`spec.ber_tags` (Backend.hpp) cover the one case
+    // `choice_alternative_has_tag` alone can't: an alternative with no tag
+    // of its own whose type is itself a CHOICE (X.680 §28 — CHOICE has no
+    // universal tag) — X.690 §8.13 dispatches straight through to *that*
+    // CHOICE's own alternatives, so the outer alternative's real dispatch
+    // tags are the union of the inner CHOICE's own resolved tags
+    // (`Generator::collect_ber_tags_for`, already computed backend-
+    // agnostically and pre-formatted in this backend's own tag-literal
+    // syntax via `format_tag_literal`, same as every other resolved_tag
+    // text elsewhere in this file). One `EmitRow` per flattened tag, all
+    // pointing back at the same alternative — genuinely one row each for
+    // the common case (a normal alternative always contributes exactly one
+    // entry to `ber_tags` too), duplicated only for a CHOICE-of-CHOICE
+    // alternative.
+    struct EmitRow { const ChoiceAlternativeSpec* alt; std::string tag_lit; };
+    std::vector<EmitRow> rows;
+    if (spec.has_ber_table) {
+        for (const auto& [tag_lit, idx] : spec.ber_tags)
+            rows.push_back({&spec.alternatives[idx], tag_lit});
+    } else {
+        for (const auto& a : spec.alternatives)
+            if (choice_alternative_has_tag(a))
+                rows.push_back({&a, format_tag_literal(*a.resolved_tag)});
+    }
+    if (!rows.empty()) {
         std::string alts_ident = std::format("{}_ALTERNATIVES", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
 
         os << std::format("static {}: [asn1cpp_ber::choice::AlternativeSpec<{}>; {}] = [\n",
-                          alts_ident, spec.type_name, taggable.size());
-        for (const auto* ap : taggable) {
-            const auto& a = *ap;
+                          alts_ident, spec.type_name, rows.size());
+        for (const auto& row : rows) {
+            const auto& a = *row.alt;
             std::string vname = variant_name(*this, a.asn1_name);
             // gambas-asn1#313: same single-alternative special-case as
             // emit_choice_definition's accessor functions above — an
@@ -1253,8 +1274,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // CHOICE is completely unaffected, since encode only panics
                 // when this specific variant is the active one and decode
                 // dispatch only reaches this row when its own tag matched.
-                std::string tag_lit = format_tag_literal(*a.resolved_tag);
-                os << std::format("        tag: {},\n", tag_lit);
+                os << std::format("        tag: {},\n", row.tag_lit);
                 // Not `emit_encode_closure`: its body binds `v` (the
                 // matched variant's inner value) and receives `out`, both
                 // unused here (`unimplemented!()` needs neither), which
@@ -1287,35 +1307,45 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // encode_explicit/decode_explicit, generic over the
                 // alternative's type (same reasoning as the SEQUENCE scalar
                 // EXPLICIT branch above).
-                std::string etag = format_tag_literal(*a.resolved_tag);
-                os << std::format("        tag: {},\n", etag);
-                emit_encode_closure("ber_encode", std::format("asn1cpp_ber::value::encode_explicit(out, {}, v);", etag));
+                os << std::format("        tag: {},\n", row.tag_lit);
+                emit_encode_closure("ber_encode", std::format("asn1cpp_ber::value::encode_explicit(out, {}, v);", row.tag_lit));
                 os << "        ber_decode_into: |r| {\n";
-                os << std::format("            let v: {} = asn1cpp_ber::value::decode_explicit(r, {})?;\n", rust_seqof_alt_mtype(a.mtype), etag);
+                os << std::format("            let v: {} = asn1cpp_ber::value::decode_explicit(r, {})?;\n", rust_seqof_alt_mtype(a.mtype), row.tag_lit);
+                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+                os << "        },\n";
+            } else if (a.resolved_tag) {
+                // Every other tagged alternative — whether IMPLICIT-retagged
+                // or using its own natural tag — dispatches through one
+                // generic pair, `Asn1Value::ber_encode_tagged`/
+                // `ber_decode_into_tagged` (value.rs), using this row's own
+                // tag whatever it is: the natural-tag case is
+                // indistinguishable from an override at this level
+                // (ber_encode_tagged's fast path makes them produce
+                // identical bytes when the two coincide), so no per-kind or
+                // override-vs-natural branching is needed here at all.
+                os << std::format("        tag: {},\n", row.tag_lit);
+                emit_encode_closure("ber_encode", std::format("asn1cpp_ber::value::Asn1Value::ber_encode_tagged(v, {}, out);", row.tag_lit));
+                os << "        ber_decode_into: |r| {\n";
+                os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
+                os << std::format("            asn1cpp_ber::value::Asn1Value::ber_decode_into_tagged(&mut v, r, {})?;\n", row.tag_lit);
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
             } else {
-                // Every non-EXPLICIT alternative — whether IMPLICIT-retagged
-                // or using its own natural tag — dispatches through one
-                // generic pair, `Asn1Value::ber_encode_tagged`/
-                // `ber_decode_into_tagged` (value.rs), using this
-                // alternative's own resolved tag whatever it is: the
-                // natural-tag case is indistinguishable from an override at
-                // this level (ber_encode_tagged's fast path makes them
-                // produce identical bytes when the two coincide), so no
-                // per-kind or override-vs-natural branching is needed here
-                // at all. choice_alternative_covered guarantees
-                // resolved_tag is always present for a covered alternative
-                // (every builtin/composite/ENUMERATED type has a real
-                // natural tag; the one case that wouldn't — a genuinely
-                // untagged nested CHOICE alternative, X.680 §28 — is
-                // already excluded from coverage there).
-                std::string tag_lit = format_tag_literal(*a.resolved_tag);
-                os << std::format("        tag: {},\n", tag_lit);
-                emit_encode_closure("ber_encode", std::format("asn1cpp_ber::value::Asn1Value::ber_encode_tagged(v, {}, out);", tag_lit));
+                // No tag of its own at all (X.680 §28 — a CHOICE-of-CHOICE
+                // alternative, only reachable when `spec.has_ber_table`):
+                // this row's `tag` is one of the *referenced* CHOICE's own
+                // flattened alternative tags (`row.tag_lit`), used purely to
+                // get `decode_choice_from`'s linear scan to try this row —
+                // once tried, the actual decode/encode delegates to the
+                // referenced type's own natural (non-tag-substituting)
+                // Asn1Value::ber_encode/ber_decode_into, since the value
+                // already carries its own real tag (whichever of the
+                // referenced CHOICE's alternatives it turns out to be).
+                os << std::format("        tag: {},\n", row.tag_lit);
+                emit_encode_closure("ber_encode", "asn1cpp_ber::value::Asn1Value::ber_encode(v, out);");
                 os << "        ber_decode_into: |r| {\n";
                 os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
-                os << std::format("            asn1cpp_ber::value::Asn1Value::ber_decode_into_tagged(&mut v, r, {})?;\n", tag_lit);
+                os << "            asn1cpp_ber::value::Asn1Value::ber_decode_into(&mut v, r)?;\n";
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
             }

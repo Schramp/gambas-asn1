@@ -179,7 +179,7 @@ pub fn decode_choice<T>(spec: &ChoiceSpec<T>, data: &[u8]) -> Result<T, DecodeEr
 pub fn decode_choice_from<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, DecodeError> {
     let tag = r.peek_tag().ok_or_else(|| DecodeError::new("empty CHOICE input".to_string(), 0))?;
     for alt in spec.alternatives {
-        if alt.tag == tag {
+        if alt.tag.matches_identifier(&tag) {
             return (alt.ber_decode_into)(r);
         }
     }
@@ -187,7 +187,17 @@ pub fn decode_choice_from<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, 
         let tlv = r.read_tlv()?;
         return Ok((ops.construct)(tlv.tag, tlv.value.to_vec()));
     }
-    Err(DecodeError::new(format!("unrecognized CHOICE alternative tag {tag:?}"), 0))
+    if crate::debug::debug_flags() & crate::debug::DBG_BER_CHOICE != 0 {
+        let alt_tags: Vec<Tag> = spec.alternatives.iter().map(|a| a.tag).collect();
+        eprintln!(
+            "[DBG_BER_CHOICE] {}: no alternative matches peek tag {tag:?} — known tags: {alt_tags:?}",
+            std::any::type_name::<T>()
+        );
+    }
+    Err(DecodeError::new(
+        format!("unrecognized CHOICE alternative tag {tag:?} for {}", std::any::type_name::<T>()),
+        0,
+    ))
 }
 
 /// Generic CHOICE XER encoder — the Rust analogue of
@@ -598,5 +608,223 @@ impl Choice {
         // fallback is opt-in, not a silent behavior change for every CHOICE.
         let data = [0x85, 0x01, 0x00]; // context primitive 5, matches neither TAG_1 nor TAG_2
         assert!(decode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &data).is_err());
+    }
+
+    // ---- untagged CHOICE-of-CHOICE alternative (flattened dispatch) ------
+
+    /// `Inner ::= CHOICE { a [1] INTEGER, b [2] INTEGER }` — the type an
+    /// untagged CHOICE-of-CHOICE alternative (`Outer::Wrapped` below)
+    /// delegates to.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum Inner {
+        A(i64),
+        B(i64),
+    }
+
+    impl Default for Inner {
+        fn default() -> Self { Inner::A(0) }
+    }
+
+    const INNER_A_TAG: Tag = Tag::context(1, false);
+    const INNER_B_TAG: Tag = Tag::context(2, false);
+
+    static INNER_ALTERNATIVES: [AlternativeSpec<Inner>; 2] = [
+        AlternativeSpec {
+            name: "a",
+            tag: INNER_A_TAG,
+            ber_encode: |x, out| if let Inner::A(v) = x {
+                Asn1Value::ber_encode_tagged(v, INNER_A_TAG, out);
+                true
+            } else { false },
+            ber_decode_into: |r| {
+                let mut v: i64 = Default::default();
+                Asn1Value::ber_decode_into_tagged(&mut v, r, INNER_A_TAG)?;
+                Ok(Inner::A(v))
+            },
+            xer_encode: |x, out| if let Inner::A(v) = x { v.xer_encode(out); true } else { false },
+            xer_decode_into: |r| {
+                let mut v: i64 = Default::default();
+                v.xer_decode_into(r)?;
+                Ok(Inner::A(v))
+            },
+        },
+        AlternativeSpec {
+            name: "b",
+            tag: INNER_B_TAG,
+            ber_encode: |x, out| if let Inner::B(v) = x {
+                Asn1Value::ber_encode_tagged(v, INNER_B_TAG, out);
+                true
+            } else { false },
+            ber_decode_into: |r| {
+                let mut v: i64 = Default::default();
+                Asn1Value::ber_decode_into_tagged(&mut v, r, INNER_B_TAG)?;
+                Ok(Inner::B(v))
+            },
+            xer_encode: |x, out| if let Inner::B(v) = x { v.xer_encode(out); true } else { false },
+            xer_decode_into: |r| {
+                let mut v: i64 = Default::default();
+                v.xer_decode_into(r)?;
+                Ok(Inner::B(v))
+            },
+        },
+    ];
+
+    static INNER_SPEC: ChoiceSpec<Inner> = ChoiceSpec { alternatives: &INNER_ALTERNATIVES, unknown_extension: None };
+
+    impl Asn1Value for Inner {
+        fn ber_natural_tag(&self) -> Tag { unreachable!("CHOICE has no natural tag") }
+        fn xer_element_name(&self) -> &'static str { "Inner" }
+        fn ber_encode_content(&self, _out: &mut Vec<u8>) { unreachable!() }
+        fn ber_decode_content(&mut self, _content: &[u8]) -> Result<(), DecodeError> { unreachable!() }
+        fn ber_encode(&self, out: &mut Vec<u8>) { encode_choice_into(&INNER_SPEC, self, out); }
+        fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+            *self = decode_choice_from(&INNER_SPEC, r)?;
+            Ok(())
+        }
+        fn xer_encode(&self, out: &mut String) { encode_choice_xer_into(&INNER_SPEC, self, out); }
+        fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+            *self = decode_choice_xer_from(&INNER_SPEC, r)?;
+            Ok(())
+        }
+    }
+
+    /// `Outer ::= CHOICE { inner Inner, direct [9] OCTET STRING }` — `inner`
+    /// carries no tag of its own and resolves to a CHOICE (`Inner`), so its
+    /// real BER dispatch tags are the union of `Inner`'s own alternative
+    /// tags (X.680 §28 — CHOICE has no universal tag; X.690 §8.13
+    /// dispatches straight through to whichever alternative the value
+    /// actually is). Mirrors the real gap found on the ETSI LI PS-PDU
+    /// schema (`GcseIRIsContent`, whose `gcseiRIContent` alternative
+    /// resolves to a 4-alternative CHOICE the same way): `RustBackend`
+    /// emits one `AlternativeSpec` row per flattened inner tag, both
+    /// delegating to the same `Outer::Wrapped` variant via `Inner`'s own
+    /// (non-tag-substituting) `Asn1Value::ber_encode`/`ber_decode_into` —
+    /// the value already carries its own real tag, whichever of `Inner`'s
+    /// alternatives it turns out to be.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum Outer {
+        Wrapped(Inner),
+        Direct(Vec<u8>),
+    }
+
+    impl Default for Outer {
+        fn default() -> Self { Outer::Wrapped(Inner::default()) }
+    }
+
+    const OUTER_DIRECT_TAG: Tag = Tag::context(9, false);
+
+    static OUTER_ALTERNATIVES: [AlternativeSpec<Outer>; 3] = [
+        AlternativeSpec {
+            name: "inner",
+            tag: INNER_A_TAG,
+            ber_encode: |x, out| if let Outer::Wrapped(v) = x { Asn1Value::ber_encode(v, out); true } else { false },
+            ber_decode_into: |r| {
+                let mut v = Inner::default();
+                Asn1Value::ber_decode_into(&mut v, r)?;
+                Ok(Outer::Wrapped(v))
+            },
+            xer_encode: |x, out| if let Outer::Wrapped(v) = x { Asn1Value::xer_encode(v, out); true } else { false },
+            xer_decode_into: |r| {
+                let mut v = Inner::default();
+                Asn1Value::xer_decode_into(&mut v, r)?;
+                Ok(Outer::Wrapped(v))
+            },
+        },
+        AlternativeSpec {
+            name: "inner",
+            tag: INNER_B_TAG,
+            ber_encode: |x, out| if let Outer::Wrapped(v) = x { Asn1Value::ber_encode(v, out); true } else { false },
+            ber_decode_into: |r| {
+                let mut v = Inner::default();
+                Asn1Value::ber_decode_into(&mut v, r)?;
+                Ok(Outer::Wrapped(v))
+            },
+            xer_encode: |x, out| if let Outer::Wrapped(v) = x { Asn1Value::xer_encode(v, out); true } else { false },
+            xer_decode_into: |r| {
+                let mut v = Inner::default();
+                Asn1Value::xer_decode_into(&mut v, r)?;
+                Ok(Outer::Wrapped(v))
+            },
+        },
+        AlternativeSpec {
+            name: "direct",
+            tag: OUTER_DIRECT_TAG,
+            ber_encode: |x, out| if let Outer::Direct(v) = x {
+                Asn1Value::ber_encode_tagged(v, OUTER_DIRECT_TAG, out);
+                true
+            } else { false },
+            ber_decode_into: |r| {
+                let mut v: Vec<u8> = Default::default();
+                Asn1Value::ber_decode_into_tagged(&mut v, r, OUTER_DIRECT_TAG)?;
+                Ok(Outer::Direct(v))
+            },
+            xer_encode: |x, out| if let Outer::Direct(v) = x { v.xer_encode(out); true } else { false },
+            xer_decode_into: |r| {
+                let mut v: Vec<u8> = Default::default();
+                v.xer_decode_into(r)?;
+                Ok(Outer::Direct(v))
+            },
+        },
+    ];
+
+    static OUTER_SPEC: ChoiceSpec<Outer> = ChoiceSpec { alternatives: &OUTER_ALTERNATIVES, unknown_extension: None };
+
+    impl Outer {
+        fn encode(&self) -> Vec<u8> { encode_choice(&OUTER_SPEC, self) }
+        fn decode(data: &[u8]) -> Result<Outer, DecodeError> { decode_choice(&OUTER_SPEC, data) }
+    }
+
+    #[test]
+    fn untagged_choice_of_choice_alternative_round_trips_every_flattened_tag() {
+        for v in [Outer::Wrapped(Inner::A(5)), Outer::Wrapped(Inner::B(-3)), Outer::Direct(vec![1, 2, 3])] {
+            let bytes = v.encode();
+            assert_eq!(Outer::decode(&bytes).unwrap(), v);
+        }
+    }
+
+    #[test]
+    fn untagged_choice_of_choice_alternative_wire_tag_is_the_inner_alternatives_own_tag() {
+        // No extra wrapper is written for the untagged `inner` alternative —
+        // the wire tag is directly Inner::A's own tag (context, primitive,
+        // number 1 = 0x81), not some synthetic outer tag.
+        let bytes = Outer::Wrapped(Inner::A(5)).encode();
+        assert_eq!(bytes[0], 0x81);
+    }
+
+    #[test]
+    fn decode_choice_from_matches_a_row_even_when_its_stored_constructed_bit_is_wrong() {
+        // Isolates exactly what `Tag::matches_identifier` (vs plain `==`)
+        // buys `decode_choice_from`: a row's table tag disagreeing with the
+        // wire's real constructed bit still dispatches correctly. This is
+        // the real shape of the bug found on the ETSI LI PS-PDU schema — a
+        // flattened dispatch entry (`Generator::collect_ber_tags_for`,
+        // reached through a `TypeRef`) can't always resolve the correct
+        // constructed bit, but C++'s own `BerCodec.cpp` dispatch never
+        // checks it either (every site there compares `cls`/`number` only).
+        enum Solo {
+            V(u8),
+        }
+        static ROW: [AlternativeSpec<Solo>; 1] = [AlternativeSpec {
+            name: "v",
+            tag: Tag::context(1, false), // deliberately the wrong constructed bit
+            ber_encode: |x, out| {
+                let Solo::V(v) = x;
+                write_primitive(out, Tag::context(1, false), &[*v]);
+                true
+            },
+            ber_decode_into: |r| {
+                let tlv = r.read_tlv()?;
+                Ok(Solo::V(tlv.value[0]))
+            },
+            xer_encode: |_, _| false,
+            xer_decode_into: |_| Err(DecodeError::new("not exercised in this test", 0)),
+        }];
+        static SPEC: ChoiceSpec<Solo> = ChoiceSpec { alternatives: &ROW, unknown_extension: None };
+
+        let mut wire = Vec::new();
+        write_primitive(&mut wire, Tag::context(1, true), &[0x05]); // constructed=true on the wire
+        match decode_choice(&SPEC, &wire).unwrap() {
+            Solo::V(v) => assert_eq!(v, 5),
+        }
     }
 }

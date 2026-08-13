@@ -48,6 +48,22 @@ impl Tag {
     pub const fn context(number: u32, constructed: bool) -> Tag {
         Tag { class: TagClass::Context, number, constructed }
     }
+
+    /// Identifier-only equality — class and number, ignoring `constructed`.
+    /// The C++ runtime's own wire-dispatch tag comparisons (`BerCodec.cpp`,
+    /// every `pt.cls == ... && pt.number == ...` site — the SEQUENCE
+    /// optional-member peek, the CHOICE tag-index/linear-scan/flattened-
+    /// `ber_tags` dispatch, all of them) never check the constructed bit
+    /// either — X.680/X.690 give a CHOICE's alternatives distinct (class,
+    /// number) tags by construction, so it carries no dispatch information
+    /// of its own; a flattened CHOICE-of-CHOICE dispatch entry
+    /// (`Generator::collect_ber_tags_for`) in particular can't always
+    /// resolve the correct constructed bit for a tag reached through a
+    /// `TypeRef`, so this method — not `==` — is what CHOICE alternative
+    /// dispatch (`choice::decode_choice_from`) uses to match a peeked tag.
+    pub fn matches_identifier(&self, other: &Tag) -> bool {
+        self.class == other.class && self.number == other.number
+    }
 }
 
 /// Universal class tag numbers used by the constructs this crate implements
@@ -175,6 +191,22 @@ mod tests {
         let mut pos = 0;
         assert_eq!(read_tag(&buf, &mut pos), Some(t));
         assert_eq!(pos, 3);
+    }
+
+    #[test]
+    fn matches_identifier_ignores_constructed_bit() {
+        let a = Tag::context(1, true);
+        let b = Tag::context(1, false);
+        assert_ne!(a, b);
+        assert!(a.matches_identifier(&b));
+        assert!(b.matches_identifier(&a));
+    }
+
+    #[test]
+    fn matches_identifier_still_distinguishes_class_and_number() {
+        let a = Tag::context(1, false);
+        assert!(!a.matches_identifier(&Tag::context(2, false)));
+        assert!(!a.matches_identifier(&Tag::universal(1, false)));
     }
 
     #[test]
