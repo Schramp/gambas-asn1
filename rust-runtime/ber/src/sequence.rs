@@ -223,35 +223,51 @@ pub fn decode_seq_of_content<V: Asn1Value + Default>(content: &[u8]) -> Result<V
     Ok(result)
 }
 
-/// XER SEQUENCE-OF content: X.693 §12 wraps each element in a tag named
-/// after the *element's own type*, all nested directly inside the member's
-/// own `<name>...</name>` (no extra container) — mirrors `SeqOfXerHandler`
-/// (`runtime/src/XerCodec.cpp`) reaching `spec.element->name` on the
-/// element's own `TypeDescriptor`. The element name comes from each item's
-/// own `Asn1Value::xer_element_name()` (builtin or composite, no
-/// distinction needed here) rather than a caller-supplied parameter — no
-/// codegen decision required for this to work for any element type.
+/// XER SEQUENCE-OF content: X.693 §12 wraps each element in a tag, all
+/// nested directly inside the member's own `<name>...</name>` (no extra
+/// container) — mirrors `SeqOfXerHandler` (`runtime/src/XerCodec.cpp`).
+/// Per-element tag shape is delegated to `Asn1Value::xer_encode_seqof_element`
+/// (builtin/composite: `<elem_name>content</elem_name>`; ENUMERATED/CHOICE/
+/// NULL: their own self-delimiting form, no wrapper) — no codegen decision
+/// required here for that split; `name_override` only ever matters to the
+/// wrapped-form default.
 pub fn encode_seq_of_xer<V: Asn1Value>(out: &mut String, items: &[V]) {
+    encode_seq_of_xer_named(out, items, None);
+}
+
+/// `name_override` is `Some` for a SEQUENCE OF/SET OF that declared an
+/// X.693 §12 element identifier (e.g. `SEQUENCE OF id INTEGER`) — the
+/// generated top-level SeqOf newtype's own `xer_encode` passes
+/// `SeqOfSpec::elem_xer_name` through here (see `emit_seq_of_definition`,
+/// RustBackend.cpp). ENUMERATED/CHOICE/NULL elements ignore it (X.693
+/// always uses their own self-delimiting tag regardless — `Generator.cpp`
+/// doesn't even set `elem_xer_name` for a NULL element in the first place).
+pub fn encode_seq_of_xer_named<V: Asn1Value>(out: &mut String, items: &[V], name_override: Option<&str>) {
     for item in items {
-        let elem_name = item.xer_element_name();
-        crate::xer::write_open_tag(out, elem_name);
-        item.xer_encode(out);
-        crate::xer::write_close_tag(out, elem_name);
+        item.xer_encode_seqof_element(out, name_override);
     }
 }
 
 pub fn decode_seq_of_xer<V: Asn1Value + Default>(r: &mut XerReader) -> Result<Vec<V>, DecodeError> {
-    let elem_name = V::default().xer_element_name();
+    decode_seq_of_xer_named(r, None)
+}
+
+/// Decode counterpart of `encode_seq_of_xer_named`. Loop termination is
+/// purely "next tag is a closing tag" (mirrors `SeqOfXerHandler::decode`'s
+/// `ti.closing && ti.name == def.name` check — the outer `<name>...</name>`
+/// is already consumed by the caller before/after this runs, same as
+/// there), not a per-element name comparison: the element's own tag varies
+/// per item for ENUMERATED (value name) and CHOICE (chosen alternative),
+/// so a fixed-name peek would wrongly stop after the first element.
+pub fn decode_seq_of_xer_named<V: Asn1Value + Default>(r: &mut XerReader, name_override: Option<&str>) -> Result<Vec<V>, DecodeError> {
     let mut result = Vec::new();
     loop {
         let peeked = r.peek_tag();
-        if peeked.name != elem_name || peeked.closing {
+        if peeked.closing || peeked.name.is_empty() {
             break;
         }
-        r.consume_open_tag(elem_name)?;
         let mut item = V::default();
-        item.xer_decode_into(r)?;
-        r.consume_close_tag(elem_name)?;
+        item.xer_decode_into_seqof_element(r, name_override)?;
         result.push(item);
     }
     Ok(result)

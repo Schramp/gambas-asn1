@@ -51,22 +51,12 @@ fn known_skip() -> HashSet<&'static str> {
 }
 
 /// Rust-only skip set (the C++ leg does not skip these — they pass there).
-/// Two genuine Rust-side codegen/runtime gaps this sweep surfaced:
-///
-/// - gambas-asn1#390: `encode_seq_of_xer`/`decode_seq_of_xer` don't honor
-///   named SEQUENCE OF/SET OF element identifiers, bare self-closing
-///   ENUMERATED/NULL elements, or CHOICE-typed elements (no wrapper tag).
-/// - gambas-asn1#391: an extension ENUMERATED member in a SET panics as an
-///   `Unsupported` codegen stub (RustBackend::sequence_member_covered).
+/// gambas-asn1#390 (named SEQUENCE OF/SET OF element identifiers, bare
+/// self-closing ENUMERATED/NULL elements, CHOICE-typed elements) is fixed;
+/// only gambas-asn1#391 (extension ENUMERATED member in a SET panics as an
+/// `Unsupported` codegen stub) remains.
 fn rust_known_skip() -> HashSet<&'static str> {
     [
-        // gambas-asn1#390 — named element identifier
-        "data-70-11.in", "data-70-27.in", "data-70-32.in",
-        "data-70-47.in", "data-70-49.in", "data-70-50.in",
-        // gambas-asn1#390 — bare self-closing ENUMERATED/NULL element
-        "data-70-25.in", "data-70-28.in", "data-70-29-D.in",
-        // gambas-asn1#390 — CHOICE-typed element, no wrapper tag
-        "data-70-51.in", "data-70-52-D.in", "data-70-53.in", "data-70-54-D.in",
         // gambas-asn1#391 — extension ENUMERATED member panics as Unsupported
         "data-70-12.in", "data-70-13-D.in", "data-70-33.in",
     ]
