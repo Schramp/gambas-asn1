@@ -89,6 +89,23 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
     return backend_.native_builtin_type(BT::OctetString);
 }
 
+/// @brief cpp_type_for, specialized for a CHOICE alternative — the one case
+///        where a SEQUENCE OF alternative needs a different resolved type
+///        than cpp_type_for's own generic is_seq_of handling would give it,
+///        for backends without a generic collection type to reach for
+///        (Backend::use_synthetic_seqof_member_type's own doc explains why;
+///        C++ never takes this branch, VectorSeqOf<T> already covers it via
+///        cpp_type_for unchanged). `generate_inline_types` already emits a
+///        real named wrapper type for any named SEQUENCE OF member/alternative
+///        (same synthesis every other anonymous inline construct gets) —
+///        this just points such a backend at that existing type instead of
+///        a bare `Vec<T>` with nothing to implement Asn1Value for it.
+std::string Generator::choice_alt_type_for(const ast::TypeDef& m) {
+    if (m.is_seq_of() && backend_.use_synthetic_seqof_member_type())
+        return backend_.synthetic_name(current_type_, m.name);
+    return cpp_type_for(m);
+}
+
 // Returns true if the member encodes as a constructed TLV (SEQUENCE, SET, CHOICE, OF).
 // Follows one level of TypeRef so that [n] IMPLICIT ReferencedChoice is also caught.
 bool Generator::member_is_constructed(const ast::TypeDef& m) const {
@@ -1480,23 +1497,42 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
             emit_inc(cpp_name_for_typeref(*tr));
         } else if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
-            // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
+            // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header.
+            // Unconditional (not emit_wrapper_inc/needs_seqof_wrapper_reference)
+            // when choice_alt_type_for actually made this the alternative's
+            // own resolved type (use_synthetic_seqof_member_type): the header
+            // is then a hard dependency, not the optional context
+            // needs_seqof_wrapper_reference gates for a SEQUENCE member
+            // (which still uses its own native collection type directly,
+            // never the wrapper name — is_set_of alternatives too, out of
+            // choice_alt_type_for's scope same as SequenceMemberSpec's own).
             auto cn2 = cpp_name_for_ref(backend_.synthetic_name(cname, m->name), current_module_);
-            emit_wrapper_inc(cn2);
+            bool uses_wrapper_as_own_type = m->is_seq_of() && backend_.use_synthetic_seqof_member_type();
+            if (uses_wrapper_as_own_type)
+                emit_inc(cn2);
+            else
+                emit_wrapper_inc(cn2);
             // gambas-asn1#301: also include the actual element type directly
             // when it's a plain TypeRef — see the matching fix (and its
             // rationale) in Generator::emit_type_files's emit_member_include
             // lambda, same bug, independently duplicated here for CHOICE.
-            const auto& seqof_elem = m->is_seq_of()
-                ? std::get<ast::SequenceOfType>(m->body).element
-                : std::get<ast::SetOfType>(m->body).element;
-            if (auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body)) {
-                emit_inc(cpp_name_for_typeref(*tr_elem));
-            } else if (seqof_elem->is_sequence() || seqof_elem->is_choice() || seqof_elem->is_set()) {
-                // Anonymous inline element — see the matching fix in
-                // emit_member_include for the "Anon"-suffixed doubly-nested
-                // synthetic name rationale.
-                emit_inc(backend_.synthetic_name(backend_.synthetic_name(cname, m->name), "Anon"));
+            // Skipped when the alternative's own resolved type IS the
+            // wrapper (uses_wrapper_as_own_type): the alternative only
+            // names the wrapper type then, never the raw element type
+            // directly — the wrapper's own generated file already imports
+            // it for its own Asn1Value impl.
+            if (!uses_wrapper_as_own_type) {
+                const auto& seqof_elem = m->is_seq_of()
+                    ? std::get<ast::SequenceOfType>(m->body).element
+                    : std::get<ast::SetOfType>(m->body).element;
+                if (auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body)) {
+                    emit_inc(cpp_name_for_typeref(*tr_elem));
+                } else if (seqof_elem->is_sequence() || seqof_elem->is_choice() || seqof_elem->is_set()) {
+                    // Anonymous inline element — see the matching fix in
+                    // emit_member_include for the "Anon"-suffixed doubly-nested
+                    // synthetic name rationale.
+                    emit_inc(backend_.synthetic_name(backend_.synthetic_name(cname, m->name), "Anon"));
+                }
             }
         } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
             auto synth = backend_.synthetic_name(cname, m->name);
@@ -1517,7 +1553,7 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
     std::vector<ChoiceAlternativeSpec> alts;
     for (const auto* m : canon_members) {
         ChoiceAlternativeSpec alt;
-        alt.mtype = cpp_type_for(*m);
+        alt.mtype = choice_alt_type_for(*m);
         alt.accessor_name = backend_.member_name(m->name,
             {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
              "s_alternatives", "s_alternative_count"});
@@ -1553,11 +1589,6 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind storage_kind = IntStorageKind::S64;
             std::optional<MemberTagSpec> resolved_tag;  // gambas-asn1#336/#347
-            // Mirrors SequenceMemberSpec's own is_seq_of/elem_builtin/
-            // elem_mtype trio — see ChoiceAlternativeSpec's doc (Backend.hpp).
-            bool is_seq_of = false;
-            std::optional<ast::BuiltinType> elem_builtin;
-            std::string elem_mtype;
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1568,7 +1599,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::string mname = backend_.member_name(m->name);
             auto [resolved_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, session);
-            std::string alt_type = cpp_type_for(*m);
+            std::string alt_type = choice_alt_type_for(*m);
             int tag_ctx_num = -1;
             ast::Tag full_tag = m->tag;
             if (apply_auto_tags && !m->tag.present()) {
@@ -1584,19 +1615,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                 mbuiltin = *bt;
                 if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
             }
-            bool alt_is_seq_of = false;
-            std::optional<ast::BuiltinType> alt_elem_builtin;
-            std::string alt_elem_mtype;
-            if (m->is_seq_of()) {
-                alt_is_seq_of = true;
-                const auto& elem = *std::get<ast::SequenceOfType>(m->body).element;
-                alt_elem_mtype = cpp_type_for(elem);
-                if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body))
-                    alt_elem_builtin = *ebt;
-            }
             rows.push_back({ m->name, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag,
-                             alt_is_seq_of, alt_elem_builtin, alt_elem_mtype });
+                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag });
             ++auto_tag_num;
           }
         }
@@ -1631,9 +1651,6 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.mbuiltin = r.mbuiltin;
             alt.storage_kind = r.storage_kind;
             alt.resolved_tag = r.resolved_tag;
-            alt.is_seq_of = r.is_seq_of;
-            alt.elem_builtin = r.elem_builtin;
-            alt.elem_mtype = r.elem_mtype;
             spec.alternatives.push_back(std::move(alt));
         }
 
