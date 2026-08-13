@@ -761,6 +761,60 @@ impl OptCoords {
     }
 }
 
+/// `SetCoords ::= SEQUENCE { values SET OF INTEGER }` — worked example +
+/// test subject for a SET OF *member* (gambas-asn1#402), distinct from
+/// `Coords`'s SEQUENCE OF: the member's own natural tag is SET_TAG
+/// (universal 17), not SEQUENCE_TAG (universal 16) — `APointSet` below
+/// already covers a top-level SET's own tag; this is the member-level case.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SetCoords {
+    pub values: Vec<i64>,
+}
+
+fn set_coords_values_ber_encode(v: &SetCoords, out: &mut Vec<u8>) {
+    encode_seq_of_tagged(out, SET_TAG, &v.values);
+}
+
+fn set_coords_values_ber_decode_into(v: &mut SetCoords, r: &mut Reader) -> Result<(), DecodeError> {
+    v.values = decode_seq_of_tagged(r, SET_TAG)?;
+    Ok(())
+}
+
+fn set_coords_values_xer_encode(v: &SetCoords, out: &mut String) {
+    encode_seq_of_xer(out, &v.values);
+}
+
+fn set_coords_values_xer_decode_into(v: &mut SetCoords, r: &mut XerReader) -> Result<(), DecodeError> {
+    v.values = decode_seq_of_xer(r)?;
+    Ok(())
+}
+
+static SET_COORDS_MEMBERS: [MemberDescriptor<SetCoords>; 1] = [MemberDescriptor {
+    name: "values",
+    tag: SET_TAG,
+    optional: false,
+    access: MemberAccess::SeqOf {
+        ber_encode: set_coords_values_ber_encode,
+        ber_decode_into: set_coords_values_ber_decode_into,
+        xer_encode: set_coords_values_xer_encode,
+        xer_decode_into: set_coords_values_xer_decode_into,
+        is_present: |_v| true,
+    },
+}];
+
+static SET_COORDS_SPEC: SequenceSpec<SetCoords> =
+    SequenceSpec { name: "SetCoords", tag: SEQUENCE_TAG, members: &SET_COORDS_MEMBERS };
+
+impl SetCoords {
+    pub fn encode(&self) -> Vec<u8> {
+        encode_sequence(&SET_COORDS_SPEC, self)
+    }
+
+    pub fn decode(data: &[u8]) -> Result<SetCoords, DecodeError> {
+        decode_sequence(&SET_COORDS_SPEC, data)
+    }
+}
+
 
     #[test]
     fn encodes_hand_computed_vector() {
@@ -997,6 +1051,31 @@ impl OptCoords {
         // No <values> wrapper at all when absent — not even an empty one.
         assert_eq!(xml, "<OptCoords>\n</OptCoords>\n");
         assert_eq!(OptCoords::decode_xer(&xml).unwrap(), c);
+    }
+
+    // ---- SET OF member (gambas-asn1#402) -------
+
+    #[test]
+    fn set_of_member_ber_round_trips() {
+        let c = SetCoords { values: vec![1, 2] };
+        let bytes = c.encode();
+        // Outer SEQUENCE (0x30) wraps the member's own SET (0x31 — universal
+        // constructed 17, not 0x30/SEQUENCE) of two INTEGER TLVs.
+        assert_eq!(
+            bytes,
+            vec![0x30, 0x08, 0x31, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02]
+        );
+        assert_eq!(SetCoords::decode(&bytes).unwrap(), c);
+    }
+
+    #[test]
+    fn set_of_member_uses_set_tag_not_sequence_tag() {
+        // A member's own encoding must reject a peer struct whose member is
+        // SEQUENCE OF (0x30) instead of SET OF (0x31) at the same position
+        // — confirms decode actually checks the tag, not just any
+        // constructed TLV.
+        let coords_bytes = Coords { values: vec![1, 2] }.encode();
+        assert!(SetCoords::decode(&coords_bytes).is_err());
     }
 
     // ---- SEQUENCE OF/SET OF IMPLICIT tag override -------
