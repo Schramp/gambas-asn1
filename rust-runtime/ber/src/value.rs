@@ -312,9 +312,8 @@ impl Asn1Value for i64 {
 
 /// Wide-range INTEGER storage (a constrained range whose bound exceeds
 /// i64::MAX/MIN — `IntStorageKind::U64`/`I128`, `RustBackend::native_int_type`).
-/// BER leg only — XER leg stays the trait default (`unimplemented!()`); no
-/// generated code calls it (rust_member_xer_ready/rust_seqof_xer_ready gate
-/// XER coverage on `mtype == "i64"`, unaffected by this addition).
+/// XER leg is plain decimal text, same shape as `i64`'s own impl below,
+/// just unsigned.
 impl Asn1Value for u64 {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::integer::INTEGER_TAG
@@ -332,9 +331,21 @@ impl Asn1Value for u64 {
         *self = crate::integer::decode_integer_bytes_u64(content)?;
         Ok(())
     }
+
+    fn xer_encode(&self, out: &mut String) {
+        out.push_str(&self.to_string());
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        let text = r.read_text_content();
+        *self = text.trim().parse::<u64>().map_err(|_| {
+            DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
+        })?;
+        Ok(())
+    }
 }
 
-/// i128 analogue of the `u64` impl above — same BER-only scope.
+/// i128 analogue of the `u64` impl above.
 impl Asn1Value for i128 {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::integer::INTEGER_TAG
@@ -352,14 +363,26 @@ impl Asn1Value for i128 {
         *self = crate::integer::decode_integer_bytes_i128(content)?;
         Ok(())
     }
+
+    fn xer_encode(&self, out: &mut String) {
+        out.push_str(&self.to_string());
+    }
+
+    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        let text = r.read_text_content();
+        *self = text.trim().parse::<i128>().map_err(|_| {
+            DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
+        })?;
+        Ok(())
+    }
 }
 
 /// Mirrors `BooleanXerHandler` (`runtime/src/XerCodec.cpp`) — BASIC-XER's
 /// `EmptyElementBoolean` form: content is a nested self-closing `<true/>`/
-/// `<false/>` tag, not text (X.693 §8.2's default form; the lenient
-/// text-content alternative `XerDecodeMode::Lenient` allows on the C++ side
-/// isn't implemented here, matching this crate's strict-by-default scope
-/// elsewhere).
+/// `<false/>` tag, not text (X.693 §8.2's default form). `xer_decode_into`
+/// also accepts EXTENDED-XER §10 TextBoolean (plain `"true"`/`"false"`
+/// content) when `XerReader::lenient()` is set — the non-standard asn1c
+/// extension `XerDecodeMode::Lenient` allows on the C++ side.
 impl Asn1Value for bool {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::boolean::BOOLEAN_TAG
@@ -383,6 +406,23 @@ impl Asn1Value for bool {
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        // EXTENDED-XER §10 TextBoolean ("true"/"false" as plain content) is
+        // a non-standard asn1c extension, only accepted in lenient mode —
+        // detect it by trying to read text content first: the standard
+        // empty-element form (`<true/>`/`<false/>`) has none (the reader
+        // sits directly on `<`), so an empty result falls through to the
+        // tag path unchanged.
+        let text = r.read_text_content().trim();
+        if !text.is_empty() {
+            if !r.lenient() {
+                return Err(DecodeError::new("XER BOOLEAN: expected <true/> or <false/>".to_string(), 0));
+            }
+            return match text {
+                "true" => { *self = true; Ok(()) }
+                "false" => { *self = false; Ok(()) }
+                _ => Err(DecodeError::new("XER BOOLEAN: expected true or false".to_string(), 0)),
+            };
+        }
         let ti = r.consume_tag();
         if ti.self_closing && ti.name == "true" {
             *self = true;
@@ -515,10 +555,12 @@ impl Asn1Value for Vec<u8> {
 /// grammar) — C++'s writer additionally pretty-prints this across
 /// indented 64-character lines, which is cosmetic only (its own decoder
 /// skips whitespace), so this impl emits the same bit sequence unspaced,
-/// on one line, and accepts (skips) any whitespace on decode. The
-/// non-standard lenient hex-string decode extension C++ also accepts is
-/// not implemented here — matches this crate's strict-by-default scope
-/// elsewhere (see `strings.rs`'s own noted divergence).
+/// on one line, and accepts (skips) any whitespace on decode. Decode also
+/// accepts the non-standard lenient hex-pairs form
+/// (`BitStringXerHandler::decode`) when `XerReader::lenient()` is set — a
+/// pure `0`/`1` string is decoded as binary either way (indistinguishable
+/// from hex, matches the C++ heuristic); any `2`-`9`/`A`-`F`/`a`-`f`
+/// character makes it unambiguous and requires lenient mode.
 impl Asn1Value for crate::bit_string::BitString {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::bit_string::BIT_STRING_TAG
@@ -547,18 +589,49 @@ impl Asn1Value for crate::bit_string::BitString {
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
         let text = r.read_text_content();
-        let mut bytes = Vec::new();
-        let mut cur = 0u8;
-        let mut bit_count = 0usize;
+        let mut content = String::with_capacity(text.len());
+        let mut has_hex = false;
         for c in text.chars() {
             if c.is_whitespace() {
                 continue;
             }
-            let bit = match c {
-                '0' => 0u8,
-                '1' => 1u8,
+            match c {
+                '0' | '1' => {}
+                _ if c.is_ascii_hexdigit() => has_hex = true,
                 _ => return Err(DecodeError::new(format!("XER: invalid BIT STRING character '{c}'"), 0)),
-            };
+            }
+            content.push(c);
+        }
+        if has_hex && !r.lenient() {
+            return Err(DecodeError::new(
+                "XER: hex BIT STRING requires lenient mode (non-standard extension)".to_string(),
+                0,
+            ));
+        }
+        if has_hex {
+            // Non-standard asn1c extension: hex pairs, one byte each, 0
+            // unused bits (no production for this in X.680 §21's
+            // XMLBitStringValue grammar).
+            if content.len() % 2 != 0 {
+                return Err(DecodeError::new("XER: odd-length hex BIT STRING".to_string(), 0));
+            }
+            let cbytes = content.as_bytes();
+            let mut bytes = Vec::with_capacity(cbytes.len() / 2);
+            let mut i = 0;
+            while i < cbytes.len() {
+                let hi = (cbytes[i] as char).to_digit(16).unwrap() as u8;
+                let lo = (cbytes[i + 1] as char).to_digit(16).unwrap() as u8;
+                bytes.push((hi << 4) | lo);
+                i += 2;
+            }
+            *self = crate::bit_string::BitString { bytes, unused_bits: 0 };
+            return Ok(());
+        }
+        let mut bytes = Vec::new();
+        let mut cur = 0u8;
+        let mut bit_count = 0usize;
+        for c in content.chars() {
+            let bit = if c == '1' { 1u8 } else { 0u8 };
             cur = (cur << 1) | bit;
             bit_count += 1;
             if bit_count % 8 == 0 {
@@ -994,7 +1067,47 @@ mod tests {
     fn bit_string_xer_rejects_invalid_character() {
         use crate::bit_string::BitString;
 
-        let mut r = XerReader::new("102");
+        let mut r = XerReader::new("10G");
+        let mut got = BitString::default();
+        assert!(got.xer_decode_into(&mut r).is_err());
+    }
+
+    #[test]
+    fn bit_string_xer_strict_rejects_hex() {
+        use crate::bit_string::BitString;
+
+        let mut r = XerReader::new("04AA");
+        let mut got = BitString::default();
+        assert!(got.xer_decode_into(&mut r).is_err());
+    }
+
+    #[test]
+    fn bit_string_xer_lenient_accepts_hex_pairs() {
+        use crate::bit_string::BitString;
+
+        let mut r = XerReader::new_lenient("04AABB");
+        let mut got = BitString::default();
+        got.xer_decode_into(&mut r).unwrap();
+        assert_eq!(got, BitString { bytes: vec![0x04, 0xAA, 0xBB], unused_bits: 0 });
+    }
+
+    #[test]
+    fn bit_string_xer_lenient_pure_binary_string_still_decodes_as_binary() {
+        use crate::bit_string::BitString;
+
+        // "0001" has no digit outside 0/1 — indistinguishable from binary,
+        // matches asn1c's own heuristic (see xer_decode_into's own doc).
+        let mut r = XerReader::new_lenient("0001");
+        let mut got = BitString::default();
+        got.xer_decode_into(&mut r).unwrap();
+        assert_eq!(got, BitString { bytes: vec![0b0001_0000], unused_bits: 4 });
+    }
+
+    #[test]
+    fn bit_string_xer_lenient_rejects_odd_length_hex() {
+        use crate::bit_string::BitString;
+
+        let mut r = XerReader::new_lenient("04A");
         let mut got = BitString::default();
         assert!(got.xer_decode_into(&mut r).is_err());
     }
@@ -1208,6 +1321,27 @@ mod tests {
         let mut r = XerReader::new("true");
         let mut got = false;
         assert!(got.xer_decode_into(&mut r).is_err());
+    }
+
+    #[test]
+    fn bool_xer_lenient_accepts_text_content() {
+        let mut r = XerReader::new_lenient("true");
+        let mut got = false;
+        got.xer_decode_into(&mut r).unwrap();
+        assert!(got);
+
+        let mut r = XerReader::new_lenient("false");
+        let mut got = true;
+        got.xer_decode_into(&mut r).unwrap();
+        assert!(!got);
+    }
+
+    #[test]
+    fn bool_xer_lenient_still_accepts_empty_element_form() {
+        let mut r = XerReader::new_lenient("<true/>");
+        let mut got = false;
+        got.xer_decode_into(&mut r).unwrap();
+        assert!(got);
     }
 
     #[test]
