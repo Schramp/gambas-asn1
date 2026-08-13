@@ -665,6 +665,17 @@ static std::string rust_seqof_alt_mtype(const std::string& mtype) {
     return std::format("asn1cpp_ber::sequence::SeqOf<{}>", mtype.substr(4, mtype.size() - 5));
 }
 
+/// @brief The unwrapped element type text for a SEQUENCE OF/SET OF member.
+///        `m.mtype` is always exactly `"Vec<ElemType>"` for such a member —
+///        `cpp_type_for`'s own is_seq_of/is_set_of branches always route
+///        through `wrap_collection_type` (Backend.hpp) — the same shape
+///        `rust_seqof_alt_mtype` above unwraps for a CHOICE alternative;
+///        this is the SEQUENCE/SET-member analogue, so `elem_mtype` never
+///        needs to be separate Generator-computed table data.
+static std::string rust_seqof_elem_mtype(const SequenceMemberSpec& m) {
+    return m.mtype.substr(4, m.mtype.size() - 5);
+}
+
 /// @brief A SEQUENCE/SET member's own Rust field type, for a SEQUENCE
 ///        OF/SET OF member specifically — `SeqOf<ElemType>`/`SetOf<ElemType>`
 ///        (`rust-runtime/ber/src/sequence.rs`) instead of a raw
@@ -677,8 +688,8 @@ static std::string rust_seqof_alt_mtype(const std::string& mtype) {
 ///        composite member already uses. Every other member's `mtype`
 ///        passes through unchanged.
 static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
-    if (m.is_seq_of) return std::format("asn1cpp_ber::sequence::SeqOf<{}>", m.elem_mtype);
-    if (m.is_set_of) return std::format("asn1cpp_ber::sequence::SetOf<{}>", m.elem_mtype);
+    if (m.is_seq_of) return std::format("asn1cpp_ber::sequence::SeqOf<{}>", rust_seqof_elem_mtype(m));
+    if (m.is_set_of) return std::format("asn1cpp_ber::sequence::SetOf<{}>", rust_seqof_elem_mtype(m));
     return m.mtype;
 }
 
@@ -744,7 +755,8 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 ///         design had an equivalent order dependency here too.
 bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
     if (m.is_seq_of || m.is_set_of) {
-        if (m.elem_builtin) return builtin_ber_tag(*m.elem_builtin, m.elem_mtype) != nullptr;
+        std::string elem_mtype = rust_seqof_elem_mtype(m);
+        if (m.elem_builtin) return builtin_ber_tag(*m.elem_builtin, elem_mtype) != nullptr;
         // A composite (TypeRef) element — SEQUENCE OF GcsePartyIdentity,
         // e.g. — is always real now, same reasoning as any other composite
         // reference: encode_seq_of/decode_seq_of (sequence.rs) are already
@@ -755,7 +767,7 @@ bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
         // SET OF (m.is_set_of) shares this whole branch with SEQUENCE OF —
         // the only difference is the wire tag (SET_TAG vs SEQUENCE_TAG),
         // decided at emission time, not a coverage question.
-        return !unusable_alias_names_.count(m.elem_mtype) && !rust_mtype_is_unusable_vec(m.elem_mtype);
+        return !unusable_alias_names_.count(elem_mtype) && !rust_mtype_is_unusable_vec(elem_mtype);
     }
     // ANY (X.208 legacy type) has no fixed tag of its own to drive the
     // ordinary Scalar/TaggedScalar/ExplicitScalar paths — Generator forces

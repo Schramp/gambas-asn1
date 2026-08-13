@@ -356,28 +356,29 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     bool        member_type_in_cycle = false;
     // SEQUENCE OF/SET OF member support. `is_seq_of` set for a member whose
     // body is ast::SequenceOfType, `is_set_of` for ast::SetOfType — mutually
-    // exclusive, and never both false while `elem_builtin`/`elem_mtype` are
-    // meaningful. Populated identically either way, regardless of whether
-    // the element is a direct builtin or a composite (TypeRef) type —
-    // `elem_builtin` is simply unset (nullopt) in the composite case, same
-    // "optional discriminant" shape `mbuiltin` above uses for a plain
-    // scalar member, just one level down. `elem_mtype` is always populated
-    // either way (the element's own native storage type, backend-specific).
-    // No element-name field: a backend that needs the element's own X.693
-    // per-element XER tag gets it generically from the element *value*
-    // itself at runtime (e.g. RustBackend's Asn1Value::xer_element_name),
-    // the same way C++'s SeqOfXerHandler reaches its element's own
-    // TypeDescriptor::name — not duplicated here as extracted table data.
-    // A backend without SEQUENCE OF/SET OF table support can ignore all
-    // four fields; `is_seq_of`/`is_set_of` both false leaves them
-    // meaningless. The only place SEQUENCE OF and SET OF genuinely differ
-    // (X.680 §26 vs §24 — SET's own universal tag 17, not SEQUENCE's 16)
-    // is the member's *wire tag* when using its natural (non-override)
-    // tag — a backend's own emission decision, not table data.
+    // exclusive, and never both false while `elem_builtin` is meaningful.
+    // `elem_builtin` is unset (nullopt) when the element is a composite
+    // (TypeRef) type, same "optional discriminant" shape `mbuiltin` above
+    // uses for a plain scalar member, just one level down. No element-mtype
+    // or element-name field: `mtype` above is already the element's own
+    // native storage type wrapped one level (`wrap_collection_type`) — a
+    // backend that needs the bare, unwrapped element type text derives it
+    // from `mtype` itself (RustBackend's `rust_seqof_alt_mtype`/
+    // `rust_seqof_member_field_type` do this, mirroring how they already
+    // unwrap a CHOICE alternative's `mtype`), rather than duplicating it
+    // here as separately-computed table data. Likewise the element's own
+    // X.693 per-element XER tag comes generically from the element *value*
+    // at runtime (e.g. RustBackend's Asn1Value::xer_element_name), the same
+    // way C++'s SeqOfXerHandler reaches its element's own
+    // TypeDescriptor::name. A backend without SEQUENCE OF/SET OF table
+    // support can ignore all three fields; `is_seq_of`/`is_set_of` both
+    // false leaves them meaningless. The only place SEQUENCE OF and SET OF
+    // genuinely differ (X.680 §26 vs §24 — SET's own universal tag 17, not
+    // SEQUENCE's 16) is the member's *wire tag* when using its natural
+    // (non-override) tag — a backend's own emission decision, not table data.
     bool        is_seq_of = false;
     bool        is_set_of = false;
     std::optional<ast::BuiltinType> elem_builtin;
-    std::string elem_mtype;      // element's own native storage type (backend-specific)
     bool        optional = false;
     bool        has_default = false;
     std::string ops;            // pre-formatted Ops initializer, e.g. "{ &_Ops_X_Y::check, ... }"
