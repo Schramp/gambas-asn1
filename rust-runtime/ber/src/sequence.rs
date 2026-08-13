@@ -35,14 +35,30 @@ pub const SET_TAG: Tag = Tag::universal(universal::SET, true);
 
 /// One row in a `SequenceSpec<T>` table — mirrors `MemberDescriptor`
 /// (`TypeDescriptor.hpp`), minus everything not yet needed by this crate's
-/// scope (DEFAULT values, EXPLICIT/IMPLICIT tagging beyond the member's own
-/// natural tag, CHOICE alternative dispatch — all real gaps, not silently
-/// dropped: `Backend`/codegen simply doesn't emit members needing them yet).
+/// scope (EXPLICIT/IMPLICIT tagging beyond the member's own natural tag,
+/// CHOICE alternative dispatch — real gaps, not silently dropped:
+/// `Backend`/codegen simply doesn't emit members needing them yet).
 pub struct MemberDescriptor<T: 'static> {
     pub name: &'static str,
     pub tag: Tag,
     pub optional: bool,
     pub access: MemberAccess<T>,
+    /// `Some` for a DEFAULT-valued member (X.680 §25.1) whose default value
+    /// this crate can represent — mirrors `MemberDescriptor::set_default`
+    /// (`TypeDescriptor.hpp`)/`SequenceBerHandler::decode_body`'s own
+    /// `if (mbr.set_default) mbr.set_default(dest);` (`BerCodec.cpp`):
+    /// `decode_sequence_content` calls this when the member's tag is absent
+    /// from the wire, filling the schema default instead of leaving the
+    /// field however `T::default()` left it. `None` for every other
+    /// member, DEFAULT-valued or not — same "optional discriminant" shape
+    /// `access`'s own variants use. No encode-side suppression: BER (unlike
+    /// DER) never requires omitting a DEFAULT-equal value, and the C++
+    /// runtime's own `SequenceBerHandler::encode` doesn't attempt it either
+    /// (`default_value_cmp`, `TypeDescriptor.hpp`, is PER-only) — so a
+    /// decoded-then-re-encoded DEFAULT member may legitimately gain an
+    /// explicit tag it didn't have on the original wire, matching C++'s own
+    /// behavior exactly, not a Rust-specific gap.
+    pub set_default: Option<fn(&mut T)>,
 }
 
 /// How a member's value is reached and (de)serialized.
@@ -476,7 +492,10 @@ pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
 /// scan (each optional member checked once, in table order) — correct for
 /// SEQUENCE's canonical member ordering (X.690 §8.9), same simplifying
 /// assumption `MemberDescriptor`'s module doc already documents this crate
-/// making elsewhere (no DEFAULT values, no out-of-order OPTIONAL members).
+/// making elsewhere (no out-of-order OPTIONAL members). An absent
+/// DEFAULT-valued member (`m.set_default` — see `MemberDescriptor`'s own
+/// doc) gets its schema default filled in here instead of being left
+/// however `T::default()` left it.
 pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut Reader) -> Result<T, DecodeError> {
     let mut result = T::default();
     for m in spec.members {
@@ -485,6 +504,8 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {
                         get_mut(&mut result).ber_decode_into(inner)?;
+                    } else if let Some(set_default) = m.set_default {
+                        set_default(&mut result);
                     }
                 } else {
                     get_mut(&mut result).ber_decode_into(inner)?;
@@ -494,6 +515,8 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {
                         get_mut(&mut result).ber_decode_into_tagged(inner, m.tag)?;
+                    } else if let Some(set_default) = m.set_default {
+                        set_default(&mut result);
                     }
                 } else {
                     get_mut(&mut result).ber_decode_into_tagged(inner, m.tag)?;
@@ -503,6 +526,8 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {
                         ber_decode_into(&mut result, inner)?;
+                    } else if let Some(set_default) = m.set_default {
+                        set_default(&mut result);
                     }
                 } else {
                     ber_decode_into(&mut result, inner)?;
@@ -566,12 +591,14 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         tag: crate::integer::INTEGER_TAG,
         optional: false,
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
+        set_default: None,
     },
     MemberDescriptor {
         name: "y",
         tag: crate::integer::INTEGER_TAG,
         optional: false,
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
+        set_default: None,
     },
 ];
 
@@ -611,12 +638,14 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         tag: crate::integer::INTEGER_TAG,
         optional: false,
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
+        set_default: None,
     },
     MemberDescriptor {
         name: "y",
         tag: crate::integer::INTEGER_TAG,
         optional: true,
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
+        set_default: None,
     },
 ];
 
@@ -657,6 +686,7 @@ static COORDS_MEMBERS: [MemberDescriptor<Coords>; 1] = [MemberDescriptor {
     tag: SEQUENCE_TAG,
     optional: false,
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
+    set_default: None,
 }];
 
 static COORDS_SPEC: SequenceSpec<Coords> =
@@ -696,6 +726,7 @@ static OPT_COORDS_MEMBERS: [MemberDescriptor<OptCoords>; 1] = [MemberDescriptor 
     tag: SEQUENCE_TAG,
     optional: true,
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
+    set_default: None,
 }];
 
 static OPT_COORDS_SPEC: SequenceSpec<OptCoords> =
@@ -736,6 +767,7 @@ static SET_COORDS_MEMBERS: [MemberDescriptor<SetCoords>; 1] = [MemberDescriptor 
     tag: SET_TAG,
     optional: false,
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
+    set_default: None,
 }];
 
 static SET_COORDS_SPEC: SequenceSpec<SetCoords> =
@@ -748,6 +780,50 @@ impl SetCoords {
 
     pub fn decode(data: &[u8]) -> Result<SetCoords, DecodeError> {
         decode_sequence(&SET_COORDS_SPEC, data)
+    }
+}
+
+/// `DefaultPoint ::= SEQUENCE { x INTEGER, y INTEGER DEFAULT 42 }` — worked
+/// example + test subject for a DEFAULT-valued member (X.680 §25.1): `y`'s
+/// `MemberDescriptor::set_default` fills in `42` when absent from the wire,
+/// same role `OptPoint`'s `y` plays for plain OPTIONAL (no default value).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DefaultPoint {
+    pub x: i64,
+    pub y: Option<i64>,
+}
+
+fn default_point_y_default() -> i64 {
+    42
+}
+
+static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
+    MemberDescriptor {
+        name: "x",
+        tag: crate::integer::INTEGER_TAG,
+        optional: false,
+        access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
+        set_default: None,
+    },
+    MemberDescriptor {
+        name: "y",
+        tag: crate::integer::INTEGER_TAG,
+        optional: true,
+        access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
+        set_default: Some(|v| v.y = Some(default_point_y_default())),
+    },
+];
+
+static DEFAULT_POINT_SPEC: SequenceSpec<DefaultPoint> =
+    SequenceSpec { name: "DefaultPoint", tag: SEQUENCE_TAG, members: &DEFAULT_POINT_MEMBERS };
+
+impl DefaultPoint {
+    pub fn encode(&self) -> Vec<u8> {
+        encode_sequence(&DEFAULT_POINT_SPEC, self)
+    }
+
+    pub fn decode(data: &[u8]) -> Result<DefaultPoint, DecodeError> {
+        decode_sequence(&DEFAULT_POINT_SPEC, data)
     }
 }
 
@@ -867,12 +943,14 @@ impl SetCoords {
                 tag: crate::integer::INTEGER_TAG,
                 optional: false,
                 access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
+                set_default: None,
             },
             MemberDescriptor {
                 name: "y",
                 tag: crate::integer::INTEGER_TAG,
                 optional: false,
                 access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
+                set_default: None,
             },
         ];
         static A_SET_SPEC: SequenceSpec<Point> =
@@ -1110,5 +1188,27 @@ impl SetCoords {
         let v = SetOf(vec![1i64, 2, 3]);
         assert_eq!(v.len(), 3);
         assert_eq!(&v[..], &[1, 2, 3]);
+    }
+
+    // ---- DEFAULT-valued member ----------------------------
+
+    #[test]
+    fn default_member_present_on_the_wire_uses_its_real_value_not_the_default() {
+        let p = DefaultPoint { x: 1, y: Some(7) };
+        let decoded = DefaultPoint::decode(&p.encode()).unwrap();
+        assert_eq!(decoded, p);
+    }
+
+    #[test]
+    fn default_member_absent_from_the_wire_gets_the_schema_default_filled_in() {
+        // Hand-encode just `x` — same bytes as if `y` had never been
+        // written (the real "absent from the wire" case DEFAULT exists for).
+        let mut bytes = Vec::new();
+        1i64.ber_encode(&mut bytes);
+        let mut wire = Vec::new();
+        crate::writer::write_constructed(&mut wire, SEQUENCE_TAG, &bytes);
+
+        let decoded = DefaultPoint::decode(&wire).unwrap();
+        assert_eq!(decoded, DefaultPoint { x: 1, y: Some(42) });
     }
 }
