@@ -51,17 +51,10 @@ fn known_skip() -> HashSet<&'static str> {
 }
 
 /// Rust-only skip set (the C++ leg does not skip these — they pass there).
-/// gambas-asn1#390 (named SEQUENCE OF/SET OF element identifiers, bare
-/// self-closing ENUMERATED/NULL elements, CHOICE-typed elements) is fixed;
-/// only gambas-asn1#391 (extension ENUMERATED member in a SET panics as an
-/// `Unsupported` codegen stub) remains.
+/// Currently empty; kept as a named place for a future Rust-only gap to
+/// land, same as the C++ leg's own KNOWN_SKIP pattern above.
 fn rust_known_skip() -> HashSet<&'static str> {
-    [
-        // gambas-asn1#391 — extension ENUMERATED member panics as Unsupported
-        "data-70-12.in", "data-70-13-D.in", "data-70-33.in",
-    ]
-    .into_iter()
-    .collect()
+    HashSet::new()
 }
 
 // Strip all whitespace characters for loose XER comparison (mirrors xer_encoding_equal).
