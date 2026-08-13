@@ -714,8 +714,18 @@ static bool rust_mtype_is_unusable_vec(const std::string& mtype) {
 ///         safer than the general case to leave open, since the previous
 ///         design had an equivalent order dependency here too.
 bool RustBackend::sequence_member_ber_covered(const SequenceMemberSpec& m) const {
-    if (m.is_seq_of)
-        return !m.optional && m.elem_builtin && builtin_ber_tag(*m.elem_builtin, m.elem_mtype) != nullptr;
+    if (m.is_seq_of) {
+        if (m.optional) return false;  // OPTIONAL SEQUENCE OF: separate, still-unhandled scope (no presence-peek in decode_sequence's SeqOf-family arms).
+        if (m.elem_builtin) return builtin_ber_tag(*m.elem_builtin, m.elem_mtype) != nullptr;
+        // A composite (TypeRef) element — SEQUENCE OF GcsePartyIdentity,
+        // e.g. — is always real now, same reasoning as any other composite
+        // reference: encode_seq_of/decode_seq_of (sequence.rs) are already
+        // generic over V: Asn1Value, so once the element type has one
+        // (real or stub, guaranteed regardless of processing order) they
+        // work unchanged. Same two exclusions as a plain scalar composite
+        // reference for the same reasons (see this function's own doc).
+        return !unusable_alias_names_.count(m.elem_mtype) && !rust_mtype_is_unusable_vec(m.elem_mtype);
+    }
     // ANY (X.208 legacy type) has no fixed tag of its own to drive the
     // ordinary Scalar/TaggedScalar/ExplicitScalar paths — Generator forces
     // EXPLICIT tagging on any tagged ANY member regardless of module tag
@@ -854,7 +864,25 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
                 os << std::format("        access: asn1cpp_ber::sequence::MemberAccess::Unsupported {{ reason: \"{}\" }},\n", stub_reason(m));
             } else if (m.is_seq_of) {
-                const char* elem_xer_name = builtin_xer_name(*m.elem_builtin);
+                // A composite (TypeRef) element has no ASN.1 identifier
+                // available at the member level to drive X.693 §12's
+                // per-element XER tag (SequenceMemberSpec carries the
+                // element's *Rust* type name, elem_mtype, not its original
+                // ASN.1 one) — BER is real regardless (encode_seq_of/
+                // decode_seq_of don't need one), but XER for this one row
+                // stays an explicit stub, same "not every leg has to be
+                // real together" precedent ExplicitAny/Unsupported already
+                // set elsewhere in this file.
+                auto emit_seqof_xer = [&]() {
+                    if (m.elem_builtin) {
+                        const char* elem_xer_name = builtin_xer_name(*m.elem_builtin);
+                        os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}, \"{}\"),\n", m.mname, elem_xer_name);
+                        os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
+                    } else {
+                        os << "            xer_encode: |_, _| unimplemented!(\"XER leg not yet wired for a composite-element SEQUENCE OF/SET OF member\"),\n";
+                        os << "            xer_decode_into: |_, _| unimplemented!(\"XER leg not yet wired for a composite-element SEQUENCE OF/SET OF member\"),\n";
+                    }
+                };
                 // Prefer the member's real resolved tag
                 // (IMPLICIT override) over SEQUENCE-OF's natural SEQUENCE_TAG,
                 // same TaggedScalar-vs-Scalar branch used below for scalar
@@ -874,8 +902,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedSeqOf {\n";
                     os << std::format("            ber_encode: |v, out| asn1cpp_ber::writer::write_explicit(out, {1}, |inner| asn1cpp_ber::sequence::encode_seq_of(inner, &v.{0})),\n", m.mname, tag_lit);
                     os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::reader::read_explicit(r, {1}, |inner| asn1cpp_ber::sequence::decode_seq_of(inner))?; Ok(()) }},\n", m.mname, tag_lit);
-                    os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}, \"{}\"),\n", m.mname, elem_xer_name);
-                    os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
+                    emit_seqof_xer();
                     os << "        },\n";
                 } else if (m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit) {
                     std::string tag_lit = format_tag_literal(*m.resolved_tag);
@@ -889,8 +916,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedSeqOf {\n";
                     os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_tagged(out, {}, &v.{}),\n", tag_lit, m.mname);
                     os << std::format("            ber_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_tagged(r, {})?; Ok(()) }},\n", m.mname, tag_lit);
-                    os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}, \"{}\"),\n", m.mname, elem_xer_name);
-                    os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
+                    emit_seqof_xer();
                     os << "        },\n";
                 } else {
                     // The descriptor's own `tag` is the OUTER
@@ -905,8 +931,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << "        access: asn1cpp_ber::sequence::MemberAccess::SeqOf {\n";
                     os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of(out, &v.{}),\n", m.mname);
                     os << std::format("            ber_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of(r)?; Ok(()) }},\n", m.mname);
-                    os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}, \"{}\"),\n", m.mname, elem_xer_name);
-                    os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?; Ok(()) }},\n", m.mname, elem_xer_name);
+                    emit_seqof_xer();
                     os << "        },\n";
                 }
             } else if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any) {
