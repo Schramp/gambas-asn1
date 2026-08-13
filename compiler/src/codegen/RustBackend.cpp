@@ -551,11 +551,10 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
 ///       scope (same as it always has been — this backend has never had a
 ///       gate for SEQUENCE OF *element* coverage at the top-level-type
 ///       granularity, only at the member-level SeqOf/TaggedSeqOf branches).
-///       XER is only emitted when `spec.elem_xer_name` is populated (the
-///       element's own declared/resolvable identifier, X.693 §12) — with
-///       no name there's nothing valid to emit, so xer_encode/
-///       xer_decode_into stay the trait's default (panicking) body instead,
-///       same as any other not-yet-XER-ready type elsewhere in this file.
+///       XER is always emitted too, unconditionally — encode_seq_of_xer/
+///       decode_seq_of_xer (sequence.rs) derive the per-element X.693 §12
+///       tag from each element's own `Asn1Value::xer_element_name()` at
+///       runtime, so there's no per-type name to gate on here at all.
 void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
     std::string fname = escape(to_snake_case(spec.type_name) + "_size_ok");
     os << std::format("pub fn {}<T>(v: &Vec<T>) -> bool {{\n", fname);
@@ -586,16 +585,19 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << "        self.0 = asn1cpp_ber::sequence::decode_seq_of_content(content)?;\n";
     os << "        Ok(())\n";
     os << "    }\n";
-    if (spec.elem_xer_name) {
-        os << "\n";
-        os << "    fn xer_encode(&self, out: &mut String) {\n";
-        os << std::format("        asn1cpp_ber::sequence::encode_seq_of_xer(out, &self.0, \"{}\");\n", *spec.elem_xer_name);
-        os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
-        os << std::format("        self.0 = asn1cpp_ber::sequence::decode_seq_of_xer(r, \"{}\")?;\n", *spec.elem_xer_name);
-        os << "        Ok(())\n";
-        os << "    }\n";
-    }
+    // Always real now — encode_seq_of_xer/decode_seq_of_xer (sequence.rs)
+    // derive the per-element X.693 §12 tag from each element's own
+    // Asn1Value::xer_element_name() generically, same as the member-level
+    // SeqOf/TaggedSeqOf emission (see that lambda's own doc) — no longer
+    // gated on spec.elem_xer_name (that field is C++-only now, unused here).
+    os << "\n";
+    os << "    fn xer_encode(&self, out: &mut String) {\n";
+    os << "        asn1cpp_ber::sequence::encode_seq_of_xer(out, &self.0);\n";
+    os << "    }\n\n";
+    os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+    os << "        self.0 = asn1cpp_ber::sequence::decode_seq_of_xer(r)?;\n";
+    os << "        Ok(())\n";
+    os << "    }\n";
     os << "}\n\n";
 }
 
