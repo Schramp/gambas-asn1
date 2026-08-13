@@ -884,13 +884,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             } else if (m.is_seq_of || m.is_set_of) {
                 // SET OF (m.is_set_of) uses SET's own natural tag (X.680
                 // §26, universal 17) instead of SEQUENCE OF's (universal
-                // 16) wherever the *natural* (non-override) tag applies —
-                // the IMPLICIT-override branch below is unaffected (already
-                // substitutes a real override tag regardless of the
-                // underlying SEQUENCE/SET nature). The EXPLICIT branch's
-                // *inner* TLV (X.690 §8.14.3: EXPLICIT wraps the value's own
-                // natural encoding unchanged) needs it too, not just the
-                // plain/natural branch.
+                // 16) — needed here (not read from m.resolved_tag, unlike
+                // the plain/natural branch below) only for the EXPLICIT
+                // branch's *inner* TLV: X.690 §8.14.3 wraps the value's own
+                // natural encoding unchanged, but compute_member_tag
+                // (Generator.cpp) never computes that natural tag when the
+                // member has its own override tag present — resolved_tag
+                // there holds the *outer* explicit wrapper, not the inner
+                // natural one. The IMPLICIT-override branch below needs
+                // neither (already substitutes a real override tag,
+                // independent of the underlying SEQUENCE/SET nature).
                 std::string natural_tag_lit = m.is_set_of ? "asn1cpp_ber::sequence::SET_TAG" : "asn1cpp_ber::sequence::SEQUENCE_TAG";
                 auto natural_encode_call = [&](const std::string& out_var, const std::string& items_expr) {
                     return m.is_set_of
@@ -975,20 +978,28 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     os << "        },\n";
                 } else {
                     // The descriptor's own `tag` is the member's natural
-                    // tag on the wire (encode_seq_of/encode_seq_of_tagged's
-                    // own default via natural_tag_lit) — genuinely
-                    // consulted now when optional, same OPTIONAL
-                    // tag-presence peek every other MemberAccess kind
-                    // already uses (decode_sequence_content, sequence.rs).
-                    os << std::format("        tag: {},\n", natural_tag_lit);
+                    // tag on the wire — Generator::compute_member_tag
+                    // (Generator.cpp) already resolved this via
+                    // natural_tag_spec_for whenever there's no override
+                    // (tag_is_override=false), so m.resolved_tag is
+                    // guaranteed present here with the correct
+                    // SEQUENCE_TAG/SET_TAG-equivalent value already —
+                    // format it directly, same as the IMPLICIT-override
+                    // branch above, rather than re-deriving it from
+                    // is_seq_of/is_set_of. Genuinely consulted now when
+                    // optional, same OPTIONAL tag-presence peek every other
+                    // MemberAccess kind already uses (decode_sequence_content,
+                    // sequence.rs).
+                    std::string tag_lit = format_tag_literal(*m.resolved_tag);
+                    os << std::format("        tag: {},\n", tag_lit);
                     os << std::format("        optional: {},\n", m.optional ? "true" : "false");
                     os << "        access: asn1cpp_ber::sequence::MemberAccess::SeqOf {\n";
                     if (m.optional) {
-                        os << std::format("            ber_encode: |v, out| {{ if let Some(items) = &v.{0} {{ {1}; }} }},\n", m.mname, natural_encode_call("out", "items"));
-                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some({1}?); Ok(()) }},\n", m.mname, natural_decode_call("r"));
+                        os << std::format("            ber_encode: |v, out| {{ if let Some(items) = &v.{0} {{ asn1cpp_ber::sequence::encode_seq_of_tagged(out, {1}, items); }} }},\n", m.mname, tag_lit);
+                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::sequence::decode_seq_of_tagged(r, {1})?); Ok(()) }},\n", m.mname, tag_lit);
                     } else {
-                        os << std::format("            ber_encode: |v, out| {},\n", natural_encode_call("out", std::format("&v.{}", m.mname)));
-                        os << std::format("            ber_decode_into: |v, r| {{ v.{} = {}?; Ok(()) }},\n", m.mname, natural_decode_call("r"));
+                        os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_tagged(out, {1}, &v.{0}),\n", m.mname, tag_lit);
+                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::sequence::decode_seq_of_tagged(r, {1})?; Ok(()) }},\n", m.mname, tag_lit);
                     }
                     emit_seqof_xer();
                     emit_is_present();
