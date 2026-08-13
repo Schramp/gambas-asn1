@@ -654,13 +654,32 @@ static bool rust_mtype_is_unusable_vec(const std::string& mtype) {
 ///        `asn1cpp_ber::sequence::SeqOf<T>` (rust-runtime/ber/src/sequence.rs),
 ///        whose single blanket `impl<T: Asn1Value + Default> Asn1Value for
 ///        SeqOf<T>` gives it a real impl `Vec<T>` itself can't
-///        (coherence-blocked). A SEQUENCE member keeps its own raw `Vec<T>`
-///        field via `MemberAccess::SeqOf` unaffected — this only applies
-///        where `choice_alternative_covered` consults it, CHOICE
-///        alternatives. Every other mtype passes through unchanged.
+///        (coherence-blocked). Only applies where `choice_alternative_covered`
+///        consults it, CHOICE alternatives — a SEQUENCE/SET member's own
+///        field type is computed separately, `rust_seqof_member_field_type`
+///        below, since it needs to pick `SetOf<T>` over `SeqOf<T>` for a
+///        real SET OF member (the CHOICE-alt case never needs to, per this
+///        function's own doc). Every other mtype passes through unchanged.
 static std::string rust_seqof_alt_mtype(const std::string& mtype) {
     if (!rust_mtype_is_unusable_vec(mtype)) return mtype;
     return std::format("asn1cpp_ber::sequence::SeqOf<{}>", mtype.substr(4, mtype.size() - 5));
+}
+
+/// @brief A SEQUENCE/SET member's own Rust field type, for a SEQUENCE
+///        OF/SET OF member specifically — `SeqOf<ElemType>`/`SetOf<ElemType>`
+///        (`rust-runtime/ber/src/sequence.rs`) instead of a raw
+///        `Vec<ElemType>`, which has no `Asn1Value` impl of its own
+///        (coherence-blocked, same reasoning `rust_seqof_alt_mtype`'s own
+///        doc gives). Once the field itself implements `Asn1Value`, the
+///        member-table emission below needs no dedicated SeqOf-shaped
+///        closures at all — it falls through to the same
+///        Scalar/TaggedScalar/ExplicitScalar dispatch every other
+///        composite member already uses. Every other member's `mtype`
+///        passes through unchanged.
+static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
+    if (m.is_seq_of) return std::format("asn1cpp_ber::sequence::SeqOf<{}>", m.elem_mtype);
+    if (m.is_set_of) return std::format("asn1cpp_ber::sequence::SetOf<{}>", m.elem_mtype);
+    return m.mtype;
 }
 
 /// @brief Emit the Rust struct declaration for a SEQUENCE/SET type.
@@ -801,7 +820,8 @@ void RustBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostre
         // member (see SequenceMemberSpec::member_type_in_cycle's doc,
         // Backend.hpp, for why unconditional boxing — mirroring C++'s own
         // unrelated unique_ptr-everywhere convention — was rejected).
-        std::string ftype = m.member_type_in_cycle ? std::format("Box<{}>", m.mtype) : m.mtype;
+        std::string mtype = rust_seqof_member_field_type(m);
+        std::string ftype = m.member_type_in_cycle ? std::format("Box<{}>", mtype) : mtype;
         os << std::format("    pub {}: {},\n", m.mname,
                            m.optional ? std::format("Option<{}>", ftype) : ftype);
     }
@@ -881,130 +901,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 os << "        tag: asn1cpp_ber::sequence::SEQUENCE_TAG,\n";
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
                 os << std::format("        access: asn1cpp_ber::sequence::MemberAccess::Unsupported {{ reason: \"{}\" }},\n", stub_reason(m));
-            } else if (m.is_seq_of || m.is_set_of) {
-                // SET OF (m.is_set_of) uses SET's own natural tag (X.680
-                // §26, universal 17) instead of SEQUENCE OF's (universal
-                // 16) — needed here (not read from m.resolved_tag, unlike
-                // the plain/natural branch below) only for the EXPLICIT
-                // branch's *inner* TLV: X.690 §8.14.3 wraps the value's own
-                // natural encoding unchanged, but compute_member_tag
-                // (Generator.cpp) never computes that natural tag when the
-                // member has its own override tag present — resolved_tag
-                // there holds the *outer* explicit wrapper, not the inner
-                // natural one. The IMPLICIT-override branch below needs
-                // neither (already substitutes a real override tag,
-                // independent of the underlying SEQUENCE/SET nature).
-                std::string natural_tag_lit = m.is_set_of ? "asn1cpp_ber::sequence::SET_TAG" : "asn1cpp_ber::sequence::SEQUENCE_TAG";
-                auto natural_encode_call = [&](const std::string& out_var, const std::string& items_expr) {
-                    return m.is_set_of
-                        ? std::format("asn1cpp_ber::sequence::encode_seq_of_tagged({}, {}, {})", out_var, natural_tag_lit, items_expr)
-                        : std::format("asn1cpp_ber::sequence::encode_seq_of({}, {})", out_var, items_expr);
-                };
-                auto natural_decode_call = [&](const std::string& r_var) {
-                    return m.is_set_of
-                        ? std::format("asn1cpp_ber::sequence::decode_seq_of_tagged({}, {})", r_var, natural_tag_lit)
-                        : std::format("asn1cpp_ber::sequence::decode_seq_of({})", r_var);
-                };
-                // X.693 §12's per-element XER tag comes from the element's
-                // own Asn1Value::xer_element_name() at runtime now (its
-                // fixed keyword for a builtin, its real ASN.1 type name for
-                // a composite one) — encode_seq_of_xer/decode_seq_of_xer
-                // (sequence.rs) derive it internally, generic over any
-                // element type, so this row is always real for both BER
-                // and XER regardless of element kind, no per-row decision
-                // needed here at all.
-                // XER leg is identical whether the member is required or
-                // OPTIONAL (presence is decided by the walker before
-                // xer_encode is even called — MemberAccess::SeqOf::is_present's
-                // own doc, sequence.rs — and by the shared OPTIONAL peek
-                // decode_sequence_xer_content already does generically,
-                // xer.rs), so only the closure body itself needs the
-                // Option<Vec<T>> field vs plain Vec<T> field distinction.
-                auto emit_seqof_xer = [&]() {
-                    if (m.optional) {
-                        os << std::format("            xer_encode: |v, out| {{ if let Some(items) = &v.{0} {{ asn1cpp_ber::sequence::encode_seq_of_xer(out, items); }} }},\n", m.mname);
-                        os << std::format("            xer_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::sequence::decode_seq_of_xer(r)?); Ok(()) }},\n", m.mname);
-                    } else {
-                        os << std::format("            xer_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_xer(out, &v.{}),\n", m.mname);
-                        os << std::format("            xer_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_xer(r)?; Ok(()) }},\n", m.mname);
-                    }
-                };
-                // gambas-asn1#400: MemberAccess::SeqOf::is_present's own doc
-                // (sequence.rs) — the XER walker needs this to decide
-                // whether to write the outer wrapper tag at all, since
-                // xer_encode alone (writing into a plain &mut String) can't
-                // signal absence the way Asn1Value::is_present() does for a
-                // Scalar member.
-                auto emit_is_present = [&]() {
-                    if (m.optional) os << std::format("            is_present: |v| v.{}.is_some(),\n", m.mname);
-                    else            os << "            is_present: |_v| true,\n";
-                };
-                // Prefer the member's real resolved tag
-                // (IMPLICIT override) over SEQUENCE-OF's natural SEQUENCE_TAG,
-                // same TaggedScalar-vs-Scalar branch used below for scalar
-                // members.
-                if (m.resolved_tag && m.is_explicit) {
-                    // EXPLICIT — wrap the natural SeqOf
-                    // encoding (encode_seq_of/decode_seq_of, not the
-                    // tag-substituting _tagged variant) in an outer TLV.
-                    std::string tag_lit = format_tag_literal(*m.resolved_tag);
-                    os << std::format("        tag: {},\n", tag_lit);
-                    os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                    os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedSeqOf {\n";
-                    if (m.optional) {
-                        os << std::format("            ber_encode: |v, out| {{ if let Some(items) = &v.{0} {{ asn1cpp_ber::writer::write_explicit(out, {1}, |inner| {2}); }} }},\n", m.mname, tag_lit, natural_encode_call("inner", "items"));
-                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::reader::read_explicit(r, {1}, |inner| {2})?); Ok(()) }},\n", m.mname, tag_lit, natural_decode_call("inner"));
-                    } else {
-                        os << std::format("            ber_encode: |v, out| asn1cpp_ber::writer::write_explicit(out, {1}, |inner| {2}),\n", m.mname, tag_lit, natural_encode_call("inner", std::format("&v.{}", m.mname)));
-                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::reader::read_explicit(r, {1}, |inner| {2})?; Ok(()) }},\n", m.mname, tag_lit, natural_decode_call("inner"));
-                    }
-                    emit_seqof_xer();
-                    emit_is_present();
-                    os << "        },\n";
-                } else if (m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit) {
-                    std::string tag_lit = format_tag_literal(*m.resolved_tag);
-                    os << std::format("        tag: {},\n", tag_lit);
-                    os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                    os << "        access: asn1cpp_ber::sequence::MemberAccess::TaggedSeqOf {\n";
-                    if (m.optional) {
-                        os << std::format("            ber_encode: |v, out| {{ if let Some(items) = &v.{0} {{ asn1cpp_ber::sequence::encode_seq_of_tagged(out, {1}, items); }} }},\n", m.mname, tag_lit);
-                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::sequence::decode_seq_of_tagged(r, {1})?); Ok(()) }},\n", m.mname, tag_lit);
-                    } else {
-                        os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_tagged(out, {}, &v.{}),\n", tag_lit, m.mname);
-                        os << std::format("            ber_decode_into: |v, r| {{ v.{} = asn1cpp_ber::sequence::decode_seq_of_tagged(r, {})?; Ok(()) }},\n", m.mname, tag_lit);
-                    }
-                    emit_seqof_xer();
-                    emit_is_present();
-                    os << "        },\n";
-                } else {
-                    // The descriptor's own `tag` is the member's natural
-                    // tag on the wire — Generator::compute_member_tag
-                    // (Generator.cpp) already resolved this via
-                    // natural_tag_spec_for whenever there's no override
-                    // (tag_is_override=false), so m.resolved_tag is
-                    // guaranteed present here with the correct
-                    // SEQUENCE_TAG/SET_TAG-equivalent value already —
-                    // format it directly, same as the IMPLICIT-override
-                    // branch above, rather than re-deriving it from
-                    // is_seq_of/is_set_of. Genuinely consulted now when
-                    // optional, same OPTIONAL tag-presence peek every other
-                    // MemberAccess kind already uses (decode_sequence_content,
-                    // sequence.rs).
-                    std::string tag_lit = format_tag_literal(*m.resolved_tag);
-                    os << std::format("        tag: {},\n", tag_lit);
-                    os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                    os << "        access: asn1cpp_ber::sequence::MemberAccess::SeqOf {\n";
-                    if (m.optional) {
-                        os << std::format("            ber_encode: |v, out| {{ if let Some(items) = &v.{0} {{ asn1cpp_ber::sequence::encode_seq_of_tagged(out, {1}, items); }} }},\n", m.mname, tag_lit);
-                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::sequence::decode_seq_of_tagged(r, {1})?); Ok(()) }},\n", m.mname, tag_lit);
-                    } else {
-                        os << std::format("            ber_encode: |v, out| asn1cpp_ber::sequence::encode_seq_of_tagged(out, {1}, &v.{0}),\n", m.mname, tag_lit);
-                        os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::sequence::decode_seq_of_tagged(r, {1})?; Ok(()) }},\n", m.mname, tag_lit);
-                    }
-                    emit_seqof_xer();
-                    emit_is_present();
-                    os << "        },\n";
-                }
             } else if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any) {
                 // `[n] ANY` — always EXPLICIT (sequence_member_covered
                 // only lets this branch's precondition through when so).
