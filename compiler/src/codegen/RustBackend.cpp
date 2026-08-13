@@ -79,12 +79,23 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     case ast::BuiltinType::ObjectDescriptor: return "asn1cpp_ber::strings::OBJECT_DESCRIPTOR_TAG";
     case ast::BuiltinType::UtcTime:          return "asn1cpp_ber::strings::UTC_TIME_TAG";
     case ast::BuiltinType::GeneralizedTime:  return "asn1cpp_ber::strings::GENERALIZED_TIME_TAG";
+    // gambas-asn1#391: an *inline* `ENUMERATED { ... }` member/element
+    // (no separate type assignment — `m.body` holds BuiltinType::Enumerated
+    // directly, Generator.cpp's `collect()`) sets `mbuiltin` here same as
+    // any other builtin, and still needs its own `Asn1Value` impl reachable
+    // — `emit_enumerated`/`EnumeratedSpec` already generates one (Generator
+    // synthesizes a real named type for it, `cpp_type_for`), it just wasn't
+    // wired into this lookup. A member/element that's a *reference* to a
+    // separately-declared top-level ENUMERATED type has no `mbuiltin` at
+    // all (goes through the `!mbuiltin` TypeRef branch in
+    // sequence_member_covered/rust_tag_for_builtin_or_alias instead) — the
+    // comment this replaced conflated that case with this one.
+    case ast::BuiltinType::Enumerated:       return "asn1cpp_ber::enumerated::ENUMERATED_TAG";
     // Not yet covered — no Asn1Value impl in rust-runtime/ber for these
     // kinds yet, so a member of any of them falls back to struct-shape-only
     // codegen (no encode()/decode() at all if any member is uncovered).
     // Only ANY remains uncovered here (gambas-asn1#330 — separate, still
-    // open). Enumerated never reaches this switch — routed through the
-    // wholly separate emit_enumerated/EnumeratedSpec path.
+    // open).
     default:                                 return nullptr;
     }
 }
