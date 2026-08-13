@@ -418,17 +418,15 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
     // natural tag applies; set means an explicit/AUTOMATIC-assigned tag
     // overrides it (X.690 §8.14). Consumed by RustBackend's CHOICE analogue
     // of MemberAccess::TaggedScalar.
-
-    // SEQUENCE OF alternative support — mirrors SequenceMemberSpec's own
-    // is_seq_of/elem_builtin/elem_mtype trio exactly (see that struct's own
-    // doc for the field-by-field rationale, unchanged here): set for an
-    // alternative whose body is ast::SequenceOfType (e.g.
-    // `iRIPayloadSequence [0] SEQUENCE OF IRIPayload` — a real, common
-    // shape on the ETSI LI PS-PDU schema's own Payload CHOICE), regardless
-    // of whether the element is a direct builtin or composite.
-    bool        is_seq_of = false;
-    std::optional<ast::BuiltinType> elem_builtin;
-    std::string elem_mtype;
+    //
+    // A SEQUENCE OF alternative (e.g. `iRIPayloadSequence [0] SEQUENCE OF
+    // IRIPayload`) needs no dedicated fields here: Generator::
+    // generate_inline_types already emits a real named wrapper type for it
+    // (same synthesis every anonymous inline SEQUENCE/CHOICE/SET/ENUMERATED
+    // member already gets) — see cpp_type_for's use_synthetic_seqof_member_type
+    // branch, Backend::wrap_collection_type's own doc. `mtype` ends up
+    // naming that wrapper type, so it's an ordinary composite alternative
+    // through every path here, no different from a TypeRef alternative.
 };
 
 /// @brief Backend-agnostic decision for one CHOICE type (X.680 §28). The
@@ -593,6 +591,27 @@ public:
         (void)elem_type;
         throw std::logic_error("wrap_collection_type: not implemented for this backend");
     }
+
+    /// @brief Should a *named* SEQUENCE OF CHOICE alternative
+    ///        (`Generator::choice_alt_type_for`) resolve to the synthetic
+    ///        wrapper type `Generator::generate_inline_types` already
+    ///        generates for it (same file every other anonymous inline
+    ///        construct — SEQUENCE/CHOICE/SET/ENUMERATED — gets), instead
+    ///        of `wrap_collection_type(elem_type)`?
+    /// @note C++ doesn't need this: `asn1::VectorSeqOf<T>` (`wrap_collection_type`)
+    ///       is already a real, generic, reusable type — one C++ template,
+    ///       any T, dispatched through the shared `TypeDescriptor`/`ICodec`
+    ///       machinery. Rust has no equivalent generic collection wrapper
+    ///       with an `Asn1Value` impl (a blanket `impl<V: Asn1Value> Asn1Value
+    ///       for Vec<V>` would coherence-conflict with `Vec<u8>`'s own
+    ///       concrete OCTET STRING impl — same constraint noted throughout
+    ///       rust-runtime/ber), so a raw `Vec<T>` member/alternative has no
+    ///       way to implement the trait at all; the synthetic wrapper
+    ///       (already generated, just previously unused for Rust) is a
+    ///       distinct concrete type per occurrence and gets its own real
+    ///       impl the same way a top-level named SEQUENCE OF type does.
+    /// @note Default false — C++'s existing behavior, unchanged.
+    virtual bool use_synthetic_seqof_member_type() const { return false; }
 
     /// @brief Emit both halves of an ENUMERATED type: declaration then definition.
     /// @param spec    Resolved, backend-agnostic decision (see EnumeratedSpec).

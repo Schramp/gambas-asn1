@@ -206,6 +206,11 @@ public:
         return std::format("Vec<{}>", elem_type);
     }
 
+    // See Backend::use_synthetic_seqof_member_type's own doc — Vec<T> has
+    // no Asn1Value impl to reach for a named member/alternative, so use the
+    // synthetic wrapper Generator::generate_inline_types already generates.
+    bool use_synthetic_seqof_member_type() const override { return true; }
+
     // Defined in RustBackend.cpp — real emission logic, not a one-liner
     // like the naming methods above.
     void emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const override;
