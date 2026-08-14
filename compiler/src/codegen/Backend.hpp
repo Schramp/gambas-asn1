@@ -387,6 +387,19 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // emission decision, not table data.
     SeqOfKind   seq_of_kind = SeqOfKind::None;
     std::optional<ast::BuiltinType> elem_builtin;
+    // Element-level analogue of `storage_kind` above — only
+    // meaningful when `elem_builtin == ast::BuiltinType::Integer` (default
+    // S64 otherwise, harmlessly unused, same convention `storage_kind`
+    // itself uses). Before this field existed, a SEQUENCE OF/SET OF element
+    // whose INTEGER constraint picked u64/i128 storage (X.680 semi-
+    // constrained non-negative, e.g. `INTEGER (0..MAX)`) had no way to be
+    // recognized as covered — RustBackend::sequence_member_covered's
+    // element-coverage check had no `storage_kind` to intercept Integer
+    // with (unlike the member-level `rust_tag_for_builtin_or_alias` path),
+    // so it fell through to a bare `elem_mtype == "i64"` string check and
+    // wrongly reported the member as unsupported even though the runtime
+    // Asn1Value impl for u64/i128 already exists.
+    IntStorageKind elem_storage_kind = IntStorageKind::S64;
     bool        optional = false;
     bool        has_default = false;
     // gambas-asn1#419: `ops`/`offset_expr` used to live here as pre-formatted
