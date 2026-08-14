@@ -1,0 +1,20 @@
+-- gambas-asn1#422 review: exercises the SEQUENCE OF/SET OF stub_reason path
+-- (RustBackend.cpp's sequence_member_covered) for a wide-range INTEGER
+-- element. Unlike a member-level wide INTEGER (storage_kind intercepted by
+-- rust_tag_for_builtin_or_alias, always covered — see rust_wide_types_test.asn1),
+-- a SEQUENCE OF/SET OF element's coverage check calls builtin_ber_tag directly
+-- with no storage_kind interception (Generator::classify_integer_storage only
+-- runs per-member, not per-element) — its Integer case only accepts
+-- mtype == "i64", so a semi-constrained non-negative element (u64 storage,
+-- X.680 semi-constrained INTEGER, `0..MAX`) makes this member land in
+-- MemberAccess::Unsupported rather than getting a real encode/decode row —
+-- a real, currently-untested coverage gap (large-integer SEQUENCE OF/SET OF
+-- element support), not dead code.
+
+RustSeqOfWideIntTest DEFINITIONS ::= BEGIN
+
+    WideIntList ::= SEQUENCE {
+        counts SEQUENCE OF INTEGER (0..MAX)
+    }
+
+END

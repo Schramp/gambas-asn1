@@ -717,8 +717,11 @@ static std::string rust_seqof_elem_mtype(const SequenceMemberSpec& m) {
 ///        composite member already uses. Every other member's `mtype`
 ///        passes through unchanged.
 static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
-    if (m.is_seq_of) return std::format("asn1cpp_ber::sequence::SeqOf<{}>", rust_seqof_elem_mtype(m));
-    if (m.is_set_of) return std::format("asn1cpp_ber::sequence::SetOf<{}>", rust_seqof_elem_mtype(m));
+    switch (m.seq_of_kind) {
+    case SeqOfKind::SeqOf: return std::format("asn1cpp_ber::sequence::SeqOf<{}>", rust_seqof_elem_mtype(m));
+    case SeqOfKind::SetOf: return std::format("asn1cpp_ber::sequence::SetOf<{}>", rust_seqof_elem_mtype(m));
+    case SeqOfKind::None:  return m.mtype;
+    }
     return m.mtype;
 }
 
@@ -783,7 +786,7 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 ///         safer than the general case to leave open, since the previous
 ///         design had an equivalent order dependency here too.
 bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
-    if (m.is_seq_of || m.is_set_of) {
+    if (m.seq_of_kind != SeqOfKind::None) {
         std::string elem_mtype = rust_seqof_elem_mtype(m);
         if (m.elem_builtin) return builtin_ber_tag(*m.elem_builtin, elem_mtype) != nullptr;
         // A composite (TypeRef) element — SEQUENCE OF GcsePartyIdentity,
@@ -793,9 +796,9 @@ bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
         // (real or stub, guaranteed regardless of processing order) they
         // work unchanged. Same two exclusions as a plain scalar composite
         // reference for the same reasons (see this function's own doc).
-        // SET OF (m.is_set_of) shares this whole branch with SEQUENCE OF —
-        // the only difference is the wire tag (SET_TAG vs SEQUENCE_TAG),
-        // decided at emission time, not a coverage question.
+        // SET OF (SeqOfKind::SetOf) shares this whole branch with SEQUENCE
+        // OF — the only difference is the wire tag (SET_TAG vs
+        // SEQUENCE_TAG), decided at emission time, not a coverage question.
         return !unusable_alias_names_.count(elem_mtype) && !rust_mtype_is_unusable_vec(elem_mtype);
     }
     // ANY (X.208 legacy type) has no fixed tag of its own to drive the
@@ -924,7 +927,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // Human-readable reason baked into an Unsupported row's stub panic
     // message — best-effort diagnosability, not meant to be exhaustive.
     auto stub_reason = [](const SequenceMemberSpec& m) -> const char* {
-        if (m.is_seq_of || m.is_set_of) return "SEQUENCE OF/SET OF element type/tag/optionality combination not yet supported";
+        if (m.seq_of_kind != SeqOfKind::None) return "SEQUENCE OF/SET OF element type/tag/optionality combination not yet supported";
         if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any) return "untagged ANY has no tag to detect presence";
         if (!m.mbuiltin) return "OPTIONAL member of an untagged type has no tag to detect presence";
         return "builtin type/storage combination not yet supported";
