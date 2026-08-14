@@ -198,6 +198,36 @@ std::optional<TypeTagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& d
     return TypeTagSpec{ast::TagClass::Universal, 4, false};  // fallback: OCTET STRING
 }
 
+bool Generator::type_is_explicit(const ast::TypeDef& def) const {
+    if (!def.tag.present()) return false;
+    return member_is_explicit(def.tag, def);
+}
+
+std::optional<TypeTagSpec> Generator::underlying_natural_tag_spec_for(const ast::TypeDef& def) const {
+    using BT = ast::BuiltinType;
+    if (auto* bt = std::get_if<BT>(&def.body)) {
+        if (*bt == BT::Any)
+            return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::OctetString, false};
+        uint32_t n = sema::builtin_universal_tag(*bt);
+        if (n) return TypeTagSpec{ast::TagClass::Universal, n, false};
+    }
+    if (def.is_sequence())
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Sequence, true};
+    if (def.is_set())
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
+    if (def.is_choice())
+        return std::nullopt;
+    if (def.is_seq_of())
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Sequence, true};
+    if (def.is_set_of())
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
+    if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
+        auto base = resolver_.resolve_ref(*tr);
+        if (base) return underlying_natural_tag_spec_for(*base);
+    }
+    return TypeTagSpec{ast::TagClass::Universal, 4, false};  // fallback: OCTET STRING
+}
+
 /// @brief Returns the natural (universal) tag for a member def's underlying
 ///        type, in the active backend's literal syntax.
 /// @param def Member or referenced type to compute the natural tag for.
@@ -552,6 +582,8 @@ static EnumeratedSpec build_enumerated_spec(const ast::TypeDef& def,
 void Generator::emit_enumerated(const ast::TypeDef& def, TypeOutputSession& session) {
     auto spec = build_enumerated_spec(def, effective_cpp_name(def.name, current_module_));
     spec.tag = natural_tag_spec_for(def);
+    spec.is_explicit = type_is_explicit(def);
+    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
     backend_.emit_enumerated(spec, session);
 }
 
@@ -607,6 +639,8 @@ IntegerSpec Generator::build_integer_spec(const ast::TypeDef& def, const std::st
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
     spec.storage_kind = classify_integer_storage(def);
     spec.tag = natural_tag_spec_for(def);
+    spec.is_explicit = type_is_explicit(def);
+    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
     for (const auto& ev : def.enum_values)
         spec.named_values.push_back({ev.name, ev.number.value_or(0)});
 
@@ -1323,6 +1357,8 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
     spec.roms_count = roms_count;
     spec.is_set = is_set;
     spec.tag = natural_tag_spec_for(def);
+    spec.is_explicit = type_is_explicit(def);
+    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
 
     // Storage-ops helper for optional member callbacks — one per optional
     // member. Must be written before the collect() pass below:
@@ -1977,6 +2013,8 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     auto* bt = std::get_if<ast::BuiltinType>(&def.body);
     spec.builtin_type = bt ? *bt : ast::BuiltinType::Utf8String;
     spec.tag = natural_tag_spec_for(def);
+    spec.is_explicit = type_is_explicit(def);
+    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
 
     spec.alphabet = extract_from_alphabet(def);
     auto size_range = extract_size_range(def);
@@ -2055,6 +2093,8 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
     spec.is_set_of = def.is_set_of();
     spec.tag = natural_tag_spec_for(def);
+    spec.is_explicit = type_is_explicit(def);
+    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
 
     // SIZE constraint on collection length
     auto sc = compute_size_constraint(extract_size_range(def));

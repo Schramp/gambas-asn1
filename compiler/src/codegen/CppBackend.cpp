@@ -146,7 +146,8 @@ std::string make_string_constraints_init(
 }
 
 // Moved verbatim from Generator.cpp (was `static`, file-local). No
-// behavior change: same parameters, same output.
+// behavior change: same parameters, same output, unless is_explicit is set
+// (gambas-asn1#352) — see that param's own doc.
 void emit_type_descriptor(std::ostream& os,
                            const std::string& cname,
                            const std::string& xer_name,
@@ -156,7 +157,20 @@ void emit_type_descriptor(std::ostream& os,
                            const std::string& kind,
                            const std::string& per_handler,
                            const std::string& ber_handler,
-                           bool use_class_scope) {
+                           bool use_class_scope,
+                           // gambas-asn1#352: true when this type's own
+                           // top-level [n] tag is EXPLICIT (tag_expr is the
+                           // outer wrapper tag; natural_tag_expr — required
+                           // whenever this is true — is the real inner tag
+                           // BerCodec::encode/decode wraps/unwraps around).
+                           // Appended as trailing TypeDescriptor::
+                           // is_explicit/natural_tag field values; the
+                           // common (false) case emits nothing extra,
+                           // relying on those two fields' own default
+                           // member initializers, same as xer_encoding
+                           // already does for every call site here.
+                           bool is_explicit,
+                           const std::string& natural_tag_expr) {
     auto sp = [&](bool h) -> std::string {
         if (!h) return "nullptr";
         return use_class_scope ? std::format("&{}::asn_SPC", cname)
@@ -173,7 +187,11 @@ void emit_type_descriptor(std::ostream& os,
     os << std::format("    false, {} /* kind */,\n", kind);
     os << std::format("    {} /* per_handler */,\n", per_handler);
     os << std::format("    {} /* ber_handler */,\n", ber_handler);
-    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cname);
+    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */,\n", cname);
+    if (is_explicit) {
+        os << std::format("    asn1::XerEncoding::Default, true, {} /* is_explicit, natural_tag */\n",
+                          natural_tag_expr);
+    }
     os << "};\n\n";
 }
 
@@ -251,7 +269,8 @@ void CppBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::ost
         spec.tag ? format_tag_literal(*spec.tag) : "asn1::Tag{}",
         true, false, false, false, "asn1::TypeKind::Enumerated",
         "&asn1::per_enumerated_handler", "&asn1::ber_enumerated_handler",
-        /*use_class_scope=*/true);
+        /*use_class_scope=*/true, spec.is_explicit,
+        spec.is_explicit ? format_tag_literal(*spec.natural_tag) : "");
 }
 
 void CppBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const {
@@ -360,7 +379,12 @@ void CppBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& 
     os << std::format("    false, asn1::TypeKind::Primitive,\n");
     os << std::format("    {} /* per_handler */,\n", per_h);
     os << std::format("    {} /* ber_handler */,\n", ber_h);
-    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cpp_t);
+    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */,\n", cpp_t);
+    // gambas-asn1#352: see emit_type_descriptor's own doc on this trailing block.
+    if (spec.is_explicit) {
+        os << std::format("    asn1::XerEncoding::Default, true, {} /* is_explicit, natural_tag */\n",
+                          format_tag_literal(*spec.natural_tag));
+    }
     os << "};\n";
 }
 
@@ -518,10 +542,18 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
     os << std::format("    {} /* per_handler */,\n", per_h);
     os << std::format("    {} /* ber_handler */,\n", ber_h);
     os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */", cpp_t);
-    if (spec.xer_base64)
+    // gambas-asn1#352: is_explicit/natural_tag come after xer_encoding in
+    // TypeDescriptor, so supplying them means restating xer_encoding's
+    // value explicitly too, whether or not xer_base64 also applies.
+    if (spec.is_explicit) {
+        os << std::format(",\n    {}, true, {} /* xer_encoding, is_explicit, natural_tag */\n",
+                          spec.xer_base64 ? "asn1::XerEncoding::Base64" : "asn1::XerEncoding::Default",
+                          format_tag_literal(*spec.natural_tag));
+    } else if (spec.xer_base64) {
         os << ",\n    asn1::XerEncoding::Base64 /* xer_encoding */\n";
-    else
+    } else {
         os << "\n";
+    }
     os << "};\n";
 }
 
@@ -651,7 +683,9 @@ void CppBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os)
     emit_type_descriptor(os, spec.type_name, spec.xer_name,
         spec.tag ? format_tag_literal(*spec.tag) : "asn1::Tag{}",
         false, false, false, true, "asn1::TypeKind::SeqOf",
-        "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler");
+        "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler",
+        /*use_class_scope=*/false, spec.is_explicit,
+        spec.is_explicit ? format_tag_literal(*spec.natural_tag) : "");
 }
 
 void CppBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const {
@@ -759,7 +793,8 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
         spec.tag ? format_tag_literal(*spec.tag) : "asn1::Tag{}",
         false, true, false, false, "asn1::TypeKind::Sequence",
         "&asn1::per_sequence_handler", "&asn1::ber_sequence_handler",
-        /*use_class_scope=*/true);
+        /*use_class_scope=*/true, spec.is_explicit,
+        spec.is_explicit ? format_tag_literal(*spec.natural_tag) : "");
 
     // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
     for (const auto& r : spec.members) {
