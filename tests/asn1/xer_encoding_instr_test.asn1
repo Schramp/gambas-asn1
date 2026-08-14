@@ -19,4 +19,18 @@ XerEncodingInstrTest DEFINITIONS ::= BEGIN
         data  Base64Payload
     }
 
+    -- ENCODING-CONTROL XER block form (X.693 §21.2/§21.3), as opposed to
+    -- the inline [BASE64] prefix above — separate grammar path
+    -- (gambas-asn1#438), separate schema types so neither test can pass
+    -- by accident via the other's codegen.
+    LegacyBase64  ::= OCTET STRING  -- legacy per-type form target
+    StandardBase64 ::= OCTET STRING -- standard BASE64 <TypeName> form target
+    NoInstruction  ::= OCTET STRING -- untouched: must stay hex
+
+    ENCODING-CONTROL XER
+        GLOBAL-DEFAULTS MODIFIED-ENCODINGS
+        LegacyBase64 OCTET STRING ::= base64
+        BASE64 StandardBase64
+    END
+
 END

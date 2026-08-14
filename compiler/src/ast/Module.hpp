@@ -3,6 +3,7 @@
 #include <vector>
 #include <optional>
 #include <memory>
+#include <utility>
 #include "Node.hpp"
 #include "TypeDef.hpp"
 #include "Value.hpp"
@@ -36,6 +37,12 @@ struct Module : Node {
     std::vector<std::string> exports;               // empty = ALL if exports_all
     std::vector<ImportList>  imports;
     std::vector<TypeDefPtr>  assignments;           // type and value assignments
+    // ENCODING-CONTROL XER ... END block instructions (X.693 §21 BASE64
+    // form and the legacy `TypeName OCTET STRING ::= base64` form) —
+    // (type name, encoding) pairs applied to the matching assignment's
+    // own xer_encoding field once the whole module is parsed (the block
+    // may reference a type declared earlier or later in the module).
+    std::vector<std::pair<std::string, XerEncoding>> xer_encoding_overrides;
 };
 
 using ModulePtr = std::shared_ptr<Module>;
