@@ -67,8 +67,9 @@ pub struct MemberDescriptor<T: 'static> {
 /// How a member's value is reached and (de)serialized.
 ///
 /// `Scalar` is the most common shape: the member is one field whose own
-/// concrete type already implements `Asn1Value` (`i64`, `bool`, `Vec<u8>`,
-/// `String`, an `Option<V>`/newtype-string, `SeqOf<T>`/`SetOf<T>` for a
+/// concrete type already implements `Asn1Value` (`i64`, `bool`,
+/// `octet_string::OctetString`, `String`, an `Option<V>`/newtype-string,
+/// `SeqOf<T>`/`SetOf<T>` for a
 /// SEQUENCE OF/SET OF member — every kind `rust_member_ber_tag` currently
 /// covers), reached via the same accessor-function pair the crate has
 /// always used (`value.rs`'s module doc explains why a function, not an
@@ -122,10 +123,11 @@ pub enum MemberAccess<T: 'static> {
     /// member is not "one of several known types", it's raw captured bytes
     /// with no schema-visible way to know what they are. Always
     /// EXPLICIT-tagged when tagged (see `value::encode_explicit_any`'s
-    /// doc) — field type is `Vec<u8>`, same Rust type as OCTET STRING, but
-    /// holding raw captured TLV bytes rather than OCTET STRING content, so
-    /// it can't reuse `Vec<u8>`'s own `Asn1Value` impl (that would wrap
-    /// the capture in an extra OCTET STRING TLV). Mirrors the C++ side's
+    /// doc) — field type is `Vec<u8>`, holding raw captured TLV bytes with
+    /// no ASN.1 semantic type at all, so it goes through its own raw
+    /// closures rather than any `Asn1Value` impl (`octet_string::
+    /// OctetString`'s included — reusing it would wrap the capture in an
+    /// extra OCTET STRING TLV). Mirrors the C++ side's
     /// `AnyBerHandler`/`asn_DEF_Any` (`runtime/src/BerCodec.cpp`/
     /// `BuiltinTypes.cpp`), which represent ANY the same way: an
     /// EXPLICIT-tagged member (`is_explicit = true` in the generated
@@ -309,13 +311,15 @@ pub fn decode_seq_of_xer_named<V: Asn1Value + Default>(r: &mut XerReader, name_o
 /// (`RustBackend::rust_seqof_alt_mtype`) or SEQUENCE/SET *member*
 /// (`RustBackend::emit_sequence_declaration`, both `compiler/src/codegen/
 /// RustBackend.cpp`) a concrete `Asn1Value` impl without per-occurrence
-/// codegen. A bare `Vec<T>` can't get one generically: a blanket
-/// `impl<V: Asn1Value> Asn1Value for Vec<V>` would coherence-conflict with
-/// `Vec<u8>`'s own concrete OCTET STRING impl (E0119 — at most one
-/// unconstrained blanket impl per trait per crate). `SeqOf<T>` sidesteps
-/// that by being a distinct type nothing else implements, so one blanket
-/// impl below covers every element type — no per-occurrence synthesized
-/// wrapper struct needed the way a top-level named `X ::= SEQUENCE OF Y`
+/// codegen. `Vec<u8>` no longer carries a direct `Asn1Value` impl of its
+/// own (OCTET STRING is `octet_string::OctetString`, a newtype), but a bare
+/// `Vec<T>` still can't get one generically the same way: SEQUENCE OF and
+/// SET OF need different natural tags (X.680 §26 vs §24 — universal 16 vs
+/// 17), and a single blanket `impl<V: Asn1Value> Asn1Value for Vec<V>` can
+/// only ever pick one. `SeqOf<T>`/`SetOf<T>` sidestep that by being
+/// distinct types, so one blanket impl per wrapper covers every element
+/// type — no per-occurrence synthesized wrapper struct needed the way a
+/// top-level named `X ::= SEQUENCE OF Y`
 /// still gets from `emit_seq_of_definition` (that one keeps its own real
 /// ASN.1 name for XER wrapping when referenced elsewhere; a `SeqOf<T>`
 /// alternative/member is wrapped by its own alternative/field name
@@ -1179,6 +1183,47 @@ impl DefaultPoint {
 
         let mut r = Reader::new(&out);
         let mut got = SeqOf::<i64>::default();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn nested_seq_of_seq_of_ber_round_trips_through_the_trait() {
+        // SeqOf<SeqOf<i64>> — mirrors an unnamed `SEQUENCE OF SEQUENCE OF
+        // INTEGER` element (RustBackend's ElemShape/rust_wrap_elem_shape,
+        // Backend.hpp/RustBackend.cpp) at the runtime layer directly, since
+        // this crate has no codegen wired in. Confirms the blanket
+        // `impl<T: Asn1Value + Default> Asn1Value for SeqOf<T>` composes
+        // with itself — SeqOf<i64> is itself Asn1Value + Default, so
+        // SeqOf<SeqOf<i64>> just works, no special-casing needed at any
+        // nesting depth.
+        let v = SeqOf(vec![SeqOf(vec![1i64, 2]), SeqOf(vec![3i64])]);
+        let mut out = Vec::new();
+        v.ber_encode(&mut out);
+
+        let mut r = Reader::new(&out);
+        let mut got = SeqOf::<SeqOf<i64>>::default();
+        got.ber_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn nested_seq_of_set_of_ber_round_trips_with_the_correct_wire_tags() {
+        // SeqOf<SetOf<i64>> — mixed nesting (outer SEQUENCE OF, inner SET
+        // OF): confirms each level gets its own distinct natural tag
+        // (SEQUENCE_TAG outer, SET_TAG inner), not the same one forced at
+        // every depth.
+        let v = SeqOf(vec![SetOf(vec![1i64, 2])]);
+        let mut out = Vec::new();
+        v.ber_encode(&mut out);
+        // Outer: SEQUENCE (0x30) wrapping one element.
+        assert_eq!(out[0], 0x30);
+        // Inner element TLV starts right after outer tag+length (2 bytes,
+        // short-form): SET (0x31), not SEQUENCE.
+        assert_eq!(out[2], 0x31);
+
+        let mut r = Reader::new(&out);
+        let mut got = SeqOf::<SetOf<i64>>::default();
         got.ber_decode_into(&mut r).unwrap();
         assert_eq!(got, v);
     }

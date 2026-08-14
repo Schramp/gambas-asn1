@@ -43,14 +43,14 @@ static std::string variant_name(const RustBackend& backend, const std::string& a
 
 /// @brief Per-builtin-kind BER tag constant. See TaggedMemberSpec::mbuiltin's
 ///        doc comment (Backend.hpp) for why native storage type alone can't
-///        drive this (e.g. OCTET STRING/BIT STRING/OBJECT IDENTIFIER/Any all
-///        map to "Vec<u8>", but need different tags).
-/// @note `mtype` (not `storage_kind`) for the Integer case
-///       specifically because this function is also called for SEQUENCE OF
-///       *element* coverage (elem_builtin/elem_mtype — no storage_kind
-///       counterpart); the member/alt-level callers
-///       (rust_tag_for_builtin_or_alias) intercept Integer via storage_kind
-///       before ever reaching this switch.
+///        drive this (e.g. BIT STRING/OBJECT IDENTIFIER/Any all map to
+///        `Vec<u8>`, but need different tags).
+/// @note The `mtype` parameter's own Integer case (`mtype == "i64"`) is
+///       unreachable in practice — every caller (`rust_tag_for_builtin_or_alias`,
+///       used at both member/alt level and, via `ElemShape`, SEQUENCE OF/SET
+///       OF element level) intercepts Integer via `storage_kind` before ever
+///       reaching this switch. Kept as a defensive fallback, not dead-code-
+///       deleted, since a future direct caller could still reach it.
 static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype) {
     switch (bt) {
     case ast::BuiltinType::Integer:     return mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
@@ -95,29 +95,26 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
 ///        own type may be a TypeRef alias rather than a direct builtin
 ///        (mbuiltin == nullopt) — the i64-native-INTEGER-alias case still
 ///        needs a tag despite carrying no mbuiltin.
-/// @note The direct-builtin Integer case is intercepted
-///       here via `storage_kind` (a real enum, not a string coincidence)
-///       before ever reaching builtin_ber_tag's own `case Integer` —
-///       builtin_ber_tag itself keeps taking `mtype` unchanged (still needed
-///       string-based there for SEQUENCE OF *element* coverage, elem_builtin/
-///       elem_mtype, which has no storage_kind counterpart — out of this
-///       issue's scope). The `!mbuiltin` TypeRef-alias fallback below is
-///       untouched too: SequenceMemberSpec/ChoiceAlternativeSpec have no
-///       storage_kind for that case either (mbuiltin itself is unset), so
-///       there's nothing to thread through — same pre-existing string check.
+/// @note The direct-builtin Integer case is intercepted here via
+///       `storage_kind` (a real enum, not a string coincidence) before
+///       ever reaching builtin_ber_tag's own `case Integer` — used at
+///       member/alt level and, via `ElemShape` (Backend.hpp,
+///       `element_shape_covered`), SEQUENCE OF/SET OF element level too,
+///       both with a real `storage_kind` to intercept on. The `!mbuiltin`
+///       TypeRef-alias fallback below is untouched: `SequenceMemberSpec`/
+///       `ChoiceAlternativeSpec` have no `storage_kind` for that case
+///       either (`mbuiltin` itself is unset), so there's nothing to thread
+///       through — same pre-existing string check.
 static const char* rust_tag_for_builtin_or_alias(std::optional<ast::BuiltinType> mbuiltin,
                                                   IntStorageKind storage_kind,
                                                   const std::string& mtype) {
     if (!mbuiltin) return mtype == "i64" ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
     if (*mbuiltin == ast::BuiltinType::Integer)
-        // Same INTEGER_TAG regardless of storage width — the
-        // Rust *type* varies (i64/u64/i128), the wire tag never does.
-        // ARBITRARY (Vec<u8> storage) is excluded: collides with OCTET
-        // STRING's own Asn1Value impl for that same Rust type — needs its
-        // own newtype before it can get one (tracked separately).
-        return (storage_kind == IntStorageKind::S64 || storage_kind == IntStorageKind::U64 ||
-                storage_kind == IntStorageKind::I128)
-            ? "asn1cpp_ber::integer::INTEGER_TAG" : nullptr;
+        // Same INTEGER_TAG regardless of storage width — the Rust *type*
+        // varies (i64/u64/i128/ArbitraryInteger), the wire tag never does.
+        // ARBITRARY now has a real impl too (integer::ArbitraryInteger) —
+        // no exclusion needed.
+        return "asn1cpp_ber::integer::INTEGER_TAG";
     return builtin_ber_tag(*mbuiltin, mtype);
 }
 
@@ -309,17 +306,10 @@ void RustBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream
     // `pub type X = i64/u64/i128;` is a real Rust type alias (not a
     // newtype) — X already has a real Asn1Value impl via whichever
     // primitive it resolves to, so a member typed via TypeRef to it is
-    // fine to reference generically like any other composite type (no
-    // per-name registration needed for that case). ARBITRARY storage
-    // (`Vec<u8>`) is the one exception worth tracking explicitly: unlike a
-    // genuinely *missing* impl (which an Unsupported stub handles safely),
-    // `Vec<u8>` already has a real Asn1Value impl — OCTET STRING's — so a
-    // member naively routed through it would compile clean and silently
-    // encode/decode the wrong wire shape, not fail loudly. Recorded here so
-    // sequence_member_covered/choice_alternative_covered can
-    // recognize this one name and stub it explicitly instead.
-    if (spec.storage_kind == IntStorageKind::ARBITRARY)
-        unusable_alias_names_.insert(tname);
+    // fine to reference generically like any other composite type. ARBITRARY
+    // storage resolves to `integer::ArbitraryInteger`, its own newtype with
+    // a real BER impl (see that struct's own module doc) — same as every
+    // other storage kind, no special-casing needed here.
 }
 
 void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& os) const {
@@ -385,7 +375,7 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     case BT::Real:             return "f64";
     case BT::Null:             return "()";
     case BT::BitString:        return "asn1cpp_ber::bit_string::BitString";
-    case BT::OctetString:      return "Vec<u8>";
+    case BT::OctetString:      return "asn1cpp_ber::octet_string::OctetString";
     case BT::ObjectIdentifier: return "asn1cpp_ber::oid::ObjectIdentifier";
     case BT::RelativeOid:      return "asn1cpp_ber::relative_oid::RelativeOid";
     case BT::Utf8String:       return "asn1cpp_ber::strings::Utf8String";
@@ -658,11 +648,12 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
 
 /// @brief Is `mtype` a `Vec<T>` (T != u8) reference — a type with no
 ///        `Asn1Value` impl at all? Pure string check on the resolved Rust
-///        type, order-independent unlike unusable_alias_names_ (no
-///        registration/lookup-by-declaration-name needed): a named
-///        top-level SEQUENCE OF/SET OF alias (`m.mtype == "MySeqOf"`,
-///        e.g.) still needs unusable_alias_names_ since the *name* itself
-///        carries no "Vec<...>" text to match — but an anonymous inline
+///        type, order-independent (no registration/lookup-by-declaration-
+///        name needed): a named top-level SEQUENCE OF/SET OF alias
+///        (`m.mtype == "MySeqOf"`, e.g.) never has this shape at all —
+///        `emit_seq_of_declaration` gives it a real newtype with its own
+///        `Asn1Value` impl, referenced by name, not resolved-through
+///        `"Vec<...>"` text — but an anonymous inline
 ///        SEQUENCE OF/SET OF member (whose type Generator resolves
 ///        directly to the raw `"Vec<i64>"` text, never through a synthetic
 ///        alias name, even though it also generates one as a side artifact
@@ -698,11 +689,45 @@ static std::string rust_seqof_alt_mtype(const std::string& mtype) {
 ///        `m.mtype` is always exactly `"Vec<ElemType>"` for such a member —
 ///        `cpp_type_for`'s own is_seq_of/is_set_of branches always route
 ///        through `wrap_collection_type` (Backend.hpp) — the same shape
-///        `rust_seqof_alt_mtype` above unwraps for a CHOICE alternative;
-///        this is the SEQUENCE/SET-member analogue, so `elem_mtype` never
-///        needs to be separate Generator-computed table data.
+///        `rust_seqof_alt_mtype` above unwraps for a CHOICE alternative.
+///        Recurses per `ElemShape` (Backend.hpp) when the element is
+///        itself a nested SEQUENCE OF/SET OF, rewrapping each nesting
+///        level in the *correct* `SeqOf<T>`/`SetOf<T>` — text alone can't
+///        tell SEQUENCE OF from SET OF at any depth (both render
+///        identically as `"Vec<...>"`), so `ElemShape` supplies the fact
+///        the text itself can't.
+/// @param mtype One level of raw placeholder text still to resolve.
+/// @param shape This level's element shape — SeqOfKind::None is the base
+///              case (leaf: builtin/composite text, already correct).
+static std::string rust_wrap_elem_shape(const std::string& mtype, const ElemShape& shape) {
+    if (shape.kind == SeqOfKind::None) return mtype;
+    std::string inner_mtype = mtype.substr(4, mtype.size() - 5);  // strip this level's "Vec<...>"
+    std::string inner = shape.nested ? rust_wrap_elem_shape(inner_mtype, *shape.nested) : inner_mtype;
+    return std::format("asn1cpp_ber::sequence::{}<{}>",
+                        shape.kind == SeqOfKind::SeqOf ? "SeqOf" : "SetOf", inner);
+}
+
 static std::string rust_seqof_elem_mtype(const SequenceMemberSpec& m) {
-    return m.mtype.substr(4, m.mtype.size() - 5);
+    return rust_wrap_elem_shape(m.mtype.substr(4, m.mtype.size() - 5), m.elem_shape);
+}
+
+/// @brief Recursive coverage check for a SEQUENCE OF/SET OF element's
+///        shape (`ElemShape`, Backend.hpp) — real (covered) all the way
+///        down to the leaf, or stubbed at the first genuinely uncovered
+///        one. A nested collection element is covered iff its own element
+///        is, to unbounded depth; a composite (TypeRef) leaf is always
+///        real (same reasoning as a plain scalar composite reference —
+///        `sequence_member_covered`'s own doc); a builtin leaf routes
+///        through the same `rust_tag_for_builtin_or_alias` the member-level
+///        path uses (the `mtype` parameter is only ever consulted there for
+///        a TypeRef alias, which a builtin leaf never is, so an empty
+///        placeholder is safe).
+static bool element_shape_covered(const ElemShape& shape) {
+    if (shape.kind != SeqOfKind::None)
+        return shape.nested && element_shape_covered(*shape.nested);
+    if (shape.builtin)
+        return rust_tag_for_builtin_or_alias(shape.builtin, shape.storage_kind, "") != nullptr;
+    return true;
 }
 
 /// @brief A SEQUENCE/SET member's own Rust field type, for a SEQUENCE
@@ -752,60 +777,17 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 ///       stub closure can safely guess presence, so it becomes
 ///       `Unsupported` too (unconditional panic, no attempted peek — see
 ///       the stub's own doc). A required member has no such problem
-///       (nothing to peek for a required field either way). The other
-///       two exceptions are `rust_mtype_is_unusable_vec` and
-///       `unusable_alias_names_` (RustBackend.hpp) — both catch a
-///       referenced Rust type that either has no `Asn1Value` impl at all,
-///       or one that would silently produce the wrong wire bytes if
-///       reached generically:
-///       - `rust_mtype_is_unusable_vec` (order-independent, a pure string
-///         check on the resolved type) catches any `Vec<T>` reference,
-///         `T != u8` — no generic `impl<V: Asn1Value> Asn1Value for
-///         Vec<V>` exists (would coherence-conflict with `Vec<u8>`'s own
-///         concrete OCTET STRING impl). Covers a top-level named SEQUENCE
-///         OF/SET OF alias referenced elsewhere by TypeRef *and* an
-///         anonymous inline SEQUENCE OF/SET OF member (Generator resolves
-///         the latter's type directly to the raw `"Vec<T>"` text, not
-///         through a synthetic alias name, even though it also emits one
-///         as a side artifact for the size-check function) — see that
-///         function's own doc for why one check catches both spellings.
-///       - `unusable_alias_names_` (order-dependent, a small registry
-///         populated during this same single pass by
-///         emit_integer_declaration) catches an ARBITRARY-storage INTEGER
-///         alias specifically: its Rust type (also `Vec<u8>`) already has
-///         a real, but *wrong-shaped* (OCTET STRING), impl — routing it
-///         through the generic path would compile clean and silently
-///         encode/decode the wrong thing, not fail loudly. Unlike the
-///         SEQUENCE OF case, this can't be a pure string check (`Vec<u8>`
-///         is textually identical whether it means OCTET STRING or an
-///         ARBITRARY-storage INTEGER — only the *name* distinguishes
-///         them), so a member referencing an ARBITRARY alias declared
-///         *later* in the same module is a known, narrow residual gap —
-///         rare in practice (ARBITRARY storage is itself already an edge
-///         case, only for very wide unconstrained INTEGER ranges) and
-///         safer than the general case to leave open, since the previous
-///         design had an equivalent order dependency here too.
+///       (nothing to peek for a required field either way). Every named
+///       type — a top-level SEQUENCE OF/SET OF alias, an INTEGER of any
+///       storage kind including ARBITRARY — gets its own real newtype with
+///       a real `Asn1Value` impl (`emit_seq_of_declaration`,
+///       `integer::ArbitraryInteger`), referenced by name, so there's no
+///       remaining case here where a TypeRef reference is unsafe to treat
+///       as real.
 bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
-    if (m.seq_of_kind != SeqOfKind::None) {
-        std::string elem_mtype = rust_seqof_elem_mtype(m);
-        // Route through rust_tag_for_builtin_or_alias, not
-        // builtin_ber_tag directly — its Integer case intercepts via
-        // elem_storage_kind (u64/i128 elements are real, runtime has
-        // Asn1Value impls for both) instead of builtin_ber_tag's own bare
-        // `elem_mtype == "i64"` check, which used to reject them.
-        if (m.elem_builtin) return rust_tag_for_builtin_or_alias(m.elem_builtin, m.elem_storage_kind, elem_mtype) != nullptr;
-        // A composite (TypeRef) element — SEQUENCE OF GcsePartyIdentity,
-        // e.g. — is always real now, same reasoning as any other composite
-        // reference: encode_seq_of/decode_seq_of (sequence.rs) are already
-        // generic over V: Asn1Value, so once the element type has one
-        // (real or stub, guaranteed regardless of processing order) they
-        // work unchanged. Same two exclusions as a plain scalar composite
-        // reference for the same reasons (see this function's own doc).
-        // SET OF (SeqOfKind::SetOf) shares this whole branch with SEQUENCE
-        // OF — the only difference is the wire tag (SET_TAG vs
-        // SEQUENCE_TAG), decided at emission time, not a coverage question.
-        return !unusable_alias_names_.count(elem_mtype) && !rust_mtype_is_unusable_vec(elem_mtype);
-    }
+    // SEQUENCE OF/SET OF: covered iff the element's own shape is, to
+    // unbounded nesting depth (element_shape_covered's own doc).
+    if (m.seq_of_kind != SeqOfKind::None) return element_shape_covered(m.elem_shape);
     // ANY (X.208 legacy type) has no fixed tag of its own to drive the
     // ordinary Scalar/TaggedScalar/ExplicitScalar paths — Generator forces
     // EXPLICIT tagging on any tagged ANY member regardless of module tag
@@ -815,8 +797,7 @@ bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
     if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any)
         return m.resolved_tag.has_value() && m.is_explicit;
     if (!m.mbuiltin)
-        return !unusable_alias_names_.count(m.mtype) && !rust_mtype_is_unusable_vec(m.mtype) &&
-               (!m.optional || m.resolved_tag.has_value());
+        return !m.optional || m.resolved_tag.has_value();
     return rust_tag_for_builtin_or_alias(m.mbuiltin, m.storage_kind, m.mtype) != nullptr;
 }
 
@@ -825,8 +806,7 @@ bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
 ///        Only meaningful once `a` is already known to have a resolved
 ///        tag (`choice_alternative_has_tag`, checked separately) — a
 ///        row's own tag is what `decode_choice`'s linear tag scan uses to
-///        even reach it at all, real or stub. Same `unusable_alias_names_`
-///        exception as sequence_member_covered.
+///        even reach it at all, real or stub.
 bool RustBackend::choice_alternative_covered(const ChoiceAlternativeSpec& a) const {
     // A SEQUENCE OF or SET OF alternative always covers here
     // (rust_seqof_alt_mtype's own doc — both shapes format identically):
@@ -834,7 +814,7 @@ bool RustBackend::choice_alternative_covered(const ChoiceAlternativeSpec& a) con
     // the raw "Vec<T>" text rust_mtype_is_unusable_vec would otherwise flag
     // is never actually a problem for a CHOICE alternative.
     if (rust_mtype_is_unusable_vec(a.mtype)) return true;
-    if (!a.mbuiltin) return !unusable_alias_names_.count(a.mtype);
+    if (!a.mbuiltin) return true;
     return rust_tag_for_builtin_or_alias(a.mbuiltin, a.storage_kind, a.mtype) != nullptr;
 }
 
@@ -909,23 +889,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // returns the alias's own type name ("MyByte"), never the resolved
     // native type, so a plain `mtype == "i64"` string check can never match
     // it — see sequence_member_covered's `!m.mbuiltin` branch.
-    // `mbuiltin == Integer` only says the member *is* an
-    // INTEGER, not which Rust storage type classify_integer_storage/
-    // native_int_type actually picked for it (i64 default; u64/i128/
-    // Vec<u8> for wider constrained ranges — same IntStorageKind the C++
-    // side also branches on). Asn1Value is only implemented for i64
-    // (rust-runtime/ber/src/value.rs), so the INTEGER case must be gated on
-    // that storage kind — found on the real ETSI LI PS-PDU schema,
-    // where a semi-constrained-wide INTEGER member picked u64 storage and
-    // an unconditional `case Integer:` would still emit a real row for it,
-    // producing `the trait bound u64: Asn1Value is not satisfied`. That
-    // gate is `storage_kind == IntStorageKind::S64`
-    // (a real enum, checked by rust_tag_for_builtin_or_alias before ever
-    // reaching builtin_ber_tag's own `case Integer`) rather than `mtype ==
-    // "i64"` — builtin_ber_tag's own `case Integer` still takes `mtype`
-    // because it's also called for SEQUENCE OF *element* coverage
-    // (elem_builtin/elem_mtype has no storage_kind counterpart), so it
-    // keeps the original string check for that path.
+    // `mbuiltin == Integer` only says the member *is* an INTEGER, not which
+    // Rust storage type classify_integer_storage/native_int_type actually
+    // picked for it (i64 default; u64/i128/ArbitraryInteger for wider
+    // ranges — same IntStorageKind the C++ side also branches on).
+    // `rust_tag_for_builtin_or_alias` routes the Integer case through
+    // `storage_kind` (a real enum) rather than `builtin_ber_tag`'s own
+    // `mtype == "i64"` string check, which only ever matched the S64
+    // default — Asn1Value now has real impls for i64/u64/i128/
+    // ArbitraryInteger alike, so every storage kind gets the same
+    // INTEGER_TAG unconditionally, no gating needed.
     auto rust_member_ber_tag = [](const SequenceMemberSpec& m) -> const char* {
         return rust_tag_for_builtin_or_alias(m.mbuiltin, m.storage_kind, m.mtype);
     };
