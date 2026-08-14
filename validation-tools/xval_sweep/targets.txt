@@ -1,0 +1,53 @@
+# xval_sweep targets — one per line: "<schema.asn1 path relative to asn1cpp/>  <PDU type name>"
+# '#'-prefixed and blank lines ignored. Paths are relative to asn1cpp/'s own
+# root (this tool lives inside asn1cpp/, no umbrella-repo path assumptions).
+#
+# A target qualifies when: (a) the schema compiles cleanly under asn1cpp
+# for both --target=cpp and --target=rust, (b) the named type is a real
+# top-level PDU/message type (SEQUENCE/CHOICE/SET — not a scalar alias;
+# see template_cpp/src/types.cpp.tmpl's own doc on why), and (c) the type
+# has no unresolved cross-file import outside this line's schema file
+# (multi-file schemas aren't supported by this first pass — see gambas-
+# asn1#434's own "Not included here" note). PDU type names may contain
+# hyphens or other characters that need escaping in the generated C++/
+# Rust identifier — xval_sweep.py's discover_ident() finds the real
+# generated identifier by content, not by guessing the escaping rule.
+#
+# Seeded with 3 single-file test schemas (broad type coverage, tag
+# coverage, CHOICE coverage) plus 10 more probed from asn1c's own mirrored
+# test suite (tests/tests-asn1c-compiler/*-OK.asn1) and confirmed to
+# build + round-trip end-to-end. Full population of the rest of the test
+# corpus (~140 more -OK.asn1 files, plus the real ETSI/3GPP schemas) is a
+# follow-up pass, not done here.
+#
+# 6 other probed candidates that parse-checked clean but failed a full
+# build or round-trip were deliberately left out — real gaps, filed
+# separately rather than silently excluded:
+#   gambas-asn1#435 — X.681 Information Object Class field-type reference
+#     (`Type.&id`) resolves to a literal, nonexistent `#include` instead
+#     of the referenced type (164, 168, 172, 173)
+#   gambas-asn1#436 — self-referential CHOICE with AUTOMATIC TAGS: C++
+#     codegen uses the CHOICE's own (still-incomplete) type in its own
+#     val_storage_ alignas/sizeof before the class body closes (203)
+#   gambas-asn1#437 — deeply nested anonymous CHOICE-in-CHOICE promoted
+#     synthetic type has no Rust Asn1Value impl (201)
+#   gambas-asn1#438 — BASE64 ENCODING CONTROL content: C++ and Rust XER
+#     output disagree on representation for the same BER input, while
+#     each is internally round-trip-consistent (180, 183, 210 partial)
+
+tests/asn1/roundtrip_test.asn1    Container
+tests/asn1/explicit_tag_test.asn1 Mixed
+tests/asn1/choice_test.asn1       Alt4
+
+# Probed from tests/tests-asn1c-compiler/*-OK.asn1 (asn1c's own mirrored
+# suite), confirmed to build and round-trip end-to-end.
+tests/tests-asn1c-compiler/146-duplicate-member-names-OK.asn1      ServingCellConfigCommonSIB
+tests/tests-asn1c-compiler/167-pdu-deps-OK.asn1                    PDUType
+tests/tests-asn1c-compiler/170-complex-nesting-OK.asn1             StructureD
+tests/tests-asn1c-compiler/174-encoding-control-OK.asn1            TestMessage
+tests/tests-asn1c-compiler/175-encoding-control-body-OK.asn1       TestData
+tests/tests-asn1c-compiler/176-encoding-control-applied-OK.asn1    Message
+tests/tests-asn1c-compiler/177-encoding-control-codegen-OK.asn1    Message
+tests/tests-asn1c-compiler/178-nested-enum-same-name-OK.asn1       CodebookConfig-r18
+tests/tests-asn1c-compiler/181-base64-control-standard-OK.asn1     Record
+tests/tests-asn1c-compiler/202-XIOTCertificate-OK.asn1             Extension
