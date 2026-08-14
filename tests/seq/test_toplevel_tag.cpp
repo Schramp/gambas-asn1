@@ -18,6 +18,7 @@
 #include "MySeq.hpp"
 #include "MySeqOf.hpp"
 #include "MyExplicitInt.hpp"
+#include "MyExplicitChoice.hpp"
 #include "Wrapper.hpp"
 #include "WrapperTso.hpp"
 
@@ -90,7 +91,7 @@ int main() {
     }
 
     // MyExplicitInt ::= [9] EXPLICIT INTEGER, standalone-encoded.
-    // gambas-asn1#352: EXPLICIT wraps a nested TLV using the natural tag,
+    // X.690 §8.14.3: EXPLICIT wraps a nested TLV using the natural tag,
     // it does not substitute for it. Confirmed against real asn1c output
     // for the same schema/value: a9 03 02 01 2a.
     // Expected: a9 03 02 01 2a
@@ -107,6 +108,27 @@ int main() {
         MyExplicitInt got{};
         check("MyExplicitInt standalone: decode ok", decode(enc, asn_DEF_MyExplicitInt, got));
         check("MyExplicitInt standalone: round-trip value", got.value() == 42);
+    }
+
+    // MyExplicitChoice ::= [9] EXPLICIT CHOICE { a INTEGER, b BOOLEAN },
+    // standalone-encoded, alternative a=42. CHOICE has no universal tag
+    // (X.680 §30.6) to substitute, so a declared own tag is always
+    // EXPLICIT — same wrap shape as MyExplicitInt above; confirmed
+    // byte-identical against real asn1c output: a9 03 02 01 2a.
+    {
+        MyExplicitChoice v{};
+        v.set_present(MyExplicitChoice::PR::a);
+        v.a() = 42;
+        auto enc = encode(v, MyExplicitChoice::asn_DEF);
+        std::vector<uint8_t> expect = {0xa9, 0x03, 0x02, 0x01, 0x2a};
+        check("MyExplicitChoice standalone: matches asn1c ground truth byte-for-byte",
+              enc == expect);
+
+        MyExplicitChoice got{};
+        check("MyExplicitChoice standalone: decode ok",
+              decode(enc, MyExplicitChoice::asn_DEF, got));
+        check("MyExplicitChoice standalone: round-trip value",
+              got.present() == MyExplicitChoice::PR::a && got.a().value() == 42);
     }
 
     printf("\n── Same types embedded as SEQUENCE members (must still be correct) ─\n");

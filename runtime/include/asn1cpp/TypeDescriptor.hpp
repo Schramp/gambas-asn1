@@ -152,6 +152,13 @@ struct MemberDescriptor {
     const TypeDescriptor* type_descriptor;  ///< TypeDescriptor of this member's type.
     OptionalOps           optional_ops;     ///< Non-null only for optional/extension members (UniquePtrOps).
     bool                  is_explicit = false; ///< True → EXPLICIT tagging; false → IMPLICIT.
+    /// True when this member/alternative names its own `[n]` tag override
+    /// (X.680 §30.1/30.3 TaggedType construction). False when `tag` merely
+    /// restates the referenced type's own tag for dispatch/presence
+    /// purposes (a bare `x SomeType` reference, no `[n]` written on the
+    /// member) — in that case the wire encoding is exactly SomeType's own
+    /// standalone encoding; the codec must not wrap/unwrap an extra layer.
+    bool                  tag_is_override = true;
 
     /// @brief Called after BER/XER decode when the member was absent on the wire.
     /// Allocates the optional and writes the DEFAULT value from the ASN.1 schema.
@@ -327,7 +334,7 @@ struct TypeDescriptor {
     /// type's own top-level `[n]` declaration: the wire encoding must wrap
     /// a nested TLV using \c natural_tag, not substitute \c tag directly
     /// for it the way IMPLICIT does. False for every type with no declared
-    /// tag of its own, or one using IMPLICIT. See gambas-asn1#352.
+    /// tag of its own, or one using IMPLICIT.
     bool is_explicit = false;
     Tag  natural_tag = {};  ///< This type's own natural tag, ignoring `[n]`; meaningful only when is_explicit.
 };
