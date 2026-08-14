@@ -70,6 +70,21 @@ struct MemberTagSpec : TypeTagSpec {
 ///       and vice versa).
 struct TaggedTypeSpec {
     std::optional<TypeTagSpec> tag;
+    // gambas-asn1#352: true when `tag` is an EXPLICIT override (X.690
+    // §8.14.3) — the wire encoding must *wrap* a nested TLV using this
+    // type's own natural tag (`natural_tag` below), not substitute `tag`
+    // for it directly the way IMPLICIT does. Before this field existed,
+    // `tag` was applied identically for both EXPLICIT and IMPLICIT
+    // standalone type tags — silently producing IMPLICIT-shaped wire bytes
+    // for a type declared EXPLICIT (confirmed against asn1c ground truth:
+    // `MyExplicitInt ::= [9] EXPLICIT INTEGER` gets a *two-entry* tag stack
+    // there, [Context 9 constructed, Universal INTEGER primitive] — a real
+    // nested TLV, not a tag substitution). Always false for a type with no
+    // declared tag at all (`tag` itself is nullopt) or one using IMPLICIT.
+    bool is_explicit = false;
+    // The type's own natural tag, ignoring its `[n]` override — meaningful
+    // only when is_explicit is true; the tag the wrapped inner TLV uses.
+    std::optional<TypeTagSpec> natural_tag;
 };
 
 // Storage class for INTEGER types — chosen at codegen time from constraint

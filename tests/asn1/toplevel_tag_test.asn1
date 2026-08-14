@@ -14,6 +14,14 @@ TopLevelTagTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
 
     MySeqOf ::= [8] IMPLICIT SEQUENCE OF INTEGER
 
+    -- gambas-asn1#352: a top-level EXPLICIT tag must wrap a nested TLV
+    -- using the type's own natural tag, not substitute for it the way
+    -- IMPLICIT does above. Confirmed against asn1c ground truth:
+    -- asn_DEF_MyExplicitInt's tags[] there is a genuine two-entry stack,
+    -- [Context 9 constructed, Universal INTEGER primitive] — a real nested
+    -- TLV, not a tag substitution.
+    MyExplicitInt ::= [9] EXPLICIT INTEGER
+
     Wrapper ::= SEQUENCE {
         i MyInt,
         e MyEnum,
