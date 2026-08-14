@@ -1341,9 +1341,6 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
         row.is_explicit = tag_result.is_explicit;
         row.resolved_tag = tag_result.resolved_tag;
-        row.ops = optional
-            ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, row.mname)
-            : "{ nullptr, nullptr, nullptr }";
         row.tdref = emit_member_type_descriptor(m, cname, row.mname, session);
         row.def_setter = emit_default_setter(m, cname, row.mname, session);
         row.has_default = (m.marker == ast::Marker::Default);
@@ -1354,10 +1351,6 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             row.setter_is_int_alias = si.is_int_alias;
             row.setter_is_uint_alias = si.is_uint_alias;
         }
-        // Required members use offset arithmetic; optional use get_ptr (offset unused).
-        // Sentinel kInvalidMemberOffset for optional: accidental use crashes immediately.
-        row.offset_expr = optional ? "asn1::kInvalidMemberOffset"
-            : std::format("ASN1CPP_OFFSETOF({}, {})", cname, row.mname);
         spec.members.push_back(std::move(row));
         ++atag;
     };

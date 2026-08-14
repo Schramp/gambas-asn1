@@ -367,8 +367,6 @@ int main() {
         req.optional = false;
         req.tdref = "&asn_DEF_MyInt";
         req.def_setter = "nullptr";
-        req.offset_expr = "ASN1CPP_OFFSETOF(MySeq, count)";
-        req.ops = "{ nullptr, nullptr, nullptr }";
         spec.members.push_back(req);
 
         SequenceMemberSpec opt;
@@ -379,8 +377,6 @@ int main() {
         opt.optional = true;
         opt.tdref = "&asn_DEF_Utf8String";
         opt.def_setter = "nullptr";
-        opt.offset_expr = "asn1::kInvalidMemberOffset";
-        opt.ops = "{ &_Ops_MySeq_label::check, &_Ops_MySeq_label::set, &_Ops_MySeq_label::get }";
         spec.members.push_back(opt);
 
         TypeOutputSession cpp_session, rust_session;
