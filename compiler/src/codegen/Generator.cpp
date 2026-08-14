@@ -1317,6 +1317,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         row.asn1_name = m.name;
         row.mname = backend_.member_name(m.name);
         row.mtype = cpp_type_for(m);
+        row.mtype_is_unusable_vec = backend_.mtype_is_unusable_collection(row.mtype);
         if (auto* bt = std::get_if<ast::BuiltinType>(&m.body)) {
             row.mbuiltin = *bt;
             // gambas-asn1#350: same decision cpp_type_for's own Integer
@@ -1333,6 +1334,10 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
                 // does for a scalar member's own Integer body, one level
                 // down for the element.
                 if (*ebt == ast::BuiltinType::Integer) row.elem_storage_kind = classify_integer_storage(elem);
+            } else {
+                // Composite (TypeRef) element — same mtype_is_unusable_vec
+                // threading above, one level down.
+                row.elem_mtype_is_unusable_vec = backend_.mtype_is_unusable_collection(cpp_type_for(elem));
             }
         } else if (m.is_set_of()) {
             row.seq_of_kind = SeqOfKind::SetOf;
@@ -1340,6 +1345,8 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body)) {
                 row.elem_builtin = *ebt;
                 if (*ebt == ast::BuiltinType::Integer) row.elem_storage_kind = classify_integer_storage(elem);
+            } else {
+                row.elem_mtype_is_unusable_vec = backend_.mtype_is_unusable_collection(cpp_type_for(elem));
             }
         }
         if (is_class_type(m))
@@ -1522,6 +1529,7 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
     for (const auto* m : canon_members) {
         ChoiceAlternativeSpec alt;
         alt.mtype = cpp_type_for(*m);
+        alt.mtype_is_unusable_vec = backend_.mtype_is_unusable_collection(alt.mtype);
         alt.accessor_name = backend_.member_name(m->name,
             {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
              "s_alternatives", "s_alternative_count"});
@@ -1613,6 +1621,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
         for (const auto& r : rows) {
             ChoiceAlternativeSpec alt;
             alt.mtype = r.alt_type;
+            alt.mtype_is_unusable_vec = backend_.mtype_is_unusable_collection(alt.mtype);
             alt.asn1_name = r.name;
             alt.tdref = r.tdref;
             alt.is_explicit = r.is_explicit;

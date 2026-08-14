@@ -340,8 +340,20 @@ struct TaggedMemberSpec {
 ///       the rest default-constructed (never read by emit_sequence_declaration).
 struct SequenceMemberSpec : TaggedMemberSpec {
     std::string asn1_name;      // raw ASN.1 name — MemberDescriptor "name" field
-    std::string mtype;          // C++ storage type
+    std::string mtype;          // active backend's own native storage type text (see cpp_type_for)
     std::string mname;          // member identifier
+    // mtype_is_unusable_vec / elem_mtype_is_unusable_vec: Backend::
+    // mtype_is_unusable_collection(mtype), called once here instead of
+    // re-parsed from text at every coverage-check call site (RustBackend's
+    // own sequence_member_covered/choice_alternative_covered). elem_* is
+    // the SEQUENCE OF/SET OF element's own equivalent fact (only meaningful
+    // when seq_of_kind != None and elem_builtin is unset — a composite
+    // element); harmlessly false/unused for a scalar member or a
+    // builtin-typed element. Always false for a backend without the
+    // concept (e.g. CppBackend, whose default mtype_is_unusable_collection
+    // never returns true).
+    bool        mtype_is_unusable_vec = false;
+    bool        elem_mtype_is_unusable_vec = false;
     // gambas-asn1#303: true when this member's class type (direct
     // SEQUENCE/CHOICE/SET, or a TypeRef resolving to one) is reachable back
     // to the *enclosing* type by following further class-typed member
@@ -438,7 +450,11 @@ struct SequenceSpec : TaggedTypeSpec {
 ///        once): the accessor return type in the header, and the
 ///        `ChoiceOps<T>` template parameter in the alternatives table.
 struct ChoiceAlternativeSpec : TaggedMemberSpec {
-    std::string mtype;
+    std::string mtype;          // active backend's own native storage type text (see cpp_type_for)
+    // Backend::mtype_is_unusable_collection(mtype) — see
+    // SequenceMemberSpec::mtype_is_unusable_vec's doc for why this is
+    // computed once here rather than re-parsed at each call site.
+    bool        mtype_is_unusable_vec = false;
     std::string accessor_name;
     std::string pr_name;
 
@@ -613,6 +629,26 @@ public:
     virtual std::string wrap_collection_type(const std::string& elem_type) const {
         (void)elem_type;
         throw std::logic_error("wrap_collection_type: not implemented for this backend");
+    }
+
+    /// @brief Does this already-resolved native type text denote a
+    ///        collection type this backend cannot generically dispatch on
+    ///        (no real trait/interface impl for it, distinct from its
+    ///        wrapped form)? Rust-specific in practice: a bare `Vec<T>`,
+    ///        `T != u8`, has no `Asn1Value` impl (coherence-blocked — see
+    ///        `rust-runtime/ber::sequence::SeqOf<T>`'s own doc), so a member
+    ///        or CHOICE alternative whose `mtype` takes this shape needs the
+    ///        wrapped `SeqOf<T>`/`SetOf<T>` form, not the bare one, to be
+    ///        coverable. C++ has no such restriction (`std::vector<T>`
+    ///        always has a real handler) — default `false`.
+    /// @param mtype Already-resolved native type text (this backend's own
+    ///              `mtype`/`elem_type`, never raw ASN.1 or another
+    ///              backend's syntax).
+    /// @return True if this backend cannot generically dispatch on `mtype`
+    ///         in its current (unwrapped) form.
+    virtual bool mtype_is_unusable_collection(const std::string& mtype) const {
+        (void)mtype;
+        return false;
     }
 
     /// @brief Emit both halves of an ENUMERATED type: declaration then definition.

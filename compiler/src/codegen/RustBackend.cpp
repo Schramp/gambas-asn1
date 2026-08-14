@@ -658,16 +658,22 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
 
 /// @brief Is `mtype` a `Vec<T>` (T != u8) reference — a type with no
 ///        `Asn1Value` impl at all? Pure string check on the resolved Rust
-///        type, order-independent unlike unusable_alias_names_ (no
-///        registration/lookup-by-declaration-name needed): a named
-///        top-level SEQUENCE OF/SET OF alias (`m.mtype == "MySeqOf"`,
-///        e.g.) still needs unusable_alias_names_ since the *name* itself
-///        carries no "Vec<...>" text to match — but an anonymous inline
-///        SEQUENCE OF/SET OF member (whose type Generator resolves
-///        directly to the raw `"Vec<i64>"` text, never through a synthetic
-///        alias name, even though it also generates one as a side artifact
-///        for the size-check function) is only catchable this way. Only
-///        `Vec<u8>` is excluded — OCTET STRING's own real impl.
+///        type. Mirrors `RustBackend::mtype_is_unusable_collection`
+///        (RustBackend.hpp) — the coverage checks below read the
+///        `SequenceMemberSpec::mtype_is_unusable_vec`/`elem_mtype_is_unusable_vec`/
+///        `ChoiceAlternativeSpec::mtype_is_unusable_vec` fields Generator.cpp
+///        already computed via that virtual, rather than re-deriving it
+///        from text here; this free function stays only for
+///        `rust_seqof_alt_mtype` below, which needs the check inline as
+///        part of an actual text-rewrite, not a boolean.
+/// @note A named top-level SEQUENCE OF/SET OF alias (`m.mtype == "MySeqOf"`,
+///       e.g.) still needs `unusable_alias_names_` since the *name* itself
+///       carries no "Vec<...>" text to match — but an anonymous inline
+///       SEQUENCE OF/SET OF member (whose type Generator resolves directly
+///       to the raw `"Vec<i64>"` text, never through a synthetic alias
+///       name, even though it also generates one as a side artifact for
+///       the size-check function) is only catchable this way. Only
+///       `Vec<u8>` is excluded — OCTET STRING's own real impl.
 static bool rust_mtype_is_unusable_vec(const std::string& mtype) {
     return mtype.rfind("Vec<", 0) == 0 && mtype != "Vec<u8>";
 }
@@ -753,13 +759,15 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 ///       `Unsupported` too (unconditional panic, no attempted peek — see
 ///       the stub's own doc). A required member has no such problem
 ///       (nothing to peek for a required field either way). The other
-///       two exceptions are `rust_mtype_is_unusable_vec` and
+///       two exceptions are `mtype_is_unusable_vec`/`elem_mtype_is_unusable_vec`
+///       (`SequenceMemberSpec`, computed once by Generator.cpp via
+///       `RustBackend::mtype_is_unusable_collection`) and
 ///       `unusable_alias_names_` (RustBackend.hpp) — both catch a
 ///       referenced Rust type that either has no `Asn1Value` impl at all,
 ///       or one that would silently produce the wrong wire bytes if
 ///       reached generically:
-///       - `rust_mtype_is_unusable_vec` (order-independent, a pure string
-///         check on the resolved type) catches any `Vec<T>` reference,
+///       - `mtype_is_unusable_vec`/`elem_mtype_is_unusable_vec`
+///         (order-independent) catches any `Vec<T>` reference,
 ///         `T != u8` — no generic `impl<V: Asn1Value> Asn1Value for
 ///         Vec<V>` exists (would coherence-conflict with `Vec<u8>`'s own
 ///         concrete OCTET STRING impl). Covers a top-level named SEQUENCE
@@ -804,7 +812,7 @@ bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
         // SET OF (SeqOfKind::SetOf) shares this whole branch with SEQUENCE
         // OF — the only difference is the wire tag (SET_TAG vs
         // SEQUENCE_TAG), decided at emission time, not a coverage question.
-        return !unusable_alias_names_.count(elem_mtype) && !rust_mtype_is_unusable_vec(elem_mtype);
+        return !unusable_alias_names_.count(elem_mtype) && !m.elem_mtype_is_unusable_vec;
     }
     // ANY (X.208 legacy type) has no fixed tag of its own to drive the
     // ordinary Scalar/TaggedScalar/ExplicitScalar paths — Generator forces
@@ -815,7 +823,7 @@ bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
     if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any)
         return m.resolved_tag.has_value() && m.is_explicit;
     if (!m.mbuiltin)
-        return !unusable_alias_names_.count(m.mtype) && !rust_mtype_is_unusable_vec(m.mtype) &&
+        return !unusable_alias_names_.count(m.mtype) && !m.mtype_is_unusable_vec &&
                (!m.optional || m.resolved_tag.has_value());
     return rust_tag_for_builtin_or_alias(m.mbuiltin, m.storage_kind, m.mtype) != nullptr;
 }
@@ -831,9 +839,9 @@ bool RustBackend::choice_alternative_covered(const ChoiceAlternativeSpec& a) con
     // A SEQUENCE OF or SET OF alternative always covers here
     // (rust_seqof_alt_mtype's own doc — both shapes format identically):
     // its mtype gets wrapped in SeqOf<T> at every emission site below, so
-    // the raw "Vec<T>" text rust_mtype_is_unusable_vec would otherwise flag
-    // is never actually a problem for a CHOICE alternative.
-    if (rust_mtype_is_unusable_vec(a.mtype)) return true;
+    // a bare "Vec<T>" mtype is never actually a problem for a CHOICE
+    // alternative.
+    if (a.mtype_is_unusable_vec) return true;
     if (!a.mbuiltin) return !unusable_alias_names_.count(a.mtype);
     return rust_tag_for_builtin_or_alias(a.mbuiltin, a.storage_kind, a.mtype) != nullptr;
 }

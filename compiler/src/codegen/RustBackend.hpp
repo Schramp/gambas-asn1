@@ -206,6 +206,13 @@ public:
         return std::format("Vec<{}>", elem_type);
     }
 
+    // A bare Vec<T>, T != u8, has no Asn1Value impl (coherence-blocked —
+    // see Backend::mtype_is_unusable_collection's own doc). Only Vec<u8>
+    // (OCTET STRING's real impl) is excluded.
+    bool mtype_is_unusable_collection(const std::string& mtype) const override {
+        return mtype.rfind("Vec<", 0) == 0 && mtype != "Vec<u8>";
+    }
+
     // Defined in RustBackend.cpp — real emission logic, not a one-liner
     // like the naming methods above.
     void emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const override;
