@@ -1116,6 +1116,21 @@ std::string Generator::emit_member_type_descriptor(
     const std::string& mname, std::ostream& os)
 {
     using BT = ast::BuiltinType;
+    // Anonymous nested SEQUENCE OF/SET OF (X.680 §25/26 nesting, to
+    // unbounded depth — "rows SEQUENCE OF SEQUENCE OF INTEGER", both
+    // levels unnamed) needs its own synthesized descriptor: it isn't a
+    // scalar builtin, so it can't take the constraint-descriptor path
+    // below, and — unlike a *named* nested collection, already handled by
+    // type_descriptor_ref_for's own SEQUENCE OF/SET OF branch referencing
+    // a real top-level asn_DEF_ — it has no ASN.1 name to reference at
+    // all. Falling through to type_descriptor_ref_for(m) here (the
+    // pre-existing behavior) recurses straight past this collection level
+    // to its innermost scalar element, corrupting the wire encoding: the
+    // generic SeqOf BER handler would read each outer element as that
+    // scalar when it's actually a whole nested collection object. See
+    // gambas-asn1#427.
+    if ((m.is_seq_of() || m.is_set_of()) && m.name.empty())
+        return emit_synthetic_seq_of_descriptor(m, std::format("{}_{}", parent_cname, mname), os);
     auto* bt = std::get_if<BT>(&m.body);
     bool needs_xer = m.xer_encoding != ast::XerEncoding::Default;
     if (!bt || (m.constraints.empty() && !needs_xer)) return type_descriptor_ref_for(m);
@@ -2373,6 +2388,97 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
         natural_tag_for(def),
         false, false, false, true, "asn1::TypeKind::SeqOf",
         "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler");
+}
+
+/// @brief Emit a synthesized SeqOfSpec/TypeDescriptor pair for an anonymous
+///        SEQUENCE OF/SET OF appearing as another collection's element
+///        (X.680 §25/26 nesting, to unbounded depth — "SEQUENCE OF
+///        SEQUENCE OF X", both levels unnamed). Mirrors emit_seq_of_cpp's
+///        own SeqOfSpec/TypeDescriptor shape (kept as a separate function,
+///        not a shared refactor of emit_seq_of_cpp, to avoid touching the
+///        already-working top-level-type path) but keyed by a synthesized
+///        name instead of a real ASN.1 type name — there is none, this
+///        collection has no top-level type of its own. Recurses via
+///        emit_member_type_descriptor when the element is itself another
+///        anonymous nested collection.
+/// @param def         The anonymous SEQUENCE OF/SET OF TypeDef.
+/// @param synth_name  Synthesized, file-unique C++ identifier for this
+///                    collection level (e.g. "MatrixRows_elem").
+/// @param os          Output stream for the generated `.cpp` file.
+/// @return A reference expression to the synthesized descriptor
+///         (e.g. "&asn_DEF_MatrixRows_elem").
+/// @see gambas-asn1#427.
+std::string Generator::emit_synthetic_seq_of_descriptor(
+    const ast::TypeDef& def, const std::string& synth_name, std::ostream& os)
+{
+    const auto& elem_node = def.is_seq_of()
+        ? *std::get<ast::SequenceOfType>(def.body).element
+        : *std::get<ast::SetOfType>(def.body).element;
+
+    auto sc = compute_size_constraint(extract_size_range(def));
+
+    std::ostringstream elem_decl;
+    bool has_declared_name = !elem_node.name.empty();
+    std::string elem_ref = emit_member_type_descriptor(elem_node, synth_name, "elem", elem_decl);
+    if (!elem_decl.str().empty()) os << elem_decl.str();
+
+    os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", synth_name);
+    os << std::format("    {},\n", elem_ref);
+    os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
+                      sc.flags, sc.range_bits, sc.lower, sc.upper);
+    if (has_declared_name) {
+        using BT = ast::BuiltinType;
+        bool is_null_or_any = false;
+        if (auto* bt = std::get_if<BT>(&elem_node.body)) {
+            is_null_or_any = (*bt == BT::Null || *bt == BT::Any);
+        } else if (auto* tr = std::get_if<ast::TypeRef>(&elem_node.body)) {
+            if (auto resolved = resolver_.resolve_ref(*tr, current_module_)) {
+                if (auto* rbt = std::get_if<BT>(&resolved->body))
+                    is_null_or_any = (*rbt == BT::Null || *rbt == BT::Any);
+            }
+        }
+        if (!is_null_or_any)
+            os << std::format("    \"{}\",\n", elem_node.name);
+    }
+    os << "};\n\n";
+
+    // No ASN.1 name at any level of this nesting to draw an XER tag from.
+    // This descriptor's own xer_name is not cosmetic: SeqOfXerHandler::
+    // encode falls back to edef.name as the literal per-element wrap tag
+    // whenever the enclosing collection has no declared element identifier
+    // (X.693 §12) — reusing the synthesized C++ identifier here would leak
+    // an internal compiler name straight into the wire XER output. Use the
+    // bare X.680 keyword instead ("SEQUENCE"/"SET", no "OF" — XML element
+    // names can't contain a space), matching how every scalar builtin's
+    // own descriptor already carries its keyword as `.name` for this exact
+    // fallback (asn_DEF_Integer.name == "INTEGER", not a C++ identifier).
+    // Best-effort: this exact case (a genuinely anonymous, doubly-nested
+    // SEQUENCE OF/SET OF with no declared identifier at either level) has
+    // no real-world precedent to check against asn1c (confirmed zero
+    // occurrences across the ETSI LI PS-PDU schema, the asn1c conformance
+    // suite, and this project's own hand-authored test schemas).
+    //
+    // Not routed through the shared emit_type_descriptor helper: that
+    // function's TypeLifecycleOps(TypeTag<{cname}>{}) line requires cname
+    // to name a real, complete C++ type — every other caller passes a real
+    // ASN.1 type's own generated class/using-alias name. There is no such
+    // alias for this synthetic level (synth_name only names the asn_DEF_/
+    // asn_SPC_ constants, not a type), so the storage type is built
+    // directly via cpp_type_for(def) instead, the same recursive
+    // VectorSeqOf<...> text a named SEQUENCE OF/SET OF's own top-level
+    // `using` alias would get.
+    std::string storage_type = cpp_type_for(def);
+    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", synth_name);
+    os << std::format("    \"{}\",\n", def.is_seq_of() ? "SEQUENCE" : "SET");
+    os << std::format("    {},\n", natural_tag_for(def));
+    os << std::format("    nullptr, nullptr, nullptr, &asn_SPC_{}, {{}} /* constraints */,\n", synth_name);
+    os << "    false, asn1::TypeKind::SeqOf /* kind */,\n";
+    os << "    &asn1::per_seqof_handler /* per_handler */,\n";
+    os << "    &asn1::ber_seqof_handler /* ber_handler */,\n";
+    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", storage_type);
+    os << "};\n\n";
+
+    return std::format("&asn_DEF_{}", synth_name);
 }
 
 void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
