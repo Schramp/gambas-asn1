@@ -54,7 +54,7 @@ fn split_xer_records(text: &str) -> Vec<String> {
 
 fn decode_and_encode(type_name: &str, xml: &str) -> Result<Vec<u8>, asn1cpp_ber::DecodeError> {
     match type_name {
-        "__PDU_TYPE__" => Ok(randgen_rust::__PDU_MODULE__::__PDU_TYPE__::decode_xer(xml)?.encode()),
+        "__PDU_TYPE__" => Ok(randgen_rust::__PDU_MODULE__::__PDU_IDENT__::decode_xer(xml)?.encode()),
         _ => unreachable!("checked by caller"),
     }
 }
