@@ -391,6 +391,26 @@ target_include_directories(test_seq_of PRIVATE ${SEQ_OF_GEN_DIR})
 target_link_libraries(test_seq_of PRIVATE asn1cpp_runtime)
 add_test(NAME seq_of COMMAND test_seq_of)
 
+# ---- Anonymous nested SEQUENCE OF/SET OF (gambas-asn1#427) ------------------
+set(NESTED_SEQ_OF_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_nested_seq_of_test)
+add_custom_command(
+    OUTPUT  ${NESTED_SEQ_OF_GEN_DIR}/Matrix.hpp ${NESTED_SEQ_OF_GEN_DIR}/Matrix.cpp
+            ${NESTED_SEQ_OF_GEN_DIR}/MatrixRows.hpp ${NESTED_SEQ_OF_GEN_DIR}/MatrixRows.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${NESTED_SEQ_OF_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/nested_seq_of_test.asn1
+                                   -o ${NESTED_SEQ_OF_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/nested_seq_of_test.asn1
+    COMMENT "Generating C++ from nested_seq_of_test.asn1"
+)
+add_executable(test_nested_seq_of
+    seq/test_nested_seq_of.cpp
+    ${NESTED_SEQ_OF_GEN_DIR}/Matrix.cpp
+    ${NESTED_SEQ_OF_GEN_DIR}/MatrixRows.cpp
+)
+target_include_directories(test_nested_seq_of PRIVATE ${NESTED_SEQ_OF_GEN_DIR})
+target_link_libraries(test_nested_seq_of PRIVATE asn1cpp_runtime)
+add_test(NAME nested_seq_of COMMAND test_nested_seq_of)
+
 # ---- CHOICE types -----------------------------------------------------------
 set(CHOICE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_test)
 add_custom_command(
