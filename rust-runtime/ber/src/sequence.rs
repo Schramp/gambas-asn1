@@ -51,14 +51,17 @@ pub struct MemberDescriptor<T: 'static> {
     /// from the wire, filling the schema default instead of leaving the
     /// field however `T::default()` left it. `None` for every other
     /// member, DEFAULT-valued or not — same "optional discriminant" shape
-    /// `access`'s own variants use. No encode-side suppression: BER (unlike
-    /// DER) never requires omitting a DEFAULT-equal value, and the C++
-    /// runtime's own `SequenceBerHandler::encode` doesn't attempt it either
-    /// (`default_value_cmp`, `TypeDescriptor.hpp`, is PER-only) — so a
-    /// decoded-then-re-encoded DEFAULT member may legitimately gain an
-    /// explicit tag it didn't have on the original wire, matching C++'s own
-    /// behavior exactly, not a Rust-specific gap.
+    /// `access`'s own variants use.
     pub set_default: Option<fn(&mut T)>,
+    /// BER encode gate (X.690 §11.5 — a member whose value equals the
+    /// schema DEFAULT must not be encoded): `Some`, returning `true`, for
+    /// exactly the members `set_default` is `Some` for — mirrors
+    /// `MemberDescriptor::is_default_equal` (`TypeDescriptor.hpp`)/
+    /// `SequenceBerHandler::encode`'s own `if (mbr.is_default_equal &&
+    /// mbr.is_default_equal(src)) { continue; }` (`BerCodec.cpp`) exactly.
+    /// `encode_sequence_content` skips the member entirely when this
+    /// returns `true`, same as a genuinely absent OPTIONAL member.
+    pub is_default_equal: Option<fn(&T) -> bool>,
 }
 
 /// How a member's value is reached and (de)serialized.
@@ -471,6 +474,11 @@ pub struct SequenceSpec<T: 'static> {
 /// retagging replaces the outer tag only, content is unchanged).
 pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &mut Vec<u8>) {
     for m in spec.members {
+        if let Some(is_default_equal) = m.is_default_equal {
+            if is_default_equal(value) {
+                continue;
+            }
+        }
         match &m.access {
             MemberAccess::Scalar { get, .. } => get(value).ber_encode(content),
             MemberAccess::TaggedScalar { get, .. } => get(value).ber_encode_tagged(m.tag, content),
@@ -628,6 +636,7 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         optional: false,
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
         set_default: None,
+        is_default_equal: None,
     },
     MemberDescriptor {
         name: "y",
@@ -635,6 +644,7 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         optional: false,
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
         set_default: None,
+        is_default_equal: None,
     },
 ];
 
@@ -675,6 +685,7 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         optional: false,
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
         set_default: None,
+        is_default_equal: None,
     },
     MemberDescriptor {
         name: "y",
@@ -682,6 +693,7 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         optional: true,
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
         set_default: None,
+        is_default_equal: None,
     },
 ];
 
@@ -723,6 +735,7 @@ static COORDS_MEMBERS: [MemberDescriptor<Coords>; 1] = [MemberDescriptor {
     optional: false,
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
     set_default: None,
+    is_default_equal: None,
 }];
 
 static COORDS_SPEC: SequenceSpec<Coords> =
@@ -763,6 +776,7 @@ static OPT_COORDS_MEMBERS: [MemberDescriptor<OptCoords>; 1] = [MemberDescriptor 
     optional: true,
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
     set_default: None,
+    is_default_equal: None,
 }];
 
 static OPT_COORDS_SPEC: SequenceSpec<OptCoords> =
@@ -804,6 +818,7 @@ static SET_COORDS_MEMBERS: [MemberDescriptor<SetCoords>; 1] = [MemberDescriptor 
     optional: false,
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
     set_default: None,
+    is_default_equal: None,
 }];
 
 static SET_COORDS_SPEC: SequenceSpec<SetCoords> =
@@ -840,6 +855,7 @@ static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
         optional: false,
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
         set_default: None,
+        is_default_equal: None,
     },
     MemberDescriptor {
         name: "y",
@@ -847,6 +863,7 @@ static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
         optional: true,
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
         set_default: Some(|v| v.y = Some(default_point_y_default())),
+        is_default_equal: Some(|v| v.y == Some(default_point_y_default())),
     },
 ];
 
@@ -980,6 +997,7 @@ impl DefaultPoint {
                 optional: false,
                 access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
                 set_default: None,
+                is_default_equal: None,
             },
             MemberDescriptor {
                 name: "y",
@@ -987,6 +1005,7 @@ impl DefaultPoint {
                 optional: false,
                 access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
                 set_default: None,
+                is_default_equal: None,
             },
         ];
         static A_SET_SPEC: SequenceSpec<Point> =
@@ -1246,5 +1265,32 @@ impl DefaultPoint {
 
         let decoded = DefaultPoint::decode(&wire).unwrap();
         assert_eq!(decoded, DefaultPoint { x: 1, y: Some(42) });
+    }
+
+    #[test]
+    fn default_member_equal_to_the_default_is_suppressed_on_encode() {
+        // X.690 §11.5 (mirrored by is_default_equal, MemberDescriptor's own
+        // doc): a member whose value equals the schema DEFAULT must not be
+        // encoded at all — same wire bytes as if `y` had never been set,
+        // not `Some(42)` written out explicitly.
+        let p = DefaultPoint { x: 1, y: Some(42) };
+        let mut expected = Vec::new();
+        1i64.ber_encode(&mut expected);
+        let mut expected_wire = Vec::new();
+        crate::writer::write_constructed(&mut expected_wire, SEQUENCE_TAG, &expected);
+
+        assert_eq!(p.encode(), expected_wire);
+        // Round-trips back to the same value even though the wire never
+        // carried it explicitly (decode's own default-fill covers this).
+        assert_eq!(DefaultPoint::decode(&p.encode()).unwrap(), p);
+    }
+
+    #[test]
+    fn default_member_not_equal_to_the_default_is_still_encoded() {
+        let p = DefaultPoint { x: 1, y: Some(7) };
+        let bytes = p.encode();
+        assert_eq!(DefaultPoint::decode(&bytes).unwrap(), p);
+        // Distinct from the suppressed (default-valued) case above.
+        assert_ne!(bytes, DefaultPoint { x: 1, y: Some(42) }.encode());
     }
 }
