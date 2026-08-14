@@ -950,9 +950,18 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // `{parent}_{member}_default()` free function under this exact
             // name whenever this condition holds.
             std::string set_default_expr = "None";
+            std::string is_default_equal_expr = "None";
             if (m.has_default && m.def_setter != "nullptr") {
                 std::string fname = escape(std::format("{}_{}_default", to_snake_case(spec.type_name), m.mname));
                 set_default_expr = std::format("Some(|v| v.{} = Some({}()))", m.mname, fname);
+                // X.690 §11.5 — a member whose value equals the schema
+                // DEFAULT must not be encoded (mirrors CppBackend's own
+                // `_isdef_...` gate / MemberDescriptor::is_default_equal,
+                // TypeDescriptor.hpp, consulted by SequenceBerHandler::
+                // encode, BerCodec.cpp — real gap found only by an X2B/B2X
+                // byte-identity check against the C++ runtime, not caught
+                // by any XER-shaped verification).
+                is_default_equal_expr = std::format("Some(|v| v.{} == Some({}()))", m.mname, fname);
             }
             if (!sequence_member_covered(m)) {
                 os << "        tag: asn1cpp_ber::sequence::SEQUENCE_TAG,\n";
@@ -1033,6 +1042,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 os << std::format("        access: asn1cpp_ber::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
             }
             os << std::format("        set_default: {},\n", set_default_expr);
+            os << std::format("        is_default_equal: {},\n", is_default_equal_expr);
             os << "    },\n";
         }
         os << "];\n\n";
