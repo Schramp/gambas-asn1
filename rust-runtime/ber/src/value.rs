@@ -506,7 +506,7 @@ impl Asn1Value for Vec<u8> {
     }
 
     fn xer_element_name(&self) -> &'static str {
-        "OCTET-STRING"
+        "OCTET_STRING"
     }
 
     // OCTET STRING content octets *are* the value bytes — no encoding step.
@@ -567,7 +567,7 @@ impl Asn1Value for crate::bit_string::BitString {
     }
 
     fn xer_element_name(&self) -> &'static str {
-        "BIT-STRING"
+        "BIT_STRING"
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
@@ -664,7 +664,7 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
     }
 
     fn xer_element_name(&self) -> &'static str {
-        "OBJECT-IDENTIFIER"
+        "OBJECT_IDENTIFIER"
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
@@ -715,7 +715,7 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
     }
 
     fn xer_element_name(&self) -> &'static str {
-        "RELATIVE-OID"
+        "RELATIVE_OID"
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
