@@ -453,12 +453,27 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_ber::DecodeError> {\n";
     os << "        self.0.ber_decode_content(content)\n";
     os << "    }\n\n";
-    os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
-    os << "        self.0.xer_encode(out, depth);\n";
-    os << "    }\n\n";
-    os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
-    os << "        self.0.xer_decode_into(r)\n";
-    os << "    }\n";
+    // BASE64 (X.693 §21, ENCODING-CONTROL XER ... BASE64 <TypeName> or
+    // legacy `<TypeName> OCTET STRING ::= base64`) replaces this alias's
+    // own xer_encode/xer_decode_into with the base64 helpers directly —
+    // OctetString itself has no per-instance encoding flag to branch on
+    // (see octet_string.rs's own base64_encode/base64_decode doc).
+    if (spec.xer_base64) {
+        os << "    fn xer_encode(&self, out: &mut String, _depth: usize) {\n";
+        os << "        out.push_str(&asn1cpp_ber::octet_string::base64_encode(&self.0));\n";
+        os << "    }\n\n";
+        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << "        self.0.0 = asn1cpp_ber::octet_string::base64_decode(&r.read_text_content());\n";
+        os << "        Ok(())\n";
+        os << "    }\n";
+    } else {
+        os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
+        os << "        self.0.xer_encode(out, depth);\n";
+        os << "    }\n\n";
+        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << "        self.0.xer_decode_into(r)\n";
+        os << "    }\n";
+    }
     os << "}\n\n";
 
     if (!spec.has_size_constraint) return;
