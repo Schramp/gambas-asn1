@@ -1,4 +1,4 @@
-# xval_sweep targets — one per line: "<schema.asn1 path relative to asn1cpp/>  <PDU type name>"
+# xval_sweep targets — one per line: "<schema.asn1 path relative to asn1cpp/>  <PDU type name>  [skip-asn1c-reason...]"
 # '#'-prefixed and blank lines ignored. Paths are relative to asn1cpp/'s own
 # root (this tool lives inside asn1cpp/, no umbrella-repo path assumptions).
 #
@@ -12,6 +12,11 @@
 # hyphens or other characters that need escaping in the generated C++/
 # Rust identifier — xval_sweep.py's discover_ident() finds the real
 # generated identifier by content, not by guessing the escaping rule.
+#
+# Optional 3rd+ column: a known, already-filed asn1c divergence for this
+# specific target (#440's asn1c leg) — C++/Rust legs still run and gate
+# pass/fail as always, asn1c leg is skipped rather than failing on a gap
+# tracked elsewhere.
 #
 # Seeded with 3 single-file test schemas (broad type coverage, tag
 # coverage, CHOICE coverage) plus 10 more probed from asn1c's own mirrored
@@ -33,11 +38,18 @@
 #     synthetic type has no Rust Asn1Value impl (201)
 #   gambas-asn1#438 — BASE64 ENCODING CONTROL content: C++ and Rust XER
 #     output disagree on representation for the same BER input, while
-#     each is internally round-trip-consistent (180, 183, 210 partial)
+#     each is internally round-trip-consistent (180, 183, 210 partial).
+#     Confirmed against asn1c ground truth (#440's asn1c leg): asn1c
+#     produces real base64 text, asn1cpp emits raw hex instead — asn1c
+#     is right, this is a genuine asn1cpp gap, not just cross-backend
+#     disagreement.
+#   gambas-asn1#441 — top-level (non-member) CHOICE XER output is missing
+#     an outer element wrapper that asn1c always emits, found via #440's
+#     asn1c leg on Alt4 (choice_test.asn1)
 
 tests/asn1/roundtrip_test.asn1    Container
 tests/asn1/explicit_tag_test.asn1 Mixed
-tests/asn1/choice_test.asn1       Alt4
+tests/asn1/choice_test.asn1       Alt4  skip-asn1c: gambas-asn1#441 (top-level CHOICE XER wrapper)
 
 # Probed from tests/tests-asn1c-compiler/*-OK.asn1 (asn1c's own mirrored
 # suite), confirmed to build and round-trip end-to-end.
@@ -45,9 +57,9 @@ tests/tests-asn1c-compiler/146-duplicate-member-names-OK.asn1      ServingCellCo
 tests/tests-asn1c-compiler/167-pdu-deps-OK.asn1                    PDUType
 tests/tests-asn1c-compiler/170-complex-nesting-OK.asn1             StructureD
 tests/tests-asn1c-compiler/174-encoding-control-OK.asn1            TestMessage
-tests/tests-asn1c-compiler/175-encoding-control-body-OK.asn1       TestData
-tests/tests-asn1c-compiler/176-encoding-control-applied-OK.asn1    Message
-tests/tests-asn1c-compiler/177-encoding-control-codegen-OK.asn1    Message
-tests/tests-asn1c-compiler/178-nested-enum-same-name-OK.asn1       CodebookConfig-r18
-tests/tests-asn1c-compiler/181-base64-control-standard-OK.asn1     Record
+tests/tests-asn1c-compiler/175-encoding-control-body-OK.asn1       TestData    skip-asn1c: gambas-asn1#438 (BASE64 encoding instruction)
+tests/tests-asn1c-compiler/176-encoding-control-applied-OK.asn1    Message     skip-asn1c: gambas-asn1#438 (BASE64 encoding instruction)
+tests/tests-asn1c-compiler/177-encoding-control-codegen-OK.asn1    Message     skip-asn1c: gambas-asn1#438 (BASE64 encoding instruction)
+tests/tests-asn1c-compiler/178-nested-enum-same-name-OK.asn1       CodebookConfig-r18  skip-asn1c: asn1c's own -p flag mismatches its hyphenated PDU name (harness limitation, not a codec bug)
+tests/tests-asn1c-compiler/181-base64-control-standard-OK.asn1     Record      skip-asn1c: gambas-asn1#438 (BASE64 encoding instruction)
 tests/tests-asn1c-compiler/202-XIOTCertificate-OK.asn1             Extension
