@@ -9,15 +9,19 @@
 //! `match`/`if` chain, for either wire format.
 //!
 //! **No `name` field on `ChoiceSpec<T>`, unlike `SequenceSpec<T>`.** A
-//! CHOICE has no outer wrapper at all — X.690 §8.13.1: "the value is that
-//! of the chosen alternative", so the wire tag IS the chosen alternative's
-//! own tag; `ChoiceXerHandler` (`runtime/src/XerCodec.cpp`) confirms the
-//! same is true in XER (encodes/decodes using the *alternative's* name as
-//! the element tag, never the CHOICE type's own name — there's no `<Choice>`
-//! wrapper the way `SequenceXerHandler` wraps every member in `<Widget>`).
-//! So this isn't a case of "shared type-meta abstraction" review
-//! feedback applying and being skipped — there is no second `name` field
-//! to share or duplicate here at all.
+//! CHOICE has no outer wrapper *by default* — X.690 §8.13.1: "the value is
+//! that of the chosen alternative", so the wire tag IS the chosen
+//! alternative's own tag; `ChoiceXerHandler` (`runtime/src/XerCodec.cpp`)
+//! confirms the same is true in XER (encodes/decodes using the
+//! *alternative's* name as the element tag, never the CHOICE type's own
+//! name — there's no `<Choice>` wrapper the way `SequenceXerHandler` wraps
+//! every member in `<Widget>`). So this isn't a case of "shared type-meta
+//! abstraction" review feedback applying and being skipped — there is no
+//! second `name` field to share or duplicate here at all. `own_tag`
+//! (below) is the one real exception: a CHOICE *type assignment* can
+//! declare its own top-level `[n]`, which — since CHOICE has no natural
+//! tag to substitute into (X.680 §30.6) — always wraps the whole
+//! alternative-dispatch encoding in an outer TLV.
 //!
 //! Each alternative needs two things a `MemberDescriptor<T>` row doesn't:
 //! CHOICE is a sum type, so there's no single storage slot for `get`/
@@ -36,9 +40,9 @@
 //! public API) — a worked example doesn't need to be a permanent public
 //! type just to be readable as one.
 
-use crate::reader::{DecodeError, Reader};
+use crate::reader::{read_explicit, DecodeError, Reader};
 use crate::tag::Tag;
-use crate::writer::write_primitive;
+use crate::writer::{write_explicit, write_primitive};
 use crate::xer::{write_close_tag, write_open_tag, XerReader};
 
 /// One CHOICE alternative — mirrors `ChoiceAlternativeSpec`
@@ -123,6 +127,14 @@ pub struct ChoiceSpec<T: 'static> {
     /// after it — `None` for a fully closed CHOICE, where an unrecognized
     /// tag is (correctly) a genuine decode error, not a forward-compat gap.
     pub unknown_extension: Option<UnknownExtensionOps<T>>,
+    /// `Some(tag)` when the CHOICE *type assignment itself* declares a
+    /// top-level `[n]` (e.g. `MyChoice ::= [9] EXPLICIT CHOICE {...}`).
+    /// Per X.680 §30.6, a CHOICE's own tag is always EXPLICIT (no natural
+    /// tag exists to substitute into) — `encode_choice`/`decode_choice`
+    /// wrap/unwrap an outer TLV around the normal alternative-dispatch
+    /// encoding when set. `None` (the common case) — no wrapper, alternative
+    /// dispatch starts at the outermost TLV, same as before this field existed.
+    pub own_tag: Option<Tag>,
 }
 
 /// Generic CHOICE encoder — the Rust analogue of `ChoiceBerHandler::encode`.
@@ -135,6 +147,22 @@ pub struct ChoiceSpec<T: 'static> {
 /// extensible, the `unknown_extension` variant, by construction), so this
 /// is a codegen-bug backstop, not a reachable runtime error path.
 pub fn encode_choice<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
+    let content = encode_choice_dispatch(spec, value);
+    match spec.own_tag {
+        Some(tag) => {
+            let mut out = Vec::new();
+            write_explicit(&mut out, tag, |inner| inner.extend_from_slice(&content));
+            out
+        }
+        None => content,
+    }
+}
+
+/// The normal alternative-dispatch encoding (X.680 §28 — no outer wrapper
+/// of its own), before any `own_tag` wrap is applied. Split out from
+/// `encode_choice` so the wrap step (when present) has the complete inner
+/// bytes to wrap, rather than needing to know about it itself.
+fn encode_choice_dispatch<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
     for alt in spec.alternatives {
         let mut out = Vec::new();
         if (alt.ber_encode)(value, &mut out) {
@@ -178,6 +206,17 @@ pub fn decode_choice<T>(spec: &ChoiceSpec<T>, data: &[u8]) -> Result<T, DecodeEr
 /// `Reader`, not a standalone buffer) so a generated CHOICE type can
 /// implement that trait and become usable as a nested composite member.
 pub fn decode_choice_from<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, DecodeError> {
+    match spec.own_tag {
+        Some(tag) => read_explicit(r, tag, |inner| decode_choice_dispatch(spec, inner)),
+        None => decode_choice_dispatch(spec, r),
+    }
+}
+
+/// The normal alternative-dispatch decode (peek tag, linear-scan
+/// `spec.alternatives`), reading from whatever position `r` is already at —
+/// either the outermost stream position (no `own_tag`) or just inside an
+/// already-consumed `own_tag` wrapper (see `decode_choice_from`).
+fn decode_choice_dispatch<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, DecodeError> {
     let tag = r.peek_tag().ok_or_else(|| DecodeError::new("empty CHOICE input".to_string(), 0))?;
     for alt in spec.alternatives {
         if alt.tag.matches_identifier(&tag) {
@@ -387,7 +426,7 @@ static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
     },
 ];
 
-static CHOICE_SPEC: ChoiceSpec<Choice> = ChoiceSpec { alternatives: &CHOICE_ALTERNATIVES, unknown_extension: None };
+static CHOICE_SPEC: ChoiceSpec<Choice> = ChoiceSpec { alternatives: &CHOICE_ALTERNATIVES, unknown_extension: None, own_tag: None };
 
 impl Choice {
     pub fn encode(&self) -> Vec<u8> {
@@ -430,6 +469,26 @@ impl Choice {
     fn unrecognized_tag_is_error() {
         let data = [0x30, 0x00]; // SEQUENCE tag — not a Choice alternative
         assert!(Choice::decode(&data).is_err());
+    }
+
+    // own_tag: a CHOICE type assignment's own declared [n] (X.680 §30.6,
+    // always EXPLICIT) wraps the normal alternative-dispatch encoding in an
+    // outer TLV. Byte-identical to the C++ side's MyExplicitChoice test
+    // (tests/seq/test_toplevel_tag.cpp) and to real asn1c ground truth for
+    // the same construct: a9 03 02 01 2a.
+    #[test]
+    fn own_tag_wraps_the_alternative_dispatch_encoding() {
+        let tag = crate::tag::Tag {
+            class: crate::tag::TagClass::Context,
+            number: 9,
+            constructed: true,
+        };
+        let spec = ChoiceSpec { alternatives: &CHOICE_ALTERNATIVES, unknown_extension: None, own_tag: Some(tag) };
+        let enc = encode_choice(&spec, &Choice::Num(42));
+        assert_eq!(enc, vec![0xa9, 0x03, 0x02, 0x01, 0x2a]);
+
+        let decoded = decode_choice(&spec, &enc).unwrap();
+        assert_eq!(decoded, Choice::Num(42));
     }
 
     #[test]
@@ -526,7 +585,7 @@ impl Choice {
     ];
 
     static TWO_OCTETS_EXPLICIT_SPEC: ChoiceSpec<TwoOctetsExplicit> =
-        ChoiceSpec { alternatives: &TWO_OCTETS_EXPLICIT_ALTERNATIVES, unknown_extension: None };
+        ChoiceSpec { alternatives: &TWO_OCTETS_EXPLICIT_ALTERNATIVES, unknown_extension: None, own_tag: None };
 
     #[test]
     fn explicit_disambiguates_two_alternatives_of_the_same_builtin_kind() {
@@ -596,6 +655,7 @@ impl Choice {
                 _ => None,
             },
         }),
+        own_tag: None,
     };
 
     #[test]
@@ -695,7 +755,7 @@ impl Choice {
         },
     ];
 
-    static INNER_SPEC: ChoiceSpec<Inner> = ChoiceSpec { alternatives: &INNER_ALTERNATIVES, unknown_extension: None };
+    static INNER_SPEC: ChoiceSpec<Inner> = ChoiceSpec { alternatives: &INNER_ALTERNATIVES, unknown_extension: None, own_tag: None };
 
     impl Asn1Value for Inner {
         fn ber_natural_tag(&self) -> Tag { unreachable!("CHOICE has no natural tag") }
@@ -797,7 +857,7 @@ impl Choice {
         },
     ];
 
-    static OUTER_SPEC: ChoiceSpec<Outer> = ChoiceSpec { alternatives: &OUTER_ALTERNATIVES, unknown_extension: None };
+    static OUTER_SPEC: ChoiceSpec<Outer> = ChoiceSpec { alternatives: &OUTER_ALTERNATIVES, unknown_extension: None, own_tag: None };
 
     impl Outer {
         fn encode(&self) -> Vec<u8> { encode_choice(&OUTER_SPEC, self) }
@@ -849,7 +909,7 @@ impl Choice {
             xer_encode: |_, _, _| false,
             xer_decode_into: |_| Err(DecodeError::new("not exercised in this test", 0)),
         }];
-        static SPEC: ChoiceSpec<Solo> = ChoiceSpec { alternatives: &ROW, unknown_extension: None };
+        static SPEC: ChoiceSpec<Solo> = ChoiceSpec { alternatives: &ROW, unknown_extension: None, own_tag: None };
 
         let mut wire = Vec::new();
         write_primitive(&mut wire, Tag::context(1, true), &[0x05]); // constructed=true on the wire
