@@ -757,13 +757,14 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
             std::string ops = r.optional
                 ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, r.mname)
                 : "{ nullptr, nullptr, nullptr }";
-            os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {}, {} }},\n",
+            os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }},\n",
                 r.asn1_name, (r.resolved_tag ? format_tag_literal(*r.resolved_tag) : format_no_tag_literal()),
                 r.optional ? "true" : "false",
                 r.has_default ? "true" : "false",
                 offset_expr,
                 r.tdref, ops,
                 r.is_explicit ? "true" : "false",
+                (r.resolved_tag && !r.resolved_tag->tag_is_override) ? "false" : "true",
                 r.def_setter, def_cmp);
         }
         os << "};\n";
@@ -936,9 +937,10 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
         // Emit array (as class static member definition).
         os << std::format("const asn1::MemberDescriptor {}::s_alternatives[] = {{\n", cname);
         for (const auto& r : spec.alternatives) {
-            os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, nullptr, nullptr,\n",
+            os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, {}, nullptr, nullptr,\n",
                 r.asn1_name, (r.resolved_tag ? format_tag_literal(*r.resolved_tag) : format_no_tag_literal()),
-                r.tdref, r.is_explicit ? "true" : "false");
+                r.tdref, r.is_explicit ? "true" : "false",
+                (r.resolved_tag && !r.resolved_tag->tag_is_override) ? "false" : "true");
             os << std::format("      &asn1::ChoiceOps<{0}>::get_mut, &asn1::ChoiceOps<{0}>::get_const }},\n",
                 r.mtype);
         }

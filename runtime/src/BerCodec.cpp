@@ -111,35 +111,20 @@ static void ber_encode_implicit_tagged(const BerCodec& codec, BerWriter& w,
                  static_cast<std::size_t>(new_tag_bytes));
 }
 
-// A member/alternative with no tag override of its own inherits the
-// referenced type's own declared tag (Generator::compute_member_tag,
-// tag_is_override=false — e.g. `s4 T4` where `T4 ::= [53] CHOICE {...}`).
-// The member-level EXPLICIT wrap below and the referenced type's own
-// EXPLICIT wrap (TypeDescriptor::is_explicit) then both target the same
-// outer tag, which would double-wrap the wire encoding. When they
-// coincide, encode/decode the referenced type's
-// natural (unwrapped) form here instead — the wrap already happened once,
-// at this call site.
-static const TypeDescriptor& ber_content_descriptor(TypeDescriptor& scratch,
-                                                     const TypeDescriptor& mdef,
-                                                     const Tag& wrap_tag) {
-    if (mdef.is_explicit && mdef.tag == wrap_tag) {
-        scratch = mdef;
-        scratch.tag = mdef.natural_tag;
-        scratch.is_explicit = false;
-        return scratch;
-    }
-    return mdef;
-}
-
+// Only called for a member/alternative's own real tag override
+// (MemberDescriptor::tag_is_override) — X.680 §30.1/30.3: `x [7] EXPLICIT
+// SomeType` names a genuine TaggedType construction, so `[7]` wraps
+// SomeType's complete encoding (whatever that already is) as an
+// additional, cascading layer. A bare `x SomeType` reference carries no
+// such construction at all and is never routed through here — see the
+// dispatch sites below, which delegate straight to `codec.encode`/
+// `codec.decode` on the referenced type's own descriptor in that case.
 static void ber_encode_explicit_tagged(const BerCodec& codec, BerWriter& w,
                                        const Tag& ctx_tag,
                                        const TypeDescriptor& mdef, const Asn1Object* mptr) {
-    TypeDescriptor scratch;
-    const TypeDescriptor& content = ber_content_descriptor(scratch, mdef, ctx_tag);
     w.write_constructed(ctx_tag, [&](BerWriter& w2) {
         BerEncodeStream ms{w2};
-        codec.encode(ms, content, mptr);
+        codec.encode(ms, mdef, mptr);
     });
 }
 
@@ -583,7 +568,7 @@ struct SequenceBerHandler final : IBerTypeHandler {
                 const auto& mdef = *mbr.type_descriptor;
                 ValidatePathScope _vps{mbr.name};
 
-                if (mbr.tag.cls == TagClass::Context) {
+                if (mbr.tag.cls == TagClass::Context && mbr.tag_is_override) {
                     if (mbr.is_explicit) {
                         Tag exp_tag{mbr.tag.cls, mbr.tag.number, true};
                         if (debug_flags() & DBG_BER_WRITE)
@@ -595,6 +580,11 @@ struct SequenceBerHandler final : IBerTypeHandler {
                                                    def.name, mbr.name);
                     }
                 } else {
+                    // Untagged member, or a bare type reference whose tag is
+                    // merely descriptive of the referenced type's own tag
+                    // (X.680 §30.1/30.3 — no TaggedType construction on this
+                    // member itself): delegate to the type's own encode,
+                    // which already knows how to write its own tag/wrap.
                     if (debug_flags() & DBG_BER_WRITE)
                         std::fprintf(stderr, "[BER-WRITE] %s.%s untagged type=%s\n",
                                      def.name, mbr.name, mdef.name);
@@ -669,7 +659,7 @@ private:
             const auto& mdef = *mbr.type_descriptor;
             ValidatePathScope _vps{mbr.name};
 
-            if (mbr.tag.cls == TagClass::Context) {
+            if (mbr.tag.cls == TagClass::Context && mbr.tag_is_override) {
                 auto outer = inner.read_tlv();
                 if (!outer) return decode_err(outer.error());
                 if (mbr.is_explicit) {
@@ -680,14 +670,17 @@ private:
                             outer->value.empty() ? 0xff : (unsigned)outer->value[0]);
                     BerReader inner2 = inner.sub(outer->value);
                     BerDecodeStream ms{inner2};
-                    TypeDescriptor scratch;
-                    auto ok = codec.decode(ms, ber_content_descriptor(scratch, mdef, mbr.tag), mptr);
+                    auto ok = codec.decode(ms, mdef, mptr);
                     if (!ok) return ok;
                 } else {
                     auto ok = codec.decode_value(outer->value, mdef, mptr);
                     if (!ok) return ok;
                 }
             } else {
+                // Untagged member, or a bare type reference whose tag is
+                // merely descriptive (see the matching encode-side comment
+                // above) — delegate to the type's own decode, which reads
+                // and unwraps its own tag itself.
                 BerDecodeStream ms{inner};
                 auto ok = codec.decode(ms, mdef, mptr);
                 if (!ok) return ok;
@@ -715,7 +708,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         const auto& mdef = *alt.type_descriptor;
         ValidatePathScope _vps{alt.name};
 
-        if (alt.tag.cls == TagClass::Context) {
+        if (alt.tag.cls == TagClass::Context && alt.tag_is_override) {
             if (alt.is_explicit) {
                 Tag exp_tag{alt.tag.cls, alt.tag.number, true};
                 if (debug_flags() & DBG_BER_WRITE)
@@ -752,14 +745,13 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 const auto& mdef = *alt.type_descriptor;
                 ValidatePathScope _vps{alt.name};
                 DecodeResult ok = decode_ok();
-                if (alt.tag.cls == TagClass::Context) {
+                if (alt.tag.cls == TagClass::Context && alt.tag_is_override) {
                     auto outer = r.read_tlv();
                     if (!outer) return decode_err(outer.error());
                     if (alt.is_explicit) {
                         BerReader inner2 = r.sub(outer->value);
                         BerDecodeStream ms{inner2};
-                        TypeDescriptor scratch;
-                        ok = codec.decode(ms, ber_content_descriptor(scratch, mdef, alt.tag), mptr);
+                        ok = codec.decode(ms, mdef, mptr);
                     } else {
                         ok = codec.decode_value(outer->value, mdef, mptr);
                     }
@@ -792,14 +784,13 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 const auto& mdef = *alt.type_descriptor;
                 ValidatePathScope _vps{alt.name};
                 DecodeResult ok = decode_ok();
-                if (alt.tag.cls == TagClass::Context) {
+                if (alt.tag.cls == TagClass::Context && alt.tag_is_override) {
                     auto outer = r.read_tlv();
                     if (!outer) return decode_err(outer.error());
                     if (alt.is_explicit) {
                         BerReader inner2 = r.sub(outer->value);
                         BerDecodeStream ms{inner2};
-                        TypeDescriptor scratch;
-                        ok = codec.decode(ms, ber_content_descriptor(scratch, mdef, alt.tag), mptr);
+                        ok = codec.decode(ms, mdef, mptr);
                     } else {
                         ok = codec.decode_value(outer->value, mdef, mptr);
                     }
@@ -825,14 +816,13 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             const auto& mdef = *alt.type_descriptor;
             ValidatePathScope _vps{alt.name};
             DecodeResult ok = decode_ok();
-            if (alt.tag.cls == TagClass::Context) {
+            if (alt.tag.cls == TagClass::Context && alt.tag_is_override) {
                 auto outer = r.read_tlv();
                 if (!outer) return decode_err(outer.error());
                 if (alt.is_explicit) {
                     BerReader inner2 = r.sub(outer->value);
                     BerDecodeStream ms{inner2};
-                    TypeDescriptor scratch;
-                    ok = codec.decode(ms, ber_content_descriptor(scratch, mdef, alt.tag), mptr);
+                    ok = codec.decode(ms, mdef, mptr);
                 } else {
                     ok = codec.decode_value(outer->value, mdef, mptr);
                 }
