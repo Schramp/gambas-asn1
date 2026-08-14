@@ -198,7 +198,6 @@ int main() {
         bounded.size_lower = 1;
         bounded.size_upper = 10;
         bounded.extensible = false;
-        bounded.xer_base64 = false;
 
         BuiltinAliasSpec semi = bounded;
         semi.type_name = "Semi";
@@ -241,7 +240,6 @@ int main() {
         spec.size_lower = 1;
         spec.size_upper = 10;
         spec.extensible = false;
-        spec.xer_base64 = false;
 
         TypeOutputSession cpp_session, rust_session;
         c.emit_builtin_alias(spec, cpp_session);

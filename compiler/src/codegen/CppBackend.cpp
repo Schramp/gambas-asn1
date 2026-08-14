@@ -22,6 +22,17 @@ std::string CppBackend::format_tag_literal(const TypeTagSpec& tag_spec) const {
                         tag_spec.constructed ? "true" : "false");
 }
 
+/// @brief Format an X.693 §21 XER encoding decision as a C++ `asn1::XerEncoding::...` literal.
+/// @param enc The resolved encoding (Default/Base64/Utf8).
+/// @return The matching runtime enumerator's fully-qualified name.
+std::string xer_encoding_literal(ast::XerEncoding enc) {
+    switch (enc) {
+    case ast::XerEncoding::Base64: return "asn1::XerEncoding::Base64";
+    case ast::XerEncoding::Utf8:   return "asn1::XerEncoding::Utf8";
+    default:                       return "asn1::XerEncoding::Default";
+    }
+}
+
 /// @brief Returns ceil(log2(n)) clamped to [1,∞) — bits per character for an n-symbol alphabet.
 static int compute_alphabet_bits(int n) {
     int bits = 0;
@@ -541,13 +552,14 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
     os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */", cpp_t);
     // is_explicit/natural_tag come after xer_encoding in TypeDescriptor, so
     // supplying them means restating xer_encoding's value explicitly too,
-    // whether or not xer_base64 also applies.
+    // whether or not a non-default xer_encoding also applies.
+    std::string xer_lit = xer_encoding_literal(spec.xer_encoding);
+    bool non_default_xer = spec.xer_encoding != ast::XerEncoding::Default;
     if (spec.is_explicit) {
         os << std::format(",\n    {}, true, {} /* xer_encoding, is_explicit, natural_tag */\n",
-                          spec.xer_base64 ? "asn1::XerEncoding::Base64" : "asn1::XerEncoding::Default",
-                          format_tag_literal(*spec.natural_tag));
-    } else if (spec.xer_base64) {
-        os << ",\n    asn1::XerEncoding::Base64 /* xer_encoding */\n";
+                          xer_lit, format_tag_literal(*spec.natural_tag));
+    } else if (non_default_xer) {
+        os << std::format(",\n    {} /* xer_encoding */\n", xer_lit);
     } else {
         os << "\n";
     }
@@ -652,7 +664,8 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
         per_h = per_handler_for_builtin(spec.builtin_type);
         ber_h = ber_handler_for_builtin(spec.builtin_type);
         cpp_t = native_builtin_type(spec.builtin_type);
-        xer_tail = spec.needs_xer ? ", asn1::XerEncoding::Base64" : "";
+        xer_tail = spec.xer_encoding != ast::XerEncoding::Default
+                 ? std::format(", {}", xer_encoding_literal(spec.xer_encoding)) : "";
     }
 
     os << std::format(

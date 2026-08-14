@@ -207,7 +207,7 @@ struct BuiltinAliasSpec : TaggedTypeSpec {
     int      size_range_bits;
     int64_t  size_lower, size_upper;    // size_upper meaningful only when size_bounded
     bool     extensible;
-    bool     xer_base64;                // true -> XER encoding uses base64 (X.693, OCTET STRING option)
+    ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // X.693 §21 OCTET STRING representation
 };
 
 /// @brief Backend-agnostic DEFAULT value decision (X.680 §25.1) — which value
@@ -282,7 +282,7 @@ struct MemberTypeDescriptorSpec {
     bool     size_bounded;        // true iff the SIZE constraint has a finite upper bound
     int      size_range_bits;
     int64_t  size_lower, size_upper; // size_upper meaningful only when size_bounded
-    bool     needs_xer;           // non-default XER encoding (e.g. Base64) requested
+    ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // Kind::Integer never sets this
 
     // Both kinds — target-agnostic BER/XER facts (X.690/X.693), not code.
     std::string xer_type_name;    // e.g. "INTEGER", "OCTET_STRING"

@@ -504,20 +504,24 @@ EncodingInstructionList:
 	;
 
 /* Legacy per-type form (X.693 §21.3): `TypeName OCTET STRING ::= base64`
- * (or `::= hexadecimal`/`::= utf8`, which we don't otherwise change from
- * asn1cpp's own default). Standard form (X.693 §21.2): `BASE64
- * TypeName` — TOK_typereference TOK_typereference is otherwise ambiguous
- * with unrelated tokens like `GLOBAL-DEFAULTS MODIFIED-ENCODINGS`
- * (a no-op we still need to accept, not just BASE64 instructions), so
- * the 2-token rule below checks $1's literal spelling rather than
- * assuming any 2-typereference sequence is a BASE64 instruction. */
+ * or `::= utf8` (gambas-asn1#443) — `::= hexadecimal` is asn1cpp's own
+ * default already, so it's accepted but changes nothing. Standard form
+ * (X.693 §21.2): `BASE64 TypeName` — TOK_typereference TOK_typereference
+ * is otherwise ambiguous with unrelated tokens like `GLOBAL-DEFAULTS
+ * MODIFIED-ENCODINGS` (a no-op we still need to accept, not just BASE64
+ * instructions), so the 2-token rule below checks $1's literal spelling
+ * rather than assuming any 2-typereference sequence is a BASE64
+ * instruction. (X.693 has no standalone `UTF8 TypeName` standard-form
+ * keyword — only the legacy `::= utf8` per-type form exists for it.) */
 EncodingInstruction:
 	  TOK_typereference TOK_OCTET TOK_STRING TOK_PPEQ Identifier {
-	      if ($5 == "base64") $$ = std::make_pair($1, ast::XerEncoding::Base64);
+	      if      ($5 == "base64") $$ = std::make_pair($1, ast::XerEncoding::Base64);
+	      else if ($5 == "utf8")   $$ = std::make_pair($1, ast::XerEncoding::Utf8);
 	      else $$ = std::nullopt;
 	  }
 	| Identifier TOK_OCTET TOK_STRING TOK_PPEQ Identifier {
-	      if ($5 == "base64") $$ = std::make_pair($1, ast::XerEncoding::Base64);
+	      if      ($5 == "base64") $$ = std::make_pair($1, ast::XerEncoding::Base64);
+	      else if ($5 == "utf8")   $$ = std::make_pair($1, ast::XerEncoding::Utf8);
 	      else $$ = std::nullopt;
 	  }
 	| TOK_typereference TOK_typereference {

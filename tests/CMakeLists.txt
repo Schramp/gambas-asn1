@@ -1102,7 +1102,7 @@ set_tests_properties(cross_module_value PROPERTIES TIMEOUT 30)
 # test_xer_encoding_instr — XER encoding instruction [BASE64] on OCTET STRING (issue #68),
 # plus ENCODING-CONTROL XER block form, legacy and standard (gambas-asn1#438)
 set(XER_ENC_INSTR_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_encoding_instr_test)
-set(XER_ENC_INSTR_TYPES InlineTest Base64Payload PayloadWrapper LegacyBase64 StandardBase64 NoInstruction)
+set(XER_ENC_INSTR_TYPES InlineTest Base64Payload PayloadWrapper LegacyBase64 StandardBase64 NoInstruction Utf8Field)
 set(_xei_outputs)
 foreach(t IN LISTS XER_ENC_INSTR_TYPES)
     list(APPEND _xei_outputs ${XER_ENC_INSTR_GEN_DIR}/${t}.hpp ${XER_ENC_INSTR_GEN_DIR}/${t}.cpp)

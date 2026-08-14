@@ -168,22 +168,37 @@ def normalise(xer: str) -> str:
     return "\n".join(line.strip() for line in xer.splitlines() if line.strip())
 
 
+
+# XER content itself is always valid text, but the ENCODING-CONTROL XER
+# `::= utf8` instruction (gambas-asn1#443) writes OCTET STRING content
+# octets directly as XML character data — and OCTET STRING content is
+# arbitrary binary data, not guaranteed to actually be valid UTF-8 (a
+# schema's `::= utf8` instruction declares intent, real-world/random test
+# data doesn't have to honor it, and doesn't when randgen fills it).
+# `errors="replace"` would silently substitute U+FFFD for any invalid byte
+# sequence, corrupting/inflating the content before it's re-encoded on the
+# x2b leg. `surrogateescape` round-trips every byte losslessly through a
+# Python `str` instead — decode and encode must use the same error mode or
+# the encode side raises.
+_TEXT_ERRORS = "surrogateescape"
+
+
 def b2x_file(tool: str, type_name: str, ber_path: str) -> tuple[str, str]:
     """BER file → XER string. Returns (xer_text, stderr)."""
     r = run(tool, "--type", type_name, ber_path)
-    return r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace").strip()
+    return r.stdout.decode(errors=_TEXT_ERRORS), r.stderr.decode(errors="replace").strip()
 
 
 def x2b(tool: str, type_name: str, xer_text: str) -> tuple[bytes, str]:
     """XER string → BER bytes. Returns (ber_bytes, stderr)."""
-    r = run(tool, "--type", type_name, input=xer_text.encode())
+    r = run(tool, "--type", type_name, input=xer_text.encode(errors=_TEXT_ERRORS))
     return r.stdout, r.stderr.decode(errors="replace").strip()
 
 
 def asn1c_b2x(tool: str, pdu_type: str, ber_path: str) -> tuple[str, str]:
     """BER file → XER string via asn1c's own converter-example. Returns (xer_text, stderr)."""
     r = run(tool, "-p", pdu_type, "-iber", "-oxer", ber_path)
-    return r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace").strip()
+    return r.stdout.decode(errors=_TEXT_ERRORS), r.stderr.decode(errors="replace").strip()
 
 
 def asn1c_x2b(tool: str, pdu_type: str, xer_text: str) -> tuple[bytes, str]:
@@ -195,7 +210,7 @@ def asn1c_x2b(tool: str, pdu_type: str, xer_text: str) -> tuple[bytes, str]:
     fd, xer_path = tempfile.mkstemp(suffix=".xer")
     try:
         with os.fdopen(fd, "wb") as f:
-            f.write(xer_text.encode())
+            f.write(xer_text.encode(errors=_TEXT_ERRORS))
         r = run(tool, "-p", pdu_type, "-ixer", "-oder", xer_path)
         return r.stdout, r.stderr.decode(errors="replace").strip()
     finally:
