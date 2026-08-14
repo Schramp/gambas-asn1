@@ -381,10 +381,14 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     std::optional<ast::BuiltinType> elem_builtin;
     bool        optional = false;
     bool        has_default = false;
-    std::string ops;            // pre-formatted Ops initializer, e.g. "{ &_Ops_X_Y::check, ... }"
+    // gambas-asn1#419: `ops`/`offset_expr` used to live here as pre-formatted
+    // C++ expression text ("{ &_Ops_X_Y::check, ... }" / "ASN1CPP_OFFSETOF(...)").
+    // Both were derivable by CppBackend alone from fields already on this row
+    // (the enclosing type name is on SequenceSpec::type_name, `mname`/`optional`
+    // are right here) — no Generator-private state involved, so CppBackend now
+    // computes them itself at emission time instead of carrying them as data.
     std::string tdref;          // reference expression to the member's TypeDescriptor
     std::string def_setter;     // "&_setdef_Parent_member" or "nullptr"
-    std::string offset_expr;    // "ASN1CPP_OFFSETOF(...)" or "asn1::kInvalidMemberOffset"
     std::string setter_param_type;   // empty = no set_<member>() emitted
     bool        setter_is_move = false;
     bool        setter_is_int_alias = false;
