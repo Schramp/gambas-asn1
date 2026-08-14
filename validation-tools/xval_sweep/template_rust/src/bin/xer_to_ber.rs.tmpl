@@ -1,0 +1,120 @@
+// xer-to-ber — decode XER records and emit raw BER stream.
+//
+// Materialized by asn1cpp-validation-tools/xval_sweep/xval_sweep.py from
+// xer_to_ber.rs.tmpl for a single (schema, PDU) target — see
+// ber_to_xer.rs.tmpl's own doc for the generalization rationale.
+//
+// Usage: xer-to-ber --type __PDU_TYPE__ [FILE]
+use std::io::{Read, Write};
+
+const TYPES: &[&str] = &["__PDU_TYPE__"];
+
+fn slurp_text(mut r: impl Read) -> String {
+    let mut buf = String::new();
+    r.read_to_string(&mut buf).expect("read failed");
+    buf
+}
+
+fn list_types() {
+    for t in TYPES {
+        eprintln!("  {t}");
+    }
+}
+
+// Split records by top-level open/close tag at column 0 — mirrors the C++
+// tool's split_xer_records (blank lines allowed inside a record).
+fn split_xer_records(text: &str) -> Vec<String> {
+    let mut records = Vec::new();
+    let mut current = String::new();
+    let mut inside = false;
+    for line in text.lines() {
+        let bytes = line.as_bytes();
+        let is_open = !bytes.is_empty() && bytes[0] == b'<' && (bytes.len() < 2 || bytes[1] != b'/');
+        let is_close = !bytes.is_empty() && bytes[0] == b'<' && bytes.len() > 1 && bytes[1] == b'/';
+        if is_open {
+            if inside && !current.is_empty() {
+                records.push(std::mem::take(&mut current));
+            }
+            inside = true;
+        }
+        if inside {
+            current.push_str(line);
+            current.push('\n');
+        }
+        if is_close {
+            records.push(std::mem::take(&mut current));
+            inside = false;
+        }
+    }
+    if !current.is_empty() {
+        records.push(current);
+    }
+    records
+}
+
+fn decode_and_encode(type_name: &str, xml: &str) -> Result<Vec<u8>, asn1cpp_ber::DecodeError> {
+    match type_name {
+        "__PDU_TYPE__" => Ok(randgen_rust::__PDU_MODULE__::__PDU_TYPE__::decode_xer(xml)?.encode()),
+        _ => unreachable!("checked by caller"),
+    }
+}
+
+fn main() {
+    let mut type_name = String::new();
+    let mut input_file: Option<String> = None;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--type" {
+            type_name = args.next().unwrap_or_else(|| {
+                eprintln!("--type requires an argument");
+                std::process::exit(1);
+            });
+        } else if !arg.starts_with('-') {
+            input_file = Some(arg);
+        } else {
+            eprintln!("Unknown option: {arg}");
+            std::process::exit(1);
+        }
+    }
+
+    if type_name.is_empty() || type_name == "list" {
+        eprintln!("Available types:");
+        list_types();
+        std::process::exit(if type_name.is_empty() { 1 } else { 0 });
+    }
+    if !TYPES.contains(&type_name.as_str()) {
+        eprintln!("Unknown type: {type_name}\nAvailable:");
+        list_types();
+        std::process::exit(1);
+    }
+
+    let text = match &input_file {
+        Some(path) => slurp_text(std::fs::File::open(path).unwrap_or_else(|e| {
+            eprintln!("Cannot open: {path}: {e}");
+            std::process::exit(1);
+        })),
+        None => slurp_text(std::io::stdin()),
+    };
+    let records = split_xer_records(&text);
+
+    let mut n = 0;
+    let mut errors = 0;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+
+    for rec in &records {
+        match decode_and_encode(&type_name, rec) {
+            Ok(ber) => {
+                out.write_all(&ber).unwrap();
+                n += 1;
+            }
+            Err(e) => {
+                eprintln!("XER decode failed record #{n}: {}", e.message);
+                errors += 1;
+            }
+        }
+    }
+
+    eprintln!("{n} records processed, {errors} errors");
+    std::process::exit(if errors != 0 { 1 } else { 0 });
+}

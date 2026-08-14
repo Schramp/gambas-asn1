@@ -1,0 +1,21 @@
+# xval_sweep targets — one per line: "<schema.asn1 path relative to asn1cpp/>  <PDU type name>"
+# '#'-prefixed and blank lines ignored. Paths are relative to asn1cpp/'s own
+# root (this tool lives inside asn1cpp/, no umbrella-repo path assumptions).
+#
+# A target qualifies when: (a) the schema compiles cleanly under asn1cpp
+# for both --target=cpp and --target=rust, (b) the named type is a real
+# top-level PDU/message type (SEQUENCE/CHOICE/SET — not a scalar alias;
+# see template_cpp/src/types.cpp.tmpl's own doc on why), and (c) the type
+# has no unresolved cross-file import outside this line's schema file
+# (multi-file schemas aren't supported by this first pass — see gambas-
+# asn1#434's own "Not included here" note).
+#
+# Seeded with a small hand-picked set from asn1cpp's own single-file test
+# schemas (broad type coverage, tag coverage, CHOICE coverage) to prove
+# the harness end-to-end — full population of the rest of the test corpus
+# (tests/tests-asn1c-compiler/*-OK.asn1, the real ETSI/3GPP schemas) is a
+# follow-up pass, not done here.
+
+tests/asn1/roundtrip_test.asn1    Container
+tests/asn1/explicit_tag_test.asn1 Mixed
+tests/asn1/choice_test.asn1       Alt4
