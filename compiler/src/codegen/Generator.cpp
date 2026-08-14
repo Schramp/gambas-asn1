@@ -1327,13 +1327,20 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         if (m.is_seq_of()) {
             row.seq_of_kind = SeqOfKind::SeqOf;
             const auto& elem = *std::get<ast::SequenceOfType>(m.body).element;
-            if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body))
+            if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body)) {
                 row.elem_builtin = *ebt;
+                // Same threading storage_kind above already
+                // does for a scalar member's own Integer body, one level
+                // down for the element.
+                if (*ebt == ast::BuiltinType::Integer) row.elem_storage_kind = classify_integer_storage(elem);
+            }
         } else if (m.is_set_of()) {
             row.seq_of_kind = SeqOfKind::SetOf;
             const auto& elem = *std::get<ast::SetOfType>(m.body).element;
-            if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body))
+            if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body)) {
                 row.elem_builtin = *ebt;
+                if (*ebt == ast::BuiltinType::Integer) row.elem_storage_kind = classify_integer_storage(elem);
+            }
         }
         if (is_class_type(m))
             row.member_type_in_cycle = member_type_in_cycle(m, def.name);
