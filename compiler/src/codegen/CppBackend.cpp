@@ -718,12 +718,20 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
             std::string def_cmp = (r.has_default && r.def_setter != "nullptr")
                 ? std::format("&_isdef_{}_{}", cname, r.mname)
                 : "nullptr";
+            // gambas-asn1#419: offset_expr/ops used to be pre-formatted on the
+            // row; both are derivable here from cname/r.mname/r.optional alone,
+            // no Generator-private state needed.
+            std::string offset_expr = r.optional ? "asn1::kInvalidMemberOffset"
+                : std::format("ASN1CPP_OFFSETOF({}, {})", cname, r.mname);
+            std::string ops = r.optional
+                ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, r.mname)
+                : "{ nullptr, nullptr, nullptr }";
             os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {}, {} }},\n",
                 r.asn1_name, (r.resolved_tag ? format_tag_literal(*r.resolved_tag) : format_no_tag_literal()),
                 r.optional ? "true" : "false",
                 r.has_default ? "true" : "false",
-                r.offset_expr,
-                r.tdref, r.ops,
+                offset_expr,
+                r.tdref, ops,
                 r.is_explicit ? "true" : "false",
                 r.def_setter, def_cmp);
         }
