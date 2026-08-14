@@ -428,6 +428,10 @@ private:
     // Choose INTEGER storage class from constraint analysis.
     IntStorageKind classify_integer_storage(const ast::TypeDef& def) const;
 
+    // Recursive shape of a SEQUENCE OF/SET OF element — see ElemShape's
+    // own doc (Backend.hpp) for why this can't be a flat field.
+    ElemShape build_elem_shape(const ast::TypeDef& elem) const;
+
     // Shared helpers used by both SEQUENCE/SET and CHOICE codegen.
     struct MemberCount { int count; int ext_at; };
     static MemberCount count_members(const ast::TypeDef& def);

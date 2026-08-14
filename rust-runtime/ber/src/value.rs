@@ -512,57 +512,6 @@ impl Asn1Value for () {
     }
 }
 
-/// Maps ASN.1 OCTET STRING (`native_builtin_type`'s `Vec<u8>` choice,
-/// `RustBackend.cpp`). Mirrors `OctetStringXerHandler`'s default (non-Base64)
-/// encoding: unspaced uppercase hex pairs (`write_hex_bytes`,
-/// `runtime/src/HexEncoder.hpp`) — distinct from BIT STRING/hex-string
-/// types' *spaced* hex (`format_hex_bytes`), not implemented by this crate.
-impl Asn1Value for Vec<u8> {
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
-        crate::octet_string::OCTET_STRING_TAG
-    }
-
-    fn xer_element_name(&self) -> &'static str {
-        "OCTET_STRING"
-    }
-
-    // OCTET STRING content octets *are* the value bytes — no encoding step.
-    fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self);
-    }
-
-    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        *self = content.to_vec();
-        Ok(())
-    }
-
-    fn xer_encode(&self, out: &mut String, _depth: usize) {
-        for b in self {
-            out.push_str(&format!("{b:02X}"));
-        }
-    }
-
-    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        let text = r.read_text_content();
-        // Mirrors parse_hex_bytes (runtime/src/XerCodec.cpp): skip
-        // whitespace between pairs, stop silently (not an error) at the
-        // first non-hex-pair remainder — lenient by design on the C++ side,
-        // matched here rather than diverging into stricter validation.
-        let mut bytes = Vec::new();
-        let trimmed = text.trim();
-        let mut chars = trimmed.chars().filter(|c| !c.is_whitespace()).peekable();
-        while let (Some(hi), Some(lo)) = (chars.next(), chars.next()) {
-            let byte_str: String = [hi, lo].iter().collect();
-            match u8::from_str_radix(&byte_str, 16) {
-                Ok(b) => bytes.push(b),
-                Err(_) => break,
-            }
-        }
-        *self = bytes;
-        Ok(())
-    }
-}
-
 /// Maps ASN.1 BIT STRING — `native_builtin_type`'s
 /// `bit_string::BitString` choice, `RustBackend.cpp` (not `Vec<u8>`: see
 /// that struct's own module doc for why it can't be a plain-`Vec<u8>`
@@ -1388,18 +1337,6 @@ mod tests {
     }
 
     #[test]
-    fn vec_u8_ber_round_trips_through_the_trait() {
-        let mut out = Vec::new();
-        vec![0x68u8, 0x69].ber_encode(&mut out);
-        assert_eq!(out, vec![0x04, 0x02, 0x68, 0x69]);
-
-        let mut r = Reader::new(&out);
-        let mut got: Vec<u8> = Vec::new();
-        got.ber_decode_into(&mut r).unwrap();
-        assert_eq!(got, vec![0x68, 0x69]);
-    }
-
-    #[test]
     fn string_ber_round_trips_through_the_trait() {
         let mut out = Vec::new();
         "hi".to_string().ber_encode(&mut out);
@@ -1409,48 +1346,6 @@ mod tests {
         let mut got = String::new();
         got.ber_decode_into(&mut r).unwrap();
         assert_eq!(got, "hi");
-    }
-
-    #[test]
-    fn vec_u8_xer_encodes_unspaced_uppercase_hex() {
-        let mut out = String::new();
-        vec![0x68u8, 0x69].xer_encode(&mut out, 0);
-        assert_eq!(out, "6869");
-    }
-
-    #[test]
-    fn vec_u8_xer_round_trips_wrapped_by_hand() {
-        use crate::xer::{write_close_tag, write_open_tag};
-
-        let mut out = String::new();
-        write_open_tag(&mut out, "data");
-        vec![0x68u8, 0x69].xer_encode(&mut out, 0);
-        write_close_tag(&mut out, "data");
-        assert_eq!(out, "<data>6869</data>");
-
-        let mut r = XerReader::new(&out);
-        r.consume_open_tag("data").unwrap();
-        let mut got: Vec<u8> = Vec::new();
-        got.xer_decode_into(&mut r).unwrap();
-        r.consume_close_tag("data").unwrap();
-        assert_eq!(got, vec![0x68, 0x69]);
-    }
-
-    #[test]
-    fn vec_u8_xer_empty_round_trips() {
-        let mut r = XerReader::new("");
-        let mut got: Vec<u8> = Vec::new();
-        got.xer_decode_into(&mut r).unwrap();
-        assert_eq!(got, Vec::<u8>::new());
-    }
-
-    #[test]
-    fn vec_u8_xer_odd_trailing_nibble_is_dropped_leniently() {
-        // Matches parse_hex_bytes's lenient truncation, not an error.
-        let mut r = XerReader::new("686");
-        let mut got: Vec<u8> = Vec::new();
-        got.xer_decode_into(&mut r).unwrap();
-        assert_eq!(got, vec![0x68]);
     }
 
     #[test]

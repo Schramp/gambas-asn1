@@ -569,6 +569,31 @@ IntStorageKind Generator::classify_integer_storage(const ast::TypeDef& def) cons
     return IntStorageKind::S64;
 }
 
+ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
+    ElemShape shape;
+    if (elem.is_seq_of()) {
+        shape.kind = SeqOfKind::SeqOf;
+        shape.nested = std::make_shared<ElemShape>(
+            build_elem_shape(*std::get<ast::SequenceOfType>(elem.body).element));
+        return shape;
+    }
+    if (elem.is_set_of()) {
+        shape.kind = SeqOfKind::SetOf;
+        shape.nested = std::make_shared<ElemShape>(
+            build_elem_shape(*std::get<ast::SetOfType>(elem.body).element));
+        return shape;
+    }
+    // Scalar leaf: a builtin (kind stays None, builtin set) or a composite
+    // TypeRef/SEQUENCE/CHOICE/SET (kind stays None, builtin stays nullopt —
+    // same "optional discriminant" convention SequenceMemberSpec::mbuiltin
+    // uses one level up).
+    if (auto* bt = std::get_if<ast::BuiltinType>(&elem.body)) {
+        shape.builtin = *bt;
+        if (*bt == ast::BuiltinType::Integer) shape.storage_kind = classify_integer_storage(elem);
+    }
+    return shape;
+}
+
 /// @brief True if any top-level constraint on `def` carries a trailing '...'.
 /// @param def Type definition to inspect.
 /// @return Whether `def` is constraint-extensible (X.680 §49.3).
@@ -1332,21 +1357,10 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         }
         if (m.is_seq_of()) {
             row.seq_of_kind = SeqOfKind::SeqOf;
-            const auto& elem = *std::get<ast::SequenceOfType>(m.body).element;
-            if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body)) {
-                row.elem_builtin = *ebt;
-                // Same threading storage_kind above already
-                // does for a scalar member's own Integer body, one level
-                // down for the element.
-                if (*ebt == ast::BuiltinType::Integer) row.elem_storage_kind = classify_integer_storage(elem);
-            }
+            row.elem_shape = build_elem_shape(*std::get<ast::SequenceOfType>(m.body).element);
         } else if (m.is_set_of()) {
             row.seq_of_kind = SeqOfKind::SetOf;
-            const auto& elem = *std::get<ast::SetOfType>(m.body).element;
-            if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body)) {
-                row.elem_builtin = *ebt;
-                if (*ebt == ast::BuiltinType::Integer) row.elem_storage_kind = classify_integer_storage(elem);
-            }
+            row.elem_shape = build_elem_shape(*std::get<ast::SetOfType>(m.body).element);
         }
         if (is_class_type(m))
             row.member_type_in_cycle = member_type_in_cycle(m, def.name);

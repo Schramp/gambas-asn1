@@ -6,9 +6,52 @@
 
 use crate::reader::{DecodeError, Reader};
 use crate::tag::{universal, Tag};
+use crate::value::Asn1Value;
 use crate::writer::write_primitive;
 
 pub const INTEGER_TAG: Tag = Tag::universal(universal::INTEGER, false);
+
+/// `IntStorageKind::ARBITRARY` storage (`RustBackend::native_int_type`) —
+/// an INTEGER whose constrained range exceeds `i128` (unconstrained or very
+/// wide, e.g. cryptographic keys). Its own newtype, not a direct
+/// `Asn1Value` impl on bare `Vec<u8>` — same coherence reasoning as
+/// `octet_string::OctetString`'s own module doc: a second, unrelated
+/// `Asn1Value` impl on the same concrete `Vec<u8>` type is impossible
+/// (E0119), and this crate's `unusable_alias_names_` registry
+/// (`compiler/src/codegen/RustBackend.hpp`) exists specifically because,
+/// before this newtype, an ARBITRARY-storage alias's referencing members
+/// had no distinct type of their own to identify as unusable.
+///
+/// BER content is the value's minimal two's-complement bytes verbatim —
+/// unlike `i64`/`u64`/`i128`, there's no fixed-width parse/format step:
+/// the wire's own minimal-encoding rule (X.690 §8.3.2) already *is* what
+/// `Vec<u8>` stores. No XER leg yet (`Asn1Value`'s own default: panics with
+/// "XER leg not yet wired for this type") — X.693's decimal-text INTEGER
+/// form needs bignum long division on the byte array to convert, real work
+/// deliberately left for when a schema actually exercises this path (none
+/// does today — confirmed zero real usage, this storage kind is itself
+/// already an edge case for very wide unconstrained ranges).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArbitraryInteger(pub Vec<u8>);
+
+impl Asn1Value for ArbitraryInteger {
+    fn ber_natural_tag(&self) -> Tag {
+        INTEGER_TAG
+    }
+
+    fn xer_element_name(&self) -> &'static str {
+        "INTEGER"
+    }
+
+    fn ber_encode_content(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.0);
+    }
+
+    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+        self.0 = content.to_vec();
+        Ok(())
+    }
+}
 
 /// Minimal two's-complement big-endian encoding of `n` — the fewest bytes
 /// that still round-trip through sign extension.

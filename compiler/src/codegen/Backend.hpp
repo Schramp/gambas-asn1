@@ -94,6 +94,34 @@ enum class IntStorageKind {
 // type system instead of by convention.
 enum class SeqOfKind { None, SeqOf, SetOf };
 
+/// @brief Recursive description of a SEQUENCE OF/SET OF element's shape —
+///        a scalar (builtin or composite TypeRef) or, when the element is
+///        itself a nested SEQUENCE OF/SET OF (X.680 §25/26, nesting to
+///        unbounded depth and freely mixable — `SEQUENCE OF SET OF
+///        SEQUENCE OF X` is legal ASN.1), *its own* element's shape,
+///        recursively, with `kind` re-derived independently at every level
+///        (never inherited from the level above, so mixed nesting is
+///        represented correctly, not forced uniform).
+/// @note Exists because the final per-level wrapper (`SeqOf<T>`/`SetOf<T>`
+///       — a real type, real `Asn1Value` impl each) is *not* derivable from
+///       `mtype` text alone: `Backend::wrap_collection_type` renders every
+///       nesting level identically as the same placeholder shape
+///       (`"Vec<...>"`) regardless of whether that level is SEQUENCE OF or
+///       SET OF — a backend rewrapping that intermediate text into the
+///       real per-level wrapper has no way to know which one belongs at
+///       which depth from the text itself. `elem_shape` walks alongside
+///       that placeholder text, one `kind` per nesting level, so each
+///       `"Vec<"` gets substituted with the *correct* `SeqOf</SetOf<` —
+///       getting a level wrong would encode the wrong wire tag (X.680 §26
+///       vs §24 — universal 16 vs 17), a real correctness bug, not just a
+///       missing-impl gap.
+struct ElemShape {
+    SeqOfKind kind = SeqOfKind::None;   // None = scalar at this level
+    std::optional<ast::BuiltinType> builtin;           // meaningful when kind == None
+    IntStorageKind storage_kind = IntStorageKind::S64;  // meaningful when builtin == Integer
+    std::shared_ptr<ElemShape> nested;  // meaningful when kind != None; recurses to unbounded depth
+};
+
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —
 ///        which named values apply, in declaration order, with automatic
 ///        numbering (X.680 §20.6) already resolved. No C++/Rust/etc. syntax.
@@ -365,41 +393,31 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     bool        member_type_in_cycle = false;
     // SEQUENCE OF/SET OF member support. `seq_of_kind` is SeqOfKind::SeqOf
     // for a member whose body is ast::SequenceOfType, SetOf for
-    // ast::SetOfType, None otherwise. `elem_builtin` is unset (nullopt)
-    // when the element is a composite (TypeRef) type, same "optional
-    // discriminant" shape `mbuiltin` above uses for a plain scalar member,
-    // just one level down. No element-mtype or element-name field: `mtype`
-    // above is already the element's own native storage type wrapped one
-    // level (`wrap_collection_type`) — a backend that needs the bare,
-    // unwrapped element type text derives it from `mtype` itself
-    // (RustBackend's `rust_seqof_alt_mtype`/`rust_seqof_member_field_type`
-    // do this, mirroring how they already unwrap a CHOICE alternative's
-    // `mtype`), rather than duplicating it here as separately-computed
-    // table data. Likewise the element's own X.693 per-element XER tag
-    // comes generically from the element *value* at runtime (e.g.
-    // RustBackend's Asn1Value::xer_element_name), the same way C++'s
-    // SeqOfXerHandler reaches its element's own TypeDescriptor::name. A
-    // backend without SEQUENCE OF/SET OF table support can ignore both
-    // fields; seq_of_kind == None leaves elem_builtin meaningless. The only
-    // place SEQUENCE OF and SET OF genuinely differ (X.680 §26 vs §24 —
-    // SET's own universal tag 17, not SEQUENCE's 16) is the member's *wire
-    // tag* when using its natural (non-override) tag — a backend's own
+    // ast::SetOfType, None otherwise. `elem_shape` describes the element's
+    // own shape recursively (see ElemShape's own doc) — a scalar builtin,
+    // a composite TypeRef (ElemShape::kind == None, builtin == nullopt), or
+    // — nested to unbounded depth — another SEQUENCE OF/SET OF. No
+    // element-mtype or element-name field: `mtype` above is already the
+    // element's own native storage type wrapped one level
+    // (`wrap_collection_type`) — a backend that needs the bare, unwrapped
+    // element type text derives it from `mtype` itself (RustBackend's
+    // `rust_seqof_alt_mtype`/`rust_seqof_member_field_type` do this,
+    // mirroring how they already unwrap a CHOICE alternative's `mtype`),
+    // rather than duplicating it here as separately-computed table data —
+    // `elem_shape` supplies the *structural* fact text can't (which
+    // wrapper belongs at which nesting depth), not the text itself.
+    // Likewise the element's own X.693 per-element XER tag comes
+    // generically from the element *value* at runtime (e.g. RustBackend's
+    // Asn1Value::xer_element_name), the same way C++'s SeqOfXerHandler
+    // reaches its element's own TypeDescriptor::name. A backend without
+    // SEQUENCE OF/SET OF table support can ignore both fields; seq_of_kind
+    // == None leaves elem_shape meaningless. The only place SEQUENCE OF
+    // and SET OF genuinely differ (X.680 §26 vs §24 — SET's own universal
+    // tag 17, not SEQUENCE's 16) is the *wire tag* at whichever nesting
+    // level is using its natural (non-override) tag — a backend's own
     // emission decision, not table data.
     SeqOfKind   seq_of_kind = SeqOfKind::None;
-    std::optional<ast::BuiltinType> elem_builtin;
-    // Element-level analogue of `storage_kind` above — only
-    // meaningful when `elem_builtin == ast::BuiltinType::Integer` (default
-    // S64 otherwise, harmlessly unused, same convention `storage_kind`
-    // itself uses). Before this field existed, a SEQUENCE OF/SET OF element
-    // whose INTEGER constraint picked u64/i128 storage (X.680 semi-
-    // constrained non-negative, e.g. `INTEGER (0..MAX)`) had no way to be
-    // recognized as covered — RustBackend::sequence_member_covered's
-    // element-coverage check had no `storage_kind` to intercept Integer
-    // with (unlike the member-level `rust_tag_for_builtin_or_alias` path),
-    // so it fell through to a bare `elem_mtype == "i64"` string check and
-    // wrongly reported the member as unsupported even though the runtime
-    // Asn1Value impl for u64/i128 already exists.
-    IntStorageKind elem_storage_kind = IntStorageKind::S64;
+    ElemShape   elem_shape;
     bool        optional = false;
     bool        has_default = false;
     // gambas-asn1#419: `ops`/`offset_expr` used to live here as pre-formatted
