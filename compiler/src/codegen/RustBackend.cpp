@@ -788,7 +788,12 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
     if (m.seq_of_kind != SeqOfKind::None) {
         std::string elem_mtype = rust_seqof_elem_mtype(m);
-        if (m.elem_builtin) return builtin_ber_tag(*m.elem_builtin, elem_mtype) != nullptr;
+        // Route through rust_tag_for_builtin_or_alias, not
+        // builtin_ber_tag directly — its Integer case intercepts via
+        // elem_storage_kind (u64/i128 elements are real, runtime has
+        // Asn1Value impls for both) instead of builtin_ber_tag's own bare
+        // `elem_mtype == "i64"` check, which used to reject them.
+        if (m.elem_builtin) return rust_tag_for_builtin_or_alias(m.elem_builtin, m.elem_storage_kind, elem_mtype) != nullptr;
         // A composite (TypeRef) element — SEQUENCE OF GcsePartyIdentity,
         // e.g. — is always real now, same reasoning as any other composite
         // reference: encode_seq_of/decode_seq_of (sequence.rs) are already
