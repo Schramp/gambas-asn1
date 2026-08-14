@@ -14,13 +14,21 @@ TopLevelTagTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
 
     MySeqOf ::= [8] IMPLICIT SEQUENCE OF INTEGER
 
-    -- gambas-asn1#352: a top-level EXPLICIT tag must wrap a nested TLV
+    -- X.690 §8.14.3: a top-level EXPLICIT tag must wrap a nested TLV
     -- using the type's own natural tag, not substitute for it the way
     -- IMPLICIT does above. Confirmed against asn1c ground truth:
     -- asn_DEF_MyExplicitInt's tags[] there is a genuine two-entry stack,
     -- [Context 9 constructed, Universal INTEGER primitive] — a real nested
     -- TLV, not a tag substitution.
     MyExplicitInt ::= [9] EXPLICIT INTEGER
+
+    -- A top-level EXPLICIT tag on a CHOICE type assignment must wrap the
+    -- chosen alternative's own encoding in an outer TLV, same
+    -- shape as MyExplicitInt above — even though CHOICE itself has no
+    -- universal tag to fall back on for the (unused) natural-tag slot
+    -- (X.680 §30.6). Confirmed against asn1c ground truth for alternative
+    -- `a`=42: a9 03 02 01 2a — byte-identical to MyExplicitInt(42).
+    MyExplicitChoice ::= [9] EXPLICIT CHOICE { a INTEGER, b BOOLEAN }
 
     Wrapper ::= SEQUENCE {
         i MyInt,

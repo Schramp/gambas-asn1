@@ -55,7 +55,9 @@ void emit_type_descriptor(std::ostream& os,
                            const std::string& per_handler = "nullptr",
                            const std::string& ber_handler = "nullptr",
                            bool use_class_scope = false,
-                           // gambas-asn1#352: see this param's own doc (CppBackend.cpp).
+                           // X.690 §8.14.3 — true when `tag_expr` is an EXPLICIT override;
+                           // `natural_tag_expr` then carries the type's own natural tag,
+                           // wrapped rather than substituted (see CppBackend.cpp).
                            bool is_explicit = false,
                            const std::string& natural_tag_expr = "");
 
