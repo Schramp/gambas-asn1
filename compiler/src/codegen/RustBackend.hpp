@@ -173,7 +173,7 @@ public:
         switch (kind) {
             case IntStorageKind::U64:       return "u64";
             case IntStorageKind::I128:      return "i128";  // Rust has a real 128-bit type — no C++-style stub
-            case IntStorageKind::ARBITRARY: return "Vec<u8>";
+            case IntStorageKind::ARBITRARY: return "asn1cpp_ber::integer::ArbitraryInteger";
             default:                        return "i64";
         }
     }
@@ -280,29 +280,21 @@ private:
     // have *some* `Asn1Value` impl (real or stub) by the time the crate
     // finishes compiling either way, so referencing it is always safe; no
     // per-run coverage bookkeeping is needed to know that in advance. The
-    // one exception is unusable_alias_names_ below — see
-    // sequence_member_covered's own doc (RustBackend.cpp) for why.
-    // Rust-only concerns (this backend's own trait-object dispatch model),
-    // so they live here rather than on the shared Backend interface/Generator.
+    // Rust-only concern (this backend's own trait-object dispatch model),
+    // so it lives here rather than on the shared Backend interface/Generator.
+    // No per-run bookkeeping needed: every referenced composite type (a
+    // TypeRef to SEQUENCE/SET/CHOICE/ENUMERATED, a TypeRef-aliased INTEGER
+    // of any storage kind, an ARBITRARY-storage alias included since
+    // `integer::ArbitraryInteger` is its own real newtype now) is always
+    // real regardless of processing order — it will have *some* `Asn1Value`
+    // impl (real or stub) by the time the crate finishes compiling either
+    // way, so referencing it is always safe.
     bool sequence_member_covered(const SequenceMemberSpec& m) const;
     bool choice_alternative_covered(const ChoiceAlternativeSpec& a) const;
     // Whether a CHOICE alternative has any resolved tag at all — see
     // choice_alternative_has_tag's own doc (RustBackend.cpp) for why this
     // is a separate, prior question from choice_alternative_covered.
     bool choice_alternative_has_tag(const ChoiceAlternativeSpec& a) const;
-
-    // Names of type aliases known to resolve to a Rust type with no usable
-    // Asn1Value impl for member-reference purposes — an ARBITRARY-storage
-    // INTEGER alias (Vec<u8>, wrong-shaped: collides with OCTET STRING's
-    // own impl) or a named top-level SEQUENCE OF/SET OF alias (Vec<T>,
-    // T != u8: no impl at all). Populated by emit_integer_declaration/
-    // emit_seq_of_declaration, consulted by sequence_member_covered/
-    // choice_alternative_covered to explicitly stub a reference to one
-    // instead of assuming it's safe like every other composite reference
-    // (see those methods' own doc for the full rationale). `mutable`:
-    // populated by emit_integer/emit_seq_of, which are const per the
-    // Backend interface.
-    mutable std::unordered_set<std::string> unusable_alias_names_;
 };
 
 } // namespace asn1::codegen

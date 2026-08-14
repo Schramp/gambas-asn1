@@ -321,7 +321,7 @@ mod tests {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Choice {
     Num(i64),
-    Data(Vec<u8>),
+    Data(crate::octet_string::OctetString),
 }
 
 static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
@@ -367,7 +367,7 @@ static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
             }
         },
         ber_decode_into: |r| {
-            let mut v: Vec<u8> = Default::default();
+            let mut v: crate::octet_string::OctetString = Default::default();
             v.ber_decode_into(r)?;
             Ok(Choice::Data(v))
         },
@@ -380,7 +380,7 @@ static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
             }
         },
         xer_decode_into: |r| {
-            let mut v: Vec<u8> = Default::default();
+            let mut v: crate::octet_string::OctetString = Default::default();
             v.xer_decode_into(r)?;
             Ok(Choice::Data(v))
         },
@@ -415,12 +415,12 @@ impl Choice {
 
     #[test]
     fn encodes_data_alternative() {
-        assert_eq!(Choice::Data(vec![1, 2, 3]).encode(), vec![0x04, 0x03, 0x01, 0x02, 0x03]);
+        assert_eq!(Choice::Data(crate::octet_string::OctetString(vec![1, 2, 3])).encode(), vec![0x04, 0x03, 0x01, 0x02, 0x03]);
     }
 
     #[test]
     fn round_trips_both_alternatives() {
-        for c in [Choice::Num(-42), Choice::Data(vec![0xAA, 0xBB])] {
+        for c in [Choice::Num(-42), Choice::Data(crate::octet_string::OctetString(vec![0xAA, 0xBB]))] {
             let bytes = c.encode();
             assert_eq!(Choice::decode(&bytes).unwrap(), c);
         }
@@ -446,12 +446,12 @@ impl Choice {
 
     #[test]
     fn xer_encodes_data_alternative() {
-        assert_eq!(Choice::Data(vec![0x68, 0x69]).encode_xer(), "\n    <data>6869</data>");
+        assert_eq!(Choice::Data(crate::octet_string::OctetString(vec![0x68, 0x69])).encode_xer(), "\n    <data>6869</data>");
     }
 
     #[test]
     fn xer_round_trips_both_alternatives() {
-        for c in [Choice::Num(-42), Choice::Data(vec![0xAA, 0xBB])] {
+        for c in [Choice::Num(-42), Choice::Data(crate::octet_string::OctetString(vec![0xAA, 0xBB]))] {
             let xml = c.encode_xer();
             assert_eq!(Choice::decode_xer(&xml).unwrap(), c);
         }
@@ -479,8 +479,8 @@ impl Choice {
     /// `decode_choice`'s linear tag scan would misdecode one into the
     /// other.
     enum TwoOctetsExplicit {
-        First(Vec<u8>),
-        Second(Vec<u8>),
+        First(crate::octet_string::OctetString),
+        Second(crate::octet_string::OctetString),
     }
 
     const TAG_1: Tag = Tag::context(1, true);
@@ -499,7 +499,7 @@ impl Choice {
                 }
             },
             ber_decode_into: |r| {
-                let v: Vec<u8> = crate::value::decode_explicit(r, TAG_1)?;
+                let v: crate::octet_string::OctetString = crate::value::decode_explicit(r, TAG_1)?;
                 Ok(TwoOctetsExplicit::First(v))
             },
             xer_encode: |_, _, _| false,
@@ -517,7 +517,7 @@ impl Choice {
                 }
             },
             ber_decode_into: |r| {
-                let v: Vec<u8> = crate::value::decode_explicit(r, TAG_2)?;
+                let v: crate::octet_string::OctetString = crate::value::decode_explicit(r, TAG_2)?;
                 Ok(TwoOctetsExplicit::Second(v))
             },
             xer_encode: |_, _, _| false,
@@ -530,8 +530,8 @@ impl Choice {
 
     #[test]
     fn explicit_disambiguates_two_alternatives_of_the_same_builtin_kind() {
-        let first = TwoOctetsExplicit::First(vec![0xAA]);
-        let second = TwoOctetsExplicit::Second(vec![0xAA]); // same content, different alternative
+        let first = TwoOctetsExplicit::First(crate::octet_string::OctetString(vec![0xAA]));
+        let second = TwoOctetsExplicit::Second(crate::octet_string::OctetString(vec![0xAA])); // same content, different alternative
 
         let enc_first = encode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &first);
         let enc_second = encode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &second);
@@ -543,11 +543,11 @@ impl Choice {
         assert_ne!(enc_first, enc_second);
 
         match decode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &enc_first).unwrap() {
-            TwoOctetsExplicit::First(v) => assert_eq!(v, vec![0xAA]),
+            TwoOctetsExplicit::First(v) => assert_eq!(v.0, vec![0xAA]),
             TwoOctetsExplicit::Second(_) => panic!("misdecoded First as Second"),
         }
         match decode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &enc_second).unwrap() {
-            TwoOctetsExplicit::Second(v) => assert_eq!(v, vec![0xAA]),
+            TwoOctetsExplicit::Second(v) => assert_eq!(v.0, vec![0xAA]),
             TwoOctetsExplicit::First(_) => panic!("misdecoded Second as First"),
         }
     }
@@ -734,7 +734,7 @@ impl Choice {
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Outer {
         Wrapped(Inner),
-        Direct(Vec<u8>),
+        Direct(crate::octet_string::OctetString),
     }
 
     impl Default for Outer {
@@ -784,13 +784,13 @@ impl Choice {
                 true
             } else { false },
             ber_decode_into: |r| {
-                let mut v: Vec<u8> = Default::default();
+                let mut v: crate::octet_string::OctetString = Default::default();
                 Asn1Value::ber_decode_into_tagged(&mut v, r, OUTER_DIRECT_TAG)?;
                 Ok(Outer::Direct(v))
             },
             xer_encode: |x, out, depth| if let Outer::Direct(v) = x { v.xer_encode(out, depth); true } else { false },
             xer_decode_into: |r| {
-                let mut v: Vec<u8> = Default::default();
+                let mut v: crate::octet_string::OctetString = Default::default();
                 v.xer_decode_into(r)?;
                 Ok(Outer::Direct(v))
             },
@@ -806,7 +806,7 @@ impl Choice {
 
     #[test]
     fn untagged_choice_of_choice_alternative_round_trips_every_flattened_tag() {
-        for v in [Outer::Wrapped(Inner::A(5)), Outer::Wrapped(Inner::B(-3)), Outer::Direct(vec![1, 2, 3])] {
+        for v in [Outer::Wrapped(Inner::A(5)), Outer::Wrapped(Inner::B(-3)), Outer::Direct(crate::octet_string::OctetString(vec![1, 2, 3]))] {
             let bytes = v.encode();
             assert_eq!(Outer::decode(&bytes).unwrap(), v);
         }
