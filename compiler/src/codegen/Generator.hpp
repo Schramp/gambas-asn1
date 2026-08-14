@@ -385,7 +385,6 @@ private:
     ///        not substitute for it — unlike natural_tag_spec_for's own
     ///        `def.tag.present()` branch, which only decides the wire tag
     ///        text, not whether the encoding is a wrap or a substitution.
-    /// @see gambas-asn1#352.
     bool type_is_explicit(const ast::TypeDef& def) const;
     /// @brief This type's own natural (universal, or resolved-through-alias)
     ///        tag, ignoring any [n] override `def` itself carries — the real
@@ -394,7 +393,6 @@ private:
     ///        (which folds `def`'s own override into its result when
     ///        present) rather than a refactor of it, to avoid touching that
     ///        function's existing, widely-used behavior.
-    /// @see gambas-asn1#352.
     std::optional<TypeTagSpec> underlying_natural_tag_spec_for(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
     // alt_idx: 0-based index of the alternative in its parent CHOICE.

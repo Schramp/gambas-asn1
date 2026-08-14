@@ -133,6 +133,7 @@ add_custom_command(
             ${TOPLEVEL_TAG_GEN_DIR}/MySeq.hpp    ${TOPLEVEL_TAG_GEN_DIR}/MySeq.cpp
             ${TOPLEVEL_TAG_GEN_DIR}/MySeqOf.hpp  ${TOPLEVEL_TAG_GEN_DIR}/MySeqOf.cpp
             ${TOPLEVEL_TAG_GEN_DIR}/MyExplicitInt.hpp ${TOPLEVEL_TAG_GEN_DIR}/MyExplicitInt.cpp
+            ${TOPLEVEL_TAG_GEN_DIR}/MyExplicitChoice.hpp ${TOPLEVEL_TAG_GEN_DIR}/MyExplicitChoice.cpp
             ${TOPLEVEL_TAG_GEN_DIR}/Wrapper.hpp  ${TOPLEVEL_TAG_GEN_DIR}/Wrapper.cpp
             ${TOPLEVEL_TAG_GEN_DIR}/WrapperTso.hpp ${TOPLEVEL_TAG_GEN_DIR}/WrapperTso.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${TOPLEVEL_TAG_GEN_DIR}
@@ -148,6 +149,7 @@ add_executable(test_toplevel_tag
     ${TOPLEVEL_TAG_GEN_DIR}/MySeq.cpp
     ${TOPLEVEL_TAG_GEN_DIR}/MySeqOf.cpp
     ${TOPLEVEL_TAG_GEN_DIR}/MyExplicitInt.cpp
+    ${TOPLEVEL_TAG_GEN_DIR}/MyExplicitChoice.cpp
     ${TOPLEVEL_TAG_GEN_DIR}/Wrapper.cpp
     ${TOPLEVEL_TAG_GEN_DIR}/WrapperTso.cpp
 )

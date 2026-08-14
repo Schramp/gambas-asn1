@@ -111,12 +111,35 @@ static void ber_encode_implicit_tagged(const BerCodec& codec, BerWriter& w,
                  static_cast<std::size_t>(new_tag_bytes));
 }
 
+// A member/alternative with no tag override of its own inherits the
+// referenced type's own declared tag (Generator::compute_member_tag,
+// tag_is_override=false — e.g. `s4 T4` where `T4 ::= [53] CHOICE {...}`).
+// The member-level EXPLICIT wrap below and the referenced type's own
+// EXPLICIT wrap (TypeDescriptor::is_explicit) then both target the same
+// outer tag, which would double-wrap the wire encoding. When they
+// coincide, encode/decode the referenced type's
+// natural (unwrapped) form here instead — the wrap already happened once,
+// at this call site.
+static const TypeDescriptor& ber_content_descriptor(TypeDescriptor& scratch,
+                                                     const TypeDescriptor& mdef,
+                                                     const Tag& wrap_tag) {
+    if (mdef.is_explicit && mdef.tag == wrap_tag) {
+        scratch = mdef;
+        scratch.tag = mdef.natural_tag;
+        scratch.is_explicit = false;
+        return scratch;
+    }
+    return mdef;
+}
+
 static void ber_encode_explicit_tagged(const BerCodec& codec, BerWriter& w,
                                        const Tag& ctx_tag,
                                        const TypeDescriptor& mdef, const Asn1Object* mptr) {
+    TypeDescriptor scratch;
+    const TypeDescriptor& content = ber_content_descriptor(scratch, mdef, ctx_tag);
     w.write_constructed(ctx_tag, [&](BerWriter& w2) {
         BerEncodeStream ms{w2};
-        codec.encode(ms, mdef, mptr);
+        codec.encode(ms, content, mptr);
     });
 }
 
@@ -657,7 +680,8 @@ private:
                             outer->value.empty() ? 0xff : (unsigned)outer->value[0]);
                     BerReader inner2 = inner.sub(outer->value);
                     BerDecodeStream ms{inner2};
-                    auto ok = codec.decode(ms, mdef, mptr);
+                    TypeDescriptor scratch;
+                    auto ok = codec.decode(ms, ber_content_descriptor(scratch, mdef, mbr.tag), mptr);
                     if (!ok) return ok;
                 } else {
                     auto ok = codec.decode_value(outer->value, mdef, mptr);
@@ -734,7 +758,8 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                     if (alt.is_explicit) {
                         BerReader inner2 = r.sub(outer->value);
                         BerDecodeStream ms{inner2};
-                        ok = codec.decode(ms, mdef, mptr);
+                        TypeDescriptor scratch;
+                        ok = codec.decode(ms, ber_content_descriptor(scratch, mdef, alt.tag), mptr);
                     } else {
                         ok = codec.decode_value(outer->value, mdef, mptr);
                     }
@@ -773,7 +798,8 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                     if (alt.is_explicit) {
                         BerReader inner2 = r.sub(outer->value);
                         BerDecodeStream ms{inner2};
-                        ok = codec.decode(ms, mdef, mptr);
+                        TypeDescriptor scratch;
+                        ok = codec.decode(ms, ber_content_descriptor(scratch, mdef, alt.tag), mptr);
                     } else {
                         ok = codec.decode_value(outer->value, mdef, mptr);
                     }
@@ -805,7 +831,8 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 if (alt.is_explicit) {
                     BerReader inner2 = r.sub(outer->value);
                     BerDecodeStream ms{inner2};
-                    ok = codec.decode(ms, mdef, mptr);
+                    TypeDescriptor scratch;
+                    ok = codec.decode(ms, ber_content_descriptor(scratch, mdef, alt.tag), mptr);
                 } else {
                     ok = codec.decode_value(outer->value, mdef, mptr);
                 }
@@ -977,7 +1004,7 @@ void BerCodec::encode(IEncodeStream& dst,
     BerWriter& w = s.writer();
     // X.690 §8.14.3 — a type's own top-level EXPLICIT tag wraps a nested
     // TLV using its natural tag; it does not substitute for it the way
-    // IMPLICIT does (gambas-asn1#352). def.tag is the outer wrapper here;
+    // IMPLICIT does. def.tag is the outer wrapper here;
     // the inner TLV is this same def's own encoding, just with its natural
     // tag (def.natural_tag) instead of the override, and is_explicit
     // cleared so a self-referential def (there are none today, but nothing
