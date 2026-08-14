@@ -80,7 +80,7 @@ mod tests {
     use super::Widget;
 
     fn widget(id: i64, flag: bool, data: &[u8], label: &str) -> Widget {
-        Widget { id, flag, data: data.to_vec(), label: label.to_string() }
+        Widget { id, flag, data: asn1cpp_ber::octet_string::OctetString(data.to_vec()), label: label.to_string() }
     }
 
     #[test]
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn selector_data_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Data(vec![0x68, 0x69]).encode(), vec![0x04, 0x02, 0x68, 0x69]);
+        assert_eq!(Selector::Data(asn1cpp_ber::octet_string::OctetString(vec![0x68, 0x69])).encode(), vec![0x04, 0x02, 0x68, 0x69]);
     }
 
     #[test]
@@ -179,7 +179,7 @@ mod tests {
         for s in [
             Selector::Num(-42),
             Selector::Flag(false),
-            Selector::Data(vec![0xAA, 0xBB]),
+            Selector::Data(asn1cpp_ber::octet_string::OctetString(vec![0xAA, 0xBB])),
             Selector::Label("round-trip".to_string()),
         ] {
             let bytes = s.encode();
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn selector_data_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Data(vec![0x68, 0x69]).encode_xer(), "\n    <data>6869</data>");
+        assert_eq!(Selector::Data(asn1cpp_ber::octet_string::OctetString(vec![0x68, 0x69])).encode_xer(), "\n    <data>6869</data>");
     }
 
     #[test]
@@ -223,7 +223,7 @@ mod tests {
         for s in [
             Selector::Num(-42),
             Selector::Flag(false),
-            Selector::Data(vec![0xAA, 0xBB]),
+            Selector::Data(asn1cpp_ber::octet_string::OctetString(vec![0xAA, 0xBB])),
             Selector::Label("round-trip".to_string()),
         ] {
             let xml = s.encode_xer();
