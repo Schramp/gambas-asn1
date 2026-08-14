@@ -238,21 +238,57 @@ def run_make(directory, *make_args, label=""):
     return True
 
 
+def discover_ident(gen_dir, ext, pdu_type):
+    """Find the real generated identifier(s) for pdu_type in gen_dir.
+
+    asn1cpp's identifier escaping (hyphens, keyword collisions) differs
+    per backend and can't be predicted from the raw ASN.1 name alone —
+    confirmed divergent for a hyphenated name: C++ substitutes underscores
+    (`Foo-Bar` -> `Foo_Bar`), Rust collapses the hyphen and capitalizes
+    the next letter (`Foo-Bar` -> `FooBar`). Both backends emit the raw,
+    unescaped name verbatim as the type's own XER-name string literal
+    though (`"name": "<raw>"` in the generated TypeDescriptor/ChoiceSpec),
+    so grep for that instead of guessing a transform — file stem (minus
+    ext) is the real identifier.
+    """
+    needle = f'"{pdu_type}"'
+    matches = []
+    for fn in os.listdir(gen_dir):
+        if not fn.endswith(ext):
+            continue
+        with open(os.path.join(gen_dir, fn), errors="replace") as f:
+            if needle in f.read():
+                matches.append(fn[:-len(ext)])
+    return sorted(set(matches))
+
+
 def build_cpp(target_dir, asn1_files_abs, pdu_type):
     cpp_dir = os.path.join(target_dir, "cpp")
     for name in ["randgen.cpp", "ber-to-xer.cpp", "xer-to-ber.cpp",
                  "type_registry.hpp", "type_registry.cpp"]:
         copy_verbatim(os.path.join(TEMPLATE_CPP, "src", name),
                       os.path.join(cpp_dir, "src", name))
-    materialize(os.path.join(TEMPLATE_CPP, "src", "types.cpp.tmpl"),
-                os.path.join(cpp_dir, "src", "types.cpp"),
-                {"__PDU_TYPE__": pdu_type})
     materialize(os.path.join(TEMPLATE_CPP, "Makefile.tmpl"),
                 os.path.join(cpp_dir, "Makefile"),
                 {"__ASN1CPP_ROOT__": ASN1CPP_ROOT,
                  "__ASN1_FILES__": " ".join(asn1_files_abs),
                  "__PDU_TYPE__": pdu_type})
-    if not run_make(cpp_dir, "-j4", label="C++"):
+
+    # Codegen first — src/types.cpp (materialized below) needs the real
+    # generated identifier, which can only be discovered after codegen
+    # runs (see discover_ident's own doc).
+    if not run_make(cpp_dir, "gen", label="C++ codegen"):
+        return None
+    idents = discover_ident(os.path.join(cpp_dir, "gen"), ".cpp", pdu_type)
+    if len(idents) != 1:
+        print(f"  expected exactly one C++ identifier for {pdu_type!r}, found {idents}")
+        return None
+    ident = idents[0]
+
+    materialize(os.path.join(TEMPLATE_CPP, "src", "types.cpp.tmpl"),
+                os.path.join(cpp_dir, "src", "types.cpp"),
+                {"__PDU_IDENT__": ident, "__PDU_TYPE__": pdu_type})
+    if not run_make(cpp_dir, "build", "-j4", label="C++ build"):
         return None
     return {
         "randgen": os.path.join(cpp_dir, "randgen"),
@@ -276,28 +312,29 @@ def build_rust(target_dir, asn1_files_abs, pdu_type):
                 os.path.join(rust_dir, "Cargo.toml"),
                 {"__ASN1CPP_BER_CRATE__": ASN1CPP_BER_CRATE})
 
-    # Regen first (Makefile.tmpl's own comment explains why this can't be
-    # deferred to `cargo build` the way the C++ side defers to `make`:
-    # the module name is a snake_case mangling we can only learn by
-    # reading the freshly generated gen/lib.rs).
     if not run_make(rust_dir, "gen", label="Rust codegen"):
         return None
+    idents = discover_ident(os.path.join(rust_dir, "gen"), ".rs", pdu_type)
+    if len(idents) != 1:
+        print(f"  expected exactly one Rust identifier for {pdu_type!r}, found {idents}")
+        return None
+    ident = idents[0]
 
     lib_rs_path = os.path.join(rust_dir, "gen", "lib.rs")
     with open(lib_rs_path) as f:
         lib_rs = f.read()
-    m = re.search(rf'#\[path = "{re.escape(pdu_type)}\.rs"\]\s*pub mod (\w+);', lib_rs)
+    m = re.search(rf'#\[path = "{re.escape(ident)}\.rs"\]\s*pub mod (\w+);', lib_rs)
     if not m:
-        print(f"  could not find module for {pdu_type}.rs in {lib_rs_path}")
+        print(f"  could not find module for {ident}.rs in {lib_rs_path}")
         return None
     module = m.group(1)
 
     materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "ber_to_xer.rs.tmpl"),
                 os.path.join(rust_dir, "src", "bin", "ber_to_xer.rs"),
-                {"__PDU_TYPE__": pdu_type, "__PDU_MODULE__": module})
+                {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
     materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "xer_to_ber.rs.tmpl"),
                 os.path.join(rust_dir, "src", "bin", "xer_to_ber.rs"),
-                {"__PDU_TYPE__": pdu_type, "__PDU_MODULE__": module})
+                {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
 
     if not run_make(rust_dir, "build", label="Rust cargo build"):
         return None

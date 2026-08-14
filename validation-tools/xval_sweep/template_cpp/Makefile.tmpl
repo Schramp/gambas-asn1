@@ -32,7 +32,16 @@ LIBS     := $(LIB) $(RUNTIME_LIB) $(FMT_LIBS)
 REGISTRY_OBJS := src/type_registry.o src/types.o
 PROGRAMS      := randgen ber-to-xer xer-to-ber
 
-all: $(PROGRAMS)
+# Two-step build, driven explicitly by the Python driver (not chained here)
+# — same reason template_rust/Makefile.tmpl splits gen/build: the PDU
+# type's real C++ identifier (used by src/types.cpp, which the driver
+# materializes) is discovered by grepping the freshly generated gen/*.cpp
+# for the PDU's own XER name literal, since asn1cpp's identifier-escaping
+# (hyphens, keyword collisions) can't be predicted ahead of time from the
+# raw ASN.1 name alone. See xval_sweep.py's own driver-ordering comment.
+all: build
+gen: $(GEN_DIR)/.stamp
+build: $(PROGRAMS)
 
 # Codegen: re-runs whenever the schema source(s) or the compiler binary
 # change. A stamp file (not GEN_DIR itself) is the make target since
@@ -71,4 +80,4 @@ xer-to-ber: src/xer-to-ber.cpp $(REGISTRY_OBJS) $(LIB) $(RUNTIME_LIB)
 clean:
 	rm -rf $(PROGRAMS) $(GEN_DIR) obj lib src/*.o
 
-.PHONY: all clean
+.PHONY: all gen build clean

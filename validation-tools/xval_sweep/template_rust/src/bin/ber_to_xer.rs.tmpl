@@ -27,8 +27,8 @@ fn decode_one(type_name: &str, data: &[u8]) -> Result<(String, usize), asn1cpp_b
     let mut r = asn1cpp_ber::Reader::new(data);
     match type_name {
         "__PDU_TYPE__" => {
-            let mut v = randgen_rust::__PDU_MODULE__::__PDU_TYPE__::default();
-            <randgen_rust::__PDU_MODULE__::__PDU_TYPE__ as asn1cpp_ber::value::Asn1Value>::ber_decode_into(&mut v, &mut r)?;
+            let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
+            <randgen_rust::__PDU_MODULE__::__PDU_IDENT__ as asn1cpp_ber::value::Asn1Value>::ber_decode_into(&mut v, &mut r)?;
             Ok((v.encode_xer(), r.pos()))
         }
         _ => unreachable!("checked by caller"),
