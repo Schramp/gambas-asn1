@@ -975,6 +975,23 @@ void BerCodec::encode(IEncodeStream& dst,
 #endif
     auto& s = static_cast<BerEncodeStream&>(dst);
     BerWriter& w = s.writer();
+    // X.690 §8.14.3 — a type's own top-level EXPLICIT tag wraps a nested
+    // TLV using its natural tag; it does not substitute for it the way
+    // IMPLICIT does (gambas-asn1#352). def.tag is the outer wrapper here;
+    // the inner TLV is this same def's own encoding, just with its natural
+    // tag (def.natural_tag) instead of the override, and is_explicit
+    // cleared so a self-referential def (there are none today, but nothing
+    // stops one) can't recurse into this branch a second time.
+    if (def.is_explicit) {
+        w.write_constructed(def.tag, [&](BerWriter& w2) {
+            TypeDescriptor inner = def;
+            inner.tag = def.natural_tag;
+            inner.is_explicit = false;
+            BerEncodeStream ms{w2};
+            inner.ber_handler->encode(*this, w2, inner, src);
+        });
+        return;
+    }
     def.ber_handler->encode(*this, w, def, src);
 }
 
@@ -984,7 +1001,27 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
 {
     auto& s = static_cast<BerDecodeStream&>(src);
     BerReader& r = s.reader();
-    DecodeResult res = def.ber_handler->decode(*this, r, def, dest);
+    DecodeResult res = decode_ok();
+    if (def.is_explicit) {
+        // Read the outer wrapper TLV (def.tag), then decode its content as
+        // this same def's own natural-tag encoding — mirror of the encode
+        // side above.
+        auto outer = r.read_tlv();
+        if (!outer) {
+            res = decode_err(outer.error());
+        } else if (outer->tag != def.tag) {
+            res = decode_err(DecodeError(
+                std::string("BerCodec: expected EXPLICIT wrapper tag for ") + def.name));
+        } else {
+            BerReader inner_r = r.sub(outer->value);
+            TypeDescriptor inner = def;
+            inner.tag = def.natural_tag;
+            inner.is_explicit = false;
+            res = inner.ber_handler->decode(*this, inner_r, inner, dest);
+        }
+    } else {
+        res = def.ber_handler->decode(*this, r, def, dest);
+    }
 
 #if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_DECODE)
     if (res.has_value() && !def.is_any && !(debug_flags() & DBG_NO_VALIDATE)) {

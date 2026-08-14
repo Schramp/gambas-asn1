@@ -54,7 +54,10 @@ void emit_type_descriptor(std::ostream& os,
                            const std::string& kind,
                            const std::string& per_handler = "nullptr",
                            const std::string& ber_handler = "nullptr",
-                           bool use_class_scope = false);
+                           bool use_class_scope = false,
+                           // gambas-asn1#352: see this param's own doc (CppBackend.cpp).
+                           bool is_explicit = false,
+                           const std::string& natural_tag_expr = "");
 
 /// @brief Build a Constraints designated-initializer literal for an INTEGER
 ///        constraint. Pure C++ text formatting from already-resolved
