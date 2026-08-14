@@ -220,6 +220,14 @@ private:
     bool        member_is_explicit(const ast::Tag& tag, const ast::TypeDef& member_type) const;
     std::string emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
                                             const std::string& mname, std::ostream& os);
+    // Emits a synthesized SeqOfSpec/TypeDescriptor pair for an anonymous
+    // (unnamed) SEQUENCE OF/SET OF appearing as another collection's
+    // element — X.680 §25/26 nesting, to unbounded depth. Recurses via
+    // emit_member_type_descriptor when the element is itself such a
+    // collection. Returns the reference expression to the synthesized
+    // descriptor (e.g. "&asn_DEF_MatrixRowsElem"). See gambas-asn1#427.
+    std::string emit_synthetic_seq_of_descriptor(const ast::TypeDef& def,
+                                                  const std::string& synth_name, std::ostream& os);
     std::string tag_literal(const ast::Tag& tag, bool constructed) const;
     std::string natural_tag_for(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
