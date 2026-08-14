@@ -223,6 +223,20 @@ impl<'a> XerReader<'a> {
     }
 }
 
+/// `depth * 4` spaces — the C++ runtime's own indent unit
+/// (`XerEncodeStream::indent`, `runtime/include/asn1cpp/codec/XerCodec.hpp`:
+/// `4 * (depth_ + offset)`). `depth` means "the level this value's own
+/// wrapper tag sits at" throughout the XER encode call graph (`Asn1Value::
+/// xer_encode`'s own `depth` parameter, `encode_sequence_xer_content`,
+/// `encode_choice_xer_into`, `sequence::encode_seq_of_xer_named`) — a
+/// composite's content is always written one level deeper than its own
+/// `depth`, recursively, matching the C++ runtime's `s.depth() + 1`
+/// convention exactly (`XerCodec.cpp`'s `SequenceXerHandler`/
+/// `ChoiceXerHandler`/`SeqOfXerHandler`, all three).
+pub fn indent(depth: usize) -> String {
+    " ".repeat(4 * depth)
+}
+
 /// Append `<name>` to `out`. Field-name-derived — callers (the
 /// table-driven walker, `encode_sequence_xer` below) supply `name` from
 /// `MemberDescriptor::name`, not from the value's own type.
@@ -244,15 +258,26 @@ pub fn write_close_tag(out: &mut String, name: &str) {
 /// `SequenceXerHandler::encode` (`runtime/src/XerCodec.cpp`). Walks the
 /// *same* `SequenceSpec<T>`/`MemberDescriptor<T>` table `encode_sequence`
 /// already uses — one table drives both wire formats (see `lib.rs`'s
-/// crate doc). Output shape matches the C++ side for a flat (non-nested)
-/// SEQUENCE: `<Name>\n    <member>text</member>\n...</Name>\n`, 4-space
-/// member indent. No nested-SEQUENCE indent tracking yet — out of scope
-/// until a member type needing it lands (matches `encode_sequence`'s own
-/// scope note). OPTIONAL suppression: an absent member is
-/// skipped entirely (no `<member></member>` pair), via
-/// `Asn1Value::is_present` — unlike BER, XER's outer element tag is this
-/// walker's own responsibility, not something `Option<V>::xer_encode` can
-/// suppress by itself.
+/// crate doc). OPTIONAL suppression: an absent member is skipped entirely
+/// (no `<member></member>` pair), via `Asn1Value::is_present` — unlike
+/// BER, XER's outer element tag is this walker's own responsibility, not
+/// something `Option<V>::xer_encode` can suppress by itself.
+///
+/// `depth` is *this SEQUENCE's own* depth — the level its own wrapper tag
+/// sits at (`Asn1Value::xer_encode`'s own "argument = my position"
+/// convention, matching the C++ runtime's `XerEncodeStream::depth()`
+/// exactly, `runtime/include/asn1cpp/codec/XerCodec.hpp`). Each present
+/// member is written one level deeper (`depth + 1`, `xer::indent`), and if
+/// that member's own value is itself composite (SEQUENCE/CHOICE/SeqOf/
+/// SetOf), *its* content recurses at `depth + 1` too (the value passed to
+/// `val.xer_encode` — the member's own wrapper tag and its content sit at
+/// the same depth argument, since `xer_encode` internally goes one level
+/// deeper again for its own children, same convention throughout). An
+/// empty SEQUENCE (no present members) contributes nothing at all —
+/// `<Name></Name>` results automatically once the caller's own open/close
+/// tags are placed back to back, matching `SequenceXerHandler`'s own
+/// `!any_present` early return with no special case needed here.
+///
 /// Member-loop content of a SEQUENCE's XER encoding, without the outer
 /// `<name>`/`</name>` wrapper — shared by `encode_sequence_xer` (the type's
 /// own name) and, once a generated SEQUENCE/SET type has its own
@@ -261,8 +286,9 @@ pub fn write_close_tag(out: &mut String, name: &str) {
 /// module's own doc — so a nested composite member's inner content is
 /// exactly this loop, wrapped in the *member's* tag by the caller, same
 /// contract `Asn1Value::xer_encode` already documents for every other type).
-fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut String) {
+fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut String, depth: usize) {
     use crate::sequence::MemberAccess;
+    let mut any = false;
     for m in spec.members {
         match &m.access {
             // TaggedScalar reuses Scalar's get here: XER
@@ -273,11 +299,12 @@ fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut S
                 if !val.is_present() {
                     continue;
                 }
-                out.push_str("    ");
-                write_open_tag(out, m.name);
-                val.xer_encode(out);
-                write_close_tag(out, m.name);
+                any = true;
                 out.push('\n');
+                out.push_str(&indent(depth + 1));
+                write_open_tag(out, m.name);
+                val.xer_encode(out, depth + 1);
+                write_close_tag(out, m.name);
             }
             // ANY has no defined XER form here. Every generated type now
             // always gets a real xer_encode override (RustBackend.cpp no
@@ -288,13 +315,16 @@ fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut S
             MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
         }
     }
+    if any {
+        out.push('\n');
+        out.push_str(&indent(depth));
+    }
 }
 
 pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
     let mut out = String::new();
     write_open_tag(&mut out, spec.name);
-    out.push('\n');
-    encode_sequence_xer_content(spec, value, &mut out);
+    encode_sequence_xer_content(spec, value, &mut out, 0);
     write_close_tag(&mut out, spec.name);
     out.push('\n');
     out
@@ -305,8 +335,8 @@ pub fn encode_sequence_xer<T>(spec: &SequenceSpec<T>, value: &T) -> String {
 /// content, wrapper is the caller's job) so a generated SEQUENCE/SET type
 /// can implement that trait leg and become usable as a nested composite
 /// member, same role `sequence::encode_sequence_into` plays for the BER leg.
-pub fn encode_sequence_xer_into<T>(spec: &SequenceSpec<T>, value: &T, out: &mut String) {
-    encode_sequence_xer_content(spec, value, out);
+pub fn encode_sequence_xer_into<T>(spec: &SequenceSpec<T>, value: &T, out: &mut String, depth: usize) {
+    encode_sequence_xer_content(spec, value, out, depth);
 }
 
 /// Generic SEQUENCE XER decoder — the XER analogue of `decode_sequence`

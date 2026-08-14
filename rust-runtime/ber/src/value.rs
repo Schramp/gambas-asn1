@@ -91,7 +91,7 @@ pub trait Asn1Value {
         self.ber_decode_content(tlv.value)
     }
 
-    fn xer_encode(&self, _out: &mut String) {
+    fn xer_encode(&self, _out: &mut String, _depth: usize) {
         unimplemented!("XER leg not yet wired for this type")
     }
 
@@ -127,27 +127,42 @@ pub trait Asn1Value {
     /// — mirrors the dispatch the C++ runtime's `SeqOfXerHandler` does by
     /// inspecting the element's `TypeDescriptor` (`edef.enum_spec`,
     /// `spec.element_xer_tag`) before calling `codec.encode` generically.
+    /// `depth` is the *collection's own* depth (`sequence::
+    /// encode_seq_of_xer_named`'s own `depth` parameter) — every override
+    /// writes its own leading `\n` + `indent(depth + 1)` before its content,
+    /// same "one level deeper than my container" convention `xer_encode`
+    /// itself uses, with exactly one exception (CHOICE, see below).
+    ///
     /// The default wraps `xer_encode`'s content in `<name>...</name>`,
     /// `name` being `name_override` when the collection declared one
     /// (X.693 §12 identifier, e.g. `SEQUENCE OF id INTEGER`) or else this
-    /// value's own `xer_element_name()`. ENUMERATED and CHOICE override
-    /// this to forward straight to `xer_encode` with no wrapper at all —
-    /// both already write a complete self-delimiting tag of their own
-    /// (a bare `<value-name/>`, or the chosen alternative's own tag) and
-    /// X.693 always uses that in place of any wrapper/identifier, mirroring
-    /// `SeqOfXerHandler`'s `edef.enum_spec` early-out and `ChoiceXerHandler`
-    /// having no outer wrapper either. `()` (NULL) overrides similarly:
-    /// `NullXerHandler` self-closes exactly when asked to write under the
-    /// literal name `"NULL"`, which is what an unnamed NULL element's own
-    /// `edef.name` always is — `Generator::emit_sequence_definition`
-    /// (Generator.cpp) never populates `SeqOfSpec::elem_xer_name` for a
-    /// NULL element in the first place, so `name_override` is always
-    /// `None` for NULL in practice, but the override ignores it either way
-    /// for the same reason ENUMERATED/CHOICE do.
-    fn xer_encode_seqof_element(&self, out: &mut String, name_override: Option<&str>) {
+    /// value's own `xer_element_name()`; content itself is written at
+    /// `depth + 1` (matching `xer_encode`'s own "argument = my position"
+    /// convention). ENUMERATED and `()` (NULL) override this to forward to
+    /// `xer_encode` with no `<name>` wrapper — both already write a
+    /// complete self-delimiting tag of their own (a bare `<value-name/>`)
+    /// and X.693 always uses that in place of any wrapper/identifier
+    /// (`SeqOfXerHandler`'s `edef.enum_spec`/NULL early-out,
+    /// `runtime/src/XerCodec.cpp`) — but still write the same leading
+    /// `\n` + `indent(depth + 1)` the default does, since C++'s own
+    /// `SeqOfXerHandler` writes that unconditionally for every element
+    /// whose `TypeDescriptor` isn't itself CHOICE-shaped
+    /// (`if (!edef.choice_spec) { ...; os << s.indent(1); }`).
+    ///
+    /// CHOICE is the one genuine exception: it writes *no* leading
+    /// whitespace of its own here at all (`self.xer_encode(out, depth + 1)`
+    /// only) — `ChoiceXerHandler` provides its own leading
+    /// `'\n' << s.indent(1)` before the chosen alternative's own tag
+    /// (`encode_choice_xer_into`'s own doc), so adding another here would
+    /// double it up. This is why CHOICE can't share NULL/ENUMERATED's
+    /// "bare tag, but still indent" override shape despite also skipping
+    /// the `<name>` wrapper.
+    fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, name_override: Option<&str>) {
+        out.push('\n');
+        out.push_str(&crate::xer::indent(depth + 1));
         let name = name_override.unwrap_or_else(|| self.xer_element_name());
         crate::xer::write_open_tag(out, name);
-        self.xer_encode(out);
+        self.xer_encode(out, depth + 1);
         crate::xer::write_close_tag(out, name);
     }
 
@@ -265,9 +280,9 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
+    fn xer_encode(&self, out: &mut String, depth: usize) {
         if let Some(v) = self {
-            v.xer_encode(out);
+            v.xer_encode(out, depth);
         }
     }
 
@@ -297,7 +312,7 @@ impl Asn1Value for i64 {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
+    fn xer_encode(&self, out: &mut String, _depth: usize) {
         out.push_str(&self.to_string());
     }
 
@@ -332,7 +347,7 @@ impl Asn1Value for u64 {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
+    fn xer_encode(&self, out: &mut String, _depth: usize) {
         out.push_str(&self.to_string());
     }
 
@@ -364,7 +379,7 @@ impl Asn1Value for i128 {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
+    fn xer_encode(&self, out: &mut String, _depth: usize) {
         out.push_str(&self.to_string());
     }
 
@@ -401,7 +416,7 @@ impl Asn1Value for bool {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
+    fn xer_encode(&self, out: &mut String, _depth: usize) {
         out.push_str(if *self { "<true/>" } else { "<false/>" });
     }
 
@@ -462,7 +477,7 @@ impl Asn1Value for () {
         crate::null::decode_null_content(content)
     }
 
-    fn xer_encode(&self, _out: &mut String) {
+    fn xer_encode(&self, _out: &mut String, _depth: usize) {
         // Empty content — nothing to write.
     }
 
@@ -476,7 +491,9 @@ impl Asn1Value for () {
     // self-closing exactly when asked to write under the literal name
     // `"NULL"` — see the trait default's own doc for why `name_override`
     // is always `None` here in practice anyway).
-    fn xer_encode_seqof_element(&self, out: &mut String, _name_override: Option<&str>) {
+    fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, _name_override: Option<&str>) {
+        out.push('\n');
+        out.push_str(&crate::xer::indent(depth + 1));
         out.push_str("<NULL/>");
     }
 
@@ -519,7 +536,7 @@ impl Asn1Value for Vec<u8> {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
+    fn xer_encode(&self, out: &mut String, _depth: usize) {
         for b in self {
             out.push_str(&format!("{b:02X}"));
         }
@@ -579,12 +596,38 @@ impl Asn1Value for crate::bit_string::BitString {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
+    /// Unlike every other primitive in this file, BIT STRING genuinely
+    /// consults `depth`: `BitStringXerHandler` (`runtime/src/XerCodec.cpp`)
+    /// always writes its own content starting on a fresh line, wrapped at
+    /// 64 bits per line, each line at `depth + 1` — the same "children one
+    /// level deeper than my own position" convention every composite in
+    /// this crate uses (`encode_sequence_xer_content`'s own doc, `xer.rs`),
+    /// even though BIT STRING is otherwise a plain primitive. An empty
+    /// value still gets exactly one (blank) line — `BitStringXerHandler`'s
+    /// own `total == 0` branch writes `s.indent(1) << "\n"` unconditionally,
+    /// never an empty `<name></name>`. Ends with a trailing `\n` +
+    /// `indent(depth)`, same reason every other composite content ends
+    /// that way (positions the cursor for the caller's own closing tag).
+    fn xer_encode(&self, out: &mut String, depth: usize) {
         let total = self.bit_count();
-        for i in 0..total {
-            let bit = (self.bytes[i / 8] >> (7 - (i % 8))) & 1;
-            out.push(if bit == 1 { '1' } else { '0' });
+        if total == 0 {
+            out.push('\n');
+            out.push_str(&crate::xer::indent(depth + 1));
+        } else {
+            let mut i = 0;
+            while i < total {
+                out.push('\n');
+                out.push_str(&crate::xer::indent(depth + 1));
+                let line_end = (i + 64).min(total);
+                while i < line_end {
+                    let bit = (self.bytes[i / 8] >> (7 - (i % 8))) & 1;
+                    out.push(if bit == 1 { '1' } else { '0' });
+                    i += 1;
+                }
+            }
         }
+        out.push('\n');
+        out.push_str(&crate::xer::indent(depth));
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
@@ -676,7 +719,7 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
+    fn xer_encode(&self, out: &mut String, _depth: usize) {
         for (i, arc) in self.0.iter().enumerate() {
             if i > 0 {
                 out.push('.');
@@ -727,7 +770,7 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
+    fn xer_encode(&self, out: &mut String, _depth: usize) {
         for (i, arc) in self.0.iter().enumerate() {
             if i > 0 {
                 out.push('.');
@@ -778,7 +821,7 @@ impl Asn1Value for f64 {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
+    fn xer_encode(&self, out: &mut String, _depth: usize) {
         if self.is_nan() {
             out.push_str("<NOT-A-NUMBER/>");
         } else if self.is_infinite() {
@@ -852,7 +895,7 @@ impl Asn1Value for String {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
+    fn xer_encode(&self, out: &mut String, _depth: usize) {
         crate::xer::escape(self, out);
     }
 
@@ -908,8 +951,8 @@ impl<T: Asn1Value> Asn1Value for Box<T> {
         (**self).ber_decode_into_tagged(r, tag)
     }
 
-    fn xer_encode(&self, out: &mut String) {
-        (**self).xer_encode(out)
+    fn xer_encode(&self, out: &mut String, depth: usize) {
+        (**self).xer_encode(out, depth)
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
@@ -939,7 +982,7 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "x");
-        1i64.xer_encode(&mut out);
+        1i64.xer_encode(&mut out, 0);
         write_close_tag(&mut out, "x");
         assert_eq!(out, "<x>1</x>");
 
@@ -954,7 +997,7 @@ mod tests {
     #[test]
     fn i64_xer_negative_and_whitespace() {
         let mut out = String::new();
-        (-42i64).xer_encode(&mut out);
+        (-42i64).xer_encode(&mut out, 0);
         assert_eq!(out, "-42");
 
         let mut r = XerReader::new("  -42  ");
@@ -1000,7 +1043,7 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "flag");
-        ().xer_encode(&mut out);
+        ().xer_encode(&mut out, 0);
         write_close_tag(&mut out, "flag");
         assert_eq!(out, "<flag></flag>");
 
@@ -1041,9 +1084,9 @@ mod tests {
         let v = BitString { bytes: vec![0b1010_0000], unused_bits: 4 };
         let mut out = String::new();
         write_open_tag(&mut out, "flags");
-        v.xer_encode(&mut out);
+        v.xer_encode(&mut out, 0);
         write_close_tag(&mut out, "flags");
-        assert_eq!(out, "<flags>1010</flags>");
+        assert_eq!(out, "<flags>\n    1010\n</flags>");
 
         let mut r = XerReader::new(&out);
         r.consume_open_tag("flags").unwrap();
@@ -1135,7 +1178,7 @@ mod tests {
         let v = ObjectIdentifier(vec![2, 5, 4, 3]);
         let mut out = String::new();
         write_open_tag(&mut out, "oid");
-        v.xer_encode(&mut out);
+        v.xer_encode(&mut out, 0);
         write_close_tag(&mut out, "oid");
         assert_eq!(out, "<oid>2.5.4.3</oid>");
 
@@ -1190,7 +1233,7 @@ mod tests {
         let v = RelativeOid(vec![8571, 1]);
         let mut out = String::new();
         write_open_tag(&mut out, "roid");
-        v.xer_encode(&mut out);
+        v.xer_encode(&mut out, 0);
         write_close_tag(&mut out, "roid");
         assert_eq!(out, "<roid>8571.1</roid>");
 
@@ -1229,7 +1272,7 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "x");
-        1.5f64.xer_encode(&mut out);
+        1.5f64.xer_encode(&mut out, 0);
         write_close_tag(&mut out, "x");
         assert_eq!(out, "<x>1.5</x>");
 
@@ -1244,11 +1287,11 @@ mod tests {
     #[test]
     fn f64_xer_zero_encodes_as_bare_zero() {
         let mut out = String::new();
-        0.0f64.xer_encode(&mut out);
+        0.0f64.xer_encode(&mut out, 0);
         assert_eq!(out, "0");
 
         let mut out2 = String::new();
-        (-0.0f64).xer_encode(&mut out2);
+        (-0.0f64).xer_encode(&mut out2, 0);
         assert_eq!(out2, "0");
     }
 
@@ -1256,7 +1299,7 @@ mod tests {
     fn f64_xer_special_values_round_trip() {
         for v in [f64::INFINITY, f64::NEG_INFINITY] {
             let mut out = String::new();
-            v.xer_encode(&mut out);
+            v.xer_encode(&mut out, 0);
             let mut r = XerReader::new(&out);
             let mut got: f64 = 0.0;
             got.xer_decode_into(&mut r).unwrap();
@@ -1264,7 +1307,7 @@ mod tests {
         }
 
         let mut out = String::new();
-        f64::NAN.xer_encode(&mut out);
+        f64::NAN.xer_encode(&mut out, 0);
         assert_eq!(out, "<NOT-A-NUMBER/>");
         let mut r = XerReader::new(&out);
         let mut got: f64 = 0.0;
@@ -1275,7 +1318,7 @@ mod tests {
     #[test]
     fn f64_xer_trims_trailing_zeros_but_keeps_one_digit() {
         let mut out = String::new();
-        2.0f64.xer_encode(&mut out);
+        2.0f64.xer_encode(&mut out, 0);
         assert_eq!(out, "2.0");
     }
 
@@ -1292,7 +1335,7 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "flag");
-        true.xer_encode(&mut out);
+        true.xer_encode(&mut out, 0);
         write_close_tag(&mut out, "flag");
         assert_eq!(out, "<flag><true/></flag>");
 
@@ -1307,7 +1350,7 @@ mod tests {
     #[test]
     fn bool_xer_false_round_trips() {
         let mut out = String::new();
-        false.xer_encode(&mut out);
+        false.xer_encode(&mut out, 0);
         assert_eq!(out, "<false/>");
 
         let mut r = XerReader::new("<false/>");
@@ -1371,7 +1414,7 @@ mod tests {
     #[test]
     fn vec_u8_xer_encodes_unspaced_uppercase_hex() {
         let mut out = String::new();
-        vec![0x68u8, 0x69].xer_encode(&mut out);
+        vec![0x68u8, 0x69].xer_encode(&mut out, 0);
         assert_eq!(out, "6869");
     }
 
@@ -1381,7 +1424,7 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "data");
-        vec![0x68u8, 0x69].xer_encode(&mut out);
+        vec![0x68u8, 0x69].xer_encode(&mut out, 0);
         write_close_tag(&mut out, "data");
         assert_eq!(out, "<data>6869</data>");
 
@@ -1416,7 +1459,7 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "label");
-        "a<b>&c".to_string().xer_encode(&mut out);
+        "a<b>&c".to_string().xer_encode(&mut out, 0);
         write_close_tag(&mut out, "label");
         assert_eq!(out, "<label>a&lt;b&gt;&amp;c</label>");
 

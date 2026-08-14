@@ -144,7 +144,7 @@ macro_rules! char_string_type {
                 Ok(())
             }
 
-            fn xer_encode(&self, out: &mut String) {
+            fn xer_encode(&self, out: &mut String, _depth: usize) {
                 crate::xer::escape(&self.0, out);
             }
 
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn printable_string_xer_round_trips() {
         let mut out = String::new();
-        PrintableString("a<b".to_string()).xer_encode(&mut out);
+        PrintableString("a<b".to_string()).xer_encode(&mut out, 0);
         assert_eq!(out, "a&lt;b");
 
         let mut r = XerReader::new(&out);
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn utc_time_xer_round_trips() {
         let mut out = String::new();
-        UtcTime("240115143000Z".to_string()).xer_encode(&mut out);
+        UtcTime("240115143000Z".to_string()).xer_encode(&mut out, 0);
         assert_eq!(out, "240115143000Z");
 
         let mut r = XerReader::new(&out);
@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn generalized_time_xer_round_trips() {
         let mut out = String::new();
-        GeneralizedTime("20240115143000Z".to_string()).xer_encode(&mut out);
+        GeneralizedTime("20240115143000Z".to_string()).xer_encode(&mut out, 0);
         assert_eq!(out, "20240115143000Z");
 
         let mut r = XerReader::new(&out);
