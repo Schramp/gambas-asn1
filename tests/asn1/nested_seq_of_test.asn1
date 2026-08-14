@@ -1,0 +1,12 @@
+-- Regression coverage for gambas-asn1#427: an anonymous (unnamed) nested
+-- SEQUENCE OF SEQUENCE OF X must generate a real, correctly-wired
+-- descriptor chain for the intermediate collection level, not skip
+-- straight through to X's own descriptor (which corrupts the BER
+-- encoding — the intermediate VectorSeqOf<X> object's memory would be
+-- read as if it were a bare X).
+
+NestedSeqOfTest DEFINITIONS ::= BEGIN
+    Matrix ::= SEQUENCE {
+        rows SEQUENCE OF SEQUENCE OF INTEGER
+    }
+END
