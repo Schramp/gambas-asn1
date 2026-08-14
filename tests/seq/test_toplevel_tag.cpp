@@ -17,6 +17,7 @@
 #include "MyEnum.hpp"
 #include "MySeq.hpp"
 #include "MySeqOf.hpp"
+#include "MyExplicitInt.hpp"
 #include "Wrapper.hpp"
 #include "WrapperTso.hpp"
 
@@ -86,6 +87,26 @@ int main() {
         auto enc = encode(v, asn_DEF_MySeqOf);
         check("MySeqOf standalone: context-8 constructed tag (0xa8)",
               !enc.empty() && enc[0] == 0xa8);
+    }
+
+    // MyExplicitInt ::= [9] EXPLICIT INTEGER, standalone-encoded.
+    // gambas-asn1#352: EXPLICIT wraps a nested TLV using the natural tag,
+    // it does not substitute for it. Confirmed against real asn1c output
+    // for the same schema/value: a9 03 02 01 2a.
+    // Expected: a9 03 02 01 2a
+    //   a9       Context 9, constructed (the EXPLICIT wrapper)
+    //   03       wrapper length = 3
+    //   02 01 2a Universal INTEGER, len 1, value 42 (the natural encoding)
+    {
+        MyExplicitInt v(42);
+        auto enc = encode(v, asn_DEF_MyExplicitInt);
+        std::vector<uint8_t> expect = {0xa9, 0x03, 0x02, 0x01, 0x2a};
+        check("MyExplicitInt standalone: matches asn1c ground truth byte-for-byte",
+              enc == expect);
+
+        MyExplicitInt got{};
+        check("MyExplicitInt standalone: decode ok", decode(enc, asn_DEF_MyExplicitInt, got));
+        check("MyExplicitInt standalone: round-trip value", got.value() == 42);
     }
 
     printf("\n── Same types embedded as SEQUENCE members (must still be correct) ─\n");

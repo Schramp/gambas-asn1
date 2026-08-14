@@ -378,6 +378,24 @@ private:
     /// @note Backend-agnostic: no C++ syntax. `natural_tag_for()` is now a
     ///       thin wrapper — this decides, format_tag_literal() emits.
     std::optional<TypeTagSpec> natural_tag_spec_for(const ast::TypeDef& def) const;
+    /// @brief Is this type's own top-level [n] tag (if any) EXPLICIT (X.690
+    ///        §8.14.3)? False when untagged. See TaggedTypeSpec::is_explicit
+    ///        (Backend.hpp) for why this matters: an EXPLICIT top-level tag
+    ///        wraps a nested TLV using the type's own natural tag, it does
+    ///        not substitute for it — unlike natural_tag_spec_for's own
+    ///        `def.tag.present()` branch, which only decides the wire tag
+    ///        text, not whether the encoding is a wrap or a substitution.
+    /// @see gambas-asn1#352.
+    bool type_is_explicit(const ast::TypeDef& def) const;
+    /// @brief This type's own natural (universal, or resolved-through-alias)
+    ///        tag, ignoring any [n] override `def` itself carries — the real
+    ///        inner tag an EXPLICIT wrapper (type_is_explicit) needs to wrap.
+    ///        A deliberately separate function from natural_tag_spec_for
+    ///        (which folds `def`'s own override into its result when
+    ///        present) rather than a refactor of it, to avoid touching that
+    ///        function's existing, widely-used behavior.
+    /// @see gambas-asn1#352.
+    std::optional<TypeTagSpec> underlying_natural_tag_spec_for(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
     // alt_idx: 0-based index of the alternative in its parent CHOICE.
     // Appends {tag_literal, alt_idx} pairs; recurses if alt resolves to untagged CHOICE.
