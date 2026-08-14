@@ -1603,6 +1603,12 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
     spec.count = count;
     spec.ext_at = ext_at;
 
+    // X.680 §30.6 — CHOICE has no universal tag; a declared [n] on the type
+    // assignment itself is always EXPLICIT (wraps the chosen alternative's
+    // own encoding in an outer TLV) rather than substituting for anything.
+    spec.tag = tag_spec_for(def.tag, /*constructed=*/true);
+    spec.is_explicit = type_is_explicit(def);
+
     // Alternative descriptor table
     if (count > 0) {
         struct AltRow {

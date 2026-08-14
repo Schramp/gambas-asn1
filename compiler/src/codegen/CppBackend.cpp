@@ -145,9 +145,6 @@ std::string make_string_constraints_init(
     return s;
 }
 
-// Moved verbatim from Generator.cpp (was `static`, file-local). No
-// behavior change: same parameters, same output, unless is_explicit is set
-// (gambas-asn1#352) — see that param's own doc.
 void emit_type_descriptor(std::ostream& os,
                            const std::string& cname,
                            const std::string& xer_name,
@@ -158,8 +155,8 @@ void emit_type_descriptor(std::ostream& os,
                            const std::string& per_handler,
                            const std::string& ber_handler,
                            bool use_class_scope,
-                           // gambas-asn1#352: true when this type's own
-                           // top-level [n] tag is EXPLICIT (tag_expr is the
+                           // True when this type's own top-level [n] tag
+                           // is EXPLICIT (X.690 §8.14.3; tag_expr is the
                            // outer wrapper tag; natural_tag_expr — required
                            // whenever this is true — is the real inner tag
                            // BerCodec::encode/decode wraps/unwraps around).
@@ -380,7 +377,7 @@ void CppBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& 
     os << std::format("    {} /* per_handler */,\n", per_h);
     os << std::format("    {} /* ber_handler */,\n", ber_h);
     os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */,\n", cpp_t);
-    // gambas-asn1#352: see emit_type_descriptor's own doc on this trailing block.
+    // Trailing EXPLICIT-wrap fields (X.690 §8.14.3) — see emit_type_descriptor's own doc.
     if (spec.is_explicit) {
         os << std::format("    asn1::XerEncoding::Default, true, {} /* is_explicit, natural_tag */\n",
                           format_tag_literal(*spec.natural_tag));
@@ -542,9 +539,9 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
     os << std::format("    {} /* per_handler */,\n", per_h);
     os << std::format("    {} /* ber_handler */,\n", ber_h);
     os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */", cpp_t);
-    // gambas-asn1#352: is_explicit/natural_tag come after xer_encoding in
-    // TypeDescriptor, so supplying them means restating xer_encoding's
-    // value explicitly too, whether or not xer_base64 also applies.
+    // is_explicit/natural_tag come after xer_encoding in TypeDescriptor, so
+    // supplying them means restating xer_encoding's value explicitly too,
+    // whether or not xer_base64 also applies.
     if (spec.is_explicit) {
         os << std::format(",\n    {}, true, {} /* xer_encoding, is_explicit, natural_tag */\n",
                           spec.xer_base64 ? "asn1::XerEncoding::Base64" : "asn1::XerEncoding::Default",
@@ -1004,12 +1001,21 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
                           cname, spec.tag_index_base, (int)spec.tag_index_table.size());
     os << "};\n\n";
 
-    // TypeDescriptor — CHOICE tag is a transparent placeholder (no fixed universal tag)
+    // TypeDescriptor — CHOICE has no universal tag (X.680 §30.6); absent an
+    // own declared [n], the tag is a transparent placeholder never consulted
+    // by ChoiceBerHandler (dispatch runs on the alternatives' own tags). A
+    // declared own tag is always EXPLICIT — it wraps the chosen alternative's
+    // encoding in an outer TLV (see BerCodec::encode/decode's is_explicit
+    // branch, which ChoiceBerHandler is compatible with unchanged since it
+    // never reads def.tag itself).
+    std::string tag_expr = spec.tag ? format_tag_literal(*spec.tag)
+                                     : "asn1::Tag{asn1::TagClass::Context, 0, false}";
     emit_type_descriptor(os, cname, spec.xer_name,
-        "asn1::Tag{asn1::TagClass::Context, 0, false}",
+        tag_expr,
         false, false, true, false, "asn1::TypeKind::Choice",
         "&asn1::per_choice_handler", "&asn1::ber_choice_handler",
-        /*use_class_scope=*/true);
+        /*use_class_scope=*/true,
+        spec.is_explicit, "");
 }
 
 void CppBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const {

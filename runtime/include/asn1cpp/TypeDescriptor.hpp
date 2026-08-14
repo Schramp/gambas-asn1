@@ -327,7 +327,7 @@ struct TypeDescriptor {
     /// type's own top-level `[n]` declaration: the wire encoding must wrap
     /// a nested TLV using \c natural_tag, not substitute \c tag directly
     /// for it the way IMPLICIT does. False for every type with no declared
-    /// tag of its own, or one using IMPLICIT. See gambas-asn1#352.
+    /// tag of its own, or one using IMPLICIT.
     bool is_explicit = false;
     Tag  natural_tag = {};  ///< This type's own natural tag, ignoring `[n]`; meaningful only when is_explicit.
 };
