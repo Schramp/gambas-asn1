@@ -254,7 +254,8 @@
 %type <MarkerInfo>                  optMarker Marker
 
 /* Encoding control */
-%type <std::monostate>              EncodingControlBody EncodingInstructionList EncodingInstruction
+%type <std::vector<std::pair<std::string, ast::XerEncoding>>> EncodingControlBody EncodingInstructionList
+%type <std::optional<std::pair<std::string, ast::XerEncoding>>> EncodingInstruction
 
 %%
 
@@ -282,6 +283,14 @@ ModuleDefinition:
 	    m->oid                   = $2;
 	    m->tag_default           = $4.tag_default.value_or(TagDefault::Explicit);
 	    m->extensibility_implied = $4.extensibility_implied;
+	    // Apply ENCODING-CONTROL XER overrides now that every assignment
+	    // in the module is parsed — the block may name a type declared
+	    // either before or after it in the source.
+	    for (auto& [tname, enc] : m->xer_encoding_overrides) {
+	        for (auto& td : m->assignments) {
+	            if (td && td->name == tname) { td->xer_encoding = enc; break; }
+	        }
+	    }
 	    $$ = m;
 	}
 	;
@@ -442,9 +451,12 @@ AssignmentList:
 	  Assignment { $$ = $1; }
 	| AssignmentList Assignment {
 	    $$ = $1;
-	    if ($2)
+	    if ($2) {
 	        for (auto& a : $2->assignments)
 	            $$->assignments.push_back(std::move(a));
+	        for (auto& o : $2->xer_encoding_overrides)
+	            $$->xer_encoding_overrides.push_back(std::move(o));
+	    }
 	  }
 	;
 
@@ -464,30 +476,59 @@ Assignment:
 	    m->assignments.push_back($1);
 	    $$ = m;
 	  }
-	| TOK_ENCODING_CONTROL TOK_capitalreference EncodingControlBody TOK_END
-	    { $$ = std::make_shared<Module>(); }
+	| TOK_ENCODING_CONTROL TOK_capitalreference
+	    { lexer.push_encoding_control_state(); }
+	    EncodingControlBody TOK_END
+	    {
+	        auto m = std::make_shared<Module>();
+	        m->xer_encoding_overrides = std::move($4);
+	        $$ = m;
+	    }
 	| error ';'     { $$ = std::make_shared<Module>(); yyerrok; }
 	| error TOK_END { $$ = std::make_shared<Module>(); yyerrok; }
 	;
 
 EncodingControlBody:
 	  /* empty */          { }
-	| EncodingInstructionList { }
+	| EncodingInstructionList { $$ = std::move($1); }
 	;
 
 EncodingInstructionList:
-	  EncodingInstruction                      { }
-	| EncodingInstructionList EncodingInstruction { }
+	  EncodingInstruction {
+	      if ($1) $$.push_back(std::move(*$1));
+	  }
+	| EncodingInstructionList EncodingInstruction {
+	      $$ = std::move($1);
+	      if ($2) $$.push_back(std::move(*$2));
+	  }
 	;
 
+/* Legacy per-type form (X.693 §21.3): `TypeName OCTET STRING ::= base64`
+ * (or `::= hexadecimal`/`::= utf8`, which we don't otherwise change from
+ * asn1cpp's own default). Standard form (X.693 §21.2): `BASE64
+ * TypeName` — TOK_typereference TOK_typereference is otherwise ambiguous
+ * with unrelated tokens like `GLOBAL-DEFAULTS MODIFIED-ENCODINGS`
+ * (a no-op we still need to accept, not just BASE64 instructions), so
+ * the 2-token rule below checks $1's literal spelling rather than
+ * assuming any 2-typereference sequence is a BASE64 instruction. */
 EncodingInstruction:
-	  TOK_typereference TOK_OCTET TOK_STRING TOK_PPEQ Identifier { }
-	| Identifier TOK_OCTET TOK_STRING TOK_PPEQ Identifier        { }
-	| TOK_opaque     { }
-	| TOK_typereference { }
-	| Identifier     { }
-	| TOK_PPEQ       { }
-	| error          { }
+	  TOK_typereference TOK_OCTET TOK_STRING TOK_PPEQ Identifier {
+	      if ($5 == "base64") $$ = std::make_pair($1, ast::XerEncoding::Base64);
+	      else $$ = std::nullopt;
+	  }
+	| Identifier TOK_OCTET TOK_STRING TOK_PPEQ Identifier {
+	      if ($5 == "base64") $$ = std::make_pair($1, ast::XerEncoding::Base64);
+	      else $$ = std::nullopt;
+	  }
+	| TOK_typereference TOK_typereference {
+	      if ($1 == "BASE64") $$ = std::make_pair($2, ast::XerEncoding::Base64);
+	      else $$ = std::nullopt;
+	  }
+	| TOK_opaque     { $$ = std::nullopt; }
+	| TOK_typereference { $$ = std::nullopt; }
+	| Identifier     { $$ = std::nullopt; }
+	| TOK_PPEQ       { $$ = std::nullopt; }
+	| error          { $$ = std::nullopt; }
 	;
 
 /* ===== Value Set Type Assignment ========================================== */

@@ -94,6 +94,62 @@ impl Asn1Value for OctetString {
     }
 }
 
+/// BASE64 XER representation (X.693 §21) for an OCTET STRING-derived type
+/// under an `ENCODING-CONTROL XER ... BASE64 <TypeName>` (or legacy
+/// `<TypeName> OCTET STRING ::= base64`) instruction — the alternative to
+/// this module's own default (unspaced uppercase hex, `xer_encode` above).
+/// Mirrors `base64_encode`/`base64_decode` in `runtime/src/XerCodec.cpp`
+/// byte-for-byte (same alphabet, same '='-padding), since a generated
+/// alias type's own `Asn1Value` impl (`RustBackend::
+/// emit_builtin_alias_definition`) calls these directly instead of
+/// delegating to `OctetString`'s own hex `xer_encode`/`xer_decode_into`
+/// when `BuiltinAliasSpec::xer_base64` is set — there's no per-instance
+/// flag on `OctetString` itself to branch on (Rust's `Asn1Value` is a
+/// compile-time trait impl, not a runtime-descriptor-driven dispatch the
+/// way C++'s `TypeDescriptor::xer_encoding` field is), so the choice is
+/// baked into the generated type's own method bodies at codegen time.
+pub fn base64_encode(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(((input.len() + 2) / 3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = chunk.get(1).copied();
+        let b2 = chunk.get(2).copied();
+        let v = (b0 as u32) << 16 | (b1.unwrap_or(0) as u32) << 8 | (b2.unwrap_or(0) as u32);
+        out.push(TABLE[((v >> 18) & 0x3F) as usize] as char);
+        out.push(TABLE[((v >> 12) & 0x3F) as usize] as char);
+        out.push(if b1.is_some() { TABLE[((v >> 6) & 0x3F) as usize] as char } else { '=' });
+        out.push(if b2.is_some() { TABLE[(v & 0x3F) as usize] as char } else { '=' });
+    }
+    out
+}
+
+pub fn base64_decode(input: &str) -> Vec<u8> {
+    fn val(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out = Vec::new();
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+    for c in input.bytes() {
+        let Some(v) = val(c) else { continue };
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((buf >> bits) & 0xFF) as u8);
+        }
+    }
+    out
+}
+
 pub fn write_octet_string(out: &mut Vec<u8>, value: &[u8]) {
     write_octet_string_tagged(out, OCTET_STRING_TAG, value);
 }
@@ -212,5 +268,15 @@ mod tests {
         let mut got = OctetString::default();
         got.xer_decode_into(&mut r).unwrap();
         assert_eq!(got.0, vec![0x68]);
+    }
+
+    #[test]
+    fn base64_round_trips() {
+        assert_eq!(base64_encode(b"hi"), "aGk=");
+        assert_eq!(base64_decode("aGk="), b"hi");
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_decode(""), Vec::<u8>::new());
+        assert_eq!(base64_encode(b"any carnal pleasure"), "YW55IGNhcm5hbCBwbGVhc3VyZQ==");
+        assert_eq!(base64_decode("YW55IGNhcm5hbCBwbGVhc3VyZQ=="), b"any carnal pleasure");
     }
 }
