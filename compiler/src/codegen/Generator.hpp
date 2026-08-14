@@ -106,6 +106,17 @@ class Generator {
     fs::path                out_dir_;
     sema::Resolver&         resolver_;
     std::set<std::string>   generated_names_;
+    // Synthetic type names promoted for an anonymous nested SEQUENCE OF/SET
+    // OF element (generate_inline_types, gambas-asn1#427) — needed because
+    // type_descriptor_ref_for's own TypeRef-fallback branch (reached when
+    // resolver_.resolve_ref can't find a dynamically-created synthetic
+    // TypeDef, which is the normal case for every synthetic promotion) has
+    // no other way to know the synthetic type isn't SEQUENCE/CHOICE/
+    // ENUMERATED (its own long-standing assumption for every *other* kind
+    // of synthetic promotion, still correct for those — only SEQUENCE
+    // OF/SET OF needs a *free* asn_DEF_X reference, not a class-scoped
+    // X::asn_DEF one).
+    std::set<std::string>   seq_of_synthetic_names_;
     std::set<std::string>   collision_types_;   // ASN.1 type names defined in >1 module
     std::string             current_module_;    // module being generated right now
     std::string             current_type_;      // C++ name of type currently being generated

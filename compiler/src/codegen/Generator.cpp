@@ -468,9 +468,15 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
             return is_class ? std::format("&{}::asn_DEF", n)
                             : std::format("&asn_DEF_{}", n);
         }
-        // Fallback: unresolved ref — synthetic types (compiler-generated SeqOf element
-        // replacements) are always SEQUENCE/CHOICE/ENUM → class-scoped static member.
-        return std::format("&{}::asn_DEF", cpp_name_for_typeref(*tr));
+        // Fallback: unresolved ref — synthetic types (compiler-generated
+        // element replacements) are SEQUENCE/CHOICE/ENUM → class-scoped
+        // static member, except a promoted anonymous nested SEQUENCE OF/SET
+        // OF (seq_of_synthetic_names_, gambas-asn1#427), which — like any
+        // other SEQUENCE OF/SET OF — gets a free asn_DEF_X, not X::asn_DEF.
+        auto n = cpp_name_for_typeref(*tr);
+        return seq_of_synthetic_names_.count(n)
+            ? std::format("&asn_DEF_{}", n)
+            : std::format("&{}::asn_DEF", n);
     }
     // SEQUENCE OF / SET OF — named member uses synthetic SeqOf wrapper descriptor (using alias)
     if (def.is_seq_of()) {
@@ -2145,6 +2151,42 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                                             : elem.is_set()      ? "SET"
                                             : "CHOICE";
                     }
+                    generate_inline_types(*synthetic, mod);
+                    current_type_ = elem_type_name;
+                    emit_type_files(elem_type_name, *synthetic, mod);
+                }
+            } else if (elem.is_seq_of() || elem.is_set_of()) {
+                // Anonymous nested SEQUENCE OF/SET OF element (X.680 §25/26
+                // nesting, to unbounded depth — "rows SEQUENCE OF SEQUENCE
+                // OF INTEGER", both levels unnamed). Same promote-to-a-real-
+                // named-type treatment as the composite-element case just
+                // above: without this, the element stays embedded inline
+                // and cpp_type_for/type_descriptor_ref_for's own SEQUENCE
+                // OF/SET OF branches (which only know how to resolve a
+                // *named* nested collection, or recurse straight through an
+                // anonymous one to its innermost scalar) skip the
+                // intermediate collection level entirely — corrupting the
+                // C++ BER encoding (the generic SeqOf handler reads each
+                // outer element as the wrong type) and, on the Rust side,
+                // producing a bare Vec<Vec<T>> field with no Asn1Value impl
+                // (same coherence problem octet_string::OctetString's own
+                // module doc describes) that fails to compile. Promoting
+                // gives this level a real name, a real recursive descriptor
+                // (generate_inline_types recurses into it below, handling
+                // further nesting the same way), and — critically — the
+                // rewrite to a TypeRef a few lines down means every other
+                // resolution path (type_descriptor_ref_for, cpp_type_for)
+                // just takes their already-correct, already-tested named-
+                // type branch from here on, no special-casing needed there.
+                // See gambas-asn1#427.
+                bool was_anon = elem.name.empty();
+                elem_type_name = backend_.synthetic_name(seqof_name, was_anon ? "Anon" : elem.name);
+                seq_of_synthetic_names_.insert(elem_type_name);
+                if (!generated_names_.count(elem_type_name)) {
+                    generated_names_.insert(elem_type_name);
+                    auto synthetic = std::make_shared<ast::TypeDef>(elem);
+                    synthetic->name = elem_type_name;
+                    if (was_anon) synthetic->xer_name = elem.is_seq_of() ? "SEQUENCE" : "SET";
                     generate_inline_types(*synthetic, mod);
                     current_type_ = elem_type_name;
                     emit_type_files(elem_type_name, *synthetic, mod);
