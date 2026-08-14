@@ -43,10 +43,11 @@
 #     runtime support) and a new base64_encode/decode pair in RustBackend/
 #     rust-runtime/ber (Rust had none at all). 180/183/210 (SEQUENCE-OF/
 #     inline-member cases) still unconfirmed — not yet re-probed.
-#   gambas-asn1#443 — sibling gap uncovered while fixing #438: the third
-#     ENCODING-CONTROL instruction form, `TypeName OCTET STRING ::= utf8`
-#     (raw UTF-8 text instead of hex), still falls through to hex — not
-#     fixed here, out of #438's original (BASE64-only) scope (175, 176, 177)
+#   gambas-asn1#443 — fixed: the third ENCODING-CONTROL instruction form,
+#     `TypeName OCTET STRING ::= utf8` (raw UTF-8 text, X.680 §11.15
+#     control-character/entity escaping), threaded through the same
+#     xer_encoding path #438 wired up, with new C++ (XerCodec.cpp) and
+#     Rust (octet_string.rs) runtime encode/decode.
 #   gambas-asn1#441 — top-level (non-member) CHOICE XER output is missing
 #     an outer element wrapper that asn1c always emits, found via #440's
 #     asn1c leg on Alt4 (choice_test.asn1)
@@ -61,9 +62,9 @@ tests/tests-asn1c-compiler/146-duplicate-member-names-OK.asn1      ServingCellCo
 tests/tests-asn1c-compiler/167-pdu-deps-OK.asn1                    PDUType
 tests/tests-asn1c-compiler/170-complex-nesting-OK.asn1             StructureD
 tests/tests-asn1c-compiler/174-encoding-control-OK.asn1            TestMessage
-tests/tests-asn1c-compiler/175-encoding-control-body-OK.asn1       TestData    skip-asn1c: gambas-asn1#443 (::= utf8 instruction)
-tests/tests-asn1c-compiler/176-encoding-control-applied-OK.asn1    Message     skip-asn1c: gambas-asn1#443 (::= utf8 instruction)
-tests/tests-asn1c-compiler/177-encoding-control-codegen-OK.asn1    Message     skip-asn1c: gambas-asn1#443 (::= utf8 instruction)
+tests/tests-asn1c-compiler/175-encoding-control-body-OK.asn1       TestData
+tests/tests-asn1c-compiler/176-encoding-control-applied-OK.asn1    Message
+tests/tests-asn1c-compiler/177-encoding-control-codegen-OK.asn1    Message
 tests/tests-asn1c-compiler/178-nested-enum-same-name-OK.asn1       CodebookConfig-r18  skip-asn1c: asn1c's own -p flag mismatches its hyphenated PDU name (harness limitation, not a codec bug)
 tests/tests-asn1c-compiler/181-base64-control-standard-OK.asn1     Record
 tests/tests-asn1c-compiler/202-XIOTCertificate-OK.asn1             Extension

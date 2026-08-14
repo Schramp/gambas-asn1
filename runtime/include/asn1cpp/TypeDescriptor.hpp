@@ -304,6 +304,8 @@ struct TypeLifecycleOps {
 enum class XerEncoding : uint8_t {
     Default = 0, ///< Hexadecimal uppercase pairs (X.693 §17.4 first alternative).
     Base64  = 1, ///< RFC 2045 §6.8 base64 (X.693 §21 "BASE64" instruction).
+    Utf8    = 2, ///< Content octets as raw UTF-8 text (X.693 §21 "utf8" instruction,
+                 ///< X.680 §11.15 control-character/entity escaping applies).
 };
 
 /// @brief Top-level per-type descriptor — the primary runtime metadata table.
