@@ -85,6 +85,15 @@ enum class IntStorageKind {
     ARBITRARY, // vector<uint8_t> — asn1::ArbitraryInteger (stub; unconstrained crypto keys)
 };
 
+// gambas-asn1#421: a SEQUENCE/SET member's collection kind, if any — the
+// member's body is ast::SequenceOfType (X.680 §26), ast::SetOfType
+// (X.680 §24), or neither. Was two independent bools (`is_seq_of`/
+// `is_set_of`) on SequenceMemberSpec; always mutually exclusive in
+// practice (Generator::emit_sequence_definition's collect() sets at most
+// one), so a single discriminant makes that invariant checkable by the
+// type system instead of by convention.
+enum class SeqOfKind { None, SeqOf, SetOf };
+
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —
 ///        which named values apply, in declaration order, with automatic
 ///        numbering (X.680 §20.6) already resolved. No C++/Rust/etc. syntax.
@@ -354,30 +363,29 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // everything to mirror C++ would be needless indirection with no
     // upside. Only cycle-participating members get boxed.
     bool        member_type_in_cycle = false;
-    // SEQUENCE OF/SET OF member support. `is_seq_of` set for a member whose
-    // body is ast::SequenceOfType, `is_set_of` for ast::SetOfType — mutually
-    // exclusive, and never both false while `elem_builtin` is meaningful.
-    // `elem_builtin` is unset (nullopt) when the element is a composite
-    // (TypeRef) type, same "optional discriminant" shape `mbuiltin` above
-    // uses for a plain scalar member, just one level down. No element-mtype
-    // or element-name field: `mtype` above is already the element's own
-    // native storage type wrapped one level (`wrap_collection_type`) — a
-    // backend that needs the bare, unwrapped element type text derives it
-    // from `mtype` itself (RustBackend's `rust_seqof_alt_mtype`/
-    // `rust_seqof_member_field_type` do this, mirroring how they already
-    // unwrap a CHOICE alternative's `mtype`), rather than duplicating it
-    // here as separately-computed table data. Likewise the element's own
-    // X.693 per-element XER tag comes generically from the element *value*
-    // at runtime (e.g. RustBackend's Asn1Value::xer_element_name), the same
-    // way C++'s SeqOfXerHandler reaches its element's own
-    // TypeDescriptor::name. A backend without SEQUENCE OF/SET OF table
-    // support can ignore all three fields; `is_seq_of`/`is_set_of` both
-    // false leaves them meaningless. The only place SEQUENCE OF and SET OF
-    // genuinely differ (X.680 §26 vs §24 — SET's own universal tag 17, not
-    // SEQUENCE's 16) is the member's *wire tag* when using its natural
-    // (non-override) tag — a backend's own emission decision, not table data.
-    bool        is_seq_of = false;
-    bool        is_set_of = false;
+    // SEQUENCE OF/SET OF member support. `seq_of_kind` is SeqOfKind::SeqOf
+    // for a member whose body is ast::SequenceOfType, SetOf for
+    // ast::SetOfType, None otherwise. `elem_builtin` is unset (nullopt)
+    // when the element is a composite (TypeRef) type, same "optional
+    // discriminant" shape `mbuiltin` above uses for a plain scalar member,
+    // just one level down. No element-mtype or element-name field: `mtype`
+    // above is already the element's own native storage type wrapped one
+    // level (`wrap_collection_type`) — a backend that needs the bare,
+    // unwrapped element type text derives it from `mtype` itself
+    // (RustBackend's `rust_seqof_alt_mtype`/`rust_seqof_member_field_type`
+    // do this, mirroring how they already unwrap a CHOICE alternative's
+    // `mtype`), rather than duplicating it here as separately-computed
+    // table data. Likewise the element's own X.693 per-element XER tag
+    // comes generically from the element *value* at runtime (e.g.
+    // RustBackend's Asn1Value::xer_element_name), the same way C++'s
+    // SeqOfXerHandler reaches its element's own TypeDescriptor::name. A
+    // backend without SEQUENCE OF/SET OF table support can ignore both
+    // fields; seq_of_kind == None leaves elem_builtin meaningless. The only
+    // place SEQUENCE OF and SET OF genuinely differ (X.680 §26 vs §24 —
+    // SET's own universal tag 17, not SEQUENCE's 16) is the member's *wire
+    // tag* when using its natural (non-override) tag — a backend's own
+    // emission decision, not table data.
+    SeqOfKind   seq_of_kind = SeqOfKind::None;
     std::optional<ast::BuiltinType> elem_builtin;
     bool        optional = false;
     bool        has_default = false;
