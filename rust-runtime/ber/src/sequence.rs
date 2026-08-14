@@ -223,8 +223,8 @@ pub fn decode_seq_of_content<V: Asn1Value + Default>(content: &[u8]) -> Result<V
 /// NULL: their own self-delimiting form, no wrapper) — no codegen decision
 /// required here for that split; `name_override` only ever matters to the
 /// wrapped-form default.
-pub fn encode_seq_of_xer<V: Asn1Value>(out: &mut String, items: &[V]) {
-    encode_seq_of_xer_named(out, items, None);
+pub fn encode_seq_of_xer<V: Asn1Value>(out: &mut String, items: &[V], depth: usize) {
+    encode_seq_of_xer_named(out, items, depth, None);
 }
 
 /// `name_override` is `Some` for a SEQUENCE OF/SET OF that declared an
@@ -234,9 +234,45 @@ pub fn encode_seq_of_xer<V: Asn1Value>(out: &mut String, items: &[V]) {
 /// RustBackend.cpp). ENUMERATED/CHOICE/NULL elements ignore it (X.693
 /// always uses their own self-delimiting tag regardless — `Generator.cpp`
 /// doesn't even set `elem_xer_name` for a NULL element in the first place).
-pub fn encode_seq_of_xer_named<V: Asn1Value>(out: &mut String, items: &[V], name_override: Option<&str>) {
+///
+/// `depth` is *this collection's own* depth (matching `Asn1Value::
+/// xer_encode`'s own "argument = my position" convention). Every element
+/// writes its own leading `\n` + indent at `depth + 1`
+/// (`Asn1Value::xer_encode_seqof_element`'s own doc) — most kinds add
+/// nothing after their own closing tag, relying on the *next* element's
+/// leading `\n` (or, for the last element, this function's own trailing
+/// bit below) as the separator. CHOICE is the one exception: its own
+/// element (`xer_encode_seqof_element`'s CHOICE override) adds a trailing
+/// `\n` of its own too, matching `ChoiceXerHandler`'s own unconditional
+/// `... << "</" << alt.name << ">\n"` (`runtime/src/XerCodec.cpp`) — when
+/// two CHOICE elements sit back to back, that produces a genuine blank
+/// line between them (confirmed against a real schema:
+/// `Messaging-Property ::= CHOICE` used as a `SET OF` element — not a
+/// bug, `SeqOfXerHandler`'s own loop only special-cases *its own* leading
+/// newline for a non-CHOICE element, `if (!edef.choice_spec) { ...
+/// os << s.indent(1); }`, so two adjacent CHOICE elements each
+/// unconditionally contribute their own leading *and* trailing newline
+/// with nothing to deduplicate them).
+///
+/// This function's own trailing bit — `\n` + `indent(depth)`, iff at
+/// least one element was written (an empty collection contributes
+/// nothing at all, matching `SeqOfXerHandler`'s own `count == 0` case —
+/// the caller's `<name></name>` results automatically with no special
+/// case needed here, same reasoning `encode_sequence_xer_content`'s own
+/// empty-content case gives) — only adds the `\n` when the last element
+/// didn't already end with one (CHOICE's own case): otherwise the two
+/// would combine into an unwanted blank line right before the closing
+/// tag, which real ground-truth output never has.
+pub fn encode_seq_of_xer_named<V: Asn1Value>(out: &mut String, items: &[V], depth: usize, name_override: Option<&str>) {
+    let start = out.len();
     for item in items {
-        item.xer_encode_seqof_element(out, name_override);
+        item.xer_encode_seqof_element(out, depth, name_override);
+    }
+    if out.len() > start {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&crate::xer::indent(depth));
     }
 }
 
@@ -332,8 +368,8 @@ impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
-        encode_seq_of_xer(out, &self.0);
+    fn xer_encode(&self, out: &mut String, depth: usize) {
+        encode_seq_of_xer(out, &self.0, depth);
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
@@ -383,8 +419,8 @@ impl<T: Asn1Value + Default> Asn1Value for SetOf<T> {
         Ok(())
     }
 
-    fn xer_encode(&self, out: &mut String) {
-        encode_seq_of_xer(out, &self.0);
+    fn xer_encode(&self, out: &mut String, depth: usize) {
+        encode_seq_of_xer(out, &self.0, depth);
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
@@ -1002,7 +1038,7 @@ impl DefaultPoint {
         let xml = c.encode_xer();
         assert_eq!(
             xml,
-            "<Coords>\n    <values><INTEGER>1</INTEGER><INTEGER>2</INTEGER><INTEGER>3</INTEGER></values>\n</Coords>\n"
+            "<Coords>\n    <values>\n        <INTEGER>1</INTEGER>\n        <INTEGER>2</INTEGER>\n        <INTEGER>3</INTEGER>\n    </values>\n</Coords>\n"
         );
         assert_eq!(Coords::decode_xer(&xml).unwrap(), c);
     }
@@ -1053,7 +1089,7 @@ impl DefaultPoint {
         let xml = c.encode_xer();
         assert_eq!(
             xml,
-            "<OptCoords>\n    <values><INTEGER>1</INTEGER><INTEGER>2</INTEGER></values>\n</OptCoords>\n"
+            "<OptCoords>\n    <values>\n        <INTEGER>1</INTEGER>\n        <INTEGER>2</INTEGER>\n    </values>\n</OptCoords>\n"
         );
         assert_eq!(OptCoords::decode_xer(&xml).unwrap(), c);
     }
@@ -1063,7 +1099,7 @@ impl DefaultPoint {
         let c = OptCoords { values: None };
         let xml = c.encode_xer();
         // No <values> wrapper at all when absent — not even an empty one.
-        assert_eq!(xml, "<OptCoords>\n</OptCoords>\n");
+        assert_eq!(xml, "<OptCoords></OptCoords>\n");
         assert_eq!(OptCoords::decode_xer(&xml).unwrap(), c);
     }
 
@@ -1133,9 +1169,9 @@ impl DefaultPoint {
         let v = SeqOf(vec![1i64, 2]);
         let mut out = String::new();
         crate::xer::write_open_tag(&mut out, "items");
-        v.xer_encode(&mut out);
+        v.xer_encode(&mut out, 0);
         crate::xer::write_close_tag(&mut out, "items");
-        assert_eq!(out, "<items><INTEGER>1</INTEGER><INTEGER>2</INTEGER></items>");
+        assert_eq!(out, "<items>\n    <INTEGER>1</INTEGER>\n    <INTEGER>2</INTEGER>\n</items>");
 
         let mut r = XerReader::new(&out);
         r.consume_open_tag("items").unwrap();
@@ -1171,9 +1207,9 @@ impl DefaultPoint {
         let v = SetOf(vec![1i64, 2]);
         let mut out = String::new();
         crate::xer::write_open_tag(&mut out, "items");
-        v.xer_encode(&mut out);
+        v.xer_encode(&mut out, 0);
         crate::xer::write_close_tag(&mut out, "items");
-        assert_eq!(out, "<items><INTEGER>1</INTEGER><INTEGER>2</INTEGER></items>");
+        assert_eq!(out, "<items>\n    <INTEGER>1</INTEGER>\n    <INTEGER>2</INTEGER>\n</items>");
 
         let mut r = XerReader::new(&out);
         r.consume_open_tag("items").unwrap();

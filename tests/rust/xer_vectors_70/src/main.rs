@@ -77,7 +77,7 @@ fn xer_decode(xml: &str) -> Option<pdu::PDU> {
 
 fn xer_encode(val: &pdu::PDU) -> String {
     let mut out = String::new();
-    val.xer_encode(&mut out);
+    val.xer_encode(&mut out, 0);
     out
 }
 
