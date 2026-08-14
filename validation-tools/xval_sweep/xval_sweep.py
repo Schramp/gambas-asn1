@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-xval_sweep.py — cross-validate C++ vs Rust BER/XER codecs across every
-(schema, PDU type) target listed in targets.txt (gambas-asn1#434).
+xval_sweep.py — cross-validate C++ vs Rust BER/XER codecs (and, when
+asn1c is available, asn1c as ground truth) across every (schema, PDU
+type) target listed in targets.txt (gambas-asn1#434, #440).
 
 For each target: materializes a per-target C++ build (from template_cpp/)
 and a per-target Rust build (from template_rust/) via keyword substitution
@@ -17,6 +18,18 @@ asn1c vs asn1cpp, but self-contained here (no cross-repo import) since
 this tool lives inside asn1cpp/ and must work from a standalone asn1cpp/
 checkout.
 
+asn1c leg (optional, #440): when an `asn1c` binary is found (ASN1C_BIN_DIR
+env var, PATH, or /usr/local/bin — same search order CMakeLists.txt's own
+cross-validation gate uses), also builds asn1c's own generated
+converter-example tool for the target (`asn1c -D <dir> ... && make -f
+converter-example.mk` — asn1c's own example CLI already speaks `-p <PDU>
+-iber -oxer` / `-ixer -oder`, no custom C harness needed) and adds it as
+ground truth: asn1c.B2X vs cpp.B2X, asn1c.B2X vs rust.B2X, and asn1c's own
+round-trip. When asn1c isn't found, or codegen/build fails for a specific
+target (e.g. a construct asn1c itself rejects), that target's asn1c leg
+is skipped with a note — never a hard failure, and the C++/Rust legs
+always run regardless.
+
 Build dependency handling: each target's `make` (C++ side) and
 `make gen` + `cargo build` (Rust side, via build.rs's own
 rerun-if-changed) track their own source/schema/compiler staleness — this
@@ -26,9 +39,13 @@ of this script is always safe and cheap when nothing changed.
 
 Usage:
   python3 xval_sweep.py [--count N] [--seed S] [--target NAME] [--verbose]
+                        [--asn1c-dir DIR] [--no-asn1c]
 
-  --target NAME   only run the target whose schema path or PDU type
-                  matches NAME (substring match); default: all targets.
+  --target NAME    only run the target whose schema path or PDU type
+                   matches NAME (substring match); default: all targets.
+  --asn1c-dir DIR  directory containing the asn1c binary (overrides
+                   ASN1C_BIN_DIR env var / PATH / /usr/local/bin search).
+  --no-asn1c       skip the asn1c leg even if asn1c is found.
 
 Exit code: 0 if every target's every comparison passed, 1 otherwise.
 """
@@ -39,6 +56,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASN1CPP_ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -49,6 +67,28 @@ TEMPLATE_CPP = os.path.join(HERE, "template_cpp")
 TEMPLATE_RUST = os.path.join(HERE, "template_rust")
 TESTBUILD = os.path.join(HERE, "testbuild")
 TARGETS_FILE = os.path.join(HERE, "targets.txt")
+
+
+def find_asn1c(override_dir=None):
+    """Locate the asn1c binary — same search order as CMakeLists.txt's own
+    cross-validation gate: an explicit override, then ASN1C_BIN_DIR env
+    var, then PATH, then /usr/local/bin. Returns the binary path, or None
+    (never raises) — the asn1c leg is optional everywhere it's used.
+    """
+    candidates = []
+    if override_dir:
+        candidates.append(os.path.join(override_dir, "asn1c"))
+    bin_dir = os.environ.get("ASN1C_BIN_DIR")
+    if bin_dir:
+        candidates.append(os.path.join(bin_dir, "asn1c"))
+    on_path = shutil.which("asn1c")
+    if on_path:
+        candidates.append(on_path)
+    candidates.append("/usr/local/bin/asn1c")
+    for c in candidates:
+        if c and os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +180,28 @@ def x2b(tool: str, type_name: str, xer_text: str) -> tuple[bytes, str]:
     return r.stdout, r.stderr.decode(errors="replace").strip()
 
 
+def asn1c_b2x(tool: str, pdu_type: str, ber_path: str) -> tuple[str, str]:
+    """BER file → XER string via asn1c's own converter-example. Returns (xer_text, stderr)."""
+    r = run(tool, "-p", pdu_type, "-iber", "-oxer", ber_path)
+    return r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace").strip()
+
+
+def asn1c_x2b(tool: str, pdu_type: str, xer_text: str) -> tuple[bytes, str]:
+    """XER string → DER bytes via asn1c's own converter-example.
+
+    converter-example takes a datafile argument, not stdin, unlike the
+    C++/Rust tools' x2b — write to a temp file.
+    """
+    fd, xer_path = tempfile.mkstemp(suffix=".xer")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(xer_text.encode())
+        r = run(tool, "-p", pdu_type, "-ixer", "-oder", xer_path)
+        return r.stdout, r.stderr.decode(errors="replace").strip()
+    finally:
+        os.unlink(xer_path)
+
+
 def compare_records(recs_a: list[str], recs_b: list[str], verbose: bool) -> tuple[int, int]:
     n = min(len(recs_a), len(recs_b))
     matches = mismatches = 0
@@ -198,6 +260,15 @@ def compare_ber(label: str, ber_a: bytes, ber_b: bytes, verbose: bool) -> tuple[
 # Target build orchestration
 
 def parse_targets(path):
+    """Returns a list of (schema, pdu_type, skip_asn1c_reason_or_None).
+
+    A line is normally "<schema> <PduType>". A third token+ marks a known,
+    already-filed divergence between asn1c and asn1cpp for this specific
+    target — the C++/Rust legs still run and gate pass/fail as usual, but
+    the asn1c leg is skipped (not run at all) rather than failing the
+    target on a gap that's already tracked elsewhere. The remaining
+    tokens are the skip reason, printed verbatim (e.g. an issue number).
+    """
     targets = []
     with open(path) as f:
         for lineno, line in enumerate(f, 1):
@@ -205,10 +276,11 @@ def parse_targets(path):
             if not line or line.startswith("#"):
                 continue
             parts = line.split()
-            if len(parts) != 2:
-                print(f"{path}:{lineno}: expected '<schema> <PduType>', got: {line!r}")
+            if len(parts) < 2:
+                print(f"{path}:{lineno}: expected '<schema> <PduType> [skip-asn1c-reason]', got: {line!r}")
                 sys.exit(1)
-            targets.append((parts[0], parts[1]))
+            reason = " ".join(parts[2:]) if len(parts) > 2 else None
+            targets.append((parts[0], parts[1], reason))
     return targets
 
 
@@ -344,12 +416,44 @@ def build_rust(target_dir, asn1_files_abs, pdu_type):
     }
 
 
-def run_target(schema_rel, pdu_type, count, seed, verbose):
+def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin):
+    """Build asn1c's own converter-example tool for this target — ground
+    truth leg (#440). Returns None (not a hard error) whenever asn1c
+    itself can't handle this target's schema/construct — codegen or build
+    failure just means this target's asn1c leg is skipped, same as
+    "asn1c not found" globally; the C++/Rust legs never depend on this.
+    """
+    c_dir = os.path.join(target_dir, "asn1c")
+    os.makedirs(c_dir, exist_ok=True)
+    r = run(asn1c_bin, "-fcompound-names", "-fno-include-deps",
+            "-fallow-newer-modules", f"-pdu={pdu_type}", "-D", c_dir,
+            *asn1_files_abs)
+    if r.returncode != 0:
+        print(f"  asn1c leg: codegen failed, skipping — {r.stderr.decode(errors='replace')[-500:]}")
+        return None
+    mk = os.path.join(c_dir, "converter-example.mk")
+    if not os.path.isfile(mk):
+        print(f"  asn1c leg: no converter-example.mk produced, skipping")
+        return None
+    r = run("make", "-C", c_dir, "-f", "converter-example.mk")
+    if r.returncode != 0:
+        print(f"  asn1c leg: build failed, skipping — {r.stderr.decode(errors='replace')[-500:]}")
+        return None
+    tool = os.path.join(c_dir, "converter-example")
+    if not os.path.isfile(tool):
+        print(f"  asn1c leg: converter-example binary not produced, skipping")
+        return None
+    return {"tool": tool}
+
+
+def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c_reason=None):
     slug = os.path.splitext(os.path.basename(schema_rel))[0] + "_" + pdu_type
     target_dir = os.path.join(TESTBUILD, slug)
     asn1_files_abs = [os.path.join(ASN1CPP_ROOT, schema_rel)]
 
     print(f"\n=== {schema_rel} :: {pdu_type} ===")
+    if skip_asn1c_reason:
+        print(f"  asn1c leg: skipped ({skip_asn1c_reason})")
 
     cpp_tools = build_cpp(target_dir, asn1_files_abs, pdu_type)
     if cpp_tools is None:
@@ -357,6 +461,8 @@ def run_target(schema_rel, pdu_type, count, seed, verbose):
     rust_tools = build_rust(target_dir, asn1_files_abs, pdu_type)
     if rust_tools is None:
         return False
+    asn1c_tools = (build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin)
+                   if asn1c_bin and not skip_asn1c_reason else None)
 
     ber_path = os.path.join(target_dir, "records.ber")
     gen_cmd = [cpp_tools["randgen"], "--type", pdu_type,
@@ -426,6 +532,28 @@ def run_target(schema_rel, pdu_type, count, seed, verbose):
     ber_cross2, _ = x2b(cpp_tools["x2b"], pdu_type, xer_rust)
     tally(compare_ber("orig vs cpp.X2B(rust.XER)", ber_orig, ber_cross2, verbose))
 
+    if asn1c_tools:
+        xer_asn1c, err_asn1c = asn1c_b2x(asn1c_tools["tool"], pdu_type, ber_path)
+        if err_asn1c:
+            print(f"  asn1c b2x stderr: {err_asn1c}")
+        xer_asn1c = dedent_xer(xer_asn1c)
+
+        # These two are the real ground-truth signal — does asn1c agree
+        # with what our own decode+XER-encode produced — so they gate
+        # pass/fail like every other check.
+        tally(run_comparison("asn1c.B2X vs cpp.B2X", xer_asn1c, xer_cpp, verbose))
+        tally(run_comparison("asn1c.B2X vs rust.B2X", xer_asn1c, xer_rust, verbose))
+
+        # asn1c's own round-trip stability is informational only, not
+        # gating: a type with REAL fields can legitimately re-encode to a
+        # different (still valid) DER byte sequence for the same value —
+        # this tests asn1c's own canonicalization behavior, not our
+        # codecs, so it's printed but never fails the target.
+        ber_asn1c2, _ = asn1c_x2b(asn1c_tools["tool"], pdu_type, xer_asn1c)
+        compare_ber("orig vs asn1c.X2B(asn1c.XER) [informational]", ber_orig, ber_asn1c2, verbose)
+    elif not skip_asn1c_reason:
+        print("  asn1c leg: skipped (not found or unsupported for this target)")
+
     if total_records == 0:
         print(f"  --- {schema_rel}::{pdu_type}: FAIL — no records compared (harness/parsing gap, not verified) ---")
         return False
@@ -441,11 +569,21 @@ def main():
     ap.add_argument("--target", default=None,
                      help="only run targets whose schema path or PDU type contains this substring")
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--asn1c-dir", default=None,
+                     help="directory containing the asn1c binary (overrides ASN1C_BIN_DIR/PATH search)")
+    ap.add_argument("--no-asn1c", action="store_true",
+                     help="skip the asn1c leg even if asn1c is found")
     opts = ap.parse_args()
 
     if not os.path.isfile(ASNCPP_BIN):
         print(f"asn1cpp compiler not built: {ASNCPP_BIN}\nRun: cmake --build {ASN1CPP_ROOT}/build")
         sys.exit(1)
+
+    asn1c_bin = None if opts.no_asn1c else find_asn1c(opts.asn1c_dir)
+    if asn1c_bin:
+        print(f"asn1c leg: ON  ({asn1c_bin})")
+    else:
+        print("asn1c leg: OFF (asn1c not found — set ASN1C_BIN_DIR or --asn1c-dir to enable)")
 
     targets = parse_targets(TARGETS_FILE)
     if opts.target:
@@ -457,8 +595,9 @@ def main():
     os.makedirs(TESTBUILD, exist_ok=True)
 
     results = []
-    for schema_rel, pdu_type in targets:
-        ok = run_target(schema_rel, pdu_type, opts.count, opts.seed, opts.verbose)
+    for schema_rel, pdu_type, skip_asn1c_reason in targets:
+        ok = run_target(schema_rel, pdu_type, opts.count, opts.seed, opts.verbose,
+                         asn1c_bin, skip_asn1c_reason)
         results.append((schema_rel, pdu_type, ok))
 
     print("\n=== Summary ===")
