@@ -249,7 +249,7 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "        *self = asn1cpp_ber::enumerated::decode_enumerated_content(content)?;\n";
         os << "        Ok(())\n";
         os << "    }\n\n";
-        os << "    fn xer_encode(&self, out: &mut String) {\n";
+        os << "    fn xer_encode(&self, out: &mut String, _depth: usize) {\n";
         os << std::format("        asn1cpp_ber::enumerated::xer_encode_enum(out, &{}, *self as i64);\n", map_ident);
         os << "    }\n\n";
         os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
@@ -260,11 +260,16 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // `<value-name/>` with no type-name wrapper and no X.693 §12
         // identifier override — `xer_encode`/`xer_decode_into` above
         // already write/read exactly that shape (xer_encode_enum/
-        // xer_decode_enum), so the seqof leg is a direct passthrough
-        // (mirrors SeqOfXerHandler's `edef.enum_spec` early-out,
-        // runtime/src/XerCodec.cpp).
-        os << "    fn xer_encode_seqof_element(&self, out: &mut String, _name_override: std::option::Option<&str>) {\n";
-        os << "        self.xer_encode(out);\n";
+        // xer_decode_enum). Unlike CHOICE (see the generated CHOICE type's
+        // own override further down), ENUMERATED still needs its own
+        // leading `\n` + indent here — its `TypeDescriptor` isn't
+        // CHOICE-shaped, so `SeqOfXerHandler`'s own `!edef.choice_spec`
+        // check (`runtime/src/XerCodec.cpp`) still writes that leading
+        // whitespace for it, same as any wrapped element.
+        os << "    fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, _name_override: std::option::Option<&str>) {\n";
+        os << "        out.push('\\n');\n";
+        os << "        out.push_str(&asn1cpp_ber::xer::indent(depth + 1));\n";
+        os << "        self.xer_encode(out, depth + 1);\n";
         os << "    }\n\n";
         os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_ber::xer::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_ber::DecodeError> {\n";
         os << "        self.xer_decode_into(r)\n";
@@ -458,8 +463,8 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_ber::DecodeError> {\n";
     os << "        self.0.ber_decode_content(content)\n";
     os << "    }\n\n";
-    os << "    fn xer_encode(&self, out: &mut String) {\n";
-    os << "        self.0.xer_encode(out);\n";
+    os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
+    os << "        self.0.xer_encode(out, depth);\n";
     os << "    }\n\n";
     os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
     os << "        self.0.xer_decode_into(r)\n";
@@ -633,11 +638,11 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // the _named variant (ignored by ENUMERATED/CHOICE/NULL elements —
     // see Asn1Value::xer_encode_seqof_element's own doc, rust-runtime/ber).
     os << "\n";
-    os << "    fn xer_encode(&self, out: &mut String) {\n";
+    os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
     if (spec.elem_xer_name) {
-        os << std::format("        asn1cpp_ber::sequence::encode_seq_of_xer_named(out, &self.0, Some(\"{}\"));\n", *spec.elem_xer_name);
+        os << std::format("        asn1cpp_ber::sequence::encode_seq_of_xer_named(out, &self.0, depth, Some(\"{}\"));\n", *spec.elem_xer_name);
     } else {
-        os << "        asn1cpp_ber::sequence::encode_seq_of_xer(out, &self.0);\n";
+        os << "        asn1cpp_ber::sequence::encode_seq_of_xer(out, &self.0, depth);\n";
     }
     os << "    }\n\n";
     os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
@@ -1099,8 +1104,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << std::format("        *self = asn1cpp_ber::sequence::decode_sequence_content(&{}, &mut r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n\n";
-        os << "    fn xer_encode(&self, out: &mut String) {\n";
-        os << std::format("        asn1cpp_ber::xer::encode_sequence_xer_into(&{}, self, out);\n", spec_ident);
+        os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
+        os << std::format("        asn1cpp_ber::xer::encode_sequence_xer_into(&{}, self, out, depth);\n", spec_ident);
         os << "    }\n\n";
         os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
         os << std::format("        *self = asn1cpp_ber::xer::decode_sequence_xer_from(&{}, r)?;\n", spec_ident);
@@ -1304,6 +1309,25 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     os << "        } else { false },\n";
                 }
             };
+            // `xer_encode` carries a third (`depth: usize`) parameter no
+            // other closure field here does (`AlternativeSpec::xer_encode`'s
+            // own doc, choice.rs) — a dedicated emitter, not another
+            // `emit_encode_closure` parameter, since every call site wants
+            // the exact same fixed shape (`x, out, depth`), never a mix.
+            auto emit_xer_encode_closure = [&](const std::string& body_line) {
+                os << std::format("        xer_encode: |x, out, depth| ");
+                if (single_alt) {
+                    os << std::format("{{\n            let {}::{}(v) = x;\n", spec.type_name, vname);
+                    os << std::format("            {}\n", body_line);
+                    os << "            true\n";
+                    os << "        },\n";
+                } else {
+                    os << std::format("if let {}::{}(v) = x {{\n", spec.type_name, vname);
+                    os << std::format("            {}\n", body_line);
+                    os << "            true\n";
+                    os << "        } else { false },\n";
+                }
+            };
             os << "    asn1cpp_ber::choice::AlternativeSpec {\n";
             os << std::format("        name: \"{}\",\n", a.asn1_name);
             if (!choice_alternative_covered(a)) {
@@ -1316,12 +1340,13 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // when this specific variant is the active one and decode
                 // dispatch only reaches this row when its own tag matched.
                 os << std::format("        tag: {},\n", row.tag_lit);
-                // Not `emit_encode_closure`: its body binds `v` (the
-                // matched variant's inner value) and receives `out`, both
-                // unused here (`unimplemented!()` needs neither), which
-                // would warn under this crate's `-D warnings` bar.
-                auto emit_stub_encode_closure = [&](const char* field) {
-                    os << std::format("        {}: |x, _out| ", field);
+                // Not `emit_encode_closure`/`emit_xer_encode_closure`: their
+                // bodies bind `v` (the matched variant's inner value) and
+                // receive `out`/`depth`, all unused here (`unimplemented!()`
+                // needs none of them), which would warn under this crate's
+                // `-D warnings` bar.
+                auto emit_stub_encode_closure = [&](const char* field, const char* params = "x, _out") {
+                    os << std::format("        {}: |{}| ", field, params);
                     if (single_alt) {
                         // unimplemented!() diverges (type `!`, unifies with
                         // `bool`) — no trailing `true` needed, and one would
@@ -1337,7 +1362,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 };
                 emit_stub_encode_closure("ber_encode");
                 os << std::format("        ber_decode_into: |_r| unimplemented!(\"alternative not yet supported\"),\n");
-                emit_stub_encode_closure("xer_encode");
+                emit_stub_encode_closure("xer_encode", "x, _out, _depth");
                 os << std::format("        xer_decode_into: |_r| unimplemented!(\"alternative not yet supported\"),\n");
                 os << "    },\n";
                 continue;
@@ -1390,7 +1415,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
                 os << "        },\n";
             }
-            emit_encode_closure("xer_encode", "asn1cpp_ber::value::Asn1Value::xer_encode(v, out);");
+            emit_xer_encode_closure("asn1cpp_ber::value::Asn1Value::xer_encode(v, out, depth);");
             os << "        xer_decode_into: |r| {\n";
             os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
             os << "            asn1cpp_ber::value::Asn1Value::xer_decode_into(&mut v, r)?;\n";
@@ -1467,8 +1492,20 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << std::format("        *self = asn1cpp_ber::choice::decode_choice_from(&{}, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n\n";
-        os << "    fn xer_encode(&self, out: &mut String) {\n";
-        os << std::format("        asn1cpp_ber::choice::encode_choice_xer_into(&{}, self, out);\n", spec_ident);
+        // `encode_choice_xer_into` deliberately ends right after the
+        // chosen alternative's own closing tag — no trailing `\n` +
+        // `indent(depth)` (its own doc, rust-runtime/ber/src/choice.rs).
+        // A CHOICE-typed member's own wrapper (`<mname>`, written by
+        // `encode_sequence_xer_content`) does immediately follow, so
+        // `xer_encode` itself (used for exactly that context) adds that
+        // trailing bit here — mirrors `SequenceXerHandler`'s own
+        // CHOICE-typed-member special case in C++, which writes its own
+        // `s.indent(1) << "</" << mbr.name` closing line external to
+        // `ChoiceXerHandler` for the very same reason.
+        os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
+        os << std::format("        asn1cpp_ber::choice::encode_choice_xer_into(&{}, self, out, depth);\n", spec_ident);
+        os << "        out.push('\\n');\n";
+        os << "        out.push_str(&asn1cpp_ber::xer::indent(depth));\n";
         os << "    }\n\n";
         os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
         os << std::format("        *self = asn1cpp_ber::choice::decode_choice_xer_from(&{}, r)?;\n", spec_ident);
@@ -1476,12 +1513,18 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "    }\n\n";
         // X.693: as a SEQUENCE OF/SET OF element, a CHOICE has no wrapper
         // of its own — the chosen alternative's own tag already serves as
-        // the element tag (`encode_choice_xer_into`/`decode_choice_xer_from`
-        // above write/read that tag directly), so the seqof leg is a
-        // direct passthrough (mirrors `ChoiceXerHandler` never adding an
-        // outer wrapper, runtime/src/XerCodec.cpp).
-        os << "    fn xer_encode_seqof_element(&self, out: &mut String, _name_override: std::option::Option<&str>) {\n";
-        os << "        self.xer_encode(out);\n";
+        // the element tag, so this calls `encode_choice_xer_into` directly,
+        // *not* `self.xer_encode` (whose trailing bit above is specific to
+        // the member-wrapper case — no per-element wrapper follows a
+        // SEQUENCE OF/SET OF element for it to position). The trailing
+        // `\n` here instead matches `ChoiceXerHandler`'s own unconditional
+        // "always end with `\n`" convention (`encode_choice_xer_into`'s own
+        // doc, rust-runtime/ber/src/choice.rs) — `encode_seq_of_xer_named`
+        // (sequence.rs) checks for it to avoid doubling up with its own
+        // trailing separator.
+        os << "    fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, _name_override: std::option::Option<&str>) {\n";
+        os << std::format("        asn1cpp_ber::choice::encode_choice_xer_into(&{}, self, out, depth + 1);\n", spec_ident);
+        os << "        out.push('\\n');\n";
         os << "    }\n\n";
         os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_ber::xer::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_ber::DecodeError> {\n";
         os << "        self.xer_decode_into(r)\n";

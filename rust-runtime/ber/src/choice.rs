@@ -82,7 +82,8 @@ pub struct AlternativeSpec<T: 'static> {
     pub tag: Tag,
     pub ber_encode: fn(&T, &mut Vec<u8>) -> bool,
     pub ber_decode_into: fn(&mut Reader) -> Result<T, DecodeError>,
-    pub xer_encode: fn(&T, &mut String) -> bool,
+    /// `depth` — see `encode_choice_xer_into`'s own doc for what it means here.
+    pub xer_encode: fn(&T, &mut String, usize) -> bool,
     pub xer_decode_into: fn(&mut XerReader) -> Result<T, DecodeError>,
 }
 
@@ -201,33 +202,56 @@ pub fn decode_choice_from<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, 
 }
 
 /// Generic CHOICE XER encoder — the Rust analogue of
-/// `ChoiceXerHandler::encode`. Tries each alternative's `xer_encode` in
-/// table order; the first match wins, wrapped in `<name>...</name>` by this
-/// function (not `xer_encode` itself — see `AlternativeSpec`'s doc).
-/// Matches the C++ side's exact non-nested-alternative output shape:
+/// `ChoiceXerHandler::encode`, top-level entry point (a generated CHOICE
+/// type's own `.encode_xer()`). Just `encode_choice_xer_into` at depth 0 —
+/// matches the C++ side's exact non-nested-alternative output shape:
 /// `\n    <name>value</name>` (leading newline + one indent level, no
 /// trailing newline) — verified against the real C++ runtime, not derived
 /// from reading the handler alone.
 pub fn encode_choice_xer<T>(spec: &ChoiceSpec<T>, value: &T) -> String {
     let mut out = String::new();
-    out.push('\n');
-    out.push_str("    ");
-    encode_choice_xer_into(spec, value, &mut out);
+    encode_choice_xer_into(spec, value, &mut out, 0);
     out
 }
 
 /// Appends a CHOICE's XER content (whichever alternative's own
 /// `<name>value</name>` — CHOICE has no outer wrapper, see module doc) to
-/// an existing buffer, with no leading newline/indent — the shape
-/// `Asn1Value::xer_encode` needs (content only, the *member's* own wrapper
-/// tag and any indentation is the caller's job) so a generated CHOICE type
-/// can implement that trait leg and become usable as a nested composite
-/// member. `encode_choice_xer` (above) is the top-level, human-formatted
-/// entry point; this is its content-only core.
-pub fn encode_choice_xer_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut String) {
+/// an existing buffer — the shape `Asn1Value::xer_encode` needs (content
+/// only, the *member's* own wrapper tag — if any; CHOICE itself needs
+/// none — is the caller's job) so a generated CHOICE type can implement
+/// that trait leg and become usable as a nested composite member.
+///
+/// `depth` is *this CHOICE's own* depth — same "argument = my position"
+/// convention `Asn1Value::xer_encode` uses everywhere else (see
+/// `encode_sequence_xer_content`'s own doc, `xer.rs`, for the fullest
+/// explanation). The chosen alternative's own wrapper tag is written one
+/// level deeper (`depth + 1`), its inner content one level deeper again
+/// (`depth + 2`, passed as `depth + 1` to the alternative's own
+/// `xer_encode` closure — consistent since that closure's own `depth`
+/// argument means "my position", same as everywhere else).
+///
+/// Deliberately no trailing `\n` + `indent(depth)` here — unlike every
+/// other composite's own content function (`encode_sequence_xer_content`,
+/// `encode_seq_of_xer_named`), matching `ChoiceXerHandler::encode`
+/// (`runtime/src/XerCodec.cpp`) exactly: it ends right after the chosen
+/// alternative's own `</altname>\n`, nothing more — a CHOICE genuinely has
+/// no wrapper of its own (module doc) for anything to trail. The generated
+/// CHOICE type's own `Asn1Value::xer_encode` impl (`RustBackend.cpp`) adds
+/// that trailing bit itself, exactly the way `SequenceXerHandler`'s own
+/// CHOICE-typed-member special case does in C++ (writes the *member's*
+/// `s.indent(1) << "</" << mbr.name` closing line itself, external to
+/// `ChoiceXerHandler`) — necessary there since a `<mname>` wrapper
+/// (written by the enclosing SEQUENCE) does follow immediately. A SEQUENCE
+/// OF/SET OF element has no such per-element wrapper to position for
+/// (`Asn1Value::xer_encode_seqof_element`'s CHOICE override, `value.rs`,
+/// calls this function directly, bypassing `xer_encode`'s extra trailing
+/// bit) — confirmed against a real schema (`Messaging-Property ::= CHOICE`
+/// used as a `SET OF` element): including it there produced a spurious
+/// blank line between/after consecutive CHOICE elements.
+pub fn encode_choice_xer_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut String, depth: usize) {
     for alt in spec.alternatives {
         let mut inner = String::new();
-        if (alt.xer_encode)(value, &mut inner) {
+        if (alt.xer_encode)(value, &mut inner, depth + 1) {
             // Always paired, never self-closing, regardless of content —
             // matches `NullXerHandler::encode`'s literal-name special case
             // (`def.name == "NULL"`): a CHOICE alternative's wrapper name
@@ -239,6 +263,8 @@ pub fn encode_choice_xer_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut Stri
             // too) — the asymmetry is real, not a bug: round-tripping a
             // self-closing input through this encoder legitimately
             // produces different (but equivalent) output.
+            out.push('\n');
+            out.push_str(&crate::xer::indent(depth + 1));
             write_open_tag(out, alt.name);
             out.push_str(&inner);
             write_close_tag(out, alt.name);
@@ -315,9 +341,9 @@ static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
             v.ber_decode_into(r)?;
             Ok(Choice::Num(v))
         },
-        xer_encode: |x, out| {
+        xer_encode: |x, out, depth| {
             if let Choice::Num(v) = x {
-                v.xer_encode(out);
+                v.xer_encode(out, depth);
                 true
             } else {
                 false
@@ -345,9 +371,9 @@ static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
             v.ber_decode_into(r)?;
             Ok(Choice::Data(v))
         },
-        xer_encode: |x, out| {
+        xer_encode: |x, out, depth| {
             if let Choice::Data(v) = x {
-                v.xer_encode(out);
+                v.xer_encode(out, depth);
                 true
             } else {
                 false
@@ -476,7 +502,7 @@ impl Choice {
                 let v: Vec<u8> = crate::value::decode_explicit(r, TAG_1)?;
                 Ok(TwoOctetsExplicit::First(v))
             },
-            xer_encode: |_, _| false,
+            xer_encode: |_, _, _| false,
             xer_decode_into: |_| Err(DecodeError::new("xer not exercised in this test", 0)),
         },
         AlternativeSpec {
@@ -494,7 +520,7 @@ impl Choice {
                 let v: Vec<u8> = crate::value::decode_explicit(r, TAG_2)?;
                 Ok(TwoOctetsExplicit::Second(v))
             },
-            xer_encode: |_, _| false,
+            xer_encode: |_, _, _| false,
             xer_decode_into: |_| Err(DecodeError::new("xer not exercised in this test", 0)),
         },
     ];
@@ -557,7 +583,7 @@ impl Choice {
             let v = crate::integer::read_integer_tagged(r, NUM_TAG)?;
             Ok(ExtChoice::Num(v))
         },
-        xer_encode: |_, _| false,
+        xer_encode: |_, _, _| false,
         xer_decode_into: |_| Err(DecodeError::new("xer not exercised in this test", 0)),
     }];
 
@@ -641,7 +667,7 @@ impl Choice {
                 Asn1Value::ber_decode_into_tagged(&mut v, r, INNER_A_TAG)?;
                 Ok(Inner::A(v))
             },
-            xer_encode: |x, out| if let Inner::A(v) = x { v.xer_encode(out); true } else { false },
+            xer_encode: |x, out, depth| if let Inner::A(v) = x { v.xer_encode(out, depth); true } else { false },
             xer_decode_into: |r| {
                 let mut v: i64 = Default::default();
                 v.xer_decode_into(r)?;
@@ -660,7 +686,7 @@ impl Choice {
                 Asn1Value::ber_decode_into_tagged(&mut v, r, INNER_B_TAG)?;
                 Ok(Inner::B(v))
             },
-            xer_encode: |x, out| if let Inner::B(v) = x { v.xer_encode(out); true } else { false },
+            xer_encode: |x, out, depth| if let Inner::B(v) = x { v.xer_encode(out, depth); true } else { false },
             xer_decode_into: |r| {
                 let mut v: i64 = Default::default();
                 v.xer_decode_into(r)?;
@@ -681,7 +707,11 @@ impl Choice {
             *self = decode_choice_from(&INNER_SPEC, r)?;
             Ok(())
         }
-        fn xer_encode(&self, out: &mut String) { encode_choice_xer_into(&INNER_SPEC, self, out); }
+        fn xer_encode(&self, out: &mut String, depth: usize) {
+            encode_choice_xer_into(&INNER_SPEC, self, out, depth);
+            out.push('\n');
+            out.push_str(&crate::xer::indent(depth));
+        }
         fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
             *self = decode_choice_xer_from(&INNER_SPEC, r)?;
             Ok(())
@@ -723,7 +753,7 @@ impl Choice {
                 Asn1Value::ber_decode_into(&mut v, r)?;
                 Ok(Outer::Wrapped(v))
             },
-            xer_encode: |x, out| if let Outer::Wrapped(v) = x { Asn1Value::xer_encode(v, out); true } else { false },
+            xer_encode: |x, out, depth| if let Outer::Wrapped(v) = x { Asn1Value::xer_encode(v, out, depth); true } else { false },
             xer_decode_into: |r| {
                 let mut v = Inner::default();
                 Asn1Value::xer_decode_into(&mut v, r)?;
@@ -739,7 +769,7 @@ impl Choice {
                 Asn1Value::ber_decode_into(&mut v, r)?;
                 Ok(Outer::Wrapped(v))
             },
-            xer_encode: |x, out| if let Outer::Wrapped(v) = x { Asn1Value::xer_encode(v, out); true } else { false },
+            xer_encode: |x, out, depth| if let Outer::Wrapped(v) = x { Asn1Value::xer_encode(v, out, depth); true } else { false },
             xer_decode_into: |r| {
                 let mut v = Inner::default();
                 Asn1Value::xer_decode_into(&mut v, r)?;
@@ -758,7 +788,7 @@ impl Choice {
                 Asn1Value::ber_decode_into_tagged(&mut v, r, OUTER_DIRECT_TAG)?;
                 Ok(Outer::Direct(v))
             },
-            xer_encode: |x, out| if let Outer::Direct(v) = x { v.xer_encode(out); true } else { false },
+            xer_encode: |x, out, depth| if let Outer::Direct(v) = x { v.xer_encode(out, depth); true } else { false },
             xer_decode_into: |r| {
                 let mut v: Vec<u8> = Default::default();
                 v.xer_decode_into(r)?;
@@ -816,7 +846,7 @@ impl Choice {
                 let tlv = r.read_tlv()?;
                 Ok(Solo::V(tlv.value[0]))
             },
-            xer_encode: |_, _| false,
+            xer_encode: |_, _, _| false,
             xer_decode_into: |_| Err(DecodeError::new("not exercised in this test", 0)),
         }];
         static SPEC: ChoiceSpec<Solo> = ChoiceSpec { alternatives: &ROW, unknown_extension: None };
