@@ -46,15 +46,4 @@ struct BerTraits<Boolean> {
     }
 };
 
-template<>
-struct BerTraits<bool> {
-    static constexpr Tag tag() { return BerTraits<Boolean>::tag(); }
-    static void encode(BerWriter& w, bool v) { BerTraits<Boolean>::encode(w, Boolean{v}); }
-    static Expected<bool, DecodeError> decode(BerReader& r) {
-        auto r2 = BerTraits<Boolean>::decode(r);
-        if (!r2) return make_unexpected<bool, DecodeError>(r2.error());
-        return r2->value();
-    }
-};
-
 } // namespace asn1
