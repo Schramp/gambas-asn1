@@ -1189,7 +1189,16 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
             throw std::runtime_error(std::format(
                 "RustBackend: CHOICE '{}' — alternatives '{}' and '{}' both map to Rust variant '{}'",
                 spec.type_name, it->second, a.asn1_name, vname));
-        os << std::format("    {}({}),\n", vname, rust_seqof_alt_mtype(a.mtype));
+        // A directly self-referential alternative (a.mtype == the CHOICE's
+        // own name, X.680 §28 permits this — e.g. a tree-shaped message)
+        // needs a Box: an unboxed variant makes the enum an infinite-size
+        // recursive type (rustc E0072). The C++ side hits the analogous
+        // problem for a different reason (val_storage_'s sizeof/alignof on
+        // its own still-incomplete type) and box for the same reason — see
+        // CppBackend::emit_choice_declaration's val_storage_ comment.
+        bool boxed = (a.mtype == spec.type_name);
+        os << std::format("    {}({}{}{}),\n", vname,
+                          boxed ? "Box<" : "", rust_seqof_alt_mtype(a.mtype), boxed ? ">" : "");
     }
     // A `...`-marked CHOICE (X.680 §29.6) promises a future schema revision
     // may add alternatives this compiler run never saw. Every real
@@ -1321,6 +1330,21 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         for (const auto& row : rows) {
             const auto& a = *row.alt;
             std::string vname = variant_name(*this, a.asn1_name);
+            // Directly self-referential alternative (see
+            // emit_choice_declaration's Box<> comment) — `v` binds as
+            // `&Box<Self>`/`&mut Box<Self>` here, but every body_line below
+            // was written assuming `v: &Self`/`&mut Self` (the unboxed
+            // shape every other alternative has). Reborrowing through one
+            // extra deref right after the match keeps every body_line
+            // untouched instead of special-casing each one.
+            bool boxed = (a.mtype == spec.type_name);
+            const char* box_deref = boxed ? "            let v = &**v;\n" : "";
+            // Decode side: `v` is built as a plain (unboxed) local above
+            // every `Ok(...)` line below — only the final construction into
+            // the enum variant needs boxing.
+            std::string ok_variant = boxed
+                ? std::format("Ok({}::{}(Box::new(v)))", spec.type_name, vname)
+                : std::format("Ok({}::{}(v))", spec.type_name, vname);
             // gambas-asn1#313: same single-alternative special-case as
             // emit_choice_definition's accessor functions above — an
             // `if let ... = x { ... } else { false }` is irrefutable when
@@ -1331,11 +1355,13 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << std::format("        {}: |x, out| ", field);
                 if (single_alt) {
                     os << std::format("{{\n            let {}::{}(v) = x;\n", spec.type_name, vname);
+                    os << box_deref;
                     os << std::format("            {}\n", body_line);
                     os << "            true\n";
                     os << "        },\n";
                 } else {
                     os << std::format("if let {}::{}(v) = x {{\n", spec.type_name, vname);
+                    os << box_deref;
                     os << std::format("            {}\n", body_line);
                     os << "            true\n";
                     os << "        } else { false },\n";
@@ -1350,11 +1376,13 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << std::format("        xer_encode: |x, out, depth| ");
                 if (single_alt) {
                     os << std::format("{{\n            let {}::{}(v) = x;\n", spec.type_name, vname);
+                    os << box_deref;
                     os << std::format("            {}\n", body_line);
                     os << "            true\n";
                     os << "        },\n";
                 } else {
                     os << std::format("if let {}::{}(v) = x {{\n", spec.type_name, vname);
+                    os << box_deref;
                     os << std::format("            {}\n", body_line);
                     os << "            true\n";
                     os << "        } else { false },\n";
@@ -1415,7 +1443,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 emit_encode_closure("ber_encode", std::format("asn1cpp_ber::value::encode_explicit(out, {}, v);", row.tag_lit));
                 os << "        ber_decode_into: |r| {\n";
                 os << std::format("            let v: {} = asn1cpp_ber::value::decode_explicit(r, {})?;\n", rust_seqof_alt_mtype(a.mtype), row.tag_lit);
-                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+                os << std::format("            {}\n", ok_variant);
                 os << "        },\n";
             } else if (a.resolved_tag && a.is_explicit) {
                 // A bare type reference (no `[n]` of its own) to a type that
@@ -1430,7 +1458,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << "        ber_decode_into: |r| {\n";
                 os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
                 os << "            asn1cpp_ber::value::Asn1Value::ber_decode_into(&mut v, r)?;\n";
-                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+                os << std::format("            {}\n", ok_variant);
                 os << "        },\n";
             } else if (a.resolved_tag) {
                 // Every other tagged alternative — whether IMPLICIT-retagged
@@ -1447,7 +1475,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << "        ber_decode_into: |r| {\n";
                 os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
                 os << std::format("            asn1cpp_ber::value::Asn1Value::ber_decode_into_tagged(&mut v, r, {})?;\n", row.tag_lit);
-                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+                os << std::format("            {}\n", ok_variant);
                 os << "        },\n";
             } else {
                 // No tag of its own at all (X.680 §28 — a CHOICE-of-CHOICE
@@ -1465,14 +1493,14 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 os << "        ber_decode_into: |r| {\n";
                 os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
                 os << "            asn1cpp_ber::value::Asn1Value::ber_decode_into(&mut v, r)?;\n";
-                os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+                os << std::format("            {}\n", ok_variant);
                 os << "        },\n";
             }
             emit_xer_encode_closure("asn1cpp_ber::value::Asn1Value::xer_encode(v, out, depth);");
             os << "        xer_decode_into: |r| {\n";
             os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
             os << "            asn1cpp_ber::value::Asn1Value::xer_decode_into(&mut v, r)?;\n";
-            os << std::format("            Ok({}::{}(v))\n", spec.type_name, vname);
+            os << std::format("            {}\n", ok_variant);
             os << "        },\n";
             os << "    },\n";
         }
