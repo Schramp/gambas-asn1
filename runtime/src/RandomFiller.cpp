@@ -518,8 +518,66 @@ void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
                                    cfg_.min_str_len, cfg_.max_str_len);
         int len = rand_int(lo, hi);
         std::vector<uint8_t> b(len);
-        for (auto& byte : b)
-            byte = static_cast<uint8_t>(rand_int(0, 255));
+        if (def.xer_encoding == XerEncoding::Utf8) {
+            // ENCODING-CONTROL XER `::= utf8` (X.693 §21, gambas-asn1#443):
+            // the field's own contract is "content octets are valid UTF-8
+            // text" — arbitrary random bytes almost never honor that
+            // (multi-byte sequences need specific continuation-byte
+            // patterns), and a codec correctly round-tripping *malformed*
+            // "UTF-8" text has no well-defined byte-for-byte behavior to
+            // even test against (X.693 doesn't define one either). Mix
+            // printable ASCII, X.680 §11.15.5 Table 3 control characters
+            // (exercises the <dc3/>-style empty-element escape path), and
+            // multi-byte code points up to the emoji/supplementary-plane
+            // range (exercises real UTF-8 byte-pass-through, not just
+            // 1-byte ASCII) — built unit-by-unit so the total stays
+            // exactly `len` octets without ever splitting a code point.
+            b.clear();
+            b.reserve(len);
+            while (static_cast<int>(b.size()) < len) {
+                int remaining = len - static_cast<int>(b.size());
+                int roll = rand_int(0, 99);
+                if (roll < 60 || remaining < 2) {
+                    b.push_back(static_cast<uint8_t>(rand_int(0x20, 0x7E)));
+                } else if (roll < 75) {
+                    // Table 3 control char — excludes 9/10/13 (tab/LF/CR),
+                    // which the table's own NOTE passes through literally
+                    // rather than as an empty-element tag (spec-correct,
+                    // but a raw embedded newline defeats every line-based
+                    // XER test tool this repo has, asn1cpp's own and
+                    // asn1cpp-validation-tools/xval_sweep alike — not
+                    // interesting to exercise here anyway, since the
+                    // literal-passthrough case needs no special handling
+                    // to begin with).
+                    uint8_t c;
+                    do { c = static_cast<uint8_t>(rand_int(0, 31)); }
+                    while (c == 9 || c == 10 || c == 13);
+                    b.push_back(c);
+                } else if (roll < 85 && remaining >= 2) {
+                    uint32_t cp = static_cast<uint32_t>(rand_int(0xA0, 0x3FF));
+                    b.push_back(static_cast<uint8_t>(0xC0 | (cp >> 6)));
+                    b.push_back(static_cast<uint8_t>(0x80 | (cp & 0x3F)));
+                } else if (roll < 95 && remaining >= 3) {
+                    uint32_t cp;
+                    do { cp = static_cast<uint32_t>(rand_int(0x800, 0xFFFF)); }
+                    while (cp >= 0xD800 && cp <= 0xDFFF); // exclude surrogate range
+                    b.push_back(static_cast<uint8_t>(0xE0 | (cp >> 12)));
+                    b.push_back(static_cast<uint8_t>(0x80 | ((cp >> 6) & 0x3F)));
+                    b.push_back(static_cast<uint8_t>(0x80 | (cp & 0x3F)));
+                } else if (remaining >= 4) {
+                    uint32_t cp = static_cast<uint32_t>(rand_int(0x1F300, 0x1FAFF)); // emoji block
+                    b.push_back(static_cast<uint8_t>(0xF0 | (cp >> 18)));
+                    b.push_back(static_cast<uint8_t>(0x80 | ((cp >> 12) & 0x3F)));
+                    b.push_back(static_cast<uint8_t>(0x80 | ((cp >> 6) & 0x3F)));
+                    b.push_back(static_cast<uint8_t>(0x80 | (cp & 0x3F)));
+                } else {
+                    b.push_back(static_cast<uint8_t>(rand_int(0x20, 0x7E))); // budget filler
+                }
+            }
+        } else {
+            for (auto& byte : b)
+                byte = static_cast<uint8_t>(rand_int(0, 255));
+        }
         static_cast<OctetString*>(obj)->set(std::move(b));
         break;
     }

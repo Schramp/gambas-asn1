@@ -58,7 +58,11 @@ struct MarkerInfo {
 };
 
 // XER encoding instruction (X.693 §21): affects how the value is serialised in XER.
-enum class XerEncoding { Default, Base64 };
+// Utf8 (ENCODING-CONTROL XER `TypeName OCTET STRING ::= utf8`, gambas-asn1#443):
+// content octets are interpreted as UTF-8 text and emitted directly as XML
+// character data (X.680 §11.15's control-character/entity escaping applies),
+// not hex/base64.
+enum class XerEncoding { Default, Base64, Utf8 };
 
 // --- The main TypeDef node ---------------------------------------------------
 struct TypeDef : Node {

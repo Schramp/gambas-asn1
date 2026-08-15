@@ -39,14 +39,29 @@ pub fn escape(s: &str, out: &mut String) {
 /// input may contain (`&quot;`, `&apos;`, `&#NN;`, `&#xNN;`). Mirrors
 /// `xer_detail::xer_unescape` — unrecognized `&...;` sequences pass through
 /// literally rather than erroring, same as the C++ side.
+///
+/// Batches runs of non-`&` bytes instead of pushing byte-by-byte: `byte as
+/// char` on a raw `u8` is a *Latin-1* cast, not "reinterpret this byte as
+/// UTF-8" — for any byte ≥ 0x80 (a UTF-8 continuation/lead byte) it pushes
+/// the wrong codepoint, which Rust then re-encodes as a *different*,
+/// wrong multi-byte sequence, corrupting any non-ASCII character in the
+/// input (silently, since the result is still "valid" UTF-8 — just not
+/// the same bytes). `s: &str` is already guaranteed valid UTF-8 at the
+/// type level, and `&` (0x26) can only ever appear as a genuine standalone
+/// ASCII character in valid UTF-8, never as a continuation byte — so
+/// slicing `s` at any byte offset landing on a literal `&` is always a
+/// valid char boundary, making the batched slice trivially safe.
 pub fn unescape(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] != b'&' {
-            out.push(bytes[i] as char);
-            i += 1;
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'&' {
+                i += 1;
+            }
+            out.push_str(&s[start..i]);
             continue;
         }
         let mut end = i + 1;
@@ -435,6 +450,19 @@ mod tests {
         let mut escaped = String::new();
         escape(original, &mut escaped);
         assert_eq!(unescape(&escaped), original);
+    }
+
+    #[test]
+    fn unescape_preserves_multi_byte_utf8() {
+        // Regression test: byte-by-byte `bytes[i] as char` corrupts any
+        // byte >= 0x80 (a Latin-1 cast, not a UTF-8 reinterpretation) —
+        // caught via gambas-asn1#443's utf8 XER instruction work, but this
+        // bug predates it and affects every Rust-decoded XER string field
+        // with non-ASCII content (strings.rs calls unescape too).
+        assert_eq!(unescape("caf\u{00e9}"), "caf\u{00e9}"); // 2-byte (é)
+        assert_eq!(unescape("\u{4e2d}\u{6587}"), "\u{4e2d}\u{6587}"); // 3-byte (中文)
+        assert_eq!(unescape("\u{1f600}"), "\u{1f600}"); // 4-byte emoji (😀)
+        assert_eq!(unescape("a\u{1f600}&amp;\u{00e9}b"), "a\u{1f600}&\u{00e9}b");
     }
 
     #[test]
