@@ -1176,6 +1176,38 @@ target_link_libraries(test_self_ref_choice PRIVATE asn1cpp_runtime)
 add_test(NAME self_ref_choice COMMAND test_self_ref_choice)
 set_tests_properties(self_ref_choice PROPERTIES TIMEOUT 30)
 
+# test_nested_choice_201 — deeply nested anonymous CHOICE-in-CHOICE,
+# AUTOMATIC TAGS collision on a promoted type (#450)
+set(NESTED_CHOICE_201_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_nested_choice_201_test)
+set(NESTED_CHOICE_201_TYPES HandoverCommand HandoverCommandCriticalExtensions
+    HandoverCommandCriticalExtensionsR8 HandoverCommandCriticalExtensionsCriticalExtensions
+    HandoverCommandCriticalExtensionsCriticalExtensionsR11
+    HandoverCommandCriticalExtensionsCriticalExtensionsCriticalExtensions)
+set(_nc201_outputs)
+foreach(t IN LISTS NESTED_CHOICE_201_TYPES)
+    list(APPEND _nc201_outputs ${NESTED_CHOICE_201_GEN_DIR}/${t}.hpp ${NESTED_CHOICE_201_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_nc201_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${NESTED_CHOICE_201_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/201-nested-choice-name-collision-OK.asn1
+                                   -o ${NESTED_CHOICE_201_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/201-nested-choice-name-collision-OK.asn1
+    COMMENT "Generating C++ from 201-nested-choice-name-collision-OK.asn1"
+)
+set(_nc201_cpps)
+foreach(t IN LISTS NESTED_CHOICE_201_TYPES)
+    list(APPEND _nc201_cpps ${NESTED_CHOICE_201_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_nested_choice_201
+    seq/test_nested_choice_201.cpp
+    ${_nc201_cpps}
+)
+target_include_directories(test_nested_choice_201 PRIVATE ${NESTED_CHOICE_201_GEN_DIR})
+target_link_libraries(test_nested_choice_201 PRIVATE asn1cpp_runtime)
+add_test(NAME nested_choice_201 COMMAND test_nested_choice_201)
+set_tests_properties(nested_choice_201 PROPERTIES TIMEOUT 30)
+
 # test_random_roundtrip — randomised BER/XER round-trip for all primitive types (issue #29)
 set(ROUNDTRIP_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_roundtrip_test)
 set(ROUNDTRIP_TYPES Container ContainerItems Primitives Item PrimEnum)
