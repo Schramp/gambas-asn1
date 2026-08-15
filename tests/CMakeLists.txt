@@ -1525,6 +1525,30 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_XV202_GEN_DIR=${RUST_XV202_GEN_DIR}")
 endif()
 
+# Rust leg of the deeply nested anonymous CHOICE-in-CHOICE regression
+# (201-nested-choice-name-collision-OK.asn1, #437) — see
+# tests/rust/nested_choice_201/src/main.rs for the full rationale.
+set(RUST_NC201_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_nested_choice_201)
+add_custom_command(
+    OUTPUT  ${RUST_NC201_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_NC201_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/201-nested-choice-name-collision-OK.asn1
+                                   -o ${RUST_NC201_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/201-nested-choice-name-collision-OK.asn1
+    COMMENT "Generating Rust from 201-nested-choice-name-collision-OK.asn1"
+)
+add_custom_target(gen_rust_nested_choice_201 ALL DEPENDS ${RUST_NC201_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_nested_choice_201
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/nested_choice_201/Cargo.toml)
+    set_tests_properties(rust_nested_choice_201 PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_NC201_GEN_DIR=${RUST_NC201_GEN_DIR}")
+endif()
+
 # gambas-asn1#309: Rust-codegen sweep across tests/asn1/*.asn1 — the Rust
 # equivalent of validate_parser.py's C++ parser-conformance sweep (that one
 # lives outside this repo, asn1cpp-validation-tools/, because it also needs
