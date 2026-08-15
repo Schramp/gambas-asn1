@@ -876,11 +876,20 @@ void CppBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& o
 
     // val_storage_: raw byte buffer sized/aligned to the largest alternative.
     // val_ (in ChoiceInterface base) points here — set once in the constructor.
+    //
+    // A directly self-referential alternative (a.mtype == cname, X.680 §28
+    // permits this — e.g. a tree-shaped CHOICE) can't contribute sizeof(cname)/
+    // alignof(cname) here: cname is still incomplete at this point in its own
+    // class body. Use sizeof/alignof(std::unique_ptr<cname>) instead — fixed,
+    // pointer-sized, doesn't need cname complete — and box that one
+    // alternative (see the accessor loop below and emit_choice_definition's
+    // matching MemberDescriptor row).
     os << "    alignas(std::max({";
     { bool first = true;
       for (const auto& a : spec.alternatives) {
         if (!first) os << ", ";
-        os << std::format("alignof({})", a.mtype);
+        bool boxed = (a.mtype == cname);
+        os << std::format("alignof({})", boxed ? std::format("std::unique_ptr<{}>", cname) : a.mtype);
         first = false;
       }
       if (spec.count > 0) os << ", ";
@@ -889,7 +898,8 @@ void CppBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& o
     { bool first = true;
       for (const auto& a : spec.alternatives) {
         if (!first) os << ", ";
-        os << std::format("sizeof({})", a.mtype);
+        bool boxed = (a.mtype == cname);
+        os << std::format("sizeof({})", boxed ? std::format("std::unique_ptr<{}>", cname) : a.mtype);
         first = false;
       }
       if (spec.count > 0) os << ", ";
@@ -925,11 +935,23 @@ void CppBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& o
     os << "    void set_present(PR p);\n";
 
     for (const auto& a : spec.alternatives) {
-        os << std::format(
-            "    {0}& {1}() {{ return *std::launder(reinterpret_cast<{0}*>(val_)); }}\n", a.mtype, a.accessor_name);
-        os << std::format(
-            "    const {0}& {1}() const"
-            " {{ return *std::launder(reinterpret_cast<const {0}*>(val_)); }}\n", a.mtype, a.accessor_name);
+        if (a.mtype == cname) {
+            // Boxed (see the val_storage_ comment above): val_ holds a
+            // std::unique_ptr<cname>, not a cname — one extra deref.
+            os << std::format(
+                "    {0}& {1}() {{ return *std::launder(reinterpret_cast<std::unique_ptr<{0}>*>(val_))->get(); }}\n",
+                a.mtype, a.accessor_name);
+            os << std::format(
+                "    const {0}& {1}() const"
+                " {{ return *std::launder(reinterpret_cast<const std::unique_ptr<{0}>*>(val_))->get(); }}\n",
+                a.mtype, a.accessor_name);
+        } else {
+            os << std::format(
+                "    {0}& {1}() {{ return *std::launder(reinterpret_cast<{0}*>(val_)); }}\n", a.mtype, a.accessor_name);
+            os << std::format(
+                "    const {0}& {1}() const"
+                " {{ return *std::launder(reinterpret_cast<const {0}*>(val_)); }}\n", a.mtype, a.accessor_name);
+        }
     }
     if (spec.count > 0) {
         os << std::format("    static const asn1::MemberDescriptor s_alternatives[{}];\n", spec.count);
@@ -947,15 +969,33 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
     const std::string& cname = spec.type_name;
 
     if (!spec.alternatives.empty()) {
+        // Boxed (self-referential) alternatives need their own
+        // std::unique_ptr<cname>-flavoured TypeLifecycleOps (see
+        // emit_choice_declaration's val_storage_ comment) — emitted once
+        // here, referenced from that alternative's MemberDescriptor row below.
+        for (const auto& r : spec.alternatives) {
+            if (r.mtype == cname) {
+                os << std::format(
+                    "static const asn1::TypeLifecycleOps asn_BOXLC_{0}_{1} = asn1::TypeLifecycleOps(asn1::BoxedTypeTag<{0}>{{}});\n",
+                    cname, r.accessor_name);
+            }
+        }
         // Emit array (as class static member definition).
         os << std::format("const asn1::MemberDescriptor {}::s_alternatives[] = {{\n", cname);
         for (const auto& r : spec.alternatives) {
+            bool boxed = (r.mtype == cname);
             os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, {}, nullptr, nullptr,\n",
                 r.asn1_name, (r.resolved_tag ? format_tag_literal(*r.resolved_tag) : format_no_tag_literal()),
                 r.tdref, r.is_explicit ? "true" : "false",
                 (r.resolved_tag && !r.resolved_tag->tag_is_override) ? "false" : "true");
-            os << std::format("      &asn1::ChoiceOps<{0}>::get_mut, &asn1::ChoiceOps<{0}>::get_const }},\n",
-                r.mtype);
+            if (boxed) {
+                os << std::format(
+                    "      &asn1::BoxedChoiceOps<{0}>::get_mut, &asn1::BoxedChoiceOps<{0}>::get_const, &asn_BOXLC_{0}_{1} }},\n",
+                    r.mtype, r.accessor_name);
+            } else {
+                os << std::format("      &asn1::ChoiceOps<{0}>::get_mut, &asn1::ChoiceOps<{0}>::get_const }},\n",
+                    r.mtype);
+            }
         }
         os << "};\n";
         os << std::format("const int {}::s_alternative_count = {};\n\n", cname, spec.count);

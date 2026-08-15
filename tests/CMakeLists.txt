@@ -1156,6 +1156,26 @@ target_link_libraries(test_recursive_choice PRIVATE asn1cpp_runtime)
 add_test(NAME recursive_choice COMMAND test_recursive_choice)
 set_tests_properties(recursive_choice PROPERTIES TIMEOUT 30)
 
+# test_self_ref_choice — direct recursive CHOICE, alternative typed as the
+# enclosing CHOICE itself, no OPTIONAL indirection to break the cycle (#436)
+set(SELF_REF_CHOICE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_self_ref_choice_test)
+add_custom_command(
+    OUTPUT  ${SELF_REF_CHOICE_GEN_DIR}/RecChoice.hpp ${SELF_REF_CHOICE_GEN_DIR}/RecChoice.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SELF_REF_CHOICE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/self_ref_choice_test.asn1
+                                   -o ${SELF_REF_CHOICE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/self_ref_choice_test.asn1
+    COMMENT "Generating C++ from self_ref_choice_test.asn1"
+)
+add_executable(test_self_ref_choice
+    seq/test_self_ref_choice.cpp
+    ${SELF_REF_CHOICE_GEN_DIR}/RecChoice.cpp
+)
+target_include_directories(test_self_ref_choice PRIVATE ${SELF_REF_CHOICE_GEN_DIR})
+target_link_libraries(test_self_ref_choice PRIVATE asn1cpp_runtime)
+add_test(NAME self_ref_choice COMMAND test_self_ref_choice)
+set_tests_properties(self_ref_choice PROPERTIES TIMEOUT 30)
+
 # test_random_roundtrip — randomised BER/XER round-trip for all primitive types (issue #29)
 set(ROUNDTRIP_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_roundtrip_test)
 set(ROUNDTRIP_TYPES Container ContainerItems Primitives Item PrimEnum)
