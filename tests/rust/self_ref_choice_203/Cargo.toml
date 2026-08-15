@@ -1,0 +1,14 @@
+[package]
+name = "self-ref-choice-203-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "gambas-asn1#447: a directly self-referential CHOICE alternative (203-automatic-tags-OK.asn1's RecChoice ::= [0] CHOICE { a INTEGER, b INTEGER, c RecChoice }) generated a plain (un-boxed) enum variant, which rustc rejects as an infinite-size recursive type (E0072). Pulls generated .rs from ASN1CPP_RUST_SRC203_GEN_DIR (set by tests/CMakeLists.txt's rust_self_ref_choice_203) — needs that env var set, so this isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "self_ref_choice_203"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-ber = { path = "../../../rust-runtime/ber" }

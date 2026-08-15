@@ -1528,6 +1528,15 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
     for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
         auto emit_inc = [&](const std::string& cn) {
+            // Self-referential alternative (e.g. `c RecChoice` inside
+            // RecChoice itself, X.680 §28 permits this): the enclosing
+            // type's own definition file already has full visibility of
+            // itself, so re-including/re-`use`ing it here is at best
+            // redundant (harmless under C++'s #pragma once) and at worst a
+            // self-import (Rust: declaration+definition share one file,
+            // unlike C++'s .hpp/.cpp split — E0255). Same fix
+            // emit_sequence_definition's emit_opt_include already has.
+            if (cn == cname) return;
             auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
             write_type_reference(cn, inc_os);
         };
