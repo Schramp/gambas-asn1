@@ -1208,6 +1208,26 @@ target_link_libraries(test_nested_choice_201 PRIVATE asn1cpp_runtime)
 add_test(NAME nested_choice_201 COMMAND test_nested_choice_201)
 set_tests_properties(nested_choice_201 PROPERTIES TIMEOUT 30)
 
+# test_self_ref_choice_203 — AUTOMATIC TAGS EXPLICIT/IMPLICIT for a CHOICE
+# alternative referencing an already-tagged type (#448)
+set(SELF_REF_CHOICE_203_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_self_ref_choice_203_test)
+add_custom_command(
+    OUTPUT  ${SELF_REF_CHOICE_203_GEN_DIR}/RecChoice.hpp ${SELF_REF_CHOICE_203_GEN_DIR}/RecChoice.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SELF_REF_CHOICE_203_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/203-automatic-tags-OK.asn1
+                                   -pdu=RecChoice -o ${SELF_REF_CHOICE_203_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/203-automatic-tags-OK.asn1
+    COMMENT "Generating C++ from 203-automatic-tags-OK.asn1"
+)
+add_executable(test_self_ref_choice_203
+    seq/test_self_ref_choice_203.cpp
+    ${SELF_REF_CHOICE_203_GEN_DIR}/RecChoice.cpp
+)
+target_include_directories(test_self_ref_choice_203 PRIVATE ${SELF_REF_CHOICE_203_GEN_DIR})
+target_link_libraries(test_self_ref_choice_203 PRIVATE asn1cpp_runtime)
+add_test(NAME self_ref_choice_203 COMMAND test_self_ref_choice_203)
+set_tests_properties(self_ref_choice_203 PROPERTIES TIMEOUT 30)
+
 # test_random_roundtrip — randomised BER/XER round-trip for all primitive types (issue #29)
 set(ROUNDTRIP_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_roundtrip_test)
 set(ROUNDTRIP_TYPES Container ContainerItems Primitives Item PrimEnum)

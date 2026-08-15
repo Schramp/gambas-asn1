@@ -176,7 +176,16 @@ pub fn encode_choice<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
 /// of its own), before any `own_tag` wrap is applied. Split out from
 /// `encode_choice` so the wrap step (when present) has the complete inner
 /// bytes to wrap, rather than needing to know about it itself.
-fn encode_choice_dispatch<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
+///
+/// Also reused directly by a generated CHOICE-with-own_tag type's
+/// `Asn1Value::ber_encode_tagged` override (RustBackend, gambas-asn1#448):
+/// an AUTOMATIC-TAGS IMPLICIT retag of an already-tagged CHOICE reference
+/// substitutes for own_tag's own outer tag, but the content wrapped is
+/// exactly this — the raw dispatch, unaffected by which tag wraps it
+/// (X.690 §8.14.2) — so `Asn1Value`'s natural-tag/content-split defaults
+/// (which CHOICE can't support at all, X.680 §28) don't apply; this needed
+/// its own pair of overrides operating on this function directly instead.
+pub fn encode_choice_dispatch<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
     for alt in spec.alternatives {
         let mut out = Vec::new();
         if (alt.ber_encode)(value, &mut out) {
@@ -230,7 +239,11 @@ pub fn decode_choice_from<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, 
 /// `spec.alternatives`), reading from whatever position `r` is already at —
 /// either the outermost stream position (no `own_tag`) or just inside an
 /// already-consumed `own_tag` wrapper (see `decode_choice_from`).
-fn decode_choice_dispatch<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, DecodeError> {
+///
+/// Also reused directly by a generated CHOICE-with-own_tag type's
+/// `Asn1Value::ber_decode_into_tagged` override — see
+/// `encode_choice_dispatch`'s matching doc for why.
+pub fn decode_choice_dispatch<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, DecodeError> {
     let tag = r.peek_tag().ok_or_else(|| DecodeError::new("empty CHOICE input".to_string(), 0))?;
     for alt in spec.alternatives {
         if alt.tag.matches_identifier(&tag) {
