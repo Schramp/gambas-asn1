@@ -11,16 +11,11 @@
 // (`C(Box<RecChoice>)` instead of `C(RecChoice)`) — see
 // RustBackend::emit_choice_declaration's Box<> comment.
 //
-// Note: RecChoice's own `[0]` tag interacts with a separate, pre-existing
-// AUTOMATIC TAGS bug (gambas-asn1#448 — a CHOICE alternative referencing
-// an already-tagged type is wrongly forced EXPLICIT) that currently
-// produces a double-wrapped encoding for alternative `c`, in both this
-// crate's output and the equivalent C++ output (confirmed identical bytes
-// both ways — a real bug, but a wire-format one, unrelated to what this
-// test regresses). So this test checks round-trip correctness and
-// cross-language byte parity against the C++ runtime, not exact bytes
-// against real asn1c ground truth — that assertion belongs with #448's
-// own fix instead.
+// The depth-1 case below is asserted byte-exact against real asn1c output
+// (`asn1c -fcompound-names` + `converter-example -ixer -oder`) — this
+// needed gambas-asn1#448 fixed too (alternative `c` references RecChoice,
+// which already carries its own `[0]`; AUTOMATIC TAGS was wrongly forcing
+// EXPLICIT there instead of IMPLICIT, double-wrapping the encoding).
 #![allow(non_snake_case)]
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
@@ -41,13 +36,11 @@ fn main() {
 
     let mut failures = 0;
 
-    // Depth 1: RecChoice = c(a(7)) — cross-language byte parity against the
-    // equivalent C++ runtime output (BerCodec::instance().encode() on the
-    // equivalent C++ RecChoice value).
+    // Depth 1: RecChoice = c(a(7)).
     let r = RecChoice::C(Box::new(RecChoice::A(7)));
     let bytes = r.encode();
-    let cpp_bytes: &[u8] = &[0xa0, 0x07, 0xa2, 0x05, 0xa0, 0x03, 0x80, 0x01, 0x07];
-    check("depth-1 BER matches C++ output (byte parity, see #448)", bytes == cpp_bytes, &mut failures);
+    let expected: &[u8] = &[0xa0, 0x05, 0xa2, 0x03, 0x80, 0x01, 0x07];
+    check("depth-1 BER matches asn1c ground truth", bytes == expected, &mut failures);
 
     let back = RecChoice::decode(&bytes);
     check("depth-1 BER decode ok", back.is_ok(), &mut failures);

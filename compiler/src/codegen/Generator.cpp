@@ -117,6 +117,24 @@ bool Generator::member_type_is_choice(const ast::TypeDef& m) const {
     return false;
 }
 
+// X.680 §30.6/§30.7 forces EXPLICIT only for an *untagged* CHOICE/ANY — one
+// with no tag of its own to substitute onto. A member/alternative whose type
+// is a plain reference to an *already-tagged* CHOICE (`c RecChoice` where
+// `RecChoice ::= [0] CHOICE {...}`) is a TaggedType (X.680 §31.2), not a bare
+// CHOICE, for tagging purposes: IMPLICIT applies normally, substituting for
+// the referenced type's own declared tag exactly like any other
+// already-tagged reference. An inline CHOICE body (m.is_choice() directly,
+// not a TypeRef) can never carry its own `[n]` — only a member/alternative
+// wrapping it can — so it's always the untagged case.
+bool Generator::member_type_is_untagged_choice(const ast::TypeDef& m) const {
+    if (m.is_choice()) return true;
+    if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+        auto res = resolver_.resolve_ref(*tr, current_module_);
+        if (res) return res->is_choice() && !res->tag.present();
+    }
+    return false;
+}
+
 bool Generator::member_type_is_any(const ast::TypeDef& m) const {
     if (auto* bt = std::get_if<ast::BuiltinType>(&m.body))
         return *bt == ast::BuiltinType::Any;
@@ -133,9 +151,12 @@ bool Generator::member_is_explicit(const ast::Tag& tag, const ast::TypeDef& memb
     // TagMode::Default — use module-level default.
     if (current_tag_default_ == ast::TagDefault::Explicit) return true;
     // IMPLICIT or AUTOMATIC default.
-    // Exception: CHOICE and ANY cannot be IMPLICIT tagged (X.680 §30.6/30.7);
-    // tagging must be EXPLICIT even in an IMPLICIT TAGS module.
-    return member_type_is_choice(member_type) || member_type_is_any(member_type);
+    // Exception: an *untagged* CHOICE or ANY cannot be IMPLICIT tagged
+    // (X.680 §30.6/30.7 — no tag of its own to substitute onto); tagging
+    // must be EXPLICIT even in an IMPLICIT TAGS module. A CHOICE that
+    // already carries its own declared [n] is a TaggedType, not a bare
+    // CHOICE, for this purpose (member_type_is_untagged_choice's own doc).
+    return member_type_is_untagged_choice(member_type) || member_type_is_any(member_type);
 }
 
 /// @brief Decide whether a member carries an explicit BER tag override and,
@@ -272,14 +293,20 @@ Generator::TagResult Generator::compute_member_tag(const ast::TypeDef& m,
         resolved_tag = MemberTagSpec{ TypeTagSpec{ m.tag.cls, m.tag.number, constructed },
                                       /*tag_is_override=*/true };
     } else if (apply_auto_tags) {
-        // X.680 §24.9 / §28.2: untagged CHOICE in AUTOMATIC TAGS gets EXPLICIT.
-        bool is_choice = member_type_is_choice(m);
+        // X.680 §22.5/§28.4: AUTOMATIC TAGGING assigns an IMPLICIT context
+        // tag substituting for whatever tag the member would otherwise
+        // carry — UNLESS the member's type is an *untagged* CHOICE (or
+        // ANY), which has no tag to substitute onto, forcing EXPLICIT
+        // instead (X.680 §30.6/30.7). A CHOICE that already carries its own
+        // declared [n] is not "untagged" for this purpose — see
+        // member_type_is_untagged_choice's own doc.
+        bool untagged_choice = member_type_is_untagged_choice(m);
         ast::Tag auto_tag;
         auto_tag.cls    = ast::TagClass::Context;
         auto_tag.number = auto_tag_num;
-        auto_tag.mode   = is_choice ? ast::TagMode::Explicit : ast::TagMode::Implicit;
-        bool constructed = is_choice || member_is_constructed(m);
-        is_explicit = is_choice;
+        auto_tag.mode   = untagged_choice ? ast::TagMode::Explicit : ast::TagMode::Implicit;
+        bool constructed = untagged_choice || member_is_constructed(m);
+        is_explicit = untagged_choice;
         resolved_tag = MemberTagSpec{ TypeTagSpec{ auto_tag.cls, auto_tag.number, constructed },
                                       /*tag_is_override=*/true };
     } else {

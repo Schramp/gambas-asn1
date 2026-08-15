@@ -31,19 +31,14 @@
 #   gambas-asn1#435 — X.681 Information Object Class field-type reference
 #     (`Type.&id`) resolves to a literal, nonexistent `#include` instead
 #     of the referenced type (164, 168, 172, 173)
-#   gambas-asn1#436 — fixed for C++ (PR #449, self_ref_choice_test.asn1 /
-#     RecChoice, boxed val_storage_ slot for the self-referential
-#     alternative). Still excluded here: this tool requires BOTH
-#     --target=cpp and --target=rust to build before a target qualifies,
-#     and Rust generates the same schema as a plain (un-boxed) recursive
-#     enum variant, which rustc rejects outright (gambas-asn1#447) — a
-#     hard build failure, not something xval_sweep can soft-skip the way
-#     it skips just the asn1c leg. Uncomment once #447 lands (skip-asn1c
-#     is gambas-asn1#448 — an unrelated, separately-filed AUTOMATIC TAGS
-#     EXPLICIT/IMPLICIT tagging bug this same schema also hits):
-#     tests/asn1/self_ref_choice_test.asn1 RecChoice  skip-asn1c: gambas-asn1#448 (AUTOMATIC TAGS wrongly forces EXPLICIT on a member referencing an already-tagged CHOICE)
+#   gambas-asn1#436 — fixed for C++ (PR #449) and Rust (PR #453, boxed
+#     self-referential alternative — rustc otherwise rejects the plain
+#     enum variant as an infinite-size recursive type). Now an active
+#     target below (no skip-asn1c needed — this schema's RecChoice has no
+#     own [n], so gambas-asn1#448's EXPLICIT/IMPLICIT bug never applied
+#     to it in the first place).
 #   gambas-asn1#437 — deeply nested anonymous CHOICE-in-CHOICE promoted
-#     synthetic type has no Rust Asn1Value impl (201)
+#     synthetic type has no Rust Asn1Value impl (201) — fixed, PR #451.
 #   gambas-asn1#438 — fixed: ENCODING-CONTROL XER BASE64 instructions
 #     (both legacy `TypeName OCTET STRING ::= base64` and standard
 #     `BASE64 TypeName` forms) were parsed and silently discarded; now
@@ -60,9 +55,10 @@
 #     gets the X.693 §8.3.1 document-element wrapper asn1c always emits,
 #     in both C++ (XerCodec.cpp) and Rust (choice.rs).
 
-tests/asn1/roundtrip_test.asn1    Container
-tests/asn1/explicit_tag_test.asn1 Mixed
-tests/asn1/choice_test.asn1       Alt4
+tests/asn1/roundtrip_test.asn1        Container
+tests/asn1/explicit_tag_test.asn1     Mixed
+tests/asn1/choice_test.asn1           Alt4
+tests/asn1/self_ref_choice_test.asn1  RecChoice
 
 # Probed from tests/tests-asn1c-compiler/*-OK.asn1 (asn1c's own mirrored
 # suite), confirmed to build and round-trip end-to-end.

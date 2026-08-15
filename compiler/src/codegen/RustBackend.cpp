@@ -1621,6 +1621,27 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_ber::xer::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_ber::DecodeError> {\n";
         os << "        self.xer_decode_into(r)\n";
         os << "    }\n";
+        if (spec.tag) {
+            // Only reachable when this CHOICE has its own declared [n]
+            // (X.680 §30.6, own_tag above): AUTOMATIC TAGS can then assign
+            // an IMPLICIT tag to a member/alternative that's a plain
+            // reference to this type (X.680 §22.5/§28.4 — an already-tagged
+            // CHOICE is a TaggedType for retagging purposes, not a bare
+            // untagged CHOICE, so it's no longer forced EXPLICIT), reaching
+            // Asn1Value::ber_encode_tagged/ber_decode_into_tagged generically
+            // (MemberAccess::TaggedScalar / the generic-tagged AlternativeSpec
+            // branch). The trait's own defaults assume a natural-tag/content
+            // split CHOICE can't support (X.680 §28, no universal tag) — see
+            // encode_choice_tagged/decode_choice_tagged's own doc (choice.rs)
+            // for the actual logic; this is a one-line delegate to it.
+            os << "    fn ber_encode_tagged(&self, tag: asn1cpp_ber::Tag, out: &mut Vec<u8>) {\n";
+            os << std::format("        asn1cpp_ber::choice::encode_choice_tagged(&{}, self, tag, out);\n", spec_ident);
+            os << "    }\n\n";
+            os << "    fn ber_decode_into_tagged(&mut self, r: &mut asn1cpp_ber::Reader, tag: asn1cpp_ber::Tag) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+            os << std::format("        *self = asn1cpp_ber::choice::decode_choice_tagged(&{}, r, tag)?;\n", spec_ident);
+            os << "        Ok(())\n";
+            os << "    }\n";
+        }
         os << "}\n\n";
     }
 }
