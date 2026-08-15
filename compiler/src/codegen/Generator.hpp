@@ -349,6 +349,7 @@ private:
     std::string type_descriptor_ref_for(const ast::TypeDef& def);
     bool        member_is_constructed(const ast::TypeDef& m) const;
     bool        member_type_is_choice(const ast::TypeDef& m) const;
+    bool        member_type_is_untagged_choice(const ast::TypeDef& m) const;
     bool        member_type_is_any(const ast::TypeDef& m) const;
     bool        member_is_explicit(const ast::Tag& tag, const ast::TypeDef& member_type) const;
     std::string emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
