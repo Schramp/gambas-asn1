@@ -933,7 +933,17 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         if (!m.mbuiltin) return "OPTIONAL member of an untagged type has no tag to detect presence";
         return "builtin type/storage combination not yet supported";
     };
-    if (!spec.members.empty()) {
+    {
+        // Emitted unconditionally, even for an empty SEQUENCE {} (0
+        // members, e.g. an ASN.1 extension-marker placeholder like
+        // `criticalExtensions SEQUENCE {}` — X.680 §24 permits a SEQUENCE
+        // with no components at all). A 0-length `[MemberDescriptor<T>; 0]`
+        // is a perfectly ordinary Rust array; the real bug this guard used
+        // to cause was withholding the whole Asn1Value impl below for a
+        // 0-member type, which breaks the moment that type is used as a
+        // composite member/alternative elsewhere (a deeply nested anonymous
+        // CHOICE-in-CHOICE can promote exactly such a type — C++'s
+        // CppBackend never had this guard).
         std::string members_ident = std::format("{}_MEMBERS", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
 
