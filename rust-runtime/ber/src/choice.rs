@@ -407,6 +407,66 @@ pub fn decode_choice_xer_from<T>(spec: &ChoiceSpec<T>, r: &mut XerReader) -> Res
     Err(DecodeError::new(format!("unrecognized CHOICE alternative element <{}>", ti.name), 0))
 }
 
+// ---------------------------------------------------------------------------
+// Per-alternative decode constructors
+//
+// Every AlternativeSpec::ber_decode_into/xer_decode_into closure
+// (RustBackend's emit_choice_definition) needs the same three steps —
+// default-construct the alternative's own type, decode into it, wrap the
+// result in the enum variant — differing only in *which* Asn1Value/
+// value:: decode call sits in the middle and whether a tag is involved.
+// Generic here over the alternative's type T and a `ctor: fn(T) -> C`
+// (a bare tuple-variant path — `MyChoice::Alt` — is itself a valid
+// `fn(T) -> C` in Rust; a boxed/self-referential alternative passes a
+// small non-capturing closure, `|v| MyChoice::Alt(Box::new(v))`, which
+// coerces to the same function-pointer type) so codegen's four
+// tag-shape branches collapse to one line each instead of re-emitting
+// this scaffolding per alternative per branch.
+
+/// `ber_decode_into` (no tag substitution/wrap) — the bare-type-reference-
+/// to-an-already-wrapped-type and untagged-CHOICE-of-CHOICE branches.
+pub fn decode_alt<T: crate::value::Asn1Value + Default, C>(
+    r: &mut Reader,
+    ctor: fn(T) -> C,
+) -> Result<C, DecodeError> {
+    let mut v = T::default();
+    v.ber_decode_into(r)?;
+    Ok(ctor(v))
+}
+
+/// `ber_decode_into_tagged` (IMPLICIT retag, X.690 §8.14.2) — the generic
+/// tagged branch (own natural tag or an override, indistinguishable here).
+pub fn decode_alt_tagged<T: crate::value::Asn1Value + Default, C>(
+    r: &mut Reader,
+    tag: Tag,
+    ctor: fn(T) -> C,
+) -> Result<C, DecodeError> {
+    let mut v = T::default();
+    v.ber_decode_into_tagged(r, tag)?;
+    Ok(ctor(v))
+}
+
+/// `value::decode_explicit` (EXPLICIT wrap, X.690 §8.14.3) — the
+/// alternative's own declared `[n]` branch.
+pub fn decode_alt_explicit<T: crate::value::Asn1Value + Default, C>(
+    r: &mut Reader,
+    tag: Tag,
+    ctor: fn(T) -> C,
+) -> Result<C, DecodeError> {
+    let v: T = crate::value::decode_explicit(r, tag)?;
+    Ok(ctor(v))
+}
+
+/// `xer_decode_into` — the one XER shape every alternative uses,
+/// regardless of its BER tag-shape branch.
+pub fn decode_alt_xer<T: crate::value::Asn1Value + Default, C>(
+    r: &mut XerReader,
+    ctor: fn(T) -> C,
+) -> Result<C, DecodeError> {
+    let mut v = T::default();
+    v.xer_decode_into(r)?;
+    Ok(ctor(v))
+}
 
 #[cfg(test)]
 mod tests {
