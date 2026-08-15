@@ -1471,6 +1471,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << std::format(
             "static {}: asn1cpp_ber::choice::ChoiceSpec<{}> = asn1cpp_ber::choice::ChoiceSpec {{\n",
             spec_ident, spec.type_name);
+        // X.693 §8.3.1 — document-root XMLTypedValue wrapper name, used only
+        // by encode_choice_xer/decode_choice_xer (never by the _into/_from
+        // nested variants, and never for BER).
+        os << std::format("    name: \"{}\",\n", spec.xer_name);
         os << std::format("    alternatives: &{},\n", alts_ident);
         if (spec.ext_at >= 0) {
             // Wire the UnknownExtension variant (declared

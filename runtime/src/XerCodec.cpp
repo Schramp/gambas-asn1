@@ -942,15 +942,54 @@ const IXerTypeHandler* const XerCodec::prim_dispatch_[32] = {
 // ---------------------------------------------------------------------------
 // XerCodec public entry points
 
+namespace {
+
+// X.680 §16.2 / X.693 §8.3.1: the XML *document element* (the outermost
+// value in a standalone XER encoding) is always an "XMLTypedValue" —
+// `<TypeName>...</TypeName>` — regardless of what kind of type it is.
+// Every other type already produces this shape at any nesting depth
+// (SEQUENCE/SET/ENUMERATED/etc. always write their own name as a
+// wrapper), so it's only visible for CHOICE: X.693's *member*-position
+// rule for CHOICE genuinely has no wrapper (the alternative's own tag is
+// enough — see ChoiceXerHandler's own doc), which is right for CHOICE
+// nested inside a SEQUENCE/SET/CHOICE, but wrong at the true document
+// root, where there's no enclosing member to supply one (confirmed
+// against real asn1c output, which does wrap: `<Alt4>\n<str>j</str>
+// </Alt4>`, not `<str>j</str>`).
+//
+// `XerCodec::encode`/`decode` are the single funnel every recursive XER
+// call passes through (composite handlers call back into `codec.encode`/
+// `codec.decode`, never straight into a nested handler) — a thread-local
+// recursion counter here distinguishes the outermost call from every
+// nested one without threading a new parameter through the shared
+// `ICodec` interface (which XER, BER, JER, and PER all implement with
+// the same signature) or touching any composite handler's own logic.
+// Mirrors `ValidatePathScope`'s RAII-around-thread-local pattern
+// (`codec/Validation.hpp`).
+struct XerRecursionScope {
+    XerRecursionScope() { ++depth(); }
+    ~XerRecursionScope() { --depth(); }
+    XerRecursionScope(const XerRecursionScope&) = delete;
+    XerRecursionScope& operator=(const XerRecursionScope&) = delete;
+    bool is_root() const { return depth() == 1; }
+    static int& depth() { thread_local int d = 0; return d; }
+};
+
+} // namespace
+
 void XerCodec::encode(IEncodeStream& dst,
                       const TypeDescriptor& def,
                       const Asn1Object* src) const
 {
     auto& s = static_cast<XerEncodeStream&>(dst);
+    XerRecursionScope scope;
+    bool wrap = scope.is_root() && def.kind == TypeKind::Choice;
+    if (wrap) s.os() << '<' << def.name << '>';
     if (def.kind == TypeKind::Primitive)
         prim_dispatch_[def.tag.number]->encode(*this, s, def, src);
     else
         comp_dispatch_[(int)def.kind]->encode(*this, s, def, src);
+    if (wrap) s.os() << '\n' << "</" << def.name << ">\n";
 }
 
 DecodeResult XerCodec::decode(IDecodeStream& src,
@@ -958,9 +997,21 @@ DecodeResult XerCodec::decode(IDecodeStream& src,
                                Asn1Object* dest) const
 {
     auto& s = static_cast<XerDecodeStream&>(src);
+    XerRecursionScope scope;
+    bool wrap = scope.is_root() && def.kind == TypeKind::Choice;
+    if (wrap) {
+        if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
+    }
+    DecodeResult res = decode_ok();
     if (def.kind == TypeKind::Primitive)
-        return prim_dispatch_[def.tag.number]->decode(*this, s, def, dest);
-    return comp_dispatch_[(int)def.kind]->decode(*this, s, def, dest);
+        res = prim_dispatch_[def.tag.number]->decode(*this, s, def, dest);
+    else
+        res = comp_dispatch_[(int)def.kind]->decode(*this, s, def, dest);
+    if (!res) return res;
+    if (wrap) {
+        if (auto r = xer_detail::consume_close_tag(s, def.name); !r) return r;
+    }
+    return res;
 }
 
 } // namespace asn1

@@ -200,22 +200,22 @@ mod tests {
 
     #[test]
     fn selector_num_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Num(7).encode_xer(), "\n    <num>7</num>");
+        assert_eq!(Selector::Num(7).encode_xer(), "<Selector>\n    <num>7</num>\n</Selector>\n");
     }
 
     #[test]
     fn selector_flag_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Flag(true).encode_xer(), "\n    <flag><true/></flag>");
+        assert_eq!(Selector::Flag(true).encode_xer(), "<Selector>\n    <flag><true/></flag>\n</Selector>\n");
     }
 
     #[test]
     fn selector_data_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Data(asn1cpp_ber::octet_string::OctetString(vec![0x68, 0x69])).encode_xer(), "\n    <data>6869</data>");
+        assert_eq!(Selector::Data(asn1cpp_ber::octet_string::OctetString(vec![0x68, 0x69])).encode_xer(), "<Selector>\n    <data>6869</data>\n</Selector>\n");
     }
 
     #[test]
     fn selector_label_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Label("hi".to_string()).encode_xer(), "\n    <label>hi</label>");
+        assert_eq!(Selector::Label("hi".to_string()).encode_xer(), "<Selector>\n    <label>hi</label>\n</Selector>\n");
     }
 
     #[test]

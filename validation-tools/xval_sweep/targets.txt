@@ -48,13 +48,13 @@
 #     control-character/entity escaping), threaded through the same
 #     xer_encoding path #438 wired up, with new C++ (XerCodec.cpp) and
 #     Rust (octet_string.rs) runtime encode/decode.
-#   gambas-asn1#441 — top-level (non-member) CHOICE XER output is missing
-#     an outer element wrapper that asn1c always emits, found via #440's
-#     asn1c leg on Alt4 (choice_test.asn1)
+#   gambas-asn1#441 — fixed: top-level (non-member) CHOICE XER output now
+#     gets the X.693 §8.3.1 document-element wrapper asn1c always emits,
+#     in both C++ (XerCodec.cpp) and Rust (choice.rs).
 
 tests/asn1/roundtrip_test.asn1    Container
 tests/asn1/explicit_tag_test.asn1 Mixed
-tests/asn1/choice_test.asn1       Alt4  skip-asn1c: gambas-asn1#441 (top-level CHOICE XER wrapper)
+tests/asn1/choice_test.asn1       Alt4
 
 # Probed from tests/tests-asn1c-compiler/*-OK.asn1 (asn1c's own mirrored
 # suite), confirmed to build and round-trip end-to-end.
