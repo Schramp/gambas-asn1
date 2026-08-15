@@ -138,6 +138,9 @@ struct OptionalOps {
 
 /// Forward declaration — MemberDescriptor references TypeDescriptor.
 struct TypeDescriptor;
+/// Forward declaration — MemberDescriptor::boxed_lifecycle references TypeLifecycleOps
+/// (defined below, after MemberDescriptor).
+struct TypeLifecycleOps;
 
 /// @brief Per-member descriptor for SEQUENCE, SET, and CHOICE types.
 /// Mirrors \c asn_TYPE_member_t from asn1c.  One entry per member in the
@@ -175,6 +178,15 @@ struct MemberDescriptor {
     Asn1Object*       (*get_mut_fn)(Asn1Object* choice_ptr)          = nullptr;
     /// @brief Return const pointer to the active CHOICE alternative (null for non-CHOICE members).
     const Asn1Object* (*get_const_fn)(const Asn1Object* choice_ptr)  = nullptr;
+
+    /// @brief Non-null only for a CHOICE alternative boxed via \c std::unique_ptr<T>
+    /// (a directly self-referential alternative — see \c TypeLifecycleOps's
+    /// \c BoxedTypeTag constructor). \c ChoiceInterface::emplace_alt uses this
+    /// instead of \c type_descriptor->lifecycle when set; \c type_descriptor
+    /// itself stays the alternative's own (unboxed) descriptor, since codec
+    /// dispatch operates on the dereferenced value \c get_mut_fn/get_const_fn
+    /// already hand back, not on \c val_ directly.
+    const TypeLifecycleOps* boxed_lifecycle = nullptr;
 };
 
 /// @brief SEQUENCE OF / SET OF element and constraint metadata.
@@ -259,6 +271,10 @@ struct IBerTypeHandler;
 /// @brief Type-tag knob for selecting \c T in \c TypeLifecycleOps template constructor.
 template<typename T> struct TypeTag {};
 
+/// @brief Type-tag knob selecting the boxed (\c std::unique_ptr<T>) storage
+/// overload of \c TypeLifecycleOps — see that constructor's doc.
+template<typename T> struct BoxedTypeTag {};
+
 /// @brief Per-type lifecycle operations used by \c ChoiceInterface::emplace_alt().
 ///
 /// Embedded by value in \c TypeDescriptor (same 3×ptr cost as three separate fields).
@@ -297,6 +313,24 @@ struct TypeLifecycleOps {
               new(d) T(std::move(*static_cast<T*>(s)));
               std::destroy_at(static_cast<T*>(s)); })
         , clone    (make_clone_fn<T>())
+    {}
+
+    /// @brief Ops for a CHOICE alternative stored as \c std::unique_ptr<T> instead
+    /// of \c T inline — the only way to break the layout cycle for a CHOICE
+    /// alternative whose type resolves (directly) back to the enclosing CHOICE
+    /// itself (X.680 §28 permits this; \c sizeof(T) is otherwise circular).
+    /// \c construct heap-allocates a default \c T so the alternative's own
+    /// accessor can dereference unconditionally, same as every other alternative.
+    template<typename T>
+    explicit constexpr TypeLifecycleOps(BoxedTypeTag<T>) noexcept
+        : construct([](void* p){ new(p) std::unique_ptr<T>(std::make_unique<T>()); })
+        , destroy  ([](void* p){ std::destroy_at(static_cast<std::unique_ptr<T>*>(p)); })
+        , move     ([](void* d, void* s){
+              new(d) std::unique_ptr<T>(std::move(*static_cast<std::unique_ptr<T>*>(s)));
+              std::destroy_at(static_cast<std::unique_ptr<T>*>(s)); })
+        , clone    ([](void* d, const void* s){
+              new(d) std::unique_ptr<T>(std::make_unique<T>(
+                  *static_cast<const std::unique_ptr<T>*>(s)->get())); })
     {}
 };
 

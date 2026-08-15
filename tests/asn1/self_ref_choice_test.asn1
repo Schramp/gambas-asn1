@@ -1,0 +1,12 @@
+SelfRefChoiceTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    -- Direct recursive CHOICE: an alternative's type is the CHOICE itself
+    -- (no SEQUENCE/OPTIONAL indirection to break the cycle). Mirrors
+    -- tests/tests-asn1c-compiler/203-automatic-tags-OK.asn1's RecChoice.
+    RecChoice ::= CHOICE {
+        a INTEGER,
+        b INTEGER,
+        c RecChoice
+    }
+
+END

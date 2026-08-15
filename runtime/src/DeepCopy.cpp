@@ -30,21 +30,23 @@ void deep_copy(const TypeDescriptor& def, Asn1Object* dst, const Asn1Object* src
         const auto* src_ch = static_cast<const ChoiceInterface*>(src);
         int idx = src_ch->_present;
 
-        // Destroy dst's current alternative.
-        dst_ch->active_lifecycle->destroy(dst_ch->val_);
-        dst_ch->active_lifecycle = &ChoiceInterface::k_noop_lifecycle;
-        dst_ch->_present = 0;
-
-        if (idx <= 0 || idx > spec.count) return; // src is NOTHING
+        if (idx <= 0 || idx > spec.count) {
+            // src is NOTHING: destroy dst's current alternative, reset to NOTHING.
+            dst_ch->active_lifecycle->destroy(dst_ch->val_);
+            dst_ch->active_lifecycle = &ChoiceInterface::k_noop_lifecycle;
+            dst_ch->_present = 0;
+            return;
+        }
 
         const auto& alt     = spec.alternatives[idx - 1];
         const auto& alt_def = *alt.type_descriptor;
 
         // Construct a fresh default alternative, then recursively copy content.
         // Using construct+recurse (not clone) so this works even for arm types
-        // that are themselves SEQUENCE-with-optionals or CHOICE.
-        alt_def.lifecycle.construct(dst_ch->val_);
-        dst_ch->active_lifecycle = &alt_def.lifecycle;
+        // that are themselves SEQUENCE-with-optionals or CHOICE. Routed through
+        // emplace_alt (not alt_def.lifecycle directly) so a boxed self-referential
+        // alternative (MemberDescriptor::boxed_lifecycle) constructs correctly too.
+        dst_ch->emplace_alt(alt);
         dst_ch->_present = idx;
 
         Asn1Object*       dst_val = alt.get_mut_fn(dst);
