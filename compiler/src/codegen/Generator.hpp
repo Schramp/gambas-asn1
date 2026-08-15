@@ -181,6 +181,18 @@ public:
 
         for (const auto& mod : pr.modules) {
             current_module_ = mod->name;
+            // generate_inline_types (promoted anonymous nested SEQUENCE/SET/
+            // CHOICE types) must see the same AUTOMATIC/IMPLICIT/EXPLICIT
+            // default as generate_type's own def — X.680 §24.9/§28.4's
+            // per-alternative auto-tag assignment reads current_tag_default_
+            // via should_apply_auto_tags. generate_type sets it too (kept
+            // there for direct callers), but that happens *after*
+            // generate_inline_types already ran for this def, so every
+            // promoted type generated below saw whatever tag default was
+            // left over from the previous type assignment (or the class's
+            // default-initialized Explicit, before the first one) instead of
+            // this module's real default.
+            current_tag_default_ = mod->tag_default;
             for (const auto& def : mod->assignments)
                 if (!def->name.empty() && !def->is_extension_marker) {
                     if (!pdu_roots_.empty() && !reachable_asn_names_.count(def->name)) continue;
