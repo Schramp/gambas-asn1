@@ -1346,12 +1346,13 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             // untouched instead of special-casing each one.
             bool boxed = (a.mtype == spec.type_name);
             const char* box_deref = boxed ? "            let v = &**v;\n" : "";
-            // Decode side: `v` is built as a plain (unboxed) local above
-            // every `Ok(...)` line below — only the final construction into
-            // the enum variant needs boxing.
-            std::string ok_variant = boxed
-                ? std::format("Ok({}::{}(Box::new(v)))", spec.type_name, vname)
-                : std::format("Ok({}::{}(v))", spec.type_name, vname);
+            // `fn(T) -> C` constructor passed to choice::decode_alt*
+            // (choice.rs) — a bare tuple-variant path is itself a valid
+            // fn item; the boxed case needs a small non-capturing closure
+            // instead (still coerces to the same fn-pointer type).
+            std::string ctor_expr = boxed
+                ? std::format("|v| {}::{}(Box::new(v))", spec.type_name, vname)
+                : std::format("{}::{}", spec.type_name, vname);
             // gambas-asn1#313: same single-alternative special-case as
             // emit_choice_definition's accessor functions above — an
             // `if let ... = x { ... } else { false }` is irrefutable when
@@ -1448,10 +1449,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // construction on this alternative means no extra layer).
                 os << std::format("        tag: {},\n", row.tag_lit);
                 emit_encode_closure("ber_encode", std::format("asn1cpp_ber::value::encode_explicit(out, {}, v);", row.tag_lit));
-                os << "        ber_decode_into: |r| {\n";
-                os << std::format("            let v: {} = asn1cpp_ber::value::decode_explicit(r, {})?;\n", rust_seqof_alt_mtype(a.mtype), row.tag_lit);
-                os << std::format("            {}\n", ok_variant);
-                os << "        },\n";
+                os << std::format("        ber_decode_into: |r| asn1cpp_ber::choice::decode_alt_explicit(r, {}, {}),\n", row.tag_lit, ctor_expr);
             } else if (a.resolved_tag && a.is_explicit) {
                 // A bare type reference (no `[n]` of its own) to a type that
                 // is itself EXPLICIT-tagged (e.g. an alternative referencing
@@ -1462,11 +1460,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // untagged-CHOICE-alternative branch further below.
                 os << std::format("        tag: {},\n", row.tag_lit);
                 emit_encode_closure("ber_encode", "asn1cpp_ber::value::Asn1Value::ber_encode(v, out);");
-                os << "        ber_decode_into: |r| {\n";
-                os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
-                os << "            asn1cpp_ber::value::Asn1Value::ber_decode_into(&mut v, r)?;\n";
-                os << std::format("            {}\n", ok_variant);
-                os << "        },\n";
+                os << std::format("        ber_decode_into: |r| asn1cpp_ber::choice::decode_alt(r, {}),\n", ctor_expr);
             } else if (a.resolved_tag) {
                 // Every other tagged alternative — whether IMPLICIT-retagged
                 // or using its own natural tag — dispatches through one
@@ -1479,11 +1473,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // override-vs-natural branching is needed here at all.
                 os << std::format("        tag: {},\n", row.tag_lit);
                 emit_encode_closure("ber_encode", std::format("asn1cpp_ber::value::Asn1Value::ber_encode_tagged(v, {}, out);", row.tag_lit));
-                os << "        ber_decode_into: |r| {\n";
-                os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
-                os << std::format("            asn1cpp_ber::value::Asn1Value::ber_decode_into_tagged(&mut v, r, {})?;\n", row.tag_lit);
-                os << std::format("            {}\n", ok_variant);
-                os << "        },\n";
+                os << std::format("        ber_decode_into: |r| asn1cpp_ber::choice::decode_alt_tagged(r, {}, {}),\n", row.tag_lit, ctor_expr);
             } else {
                 // No tag of its own at all (X.680 §28 — a CHOICE-of-CHOICE
                 // alternative, only reachable when `spec.has_ber_table`):
@@ -1497,18 +1487,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // referenced CHOICE's alternatives it turns out to be).
                 os << std::format("        tag: {},\n", row.tag_lit);
                 emit_encode_closure("ber_encode", "asn1cpp_ber::value::Asn1Value::ber_encode(v, out);");
-                os << "        ber_decode_into: |r| {\n";
-                os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
-                os << "            asn1cpp_ber::value::Asn1Value::ber_decode_into(&mut v, r)?;\n";
-                os << std::format("            {}\n", ok_variant);
-                os << "        },\n";
+                os << std::format("        ber_decode_into: |r| asn1cpp_ber::choice::decode_alt(r, {}),\n", ctor_expr);
             }
             emit_xer_encode_closure("asn1cpp_ber::value::Asn1Value::xer_encode(v, out, depth);");
-            os << "        xer_decode_into: |r| {\n";
-            os << std::format("            let mut v: {} = Default::default();\n", rust_seqof_alt_mtype(a.mtype));
-            os << "            asn1cpp_ber::value::Asn1Value::xer_decode_into(&mut v, r)?;\n";
-            os << std::format("            {}\n", ok_variant);
-            os << "        },\n";
+            os << std::format("        xer_decode_into: |r| asn1cpp_ber::choice::decode_alt_xer(r, {}),\n", ctor_expr);
             os << "    },\n";
         }
         os << "];\n\n";
