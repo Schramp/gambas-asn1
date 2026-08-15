@@ -1083,7 +1083,7 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
             spec.tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
             spec.xer_type_name = tn;
             spec.universal_tag = *utag;
-            spec.needs_xer = needs_xer;
+            spec.xer_encoding = m.xer_encoding;
             return spec;
         }
     }
@@ -2034,7 +2034,7 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
         spec.size_upper = sc.upper;  // meaningless when !size_bounded (semi-constrained)
     }
     spec.extensible = is_constraint_extensible(def);
-    spec.xer_base64 = (def.xer_encoding == ast::XerEncoding::Base64);
+    spec.xer_encoding = def.xer_encoding;
     return spec;
 }
 

@@ -14,6 +14,7 @@
 #include "LegacyBase64.hpp"
 #include "StandardBase64.hpp"
 #include "NoInstruction.hpp"
+#include "Utf8Field.hpp"
 
 using namespace asn1;
 
@@ -231,6 +232,45 @@ static void test_encoding_control_no_instruction_stays_hex() {
 }
 
 // ---------------------------------------------------------------------------
+// 6. ENCODING-CONTROL XER ::= utf8 (gambas-asn1#443) — raw UTF-8 text, not
+//    a hex/base64 variant. "Hi" + DC3 control char (0x13) + '&' + 'é'
+//    (multi-byte UTF-8, 0xC3 0xA9) + '<' + '>'.
+//    Expected XER: Hi<dc3/>&amp;\xC3\xA9&lt;&gt;
+
+static const uint8_t kUtf8Bytes[] = {
+    'H', 'i', 0x13, '&', 0xC3, 0xA9, '<', '>'
+};
+
+static void test_encoding_control_utf8_encode() {
+    printf("--- ENCODING-CONTROL XER ::= utf8 encode ---\n");
+
+    Utf8Field v{kUtf8Bytes, sizeof(kUtf8Bytes)};
+    std::string xer = xer_encode_generic(v, asn_DEF_Utf8Field);
+    check("utf8 form: ASCII text passes through", xer.find("Hi") != std::string::npos);
+    check("utf8 form: control char becomes <dc3/>", xer.find("<dc3/>") != std::string::npos);
+    check("utf8 form: & escaped", xer.find("&amp;") != std::string::npos);
+    check("utf8 form: multi-byte UTF-8 passes through raw",
+          xer.find("\xC3\xA9") != std::string::npos);
+    check("utf8 form: < escaped", xer.find("&lt;") != std::string::npos);
+    check("utf8 form: > escaped", xer.find("&gt;") != std::string::npos);
+    // Not present as raw hex the way Default/Base64 would render these bytes.
+    check("utf8 form: not hex-encoded", xer.find("4869") == std::string::npos);
+}
+
+static void test_encoding_control_utf8_roundtrip() {
+    printf("--- ENCODING-CONTROL XER ::= utf8 round-trip ---\n");
+
+    Utf8Field orig{kUtf8Bytes, sizeof(kUtf8Bytes)};
+    std::string xer = xer_encode_generic(orig, asn_DEF_Utf8Field);
+
+    Utf8Field out{};
+    check("utf8 form round-trip decode ok", xer_decode_generic(xer, asn_DEF_Utf8Field, out));
+    check("utf8 form round-trip bytes match",
+          out.bytes().size() == sizeof(kUtf8Bytes)
+              && std::equal(out.bytes().begin(), out.bytes().end(), kUtf8Bytes));
+}
+
+// ---------------------------------------------------------------------------
 
 int main() {
     test_inline_encode();
@@ -243,6 +283,8 @@ int main() {
     test_encoding_control_legacy();
     test_encoding_control_standard();
     test_encoding_control_no_instruction_stays_hex();
+    test_encoding_control_utf8_encode();
+    test_encoding_control_utf8_roundtrip();
 
     if (failures == 0) {
         printf("\nAll tests passed.\n");

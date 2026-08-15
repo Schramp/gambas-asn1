@@ -26,11 +26,13 @@ XerEncodingInstrTest DEFINITIONS ::= BEGIN
     LegacyBase64  ::= OCTET STRING  -- legacy per-type form target
     StandardBase64 ::= OCTET STRING -- standard BASE64 <TypeName> form target
     NoInstruction  ::= OCTET STRING -- untouched: must stay hex
+    Utf8Field      ::= OCTET STRING -- ::= utf8 form target (gambas-asn1#443)
 
     ENCODING-CONTROL XER
         GLOBAL-DEFAULTS MODIFIED-ENCODINGS
         LegacyBase64 OCTET STRING ::= base64
         BASE64 StandardBase64
+        Utf8Field OCTET STRING ::= utf8
     END
 
 END
