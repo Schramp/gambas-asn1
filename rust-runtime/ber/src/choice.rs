@@ -50,7 +50,7 @@
 
 use crate::reader::{read_explicit, DecodeError, Reader};
 use crate::tag::Tag;
-use crate::writer::{write_explicit, write_primitive};
+use crate::writer::{write_constructed, write_explicit, write_primitive};
 use crate::xer::{write_close_tag, write_open_tag, XerReader};
 
 /// One CHOICE alternative — mirrors `ChoiceAlternativeSpec`
@@ -175,17 +175,10 @@ pub fn encode_choice<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
 /// The normal alternative-dispatch encoding (X.680 §28 — no outer wrapper
 /// of its own), before any `own_tag` wrap is applied. Split out from
 /// `encode_choice` so the wrap step (when present) has the complete inner
-/// bytes to wrap, rather than needing to know about it itself.
-///
-/// Also reused directly by a generated CHOICE-with-own_tag type's
-/// `Asn1Value::ber_encode_tagged` override (RustBackend, gambas-asn1#448):
-/// an AUTOMATIC-TAGS IMPLICIT retag of an already-tagged CHOICE reference
-/// substitutes for own_tag's own outer tag, but the content wrapped is
-/// exactly this — the raw dispatch, unaffected by which tag wraps it
-/// (X.690 §8.14.2) — so `Asn1Value`'s natural-tag/content-split defaults
-/// (which CHOICE can't support at all, X.680 §28) don't apply; this needed
-/// its own pair of overrides operating on this function directly instead.
-pub fn encode_choice_dispatch<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
+/// bytes to wrap, rather than needing to know about it itself. Also the
+/// building block `encode_choice_tagged` (below) reuses for IMPLICIT
+/// retagging of an already-tagged CHOICE reference.
+fn encode_choice_dispatch<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
     for alt in spec.alternatives {
         let mut out = Vec::new();
         if (alt.ber_encode)(value, &mut out) {
@@ -208,6 +201,39 @@ pub fn encode_choice_dispatch<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
 /// implement that trait and become usable as a nested composite member.
 pub fn encode_choice_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut Vec<u8>) {
     out.extend_from_slice(&encode_choice(spec, value));
+}
+
+/// IMPLICIT-retags a CHOICE-with-own_tag value under `tag` instead of its
+/// own declared `[n]` (X.680 §22.5/§28.4 — a member/alternative that's a
+/// plain reference to an *already-tagged* CHOICE gets AUTOMATIC TAGS'
+/// ordinary IMPLICIT substitution, same as any other already-tagged
+/// reference; only a genuinely *untagged* CHOICE forces EXPLICIT, X.680
+/// §30.6). The wrapped content is the same raw alternative-dispatch bytes
+/// `own_tag`'s own EXPLICIT wrap would otherwise carry (X.690 §8.14.2 —
+/// IMPLICIT retagging never touches content, only the tag octets) — so
+/// `Asn1Value`'s natural-tag/content-split defaults (`ber_encode_tagged`'s
+/// own doc) don't apply here; CHOICE has no natural tag to split on at all
+/// (X.680 §28). A generated CHOICE-with-own_tag type's
+/// `Asn1Value::ber_encode_tagged` override is a one-line call to this.
+pub fn encode_choice_tagged<T>(spec: &ChoiceSpec<T>, value: &T, tag: Tag, out: &mut Vec<u8>) {
+    let content = encode_choice_dispatch(spec, value);
+    write_constructed(out, tag, &content);
+}
+
+/// Decode counterpart of `encode_choice_tagged`. `Asn1Value::
+/// ber_decode_into_tagged`'s own default (choice.rs's sibling, value.rs)
+/// reads the substituted tag then calls `ber_decode_content`, which CHOICE
+/// deliberately leaves `unreachable!()` (X.680 §28, see the module doc) —
+/// this reads it then dispatches on the *value* bytes directly instead,
+/// via the same alternative-dispatch `decode_choice_dispatch` uses for the
+/// no-`own_tag` case.
+pub fn decode_choice_tagged<T>(spec: &ChoiceSpec<T>, r: &mut Reader, tag: Tag) -> Result<T, DecodeError> {
+    let tlv = r.read_tlv()?;
+    if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+        return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
+    }
+    let mut inner = Reader::new(tlv.value);
+    decode_choice_dispatch(spec, &mut inner)
 }
 
 /// Generic CHOICE decoder — the Rust analogue of `ChoiceBerHandler::decode`.
@@ -238,12 +264,9 @@ pub fn decode_choice_from<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, 
 /// The normal alternative-dispatch decode (peek tag, linear-scan
 /// `spec.alternatives`), reading from whatever position `r` is already at —
 /// either the outermost stream position (no `own_tag`) or just inside an
-/// already-consumed `own_tag` wrapper (see `decode_choice_from`).
-///
-/// Also reused directly by a generated CHOICE-with-own_tag type's
-/// `Asn1Value::ber_decode_into_tagged` override — see
-/// `encode_choice_dispatch`'s matching doc for why.
-pub fn decode_choice_dispatch<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, DecodeError> {
+/// already-consumed `own_tag` wrapper (see `decode_choice_from`), or
+/// (`decode_choice_tagged`) an IMPLICIT-substituted tag's value bytes.
+fn decode_choice_dispatch<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, DecodeError> {
     let tag = r.peek_tag().ok_or_else(|| DecodeError::new("empty CHOICE input".to_string(), 0))?;
     for alt in spec.alternatives {
         if alt.tag.matches_identifier(&tag) {
