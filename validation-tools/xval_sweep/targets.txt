@@ -31,9 +31,17 @@
 #   gambas-asn1#435 — X.681 Information Object Class field-type reference
 #     (`Type.&id`) resolves to a literal, nonexistent `#include` instead
 #     of the referenced type (164, 168, 172, 173)
-#   gambas-asn1#436 — self-referential CHOICE with AUTOMATIC TAGS: C++
-#     codegen uses the CHOICE's own (still-incomplete) type in its own
-#     val_storage_ alignas/sizeof before the class body closes (203)
+#   gambas-asn1#436 — fixed for C++ (PR #449, self_ref_choice_test.asn1 /
+#     RecChoice, boxed val_storage_ slot for the self-referential
+#     alternative). Still excluded here: this tool requires BOTH
+#     --target=cpp and --target=rust to build before a target qualifies,
+#     and Rust generates the same schema as a plain (un-boxed) recursive
+#     enum variant, which rustc rejects outright (gambas-asn1#447) — a
+#     hard build failure, not something xval_sweep can soft-skip the way
+#     it skips just the asn1c leg. Add as an active target (with
+#     `skip-asn1c: gambas-asn1#448` — an unrelated, separately-filed
+#     AUTOMATIC TAGS EXPLICIT/IMPLICIT tagging bug this same schema also
+#     hits) once #447 lands.
 #   gambas-asn1#437 — deeply nested anonymous CHOICE-in-CHOICE promoted
 #     synthetic type has no Rust Asn1Value impl (201)
 #   gambas-asn1#438 — fixed: ENCODING-CONTROL XER BASE64 instructions
