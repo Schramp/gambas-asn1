@@ -211,6 +211,19 @@ pub fn decode_explicit<T: Asn1Value + Default>(r: &mut Reader, tag: crate::tag::
     })
 }
 
+/// `encode_explicit` for an OPTIONAL member (X.690 §11.5 — an absent
+/// OPTIONAL is simply not written, not an empty wrapper): codegen's
+/// `MemberAccess::ExplicitScalar::ber_encode` closure would otherwise need
+/// its own `if let Some(x) = ... { encode_explicit(...) }` branch,
+/// duplicated once per optional EXPLICIT member — the presence check moves
+/// here instead, so the generated closure for both the optional and
+/// required case is the same one-line call, just to a different function.
+pub fn encode_explicit_opt<T: Asn1Value>(out: &mut Vec<u8>, tag: crate::tag::Tag, opt: &Option<T>) {
+    if let Some(v) = opt {
+        encode_explicit(out, tag, v);
+    }
+}
+
 /// EXPLICIT-wrapped ANY (X.208 legacy type; ANY has no fixed tag of its
 /// own, so a `[n] ANY` member is always EXPLICIT even under IMPLICIT/
 /// AUTOMATIC TAGS — same exception CHOICE gets, X.680 §30.6/§30.7).
@@ -223,6 +236,14 @@ pub fn encode_explicit_any(out: &mut Vec<u8>, tag: crate::tag::Tag, raw: &[u8]) 
 
 pub fn decode_explicit_any(r: &mut Reader, tag: crate::tag::Tag) -> Result<Vec<u8>, DecodeError> {
     crate::reader::read_explicit(r, tag, |inner| Ok(inner.remaining().to_vec()))
+}
+
+/// `encode_explicit_any` for an OPTIONAL `[n] ANY` member — see
+/// `encode_explicit_opt`'s matching doc for why this exists.
+pub fn encode_explicit_any_opt(out: &mut Vec<u8>, tag: crate::tag::Tag, opt: &Option<Vec<u8>>) {
+    if let Some(raw) = opt {
+        encode_explicit_any(out, tag, raw);
+    }
 }
 
 /// OPTIONAL member support. An `Option<V>` field (what

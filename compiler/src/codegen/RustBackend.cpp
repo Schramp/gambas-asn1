@@ -991,9 +991,14 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 std::string tag_lit = format_tag_literal(*m.resolved_tag);
                 os << std::format("        tag: {},\n", tag_lit);
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
+                // value::encode_explicit_any_opt/encode_explicit_any keep
+                // this closure a one-line call either way — the Some/None
+                // presence check for the optional case lives in the
+                // runtime function, not duplicated here (see
+                // encode_explicit_opt's doc, value.rs).
                 os << "        access: asn1cpp_ber::sequence::MemberAccess::ExplicitAny {\n";
                 if (m.optional) {
-                    os << std::format("            ber_encode: |v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::value::encode_explicit_any(out, {1}, x); }} }},\n", m.mname, tag_lit);
+                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::value::encode_explicit_any_opt(out, {1}, &v.{0}),\n", m.mname, tag_lit);
                     os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::value::decode_explicit_any(r, {1})?); Ok(()) }},\n", m.mname, tag_lit);
                 } else {
                     os << std::format("            ber_encode: |v, out| asn1cpp_ber::value::encode_explicit_any(out, {1}, &v.{0}),\n", m.mname, tag_lit);
@@ -1019,9 +1024,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 std::string tag_lit = format_tag_literal(*m.resolved_tag);
                 os << std::format("        tag: {},\n", tag_lit);
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
+                // value::encode_explicit_opt/encode_explicit — same
+                // one-line-either-way shape as the ExplicitAny branch above.
                 os << "        access: asn1cpp_ber::sequence::MemberAccess::ExplicitScalar {\n";
                 if (m.optional) {
-                    os << std::format("            ber_encode: |v, out| {{ if let Some(x) = &v.{0} {{ asn1cpp_ber::value::encode_explicit(out, {1}, x); }} }},\n", m.mname, tag_lit);
+                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::value::encode_explicit_opt(out, {1}, &v.{0}),\n", m.mname, tag_lit);
                     os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::value::decode_explicit(r, {1})?); Ok(()) }},\n", m.mname, tag_lit);
                 } else {
                     os << std::format("            ber_encode: |v, out| asn1cpp_ber::value::encode_explicit(out, {1}, &v.{0}),\n", m.mname, tag_lit);
