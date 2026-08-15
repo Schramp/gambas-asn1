@@ -1581,6 +1581,30 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_NC201_GEN_DIR=${RUST_NC201_GEN_DIR}")
 endif()
 
+# Rust leg of the directly self-referential CHOICE regression
+# (203-automatic-tags-OK.asn1's RecChoice, #447) — see
+# tests/rust/self_ref_choice_203/src/main.rs for the full rationale.
+set(RUST_SRC203_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_self_ref_choice_203)
+add_custom_command(
+    OUTPUT  ${RUST_SRC203_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_SRC203_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/203-automatic-tags-OK.asn1
+                                   -o ${RUST_SRC203_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/203-automatic-tags-OK.asn1
+    COMMENT "Generating Rust from 203-automatic-tags-OK.asn1"
+)
+add_custom_target(gen_rust_self_ref_choice_203 ALL DEPENDS ${RUST_SRC203_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_self_ref_choice_203
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/self_ref_choice_203/Cargo.toml)
+    set_tests_properties(rust_self_ref_choice_203 PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_SRC203_GEN_DIR=${RUST_SRC203_GEN_DIR}")
+endif()
+
 # gambas-asn1#309: Rust-codegen sweep across tests/asn1/*.asn1 — the Rust
 # equivalent of validate_parser.py's C++ parser-conformance sweep (that one
 # lives outside this repo, asn1cpp-validation-tools/, because it also needs
