@@ -53,6 +53,33 @@ use crate::tag::Tag;
 use crate::writer::{write_constructed, write_explicit, write_primitive};
 use crate::xer::{write_close_tag, write_open_tag, XerReader};
 
+/// Matches a CHOICE alternative's variant, runs `body` (which must itself
+/// evaluate to `bool` — a diverging `unimplemented!()` for a not-yet-
+/// representable alternative works too, since `!` coerces to `bool`),
+/// falling back to `false` when `x` isn't that variant. Used by
+/// `RustBackend`'s generated `AlternativeSpec::ber_encode`/`xer_encode`
+/// closures for every alternative, real or stub.
+///
+/// A CHOICE with exactly one alternative (X.680 §28 permits this) makes
+/// the `if let` here provably always true — rustc's `irrefutable_let_
+/// patterns` lint would otherwise fire under this crate's `-D warnings`
+/// bar (gambas-asn1#313). Suppressed once, here, instead of codegen
+/// needing a parallel single-alternative-vs-not code path (a plain `let`
+/// with no `else`) for every call site — same outcome (compiles clean
+/// either way), one fewer thing for `RustBackend` to special-case.
+#[macro_export]
+macro_rules! __alt_match {
+    ($x:expr, $pat:path, |$v:ident| $body:expr) => {{
+        #[allow(irrefutable_let_patterns)]
+        if let $pat($v) = $x {
+            $body
+        } else {
+            false
+        }
+    }};
+}
+pub use __alt_match as alt_match;
+
 /// One CHOICE alternative — mirrors `ChoiceAlternativeSpec`
 /// (`compiler/src/codegen/Backend.hpp`), minus the PER/tag-index
 /// dispatch-optimization fields (see `ChoiceSpec`'s own doc below) — a
