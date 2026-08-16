@@ -1387,11 +1387,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // `out`/`depth` closure params are unused here
                 // (`unimplemented!()` needs none of them), which would warn
                 // under this crate's `-D warnings` bar — `_out`/`_depth`
-                // params plus alt_match!'s bound value as `_v` (Rust's
-                // leading-underscore convention suppresses unused-variable
-                // warnings without needing a true wildcard pattern, which
-                // `:ident` fragments can't match — `_` alone is a reserved
-                // token in macro_rules).
+                // params plus alt_match!'s bound value as `_v`. Rust's
+                // leading-underscore convention suppresses the unused-
+                // variable warning on a real identifier; a bare `_` can't be
+                // used here instead, since it's its own reserved token in
+                // the language grammar, not an identifier — `:ident`
+                // fragments in macro_rules! only ever match identifiers.
                 auto emit_stub_encode_closure = [&](const char* field, const char* params = "x, _out") {
                     os << std::format(
                         "        {}: |{}| asn1cpp_ber::choice::alt_match!(x, {}, |_v| unimplemented!(\"alternative not yet supported\")),\n",
