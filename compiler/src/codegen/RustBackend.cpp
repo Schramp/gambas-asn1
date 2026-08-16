@@ -1345,7 +1345,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             // extra deref right after the match keeps every body_line
             // untouched instead of special-casing each one.
             bool boxed = (a.mtype == spec.type_name);
-            const char* box_deref = boxed ? "            let v = &**v;\n" : "";
+            const char* box_deref = boxed ? "let v = &**v; " : "";
             // `fn(T) -> C` constructor passed to choice::decode_alt*
             // (choice.rs) — a bare tuple-variant path is itself a valid
             // fn item; the boxed case needs a small non-capturing closure
@@ -1353,27 +1353,14 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             std::string ctor_expr = boxed
                 ? std::format("|v| {}::{}(Box::new(v))", spec.type_name, vname)
                 : std::format("{}::{}", spec.type_name, vname);
-            // gambas-asn1#313: same single-alternative special-case as
-            // emit_choice_definition's accessor functions above — an
-            // `if let ... = x { ... } else { false }` is irrefutable when
-            // `Type` has exactly one variant (rustc flags it), so emit a
-            // plain `let` (no `else` arm needed, matches unconditionally)
-            // instead in that case.
+            // choice::alt_match! (rust-runtime/ber/src/choice.rs) owns the
+            // if-let/else-false plumbing generically, including the
+            // gambas-asn1#313 single-alternative-CHOICE irrefutable-pattern
+            // case — one line here regardless of alternative count.
+            std::string variant_path = std::format("{}::{}", spec.type_name, vname);
             auto emit_encode_closure = [&](const char* field, const std::string& body_line) {
-                os << std::format("        {}: |x, out| ", field);
-                if (single_alt) {
-                    os << std::format("{{\n            let {}::{}(v) = x;\n", spec.type_name, vname);
-                    os << box_deref;
-                    os << std::format("            {}\n", body_line);
-                    os << "            true\n";
-                    os << "        },\n";
-                } else {
-                    os << std::format("if let {}::{}(v) = x {{\n", spec.type_name, vname);
-                    os << box_deref;
-                    os << std::format("            {}\n", body_line);
-                    os << "            true\n";
-                    os << "        } else { false },\n";
-                }
+                os << std::format("        {}: |x, out| asn1cpp_ber::choice::alt_match!(x, {}, |v| {{ {}{} true }}),\n",
+                                  field, variant_path, box_deref, body_line);
             };
             // `xer_encode` carries a third (`depth: usize`) parameter no
             // other closure field here does (`AlternativeSpec::xer_encode`'s
@@ -1381,20 +1368,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             // `emit_encode_closure` parameter, since every call site wants
             // the exact same fixed shape (`x, out, depth`), never a mix.
             auto emit_xer_encode_closure = [&](const std::string& body_line) {
-                os << std::format("        xer_encode: |x, out, depth| ");
-                if (single_alt) {
-                    os << std::format("{{\n            let {}::{}(v) = x;\n", spec.type_name, vname);
-                    os << box_deref;
-                    os << std::format("            {}\n", body_line);
-                    os << "            true\n";
-                    os << "        },\n";
-                } else {
-                    os << std::format("if let {}::{}(v) = x {{\n", spec.type_name, vname);
-                    os << box_deref;
-                    os << std::format("            {}\n", body_line);
-                    os << "            true\n";
-                    os << "        } else { false },\n";
-                }
+                os << std::format("        xer_encode: |x, out, depth| asn1cpp_ber::choice::alt_match!(x, {}, |v| {{ {}{} true }}),\n",
+                                  variant_path, box_deref, body_line);
             };
             os << "    asn1cpp_ber::choice::AlternativeSpec {\n";
             os << std::format("        name: \"{}\",\n", a.asn1_name);
@@ -1409,24 +1384,19 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // dispatch only reaches this row when its own tag matched.
                 os << std::format("        tag: {},\n", row.tag_lit);
                 // Not `emit_encode_closure`/`emit_xer_encode_closure`: their
-                // bodies bind `v` (the matched variant's inner value) and
-                // receive `out`/`depth`, all unused here (`unimplemented!()`
-                // needs none of them), which would warn under this crate's
-                // `-D warnings` bar.
+                // `out`/`depth` closure params are unused here
+                // (`unimplemented!()` needs none of them), which would warn
+                // under this crate's `-D warnings` bar — `_out`/`_depth`
+                // params plus alt_match!'s bound value as `_v`. Rust's
+                // leading-underscore convention suppresses the unused-
+                // variable warning on a real identifier; a bare `_` can't be
+                // used here instead, since it's its own reserved token in
+                // the language grammar, not an identifier — `:ident`
+                // fragments in macro_rules! only ever match identifiers.
                 auto emit_stub_encode_closure = [&](const char* field, const char* params = "x, _out") {
-                    os << std::format("        {}: |{}| ", field, params);
-                    if (single_alt) {
-                        // unimplemented!() diverges (type `!`, unifies with
-                        // `bool`) — no trailing `true` needed, and one would
-                        // be unreachable-code-warned after it anyway.
-                        os << std::format("{{\n            let {}::{}(_) = x;\n", spec.type_name, vname);
-                        os << "            unimplemented!(\"alternative not yet supported\")\n";
-                        os << "        },\n";
-                    } else {
-                        os << std::format("if let {}::{}(_) = x {{\n", spec.type_name, vname);
-                        os << "            unimplemented!(\"alternative not yet supported\")\n";
-                        os << "        } else { false },\n";
-                    }
+                    os << std::format(
+                        "        {}: |{}| asn1cpp_ber::choice::alt_match!(x, {}, |_v| unimplemented!(\"alternative not yet supported\")),\n",
+                        field, params, variant_path);
                 };
                 emit_stub_encode_closure("ber_encode");
                 os << std::format("        ber_decode_into: |_r| unimplemented!(\"alternative not yet supported\"),\n");
