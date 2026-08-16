@@ -91,6 +91,25 @@ pub trait Asn1Value {
         self.ber_decode_content(tlv.value)
     }
 
+    /// EXPLICIT tag override (X.690 §8.14.3) — wraps this value's own
+    /// complete natural-tag encoding (`ber_encode`) in an outer constructed
+    /// TLV, rather than substituting for it the way `ber_encode_tagged`
+    /// (IMPLICIT) does. Object-safe (unlike the free-function
+    /// `value::encode_explicit<T>`/`decode_explicit<T>` pair, which need a
+    /// concrete `T: Default` to construct a fresh value) — lets
+    /// `MemberAccess::ExplicitScalar` (`sequence.rs`) reach an EXPLICIT-
+    /// tagged member through the same `get`/`get_mut: fn(&mut T) -> &mut
+    /// dyn Asn1Value` accessor `Scalar`/`TaggedScalar` already use, instead
+    /// of a per-member closure duplicating that same field access.
+    fn ber_encode_explicit(&self, out: &mut Vec<u8>, tag: crate::tag::Tag) {
+        crate::writer::write_explicit(out, tag, |inner| self.ber_encode(inner));
+    }
+
+    /// Decode counterpart of `ber_encode_explicit`.
+    fn ber_decode_into_explicit(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
+        crate::reader::read_explicit(r, tag, |inner| self.ber_decode_into(inner))
+    }
+
     fn xer_encode(&self, _out: &mut String, _depth: usize) {
         unimplemented!("XER leg not yet wired for this type")
     }
@@ -211,19 +230,6 @@ pub fn decode_explicit<T: Asn1Value + Default>(r: &mut Reader, tag: crate::tag::
     })
 }
 
-/// `encode_explicit` for an OPTIONAL member (X.690 §11.5 — an absent
-/// OPTIONAL is simply not written, not an empty wrapper): codegen's
-/// `MemberAccess::ExplicitScalar::ber_encode` closure would otherwise need
-/// its own `if let Some(x) = ... { encode_explicit(...) }` branch,
-/// duplicated once per optional EXPLICIT member — the presence check moves
-/// here instead, so the generated closure for both the optional and
-/// required case is the same one-line call, just to a different function.
-pub fn encode_explicit_opt<T: Asn1Value>(out: &mut Vec<u8>, tag: crate::tag::Tag, opt: &Option<T>) {
-    if let Some(v) = opt {
-        encode_explicit(out, tag, v);
-    }
-}
-
 /// EXPLICIT-wrapped ANY (X.208 legacy type; ANY has no fixed tag of its
 /// own, so a `[n] ANY` member is always EXPLICIT even under IMPLICIT/
 /// AUTOMATIC TAGS — same exception CHOICE gets, X.680 §30.6/§30.7).
@@ -297,6 +303,23 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
     fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
         let mut v = V::default();
         v.ber_decode_into_tagged(r, tag)?;
+        *self = Some(v);
+        Ok(())
+    }
+
+    // Not reached via ExplicitScalar for an absent optional member — the
+    // SEQUENCE walker (`decode_sequence_content`, `sequence.rs`) peeks the
+    // wire tag before calling in, same as it already does for Scalar/
+    // TaggedScalar, so `None` only writes here on the encode side.
+    fn ber_encode_explicit(&self, out: &mut Vec<u8>, tag: crate::tag::Tag) {
+        if let Some(v) = self {
+            v.ber_encode_explicit(out, tag);
+        }
+    }
+
+    fn ber_decode_into_explicit(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
+        let mut v = V::default();
+        v.ber_decode_into_explicit(r, tag)?;
         *self = Some(v);
         Ok(())
     }
