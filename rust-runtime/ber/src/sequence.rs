@@ -102,17 +102,13 @@ pub enum MemberAccess<T: 'static> {
     },
     /// EXPLICIT tagging (X.690 §8.14.3) — wraps the member's natural
     /// encoding in an outer TLV, rather than substituting the tag like
-    /// `TaggedScalar`. Needs its own closures, unlike `TaggedScalar`:
-    /// `value::decode_explicit` *constructs* a fresh value
-    /// (`T: Asn1Value + Default`, monomorphized on the member's concrete
-    /// type), it can't decode in place through a `&mut dyn Asn1Value`
-    /// trait object the way `ber_decode_into_tagged` does — a trait object
-    /// has no way to hand back a concrete, constructible `Self`. `get`/
-    /// `get_mut` are carried too, XER-only (same field-name-derived-tag
-    /// reasoning as `TaggedScalar` — EXPLICIT is purely a BER concept).
+    /// `TaggedScalar`. Same shape as `TaggedScalar` (`get`/`get_mut` only)
+    /// via `Asn1Value::ber_encode_explicit`/`ber_decode_into_explicit`
+    /// (`value.rs`) — the object-safe methods that let this member's own
+    /// EXPLICIT wrap/unwrap happen through the same trait-object accessor
+    /// `TaggedScalar` uses for its IMPLICIT retag, instead of a per-member
+    /// closure re-deriving `v.{field}` a second time.
     ExplicitScalar {
-        ber_encode: fn(&T, &mut Vec<u8>),
-        ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
         get: fn(&T) -> &dyn Asn1Value,
         get_mut: fn(&mut T) -> &mut dyn Asn1Value,
     },
@@ -486,7 +482,7 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
         match &m.access {
             MemberAccess::Scalar { get, .. } => get(value).ber_encode(content),
             MemberAccess::TaggedScalar { get, .. } => get(value).ber_encode_tagged(m.tag, content),
-            MemberAccess::ExplicitScalar { ber_encode, .. } => ber_encode(value, content),
+            MemberAccess::ExplicitScalar { get, .. } => get(value).ber_encode_explicit(content, m.tag),
             MemberAccess::ExplicitAny { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
         }
@@ -570,15 +566,15 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
                     get_mut(&mut result).ber_decode_into_tagged(inner, m.tag)?;
                 }
             }
-            MemberAccess::ExplicitScalar { ber_decode_into, .. } => {
+            MemberAccess::ExplicitScalar { get_mut, .. } => {
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {
-                        ber_decode_into(&mut result, inner)?;
+                        get_mut(&mut result).ber_decode_into_explicit(inner, m.tag)?;
                     } else if let Some(set_default) = m.set_default {
                         set_default(&mut result);
                     }
                 } else {
-                    ber_decode_into(&mut result, inner)?;
+                    get_mut(&mut result).ber_decode_into_explicit(inner, m.tag)?;
                 }
             }
             MemberAccess::ExplicitAny { ber_decode_into, .. } => {
