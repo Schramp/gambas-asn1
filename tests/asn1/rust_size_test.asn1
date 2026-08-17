@@ -1,13 +1,21 @@
 -- gambas-asn1#464: real-codegen coverage for MemberDescriptor::validate —
 -- an inline X.680 §22/§21/§51 SIZE constraint on an OCTET STRING / BIT
 -- STRING SEQUENCE member.
+--
+-- gambas-asn1#465: same mechanism, character-string SIZE. `label` covers
+-- IA5String (native_builtin_type maps it to bare `String`, not one of the
+-- other kinds' newtype wrapper); `note` covers UTF8String (the newtype
+-- case, via Deref<Target=String>) — both code paths through
+-- {name}_size_delta.
 
 RustSizeTest DEFINITIONS ::= BEGIN
 
     Blob ::= SEQUENCE {
         data  OCTET STRING (SIZE(1..4)),
         flags BIT STRING (SIZE(1..16)),
-        tag   OCTET STRING
+        tag   OCTET STRING,
+        label IA5String (SIZE(1..8)),
+        note  UTF8String (SIZE(0..5))
     }
 
 END

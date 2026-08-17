@@ -338,6 +338,8 @@ mod tests {
             data: OctetString(data),
             flags: BitString { bytes: flags_bytes, unused_bits: flags_unused_bits },
             tag: OctetString(vec![]),
+            label: "ok".to_string(),
+            note: asn1cpp_ber::strings::Utf8String("hi".to_string()),
         }
     }
 
@@ -378,6 +380,51 @@ mod tests {
         let b = blob(vec![1], vec![0xFF], 4);
         let mut b = b;
         b.tag = OctetString(vec![0; 1000]);
+        let _ = b.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+    }
+
+    // gambas-asn1#465: character-string SIZE — `label` (IA5String, bare
+    // `String` via native_builtin_type) and `note` (UTF8String, the
+    // newtype-wrapper case), both through the same {name}_size_delta shape
+    // OCTET STRING/BIT STRING already use.
+
+    #[test]
+    fn blob_too_short_ia5_string_bumps_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let mut b = blob(vec![1], vec![0xFF], 4);
+        b.label = "".to_string(); // below SIZE(1..8)
+        let _ = b.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+    }
+
+    #[test]
+    fn blob_too_long_ia5_string_bumps_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let mut b = blob(vec![1], vec![0xFF], 4);
+        b.label = "123456789".to_string(); // above SIZE(1..8)
+        let _ = b.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+    }
+
+    #[test]
+    fn blob_too_long_utf8_string_bumps_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let mut b = blob(vec![1], vec![0xFF], 4);
+        b.note = asn1cpp_ber::strings::Utf8String("123456".to_string()); // above SIZE(0..5)
+        let _ = b.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+    }
+
+    #[test]
+    fn blob_empty_utf8_string_is_in_range_and_does_not_bump_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let mut b = blob(vec![1], vec![0xFF], 4);
+        b.note = asn1cpp_ber::strings::Utf8String(String::new()); // SIZE(0..5): empty is valid
         let _ = b.encode();
         assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
     }
