@@ -1461,4 +1461,56 @@ impl DefaultPoint {
         let _ = decode_sequence::<RangedPoint>(&RANGED_POINT_SPEC, &bytes).unwrap();
         assert_eq!(crate::validate::validate_fail_count(), 1);
     }
+
+    /// `SizedBlob ::= SEQUENCE { data OCTET STRING (SIZE(1..4)) }` — dogfood
+    /// for `MemberDescriptor::validate` against a real `OctetString` field
+    /// (gambas-asn1#464), same role `RangedPoint` plays for INTEGER above.
+    #[derive(Debug, Clone, Default, PartialEq)]
+    struct SizedBlob {
+        data: crate::octet_string::OctetString,
+    }
+
+    fn sized_blob_data_size_delta(v: &crate::octet_string::OctetString) -> i64 {
+        crate::validate::size_delta(v.len(), false, true, 1, 4)
+    }
+
+    static SIZED_BLOB_MEMBERS: [MemberDescriptor<SizedBlob>; 1] = [MemberDescriptor {
+        name: "data",
+        tag: crate::octet_string::OCTET_STRING_TAG,
+        optional: false,
+        access: MemberAccess::Scalar { get: |v| &v.data, get_mut: |v| &mut v.data },
+        set_default: None,
+        is_default_equal: None,
+        validate: Some(|v| sized_blob_data_size_delta(&v.data)),
+    }];
+
+    static SIZED_BLOB_SPEC: SequenceSpec<SizedBlob> =
+        SequenceSpec { name: "SizedBlob", tag: SEQUENCE_TAG, members: &SIZED_BLOB_MEMBERS };
+
+    #[test]
+    fn encode_of_an_in_range_size_member_does_not_bump_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let b = SizedBlob { data: crate::octet_string::OctetString(vec![1, 2]) };
+        let _ = encode_sequence(&SIZED_BLOB_SPEC, &b);
+        assert_eq!(crate::validate::validate_fail_count(), 0);
+    }
+
+    #[test]
+    fn encode_of_a_too_long_size_member_bumps_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let b = SizedBlob { data: crate::octet_string::OctetString(vec![1, 2, 3, 4, 5]) };
+        let _ = encode_sequence(&SIZED_BLOB_SPEC, &b);
+        assert_eq!(crate::validate::validate_fail_count(), 1);
+    }
+
+    #[test]
+    fn encode_of_a_too_short_size_member_bumps_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let b = SizedBlob { data: crate::octet_string::OctetString(vec![]) };
+        let _ = encode_sequence(&SIZED_BLOB_SPEC, &b);
+        assert_eq!(crate::validate::validate_fail_count(), 1);
+    }
 }
