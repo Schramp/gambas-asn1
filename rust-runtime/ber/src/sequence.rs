@@ -62,6 +62,20 @@ pub struct MemberDescriptor<T: 'static> {
     /// `encode_sequence_content` skips the member entirely when this
     /// returns `true`, same as a genuinely absent OPTIONAL member.
     pub is_default_equal: Option<fn(&T) -> bool>,
+    /// `Some` for a member with a real X.680 §51 SubtypeConstraint this
+    /// crate can check (INTEGER range so far — other constraint kinds are
+    /// separate follow-on issues). Takes the whole containing struct (same
+    /// shape as `set_default`/`is_default_equal`) because the member's own
+    /// field type (e.g. a bare `i64` INTEGER alias) is shared across every
+    /// member regardless of its individual bound, so `Asn1Value::validate()`
+    /// can't carry a per-member check the way it carries a per-type one.
+    /// Returns the delta convention `Asn1Value::validate()` itself
+    /// documents: `0` valid, positive = below lower bound, negative =
+    /// above upper bound. Checked by `encode_sequence_content`/
+    /// `decode_sequence_content` via `validate::check_delta` whenever the
+    /// member actually has a value (present on the wire, or filled by
+    /// `set_default`) — not for a genuinely absent OPTIONAL member.
+    pub validate: Option<fn(&T) -> i64>,
 }
 
 /// How a member's value is reached and (de)serialized.
@@ -486,6 +500,9 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
             MemberAccess::ExplicitAny { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
         }
+        if let Some(validate) = m.validate {
+            crate::validate::check_delta(validate(value), m.name, "encode");
+        }
     }
 }
 
@@ -545,36 +562,60 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
     for m in spec.members {
         match &m.access {
             MemberAccess::Scalar { get_mut, .. } => {
+                let mut has_value = true;
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {
                         get_mut(&mut result).ber_decode_into(inner)?;
                     } else if let Some(set_default) = m.set_default {
                         set_default(&mut result);
+                    } else {
+                        has_value = false;
                     }
                 } else {
                     get_mut(&mut result).ber_decode_into(inner)?;
                 }
+                if has_value {
+                    if let Some(validate) = m.validate {
+                        crate::validate::check_delta(validate(&result), m.name, "decode");
+                    }
+                }
             }
             MemberAccess::TaggedScalar { get_mut, .. } => {
+                let mut has_value = true;
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {
                         get_mut(&mut result).ber_decode_into_tagged(inner, m.tag)?;
                     } else if let Some(set_default) = m.set_default {
                         set_default(&mut result);
+                    } else {
+                        has_value = false;
                     }
                 } else {
                     get_mut(&mut result).ber_decode_into_tagged(inner, m.tag)?;
                 }
+                if has_value {
+                    if let Some(validate) = m.validate {
+                        crate::validate::check_delta(validate(&result), m.name, "decode");
+                    }
+                }
             }
             MemberAccess::ExplicitScalar { get_mut, .. } => {
+                let mut has_value = true;
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {
                         get_mut(&mut result).ber_decode_into_explicit(inner, m.tag)?;
                     } else if let Some(set_default) = m.set_default {
                         set_default(&mut result);
+                    } else {
+                        has_value = false;
                     }
                 } else {
                     get_mut(&mut result).ber_decode_into_explicit(inner, m.tag)?;
+                }
+                if has_value {
+                    if let Some(validate) = m.validate {
+                        crate::validate::check_delta(validate(&result), m.name, "decode");
+                    }
                 }
             }
             MemberAccess::ExplicitAny { ber_decode_into, .. } => {
@@ -637,6 +678,7 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
         set_default: None,
         is_default_equal: None,
+        validate: None,
     },
     MemberDescriptor {
         name: "y",
@@ -645,6 +687,7 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
         set_default: None,
         is_default_equal: None,
+        validate: None,
     },
 ];
 
@@ -686,6 +729,7 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
         set_default: None,
         is_default_equal: None,
+        validate: None,
     },
     MemberDescriptor {
         name: "y",
@@ -694,6 +738,7 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
         set_default: None,
         is_default_equal: None,
+        validate: None,
     },
 ];
 
@@ -736,6 +781,7 @@ static COORDS_MEMBERS: [MemberDescriptor<Coords>; 1] = [MemberDescriptor {
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
     set_default: None,
     is_default_equal: None,
+    validate: None,
 }];
 
 static COORDS_SPEC: SequenceSpec<Coords> =
@@ -777,6 +823,7 @@ static OPT_COORDS_MEMBERS: [MemberDescriptor<OptCoords>; 1] = [MemberDescriptor 
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
     set_default: None,
     is_default_equal: None,
+    validate: None,
 }];
 
 static OPT_COORDS_SPEC: SequenceSpec<OptCoords> =
@@ -819,6 +866,7 @@ static SET_COORDS_MEMBERS: [MemberDescriptor<SetCoords>; 1] = [MemberDescriptor 
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
     set_default: None,
     is_default_equal: None,
+    validate: None,
 }];
 
 static SET_COORDS_SPEC: SequenceSpec<SetCoords> =
@@ -856,6 +904,7 @@ static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
         set_default: None,
         is_default_equal: None,
+        validate: None,
     },
     MemberDescriptor {
         name: "y",
@@ -864,6 +913,7 @@ static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
         set_default: Some(|v| v.y = Some(default_point_y_default())),
         is_default_equal: Some(|v| v.y == Some(default_point_y_default())),
+        validate: None,
     },
 ];
 
@@ -998,6 +1048,7 @@ impl DefaultPoint {
                 access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
                 set_default: None,
                 is_default_equal: None,
+                validate: None,
             },
             MemberDescriptor {
                 name: "y",
@@ -1006,6 +1057,7 @@ impl DefaultPoint {
                 access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
                 set_default: None,
                 is_default_equal: None,
+                validate: None,
             },
         ];
         static A_SET_SPEC: SequenceSpec<Point> =
@@ -1333,5 +1385,80 @@ impl DefaultPoint {
         assert_eq!(DefaultPoint::decode(&bytes).unwrap(), p);
         // Distinct from the suppressed (default-valued) case above.
         assert_ne!(bytes, DefaultPoint { x: 1, y: Some(42) }.encode());
+    }
+
+    /// `RangedPoint ::= SEQUENCE { x INTEGER (0..100), y INTEGER }` — a
+    /// dogfood type proving `MemberDescriptor::validate` (not
+    /// `Asn1Value::validate()`, which a bare `i64` member can't override
+    /// per-member) is actually reached by the generic walker, same role
+    /// `validate.rs`'s own `NonNegative` dogfood type plays for the
+    /// type-level path. Delta convention matches `Integer::validate`
+    /// (`runtime/include/asn1cpp/types/Integer.hpp`): positive = below
+    /// lower bound, negative = above upper bound.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct RangedPoint {
+        x: i64,
+        y: i64,
+    }
+
+    fn ranged_point_x_range_delta(v: &RangedPoint) -> i64 {
+        if v.x < 0 {
+            -v.x
+        } else if v.x > 100 {
+            100 - v.x
+        } else {
+            0
+        }
+    }
+
+    static RANGED_POINT_MEMBERS: [MemberDescriptor<RangedPoint>; 2] = [
+        MemberDescriptor {
+            name: "x",
+            tag: crate::integer::INTEGER_TAG,
+            optional: false,
+            access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
+            set_default: None,
+            is_default_equal: None,
+            validate: Some(ranged_point_x_range_delta),
+        },
+        MemberDescriptor {
+            name: "y",
+            tag: crate::integer::INTEGER_TAG,
+            optional: false,
+            access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
+            set_default: None,
+            is_default_equal: None,
+            validate: None,
+        },
+    ];
+
+    static RANGED_POINT_SPEC: SequenceSpec<RangedPoint> =
+        SequenceSpec { name: "RangedPoint", tag: SEQUENCE_TAG, members: &RANGED_POINT_MEMBERS };
+
+    #[test]
+    fn encode_of_an_in_range_member_does_not_bump_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let p = RangedPoint { x: 50, y: 1 };
+        let _ = encode_sequence(&RANGED_POINT_SPEC, &p);
+        assert_eq!(crate::validate::validate_fail_count(), 0);
+    }
+
+    #[test]
+    fn encode_of_an_out_of_range_member_bumps_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let p = RangedPoint { x: 500, y: 1 };
+        let _ = encode_sequence(&RANGED_POINT_SPEC, &p);
+        assert_eq!(crate::validate::validate_fail_count(), 1);
+    }
+
+    #[test]
+    fn decode_of_an_out_of_range_member_bumps_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let bytes = encode_sequence(&POINT_SPEC, &Point { x: -5, y: 1 });
+        let _ = decode_sequence::<RangedPoint>(&RANGED_POINT_SPEC, &bytes).unwrap();
+        assert_eq!(crate::validate::validate_fail_count(), 1);
     }
 }
