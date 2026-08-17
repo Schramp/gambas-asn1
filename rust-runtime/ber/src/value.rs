@@ -63,24 +63,18 @@ pub trait Asn1Value {
     /// consumed and checked by the caller) into `self`.
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError>;
 
-    /// Checks `self` against whatever X.680 §51 SubtypeConstraint this
-    /// type carries (SIZE, value range, FROM alphabet, ...) — the Rust
-    /// analogue of each C++ type's own `validate(const Constraints&)`
-    /// (`runtime/include/asn1cpp/types/Integer.hpp` and siblings), reached
-    /// generically the same way (`runtime/include/asn1cpp/Validate.hpp`'s
-    /// single dispatch point). Default: no constraint, always valid.
+    /// Checks `self` against this type's X.680 §51 SubtypeConstraint
+    /// (SIZE, value range, FROM alphabet, ...), if it has one.
+    ///
+    /// The Rust analogue of each C++ type's own
+    /// `validate(const Constraints&)` (`runtime/include/asn1cpp/types/
+    /// Integer.hpp` and siblings), reached generically the same way
+    /// (`runtime/include/asn1cpp/Validate.hpp`'s single dispatch point).
     /// Composite types (SEQUENCE/SET/CHOICE) leave this at the default too
     /// — same "0, caller recurses into members" contract the C++ side's
     /// own doc states; each member gets checked individually as the
     /// generic walker (`sequence.rs`/`choice.rs`) reaches it through this
     /// same trait, not by the composite's own `validate()`.
-    ///
-    /// Returns 0 when valid (or unconstrained), otherwise a signed delta
-    /// such that `self` shifted by `delta` would land at the nearest valid
-    /// bound (positive: below the lower bound; negative: above the upper
-    /// bound) — same convention as the C++ side, so a future
-    /// `RandomFiller`-equivalent can reuse the delta to retry a sample
-    /// in-bounds rather than merely reporting failure.
     ///
     /// Not called directly by generated code — `ber_encode_tagged`/
     /// `ber_decode_into_tagged`'s default bodies (below) are the actual
@@ -90,6 +84,14 @@ pub trait Asn1Value {
     /// OCTET/BIT STRING and character string SIZE, FROM alphabet,
     /// SEQUENCE OF/SET OF SIZE, ENUMERATED unknown-value) is separate,
     /// not-yet-implemented follow-on work, one constraint kind at a time.
+    ///
+    /// # Returns
+    /// `0` when valid (or unconstrained), otherwise a signed delta such
+    /// that `self` shifted by `delta` would land at the nearest valid
+    /// bound (positive: below the lower bound; negative: above the upper
+    /// bound) — same convention as the C++ side, so a future
+    /// `RandomFiller`-equivalent can reuse the delta to retry a sample
+    /// in-bounds rather than merely reporting failure.
     fn validate(&self) -> i64 {
         0
     }
