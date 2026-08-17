@@ -1,12 +1,20 @@
 -- gambas-asn1#463: real-codegen coverage for MemberDescriptor::validate
 -- (rust-runtime/ber/src/sequence.rs) — an inline X.680 §19/§51 INTEGER
 -- value-range constraint on a SEQUENCE member.
+--
+-- `hint` is OPTIONAL and constrained — its Rust field is `Option<i64>`,
+-- not `i64`, exercising the MemberDescriptor::validate closure's
+-- Option-unwrap path (a real regression once: the codegen sweep's other
+-- schemas never combined OPTIONAL with an inline INTEGER value range, so
+-- a mismatched-types compile error slipped past ctest until caught by
+-- hand while working #464).
 
 RustRangeTest DEFINITIONS ::= BEGIN
 
     Gauge ::= SEQUENCE {
         level INTEGER (0..100),
-        note  INTEGER
+        note  INTEGER,
+        hint  [0] INTEGER (0..10) OPTIONAL
     }
 
 END

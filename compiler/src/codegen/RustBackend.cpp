@@ -591,18 +591,29 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         }
         return;
     }
-    if (!spec.has_size_constraint) return;
+    // Always emitted (not gated on has_size_constraint) whenever this
+    // function runs at all — this spec can also get built for a
+    // FROM-alphabet-only or custom-XER-only member with no SIZE constraint
+    // (Generator::build_member_type_descriptor_spec's Sizeable branch:
+    // `if (sr || !alphabet.empty() || needs_xer)`), and RustBackend's own
+    // member-row loop only has `tdref`'s "&asn_TYP_..." prefix to tell
+    // whether *some* spec was built for this member (same signal
+    // `range_delta`'s own doc explains, reused here) — not whether the
+    // SIZE-specific function within it exists. Keeping this function
+    // unconditional keeps that one signal reliable for every Sizeable
+    // member uniformly, matching the C++ side's own "always call, a
+    // flags=0 Constraints struct makes it a no-op" pattern (Validate.hpp)
+    // — no second gate needed.
     std::string rust_type = native_builtin_type(spec.builtin_type);
     const char* len_expr = size_check_len_expr(spec.builtin_type);
-    os << std::format("pub fn {}_size_ok(v: &{}) -> bool {{\n", base, rust_type);
-    if (spec.size_bounded) {
-        os << std::format("    ({0} as i64) >= {1} && ({0} as i64) <= {2}\n",
-                           len_expr, spec.size_lower, spec.size_upper);
+    if (spec.has_size_constraint) {
+        os << std::format(
+            "pub fn {}_size_delta(v: &{}) -> i64 {{ asn1cpp_ber::validate::size_delta({}, {}, {}, {}, {}) }}\n\n",
+            base, rust_type, len_expr, spec.extensible ? "true" : "false",
+            spec.size_bounded ? "true" : "false", spec.size_lower, spec.size_upper);
     } else {
-        os << std::format("    ({} as i64) >= {} // semi-constrained, no upper cap\n",
-                           len_expr, spec.size_lower);
+        os << std::format("pub fn {}_size_delta(v: &{}) -> i64 {{ let _ = v; 0 }}\n\n", base, rust_type);
     }
-    os << "}\n\n";
 }
 
 /// @brief Emit a Rust size-check function for a SEQUENCE OF / SET OF type's
@@ -1094,12 +1105,35 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // fallback (`type_descriptor_ref_for`) never produces that
             // prefix. `base` itself is recomputed from `tname`'s
             // deterministic naming, not read back off stored data.
+            // `m.optional` also covers a DEFAULT-valued member (X.680
+            // §25.1: `Generator::collect` passes `m->is_optional()`, true
+            // for both markers) — its Rust field is `Option<T>` too (see
+            // the `Option<{}>` wrapping just above), so the closure needs
+            // to unwrap either way. A `None` field (genuinely absent
+            // OPTIONAL member, or a DEFAULT member not yet filled at the
+            // point this closure could in principle run) reports "valid"
+            // (`0`) — same "nothing to check" contract
+            // `encode_sequence_content`/`decode_sequence_content`
+            // (`sequence.rs`) already give a `set_default`-less absent
+            // member.
             std::string validate_expr = "None";
             if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Integer &&
                 m.tdref.starts_with("&asn_TYP_") &&
                 (m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64)) {
                 std::string base = escape(to_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
-                validate_expr = std::format("Some(|v| {}_range_delta(v.{}))", base, m.mname);
+                validate_expr = m.optional
+                    ? std::format("Some(|v| v.{}.map_or(0, {}_range_delta))", m.mname, base)
+                    : std::format("Some(|v| {}_range_delta(v.{}))", base, m.mname);
+            } else if (m.mbuiltin &&
+                       (*m.mbuiltin == ast::BuiltinType::OctetString || *m.mbuiltin == ast::BuiltinType::BitString) &&
+                       m.tdref.starts_with("&asn_TYP_")) {
+                // Character-string SIZE (`emit_member_type_descriptor`'s
+                // same Sizeable branch, same `_size_delta` function shape)
+                // is gambas-asn1#465, not this issue — left `None` here.
+                std::string base = escape(to_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
+                validate_expr = m.optional
+                    ? std::format("Some(|v| v.{}.as_ref().map_or(0, {}_size_delta))", m.mname, base)
+                    : std::format("Some(|v| {}_size_delta(&v.{}))", base, m.mname);
             }
             os << std::format("        validate: {},\n", validate_expr);
             os << "    },\n";

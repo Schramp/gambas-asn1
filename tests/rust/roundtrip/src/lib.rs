@@ -28,15 +28,21 @@
 //! generated `{name}_range_delta` free function
 //! (`RustBackend::emit_member_type_descriptor`), not just the hand-written
 //! `RangedPoint` dogfood type `sequence.rs`'s own unit tests use.
+//!
+//! `blob_generated.rs` (gambas-asn1#464) is `Blob` from
+//! `tests/asn1/rust_size_test.asn1` — OCTET STRING / BIT STRING members
+//! with an inline X.680 §22/§21/§51 SIZE constraint, same role for
+//! `{name}_size_delta` that `Gauge` plays for `{name}_range_delta`.
 
 include!(concat!(env!("OUT_DIR"), "/point_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/widget_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/selector_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/gauge_generated.rs"));
+include!(concat!(env!("OUT_DIR"), "/blob_generated.rs"));
 
 #[cfg(test)]
 mod tests {
-    use super::Gauge;
+    use super::{Blob, Gauge};
     use super::Point;
 
     fn ber_roundtrip(x: i64, y: i64) -> bool {
@@ -261,7 +267,7 @@ mod tests {
     fn gauge_in_range_member_round_trips_and_does_not_bump_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
         asn1cpp_ber::validate::reset_validate_fail_count();
-        let g = Gauge { level: 50, note: -7 };
+        let g = Gauge { level: 50, note: -7, hint: Some(3) };
         assert_eq!(Gauge::decode(&g.encode()).unwrap(), g);
         assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
     }
@@ -270,7 +276,30 @@ mod tests {
     fn gauge_out_of_range_member_bumps_the_validate_counter_on_encode() {
         let _guard = COUNTER_LOCK.lock().unwrap();
         asn1cpp_ber::validate::reset_validate_fail_count();
-        let g = Gauge { level: 500, note: 1 };
+        let g = Gauge { level: 500, note: 1, hint: None };
+        let _ = g.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+    }
+
+    // Regression: `hint`'s field is `Option<i64>` (OPTIONAL + constrained),
+    // not `i64` — the generated MemberDescriptor::validate closure has to
+    // unwrap it, not forward it straight to a `fn(i64) -> i64`. Compiled
+    // fine before this test existed only because no other schema in the
+    // codegen sweep combined OPTIONAL with an inline INTEGER value range.
+    #[test]
+    fn gauge_absent_optional_constrained_member_does_not_bump_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let g = Gauge { level: 50, note: 1, hint: None };
+        let _ = g.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+    }
+
+    #[test]
+    fn gauge_out_of_range_optional_constrained_member_bumps_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let g = Gauge { level: 50, note: 1, hint: Some(500) };
         let _ = g.encode();
         assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
     }
@@ -297,5 +326,59 @@ mod tests {
         let g = Gauge::decode(&wire).unwrap();
         assert_eq!(g.level, -5);
         assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+    }
+
+    // gambas-asn1#464: real-codegen MemberDescriptor::validate coverage for
+    // OCTET STRING / BIT STRING SIZE.
+    use asn1cpp_ber::bit_string::BitString;
+    use asn1cpp_ber::octet_string::OctetString;
+
+    fn blob(data: Vec<u8>, flags_bytes: Vec<u8>, flags_unused_bits: u8) -> Blob {
+        Blob {
+            data: OctetString(data),
+            flags: BitString { bytes: flags_bytes, unused_bits: flags_unused_bits },
+            tag: OctetString(vec![]),
+        }
+    }
+
+    #[test]
+    fn blob_in_size_members_round_trip_and_do_not_bump_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let b = blob(vec![1, 2], vec![0xFF], 4);
+        assert_eq!(Blob::decode(&b.encode()).unwrap(), b);
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+    }
+
+    #[test]
+    fn blob_too_long_octet_string_bumps_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let b = blob(vec![1, 2, 3, 4, 5], vec![0xFF], 4);
+        let _ = b.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+    }
+
+    #[test]
+    fn blob_too_short_bit_string_bumps_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        // bit_count() == 0 (empty bytes, no unused_bits) — below the
+        // SIZE(1..16) lower bound.
+        let b = blob(vec![1], vec![], 0);
+        let _ = b.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+    }
+
+    #[test]
+    fn blob_unconstrained_octet_string_member_never_bumps_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        // `tag` has no SIZE constraint at all — arbitrarily long is fine.
+        let b = blob(vec![1], vec![0xFF], 4);
+        let mut b = b;
+        b.tag = OctetString(vec![0; 1000]);
+        let _ = b.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
     }
 }
