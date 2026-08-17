@@ -261,7 +261,7 @@ mod tests {
     fn gauge_in_range_member_round_trips_and_does_not_bump_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
         asn1cpp_ber::validate::reset_validate_fail_count();
-        let g = Gauge { level: 50, note: -7 };
+        let g = Gauge { level: 50, note: -7, hint: Some(3) };
         assert_eq!(Gauge::decode(&g.encode()).unwrap(), g);
         assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
     }
@@ -270,7 +270,30 @@ mod tests {
     fn gauge_out_of_range_member_bumps_the_validate_counter_on_encode() {
         let _guard = COUNTER_LOCK.lock().unwrap();
         asn1cpp_ber::validate::reset_validate_fail_count();
-        let g = Gauge { level: 500, note: 1 };
+        let g = Gauge { level: 500, note: 1, hint: None };
+        let _ = g.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+    }
+
+    // Regression: `hint`'s field is `Option<i64>` (OPTIONAL + constrained),
+    // not `i64` — the generated MemberDescriptor::validate closure has to
+    // unwrap it, not forward it straight to a `fn(i64) -> i64`. Compiled
+    // fine before this test existed only because no other schema in the
+    // codegen sweep combined OPTIONAL with an inline INTEGER value range.
+    #[test]
+    fn gauge_absent_optional_constrained_member_does_not_bump_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let g = Gauge { level: 50, note: 1, hint: None };
+        let _ = g.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+    }
+
+    #[test]
+    fn gauge_out_of_range_optional_constrained_member_bumps_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let g = Gauge { level: 50, note: 1, hint: Some(500) };
         let _ = g.encode();
         assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
     }
