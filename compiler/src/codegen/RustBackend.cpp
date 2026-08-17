@@ -1006,36 +1006,28 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 }
                 os << "        },\n";
             } else if (m.resolved_tag && m.is_explicit && m.resolved_tag->tag_is_override) {
-                // EXPLICIT tagging (X.690 §8.14.3) — wraps
-                // the member's natural Asn1Value encoding in a constructed
-                // outer TLV via value::encode_explicit/decode_explicit,
-                // rather than substituting the tag like the IMPLICIT
-                // branch below. Generic over Asn1Value, so it covers every
-                // member the natural Scalar path already covers with one
-                // runtime pair. Only a real `[n]` written on this member
-                // itself (tag_is_override) reaches here — a bare type
-                // reference to an already-EXPLICIT-tagged type (e.g. a
-                // member naming `T4 ::= [53] CHOICE {...}` with no `[n]` of
-                // its own) falls through to the plain-delegate `else`
-                // branch below instead: that type's own Asn1Value impl
-                // already wraps itself, and a second wrap here would
-                // double it (X.680 §30.1/30.3 — no TaggedType construction
-                // on this member means no extra layer).
+                // EXPLICIT tagging (X.690 §8.14.3) — wraps the member's
+                // natural Asn1Value encoding in a constructed outer TLV via
+                // Asn1Value::ber_encode_explicit/ber_decode_into_explicit
+                // (value.rs), rather than substituting the tag like the
+                // IMPLICIT branch below. `MemberAccess::ExplicitScalar` has
+                // no closures of its own (same as TaggedScalar just below)
+                // — the walker calls those two generically using this row's
+                // own `tag` field, one runtime pair covering every member
+                // the natural Scalar path already covers. Only a real `[n]`
+                // written on this member itself (tag_is_override) reaches
+                // here — a bare type reference to an already-EXPLICIT-
+                // tagged type (e.g. a member naming `T4 ::= [53] CHOICE
+                // {...}` with no `[n]` of its own) falls through to the
+                // plain-delegate `else` branch below instead: that type's
+                // own Asn1Value impl already wraps itself, and a second
+                // wrap here would double it (X.680 §30.1/30.3 — no
+                // TaggedType construction on this member means no extra
+                // layer).
                 std::string tag_lit = format_tag_literal(*m.resolved_tag);
                 os << std::format("        tag: {},\n", tag_lit);
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                // value::encode_explicit_opt/encode_explicit — same
-                // one-line-either-way shape as the ExplicitAny branch above.
-                os << "        access: asn1cpp_ber::sequence::MemberAccess::ExplicitScalar {\n";
-                if (m.optional) {
-                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::value::encode_explicit_opt(out, {1}, &v.{0}),\n", m.mname, tag_lit);
-                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_ber::value::decode_explicit(r, {1})?); Ok(()) }},\n", m.mname, tag_lit);
-                } else {
-                    os << std::format("            ber_encode: |v, out| asn1cpp_ber::value::encode_explicit(out, {1}, &v.{0}),\n", m.mname, tag_lit);
-                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_ber::value::decode_explicit(r, {1})?; Ok(()) }},\n", m.mname, tag_lit);
-                }
-                os << std::format("            get: |v| &v.{0}, get_mut: |v| &mut v.{0},\n", m.mname);
-                os << "        },\n";
+                os << std::format("        access: asn1cpp_ber::sequence::MemberAccess::ExplicitScalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
             } else if (m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit) {
                 // IMPLICIT retag (X.690 §8.14.2) — same content,
                 // different outer tag. `MemberAccess::TaggedScalar` has no
