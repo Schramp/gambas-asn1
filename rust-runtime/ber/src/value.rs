@@ -63,6 +63,39 @@ pub trait Asn1Value {
     /// consumed and checked by the caller) into `self`.
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError>;
 
+    /// Checks `self` against this type's X.680 §51 SubtypeConstraint
+    /// (SIZE, value range, FROM alphabet, ...), if it has one.
+    ///
+    /// The Rust analogue of each C++ type's own
+    /// `validate(const Constraints&)` (`runtime/include/asn1cpp/types/
+    /// Integer.hpp` and siblings), reached generically the same way
+    /// (`runtime/include/asn1cpp/Validate.hpp`'s single dispatch point).
+    /// Composite types (SEQUENCE/SET/CHOICE) leave this at the default too
+    /// — same "0, caller recurses into members" contract the C++ side's
+    /// own doc states; each member gets checked individually as the
+    /// generic walker (`sequence.rs`/`choice.rs`) reaches it through this
+    /// same trait, not by the composite's own `validate()`.
+    ///
+    /// Not called directly by generated code — `ber_encode_tagged`/
+    /// `ber_decode_into_tagged`'s default bodies (below) are the actual
+    /// call site (`validate::check`, `validate.rs`), gated by
+    /// `debug::debug_flags()`. This method's own default (always 0) is
+    /// the whole story for now; every concrete override (INTEGER range,
+    /// OCTET/BIT STRING and character string SIZE, FROM alphabet,
+    /// SEQUENCE OF/SET OF SIZE, ENUMERATED unknown-value) is separate,
+    /// not-yet-implemented follow-on work, one constraint kind at a time.
+    ///
+    /// # Returns
+    /// `0` when valid (or unconstrained), otherwise a signed delta such
+    /// that `self` shifted by `delta` would land at the nearest valid
+    /// bound (positive: below the lower bound; negative: above the upper
+    /// bound) — same convention as the C++ side, so a future
+    /// `RandomFiller`-equivalent can reuse the delta to retry a sample
+    /// in-bounds rather than merely reporting failure.
+    fn validate(&self) -> i64 {
+        0
+    }
+
     /// Writes this value's complete TLV under its own natural tag.
     fn ber_encode(&self, out: &mut Vec<u8>) {
         self.ber_encode_tagged(self.ber_natural_tag(), out);
@@ -76,19 +109,34 @@ pub trait Asn1Value {
 
     /// IMPLICIT tag override (X.690 §8.14) — writes this value's content
     /// under `tag` instead of its own natural one.
+    ///
+    /// This is the one call site every non-composite `Asn1Value` impl
+    /// funnels through on encode (`ber_encode`'s own default delegates
+    /// here; `TaggedScalar`/`ber_encode_explicit`'s default reach it too —
+    /// see `validate`'s own doc for why this, not `ber_encode`, is where
+    /// `validate()` is called from) — so it is also where constraint
+    /// validation (X.680 §51 SubtypeConstraint) hooks in, gated by
+    /// `debug::debug_flags()` the same way every other
+    /// `ASN1CPP_DEBUG` bit is (`debug.rs`): on by default, `DBG_NO_VALIDATE`
+    /// opts out, `DBG_VALIDATE_TRACE` additionally prints each failure.
     fn ber_encode_tagged(&self, tag: crate::tag::Tag, out: &mut Vec<u8>) {
+        crate::validate::check(self, "encode");
         let mut content = Vec::new();
         self.ber_encode_content(&mut content);
         crate::writer::write_primitive(out, tag, &content);
     }
 
-    /// Decode counterpart of `ber_encode_tagged`.
+    /// Decode counterpart of `ber_encode_tagged` — same `validate()` call
+    /// site rationale, checked after a successful decode (mirrors
+    /// `BerCodec::decode`'s own `res.has_value() && ...` guard, C++).
     fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
         let tlv = r.read_tlv()?;
         if tlv.tag != tag {
             return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
         }
-        self.ber_decode_content(tlv.value)
+        self.ber_decode_content(tlv.value)?;
+        crate::validate::check(self, "decode");
+        Ok(())
     }
 
     /// EXPLICIT tag override (X.690 §8.14.3) — wraps this value's own

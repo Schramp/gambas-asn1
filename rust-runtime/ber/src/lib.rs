@@ -48,6 +48,7 @@ pub mod relative_oid;
 pub mod sequence;
 pub mod strings;
 pub mod tag;
+pub mod validate;
 pub mod value;
 pub mod writer;
 pub mod xer;
