@@ -20,13 +20,23 @@
 //! table-driven CHOICE — `Selector` from `tests/asn1/rust_choice_test.asn1`,
 //! same four alternative kinds `Widget` covers for SEQUENCE. Expected wire
 //! bytes (both formats) captured from the real C++ runtime the same way.
+//!
+//! `gauge_generated.rs` (gambas-asn1#463) is `Gauge` from
+//! `tests/asn1/rust_range_test.asn1` — a member with an inline X.680 §19/§51
+//! INTEGER value-range constraint. Proves `MemberDescriptor::validate`
+//! (`rust-runtime/ber/src/sequence.rs`) is reached through the real
+//! generated `{name}_range_delta` free function
+//! (`RustBackend::emit_member_type_descriptor`), not just the hand-written
+//! `RangedPoint` dogfood type `sequence.rs`'s own unit tests use.
 
 include!(concat!(env!("OUT_DIR"), "/point_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/widget_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/selector_generated.rs"));
+include!(concat!(env!("OUT_DIR"), "/gauge_generated.rs"));
 
 #[cfg(test)]
 mod tests {
+    use super::Gauge;
     use super::Point;
 
     fn ber_roundtrip(x: i64, y: i64) -> bool {
@@ -239,5 +249,53 @@ mod tests {
     #[test]
     fn selector_xer_rejects_empty_input() {
         assert!(Selector::decode_xer("").is_err());
+    }
+
+    // gambas-asn1#463: real-codegen MemberDescriptor::validate coverage.
+    // VALIDATE_FAIL_COUNT is one process-global atomic
+    // (rust-runtime/ber/src/validate.rs) and `cargo test` runs in parallel
+    // by default — same lock discipline that crate's own tests use.
+    static COUNTER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn gauge_in_range_member_round_trips_and_does_not_bump_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let g = Gauge { level: 50, note: -7 };
+        assert_eq!(Gauge::decode(&g.encode()).unwrap(), g);
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+    }
+
+    #[test]
+    fn gauge_out_of_range_member_bumps_the_validate_counter_on_encode() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let g = Gauge { level: 500, note: 1 };
+        let _ = g.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+    }
+
+    #[test]
+    fn gauge_out_of_range_member_bumps_the_validate_counter_on_decode() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        // level == -5 is invalid per Gauge's own schema (0..100), but BER
+        // itself has no notion of "invalid content" for a plain INTEGER —
+        // building the wire bytes with a sibling in-range Gauge's encoder
+        // isn't an option (Gauge::encode() would itself trip the same
+        // counter), so hand-assemble the two-member SEQUENCE content
+        // directly via the runtime's own low-level integer writer.
+        let mut level_bytes = Vec::new();
+        asn1cpp_ber::integer::write_integer_tagged(&mut level_bytes, asn1cpp_ber::integer::INTEGER_TAG, -5);
+        let mut note_bytes = Vec::new();
+        asn1cpp_ber::integer::write_integer_tagged(&mut note_bytes, asn1cpp_ber::integer::INTEGER_TAG, 1);
+        let mut content = level_bytes;
+        content.extend_from_slice(&note_bytes);
+        let mut wire = Vec::new();
+        asn1cpp_ber::writer::write_constructed(&mut wire, asn1cpp_ber::sequence::SEQUENCE_TAG, &content);
+
+        let g = Gauge::decode(&wire).unwrap();
+        assert_eq!(g.level, -5);
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
     }
 }
