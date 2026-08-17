@@ -311,8 +311,8 @@ int main() {
               cpp_os.find("asn_TYP_MySeq_myField") != std::string::npos,
               cpp_os);
         check("emit_member_type_descriptor: Rust produces a real range-check function",
-              rust_os.find("pub fn asn_typ_my_seq_my_field_in_range(v: i64) -> bool {") != std::string::npos &&
-              rust_os.find("v >= 0 && v <= 100") != std::string::npos,
+              rust_os.find("pub fn asn_typ_my_seq_my_field_range_delta(v: i64) -> i64 { "
+                            "asn1cpp_ber::integer::range_delta_i64(v, false, false, 0, 100) }") != std::string::npos,
               rust_os);
     }
 

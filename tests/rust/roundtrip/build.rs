@@ -42,6 +42,11 @@ fn main() {
         "ASN1CPP_RUST_CHOICE_GEN_DIR must be set to the directory containing the compiler-generated \
          Selector.rs (see tests/CMakeLists.txt's rust_roundtrip_test ENVIRONMENT property)",
     );
+    // gambas-asn1#463: Gauge.rs, same separate-out-dir reason as Widget.rs.
+    let range_gen_dir = env::var("ASN1CPP_RUST_RANGE_GEN_DIR").expect(
+        "ASN1CPP_RUST_RANGE_GEN_DIR must be set to the directory containing the compiler-generated \
+         Gauge.rs (see tests/CMakeLists.txt's rust_roundtrip_test ENVIRONMENT property)",
+    );
     let out_dir = env::var("OUT_DIR").unwrap();
 
     let point_src = PathBuf::from(&gen_dir).join("Point.rs");
@@ -56,10 +61,16 @@ fn main() {
     let selector_dst = PathBuf::from(&out_dir).join("selector_generated.rs");
     copy_neutralizing_inner_doc_comment(&selector_src, &selector_dst);
 
+    let gauge_src = PathBuf::from(&range_gen_dir).join("Gauge.rs");
+    let gauge_dst = PathBuf::from(&out_dir).join("gauge_generated.rs");
+    copy_neutralizing_inner_doc_comment(&gauge_src, &gauge_dst);
+
     println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_GEN_DIR");
     println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_WIDE_GEN_DIR");
     println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_CHOICE_GEN_DIR");
+    println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_RANGE_GEN_DIR");
     println!("cargo:rerun-if-changed={}", point_src.display());
     println!("cargo:rerun-if-changed={}", widget_src.display());
     println!("cargo:rerun-if-changed={}", selector_src.display());
+    println!("cargo:rerun-if-changed={}", gauge_src.display());
 }
