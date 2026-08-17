@@ -68,26 +68,38 @@ pub fn bump_validate_fail() {
 /// `BerCodec.cpp`'s own `record_validate_fail`/`DBG_VALIDATE_TRACE` split
 /// exactly.
 pub fn check<T: crate::value::Asn1Value + ?Sized>(v: &T, phase: &str) {
-    let flags = crate::debug::debug_flags();
-    if flags & crate::debug::DBG_NO_VALIDATE != 0 {
+    if crate::debug::debug_flags() & crate::debug::DBG_NO_VALIDATE != 0 {
         return;
     }
-    let delta = v.validate();
+    report(v.validate(), std::any::type_name::<T>(), phase);
+}
+
+/// Gate + report a delta already computed by the caller — the same shape
+/// as `check()` but for callers that don't have an `Asn1Value` to call
+/// `.validate()` on. Used by `MemberDescriptor::validate`
+/// (`sequence.rs`, X.680 §51 per-member constraint checks that can't hang
+/// off `Asn1Value::validate()` because the member's own Rust type — e.g. a
+/// bare `i64` INTEGER alias — is shared across every member regardless of
+/// its individual bound): the generated per-member fn computes the delta,
+/// this gates/counts/traces it exactly like `check()` does.
+pub fn check_delta(delta: i64, name: &str, phase: &str) {
+    if crate::debug::debug_flags() & crate::debug::DBG_NO_VALIDATE != 0 {
+        return;
+    }
+    report(delta, name, phase);
+}
+
+fn report(delta: i64, name: &str, phase: &str) {
     if delta != 0 {
         bump_validate_fail();
-        if flags & crate::debug::DBG_VALIDATE_TRACE != 0 {
-            eprintln!(
-                "[VALIDATE-{}][BER] {} delta={}",
-                phase.to_uppercase(),
-                std::any::type_name::<T>(),
-                delta
-            );
+        if crate::debug::debug_flags() & crate::debug::DBG_VALIDATE_TRACE != 0 {
+            eprintln!("[VALIDATE-{}][BER] {} delta={}", phase.to_uppercase(), name, delta);
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::reader::Reader;
     use crate::tag::{universal, Tag};
@@ -98,7 +110,10 @@ mod tests {
     // tests in parallel by default, so every test in this module that
     // reads/resets it needs to hold this lock for its whole body or two
     // tests interleaving would see each other's bumps.
-    static COUNTER_LOCK: Mutex<()> = Mutex::new(());
+    // pub(crate): sequence.rs's own MemberDescriptor::validate tests share
+    // this same process-global counter and need to serialize against these
+    // tests too, not just against each other.
+    pub(crate) static COUNTER_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn bump_and_reset_round_trip() {

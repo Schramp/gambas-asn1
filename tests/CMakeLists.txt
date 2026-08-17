@@ -1477,10 +1477,25 @@ add_custom_command(
     COMMENT "Generating Rust from rust_choice_test.asn1"
 )
 
+# gambas-asn1#463: MemberDescriptor::validate real-codegen coverage — an
+# inline INTEGER value-range constraint. Own output directory, same reason
+# as RUST_WIDE_TYPES_GEN_DIR above.
+set(RUST_RANGE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_range)
+add_custom_command(
+    OUTPUT  ${RUST_RANGE_GEN_DIR}/Gauge.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_RANGE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_range_test.asn1
+                                   -o ${RUST_RANGE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_range_test.asn1
+    COMMENT "Generating Rust from rust_range_test.asn1"
+)
+
 add_custom_target(gen_rust_simple_seq ALL DEPENDS
     ${RUST_SIMPLE_SEQ_GEN_DIR}/Point.rs
     ${RUST_WIDE_TYPES_GEN_DIR}/Widget.rs
-    ${RUST_CHOICE_GEN_DIR}/Selector.rs)
+    ${RUST_CHOICE_GEN_DIR}/Selector.rs
+    ${RUST_RANGE_GEN_DIR}/Gauge.rs)
 
 if(WITH_BER_RUNTIME_TEST)
     add_test(NAME rust_roundtrip_test
@@ -1488,7 +1503,7 @@ if(WITH_BER_RUNTIME_TEST)
                 ${CMAKE_CURRENT_SOURCE_DIR}/rust/roundtrip/Cargo.toml)
     set_tests_properties(rust_roundtrip_test PROPERTIES
         TIMEOUT 60 LABELS "rust"
-        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIMPLE_SEQ_GEN_DIR};ASN1CPP_RUST_WIDE_GEN_DIR=${RUST_WIDE_TYPES_GEN_DIR};ASN1CPP_RUST_CHOICE_GEN_DIR=${RUST_CHOICE_GEN_DIR}")
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIMPLE_SEQ_GEN_DIR};ASN1CPP_RUST_WIDE_GEN_DIR=${RUST_WIDE_TYPES_GEN_DIR};ASN1CPP_RUST_CHOICE_GEN_DIR=${RUST_CHOICE_GEN_DIR};ASN1CPP_RUST_RANGE_GEN_DIR=${RUST_RANGE_GEN_DIR}")
 endif()
 
 # gambas-asn1#323: Rust leg of the real asn1c data-62 BER-vector fixture

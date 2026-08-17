@@ -441,6 +441,16 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     bool        setter_is_move = false;
     bool        setter_is_int_alias = false;
     bool        setter_is_uint_alias = false;
+    // `Some` iff this member is a direct (non-TypeRef) INTEGER with an
+    // inline X.680 §19/§51 value-range constraint — the same condition
+    // `build_member_type_descriptor_spec`'s Kind::Integer branch checks,
+    // recomputed here (cheap, pure) so RustBackend can emit
+    // `MemberDescriptor::validate` (rust-runtime/ber/src/sequence.rs)
+    // without re-deriving bounds from `tdref` text. A TypeRef-aliased
+    // constrained INTEGER member (`x MyByte` where
+    // `MyByte ::= INTEGER(0..255)`) is NOT covered — its constraint lives
+    // on the resolved named type, a separate, not-yet-wired case.
+    std::optional<MemberTypeDescriptorSpec> int_range;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET type (X.680 §24/25).

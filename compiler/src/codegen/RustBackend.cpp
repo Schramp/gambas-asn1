@@ -562,15 +562,33 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     using Kind = MemberTypeDescriptorSpec::Kind;
     std::string base = escape(to_snake_case(spec.tname));
     if (spec.kind == Kind::Integer) {
-        os << std::format("pub fn {}_in_range(v: i64) -> bool {{\n", base);
-        if (spec.semi_constrained || spec.hi_is_large) {
-            os << std::format("    v >= {} // {}\n", spec.lower_s64,
-                               spec.hi_is_large ? "upper bound exceeds i64 range, not checked"
-                                                 : "semi-constrained, no upper cap");
-        } else {
-            os << std::format("    v >= {} && v <= {}\n", spec.lower_s64, spec.upper_s64);
+        // Delta convention, EXTENSIBLE handling, and the saturating i64
+        // clamp for U64 storage all live in `integer::range_delta_i64`/
+        // `range_delta_u64` (rust-runtime/ber/src/integer.rs) — this just
+        // binds the member's own bounds, one line, same "generic runtime
+        // function, one-line codegen call" shape the rest of RustBackend
+        // uses (e.g. `choice::decode_alt`). Only INT_S64/INT_U64 storage
+        // gets a real function — INT_I128/INT_ARBITRARY are skipped (no
+        // function emitted; the member's MemberDescriptor.validate is
+        // `None`), matching or exceeding the C++ side's own correctness
+        // rather than replicating its latent I128/ARBITRARY static_cast
+        // bug (Validate.hpp) in Rust too.
+        if (spec.storage_kind == IntStorageKind::S64) {
+            // hi_is_large's upper bound may exceed i64::MAX (X.691 §10.5.6,
+            // e.g. UINT64_MAX) and isn't exactly representable as an i64
+            // parameter — treated as semi-constrained (lower-bound-only
+            // check) rather than passing an incorrect upper bound.
+            os << std::format(
+                "pub fn {}_range_delta(v: i64) -> i64 {{ asn1cpp_ber::integer::range_delta_i64(v, {}, {}, {}, {}) }}\n\n",
+                base, spec.extensible ? "true" : "false",
+                (spec.semi_constrained || spec.hi_is_large) ? "true" : "false",
+                spec.lower_s64, spec.upper_s64);
+        } else if (spec.storage_kind == IntStorageKind::U64) {
+            os << std::format(
+                "pub fn {}_range_delta(v: u64) -> i64 {{ asn1cpp_ber::integer::range_delta_u64(v, {}, {}, {}u64, {}u64) }}\n\n",
+                base, spec.extensible ? "true" : "false", spec.semi_constrained ? "true" : "false",
+                spec.lower_u64, spec.upper_u64);
         }
-        os << "}\n\n";
         return;
     }
     if (!spec.has_size_constraint) return;
@@ -1064,6 +1082,21 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             }
             os << std::format("        set_default: {},\n", set_default_expr);
             os << std::format("        is_default_equal: {},\n", is_default_equal_expr);
+            // `emit_member_type_descriptor` (above, via the Generator's own
+            // second `build_member_type_descriptor_spec` call at row-build
+            // time) already emitted `{base}_range_delta` for a direct
+            // INTEGER member with an inline X.680 §19/§51 value range —
+            // only INT_S64/INT_U64 storage gets a real function (see that
+            // emitter's own doc); other storage kinds leave `int_range`
+            // set but the function unemitted, so still fall through to None.
+            std::string validate_expr = "None";
+            if (m.int_range &&
+                (m.int_range->storage_kind == IntStorageKind::S64 ||
+                 m.int_range->storage_kind == IntStorageKind::U64)) {
+                std::string base = escape(to_snake_case(m.int_range->tname));
+                validate_expr = std::format("Some(|v| {}_range_delta(v.{}))", base, m.mname);
+            }
+            os << std::format("        validate: {},\n", validate_expr);
             os << "    },\n";
         }
         os << "];\n\n";
