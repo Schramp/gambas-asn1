@@ -134,6 +134,40 @@ static const char* size_check_len_expr(ast::BuiltinType bt) {
     return bt == ast::BuiltinType::BitString ? "v.bit_count()" : "v.len()";
 }
 
+/// @brief True for the 12 character-string builtins X.680 §51 SIZE
+///        validation covers (gambas-asn1#465) — the same set
+///        `Generator::build_member_type_descriptor_spec`'s
+///        `sizeable_universal_tag` lambda maps to a universal tag, minus
+///        OCTET STRING/BIT STRING (their own row-loop branch already
+///        handles those, gambas-asn1#464). Every one of these newtypes
+///        (or, for IA5String, bare `String`) `Deref`s to `String`
+///        (`rust-runtime/ber/src/strings.rs`'s own module doc), so
+///        `{base}_size_delta`'s `v.len()` — byte length, matching C++'s
+///        own `AsnString<N>::validate`, whose own doc notes this is byte
+///        count "not characters for multi-byte encodings like UTF-8", the
+///        same simplification carried over here — already works
+///        uniformly across the set with no per-kind runtime code.
+static bool is_sizeable_string_kind(ast::BuiltinType bt) {
+    using BT = ast::BuiltinType;
+    switch (bt) {
+    case BT::Utf8String:
+    case BT::NumericString:
+    case BT::PrintableString:
+    case BT::T61String:
+    case BT::Ia5String:
+    case BT::VisibleString:
+    case BT::GeneralString:
+    case BT::GraphicString:
+    case BT::UniversalString:
+    case BT::BmpString:
+    case BT::VideotexString:
+    case BT::ObjectDescriptor:
+        return true;
+    default:
+        return false;
+    }
+}
+
 void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
@@ -1125,11 +1159,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     ? std::format("Some(|v| v.{}.map_or(0, {}_range_delta))", m.mname, base)
                     : std::format("Some(|v| {}_range_delta(v.{}))", base, m.mname);
             } else if (m.mbuiltin &&
-                       (*m.mbuiltin == ast::BuiltinType::OctetString || *m.mbuiltin == ast::BuiltinType::BitString) &&
+                       (*m.mbuiltin == ast::BuiltinType::OctetString || *m.mbuiltin == ast::BuiltinType::BitString ||
+                        is_sizeable_string_kind(*m.mbuiltin)) &&
                        m.tdref.starts_with("&asn_TYP_")) {
-                // Character-string SIZE (`emit_member_type_descriptor`'s
-                // same Sizeable branch, same `_size_delta` function shape)
-                // is gambas-asn1#465, not this issue — left `None` here.
                 std::string base = escape(to_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
                 validate_expr = m.optional
                     ? std::format("Some(|v| v.{}.as_ref().map_or(0, {}_size_delta))", m.mname, base)
