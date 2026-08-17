@@ -1432,10 +1432,6 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         row.is_explicit = tag_result.is_explicit;
         row.resolved_tag = tag_result.resolved_tag;
         row.tdref = emit_member_type_descriptor(m, cname, row.mname, session);
-        if (row.mbuiltin && *row.mbuiltin == ast::BuiltinType::Integer) {
-            auto ts = build_member_type_descriptor_spec(m, cname, row.mname);
-            row.has_int_range = ts && ts->kind == MemberTypeDescriptorSpec::Kind::Integer;
-        }
         row.def_setter = emit_default_setter(m, cname, row.mname, session);
         row.has_default = (m.marker == ast::Marker::Default);
         if (!optional) {

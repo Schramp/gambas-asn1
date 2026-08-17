@@ -1085,15 +1085,18 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // `emit_member_type_descriptor` (above) already emitted
             // `{base}_range_delta` for a direct INTEGER member with an
             // inline X.680 §19/§51 value range — only INT_S64/INT_U64
-            // storage gets a real function (see that emitter's own doc);
-            // other storage kinds leave `has_int_range` set but the
-            // function unemitted, so still fall through to None. `base`
-            // is recomputed, not stored — `tname`'s "asn_TYP_{parent}_
-            // {member}" naming is deterministic from data this row
-            // already carries (spec.type_name, m.mname), same as
-            // `emit_member_type_descriptor` itself derives it.
+            // storage gets a real function (see that emitter's own doc).
+            // No dedicated field needed to detect this: `tdref` (already
+            // set on every row, both backends) is `"&" + tname` — the
+            // exact "asn_TYP_{parent}_{member}" text — only when
+            // `build_member_type_descriptor_spec` actually built a spec
+            // for this member; the plain/TypeRef-aliased/no-constraint
+            // fallback (`type_descriptor_ref_for`) never produces that
+            // prefix. `base` itself is recomputed from `tname`'s
+            // deterministic naming, not read back off stored data.
             std::string validate_expr = "None";
-            if (m.has_int_range &&
+            if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Integer &&
+                m.tdref.starts_with("&asn_TYP_") &&
                 (m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64)) {
                 std::string base = escape(to_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
                 validate_expr = std::format("Some(|v| {}_range_delta(v.{}))", base, m.mname);
