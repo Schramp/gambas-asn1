@@ -1,0 +1,13 @@
+-- gambas-asn1#464: real-codegen coverage for MemberDescriptor::validate —
+-- an inline X.680 §22/§21/§51 SIZE constraint on an OCTET STRING / BIT
+-- STRING SEQUENCE member.
+
+RustSizeTest DEFINITIONS ::= BEGIN
+
+    Blob ::= SEQUENCE {
+        data  OCTET STRING (SIZE(1..4)),
+        flags BIT STRING (SIZE(1..16)),
+        tag   OCTET STRING
+    }
+
+END
