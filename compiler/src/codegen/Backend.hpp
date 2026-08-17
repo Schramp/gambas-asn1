@@ -441,16 +441,20 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     bool        setter_is_move = false;
     bool        setter_is_int_alias = false;
     bool        setter_is_uint_alias = false;
-    // `Some` iff this member is a direct (non-TypeRef) INTEGER with an
+    // True iff this member is a direct (non-TypeRef) INTEGER with an
     // inline X.680 §19/§51 value-range constraint — the same condition
-    // `build_member_type_descriptor_spec`'s Kind::Integer branch checks,
-    // recomputed here (cheap, pure) so RustBackend can emit
-    // `MemberDescriptor::validate` (rust-runtime/ber/src/sequence.rs)
-    // without re-deriving bounds from `tdref` text. A TypeRef-aliased
-    // constrained INTEGER member (`x MyByte` where
-    // `MyByte ::= INTEGER(0..255)`) is NOT covered — its constraint lives
-    // on the resolved named type, a separate, not-yet-wired case.
-    std::optional<MemberTypeDescriptorSpec> int_range;
+    // `build_member_type_descriptor_spec`'s Kind::Integer branch checks.
+    // Just the boolean signal, not a copy of the bounds: RustBackend
+    // derives the `{name}_range_delta` function `emit_member_type_
+    // descriptor` already emitted from `tname`'s own deterministic
+    // "asn_TYP_{parent}_{member}" naming (same text this row's own
+    // `mname` + the enclosing SequenceSpec::type_name reproduce), so
+    // storing the bounds a second time here would be redundant data the
+    // C++ side has no equivalent of either. A TypeRef-aliased constrained
+    // INTEGER member (`x MyByte` where `MyByte ::= INTEGER(0..255)`) is
+    // NOT covered — its constraint lives on the resolved named type, a
+    // separate, not-yet-wired case.
+    bool has_int_range = false;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET type (X.680 §24/25).

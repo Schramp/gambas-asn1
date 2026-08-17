@@ -1082,18 +1082,20 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             }
             os << std::format("        set_default: {},\n", set_default_expr);
             os << std::format("        is_default_equal: {},\n", is_default_equal_expr);
-            // `emit_member_type_descriptor` (above, via the Generator's own
-            // second `build_member_type_descriptor_spec` call at row-build
-            // time) already emitted `{base}_range_delta` for a direct
-            // INTEGER member with an inline X.680 §19/§51 value range —
-            // only INT_S64/INT_U64 storage gets a real function (see that
-            // emitter's own doc); other storage kinds leave `int_range`
-            // set but the function unemitted, so still fall through to None.
+            // `emit_member_type_descriptor` (above) already emitted
+            // `{base}_range_delta` for a direct INTEGER member with an
+            // inline X.680 §19/§51 value range — only INT_S64/INT_U64
+            // storage gets a real function (see that emitter's own doc);
+            // other storage kinds leave `has_int_range` set but the
+            // function unemitted, so still fall through to None. `base`
+            // is recomputed, not stored — `tname`'s "asn_TYP_{parent}_
+            // {member}" naming is deterministic from data this row
+            // already carries (spec.type_name, m.mname), same as
+            // `emit_member_type_descriptor` itself derives it.
             std::string validate_expr = "None";
-            if (m.int_range &&
-                (m.int_range->storage_kind == IntStorageKind::S64 ||
-                 m.int_range->storage_kind == IntStorageKind::U64)) {
-                std::string base = escape(to_snake_case(m.int_range->tname));
+            if (m.has_int_range &&
+                (m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64)) {
+                std::string base = escape(to_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
                 validate_expr = std::format("Some(|v| {}_range_delta(v.{}))", base, m.mname);
             }
             os << std::format("        validate: {},\n", validate_expr);
