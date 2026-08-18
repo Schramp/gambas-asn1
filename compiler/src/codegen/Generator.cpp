@@ -2139,7 +2139,10 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
 
     // SIZE constraint on collection length
-    auto sc = compute_size_constraint(extract_size_range(def));
+    auto size_range = extract_size_range(def);
+    auto sc = compute_size_constraint(size_range, is_constraint_extensible(def));
+    spec.has_size_constraint = size_range.has_value();
+    spec.extensible = is_constraint_extensible(def);
     spec.range_bits = sc.range_bits;
     spec.size_lower = sc.lower;
     if (sc.flags & asn1::Constraints::SIZE_CONSTRAINED) spec.size_upper = sc.upper;

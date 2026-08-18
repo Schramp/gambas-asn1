@@ -676,14 +676,24 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
 ///       tag from each element's own `Asn1Value::xer_element_name()` at
 ///       runtime, so there's no per-type name to gate on here at all.
 void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
-    std::string fname = escape(to_snake_case(spec.type_name) + "_size_ok");
-    os << std::format("pub fn {}<T>(v: &Vec<T>) -> bool {{\n", fname);
-    if (spec.size_upper) {
-        os << std::format("    (v.len() as i64) >= {} && (v.len() as i64) <= {}\n",
-                           spec.size_lower, *spec.size_upper);
+    // Always emitted, real bounds or not (gambas-asn1#467) — same "always
+    // call, a permissive default makes it a no-op" pattern
+    // `emit_member_type_descriptor`'s Sizeable branch already established
+    // (#464): every generated SEQUENCE OF/SET OF type gets one, including
+    // an anonymous inline member's synthetic promoted type
+    // (`Generator::emit_seq_of_definition` runs identically for both — see
+    // this pairing's own doc), so the containing SEQUENCE's member-row
+    // loop (`emit_sequence_definition`) can always find
+    // `{synthetic_name}_size_delta` by the same deterministic name it
+    // already derives for the field type, no extra signal needed.
+    std::string fname = escape(to_snake_case(spec.type_name) + "_size_delta");
+    os << std::format("pub fn {}(len: usize) -> i64 {{\n", fname);
+    if (spec.has_size_constraint) {
+        os << std::format("    asn1cpp_ber::validate::size_delta(len, {}, {}, {}, {})\n",
+                           spec.extensible ? "true" : "false", spec.size_upper ? "true" : "false",
+                           spec.size_lower, spec.size_upper.value_or(0));
     } else {
-        os << std::format("    (v.len() as i64) >= {} // semi-constrained or unconstrained, no upper cap\n",
-                           spec.size_lower);
+        os << "    let _ = len;\n    0\n";
     }
     os << "}\n\n";
 
@@ -729,6 +739,18 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     }
     os << "        Ok(())\n";
     os << "    }\n";
+    // `Asn1Value::validate()`'s default (`value.rs`) is `0` — this override
+    // is only needed when there's a real SIZE constraint to check, unlike
+    // `{name}_size_delta` above (always emitted, unconditionally, so the
+    // member-row loop's name-derivation never has to guess whether it
+    // exists). Plain trait override, not a MemberDescriptor fn-pointer:
+    // every named or synthetic SEQUENCE OF/SET OF type is genuinely its
+    // own distinct Rust type (unlike INTEGER's shared `i64`, #463), so it
+    // can carry its own constraint directly, the way #462 originally
+    // intended.
+    if (spec.has_size_constraint) {
+        os << std::format("\n    fn validate(&self) -> i64 {{\n        {}(self.0.len())\n    }}\n", fname);
+    }
     os << "}\n\n";
 }
 
@@ -1166,6 +1188,42 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 validate_expr = m.optional
                     ? std::format("Some(|v| v.{}.as_ref().map_or(0, {}_size_delta))", m.mname, base)
                     : std::format("Some(|v| {}_size_delta(&v.{}))", base, m.mname);
+            } else if (m.seq_of_kind != SeqOfKind::None) {
+                // Inline SEQUENCE OF/SET OF member: the field's own Rust
+                // type is the generic `SeqOf<T>`/`SetOf<T>` wrapper (shared
+                // across every inline collection member, coherence-blocked
+                // from a bare `Vec<T>` impl — `SeqOf<T>`'s own doc), not a
+                // distinct type each member could carry its own
+                // `Asn1Value::validate()` override on — same reason
+                // INTEGER/OCTET STRING need `MemberDescriptor::validate`
+                // instead of a trait override. `Generator::collect` always
+                // promotes an inline SEQUENCE OF/SET OF member to its own
+                // synthetic named type as a side effect (`synthetic_name`
+                // below reproduces that exact name), and
+                // `emit_seq_of_definition` (above) always emits that
+                // synthetic type's own `{name}_size_delta` unconditionally
+                // — real bounds or a trivial always-`0` body — so this
+                // reference is always valid, constrained or not.
+                //
+                // Fully qualified (`crate::{module}::{fn}`), not a bare
+                // call: the synthetic type lives in its own generated file/
+                // module (`Generator::emit_seq_of` runs it through its own
+                // `TypeOutputSession`, separate from this SEQUENCE's own),
+                // and this is the first thing in this file that ever
+                // references it by name — `needs_seqof_wrapper_reference()`
+                // is `false` for Rust (the field itself never names the
+                // synthetic type, only the generic wrapper), so Generator's
+                // own `use crate::X;` bookkeeping was never told to emit
+                // one here. Fully qualifying sidesteps needing a `use` line
+                // at all; the module name is the same `to_snake_case` of
+                // the synthetic type name every other cross-module
+                // reference in this codebase already derives it as.
+                std::string synth = synthetic_name(spec.type_name, m.asn1_name);
+                std::string base = std::format("crate::{}::{}", to_snake_case(synth),
+                                                escape(to_snake_case(synth) + "_size_delta"));
+                validate_expr = m.optional
+                    ? std::format("Some(|v| v.{}.as_ref().map_or(0, |x| {}(x.len())))", m.mname, base)
+                    : std::format("Some(|v| {}(v.{}.len()))", base, m.mname);
             }
             os << std::format("        validate: {},\n", validate_expr);
             os << "    },\n";
