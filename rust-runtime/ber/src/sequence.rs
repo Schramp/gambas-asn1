@@ -1401,15 +1401,18 @@ impl DefaultPoint {
         y: i64,
     }
 
-    fn ranged_point_x_range_delta(v: &RangedPoint) -> i64 {
-        if v.x < 0 {
-            -v.x
-        } else if v.x > 100 {
-            100 - v.x
-        } else {
-            0
-        }
-    }
+    // Plain `static` data, not a generated per-member function (gambas-
+    // asn1#473 review) — mirrors what `RustBackend::emit_member_type_
+    // descriptor` now emits for a real constrained INTEGER member.
+    static RANGED_POINT_X_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
+        flags: crate::constraints::Constraints::CONSTRAINED,
+        lower_bound: 0,
+        upper_bound: 100,
+        lower_u64: 0,
+        upper_u64: 0,
+        size_lower: 0,
+        size_upper: 0,
+    };
 
     static RANGED_POINT_MEMBERS: [MemberDescriptor<RangedPoint>; 2] = [
         MemberDescriptor {
@@ -1419,7 +1422,7 @@ impl DefaultPoint {
             access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
             set_default: None,
             is_default_equal: None,
-            validate: Some(ranged_point_x_range_delta),
+            validate: Some(|v| crate::constraints::validate_s64(v.x, &RANGED_POINT_X_CONSTRAINTS)),
         },
         MemberDescriptor {
             name: "y",
@@ -1470,9 +1473,15 @@ impl DefaultPoint {
         data: crate::octet_string::OctetString,
     }
 
-    fn sized_blob_data_size_delta(v: &crate::octet_string::OctetString) -> i64 {
-        crate::validate::size_delta(v.len(), false, true, 1, 4)
-    }
+    static SIZED_BLOB_DATA_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
+        flags: crate::constraints::Constraints::SIZE_CONSTRAINED,
+        lower_bound: 0,
+        upper_bound: 0,
+        lower_u64: 0,
+        upper_u64: 0,
+        size_lower: 1,
+        size_upper: 4,
+    };
 
     static SIZED_BLOB_MEMBERS: [MemberDescriptor<SizedBlob>; 1] = [MemberDescriptor {
         name: "data",
@@ -1481,7 +1490,7 @@ impl DefaultPoint {
         access: MemberAccess::Scalar { get: |v| &v.data, get_mut: |v| &mut v.data },
         set_default: None,
         is_default_equal: None,
-        validate: Some(|v| sized_blob_data_size_delta(&v.data)),
+        validate: Some(|v| crate::constraints::validate_size(v.data.len(), &SIZED_BLOB_DATA_CONSTRAINTS)),
     }];
 
     static SIZED_BLOB_SPEC: SequenceSpec<SizedBlob> =
@@ -1511,6 +1520,114 @@ impl DefaultPoint {
         crate::validate::reset_validate_fail_count();
         let b = SizedBlob { data: crate::octet_string::OctetString(vec![]) };
         let _ = encode_sequence(&SIZED_BLOB_SPEC, &b);
+        assert_eq!(crate::validate::validate_fail_count(), 1);
+    }
+
+    /// `NamedTags ::= SEQUENCE (SIZE(1..3)) OF INTEGER` — dogfood for the
+    /// *named* SEQUENCE OF/SET OF case (gambas-asn1#467): unlike
+    /// INTEGER/OctetString, every named collection type is its own
+    /// distinct Rust struct, so it overrides `Asn1Value::validate()`
+    /// directly (the funnel `ber_encode`/`ber_encode_tagged` already reach,
+    /// `value.rs`) instead of needing a `MemberDescriptor::validate`
+    /// fn-pointer — the mechanism `RustBackend::emit_seq_of_definition`
+    /// actually generates for a real named SEQUENCE OF/SET OF type.
+    #[derive(Debug, Clone, Default, PartialEq)]
+    struct NamedTags(Vec<i64>);
+
+    impl Asn1Value for NamedTags {
+        fn ber_natural_tag(&self) -> Tag {
+            SEQUENCE_TAG
+        }
+        fn ber_encode_content(&self, out: &mut Vec<u8>) {
+            encode_seq_of_content(out, &self.0);
+        }
+        fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+            self.0 = decode_seq_of_content(content)?;
+            Ok(())
+        }
+        fn validate(&self) -> i64 {
+            crate::constraints::validate_size(self.0.len(), &NAMED_TAGS_CONSTRAINTS)
+        }
+    }
+
+    static NAMED_TAGS_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
+        flags: crate::constraints::Constraints::SIZE_CONSTRAINED,
+        lower_bound: 0,
+        upper_bound: 0,
+        lower_u64: 0,
+        upper_u64: 0,
+        size_lower: 1,
+        size_upper: 3,
+    };
+
+    #[test]
+    fn named_seqof_in_range_does_not_bump_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let mut out = Vec::new();
+        NamedTags(vec![1, 2]).ber_encode(&mut out);
+        assert_eq!(crate::validate::validate_fail_count(), 0);
+    }
+
+    #[test]
+    fn named_seqof_too_many_elements_bumps_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let mut out = Vec::new();
+        NamedTags(vec![1, 2, 3, 4]).ber_encode(&mut out);
+        assert_eq!(crate::validate::validate_fail_count(), 1);
+    }
+
+    /// `Basket ::= SEQUENCE { inlineTags SEQUENCE (SIZE(1..2)) OF INTEGER }`
+    /// — dogfood for the *inline* case: the field's own Rust type is the
+    /// generic `SeqOf<i64>` wrapper (shared across every inline collection
+    /// member, coherence-blocked from its own `Asn1Value` impl), so it
+    /// needs `MemberDescriptor::validate` like INTEGER/OCTET STRING, not a
+    /// trait override — same shape `RustBackend`'s row-loop wires against
+    /// the synthetic promoted type's own `Constraints` table.
+    #[derive(Debug, Clone, Default, PartialEq)]
+    struct Basket {
+        inline_tags: SeqOf<i64>,
+    }
+
+    static BASKET_INLINE_TAGS_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
+        flags: crate::constraints::Constraints::SIZE_CONSTRAINED,
+        lower_bound: 0,
+        upper_bound: 0,
+        lower_u64: 0,
+        upper_u64: 0,
+        size_lower: 1,
+        size_upper: 2,
+    };
+
+    static BASKET_MEMBERS: [MemberDescriptor<Basket>; 1] = [MemberDescriptor {
+        name: "inlineTags",
+        tag: SEQUENCE_TAG,
+        optional: false,
+        access: MemberAccess::Scalar { get: |v| &v.inline_tags, get_mut: |v| &mut v.inline_tags },
+        set_default: None,
+        is_default_equal: None,
+        validate: Some(|v| crate::constraints::validate_size(v.inline_tags.len(), &BASKET_INLINE_TAGS_CONSTRAINTS)),
+    }];
+
+    static BASKET_SPEC: SequenceSpec<Basket> =
+        SequenceSpec { name: "Basket", tag: SEQUENCE_TAG, members: &BASKET_MEMBERS };
+
+    #[test]
+    fn inline_seqof_in_range_does_not_bump_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let b = Basket { inline_tags: SeqOf(vec![1]) };
+        let _ = encode_sequence(&BASKET_SPEC, &b);
+        assert_eq!(crate::validate::validate_fail_count(), 0);
+    }
+
+    #[test]
+    fn inline_seqof_too_many_elements_bumps_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let b = Basket { inline_tags: SeqOf(vec![1, 2, 3]) };
+        let _ = encode_sequence(&BASKET_SPEC, &b);
         assert_eq!(crate::validate::validate_fail_count(), 1);
     }
 }

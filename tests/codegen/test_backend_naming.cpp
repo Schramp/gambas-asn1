@@ -310,9 +310,9 @@ int main() {
         check("emit_member_type_descriptor: C++ produces a TypeDescriptor",
               cpp_os.find("asn_TYP_MySeq_myField") != std::string::npos,
               cpp_os);
-        check("emit_member_type_descriptor: Rust produces a real range-check function",
-              rust_os.find("pub fn asn_typ_my_seq_my_field_range_delta(v: i64) -> i64 { "
-                            "asn1cpp_ber::integer::range_delta_i64(v, false, false, 0, 100) }") != std::string::npos,
+        check("emit_member_type_descriptor: Rust produces a real Constraints table, not a function",
+              rust_os.find("static ASN_TYP_MY_SEQ_MY_FIELD_CONSTRAINTS: asn1cpp_ber::constraints::Constraints") != std::string::npos &&
+              rust_os.find("flags: 1, lower_bound: 0, upper_bound: 100") != std::string::npos,
               rust_os);
     }
 
@@ -327,6 +327,7 @@ int main() {
         spec.range_bits = 4;
         spec.size_lower = 1;
         spec.size_upper = 10;
+        spec.has_size_constraint = true;
         spec.is_set_of = false;
 
         TypeOutputSession cpp_session, rust_session;
@@ -339,9 +340,10 @@ int main() {
               cpp_os.find("asn_SPC_MyList") != std::string::npos &&
               cpp_os.find("asn_DEF_MyList") != std::string::npos,
               cpp_os);
-        check("emit_seq_of: Rust produces a real generic size-check function",
-              rust_os.find("pub fn my_list_size_ok<T>(v: &Vec<T>) -> bool {") != std::string::npos &&
-              rust_os.find("(v.len() as i64) >= 1 && (v.len() as i64) <= 10") != std::string::npos,
+        check("emit_seq_of: Rust produces a real Constraints table, not a function",
+              rust_os.find("static MY_LIST_CONSTRAINTS: asn1cpp_ber::constraints::Constraints") != std::string::npos &&
+              rust_os.find("flags: 8, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: 1, size_upper: 10") != std::string::npos &&
+              rust_os.find("fn validate(&self) -> i64 {\n        asn1cpp_ber::constraints::validate_size(self.0.len(), &MY_LIST_CONSTRAINTS)\n    }") != std::string::npos,
               rust_os);
     }
 
