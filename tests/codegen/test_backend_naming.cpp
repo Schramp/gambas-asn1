@@ -310,9 +310,9 @@ int main() {
         check("emit_member_type_descriptor: C++ produces a TypeDescriptor",
               cpp_os.find("asn_TYP_MySeq_myField") != std::string::npos,
               cpp_os);
-        check("emit_member_type_descriptor: Rust produces a real range-check function",
-              rust_os.find("pub fn asn_typ_my_seq_my_field_range_delta(v: i64) -> i64 { "
-                            "asn1cpp_ber::integer::range_delta_i64(v, false, false, 0, 100) }") != std::string::npos,
+        check("emit_member_type_descriptor: Rust produces a real Constraints table, not a function",
+              rust_os.find("static ASN_TYP_MY_SEQ_MY_FIELD_CONSTRAINTS: asn1cpp_ber::constraints::Constraints") != std::string::npos &&
+              rust_os.find("flags: 1, lower_bound: 0, upper_bound: 100") != std::string::npos,
               rust_os);
     }
 
@@ -340,10 +340,10 @@ int main() {
               cpp_os.find("asn_SPC_MyList") != std::string::npos &&
               cpp_os.find("asn_DEF_MyList") != std::string::npos,
               cpp_os);
-        check("emit_seq_of: Rust produces a real size-delta function",
-              rust_os.find("pub fn my_list_size_delta(len: usize) -> i64 {") != std::string::npos &&
-              rust_os.find("asn1cpp_ber::validate::size_delta(len, false, true, 1, 10)") != std::string::npos &&
-              rust_os.find("fn validate(&self) -> i64 {\n        my_list_size_delta(self.0.len())\n    }") != std::string::npos,
+        check("emit_seq_of: Rust produces a real Constraints table, not a function",
+              rust_os.find("static MY_LIST_CONSTRAINTS: asn1cpp_ber::constraints::Constraints") != std::string::npos &&
+              rust_os.find("flags: 8, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: 1, size_upper: 10") != std::string::npos &&
+              rust_os.find("fn validate(&self) -> i64 {\n        asn1cpp_ber::constraints::validate_size(self.0.len(), &MY_LIST_CONSTRAINTS)\n    }") != std::string::npos,
               rust_os);
     }
 

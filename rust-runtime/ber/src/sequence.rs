@@ -1401,15 +1401,18 @@ impl DefaultPoint {
         y: i64,
     }
 
-    fn ranged_point_x_range_delta(v: &RangedPoint) -> i64 {
-        if v.x < 0 {
-            -v.x
-        } else if v.x > 100 {
-            100 - v.x
-        } else {
-            0
-        }
-    }
+    // Plain `static` data, not a generated per-member function (gambas-
+    // asn1#473 review) — mirrors what `RustBackend::emit_member_type_
+    // descriptor` now emits for a real constrained INTEGER member.
+    static RANGED_POINT_X_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
+        flags: crate::constraints::Constraints::CONSTRAINED,
+        lower_bound: 0,
+        upper_bound: 100,
+        lower_u64: 0,
+        upper_u64: 0,
+        size_lower: 0,
+        size_upper: 0,
+    };
 
     static RANGED_POINT_MEMBERS: [MemberDescriptor<RangedPoint>; 2] = [
         MemberDescriptor {
@@ -1419,7 +1422,7 @@ impl DefaultPoint {
             access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
             set_default: None,
             is_default_equal: None,
-            validate: Some(ranged_point_x_range_delta),
+            validate: Some(|v| crate::constraints::validate_s64(v.x, &RANGED_POINT_X_CONSTRAINTS)),
         },
         MemberDescriptor {
             name: "y",
@@ -1470,9 +1473,15 @@ impl DefaultPoint {
         data: crate::octet_string::OctetString,
     }
 
-    fn sized_blob_data_size_delta(v: &crate::octet_string::OctetString) -> i64 {
-        crate::validate::size_delta(v.len(), false, true, 1, 4)
-    }
+    static SIZED_BLOB_DATA_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
+        flags: crate::constraints::Constraints::SIZE_CONSTRAINED,
+        lower_bound: 0,
+        upper_bound: 0,
+        lower_u64: 0,
+        upper_u64: 0,
+        size_lower: 1,
+        size_upper: 4,
+    };
 
     static SIZED_BLOB_MEMBERS: [MemberDescriptor<SizedBlob>; 1] = [MemberDescriptor {
         name: "data",
@@ -1481,7 +1490,7 @@ impl DefaultPoint {
         access: MemberAccess::Scalar { get: |v| &v.data, get_mut: |v| &mut v.data },
         set_default: None,
         is_default_equal: None,
-        validate: Some(|v| sized_blob_data_size_delta(&v.data)),
+        validate: Some(|v| crate::constraints::validate_size(v.data.len(), &SIZED_BLOB_DATA_CONSTRAINTS)),
     }];
 
     static SIZED_BLOB_SPEC: SequenceSpec<SizedBlob> =
@@ -1537,9 +1546,19 @@ impl DefaultPoint {
             Ok(())
         }
         fn validate(&self) -> i64 {
-            crate::validate::size_delta(self.0.len(), false, true, 1, 3)
+            crate::constraints::validate_size(self.0.len(), &NAMED_TAGS_CONSTRAINTS)
         }
     }
+
+    static NAMED_TAGS_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
+        flags: crate::constraints::Constraints::SIZE_CONSTRAINED,
+        lower_bound: 0,
+        upper_bound: 0,
+        lower_u64: 0,
+        upper_u64: 0,
+        size_lower: 1,
+        size_upper: 3,
+    };
 
     #[test]
     fn named_seqof_in_range_does_not_bump_the_validate_counter() {
@@ -1565,15 +1584,21 @@ impl DefaultPoint {
     /// member, coherence-blocked from its own `Asn1Value` impl), so it
     /// needs `MemberDescriptor::validate` like INTEGER/OCTET STRING, not a
     /// trait override — same shape `RustBackend`'s row-loop wires against
-    /// the synthetic promoted type's `{name}_size_delta` free function.
+    /// the synthetic promoted type's own `Constraints` table.
     #[derive(Debug, Clone, Default, PartialEq)]
     struct Basket {
         inline_tags: SeqOf<i64>,
     }
 
-    fn basket_inline_tags_size_delta(len: usize) -> i64 {
-        crate::validate::size_delta(len, false, true, 1, 2)
-    }
+    static BASKET_INLINE_TAGS_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
+        flags: crate::constraints::Constraints::SIZE_CONSTRAINED,
+        lower_bound: 0,
+        upper_bound: 0,
+        lower_u64: 0,
+        upper_u64: 0,
+        size_lower: 1,
+        size_upper: 2,
+    };
 
     static BASKET_MEMBERS: [MemberDescriptor<Basket>; 1] = [MemberDescriptor {
         name: "inlineTags",
@@ -1582,7 +1607,7 @@ impl DefaultPoint {
         access: MemberAccess::Scalar { get: |v| &v.inline_tags, get_mut: |v| &mut v.inline_tags },
         set_default: None,
         is_default_equal: None,
-        validate: Some(|v| basket_inline_tags_size_delta(v.inline_tags.len())),
+        validate: Some(|v| crate::constraints::validate_size(v.inline_tags.len(), &BASKET_INLINE_TAGS_CONSTRAINTS)),
     }];
 
     static BASKET_SPEC: SequenceSpec<Basket> =
