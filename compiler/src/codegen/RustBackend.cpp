@@ -306,6 +306,17 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "    }\n\n";
         os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_ber::xer::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_ber::DecodeError> {\n";
         os << "        self.xer_decode_into(r)\n";
+        os << "    }\n\n";
+        // X.680 §20/§51 (gambas-asn1#468) — reuses {map_ident} (already
+        // emitted above for BER/XER), same "table data, one generic
+        // function, no per-type logic" shape #473's Constraints redesign
+        // established. In practice unreachable through the normal decode
+        // path (TryFrom<i64> already rejects an unrecognized wire value
+        // before a Rust enum instance can exist — see
+        // enumerated::validate_enum's own doc), but a real override, not
+        // a stub, for parity with the other constraint kinds.
+        os << "    fn validate(&self) -> i64 {\n";
+        os << std::format("        asn1cpp_ber::enumerated::validate_enum(*self as i64, &{})\n", map_ident);
         os << "    }\n";
         os << "}\n\n";
     }
