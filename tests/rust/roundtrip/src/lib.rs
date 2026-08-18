@@ -24,15 +24,17 @@
 //! `gauge_generated.rs` (gambas-asn1#463) is `Gauge` from
 //! `tests/asn1/rust_range_test.asn1` — a member with an inline X.680 §19/§51
 //! INTEGER value-range constraint. Proves `MemberDescriptor::validate`
-//! (`rust-runtime/ber/src/sequence.rs`) is reached through the real
-//! generated `{name}_range_delta` free function
-//! (`RustBackend::emit_member_type_descriptor`), not just the hand-written
-//! `RangedPoint` dogfood type `sequence.rs`'s own unit tests use.
+//! (`rust-runtime/ber/src/sequence.rs`) is reached through a real generated
+//! `Constraints` table (`RustBackend::emit_member_type_descriptor`) plus
+//! `constraints::validate_s64` (gambas-asn1#473: table data, not a
+//! generated per-member function), not just the hand-written `RangedPoint`
+//! dogfood type `sequence.rs`'s own unit tests use.
 //!
 //! `blob_generated.rs` (gambas-asn1#464) is `Blob` from
 //! `tests/asn1/rust_size_test.asn1` — OCTET STRING / BIT STRING members
-//! with an inline X.680 §22/§21/§51 SIZE constraint, same role for
-//! `{name}_size_delta` that `Gauge` plays for `{name}_range_delta`.
+//! with an inline X.680 §22/§21/§51 SIZE constraint, same
+//! `Constraints`-table + `constraints::validate_size` shape `Gauge` plays
+//! for INTEGER.
 
 include!(concat!(env!("OUT_DIR"), "/point_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/widget_generated.rs"));
@@ -386,7 +388,7 @@ mod tests {
 
     // gambas-asn1#465: character-string SIZE — `label` (IA5String, bare
     // `String` via native_builtin_type) and `note` (UTF8String, the
-    // newtype-wrapper case), both through the same {name}_size_delta shape
+    // newtype-wrapper case), both through the same Constraints-table shape
     // OCTET STRING/BIT STRING already use.
 
     #[test]

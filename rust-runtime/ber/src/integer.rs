@@ -238,48 +238,10 @@ pub fn read_integer_i128_tagged(r: &mut Reader, tag: Tag) -> Result<i128, Decode
     decode_integer_bytes_i128(tlv.value)
 }
 
-/// X.680 §19/§51 INTEGER value-range constraint check for `i64`-stored
-/// members — the runtime half of the delta-returning function
-/// `RustBackend::emit_member_type_descriptor`/`emit_integer_definition`
-/// (`compiler/src/codegen/RustBackend.cpp`) emit one call to per
-/// constrained member/named alias, rather than inlining this logic as
-/// generated text (same "generic function, one-line codegen call" shape
-/// the rest of this crate uses — see e.g. `choice::decode_alt`). Mirrors
-/// `Integer::validate` (`runtime/include/asn1cpp/types/Integer.hpp`)
-/// exactly: `0` valid; positive = below `lower`; negative = above `upper`
-/// (only when `!extensible && !semi_constrained`); `extensible` (X.680
-/// §51.8.3) always `0`.
-pub fn range_delta_i64(v: i64, extensible: bool, semi_constrained: bool, lower: i64, upper: i64) -> i64 {
-    if extensible {
-        return 0;
-    }
-    if v < lower {
-        return lower - v;
-    }
-    if !semi_constrained && v > upper {
-        return upper - v;
-    }
-    0
-}
-
-/// `u64`-stored counterpart of `range_delta_i64` — mirrors
-/// `UInteger::validate`'s own saturating clamp to the `i64` delta range
-/// exactly (a `u64` bound can be up to `u64::MAX`, not representable as an
-/// `i64` delta without clamping).
-pub fn range_delta_u64(v: u64, extensible: bool, semi_constrained: bool, lower: u64, upper: u64) -> i64 {
-    if extensible {
-        return 0;
-    }
-    if v < lower {
-        let d = lower - v;
-        return if d > i64::MAX as u64 { i64::MAX } else { d as i64 };
-    }
-    if !semi_constrained && v > upper {
-        let d = v - upper;
-        return if d > i64::MAX as u64 { i64::MIN } else { -(d as i64) };
-    }
-    0
-}
+// X.680 §19/§51 INTEGER value-range validation moved to
+// `constraints::validate_s64`/`validate_u64` (gambas-asn1#473 review: a
+// static Constraints *table* per member, not a generated per-member
+// function).
 
 #[cfg(test)]
 mod tests {
@@ -400,55 +362,4 @@ mod tests {
         assert_eq!(read_integer_i128(&mut r).unwrap(), i128::MIN);
     }
 
-    // ---- range_delta_i64 / range_delta_u64 --------------------------------
-
-    #[test]
-    fn range_delta_i64_in_range_is_zero() {
-        assert_eq!(range_delta_i64(50, false, false, 0, 100), 0);
-        assert_eq!(range_delta_i64(0, false, false, 0, 100), 0);
-        assert_eq!(range_delta_i64(100, false, false, 0, 100), 0);
-    }
-
-    #[test]
-    fn range_delta_i64_below_lower_is_positive() {
-        assert_eq!(range_delta_i64(-5, false, false, 0, 100), 5);
-    }
-
-    #[test]
-    fn range_delta_i64_above_upper_is_negative() {
-        assert_eq!(range_delta_i64(105, false, false, 0, 100), -5);
-    }
-
-    #[test]
-    fn range_delta_i64_semi_constrained_ignores_upper() {
-        assert_eq!(range_delta_i64(1_000_000, false, true, 0, 100), 0);
-        assert_eq!(range_delta_i64(-1, false, true, 0, 100), 1);
-    }
-
-    #[test]
-    fn range_delta_i64_extensible_is_always_zero() {
-        assert_eq!(range_delta_i64(-1_000_000, true, false, 0, 100), 0);
-        assert_eq!(range_delta_i64(1_000_000, true, false, 0, 100), 0);
-    }
-
-    #[test]
-    fn range_delta_u64_in_range_is_zero() {
-        assert_eq!(range_delta_u64(50, false, false, 0, 100), 0);
-    }
-
-    #[test]
-    fn range_delta_u64_below_lower_is_positive() {
-        assert_eq!(range_delta_u64(0, false, false, 10, 100), 10);
-    }
-
-    #[test]
-    fn range_delta_u64_above_upper_is_negative() {
-        assert_eq!(range_delta_u64(105, false, false, 0, 100), -5);
-    }
-
-    #[test]
-    fn range_delta_u64_saturates_at_i64_bounds() {
-        assert_eq!(range_delta_u64(0, false, false, u64::MAX, u64::MAX), i64::MAX);
-        assert_eq!(range_delta_u64(u64::MAX, false, false, 0, 0), i64::MIN);
-    }
 }

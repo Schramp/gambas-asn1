@@ -680,7 +680,12 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
 void CppBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
     os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", spec.type_name);
     os << std::format("    {},\n", spec.elem_ref);
-    int flags = spec.size_upper ? asn1::Constraints::SIZE_CONSTRAINED : 0;
+    // gambas-asn1#467: extensible was untracked on SeqOfSpec until now — a
+    // SEQUENCE OF/SET OF's own SIZE(...,...) extension marker (X.680
+    // §51.8.3) never reached this Constraints table, so SeqOfSpec::validate
+    // (TypeDescriptor.hpp) enforced the bound as if non-extensible.
+    int flags = (spec.size_upper ? asn1::Constraints::SIZE_CONSTRAINED : 0) |
+                (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
     os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
                       flags, spec.range_bits, spec.size_lower, spec.size_upper.value_or(0));
     if (spec.elem_xer_name)

@@ -98,31 +98,9 @@ fn report(delta: i64, name: &str, phase: &str) {
     }
 }
 
-/// X.680 §25/§26 SIZE constraint check, generic over what "size" means for
-/// the caller's own kind (byte count for OCTET STRING, bit count for BIT
-/// STRING via `BitString::bit_count()`, character count for a restricted
-/// character string — same `n`, different unit, computed by the caller
-/// before calling this). Mirrors `OctetString::validate`/`BitString::validate`
-/// (`runtime/include/asn1cpp/types/OctetString.hpp`/`BitString.hpp`)
-/// exactly: `0` valid; positive = too short (below `lower`); negative = too
-/// long (above `upper`, only when `bounded`); `extensible` (X.680 §51.8.3)
-/// always `0`. `RustBackend::emit_member_type_descriptor`
-/// (`compiler/src/codegen/RustBackend.cpp`) emits one call per constrained
-/// member, same "generic runtime function, one-line codegen call" shape
-/// `integer::range_delta_i64`/`range_delta_u64` already use.
-pub fn size_delta(n: usize, extensible: bool, bounded: bool, lower: i64, upper: i64) -> i64 {
-    if extensible {
-        return 0;
-    }
-    let n = n as i64;
-    if n < lower {
-        return lower - n;
-    }
-    if bounded && n > upper {
-        return upper - n;
-    }
-    0
-}
+// SIZE constraint checking moved to `constraints::validate_size` (gambas-
+// asn1#473 review: a static Constraints *table* per member, not a
+// generated per-member function).
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -209,36 +187,5 @@ pub(crate) mod tests {
         let mut v = NonNegative::default();
         v.ber_decode_into(&mut r).unwrap();
         assert_eq!(validate_fail_count(), 1);
-    }
-
-    // ---- size_delta ---------------------------------------------------
-
-    #[test]
-    fn size_delta_in_range_is_zero() {
-        assert_eq!(size_delta(5, false, true, 1, 10), 0);
-        assert_eq!(size_delta(1, false, true, 1, 10), 0);
-        assert_eq!(size_delta(10, false, true, 1, 10), 0);
-    }
-
-    #[test]
-    fn size_delta_too_short_is_positive() {
-        assert_eq!(size_delta(0, false, true, 1, 10), 1);
-    }
-
-    #[test]
-    fn size_delta_too_long_is_negative() {
-        assert_eq!(size_delta(12, false, true, 1, 10), -2);
-    }
-
-    #[test]
-    fn size_delta_unbounded_ignores_upper() {
-        assert_eq!(size_delta(1_000_000, false, false, 1, 10), 0);
-        assert_eq!(size_delta(0, false, false, 1, 10), 1);
-    }
-
-    #[test]
-    fn size_delta_extensible_is_always_zero() {
-        assert_eq!(size_delta(0, true, true, 1, 10), 0);
-        assert_eq!(size_delta(1_000_000, true, true, 1, 10), 0);
     }
 }
