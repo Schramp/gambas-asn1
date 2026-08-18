@@ -72,3 +72,6 @@ tests/tests-asn1c-compiler/177-encoding-control-codegen-OK.asn1    Message
 tests/tests-asn1c-compiler/178-nested-enum-same-name-OK.asn1       CodebookConfig-r18  skip-asn1c: asn1c's own -p flag mismatches its hyphenated PDU name (harness limitation, not a codec bug)
 tests/tests-asn1c-compiler/181-base64-control-standard-OK.asn1     Record
 tests/tests-asn1c-compiler/202-XIOTCertificate-OK.asn1             Extension
+tests/asn1/rust_range_test.asn1        Gauge
+tests/asn1/rust_size_test.asn1         Blob
+tests/asn1/rust_seqof_size_test.asn1   Basket
