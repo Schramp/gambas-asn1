@@ -1513,4 +1513,96 @@ impl DefaultPoint {
         let _ = encode_sequence(&SIZED_BLOB_SPEC, &b);
         assert_eq!(crate::validate::validate_fail_count(), 1);
     }
+
+    /// `NamedTags ::= SEQUENCE (SIZE(1..3)) OF INTEGER` — dogfood for the
+    /// *named* SEQUENCE OF/SET OF case (gambas-asn1#467): unlike
+    /// INTEGER/OctetString, every named collection type is its own
+    /// distinct Rust struct, so it overrides `Asn1Value::validate()`
+    /// directly (the funnel `ber_encode`/`ber_encode_tagged` already reach,
+    /// `value.rs`) instead of needing a `MemberDescriptor::validate`
+    /// fn-pointer — the mechanism `RustBackend::emit_seq_of_definition`
+    /// actually generates for a real named SEQUENCE OF/SET OF type.
+    #[derive(Debug, Clone, Default, PartialEq)]
+    struct NamedTags(Vec<i64>);
+
+    impl Asn1Value for NamedTags {
+        fn ber_natural_tag(&self) -> Tag {
+            SEQUENCE_TAG
+        }
+        fn ber_encode_content(&self, out: &mut Vec<u8>) {
+            encode_seq_of_content(out, &self.0);
+        }
+        fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+            self.0 = decode_seq_of_content(content)?;
+            Ok(())
+        }
+        fn validate(&self) -> i64 {
+            crate::validate::size_delta(self.0.len(), false, true, 1, 3)
+        }
+    }
+
+    #[test]
+    fn named_seqof_in_range_does_not_bump_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let mut out = Vec::new();
+        NamedTags(vec![1, 2]).ber_encode(&mut out);
+        assert_eq!(crate::validate::validate_fail_count(), 0);
+    }
+
+    #[test]
+    fn named_seqof_too_many_elements_bumps_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let mut out = Vec::new();
+        NamedTags(vec![1, 2, 3, 4]).ber_encode(&mut out);
+        assert_eq!(crate::validate::validate_fail_count(), 1);
+    }
+
+    /// `Basket ::= SEQUENCE { inlineTags SEQUENCE (SIZE(1..2)) OF INTEGER }`
+    /// — dogfood for the *inline* case: the field's own Rust type is the
+    /// generic `SeqOf<i64>` wrapper (shared across every inline collection
+    /// member, coherence-blocked from its own `Asn1Value` impl), so it
+    /// needs `MemberDescriptor::validate` like INTEGER/OCTET STRING, not a
+    /// trait override — same shape `RustBackend`'s row-loop wires against
+    /// the synthetic promoted type's `{name}_size_delta` free function.
+    #[derive(Debug, Clone, Default, PartialEq)]
+    struct Basket {
+        inline_tags: SeqOf<i64>,
+    }
+
+    fn basket_inline_tags_size_delta(len: usize) -> i64 {
+        crate::validate::size_delta(len, false, true, 1, 2)
+    }
+
+    static BASKET_MEMBERS: [MemberDescriptor<Basket>; 1] = [MemberDescriptor {
+        name: "inlineTags",
+        tag: SEQUENCE_TAG,
+        optional: false,
+        access: MemberAccess::Scalar { get: |v| &v.inline_tags, get_mut: |v| &mut v.inline_tags },
+        set_default: None,
+        is_default_equal: None,
+        validate: Some(|v| basket_inline_tags_size_delta(v.inline_tags.len())),
+    }];
+
+    static BASKET_SPEC: SequenceSpec<Basket> =
+        SequenceSpec { name: "Basket", tag: SEQUENCE_TAG, members: &BASKET_MEMBERS };
+
+    #[test]
+    fn inline_seqof_in_range_does_not_bump_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let b = Basket { inline_tags: SeqOf(vec![1]) };
+        let _ = encode_sequence(&BASKET_SPEC, &b);
+        assert_eq!(crate::validate::validate_fail_count(), 0);
+    }
+
+    #[test]
+    fn inline_seqof_too_many_elements_bumps_the_validate_counter() {
+        let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
+        crate::validate::reset_validate_fail_count();
+        let b = Basket { inline_tags: SeqOf(vec![1, 2, 3]) };
+        let _ = encode_sequence(&BASKET_SPEC, &b);
+        assert_eq!(crate::validate::validate_fail_count(), 1);
+    }
 }

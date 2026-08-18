@@ -327,6 +327,7 @@ int main() {
         spec.range_bits = 4;
         spec.size_lower = 1;
         spec.size_upper = 10;
+        spec.has_size_constraint = true;
         spec.is_set_of = false;
 
         TypeOutputSession cpp_session, rust_session;
@@ -339,9 +340,10 @@ int main() {
               cpp_os.find("asn_SPC_MyList") != std::string::npos &&
               cpp_os.find("asn_DEF_MyList") != std::string::npos,
               cpp_os);
-        check("emit_seq_of: Rust produces a real generic size-check function",
-              rust_os.find("pub fn my_list_size_ok<T>(v: &Vec<T>) -> bool {") != std::string::npos &&
-              rust_os.find("(v.len() as i64) >= 1 && (v.len() as i64) <= 10") != std::string::npos,
+        check("emit_seq_of: Rust produces a real size-delta function",
+              rust_os.find("pub fn my_list_size_delta(len: usize) -> i64 {") != std::string::npos &&
+              rust_os.find("asn1cpp_ber::validate::size_delta(len, false, true, 1, 10)") != std::string::npos &&
+              rust_os.find("fn validate(&self) -> i64 {\n        my_list_size_delta(self.0.len())\n    }") != std::string::npos,
               rust_os);
     }
 

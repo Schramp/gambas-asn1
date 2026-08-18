@@ -1,0 +1,21 @@
+-- gambas-asn1#467: real-codegen coverage for MemberDescriptor::validate /
+-- Asn1Value::validate — an inline or named X.680 §25/§26/§51 SIZE
+-- constraint on a SEQUENCE OF / SET OF collection.
+--
+-- `Tags` (named type) exercises Asn1Value::validate() overriding directly
+-- on the type itself (every named SEQUENCE OF/SET OF is its own distinct
+-- Rust struct, unlike INTEGER/OCTET STRING). `Basket.inlineTags` (inline,
+-- anonymous) exercises MemberDescriptor::validate against the generic
+-- SeqOf<T> wrapper instead, since Rust codegen promotes it to a synthetic
+-- named type that's never actually used as the field's own type.
+
+RustSeqofSizeTest DEFINITIONS ::= BEGIN
+
+    Tags ::= SEQUENCE (SIZE(1..3)) OF IA5String
+
+    Basket ::= SEQUENCE {
+        inlineTags SEQUENCE (SIZE(1..2)) OF IA5String,
+        namedTags  Tags
+    }
+
+END

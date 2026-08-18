@@ -303,6 +303,11 @@ struct SeqOfSpec : TaggedTypeSpec {
     int         range_bits;
     int64_t     size_lower;
     std::optional<int64_t> size_upper; // present = finite upper bound; absent = semi-constrained/unconstrained
+    bool        has_size_constraint = false; // false -> no SIZE(...) at all (size_lower/size_upper both meaningless)
+    bool        extensible = false;          // X.680 §51.8.3 SIZE(...,...) — gambas-asn1#467: previously untracked,
+                                              // so CppBackend::emit_seq_of_definition's own Constraints table never
+                                              // set EXTENSIBLE for a SEQUENCE OF/SET OF's own SIZE constraint, a
+                                              // real pre-existing gap fixed alongside adding Rust's validate().
     std::optional<std::string> elem_xer_name; // X.693 §12: element's declared identifier, if any
     bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
 };
