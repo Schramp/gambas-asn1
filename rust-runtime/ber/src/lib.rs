@@ -36,6 +36,7 @@
 pub mod bit_string;
 pub mod boolean;
 pub mod choice;
+pub mod constraints;
 pub mod debug;
 pub mod enumerated;
 pub mod integer;

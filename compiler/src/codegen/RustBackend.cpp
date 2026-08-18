@@ -1,7 +1,9 @@
 #include "RustBackend.hpp"
+#include "asn1cpp/codec/Constraints.hpp"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -141,12 +143,12 @@ static const char* size_check_len_expr(ast::BuiltinType bt) {
 ///        OCTET STRING/BIT STRING (their own row-loop branch already
 ///        handles those, gambas-asn1#464). Every one of these newtypes
 ///        (or, for IA5String, bare `String`) `Deref`s to `String`
-///        (`rust-runtime/ber/src/strings.rs`'s own module doc), so
-///        `{base}_size_delta`'s `v.len()` — byte length, matching C++'s
-///        own `AsnString<N>::validate`, whose own doc notes this is byte
-///        count "not characters for multi-byte encodings like UTF-8", the
-///        same simplification carried over here — already works
-///        uniformly across the set with no per-kind runtime code.
+///        (`rust-runtime/ber/src/strings.rs`'s own module doc), so the
+///        member-row loop's own `v.{mname}.len()` — byte length, matching
+///        C++'s own `AsnString<N>::validate`, whose own doc notes this is
+///        byte count "not characters for multi-byte encodings like
+///        UTF-8", the same simplification carried over here — already
+///        works uniformly across the set with no per-kind runtime code.
 static bool is_sizeable_string_kind(ast::BuiltinType bt) {
     using BT = ast::BuiltinType;
     switch (bt) {
@@ -594,34 +596,41 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
 void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
     std::ostream& os = session.buffer(definition_extension());
     using Kind = MemberTypeDescriptorSpec::Kind;
-    std::string base = escape(to_snake_case(spec.tname));
+    std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(spec.tname));
     if (spec.kind == Kind::Integer) {
-        // Delta convention, EXTENSIBLE handling, and the saturating i64
-        // clamp for U64 storage all live in `integer::range_delta_i64`/
-        // `range_delta_u64` (rust-runtime/ber/src/integer.rs) — this just
-        // binds the member's own bounds, one line, same "generic runtime
-        // function, one-line codegen call" shape the rest of RustBackend
-        // uses (e.g. `choice::decode_alt`). Only INT_S64/INT_U64 storage
-        // gets a real function — INT_I128/INT_ARBITRARY are skipped (no
-        // function emitted; the member's MemberDescriptor.validate is
-        // `None`), matching or exceeding the C++ side's own correctness
-        // rather than replicating its latent I128/ARBITRARY static_cast
-        // bug (Validate.hpp) in Rust too.
+        // Plain `static` data, not a generated per-member function (#473
+        // review: "all constraints should be table based ... never put it
+        // in code" — a parser/tool should be able to read the bound
+        // straight off this table without executing anything). Delta
+        // convention, EXTENSIBLE handling, and the saturating i64 clamp
+        // for U64 storage all live in `constraints::validate_s64`/
+        // `validate_u64` (rust-runtime/ber/src/constraints.rs) — the only
+        // code, identical for every member. Only INT_S64/INT_U64 storage
+        // gets a table — INT_I128/INT_ARBITRARY are skipped (the member's
+        // MemberDescriptor.validate is `None`), matching or exceeding the
+        // C++ side's own correctness rather than replicating its latent
+        // I128/ARBITRARY static_cast bug (Validate.hpp) in Rust too.
         if (spec.storage_kind == IntStorageKind::S64) {
             // hi_is_large's upper bound may exceed i64::MAX (X.691 §10.5.6,
             // e.g. UINT64_MAX) and isn't exactly representable as an i64
-            // parameter — treated as semi-constrained (lower-bound-only
-            // check) rather than passing an incorrect upper bound.
+            // bound — treated as semi-constrained (lower-bound-only check)
+            // rather than storing an incorrect upper bound.
+            bool semi = spec.semi_constrained || spec.hi_is_large;
+            int flags = (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0) |
+                        (semi ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED);
             os << std::format(
-                "pub fn {}_range_delta(v: i64) -> i64 {{ asn1cpp_ber::integer::range_delta_i64(v, {}, {}, {}, {}) }}\n\n",
-                base, spec.extensible ? "true" : "false",
-                (spec.semi_constrained || spec.hi_is_large) ? "true" : "false",
-                spec.lower_s64, spec.upper_s64);
+                "static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
+                "    flags: {}, lower_bound: {}, upper_bound: {}, lower_u64: 0, upper_u64: 0, size_lower: 0, size_upper: 0,\n"
+                "}};\n\n",
+                cname, flags, spec.lower_s64, spec.upper_s64);
         } else if (spec.storage_kind == IntStorageKind::U64) {
+            int flags = (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0) |
+                        (spec.semi_constrained ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED);
             os << std::format(
-                "pub fn {}_range_delta(v: u64) -> i64 {{ asn1cpp_ber::integer::range_delta_u64(v, {}, {}, {}u64, {}u64) }}\n\n",
-                base, spec.extensible ? "true" : "false", spec.semi_constrained ? "true" : "false",
-                spec.lower_u64, spec.upper_u64);
+                "static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
+                "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: {}u64, upper_u64: {}u64, size_lower: 0, size_upper: 0,\n"
+                "}};\n\n",
+                cname, flags, spec.lower_u64, spec.upper_u64);
         }
         return;
     }
@@ -631,23 +640,33 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // (Generator::build_member_type_descriptor_spec's Sizeable branch:
     // `if (sr || !alphabet.empty() || needs_xer)`), and RustBackend's own
     // member-row loop only has `tdref`'s "&asn_TYP_..." prefix to tell
-    // whether *some* spec was built for this member (same signal
-    // `range_delta`'s own doc explains, reused here) — not whether the
-    // SIZE-specific function within it exists. Keeping this function
-    // unconditional keeps that one signal reliable for every Sizeable
-    // member uniformly, matching the C++ side's own "always call, a
-    // flags=0 Constraints struct makes it a no-op" pattern (Validate.hpp)
-    // — no second gate needed.
-    std::string rust_type = native_builtin_type(spec.builtin_type);
-    const char* len_expr = size_check_len_expr(spec.builtin_type);
-    if (spec.has_size_constraint) {
-        os << std::format(
-            "pub fn {}_size_delta(v: &{}) -> i64 {{ asn1cpp_ber::validate::size_delta({}, {}, {}, {}, {}) }}\n\n",
-            base, rust_type, len_expr, spec.extensible ? "true" : "false",
-            spec.size_bounded ? "true" : "false", spec.size_lower, spec.size_upper);
-    } else {
-        os << std::format("pub fn {}_size_delta(v: &{}) -> i64 {{ let _ = v; 0 }}\n\n", base, rust_type);
-    }
+    // whether *some* spec was built for this member — not whether the
+    // SIZE constraint within it is real. Keeping this table unconditional
+    // (flags=0 when unconstrained, same as `Constraints::default()`) keeps
+    // that one signal reliable for every Sizeable member uniformly,
+    // matching the C++ side's own "always reference a Constraints value,
+    // flags=0 makes it a no-op" pattern (Validate.hpp) — no second gate
+    // needed, and `validate_size` already treats a missing
+    // SIZE_CONSTRAINED bit as always-valid.
+    // `size_bounded == false` (SIZE(n..MAX)) still gets SIZE_CONSTRAINED
+    // set (unlike C++'s own Constraints, which only sets it for a finite
+    // upper bound and so skips validation entirely for a semi-constrained
+    // SIZE — see OctetString::validate/BitString::validate's own `if
+    // (!(c.flags & SIZE_CONSTRAINED)) return 0;` gate) — the lower bound
+    // is still real and worth checking; `size_upper` becomes `i64::MAX`
+    // (via `INT64_MAX`) as a sentinel so `validate_size`'s upper check
+    // never fires for a realistic element/byte/character count. A
+    // deliberate, already-shipped (#464/#465) improvement over C++, not a
+    // parity gap introduced here.
+    int flags = spec.has_size_constraint
+        ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
+        : 0;
+    int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
+    os << std::format(
+        "static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
+        "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: {}, size_upper: {},\n"
+        "}};\n\n",
+        cname, flags, spec.size_lower, size_upper);
 }
 
 /// @brief Emit a Rust size-check function for a SEQUENCE OF / SET OF type's
@@ -676,26 +695,35 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
 ///       tag from each element's own `Asn1Value::xer_element_name()` at
 ///       runtime, so there's no per-type name to gate on here at all.
 void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
-    // Always emitted, real bounds or not (gambas-asn1#467) — same "always
-    // call, a permissive default makes it a no-op" pattern
-    // `emit_member_type_descriptor`'s Sizeable branch already established
-    // (#464): every generated SEQUENCE OF/SET OF type gets one, including
-    // an anonymous inline member's synthetic promoted type
-    // (`Generator::emit_seq_of_definition` runs identically for both — see
-    // this pairing's own doc), so the containing SEQUENCE's member-row
-    // loop (`emit_sequence_definition`) can always find
-    // `{synthetic_name}_size_delta` by the same deterministic name it
-    // already derives for the field type, no extra signal needed.
-    std::string fname = escape(to_snake_case(spec.type_name) + "_size_delta");
-    os << std::format("pub fn {}(len: usize) -> i64 {{\n", fname);
-    if (spec.has_size_constraint) {
-        os << std::format("    asn1cpp_ber::validate::size_delta(len, {}, {}, {}, {})\n",
-                           spec.extensible ? "true" : "false", spec.size_upper ? "true" : "false",
-                           spec.size_lower, spec.size_upper.value_or(0));
-    } else {
-        os << "    let _ = len;\n    0\n";
-    }
-    os << "}\n\n";
+    // Plain `static` data, not a generated per-type function (#473 review)
+    // — always emitted, real bounds or not: every generated SEQUENCE
+    // OF/SET OF type gets one, including an anonymous inline member's
+    // synthetic promoted type (`Generator::emit_seq_of_definition` runs
+    // identically for both — see this pairing's own doc), so the
+    // containing SEQUENCE's member-row loop (`emit_sequence_definition`)
+    // can always find `{TYPE}_CONSTRAINTS` by the same deterministic name
+    // it already derives for the field type, no extra signal needed. A
+    // semi-constrained SIZE (`size_upper` absent) still gets
+    // SIZE_CONSTRAINED set with `size_upper` as a sentinel `i64::MAX` —
+    // `validate_size` (constraints.rs) then still checks the lower bound,
+    // same already-shipped (#464/#465) improvement over C++'s own
+    // Constraints (which skips validation entirely for a semi-constrained
+    // SIZE — see OctetString::validate's own `SIZE_CONSTRAINED` gate).
+    std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(spec.type_name));
+    int flags = spec.has_size_constraint
+        ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
+        : 0;
+    int64_t size_upper = spec.size_upper.value_or(std::numeric_limits<int64_t>::max());
+    // `pub`, unlike the member-inline Constraints tables above — a
+    // synthetic promoted type's own table is referenced cross-module by
+    // the containing SEQUENCE's row-loop (an inline member never has this
+    // type as its field type directly, only the generic SeqOf<T>/SetOf<T>
+    // wrapper — see that reference's own doc).
+    os << std::format(
+        "pub static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
+        "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: {}, size_upper: {},\n"
+        "}};\n\n",
+        cname, flags, spec.size_lower, size_upper);
 
     std::string natural_tag = std::format("asn1cpp_ber::sequence::{}", spec.is_set_of ? "SET_TAG" : "SEQUENCE_TAG");
     // Honor a top-level [n] IMPLICIT/EXPLICIT tag on this type assignment
@@ -741,15 +769,14 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << "    }\n";
     // `Asn1Value::validate()`'s default (`value.rs`) is `0` — this override
     // is only needed when there's a real SIZE constraint to check, unlike
-    // `{name}_size_delta` above (always emitted, unconditionally, so the
-    // member-row loop's name-derivation never has to guess whether it
-    // exists). Plain trait override, not a MemberDescriptor fn-pointer:
-    // every named or synthetic SEQUENCE OF/SET OF type is genuinely its
-    // own distinct Rust type (unlike INTEGER's shared `i64`, #463), so it
-    // can carry its own constraint directly, the way #462 originally
-    // intended.
+    // `{cname}` above (always emitted, unconditionally, so the member-row
+    // loop's name-derivation never has to guess whether it exists). Plain
+    // trait override, not a MemberDescriptor fn-pointer: every named or
+    // synthetic SEQUENCE OF/SET OF type is genuinely its own distinct Rust
+    // type (unlike INTEGER's shared `i64`, #463), so it can carry its own
+    // constraint directly, the way #462 originally intended.
     if (spec.has_size_constraint) {
-        os << std::format("\n    fn validate(&self) -> i64 {{\n        {}(self.0.len())\n    }}\n", fname);
+        os << std::format("\n    fn validate(&self) -> i64 {{\n        asn1cpp_ber::constraints::validate_size(self.0.len(), &{})\n    }}\n", cname);
     }
     os << "}\n\n";
 }
@@ -1149,18 +1176,21 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             }
             os << std::format("        set_default: {},\n", set_default_expr);
             os << std::format("        is_default_equal: {},\n", is_default_equal_expr);
-            // `emit_member_type_descriptor` (above) already emitted
-            // `{base}_range_delta` for a direct INTEGER member with an
-            // inline X.680 §19/§51 value range — only INT_S64/INT_U64
-            // storage gets a real function (see that emitter's own doc).
-            // No dedicated field needed to detect this: `tdref` (already
-            // set on every row, both backends) is `"&" + tname` — the
-            // exact "asn_TYP_{parent}_{member}" text — only when
-            // `build_member_type_descriptor_spec` actually built a spec
-            // for this member; the plain/TypeRef-aliased/no-constraint
-            // fallback (`type_descriptor_ref_for`) never produces that
-            // prefix. `base` itself is recomputed from `tname`'s
-            // deterministic naming, not read back off stored data.
+            // `emit_member_type_descriptor` (above) already emitted a
+            // `static ... Constraints` table for a direct INTEGER/Sizeable
+            // member with an inline X.680 §19/§25/§26/§51 constraint —
+            // only INT_S64/INT_U64 storage gets one for INTEGER (see that
+            // emitter's own doc). No dedicated field needed to detect
+            // this: `tdref` (already set on every row, both backends) is
+            // `"&" + tname` — the exact "asn_TYP_{parent}_{member}" text —
+            // only when `build_member_type_descriptor_spec` actually built
+            // a spec for this member; the plain/TypeRef-aliased/no-
+            // constraint fallback (`type_descriptor_ref_for`) never
+            // produces that prefix. `cname` itself is recomputed from
+            // `tname`'s deterministic naming, not read back off stored
+            // data — same table `constraints::validate_s64`/`validate_u64`/
+            // `validate_size` (rust-runtime/ber/src/constraints.rs) read,
+            // never a per-member generated function (#473 review).
             // `m.optional` also covers a DEFAULT-valued member (X.680
             // §25.1: `Generator::collect` passes `m->is_optional()`, true
             // for both markers) — its Rust field is `Option<T>` too (see
@@ -1176,18 +1206,21 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Integer &&
                 m.tdref.starts_with("&asn_TYP_") &&
                 (m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64)) {
-                std::string base = escape(to_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
+                std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
+                const char* fn = m.storage_kind == IntStorageKind::S64 ? "validate_s64" : "validate_u64";
                 validate_expr = m.optional
-                    ? std::format("Some(|v| v.{}.map_or(0, {}_range_delta))", m.mname, base)
-                    : std::format("Some(|v| {}_range_delta(v.{}))", base, m.mname);
+                    ? std::format("Some(|v| v.{}.map_or(0, |x| asn1cpp_ber::constraints::{}(x, &{})))", m.mname, fn, cname)
+                    : std::format("Some(|v| asn1cpp_ber::constraints::{}(v.{}, &{}))", fn, m.mname, cname);
             } else if (m.mbuiltin &&
                        (*m.mbuiltin == ast::BuiltinType::OctetString || *m.mbuiltin == ast::BuiltinType::BitString ||
                         is_sizeable_string_kind(*m.mbuiltin)) &&
                        m.tdref.starts_with("&asn_TYP_")) {
-                std::string base = escape(to_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
+                std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
+                const char* method = *m.mbuiltin == ast::BuiltinType::BitString ? "bit_count" : "len";
                 validate_expr = m.optional
-                    ? std::format("Some(|v| v.{}.as_ref().map_or(0, {}_size_delta))", m.mname, base)
-                    : std::format("Some(|v| {}_size_delta(&v.{}))", base, m.mname);
+                    ? std::format("Some(|v| v.{}.as_ref().map_or(0, |x| asn1cpp_ber::constraints::validate_size(x.{}(), &{})))",
+                                   m.mname, method, cname)
+                    : std::format("Some(|v| asn1cpp_ber::constraints::validate_size(v.{}.{}(), &{}))", m.mname, method, cname);
             } else if (m.seq_of_kind != SeqOfKind::None) {
                 // Inline SEQUENCE OF/SET OF member: the field's own Rust
                 // type is the generic `SeqOf<T>`/`SetOf<T>` wrapper (shared
@@ -1201,15 +1234,15 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // synthetic named type as a side effect (`synthetic_name`
                 // below reproduces that exact name), and
                 // `emit_seq_of_definition` (above) always emits that
-                // synthetic type's own `{name}_size_delta` unconditionally
-                // — real bounds or a trivial always-`0` body — so this
+                // synthetic type's own `..._CONSTRAINTS` table
+                // unconditionally — real bounds or `flags: 0` — so this
                 // reference is always valid, constrained or not.
                 //
-                // Fully qualified (`crate::{module}::{fn}`), not a bare
-                // call: the synthetic type lives in its own generated file/
-                // module (`Generator::emit_seq_of` runs it through its own
-                // `TypeOutputSession`, separate from this SEQUENCE's own),
-                // and this is the first thing in this file that ever
+                // Fully qualified (`crate::{module}::{const}`), not a bare
+                // reference: the synthetic type lives in its own generated
+                // file/module (`Generator::emit_seq_of` runs it through its
+                // own `TypeOutputSession`, separate from this SEQUENCE's
+                // own), and this is the first thing in this file that ever
                 // references it by name — `needs_seqof_wrapper_reference()`
                 // is `false` for Rust (the field itself never names the
                 // synthetic type, only the generic wrapper), so Generator's
@@ -1219,11 +1252,12 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // the synthetic type name every other cross-module
                 // reference in this codebase already derives it as.
                 std::string synth = synthetic_name(spec.type_name, m.asn1_name);
-                std::string base = std::format("crate::{}::{}", to_snake_case(synth),
-                                                escape(to_snake_case(synth) + "_size_delta"));
+                std::string cname = std::format("crate::{}::{}_CONSTRAINTS", to_snake_case(synth),
+                                                 to_screaming_snake_case(synth));
                 validate_expr = m.optional
-                    ? std::format("Some(|v| v.{}.as_ref().map_or(0, |x| {}(x.len())))", m.mname, base)
-                    : std::format("Some(|v| {}(v.{}.len()))", base, m.mname);
+                    ? std::format("Some(|v| v.{}.as_ref().map_or(0, |x| asn1cpp_ber::constraints::validate_size(x.len(), &{})))",
+                                   m.mname, cname)
+                    : std::format("Some(|v| asn1cpp_ber::constraints::validate_size(v.{}.len(), &{}))", m.mname, cname);
             }
             os << std::format("        validate: {},\n", validate_expr);
             os << "    },\n";
