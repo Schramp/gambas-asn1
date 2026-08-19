@@ -118,6 +118,13 @@ public:
     // directly before this method existed.
     std::string format_no_tag_literal() const override { return "asn1::Tag{}"; }
 
+    // gambas-asn1#478: this same C++ text used to be hardcoded directly
+    // inside Generator::type_descriptor_ref_for (verbatim switch moved
+    // here unchanged — verified byte-identical regen); Generator now only
+    // decides the reference *kind* (type_descriptor_ref_spec_for) and
+    // delegates rendering here. Defined in CppBackend.cpp.
+    std::string format_type_descriptor_ref(const TypeDescriptorRefSpec& spec) const override;
+
     std::string native_builtin_type(ast::BuiltinType bt) const override {
         using BT = ast::BuiltinType;
         switch (bt) {

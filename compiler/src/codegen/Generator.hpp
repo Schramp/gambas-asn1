@@ -70,9 +70,6 @@ inline std::string safe_name(std::string n,
     return n + "_" + buf;
 }
 
-// Escape a C++ identifier if it collides with a keyword (backward compat alias).
-inline std::string safe_member_name(std::string n) { return safe_name(std::move(n)); }
-
 // Upper-cases the first character of a C++ identifier string.
 inline std::string capitalize_first(std::string s) {
     if (!s.empty()) s[0] = (char)std::toupper((unsigned char)s[0]);
@@ -108,7 +105,7 @@ class Generator {
     std::set<std::string>   generated_names_;
     // Synthetic type names promoted for an anonymous nested SEQUENCE OF/SET
     // OF element (generate_inline_types, gambas-asn1#427) — needed because
-    // type_descriptor_ref_for's own TypeRef-fallback branch (reached when
+    // type_descriptor_ref_spec_for's own TypeRef-fallback branch (reached when
     // resolver_.resolve_ref can't find a dynamically-created synthetic
     // TypeDef, which is the normal case for every synthetic promotion) has
     // no other way to know the synthetic type isn't SEQUENCE/CHOICE/
@@ -345,7 +342,8 @@ private:
     std::vector<ChoiceAlternativeSpec> emit_choice_declaration(const ast::TypeDef& def, std::ostream& os);
     ChoiceSpec emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session);
 
-    std::string cpp_type_for(const ast::TypeDef& def);
+    std::string native_member_type_for(const ast::TypeDef& def);
+    TypeDescriptorRefSpec type_descriptor_ref_spec_for(const ast::TypeDef& def);
     std::string type_descriptor_ref_for(const ast::TypeDef& def);
     bool        member_is_constructed(const ast::TypeDef& m) const;
     bool        member_type_is_choice(const ast::TypeDef& m) const;

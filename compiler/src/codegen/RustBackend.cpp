@@ -457,15 +457,12 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
 ///        constructed combinations, including EXPLICIT/IMPLICIT/auto-tag
 ///        context tags that have no named constant.
 std::string RustBackend::format_tag_literal(const TypeTagSpec& tag_spec) const {
-    const char* tag_class_literal;
-    switch (tag_spec.cls) {
-    case ast::TagClass::Universal:   tag_class_literal = "asn1cpp_ber::tag::TagClass::Universal";   break;
-    case ast::TagClass::Application: tag_class_literal = "asn1cpp_ber::tag::TagClass::Application"; break;
-    case ast::TagClass::Private:     tag_class_literal = "asn1cpp_ber::tag::TagClass::Private";     break;
-    default:                         tag_class_literal = "asn1cpp_ber::tag::TagClass::Context";     break;
-    }
+    static constexpr const char* kTagClassLiterals[4] = {
+        "asn1cpp_ber::tag::TagClass::Universal", "asn1cpp_ber::tag::TagClass::Application",
+        "asn1cpp_ber::tag::TagClass::Private", "asn1cpp_ber::tag::TagClass::Context"};
     return std::format("asn1cpp_ber::tag::Tag {{ class: {}, number: {}, constructed: {} }}",
-                        tag_class_literal, tag_spec.number, tag_spec.constructed ? "true" : "false");
+                        kTagClassLiterals[tag_class_index(tag_spec.cls)], tag_spec.number,
+                        tag_spec.constructed ? "true" : "false");
 }
 
 /// @brief Emit the `Asn1Value` impl for a builtin-alias newtype (see
@@ -552,14 +549,14 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
 /// @brief Emit a Rust default-value accessor function for a SEQUENCE/SET
 ///        member's DEFAULT value (X.680 §25.1).
 /// @param spec        Resolved, backend-agnostic decision (see DefaultValueSpec).
-/// @param type_name   Storage type computed by Generator::cpp_type_for().
+/// @param type_name   Storage type computed by Generator::native_member_type_for().
 /// @param parent_name Enclosing SEQUENCE/SET type identifier.
 /// @param member_name Member identifier (already backend-dispatched — snake_case).
 /// @param os          Output stream to write to.
 /// @note `type_name` is only genuinely backend-dispatched for Kind::Int
 ///       (via native_int_type) and Kind::EnumRef (via type_name()) — both
 ///       reused here directly. For Kind::Bool/Kind::String,
-///       Generator::cpp_type_for() hardcodes a C++ runtime wrapper type
+///       Generator::native_member_type_for() hardcodes a C++ runtime wrapper type
 ///       ("asn1::Boolean"/"asn1::Ia5String" etc.), so those two cases ignore
 ///       it and use "bool"/"String" instead.
 void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
@@ -836,7 +833,7 @@ static bool rust_mtype_is_unusable_vec(const std::string& mtype) {
 
 /// @brief A CHOICE alternative's `mtype`, rewritten to wrap a bare
 ///        `Vec<T>` — `rust_mtype_is_unusable_vec`'s own doc: the only
-///        source of that shape is `cpp_type_for`'s is_seq_of/is_set_of
+///        source of that shape is `native_member_type_for`'s is_seq_of/is_set_of
 ///        branches (both format identically via `wrap_collection_type`,
 ///        indistinguishable from the text alone — this covers a SET OF
 ///        alternative too, not just SEQUENCE OF; harmless, since a CHOICE
@@ -858,7 +855,7 @@ static std::string rust_seqof_alt_mtype(const std::string& mtype) {
 
 /// @brief The unwrapped element type text for a SEQUENCE OF/SET OF member.
 ///        `m.mtype` is always exactly `"Vec<ElemType>"` for such a member —
-///        `cpp_type_for`'s own is_seq_of/is_set_of branches always route
+///        `native_member_type_for`'s own is_seq_of/is_set_of branches always route
 ///        through `wrap_collection_type` (Backend.hpp) — the same shape
 ///        `rust_seqof_alt_mtype` above unwraps for a CHOICE alternative.
 ///        Recurses per `ElemShape` (Backend.hpp) when the element is
@@ -925,7 +922,7 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 /// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
 /// @param os   Output stream to write to.
 /// @note `spec.members[i].mtype` is treated as an opaque, already-Rust-
-///       shaped type name string, always a real `Generator::cpp_type_for()`
+///       shaped type name string, always a real `Generator::native_member_type_for()`
 ///       value under `--target=rust`. `ops`/`tdref`/`def_setter`/`offset_expr` are
 ///       C++-runtime-only (per SequenceMemberSpec's own doc) and unused
 ///       here; optional members become `Option<T>` rather than C++'s
@@ -1056,7 +1053,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // e.g. `MyByte ::= INTEGER (0..255)` used as a member type) — Generator
     // only populates it from the member's own AST node when that node
     // directly holds a builtin type (`std::get_if<ast::BuiltinType>`), not
-    // for a reference that *resolves* to one — cpp_type_for's TypeRef branch
+    // for a reference that *resolves* to one — native_member_type_for's TypeRef branch
     // returns the alias's own type name ("MyByte"), never the resolved
     // native type, so a plain `mtype == "i64"` string check can never match
     // it — see sequence_member_covered's `!m.mbuiltin` branch.

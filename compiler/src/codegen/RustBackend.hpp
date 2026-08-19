@@ -154,7 +154,7 @@ public:
 
     // gambas-asn1#306: parent + to_upper_camel_case(member_name), not
     // make_synthetic_name's capitalize_first(to_cpp_name(...)) — must match
-    // Generator::cpp_type_for's own inline-ENUMERATED-member calculation
+    // Generator::native_member_type_for's own inline-ENUMERATED-member calculation
     // (`current_type_ + capitalize_first(backend_.type_name(name))`,
     // Generator.cpp), the *other* independent place that computes this same
     // synthetic type's name when referencing it from a field/generic
@@ -181,7 +181,7 @@ public:
     // Defined in RustBackend.cpp — reuses the same mapping as the file-local
     // native_builtin_type() free function every other Rust construct pairing
     // already calls internally (gambas-asn1#270: now also reachable from
-    // Generator::cpp_type_for, not just RustBackend's own emit_* methods).
+    // Generator::native_member_type_for, not just RustBackend's own emit_* methods).
     std::string native_builtin_type(ast::BuiltinType bt) const override;
 
     // gambas-asn1#290: Generator::tag_literal()/natural_tag_for() call this
@@ -201,6 +201,15 @@ public:
     std::string format_no_tag_literal() const override {
         return "asn1cpp_ber::tag::Tag { class: asn1cpp_ber::tag::TagClass::Context, number: 0, constructed: false }";
     }
+
+    // gambas-asn1#478: tdref is populated unconditionally for every
+    // SEQUENCE/CHOICE member (see Backend::format_type_descriptor_ref's own
+    // doc), but RustBackend has no codec dispatch table wired up yet to read
+    // it — confirmed by grep, same status as needs_seqof_wrapper_reference()
+    // below. Empty string is a valid, harmlessly-unused default; revisit
+    // together with needs_seqof_wrapper_reference() once Rust grows its own
+    // per-member descriptor table.
+    std::string format_type_descriptor_ref(const TypeDescriptorRefSpec&) const override { return {}; }
 
     std::string wrap_collection_type(const std::string& elem_type) const override {
         return std::format("Vec<{}>", elem_type);
