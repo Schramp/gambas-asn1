@@ -2,11 +2,21 @@
 -- an inline X.680 §51.4 FROM (PermittedAlphabet) constraint on a
 -- character-string SEQUENCE member, combined with SIZE via
 -- constraints::validate_string.
+--
+-- `tag` is FROM-only, no SIZE clause at all — regression coverage for a
+-- real bug found while implementing this: MemberTypeDescriptorSpec's
+-- size_lower/size_upper were left uninitialized for exactly this
+-- combination (Generator.cpp), so the generated Constraints table
+-- literally contained garbage stack values in already-shipped C++
+-- output until fixed alongside this issue. See
+-- tests/rust/check_alphabet_only_no_garbage_constraints.py for the
+-- exact-text regression check.
 
 RustAlphabetTest DEFINITIONS ::= BEGIN
 
     Code ::= SEQUENCE {
-        digits NumericString (FROM ("0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9")) (SIZE(1..6))
+        digits NumericString (FROM ("0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9")) (SIZE(1..6)),
+        tag    IA5String (FROM ("a"|"b"|"c"))
     }
 
 END
