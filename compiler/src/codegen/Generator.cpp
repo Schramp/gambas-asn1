@@ -49,7 +49,7 @@ static std::string filename_for(const std::string& cname) {
     return cname.substr(0, 220) + suffix;
 }
 
-std::string Generator::cpp_type_for(const ast::TypeDef& def) {
+std::string Generator::native_member_type_for(const ast::TypeDef& def) {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
         switch (*bt) {
@@ -74,7 +74,7 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
             return backend_.wrap_collection_type(
                                backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Anon"));
-        return backend_.wrap_collection_type(cpp_type_for(elem));
+        return backend_.wrap_collection_type(native_member_type_for(elem));
     }
     if (def.is_set_of()) {
         const auto& sof = std::get<ast::SetOfType>(def.body);
@@ -82,7 +82,7 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
             return backend_.wrap_collection_type(
                                backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Anon"));
-        return backend_.wrap_collection_type(cpp_type_for(elem));
+        return backend_.wrap_collection_type(native_member_type_for(elem));
     }
     if (def.is_sequence() || def.is_choice() || def.is_set())
         return backend_.synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
@@ -446,45 +446,29 @@ static bool is_type_assignment(const ast::TypeDef& def) {
 }
 
 // ---------------------------------------------------------------------------
-// type_descriptor_ref_for — Generator member (collision-aware)
+// type_descriptor_ref_spec_for / type_descriptor_ref_for — Generator members
+// (collision-aware)
 // ---------------------------------------------------------------------------
 
-std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
+/// @brief Decide which reference form a type-descriptor reference takes
+///        (see TypeDescriptorRefSpec) — plain data, no C++ syntax. Needs
+///        Generator-private resolver/collision state (resolver_,
+///        collision_types_, effective_cpp_name/cpp_name_for_ref/
+///        cpp_name_for_typeref), so stays a Generator method; the caller
+///        (type_descriptor_ref_for, below) renders it via
+///        backend_.format_type_descriptor_ref.
+/// @see TypeDescriptorRefSpec (Backend.hpp) for the field-by-field contract.
+TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef& def) {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
-        switch (*bt) {
-        case BT::Integer:           return "&asn1::asn_DEF_Integer";
-        case BT::Boolean:           return "&asn1::asn_DEF_Boolean";
-        case BT::Null:              return "&asn1::asn_DEF_Null";
-        case BT::Real:              return "&asn1::asn_DEF_Real";
-        case BT::BitString:         return "&asn1::asn_DEF_BitString";
-        case BT::ObjectIdentifier:  return "&asn1::asn_DEF_Oid";
-        case BT::RelativeOid:       return "&asn1::asn_DEF_RelativeOid";
-        case BT::UtcTime:           return "&asn1::asn_DEF_UtcTime";
-        case BT::GeneralizedTime:   return "&asn1::asn_DEF_GeneralizedTime";
-        case BT::OctetString:       return "&asn1::asn_DEF_OctetString";
-        case BT::Utf8String:        return "&asn1::asn_DEF_Utf8String";
-        case BT::Ia5String:         return "&asn1::asn_DEF_Ia5String";
-        case BT::NumericString:     return "&asn1::asn_DEF_NumericString";
-        case BT::PrintableString:   return "&asn1::asn_DEF_PrintableString";
-        case BT::T61String:         return "&asn1::asn_DEF_T61String";
-        case BT::VisibleString:     return "&asn1::asn_DEF_VisibleString";
-        case BT::GeneralString:     return "&asn1::asn_DEF_GeneralString";
-        case BT::GraphicString:     return "&asn1::asn_DEF_GraphicString";
-        case BT::UniversalString:   return "&asn1::asn_DEF_UniversalString";
-        case BT::BmpString:         return "&asn1::asn_DEF_BmpString";
-        case BT::VideotexString:    return "&asn1::asn_DEF_VideotexString";
-        case BT::ObjectDescriptor:  return "&asn1::asn_DEF_ObjectDescriptor";
-        case BT::Any:               return "&asn1::asn_DEF_Any";
-        case BT::Enumerated:        break; // handled below — inline ENUMERATED needs synthetic name
-        default:                    return "nullptr";
-        }
+        if (*bt != BT::Enumerated)  // Enumerated handled below — inline ENUMERATED needs synthetic name
+            return TypeDescriptorRefSpec{TypeDescriptorRefKind::Builtin, *bt, {}};
     }
     // Inline ENUMERATED member — use synthetic name (generates a class)
     if (auto* bt2 = std::get_if<BT>(&def.body);
         bt2 && *bt2 == BT::Enumerated && !def.enum_values.empty() && !current_type_.empty()) {
         auto sname = backend_.synthetic_name(current_type_, def.name.empty() ? "Enum" : def.name);
-        return std::format("&{}::asn_DEF", sname);
+        return TypeDescriptorRefSpec{TypeDescriptorRefKind::ClassScoped, {}, sname};
     }
     // Named type reference.
     // Pure TypeRef aliases (e.g. "LawfulInterceptionIdentifier ::= LIID") generate only a
@@ -499,31 +483,30 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
             if (!def_mod.empty()) {
                 auto td = resolver_.resolve_in_module(tr->type_name, def_mod);
                 if (td && std::get_if<ast::TypeRef>(&td->body))
-                    return type_descriptor_ref_for(*td);  // pure alias — follow chain
+                    return type_descriptor_ref_spec_for(*td);  // pure alias — follow chain
                 if (td) {
                     auto n = effective_cpp_name(tr->type_name, def_mod);
                     if (td->is_sequence() || td->is_set() || td->is_choice() ||
                         (std::get_if<BT>(&td->body) && std::get<BT>(td->body) == BT::Enumerated))
-                        return std::format("&{}::asn_DEF", n);
-                    return std::format("&asn_DEF_{}", n);
+                        return TypeDescriptorRefSpec{TypeDescriptorRefKind::ClassScoped, {}, n};
+                    return TypeDescriptorRefSpec{TypeDescriptorRefKind::FreeStanding, {}, n};
                 }
             }
         }
         auto resolved = resolver_.resolve_ref(*tr);
         if (resolved && !resolved->name.empty()) {
             if (std::get_if<ast::TypeRef>(&resolved->body))
-                return type_descriptor_ref_for(*resolved);  // pure alias — follow chain
+                return type_descriptor_ref_spec_for(*resolved);  // pure alias — follow chain
             bool is_class = resolved->is_sequence() || resolved->is_set() || resolved->is_choice() ||
                 (std::get_if<BT>(&resolved->body) && std::get<BT>(resolved->body) == BT::Enumerated);
+            auto kind = is_class ? TypeDescriptorRefKind::ClassScoped : TypeDescriptorRefKind::FreeStanding;
             // Qualified ref: use explicit module for collision disambiguation on resolved name.
             if (!tr->module_name.empty() && collision_types_.count(backend_.type_name(resolved->name))) {
                 auto n = effective_cpp_name(resolved->name, tr->module_name);
-                return is_class ? std::format("&{}::asn_DEF", n)
-                                : std::format("&asn_DEF_{}", n);
+                return TypeDescriptorRefSpec{kind, {}, n};
             }
             auto n = cpp_name_for_ref(resolved->name, current_module_);
-            return is_class ? std::format("&{}::asn_DEF", n)
-                            : std::format("&asn_DEF_{}", n);
+            return TypeDescriptorRefSpec{kind, {}, n};
         }
         // Fallback: unresolved ref — synthetic types (compiler-generated
         // element replacements) are SEQUENCE/CHOICE/ENUM → class-scoped
@@ -531,29 +514,39 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
         // OF (seq_of_synthetic_names_, gambas-asn1#427), which — like any
         // other SEQUENCE OF/SET OF — gets a free asn_DEF_X, not X::asn_DEF.
         auto n = cpp_name_for_typeref(*tr);
-        return seq_of_synthetic_names_.count(n)
-            ? std::format("&asn_DEF_{}", n)
-            : std::format("&{}::asn_DEF", n);
+        auto kind = seq_of_synthetic_names_.count(n) ? TypeDescriptorRefKind::FreeStanding
+                                                       : TypeDescriptorRefKind::ClassScoped;
+        return TypeDescriptorRefSpec{kind, {}, n};
     }
     // SEQUENCE OF / SET OF — named member uses synthetic SeqOf wrapper descriptor (using alias)
     if (def.is_seq_of()) {
         if (!def.name.empty())
-            return std::format("&asn_DEF_{}", backend_.synthetic_name(current_type_, def.name));
+            return TypeDescriptorRefSpec{TypeDescriptorRefKind::FreeStanding, {},
+                                          backend_.synthetic_name(current_type_, def.name)};
         const auto& elem = std::get<ast::SequenceOfType>(def.body).element;
-        return type_descriptor_ref_for(*elem);
+        return type_descriptor_ref_spec_for(*elem);
     }
     if (def.is_set_of()) {
         if (!def.name.empty())
-            return std::format("&asn_DEF_{}", backend_.synthetic_name(current_type_, def.name));
+            return TypeDescriptorRefSpec{TypeDescriptorRefKind::FreeStanding, {},
+                                          backend_.synthetic_name(current_type_, def.name)};
         const auto& elem = std::get<ast::SetOfType>(def.body).element;
-        return type_descriptor_ref_for(*elem);
+        return type_descriptor_ref_spec_for(*elem);
     }
     // Inline SEQUENCE / CHOICE / SET member — synthetic name, generates a class
     if (def.is_sequence() || def.is_choice() || def.is_set()) {
         auto sname = backend_.synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
-        return std::format("&{}::asn_DEF", sname);
+        return TypeDescriptorRefSpec{TypeDescriptorRefKind::ClassScoped, {}, sname};
     }
-    return "nullptr";
+    return TypeDescriptorRefSpec{};  // kind == None
+}
+
+/// @brief Returns the backend's reference-expression syntax for `def`'s
+///        type-descriptor reference (gambas-asn1#478:
+///        `backend_.format_type_descriptor_ref`, not hardcoded C++ text —
+///        same split as tag_literal()/format_tag_literal()).
+std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
+    return backend_.format_type_descriptor_ref(type_descriptor_ref_spec_for(def));
 }
 
 // ---------------------------------------------------------------------------
@@ -840,7 +833,7 @@ std::string Generator::emit_default_setter(
     auto spec = default_value_spec_for(m);
     if (spec.kind == DefaultValueSpec::Kind::None) return "nullptr";
 
-    std::string mtype = cpp_type_for(m);
+    std::string mtype = native_member_type_for(m);
     backend_.emit_default_setter(spec, mtype, parent_cname, mname, session);
     return std::format("&_setdef_{}_{}", parent_cname, mname);
 }
@@ -1159,7 +1152,7 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
         if (!resolved) return {};
         auto* rbt = std::get_if<BT>(&resolved->body);
         if (!rbt) return {};
-        std::string ct = cpp_type_for(m);
+        std::string ct = native_member_type_for(m);
         switch (*rbt) {
         case BT::Integer: {
             // TypeRef → using T = int64_t or uint64_t; no .validate() — wrap in Integer/UInteger
@@ -1244,8 +1237,8 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
                     post_class_includes.push_back(synth); // defer: needs current class complete
                 } else {
                     emit_wrapper_inc(synth);
-                    // gambas-asn1#301: cpp_type_for's SEQUENCE OF branch uses
-                    // the element type directly (wrap_collection_type(cpp_type_for(elem)))
+                    // gambas-asn1#301: native_member_type_for's SEQUENCE OF branch uses
+                    // the element type directly (wrap_collection_type(native_member_type_for(elem)))
                     // when the element is a plain TypeRef — it only falls
                     // back to the synthetic name above for an *anonymous*
                     // inline element. CppBackend gets away with including
@@ -1260,7 +1253,7 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
                     if (tr_elem) {
                         emit_inc(cpp_name_for_typeref(*tr_elem));
                     } else if (seqof_elem->is_sequence() || seqof_elem->is_choice() || seqof_elem->is_set()) {
-                        // Anonymous inline element: cpp_type_for's SEQUENCE
+                        // Anonymous inline element: native_member_type_for's SEQUENCE
                         // OF branch names the field type with a *second*,
                         // "Anon"-suffixed synthetic name layered on top of
                         // `synth` (synthetic_name(synth, "Anon")) — a real
@@ -1392,10 +1385,10 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
     // types directly by name.
     for (auto* m : sm_root) {
         if (!m->is_optional()) continue;
-        backend_.emit_optional_member_ops(cname, backend_.member_name(m->name), cpp_type_for(*m), session);
+        backend_.emit_optional_member_ops(cname, backend_.member_name(m->name), native_member_type_for(*m), session);
     }
     for (auto* m : sm_ext) {
-        backend_.emit_optional_member_ops(cname, backend_.member_name(m->name), cpp_type_for(*m), session);
+        backend_.emit_optional_member_ops(cname, backend_.member_name(m->name), native_member_type_for(*m), session);
     }
     os << "\n";
 
@@ -1409,10 +1402,10 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         SequenceMemberSpec row;
         row.asn1_name = m.name;
         row.mname = backend_.member_name(m.name);
-        row.mtype = cpp_type_for(m);
+        row.mtype = native_member_type_for(m);
         if (auto* bt = std::get_if<ast::BuiltinType>(&m.body)) {
             row.mbuiltin = *bt;
-            // gambas-asn1#350: same decision cpp_type_for's own Integer
+            // gambas-asn1#350: same decision native_member_type_for's own Integer
             // branch already made to produce row.mtype above — threaded
             // through as structured data too, not re-derived from mtype text.
             if (*bt == ast::BuiltinType::Integer) row.storage_kind = classify_integer_storage(m);
@@ -1612,7 +1605,7 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
     std::vector<ChoiceAlternativeSpec> alts;
     for (const auto* m : canon_members) {
         ChoiceAlternativeSpec alt;
-        alt.mtype = cpp_type_for(*m);
+        alt.mtype = native_member_type_for(*m);
         alt.accessor_name = backend_.member_name(m->name,
             {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
              "s_alternatives", "s_alternative_count"});
@@ -1664,7 +1657,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::string mname = backend_.member_name(m->name);
             auto [resolved_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, session);
-            std::string alt_type = cpp_type_for(*m);
+            std::string alt_type = native_member_type_for(*m);
             int tag_ctx_num = -1;
             ast::Tag full_tag = m->tag;
             if (apply_auto_tags && !m->tag.present()) {
@@ -2114,7 +2107,7 @@ SeqOfSpec Generator::emit_seq_of_declaration(const ast::TypeDef& def, std::ostre
     }
     SeqOfSpec spec;
     spec.type_name = cname;
-    spec.elem_type = cpp_type_for(*elem);
+    spec.elem_type = native_member_type_for(*elem);
     return spec;
 }
 
@@ -2259,7 +2252,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 // OF INTEGER", both levels unnamed). Same promote-to-a-real-
                 // named-type treatment as the composite-element case just
                 // above: without this, the element stays embedded inline
-                // and cpp_type_for/type_descriptor_ref_for's own SEQUENCE
+                // and native_member_type_for/type_descriptor_ref_for's own SEQUENCE
                 // OF/SET OF branches (which only know how to resolve a
                 // *named* nested collection, or recurse straight through an
                 // anonymous one to its innermost scalar) skip the
@@ -2273,7 +2266,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 // (generate_inline_types recurses into it below, handling
                 // further nesting the same way), and — critically — the
                 // rewrite to a TypeRef a few lines down means every other
-                // resolution path (type_descriptor_ref_for, cpp_type_for)
+                // resolution path (type_descriptor_ref_for, native_member_type_for)
                 // just takes their already-correct, already-tested named-
                 // type branch from here on, no special-casing needed there.
                 // See gambas-asn1#427.

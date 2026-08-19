@@ -94,6 +94,33 @@ enum class IntStorageKind {
     ARBITRARY, // vector<uint8_t> — asn1::ArbitraryInteger (stub; unconstrained crypto keys)
 };
 
+/// @brief Which reference form a resolved type-descriptor reference takes —
+///        backend-agnostic *shape*, not text. `Generator::type_descriptor_ref_spec_for`
+///        decides this (needs resolver_/collision_types_/effective_cpp_name — Generator-
+///        private state Backend has no access to); `Backend::format_type_descriptor_ref`
+///        renders it as this backend's reference-expression syntax.
+enum class TypeDescriptorRefKind {
+    Builtin,       // a universal builtin type — see TypeDescriptorRefSpec::builtin
+    ClassScoped,   // reference to a generated class's own static descriptor member
+    FreeStanding,  // reference to a free-standing generated descriptor symbol
+    None,          // no descriptor exists for this reference
+};
+
+/// @brief Backend-agnostic decision for a type-descriptor reference (e.g.
+///        a SEQUENCE/CHOICE member's `tdref`). See TypeDescriptorRefKind.
+/// @note gambas-asn1#478 review: previously `Generator::type_descriptor_ref_for`
+///       built `&asn1::asn_DEF_X`/`&X::asn_DEF`/`&asn_DEF_X` C++ text directly —
+///       the *decision* (which form, which name) stays on Generator
+///       (`type_descriptor_ref_spec_for`) because it needs resolver access,
+///       but the C++ syntax itself now lives in
+///       CppBackend::format_type_descriptor_ref, matching every other
+///       emit_*/format_* split in this file.
+struct TypeDescriptorRefSpec {
+    TypeDescriptorRefKind kind = TypeDescriptorRefKind::None;
+    ast::BuiltinType builtin = ast::BuiltinType::Boolean;  // meaningful only when kind == Builtin
+    std::string name;  // meaningful for ClassScoped/FreeStanding — the generated type's identifier
+};
+
 // gambas-asn1#421: a SEQUENCE/SET member's collection kind, if any — the
 // member's body is ast::SequenceOfType (X.680 §26), ast::SetOfType
 // (X.680 §24), or neither. Was two independent bools (`is_seq_of`/
@@ -369,14 +396,21 @@ struct TaggedMemberSpec {
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. Several
-///        fields are pre-formatted C++ expression text (`ops`, `tdref`,
-///        `def_setter`, `offset_expr`) rather than raw data — same
-///        rationale as SeqOfSpec::elem_ref: they reference C++-runtime-only
-///        constructs (UniquePtrOps aliases, static TypeDescriptor
-///        variables, offsetof macros) that only CppBackend's own emitted
-///        text can resolve. This issue's scope (#231) is moving the
-///        existing C++ emission verbatim off Generator, not redesigning
-///        SEQUENCE for a second backend — that's #239's job.
+///        fields are pre-formatted C++ expression text (`ops`, `def_setter`,
+///        `offset_expr`) rather than raw data — same rationale as
+///        SeqOfSpec::elem_ref: they reference C++-runtime-only constructs
+///        (UniquePtrOps aliases, static TypeDescriptor variables, offsetof
+///        macros) that only CppBackend's own emitted text can resolve. This
+///        issue's scope (#231) is moving the existing C++ emission verbatim
+///        off Generator, not redesigning SEQUENCE for a second backend —
+///        that's #239's job. `tdref` (gambas-asn1#478) is the one exception
+///        already split the "real" way: `Generator::type_descriptor_ref_spec_for`
+///        decides the reference *kind* (needs Generator-private
+///        resolver/collision-tracking state — `resolver_`, `collision_types_`,
+///        `effective_cpp_name` — Backend has no access to), and
+///        `Backend::format_type_descriptor_ref` renders the actual syntax,
+///        so `tdref` is real per-backend text (empty/unused on RustBackend
+///        today), not a C++-only assumption baked into this field.
 /// @note Used identically for both the `.hpp` and `.cpp` passes; the `.hpp`
 ///       pass only reads `mtype`/`mname`/`optional`/`setter_*` and leaves
 ///       the rest default-constructed (never read by emit_sequence_declaration).
@@ -615,6 +649,21 @@ public:
         throw std::logic_error("format_no_tag_literal: not implemented for this backend");
     }
 
+    /// @brief Format a resolved TypeDescriptorRefSpec (see its own doc) as
+    ///        this backend's reference-expression syntax, e.g.
+    ///        `"&asn1::asn_DEF_Integer"` / `"&Foo::asn_DEF"` / `"&asn_DEF_Bar"`
+    ///        in C++.
+    /// @note Called unconditionally for every SEQUENCE/CHOICE member
+    ///       (populates SequenceMemberSpec::tdref/ChoiceAlternativeSpec::tdref),
+    ///       even on backends that don't read that field yet (see
+    ///       Backend::needs_seqof_wrapper_reference's note) — so, unlike most
+    ///       format_*/emit_* defaults, this must return valid (possibly
+    ///       unused) syntax rather than throw.
+    virtual std::string format_type_descriptor_ref(const TypeDescriptorRefSpec& spec) const {
+        (void)spec;
+        return {};
+    }
+
     /// @brief Map a plain builtin type (never INTEGER or ENUMERATED — those
     ///        have their own dispatch, `native_int_type` and a
     ///        backend-computed synthetic name respectively) to this
@@ -623,7 +672,7 @@ public:
     ///        Rust).
     /// @param bt Built-in type tag.
     /// @note gambas-asn1#270: previously a hardcoded switch inside
-    ///       Generator::cpp_type_for, unconditionally returning C++ runtime
+    ///       Generator::native_member_type_for, unconditionally returning C++ runtime
     ///       wrapper type names — broke RustBackend on any SEQUENCE/CHOICE/
     ///       SEQUENCE OF containing a plain builtin (BOOLEAN, OCTET STRING,
     ///       etc.) member/alternative/element.
@@ -640,7 +689,7 @@ public:
     ///        instead). E.g. `asn1::VectorSeqOf<T>` in C++, `Vec<T>` in Rust.
     /// @param elem_type Already-resolved native type of the collection's element.
     /// @note gambas-asn1#270: previously a hardcoded `"asn1::VectorSeqOf<{}>"`
-    ///       format string inside Generator::cpp_type_for.
+    ///       format string inside Generator::native_member_type_for.
     /// @note Default throws — same rationale as emit_enumerated.
     virtual std::string wrap_collection_type(const std::string& elem_type) const {
         (void)elem_type;
@@ -869,7 +918,7 @@ public:
     ///        top of the deeper element-type reference gambas-asn1#301
     ///        already adds.
     /// @note Default `true`. CppBackend needs it unconditionally:
-    ///       `Generator::type_descriptor_ref_for`'s SEQUENCE-OF branch
+    ///       `Generator::type_descriptor_ref_spec_for`'s SEQUENCE-OF branch
     ///       (Generator.cpp) always points a member's `tdref` at
     ///       `&asn_DEF_<wrapper>` — the wrapper's *descriptor*, declared in
     ///       its own header — regardless of whether the field's C++ type
@@ -880,7 +929,7 @@ public:
     ///       codec table wiring yet) — so for Rust the wrapper reference is
     ///       always genuinely unused, in both the plain-TypeRef-element case
     ///       gambas-asn1#301 originally covered and the anonymous-inline-
-    ///       element case (`cpp_type_for`'s SEQUENCE OF branch never emits
+    ///       element case (`native_member_type_for`'s SEQUENCE OF branch never emits
     ///       the bare wrapper name as a field type either way — only the
     ///       element type directly, or the doubly-suffixed "Anon" type).
     ///       80 `unused_imports` warnings on the real ETSI LI PS-PDU schema
@@ -1003,6 +1052,22 @@ protected:
     ///             (e.g. `"namespace X {\n\n"` for C++, `"pub mod X {\n\n"`
     ///             for Rust) — same string goes to both buffers.
     void write_to_both(TypeOutputSession& session, const std::string& text) const;
+
+    /// @brief Shared `TagClass` dispatch for `format_tag_literal` overrides —
+    ///        both CppBackend and RustBackend switch over the same 4 cases
+    ///        (Universal/Application/Private/default-Context) and differ only
+    ///        in which literal string each case maps to. Returns an index
+    ///        into a 4-element {Universal, Application, Private, Context}
+    ///        array the caller supplies its own strings for, so the switch
+    ///        itself isn't duplicated per backend.
+    static int tag_class_index(ast::TagClass cls) {
+        switch (cls) {
+        case ast::TagClass::Universal:   return 0;
+        case ast::TagClass::Application: return 1;
+        case ast::TagClass::Private:     return 2;
+        default:                         return 3;  // Context
+        }
+    }
 };
 
 /// @brief Per-type output session (gambas-asn1#262). Backend decides file

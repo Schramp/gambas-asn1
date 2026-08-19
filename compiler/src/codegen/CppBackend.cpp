@@ -11,15 +11,56 @@ namespace asn1::codegen {
 /// @param tag_spec The decision to format (class, number, encoding form).
 /// @return A C++ expression string, e.g. `"asn1::Tag{asn1::TagClass::Context, 1, false}"`.
 std::string CppBackend::format_tag_literal(const TypeTagSpec& tag_spec) const {
-    std::string tag_class_literal;
-    switch (tag_spec.cls) {
-    case ast::TagClass::Universal:   tag_class_literal = "asn1::TagClass::Universal";   break;
-    case ast::TagClass::Application: tag_class_literal = "asn1::TagClass::Application"; break;
-    case ast::TagClass::Private:     tag_class_literal = "asn1::TagClass::Private";     break;
-    default:                         tag_class_literal = "asn1::TagClass::Context";     break;
+    static constexpr const char* kTagClassLiterals[4] = {
+        "asn1::TagClass::Universal", "asn1::TagClass::Application",
+        "asn1::TagClass::Private", "asn1::TagClass::Context"};
+    return std::format("asn1::Tag{{{}, {}, {}}}", kTagClassLiterals[tag_class_index(tag_spec.cls)],
+                        tag_spec.number, tag_spec.constructed ? "true" : "false");
+}
+
+/// @brief Format a resolved TypeDescriptorRefSpec as a C++ reference
+///        expression to the target's `TypeDescriptor`. Verbatim switch
+///        moved from the former Generator::type_descriptor_ref_for
+///        (gambas-asn1#478) — Generator still decides *which* form applies
+///        (needs resolver access), this only renders the C++ syntax.
+/// @param spec The resolved decision (kind + builtin/name).
+/// @return A C++ expression string, e.g. `"&asn1::asn_DEF_Integer"`,
+///         `"&Foo::asn_DEF"`, `"&asn_DEF_Bar"`, or `"nullptr"`.
+std::string CppBackend::format_type_descriptor_ref(const TypeDescriptorRefSpec& spec) const {
+    using BT = ast::BuiltinType;
+    switch (spec.kind) {
+    case TypeDescriptorRefKind::Builtin:
+        switch (spec.builtin) {
+        case BT::Integer:           return "&asn1::asn_DEF_Integer";
+        case BT::Boolean:           return "&asn1::asn_DEF_Boolean";
+        case BT::Null:              return "&asn1::asn_DEF_Null";
+        case BT::Real:              return "&asn1::asn_DEF_Real";
+        case BT::BitString:         return "&asn1::asn_DEF_BitString";
+        case BT::ObjectIdentifier:  return "&asn1::asn_DEF_Oid";
+        case BT::RelativeOid:       return "&asn1::asn_DEF_RelativeOid";
+        case BT::UtcTime:           return "&asn1::asn_DEF_UtcTime";
+        case BT::GeneralizedTime:   return "&asn1::asn_DEF_GeneralizedTime";
+        case BT::OctetString:       return "&asn1::asn_DEF_OctetString";
+        case BT::Utf8String:        return "&asn1::asn_DEF_Utf8String";
+        case BT::Ia5String:         return "&asn1::asn_DEF_Ia5String";
+        case BT::NumericString:     return "&asn1::asn_DEF_NumericString";
+        case BT::PrintableString:   return "&asn1::asn_DEF_PrintableString";
+        case BT::T61String:         return "&asn1::asn_DEF_T61String";
+        case BT::VisibleString:     return "&asn1::asn_DEF_VisibleString";
+        case BT::GeneralString:     return "&asn1::asn_DEF_GeneralString";
+        case BT::GraphicString:     return "&asn1::asn_DEF_GraphicString";
+        case BT::UniversalString:   return "&asn1::asn_DEF_UniversalString";
+        case BT::BmpString:         return "&asn1::asn_DEF_BmpString";
+        case BT::VideotexString:    return "&asn1::asn_DEF_VideotexString";
+        case BT::ObjectDescriptor:  return "&asn1::asn_DEF_ObjectDescriptor";
+        case BT::Any:               return "&asn1::asn_DEF_Any";
+        default:                    return "nullptr";
+        }
+    case TypeDescriptorRefKind::ClassScoped:  return std::format("&{}::asn_DEF", spec.name);
+    case TypeDescriptorRefKind::FreeStanding: return std::format("&asn_DEF_{}", spec.name);
+    case TypeDescriptorRefKind::None:
+    default:                                  return "nullptr";
     }
-    return std::format("asn1::Tag{{{}, {}, {}}}", tag_class_literal, tag_spec.number,
-                        tag_spec.constructed ? "true" : "false");
 }
 
 /// @brief Format an X.693 §21 XER encoding decision as a C++ `asn1::XerEncoding::...` literal.
@@ -406,7 +447,7 @@ void CppBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessio
 ///           ENUMERATED — `BuiltinAliasSpec` is only built for plain
 ///           `ast::BuiltinType` bodies other than those two).
 /// @return C++ runtime type name, e.g. `"asn1::OctetString"`.
-/// @note A small, self-contained subset of what `Generator::cpp_type_for`
+/// @note A small, self-contained subset of what `Generator::native_member_type_for`
 ///       computes for the general case (which also handles SEQUENCE/CHOICE/
 ///       TypeRef/SEQUENCE OF — out of scope here).
 static std::string native_builtin_type(ast::BuiltinType bt) {
