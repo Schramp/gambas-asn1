@@ -105,7 +105,7 @@ class Generator {
     std::set<std::string>   generated_names_;
     // Synthetic type names promoted for an anonymous nested SEQUENCE OF/SET
     // OF element (generate_inline_types, gambas-asn1#427) — needed because
-    // cpp_type_descriptor_ref_for's own TypeRef-fallback branch (reached when
+    // type_descriptor_ref_spec_for's own TypeRef-fallback branch (reached when
     // resolver_.resolve_ref can't find a dynamically-created synthetic
     // TypeDef, which is the normal case for every synthetic promotion) has
     // no other way to know the synthetic type isn't SEQUENCE/CHOICE/
@@ -343,7 +343,8 @@ private:
     ChoiceSpec emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session);
 
     std::string native_member_type_for(const ast::TypeDef& def);
-    std::string cpp_type_descriptor_ref_for(const ast::TypeDef& def);
+    TypeDescriptorRefSpec type_descriptor_ref_spec_for(const ast::TypeDef& def);
+    std::string type_descriptor_ref_for(const ast::TypeDef& def);
     bool        member_is_constructed(const ast::TypeDef& m) const;
     bool        member_type_is_choice(const ast::TypeDef& m) const;
     bool        member_type_is_untagged_choice(const ast::TypeDef& m) const;
@@ -357,7 +358,7 @@ private:
     ///        (extract_integer_range/extract_size_range/classify_integer_storage
     ///        use resolver_-backed decisions), so a member like build_integer_spec.
     /// @return nullopt when the member has no inline constraint worth a
-    ///         dedicated descriptor — caller falls back to cpp_type_descriptor_ref_for().
+    ///         dedicated descriptor — caller falls back to type_descriptor_ref_for().
     std::optional<MemberTypeDescriptorSpec> build_member_type_descriptor_spec(
         const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname);
     /// @brief Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.

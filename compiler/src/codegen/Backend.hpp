@@ -94,6 +94,33 @@ enum class IntStorageKind {
     ARBITRARY, // vector<uint8_t> — asn1::ArbitraryInteger (stub; unconstrained crypto keys)
 };
 
+/// @brief Which reference form a resolved type-descriptor reference takes —
+///        backend-agnostic *shape*, not text. `Generator::type_descriptor_ref_spec_for`
+///        decides this (needs resolver_/collision_types_/effective_cpp_name — Generator-
+///        private state Backend has no access to); `Backend::format_type_descriptor_ref`
+///        renders it as this backend's reference-expression syntax.
+enum class TypeDescriptorRefKind {
+    Builtin,       // a universal builtin type — see TypeDescriptorRefSpec::builtin
+    ClassScoped,   // reference to a generated class's own static descriptor member
+    FreeStanding,  // reference to a free-standing generated descriptor symbol
+    None,          // no descriptor exists for this reference
+};
+
+/// @brief Backend-agnostic decision for a type-descriptor reference (e.g.
+///        a SEQUENCE/CHOICE member's `tdref`). See TypeDescriptorRefKind.
+/// @note gambas-asn1#478 review: previously `Generator::type_descriptor_ref_for`
+///       built `&asn1::asn_DEF_X`/`&X::asn_DEF`/`&asn_DEF_X` C++ text directly —
+///       the *decision* (which form, which name) stays on Generator
+///       (`type_descriptor_ref_spec_for`) because it needs resolver access,
+///       but the C++ syntax itself now lives in
+///       CppBackend::format_type_descriptor_ref, matching every other
+///       emit_*/format_* split in this file.
+struct TypeDescriptorRefSpec {
+    TypeDescriptorRefKind kind = TypeDescriptorRefKind::None;
+    ast::BuiltinType builtin = ast::BuiltinType::Boolean;  // meaningful only when kind == Builtin
+    std::string name;  // meaningful for ClassScoped/FreeStanding — the generated type's identifier
+};
+
 // gambas-asn1#421: a SEQUENCE/SET member's collection kind, if any — the
 // member's body is ast::SequenceOfType (X.680 §26), ast::SetOfType
 // (X.680 §24), or neither. Was two independent bools (`is_seq_of`/
@@ -369,20 +396,21 @@ struct TaggedMemberSpec {
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. Several
-///        fields are pre-formatted C++ expression text (`ops`, `tdref`,
-///        `def_setter`, `offset_expr`) rather than raw data — same
-///        rationale as SeqOfSpec::elem_ref: they reference C++-runtime-only
-///        constructs (UniquePtrOps aliases, static TypeDescriptor
-///        variables, offsetof macros) that only CppBackend's own emitted
-///        text can resolve. This issue's scope (#231) is moving the
-///        existing C++ emission verbatim off Generator, not redesigning
-///        SEQUENCE for a second backend — that's #239's job. `tdref` is
-///        produced by `Generator::cpp_type_descriptor_ref_for` (named to say
-///        so explicitly, since it stays on Generator rather than moving into
-///        CppBackend — it needs Generator-private resolver/collision-tracking
-///        state (`resolver_`, `collision_types_`, `effective_cpp_name`) that
-///        Backend has no access to and isn't meant to; moving the logic
-///        without also exposing that state is #239's job, not a name change).
+///        fields are pre-formatted C++ expression text (`ops`, `def_setter`,
+///        `offset_expr`) rather than raw data — same rationale as
+///        SeqOfSpec::elem_ref: they reference C++-runtime-only constructs
+///        (UniquePtrOps aliases, static TypeDescriptor variables, offsetof
+///        macros) that only CppBackend's own emitted text can resolve. This
+///        issue's scope (#231) is moving the existing C++ emission verbatim
+///        off Generator, not redesigning SEQUENCE for a second backend —
+///        that's #239's job. `tdref` (gambas-asn1#478) is the one exception
+///        already split the "real" way: `Generator::type_descriptor_ref_spec_for`
+///        decides the reference *kind* (needs Generator-private
+///        resolver/collision-tracking state — `resolver_`, `collision_types_`,
+///        `effective_cpp_name` — Backend has no access to), and
+///        `Backend::format_type_descriptor_ref` renders the actual syntax,
+///        so `tdref` is real per-backend text (empty/unused on RustBackend
+///        today), not a C++-only assumption baked into this field.
 /// @note Used identically for both the `.hpp` and `.cpp` passes; the `.hpp`
 ///       pass only reads `mtype`/`mname`/`optional`/`setter_*` and leaves
 ///       the rest default-constructed (never read by emit_sequence_declaration).
@@ -619,6 +647,21 @@ public:
     ///       in covered output today.
     virtual std::string format_no_tag_literal() const {
         throw std::logic_error("format_no_tag_literal: not implemented for this backend");
+    }
+
+    /// @brief Format a resolved TypeDescriptorRefSpec (see its own doc) as
+    ///        this backend's reference-expression syntax, e.g.
+    ///        `"&asn1::asn_DEF_Integer"` / `"&Foo::asn_DEF"` / `"&asn_DEF_Bar"`
+    ///        in C++.
+    /// @note Called unconditionally for every SEQUENCE/CHOICE member
+    ///       (populates SequenceMemberSpec::tdref/ChoiceAlternativeSpec::tdref),
+    ///       even on backends that don't read that field yet (see
+    ///       Backend::needs_seqof_wrapper_reference's note) — so, unlike most
+    ///       format_*/emit_* defaults, this must return valid (possibly
+    ///       unused) syntax rather than throw.
+    virtual std::string format_type_descriptor_ref(const TypeDescriptorRefSpec& spec) const {
+        (void)spec;
+        return {};
     }
 
     /// @brief Map a plain builtin type (never INTEGER or ENUMERATED — those
@@ -875,7 +918,7 @@ public:
     ///        top of the deeper element-type reference gambas-asn1#301
     ///        already adds.
     /// @note Default `true`. CppBackend needs it unconditionally:
-    ///       `Generator::cpp_type_descriptor_ref_for`'s SEQUENCE-OF branch
+    ///       `Generator::type_descriptor_ref_spec_for`'s SEQUENCE-OF branch
     ///       (Generator.cpp) always points a member's `tdref` at
     ///       `&asn_DEF_<wrapper>` — the wrapper's *descriptor*, declared in
     ///       its own header — regardless of whether the field's C++ type

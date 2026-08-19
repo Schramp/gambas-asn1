@@ -1218,7 +1218,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // `"&" + tname` — the exact "asn_TYP_{parent}_{member}" text —
             // only when `build_member_type_descriptor_spec` actually built
             // a spec for this member; the plain/TypeRef-aliased/no-
-            // constraint fallback (`cpp_type_descriptor_ref_for`) never
+            // constraint fallback (`type_descriptor_ref_for`) never
             // produces that prefix. `cname` itself is recomputed from
             // `tname`'s deterministic naming, not read back off stored
             // data — same table `constraints::validate_s64`/`validate_u64`/
