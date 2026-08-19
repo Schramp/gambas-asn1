@@ -1,0 +1,12 @@
+-- gambas-asn1#466: real-codegen coverage for MemberDescriptor::validate —
+-- an inline X.680 §51.4 FROM (PermittedAlphabet) constraint on a
+-- character-string SEQUENCE member, combined with SIZE via
+-- constraints::validate_string.
+
+RustAlphabetTest DEFINITIONS ::= BEGIN
+
+    Code ::= SEQUENCE {
+        digits NumericString (FROM ("0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9")) (SIZE(1..6))
+    }
+
+END
