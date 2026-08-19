@@ -1,6 +1,7 @@
 #include "RustBackend.hpp"
 #include "asn1cpp/codec/Constraints.hpp"
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -631,7 +632,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
                         (semi ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED);
             os << std::format(
                 "static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
-                "    flags: {}, lower_bound: {}, upper_bound: {}, lower_u64: 0, upper_u64: 0, size_lower: 0, size_upper: 0,\n"
+                "    flags: {}, lower_bound: {}, upper_bound: {}, lower_u64: 0, upper_u64: 0, size_lower: 0, size_upper: 0, encode_table: None,\n"
                 "}};\n\n",
                 cname, flags, spec.lower_s64, spec.upper_s64);
         } else if (spec.storage_kind == IntStorageKind::U64) {
@@ -639,7 +640,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
                         (spec.semi_constrained ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED);
             os << std::format(
                 "static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
-                "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: {}u64, upper_u64: {}u64, size_lower: 0, size_upper: 0,\n"
+                "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: {}u64, upper_u64: {}u64, size_lower: 0, size_upper: 0, encode_table: None,\n"
                 "}};\n\n",
                 cname, flags, spec.lower_u64, spec.upper_u64);
         }
@@ -673,11 +674,35 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
         : 0;
     int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
+    // X.680 §51.4 PermittedAlphabet (gambas-asn1#466) — `spec.alphabet` is
+    // the resolved, sorted, deduplicated permitted-character set
+    // (`Generator::extract_from_alphabet`); emitted as a plain 256-entry
+    // lookup table (data, not code — same #473 review this whole redesign
+    // follows), `encode_table[byte] = index in alphabet` or `0xFFFF` if
+    // `byte` isn't permitted. `constraints::validate_alphabet`/
+    // `validate_string` (rust-runtime/ber/src/constraints.rs) are the only
+    // code, identical for every alphabet-constrained member.
+    std::string encode_table_expr = "None";
+    if (!spec.alphabet.empty()) {
+        std::string enc_ident = std::format("{}_ENC", to_screaming_snake_case(spec.tname));
+        std::array<uint16_t, 256> table;
+        table.fill(0xFFFFu);
+        for (size_t i = 0; i < spec.alphabet.size(); ++i) table[spec.alphabet[i]] = static_cast<uint16_t>(i);
+        os << std::format("static {}: [u16; 256] = [\n", enc_ident);
+        for (int i = 0; i < 256; ++i) {
+            if (i % 16 == 0) os << "    ";
+            os << table[i];
+            os << (i < 255 ? "," : "");
+            os << (i % 16 == 15 ? "\n" : " ");
+        }
+        os << "];\n\n";
+        encode_table_expr = std::format("Some(&{})", enc_ident);
+    }
     os << std::format(
         "static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
-        "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: {}, size_upper: {},\n"
+        "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: {}, size_upper: {}, encode_table: {},\n"
         "}};\n\n",
-        cname, flags, spec.size_lower, size_upper);
+        cname, flags, spec.size_lower, size_upper, encode_table_expr);
 }
 
 /// @brief Emit a Rust size-check function for a SEQUENCE OF / SET OF type's
@@ -732,7 +757,7 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // wrapper — see that reference's own doc).
     os << std::format(
         "pub static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
-        "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: {}, size_upper: {},\n"
+        "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: {}, size_upper: {}, encode_table: None,\n"
         "}};\n\n",
         cname, flags, spec.size_lower, size_upper);
 
@@ -1222,9 +1247,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 validate_expr = m.optional
                     ? std::format("Some(|v| v.{}.map_or(0, |x| asn1cpp_ber::constraints::{}(x, &{})))", m.mname, fn, cname)
                     : std::format("Some(|v| asn1cpp_ber::constraints::{}(v.{}, &{}))", fn, m.mname, cname);
-            } else if (m.mbuiltin &&
-                       (*m.mbuiltin == ast::BuiltinType::OctetString || *m.mbuiltin == ast::BuiltinType::BitString ||
-                        is_sizeable_string_kind(*m.mbuiltin)) &&
+            } else if (m.mbuiltin && (*m.mbuiltin == ast::BuiltinType::OctetString || *m.mbuiltin == ast::BuiltinType::BitString) &&
                        m.tdref.starts_with("&asn_TYP_")) {
                 std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
                 const char* method = *m.mbuiltin == ast::BuiltinType::BitString ? "bit_count" : "len";
@@ -1232,6 +1255,22 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     ? std::format("Some(|v| v.{}.as_ref().map_or(0, |x| asn1cpp_ber::constraints::validate_size(x.{}(), &{})))",
                                    m.mname, method, cname)
                     : std::format("Some(|v| asn1cpp_ber::constraints::validate_size(v.{}.{}(), &{}))", m.mname, method, cname);
+            } else if (m.mbuiltin && is_sizeable_string_kind(*m.mbuiltin) && m.tdref.starts_with("&asn_TYP_")) {
+                // X.680 §51.4 FROM alphabet (gambas-asn1#466), combined with
+                // SIZE via `constraints::validate_string` — the table
+                // (`{cname}`, above) may or may not have a real
+                // `encode_table`; `validate_string`/`validate_alphabet`
+                // treat `None` as "no FROM constraint" uniformly, so this
+                // wiring is identical whether the member actually has a
+                // FROM clause or not, same "always wire, table decides"
+                // shape the other constraint kinds use. `&str` coercion
+                // chains through the newtype's own `Deref<Target=String>`
+                // (`strings.rs`) automatically — no explicit `.as_str()`
+                // needed, works for bare `String` (IA5String) too.
+                std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
+                validate_expr = m.optional
+                    ? std::format("Some(|v| v.{}.as_ref().map_or(0, |x| asn1cpp_ber::constraints::validate_string(x, &{})))", m.mname, cname)
+                    : std::format("Some(|v| asn1cpp_ber::constraints::validate_string(&v.{}, &{}))", m.mname, cname);
             } else if (m.seq_of_kind != SeqOfKind::None) {
                 // Inline SEQUENCE OF/SET OF member: the field's own Rust
                 // type is the generic `SeqOf<T>`/`SetOf<T>` wrapper (shared

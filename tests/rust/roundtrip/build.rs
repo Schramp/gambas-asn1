@@ -52,6 +52,11 @@ fn main() {
         "ASN1CPP_RUST_SIZE_GEN_DIR must be set to the directory containing the compiler-generated \
          Blob.rs (see tests/CMakeLists.txt's rust_roundtrip_test ENVIRONMENT property)",
     );
+    // gambas-asn1#466: Code.rs, same separate-out-dir reason as Widget.rs.
+    let alphabet_gen_dir = env::var("ASN1CPP_RUST_ALPHABET_GEN_DIR").expect(
+        "ASN1CPP_RUST_ALPHABET_GEN_DIR must be set to the directory containing the compiler-generated \
+         Code.rs (see tests/CMakeLists.txt's rust_roundtrip_test ENVIRONMENT property)",
+    );
     let out_dir = env::var("OUT_DIR").unwrap();
 
     let point_src = PathBuf::from(&gen_dir).join("Point.rs");
@@ -74,14 +79,20 @@ fn main() {
     let blob_dst = PathBuf::from(&out_dir).join("blob_generated.rs");
     copy_neutralizing_inner_doc_comment(&blob_src, &blob_dst);
 
+    let code_src = PathBuf::from(&alphabet_gen_dir).join("Code.rs");
+    let code_dst = PathBuf::from(&out_dir).join("code_generated.rs");
+    copy_neutralizing_inner_doc_comment(&code_src, &code_dst);
+
     println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_GEN_DIR");
     println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_WIDE_GEN_DIR");
     println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_CHOICE_GEN_DIR");
     println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_RANGE_GEN_DIR");
     println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_SIZE_GEN_DIR");
+    println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_ALPHABET_GEN_DIR");
     println!("cargo:rerun-if-changed={}", point_src.display());
     println!("cargo:rerun-if-changed={}", widget_src.display());
     println!("cargo:rerun-if-changed={}", selector_src.display());
     println!("cargo:rerun-if-changed={}", gauge_src.display());
     println!("cargo:rerun-if-changed={}", blob_src.display());
+    println!("cargo:rerun-if-changed={}", code_src.display());
 }
