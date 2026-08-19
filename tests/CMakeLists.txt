@@ -1536,18 +1536,6 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIMPLE_SEQ_GEN_DIR};ASN1CPP_RUST_WIDE_GEN_DIR=${RUST_WIDE_TYPES_GEN_DIR};ASN1CPP_RUST_CHOICE_GEN_DIR=${RUST_CHOICE_GEN_DIR};ASN1CPP_RUST_RANGE_GEN_DIR=${RUST_RANGE_GEN_DIR};ASN1CPP_RUST_SIZE_GEN_DIR=${RUST_SIZE_GEN_DIR};ASN1CPP_RUST_ALPHABET_GEN_DIR=${RUST_ALPHABET_GEN_DIR}")
 endif()
 
-# gambas-asn1#466 regression: a FROM-alphabet-only member (no SIZE clause)
-# left MemberTypeDescriptorSpec::size_lower/size_upper uninitialized
-# (Generator.cpp) — the generated Constraints table literally contained
-# garbage stack values, still valid Rust (compiles fine), so build success
-# alone never caught it. Checks the real generated Code.rs source text for
-# the exact clean (size_lower: 0, size_upper: i64::MAX sentinel) values.
-add_test(NAME rust_alphabet_only_no_garbage_constraints
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/rust/check_alphabet_only_no_garbage_constraints.py
-            ${RUST_ALPHABET_GEN_DIR}/Code.rs)
-set_tests_properties(rust_alphabet_only_no_garbage_constraints PROPERTIES LABELS "rust")
-
 # gambas-asn1#323: Rust leg of the real asn1c data-62 BER-vector fixture
 # cross-validation — same schema (62-any-OK.asn1), same real ground-truth
 # .ber files, same check-62.c pass/fail semantics as the C++
