@@ -88,6 +88,36 @@ pub fn xer_decode_enum<T: TryFrom<i64>>(r: &mut XerReader, entries: &[EnumEntry]
     T::try_from(raw).map_err(|_| DecodeError::new(format!("invalid ENUMERATED value: {}", ti.name), 0))
 }
 
+/// X.680 §20/§51 ENUMERATED validation (gambas-asn1#468) — mirrors
+/// `EnumSpec::validate` (`runtime/include/asn1cpp/TypeDescriptor.hpp`)
+/// exactly: not a range check like INTEGER/SIZE — `1` when `value` isn't
+/// any known root or extension enumeration value, `0` otherwise. No
+/// "nearest valid bound" delta concept applies (an unknown ENUMERATED
+/// value has no natural distance metric), matching the C++ side's own
+/// doc note. `EXTENSIBLE` gets no bypass here either (unlike INTEGER/
+/// SIZE) — an extensible ENUMERATED still requires the decoded value to
+/// be one of the *known* root/extension values; X.691 §22's own
+/// extension-addition mechanism is how a *new* value becomes known, not
+/// a blanket "anything goes" escape hatch.
+///
+/// In practice this can only ever return `0` through the normal decode
+/// path: `read_enumerated_tagged`/`decode_enumerated_content` already
+/// reject an unrecognized wire value via `T: TryFrom<i64>` before a Rust
+/// enum instance can exist at all (`enumerated.rs`'s own module doc) — a
+/// stronger, compile-time-enforced guarantee than C++'s runtime-only
+/// check. Implemented anyway, reusing the same `{TYPE}_MAP` table BER/XER
+/// already emit, for parity with the other constraint kinds and as a
+/// defined behavior for the (currently unreachable) case a `T::default()`
+/// or other non-decode construction path ever produces an out-of-table
+/// discriminant.
+pub fn validate_enum(v: i64, entries: &[EnumEntry]) -> i64 {
+    if entries.iter().any(|e| e.value == v) {
+        0
+    } else {
+        1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +184,17 @@ mod tests {
     fn xer_non_self_closing_is_error() {
         let mut r = XerReader::new("<aaaFailed></aaaFailed>");
         assert!(xer_decode_enum::<i64>(&mut r, &ENTRIES).is_err());
+    }
+
+    #[test]
+    fn validate_enum_known_value_is_zero() {
+        assert_eq!(validate_enum(1, &ENTRIES), 0);
+        assert_eq!(validate_enum(2, &ENTRIES), 0);
+    }
+
+    #[test]
+    fn validate_enum_unknown_value_is_one() {
+        assert_eq!(validate_enum(3, &ENTRIES), 1);
+        assert_eq!(validate_enum(-1, &ENTRIES), 1);
     }
 }
