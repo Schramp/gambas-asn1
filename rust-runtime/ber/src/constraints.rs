@@ -36,6 +36,15 @@ pub struct Constraints {
     pub upper_u64: u64,
     pub size_lower: i64,
     pub size_upper: i64,
+    /// X.680 §51.4 PermittedAlphabet (gambas-asn1#466) — `encode_table[b]`
+    /// for byte `b` gives its position in the permitted alphabet, or
+    /// `0xFFFF` if `b` isn't permitted at all. Mirrors `Constraints::
+    /// encode_table` (`Constraints.hpp`) exactly, minus the decode-direction
+    /// `alphabet`/`alphabet_size` fields (PER-only; this crate's BER/XER
+    /// codecs never need the reverse mapping, only `validate_alphabet`
+    /// does the forward one). `None` — not `Some(&ALL_0XFFFF)` — means "no
+    /// FROM constraint", checked before indexing at all.
+    pub encode_table: Option<&'static [u16; 256]>,
 }
 
 impl Constraints {
@@ -120,6 +129,47 @@ pub fn validate_size(n: usize, c: &Constraints) -> i64 {
         return c.size_upper - n;
     }
     0
+}
+
+/// X.680 §51.4 PermittedAlphabet check (gambas-asn1#466). Mirrors the
+/// alphabet half of `AsnString<N>::validate`
+/// (`runtime/include/asn1cpp/types/Strings.hpp`) exactly: `0` when every
+/// byte of `s` is in the permitted alphabet (or `c.encode_table` is
+/// `None` — no FROM constraint at all); `1` — a sentinel, not a delta,
+/// same as `validate_enum`'s own "no nearest-bound metric" case — the
+/// moment any byte isn't. `EXTENSIBLE` is deliberately not consulted
+/// here: X.680 §51.8.3 extensibility on a SIZE or value-range constraint
+/// means "a future edition may widen the bound," but `FROM` has its own,
+/// separate extension marker (`ast::FromConstraint::inner::extensible`,
+/// `Generator::build_member_type_descriptor_spec`) that this crate
+/// doesn't enforce differently yet — same scope the alphabet arrays
+/// themselves don't distinguish (`Generator` builds one merged
+/// permitted-character set either way).
+pub fn validate_alphabet(s: &str, c: &Constraints) -> i64 {
+    if let Some(table) = c.encode_table {
+        for b in s.bytes() {
+            if table[b as usize] == 0xFFFF {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+/// Combined SIZE + FROM-alphabet check for a character-string member —
+/// the single `MemberDescriptor::validate` slot a member can only wire to
+/// one function, mirroring `AsnString<N>::validate`'s own combined body
+/// exactly (SIZE checked first; only reached at all if SIZE passed or
+/// wasn't constrained). OCTET STRING/BIT STRING never have alphabets
+/// (X.680 §51.4 only applies to character string types), so those keep
+/// calling `validate_size` directly — this wrapper is only for the 12
+/// character-string builtins.
+pub fn validate_string(s: &str, c: &Constraints) -> i64 {
+    let delta = validate_size(s.len(), c);
+    if delta != 0 {
+        return delta;
+    }
+    validate_alphabet(s, c)
 }
 
 #[cfg(test)]
@@ -221,5 +271,64 @@ mod tests {
     #[test]
     fn size_no_constraint_bit_is_always_zero() {
         assert_eq!(validate_size(1_000_000, &Constraints::default()), 0);
+    }
+
+    // Digits-only alphabet ('0'..'9' -> 0..9, everything else 0xFFFF) —
+    // small enough to write by hand, same shape a real FROM("0".."9")
+    // NumericString constraint would generate.
+    fn digits_table() -> [u16; 256] {
+        let mut t = [0xFFFFu16; 256];
+        for (i, b) in (b'0'..=b'9').enumerate() {
+            t[b as usize] = i as u16;
+        }
+        t
+    }
+
+    fn ca(table: &'static [u16; 256]) -> Constraints {
+        Constraints { encode_table: Some(table), ..Default::default() }
+    }
+
+    #[test]
+    fn alphabet_every_char_permitted_is_zero() {
+        static TABLE: [u16; 256] = {
+            let mut t = [0xFFFFu16; 256];
+            let mut b = b'0';
+            let mut i = 0u16;
+            while b <= b'9' {
+                t[b as usize] = i;
+                i += 1;
+                b += 1;
+            }
+            t
+        };
+        assert_eq!(validate_alphabet("12345", &ca(&TABLE)), 0);
+    }
+
+    #[test]
+    fn alphabet_disallowed_char_is_one() {
+        let table: &'static [u16; 256] = Box::leak(Box::new(digits_table()));
+        assert_eq!(validate_alphabet("12a45", &ca(table)), 1);
+    }
+
+    #[test]
+    fn alphabet_no_encode_table_is_always_zero() {
+        assert_eq!(validate_alphabet("anything at all!", &Constraints::default()), 0);
+    }
+
+    #[test]
+    fn validate_string_checks_size_before_alphabet() {
+        let table: &'static [u16; 256] = Box::leak(Box::new(digits_table()));
+        // Too short (SIZE(2..5)) AND contains a disallowed char — SIZE
+        // wins, matching AsnString<N>::validate's own check order.
+        let c = Constraints { flags: Constraints::SIZE_CONSTRAINED, size_lower: 2, size_upper: 5, encode_table: Some(table), ..Default::default() };
+        assert_eq!(validate_string("a", &c), 1); // size_lower(2) - len(1) = 1
+    }
+
+    #[test]
+    fn validate_string_checks_alphabet_when_size_passes() {
+        let table: &'static [u16; 256] = Box::leak(Box::new(digits_table()));
+        let c = Constraints { flags: Constraints::SIZE_CONSTRAINED, size_lower: 2, size_upper: 5, encode_table: Some(table), ..Default::default() };
+        assert_eq!(validate_string("1a3", &c), 1);
+        assert_eq!(validate_string("123", &c), 0);
     }
 }
