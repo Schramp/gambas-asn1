@@ -708,6 +708,70 @@ void CppBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) 
     emit_seq_of_definition(spec, session.buffer(definition_extension()));
 }
 
+// gambas-asn1#419: set_<member>() classification — same shape as
+// Generator::MemberSetterInfo (a private nested type, not reusable here),
+// redeclared locally rather than exposed just for this.
+struct SetterInfo {
+    std::string param_type;
+    bool is_int_alias = false;
+    bool is_uint_alias = false;
+    bool is_move = false;
+};
+
+// Classification for a member whose type is a *direct* builtin
+// (`SequenceMemberSpec::mbuiltin` set) — mirrors
+// Generator::classify_member_setter's former `if (bt) {...}` branch
+// exactly, moved here since it only ever needed `mbuiltin`/`storage_kind`
+// (both already on the row), no Generator-private state. A TypeRef-alias
+// member (`mbuiltin` unset) still needs `Generator::classify_member_setter`
+// itself — resolving a TypeRef requires `Resolver`, Generator-private by
+// design.
+static SetterInfo classify_builtin_setter(ast::BuiltinType bt, IntStorageKind storage_kind) {
+    using BT = ast::BuiltinType;
+    switch (bt) {
+    case BT::Integer:
+        if (storage_kind == IntStorageKind::U64)
+            return {"uint64_t", false, false, false};  // asn1::UInteger field, .set(uint64_t)
+        return {"int64_t", false, false, false};        // asn1::Integer field, .set(int64_t)
+    case BT::OctetString:
+    case BT::Any:              return {"asn1::OctetString",     false, false, true};
+    case BT::BitString:        return {"asn1::BitString",       false, false, true};
+    case BT::Utf8String:       return {"asn1::Utf8String",      false, false, true};
+    case BT::NumericString:    return {"asn1::NumericString",   false, false, true};
+    case BT::PrintableString:  return {"asn1::PrintableString", false, false, true};
+    case BT::T61String:        return {"asn1::T61String",       false, false, true};
+    case BT::Ia5String:        return {"asn1::Ia5String",       false, false, true};
+    case BT::VisibleString:    return {"asn1::VisibleString",   false, false, true};
+    case BT::GeneralString:    return {"asn1::GeneralString",   false, false, true};
+    case BT::GraphicString:    return {"asn1::GraphicString",   false, false, true};
+    case BT::UniversalString:  return {"asn1::UniversalString", false, false, true};
+    case BT::BmpString:        return {"asn1::BmpString",       false, false, true};
+    case BT::VideotexString:   return {"asn1::VideotexString",  false, false, true};
+    case BT::ObjectDescriptor: return {"asn1::ObjectDescriptor",false, false, true};
+    default: return {};
+    }
+}
+
+// Unifies the direct-builtin (self-computed here) and TypeRef-alias
+// (Generator-computed, carried on the row as `setter_param_type`/
+// `setter_is_move`/`setter_is_int_alias`/`setter_is_uint_alias`) cases —
+// every set_<member>() emission site goes through this, not the row's raw
+// fields directly, so there's exactly one place that knows which case
+// applies. No set_<member>() for an OPTIONAL member (unique_ptr storage,
+// no direct-value setter) — `r.mbuiltin`/`r.storage_kind` are populated
+// regardless of optionality, so this check has to happen here, not just
+// be inherited for free the way the old Generator-only path got it (that
+// path's own `if (!optional) {...}` guard, Generator.cpp, only ever
+// populated `setter_param_type` for a non-optional member in the first
+// place).
+static SetterInfo resolve_setter_info(const SequenceMemberSpec& r) {
+    if (r.optional) return {};
+    if (r.mbuiltin) return classify_builtin_setter(*r.mbuiltin, r.storage_kind);
+    if (!r.setter_param_type.empty())
+        return {r.setter_param_type, r.setter_is_int_alias, r.setter_is_uint_alias, r.setter_is_move};
+    return {};
+}
+
 void CppBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
@@ -733,8 +797,10 @@ void CppBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostrea
     }
     // set_<member> declarations for non-optional members only
     for (const auto& r : spec.members) {
-        if (r.optional || r.setter_param_type.empty()) continue;
-        os << std::format("    void set_{}({} val);\n", r.mname, r.setter_param_type);
+        if (r.optional) continue;
+        auto si = resolve_setter_info(r);
+        if (si.param_type.empty()) continue;
+        os << std::format("    void set_{}({} val);\n", r.mname, si.param_type);
     }
     if (spec.mcount > 0) {
         os << std::format("    static const asn1::MemberDescriptor s_members[{}];\n", spec.mcount);
@@ -814,21 +880,22 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
 
     // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
     for (const auto& r : spec.members) {
-        if (r.setter_param_type.empty()) continue;
+        auto si = resolve_setter_info(r);
+        if (si.param_type.empty()) continue;
         // tdref is "&asn_DEF_Foo" or "&asn_TYP_Parent_member"; strip leading &
         std::string tdname = (r.tdref.size() > 1 && r.tdref[0] == '&')
             ? r.tdref.substr(1) : r.tdref;
-        std::string assign = r.setter_is_move
+        std::string assign = si.is_move
             ? std::format("{} = std::move(val);", r.mname)
-            : (r.setter_is_int_alias || r.setter_is_uint_alias
+            : (si.is_int_alias || si.is_uint_alias
                 ? std::format("{} = val;", r.mname)
                 : std::format("{}.set(val);", r.mname));
-        std::string validate_expr = r.setter_is_int_alias
+        std::string validate_expr = si.is_int_alias
             ? std::format("asn1::Integer{{{}}}.validate({}.constraints)", r.mname, tdname)
-            : r.setter_is_uint_alias
+            : si.is_uint_alias
                 ? std::format("asn1::UInteger{{{}}}.validate({}.constraints)", r.mname, tdname)
                 : std::format("{}.validate({}.constraints)", r.mname, tdname);
-        os << std::format("void {}::set_{}({} val) {{\n", cname, r.mname, r.setter_param_type);
+        os << std::format("void {}::set_{}({} val) {{\n", cname, r.mname, si.param_type);
         os << std::format("    {}\n", assign);
         os << "#if defined(ASN1CPP_VALIDATE_ON_SET) && defined(ASN1CPP_VALIDATE)\n";
         os << std::format("    if ({}) asn1::bump_validate_fail();\n", validate_expr);

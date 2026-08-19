@@ -1133,41 +1133,27 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
 
 // ---------------------------------------------------------------------------
 // classify_member_setter — determines param type + validate strategy for
-// set_<member> helpers. Returns empty param_type for members that should
-// not get a setter (optional, complex, non-primitive types).
+// set_<member> helpers, TypeRef-alias members only. Returns empty
+// param_type for members that should not get a setter (optional, complex,
+// non-primitive types, or an unresolvable/non-builtin-resolving TypeRef).
+//
+// gambas-asn1#419: the direct-builtin case (this function's own former
+// `if (bt) {...}` branch) used to live here as one more piece of
+// pre-formatted C++ text riding along on a field RustBackend never reads —
+// dead computation on every Rust compile, not just dead storage. It's
+// fully self-computable by CppBackend alone from fields already on
+// SequenceMemberSpec (`mbuiltin`/`storage_kind`), the same "no Generator-
+// private state needed" reasoning `ops`/`offset_expr` were already moved
+// for — see CppBackend.cpp's own `classify_builtin_setter`. Only the
+// TypeRef-alias case stays here: it needs `resolver_.resolve_ref`, which
+// is Generator-private by design (CppBackend has no access, deliberately —
+// see this issue's own "known blocker" note).
 // ---------------------------------------------------------------------------
 Generator::MemberSetterInfo
 Generator::classify_member_setter(const ast::TypeDef& m) {
     using BT = ast::BuiltinType;
     if (m.is_sequence() || m.is_set() || m.is_choice() || m.is_seq_of() || m.is_set_of())
         return {};
-    auto* bt = std::get_if<BT>(&m.body);
-    if (bt) {
-        switch (*bt) {
-        case BT::Integer: {
-            auto kind = classify_integer_storage(m);
-            if (kind == IntStorageKind::U64)
-                return {"uint64_t", false, false, false};  // asn1::UInteger field, .set(uint64_t)
-            return {"int64_t", false, false, false};        // asn1::Integer field, .set(int64_t)
-        }
-        case BT::OctetString:
-        case BT::Any:             return {"asn1::OctetString",    false, false, true};
-        case BT::BitString:       return {"asn1::BitString",      false, false, true};
-        case BT::Utf8String:      return {"asn1::Utf8String",     false, false, true};
-        case BT::NumericString:   return {"asn1::NumericString",  false, false, true};
-        case BT::PrintableString: return {"asn1::PrintableString",false, false, true};
-        case BT::T61String:       return {"asn1::T61String",      false, false, true};
-        case BT::Ia5String:       return {"asn1::Ia5String",      false, false, true};
-        case BT::VisibleString:   return {"asn1::VisibleString",  false, false, true};
-        case BT::GeneralString:   return {"asn1::GeneralString",  false, false, true};
-        case BT::GraphicString:   return {"asn1::GraphicString",  false, false, true};
-        case BT::UniversalString: return {"asn1::UniversalString",false, false, true};
-        case BT::BmpString:       return {"asn1::BmpString",      false, false, true};
-        case BT::VideotexString:  return {"asn1::VideotexString", false, false, true};
-        case BT::ObjectDescriptor:return {"asn1::ObjectDescriptor",false,false,true};
-        default: return {};
-        }
-    }
     if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
         auto resolved = resolver_.resolve_ref(*tr);
         if (!resolved) return {};
