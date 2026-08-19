@@ -11,15 +11,11 @@ namespace asn1::codegen {
 /// @param tag_spec The decision to format (class, number, encoding form).
 /// @return A C++ expression string, e.g. `"asn1::Tag{asn1::TagClass::Context, 1, false}"`.
 std::string CppBackend::format_tag_literal(const TypeTagSpec& tag_spec) const {
-    std::string tag_class_literal;
-    switch (tag_spec.cls) {
-    case ast::TagClass::Universal:   tag_class_literal = "asn1::TagClass::Universal";   break;
-    case ast::TagClass::Application: tag_class_literal = "asn1::TagClass::Application"; break;
-    case ast::TagClass::Private:     tag_class_literal = "asn1::TagClass::Private";     break;
-    default:                         tag_class_literal = "asn1::TagClass::Context";     break;
-    }
-    return std::format("asn1::Tag{{{}, {}, {}}}", tag_class_literal, tag_spec.number,
-                        tag_spec.constructed ? "true" : "false");
+    static constexpr const char* kTagClassLiterals[4] = {
+        "asn1::TagClass::Universal", "asn1::TagClass::Application",
+        "asn1::TagClass::Private", "asn1::TagClass::Context"};
+    return std::format("asn1::Tag{{{}, {}, {}}}", kTagClassLiterals[tag_class_index(tag_spec.cls)],
+                        tag_spec.number, tag_spec.constructed ? "true" : "false");
 }
 
 /// @brief Format an X.693 §21 XER encoding decision as a C++ `asn1::XerEncoding::...` literal.
@@ -406,7 +402,7 @@ void CppBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessio
 ///           ENUMERATED — `BuiltinAliasSpec` is only built for plain
 ///           `ast::BuiltinType` bodies other than those two).
 /// @return C++ runtime type name, e.g. `"asn1::OctetString"`.
-/// @note A small, self-contained subset of what `Generator::cpp_type_for`
+/// @note A small, self-contained subset of what `Generator::native_member_type_for`
 ///       computes for the general case (which also handles SEQUENCE/CHOICE/
 ///       TypeRef/SEQUENCE OF — out of scope here).
 static std::string native_builtin_type(ast::BuiltinType bt) {
