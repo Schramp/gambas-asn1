@@ -1065,10 +1065,23 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
             MemberTypeDescriptorSpec spec;
             spec.kind = MemberTypeDescriptorSpec::Kind::Sizeable;
             spec.builtin_type = *bt;
-            // Compute SIZE constraint fields.
+            // Compute SIZE constraint fields. size_range_bits/size_lower/
+            // size_upper default to 0 (not left indeterminate) even when
+            // `!sr` (FROM-alphabet-only or custom-XER-only member, no
+            // SIZE at all) — both backends format these fields into their
+            // generated Constraints tables unconditionally (gated on
+            // `has_size_constraint`/a flags bit at read time, not at
+            // codegen time), so leaving them uninitialized here was a
+            // real, previously undetected UB/garbage-value bug (only
+            // surfaced by gambas-asn1#466 adding a FROM-alphabet-only
+            // inline member schema — no existing schema exercised this
+            // combination before).
             spec.has_size_constraint = sr.has_value();
             spec.size_bounded = sr.has_value()
                 && sr->second != std::numeric_limits<int64_t>::max();
+            spec.size_range_bits = 0;
+            spec.size_lower = 0;
+            spec.size_upper = 0;
             if (sr) {
                 auto sc = compute_size_constraint(sr, is_constraint_extensible(m));
                 spec.size_range_bits = sc.range_bits;

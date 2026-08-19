@@ -35,16 +35,23 @@
 //! with an inline X.680 §22/§21/§51 SIZE constraint, same
 //! `Constraints`-table + `constraints::validate_size` shape `Gauge` plays
 //! for INTEGER.
+//!
+//! `code_generated.rs` (gambas-asn1#466) is `Code` from
+//! `tests/asn1/rust_alphabet_test.asn1` — a NumericString member with both
+//! an inline FROM (PermittedAlphabet) and SIZE constraint, exercising
+//! `constraints::validate_string`'s combined check (SIZE first, then
+//! alphabet) through a real generated `encode_table`.
 
 include!(concat!(env!("OUT_DIR"), "/point_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/widget_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/selector_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/gauge_generated.rs"));
 include!(concat!(env!("OUT_DIR"), "/blob_generated.rs"));
+include!(concat!(env!("OUT_DIR"), "/code_generated.rs"));
 
 #[cfg(test)]
 mod tests {
-    use super::{Blob, Gauge};
+    use super::{Blob, Code, Gauge};
     use super::Point;
 
     fn ber_roundtrip(x: i64, y: i64) -> bool {
@@ -429,5 +436,47 @@ mod tests {
         b.note = asn1cpp_ber::strings::Utf8String(String::new()); // SIZE(0..5): empty is valid
         let _ = b.encode();
         assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+    }
+
+    // gambas-asn1#466: real-codegen MemberDescriptor::validate coverage
+    // for FROM (PermittedAlphabet), combined with SIZE.
+
+    #[test]
+    fn code_in_alphabet_and_size_round_trips_and_does_not_bump_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let c = Code { digits: asn1cpp_ber::strings::NumericString("12345".to_string()), tag: "a".to_string() };
+        assert_eq!(Code::decode(&c.encode()).unwrap(), c);
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+    }
+
+    #[test]
+    fn code_disallowed_character_bumps_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        // 'a' is not in the FROM("0".."9") alphabet.
+        let c = Code { digits: asn1cpp_ber::strings::NumericString("12a45".to_string()), tag: "a".to_string() };
+        let _ = c.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+    }
+
+    #[test]
+    fn code_too_long_bumps_the_validate_counter_before_alphabet_is_even_checked() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        // SIZE(1..6): 7 chars is too long, even though every character is
+        // in the permitted alphabet — SIZE is checked first.
+        let c = Code { digits: asn1cpp_ber::strings::NumericString("1234567".to_string()), tag: "a".to_string() };
+        let _ = c.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+    }
+
+    #[test]
+    fn code_too_short_bumps_the_validate_counter() {
+        let _guard = COUNTER_LOCK.lock().unwrap();
+        asn1cpp_ber::validate::reset_validate_fail_count();
+        let c = Code { digits: asn1cpp_ber::strings::NumericString(String::new()), tag: "a".to_string() };
+        let _ = c.encode();
+        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
     }
 }

@@ -75,3 +75,4 @@ tests/tests-asn1c-compiler/202-XIOTCertificate-OK.asn1             Extension
 tests/asn1/rust_range_test.asn1        Gauge
 tests/asn1/rust_size_test.asn1         Blob
 tests/asn1/rust_seqof_size_test.asn1   Basket
+tests/asn1/rust_alphabet_test.asn1     Code
