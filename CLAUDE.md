@@ -130,6 +130,30 @@ asn1cpp/
 3. **Sema** (`Resolver`) → resolved type references
 4. **Codegen** (`Generator`) → one `.hpp` + `.cpp` pair per type
 
+### Generator/Backend split — reviewed, mostly sound (2026-08-19)
+
+`Generator` computes backend-agnostic *decisions* (`TagSpec`, `DefaultValueSpec`,
+`IntStorageKind`, the `*Spec` structs in `Backend.hpp`); `Backend` (`CppBackend`/
+`RustBackend`) formats them into target-language text. Full review findings: split is
+sound overall, not a rehaul candidate. Fixes applied:
+- `Generator::cpp_type_for` → renamed `native_member_type_for` — it was actually the
+  shared type-resolution entry point both backends depend on, despite the `cpp_` prefix.
+- `Generator::type_descriptor_ref_for` → renamed `cpp_type_descriptor_ref_for` — this one
+  really is C++-only (builds `&asn1::asn_DEF_X` text directly), stays on `Generator`
+  because it needs Generator-private resolver/collision-tracking state
+  (`resolver_`/`collision_types_`/`effective_cpp_name`) `Backend` doesn't have access to.
+  Fully relocating this logic into `CppBackend` is tracked as gambas-asn1#239, deliberately
+  out of scope here — it needs `Backend` to gain resolver access, a bigger boundary change.
+- Deleted dead `safe_member_name` (`Generator.hpp`) — undocumented no-op alias for `safe_name`.
+- `Backend::format_tag_literal`'s identical 4-case `TagClass` switch, duplicated verbatim in
+  `CppBackend`/`RustBackend`, hoisted into `Backend::tag_class_index()`.
+- Declined to collapse the six `emit_enumerated/integer/builtin_alias/seq_of/sequence/choice`
+  2-line dispatchers (identical in both backends) into `Backend` — doing so would replace 6
+  throw-by-default virtuals with 12 (declaration+definition halves each), against the
+  interface's deliberate "one virtual per construct, throws loud if unsupported" design
+  (documented at every `emit_*` default in `Backend.hpp`). Not worth the churn for what's
+  ~2 lines of duplication per construct.
+
 ### Generated code design — tables only, no inline codec logic
 
 Generated `.hpp`/`.cpp` files contain **only static descriptor tables and thin wrapper

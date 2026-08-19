@@ -376,7 +376,13 @@ struct TaggedMemberSpec {
 ///        variables, offsetof macros) that only CppBackend's own emitted
 ///        text can resolve. This issue's scope (#231) is moving the
 ///        existing C++ emission verbatim off Generator, not redesigning
-///        SEQUENCE for a second backend — that's #239's job.
+///        SEQUENCE for a second backend — that's #239's job. `tdref` is
+///        produced by `Generator::cpp_type_descriptor_ref_for` (named to say
+///        so explicitly, since it stays on Generator rather than moving into
+///        CppBackend — it needs Generator-private resolver/collision-tracking
+///        state (`resolver_`, `collision_types_`, `effective_cpp_name`) that
+///        Backend has no access to and isn't meant to; moving the logic
+///        without also exposing that state is #239's job, not a name change).
 /// @note Used identically for both the `.hpp` and `.cpp` passes; the `.hpp`
 ///       pass only reads `mtype`/`mname`/`optional`/`setter_*` and leaves
 ///       the rest default-constructed (never read by emit_sequence_declaration).
@@ -623,7 +629,7 @@ public:
     ///        Rust).
     /// @param bt Built-in type tag.
     /// @note gambas-asn1#270: previously a hardcoded switch inside
-    ///       Generator::cpp_type_for, unconditionally returning C++ runtime
+    ///       Generator::native_member_type_for, unconditionally returning C++ runtime
     ///       wrapper type names — broke RustBackend on any SEQUENCE/CHOICE/
     ///       SEQUENCE OF containing a plain builtin (BOOLEAN, OCTET STRING,
     ///       etc.) member/alternative/element.
@@ -640,7 +646,7 @@ public:
     ///        instead). E.g. `asn1::VectorSeqOf<T>` in C++, `Vec<T>` in Rust.
     /// @param elem_type Already-resolved native type of the collection's element.
     /// @note gambas-asn1#270: previously a hardcoded `"asn1::VectorSeqOf<{}>"`
-    ///       format string inside Generator::cpp_type_for.
+    ///       format string inside Generator::native_member_type_for.
     /// @note Default throws — same rationale as emit_enumerated.
     virtual std::string wrap_collection_type(const std::string& elem_type) const {
         (void)elem_type;
@@ -869,7 +875,7 @@ public:
     ///        top of the deeper element-type reference gambas-asn1#301
     ///        already adds.
     /// @note Default `true`. CppBackend needs it unconditionally:
-    ///       `Generator::type_descriptor_ref_for`'s SEQUENCE-OF branch
+    ///       `Generator::cpp_type_descriptor_ref_for`'s SEQUENCE-OF branch
     ///       (Generator.cpp) always points a member's `tdref` at
     ///       `&asn_DEF_<wrapper>` — the wrapper's *descriptor*, declared in
     ///       its own header — regardless of whether the field's C++ type
@@ -880,7 +886,7 @@ public:
     ///       codec table wiring yet) — so for Rust the wrapper reference is
     ///       always genuinely unused, in both the plain-TypeRef-element case
     ///       gambas-asn1#301 originally covered and the anonymous-inline-
-    ///       element case (`cpp_type_for`'s SEQUENCE OF branch never emits
+    ///       element case (`native_member_type_for`'s SEQUENCE OF branch never emits
     ///       the bare wrapper name as a field type either way — only the
     ///       element type directly, or the doubly-suffixed "Anon" type).
     ///       80 `unused_imports` warnings on the real ETSI LI PS-PDU schema
@@ -1003,6 +1009,22 @@ protected:
     ///             (e.g. `"namespace X {\n\n"` for C++, `"pub mod X {\n\n"`
     ///             for Rust) — same string goes to both buffers.
     void write_to_both(TypeOutputSession& session, const std::string& text) const;
+
+    /// @brief Shared `TagClass` dispatch for `format_tag_literal` overrides —
+    ///        both CppBackend and RustBackend switch over the same 4 cases
+    ///        (Universal/Application/Private/default-Context) and differ only
+    ///        in which literal string each case maps to. Returns an index
+    ///        into a 4-element {Universal, Application, Private, Context}
+    ///        array the caller supplies its own strings for, so the switch
+    ///        itself isn't duplicated per backend.
+    static int tag_class_index(ast::TagClass cls) {
+        switch (cls) {
+        case ast::TagClass::Universal:   return 0;
+        case ast::TagClass::Application: return 1;
+        case ast::TagClass::Private:     return 2;
+        default:                         return 3;  // Context
+        }
+    }
 };
 
 /// @brief Per-type output session (gambas-asn1#262). Backend decides file
