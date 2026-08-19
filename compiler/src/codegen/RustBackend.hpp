@@ -202,6 +202,15 @@ public:
         return "asn1cpp_ber::tag::Tag { class: asn1cpp_ber::tag::TagClass::Context, number: 0, constructed: false }";
     }
 
+    // gambas-asn1#478: tdref is populated unconditionally for every
+    // SEQUENCE/CHOICE member (see Backend::format_type_descriptor_ref's own
+    // doc), but RustBackend has no codec dispatch table wired up yet to read
+    // it — confirmed by grep, same status as needs_seqof_wrapper_reference()
+    // below. Empty string is a valid, harmlessly-unused default; revisit
+    // together with needs_seqof_wrapper_reference() once Rust grows its own
+    // per-member descriptor table.
+    std::string format_type_descriptor_ref(const TypeDescriptorRefSpec&) const override { return {}; }
+
     std::string wrap_collection_type(const std::string& elem_type) const override {
         return std::format("Vec<{}>", elem_type);
     }
