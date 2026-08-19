@@ -445,7 +445,7 @@ mod tests {
     fn code_in_alphabet_and_size_round_trips_and_does_not_bump_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
         asn1cpp_ber::validate::reset_validate_fail_count();
-        let c = Code { digits: asn1cpp_ber::strings::NumericString("12345".to_string()) };
+        let c = Code { digits: asn1cpp_ber::strings::NumericString("12345".to_string()), tag: "a".to_string() };
         assert_eq!(Code::decode(&c.encode()).unwrap(), c);
         assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
     }
@@ -455,7 +455,7 @@ mod tests {
         let _guard = COUNTER_LOCK.lock().unwrap();
         asn1cpp_ber::validate::reset_validate_fail_count();
         // 'a' is not in the FROM("0".."9") alphabet.
-        let c = Code { digits: asn1cpp_ber::strings::NumericString("12a45".to_string()) };
+        let c = Code { digits: asn1cpp_ber::strings::NumericString("12a45".to_string()), tag: "a".to_string() };
         let _ = c.encode();
         assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
     }
@@ -466,7 +466,7 @@ mod tests {
         asn1cpp_ber::validate::reset_validate_fail_count();
         // SIZE(1..6): 7 chars is too long, even though every character is
         // in the permitted alphabet — SIZE is checked first.
-        let c = Code { digits: asn1cpp_ber::strings::NumericString("1234567".to_string()) };
+        let c = Code { digits: asn1cpp_ber::strings::NumericString("1234567".to_string()), tag: "a".to_string() };
         let _ = c.encode();
         assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
     }
@@ -475,7 +475,7 @@ mod tests {
     fn code_too_short_bumps_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
         asn1cpp_ber::validate::reset_validate_fail_count();
-        let c = Code { digits: asn1cpp_ber::strings::NumericString(String::new()) };
+        let c = Code { digits: asn1cpp_ber::strings::NumericString(String::new()), tag: "a".to_string() };
         let _ = c.encode();
         assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
     }
