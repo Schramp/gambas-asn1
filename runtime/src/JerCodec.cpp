@@ -1049,8 +1049,6 @@ void JerCodec::encode(IEncodeStream& dst,
         prim_dispatch_[def.tag.number]->encode(*this, s, def, src);
     else
         comp_dispatch_[(int)def.kind]->encode(*this, s, def, src);
-
-    // TODO #165: add validate() call after encode under ASN1CPP_VALIDATE guards (mirrors BerCodec::encode)
 }
 
 DecodeResult JerCodec::decode(IDecodeStream& src,

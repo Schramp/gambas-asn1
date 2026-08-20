@@ -1123,12 +1123,11 @@ std::string Generator::emit_member_type_descriptor(
     // below, and — unlike a *named* nested collection, already handled by
     // type_descriptor_ref_for's own SEQUENCE OF/SET OF branch referencing
     // a real top-level asn_DEF_ — it has no ASN.1 name to reference at
-    // all. Falling through to type_descriptor_ref_for(m) here (the
-    // pre-existing behavior) recurses straight past this collection level
-    // to its innermost scalar element, corrupting the wire encoding: the
-    // generic SeqOf BER handler would read each outer element as that
-    // scalar when it's actually a whole nested collection object. See
-    // gambas-asn1#427.
+    // all. Falling through to type_descriptor_ref_for(m) here would
+    // recurse straight past this collection level to its innermost scalar
+    // element, corrupting the wire encoding: the generic SeqOf BER handler
+    // would read each outer element as that scalar when it's actually a
+    // whole nested collection object.
     if ((m.is_seq_of() || m.is_set_of()) && m.name.empty())
         return emit_synthetic_seq_of_descriptor(m, std::format("{}_{}", parent_cname, mname), os);
     auto* bt = std::get_if<BT>(&m.body);
@@ -2407,7 +2406,6 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
 /// @param os          Output stream for the generated `.cpp` file.
 /// @return A reference expression to the synthesized descriptor
 ///         (e.g. "&asn_DEF_MatrixRows_elem").
-/// @see gambas-asn1#427.
 std::string Generator::emit_synthetic_seq_of_descriptor(
     const ast::TypeDef& def, const std::string& synth_name, std::ostream& os)
 {

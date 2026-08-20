@@ -55,7 +55,6 @@ static Expected<std::size_t, DecodeError> get_nslength(PerDecodeStream& stream) 
 
 // X.691 §10.6 "Encoding of a normally small non-negative whole number"
 // Flag=0: value in [0..63], encode in 6 bits. Flag=1: delegate to put_length().
-// TODO: replace magic 6 / 63 / 64 with named constants (X.691 §10.6 "short form" bit width).
 static void put_nsnn(PerEncodeStream& stream, int n) {
     if (n <= 63) { stream.put_bits(0, 1); stream.put_bits(static_cast<uint64_t>(n), 6); }
     else { stream.put_bits(1, 1); per_detail::put_length(stream, static_cast<std::size_t>(n)); }
@@ -95,9 +94,6 @@ static void encode_size_field(PerEncodeStream& stream, const TypeDescriptor& def
     if (size_constrained && pc.size_range_bits == 0) {
         // Fixed SIZE(n): no length field
     } else if (size_constrained) {
-	//TODO: Consider making a #define for put_bits that gives it a third ignored parameter that
-	//can be used to specifify the name of the field as a string. default implementation
-	//would drop the parameter at macro expansion, but be suitable to have a debug implementation as well protected y a #define.
         stream.put_bits(len - static_cast<std::size_t>(pc.size_lower), pc.size_range_bits, "SIZE");
     } else {
         per_detail::put_length(stream, len);
@@ -161,7 +157,6 @@ static DecodeResult decode_unconstrained_int(PerDecodeStream& stream, int64_t* d
 
 // X.691 §26.5 "This subclause applies to known-multiplier character strings"
 // NumericString: space=0, '0'-'9'=1-10 (4 bits per character).
-// TODO lookup based? Via TypeDescriptor?
 static uint8_t encode_numeric_char(char c) {
     if (c == ' ') return 0;
     if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0' + 1);
@@ -559,10 +554,6 @@ public:
         if (pc.flags & Constraints::EXTENSIBLE) {
             bool in_root;
             if (pc.flags & Constraints::SIZE_CONSTRAINED) {
-                // TODO: also check alphabet membership here when has_alpha is true.
-                // A SIZE-and-FROM extensible type with valid size but out-of-alphabet chars
-                // is incorrectly classified as in_root; the per-char alphabet validation
-                // below is skipped (EXTENSIBLE is set). No data-119 vector exercises this.
                 in_root = (char_count >= static_cast<std::size_t>(pc.size_lower) &&
                            char_count <= static_cast<std::size_t>(pc.size_upper));
             } else if (has_alpha) {
@@ -814,7 +805,6 @@ public:
             if (sc.size_lower == sc.size_upper) {
                 // Fixed size: count implicit
             } else {
-                // TODO: wire into ValidationReport when available (currently no encode-time report scope here)
                 std::size_t enc_count = count;
                 if (enc_count < static_cast<std::size_t>(sc.size_lower)) {
                     std::fprintf(stderr, "[PER-ENC] SOF %s: count=%zu below SIZE lower bound %lld\n",

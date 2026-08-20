@@ -13,7 +13,7 @@
 ///
 /// Build a \c BerProjection once at program startup, then share it read-only
 /// across threads.  Each worker thread holds its own \c BerProjectionResult
-/// (issue #173) which points into this trie.
+/// which points into this trie.
 ///
 /// Typical usage:
 /// @code
@@ -24,7 +24,7 @@
 /// auto h_val = proj.add_path("Body/value");  // Body is a CHOICE; value is one alternative
 /// proj.finalize();
 ///
-/// // Per thread — see BerProjectionResult (#173)
+/// // Per thread:
 /// BerProjectionResult res{proj};
 /// res.bind(h_id, my_id);
 /// while (auto frame = next_frame()) {
@@ -60,7 +60,7 @@ struct TrieNode {
     bool                  is_choice    = false;      ///< True when this node's value is a CHOICE: children are alternatives.
                                                      ///< Always \c false on leaf nodes — leaves capture value bytes whole;
                                                      ///< no alternative-scanning is needed regardless of the leaf's type kind.
-    const TypeDescriptor* node_desc    = nullptr;    ///< TypeDescriptor at this level (used for introspection and #174).
+    const TypeDescriptor* node_desc    = nullptr;    ///< TypeDescriptor at this level (used for introspection, e.g. BerInspect path dumping).
 };
 
 // ── FieldHandle ───────────────────────────────────────────────────────────────
