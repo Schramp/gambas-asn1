@@ -173,7 +173,10 @@ struct ElemShape {
 ///        this same shape (EnumeratedSpec::values, IntegerSpec::named_values)
 ///        so the two constructs share one representation and one integer
 ///        width instead of drifting independently.
-struct NamedValue { std::string asn1_name; int64_t value; };
+struct NamedValue {
+    std::string asn1_name;
+    int64_t     value;  // the numeric literal itself, e.g. the 0 in "foo(0)" — not a BER tag (see TypeTagSpec/MemberTagSpec above for those)
+};
 
 struct EnumeratedSpec : TaggedTypeSpec {
     std::string       type_name;   // final type identifier (see note above)
