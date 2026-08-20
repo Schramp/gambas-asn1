@@ -108,21 +108,14 @@ public:
         }
     }
 
-    // gambas-asn1#290: was a plain namespace-level free function, called
-    // directly by Generator.cpp regardless of active backend. Defined in
-    // CppBackend.cpp (body unchanged from the free function — verified
-    // byte-identical regen).
+    // Defined in CppBackend.cpp.
     std::string format_tag_literal(const TypeTagSpec& tag_spec) const override;
 
-    // gambas-asn1#347: same C++ literal Generator.cpp used to hardcode
-    // directly before this method existed.
     std::string format_no_tag_literal() const override { return "asn1::Tag{}"; }
 
-    // gambas-asn1#478: this same C++ text used to be hardcoded directly
-    // inside Generator::type_descriptor_ref_for (verbatim switch moved
-    // here unchanged — verified byte-identical regen); Generator now only
-    // decides the reference *kind* (type_descriptor_ref_spec_for) and
-    // delegates rendering here. Defined in CppBackend.cpp.
+    // Generator only decides the reference *kind*
+    // (type_descriptor_ref_spec_for); this renders the C++ text. Defined
+    // in CppBackend.cpp.
     std::string format_type_descriptor_ref(const TypeDescriptorRefSpec& spec) const override;
 
     std::string native_builtin_type(ast::BuiltinType bt) const override {
@@ -189,8 +182,7 @@ public:
 private:
     // Split declaration/definition halves — kept as private helpers so the
     // (substantial) per-construct emission bodies don't need reshaping;
-    // the public emit_* overrides above just call both in sequence
-    // (gambas-asn1#265: combine the pair into one call taking both streams).
+    // the public emit_* overrides above just call both in sequence.
     void emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const;
     void emit_enumerated_definition(const EnumeratedSpec& spec, std::ostream& os) const;
     void emit_integer_declaration(const IntegerSpec& spec, std::ostream& os) const;

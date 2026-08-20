@@ -504,7 +504,7 @@ EncodingInstructionList:
 	;
 
 /* Legacy per-type form (X.693 §21.3): `TypeName OCTET STRING ::= base64`
- * or `::= utf8` (gambas-asn1#443) — `::= hexadecimal` is asn1cpp's own
+ * or `::= utf8` — `::= hexadecimal` is asn1cpp's own
  * default already, so it's accepted but changes nothing. Standard form
  * (X.693 §21.2): `BASE64 TypeName` — TOK_typereference TOK_typereference
  * is otherwise ambiguous with unrelated tokens like `GLOBAL-DEFAULTS

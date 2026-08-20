@@ -34,7 +34,7 @@ struct TypeTagSpec {
     bool          constructed;  ///< True for constructed encoding form.
 };
 
-/// @brief A member/alternative's resolved wire tag (gambas-asn1#347) —
+/// @brief A member/alternative's resolved wire tag —
 ///        TypeTagSpec's shape plus the one extra fact only a member (not a
 ///        standalone type) can have: whether this tag came from the
 ///        member's own override (`[n]`/AUTOMATIC) or is simply the type's
@@ -54,11 +54,10 @@ struct MemberTagSpec : TypeTagSpec {
 /// @brief Backend-agnostic tag-bearing field shared by every construct that
 ///        can carry its own top-level [n] IMPLICIT/EXPLICIT tag (X.690 §8.14)
 ///        on its *standalone* TypeDescriptor — same base-class consolidation
-///        gambas-asn1#338 already did for member-level tags
-///        (TaggedMemberSpec), applied here at the type level after #342
-///        found the field independently duplicated across EnumeratedSpec/
-///        IntegerSpec/SequenceSpec/SeqOfSpec/BuiltinAliasSpec (raised on
-///        #342's own review).
+///        applied at the member level for TaggedMemberSpec, applied here at
+///        the type level to avoid the field being independently duplicated
+///        across EnumeratedSpec/IntegerSpec/SequenceSpec/SeqOfSpec/
+///        BuiltinAliasSpec.
 /// @note nullopt means the type's natural tag applies (a backend's own
 ///       per-kind universal-tag constant); set means this type assignment
 ///       carries its own declared tag, overriding the natural one on the
@@ -108,25 +107,22 @@ enum class TypeDescriptorRefKind {
 
 /// @brief Backend-agnostic decision for a type-descriptor reference (e.g.
 ///        a SEQUENCE/CHOICE member's `tdref`). See TypeDescriptorRefKind.
-/// @note gambas-asn1#478 review: previously `Generator::type_descriptor_ref_for`
-///       built `&asn1::asn_DEF_X`/`&X::asn_DEF`/`&asn_DEF_X` C++ text directly —
-///       the *decision* (which form, which name) stays on Generator
+/// @note The *decision* (which form, which name) stays on Generator
 ///       (`type_descriptor_ref_spec_for`) because it needs resolver access,
-///       but the C++ syntax itself now lives in
-///       CppBackend::format_type_descriptor_ref, matching every other
-///       emit_*/format_* split in this file.
+///       but the C++ syntax (`&asn1::asn_DEF_X`/`&X::asn_DEF`/`&asn_DEF_X`)
+///       lives in CppBackend::format_type_descriptor_ref, matching every
+///       other emit_*/format_* split in this file.
 struct TypeDescriptorRefSpec {
     TypeDescriptorRefKind kind = TypeDescriptorRefKind::None;
     ast::BuiltinType builtin = ast::BuiltinType::Boolean;  // meaningful only when kind == Builtin
     std::string name;  // meaningful for ClassScoped/FreeStanding — the generated type's identifier
 };
 
-// gambas-asn1#421: a SEQUENCE/SET member's collection kind, if any — the
+// A SEQUENCE/SET member's collection kind, if any — the
 // member's body is ast::SequenceOfType (X.680 §26), ast::SetOfType
-// (X.680 §24), or neither. Was two independent bools (`is_seq_of`/
-// `is_set_of`) on SequenceMemberSpec; always mutually exclusive in
-// practice (Generator::emit_sequence_definition's collect() sets at most
-// one), so a single discriminant makes that invariant checkable by the
+// (X.680 §24), or neither. Always mutually exclusive in practice
+// (Generator::emit_sequence_definition's collect() sets at most one), so a
+// single discriminant makes that invariant checkable by the
 // type system instead of by convention.
 enum class SeqOfKind { None, SeqOf, SetOf };
 
@@ -331,10 +327,9 @@ struct SeqOfSpec : TaggedTypeSpec {
     int64_t     size_lower;
     std::optional<int64_t> size_upper; // present = finite upper bound; absent = semi-constrained/unconstrained
     bool        has_size_constraint = false; // false -> no SIZE(...) at all (size_lower/size_upper both meaningless)
-    bool        extensible = false;          // X.680 §51.8.3 SIZE(...,...) — gambas-asn1#467: previously untracked,
-                                              // so CppBackend::emit_seq_of_definition's own Constraints table never
-                                              // set EXTENSIBLE for a SEQUENCE OF/SET OF's own SIZE constraint, a
-                                              // real pre-existing gap fixed alongside adding Rust's validate().
+    bool        extensible = false;          // X.680 §51.8.3 SIZE(...,...) — drives whether
+                                              // CppBackend::emit_seq_of_definition's Constraints table sets
+                                              // EXTENSIBLE for a SEQUENCE OF/SET OF's own SIZE constraint.
     std::optional<std::string> elem_xer_name; // X.693 §12: element's declared identifier, if any
     bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
 };
@@ -342,24 +337,19 @@ struct SeqOfSpec : TaggedTypeSpec {
 /// @brief Backend-agnostic tag-bearing fields shared by every construct that
 ///        can carry an ASN.1 tag on its own TLV (X.690 §8.1) — a SEQUENCE/SET
 ///        member, a CHOICE alternative, and (should it ever need one) a
-///        SEQUENCE OF/SET OF element. gambas-asn1#338: factored out of
-///        SequenceMemberSpec after #332 added `resolved_tag` there but a
-///        sibling struct (`ChoiceAlternativeSpec`) kept an independent,
-///        stale-prone copy of `eff_tag`/`is_explicit`/`mbuiltin` with no
-///        `resolved_tag` at all (gambas-asn1#336's bug: CHOICE alternatives
-///        never got their real IMPLICIT tag override, because the field
-///        allowing one simply didn't exist there) — the exact failure mode a
-///        shared base makes structurally harder to reintroduce (adding a
-///        field here updates every derived construct, not just whichever
-///        one a given PR happened to touch).
+///        SEQUENCE OF/SET OF element.
+/// @note Every derived spec (SequenceMemberSpec, ChoiceAlternativeSpec, ...)
+///       gets `resolved_tag` from this one shared base, not its own copy —
+///       a CHOICE alternative's IMPLICIT tag override is exercised through
+///       the same field a SEQUENCE member uses, so a fix or a new field
+///       here applies to every derived construct automatically instead of
+///       only whichever one happens to be touched.
 /// @note Pure field consolidation, no behavior change: every derived struct
 ///       still owns its own construct-specific fields (`asn1_name`, `tdref`,
 ///       etc. are *not* pulled up here even though both current derived
-///       structs happen to have identically-named/typed copies — see this
-///       issue's own filing for why that's left for a possible future pass,
-///       not decided here).
+///       structs happen to have identically-named/typed copies).
 struct TaggedMemberSpec {
-    // gambas-asn1#347: always populated except when this member's type has
+    // Always populated except when this member's type has
     // no tag at all (an untagged CHOICE — X.680 §28). No pre-formatted
     // string lives here anymore (the old eff_tag, C++-syntax-only, is
     // gone) — each backend calls its own format_tag_literal/
@@ -383,15 +373,11 @@ struct TaggedMemberSpec {
     // discriminant to dispatch on; unset (nullopt) for TypeRef/SEQUENCE/
     // CHOICE/SEQUENCE OF/ENUMERATED members/alternatives.
     std::optional<ast::BuiltinType> mbuiltin;
-    // gambas-asn1#350: only meaningful when mbuiltin == ast::BuiltinType::
-    // Integer (default S64 otherwise, harmlessly unused) — mirrors
-    // IntegerSpec::storage_kind, one level down. Before this field existed,
-    // the only way to ask "is this member's storage the one Asn1Value
-    // supports" was `mtype == "i64"`, a string literal coincidentally
-    // matching what `native_int_type(IntStorageKind::S64)` returns rather
-    // than a real reference to it — fragile (a silent, uncaught mismatch if
-    // that mapping ever changed), not a bug today. Real enum comparison
-    // instead: `storage_kind == IntStorageKind::S64`.
+    // Only meaningful when mbuiltin == ast::BuiltinType::Integer (default
+    // S64 otherwise, harmlessly unused) — mirrors IntegerSpec::storage_kind,
+    // one level down. Compare via `storage_kind == IntStorageKind::S64`
+    // rather than string-matching `mtype`, since `mtype` only coincidentally
+    // matches what `native_int_type(IntStorageKind::S64)` returns.
     IntStorageKind storage_kind = IntStorageKind::S64;
 };
 
@@ -400,11 +386,9 @@ struct TaggedMemberSpec {
 ///        `offset_expr`) rather than raw data — same rationale as
 ///        SeqOfSpec::elem_ref: they reference C++-runtime-only constructs
 ///        (UniquePtrOps aliases, static TypeDescriptor variables, offsetof
-///        macros) that only CppBackend's own emitted text can resolve. This
-///        issue's scope (#231) is moving the existing C++ emission verbatim
-///        off Generator, not redesigning SEQUENCE for a second backend —
-///        that's #239's job. `tdref` (gambas-asn1#478) is the one exception
-///        already split the "real" way: `Generator::type_descriptor_ref_spec_for`
+///        macros) that only CppBackend's own emitted text can resolve.
+///        `tdref` is the one exception already split the "real" way:
+///        `Generator::type_descriptor_ref_spec_for`
 ///        decides the reference *kind* (needs Generator-private
 ///        resolver/collision-tracking state — `resolver_`, `collision_types_`,
 ///        `effective_cpp_name` — Backend has no access to), and
@@ -418,7 +402,7 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     std::string asn1_name;      // raw ASN.1 name — MemberDescriptor "name" field
     std::string mtype;          // C++ storage type
     std::string mname;          // member identifier
-    // gambas-asn1#303: true when this member's class type (direct
+    // True when this member's class type (direct
     // SEQUENCE/CHOICE/SET, or a TypeRef resolving to one) is reachable back
     // to the *enclosing* type by following further class-typed member
     // chains — i.e. this member sits on a real ASN.1 type-reference cycle
@@ -427,7 +411,7 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // self-referential/mutually-recursive struct has no finite size in Rust
     // without heap indirection somewhere in the cycle — X.680 places no
     // restriction against a type referencing itself, so real schemas do
-    // this; found on the ETSI LI PS-PDU schema, #299).
+    // this (e.g. the ETSI LI PS-PDU schema).
     //
     // Deliberately NOT "is this member class-typed" alone: C++ boxes every
     // OPTIONAL member unconditionally via `std::unique_ptr<T>`
@@ -468,12 +452,12 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     ElemShape   elem_shape;
     bool        optional = false;
     bool        has_default = false;
-    // gambas-asn1#419: `ops`/`offset_expr` used to live here as pre-formatted
-    // C++ expression text ("{ &_Ops_X_Y::check, ... }" / "ASN1CPP_OFFSETOF(...)").
-    // Both were derivable by CppBackend alone from fields already on this row
-    // (the enclosing type name is on SequenceSpec::type_name, `mname`/`optional`
-    // are right here) — no Generator-private state involved, so CppBackend now
-    // computes them itself at emission time instead of carrying them as data.
+    // `ops`/`offset_expr` are not carried as pre-formatted C++ expression
+    // text ("{ &_Ops_X_Y::check, ... }" / "ASN1CPP_OFFSETOF(...)") here —
+    // both are derivable by CppBackend alone from fields already on this
+    // row (the enclosing type name is on SequenceSpec::type_name,
+    // `mname`/`optional` are right here), so CppBackend computes them
+    // itself at emission time instead.
     std::string tdref;          // reference expression to the member's TypeDescriptor
     std::string def_setter;     // "&_setdef_Parent_member" or "nullptr"
     std::string setter_param_type;   // empty = no set_<member>() emitted
@@ -510,7 +494,7 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
 
     std::string asn1_name;
     std::string tdref;
-    // gambas-asn1#336: resolved_tag (inherited from TaggedMemberSpec) is now
+    // resolved_tag (inherited from TaggedMemberSpec) is
     // populated by Generator::emit_choice_definition, same as
     // SequenceMemberSpec::resolved_tag — nullopt means the alternative's own
     // natural tag applies; set means an explicit/AUTOMATIC-assigned tag
@@ -612,17 +596,12 @@ public:
     ///        tag-literal syntax, e.g. `"asn1::Tag{...}"` in C++.
     /// @param tag_spec Resolved tag decision (`Generator::tag_spec_for`/
     ///        `natural_tag_spec_for`).
-    /// @note gambas-asn1#290: previously a plain namespace-level free
-    ///       function (`format_tag_literal` in `CppBackend.cpp`) called
-    ///       directly by `Generator::tag_literal()`/`natural_tag_for()`
-    ///       regardless of the active backend — always produced C++ syntax,
-    ///       leaking into `SequenceMemberSpec::eff_tag`/
-    ///       `ChoiceAlternativeSpec::eff_tag` even under `--target=rust`.
-    ///       Found on #282 review; not yet load-bearing there (RustBackend
-    ///       computes its own tags via `mbuiltin`), but #284/#285's
-    ///       table-driven CHOICE needs real EXPLICIT/IMPLICIT/auto-tag
-    ///       literals for tagged alternatives, same as this field already
-    ///       provides for C++.
+    /// @note Each backend renders its own tag-literal syntax through this
+    ///       virtual rather than a shared free function, so the result is
+    ///       never C++-syntax text leaking into a Rust build:
+    ///       RustBackend's table-driven CHOICE needs real
+    ///       EXPLICIT/IMPLICIT/auto-tag literals for tagged alternatives,
+    ///       same as this field already provides for C++.
     /// @note Default throws — same rationale as emit_enumerated.
     virtual std::string format_tag_literal(const TypeTagSpec& tag_spec) const {
         (void)tag_spec;
@@ -633,11 +612,9 @@ public:
     ///        is absent entirely (an untagged CHOICE-typed member — X.680
     ///        §28, CHOICE has no universal tag of its own; `natural_tag_for`/
     ///        `natural_tag_spec_for` return an absent/empty result only for
-    ///        this one case). Backend-agnostic counterpart to the C++-only
-    ///        `"asn1::Tag{}"` string `Generator::compute_member_tag` used to
-    ///        hardcode directly (gambas-asn1#347) — this method exists so
-    ///        that hardcoding lives in each backend's own file instead of in
-    ///        shared `Generator.cpp`.
+    ///        this one case). Backend-agnostic counterpart to C++'s own
+    ///        `"asn1::Tag{}"` placeholder string — each backend supplies its
+    ///        own literal here instead of `Generator.cpp` hardcoding one.
     /// @note `eff_tag` is populated for every member unconditionally,
     ///       regardless of whether a particular backend's own coverage
     ///       gating (e.g. RustBackend's `all_covered`) would end up using
@@ -671,11 +648,6 @@ public:
     ///        element* of that type (e.g. `asn1::Boolean` in C++, `bool` in
     ///        Rust).
     /// @param bt Built-in type tag.
-    /// @note gambas-asn1#270: previously a hardcoded switch inside
-    ///       Generator::native_member_type_for, unconditionally returning C++ runtime
-    ///       wrapper type names — broke RustBackend on any SEQUENCE/CHOICE/
-    ///       SEQUENCE OF containing a plain builtin (BOOLEAN, OCTET STRING,
-    ///       etc.) member/alternative/element.
     /// @note Default throws — same rationale as emit_enumerated.
     virtual std::string native_builtin_type(ast::BuiltinType bt) const {
         (void)bt;
@@ -688,8 +660,6 @@ public:
     ///        type — those go through emit_seq_of's own SeqOfSpec::elem_type
     ///        instead). E.g. `asn1::VectorSeqOf<T>` in C++, `Vec<T>` in Rust.
     /// @param elem_type Already-resolved native type of the collection's element.
-    /// @note gambas-asn1#270: previously a hardcoded `"asn1::VectorSeqOf<{}>"`
-    ///       format string inside Generator::native_member_type_for.
     /// @note Default throws — same rationale as emit_enumerated.
     virtual std::string wrap_collection_type(const std::string& elem_type) const {
         (void)elem_type;
@@ -698,14 +668,13 @@ public:
 
     /// @brief Emit both halves of an ENUMERATED type: declaration then definition.
     /// @param spec    Resolved, backend-agnostic decision (see EnumeratedSpec).
-    /// @param session Per-type output session (gambas-asn1#262) — the override
+    /// @param session Per-type output session — the override
     ///                pulls its own declaration/definition streams via
     ///                `session.buffer(declaration_extension())` /
     ///                `session.buffer(definition_extension())`.
-    /// @note gambas-asn1#265: declaration/definition used to be two separate
-    ///       virtuals, but every override called them back-to-back with the
-    ///       same spec — combined into one call. Takes the session (not two
-    ///       raw streams) because the two streams are already grouped there;
+    /// @note One call covers both the declaration and definition halves.
+    ///       Takes the session (not two raw streams) because the two
+    ///       streams are already grouped there;
     ///       a single-file backend (declaration_extension() ==
     ///       definition_extension(), e.g. Rust) then makes exactly one
     ///       `session.buffer()` call instead of acquiring the same stream
@@ -884,9 +853,6 @@ public:
     ///                  target stream instead — Backend only owns the
     ///                  *text*, never touches a raw stream directly, and
     ///                  never needs to know which real file it ends up in.
-    /// @note gambas-asn1#266: previously hardcoded `#include "X.hpp"\n` at
-    ///       9 call sites in Generator.cpp regardless of backend — broke
-    ///       RustBackend on any schema with cross-type references.
     /// @note Default throws — same rationale as emit_enumerated.
     virtual void emit_type_reference(const std::string& type_name,
                                       const std::string& filename, TypeOutputSession& session) const {
@@ -896,27 +862,20 @@ public:
 
     /// @brief Whether `Generator::write_type_reference` should skip a call
     ///        to `emit_type_reference` for a type this file already
-    ///        referenced once (gambas-asn1#300).
-    /// @note Default `true`. CppBackend's `#include` is idempotent, so
-    ///       today's duplicate `#include "X.hpp"` lines (one per member/
-    ///       alternative referencing the same type — a real, pre-existing
-    ///       pattern in generated output, confirmed on the real ETSI LI
-    ///       PS-PDU schema) were harmless either way; deduping them too is a
-    ///       strict improvement (fewer, cleaner lines, same semantics) —
-    ///       reviewed and confirmed on #300/PR #308 rather than opting only
-    ///       RustBackend in and leaving CppBackend's redundant duplicates as
-    ///       a "don't touch it" byte-identical exception. RustBackend needs
-    ///       this unconditionally: `use crate::X::X;` has no #include-guard
-    ///       equivalent — a duplicate is a hard compile error (E0252), the
-    ///       single largest error category found running the ETSI schema
-    ///       through `--target=rust` (#299).
+    ///        referenced once.
+    /// @note Default `true`. CppBackend's `#include` is idempotent, so a
+    ///       duplicate `#include "X.hpp"` line (one per member/alternative
+    ///       referencing the same type) is harmless either way; deduping
+    ///       them is a strict improvement (fewer, cleaner lines, same
+    ///       semantics). RustBackend needs this unconditionally:
+    ///       `use crate::X::X;` has no #include-guard equivalent — a
+    ///       duplicate is a hard compile error (E0252).
     virtual bool dedupe_type_references() const { return true; }
 
     /// @brief Whether a named SEQUENCE OF/SET OF member needs a reference to
     ///        its own synthetic SeqOf wrapper type (e.g. `X` in
     ///        `pub type X = Vec<Elem>;`/`using X = std::vector<Elem>;`), on
-    ///        top of the deeper element-type reference gambas-asn1#301
-    ///        already adds.
+    ///        top of the deeper element-type reference already added.
     /// @note Default `true`. CppBackend needs it unconditionally:
     ///       `Generator::type_descriptor_ref_spec_for`'s SEQUENCE-OF branch
     ///       (Generator.cpp) always points a member's `tdref` at
@@ -924,16 +883,14 @@ public:
     ///       its own header — regardless of whether the field's C++ type
     ///       text itself names the wrapper or inlines
     ///       `std::vector<Elem>` directly. RustBackend doesn't have this:
-    ///       confirmed by grep, nothing in RustBackend.cpp ever reads
+    ///       nothing in RustBackend.cpp reads
     ///       `SequenceMemberSpec::tdref`/`ChoiceAlternativeSpec::tdref` (no
     ///       codec table wiring yet) — so for Rust the wrapper reference is
-    ///       always genuinely unused, in both the plain-TypeRef-element case
-    ///       gambas-asn1#301 originally covered and the anonymous-inline-
-    ///       element case (`native_member_type_for`'s SEQUENCE OF branch never emits
-    ///       the bare wrapper name as a field type either way — only the
-    ///       element type directly, or the doubly-suffixed "Anon" type).
-    ///       80 `unused_imports` warnings on the real ETSI LI PS-PDU schema
-    ///       (gambas-asn1#312).
+    ///       genuinely unused, in both the plain-TypeRef-element case and
+    ///       the anonymous-inline-element case (`native_member_type_for`'s
+    ///       SEQUENCE OF branch never emits the bare wrapper name as a
+    ///       field type either way — only the element type directly, or
+    ///       the doubly-suffixed "Anon" type).
     /// @note A plain bool, not a new emit_*() virtual mirroring
     ///       emit_type_reference — this is one of potentially several such
     ///       per-backend "does this schema-derived reference even apply to
@@ -942,10 +899,10 @@ public:
     ///       emitted_type_refs_, filename_for, session-seeding) must not
     ///       fork per question — one write path, N boolean answers, not N
     ///       parallel write_*/emit_* method pairs to keep in sync forever.
-    /// @note Provisional, not a permanent "Rust never needs this" claim
-    ///       (raised on #312's own review) — "unused today" tracks Rust
-    ///       having no codec dispatch tables wired at all yet, not a
-    ///       structural fact about the wrapper type. The moment Rust grows
+    /// @note Provisional, not a permanent "Rust never needs this" claim —
+    ///       "unused today" tracks Rust having no codec dispatch tables
+    ///       wired at all yet, not a structural fact about the wrapper
+    ///       type. The moment Rust grows
     ///       its own equivalent of `tdref`/`asn_DEF_<wrapper>` (a per-member
     ///       BER/XER table entry needing the wrapper's descriptor, the same
     ///       reason CppBackend needs it), `RustBackend::needs_seqof_wrapper_
@@ -981,9 +938,6 @@ public:
     /// @param type_name Final identifier of the SEQUENCE/SET type.
     /// @param session   Per-type output session — writes into
     ///                  `session.buffer(definition_extension())`.
-    /// @note gambas-asn1#268: previously hardcoded directly in
-    ///       Generator::emit_sequence_definition regardless of backend —
-    ///       broke RustBackend on any SEQUENCE/SET with an optional member.
     /// @note Default throws — same rationale as emit_enumerated.
     virtual void emit_special_members(const std::string& type_name, TypeOutputSession& session) const {
         (void)type_name; (void)session;
@@ -1000,8 +954,8 @@ public:
     /// @param member_type Member's storage type.
     /// @param session     Per-type output session — writes into
     ///                    `session.buffer(definition_extension())`.
-    /// @note gambas-asn1#268: same root cause as emit_special_members —
-    ///       previously hardcoded unconditionally in Generator.cpp.
+    /// @note Same root cause as emit_special_members: backend-specific
+    ///       storage semantics belong in the backend, not shared codegen.
     /// @note Default throws — same rationale as emit_enumerated.
     virtual void emit_optional_member_ops(const std::string& type_name, const std::string& member_name,
                                            const std::string& member_type, TypeOutputSession& session) const {
@@ -1019,9 +973,7 @@ public:
     /// @brief Output file extension (no leading dot) for a type's
     ///        definition half (the content `emit_definition` produces).
     ///
-    /// gambas-asn1#262: file identity used to be hardcoded ".hpp"/".cpp" in
-    /// Generator, baking C++'s header+impl split into the whole pipeline.
-    /// Now Backend decides both extensions; merging is implicit rather than
+    /// Backend decides both extensions; merging is implicit rather than
     /// a separate flag Generator has to consult — TypeOutputSession::buffer()
     /// returns the *same* stream when declaration_extension() ==
     /// definition_extension(), so returning the same value as
@@ -1070,7 +1022,7 @@ protected:
     }
 };
 
-/// @brief Per-type output session (gambas-asn1#262). Backend decides file
+/// @brief Per-type output session. Backend decides file
 ///        identity via declaration_extension()/definition_extension();
 ///        Generator drives emission by requesting named buffers and, once
 ///        done, collects their content via finish() to write to disk (file

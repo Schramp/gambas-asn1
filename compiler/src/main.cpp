@@ -48,8 +48,7 @@ static void print_help(const char* prog) {
         "                              -pdu=all is accepted as an alias for the default.\n"
         "  --integer-type=<kind>       Integer storage: int64 (default), uint64,\n"
         "                              int128 (unimplemented), arbitrary (unimplemented)\n"
-        "  --target=<lang>             Output language: cpp (default) or rust (WIP,\n"
-        "                              gambas-asn1#214).\n";
+        "  --target=<lang>             Output language: cpp (default) or rust (WIP).\n";
 }
 
 static void usage(const char* prog) {

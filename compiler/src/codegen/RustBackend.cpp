@@ -39,10 +39,8 @@ static std::string variant_name(const RustBackend& backend, const std::string& a
 
 // Per-builtin-kind lookup tables shared by
 // emit_sequence_definition (SEQUENCE members, SEQUENCE OF elements) and
-// emit_choice_definition (CHOICE alternatives) — previously three separate
-// near-identical switches over ast::BuiltinType per function (six total).
-// Hoisted to file scope so there's exactly one switch per question asked,
-// not one per caller.
+// emit_choice_definition (CHOICE alternatives), file-scoped so there's
+// exactly one switch per question asked, not one per caller.
 
 /// @brief Per-builtin-kind BER tag constant. See TaggedMemberSpec::mbuiltin's
 ///        doc comment (Backend.hpp) for why native storage type alone can't
@@ -138,11 +136,11 @@ static const char* size_check_len_expr(ast::BuiltinType bt) {
 }
 
 /// @brief True for the 12 character-string builtins X.680 §51 SIZE
-///        validation covers (gambas-asn1#465) — the same set
+///        validation covers — the same set
 ///        `Generator::build_member_type_descriptor_spec`'s
 ///        `sizeable_universal_tag` lambda maps to a universal tag, minus
 ///        OCTET STRING/BIT STRING (their own row-loop branch already
-///        handles those, gambas-asn1#464). Every one of these newtypes
+///        handles those). Every one of these newtypes
 ///        (or, for IA5String, bare `String`) `Deref`s to `String`
 ///        (`rust-runtime/ber/src/strings.rs`'s own module doc), so the
 ///        member-row loop's own `v.{mname}.len()` — byte length, matching
@@ -308,9 +306,9 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_ber::xer::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_ber::DecodeError> {\n";
         os << "        self.xer_decode_into(r)\n";
         os << "    }\n\n";
-        // X.680 §20/§51 (gambas-asn1#468) — reuses {map_ident} (already
+        // X.680 §20/§51 — reuses {map_ident} (already
         // emitted above for BER/XER), same "table data, one generic
-        // function, no per-type logic" shape #473's Constraints redesign
+        // function, no per-type logic" shape the Constraints redesign
         // established. In practice unreachable through the normal decode
         // path (TryFrom<i64> already rejects an unrecognized wire value
         // before a Rust enum instance can exist — see
@@ -607,10 +605,10 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     using Kind = MemberTypeDescriptorSpec::Kind;
     std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(spec.tname));
     if (spec.kind == Kind::Integer) {
-        // Plain `static` data, not a generated per-member function (#473
-        // review: "all constraints should be table based ... never put it
-        // in code" — a parser/tool should be able to read the bound
-        // straight off this table without executing anything). Delta
+        // Plain `static` data, not a generated per-member function — all
+        // constraints are table based, never in code, so a parser/tool can
+        // read the bound straight off this table without executing
+        // anything. Delta
         // convention, EXTENSIBLE handling, and the saturating i64 clamp
         // for U64 storage all live in `constraints::validate_s64`/
         // `validate_u64` (rust-runtime/ber/src/constraints.rs) — the only
@@ -665,17 +663,16 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // is still real and worth checking; `size_upper` becomes `i64::MAX`
     // (via `INT64_MAX`) as a sentinel so `validate_size`'s upper check
     // never fires for a realistic element/byte/character count. A
-    // deliberate, already-shipped (#464/#465) improvement over C++, not a
-    // parity gap introduced here.
+    // deliberate improvement over C++, not a parity gap.
     int flags = spec.has_size_constraint
         ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
         : 0;
     int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
-    // X.680 §51.4 PermittedAlphabet (gambas-asn1#466) — `spec.alphabet` is
+    // X.680 §51.4 PermittedAlphabet — `spec.alphabet` is
     // the resolved, sorted, deduplicated permitted-character set
     // (`Generator::extract_from_alphabet`); emitted as a plain 256-entry
-    // lookup table (data, not code — same #473 review this whole redesign
-    // follows), `encode_table[byte] = index in alphabet` or `0xFFFF` if
+    // lookup table (data, not code, same as the Constraints table above),
+    // `encode_table[byte] = index in alphabet` or `0xFFFF` if
     // `byte` isn't permitted. `constraints::validate_alphabet`/
     // `validate_string` (rust-runtime/ber/src/constraints.rs) are the only
     // code, identical for every alphabet-constrained member.
@@ -728,7 +725,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
 ///       tag from each element's own `Asn1Value::xer_element_name()` at
 ///       runtime, so there's no per-type name to gate on here at all.
 void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
-    // Plain `static` data, not a generated per-type function (#473 review)
+    // Plain `static` data, not a generated per-type function
     // — always emitted, real bounds or not: every generated SEQUENCE
     // OF/SET OF type gets one, including an anonymous inline member's
     // synthetic promoted type (`Generator::emit_seq_of_definition` runs
@@ -739,7 +736,7 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // semi-constrained SIZE (`size_upper` absent) still gets
     // SIZE_CONSTRAINED set with `size_upper` as a sentinel `i64::MAX` —
     // `validate_size` (constraints.rs) then still checks the lower bound,
-    // same already-shipped (#464/#465) improvement over C++'s own
+    // a deliberate improvement over C++'s own
     // Constraints (which skips validation entirely for a semi-constrained
     // SIZE — see OctetString::validate's own `SIZE_CONSTRAINED` gate).
     std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(spec.type_name));
@@ -806,8 +803,8 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // loop's name-derivation never has to guess whether it exists). Plain
     // trait override, not a MemberDescriptor fn-pointer: every named or
     // synthetic SEQUENCE OF/SET OF type is genuinely its own distinct Rust
-    // type (unlike INTEGER's shared `i64`, #463), so it can carry its own
-    // constraint directly, the way #462 originally intended.
+    // type (unlike INTEGER's shared `i64`), so it can carry its own
+    // constraint directly.
     if (spec.has_size_constraint) {
         os << std::format("\n    fn validate(&self) -> i64 {{\n        asn1cpp_ber::constraints::validate_size(self.0.len(), &{})\n    }}\n", cname);
     }
@@ -1223,7 +1220,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // `tname`'s deterministic naming, not read back off stored
             // data — same table `constraints::validate_s64`/`validate_u64`/
             // `validate_size` (rust-runtime/ber/src/constraints.rs) read,
-            // never a per-member generated function (#473 review).
+            // never a per-member generated function.
             // `m.optional` also covers a DEFAULT-valued member (X.680
             // §25.1: `Generator::collect` passes `m->is_optional()`, true
             // for both markers) — its Rust field is `Option<T>` too (see
@@ -1253,7 +1250,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                                    m.mname, method, cname)
                     : std::format("Some(|v| asn1cpp_ber::constraints::validate_size(v.{}.{}(), &{}))", m.mname, method, cname);
             } else if (m.mbuiltin && is_sizeable_string_kind(*m.mbuiltin) && m.tdref.starts_with("&asn_TYP_")) {
-                // X.680 §51.4 FROM alphabet (gambas-asn1#466), combined with
+                // X.680 §51.4 FROM alphabet, combined with
                 // SIZE via `constraints::validate_string` — the table
                 // (`{cname}`, above) may or may not have a real
                 // `encode_table`; `validate_string`/`validate_alphabet`
@@ -1474,19 +1471,19 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
 ///       unused here — no runtime wiring yet, same as every prior pairing.
 void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const {
     std::string prefix = escape(to_snake_case(spec.type_name));
-    // gambas-asn1#313: a CHOICE with exactly one alternative makes every
+    // A CHOICE with exactly one alternative makes every
     // "does x match this variant" pattern provably always true — rustc
     // correctly flags a `_ => panic!(...)` wildcard arm as unreachable in
     // that case (and, below, an `if let` as irrefutable). Special-cased
-    // per this issue's own preferred fix (correct-by-construction output
-    // over suppressing real compiler signal): a single-alternative CHOICE
+    // for correct-by-construction output rather than suppressing real
+    // compiler signal: a single-alternative CHOICE
     // uses a plain irrefutable `let` pattern instead of `match`/`if let`,
     // which needs no wildcard/`else` arm at all and warns on neither.
     // An extensible CHOICE (spec.ext_at >= 0) always gets a
     // second enum variant (UnknownExtension, see emit_choice_declaration) —
     // even when spec.alternatives itself has only one row, the enum as a
     // whole is never single-variant once extensible, so the single_alt
-    // irrefutable-pattern special-case (#313) must not fire for it.
+    // irrefutable-pattern special-case must not fire for it.
     bool single_alt = spec.alternatives.size() == 1 && spec.ext_at < 0;
     for (const auto& a : spec.alternatives) {
         std::string fname = escape(std::format("{}_get_{}", prefix, a.accessor_name));
@@ -1590,7 +1587,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 : std::format("{}::{}", spec.type_name, vname);
             // choice::alt_match! (rust-runtime/ber/src/choice.rs) owns the
             // if-let/else-false plumbing generically, including the
-            // gambas-asn1#313 single-alternative-CHOICE irrefutable-pattern
+            // single-alternative-CHOICE irrefutable-pattern
             // case — one line here regardless of alternative count.
             std::string variant_path = std::format("{}::{}", spec.type_name, vname);
             auto emit_encode_closure = [&](const char* field, const std::string& body_line) {
@@ -1995,7 +1992,7 @@ void RustBackend::emit_optional_member_ops(const std::string&, const std::string
 /// @brief Write the crate root: one module declaration per generated `.rs`
 ///        file, so the `use crate::<module>::<Type>;` paths
 ///        emit_type_reference emits actually resolve.
-///        WIP (#214): flat mod-per-file list, no module tree mirroring
+///        WIP: flat mod-per-file list, no module tree mirroring
 ///        ASN.1 modules.
 /// @note module *identifier* is snake_case
 ///       (`pub mod contact_list;`), not the PascalCase file stem — Rust

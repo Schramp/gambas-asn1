@@ -172,8 +172,8 @@ std::optional<TypeTagSpec> Generator::tag_spec_for(const ast::Tag& tag, bool con
 }
 
 /// @brief Returns the backend's tag-literal syntax for a tag override, empty
-///        string if absent (gambas-asn1#290: `backend_.format_tag_literal`,
-///        not a hardcoded C++ free function).
+///        string if absent. Routes through `backend_.format_tag_literal`,
+///        not a hardcoded C++ free function.
 /// @param tag         The member's (possibly absent) tag override.
 /// @param constructed True if the encoding form is constructed, not primitive.
 /// @return The backend's literal string, or "" if `tag` is absent.
@@ -310,8 +310,8 @@ Generator::TagResult Generator::compute_member_tag(const ast::TypeDef& m,
         resolved_tag = MemberTagSpec{ TypeTagSpec{ auto_tag.cls, auto_tag.number, constructed },
                                       /*tag_is_override=*/true };
     } else {
-        // gambas-asn1#347: structured natural tag, not a pre-rendered
-        // string — absent (resolved_tag stays nullopt) only for the one
+        // Structured natural tag, not a pre-rendered string — absent
+        // (resolved_tag stays nullopt) only for the one
         // case a member's type has no tag at all (an untagged CHOICE —
         // X.680 §28, no universal tag). Each backend formats this itself
         // at the point of use.
@@ -337,8 +337,8 @@ bool Generator::is_class_type(const ast::TypeDef& m) const {
     return false;
 }
 
-// gambas-asn1#303: is `target` (an ASN.1 type name) reachable from `from`
-// by following further class-typed member references? DFS over the
+// Is `target` (an ASN.1 type name) reachable from `from` by following
+// further class-typed member references? DFS over the
 // resolved-type graph, bounded by `visited` (finite — one entry per
 // distinct named class type actually reachable, plus one per anonymous
 // inline member visited along the way).
@@ -370,8 +370,8 @@ bool Generator::type_reaches(const ast::TypeDef& from, const std::string& target
     return false;
 }
 
-// gambas-asn1#303: does member `m`'s class type eventually reference
-// `enclosing_name` again (a real ASN.1 type-reference cycle)? Only
+// Does member `m`'s class type eventually reference `enclosing_name`
+// again (a real ASN.1 type-reference cycle)? Only
 // meaningful when `m` is itself class-typed (caller should check
 // is_class_type(m) first, or accept the always-false short-circuit below).
 bool Generator::member_type_in_cycle(const ast::TypeDef& m, const std::string& enclosing_name) const {
@@ -511,7 +511,7 @@ TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef
         // Fallback: unresolved ref — synthetic types (compiler-generated
         // element replacements) are SEQUENCE/CHOICE/ENUM → class-scoped
         // static member, except a promoted anonymous nested SEQUENCE OF/SET
-        // OF (seq_of_synthetic_names_, gambas-asn1#427), which — like any
+        // OF (seq_of_synthetic_names_), which — like any
         // other SEQUENCE OF/SET OF — gets a free asn_DEF_X, not X::asn_DEF.
         auto n = cpp_name_for_typeref(*tr);
         auto kind = seq_of_synthetic_names_.count(n) ? TypeDescriptorRefKind::FreeStanding
@@ -542,9 +542,9 @@ TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef
 }
 
 /// @brief Returns the backend's reference-expression syntax for `def`'s
-///        type-descriptor reference (gambas-asn1#478:
+///        type-descriptor reference. Routes through
 ///        `backend_.format_type_descriptor_ref`, not hardcoded C++ text —
-///        same split as tag_literal()/format_tag_literal()).
+///        same split as tag_literal()/format_tag_literal().
 std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
     return backend_.format_type_descriptor_ref(type_descriptor_ref_spec_for(def));
 }
@@ -577,8 +577,8 @@ split_members(const ast::TypeDef& def)
 /// @brief Decide the resolved value list for an ENUMERATED type — automatic
 ///        numbering (X.680 §20.6) applied, root and extension values in one
 ///        continuous sequence. Backend-agnostic: shared by both
-///        emit_enumerated_declaration and emit_enumerated_definition (previously each
-///        recomputed this — now computed once).
+///        emit_enumerated_declaration and emit_enumerated_definition so
+///        neither recomputes it independently.
 static EnumeratedSpec build_enumerated_spec(const ast::TypeDef& def,
                                             const std::string& type_name) {
     EnumeratedSpec spec;
@@ -1064,11 +1064,9 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
             // SIZE at all) — both backends format these fields into their
             // generated Constraints tables unconditionally (gated on
             // `has_size_constraint`/a flags bit at read time, not at
-            // codegen time), so leaving them uninitialized here was a
-            // real, previously undetected UB/garbage-value bug (only
-            // surfaced by gambas-asn1#466 adding a FROM-alphabet-only
-            // inline member schema — no existing schema exercised this
-            // combination before).
+            // codegen time), so leaving them uninitialized here is UB:
+            // always default-initialize explicitly, don't rely on the
+            // struct's own defaults.
             spec.has_size_constraint = sr.has_value();
             spec.size_bounded = sr.has_value()
                 && sr->second != std::numeric_limits<int64_t>::max();
@@ -1130,17 +1128,11 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
 // param_type for members that should not get a setter (optional, complex,
 // non-primitive types, or an unresolvable/non-builtin-resolving TypeRef).
 //
-// gambas-asn1#419: the direct-builtin case (this function's own former
-// `if (bt) {...}` branch) used to live here as one more piece of
-// pre-formatted C++ text riding along on a field RustBackend never reads —
-// dead computation on every Rust compile, not just dead storage. It's
-// fully self-computable by CppBackend alone from fields already on
-// SequenceMemberSpec (`mbuiltin`/`storage_kind`), the same "no Generator-
-// private state needed" reasoning `ops`/`offset_expr` were already moved
-// for — see CppBackend.cpp's own `classify_builtin_setter`. Only the
+// The direct-builtin case is fully self-computable by CppBackend alone
+// from fields already on SequenceMemberSpec (`mbuiltin`/`storage_kind`) —
+// see CppBackend.cpp's own `classify_builtin_setter`. Only the
 // TypeRef-alias case stays here: it needs `resolver_.resolve_ref`, which
-// is Generator-private by design (CppBackend has no access, deliberately —
-// see this issue's own "known blocker" note).
+// is Generator-private by design — CppBackend deliberately has no access.
 // ---------------------------------------------------------------------------
 Generator::MemberSetterInfo
 Generator::classify_member_setter(const ast::TypeDef& m) {
@@ -1209,8 +1201,8 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
     auto emit_fwd = [&](const std::string& cn) {
         write_forward_declaration(cn, os);
     };
-    // gambas-asn1#312: named SEQUENCE OF/SET OF member's own synthetic
-    // wrapper reference — the field's own type text never names the bare
+    // Named SEQUENCE OF/SET OF member's own synthetic wrapper reference —
+    // the field's own type text never names the bare
     // wrapper either way (element type directly, or the doubly-suffixed
     // "Anon" type), so whether this reference is needed at all is purely a
     // per-backend fact (CppBackend's tdref points at the wrapper's own
@@ -1237,7 +1229,7 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
                     post_class_includes.push_back(synth); // defer: needs current class complete
                 } else {
                     emit_wrapper_inc(synth);
-                    // gambas-asn1#301: native_member_type_for's SEQUENCE OF branch uses
+                    // native_member_type_for's SEQUENCE OF branch uses
                     // the element type directly (wrap_collection_type(native_member_type_for(elem)))
                     // when the element is a plain TypeRef — it only falls
                     // back to the synthetic name above for an *anonymous*
@@ -1247,9 +1239,8 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
                     // transitive; Rust's `use` only brings the one named
                     // symbol into scope, not whatever *that* module itself
                     // `use`d — so a field typed `Vec<CallId>` with no direct
-                    // `use crate::CallId::CallId;` failed to compile
-                    // (E0425), the second-largest error category on the real
-                    // ETSI LI PS-PDU schema (#299/#301).
+                    // `use crate::CallId::CallId;` fails to compile (E0425)
+                    // without this explicit include.
                     if (tr_elem) {
                         emit_inc(cpp_name_for_typeref(*tr_elem));
                     } else if (seqof_elem->is_sequence() || seqof_elem->is_choice() || seqof_elem->is_set()) {
@@ -1333,7 +1324,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
                     // re-`use`ing it here is at best redundant (harmless under
                     // C++'s #pragma once) and at worst a self-import (Rust:
                     // declaration+definition share one file, unlike C++'s
-                    // .hpp/.cpp split — E0255, gambas-asn1#320).
+                    // .hpp/.cpp split — E0255).
                     if (cn != cname) {
                         auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
                         write_type_reference(cn, inc_os);
@@ -1405,8 +1396,8 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         row.mtype = native_member_type_for(m);
         if (auto* bt = std::get_if<ast::BuiltinType>(&m.body)) {
             row.mbuiltin = *bt;
-            // gambas-asn1#350: same decision native_member_type_for's own Integer
-            // branch already made to produce row.mtype above — threaded
+            // Same decision native_member_type_for's own Integer branch
+            // already made to produce row.mtype above — threaded
             // through as structured data too, not re-derived from mtype text.
             if (*bt == ast::BuiltinType::Integer) row.storage_kind = classify_integer_storage(m);
         }
@@ -1559,7 +1550,7 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
             auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
             write_type_reference(cn, inc_os);
         };
-        // gambas-asn1#312: same wrapper-reference decision as
+        // Same wrapper-reference decision as
         // emit_sequence_declaration's emit_wrapper_inc (see
         // Backend::needs_seqof_wrapper_reference's doc comment).
         auto emit_wrapper_inc = [&](const std::string& cn) {
@@ -1571,10 +1562,10 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
             // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
             auto cn2 = cpp_name_for_ref(backend_.synthetic_name(cname, m->name), current_module_);
             emit_wrapper_inc(cn2);
-            // gambas-asn1#301: also include the actual element type directly
-            // when it's a plain TypeRef — see the matching fix (and its
-            // rationale) in Generator::emit_type_files's emit_member_include
-            // lambda, same bug, independently duplicated here for CHOICE.
+            // Also include the actual element type directly when it's a
+            // plain TypeRef — see the matching rationale in
+            // Generator::emit_type_files's emit_member_include lambda;
+            // this is the CHOICE-alternative counterpart of that logic.
             const auto& seqof_elem = m->is_seq_of()
                 ? std::get<ast::SequenceOfType>(m->body).element
                 : std::get<ast::SetOfType>(m->body).element;
@@ -1646,7 +1637,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             ast::Tag full_tag;      // for canonical sort
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind storage_kind = IntStorageKind::S64;
-            std::optional<MemberTagSpec> resolved_tag;  // gambas-asn1#336/#347
+            std::optional<MemberTagSpec> resolved_tag;
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1790,9 +1781,8 @@ void Generator::emit_choice(const ast::TypeDef& def, TypeOutputSession& session)
 // ---------------------------------------------------------------------------
 
 /// @brief Write the output file(s) for one type definition, driven by a
-///        TypeOutputSession (gambas-asn1#262) instead of hardcoding a
-///        ".hpp"/".cpp" pair — see Generator.hpp's declaration for the
-///        parameter contract.
+///        TypeOutputSession instead of hardcoding a ".hpp"/".cpp" pair —
+///        see Generator.hpp's declaration for the parameter contract.
 /// @note Merging is implicit: when backend_.declaration_extension() ==
 ///       backend_.definition_extension(), the session hands emit_declaration and
 ///       emit_definition the *same* stream, so they naturally combine into one
@@ -1824,13 +1814,11 @@ void Generator::emit_type_files(const std::string& name, const ast::TypeDef& def
 }
 
 void Generator::write_type_reference(const std::string& type_name, std::ostream& target) {
-    // gambas-asn1#300: skip a reference this type's declaration output has
-    // already written (gated on backend_.dedupe_type_references(), true by
-    // default for every backend — see that method's doc, Backend.hpp).
-    // Found on the real ETSI LI PS-PDU schema (#299/#300): RustBackend's
+    // Skip a reference this type's declaration output has already written
+    // (gated on backend_.dedupe_type_references(), true by default for
+    // every backend — see that method's doc, Backend.hpp). RustBackend's
     // `use crate::X::X;` has no #include-guard equivalent, so a duplicate
-    // reference was a hard compile error (E0252), the single largest error
-    // category on that schema.
+    // reference is a hard compile error (E0252).
     if (backend_.dedupe_type_references() && !emitted_type_refs_.insert(type_name).second) return;
     TypeOutputSession ref;
     ref.seed(backend_.declaration_extension(), target);
@@ -1933,8 +1921,8 @@ void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, 
         if (!has_definition && def_ext != decl_ext) {
             // A plain TypeRef alias has no definition half, but
             // emit_namespace_open/close above still wrote open/close
-            // markers into def_os unconditionally (gambas-asn1#265) —
-            // reset it back to empty now that both have run, so the stray
+            // markers into def_os unconditionally — reset it back to empty
+            // now that both have run, so the stray
             // markers don't turn into a near-empty file at write time.
             // Guarded on def_ext != decl_ext: for a single-file backend
             // def_os *is* decl_os, and clearing it would wipe the real
@@ -2269,7 +2257,6 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 // resolution path (type_descriptor_ref_for, native_member_type_for)
                 // just takes their already-correct, already-tested named-
                 // type branch from here on, no special-casing needed there.
-                // See gambas-asn1#427.
                 bool was_anon = elem.name.empty();
                 elem_type_name = backend_.synthetic_name(seqof_name, was_anon ? "Anon" : elem.name);
                 seq_of_synthetic_names_.insert(elem_type_name);

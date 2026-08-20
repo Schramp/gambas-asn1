@@ -7,22 +7,20 @@
 
 namespace asn1::codegen {
 
-// gambas-asn1#306: acronym-aware word splitter — the naive "insert '_'
-// before every uppercase letter" rule (to_snake_case's old body) splits a
-// run of consecutive uppercase letters one at a time ("TYP" -> "t_y_p"
-// instead of "typ"), because it treats every individual uppercase letter as
-// its own word start rather than recognizing a whole acronym run as one
-// word. Standard rule instead: '-' or '_' is always a hard word break
+// Acronym-aware word splitter — inserting '_' before every uppercase letter
+// would split a run of consecutive uppercase letters one at a time ("TYP"
+// -> "t_y_p" instead of "typ"), treating every individual uppercase letter
+// as its own word start rather than recognizing a whole acronym run as one
+// word. Rule instead: '-' or '_' is always a hard word break
 // (X.680's own identifier separator, plus the literal underscores already
 // present in CppBackend-convention synthetic names like "asn_TYP_Parent_
 // member" that also get routed through to_snake_case); a lowercase/digit ->
 // uppercase transition starts a new word; a run of 2+ uppercase letters
 // followed by a lowercase letter keeps the run together except its *last*
 // letter, which starts the next word ("HTTPServer" -> ["HTTP", "Server"],
-// not one letter per word). Not purely cosmetic scope creep: this is the
-// same word-splitting problem #305's to_upper_camel_case solves in the
-// opposite case direction — see gambas-asn1#356 (tracked follow-up to
-// unify both under one shared tokenizer instead of near-duplicate logic).
+// not one letter per word). Shared by to_snake_case and
+// to_upper_camel_case, which solve the same word-splitting problem in
+// opposite case directions.
 inline std::vector<std::string> split_words(std::string_view s) {
     std::vector<std::string> words;
     std::string cur;
@@ -61,13 +59,13 @@ inline std::string to_screaming_snake_case(std::string_view s) {
     return out;
 }
 
-// gambas-asn1#305: real word-split UpperCamelCase conversion, unlike
+// Real word-split UpperCamelCase conversion, unlike
 // capitalize_first (which only uppercases the first character of the whole
 // string). X.680 §11.2 identifiers are hyphen-separated lowercase words
-// (e.g. "eight-bit-binary") — capitalize_first(to_cpp_name(...)) turns the
-// hyphen into a literal underscore first, so multi-word ASN.1 value names
-// came out "Eight_bit_binary" (fails rustc's non_camel_case_types lint), not
-// "EightBitBinary". Splits on '-' (the only word separator X.680 allows in
+// (e.g. "eight-bit-binary") — capitalize_first(to_cpp_name(...)) would turn
+// the hyphen into a literal underscore first, producing "Eight_bit_binary"
+// (fails rustc's non_camel_case_types lint) instead of "EightBitBinary".
+// Splits on '-' (the only word separator X.680 allows in
 // an identifier) and capitalizes the first letter of every segment, joining
 // with no separator; single-word names behave identically to the old
 // capitalize_first(to_cpp_name(...)) path.
@@ -122,14 +120,13 @@ inline std::string rust_escape(std::string n,
 /// coincidental, not an assumption baked into the interface.
 class RustBackend : public Backend {
 public:
-    // gambas-asn1#306: to_upper_camel_case (real word-split PascalCase,
-    // shared with #305's variant_name), not to_cpp_name (hyphen->underscore
-    // only, no case normalization) — an ASN.1 type name written
-    // ALL-CAPS-WITH-HYPHENS (e.g. "TARGETACTIVITYMONITOR-1") or
+    // Uses to_upper_camel_case (real word-split PascalCase), not to_cpp_name
+    // (hyphen->underscore only, no case normalization) — an ASN.1 type name
+    // written ALL-CAPS-WITH-HYPHENS (e.g. "TARGETACTIVITYMONITOR-1") or
     // mixed-case-with-hyphens (e.g. "EpsHI2OperationsGA-PointWithUnCertainty")
-    // used to keep its hyphen as a literal underscore in the generated Rust
-    // identifier ("TARGETACTIVITYMONITOR_1"), which fails rustc's
-    // non_camel_case_types lint — the lint only checks for a literal
+    // would otherwise keep its hyphen as a literal underscore in the
+    // generated Rust identifier ("TARGETACTIVITYMONITOR_1"), which fails
+    // rustc's non_camel_case_types lint — the lint only checks for a literal
     // underscore in the identifier, not internal acronym casing, so simply
     // not reintroducing the hyphen as an underscore is enough (confirmed
     // empirically: an all-caps identifier with no underscore, e.g.
@@ -152,18 +149,16 @@ public:
         return rust_escape(std::move(name), extra);
     }
 
-    // gambas-asn1#306: parent + to_upper_camel_case(member_name), not
+    // Uses parent + to_upper_camel_case(member_name), not
     // make_synthetic_name's capitalize_first(to_cpp_name(...)) — must match
     // Generator::native_member_type_for's own inline-ENUMERATED-member calculation
     // (`current_type_ + capitalize_first(backend_.type_name(name))`,
     // Generator.cpp), the *other* independent place that computes this same
     // synthetic type's name when referencing it from a field/generic
-    // position. Both sides agreed by coincidence while type_name() was
-    // to_cpp_name too; diverged the moment type_name() became a real
-    // word-split PascalCase conversion, producing an
+    // position. Diverging from that calculation produces an
     // undefined-type-reference compile error on any real-world schema with
-    // hyphenated inline SEQUENCE/CHOICE/ENUMERATED member names (confirmed
-    // on the ETSI LI PS-PDU schema, #299/#355).
+    // hyphenated inline SEQUENCE/CHOICE/ENUMERATED member names (e.g. the
+    // ETSI LI PS-PDU schema).
     std::string synthetic_name(const std::string& parent,
                                 const std::string& member_name) const override {
         return parent + to_upper_camel_case(member_name);
@@ -180,32 +175,32 @@ public:
 
     // Defined in RustBackend.cpp — reuses the same mapping as the file-local
     // native_builtin_type() free function every other Rust construct pairing
-    // already calls internally (gambas-asn1#270: now also reachable from
-    // Generator::native_member_type_for, not just RustBackend's own emit_* methods).
+    // calls internally, also reachable from
+    // Generator::native_member_type_for, not just RustBackend's own emit_* methods.
     std::string native_builtin_type(ast::BuiltinType bt) const override;
 
-    // gambas-asn1#290: Generator::tag_literal()/natural_tag_for() call this
-    // unconditionally (populates SequenceMemberSpec::eff_tag/
-    // ChoiceAlternativeSpec::eff_tag for every SEQUENCE/CHOICE member,
+    // Generator::tag_literal()/natural_tag_for() call this
+    // unconditionally (populates SequenceMemberSpec::resolved_tag/
+    // ChoiceAlternativeSpec::resolved_tag for every SEQUENCE/CHOICE member,
     // regardless of active backend) — must be real, not a stub, or Rust
     // codegen throws on every SEQUENCE/CHOICE. Defined in RustBackend.cpp.
     std::string format_tag_literal(const TypeTagSpec& tag_spec) const override;
 
-    // gambas-asn1#347: same reasoning as format_tag_literal's own comment —
-    // eff_tag is populated unconditionally for every member, so this must
-    // return real Rust syntax, not throw. Dead in practice today (no
-    // RustBackend.cpp call site ever reads SequenceMemberSpec::eff_tag/
-    // ChoiceAlternativeSpec::eff_tag — confirmed by grep — RustBackend
-    // computes its own tags via mbuiltin/resolved_tag instead), but must
-    // stay valid Rust in case that changes (e.g. CHOICE-member coverage).
+    // Same reasoning as format_tag_literal's own comment —
+    // resolved_tag is populated unconditionally for every member, so this
+    // must return real Rust syntax, not throw. Dead in practice today (no
+    // RustBackend.cpp call site ever reads SequenceMemberSpec::resolved_tag/
+    // ChoiceAlternativeSpec::resolved_tag — RustBackend computes its own
+    // tags via mbuiltin instead), but must stay valid Rust in case that
+    // changes (e.g. CHOICE-member coverage).
     std::string format_no_tag_literal() const override {
         return "asn1cpp_ber::tag::Tag { class: asn1cpp_ber::tag::TagClass::Context, number: 0, constructed: false }";
     }
 
-    // gambas-asn1#478: tdref is populated unconditionally for every
+    // tdref is populated unconditionally for every
     // SEQUENCE/CHOICE member (see Backend::format_type_descriptor_ref's own
     // doc), but RustBackend has no codec dispatch table wired up yet to read
-    // it — confirmed by grep, same status as needs_seqof_wrapper_reference()
+    // it — same status as needs_seqof_wrapper_reference()
     // below. Empty string is a valid, harmlessly-unused default; revisit
     // together with needs_seqof_wrapper_reference() once Rust grows its own
     // per-member descriptor table.
@@ -235,9 +230,9 @@ public:
                                  TypeOutputSession& session) const override;
     void emit_type_reference(const std::string& type_name, const std::string& filename,
                               TypeOutputSession& session) const override;
-    // gambas-asn1#300: dedupe_type_references() default (Backend.hpp) is
+    // dedupe_type_references() default (Backend.hpp) is
     // true and covers RustBackend's need — no override necessary here.
-    // gambas-asn1#312: needs_seqof_wrapper_reference() default (Backend.hpp)
+    // needs_seqof_wrapper_reference() default (Backend.hpp)
     // is true, tied to CppBackend's tdref/asn_DEF_<wrapper> descriptor
     // usage — RustBackend has no such table wiring yet, so the wrapper
     // reference is dead weight (unused_imports) today. Provisional, not a
@@ -252,7 +247,7 @@ public:
                                    const std::string& member_type, TypeOutputSession& session) const override;
     void finalize_output(const std::string& out_dir) const override;
 
-    // Single-file mode (gambas-asn1#262): Rust has no header/impl split.
+    // Single-file mode: Rust has no header/impl split.
     // Returning the same extension from both methods makes
     // TypeOutputSession::buffer() hand back the same stream for
     // emit_declaration's and emit_definition's content, merging them into one "<Type>.rs"
@@ -263,7 +258,7 @@ public:
 private:
     // Split declaration/definition halves — kept as private helpers so the
     // per-construct emission bodies don't need reshaping; the public emit_*
-    // overrides above just call both in sequence (gambas-asn1#265).
+    // overrides above just call both in sequence.
     void emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const;
     void emit_enumerated_definition(const EnumeratedSpec& spec, std::ostream& os) const;
     void emit_integer_declaration(const IntegerSpec& spec, std::ostream& os) const;
@@ -279,9 +274,9 @@ private:
 
     // Per-row real-vs-stub predicates for emit_sequence_definition/
     // emit_choice_definition — every generated SEQUENCE/SET/CHOICE always
-    // gets a real table and `Asn1Value` impl now (see
-    // `sequence::MemberAccess::Unsupported`'s doc, rust-runtime/ber), so
-    // these no longer gate whether a *type* gets emitted at all; they only
+    // gets a real table and `Asn1Value` impl (see
+    // `sequence::MemberAccess::Unsupported`'s doc, rust-runtime/ber). These
+    // predicates do not gate whether a *type* gets emitted at all; they only
     // decide whether a given member/alternative's own row is a real access
     // closure or an `Unsupported` stub. A referenced composite type (a
     // TypeRef to SEQUENCE/SET/CHOICE/ENUMERATED, or a TypeRef-aliased
