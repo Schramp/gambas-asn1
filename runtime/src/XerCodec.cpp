@@ -77,8 +77,8 @@ static std::string base64_decode(std::string_view in) {
 }
 
 // X.680 §11.15.5 Table 3 — escape sequences for control characters in an
-// "xmlcstring", used by the utf8 ENCODING-CONTROL XER instruction
-// (gambas-asn1#443). Codes 9 (tab), 10 (LF), 13 (CR) are excluded per the
+// "xmlcstring", used by the utf8 ENCODING-CONTROL XER instruction.
+// Codes 9 (tab), 10 (LF), 13 (CR) are excluded per the
 // table's own NOTE — those pass through literally, not as empty-element tags.
 static const char* control_char_tag_name(uint8_t c) {
     switch (c) {
@@ -107,7 +107,7 @@ static int control_char_from_tag_name(std::string_view name) {
     return -1;
 }
 
-// utf8 ENCODING-CONTROL instruction (X.693 §21, gambas-asn1#443): content
+// utf8 ENCODING-CONTROL instruction (X.693 §21): content
 // octets are raw UTF-8 text, written directly as XML character data except
 // for &/</> (standard XML entities) and the Table 3 control characters
 // (empty-element tags). Non-ASCII bytes (UTF-8 continuation/lead bytes,
