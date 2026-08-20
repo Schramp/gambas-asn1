@@ -34,7 +34,9 @@ struct TypeTagSpec {
     bool          constructed;  ///< True for constructed encoding form.
 };
 
-/// @brief A member/alternative's resolved wire tag —
+/// @brief A member/alternative's resolved wire tag — applies to SEQUENCE/SET
+///        members and CHOICE alternatives (see SequenceMemberSpec,
+///        ChoiceAlternativeSpec below, both of which inherit this) —
 ///        TypeTagSpec's shape plus the one extra fact only a member (not a
 ///        standalone type) can have: whether this tag came from the
 ///        member's own override (`[n]`/AUTOMATIC) or is simply the type's
