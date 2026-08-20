@@ -168,12 +168,17 @@ struct ElemShape {
 ///       against colliding with its own generated method names; a Rust
 ///       backend's needs will differ since Rust enum variants live in a
 ///       separate namespace from methods).
-struct EnumeratedSpec : TaggedTypeSpec {
-    struct Value { std::string asn1_name; long value; };
+/// @brief A single "identifier(value)" pair — an ENUMERATED named value
+///        (X.680 §20.6) or an INTEGER named number (X.680 §19.5). Both use
+///        this same shape (EnumeratedSpec::values, IntegerSpec::named_values)
+///        so the two constructs share one representation and one integer
+///        width instead of drifting independently.
+struct NamedValue { std::string asn1_name; int64_t value; };
 
+struct EnumeratedSpec : TaggedTypeSpec {
     std::string       type_name;   // final type identifier (see note above)
     std::string       xer_name;    // XER tag name (X.693) — not an identifier, no escaping needed
-    std::vector<Value> values;     // declaration order, auto-numbering resolved
+    std::vector<NamedValue> values; // declaration order, auto-numbering resolved
     bool              extensible;  // true if def.enum_values contained "..."
     int               root_count;  // count of values before the first extension marker
 };
@@ -189,8 +194,6 @@ struct EnumeratedSpec : TaggedTypeSpec {
 ///       PER needs the identical value, so it's computed once here rather
 ///       than re-derived per backend.
 struct IntegerSpec : TaggedTypeSpec {
-    struct NamedValue { std::string asn1_name; int64_t value; };
-
     std::string       type_name;
     std::string       xer_name;
     IntStorageKind    storage_kind;
