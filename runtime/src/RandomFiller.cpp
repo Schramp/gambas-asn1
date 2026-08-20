@@ -519,7 +519,7 @@ void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
         int len = rand_int(lo, hi);
         std::vector<uint8_t> b(len);
         if (def.xer_encoding == XerEncoding::Utf8) {
-            // ENCODING-CONTROL XER `::= utf8` (X.693 §21, gambas-asn1#443):
+            // ENCODING-CONTROL XER `::= utf8` (X.693 §21):
             // the field's own contract is "content octets are valid UTF-8
             // text" — arbitrary random bytes almost never honor that
             // (multi-byte sequences need specific continuation-byte
