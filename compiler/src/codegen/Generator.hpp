@@ -104,7 +104,7 @@ class Generator {
     sema::Resolver&         resolver_;
     std::set<std::string>   generated_names_;
     // Synthetic type names promoted for an anonymous nested SEQUENCE OF/SET
-    // OF element (generate_inline_types, gambas-asn1#427) — needed because
+    // OF element (generate_inline_types) — needed because
     // type_descriptor_ref_spec_for's own TypeRef-fallback branch (reached when
     // resolver_.resolve_ref can't find a dynamically-created synthetic
     // TypeDef, which is the normal case for every synthetic promotion) has
@@ -125,19 +125,18 @@ class Generator {
     std::set<std::string>   pdu_roots_;           // ASN.1 names of -pdu= root types (empty = generate all)
     std::set<std::string>   reachable_asn_names_; // populated by compute_reachable(); ASN.1 names
     std::set<fs::path>      known_files_;         // every path emit_type_files() intended to (re)write
-    // gambas-asn1#300: type names already write_type_reference()'d for the
-    // current type's declaration output. Cleared at the start of each
-    // emit_type_files() call (one type's generation pass). Consulted when
+    // Type names already write_type_reference()'d for the current type's
+    // declaration output. Cleared at the start of each emit_type_files()
+    // call (one type's generation pass). Consulted when
     // backend_.dedupe_type_references() is true (the default — see that
     // method's doc, Backend.hpp).
     std::set<std::string>   emitted_type_refs_;
                                                     // this run, whether or not its content actually changed —
-                                                    // used to remove now-stale generated files (gambas-asn1#262
-                                                    // follow-up: file count/extension is backend-owned and can
-                                                    // now vary per type/backend, e.g. a SEQUENCE turning into a
-                                                    // plain alias drops its .cpp file, or a schema regenerated
-                                                    // under a single-file backend drops the .cpp/.hpp split
-                                                    // entirely — neither used to be cleaned up).
+                                                    // consulted to remove now-stale generated files: file
+                                                    // count/extension is backend-owned and can vary per
+                                                    // type/backend, e.g. a SEQUENCE turning into a plain alias
+                                                    // drops its .cpp file, or a schema regenerated under a
+                                                    // single-file backend drops the .cpp/.hpp split entirely.
     std::unique_ptr<Backend> owned_backend_;      // set only when no external Backend is supplied
     Backend&                 backend_;            // naming/escaping — see Backend.hpp
 
@@ -146,7 +145,7 @@ public:
     ///        Generator.cpp to avoid a Generator.hpp <-> CppBackend.hpp cycle
     ///        (CppBackend.hpp includes Generator.hpp for the naming free functions).
     Generator(fs::path out_dir, sema::Resolver& res);
-    /// @brief Construct with an explicit backend (e.g. a future Rust backend, #217).
+    /// @brief Construct with an explicit backend (e.g. RustBackend).
     Generator(fs::path out_dir, sema::Resolver& res, Backend& backend)
         : out_dir_(std::move(out_dir)), resolver_(res), backend_(backend) {}
 
@@ -260,21 +259,17 @@ private:
     void generate_type(const ast::TypeDef& def, const ast::Module& mod);
     void generate_inline_types(const ast::TypeDef& def, const ast::Module& mod);
     /// @brief Write the output file(s) for one type definition, driven by a
-    ///        TypeOutputSession (gambas-asn1#262) instead of hardcoding a
-    ///        ".hpp"/".cpp" pair.
+    ///        TypeOutputSession instead of hardcoding a ".hpp"/".cpp" pair.
     /// @param def  Type definition to emit.
     /// @param mod  Owning module (provides tag default and OID for the file header comment).
     /// @param session The type's output session (already created by the caller).
-    /// @note gambas-asn1#265: used to be two separate top-level functions
-    ///       (emit_declaration/emit_definition) called back-to-back by
-    ///       emit_type_files, one call per stream. Merged into one so each
-    ///       per-construct dispatch branch can make a single combined
-    ///       backend_.emit_*() call instead of two. Always dispatches both
-    ///       halves; the definition half decides for itself whether a
-    ///       definition exists (e.g. none for a plain TypeRef alias) rather
-    ///       than relying on a separately-computed flag, and any buffer left
-    ///       empty afterward — including a backend's genuinely-empty
-    ///       declaration half — is simply not written.
+    /// @note Each per-construct dispatch branch makes one combined
+    ///       backend_.emit_*() call covering both the declaration and
+    ///       definition halves. The definition half decides for itself
+    ///       whether a definition exists (e.g. none for a plain TypeRef
+    ///       alias) rather than relying on a separately-computed flag, and
+    ///       any buffer left empty afterward — including a backend's
+    ///       genuinely-empty declaration half — is simply not written.
     void emit_type_body(const ast::TypeDef& def, const ast::Module& mod, TypeOutputSession& session);
     /// @brief Create the type's TypeOutputSession, call emit_type_body, then
     ///        write any non-empty resulting buffer to disk.
@@ -286,7 +281,7 @@ private:
 
     /// @brief Route a cross-type reference through backend_.emit_type_reference,
     ///        seeding a throwaway session so Backend never touches `target`
-    ///        directly (gambas-asn1#266 review) — Generator picks the real
+    ///        directly — Generator picks the real
     ///        stream (declaration body, pre-namespace redirect, deferred
     ///        post-namespace includes, a `.cpp`-side include, ...), Backend
     ///        only owns the reference text.
@@ -465,16 +460,16 @@ private:
 
     bool should_apply_auto_tags(const ast::TypeDef& def) const;
 
-    // gambas-asn1#347: resolved_tag is always populated with the member's
-    // final effective wire tag (MemberTagSpec — Backend.hpp) — computed via
+    // resolved_tag is always populated with the member's final effective
+    // wire tag (MemberTagSpec — Backend.hpp) — computed via
     // natural_tag_spec_for whether it comes from an override (explicit
     // `[n]`/AUTOMATIC, MemberTagSpec::tag_is_override true) or the type's
     // own natural tag (tag_is_override false). nullopt only for the one
     // case a member's type genuinely has no tag at all (an untagged
     // CHOICE — X.680 §28, no universal tag). No backend-specific string is
-    // computed here anymore (gambas-asn1#290/#347's eff_tag is gone) — each
-    // backend calls its own format_tag_literal/format_no_tag_literal on
-    // this structured data at the point of use.
+    // computed here — each backend calls its own
+    // format_tag_literal/format_no_tag_literal on this structured data at
+    // the point of use.
     struct TagResult { std::optional<MemberTagSpec> resolved_tag; bool is_explicit; };
     TagResult compute_member_tag(const ast::TypeDef& m,
                                  bool apply_auto_tags,
@@ -482,9 +477,9 @@ private:
 
     bool is_class_type(const ast::TypeDef& m) const;
 
-    // gambas-asn1#303: cycle detection for RustBackend's Box<T> decision —
-    // see SequenceMemberSpec::member_type_in_cycle's doc (Backend.hpp) for
-    // the full rationale.
+    // Cycle detection for RustBackend's Box<T> decision — see
+    // SequenceMemberSpec::member_type_in_cycle's doc (Backend.hpp) for the
+    // full rationale.
     bool type_reaches(const ast::TypeDef& from, const std::string& target,
                        std::set<std::string>& visited) const;
     bool member_type_in_cycle(const ast::TypeDef& m, const std::string& enclosing_name) const;

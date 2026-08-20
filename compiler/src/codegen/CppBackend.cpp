@@ -19,10 +19,9 @@ std::string CppBackend::format_tag_literal(const TypeTagSpec& tag_spec) const {
 }
 
 /// @brief Format a resolved TypeDescriptorRefSpec as a C++ reference
-///        expression to the target's `TypeDescriptor`. Verbatim switch
-///        moved from the former Generator::type_descriptor_ref_for
-///        (gambas-asn1#478) — Generator still decides *which* form applies
-///        (needs resolver access), this only renders the C++ syntax.
+///        expression to the target's `TypeDescriptor`. Generator decides
+///        *which* form applies (needs resolver access); this only renders
+///        the C++ syntax.
 /// @param spec The resolved decision (kind + builtin/name).
 /// @return A C++ expression string, e.g. `"&asn1::asn_DEF_Integer"`,
 ///         `"&Foo::asn_DEF"`, `"&asn_DEF_Bar"`, or `"nullptr"`.
@@ -310,7 +309,7 @@ void CppBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::ost
     os << "};\n\n";
 
     // TypeDescriptor
-    // gambas-asn1#342: honor a top-level [n] IMPLICIT/EXPLICIT tag on this
+    // Honor a top-level [n] IMPLICIT/EXPLICIT tag on this
     // type assignment itself (X.690 §8.14) — nullopt only for CHOICE
     // (natural_tag_spec_for), never for ENUMERATED, so the fallback is
     // defensive, not a live case.
@@ -391,7 +390,7 @@ void CppBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& 
 
     os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
     os << std::format("    \"{}\",\n", spec.xer_name);
-    // gambas-asn1#342: honor a top-level [n] IMPLICIT/EXPLICIT tag on this
+    // Honor a top-level [n] IMPLICIT/EXPLICIT tag on this
     // type assignment itself (X.690 §8.14) — see emit_enumerated_definition's
     // matching comment.
     os << std::format("    {},\n", spec.tag ? format_tag_literal(*spec.tag) : "asn1::Tag{}");
@@ -721,10 +720,9 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
 void CppBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
     os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", spec.type_name);
     os << std::format("    {},\n", spec.elem_ref);
-    // gambas-asn1#467: extensible was untracked on SeqOfSpec until now — a
-    // SEQUENCE OF/SET OF's own SIZE(...,...) extension marker (X.680
-    // §51.8.3) never reached this Constraints table, so SeqOfSpec::validate
-    // (TypeDescriptor.hpp) enforced the bound as if non-extensible.
+    // A SEQUENCE OF/SET OF's own SIZE(...,...) extension marker (X.680
+    // §51.8.3) must reach this Constraints table, or SeqOfSpec::validate
+    // (TypeDescriptor.hpp) enforces the bound as if non-extensible.
     int flags = (spec.size_upper ? asn1::Constraints::SIZE_CONSTRAINED : 0) |
                 (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
     os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
@@ -733,7 +731,7 @@ void CppBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os)
         os << std::format("    \"{}\",\n", *spec.elem_xer_name);
     os << "};\n\n";
 
-    // gambas-asn1#342: honor a top-level [n] IMPLICIT/EXPLICIT tag on this
+    // Honor a top-level [n] IMPLICIT/EXPLICIT tag on this
     // type assignment itself (X.690 §8.14) — see emit_enumerated_definition's
     // matching comment.
     emit_type_descriptor(os, spec.type_name, spec.xer_name,
@@ -749,7 +747,7 @@ void CppBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) 
     emit_seq_of_definition(spec, session.buffer(definition_extension()));
 }
 
-// gambas-asn1#419: set_<member>() classification — same shape as
+// set_<member>() classification — same shape as
 // Generator::MemberSetterInfo (a private nested type, not reusable here),
 // redeclared locally rather than exposed just for this.
 struct SetterInfo {
@@ -874,9 +872,8 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
             std::string def_cmp = (r.has_default && r.def_setter != "nullptr")
                 ? std::format("&_isdef_{}_{}", cname, r.mname)
                 : "nullptr";
-            // gambas-asn1#419: offset_expr/ops used to be pre-formatted on the
-            // row; both are derivable here from cname/r.mname/r.optional alone,
-            // no Generator-private state needed.
+            // offset_expr/ops are derivable here from cname/r.mname/r.optional
+            // alone, no Generator-private state needed.
             std::string offset_expr = r.optional ? "asn1::kInvalidMemberOffset"
                 : std::format("ASN1CPP_OFFSETOF({}, {})", cname, r.mname);
             std::string ops = r.optional
@@ -908,7 +905,7 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
     os << "};\n\n";
 
     // TypeDescriptor
-    // gambas-asn1#342: honor a top-level [n] IMPLICIT/EXPLICIT tag on this
+    // Honor a top-level [n] IMPLICIT/EXPLICIT tag on this
     // type assignment itself (X.690 §8.14) — see emit_enumerated_definition's
     // matching comment.
     emit_type_descriptor(os, cname,
