@@ -284,7 +284,7 @@ void CppBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::ost
     // value2enum table (sorted by value for binary search)
     auto sorted = spec.values;
     std::sort(sorted.begin(), sorted.end(),
-              [](const EnumeratedSpec::Value& a, const EnumeratedSpec::Value& b) {
+              [](const NamedValue& a, const NamedValue& b) {
                   return a.value < b.value;
               });
 

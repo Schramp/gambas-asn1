@@ -587,11 +587,11 @@ static EnumeratedSpec build_enumerated_spec(const ast::TypeDef& def,
     spec.extensible = false;
     spec.root_count  = 0;
 
-    long auto_val = 0;
+    int64_t auto_val = 0;
     bool past_ext = false;
     for (const auto& ev : def.enum_values) {
         if (ev.name == "...") { spec.extensible = true; past_ext = true; continue; }
-        long v = static_cast<long>(ev.number.value_or(auto_val));
+        int64_t v = ev.number.value_or(auto_val);
         spec.values.push_back({ev.name, v});
         auto_val = v + 1;
         if (!past_ext) ++spec.root_count;
