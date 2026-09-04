@@ -584,7 +584,7 @@ static EnumeratedSpec build_enumerated_spec(const ast::TypeDef& def,
     EnumeratedSpec spec;
     spec.type_name = type_name;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
-    spec.asn1_name = def.name;
+    spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
     spec.extensible = false;
     spec.root_count  = 0;
 
@@ -658,7 +658,7 @@ IntegerSpec Generator::build_integer_spec(const ast::TypeDef& def, const std::st
     IntegerSpec spec;
     spec.type_name = type_name;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
-    spec.asn1_name = def.name;
+    spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
     spec.storage_kind = classify_integer_storage(def);
     spec.tag = natural_tag_spec_for(def);
     spec.is_explicit = type_is_explicit(def);
@@ -1363,7 +1363,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
     SequenceSpec spec;
     spec.type_name = cname;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
-    spec.asn1_name = def.name;
+    spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
     spec.has_optional_members = has_optional_members;
     spec.mcount = mcount;
     spec.ext_at = ext_at;
@@ -1622,7 +1622,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
     ChoiceSpec spec;
     spec.type_name = cname;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
-    spec.asn1_name = def.name;
+    spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
     spec.count = count;
     spec.ext_at = ext_at;
 
@@ -2032,7 +2032,7 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     BuiltinAliasSpec spec;
     spec.type_name = type_name;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
-    spec.asn1_name = def.name;
+    spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
     // Defensive fallback (unreachable in practice — this is only called from
     // emit_definition's dispatch after confirming def.body is a BuiltinType): if
     // absent, fall back to Utf8String, whose LUT entries are the generic
@@ -2118,7 +2118,7 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     SeqOfSpec spec;
     spec.type_name = cname;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
-    spec.asn1_name = def.name;
+    spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
     spec.is_set_of = def.is_set_of();
     spec.tag = natural_tag_spec_for(def);
     spec.is_explicit = type_is_explicit(def);
@@ -2196,6 +2196,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 generated_names_.insert(synth_name);
                 auto synthetic = std::make_shared<ast::TypeDef>(elem);
                 synthetic->name = synth_name;
+                synthetic->origin_label = was_anon ? def.name : elem.name;
                 if (was_anon) {
                     synthetic->xer_name = elem.is_sequence() ? "SEQUENCE"
                                         : elem.is_set()      ? "SET"
@@ -2231,6 +2232,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                     generated_names_.insert(elem_type_name);
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
                     synthetic->name = elem_type_name;
+                    synthetic->origin_label = was_anon ? m->name : elem.name;
                     if (was_anon) {
                         synthetic->xer_name = elem.is_sequence() ? "SEQUENCE"
                                             : elem.is_set()      ? "SET"
@@ -2270,6 +2272,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                     generated_names_.insert(elem_type_name);
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
                     synthetic->name = elem_type_name;
+                    synthetic->origin_label = was_anon ? m->name : elem.name;
                     if (was_anon) synthetic->xer_name = elem.is_seq_of() ? "SEQUENCE" : "SET";
                     generate_inline_types(*synthetic, mod);
                     current_type_ = elem_type_name;
@@ -2283,6 +2286,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                     generated_names_.insert(elem_type_name);
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
                     synthetic->name = elem_type_name;
+                    synthetic->origin_label = was_anon ? m->name : elem.name;
                     current_type_ = elem_type_name;
                     emit_type_files(elem_type_name, *synthetic, mod);
                 }
@@ -2326,6 +2330,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
 
         auto synthetic = std::make_shared<ast::TypeDef>(*m);
         synthetic->name = synth_name;
+        synthetic->origin_label = m->name;
         // Same reasoning as the SeqOf wrapper above: the member's own [n] tag must
         // not be mistaken for this synthetic type's own top-level declared tag.
         synthetic->tag = ast::Tag{};
@@ -2363,6 +2368,7 @@ void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
                 generated_names_.insert(elem_name);
                 auto synthetic = std::make_shared<ast::TypeDef>(*elem_ptr);
                 synthetic->name = elem_name;
+                synthetic->origin_label = elem_ptr->name.empty() ? def.name : elem_ptr->name;
                 auto save = current_type_;
                 current_type_ = elem_name;
                 emit_type_files(elem_name, *synthetic, mod);
