@@ -13,6 +13,7 @@
 #include "../ast/Tag.hpp"
 #include "../sema/Resolver.hpp"
 #include "Backend.hpp"
+#include "Casing.hpp"
 #include <optional>
 #include <limits>
 #include <memory>
@@ -20,15 +21,6 @@
 namespace asn1::codegen {
 
 namespace fs = std::filesystem;
-
-// Converts an ASN.1 type name to a valid C++ identifier.
-// "My-Type" -> "MyType"
-inline std::string to_cpp_name(std::string_view s) {
-    std::string out;
-    for (char c : s)
-        out += (c == '-') ? '_' : c;
-    return out;
-}
 
 // FNV-1a hash of s — used to generate a deterministic, build-constant suffix.
 inline uint32_t fnv1a_hash(std::string_view s) {
@@ -68,12 +60,6 @@ inline std::string safe_name(std::string n,
     char buf[10];
     snprintf(buf, sizeof(buf), "%08x", fnv1a_hash(n));
     return n + "_" + buf;
-}
-
-// Upper-cases the first character of a C++ identifier string.
-inline std::string capitalize_first(std::string s) {
-    if (!s.empty()) s[0] = (char)std::toupper((unsigned char)s[0]);
-    return s;
 }
 
 // Builds the synthetic C++ name for an inline member type: parent + CapitalizedMember.
