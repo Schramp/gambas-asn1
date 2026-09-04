@@ -70,6 +70,8 @@ struct MemberTagSpec : TypeTagSpec {
 ///       type's tag without that type's own standalone descriptor changing,
 ///       and vice versa).
 struct TaggedTypeSpec {
+    std::string type_name;   // final resolved type identifier
+    std::string xer_name;    // XER tag name (X.693) — not an identifier, no escaping needed
     std::optional<TypeTagSpec> tag;
     // True when `tag` is an EXPLICIT override (X.690 §8.14.3) — the wire
     // encoding must *wrap* a nested TLV using this type's own natural tag
@@ -179,8 +181,6 @@ struct NamedValue {
 };
 
 struct EnumeratedSpec : TaggedTypeSpec {
-    std::string       type_name;   // final type identifier (see note above)
-    std::string       xer_name;    // XER tag name (X.693) — not an identifier, no escaping needed
     std::vector<NamedValue> values; // declaration order, auto-numbering resolved
     bool              extensible;  // true if def.enum_values contained "..."
     int               root_count;  // count of values before the first extension marker
@@ -197,8 +197,6 @@ struct EnumeratedSpec : TaggedTypeSpec {
 ///       PER needs the identical value, so it's computed once here rather
 ///       than re-derived per backend.
 struct IntegerSpec : TaggedTypeSpec {
-    std::string       type_name;
-    std::string       xer_name;
     IntStorageKind    storage_kind;
     std::vector<NamedValue> named_values;  // INTEGER { foo(0), bar(1) } style constants
 
@@ -222,8 +220,6 @@ struct IntegerSpec : TaggedTypeSpec {
 ///       needs to distinguish OCTET STRING from BOOLEAN etc. the same way,
 ///       so the AST's own classification is already the right shape.
 struct BuiltinAliasSpec : TaggedTypeSpec {
-    std::string            type_name;
-    std::string            xer_name;
     ast::BuiltinType        builtin_type;
     // tag (inherited): natural tag (X.690 §8.1); always present in practice —
     // builtin-alias types are never CHOICE, the only case natural-tag
@@ -327,8 +323,6 @@ struct MemberTypeDescriptorSpec {
 ///        reference expression since it comes from the (already
 ///        backend-delegated) emit_member_type_descriptor call.
 struct SeqOfSpec : TaggedTypeSpec {
-    std::string type_name;
-    std::string xer_name;
     std::string elem_ref;        // reference expression to the element's TypeDescriptor
     std::string elem_type;       // element's native storage type (hpp `using X = VectorSeqOf<elem_type>` only)
     int         range_bits;
@@ -478,8 +472,6 @@ struct SequenceMemberSpec : TaggedMemberSpec {
 ///        See SequenceMemberSpec's note on why several fields stay
 ///        pre-formatted C++ text for this issue's scope.
 struct SequenceSpec : TaggedTypeSpec {
-    std::string type_name;
-    std::string xer_name;
     bool        has_optional_members;
     int         mcount;
     int         ext_at;
@@ -521,8 +513,6 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
 ///       decides *whether* and *what*; CppBackend formats the resulting
 ///       arrays and ChoiceSpec aggregate fields into C++ text.
 struct ChoiceSpec : TaggedTypeSpec {
-    std::string type_name;
-    std::string xer_name;
     int count;
     int ext_at;
     std::vector<ChoiceAlternativeSpec> alternatives;
