@@ -584,6 +584,7 @@ static EnumeratedSpec build_enumerated_spec(const ast::TypeDef& def,
     EnumeratedSpec spec;
     spec.type_name = type_name;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.asn1_name = def.name;
     spec.extensible = false;
     spec.root_count  = 0;
 
@@ -657,6 +658,7 @@ IntegerSpec Generator::build_integer_spec(const ast::TypeDef& def, const std::st
     IntegerSpec spec;
     spec.type_name = type_name;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.asn1_name = def.name;
     spec.storage_kind = classify_integer_storage(def);
     spec.tag = natural_tag_spec_for(def);
     spec.is_explicit = type_is_explicit(def);
@@ -1361,6 +1363,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
     SequenceSpec spec;
     spec.type_name = cname;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.asn1_name = def.name;
     spec.has_optional_members = has_optional_members;
     spec.mcount = mcount;
     spec.ext_at = ext_at;
@@ -1619,6 +1622,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
     ChoiceSpec spec;
     spec.type_name = cname;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.asn1_name = def.name;
     spec.count = count;
     spec.ext_at = ext_at;
 
@@ -2028,6 +2032,7 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     BuiltinAliasSpec spec;
     spec.type_name = type_name;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.asn1_name = def.name;
     // Defensive fallback (unreachable in practice — this is only called from
     // emit_definition's dispatch after confirming def.body is a BuiltinType): if
     // absent, fall back to Utf8String, whose LUT entries are the generic
@@ -2113,6 +2118,7 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     SeqOfSpec spec;
     spec.type_name = cname;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.asn1_name = def.name;
     spec.is_set_of = def.is_set_of();
     spec.tag = natural_tag_spec_for(def);
     spec.is_explicit = type_is_explicit(def);

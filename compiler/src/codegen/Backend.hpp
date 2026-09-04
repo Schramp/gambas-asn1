@@ -72,6 +72,8 @@ struct MemberTagSpec : TypeTagSpec {
 struct TaggedTypeSpec {
     std::string type_name;   // final resolved type identifier
     std::string xer_name;    // XER tag name (X.693) — not an identifier, no escaping needed
+    std::string asn1_name;   // raw ASN.1 type name, before any case conversion; empty for
+                              // an anonymous/synthetic type with no ASN.1 name of its own
     std::optional<TypeTagSpec> tag;
     // True when `tag` is an EXPLICIT override (X.690 §8.14.3) — the wire
     // encoding must *wrap* a nested TLV using this type's own natural tag
