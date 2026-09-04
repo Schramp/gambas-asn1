@@ -172,6 +172,10 @@ static bool is_sizeable_string_kind(ast::BuiltinType bt) {
 void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
+    // Doc comment ties the generated name back to its ASN.1 source —
+    // matters most at the edges variant_name's word-split conversion can
+    // erase (e.g. "utf-8"/"utf8" both -> "Utf8", "a-b"/"ab" both -> "Ab").
+    if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     os << "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n";
     os << "#[repr(i64)]\n";
     os << std::format("pub enum {} {{\n", tname);
@@ -189,6 +193,7 @@ void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::o
             throw std::runtime_error(std::format(
                 "RustBackend: ENUMERATED '{}' — values '{}' and '{}' both map to Rust variant '{}'",
                 tname, it->second, v.asn1_name, vname));
+        os << std::format("    /// ASN.1: `{}`\n", v.asn1_name);
         os << std::format("    {} = {},\n", vname, v.value);
     }
     if (spec.extensible)
@@ -343,10 +348,13 @@ void RustBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession&
 void RustBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
+    if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     os << std::format("pub type {} = {};\n\n", tname, native_int_type(spec.storage_kind));
 
-    for (const auto& v : spec.named_values)
+    for (const auto& v : spec.named_values) {
+        os << std::format("/// ASN.1: `{}`\n", v.asn1_name);
         os << std::format("pub const {}: i64 = {};\n", value_name(v.asn1_name), v.value);
+    }
     if (!spec.named_values.empty()) os << "\n";
 
     // `pub type X = i64/u64/i128;` is a real Rust type alias (not a
@@ -1002,6 +1010,7 @@ bool RustBackend::choice_alternative_has_tag(const ChoiceAlternativeSpec& a) con
 }
 
 void RustBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostream& os) const {
+    if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     os << "#[derive(Debug, Clone, Default, PartialEq)]\n";
     os << std::format("pub struct {} {{\n", spec.type_name);
     for (const auto& m : spec.members) {
@@ -1016,6 +1025,7 @@ void RustBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostre
         // unrelated unique_ptr-everywhere convention — was rejected).
         std::string mtype = rust_seqof_member_field_type(m);
         std::string ftype = m.member_type_in_cycle ? std::format("Box<{}>", mtype) : mtype;
+        os << std::format("    /// ASN.1: `{}`\n", m.asn1_name);
         os << std::format("    pub {}: {},\n", m.mname,
                            m.optional ? std::format("Option<{}>", ftype) : ftype);
     }
@@ -1415,6 +1425,7 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
     // it into a hard failure the moment that harness compiles real codegen
     // output instead of hand-written mirrors). Same fix ENUMERATED already
     // needed (variant_name(), just above emit_enumerated_declaration).
+    if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     os << "#[derive(Debug, Clone, PartialEq)]\n";
     os << std::format("pub enum {} {{\n", spec.type_name);
     // Same collision guard as emit_enumerated_declaration —
@@ -1436,6 +1447,7 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
         // its own still-incomplete type) and box for the same reason — see
         // CppBackend::emit_choice_declaration's val_storage_ comment.
         bool boxed = (a.mtype == spec.type_name);
+        os << std::format("    /// ASN.1: `{}`\n", a.asn1_name);
         os << std::format("    {}({}{}{}),\n", vname,
                           boxed ? "Box<" : "", rust_seqof_alt_mtype(a.mtype), boxed ? ">" : "");
     }
@@ -1903,6 +1915,7 @@ void RustBackend::emit_namespace_close(const std::string& name, TypeOutputSessio
 ///       needing `.0` everywhere.
 void RustBackend::emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, std::ostream& os) const {
     std::string native = native_builtin_type(spec.builtin_type);
+    if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     os << "#[derive(Debug, Clone, Default, PartialEq)]\n";
     os << std::format("pub struct {}(pub {});\n\n", spec.type_name, native);
     os << std::format("impl std::ops::Deref for {} {{\n", spec.type_name);
@@ -1935,6 +1948,7 @@ void RustBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSes
 ///       that impl. `Deref`/`DerefMut` to `Vec<ElemType>` keep `.len()`/
 ///       `.iter()`/indexing working without needing `.0` everywhere.
 void RustBackend::emit_seq_of_declaration(const SeqOfSpec& spec, std::ostream& os) const {
+    if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     os << "#[derive(Debug, Clone, Default, PartialEq)]\n";
     os << std::format("pub struct {}(pub Vec<{}>);\n\n", spec.type_name, spec.elem_type);
     os << std::format("impl std::ops::Deref for {} {{\n", spec.type_name);
