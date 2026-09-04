@@ -172,7 +172,7 @@ static bool is_sizeable_string_kind(ast::BuiltinType bt) {
 void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
-    // Doc comment ties the generated name back to its ASN.1 source (#358) —
+    // Doc comment ties the generated name back to its ASN.1 source —
     // matters most at the edges variant_name's word-split conversion can
     // erase (e.g. "utf-8"/"utf8" both -> "Utf8", "a-b"/"ab" both -> "Ab").
     if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);

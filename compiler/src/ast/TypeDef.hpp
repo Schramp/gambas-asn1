@@ -71,10 +71,11 @@ struct TypeDef : Node {
     // Set only when this TypeDef is a synthetic promotion of an anonymous
     // inline construct (generate_inline_types) — `name` at that point holds
     // the compiler-generated backend identifier, not a real ASN.1 name, so
-    // callers wanting a human-traceable label (e.g. doc comments, #358) need
-    // this instead: the original ASN.1 identifier if the promoted element
-    // had one of its own, otherwise the enclosing field/type name it was
-    // promoted from. Empty for an ordinary named type (use `name` there).
+    // callers wanting a human-traceable label (e.g. generated doc comments)
+    // need this instead: the original ASN.1 identifier if the promoted
+    // element had one of its own, otherwise the enclosing field/type name
+    // it was promoted from. Empty for an ordinary named type (use `name`
+    // there).
     std::string origin_label;
     XerEncoding xer_encoding = XerEncoding::Default;
 
