@@ -557,6 +557,15 @@ pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
 /// DEFAULT-valued member (`m.set_default` — see `MemberDescriptor`'s own
 /// doc) gets its schema default filled in here instead of being left
 /// however `T::default()` left it.
+///
+/// Not a candidate for a tag→member lookup table: X.690 §8.9 requires
+/// components in declared order on the wire ("shall consist of... one
+/// data value from each of the types listed... in the order of their
+/// appearance in the definition"), so this loop already has to walk
+/// declared order to know which member's absence a given peek is
+/// testing for. Each member's check is already O(1) (one peek + compare);
+/// a hashmap would add hashing/indirection on top of that same O(1)
+/// result, not replace a scan that doesn't otherwise exist.
 pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut Reader) -> Result<T, DecodeError> {
     let mut result = T::default();
     for m in spec.members {
