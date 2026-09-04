@@ -662,6 +662,16 @@ private:
             if (mbr.tag.cls == TagClass::Context && mbr.tag_is_override) {
                 auto outer = inner.read_tlv();
                 if (!outer) return decode_err(outer.error());
+                if (outer->tag.cls != mbr.tag.cls || outer->tag.number != mbr.tag.number) {
+                    // Mandatory members have no presence check to piggyback a
+                    // tag check on (unlike the optional-member branch above);
+                    // without this, a non-conformant/corrupted encoder that
+                    // put a different member's TLV here (X.690 §8.9 requires
+                    // declared order) would decode silently — worst case for
+                    // an IMPLICIT member, since the outer tag is consumed and
+                    // there's no natural tag left downstream to catch it.
+                    return decode_err(DecodeError(std::string("wrong tag for ") + def.name + "." + mbr.name));
+                }
                 if (mbr.is_explicit) {
                     if (debug_flags() & DBG_BER_SEQ)
                         std::fprintf(stderr,
