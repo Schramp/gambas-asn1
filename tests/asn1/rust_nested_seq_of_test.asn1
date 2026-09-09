@@ -1,0 +1,20 @@
+-- Regression coverage: an unnamed (anonymous, inline) nested SEQUENCE
+-- OF/SET OF element must get a real, correctly-typed wrapper at every
+-- nesting level (SeqOf<SeqOf<i64>>, SeqOf<SetOf<OctetString>>, etc.), not
+-- fall back to an unsupported bare Vec<Vec<T>> (no Asn1Value impl —
+-- coherence-blocked, same reasoning octet_string::OctetString's own module
+-- doc gives) or the wrong wrapper at a given depth (SEQUENCE OF and SET OF
+-- both render identically as intermediate placeholder text, so picking the
+-- wrong one at any level would encode the wrong wire tag).
+
+RustNestedSeqOfTest DEFINITIONS ::= BEGIN
+
+    Matrix ::= SEQUENCE {
+        rows SEQUENCE OF SEQUENCE OF INTEGER
+    }
+
+    MixedNesting ::= SEQUENCE {
+        groups SEQUENCE OF SET OF OCTET STRING
+    }
+
+END

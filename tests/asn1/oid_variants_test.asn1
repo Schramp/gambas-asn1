@@ -1,0 +1,22 @@
+-- gambas-asn1#349: OBJECT IDENTIFIER coverage beyond the minimal required-
+-- member case oid_test.asn1 already exercises (OPTIONAL member, CHOICE
+-- alternative, and an IMPLICIT-tagged member) — each takes a different
+-- RustBackend.cpp code path (MemberAccess::Scalar vs TaggedScalar,
+-- AlternativeSpec).
+
+OidVariantsTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+    HasOptionalOid ::= SEQUENCE {
+        id  OBJECT IDENTIFIER OPTIONAL
+    }
+
+    OidOrInt ::= CHOICE {
+        id   OBJECT IDENTIFIER,
+        num  INTEGER
+    }
+
+    HasTaggedOid ::= SEQUENCE {
+        id  [3] OBJECT IDENTIFIER
+    }
+
+END

@@ -1,0 +1,9 @@
+[package]
+name = "asn1cpp-ber"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust BER codec primitives (gambas-asn1#218) — no FFI to the C++ runtime."
+
+[lib]
+name = "asn1cpp_ber"
+path = "src/lib.rs"

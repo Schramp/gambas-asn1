@@ -33,6 +33,8 @@ add_executable(asn1cpp
     ${BISON_asn1_parser_OUTPUTS}
     ${REFLEX_LEXER_SRC}
     src/codegen/Generator.cpp
+    src/codegen/CppBackend.cpp
+    src/codegen/RustBackend.cpp
     src/main.cpp
 )
 

@@ -111,6 +111,14 @@ static void ber_encode_implicit_tagged(const BerCodec& codec, BerWriter& w,
                  static_cast<std::size_t>(new_tag_bytes));
 }
 
+// Only called for a member/alternative's own real tag override
+// (MemberDescriptor::tag_is_override) — X.680 §30.1/30.3: `x [7] EXPLICIT
+// SomeType` names a genuine TaggedType construction, so `[7]` wraps
+// SomeType's complete encoding (whatever that already is) as an
+// additional, cascading layer. A bare `x SomeType` reference carries no
+// such construction at all and is never routed through here — see the
+// dispatch sites below, which delegate straight to `codec.encode`/
+// `codec.decode` on the referenced type's own descriptor in that case.
 static void ber_encode_explicit_tagged(const BerCodec& codec, BerWriter& w,
                                        const Tag& ctx_tag,
                                        const TypeDescriptor& mdef, const Asn1Object* mptr) {
@@ -560,7 +568,7 @@ struct SequenceBerHandler final : IBerTypeHandler {
                 const auto& mdef = *mbr.type_descriptor;
                 ValidatePathScope _vps{mbr.name};
 
-                if (mbr.tag.cls == TagClass::Context) {
+                if (mbr.tag.cls == TagClass::Context && mbr.tag_is_override) {
                     if (mbr.is_explicit) {
                         Tag exp_tag{mbr.tag.cls, mbr.tag.number, true};
                         if (debug_flags() & DBG_BER_WRITE)
@@ -572,6 +580,11 @@ struct SequenceBerHandler final : IBerTypeHandler {
                                                    def.name, mbr.name);
                     }
                 } else {
+                    // Untagged member, or a bare type reference whose tag is
+                    // merely descriptive of the referenced type's own tag
+                    // (X.680 §30.1/30.3 — no TaggedType construction on this
+                    // member itself): delegate to the type's own encode,
+                    // which already knows how to write its own tag/wrap.
                     if (debug_flags() & DBG_BER_WRITE)
                         std::fprintf(stderr, "[BER-WRITE] %s.%s untagged type=%s\n",
                                      def.name, mbr.name, mdef.name);
@@ -646,9 +659,19 @@ private:
             const auto& mdef = *mbr.type_descriptor;
             ValidatePathScope _vps{mbr.name};
 
-            if (mbr.tag.cls == TagClass::Context) {
+            if (mbr.tag.cls == TagClass::Context && mbr.tag_is_override) {
                 auto outer = inner.read_tlv();
                 if (!outer) return decode_err(outer.error());
+                if (outer->tag.cls != mbr.tag.cls || outer->tag.number != mbr.tag.number) {
+                    // Mandatory members have no presence check to piggyback a
+                    // tag check on (unlike the optional-member branch above);
+                    // without this, a non-conformant/corrupted encoder that
+                    // put a different member's TLV here (X.690 §8.9 requires
+                    // declared order) would decode silently — worst case for
+                    // an IMPLICIT member, since the outer tag is consumed and
+                    // there's no natural tag left downstream to catch it.
+                    return decode_err(DecodeError(std::string("wrong tag for ") + def.name + "." + mbr.name));
+                }
                 if (mbr.is_explicit) {
                     if (debug_flags() & DBG_BER_SEQ)
                         std::fprintf(stderr,
@@ -664,6 +687,10 @@ private:
                     if (!ok) return ok;
                 }
             } else {
+                // Untagged member, or a bare type reference whose tag is
+                // merely descriptive (see the matching encode-side comment
+                // above) — delegate to the type's own decode, which reads
+                // and unwraps its own tag itself.
                 BerDecodeStream ms{inner};
                 auto ok = codec.decode(ms, mdef, mptr);
                 if (!ok) return ok;
@@ -691,7 +718,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         const auto& mdef = *alt.type_descriptor;
         ValidatePathScope _vps{alt.name};
 
-        if (alt.tag.cls == TagClass::Context) {
+        if (alt.tag.cls == TagClass::Context && alt.tag_is_override) {
             if (alt.is_explicit) {
                 Tag exp_tag{alt.tag.cls, alt.tag.number, true};
                 if (debug_flags() & DBG_BER_WRITE)
@@ -728,7 +755,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 const auto& mdef = *alt.type_descriptor;
                 ValidatePathScope _vps{alt.name};
                 DecodeResult ok = decode_ok();
-                if (alt.tag.cls == TagClass::Context) {
+                if (alt.tag.cls == TagClass::Context && alt.tag_is_override) {
                     auto outer = r.read_tlv();
                     if (!outer) return decode_err(outer.error());
                     if (alt.is_explicit) {
@@ -767,7 +794,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 const auto& mdef = *alt.type_descriptor;
                 ValidatePathScope _vps{alt.name};
                 DecodeResult ok = decode_ok();
-                if (alt.tag.cls == TagClass::Context) {
+                if (alt.tag.cls == TagClass::Context && alt.tag_is_override) {
                     auto outer = r.read_tlv();
                     if (!outer) return decode_err(outer.error());
                     if (alt.is_explicit) {
@@ -799,7 +826,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             const auto& mdef = *alt.type_descriptor;
             ValidatePathScope _vps{alt.name};
             DecodeResult ok = decode_ok();
-            if (alt.tag.cls == TagClass::Context) {
+            if (alt.tag.cls == TagClass::Context && alt.tag_is_override) {
                 auto outer = r.read_tlv();
                 if (!outer) return decode_err(outer.error());
                 if (alt.is_explicit) {
@@ -975,6 +1002,23 @@ void BerCodec::encode(IEncodeStream& dst,
 #endif
     auto& s = static_cast<BerEncodeStream&>(dst);
     BerWriter& w = s.writer();
+    // X.690 §8.14.3 — a type's own top-level EXPLICIT tag wraps a nested
+    // TLV using its natural tag; it does not substitute for it the way
+    // IMPLICIT does. def.tag is the outer wrapper here;
+    // the inner TLV is this same def's own encoding, just with its natural
+    // tag (def.natural_tag) instead of the override, and is_explicit
+    // cleared so a self-referential def (there are none today, but nothing
+    // stops one) can't recurse into this branch a second time.
+    if (def.is_explicit) {
+        w.write_constructed(def.tag, [&](BerWriter& w2) {
+            TypeDescriptor inner = def;
+            inner.tag = def.natural_tag;
+            inner.is_explicit = false;
+            BerEncodeStream ms{w2};
+            inner.ber_handler->encode(*this, w2, inner, src);
+        });
+        return;
+    }
     def.ber_handler->encode(*this, w, def, src);
 }
 
@@ -984,7 +1028,27 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
 {
     auto& s = static_cast<BerDecodeStream&>(src);
     BerReader& r = s.reader();
-    DecodeResult res = def.ber_handler->decode(*this, r, def, dest);
+    DecodeResult res = decode_ok();
+    if (def.is_explicit) {
+        // Read the outer wrapper TLV (def.tag), then decode its content as
+        // this same def's own natural-tag encoding — mirror of the encode
+        // side above.
+        auto outer = r.read_tlv();
+        if (!outer) {
+            res = decode_err(outer.error());
+        } else if (outer->tag != def.tag) {
+            res = decode_err(DecodeError(
+                std::string("BerCodec: expected EXPLICIT wrapper tag for ") + def.name));
+        } else {
+            BerReader inner_r = r.sub(outer->value);
+            TypeDescriptor inner = def;
+            inner.tag = def.natural_tag;
+            inner.is_explicit = false;
+            res = inner.ber_handler->decode(*this, inner_r, inner, dest);
+        }
+    } else {
+        res = def.ber_handler->decode(*this, r, def, dest);
+    }
 
 #if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_DECODE)
     if (res.has_value() && !def.is_any && !(debug_flags() & DBG_NO_VALIDATE)) {

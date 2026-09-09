@@ -1,0 +1,21 @@
+-- gambas-asn1#349: REAL coverage beyond the minimal required-member case
+-- real_test.asn1 already exercises (OPTIONAL member, CHOICE alternative,
+-- and an IMPLICIT-tagged member) — each takes a different RustBackend.cpp
+-- code path (MemberAccess::Scalar vs TaggedScalar, AlternativeSpec).
+
+RealVariantsTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+    HasOptionalReal ::= SEQUENCE {
+        value  REAL OPTIONAL
+    }
+
+    RealOrInt ::= CHOICE {
+        value  REAL,
+        num    INTEGER
+    }
+
+    HasTaggedReal ::= SEQUENCE {
+        value  [3] REAL
+    }
+
+END

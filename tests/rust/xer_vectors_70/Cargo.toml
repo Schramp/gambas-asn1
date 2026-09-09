@@ -1,0 +1,14 @@
+[package]
+name = "xer-vectors-70-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "gambas-asn1#324: decode/re-encode every real asn1c data-70 XER fixture against compiler-generated 70-xer-test-OK.asn1 types, mirroring tests/seq/test_xer_vectors_70.cpp's check-70.c semantics. build.rs pulls the generated PDU.rs/.../lib.rs from the directory named by ASN1CPP_RUST_XV70_GEN_DIR (set by tests/CMakeLists.txt's rust_xer_vectors_70) — needs that env var set, so this isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "xer_vectors_70"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-ber = { path = "../../../rust-runtime/ber" }

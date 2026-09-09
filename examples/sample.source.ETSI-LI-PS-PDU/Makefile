@@ -122,7 +122,30 @@ regen:
 	rm -f $(GEN_DIR)/sources.mk
 	$(MAKE) $(GEN_DIR)/sources.mk
 
+# gambas-asn1#299: best-effort --target=rust build of the real ETSI LI
+# PS-PDU schema — the credibility probe for the Rust backend (#214/#220).
+# Expected to fail until #300-#305 (and further construct-coverage issues)
+# land; NOT wired into ctest/CI, run on demand to check progress.
+# rust-probe/src/ is regenerated fresh every run (rm -rf first: asn1cpp
+# deletes stale files from a previous run of its own invocation, but never
+# a stale prior --target=rust run using a different flag set).
+RUST_PROBE_DIR := rust-probe
+RUST_PROBE_SRC := $(RUST_PROBE_DIR)/src
+
+rust-probe: $(ASN_FILES) $(ASNCPP)
+	@echo "[GEN]  running asn1cpp --target=rust on $(words $(ASN_FILES)) ASN.1 files ..."
+	@rm -rf $(RUST_PROBE_SRC)
+	@mkdir -p $(RUST_PROBE_SRC)
+	$(ASNCPP) $(ASN_FILES) $(ASNCPP_FLAGS) --target=rust -o $(RUST_PROBE_SRC)
+	@echo "[GEN]  $$(ls $(RUST_PROBE_SRC)/*.rs | wc -l) .rs files written"
+	@echo "[CARGO] building $(RUST_PROBE_DIR) ..."
+	-cd $(RUST_PROBE_DIR) && cargo build 2>&1 | tee build.log
+	@echo "[REPORT] $$(grep -c '^error' $(RUST_PROBE_DIR)/build.log || echo 0) compile errors, $$(grep -c '^warning:' $(RUST_PROBE_DIR)/build.log || echo 0) warnings"
+
 clean:
 	rm -rf $(GEN_DIR) $(OBJ_DIR) $(LIB_DIR) $(INC_DIR)
 
-.PHONY: all clean regen
+clean-rust-probe:
+	rm -rf $(RUST_PROBE_SRC) $(RUST_PROBE_DIR)/target $(RUST_PROBE_DIR)/Cargo.lock $(RUST_PROBE_DIR)/build.log
+
+.PHONY: all clean regen rust-probe clean-rust-probe
