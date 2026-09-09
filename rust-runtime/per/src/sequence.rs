@@ -13,12 +13,53 @@ use crate::reader::{DecodeError, Reader};
 use crate::value::PerValue;
 use crate::writer::Writer;
 
+/// How a member's value is reached and (de)serialized.
+///
+/// `Scalar` works for a member whose own concrete type genuinely owns a
+/// `PerValue` impl — SEQUENCE/CHOICE/SEQUENCE OF newtypes, ENUMERATED (a
+/// real, distinct Rust enum per ASN.1 type), or any hand-written newtype.
+///
+/// `Constrained` is for a member whose Rust field type is a *shared*
+/// native type (`i64`/`u64`/`Vec<u8>`/`String`/`bool`) rather than a
+/// per-declaration newtype — INTEGER (`pub type X = i64;`, a plain alias:
+/// `X` and `i64` are literally the same type) is the clearest case, but
+/// OCTET STRING (`Vec<u8>`) and most character-string kinds share the same
+/// shape. Unlike BER, where a shared native type's wire encoding never
+/// varies by declared constraint (2's-complement TLV either way — the
+/// declared range only matters for `Asn1Value::validate()`, a separate
+/// post-decode check), PER's wire shape *is* the constraint (constrained
+/// → fixed-width field, semi-constrained → offset encoding, unconstrained
+/// → variable-length) — so a single `impl PerValue for i64` can't be
+/// correct for two differently-constrained INTEGER declarations that both
+/// happen to alias `i64`. `Constrained`'s closures are supplied by codegen
+/// with this member's own `Constraints` already baked in (calling
+/// `integer::encode_int`/`decode_int` or similar internally) — no trait
+/// needed for this case at all, mirroring how the C++ side carries
+/// `Constraints` in the per-usage `TypeDescriptor`, never in the type itself.
+#[derive(Clone, Copy)]
+pub enum MemberAccess<T: 'static> {
+    Scalar {
+        get: fn(&T) -> &dyn PerValue,
+        get_mut: fn(&mut T) -> &mut dyn PerValue,
+    },
+    Constrained {
+        encode: fn(&T, &mut Writer),
+        decode: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
+    },
+}
+
 /// One row in a `SequenceSpec<T>` table — mirrors `MemberDescriptor`
 /// (`TypeDescriptor.hpp`)/`asn1cpp_ber::sequence::MemberDescriptor`, minus
 /// the tag-related fields neither PER nor this crate need (see module doc).
 pub struct MemberDescriptor<T: 'static> {
     pub name: &'static str,
     pub optional: bool,
+    /// Presence check — kept as its own closure rather than reusing
+    /// `PerValue::is_present` (which only exists for `Scalar` members
+    /// anyway) so both `access` variants share one uniform mechanism,
+    /// mirroring how `optional_ops.is_present(src)` is already a genuinely
+    /// separate concern from a member's own type on the C++ side.
+    pub is_present: fn(&T) -> bool,
     /// `Some` for a DEFAULT-valued member (X.680 §25.1) — called when the
     /// member is absent from the wire, filling the schema default instead
     /// of leaving the field however `T::default()` left it. Same shape and
@@ -29,8 +70,7 @@ pub struct MemberDescriptor<T: 'static> {
     /// `Some`, returning `true`, for exactly the members `set_default` is
     /// `Some` for. Mirrors `is_default_equal`'s exact role in the BER crate.
     pub is_default_equal: Option<fn(&T) -> bool>,
-    pub get: fn(&T) -> &dyn PerValue,
-    pub get_mut: fn(&mut T) -> &mut dyn PerValue,
+    pub access: MemberAccess<T>,
 }
 
 /// Backend-agnostic decision for one SEQUENCE/SET type — mirrors
@@ -51,12 +91,26 @@ fn root_end<T>(spec: &SequenceSpec<T>) -> usize {
     }
 }
 
-/// X.691 §10.2 "Open type fields" — encode `v` to a temporary buffer,
-/// prepend a length determinant. Mirrors `encode_open_type`
-/// (`runtime/src/PerCodec.cpp`) exactly.
-fn encode_open_type(w: &mut Writer, v: &dyn PerValue) {
+fn access_encode<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
+    match m.access {
+        MemberAccess::Scalar { get, .. } => get(value).per_encode(w),
+        MemberAccess::Constrained { encode, .. } => encode(value, w),
+    }
+}
+
+fn access_decode<T>(m: &MemberDescriptor<T>, result: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
+    match m.access {
+        MemberAccess::Scalar { get_mut, .. } => get_mut(result).per_decode_into(r),
+        MemberAccess::Constrained { decode, .. } => decode(result, r),
+    }
+}
+
+/// X.691 §10.2 "Open type fields" — encode this member's value to a
+/// temporary buffer, prepend a length determinant. Mirrors
+/// `encode_open_type` (`runtime/src/PerCodec.cpp`) exactly.
+fn encode_open_type<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
     let mut tmp = Writer::new();
-    v.per_encode(&mut tmp);
+    access_encode(m, value, &mut tmp);
     tmp.flush();
     let bytes = tmp.into_bytes();
     put_length(w, bytes.len());
@@ -66,14 +120,14 @@ fn encode_open_type(w: &mut Writer, v: &dyn PerValue) {
 }
 
 /// Decode counterpart of [`encode_open_type`].
-fn decode_open_type(r: &mut Reader, v: &mut dyn PerValue) -> Result<(), DecodeError> {
+fn decode_open_type<T>(m: &MemberDescriptor<T>, result: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
     let len = get_length(r)?;
     let mut bytes = Vec::with_capacity(len);
     for _ in 0..len {
         bytes.push(r.get_bits(8)? as u8);
     }
     let mut inner = Reader::new(&bytes);
-    v.per_decode_into(&mut inner)
+    access_decode(m, result, &mut inner)
 }
 
 /// Skip one unrecognized extension-addition value (X.691 §18.8, a schema
@@ -91,9 +145,7 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, w: &mut Writer, value:
     let root_end = root_end(spec);
     let mut has_ext = false;
     if spec.ext_at >= 0 {
-        has_ext = spec.members[root_end..]
-            .iter()
-            .any(|m| (m.get)(value).is_present());
+        has_ext = spec.members[root_end..].iter().any(|m| (m.is_present)(value));
         w.put_bits(has_ext as u64, 1);
     }
     for m in &spec.members[..root_end] {
@@ -101,12 +153,11 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, w: &mut Writer, value:
             continue;
         }
         let suppress = m.is_default_equal.map_or(false, |f| f(value));
-        let present = (m.get)(value).is_present() && !suppress;
+        let present = (m.is_present)(value) && !suppress;
         w.put_bits(present as u64, 1);
     }
     for m in &spec.members[..root_end] {
-        let v = (m.get)(value);
-        if m.optional && !v.is_present() {
+        if m.optional && !(m.is_present)(value) {
             continue;
         }
         if let Some(f) = m.is_default_equal {
@@ -114,20 +165,19 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, w: &mut Writer, value:
                 continue;
             }
         }
-        v.per_encode(w);
+        access_encode(m, value, w);
     }
     if has_ext {
         let n_ext = spec.members.len() - root_end;
         put_nslength(w, n_ext);
         for m in &spec.members[root_end..] {
-            w.put_bits((m.get)(value).is_present() as u64, 1);
+            w.put_bits((m.is_present)(value) as u64, 1);
         }
         for m in &spec.members[root_end..] {
-            let v = (m.get)(value);
-            if !v.is_present() {
+            if !(m.is_present)(value) {
                 continue;
             }
-            encode_open_type(w, v);
+            encode_open_type(m, value, w);
         }
     }
 }
@@ -165,7 +215,7 @@ pub fn decode_sequence_content<T: Default>(
                 continue;
             }
         }
-        (m.get_mut)(&mut result).per_decode_into(r)?;
+        access_decode(m, &mut result, r)?;
     }
 
     if spec.ext_at >= 0 {
@@ -181,8 +231,7 @@ pub fn decode_sequence_content<T: Default>(
                     continue;
                 }
                 if i < known_ext {
-                    let m = &spec.members[root_end_idx + i];
-                    decode_open_type(r, (m.get_mut)(&mut result))?;
+                    decode_open_type(&spec.members[root_end_idx + i], &mut result, r)?;
                 } else {
                     skip_open_type(r)?;
                 }
@@ -206,6 +255,12 @@ mod tests {
 
     // Dogfood-only fixtures (#[cfg(test)]-gated, never public API — mirrors
     // asn1cpp_ber's own no-public-test-fixtures convention).
+    //
+    // `a` is a bare `i64` (Constrained access — the shape a real
+    // codegen'd INTEGER alias needs, see MemberAccess's own doc);
+    // `b`/`ext1` are `Option<DogfoodInt>`, a real newtype with its own
+    // PerValue impl (Scalar access) — together these exercise both
+    // MemberAccess variants in the same table.
     #[derive(Debug, Default, PartialEq)]
     struct DogfoodInt(i64);
     impl PerValue for DogfoodInt {
@@ -218,8 +273,6 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Default, PartialEq)]
-    struct DogfoodConstrainedInt(i64);
     const DOGFOOD_CONSTRAINED: Constraints = Constraints {
         flags: crate::constraints::CONSTRAINED,
         range_bits: 4,
@@ -231,19 +284,10 @@ mod tests {
         size_lower: 0,
         size_upper: 0,
     };
-    impl PerValue for DogfoodConstrainedInt {
-        fn per_encode(&self, w: &mut Writer) {
-            encode_int(w, &DOGFOOD_CONSTRAINED, self.0);
-        }
-        fn per_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-            self.0 = decode_int(r, &DOGFOOD_CONSTRAINED)?;
-            Ok(())
-        }
-    }
 
     #[derive(Debug, Default, PartialEq)]
     struct Simple {
-        a: DogfoodConstrainedInt,
+        a: i64,
         b: Option<DogfoodInt>,
     }
 
@@ -252,18 +296,24 @@ mod tests {
             MemberDescriptor {
                 name: "a",
                 optional: false,
+                is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                get: |t| &t.a,
-                get_mut: |t| &mut t.a,
+                access: MemberAccess::Constrained {
+                    encode: |t, w| encode_int(w, &DOGFOOD_CONSTRAINED, t.a),
+                    decode: |t, r| {
+                        t.a = decode_int(r, &DOGFOOD_CONSTRAINED)?;
+                        Ok(())
+                    },
+                },
             },
             MemberDescriptor {
                 name: "b",
                 optional: true,
+                is_present: |t| t.b.is_some(),
                 set_default: None,
                 is_default_equal: None,
-                get: |t| &t.b,
-                get_mut: |t| &mut t.b,
+                access: MemberAccess::Scalar { get: |t| &t.b, get_mut: |t| &mut t.b },
             },
         ],
         ext_at: -1,
@@ -280,19 +330,19 @@ mod tests {
 
     #[test]
     fn mandatory_and_absent_optional() {
-        let v = Simple { a: DogfoodConstrainedInt(5), b: None };
+        let v = Simple { a: 5, b: None };
         assert_eq!(roundtrip(&v), v);
     }
 
     #[test]
     fn mandatory_and_present_optional() {
-        let v = Simple { a: DogfoodConstrainedInt(5), b: Some(DogfoodInt(99)) };
+        let v = Simple { a: 5, b: Some(DogfoodInt(99)) };
         assert_eq!(roundtrip(&v), v);
     }
 
     #[derive(Debug, Default, PartialEq)]
     struct WithExtension {
-        a: DogfoodConstrainedInt,
+        a: i64,
         ext1: Option<DogfoodInt>,
     }
 
@@ -301,18 +351,24 @@ mod tests {
             MemberDescriptor {
                 name: "a",
                 optional: false,
+                is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                get: |t| &t.a,
-                get_mut: |t| &mut t.a,
+                access: MemberAccess::Constrained {
+                    encode: |t, w| encode_int(w, &DOGFOOD_CONSTRAINED, t.a),
+                    decode: |t, r| {
+                        t.a = decode_int(r, &DOGFOOD_CONSTRAINED)?;
+                        Ok(())
+                    },
+                },
             },
             MemberDescriptor {
                 name: "ext1",
                 optional: true,
+                is_present: |t| t.ext1.is_some(),
                 set_default: None,
                 is_default_equal: None,
-                get: |t| &t.ext1,
-                get_mut: |t| &mut t.ext1,
+                access: MemberAccess::Scalar { get: |t| &t.ext1, get_mut: |t| &mut t.ext1 },
             },
         ],
         ext_at: 1,
@@ -329,13 +385,13 @@ mod tests {
 
     #[test]
     fn extension_absent() {
-        let v = WithExtension { a: DogfoodConstrainedInt(3), ext1: None };
+        let v = WithExtension { a: 3, ext1: None };
         assert_eq!(roundtrip_ext(&v), v);
     }
 
     #[test]
     fn extension_present() {
-        let v = WithExtension { a: DogfoodConstrainedInt(3), ext1: Some(DogfoodInt(123)) };
+        let v = WithExtension { a: 3, ext1: Some(DogfoodInt(123)) };
         assert_eq!(roundtrip_ext(&v), v);
     }
 
@@ -345,13 +401,13 @@ mod tests {
     // INTEGER) and values.
     #[test]
     fn matches_cpp_ground_truth() {
-        let v = Simple { a: DogfoodConstrainedInt(5), b: Some(DogfoodInt(99)) };
+        let v = Simple { a: 5, b: Some(DogfoodInt(99)) };
         let mut w = Writer::new();
         encode_sequence_content(&SIMPLE_SPEC, &mut w, &v);
         w.flush();
         assert_eq!(w.into_bytes(), vec![0xa8, 0x0b, 0x18]);
 
-        let v2 = Simple { a: DogfoodConstrainedInt(5), b: None };
+        let v2 = Simple { a: 5, b: None };
         let mut w2 = Writer::new();
         encode_sequence_content(&SIMPLE_SPEC, &mut w2, &v2);
         w2.flush();
