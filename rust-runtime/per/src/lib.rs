@@ -20,6 +20,7 @@
 
 pub mod choice;
 pub mod constraints;
+pub mod enumerated;
 pub mod integer;
 pub mod length;
 pub mod reader;
