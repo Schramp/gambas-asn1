@@ -139,18 +139,6 @@ struct BerTraits<Integer> {
     }
 };
 
-// Convenience specialisation for int64_t directly
-template<>
-struct BerTraits<int64_t> {
-    static constexpr Tag tag() { return BerTraits<Integer>::tag(); }
-    static void encode(BerWriter& w, int64_t v) { BerTraits<Integer>::encode(w, Integer{v}); }
-    static Expected<int64_t, DecodeError> decode(BerReader& r) {
-        auto r2 = BerTraits<Integer>::decode(r);
-        if (!r2) return make_unexpected<int64_t, DecodeError>(r2.error());
-        return r2->value();
-    }
-};
-
 // ---------------------------------------------------------------------------
 // UInteger — uint64_t storage for non-negative semi-constrained / large ranges
 // ---------------------------------------------------------------------------
@@ -259,17 +247,6 @@ struct BerTraits<UInteger> {
         uint64_t v = 0;
         for (uint8_t b : bytes) v = (v << 8) | b;
         return UInteger{v};
-    }
-};
-
-template<>
-struct BerTraits<uint64_t> {
-    static constexpr Tag tag() { return BerTraits<UInteger>::tag(); }
-    static void encode(BerWriter& w, uint64_t v) { BerTraits<UInteger>::encode(w, UInteger{v}); }
-    static Expected<uint64_t, DecodeError> decode(BerReader& r) {
-        auto r2 = BerTraits<UInteger>::decode(r);
-        if (!r2) return make_unexpected<uint64_t, DecodeError>(r2.error());
-        return r2->value();
     }
 };
 

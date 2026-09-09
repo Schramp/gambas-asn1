@@ -1,3 +1,7 @@
 gen/
 obj/
 contact-book
+rust-probe/src/
+rust-probe/target/
+rust-probe/Cargo.lock
+rust-probe/build.log

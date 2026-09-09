@@ -1,0 +1,22 @@
+-- gambas-asn1#349: RELATIVE-OID coverage beyond the minimal required-
+-- member case reloid_test.asn1 already exercises (OPTIONAL member, CHOICE
+-- alternative, and an IMPLICIT-tagged member) — each takes a different
+-- RustBackend.cpp code path (MemberAccess::Scalar vs TaggedScalar,
+-- AlternativeSpec).
+
+RelOidVariantsTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+    HasOptionalRelOid ::= SEQUENCE {
+        id  RELATIVE-OID OPTIONAL
+    }
+
+    RelOidOrInt ::= CHOICE {
+        id   RELATIVE-OID,
+        num  INTEGER
+    }
+
+    HasTaggedRelOid ::= SEQUENCE {
+        id  [3] RELATIVE-OID
+    }
+
+END

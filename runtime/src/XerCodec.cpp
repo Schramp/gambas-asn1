@@ -76,6 +76,87 @@ static std::string base64_decode(std::string_view in) {
     return out;
 }
 
+// X.680 §11.15.5 Table 3 — escape sequences for control characters in an
+// "xmlcstring", used by the utf8 ENCODING-CONTROL XER instruction.
+// Codes 9 (tab), 10 (LF), 13 (CR) are excluded per the
+// table's own NOTE — those pass through literally, not as empty-element tags.
+static const char* control_char_tag_name(uint8_t c) {
+    switch (c) {
+    case 0:  return "nul"; case 1:  return "soh"; case 2:  return "stx"; case 3:  return "etx";
+    case 4:  return "eot"; case 5:  return "enq"; case 6:  return "ack"; case 7:  return "bel";
+    case 8:  return "bs";
+    case 11: return "vt";  case 12: return "ff";
+    case 14: return "so";  case 15: return "si";  case 16: return "dle";
+    case 17: return "dc1"; case 18: return "dc2"; case 19: return "dc3"; case 20: return "dc4";
+    case 21: return "nak"; case 22: return "syn"; case 23: return "etb"; case 24: return "can";
+    case 25: return "em";  case 26: return "sub"; case 27: return "esc";
+    case 28: return "is4"; case 29: return "is3"; case 30: return "is2"; case 31: return "is1";
+    default: return nullptr;
+    }
+}
+
+// Reverse of control_char_tag_name — returns -1 if `name` isn't one of Table 3's entries.
+static int control_char_from_tag_name(std::string_view name) {
+    static const std::pair<const char*, uint8_t> kEntries[] = {
+        {"nul",0},{"soh",1},{"stx",2},{"etx",3},{"eot",4},{"enq",5},{"ack",6},{"bel",7},{"bs",8},
+        {"vt",11},{"ff",12},{"so",14},{"si",15},{"dle",16},
+        {"dc1",17},{"dc2",18},{"dc3",19},{"dc4",20},{"nak",21},{"syn",22},{"etb",23},{"can",24},
+        {"em",25},{"sub",26},{"esc",27},{"is4",28},{"is3",29},{"is2",30},{"is1",31},
+    };
+    for (auto& [n, v] : kEntries) if (name == n) return v;
+    return -1;
+}
+
+// utf8 ENCODING-CONTROL instruction (X.693 §21): content
+// octets are raw UTF-8 text, written directly as XML character data except
+// for &/</> (standard XML entities) and the Table 3 control characters
+// (empty-element tags). Non-ASCII bytes (UTF-8 continuation/lead bytes,
+// always ≥ 0x80) pass through unchanged — no codepoint decoding needed,
+// multi-byte sequences are written verbatim and remain valid UTF-8 in the
+// output stream.
+static void write_utf8_text(std::ostream& os, std::string_view sv) {
+    for (unsigned char b : sv) {
+        switch (b) {
+        case '&':  os << "&amp;"; continue;
+        case '<':  os << "&lt;";  continue;
+        case '>':  os << "&gt;";  continue;
+        case 9: case 10: case 13: os << static_cast<char>(b); continue;
+        default: break;
+        }
+        if (b < 32) { os << '<' << control_char_tag_name(b) << "/>"; continue; }
+        os << static_cast<char>(b);
+    }
+}
+
+// Reads a utf8-instruction element (<name>...</name>) — mirrors
+// decode_simple_text_element's own open/close-tag-consuming contract, but
+// can't reuse it directly: the content is mixed (text runs interleaved
+// with Table 3 empty-element tags), and read_text_content's own "stop at
+// next '<'" contract only grabs one text run at a time, unlike every
+// other XER primitive's simple (non-mixed) text content.
+static DecodeResult decode_utf8_text(XerDecodeStream& s, const char* name, std::string& out) {
+    if (auto r = xer_detail::consume_open_tag(s, name); !r) return r;
+    for (;;) {
+        out += xer_detail::xer_unescape(xer_detail::read_text_content(s));
+        if (s.remaining().empty())
+            return decode_err(DecodeError(std::string("XER: unterminated <") + name + ">"));
+        auto peek = xer_detail::peek_tag(s);
+        if (peek.closing && peek.name == name) {
+            xer_detail::consume_tag(s);
+            return decode_ok();
+        }
+        if (peek.self_closing) {
+            int b = control_char_from_tag_name(peek.name);
+            if (b < 0)
+                return decode_err(DecodeError(std::string("XER: unknown control-character tag <") + peek.name + "/>"));
+            xer_detail::consume_tag(s);
+            out.push_back(static_cast<char>(b));
+            continue;
+        }
+        return decode_err(DecodeError(std::string("XER: unexpected tag inside utf8 content of <") + name + ">"));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Handler classes
 
@@ -328,6 +409,9 @@ struct OctetStringXerHandler final : IXerTypeHandler {
             auto sp = std::span<const uint8_t>(
                 reinterpret_cast<const uint8_t*>(v.bytes().data()), v.bytes().size());
             os << base64_encode(sp);
+        } else if (def.xer_encoding == XerEncoding::Utf8) {
+            write_utf8_text(os, std::string_view(
+                reinterpret_cast<const char*>(v.bytes().data()), v.bytes().size()));
         } else {
             write_hex_bytes(os, v.bytes());
         }
@@ -335,6 +419,14 @@ struct OctetStringXerHandler final : IXerTypeHandler {
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream& s,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
+        if (def.xer_encoding == XerEncoding::Utf8) {
+            std::string dec;
+            auto r = decode_utf8_text(s, def.name, dec);
+            if (!r) return r;
+            *static_cast<OctetString*>(dest) = OctetString{
+                reinterpret_cast<const uint8_t*>(dec.data()), dec.size()};
+            return decode_ok();
+        }
         bool b64 = def.xer_encoding == XerEncoding::Base64;
         return xer_detail::decode_simple_text_element(s, def.name,
             [dest, b64](std::string_view text) -> DecodeResult {
@@ -850,15 +942,54 @@ const IXerTypeHandler* const XerCodec::prim_dispatch_[32] = {
 // ---------------------------------------------------------------------------
 // XerCodec public entry points
 
+namespace {
+
+// X.680 §16.2 / X.693 §8.3.1: the XML *document element* (the outermost
+// value in a standalone XER encoding) is always an "XMLTypedValue" —
+// `<TypeName>...</TypeName>` — regardless of what kind of type it is.
+// Every other type already produces this shape at any nesting depth
+// (SEQUENCE/SET/ENUMERATED/etc. always write their own name as a
+// wrapper), so it's only visible for CHOICE: X.693's *member*-position
+// rule for CHOICE genuinely has no wrapper (the alternative's own tag is
+// enough — see ChoiceXerHandler's own doc), which is right for CHOICE
+// nested inside a SEQUENCE/SET/CHOICE, but wrong at the true document
+// root, where there's no enclosing member to supply one (confirmed
+// against real asn1c output, which does wrap: `<Alt4>\n<str>j</str>
+// </Alt4>`, not `<str>j</str>`).
+//
+// `XerCodec::encode`/`decode` are the single funnel every recursive XER
+// call passes through (composite handlers call back into `codec.encode`/
+// `codec.decode`, never straight into a nested handler) — a thread-local
+// recursion counter here distinguishes the outermost call from every
+// nested one without threading a new parameter through the shared
+// `ICodec` interface (which XER, BER, JER, and PER all implement with
+// the same signature) or touching any composite handler's own logic.
+// Mirrors `ValidatePathScope`'s RAII-around-thread-local pattern
+// (`codec/Validation.hpp`).
+struct XerRecursionScope {
+    XerRecursionScope() { ++depth(); }
+    ~XerRecursionScope() { --depth(); }
+    XerRecursionScope(const XerRecursionScope&) = delete;
+    XerRecursionScope& operator=(const XerRecursionScope&) = delete;
+    bool is_root() const { return depth() == 1; }
+    static int& depth() { thread_local int d = 0; return d; }
+};
+
+} // namespace
+
 void XerCodec::encode(IEncodeStream& dst,
                       const TypeDescriptor& def,
                       const Asn1Object* src) const
 {
     auto& s = static_cast<XerEncodeStream&>(dst);
+    XerRecursionScope scope;
+    bool wrap = scope.is_root() && def.kind == TypeKind::Choice;
+    if (wrap) s.os() << '<' << def.name << '>';
     if (def.kind == TypeKind::Primitive)
         prim_dispatch_[def.tag.number]->encode(*this, s, def, src);
     else
         comp_dispatch_[(int)def.kind]->encode(*this, s, def, src);
+    if (wrap) s.os() << '\n' << "</" << def.name << ">\n";
 }
 
 DecodeResult XerCodec::decode(IDecodeStream& src,
@@ -866,9 +997,21 @@ DecodeResult XerCodec::decode(IDecodeStream& src,
                                Asn1Object* dest) const
 {
     auto& s = static_cast<XerDecodeStream&>(src);
+    XerRecursionScope scope;
+    bool wrap = scope.is_root() && def.kind == TypeKind::Choice;
+    if (wrap) {
+        if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
+    }
+    DecodeResult res = decode_ok();
     if (def.kind == TypeKind::Primitive)
-        return prim_dispatch_[def.tag.number]->decode(*this, s, def, dest);
-    return comp_dispatch_[(int)def.kind]->decode(*this, s, def, dest);
+        res = prim_dispatch_[def.tag.number]->decode(*this, s, def, dest);
+    else
+        res = comp_dispatch_[(int)def.kind]->decode(*this, s, def, dest);
+    if (!res) return res;
+    if (wrap) {
+        if (auto r = xer_detail::consume_close_tag(s, def.name); !r) return r;
+    }
+    return res;
 }
 
 } // namespace asn1

@@ -11,6 +11,10 @@
 #include "InlineTest.hpp"
 #include "Base64Payload.hpp"
 #include "PayloadWrapper.hpp"
+#include "LegacyBase64.hpp"
+#include "StandardBase64.hpp"
+#include "NoInstruction.hpp"
+#include "Utf8Field.hpp"
 
 using namespace asn1;
 
@@ -172,6 +176,101 @@ static void test_empty_roundtrip() {
 }
 
 // ---------------------------------------------------------------------------
+// 5. ENCODING-CONTROL XER block form (gambas-asn1#438) — separate grammar
+//    path from the inline [BASE64] prefix tested above. Legacy per-type
+//    (`T OCTET STRING ::= base64`) and standard (`BASE64 T`) forms both
+//    target types with no `[BASE64]` written on the type itself.
+
+template<typename T>
+static std::string xer_encode_generic(const T& v, const TypeDescriptor& def) {
+    std::ostringstream oss;
+    XerEncodeStream s{oss};
+    XerCodec::instance().encode(s, def, &v);
+    return oss.str();
+}
+
+template<typename T>
+static bool xer_decode_generic(const std::string& xml, const TypeDescriptor& def, T& out) {
+    XerDecodeStream s{xml};
+    return XerCodec::instance().decode(s, def, &out).has_value();
+}
+
+static void test_encoding_control_legacy() {
+    printf("--- ENCODING-CONTROL XER legacy form (T OCTET STRING ::= base64) ---\n");
+
+    LegacyBase64 v{kBytes, sizeof(kBytes)};
+    std::string xer = xer_encode_generic(v, asn_DEF_LegacyBase64);
+    check("legacy form uses base64", xer.find("3q2+7w==") != std::string::npos);
+
+    LegacyBase64 out{};
+    check("legacy form decode ok",
+          xer_decode_generic("<LegacyBase64>3q2+7w==</LegacyBase64>\n", asn_DEF_LegacyBase64, out));
+    check("legacy form decoded bytes correct",
+          out.bytes().size() == 4 && std::equal(out.bytes().begin(), out.bytes().end(), kBytes));
+}
+
+static void test_encoding_control_standard() {
+    printf("--- ENCODING-CONTROL XER standard form (BASE64 TypeName) ---\n");
+
+    StandardBase64 v{kBytes, sizeof(kBytes)};
+    std::string xer = xer_encode_generic(v, asn_DEF_StandardBase64);
+    check("standard form uses base64", xer.find("3q2+7w==") != std::string::npos);
+
+    StandardBase64 out{};
+    check("standard form decode ok",
+          xer_decode_generic("<StandardBase64>3q2+7w==</StandardBase64>\n", asn_DEF_StandardBase64, out));
+    check("standard form decoded bytes correct",
+          out.bytes().size() == 4 && std::equal(out.bytes().begin(), out.bytes().end(), kBytes));
+}
+
+static void test_encoding_control_no_instruction_stays_hex() {
+    printf("--- type with no ENCODING-CONTROL instruction stays hex ---\n");
+
+    NoInstruction v{kBytes, sizeof(kBytes)};
+    std::string xer = xer_encode_generic(v, asn_DEF_NoInstruction);
+    check("untouched type still uses hex", xer.find("DEADBEEF") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// 6. ENCODING-CONTROL XER ::= utf8 (gambas-asn1#443) — raw UTF-8 text, not
+//    a hex/base64 variant. "Hi" + DC3 control char (0x13) + '&' + 'é'
+//    (multi-byte UTF-8, 0xC3 0xA9) + '<' + '>'.
+//    Expected XER: Hi<dc3/>&amp;\xC3\xA9&lt;&gt;
+
+static const uint8_t kUtf8Bytes[] = {
+    'H', 'i', 0x13, '&', 0xC3, 0xA9, '<', '>'
+};
+
+static void test_encoding_control_utf8_encode() {
+    printf("--- ENCODING-CONTROL XER ::= utf8 encode ---\n");
+
+    Utf8Field v{kUtf8Bytes, sizeof(kUtf8Bytes)};
+    std::string xer = xer_encode_generic(v, asn_DEF_Utf8Field);
+    check("utf8 form: ASCII text passes through", xer.find("Hi") != std::string::npos);
+    check("utf8 form: control char becomes <dc3/>", xer.find("<dc3/>") != std::string::npos);
+    check("utf8 form: & escaped", xer.find("&amp;") != std::string::npos);
+    check("utf8 form: multi-byte UTF-8 passes through raw",
+          xer.find("\xC3\xA9") != std::string::npos);
+    check("utf8 form: < escaped", xer.find("&lt;") != std::string::npos);
+    check("utf8 form: > escaped", xer.find("&gt;") != std::string::npos);
+    // Not present as raw hex the way Default/Base64 would render these bytes.
+    check("utf8 form: not hex-encoded", xer.find("4869") == std::string::npos);
+}
+
+static void test_encoding_control_utf8_roundtrip() {
+    printf("--- ENCODING-CONTROL XER ::= utf8 round-trip ---\n");
+
+    Utf8Field orig{kUtf8Bytes, sizeof(kUtf8Bytes)};
+    std::string xer = xer_encode_generic(orig, asn_DEF_Utf8Field);
+
+    Utf8Field out{};
+    check("utf8 form round-trip decode ok", xer_decode_generic(xer, asn_DEF_Utf8Field, out));
+    check("utf8 form round-trip bytes match",
+          out.bytes().size() == sizeof(kUtf8Bytes)
+              && std::equal(out.bytes().begin(), out.bytes().end(), kUtf8Bytes));
+}
+
+// ---------------------------------------------------------------------------
 
 int main() {
     test_inline_encode();
@@ -181,6 +280,11 @@ int main() {
     test_named_typedef_decode();
     test_wrapper_encode();
     test_empty_roundtrip();
+    test_encoding_control_legacy();
+    test_encoding_control_standard();
+    test_encoding_control_no_instruction_stays_hex();
+    test_encoding_control_utf8_encode();
+    test_encoding_control_utf8_roundtrip();
 
     if (failures == 0) {
         printf("\nAll tests passed.\n");

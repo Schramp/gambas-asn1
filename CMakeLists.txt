@@ -49,6 +49,45 @@ option(WITH_SMOKE_MATRIX
     "Run type × flag smoke test matrix (17 types × 4 flag combos; requires g++)"
     OFF)
 
+# ---------------------------------------------------------------------------
+# Optional: RustBackend output compile-check (gambas-asn1#258)
+#   Compiles tests/rust/*.rs — hand-written patterns mirroring what
+#   RustBackend actually emits (see tests/codegen/test_backend_naming.cpp) —
+#   against a real rustc. No --target=rust CLI wiring exists yet (#245), so
+#   this checks the emitted *shape* is real, warning-free Rust, not output
+#   from an end-to-end compiler run.
+# ---------------------------------------------------------------------------
+find_program(RUSTC_EXECUTABLE rustc
+    DOC "rustc compiler (optional — enables RustBackend output compile-check)")
+cmake_dependent_option(WITH_RUST_COMPILE_CHECK
+    "Compile tests/rust/*.rs against a real rustc"
+    ON "RUSTC_EXECUTABLE" OFF)
+
+if(WITH_RUST_COMPILE_CHECK)
+    message(STATUS "Rust compile-check: ON  (${RUSTC_EXECUTABLE})")
+else()
+    message(STATUS "Rust compile-check: OFF (rustc not found)")
+endif()
+
+# ---------------------------------------------------------------------------
+# Optional: rust-runtime/ber cargo test (gambas-asn1#218)
+#   Standalone Rust crate, not a CMake target — this just wires `cargo test`
+#   into the same `ctest` run everything else uses, so `ctest --test-dir
+#   build/tests` is still the one command that exercises the whole tree.
+#   No FFI/link dependency on the C++ build either direction.
+# ---------------------------------------------------------------------------
+find_program(CARGO_EXECUTABLE cargo
+    DOC "cargo (optional — enables rust-runtime/ber cargo test via ctest)")
+cmake_dependent_option(WITH_BER_RUNTIME_TEST
+    "Run rust-runtime/ber's cargo test via ctest"
+    ON "CARGO_EXECUTABLE" OFF)
+
+if(WITH_BER_RUNTIME_TEST)
+    message(STATUS "rust-runtime/ber cargo test: ON  (${CARGO_EXECUTABLE})")
+else()
+    message(STATUS "rust-runtime/ber cargo test: OFF (cargo not found)")
+endif()
+
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 # ---------------------------------------------------------------------------

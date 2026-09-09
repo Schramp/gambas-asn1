@@ -31,6 +31,42 @@ Run compiler:
 ./build/compiler/asn1cpp <file.asn1> -o <outdir>
 ```
 
+Rust BER/XER runtime (`rust-runtime/ber/`, gambas-asn1#218/#280) — standalone crate, not
+part of the CMake build. Despite the crate name, BER and XER both live here: table-driven
+codegen means one `SequenceSpec<T>`/`MemberDescriptor<T>` table per type drives every wire
+encoding (`Asn1Value` carries both a `ber_*` and an `xer_*` leg per type), so XER only
+needed new tag-parsing primitives (`src/xer.rs`), not a separate table or crate. `per/`
+is still expected to be a genuine sibling crate under the `rust-runtime/` umbrella — PER's
+bit-level, non-self-delimiting framing needs different stream primitives entirely:
+```bash
+cd rust-runtime/ber && cargo test
+```
+
+### Architecture symmetry with the C++ side
+
+The intended design is that C++ and Rust share the same shape: one generic,
+table-driven codec, no per-type generated codec logic. Concretely:
+
+| C++ | Rust |
+|---|---|
+| `TypeDescriptor` table | `SequenceSpec<T>`/`ChoiceSpec<T>` table |
+| `MemberDescriptor` row (offset + `type_descriptor` ptr) | `MemberDescriptor<T>` row (`get`/`get_mut` fn ptr → `&dyn Asn1Value`) |
+| `ICodec` + handler singletons (`IBerTypeHandler`, `ber_boolean_handler`, ...) | `Asn1Value` trait, default methods (`ber_encode`/`ber_decode_into`/... composed from required `ber_natural_tag`/`ber_encode_content`/`ber_decode_content`) |
+| offset + `void*` field access | generated accessor closure, unsize-coerced to `&dyn Asn1Value` (vtable lives on the fat pointer, not the data) |
+| one `ICodec` interface for BER/PER/XER/JER | one `Asn1Value` trait carrying both `ber_*` and `xer_*` legs |
+
+`BerTraits<T>` (`runtime/include/asn1cpp/codec/BerTraits.hpp` + per-type
+specializations) is the one asymmetry: a template-based static-dispatch
+layer that only BER has, never referenced by codegen (only by hand-written
+code/tests and internally by `BerCodec.cpp`/`PerCodec.cpp`/
+`RandomFiller.cpp` as an implementation detail). Rust has no equivalent —
+`Asn1Value` has always been the sole mechanism. Tracked for removal on
+`main`: gambas-asn1#380 (dead `BerTraits<bool>`/`<int64_t>`/`<uint64_t>`
+raw-primitive forwarders — zero callers) and gambas-asn1#381 (the rest of
+the template layer — confirmed removable, no structural blocker in any of
+the three internal callers). Once gone, C++'s codec surface is exactly one
+path, matching Rust's from day one.
+
 ## Runtime debug logging
 
 Set `ASN1CPP_DEBUG` to a hex bitmask before running any binary that links `libasn1cpp_runtime`.
@@ -82,6 +118,10 @@ asn1cpp/
   tests/
     ber/                  # BER round-trip unit tests
   examples/               # shared ASN.1 example files (also used by asn1c sibling project)
+  rust-runtime/           # umbrella dir, one crate per wire encoding (gambas-asn1#214)
+    ber/                  # native Rust BER codec (#218) — standalone crate, no FFI to
+                          # runtime/; not yet wired to codegen (#219). per/, jer/ would
+                          # be sibling crates here, not modules inside ber/
 ```
 
 ### Compiler pipeline
@@ -89,6 +129,30 @@ asn1cpp/
 2. **Parser** (Bison C++ LALR, `api.token.constructor`, `api.value.type variant`) → `ast::Module`
 3. **Sema** (`Resolver`) → resolved type references
 4. **Codegen** (`Generator`) → one `.hpp` + `.cpp` pair per type
+
+### Generator/Backend split — reviewed, mostly sound (2026-08-19)
+
+`Generator` computes backend-agnostic *decisions* (`TagSpec`, `DefaultValueSpec`,
+`IntStorageKind`, the `*Spec` structs in `Backend.hpp`); `Backend` (`CppBackend`/
+`RustBackend`) formats them into target-language text. Full review findings: split is
+sound overall, not a rehaul candidate. Fixes applied:
+- `Generator::cpp_type_for` → renamed `native_member_type_for` — it was actually the
+  shared type-resolution entry point both backends depend on, despite the `cpp_` prefix.
+- `Generator::type_descriptor_ref_for` → renamed `cpp_type_descriptor_ref_for` — this one
+  really is C++-only (builds `&asn1::asn_DEF_X` text directly), stays on `Generator`
+  because it needs Generator-private resolver/collision-tracking state
+  (`resolver_`/`collision_types_`/`effective_cpp_name`) `Backend` doesn't have access to.
+  Fully relocating this logic into `CppBackend` is tracked as gambas-asn1#239, deliberately
+  out of scope here — it needs `Backend` to gain resolver access, a bigger boundary change.
+- Deleted dead `safe_member_name` (`Generator.hpp`) — undocumented no-op alias for `safe_name`.
+- `Backend::format_tag_literal`'s identical 4-case `TagClass` switch, duplicated verbatim in
+  `CppBackend`/`RustBackend`, hoisted into `Backend::tag_class_index()`.
+- Declined to collapse the six `emit_enumerated/integer/builtin_alias/seq_of/sequence/choice`
+  2-line dispatchers (identical in both backends) into `Backend` — doing so would replace 6
+  throw-by-default virtuals with 12 (declaration+definition halves each), against the
+  interface's deliberate "one virtual per construct, throws loud if unsupported" design
+  (documented at every `emit_*` default in `Backend.hpp`). Not worth the churn for what's
+  ~2 lines of duplication per construct.
 
 ### Generated code design — tables only, no inline codec logic
 
@@ -397,6 +461,8 @@ PRs are reviewed by Schramp and optionally by a clean Claude instance. Process r
 /// @return What is returned (or void).
 /// @see X.691 §22.6 — PER CHOICE index encoding.
 ```
+
+**Comment content: standard clause + role, not change history.** A comment should tell a reader who has never seen the old design what this code does and, where relevant, which ASN.1 clause it implements — not what it used to do or why a past approach was rejected. Avoid "used to be", "replaces what X did", "no longer needed because", or narrating the PR/issue that produced the current form (see also the no-issue-refs rule above). If a sentence would still make sense to someone who joined the project today with no history, keep it; if it only makes sense to someone who remembers the prior design, cut it — `git log`/`git blame` is where that belongs, not the comment.
 
 ### Issue management
 

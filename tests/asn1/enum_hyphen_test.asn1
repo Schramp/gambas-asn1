@@ -1,0 +1,8 @@
+-- gambas-asn1#305: hyphenated multi-word ENUMERATED value names — X.680
+-- §11.2 identifiers are hyphen-separated lowercase words. Rust's variant
+-- names must become real UpperCamelCase ("EightBitBinary", "Utf8"),
+-- not "Eight_bit_binary"/"Utf_8" (capitalize_first only uppercases the
+-- first character, leaving hyphen-turned-underscore in the middle).
+EnumHyphenTest DEFINITIONS ::= BEGIN
+    CharacterSet ::= ENUMERATED { eight-bit-binary, ucs-2, utf-8, utf-16 }
+END
