@@ -252,10 +252,18 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // generically by enumerated::xer_encode_enum/xer_decode_enum below
         // (no per-value logic in this generated file itself, table-driven
         // same as every SEQUENCE/CHOICE member table this backend emits).
+        // Sorted ascending by value — BER/XER lookup doesn't care about
+        // order, but PER's own ordinal table below (`{tname}_PER_ENTRIES`)
+        // *must* be sorted this way (X.691 §22), so this table is sorted
+        // too rather than carrying two different orderings of the same
+        // data through this file.
+        std::vector<NamedValue> sorted_values = spec.values;
+        std::sort(sorted_values.begin(), sorted_values.end(),
+                   [](const NamedValue& a, const NamedValue& b) { return a.value < b.value; });
         std::string map_ident = std::format("{}_MAP", to_screaming_snake_case(tname));
         os << std::format("static {}: [asn1cpp_ber::enumerated::EnumEntry; {}] = [\n",
-                           map_ident, spec.values.size());
-        for (const auto& v : spec.values) {
+                           map_ident, sorted_values.size());
+        for (const auto& v : sorted_values) {
             os << std::format("    asn1cpp_ber::enumerated::EnumEntry {{ value: {}, name: \"{}\" }},\n",
                                v.value, v.asn1_name);
         }
@@ -324,16 +332,16 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "    }\n";
         os << "}\n\n";
 
-        // PER leg — `asn1cpp_per::enumerated` needs its ordinal table sorted
-        // ascending by value (X.691 §22: wire ordinal is sorted numeric
-        // position, not ASN.1 declaration order — matches asn1c and the
-        // C++ side's own sorted `EnumSpec::entries`/`asn_PER_..._value_order`,
-        // see EnumeratedPerHandler, runtime/src/PerCodec.cpp), so this is a
-        // second table, not a reuse of {map_ident} above (which stays in
-        // declaration order for BER/XER, where order is irrelevant).
-        std::vector<NamedValue> sorted_values = spec.values;
-        std::sort(sorted_values.begin(), sorted_values.end(),
-                   [](const NamedValue& a, const NamedValue& b) { return a.value < b.value; });
+        // PER leg — reuses {sorted_values} above (X.691 §22: wire ordinal is
+        // the value's sorted position, matches asn1c and the C++ side's own
+        // sorted `EnumSpec::entries`/`asn_PER_..._value_order`, see
+        // EnumeratedPerHandler, runtime/src/PerCodec.cpp). A distinct table
+        // from {map_ident}, not a reference to it — `asn1cpp_per::
+        // enumerated::EnumEntry` (value only) and `asn1cpp_ber::enumerated::
+        // EnumEntry` (value + name) are different types in different
+        // crates, so the data has to be duplicated once per crate either
+        // way; keeping both tables in the same sorted order at least makes
+        // them visibly the same data instead of two divergent orderings.
         std::string per_entries_ident = std::format("{}_PER_ENTRIES", to_screaming_snake_case(tname));
         os << std::format("static {}: [asn1cpp_per::enumerated::EnumEntry; {}] = [\n",
                            per_entries_ident, sorted_values.size());
