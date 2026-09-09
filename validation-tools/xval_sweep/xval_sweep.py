@@ -62,6 +62,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ASN1CPP_ROOT = os.path.dirname(os.path.dirname(HERE))
 ASNCPP_BIN = os.path.join(ASN1CPP_ROOT, "build/compiler/asn1cpp")
 ASN1CPP_BER_CRATE = os.path.join(ASN1CPP_ROOT, "rust-runtime/ber")
+ASN1CPP_PER_CRATE = os.path.join(ASN1CPP_ROOT, "rust-runtime/per")
 
 TEMPLATE_CPP = os.path.join(HERE, "template_cpp")
 TEMPLATE_RUST = os.path.join(HERE, "template_rust")
@@ -397,7 +398,8 @@ def build_rust(target_dir, asn1_files_abs, pdu_type):
                  "__PDU_TYPE__": pdu_type})
     materialize(os.path.join(TEMPLATE_RUST, "Cargo.toml.tmpl"),
                 os.path.join(rust_dir, "Cargo.toml"),
-                {"__ASN1CPP_BER_CRATE__": ASN1CPP_BER_CRATE})
+                {"__ASN1CPP_BER_CRATE__": ASN1CPP_BER_CRATE,
+                 "__ASN1CPP_PER_CRATE__": ASN1CPP_PER_CRATE})
 
     if not run_make(rust_dir, "gen", label="Rust codegen"):
         return None
