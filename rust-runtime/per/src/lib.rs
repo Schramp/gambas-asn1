@@ -20,7 +20,9 @@
 
 pub mod constraints;
 pub mod integer;
+pub mod length;
 pub mod reader;
+pub mod strings;
 pub mod uinteger;
 pub mod writer;
 

@@ -10,6 +10,7 @@
 pub const CONSTRAINED: u32 = 1;
 pub const SEMI_CONSTRAINED: u32 = 2;
 pub const EXTENSIBLE: u32 = 4;
+pub const SIZE_CONSTRAINED: u32 = 8;
 
 /// flags == 0 means unconstrained.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -23,6 +24,12 @@ pub struct Constraints {
     /// Unsigned 64-bit bounds — read by unsigned INTEGER encode/decode.
     pub lower_u64: u64,
     pub upper_u64: u64,
+    /// SIZE constraint (OCTET STRING, BIT STRING, character strings).
+    /// `size_range_bits == 0` with `SIZE_CONSTRAINED` set means a fixed
+    /// SIZE(n) — no length field at all, `size_lower == size_upper == n`.
+    pub size_range_bits: u32,
+    pub size_lower: i64,
+    pub size_upper: i64,
 }
 
 impl Constraints {
@@ -34,5 +41,8 @@ impl Constraints {
     }
     pub fn is_extensible(&self) -> bool {
         self.flags & EXTENSIBLE != 0
+    }
+    pub fn is_size_constrained(&self) -> bool {
+        self.flags & SIZE_CONSTRAINED != 0
     }
 }
