@@ -138,6 +138,9 @@ struct OptionalOps {
 
 /// Forward declaration — MemberDescriptor references TypeDescriptor.
 struct TypeDescriptor;
+/// Forward declaration — MemberDescriptor::boxed_lifecycle references TypeLifecycleOps
+/// (defined below, after MemberDescriptor).
+struct TypeLifecycleOps;
 
 /// @brief Per-member descriptor for SEQUENCE, SET, and CHOICE types.
 /// Mirrors \c asn_TYPE_member_t from asn1c.  One entry per member in the
@@ -152,6 +155,13 @@ struct MemberDescriptor {
     const TypeDescriptor* type_descriptor;  ///< TypeDescriptor of this member's type.
     OptionalOps           optional_ops;     ///< Non-null only for optional/extension members (UniquePtrOps).
     bool                  is_explicit = false; ///< True → EXPLICIT tagging; false → IMPLICIT.
+    /// True when this member/alternative names its own `[n]` tag override
+    /// (X.680 §30.1/30.3 TaggedType construction). False when `tag` merely
+    /// restates the referenced type's own tag for dispatch/presence
+    /// purposes (a bare `x SomeType` reference, no `[n]` written on the
+    /// member) — in that case the wire encoding is exactly SomeType's own
+    /// standalone encoding; the codec must not wrap/unwrap an extra layer.
+    bool                  tag_is_override = true;
 
     /// @brief Called after BER/XER decode when the member was absent on the wire.
     /// Allocates the optional and writes the DEFAULT value from the ASN.1 schema.
@@ -168,6 +178,15 @@ struct MemberDescriptor {
     Asn1Object*       (*get_mut_fn)(Asn1Object* choice_ptr)          = nullptr;
     /// @brief Return const pointer to the active CHOICE alternative (null for non-CHOICE members).
     const Asn1Object* (*get_const_fn)(const Asn1Object* choice_ptr)  = nullptr;
+
+    /// @brief Non-null only for a CHOICE alternative boxed via \c std::unique_ptr<T>
+    /// (a directly self-referential alternative — see \c TypeLifecycleOps's
+    /// \c BoxedTypeTag constructor). \c ChoiceInterface::emplace_alt uses this
+    /// instead of \c type_descriptor->lifecycle when set; \c type_descriptor
+    /// itself stays the alternative's own (unboxed) descriptor, since codec
+    /// dispatch operates on the dereferenced value \c get_mut_fn/get_const_fn
+    /// already hand back, not on \c val_ directly.
+    const TypeLifecycleOps* boxed_lifecycle = nullptr;
 };
 
 /// @brief SEQUENCE OF / SET OF element and constraint metadata.
@@ -252,6 +271,10 @@ struct IBerTypeHandler;
 /// @brief Type-tag knob for selecting \c T in \c TypeLifecycleOps template constructor.
 template<typename T> struct TypeTag {};
 
+/// @brief Type-tag knob selecting the boxed (\c std::unique_ptr<T>) storage
+/// overload of \c TypeLifecycleOps — see that constructor's doc.
+template<typename T> struct BoxedTypeTag {};
+
 /// @brief Per-type lifecycle operations used by \c ChoiceInterface::emplace_alt().
 ///
 /// Embedded by value in \c TypeDescriptor (same 3×ptr cost as three separate fields).
@@ -291,12 +314,32 @@ struct TypeLifecycleOps {
               std::destroy_at(static_cast<T*>(s)); })
         , clone    (make_clone_fn<T>())
     {}
+
+    /// @brief Ops for a CHOICE alternative stored as \c std::unique_ptr<T> instead
+    /// of \c T inline — the only way to break the layout cycle for a CHOICE
+    /// alternative whose type resolves (directly) back to the enclosing CHOICE
+    /// itself (X.680 §28 permits this; \c sizeof(T) is otherwise circular).
+    /// \c construct heap-allocates a default \c T so the alternative's own
+    /// accessor can dereference unconditionally, same as every other alternative.
+    template<typename T>
+    explicit constexpr TypeLifecycleOps(BoxedTypeTag<T>) noexcept
+        : construct([](void* p){ new(p) std::unique_ptr<T>(std::make_unique<T>()); })
+        , destroy  ([](void* p){ std::destroy_at(static_cast<std::unique_ptr<T>*>(p)); })
+        , move     ([](void* d, void* s){
+              new(d) std::unique_ptr<T>(std::move(*static_cast<std::unique_ptr<T>*>(s)));
+              std::destroy_at(static_cast<std::unique_ptr<T>*>(s)); })
+        , clone    ([](void* d, const void* s){
+              new(d) std::unique_ptr<T>(std::make_unique<T>(
+                  *static_cast<const std::unique_ptr<T>*>(s)->get())); })
+    {}
 };
 
 /// @brief XER encoding instruction for OCTET STRING (X.693 §21).
 enum class XerEncoding : uint8_t {
     Default = 0, ///< Hexadecimal uppercase pairs (X.693 §17.4 first alternative).
     Base64  = 1, ///< RFC 2045 §6.8 base64 (X.693 §21 "BASE64" instruction).
+    Utf8    = 2, ///< Content octets as raw UTF-8 text (X.693 §21 "utf8" instruction,
+                 ///< X.680 §11.15 control-character/entity escaping applies).
 };
 
 /// @brief Top-level per-type descriptor — the primary runtime metadata table.
@@ -323,6 +366,13 @@ struct TypeDescriptor {
     const IBerTypeHandler* ber_handler  = nullptr;     ///< Direct BER handler; null = fall back to BerCodec's LUT.
     TypeLifecycleOps lifecycle;                        ///< Lifecycle ops for CHOICE emplace; default (all nullptrs) for non-CHOICE types.
     XerEncoding xer_encoding = XerEncoding::Default;  ///< XER serialisation mode (meaningful for OCTET STRING only).
+    /// X.690 §8.14.3 — true when \c tag is an EXPLICIT override on this
+    /// type's own top-level `[n]` declaration: the wire encoding must wrap
+    /// a nested TLV using \c natural_tag, not substitute \c tag directly
+    /// for it the way IMPLICIT does. False for every type with no declared
+    /// tag of its own, or one using IMPLICIT.
+    bool is_explicit = false;
+    Tag  natural_tag = {};  ///< This type's own natural tag, ignoring `[n]`; meaningful only when is_explicit.
 };
 
 /// @name Built-in type descriptors

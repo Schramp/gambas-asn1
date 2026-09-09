@@ -1,0 +1,21 @@
+-- gambas-asn1#349: NULL coverage beyond the minimal required-member case
+-- null_test.asn1 already exercises (OPTIONAL member, CHOICE alternative,
+-- and an IMPLICIT-tagged member) — each takes a different RustBackend.cpp
+-- code path (MemberAccess::Scalar vs TaggedScalar, AlternativeSpec).
+
+NullVariantsTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+    HasOptionalNull ::= SEQUENCE {
+        marker  NULL OPTIONAL
+    }
+
+    NullOrInt ::= CHOICE {
+        marker  NULL,
+        num     INTEGER
+    }
+
+    HasTaggedNull ::= SEQUENCE {
+        marker  [3] NULL
+    }
+
+END

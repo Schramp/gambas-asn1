@@ -73,13 +73,11 @@ static std::string strip_ws(const std::string& s) {
 static bool xer_decode(const std::string& xml, PDU& out) {
     XerDecodeStream xs{xml};
     // The .in files wrap the CHOICE value in an outer <PDU>...</PDU> element
-    // (same as asn1c's asn_fprint output format). The CHOICE decoder expects the
-    // stream to start at the first alternative tag, so consume the outer wrapper here.
-    if (auto r = xer_detail::consume_open_tag(xs, "PDU"); !r) return false;
+    // (same as asn1c's asn_fprint output format) — X.680 §16.2/X.693 §8.3.1's
+    // XMLTypedValue production for the document root, which XerCodec::decode
+    // now consumes/produces itself for a root-level CHOICE.
     auto r = XerCodec::instance().decode(xs, PDU::asn_DEF, &out);
-    if (!r) return false;
-    if (auto r2 = xer_detail::consume_close_tag(xs, "PDU"); !r2) return false;
-    return true;
+    return r.has_value();
 }
 
 static std::string xer_encode(const PDU& val) {
@@ -172,13 +170,12 @@ static void process(const fs::path& path) {
         return;
     }
 
-    // (none) / -E: whitespace-stripped output must match input.
-    // The .in files wrap the CHOICE in <PDU>...</PDU>; our encoder doesn't add that
-    // wrapper, so re-add it before comparing.
-    std::string wrapped = "<PDU>\n" + reenc + "</PDU>\n";
+    // (none) / -E: whitespace-stripped output must match input. The
+    // encoder now produces the <PDU>...</PDU> wrapper itself,
+    // so no manual re-wrapping needed before comparing.
     char label[256];
     std::snprintf(label, sizeof(label), "%s  XER round-trip equal (whitespace-stripped)", name.c_str());
-    check(label, strip_ws(wrapped) == strip_ws(input));
+    check(label, strip_ws(reenc) == strip_ws(input));
 }
 
 int main(int argc, char** argv) {

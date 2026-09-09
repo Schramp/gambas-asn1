@@ -1,0 +1,13 @@
+[package]
+name = "roundtrip-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "gambas-asn1#219: real codegen -> asn1cpp-ber roundtrip check. build.rs pulls in the compiler-generated Point.rs from the directory named by ASN1CPP_RUST_GEN_DIR (set by tests/CMakeLists.txt's rust_roundtrip_test) — needs that env var set, so this isn't meant to be built with a bare `cargo build`."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+asn1cpp-ber = { path = "../../../rust-runtime/ber" }

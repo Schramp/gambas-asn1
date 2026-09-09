@@ -1,5 +1,7 @@
 #include "Generator.hpp"
+#include "CppBackend.hpp"
 #include <algorithm>
+#include <cassert>
 #include <functional>
 #include <iostream>
 #include <limits>
@@ -9,6 +11,10 @@
 #include "asn1cpp/codec/Constraints.hpp"
 
 namespace asn1::codegen {
+
+Generator::Generator(fs::path out_dir, sema::Resolver& res)
+    : out_dir_(std::move(out_dir)), resolver_(res),
+      owned_backend_(std::make_unique<CppBackend>()), backend_(*owned_backend_) {}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -29,14 +35,6 @@ static void write_if_changed(const fs::path& path, const std::string& content) {
     fs::rename(tmp, path);
 }
 
-// Emit to a string then call write_if_changed.
-template<typename EmitFn>
-static void emit_file(const fs::path& path, EmitFn&& fn) {
-    std::ostringstream buf;
-    fn(buf);
-    write_if_changed(path, buf.str());
-}
-
 // ---------------------------------------------------------------------------
 
 // Linux NAME_MAX is 255; .hpp/.cpp extensions take 4 bytes. When cname exceeds
@@ -51,48 +49,21 @@ static std::string filename_for(const std::string& cname) {
     return cname.substr(0, 220) + suffix;
 }
 
-std::string Generator::cpp_type_for(const ast::TypeDef& def) {
+std::string Generator::native_member_type_for(const ast::TypeDef& def) {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
         switch (*bt) {
-        case BT::Boolean:           return "asn1::Boolean";
-        case BT::Integer: {
-            auto kind = classify_integer_storage(def);
-            switch (kind) {
-                case IntStorageKind::U64:       return "asn1::UInteger";
-                case IntStorageKind::I128:      return "asn1::BigInteger";
-                case IntStorageKind::ARBITRARY: return "asn1::ArbitraryInteger";
-                default:                        return "asn1::Integer";
-            }
-        }
-        case BT::Real:              return "asn1::Real";
-        case BT::Null:              return "asn1::Null";
-        case BT::BitString:         return "asn1::BitString";
-        case BT::OctetString:       return "asn1::OctetString";
-        case BT::ObjectIdentifier:  return "asn1::Oid";
-        case BT::RelativeOid:       return "asn1::RelativeOid";
+        case BT::Integer:
+            return backend_.native_int_type(classify_integer_storage(def));
         case BT::Enumerated: {
-            auto n = capitalize_first(to_cpp_name(def.name.empty() ? "Enum" : def.name));
+            auto n = capitalize_first(backend_.type_name(def.name.empty() ? "Enum" : def.name));
             // Inline ENUMERATED member (has enum values, not top-level)
             if (!current_type_.empty() && !def.enum_values.empty())
                 return current_type_ + n;
             return n;
         }
-        case BT::Utf8String:        return "asn1::Utf8String";
-        case BT::NumericString:     return "asn1::NumericString";
-        case BT::PrintableString:   return "asn1::PrintableString";
-        case BT::T61String:         return "asn1::T61String";
-        case BT::Ia5String:         return "asn1::Ia5String";
-        case BT::VisibleString:     return "asn1::VisibleString";
-        case BT::GeneralString:     return "asn1::GeneralString";
-        case BT::GraphicString:     return "asn1::GraphicString";
-        case BT::UniversalString:   return "asn1::UniversalString";
-        case BT::BmpString:         return "asn1::BmpString";
-        case BT::VideotexString:    return "asn1::VideotexString";
-        case BT::ObjectDescriptor:  return "asn1::ObjectDescriptor";
-        case BT::UtcTime:           return "asn1::UtcTime";
-        case BT::GeneralizedTime:   return "asn1::GeneralizedTime";
-        case BT::Any:               return "asn1::OctetString";
+        default:
+            return backend_.native_builtin_type(*bt);
         }
     }
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body))
@@ -101,21 +72,21 @@ std::string Generator::cpp_type_for(const ast::TypeDef& def) {
         const auto& sof = std::get<ast::SequenceOfType>(def.body);
         const auto& elem = *sof.element;
         if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
-            return std::format("asn1::VectorSeqOf<{}>",
-                               make_synthetic_name(make_synthetic_name(current_type_, def.name), "Anon"));
-        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(elem));
+            return backend_.wrap_collection_type(
+                               backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Anon"));
+        return backend_.wrap_collection_type(native_member_type_for(elem));
     }
     if (def.is_set_of()) {
         const auto& sof = std::get<ast::SetOfType>(def.body);
         const auto& elem = *sof.element;
         if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
-            return std::format("asn1::VectorSeqOf<{}>",
-                               make_synthetic_name(make_synthetic_name(current_type_, def.name), "Anon"));
-        return std::format("asn1::VectorSeqOf<{}>", cpp_type_for(elem));
+            return backend_.wrap_collection_type(
+                               backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Anon"));
+        return backend_.wrap_collection_type(native_member_type_for(elem));
     }
     if (def.is_sequence() || def.is_choice() || def.is_set())
-        return make_synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
-    return "asn1::OctetString";
+        return backend_.synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
+    return backend_.native_builtin_type(BT::OctetString);
 }
 
 // Returns true if the member encodes as a constructed TLV (SEQUENCE, SET, CHOICE, OF).
@@ -146,6 +117,24 @@ bool Generator::member_type_is_choice(const ast::TypeDef& m) const {
     return false;
 }
 
+// X.680 §30.6/§30.7 forces EXPLICIT only for an *untagged* CHOICE/ANY — one
+// with no tag of its own to substitute onto. A member/alternative whose type
+// is a plain reference to an *already-tagged* CHOICE (`c RecChoice` where
+// `RecChoice ::= [0] CHOICE {...}`) is a TaggedType (X.680 §31.2), not a bare
+// CHOICE, for tagging purposes: IMPLICIT applies normally, substituting for
+// the referenced type's own declared tag exactly like any other
+// already-tagged reference. An inline CHOICE body (m.is_choice() directly,
+// not a TypeRef) can never carry its own `[n]` — only a member/alternative
+// wrapping it can — so it's always the untagged case.
+bool Generator::member_type_is_untagged_choice(const ast::TypeDef& m) const {
+    if (m.is_choice()) return true;
+    if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+        auto res = resolver_.resolve_ref(*tr, current_module_);
+        if (res) return res->is_choice() && !res->tag.present();
+    }
+    return false;
+}
+
 bool Generator::member_type_is_any(const ast::TypeDef& m) const {
     if (auto* bt = std::get_if<ast::BuiltinType>(&m.body))
         return *bt == ast::BuiltinType::Any;
@@ -162,58 +151,112 @@ bool Generator::member_is_explicit(const ast::Tag& tag, const ast::TypeDef& memb
     // TagMode::Default — use module-level default.
     if (current_tag_default_ == ast::TagDefault::Explicit) return true;
     // IMPLICIT or AUTOMATIC default.
-    // Exception: CHOICE and ANY cannot be IMPLICIT tagged (X.680 §30.6/30.7);
-    // tagging must be EXPLICIT even in an IMPLICIT TAGS module.
-    return member_type_is_choice(member_type) || member_type_is_any(member_type);
+    // Exception: an *untagged* CHOICE or ANY cannot be IMPLICIT tagged
+    // (X.680 §30.6/30.7 — no tag of its own to substitute onto); tagging
+    // must be EXPLICIT even in an IMPLICIT TAGS module. A CHOICE that
+    // already carries its own declared [n] is a TaggedType, not a bare
+    // CHOICE, for this purpose (member_type_is_untagged_choice's own doc).
+    return member_type_is_untagged_choice(member_type) || member_type_is_any(member_type);
 }
 
-// Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
+/// @brief Decide whether a member carries an explicit BER tag override and,
+///        if so, what class/number/encoding-form applies.
+/// @param tag         The member's (possibly absent) tag override.
+/// @param constructed True if the encoding form is constructed, not primitive.
+/// @return The tag decision as plain data, or nullopt if `tag` is absent.
+/// @note Backend-agnostic: no C++ syntax. Separated from format_tag_literal()
+///       so a future non-C++ backend can consume the decision directly.
+std::optional<TypeTagSpec> Generator::tag_spec_for(const ast::Tag& tag, bool constructed) const {
+    if (!tag.present()) return std::nullopt;
+    return TypeTagSpec{tag.cls, tag.number, constructed};
+}
+
+/// @brief Returns the backend's tag-literal syntax for a tag override, empty
+///        string if absent. Routes through `backend_.format_tag_literal`,
+///        not a hardcoded C++ free function.
+/// @param tag         The member's (possibly absent) tag override.
+/// @param constructed True if the encoding form is constructed, not primitive.
+/// @return The backend's literal string, or "" if `tag` is absent.
 std::string Generator::tag_literal(const ast::Tag& tag, bool constructed) const {
-    if (!tag.present()) return "";
-    std::string cls;
-    switch (tag.cls) {
-    case ast::TagClass::Universal:   cls = "asn1::TagClass::Universal";   break;
-    case ast::TagClass::Application: cls = "asn1::TagClass::Application"; break;
-    case ast::TagClass::Private:     cls = "asn1::TagClass::Private";     break;
-    default:                         cls = "asn1::TagClass::Context";     break;
-    }
-    return std::format("asn1::Tag{{{}, {}, {}}}", cls, tag.number,
-                        constructed ? "true" : "false");
+    auto spec = tag_spec_for(tag, constructed);
+    if (!spec) return "";
+    return backend_.format_tag_literal(*spec);
 }
 
-// Returns the natural (universal) tag for a member def's underlying type.
-// For types with an outer [N] tag, the outer tag IS the wire-level tag.
-std::string Generator::natural_tag_for(const ast::TypeDef& def) const {
+/// @brief Decide the natural (universal) BER tag for a member def's
+///        underlying type — see Generator::natural_tag_spec_for in the header
+///        for the full contract. Plain data, no C++ syntax.
+std::optional<TypeTagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& def) const {
     if (def.tag.present()) {
         bool is_constr = def.is_sequence() || def.is_choice() ||
                          def.is_seq_of()   || def.is_set_of() || def.is_set();
         bool is_exp = member_is_explicit(def.tag, def);
-        return tag_literal(def.tag, is_exp || is_constr);
+        return tag_spec_for(def.tag, is_exp || is_constr);
     }
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
         if (*bt == BT::Any)
             // ANY is stored as raw BER bytes at runtime; codegen uses OCTET STRING tag.
             // sema treats ANY as tag-less (no fixed universal tag), so builtin_universal_tag returns 0.
-            return std::format("asn1::Tag::universal({}, false)", asn1::UniversalTag::OctetString);
+            return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::OctetString, false};
         uint32_t n = sema::builtin_universal_tag(*bt);
-        if (n) return std::format("asn1::Tag::universal({}, false)", n);
+        if (n) return TypeTagSpec{ast::TagClass::Universal, n, false};
     }
     if (def.is_sequence())
-        return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Sequence);
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Sequence, true};
     if (def.is_set())
-        return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Set);
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
     if (def.is_choice())
-        return "";  // CHOICE has no universal tag
+        return std::nullopt;  // CHOICE has no universal tag
     if (def.is_seq_of())
-        return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Sequence);
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Sequence, true};
     if (def.is_set_of())
-        return std::format("asn1::Tag::universal({}, true)", asn1::UniversalTag::Set);
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto base = resolver_.resolve_ref(*tr);
-        if (base) return natural_tag_for(*base);
+        if (base) return natural_tag_spec_for(*base);
     }
-    return "asn1::Tag::universal(4, false)";  // fallback: OCTET STRING
+    return TypeTagSpec{ast::TagClass::Universal, 4, false};  // fallback: OCTET STRING
+}
+
+bool Generator::type_is_explicit(const ast::TypeDef& def) const {
+    if (!def.tag.present()) return false;
+    return member_is_explicit(def.tag, def);
+}
+
+std::optional<TypeTagSpec> Generator::underlying_natural_tag_spec_for(const ast::TypeDef& def) const {
+    using BT = ast::BuiltinType;
+    if (auto* bt = std::get_if<BT>(&def.body)) {
+        if (*bt == BT::Any)
+            return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::OctetString, false};
+        uint32_t n = sema::builtin_universal_tag(*bt);
+        if (n) return TypeTagSpec{ast::TagClass::Universal, n, false};
+    }
+    if (def.is_sequence())
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Sequence, true};
+    if (def.is_set())
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
+    if (def.is_choice())
+        return std::nullopt;
+    if (def.is_seq_of())
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Sequence, true};
+    if (def.is_set_of())
+        return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
+    if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
+        auto base = resolver_.resolve_ref(*tr);
+        if (base) return underlying_natural_tag_spec_for(*base);
+    }
+    return TypeTagSpec{ast::TagClass::Universal, 4, false};  // fallback: OCTET STRING
+}
+
+/// @brief Returns the natural (universal) tag for a member def's underlying
+///        type, in the active backend's literal syntax.
+/// @param def Member or referenced type to compute the natural tag for.
+/// @return The backend's literal string, or "" for CHOICE (no universal tag).
+std::string Generator::natural_tag_for(const ast::TypeDef& def) const {
+    auto spec = natural_tag_spec_for(def);
+    if (!spec) return "";
+    return backend_.format_tag_literal(*spec);
 }
 
 // ---------------------------------------------------------------------------
@@ -241,24 +284,39 @@ bool Generator::should_apply_auto_tags(const ast::TypeDef& def) const {
 Generator::TagResult Generator::compute_member_tag(const ast::TypeDef& m,
                                                     bool apply_auto_tags,
                                                     int auto_tag_num) const {
-    std::string eff_tag;
     bool is_explicit = false;
+    std::optional<MemberTagSpec> resolved_tag;
     if (m.tag.present()) {
         is_explicit = member_is_explicit(m.tag, m);
         // EXPLICIT wrapper is always constructed (X.690 §8.14.3); IMPLICIT inherits.
-        eff_tag = tag_literal(m.tag, is_explicit || member_is_constructed(m));
+        bool constructed = is_explicit || member_is_constructed(m);
+        resolved_tag = MemberTagSpec{ TypeTagSpec{ m.tag.cls, m.tag.number, constructed },
+                                      /*tag_is_override=*/true };
     } else if (apply_auto_tags) {
-        // X.680 §24.9 / §28.2: untagged CHOICE in AUTOMATIC TAGS gets EXPLICIT.
-        bool is_choice = member_type_is_choice(m);
+        // X.680 §22.5/§28.4: AUTOMATIC TAGGING assigns an IMPLICIT context
+        // tag substituting for whatever tag the member would otherwise
+        // carry — UNLESS the member's type is an *untagged* CHOICE (or
+        // ANY), which has no tag to substitute onto, forcing EXPLICIT
+        // instead (X.680 §30.6/30.7). A CHOICE that already carries its own
+        // declared [n] is not "untagged" for this purpose — see
+        // member_type_is_untagged_choice's own doc.
+        bool untagged_choice = member_type_is_untagged_choice(m);
         ast::Tag auto_tag;
         auto_tag.cls    = ast::TagClass::Context;
         auto_tag.number = auto_tag_num;
-        auto_tag.mode   = is_choice ? ast::TagMode::Explicit : ast::TagMode::Implicit;
-        eff_tag    = tag_literal(auto_tag, is_choice || member_is_constructed(m));
-        is_explicit = is_choice;
+        auto_tag.mode   = untagged_choice ? ast::TagMode::Explicit : ast::TagMode::Implicit;
+        bool constructed = untagged_choice || member_is_constructed(m);
+        is_explicit = untagged_choice;
+        resolved_tag = MemberTagSpec{ TypeTagSpec{ auto_tag.cls, auto_tag.number, constructed },
+                                      /*tag_is_override=*/true };
     } else {
-        eff_tag = natural_tag_for(m);
-        if (eff_tag.empty()) eff_tag = "asn1::Tag{}";
+        // Structured natural tag, not a pre-rendered string — absent
+        // (resolved_tag stays nullopt) only for the one
+        // case a member's type has no tag at all (an untagged CHOICE —
+        // X.680 §28, no universal tag). Each backend formats this itself
+        // at the point of use.
+        if (auto natural = natural_tag_spec_for(m))
+            resolved_tag = MemberTagSpec{ *natural, /*tag_is_override=*/false };
         // If the tag came from a referenced type's outer context tag, propagate is_explicit.
         // e.g. s4 T4 where T4 ::= [53] CHOICE — CHOICE always forces EXPLICIT.
         if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
@@ -267,7 +325,7 @@ Generator::TagResult Generator::compute_member_tag(const ast::TypeDef& m,
                 is_explicit = member_is_explicit(base->tag, *base);
         }
     }
-    return { std::move(eff_tag), is_explicit };
+    return { resolved_tag, is_explicit };
 }
 
 bool Generator::is_class_type(const ast::TypeDef& m) const {
@@ -277,6 +335,57 @@ bool Generator::is_class_type(const ast::TypeDef& m) const {
         return direct && (direct->is_sequence() || direct->is_choice() || direct->is_set());
     }
     return false;
+}
+
+// Is `target` (an ASN.1 type name) reachable from `from` by following
+// further class-typed member references? DFS over the
+// resolved-type graph, bounded by `visited` (finite — one entry per
+// distinct named class type actually reachable, plus one per anonymous
+// inline member visited along the way).
+bool Generator::type_reaches(const ast::TypeDef& from, const std::string& target,
+                              std::set<std::string>& visited) const {
+    for (const auto& m : from.members) {
+        if (!m || m->is_extension_marker) continue;
+        const ast::TypeDef* member_def = nullptr;
+        std::string member_key;
+        if (m->is_sequence() || m->is_choice() || m->is_set()) {
+            // Anonymous inline class-typed member — no independent ASN.1
+            // name to compare against `target`, but still needs a unique
+            // `visited` key so a cycle purely among anonymous members
+            // terminates.
+            member_def = m.get();
+            member_key = std::format("$anon:{}", static_cast<const void*>(m.get()));
+        } else if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
+            auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
+            if (direct && (direct->is_sequence() || direct->is_choice() || direct->is_set())) {
+                member_def = direct.get();
+                member_key = tr->type_name;
+            }
+        }
+        if (!member_def) continue;
+        if (member_key == target) return true;
+        if (!visited.insert(member_key).second) continue; // already visited, not a new cycle path
+        if (type_reaches(*member_def, target, visited)) return true;
+    }
+    return false;
+}
+
+// Does member `m`'s class type eventually reference `enclosing_name`
+// again (a real ASN.1 type-reference cycle)? Only
+// meaningful when `m` is itself class-typed (caller should check
+// is_class_type(m) first, or accept the always-false short-circuit below).
+bool Generator::member_type_in_cycle(const ast::TypeDef& m, const std::string& enclosing_name) const {
+    const ast::TypeDef* member_def = nullptr;
+    if (m.is_sequence() || m.is_choice() || m.is_set()) {
+        member_def = &m;
+    } else if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+        auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
+        if (direct && (direct->is_sequence() || direct->is_choice() || direct->is_set()))
+            member_def = direct.get();
+    }
+    if (!member_def) return false;
+    std::set<std::string> visited;
+    return type_reaches(*member_def, enclosing_name, visited);
 }
 
 // Collect flattened BER dispatch tags for one CHOICE alternative (X.690 §8.13,
@@ -326,12 +435,6 @@ void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
 
 // Returns the &asn_DEF_* expression for a member's type_descriptor field.
 
-// Escape a C++ identifier vs keywords and optional extra reserved API names.
-inline std::string safe_cpp_name(const std::string& s,
-                                  std::initializer_list<std::string_view> extra = {}) {
-    return safe_name(s, extra);
-}
-
 // Returns true if this is a type assignment (not a value or class assignment).
 // Value assignments have a non-monostate default_value (the assigned value).
 static bool is_type_assignment(const ast::TypeDef& def) {
@@ -343,45 +446,29 @@ static bool is_type_assignment(const ast::TypeDef& def) {
 }
 
 // ---------------------------------------------------------------------------
-// type_descriptor_ref_for — Generator member (collision-aware)
+// type_descriptor_ref_spec_for / type_descriptor_ref_for — Generator members
+// (collision-aware)
 // ---------------------------------------------------------------------------
 
-std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
+/// @brief Decide which reference form a type-descriptor reference takes
+///        (see TypeDescriptorRefSpec) — plain data, no C++ syntax. Needs
+///        Generator-private resolver/collision state (resolver_,
+///        collision_types_, effective_cpp_name/cpp_name_for_ref/
+///        cpp_name_for_typeref), so stays a Generator method; the caller
+///        (type_descriptor_ref_for, below) renders it via
+///        backend_.format_type_descriptor_ref.
+/// @see TypeDescriptorRefSpec (Backend.hpp) for the field-by-field contract.
+TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef& def) {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
-        switch (*bt) {
-        case BT::Integer:           return "&asn1::asn_DEF_Integer";
-        case BT::Boolean:           return "&asn1::asn_DEF_Boolean";
-        case BT::Null:              return "&asn1::asn_DEF_Null";
-        case BT::Real:              return "&asn1::asn_DEF_Real";
-        case BT::BitString:         return "&asn1::asn_DEF_BitString";
-        case BT::ObjectIdentifier:  return "&asn1::asn_DEF_Oid";
-        case BT::RelativeOid:       return "&asn1::asn_DEF_RelativeOid";
-        case BT::UtcTime:           return "&asn1::asn_DEF_UtcTime";
-        case BT::GeneralizedTime:   return "&asn1::asn_DEF_GeneralizedTime";
-        case BT::OctetString:       return "&asn1::asn_DEF_OctetString";
-        case BT::Utf8String:        return "&asn1::asn_DEF_Utf8String";
-        case BT::Ia5String:         return "&asn1::asn_DEF_Ia5String";
-        case BT::NumericString:     return "&asn1::asn_DEF_NumericString";
-        case BT::PrintableString:   return "&asn1::asn_DEF_PrintableString";
-        case BT::T61String:         return "&asn1::asn_DEF_T61String";
-        case BT::VisibleString:     return "&asn1::asn_DEF_VisibleString";
-        case BT::GeneralString:     return "&asn1::asn_DEF_GeneralString";
-        case BT::GraphicString:     return "&asn1::asn_DEF_GraphicString";
-        case BT::UniversalString:   return "&asn1::asn_DEF_UniversalString";
-        case BT::BmpString:         return "&asn1::asn_DEF_BmpString";
-        case BT::VideotexString:    return "&asn1::asn_DEF_VideotexString";
-        case BT::ObjectDescriptor:  return "&asn1::asn_DEF_ObjectDescriptor";
-        case BT::Any:               return "&asn1::asn_DEF_Any";
-        case BT::Enumerated:        break; // handled below — inline ENUMERATED needs synthetic name
-        default:                    return "nullptr";
-        }
+        if (*bt != BT::Enumerated)  // Enumerated handled below — inline ENUMERATED needs synthetic name
+            return TypeDescriptorRefSpec{TypeDescriptorRefKind::Builtin, *bt, {}};
     }
     // Inline ENUMERATED member — use synthetic name (generates a class)
     if (auto* bt2 = std::get_if<BT>(&def.body);
         bt2 && *bt2 == BT::Enumerated && !def.enum_values.empty() && !current_type_.empty()) {
-        auto sname = make_synthetic_name(current_type_, def.name.empty() ? "Enum" : def.name);
-        return std::format("&{}::asn_DEF", sname);
+        auto sname = backend_.synthetic_name(current_type_, def.name.empty() ? "Enum" : def.name);
+        return TypeDescriptorRefSpec{TypeDescriptorRefKind::ClassScoped, {}, sname};
     }
     // Named type reference.
     // Pure TypeRef aliases (e.g. "LawfulInterceptionIdentifier ::= LIID") generate only a
@@ -391,60 +478,75 @@ std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
         // For collision types, resolve_ref uses global_ and may pick the wrong module's version.
         // Prefer the current-module's definition (local shadows global), fall back to resolve_ref.
         // Skip this logic for qualified references (module_name set) — they pin the source module.
-        if (tr->module_name.empty() && collision_types_.count(to_cpp_name(tr->type_name))) {
+        if (tr->module_name.empty() && collision_types_.count(backend_.type_name(tr->type_name))) {
             std::string def_mod = resolver_.module_of(tr->type_name, current_module_);
             if (!def_mod.empty()) {
                 auto td = resolver_.resolve_in_module(tr->type_name, def_mod);
                 if (td && std::get_if<ast::TypeRef>(&td->body))
-                    return type_descriptor_ref_for(*td);  // pure alias — follow chain
+                    return type_descriptor_ref_spec_for(*td);  // pure alias — follow chain
                 if (td) {
                     auto n = effective_cpp_name(tr->type_name, def_mod);
                     if (td->is_sequence() || td->is_set() || td->is_choice() ||
                         (std::get_if<BT>(&td->body) && std::get<BT>(td->body) == BT::Enumerated))
-                        return std::format("&{}::asn_DEF", n);
-                    return std::format("&asn_DEF_{}", n);
+                        return TypeDescriptorRefSpec{TypeDescriptorRefKind::ClassScoped, {}, n};
+                    return TypeDescriptorRefSpec{TypeDescriptorRefKind::FreeStanding, {}, n};
                 }
             }
         }
         auto resolved = resolver_.resolve_ref(*tr);
         if (resolved && !resolved->name.empty()) {
             if (std::get_if<ast::TypeRef>(&resolved->body))
-                return type_descriptor_ref_for(*resolved);  // pure alias — follow chain
+                return type_descriptor_ref_spec_for(*resolved);  // pure alias — follow chain
             bool is_class = resolved->is_sequence() || resolved->is_set() || resolved->is_choice() ||
                 (std::get_if<BT>(&resolved->body) && std::get<BT>(resolved->body) == BT::Enumerated);
+            auto kind = is_class ? TypeDescriptorRefKind::ClassScoped : TypeDescriptorRefKind::FreeStanding;
             // Qualified ref: use explicit module for collision disambiguation on resolved name.
-            if (!tr->module_name.empty() && collision_types_.count(to_cpp_name(resolved->name))) {
+            if (!tr->module_name.empty() && collision_types_.count(backend_.type_name(resolved->name))) {
                 auto n = effective_cpp_name(resolved->name, tr->module_name);
-                return is_class ? std::format("&{}::asn_DEF", n)
-                                : std::format("&asn_DEF_{}", n);
+                return TypeDescriptorRefSpec{kind, {}, n};
             }
             auto n = cpp_name_for_ref(resolved->name, current_module_);
-            return is_class ? std::format("&{}::asn_DEF", n)
-                            : std::format("&asn_DEF_{}", n);
+            return TypeDescriptorRefSpec{kind, {}, n};
         }
-        // Fallback: unresolved ref — synthetic types (compiler-generated SeqOf element
-        // replacements) are always SEQUENCE/CHOICE/ENUM → class-scoped static member.
-        return std::format("&{}::asn_DEF", cpp_name_for_typeref(*tr));
+        // Fallback: unresolved ref — synthetic types (compiler-generated
+        // element replacements) are SEQUENCE/CHOICE/ENUM → class-scoped
+        // static member, except a promoted anonymous nested SEQUENCE OF/SET
+        // OF (seq_of_synthetic_names_), which — like any
+        // other SEQUENCE OF/SET OF — gets a free asn_DEF_X, not X::asn_DEF.
+        auto n = cpp_name_for_typeref(*tr);
+        auto kind = seq_of_synthetic_names_.count(n) ? TypeDescriptorRefKind::FreeStanding
+                                                       : TypeDescriptorRefKind::ClassScoped;
+        return TypeDescriptorRefSpec{kind, {}, n};
     }
     // SEQUENCE OF / SET OF — named member uses synthetic SeqOf wrapper descriptor (using alias)
     if (def.is_seq_of()) {
         if (!def.name.empty())
-            return std::format("&asn_DEF_{}", make_synthetic_name(current_type_, def.name));
+            return TypeDescriptorRefSpec{TypeDescriptorRefKind::FreeStanding, {},
+                                          backend_.synthetic_name(current_type_, def.name)};
         const auto& elem = std::get<ast::SequenceOfType>(def.body).element;
-        return type_descriptor_ref_for(*elem);
+        return type_descriptor_ref_spec_for(*elem);
     }
     if (def.is_set_of()) {
         if (!def.name.empty())
-            return std::format("&asn_DEF_{}", make_synthetic_name(current_type_, def.name));
+            return TypeDescriptorRefSpec{TypeDescriptorRefKind::FreeStanding, {},
+                                          backend_.synthetic_name(current_type_, def.name)};
         const auto& elem = std::get<ast::SetOfType>(def.body).element;
-        return type_descriptor_ref_for(*elem);
+        return type_descriptor_ref_spec_for(*elem);
     }
     // Inline SEQUENCE / CHOICE / SET member — synthetic name, generates a class
     if (def.is_sequence() || def.is_choice() || def.is_set()) {
-        auto sname = make_synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
-        return std::format("&{}::asn_DEF", sname);
+        auto sname = backend_.synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
+        return TypeDescriptorRefSpec{TypeDescriptorRefKind::ClassScoped, {}, sname};
     }
-    return "nullptr";
+    return TypeDescriptorRefSpec{};  // kind == None
+}
+
+/// @brief Returns the backend's reference-expression syntax for `def`'s
+///        type-descriptor reference. Routes through
+///        `backend_.format_type_descriptor_ref`, not hardcoded C++ text —
+///        same split as tag_literal()/format_tag_literal().
+std::string Generator::type_descriptor_ref_for(const ast::TypeDef& def) {
+    return backend_.format_type_descriptor_ref(type_descriptor_ref_spec_for(def));
 }
 
 // ---------------------------------------------------------------------------
@@ -469,144 +571,41 @@ split_members(const ast::TypeDef& def)
 }
 
 // ---------------------------------------------------------------------------
-// Shared TypeDescriptor emitter
-// ---------------------------------------------------------------------------
-
-static void emit_type_descriptor(std::ostream& os,
-                                 const std::string& cname,
-                                 const std::string& xer_name,
-                                 const std::string& tag_expr,
-                                 bool has_enum, bool has_seq,
-                                 bool has_choice, bool has_seqof,
-                                 const std::string& kind,
-                                 const std::string& per_handler = "nullptr",
-                                 const std::string& ber_handler = "nullptr",
-                                 bool use_class_scope = false) {
-    auto sp = [&](bool h) -> std::string {
-        if (!h) return "nullptr";
-        return use_class_scope ? std::format("&{}::asn_SPC", cname)
-                               : std::format("&asn_SPC_{}", cname);
-    };
-    if (use_class_scope)
-        os << std::format("const asn1::TypeDescriptor {}::asn_DEF = {{\n", cname);
-    else
-        os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", xer_name);
-    os << std::format("    {},\n", tag_expr);
-    os << std::format("    {}, {}, {}, {}, {{}} /* constraints */,\n",
-                      sp(has_enum), sp(has_seq), sp(has_choice), sp(has_seqof));
-    os << std::format("    false, {} /* kind */,\n", kind);
-    os << std::format("    {} /* per_handler */,\n", per_handler);
-    os << std::format("    {} /* ber_handler */,\n", ber_handler);
-    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cname);
-    os << "};\n\n";
-}
-
-// ---------------------------------------------------------------------------
 // Emit ENUMERATED
 // ---------------------------------------------------------------------------
 
-void Generator::emit_enumerated_hpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
+/// @brief Decide the resolved value list for an ENUMERATED type — automatic
+///        numbering (X.680 §20.6) applied, root and extension values in one
+///        continuous sequence. Backend-agnostic: shared by both
+///        emit_enumerated_declaration and emit_enumerated_definition so
+///        neither recomputes it independently.
+static EnumeratedSpec build_enumerated_spec(const ast::TypeDef& def,
+                                            const std::string& type_name) {
+    EnumeratedSpec spec;
+    spec.type_name = type_name;
+    spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
+    spec.extensible = false;
+    spec.root_count  = 0;
 
-    // Count non-extension enum values
-    int count = 0;
-    bool extensible = false;
-    for (const auto& ev : def.enum_values) {
-        if (ev.name == "...") { extensible = true; continue; }
-        ++count;
-    }
-
-    // class inheriting EnumValue — plain inner enum so values leak into class scope
-    os << std::format("class {} : public asn1::EnumValue {{\npublic:\n", cname);
-    // Enum values are plain enum (not enum class) — they inject into class scope.
-    // Reserve all generated method names so values can't clash with them.
-    os << "    enum Enm : long {\n";
-    long auto_val = 0;
-    for (const auto& ev : def.enum_values) {
-        if (ev.name == "...") { continue; }
-        long v = static_cast<long>(ev.number.value_or(auto_val));
-        os << std::format("        {} = {},\n",
-            safe_cpp_name(to_cpp_name(ev.name),
-                {"present", "value_", "value", "set", "Enm"}), v);
-        auto_val = v + 1;
-    }
-    if (extensible)
-        os << "        /* extensible */\n";
-    os << "    };\n";
-    os << std::format("    {}() = default;\n", cname);
-    os << std::format("    {}(Enm v) {{ value_ = static_cast<long>(v); }}\n", cname);
-    os << std::format("    {}& operator=(Enm v) {{ value_ = static_cast<long>(v); return *this; }}\n", cname);
-    os << std::format("    Enm present() const {{ return static_cast<Enm>(value_); }}\n");
-    os << std::format("    bool operator==(Enm v) const {{ return value_ == static_cast<long>(v); }}\n");
-    os << std::format("    bool operator!=(Enm v) const {{ return value_ != static_cast<long>(v); }}\n");
-    os << "    using asn1::EnumValue::operator==;\n";
-    os << "    using asn1::EnumValue::operator!=;\n";
-    os << std::format("    static const asn1::EnumEntry    asn_MAP_value2enum[{}];\n", count);
-    os << "    static const asn1::EnumSpec     asn_SPC;\n";
-    os << "    static const asn1::TypeDescriptor asn_DEF;\n";
-    os << "};\n\n";
-
-}
-
-void Generator::emit_enumerated_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
-
-    // Collect root values (before first "...")
-    bool extensible = false;
-    int ext_root_count = 0;
-    long auto_val = 0;
-    struct EV { long value; std::string name; };
-    std::vector<EV> root_values;
-
-    for (const auto& ev : def.enum_values) {
-        if (ev.name == "...") { extensible = true; break; }
-        long v = static_cast<long>(ev.number.value_or(auto_val));
-        root_values.push_back({v, ev.name});
-        auto_val = v + 1;
-        ++ext_root_count;
-    }
-    // Also collect extension values (auto-numbering continues from last root value)
+    int64_t auto_val = 0;
     bool past_ext = false;
     for (const auto& ev : def.enum_values) {
-        if (!past_ext) { if (ev.name == "...") past_ext = true; continue; }
-        long v = static_cast<long>(ev.number.value_or(auto_val));
-        root_values.push_back({v, ev.name});
+        if (ev.name == "...") { spec.extensible = true; past_ext = true; continue; }
+        int64_t v = ev.number.value_or(auto_val);
+        spec.values.push_back({ev.name, v});
         auto_val = v + 1;
+        if (!past_ext) ++spec.root_count;
     }
+    return spec;
+}
 
-    // value2enum table (sorted by value for binary search)
-    auto sorted = root_values;
-    std::sort(sorted.begin(), sorted.end(), [](const EV& a, const EV& b){ return a.value < b.value; });
-
-    os << std::format("const asn1::EnumEntry {}::asn_MAP_value2enum[] = {{\n", cname);
-    for (const auto& ev : sorted)
-        os << std::format("    {{ {}, \"{}\" }},\n", ev.value, ev.name);
-    os << "};\n\n";
-
-    // PER: root values in definition order (ordinal → value mapping). File-local — not in header.
-    os << std::format("static const long asn_PER_{}_value_order[] = {{\n", cname);
-    for (int i = 0; i < ext_root_count; ++i)
-        os << std::format("    {},\n", root_values[i].value);
-    os << "};\n\n";
-
-    // EnumSpec
-    os << std::format("const asn1::EnumSpec {}::asn_SPC = {{\n", cname);
-    os << std::format("    {}::asn_MAP_value2enum,\n", cname);
-    os << std::format("    {},\n", (int)sorted.size());
-    os << std::format("    {}, /* extensible */\n", extensible ? "true" : "false");
-    os << std::format("    {}, /* root_count */\n", ext_root_count);
-    os << std::format("    asn_PER_{}_value_order\n", cname);
-    os << "};\n\n";
-
-    // TypeDescriptor
-    emit_type_descriptor(os, cname,
-        def.xer_name.empty() ? def.name : def.xer_name,
-        natural_tag_for(def),
-        true, false, false, false, "asn1::TypeKind::Enumerated",
-        "&asn1::per_enumerated_handler", "&asn1::ber_enumerated_handler",
-        /*use_class_scope=*/true);
-
+void Generator::emit_enumerated(const ast::TypeDef& def, TypeOutputSession& session) {
+    auto spec = build_enumerated_spec(def, effective_cpp_name(def.name, current_module_));
+    spec.tag = natural_tag_spec_for(def);
+    spec.is_explicit = type_is_explicit(def);
+    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
+    backend_.emit_enumerated(spec, session);
 }
 
 // ---------------------------------------------------------------------------
@@ -623,26 +622,98 @@ IntStorageKind Generator::classify_integer_storage(const ast::TypeDef& def) cons
     return IntStorageKind::S64;
 }
 
-void Generator::emit_integer_hpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
-
-    auto kind = classify_integer_storage(def);
-    std::string cpp_storage;
-    switch (kind) {
-        case IntStorageKind::U64:       cpp_storage = "asn1::UInteger"; break;
-        case IntStorageKind::I128:      cpp_storage = "__int128"; break;
-        case IntStorageKind::ARBITRARY: cpp_storage = "std::vector<uint8_t>"; break;
-        default:                        cpp_storage = "asn1::Integer"; break;
+ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
+    ElemShape shape;
+    if (elem.is_seq_of()) {
+        shape.kind = SeqOfKind::SeqOf;
+        shape.nested = std::make_shared<ElemShape>(
+            build_elem_shape(*std::get<ast::SequenceOfType>(elem.body).element));
+        return shape;
     }
-    os << std::format("using {} = {};\n\n", cname, cpp_storage);
+    if (elem.is_set_of()) {
+        shape.kind = SeqOfKind::SetOf;
+        shape.nested = std::make_shared<ElemShape>(
+            build_elem_shape(*std::get<ast::SetOfType>(elem.body).element));
+        return shape;
+    }
+    // Scalar leaf: a builtin (kind stays None, builtin set) or a composite
+    // TypeRef/SEQUENCE/CHOICE/SET (kind stays None, builtin stays nullopt —
+    // same "optional discriminant" convention SequenceMemberSpec::mbuiltin
+    // uses one level up).
+    if (auto* bt = std::get_if<ast::BuiltinType>(&elem.body)) {
+        shape.builtin = *bt;
+        if (*bt == ast::BuiltinType::Integer) shape.storage_kind = classify_integer_storage(elem);
+    }
+    return shape;
+}
 
-    // Named integer constants (INTEGER { foo(0), bar(1) } style)
+/// @brief True if any top-level constraint on `def` carries a trailing '...'.
+/// @param def Type definition to inspect.
+/// @return Whether `def` is constraint-extensible (X.680 §49.3).
+/// @note Forward-declared here; defined later in this file. build_integer_spec
+///       below needs it before its definition point.
+static bool is_constraint_extensible(const ast::TypeDef& def);
+
+IntegerSpec Generator::build_integer_spec(const ast::TypeDef& def, const std::string& type_name) const {
+    IntegerSpec spec;
+    spec.type_name = type_name;
+    spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
+    spec.storage_kind = classify_integer_storage(def);
+    spec.tag = natural_tag_spec_for(def);
+    spec.is_explicit = type_is_explicit(def);
+    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
     for (const auto& ev : def.enum_values)
-        os << std::format("inline constexpr int64_t {}_{} = {};\n",
-            cname, to_value_name(ev.name), ev.number.value_or(0));
-    if (!def.enum_values.empty()) os << "\n";
+        spec.named_values.push_back({ev.name, ev.number.value_or(0)});
 
-    os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
+    auto r = extract_integer_range(def);
+    spec.has_constraint = r.has_value;
+    if (!r.has_value) return spec;
+
+    int64_t lo = r.lo, hi = r.hi;
+    spec.extensible = is_constraint_extensible(def);
+    spec.semi_constrained = r.truly_max;
+    spec.hi_is_large = r.hi_is_large;
+    spec.lower_s64 = lo;
+
+    if (r.truly_max) {
+        // Truly semi-constrained (..MAX keyword): no upper cap.
+        spec.range_bits = -1;
+        spec.upper_s64 = 0;
+        spec.lower_u64 = static_cast<uint64_t>(lo >= 0 ? lo : 0);
+        spec.upper_u64 = std::numeric_limits<uint64_t>::max();
+    } else if (r.hi_is_large) {
+        // TOK_number_large upper bound (e.g. UINT64_MAX).
+        // X.691 §10.5.6 UPER: range = hi_u64 - lo + 1; compute range_bits.
+        // For the full uint64 range (lo=0, hi=UINT64_MAX), range_bits=64.
+        int rb = 0;
+        uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
+        uint64_t range_count_m1 = r.hi_u64 - u_lo; // range - 1 (exact even if range=2^64)
+        if (range_count_m1 == std::numeric_limits<uint64_t>::max()) {
+            rb = 64; // 2^64 range
+        } else {
+            for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
+        }
+        spec.range_bits = rb;
+        spec.upper_s64 = hi; // int64_t view
+        spec.lower_u64 = u_lo;
+        spec.upper_u64 = r.hi_u64;
+    } else {
+        int64_t range_count = hi - lo + 1;
+        int rb = 0;
+        if (range_count > 1)
+            for (int64_t v = range_count - 1; v > 0; v >>= 1) ++rb;
+        spec.range_bits = rb;
+        spec.upper_s64 = hi;
+        spec.lower_u64 = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
+        spec.upper_u64 = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
+    }
+    return spec;
+}
+
+void Generator::emit_integer(const ast::TypeDef& def, TypeOutputSession& session) {
+    auto spec = build_integer_spec(def, effective_cpp_name(def.name, current_module_));
+    backend_.emit_integer(spec, session);
 }
 
 // Walk a value reference chain until a literal is reached.
@@ -725,65 +796,48 @@ static const ast::TypeDef* resolve_underlying(const ast::TypeDef& m,
     return cur;
 }
 
-std::string Generator::emit_default_setter(
-    const ast::TypeDef& m, const std::string& parent_cname,
-    const std::string& mname, std::ostream& os)
-{
-    if (m.marker != ast::Marker::Default) return "nullptr";
-    if (std::holds_alternative<std::monostate>(m.default_value)) return "nullptr";
+/// @brief Decide which DEFAULT value (X.680 §25.1) applies to a member, if any.
+/// @param m Member to inspect.
+/// @return The decision as plain data — see header for the `Kind::None` cases.
+DefaultValueSpec Generator::default_value_spec_for(const ast::TypeDef& m) const {
+    if (m.marker != ast::Marker::Default) return {};
+    if (std::holds_alternative<std::monostate>(m.default_value)) return {};
 
-    std::string mtype = cpp_type_for(m);
-    const ast::TypeDef* base = resolve_underlying(m, resolver_);
-
-    std::string literal;
-    if (auto* b = std::get_if<bool>(&m.default_value)) {
-        literal = std::format("{}{{{}}}", mtype, *b ? "true" : "false");
-    } else if (auto* i = std::get_if<int64_t>(&m.default_value)) {
-        literal = std::format("{}{{{}}}", mtype, *i);
-    } else if (auto* s = std::get_if<std::string>(&m.default_value)) {
-        // String literal default (IA5String/VisibleString/PrintableString/etc.)
-        // Full C escape: backslash, quote, and all control characters.
-        std::string esc;
-        for (unsigned char c : *s) {
-            if      (c == '\\') esc += "\\\\";
-            else if (c == '"')  esc += "\\\"";
-            else if (c == '\n') esc += "\\n";
-            else if (c == '\r') esc += "\\r";
-            else if (c == '\t') esc += "\\t";
-            else if (c < 0x20 || c == 0x7f)
-                esc += std::format("\\x{:02x}", c);
-            else
-                esc += static_cast<char>(c);
-        }
-        literal = std::format("{}{{\"{}\"}}", mtype, esc);
-    } else if (auto* nr = std::get_if<ast::NamedValueRef>(&m.default_value)) {
-        // ENUMERATED named ref → EnumType::name
+    if (auto* b = std::get_if<bool>(&m.default_value))
+        return { DefaultValueSpec::Kind::Bool, *b, 0, "", "" };
+    if (auto* i = std::get_if<int64_t>(&m.default_value))
+        return { DefaultValueSpec::Kind::Int, false, *i, "", "" };
+    if (auto* s = std::get_if<std::string>(&m.default_value))
+        return { DefaultValueSpec::Kind::String, false, 0, *s, "" };
+    if (auto* nr = std::get_if<ast::NamedValueRef>(&m.default_value)) {
+        // ENUMERATED named ref → EnumType::name; unsupported for other bases.
+        const ast::TypeDef* base = resolve_underlying(m, resolver_);
         bool is_enum = base
             && std::holds_alternative<ast::BuiltinType>(base->body)
             && std::get<ast::BuiltinType>(base->body) == ast::BuiltinType::Enumerated;
-        if (!is_enum) return "nullptr";
-        literal = std::format("{}::{}", mtype, safe_cpp_name(to_cpp_name(nr->name)));
-    } else {
-        return "nullptr";
+        if (!is_enum) return {};
+        return { DefaultValueSpec::Kind::EnumRef, false, 0, "", nr->name };
     }
+    return {};
+}
 
-    std::string fname = std::format("_setdef_{}_{}", parent_cname, mname);
-    std::string cname2 = std::format("_isdef_{}_{}", parent_cname, mname);
-    os << std::format(
-        "static void {0}(asn1::Asn1Object* p) {{\n"
-        "    using Ops = _Ops_{1}_{2};\n"
-        "    Ops::set(p, true);\n"
-        "    *static_cast<{3}*>(Ops::get(p)) = {4};\n"
-        "}}\n",
-        fname, parent_cname, mname, mtype, literal);
-    os << std::format(
-        "static bool {0}(const asn1::Asn1Object* p) {{\n"
-        "    using Ops = _Ops_{1}_{2};\n"
-        "    if (!Ops::check(p)) return false;\n"
-        "    return *static_cast<const {3}*>(Ops::get(const_cast<asn1::Asn1Object*>(p))) == ({4});\n"
-        "}}\n",
-        cname2, parent_cname, mname, mtype, literal);
-    return "&" + fname;
+/// @brief Emit the DEFAULT-value setter/checker pair for a member, delegating
+///        text emission to the backend.
+/// @param m            Member carrying a DEFAULT value (see default_value_spec_for).
+/// @param parent_cname C++ name of the enclosing SEQUENCE/SET type.
+/// @param mname        Sanitised C++ member name.
+/// @param os           Output stream for the generated `.cpp` file.
+/// @return "&_setdef_<parent>_<member>", or "nullptr" if `m` has no DEFAULT.
+std::string Generator::emit_default_setter(
+    const ast::TypeDef& m, const std::string& parent_cname,
+    const std::string& mname, TypeOutputSession& session)
+{
+    auto spec = default_value_spec_for(m);
+    if (spec.kind == DefaultValueSpec::Kind::None) return "nullptr";
+
+    std::string mtype = native_member_type_for(m);
+    backend_.emit_default_setter(spec, mtype, parent_cname, mname, session);
+    return std::format("&_setdef_{}_{}", parent_cname, mname);
 }
 
 // True if any top-level constraint carries a trailing '...'.
@@ -812,130 +866,6 @@ static void walk_type_constraints(const ast::TypeDef& def, F&& f) {
 // Forward decls: defined later in this file; needed by emit_member_type_descriptor.
 // (Generator member fns can resolve named value references; extract_from_alphabet is free.)
 static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def);
-
-/// @brief Returns ceil(log2(n)) clamped to [1,∞) — bits per character for an n-symbol alphabet.
-static int compute_alphabet_bits(int n) {
-    int bits = 0;
-    for (int r = n - 1; r > 0; r >>= 1) ++bits;
-    return (bits == 0) ? 1 : bits;
-}
-
-/// @brief Returns the name of the global `asn_DEF_*` descriptor for a restricted built-in
-///        string type, or nullptr for types without a fixed alphabet (UTF8String, etc.).
-/// @param bt  Built-in type tag.
-/// @return Pointer to a string literal such as `"asn_DEF_NumericString"`, or nullptr.
-/// @see X.680 §41 — restricted character string types and their canonical alphabets.
-static const char* builtin_def_name(ast::BuiltinType bt) {
-    using BT = ast::BuiltinType;
-    switch (bt) {
-    case BT::NumericString:   return "asn_DEF_NumericString";
-    case BT::PrintableString: return "asn_DEF_PrintableString";
-    case BT::Ia5String:       return "asn_DEF_Ia5String";
-    case BT::VisibleString:   return "asn_DEF_VisibleString";
-    default:                  return nullptr;
-    }
-}
-
-/// @brief Generate the three alphabet constraint fields that reference a built-in descriptor.
-///
-/// Produces a comma-prefixed fragment suitable for insertion into a Constraints initializer:
-/// `.alphabet_bits`, `.alphabet`/`.alphabet_size` (decode table), and `.encode_table`.
-/// Returns an empty string for types without a fixed alphabet (UTF8String, etc.).
-///
-/// @param bt  Built-in type whose global `asn_DEF_*` descriptor carries the alphabet tables.
-/// @return Constraint fragment, e.g. `", .alphabet_bits=…, .alphabet=…, …"`, or `""`.
-/// @see X.691 §26.5 — known-multiplier character string PER canonical index.
-static std::string builtin_alphabet_refs(ast::BuiltinType bt) {
-    const char* def_name = builtin_def_name(bt);
-    if (!def_name) return "";
-    return std::format(
-        ", .alphabet_bits=asn1::{0}.constraints.alphabet_bits"
-        ", .alphabet=asn1::{0}.constraints.alphabet"
-        ", .alphabet_size=asn1::{0}.constraints.alphabet_size"
-        ", .encode_table=asn1::{0}.constraints.encode_table",
-        def_name);
-}
-
-/// @brief Emit static FROM-alphabet lookup tables into a generated `.cpp` file.
-/// @param os          Output stream for the generated `.cpp` file.
-/// @param prefix      Name prefix used for the static arrays (e.g. `"asn_FROM_MyStr"`).
-/// @param alphabet    Sorted FROM-alphabet character values (non-empty).
-/// @see X.691 §26.5 — known-multiplier character string PER encoding.
-static void emit_from_alphabet_arrays(
-    std::ostream& os, const std::string& prefix,
-    const std::vector<uint8_t>& alphabet)
-{
-    // Decode table: alphabet[constrained_idx] → char value (sorted, same as input).
-    os << std::format("static const uint8_t {}_alpha[{}] = {{", prefix, alphabet.size());
-    for (int i = 0; i < static_cast<int>(alphabet.size()); ++i) {
-        if (i) os << ", ";
-        os << static_cast<int>(alphabet[i]);
-    }
-    os << "};\n";
-    // Encode table: encode_table[char_value] → constrained_idx, or 0xFFFF if not in alphabet.
-    std::array<uint16_t, 256> enc;
-    enc.fill(0xFFFFu);
-    for (int i = 0; i < static_cast<int>(alphabet.size()); ++i)
-        enc[alphabet[i]] = static_cast<uint16_t>(i);
-    os << std::format("static const uint16_t {}_enc[256] = {{\n", prefix);
-    for (int i = 0; i < 256; ++i) {
-        if (i % 16 == 0) os << "  ";
-        if (enc[i] == 0xFFFFu) os << "0xFFFFu";
-        else                   os << enc[i];
-        if (i < 255) os << (i % 16 == 15 ? ",\n" : ", ");
-    }
-    os << "\n};\n";
-}
-
-/// @brief Return a `Constraints` aggregate-initializer string for a character string type.
-/// @param flags         Constraints::flags bitmask (SIZE_CONSTRAINED, EXTENSIBLE, …).
-/// @param sc_range_bits Bits needed for SIZE range encoding.
-/// @param sc_lower      SIZE lower bound.
-/// @param sc_upper      SIZE upper bound.
-/// @param alphabet      Sorted FROM-alphabet character values; empty = no FROM constraint.
-/// @param alpha_prefix  Name prefix of the static arrays emitted by emit_from_alphabet_arrays;
-///                      empty when alphabet is empty.
-/// @param builtin_def   Result of builtin_def_name() for the base string type; used to
-///                      inherit alphabet_bits/alphabet/encode_table from the global descriptor
-///                      when there is a SIZE constraint but no FROM constraint.  nullptr = skip.
-/// @return Initializer string, e.g. `"{ .flags=8, .size_lower=6, .size_upper=6, … }"`.
-/// @see X.691 §26.5 (character string PER encoding); X.691 §12 (size constraints).
-static std::string make_string_constraints_init(
-    int flags, int sc_range_bits, int64_t sc_lower, int64_t sc_upper,
-    const std::vector<uint8_t>& alphabet,
-    const std::string& alpha_prefix = "",
-    std::optional<ast::BuiltinType> builtin_bt = std::nullopt)
-{
-    int val_lb      = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
-    int val_ub      = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
-    int alpha_bits  = alphabet.empty() ? 0
-        : compute_alphabet_bits(static_cast<int>(alphabet.size()));
-    // When builtin_bt is set, alphabet_bits comes from builtin_alphabet_refs — omit here
-    // to avoid emitting the designator twice (which is a C++ error even when values match).
-    std::string s;
-    if (builtin_bt) {
-        s = std::format(
-            "{{ .flags={}, .lower_bound={}, .upper_bound={}, "
-            ".size_range_bits={}, .size_lower={}, .size_upper={}",
-            flags, val_lb, val_ub, sc_range_bits, sc_lower, sc_upper);
-    } else {
-        s = std::format(
-            "{{ .flags={}, .lower_bound={}, .upper_bound={}, "
-            ".size_range_bits={}, .size_lower={}, .size_upper={}, .alphabet_bits={}",
-            flags, val_lb, val_ub, sc_range_bits, sc_lower, sc_upper, alpha_bits);
-    }
-    if (!alphabet.empty() && !alpha_prefix.empty()) {
-        // FROM constraint: emit inline static arrays.
-        s += std::format(
-            ", .alphabet={0}_alpha, .alphabet_size={1}u, .encode_table={0}_enc",
-            alpha_prefix, alphabet.size());
-    } else if (builtin_bt) {
-        // No FROM constraint but restricted type: inherit all alphabet fields from global descriptor.
-        s += builtin_alphabet_refs(*builtin_bt);
-    }
-    s += " }";
-    return s;
-}
 
 struct SizeConstraintInfo {
     int     flags      = 0;   // SIZE_CONSTRAINED | EXTENSIBLE (0 when no/semi constraint)
@@ -1013,147 +943,66 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
     return IntRange{false, 0, 0, false, 0, false};
 }
 
-// Build a Constraints designated-initializer literal for an INTEGER constraint.
-// Uses designated initializers (C++20) so struct field additions don't require
-// updating every call site.
-static std::string make_integer_pc(int flags, int range_bits, int int_kind,
-                                   int64_t lower_s64, int64_t upper_s64,
-                                   uint64_t lower_u64, uint64_t upper_u64) {
-    return std::format(
-        "{{ .flags={}, .range_bits={}, .int_kind={}, "
-        ".lower_bound={}, .upper_bound={}, "
-        ".lower_u64={:#x}u, .upper_u64={:#x}u, "
-        ".lower_hi=0, .lower_lo=0, .upper_hi=0, .upper_lo=0 }}",
-        flags, range_bits, int_kind,
-        lower_s64, upper_s64,
-        lower_u64, upper_u64);
-}
-
-void Generator::emit_integer_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
-
-    auto r     = extract_integer_range(def);
-    auto kind  = classify_integer_storage(def);
-    int  ik    = (kind == IntStorageKind::U64) ? asn1::Constraints::INT_U64
-               : (kind == IntStorageKind::I128) ? asn1::Constraints::INT_I128
-               : (kind == IntStorageKind::ARBITRARY) ? asn1::Constraints::INT_ARBITRARY
-               : asn1::Constraints::INT_S64;
-
-    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
-    os << std::format("    {},\n", natural_tag_for(def));
-    os << "    nullptr, nullptr, nullptr, nullptr,\n";
-    if (r.has_value) {
-        int64_t lo = r.lo, hi = r.hi;
-        bool ext = is_constraint_extensible(def);
-        if (r.truly_max) {
-            // Truly semi-constrained (..MAX keyword): no upper cap.
-            int flags = asn1::Constraints::SEMI_CONSTRAINED
-                      | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-            os << std::format("    {} /* constraints — semi-constrained */,\n",
-                make_integer_pc(flags, -1, ik, lo, 0,
-                    static_cast<uint64_t>(lo >= 0 ? lo : 0),
-                    std::numeric_limits<uint64_t>::max()));
-        } else if (r.hi_is_large) {
-            // TOK_number_large upper bound (e.g. UINT64_MAX).
-            // X.691 §10.5.6 UPER: range = hi_u64 - lo + 1; compute range_bits.
-            // For the full uint64 range (lo=0, hi=UINT64_MAX), range_bits=64.
-            int rb = 0;
-            uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
-            // range = hi_u64 - u_lo + 1; if it wraps (full 64-bit range), rb=64.
-            uint64_t range_count_m1 = r.hi_u64 - u_lo; // range - 1 (exact even if range=2^64)
-            if (range_count_m1 == std::numeric_limits<uint64_t>::max()) {
-                rb = 64; // 2^64 range
-            } else {
-                for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
-            }
-            int flags = asn1::Constraints::CONSTRAINED
-                      | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-            os << std::format("    {} /* constraints — constrained large (up to UINT64_MAX) */,\n",
-                make_integer_pc(flags, rb, ik, lo, hi /* int64_t view */,
-                    u_lo, r.hi_u64));
-        } else {
-            int64_t range_count = hi - lo + 1;
-            int rb = 0;
-            if (range_count > 1)
-                for (int64_t v = range_count - 1; v > 0; v >>= 1) ++rb;
-            int flags = asn1::Constraints::CONSTRAINED
-                      | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-            uint64_t u_lo = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
-            uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
-            os << std::format("    {} /* constraints */,\n",
-                make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi));
-        }
-    } else {
-        os << "    {} /* constraints — unconstrained */,\n";
-    }
-    const char* per_h = (ik == asn1::Constraints::INT_U64)
-        ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
-    const char* ber_h = (ik == asn1::Constraints::INT_U64)
-        ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
-    const char* cpp_t = (ik == asn1::Constraints::INT_U64)
-        ? "asn1::UInteger" : "asn1::Integer";
-    os << std::format("    false, asn1::TypeKind::Primitive,\n");
-    os << std::format("    {} /* per_handler */,\n", per_h);
-    os << std::format("    {} /* ber_handler */,\n", ber_h);
-    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", cpp_t);
-    os << "};\n";
-}
-
 // ---------------------------------------------------------------------------
 // Inline-constrained member TypeDescriptor helpers
 // ---------------------------------------------------------------------------
 
-/// @brief Emit a static per-member TypeDescriptor when the member carries inline constraints.
+/// @brief Emit the static per-member TypeDescriptor when the member carries
+///        inline constraints, delegating the decision to
+///        build_member_type_descriptor_spec() and text emission to the backend.
 /// @param m             Member type definition (may carry value-range, SIZE, or FROM constraints).
 /// @param parent_cname  C++ name of the enclosing SEQUENCE/CHOICE type.
 /// @param mname         Sanitised C++ member name used as the descriptor variable suffix.
-/// @param os            Output stream for the generated `.cpp` file.
-/// @return A C++ expression referencing the descriptor (e.g. `"&asn_TYP_Foo_bar"`).
+/// @param os            Output stream to write the generated descriptor to.
+/// @return A reference expression to the descriptor (e.g. `"&asn_TYP_Foo_bar"`).
 /// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
 std::string Generator::emit_member_type_descriptor(
     const ast::TypeDef& m, const std::string& parent_cname,
-    const std::string& mname, std::ostream& os)
+    const std::string& mname, TypeOutputSession& session)
+{
+    auto spec = build_member_type_descriptor_spec(m, parent_cname, mname);
+    if (!spec) return type_descriptor_ref_for(m);
+    backend_.emit_member_type_descriptor(*spec, session);
+    return "&" + spec->tname;
+}
+
+/// @brief Decide the resolved MemberTypeDescriptorSpec for an inline-
+///        constrained SEQUENCE/CHOICE member — INTEGER value range or
+///        SIZE-able-primitive (string family, OctetString, BitString)
+///        constraints.
+/// @param m             Member type definition (may carry value-range, SIZE, or FROM constraints).
+/// @param parent_cname  C++ name of the enclosing SEQUENCE/CHOICE type.
+/// @param mname         Sanitised C++ member name used as the descriptor variable suffix.
+/// @return nullopt when the member has no inline constraint worth a dedicated
+///         descriptor — caller falls back to type_descriptor_ref_for().
+/// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
+std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_spec(
+    const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname)
 {
     using BT = ast::BuiltinType;
-    // Anonymous nested SEQUENCE OF/SET OF (X.680 §25/26 nesting, to
-    // unbounded depth — "rows SEQUENCE OF SEQUENCE OF INTEGER", both
-    // levels unnamed) needs its own synthesized descriptor: it isn't a
-    // scalar builtin, so it can't take the constraint-descriptor path
-    // below, and — unlike a *named* nested collection, already handled by
-    // type_descriptor_ref_for's own SEQUENCE OF/SET OF branch referencing
-    // a real top-level asn_DEF_ — it has no ASN.1 name to reference at
-    // all. Falling through to type_descriptor_ref_for(m) here would
-    // recurse straight past this collection level to its innermost scalar
-    // element, corrupting the wire encoding: the generic SeqOf BER handler
-    // would read each outer element as that scalar when it's actually a
-    // whole nested collection object.
-    if ((m.is_seq_of() || m.is_set_of()) && m.name.empty())
-        return emit_synthetic_seq_of_descriptor(m, std::format("{}_{}", parent_cname, mname), os);
     auto* bt = std::get_if<BT>(&m.body);
     bool needs_xer = m.xer_encoding != ast::XerEncoding::Default;
-    if (!bt || (m.constraints.empty() && !needs_xer)) return type_descriptor_ref_for(m);
+    if (!bt || (m.constraints.empty() && !needs_xer)) return std::nullopt;
 
     // INTEGER value range
     if (*bt == BT::Integer) {
         auto ir = extract_integer_range(m);
         if (ir.has_value) {
-            std::string tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
+            MemberTypeDescriptorSpec spec;
+            spec.kind = MemberTypeDescriptorSpec::Kind::Integer;
+            spec.tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
             int64_t lo = ir.lo, hi = ir.hi;
-            bool ext = is_constraint_extensible(m);
-            auto kind = classify_integer_storage(m);
-            int ik = (kind == IntStorageKind::U64)       ? asn1::Constraints::INT_U64
-                   : (kind == IntStorageKind::I128)      ? asn1::Constraints::INT_I128
-                   : (kind == IntStorageKind::ARBITRARY) ? asn1::Constraints::INT_ARBITRARY
-                   : asn1::Constraints::INT_S64;
-            std::string pc;
+            spec.extensible = is_constraint_extensible(m);
+            spec.storage_kind = classify_integer_storage(m);
+            spec.semi_constrained = ir.truly_max;
+            spec.hi_is_large = ir.hi_is_large;
+            spec.lower_s64 = lo;
             if (ir.truly_max) {
                 // Truly semi-constrained (..MAX): no upper cap.
-                int flags = asn1::Constraints::SEMI_CONSTRAINED
-                          | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-                pc = make_integer_pc(flags, -1, ik, lo, 0,
-                    static_cast<uint64_t>(lo >= 0 ? lo : 0),
-                    std::numeric_limits<uint64_t>::max());
+                spec.range_bits = -1;
+                spec.upper_s64 = 0;
+                spec.lower_u64 = static_cast<uint64_t>(lo >= 0 ? lo : 0);
+                spec.upper_u64 = std::numeric_limits<uint64_t>::max();
             } else if (ir.hi_is_large) {
                 // TOK_number_large upper bound (e.g. UINT64_MAX).
                 uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
@@ -1161,32 +1010,22 @@ std::string Generator::emit_member_type_descriptor(
                 int rb = (range_count_m1 == std::numeric_limits<uint64_t>::max())
                     ? 64 : 0;
                 if (rb == 0) for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
-                int flags = asn1::Constraints::CONSTRAINED
-                          | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-                pc = make_integer_pc(flags, rb, ik, lo, hi, u_lo, ir.hi_u64);
+                spec.range_bits = rb;
+                spec.upper_s64 = hi;
+                spec.lower_u64 = u_lo;
+                spec.upper_u64 = ir.hi_u64;
             } else {
                 int64_t rc = hi - lo + 1;
                 int rb = 0;
                 if (rc > 1) for (int64_t v = rc - 1; v > 0; v >>= 1) ++rb;
-                int flags = asn1::Constraints::CONSTRAINED
-                          | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-                uint64_t u_lo = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
-                uint64_t u_hi = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
-                pc = make_integer_pc(flags, rb, ik, lo, hi, u_lo, u_hi);
+                spec.range_bits = rb;
+                spec.upper_s64 = hi;
+                spec.lower_u64 = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
+                spec.upper_u64 = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
             }
-            const char* per_h = (kind == IntStorageKind::U64)
-                ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
-            const char* ber_h = (kind == IntStorageKind::U64)
-                ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
-            const char* cpp_t = (kind == IntStorageKind::U64)
-                ? "asn1::UInteger" : "asn1::Integer";
-            os << std::format(
-                "static const asn1::TypeDescriptor {} = "
-                "{{ \"INTEGER\", asn1::Tag::universal({}, false), "
-                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
-                "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) }};\n",
-                tname, asn1::UniversalTag::Integer, pc, per_h, ber_h, cpp_t);
-            return "&" + tname;
+            spec.xer_type_name = "INTEGER";
+            spec.universal_tag = asn1::UniversalTag::Integer;
+            return spec;
         }
     }
 
@@ -1218,34 +1057,42 @@ std::string Generator::emit_member_type_descriptor(
         // FROM constraints on it are not enforced in PER encoding — drop alphabet.
         if (*bt == BT::Utf8String) alphabet.clear();
         if (sr || !alphabet.empty() || needs_xer) {
-            // Compute SIZE constraint fields.
-            int     sc_flags = 0, sc_range_bits = 0;
-            int64_t sc_lower = 0, sc_upper = 0;
+            MemberTypeDescriptorSpec spec;
+            spec.kind = MemberTypeDescriptorSpec::Kind::Sizeable;
+            spec.builtin_type = *bt;
+            // Compute SIZE constraint fields. size_range_bits/size_lower/
+            // size_upper default to 0 (not left indeterminate) even when
+            // `!sr` (FROM-alphabet-only or custom-XER-only member, no
+            // SIZE at all) — both backends format these fields into their
+            // generated Constraints tables unconditionally (gated on
+            // `has_size_constraint`/a flags bit at read time, not at
+            // codegen time), so leaving them uninitialized here is UB:
+            // always default-initialize explicitly, don't rely on the
+            // struct's own defaults.
+            spec.has_size_constraint = sr.has_value();
+            spec.size_bounded = sr.has_value()
+                && sr->second != std::numeric_limits<int64_t>::max();
+            spec.size_range_bits = 0;
+            spec.size_lower = 0;
+            spec.size_upper = 0;
             if (sr) {
                 auto sc = compute_size_constraint(sr, is_constraint_extensible(m));
-                sc_flags = sc.flags; sc_range_bits = sc.range_bits;
-                sc_lower = sc.lower; sc_upper = sc.upper;
+                spec.size_range_bits = sc.range_bits;
+                spec.size_lower = sc.lower; spec.size_upper = sc.upper;
             }
-            bool ext = is_constraint_extensible(m);
+            spec.extensible = is_constraint_extensible(m);
             // FROM("A".."Z",...) has the extension marker inside the FromConstraint;
             // is_constraint_extensible only checks the outer Constraint::extensible.
-            if (!ext && !alphabet.empty()) {
+            if (!spec.extensible && !alphabet.empty()) {
                 walk_type_constraints(m, [&](const ast::ConstraintBody& body) {
                     auto* fc = std::get_if<ast::FromConstraint>(&body);
-                    if (fc && fc->inner && fc->inner->extensible) ext = true;
+                    if (fc && fc->inner && fc->inner->extensible) spec.extensible = true;
                 });
             }
-            int  all_flags = sc_flags | (ext ? asn1::Constraints::EXTENSIBLE : 0);
-            std::string alpha_prefix;
             if (!alphabet.empty()) {
-                alpha_prefix = std::format("asn_FROM_{}_{}", parent_cname, mname);
-                emit_from_alphabet_arrays(os, alpha_prefix, alphabet);
+                spec.alpha_prefix = std::format("asn_FROM_{}_{}", parent_cname, mname);
+                spec.alphabet = alphabet;
             }
-            std::optional<ast::BuiltinType> bbt = alphabet.empty() ? std::optional{*bt} : std::nullopt;
-            std::string pc = (!sr && alphabet.empty() && (!bbt || !builtin_def_name(*bbt)))
-                ? "{}"
-                : make_string_constraints_init(all_flags, sc_range_bits, sc_lower, sc_upper,
-                                               alphabet, alpha_prefix, bbt);
             // Use the matching asn_DEF_*'s public name as the XER tag name —
             // BerCodec / XerCodec consult it for primitive type names.
             const char* tn = nullptr;
@@ -1266,71 +1113,40 @@ std::string Generator::emit_member_type_descriptor(
             case BT::ObjectDescriptor: tn = "ObjectDescriptor";   break;
             default: break;
             }
-            std::string tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
-            const char* per_h = "&asn1::per_string_handler";
-            if (*bt == BT::BitString)   per_h = "&asn1::per_bitstring_handler";
-            if (*bt == BT::OctetString) per_h = "&asn1::per_octetstring_handler";
-            const char* ber_h = "&asn1::ber_string_handler";
-            if (*bt == BT::BitString)   ber_h = "&asn1::ber_bitstring_handler";
-            if (*bt == BT::OctetString) ber_h = "&asn1::ber_octetstring_handler";
-            std::string cpp_t = cpp_type_for(m);
-            std::string xer_tail = needs_xer ? ", asn1::XerEncoding::Base64" : "";
-            os << std::format(
-                "static const asn1::TypeDescriptor {} = "
-                "{{ \"{}\", asn1::Tag::universal({}, false), "
-                "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
-                "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}){}}};\n",
-                tname, tn, *utag, pc, per_h, ber_h, cpp_t, xer_tail);
-            return "&" + tname;
+            spec.tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
+            spec.xer_type_name = tn;
+            spec.universal_tag = *utag;
+            spec.xer_encoding = m.xer_encoding;
+            return spec;
         }
     }
 
-    return type_descriptor_ref_for(m);
+    return std::nullopt;
 }
 
 // ---------------------------------------------------------------------------
 // classify_member_setter — determines param type + validate strategy for
-// set_<member> helpers. Returns empty param_type for members that should
-// not get a setter (optional, complex, non-primitive types).
+// set_<member> helpers, TypeRef-alias members only. Returns empty
+// param_type for members that should not get a setter (optional, complex,
+// non-primitive types, or an unresolvable/non-builtin-resolving TypeRef).
+//
+// The direct-builtin case is fully self-computable by CppBackend alone
+// from fields already on SequenceMemberSpec (`mbuiltin`/`storage_kind`) —
+// see CppBackend.cpp's own `classify_builtin_setter`. Only the
+// TypeRef-alias case stays here: it needs `resolver_.resolve_ref`, which
+// is Generator-private by design — CppBackend deliberately has no access.
 // ---------------------------------------------------------------------------
 Generator::MemberSetterInfo
 Generator::classify_member_setter(const ast::TypeDef& m) {
     using BT = ast::BuiltinType;
     if (m.is_sequence() || m.is_set() || m.is_choice() || m.is_seq_of() || m.is_set_of())
         return {};
-    auto* bt = std::get_if<BT>(&m.body);
-    if (bt) {
-        switch (*bt) {
-        case BT::Integer: {
-            auto kind = classify_integer_storage(m);
-            if (kind == IntStorageKind::U64)
-                return {"uint64_t", false, false, false};  // asn1::UInteger field, .set(uint64_t)
-            return {"int64_t", false, false, false};        // asn1::Integer field, .set(int64_t)
-        }
-        case BT::OctetString:
-        case BT::Any:             return {"asn1::OctetString",    false, false, true};
-        case BT::BitString:       return {"asn1::BitString",      false, false, true};
-        case BT::Utf8String:      return {"asn1::Utf8String",     false, false, true};
-        case BT::NumericString:   return {"asn1::NumericString",  false, false, true};
-        case BT::PrintableString: return {"asn1::PrintableString",false, false, true};
-        case BT::T61String:       return {"asn1::T61String",      false, false, true};
-        case BT::Ia5String:       return {"asn1::Ia5String",      false, false, true};
-        case BT::VisibleString:   return {"asn1::VisibleString",  false, false, true};
-        case BT::GeneralString:   return {"asn1::GeneralString",  false, false, true};
-        case BT::GraphicString:   return {"asn1::GraphicString",  false, false, true};
-        case BT::UniversalString: return {"asn1::UniversalString",false, false, true};
-        case BT::BmpString:       return {"asn1::BmpString",      false, false, true};
-        case BT::VideotexString:  return {"asn1::VideotexString", false, false, true};
-        case BT::ObjectDescriptor:return {"asn1::ObjectDescriptor",false,false,true};
-        default: return {};
-        }
-    }
     if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
         auto resolved = resolver_.resolve_ref(*tr);
         if (!resolved) return {};
         auto* rbt = std::get_if<BT>(&resolved->body);
         if (!rbt) return {};
-        std::string ct = cpp_type_for(m);
+        std::string ct = native_member_type_for(m);
         switch (*rbt) {
         case BT::Integer: {
             // TypeRef → using T = int64_t or uint64_t; no .validate() — wrap in Integer/UInteger
@@ -1360,7 +1176,7 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
 /// @param def  ASN.1 type definition (must satisfy is_sequence() or is_set()).
 /// @param os   Output stream for the generated header.
 /// @see X.680 §24 (SEQUENCE), §26 (SET); X.690 §8.9 (BER SEQUENCE encoding).
-void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
+std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
     // Count non-extension members
@@ -1382,10 +1198,20 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
 
     auto emit_inc = [&](const std::string& cn) {
         auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-        inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
+        write_type_reference(cn, inc_os);
     };
     auto emit_fwd = [&](const std::string& cn) {
-        os << std::format("class {};\n", cn);
+        write_forward_declaration(cn, os);
+    };
+    // Named SEQUENCE OF/SET OF member's own synthetic wrapper reference —
+    // the field's own type text never names the bare
+    // wrapper either way (element type directly, or the doubly-suffixed
+    // "Anon" type), so whether this reference is needed at all is purely a
+    // per-backend fact (CppBackend's tdref points at the wrapper's own
+    // asn_DEF_<synth>; RustBackend has no such table wiring yet — see
+    // Backend::needs_seqof_wrapper_reference's doc comment).
+    auto emit_wrapper_inc = [&](const std::string& cn) {
+        if (backend_.needs_seqof_wrapper_reference()) emit_inc(cn);
     };
     auto emit_member_include = [&](const ast::TypeDef& m, bool optional) {
         if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
@@ -1397,14 +1223,40 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
                 const auto& seqof_elem = m.is_seq_of()
                     ? std::get<ast::SequenceOfType>(m.body).element
                     : std::get<ast::SetOfType>(m.body).element;
-                bool self_ref = false;
-                if (auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body))
-                    self_ref = (to_cpp_name(tr_elem->type_name) == to_cpp_name(def.name));
-                auto synth = make_synthetic_name(cname, m.name);
-                if (self_ref)
+                auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body);
+                bool self_ref = tr_elem &&
+                    (backend_.type_name(tr_elem->type_name) == backend_.type_name(def.name));
+                auto synth = backend_.synthetic_name(cname, m.name);
+                if (self_ref) {
                     post_class_includes.push_back(synth); // defer: needs current class complete
-                else
-                    emit_inc(synth);
+                } else {
+                    emit_wrapper_inc(synth);
+                    // native_member_type_for's SEQUENCE OF branch uses
+                    // the element type directly (wrap_collection_type(native_member_type_for(elem)))
+                    // when the element is a plain TypeRef — it only falls
+                    // back to the synthetic name above for an *anonymous*
+                    // inline element. CppBackend gets away with including
+                    // only the synthetic wrapper header because that header
+                    // itself #includes the element's header, and #include is
+                    // transitive; Rust's `use` only brings the one named
+                    // symbol into scope, not whatever *that* module itself
+                    // `use`d — so a field typed `Vec<CallId>` with no direct
+                    // `use crate::CallId::CallId;` fails to compile (E0425)
+                    // without this explicit include.
+                    if (tr_elem) {
+                        emit_inc(cpp_name_for_typeref(*tr_elem));
+                    } else if (seqof_elem->is_sequence() || seqof_elem->is_choice() || seqof_elem->is_set()) {
+                        // Anonymous inline element: native_member_type_for's SEQUENCE
+                        // OF branch names the field type with a *second*,
+                        // "Anon"-suffixed synthetic name layered on top of
+                        // `synth` (synthetic_name(synth, "Anon")) — a real
+                        // generated type distinct from `synth` itself
+                        // (`synth` is just a `pub type X = Vec<...>;` alias
+                        // in Rust). Same missing-import shape as the
+                        // plain-TypeRef case above, different root name.
+                        emit_inc(backend_.synthetic_name(synth, "Anon"));
+                    }
+                }
             } else {
                 const auto& elem = m.is_seq_of()
                     ? std::get<ast::SequenceOfType>(m.body).element
@@ -1412,86 +1264,45 @@ void Generator::emit_sequence_hpp(const ast::TypeDef& def, std::ostream& os) {
                 if (auto* tr2 = std::get_if<ast::TypeRef>(&elem->body)) {
                     emit_inc(cpp_name_for_typeref(*tr2));
                 } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
-                    emit_inc(make_synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name));
+                    emit_inc(backend_.synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name));
                 }
             }
         } else if ((m.is_sequence() || m.is_choice() || m.is_set()) && !m.name.empty()) {
-            auto synth = make_synthetic_name(cname, m.name);
+            auto synth = backend_.synthetic_name(cname, m.name);
             optional ? emit_fwd(synth) : emit_inc(synth);
         } else {
             auto* mbt = std::get_if<ast::BuiltinType>(&m.body);
             if (mbt && *mbt == ast::BuiltinType::Enumerated && !m.enum_values.empty())
-                emit_inc(make_synthetic_name(cname, m.name));
+                emit_inc(backend_.synthetic_name(cname, m.name));
         }
     };
     for (auto* m : sm_root) emit_member_include(*m, m->is_optional());
     for (auto* m : sm_ext)  emit_member_include(*m, /*optional=*/true);
     if (mcount > 0) os << "\n";
 
-    // Determine if any optional members exist — they will use unique_ptr.
-    bool has_optional_members = !sm_ext.empty() ||
-        std::any_of(sm_root.begin(), sm_root.end(),
-                    [](const ast::TypeDef* m){ return m->is_optional(); });
-
-    // class — optional members use unique_ptr (forward-decl compatible, matches asn1c semantics)
-    os << std::format("class {} : public asn1::SequenceBase<{}> {{\npublic:\n", cname, cname);
-    if (has_optional_members) {
-        // All special members declared (not defaulted) so unique_ptr<T> destructor/assignment
-        // has complete T in the .cpp where they are defined = default.
-        // Copy ctor delegates to the default ctor (ensuring all members are constructed)
-        // then calls deep_copy to reproduce the source's state field-by-field.
-        os << std::format("    {0}();\n", cname);
-        os << std::format("    ~{0}();\n", cname);
-        os << std::format("    {0}(const {0}& o);\n", cname);
-        os << std::format("    {0}& operator=(const {0}& o);\n", cname);
-        os << std::format("    {0}({0}&&) noexcept;\n", cname);
-        os << std::format("    {0}& operator=({0}&&) noexcept;\n", cname);
-    }
-    for (auto* m : sm_root) {
-        std::string mtype = cpp_type_for(*m);
-        std::string mname = to_member_name(m->name);
-        if (m->is_optional())
-            os << std::format("    std::unique_ptr<{}> {};\n", mtype, mname);
-        else
-            os << std::format("    {} {}{{}};\n", mtype, mname);
-    }
-    for (auto* m : sm_ext) {
-        os << std::format("    std::unique_ptr<{}> {};\n",
-                          cpp_type_for(*m), to_member_name(m->name));
-    }
-    // set_<member> declarations for non-optional root members only
-    for (auto* m : sm_root) {
-        if (m->is_optional()) continue;
-        auto si = classify_member_setter(*m);
-        if (si.param_type.empty()) continue;
-        os << std::format("    void set_{}({} val);\n",
-                          to_member_name(m->name), si.param_type);
-    }
-    if (mcount > 0) {
-        os << std::format("    static const asn1::MemberDescriptor s_members[{}];\n", mcount);
-        os << "    static const int s_member_count;\n";
-    }
-    os << "    static const asn1::SequenceSpec   asn_SPC;\n";
-    os << "    static const asn1::TypeDescriptor asn_DEF;\n";
-    os << "};\n\n";
-
-    // Self-referential SeqOf includes: deferred until class is complete.
-    // post_ns_os_ routes them after `} // namespace` in namespace mode.
-    if (!post_class_includes.empty()) {
-        auto& inc_os = post_ns_os_ ? *post_ns_os_ : os;
-        for (const auto& sinc : post_class_includes) {
-            inc_os << std::format("#include \"{}.hpp\"\n", filename_for(sinc));
-        }
-        inc_os << "\n";
-    }
+    // Field storage (unique_ptr vs plain) and setter declarations — the rest
+    // of SequenceSpec (tag, ops, descriptor refs, ...) is only computed in
+    // emit_sequence_definition's pass; that pass's member rows are a strict
+    // superset of what this declaration side needs (same mtype/mname/
+    // optional/setter_* computation), so emit_sequence (the combined
+    // wrapper) uses emit_sequence_definition's spec for both halves instead
+    // of building a second, redundant one here.
+    //
+    // Self-referential SeqOf includes are deferred until the class is
+    // complete — returned so emit_sequence can emit them after the combined
+    // backend_.emit_sequence() call (post_ns_os_ routes them after
+    // `} // namespace` in namespace mode).
+    return post_class_includes;
 }
 
 /// @brief Emit the .cpp-side definitions for a generated SEQUENCE type.
 /// @param def  The SEQUENCE TypeDef from the AST.
 /// @param os   Output stream for the generated .cpp source file.
 /// @see X.680 §24 — SEQUENCE type.
-void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
+SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOutputSession& session) {
+    std::ostream& os = session.buffer(backend_.definition_extension());
     std::string cname = effective_cpp_name(def.name, current_module_);
+    bool is_set = def.is_set();
 
     auto [mcount, ext_at] = count_members(def);
 
@@ -1509,14 +1320,23 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
             if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
                 if (is_class_type(m)) {
                     auto cn = cpp_name_for_typeref(*tr);
-                    auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-                    inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
-                    emitted_extra = true;
+                    // Self-referential member (e.g. `next Node OPTIONAL` inside
+                    // Node itself): the enclosing type's own definition file
+                    // already has full visibility of itself, so re-including/
+                    // re-`use`ing it here is at best redundant (harmless under
+                    // C++'s #pragma once) and at worst a self-import (Rust:
+                    // declaration+definition share one file, unlike C++'s
+                    // .hpp/.cpp split — E0255).
+                    if (cn != cname) {
+                        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+                        write_type_reference(cn, inc_os);
+                        emitted_extra = true;
+                    }
                 }
             } else if ((m.is_sequence() || m.is_choice() || m.is_set()) && !m.name.empty()) {
                 auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-                inc_os << std::format("#include \"{}.hpp\"\n",
-                                      filename_for(make_synthetic_name(cname, m.name)));
+                auto synth = backend_.synthetic_name(cname, m.name);
+                write_type_reference(synth, inc_os);
                 emitted_extra = true;
             }
         };
@@ -1525,12 +1345,9 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         if (emitted_extra) { auto& nl_os = pre_ns_os_ ? *pre_ns_os_ : os; nl_os << "\n"; }
 
         // All special members defined here where unique_ptr<T> has complete T.
-        os << std::format("{0}::{0}() = default;\n", cname);
-        os << std::format("{0}::~{0}() = default;\n", cname);
-        os << std::format("{0}::{0}(const {0}& o) : {0}() {{ asn1::deep_copy(asn_DEF, this, &o); }}\n", cname);
-        os << std::format("{0}& {0}::operator=(const {0}& o) {{ if (this != &o) asn1::deep_copy(asn_DEF, this, &o); return *this; }}\n", cname);
-        os << std::format("{0}::{0}({0}&&) noexcept = default;\n", cname);
-        os << std::format("{0}& {0}::operator=({0}&&) noexcept = default;\n\n", cname);
+        // Must be written before Ops aliases / member table below (original
+        // ordering) — pure text, no per-member decision content.
+        backend_.emit_special_members(cname, session);
     }
 
     // Count root-only optional members (for PER preamble bitmap width).
@@ -1539,130 +1356,106 @@ void Generator::emit_sequence_cpp(const ast::TypeDef& def, std::ostream& os) {
         std::count_if(sm_root.begin(), sm_root.end(),
                       [](const ast::TypeDef* m){ return m->is_optional(); }));
 
-    // Type aliases for optional member callbacks — one per optional member.
-    // Optional members: UniquePtrOps (check/set/get_ptr through unique_ptr).
-    // Required members: use offsetof (no alias needed).
-    for (auto* m : sm_root) {
-        if (!m->is_optional()) continue;
-        os << std::format("using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
-                          cname, to_member_name(m->name), cpp_type_for(*m));
-    }
-    for (auto* m : sm_ext) {
-        os << std::format("using _Ops_{0}_{1} = asn1::UniquePtrOps<{0}, {2}, &{0}::{1}>;\n",
-                          cname, to_member_name(m->name), cpp_type_for(*m));
-    }
-    os << "\n";
-
     // Determine if AUTOMATIC TAGS applies: module is AUTOMATIC TAGS and none of the
     // ComponentTypes in any ComponentTypeList has an explicit tag (X.680 §24.8).
     bool apply_auto_tags = should_apply_auto_tags(def);
 
-    // Per-member row data — hoisted so setter definitions can reference it after
-    // the descriptor table block.
-    struct MbrRow {
-        std::string name, eff_tag, mname, ops, tdref, def_setter, offset_expr;
-        bool optional, is_explicit, has_default;
-        MemberSetterInfo setter;
+    SequenceSpec spec;
+    spec.type_name = cname;
+    spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
+    spec.has_optional_members = has_optional_members;
+    spec.mcount = mcount;
+    spec.ext_at = ext_at;
+    spec.roms_count = roms_count;
+    spec.is_set = is_set;
+    spec.tag = natural_tag_spec_for(def);
+    spec.is_explicit = type_is_explicit(def);
+    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
+
+    // Storage-ops helper for optional member callbacks — one per optional
+    // member. Must be written before the collect() pass below:
+    // emit_default_setter's generated static functions reference these
+    // types directly by name.
+    for (auto* m : sm_root) {
+        if (!m->is_optional()) continue;
+        backend_.emit_optional_member_ops(cname, backend_.member_name(m->name), native_member_type_for(*m), session);
+    }
+    for (auto* m : sm_ext) {
+        backend_.emit_optional_member_ops(cname, backend_.member_name(m->name), native_member_type_for(*m), session);
+    }
+    os << "\n";
+
+    // Collect per-row data; emits any static per-member TypeDescriptors/
+    // default-setter pairs as a side effect (before the member table, which
+    // references them — can't have declarations inside an initializer list).
+    // atag continues across root→ext so auto-tagging numbers extensions
+    // after root members.
+    int atag = 0;
+    auto collect = [&](const ast::TypeDef& m, bool optional) {
+        SequenceMemberSpec row;
+        row.asn1_name = m.name;
+        row.mname = backend_.member_name(m.name);
+        row.mtype = native_member_type_for(m);
+        if (auto* bt = std::get_if<ast::BuiltinType>(&m.body)) {
+            row.mbuiltin = *bt;
+            // Same decision native_member_type_for's own Integer branch
+            // already made to produce row.mtype above — threaded
+            // through as structured data too, not re-derived from mtype text.
+            if (*bt == ast::BuiltinType::Integer) row.storage_kind = classify_integer_storage(m);
+        }
+        if (m.is_seq_of()) {
+            row.seq_of_kind = SeqOfKind::SeqOf;
+            row.elem_shape = build_elem_shape(*std::get<ast::SequenceOfType>(m.body).element);
+        } else if (m.is_set_of()) {
+            row.seq_of_kind = SeqOfKind::SetOf;
+            row.elem_shape = build_elem_shape(*std::get<ast::SetOfType>(m.body).element);
+        }
+        if (is_class_type(m))
+            row.member_type_in_cycle = member_type_in_cycle(m, def.name);
+        row.optional = optional;
+        auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
+        row.is_explicit = tag_result.is_explicit;
+        row.resolved_tag = tag_result.resolved_tag;
+        row.tdref = emit_member_type_descriptor(m, cname, row.mname, session);
+        row.def_setter = emit_default_setter(m, cname, row.mname, session);
+        row.has_default = (m.marker == ast::Marker::Default);
+        if (!optional) {
+            auto si = classify_member_setter(m);
+            row.setter_param_type = si.param_type;
+            row.setter_is_move = si.is_move;
+            row.setter_is_int_alias = si.is_int_alias;
+            row.setter_is_uint_alias = si.is_uint_alias;
+        }
+        spec.members.push_back(std::move(row));
+        ++atag;
     };
-    std::vector<MbrRow> rows;
-
-    // Member descriptor table
     if (mcount > 0) {
-        // Pass 1: collect per-row data and emit any static per-member TypeDescriptors
-        // before the array opening brace (can't have declarations inside initializer lists).
-        // atag continues across root→ext so auto-tagging numbers extensions after root members.
-        {
-            int atag = 0;
-            auto collect = [&](const ast::TypeDef& m, bool optional) {
-                std::string mname = to_member_name(m.name);
-                auto [eff_tag, is_explicit] = compute_member_tag(m, apply_auto_tags, atag);
-                std::string ops = optional
-                    ? std::format("{{ &_Ops_{0}_{1}::check, &_Ops_{0}_{1}::set, &_Ops_{0}_{1}::get }}", cname, mname)
-                    : "{ nullptr, nullptr, nullptr }";
-                std::string tdref = emit_member_type_descriptor(m, cname, mname, os);
-                std::string def_setter = emit_default_setter(m, cname, mname, os);
-                bool has_default = (m.marker == ast::Marker::Default);
-                auto setter = optional ? MemberSetterInfo{} : classify_member_setter(m);
-                // Required members use offset arithmetic; optional use get_ptr (offset unused).
-                // Sentinel kInvalidMemberOffset for optional: accidental use crashes immediately.
-                std::string offset_expr = optional ? "asn1::kInvalidMemberOffset"
-                    : std::format("ASN1CPP_OFFSETOF({}, {})", cname, mname);
-                rows.push_back({ m.name, eff_tag, mname, ops, tdref, def_setter, offset_expr,
-                                 optional, is_explicit, has_default, std::move(setter) });
-                ++atag;
-            };
-            for (auto* m : sm_root) collect(*m, m->is_optional());
-            for (auto* m : sm_ext)  collect(*m, /*optional=*/true);
-        }
-        // Pass 2: emit the array (as class static member definition)
-        os << std::format("const asn1::MemberDescriptor {}::s_members[] = {{\n", cname);
-        for (const auto& r : rows) {
-            // Emit &_isdef_… reference only when the default-value helper
-            // pair was actually emitted. emit_default_setter() returns
-            // "nullptr" (no _setdef_/_isdef_ generated) for default-value
-            // forms it doesn't understand yet — INTEGER with named values,
-            // arbitrary IntegerLiteral, etc. Without this gate the member
-            // table would reference an undefined _isdef_ symbol.
-            std::string def_cmp = (r.has_default && r.def_setter != "nullptr")
-                ? std::format("&_isdef_{}_{}", cname, r.mname)
-                : "nullptr";
-            os << std::format("    {{ \"{}\", {}, {}, {}, {}, {}, {}, {}, {}, {} }},\n",
-                r.name, r.eff_tag,
-                r.optional ? "true" : "false",
-                r.has_default ? "true" : "false",
-                r.offset_expr,
-                r.tdref, r.ops,
-                r.is_explicit ? "true" : "false",
-                r.def_setter, def_cmp);
-        }
-        os << "};\n";
-        os << std::format("const int {}::s_member_count = {};\n\n", cname, mcount);
+        for (auto* m : sm_root) collect(*m, m->is_optional());
+        for (auto* m : sm_ext)  collect(*m, /*optional=*/true);
     }
 
-    // SequenceSpec
-    os << std::format("const asn1::SequenceSpec {}::asn_SPC = {{\n", cname);
-    if (mcount > 0)
-        os << std::format("    {}::s_members,\n", cname);
-    else
-        os << "    nullptr,\n";
-    os << std::format("    {},\n", mcount);
-    os << std::format("    {}, /* ext_at */\n", ext_at);
-    os << std::format("    {}, 0, nullptr /* PER: roms_count, aoms_count, oms */\n", roms_count);
-    os << "};\n\n";
+    return spec;
+}
 
-    // TypeDescriptor
-    emit_type_descriptor(os, cname,
-        def.xer_name.empty() ? def.name : def.xer_name,
-        natural_tag_for(def),
-        false, true, false, false, "asn1::TypeKind::Sequence",
-        "&asn1::per_sequence_handler", "&asn1::ber_sequence_handler",
-        /*use_class_scope=*/true);
+/// @brief Emit a SEQUENCE/SET type's declaration+definition.
+/// @param def     SEQUENCE/SET TypeDef.
+/// @param session Per-type output session.
+void Generator::emit_sequence(const ast::TypeDef& def, TypeOutputSession& session) {
+    std::ostream& decl_os = session.buffer(backend_.declaration_extension());
+    auto post_class_includes = emit_sequence_declaration(def, decl_os);
+    auto spec = emit_sequence_definition(def, session);
+    backend_.emit_sequence(spec, session);
 
-    // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
-    for (const auto& r : rows) {
-            if (r.setter.param_type.empty()) continue;
-            // tdref is "&asn_DEF_Foo" or "&asn_TYP_Parent_member"; strip leading &
-            std::string tdname = (r.tdref.size() > 1 && r.tdref[0] == '&')
-                ? r.tdref.substr(1) : r.tdref;
-            std::string assign = r.setter.is_move
-                ? std::format("{} = std::move(val);", r.mname)
-                : (r.setter.is_int_alias || r.setter.is_uint_alias
-                    ? std::format("{} = val;", r.mname)
-                    : std::format("{}.set(val);", r.mname));
-            std::string validate_expr = r.setter.is_int_alias
-                ? std::format("asn1::Integer{{{}}}.validate({}.constraints)", r.mname, tdname)
-                : r.setter.is_uint_alias
-                    ? std::format("asn1::UInteger{{{}}}.validate({}.constraints)", r.mname, tdname)
-                    : std::format("{}.validate({}.constraints)", r.mname, tdname);
-            os << std::format("void {}::set_{}({} val) {{\n", cname, r.mname, r.setter.param_type);
-            os << std::format("    {}\n", assign);
-            os << "#if defined(ASN1CPP_VALIDATE_ON_SET) && defined(ASN1CPP_VALIDATE)\n";
-            os << std::format("    if ({}) asn1::bump_validate_fail();\n", validate_expr);
-            os << "#endif\n";
-            os << "}\n";
+    // Self-referential SeqOf includes: deferred until class is complete.
+    // post_ns_os_ routes them after `} // namespace` in namespace mode.
+    if (!post_class_includes.empty()) {
+        auto& inc_os = post_ns_os_ ? *post_ns_os_ : decl_os;
+        for (const auto& sinc : post_class_includes) {
+            write_type_reference(sinc, inc_os);
+        }
+        inc_os << "\n";
     }
-    if (!rows.empty()) os << "\n";
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1739,7 +1532,7 @@ static std::vector<const ast::TypeDef*> canonical_choice_members(
 /// @param def  ASN.1 type definition (must satisfy is_choice()).
 /// @param os   Output stream for the generated header.
 /// @see X.680 §28 (CHOICE); X.690 §8.13 (BER CHOICE encoding); X.691 §22 (PER CHOICE).
-void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
+std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
     auto [count, ext_at] = count_members(def);
@@ -1748,147 +1541,107 @@ void Generator::emit_choice_hpp(const ast::TypeDef& def, std::ostream& os) {
     for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
         auto emit_inc = [&](const std::string& cn) {
+            // Self-referential alternative (e.g. `c RecChoice` inside
+            // RecChoice itself, X.680 §28 permits this): the enclosing
+            // type's own definition file already has full visibility of
+            // itself, so re-including/re-`use`ing it here is at best
+            // redundant (harmless under C++'s #pragma once) and at worst a
+            // self-import (Rust: declaration+definition share one file,
+            // unlike C++'s .hpp/.cpp split — E0255). Same fix
+            // emit_sequence_definition's emit_opt_include already has.
+            if (cn == cname) return;
             auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-            inc_os << std::format("#include \"{}.hpp\"\n", filename_for(cn));
+            write_type_reference(cn, inc_os);
+        };
+        // Same wrapper-reference decision as
+        // emit_sequence_declaration's emit_wrapper_inc (see
+        // Backend::needs_seqof_wrapper_reference's doc comment).
+        auto emit_wrapper_inc = [&](const std::string& cn) {
+            if (backend_.needs_seqof_wrapper_reference()) emit_inc(cn);
         };
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
             emit_inc(cpp_name_for_typeref(*tr));
         } else if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
             // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
-            auto cn2 = cpp_name_for_ref(make_synthetic_name(cname, m->name), current_module_);
-            emit_inc(cn2);
+            auto cn2 = cpp_name_for_ref(backend_.synthetic_name(cname, m->name), current_module_);
+            emit_wrapper_inc(cn2);
+            // Also include the actual element type directly when it's a
+            // plain TypeRef — see the matching rationale in
+            // Generator::emit_type_files's emit_member_include lambda;
+            // this is the CHOICE-alternative counterpart of that logic.
+            const auto& seqof_elem = m->is_seq_of()
+                ? std::get<ast::SequenceOfType>(m->body).element
+                : std::get<ast::SetOfType>(m->body).element;
+            if (auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body)) {
+                emit_inc(cpp_name_for_typeref(*tr_elem));
+            } else if (seqof_elem->is_sequence() || seqof_elem->is_choice() || seqof_elem->is_set()) {
+                // Anonymous inline element — see the matching fix in
+                // emit_member_include for the "Anon"-suffixed doubly-nested
+                // synthetic name rationale.
+                emit_inc(backend_.synthetic_name(backend_.synthetic_name(cname, m->name), "Anon"));
+            }
         } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
-            auto synth = make_synthetic_name(cname, m->name);
+            auto synth = backend_.synthetic_name(cname, m->name);
             emit_inc(synth);
         } else {
             auto* mbt = std::get_if<ast::BuiltinType>(&m->body);
             if (mbt && *mbt == ast::BuiltinType::Enumerated && !m->enum_values.empty()) {
-                auto synth = make_synthetic_name(cname, m->name);
+                auto synth = backend_.synthetic_name(cname, m->name);
                 emit_inc(synth);
             }
         }
     }
     if (count > 0) os << "\n";
 
-    // Storage strategy: raw byte buffer sized/aligned to the largest alternative.
-    //
-    // Why not std::variant<T1, T2, ..., TN>?
-    //   std::variant is implemented via recursive template specialisations.
-    //   std::get<K> descends K levels of template recursion.  With N alternatives and
-    //   N different get<K> calls, GCC instantiates O(N²) templates.  For a CHOICE
-    //   with 198 alternatives (e.g. XIRIContents in the ETSI LI schema) this
-    //   consumes ~5 GB RSS and kills the build.
-    //
-    // Why a char buffer instead of a typed union?
-    //   A union { T1 a; T2 b; ... } still needs per-member access syntax and doesn't
-    //   help with the destructor/copy dispatch problem.  A raw char[] + placement new
-    //   lets the _emplace_* functions in the .cpp carry all type knowledge, keeping
-    //   the header O(N) in both parse and instantiation cost.
-    //
-    // How it works:
-    //   alignas(max_align) char val_[max_size]   — in-place storage, no heap
-    //     max_size  = std::max({sizeof(T1), ..., sizeof(TN)})   — constexpr O(N) scan
-    //     max_align = std::max({alignof(T1), ..., alignof(TN)}) — constexpr O(N) scan
-    //   active_lifecycle — pointer into TypeDescriptor::lifecycle of the current alternative;
-    //   set by ChoiceInterface::emplace_alt. destroy/move ops reached via one pointer deref.
-    //   std::launder is required on every read-back after placement-new (C++17 §6.8.4).
-
-    os << std::format("class {} : public asn1::ChoiceInterface {{\npublic:\n", cname);
     bool apply_auto_tags_hpp = should_apply_auto_tags(def);
     auto canon_members = canonical_choice_members(def, apply_auto_tags_hpp);
-    os << "    enum class PR : int { NOTHING = 0";
-    int pr_idx = 1;
-    for (const auto* m : canon_members)
-        os << std::format(", {} = {}",
-            safe_cpp_name(to_cpp_name(m->name), {"NOTHING"}), pr_idx++);
-    os << " };\n";
 
-    // val_storage_: raw byte buffer sized/aligned to the largest alternative.
-    // val_ (in ChoiceInterface base) points here — set once in the constructor.
-    os << "    alignas(std::max({";
-    { bool first = true;
-      for (const auto* m : canon_members) {
-        if (!first) os << ", ";
-        os << std::format("alignof({})", cpp_type_for(*m));
-        first = false;
-      }
-      if (count > 0) os << ", ";
-      os << "size_t(1)})) char val_storage_[std::max({";
-    }
-    { bool first = true;
-      for (const auto* m : canon_members) {
-        if (!first) os << ", ";
-        os << std::format("sizeof({})", cpp_type_for(*m));
-        first = false;
-      }
-      if (count > 0) os << ", ";
-      os << "size_t(1)})] {};\n";
-    }
-
-    // Special members.
-    // Constructor sets val_ to val_storage_ so ChoiceInterface::emplace_alt / accessors work.
-    os << std::format("    {0}() {{ val_ = val_storage_; }}\n", cname);
-    os << std::format(
-        "    ~{0}() {{ active_lifecycle->destroy(val_); }}\n", cname);
-    os << std::format("    {0}(const {0}& o);\n", cname);
-    os << std::format("    {0}& operator=(const {0}& o);\n", cname);
-    os << std::format(
-        "    {0}({0}&& o) noexcept {{"
-        " val_ = val_storage_;"
-        " _present = o._present; o._present = 0;"
-        " active_lifecycle = o.active_lifecycle;"
-        " o.active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;"
-        " active_lifecycle->move(val_, o.val_); }}\n", cname);
-    os << std::format(
-        "    {0}& operator=({0}&& o) noexcept {{"
-        " if (this != &o) {{"
-        " active_lifecycle->destroy(val_);"
-        " _present = o._present; o._present = 0;"
-        " active_lifecycle = o.active_lifecycle;"
-        " o.active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;"
-        " active_lifecycle->move(val_, o.val_);"
-        " }} return *this; }}\n", cname);
-
-    os << "    PR present() const { return static_cast<PR>(_present); }\n";
-    // set_present delegates to emplace_alt (ChoiceInterface) — defined in .cpp.
-    os << "    void set_present(PR p);\n";
-
+    std::vector<ChoiceAlternativeSpec> alts;
     for (const auto* m : canon_members) {
-        std::string t = cpp_type_for(*m);
-        std::string n = to_member_name(m->name,
+        ChoiceAlternativeSpec alt;
+        alt.mtype = native_member_type_for(*m);
+        alt.accessor_name = backend_.member_name(m->name,
             {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
              "s_alternatives", "s_alternative_count"});
-        os << std::format(
-            "    {0}& {1}() {{ return *std::launder(reinterpret_cast<{0}*>(val_)); }}\n", t, n);
-        os << std::format(
-            "    const {0}& {1}() const"
-            " {{ return *std::launder(reinterpret_cast<const {0}*>(val_)); }}\n", t, n);
+        alt.pr_name = backend_.escape(backend_.type_name(m->name), {"NOTHING"});
+        // Not otherwise needed by the declaration side — carried along
+        // purely so emit_choice's zip can assert the two independently
+        // computed canonical orderings actually agree, index by index.
+        alt.asn1_name = m->name;
+        alts.push_back(std::move(alt));
     }
-    if (count > 0) {
-        os << std::format("    static const asn1::MemberDescriptor s_alternatives[{}];\n", count);
-        os << "    static const int s_alternative_count;\n";
-    }
-    os << "    static const asn1::ChoiceSpec     asn_SPC;\n";
-    os << "    static const asn1::TypeDescriptor asn_DEF;\n";
-    os << "};\n\n";
-
+    return alts;
 }
 
-void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
+ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session) {
     std::string cname = effective_cpp_name(def.name, current_module_);
 
     auto [count, ext_at] = count_members(def);
     bool apply_auto_tags = should_apply_auto_tags(def);
-    bool has_tag_index = false;
-    int  tag_index_base = 0, tag_index_size = 0;
+
+    ChoiceSpec spec;
+    spec.type_name = cname;
+    spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
+    spec.count = count;
+    spec.ext_at = ext_at;
+
+    // X.680 §30.6 — CHOICE has no universal tag; a declared [n] on the type
+    // assignment itself is always EXPLICIT (wraps the chosen alternative's
+    // own encoding in an outer TLV) rather than substituting for anything.
+    spec.tag = tag_spec_for(def.tag, /*constructed=*/true);
+    spec.is_explicit = type_is_explicit(def);
 
     // Alternative descriptor table
     if (count > 0) {
         struct AltRow {
-            std::string name, eff_tag, mname, tdref, alt_type;
+            std::string name, tdref, alt_type;
             bool is_explicit;
             int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
             ast::Tag full_tag;      // for canonical sort
+            std::optional<ast::BuiltinType> mbuiltin;
+            IntStorageKind storage_kind = IntStorageKind::S64;
+            std::optional<MemberTagSpec> resolved_tag;
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1896,10 +1649,10 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         { int auto_tag_num = 0;
           for (const auto& m : def.members) {
             if (m->is_extension_marker) continue;
-            std::string mname = to_member_name(m->name);
-            auto [eff_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
-            std::string tdref = emit_member_type_descriptor(*m, cname, mname, os);
-            std::string alt_type = cpp_type_for(*m);
+            std::string mname = backend_.member_name(m->name);
+            auto [resolved_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
+            std::string tdref = emit_member_type_descriptor(*m, cname, mname, session);
+            std::string alt_type = native_member_type_for(*m);
             int tag_ctx_num = -1;
             ast::Tag full_tag = m->tag;
             if (apply_auto_tags && !m->tag.present()) {
@@ -1909,8 +1662,14 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
             } else if (m->tag.present() && m->tag.cls == ast::TagClass::Context) {
                 tag_ctx_num = m->tag.number;
             }
-            rows.push_back({ m->name, eff_tag, mname, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag });
+            std::optional<ast::BuiltinType> mbuiltin;
+            IntStorageKind alt_storage_kind = IntStorageKind::S64;
+            if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
+                mbuiltin = *bt;
+                if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
+            }
+            rows.push_back({ m->name, tdref, alt_type, is_explicit,
+                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag });
             ++auto_tag_num;
           }
         }
@@ -1935,42 +1694,18 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
               r.tag_cls_int = (r.full_tag.present() && r.full_tag.cls == ast::TagClass::Context)
                               ? r.full_tag.number : -1;
         }
-        // Pass 2 removed: _get_mut_T_alt / _get_const_T_alt / _emplace_T_alt named free
-        // functions replaced by ChoiceOps<AltT>::get_mut / get_const (single-type-param
-        // template in ChoiceInterface.hpp) and ChoiceInterface::emplace_alt (generic).
 
-        // Pass 3: emit array (as class static member definition).
-        os << std::format("const asn1::MemberDescriptor {}::s_alternatives[] = {{\n", cname);
-        { for (const auto& r : rows) {
-            os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, nullptr, nullptr,\n",
-                r.name, r.eff_tag, r.tdref, r.is_explicit ? "true" : "false");
-            os << std::format("      &asn1::ChoiceOps<{0}>::get_mut, &asn1::ChoiceOps<{0}>::get_const }},\n",
-                r.alt_type);
-          }
+        for (const auto& r : rows) {
+            ChoiceAlternativeSpec alt;
+            alt.mtype = r.alt_type;
+            alt.asn1_name = r.name;
+            alt.tdref = r.tdref;
+            alt.is_explicit = r.is_explicit;
+            alt.mbuiltin = r.mbuiltin;
+            alt.storage_kind = r.storage_kind;
+            alt.resolved_tag = r.resolved_tag;
+            spec.alternatives.push_back(std::move(alt));
         }
-        os << "};\n";
-        os << std::format("const int {}::s_alternative_count = {};\n\n", cname, count);
-
-        // set_present: resets the active alternative then activates the requested one.
-        // emplace_alt (generic in ChoiceInterface) handles construction via TypeDescriptor::lifecycle.
-        os << std::format(
-            "void {0}::set_present(PR p) {{\n"
-            "    active_lifecycle->destroy(val_);\n"
-            "    active_lifecycle = &asn1::ChoiceInterface::k_noop_lifecycle;\n"
-            "    _present = 0;\n"
-            "    if (p == PR::NOTHING) return;\n"
-            "    int idx = static_cast<int>(p) - 1;\n"
-            "    if (idx >= 0 && idx < s_alternative_count)\n"
-            "        emplace_alt(s_alternatives[idx]);\n"
-            "    _present = static_cast<int>(p);\n"
-            "}}\n\n", cname);
-
-        // Copy constructor: initialise as NOTHING (val_ = val_storage_), then deep-copy.
-        os << std::format(
-            "{0}::{0}(const {0}& o) {{ val_ = val_storage_; asn1::deep_copy(asn_DEF, this, &o); }}\n", cname);
-        os << std::format(
-            "{0}& {0}::operator=(const {0}& o) {{ if (this != &o) asn1::deep_copy(asn_DEF, this, &o); return *this; }}\n\n",
-            cname);
 
         // O(1) context-tag dispatch table — emit when ALL alternatives carry a context tag.
         // Density threshold: only emit if range <= 4× count (avoids huge sparse arrays).
@@ -1983,16 +1718,12 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         }
         int range = all_ctx ? (max_tag - min_tag + 1) : 0;
         if (all_ctx && count > 1 && range <= 4 * count) {
-            has_tag_index = true;
-            tag_index_base = min_tag;
-            tag_index_size = range;
             std::vector<int16_t> idx_table(range, -1);
             for (int i = 0; i < (int)rows.size(); ++i)
                 idx_table[rows[i].tag_cls_int - min_tag] = (int16_t)i;
-            os << std::format("static const int16_t asn_TAGIDX_{}[] = {{", cname);
-            for (int i = 0; i < range; ++i)
-                os << (i ? ", " : "") << idx_table[i];
-            os << "};\n\n";
+            spec.has_tag_index = true;
+            spec.tag_index_base = min_tag;
+            spec.tag_index_table = std::move(idx_table);
         }
     }
 
@@ -2013,136 +1744,197 @@ void Generator::emit_choice_cpp(const ast::TypeDef& def, std::ostream& os) {
         }
     }
     if (needs_ber_table && !ber_tags.empty()) {
-        os << std::format("static const asn1::ChoiceTagEntry asn_BER_{}[] = {{\n", cname);
-        for (const auto& [tag_lit, idx] : ber_tags)
-            os << std::format("    {{ {}, {} }},\n", tag_lit, idx);
-        os << "};\n\n";
+        spec.has_ber_table = true;
+        spec.ber_tags = std::move(ber_tags);
     }
 
-    // ChoiceSpec
-    os << std::format("const asn1::ChoiceSpec {}::asn_SPC = {{\n", cname);
-    if (count > 0)
-        os << std::format("    {}::s_alternatives,\n", cname);
-    else
-        os << "    nullptr,\n";
-    os << std::format("    {},\n", count);
-    os << std::format("    {}, /* ext_at */\n", ext_at);
-    os << "    {} /* PER: constraints */\n";
-    if (needs_ber_table && !ber_tags.empty())
-        os << std::format("    , asn_BER_{0}, {1} /* ber_tags */\n", cname, (int)ber_tags.size());
-    else if (has_tag_index)
-        os << "    , nullptr, 0 /* ber_tags */\n";
-    if (has_tag_index)
-        os << std::format("    , asn_TAGIDX_{0}, {1}, {2} /* tag_index */\n",
-                          cname, tag_index_base, tag_index_size);
-    os << "};\n\n";
+    return spec;
+}
 
-    // TypeDescriptor — CHOICE tag is a transparent placeholder (no fixed universal tag)
-    emit_type_descriptor(os, cname,
-        def.xer_name.empty() ? def.name : def.xer_name,
-        "asn1::Tag{asn1::TagClass::Context, 0, false}",
-        false, false, true, false, "asn1::TypeKind::Choice",
-        "&asn1::per_choice_handler", "&asn1::ber_choice_handler",
-        /*use_class_scope=*/true);
-
+/// @brief Emit a CHOICE type's declaration+definition.
+/// @param def     CHOICE TypeDef.
+/// @param session Per-type output session.
+/// @note Zips the declaration-only fields (mtype/accessor_name/pr_name) from
+///       emit_choice_declaration onto the definition-built ChoiceSpec by
+///       index — see the class-level note on emit_choice_declaration/
+///       emit_choice_definition for why this is safe (both compute the same
+///       canonical order; the runtime already depends on that invariant
+///       today via the generated enum vs. alternatives table).
+void Generator::emit_choice(const ast::TypeDef& def, TypeOutputSession& session) {
+    auto decl_alts = emit_choice_declaration(def, session.buffer(backend_.declaration_extension()));
+    auto spec = emit_choice_definition(def, session);
+    assert(spec.alternatives.size() == decl_alts.size() &&
+           "emit_choice_declaration/emit_choice_definition disagree on alternative count");
+    for (std::size_t i = 0; i < spec.alternatives.size() && i < decl_alts.size(); ++i) {
+        // Both sides compute canonical PER tag order independently (see the
+        // header note on emit_choice_declaration/emit_choice_definition) —
+        // assert they actually agree index-by-index before trusting the
+        // zip; a silent divergence here would attach the wrong accessor
+        // name to the wrong alternative rather than crash.
+        assert(spec.alternatives[i].asn1_name == decl_alts[i].asn1_name &&
+               "emit_choice_declaration/emit_choice_definition canonical order mismatch");
+        spec.alternatives[i].mtype = decl_alts[i].mtype;
+        spec.alternatives[i].accessor_name = decl_alts[i].accessor_name;
+        spec.alternatives[i].pr_name = decl_alts[i].pr_name;
+    }
+    backend_.emit_choice(spec, session);
 }
 
 // ---------------------------------------------------------------------------
-// Top-level emit_hpp / emit_cpp dispatch
+// Top-level emit_declaration / emit_definition dispatch
 // ---------------------------------------------------------------------------
 
-/// @brief Emit the `.hpp` file for any top-level type definition.
-/// @param def  ASN.1 type definition to generate.
-/// @param mod  Owning module (provides tag default and OID for the file header comment).
-/// @param os   Output stream for the generated header.
-void Generator::emit_hpp(const ast::TypeDef& def, const ast::Module& mod, std::ostream& os) {
+/// @brief Write the output file(s) for one type definition, driven by a
+///        TypeOutputSession instead of hardcoding a ".hpp"/".cpp" pair —
+///        see Generator.hpp's declaration for the parameter contract.
+/// @note Merging is implicit: when backend_.declaration_extension() ==
+///       backend_.definition_extension(), the session hands emit_declaration and
+///       emit_definition the *same* stream, so they naturally combine into one
+///       file with no separate branch here. Always calls both emit_declaration and
+///       emit_definition — emit_definition itself decides whether a definition exists
+///       (returns without writing anything for a plain TypeRef alias), so
+///       there's no separately-computed "needs a definition" flag to keep
+///       in sync with emit_definition's own dispatch. Buffers that end up empty
+///       (that decision, or a backend's genuinely-empty declaration half —
+///       e.g. RustBackend's emit_builtin_alias_declaration) are simply not written.
+///       Known limitation (not yet hit in practice — no backend combines
+///       single-file output with -fprefix namespace wrapping today): each
+///       of emit_declaration/emit_definition independently wraps its own body in
+///       backend_.emit_namespace_open/close when namespace_ is set, which
+///       would produce two conflicting module blocks of the same name in
+///       one file. Revisit if/when that combination occurs.
+void Generator::emit_type_files(const std::string& name, const ast::TypeDef& def,
+                                 const ast::Module& mod) {
+    std::string base = filename_for(name);
+    emitted_type_refs_.clear();
+    TypeOutputSession session;
+    emit_type_body(def, mod, session);
+    for (auto& [ext, content] : session.finish()) {
+        if (content.empty()) continue;
+        fs::path path = out_dir_ / (base + "." + ext);
+        known_files_.insert(path);
+        write_if_changed(path, content);
+    }
+}
+
+void Generator::write_type_reference(const std::string& type_name, std::ostream& target) {
+    // Skip a reference this type's declaration output has already written
+    // (gated on backend_.dedupe_type_references(), true by default for
+    // every backend — see that method's doc, Backend.hpp). RustBackend's
+    // `use crate::X::X;` has no #include-guard equivalent, so a duplicate
+    // reference is a hard compile error (E0252).
+    if (backend_.dedupe_type_references() && !emitted_type_refs_.insert(type_name).second) return;
+    TypeOutputSession ref;
+    ref.seed(backend_.declaration_extension(), target);
+    backend_.emit_type_reference(type_name, filename_for(type_name), ref);
+}
+
+void Generator::write_forward_declaration(const std::string& type_name, std::ostream& target) {
+    TypeOutputSession ref;
+    ref.seed(backend_.declaration_extension(), target);
+    backend_.emit_forward_declaration(type_name, ref);
+}
+
+/// @brief Emit both output files for any top-level type definition.
+/// @param def     ASN.1 type definition to generate.
+/// @param mod     Owning module (provides tag default and OID for the file header comment).
+/// @param session The type's real output session (backing the final files).
+void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, TypeOutputSession& session) {
     std::string cname = effective_cpp_name(def.name, mod.name);
+    const std::string decl_ext = backend_.declaration_extension();
+    const std::string def_ext  = backend_.definition_extension();
+    std::ostream& decl_os = session.buffer(decl_ext);
+    std::ostream& def_os  = session.buffer(def_ext);   // == decl_os when merged (e.g. Rust)
 
     // Module header comment with OID if present
-    os << "// Module: " << mod.name;
+    std::string module_comment = mod.name;
     if (!mod.oid.arcs.empty()) {
-        os << " {";
+        module_comment += " {";
         for (const auto& arc : mod.oid.arcs) {
-            os << " ";
-            if (arc.number >= 0) os << arc.number;
-            else os << arc.name;
+            module_comment += " ";
+            if (arc.number >= 0) module_comment += std::to_string(arc.number);
+            else module_comment += arc.name;
         }
-        os << " }";
+        module_comment += " }";
     }
-    os << "\n";
+    backend_.emit_declaration_preamble(module_comment, session);
 
-    os << "#pragma once\n";
-    os << "#include <memory>\n";
-    os << "#include <optional>\n";
-    os << "#include <vector>\n";
-    os << "#include <span>\n";
-    os << "#include <asn1cpp/asn1cpp_gen.hpp>\n\n";
+    bool has_definition = def.is_sequence() || def.is_set() || def.is_choice()
+        || def.is_seq_of() || def.is_set_of()
+        || std::holds_alternative<ast::BuiltinType>(def.body);
+    if (has_definition) backend_.emit_definition_preamble(filename_for(cname), session);
 
     // When namespace wrapping is active, cross-type #include "X.hpp" directives must land
     // BEFORE the namespace opens (each peer .hpp already wraps itself in the namespace).
     // Forward declarations (class X;) and the class body go inside the namespace.
-    // Use a body stringstream; set pre_ns_os_ so emit_inc() writes to os directly.
-    // Deferred self-referential includes (post_class_includes from emit_sequence_hpp)
-    // must land AFTER the closing `} // namespace` brace — use post_ns_ss for that.
-    std::ostringstream body_ns;
-    std::ostringstream post_ns_ss;
-    std::ostream& body = namespace_.empty() ? os : static_cast<std::ostream&>(body_ns);
+    // Dispatch writes into temporary body buffers instead of the real streams;
+    // pre_ns_os_ routes includes discovered during dispatch to the real decl_os
+    // directly. Deferred self-referential includes (post_class_includes from
+    // emit_sequence_declaration) must land AFTER the closing `} // namespace`
+    // brace — use post_ns_ss for that.
+    std::ostringstream body_ns, body_ns_definition, post_ns_ss;
+    std::ostream& decl_body = namespace_.empty() ? decl_os : static_cast<std::ostream&>(body_ns);
+    std::ostream& def_body  = namespace_.empty() ? def_os  : static_cast<std::ostream&>(body_ns_definition);
     if (!namespace_.empty()) {
-        pre_ns_os_  = &os;
+        pre_ns_os_  = &decl_os;
         post_ns_os_ = &post_ns_ss;
     }
 
+    // Dispatch session: rebinds declaration_extension()/definition_extension()
+    // to the body targets above (real streams with no namespace, temporary
+    // buffers otherwise) so the combined backend_.emit_*() calls write into
+    // the right place either way. A single seed() when merged (decl_ext ==
+    // def_ext) — dispatch.buffer(def_ext) then finds the same binding as
+    // dispatch.buffer(decl_ext), so both halves land in decl_body in write
+    // order, exactly like the un-wrapped single-file case.
+    TypeOutputSession dispatch;
+    dispatch.seed(decl_ext, decl_body);
+    if (def_ext != decl_ext) dispatch.seed(def_ext, def_body);
+
     if (def.is_sequence() || def.is_set()) {
         current_type_ = cname;
-        emit_sequence_hpp(def, body);
+        emit_sequence(def, dispatch);
     } else if (def.is_choice()) {
         current_type_ = cname;
-        emit_choice_hpp(def, body);
+        emit_choice(def, dispatch);
     } else if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
         if (*bt == ast::BuiltinType::Enumerated) {
-            emit_enumerated_hpp(def, body);
+            emit_enumerated(def, dispatch);
         } else if (*bt == ast::BuiltinType::Integer) {
-            emit_integer_hpp(def, body);
+            emit_integer(def, dispatch);
         } else {
-            body << std::format("using {} = {};\n\n", cname, cpp_type_for(def));
-            body << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
+            emit_builtin_alias(def, dispatch);
         }
     } else if (def.is_seq_of() || def.is_set_of()) {
         current_type_ = cname;
-        const auto& elem = def.is_seq_of()
-            ? std::get<ast::SequenceOfType>(def.body).element
-            : std::get<ast::SetOfType>(def.body).element;
-        // SeqOf element includes go before the namespace (each .hpp wraps itself).
-        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : body;
-        if (auto* tr = std::get_if<ast::TypeRef>(&elem->body)) {
-            auto inc = cpp_name_for_typeref(*tr);
-            inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(inc));
-        } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
-            auto synth = make_synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name);
-            inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
-        } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem->body);
-                   ebt && *ebt == ast::BuiltinType::Enumerated && !elem->enum_values.empty()) {
-            auto synth = make_synthetic_name(cname, elem->name.empty() ? "Enum" : elem->name);
-            inc_os << std::format("#include \"{}.hpp\"\n\n", filename_for(synth));
-        }
-        body << std::format("using {} = asn1::VectorSeqOf<{}>;\n\n", cname, cpp_type_for(*elem));
-        body << std::format("extern const asn1::SeqOfSpec     asn_SPC_{};\n", cname);
-        body << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
+        emit_seq_of(def, dispatch);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto inc = cpp_name_for_typeref(*tr);
-        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : body;
-        inc_os << std::format("#include \"{}.hpp\"\n", filename_for(inc));
-        body << std::format("using {} = {};\n", cname, inc);
+        auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : decl_body;
+        write_type_reference(inc, inc_os);
+        backend_.emit_typeref_alias_declaration(cname, inc, dispatch);
     }
 
     pre_ns_os_  = nullptr;
     post_ns_os_ = nullptr;
     if (!namespace_.empty()) {
-        os << "namespace " << namespace_ << " {\n\n";
-        os << body_ns.str();
-        os << "\n} // namespace " << namespace_ << "\n";
+        backend_.emit_namespace_open(namespace_, session);
+        decl_os << body_ns.str();
+        if (has_definition) def_os << body_ns_definition.str();
+        backend_.emit_namespace_close(namespace_, session);
+        if (!has_definition && def_ext != decl_ext) {
+            // A plain TypeRef alias has no definition half, but
+            // emit_namespace_open/close above still wrote open/close
+            // markers into def_os unconditionally — reset it back to empty
+            // now that both have run, so the stray
+            // markers don't turn into a near-empty file at write time.
+            // Guarded on def_ext != decl_ext: for a single-file backend
+            // def_os *is* decl_os, and clearing it would wipe the real
+            // declaration content too.
+            static_cast<std::ostringstream&>(def_os).str("");
+        }
         auto post = post_ns_ss.str();
-        if (!post.empty()) os << "\n" << post;
+        if (!post.empty()) decl_os << "\n" << post;
     }
 }
 
@@ -2228,144 +2020,129 @@ static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
     return chars;
 }
 
-/// @brief Emit the `.cpp` body for a top-level builtin string/octet/bit-string type alias.
-/// @param def  ASN.1 type assignment that resolves to a sizeable primitive (e.g. `MyStr ::= IA5String (SIZE(1..32) FROM("A".."Z"))`).
-/// @param os   Output stream for the generated `.cpp` file.
+/// @brief Decide the resolved BuiltinAliasSpec for a top-level builtin
+///        string/octet/bit-string type alias (e.g.
+///        `MyStr ::= IA5String (SIZE(1..32) FROM("A".."Z"))`).
+/// @param def       ASN.1 type assignment that resolves to a sizeable primitive.
+/// @param type_name Final backend-resolved type identifier.
+/// @return The decision as plain data — see BuiltinAliasSpec.
 /// @see X.691 §26.5 (character string PER constraints); X.690 §8.7 (OCTET STRING BER encoding).
-void Generator::emit_builtin_alias_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
+BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
+                                                       const std::string& type_name) const {
+    BuiltinAliasSpec spec;
+    spec.type_name = type_name;
+    spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
+    // Defensive fallback (unreachable in practice — this is only called from
+    // emit_definition's dispatch after confirming def.body is a BuiltinType): if
+    // absent, fall back to Utf8String, whose LUT entries are the generic
+    // string handlers, matching the original defensive fallback.
+    auto* bt = std::get_if<ast::BuiltinType>(&def.body);
+    spec.builtin_type = bt ? *bt : ast::BuiltinType::Utf8String;
+    spec.tag = natural_tag_spec_for(def);
+    spec.is_explicit = type_is_explicit(def);
+    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
 
-    // Handler LUTs indexed by ast::BuiltinType (Boolean=0 .. Any=23).
-    // Integer and Enumerated are never routed here (handled by separate emit functions).
-    using BT = ast::BuiltinType;
-    static const char* const per_lut[] = {
-        "&asn1::per_boolean_handler",    // Boolean       = 0
-        "&asn1::per_integer_handler",    // Integer       = 1  (unreachable)
-        "&asn1::per_bitstring_handler",  // BitString     = 2
-        "&asn1::per_octetstring_handler",// OctetString   = 3
-        "&asn1::per_null_handler",       // Null          = 4
-        "&asn1::per_oid_handler",        // ObjectIdentifier = 5
-        "&asn1::per_reloid_handler",     // RelativeOid   = 6
-        "&asn1::per_real_handler",       // Real          = 7
-        "&asn1::per_enumerated_handler", // Enumerated    = 8  (unreachable)
-        "&asn1::per_string_handler",     // Utf8String    = 9
-        "&asn1::per_string_handler",     // NumericString = 10
-        "&asn1::per_string_handler",     // PrintableString=11
-        "&asn1::per_string_handler",     // T61String     = 12
-        "&asn1::per_string_handler",     // VideotexString= 13
-        "&asn1::per_string_handler",     // Ia5String     = 14
-        "&asn1::per_string_handler",     // GraphicString = 15
-        "&asn1::per_string_handler",     // VisibleString = 16
-        "&asn1::per_string_handler",     // GeneralString = 17
-        "&asn1::per_string_handler",     // UniversalString=18
-        "&asn1::per_string_handler",     // BmpString     = 19
-        "&asn1::per_string_handler",     // ObjectDescriptor=20
-        "&asn1::per_string_handler",     // UtcTime       = 21
-        "&asn1::per_string_handler",     // GeneralizedTime=22
-        "&asn1::per_any_handler",        // Any           = 23
-    };
-    static const char* const ber_lut[] = {
-        "&asn1::ber_boolean_handler",    // Boolean       = 0
-        "&asn1::ber_integer_handler",    // Integer       = 1  (unreachable)
-        "&asn1::ber_bitstring_handler",  // BitString     = 2
-        "&asn1::ber_octetstring_handler",// OctetString   = 3
-        "&asn1::ber_null_handler",       // Null          = 4
-        "&asn1::ber_oid_handler",        // ObjectIdentifier = 5
-        "&asn1::ber_reloid_handler",     // RelativeOid   = 6
-        "&asn1::ber_real_handler",       // Real          = 7
-        "&asn1::ber_enumerated_handler", // Enumerated    = 8  (unreachable)
-        "&asn1::ber_string_handler",     // Utf8String    = 9
-        "&asn1::ber_string_handler",     // NumericString = 10
-        "&asn1::ber_string_handler",     // PrintableString=11
-        "&asn1::ber_string_handler",     // T61String     = 12
-        "&asn1::ber_string_handler",     // VideotexString= 13
-        "&asn1::ber_string_handler",     // Ia5String     = 14
-        "&asn1::ber_string_handler",     // GraphicString = 15
-        "&asn1::ber_string_handler",     // VisibleString = 16
-        "&asn1::ber_string_handler",     // GeneralString = 17
-        "&asn1::ber_string_handler",     // UniversalString=18
-        "&asn1::ber_string_handler",     // BmpString     = 19
-        "&asn1::ber_string_handler",     // ObjectDescriptor=20
-        "&asn1::ber_utctime_handler",    // UtcTime       = 21
-        "&asn1::ber_gentime_handler",    // GeneralizedTime=22
-        "&asn1::ber_any_handler",        // Any           = 23
-    };
-    auto* bt2 = std::get_if<BT>(&def.body);
-    const char* per_h = bt2 ? per_lut[(int)*bt2] : "&asn1::per_string_handler";
-    const char* ber_h = bt2 ? ber_lut[(int)*bt2] : "&asn1::ber_string_handler";
-
-    auto alphabet   = extract_from_alphabet(def);
+    spec.alphabet = extract_from_alphabet(def);
     auto size_range = extract_size_range(def);
-
-    bool needs_per = !alphabet.empty() || size_range.has_value();
-
-    // Emit FROM-alphabet static arrays before the TypeDescriptor so they can be
-    // referenced by the Constraints initializer inside it.
-    std::string alpha_prefix;
-    if (!alphabet.empty()) {
-        alpha_prefix = std::format("asn_FROM_{}", cname);
-        emit_from_alphabet_arrays(os, alpha_prefix, alphabet);
+    spec.has_size_constraint = size_range.has_value();
+    spec.size_bounded = size_range.has_value()
+        && size_range->second != std::numeric_limits<int64_t>::max();
+    if (size_range) {
+        auto sc = compute_size_constraint(size_range);
+        spec.size_range_bits = sc.range_bits;
+        spec.size_lower = sc.lower;
+        spec.size_upper = sc.upper;  // meaningless when !size_bounded (semi-constrained)
     }
+    spec.extensible = is_constraint_extensible(def);
+    spec.xer_encoding = def.xer_encoding;
+    return spec;
+}
 
-    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", cname);
-    os << std::format("    \"{}\",\n", def.xer_name.empty() ? def.name : def.xer_name);
-    os << std::format("    {},\n", natural_tag_for(def));
-    os << "    nullptr, nullptr, nullptr, nullptr,\n";
-
-    if (needs_per) {
-        auto sc    = compute_size_constraint(size_range);
-        int  flags = asn1::Constraints::CONSTRAINED | sc.flags
-                   | (is_constraint_extensible(def) ? asn1::Constraints::EXTENSIBLE : 0);
-        std::optional<ast::BuiltinType> bbt = (alphabet.empty() && bt2) ? std::optional{*bt2} : std::nullopt;
-        os << "    " << make_string_constraints_init(flags, sc.range_bits, sc.lower, sc.upper,
-                                                     alphabet, alpha_prefix, bbt)
-           << " /* constraints */,\n";
-    } else {
-        os << "    {} /* constraints — unconstrained */,\n";
-    }
-    std::string cpp_t = cpp_type_for(def);
-    os << std::format("    false, asn1::TypeKind::Primitive,\n");
-    os << std::format("    {} /* per_handler */,\n", per_h);
-    os << std::format("    {} /* ber_handler */,\n", ber_h);
-    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */", cpp_t);
-    if (def.xer_encoding == ast::XerEncoding::Base64)
-        os << ",\n    asn1::XerEncoding::Base64 /* xer_encoding */\n";
-    else
-        os << "\n";
-    os << "};\n";
+/// @brief Emit a builtin-alias type's declaration+definition.
+/// @param def ASN.1 type assignment (must resolve to a plain builtin type,
+///            not INTEGER/ENUMERATED — those have their own emit_integer/
+///            emit_enumerated).
+/// @param session Per-type output session.
+void Generator::emit_builtin_alias(const ast::TypeDef& def, TypeOutputSession& session) {
+    auto spec = build_builtin_alias_spec(def, effective_cpp_name(def.name, current_module_));
+    backend_.emit_builtin_alias(spec, session);
 }
 
 // ---------------------------------------------------------------------------
 // Emit SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------------
 
-void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
+/// @brief Emit the declaration-side element include (if any) and return the
+///        declaration-only SeqOfSpec fields (type_name/elem_type).
+/// @param def SEQUENCE OF / SET OF type definition.
+/// @param os  Output stream for the generated declaration file.
+SeqOfSpec Generator::emit_seq_of_declaration(const ast::TypeDef& def, std::ostream& os) {
+    std::string cname = effective_cpp_name(def.name, current_module_);
+    const auto& elem = def.is_seq_of()
+        ? std::get<ast::SequenceOfType>(def.body).element
+        : std::get<ast::SetOfType>(def.body).element;
+    // SeqOf element includes go before the namespace (each .hpp wraps itself).
+    auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+    if (auto* tr = std::get_if<ast::TypeRef>(&elem->body)) {
+        auto inc = cpp_name_for_typeref(*tr);
+        write_type_reference(inc, inc_os);
+        inc_os << "\n";
+    } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
+        auto synth = backend_.synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name);
+        write_type_reference(synth, inc_os);
+        inc_os << "\n";
+    } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem->body);
+               ebt && *ebt == ast::BuiltinType::Enumerated && !elem->enum_values.empty()) {
+        auto synth = backend_.synthetic_name(cname, elem->name.empty() ? "Enum" : elem->name);
+        write_type_reference(synth, inc_os);
+        inc_os << "\n";
+    }
+    SeqOfSpec spec;
+    spec.type_name = cname;
+    spec.elem_type = native_member_type_for(*elem);
+    return spec;
+}
+
+/// @brief Decide the resolved SeqOfSpec, emit the element's own inline-
+///        constrained descriptor (if any) as a side effect, then return
+///        the SeqOfSpec for the combined backend call.
+/// @param def     SEQUENCE OF / SET OF type definition.
+/// @param session Per-type output session.
+SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputSession& session) {
     std::string cname = effective_cpp_name(def.name, current_module_);
     const auto& elem_node = def.is_seq_of()
         ? *std::get<ast::SequenceOfType>(def.body).element
         : *std::get<ast::SetOfType>(def.body).element;
 
+    SeqOfSpec spec;
+    spec.type_name = cname;
+    spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
+    spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
+    spec.is_set_of = def.is_set_of();
+    spec.tag = natural_tag_spec_for(def);
+    spec.is_explicit = type_is_explicit(def);
+    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
+
     // SIZE constraint on collection length
-    auto sc = compute_size_constraint(extract_size_range(def));
+    auto size_range = extract_size_range(def);
+    auto sc = compute_size_constraint(size_range, is_constraint_extensible(def));
+    spec.has_size_constraint = size_range.has_value();
+    spec.extensible = is_constraint_extensible(def);
+    spec.range_bits = sc.range_bits;
+    spec.size_lower = sc.lower;
+    if (sc.flags & asn1::Constraints::SIZE_CONSTRAINED) spec.size_upper = sc.upper;
 
-    // SeqOfSpec — when the element is an inline-constrained builtin emit a per-element
+    // When the element is an inline-constrained builtin, emit a per-element
     // TypeDescriptor that carries the constraint; otherwise reuse the natural descriptor.
-    // When the element has a declared identifier (X.693 §12), emit a renamed TypeDescriptor
-    // so that XerCodec sees the right tag via edef.name without any runtime rename.
-    std::ostringstream elem_decl;
-    bool has_declared_name = !elem_node.name.empty();
-    std::string elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", elem_decl);
-    // Flush any per-element constrained descriptor before the SeqOfSpec.
-    if (!elem_decl.str().empty()) os << elem_decl.str();
+    // Writes directly into `os` (== session.buffer(definition_extension())),
+    // before the SeqOfSpec it's referenced from is emitted later.
+    spec.elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", session);
 
-    os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", cname);
-    os << std::format("    {},\n", elem_ref);
-    os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
-                      sc.flags, sc.range_bits, sc.lower, sc.upper);
     // X.693 §12: declared element identifier overrides the XER tag at the use site.
     // Exception: asn1c uses <NULL/> for NULL-typed elements regardless of declared name.
     // Similarly, ANY keeps is_any=true semantics and must not be renamed.
-    if (has_declared_name) {
+    if (!elem_node.name.empty()) {
         using BT = ast::BuiltinType;
         bool is_null_or_any = false;
         if (auto* bt = std::get_if<BT>(&elem_node.body)) {
@@ -2376,151 +2153,23 @@ void Generator::emit_seq_of_cpp(const ast::TypeDef& def, std::ostream& os) {
                     is_null_or_any = (*rbt == BT::Null || *rbt == BT::Any);
             }
         }
-        if (!is_null_or_any)
-            os << std::format("    \"{}\",\n", elem_node.name);
+        if (!is_null_or_any) spec.elem_xer_name = elem_node.name;
     }
-    os << "};\n\n";
 
-    // TypeDescriptor
-    emit_type_descriptor(os, cname,
-        def.xer_name.empty() ? def.name : def.xer_name,
-        natural_tag_for(def),
-        false, false, false, true, "asn1::TypeKind::SeqOf",
-        "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler");
+    return spec;
 }
 
-/// @brief Emit a synthesized SeqOfSpec/TypeDescriptor pair for an anonymous
-///        SEQUENCE OF/SET OF appearing as another collection's element
-///        (X.680 §25/26 nesting, to unbounded depth — "SEQUENCE OF
-///        SEQUENCE OF X", both levels unnamed). Mirrors emit_seq_of_cpp's
-///        own SeqOfSpec/TypeDescriptor shape (kept as a separate function,
-///        not a shared refactor of emit_seq_of_cpp, to avoid touching the
-///        already-working top-level-type path) but keyed by a synthesized
-///        name instead of a real ASN.1 type name — there is none, this
-///        collection has no top-level type of its own. Recurses via
-///        emit_member_type_descriptor when the element is itself another
-///        anonymous nested collection.
-/// @param def         The anonymous SEQUENCE OF/SET OF TypeDef.
-/// @param synth_name  Synthesized, file-unique C++ identifier for this
-///                    collection level (e.g. "MatrixRows_elem").
-/// @param os          Output stream for the generated `.cpp` file.
-/// @return A reference expression to the synthesized descriptor
-///         (e.g. "&asn_DEF_MatrixRows_elem").
-std::string Generator::emit_synthetic_seq_of_descriptor(
-    const ast::TypeDef& def, const std::string& synth_name, std::ostream& os)
-{
-    const auto& elem_node = def.is_seq_of()
-        ? *std::get<ast::SequenceOfType>(def.body).element
-        : *std::get<ast::SetOfType>(def.body).element;
-
-    auto sc = compute_size_constraint(extract_size_range(def));
-
-    std::ostringstream elem_decl;
-    bool has_declared_name = !elem_node.name.empty();
-    std::string elem_ref = emit_member_type_descriptor(elem_node, synth_name, "elem", elem_decl);
-    if (!elem_decl.str().empty()) os << elem_decl.str();
-
-    os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", synth_name);
-    os << std::format("    {},\n", elem_ref);
-    os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
-                      sc.flags, sc.range_bits, sc.lower, sc.upper);
-    if (has_declared_name) {
-        using BT = ast::BuiltinType;
-        bool is_null_or_any = false;
-        if (auto* bt = std::get_if<BT>(&elem_node.body)) {
-            is_null_or_any = (*bt == BT::Null || *bt == BT::Any);
-        } else if (auto* tr = std::get_if<ast::TypeRef>(&elem_node.body)) {
-            if (auto resolved = resolver_.resolve_ref(*tr, current_module_)) {
-                if (auto* rbt = std::get_if<BT>(&resolved->body))
-                    is_null_or_any = (*rbt == BT::Null || *rbt == BT::Any);
-            }
-        }
-        if (!is_null_or_any)
-            os << std::format("    \"{}\",\n", elem_node.name);
-    }
-    os << "};\n\n";
-
-    // No ASN.1 name at any level of this nesting to draw an XER tag from.
-    // This descriptor's own xer_name is not cosmetic: SeqOfXerHandler::
-    // encode falls back to edef.name as the literal per-element wrap tag
-    // whenever the enclosing collection has no declared element identifier
-    // (X.693 §12) — reusing the synthesized C++ identifier here would leak
-    // an internal compiler name straight into the wire XER output. Use the
-    // bare X.680 keyword instead ("SEQUENCE"/"SET", no "OF" — XML element
-    // names can't contain a space), matching how every scalar builtin's
-    // own descriptor already carries its keyword as `.name` for this exact
-    // fallback (asn_DEF_Integer.name == "INTEGER", not a C++ identifier).
-    // Best-effort: this exact case (a genuinely anonymous, doubly-nested
-    // SEQUENCE OF/SET OF with no declared identifier at either level) has
-    // no real-world precedent to check against asn1c (confirmed zero
-    // occurrences across the ETSI LI PS-PDU schema, the asn1c conformance
-    // suite, and this project's own hand-authored test schemas).
-    //
-    // Not routed through the shared emit_type_descriptor helper: that
-    // function's TypeLifecycleOps(TypeTag<{cname}>{}) line requires cname
-    // to name a real, complete C++ type — every other caller passes a real
-    // ASN.1 type's own generated class/using-alias name. There is no such
-    // alias for this synthetic level (synth_name only names the asn_DEF_/
-    // asn_SPC_ constants, not a type), so the storage type is built
-    // directly via cpp_type_for(def) instead, the same recursive
-    // VectorSeqOf<...> text a named SEQUENCE OF/SET OF's own top-level
-    // `using` alias would get.
-    std::string storage_type = cpp_type_for(def);
-    os << std::format("const asn1::TypeDescriptor asn_DEF_{} = {{\n", synth_name);
-    os << std::format("    \"{}\",\n", def.is_seq_of() ? "SEQUENCE" : "SET");
-    os << std::format("    {},\n", natural_tag_for(def));
-    os << std::format("    nullptr, nullptr, nullptr, &asn_SPC_{}, {{}} /* constraints */,\n", synth_name);
-    os << "    false, asn1::TypeKind::SeqOf /* kind */,\n";
-    os << "    &asn1::per_seqof_handler /* per_handler */,\n";
-    os << "    &asn1::ber_seqof_handler /* ber_handler */,\n";
-    os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */\n", storage_type);
-    os << "};\n\n";
-
-    return std::format("&asn_DEF_{}", synth_name);
-}
-
-void Generator::emit_cpp(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
-    os << std::format("#include \"{}.hpp\"\n", filename_for(cname));
-    os << "#include <asn1cpp/codec/PerHandlers.hpp>\n";
-    os << "#include <asn1cpp/codec/BerHandlers.hpp>\n";
-    // __builtin_offsetof is well-defined for all types without virtual functions
-    // on GCC/Clang, including non-standard-layout types (conditionally supported
-    // per C++ standard). Suppress the pedantic diagnostic in generated files.
-    os << "#ifdef __GNUC__\n";
-    os << "#pragma GCC diagnostic ignored \"-Winvalid-offsetof\"\n";
-    os << "#endif\n\n";
-
-    // When namespace wrapping is active, member-type includes (e.g. for optional members
-    // that need a complete type in the .cpp) must precede the namespace opener.
-    std::ostringstream body_ns_cpp;
-    std::ostream& body = namespace_.empty() ? os : static_cast<std::ostream&>(body_ns_cpp);
-    if (!namespace_.empty()) pre_ns_os_ = &os;
-
-    if (def.is_sequence() || def.is_set()) {
-        current_type_ = cname;
-        emit_sequence_cpp(def, body);
-    } else if (def.is_choice()) {
-        current_type_ = cname;
-        emit_choice_cpp(def, body);
-    } else if (def.is_seq_of() || def.is_set_of()) {
-        current_type_ = cname;
-        emit_seq_of_cpp(def, body);
-    } else if (auto* bt = std::get_if<ast::BuiltinType>(&def.body)) {
-        if (*bt == ast::BuiltinType::Enumerated)
-            emit_enumerated_cpp(def, body);
-        else if (*bt == ast::BuiltinType::Integer)
-            emit_integer_cpp(def, body);
-        else
-            emit_builtin_alias_cpp(def, body);
-    }
-
-    pre_ns_os_ = nullptr;
-    if (!namespace_.empty()) {
-        os << "namespace " << namespace_ << " {\n\n";
-        os << body_ns_cpp.str();
-        os << "\n} // namespace " << namespace_ << "\n";
-    }
+/// @brief Emit a SEQUENCE OF / SET OF type's declaration+definition.
+/// @param def     SEQUENCE OF / SET OF TypeDef.
+/// @param session Per-type output session.
+/// @note Declaration and definition each contribute disjoint SeqOfSpec
+///       fields (elem_type vs. everything else) — merge decl_spec.elem_type
+///       onto def_spec before the combined backend_.emit_seq_of() call.
+void Generator::emit_seq_of(const ast::TypeDef& def, TypeOutputSession& session) {
+    auto decl_spec = emit_seq_of_declaration(def, session.buffer(backend_.declaration_extension()));
+    auto spec = emit_seq_of_definition(def, session);
+    spec.elem_type = decl_spec.elem_type;
+    backend_.emit_seq_of(spec, session);
 }
 
 // ---------------------------------------------------------------------------
@@ -2542,11 +2191,12 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
             : *std::get<ast::SetOfType>(def.body).element;
         if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
             bool was_anon = elem.name.empty();
-            std::string synth_name = make_synthetic_name(parent_cname, was_anon ? "Anon" : elem.name);
+            std::string synth_name = backend_.synthetic_name(parent_cname, was_anon ? "Anon" : elem.name);
             if (!generated_names_.count(synth_name)) {
                 generated_names_.insert(synth_name);
                 auto synthetic = std::make_shared<ast::TypeDef>(elem);
                 synthetic->name = synth_name;
+                synthetic->origin_label = was_anon ? def.name : elem.name;
                 if (was_anon) {
                     synthetic->xer_name = elem.is_sequence() ? "SEQUENCE"
                                         : elem.is_set()      ? "SET"
@@ -2554,8 +2204,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 }
                 generate_inline_types(*synthetic, mod);
                 current_type_ = synth_name;
-                emit_file(out_dir_ / (filename_for(synth_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
-                emit_file(out_dir_ / (filename_for(synth_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
+                emit_type_files(synth_name, *synthetic, mod);
             }
         }
         return;
@@ -2574,15 +2223,16 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
             // Compute seqof_name first so anonymous element types are scoped under it,
             // preventing collisions when multiple SeqOf members have structurally-similar
             // but differently-constrained inline element types (e.g. ctfc2Bit vs ctfc6Bit).
-            std::string seqof_name = make_synthetic_name(parent_cname, m->name);
+            std::string seqof_name = backend_.synthetic_name(parent_cname, m->name);
             std::string elem_type_name;  // non-empty iff element was an inline complex type
             if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
                 bool was_anon = elem.name.empty();
-                elem_type_name = make_synthetic_name(seqof_name, was_anon ? "Anon" : elem.name);
+                elem_type_name = backend_.synthetic_name(seqof_name, was_anon ? "Anon" : elem.name);
                 if (!generated_names_.count(elem_type_name)) {
                     generated_names_.insert(elem_type_name);
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
                     synthetic->name = elem_type_name;
+                    synthetic->origin_label = was_anon ? m->name : elem.name;
                     if (was_anon) {
                         synthetic->xer_name = elem.is_sequence() ? "SEQUENCE"
                                             : elem.is_set()      ? "SET"
@@ -2590,25 +2240,60 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                     }
                     generate_inline_types(*synthetic, mod);
                     current_type_ = elem_type_name;
-                    emit_file(out_dir_ / (filename_for(elem_type_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
-                    emit_file(out_dir_ / (filename_for(elem_type_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
+                    emit_type_files(elem_type_name, *synthetic, mod);
                 }
-            } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body);
-                       ebt && *ebt == ast::BuiltinType::Enumerated && !elem.enum_values.empty()) {
+            } else if (elem.is_seq_of() || elem.is_set_of()) {
+                // Anonymous nested SEQUENCE OF/SET OF element (X.680 §25/26
+                // nesting, to unbounded depth — "rows SEQUENCE OF SEQUENCE
+                // OF INTEGER", both levels unnamed). Same promote-to-a-real-
+                // named-type treatment as the composite-element case just
+                // above: without this, the element stays embedded inline
+                // and native_member_type_for/type_descriptor_ref_for's own SEQUENCE
+                // OF/SET OF branches (which only know how to resolve a
+                // *named* nested collection, or recurse straight through an
+                // anonymous one to its innermost scalar) skip the
+                // intermediate collection level entirely — corrupting the
+                // C++ BER encoding (the generic SeqOf handler reads each
+                // outer element as the wrong type) and, on the Rust side,
+                // producing a bare Vec<Vec<T>> field with no Asn1Value impl
+                // (same coherence problem octet_string::OctetString's own
+                // module doc describes) that fails to compile. Promoting
+                // gives this level a real name, a real recursive descriptor
+                // (generate_inline_types recurses into it below, handling
+                // further nesting the same way), and — critically — the
+                // rewrite to a TypeRef a few lines down means every other
+                // resolution path (type_descriptor_ref_for, native_member_type_for)
+                // just takes their already-correct, already-tested named-
+                // type branch from here on, no special-casing needed there.
                 bool was_anon = elem.name.empty();
-                elem_type_name = make_synthetic_name(seqof_name, was_anon ? "Enum" : elem.name);
+                elem_type_name = backend_.synthetic_name(seqof_name, was_anon ? "Anon" : elem.name);
+                seq_of_synthetic_names_.insert(elem_type_name);
                 if (!generated_names_.count(elem_type_name)) {
                     generated_names_.insert(elem_type_name);
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
                     synthetic->name = elem_type_name;
+                    synthetic->origin_label = was_anon ? m->name : elem.name;
+                    if (was_anon) synthetic->xer_name = elem.is_seq_of() ? "SEQUENCE" : "SET";
+                    generate_inline_types(*synthetic, mod);
                     current_type_ = elem_type_name;
-                    emit_file(out_dir_ / (filename_for(elem_type_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
-                    emit_file(out_dir_ / (filename_for(elem_type_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
+                    emit_type_files(elem_type_name, *synthetic, mod);
+                }
+            } else if (auto* ebt = std::get_if<ast::BuiltinType>(&elem.body);
+                       ebt && *ebt == ast::BuiltinType::Enumerated && !elem.enum_values.empty()) {
+                bool was_anon = elem.name.empty();
+                elem_type_name = backend_.synthetic_name(seqof_name, was_anon ? "Enum" : elem.name);
+                if (!generated_names_.count(elem_type_name)) {
+                    generated_names_.insert(elem_type_name);
+                    auto synthetic = std::make_shared<ast::TypeDef>(elem);
+                    synthetic->name = elem_type_name;
+                    synthetic->origin_label = was_anon ? m->name : elem.name;
+                    current_type_ = elem_type_name;
+                    emit_type_files(elem_type_name, *synthetic, mod);
                 }
             }
             // Generate synthetic SeqOf wrapper descriptor type named parent + MemberCamel.
             // If element was anonymous inline, replace it with a TypeRef to the named element
-            // type so emit_hpp uses the correct name and include path.
+            // type so emit_declaration uses the correct name and include path.
             // (seqof_name already computed above)
             if (!generated_names_.count(seqof_name)) {
                 generated_names_.insert(seqof_name);
@@ -2628,8 +2313,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                         seqof_td->body = ast::SetOfType{named_elem};
                 }
                 current_type_ = seqof_name;
-                emit_file(out_dir_ / (filename_for(seqof_name) + ".hpp"), [&](auto& os){ emit_hpp(*seqof_td, mod, os); });
-                emit_file(out_dir_ / (filename_for(seqof_name) + ".cpp"), [&](auto& os){ emit_cpp(*seqof_td, os); });
+                emit_type_files(seqof_name, *seqof_td, mod);
             }
             continue;
         }
@@ -2639,13 +2323,14 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
         if (!m->is_sequence() && !m->is_choice() && !m->is_set() && !is_inline_enum) continue;
         if (m->name.empty()) continue;
 
-        std::string synth_name = make_synthetic_name(parent_cname, m->name);
+        std::string synth_name = backend_.synthetic_name(parent_cname, m->name);
 
         if (generated_names_.count(synth_name)) continue;
         generated_names_.insert(synth_name);
 
         auto synthetic = std::make_shared<ast::TypeDef>(*m);
         synthetic->name = synth_name;
+        synthetic->origin_label = m->name;
         // Same reasoning as the SeqOf wrapper above: the member's own [n] tag must
         // not be mistaken for this synthetic type's own top-level declared tag.
         synthetic->tag = ast::Tag{};
@@ -2653,8 +2338,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
         generate_inline_types(*synthetic, mod);
 
         current_type_ = synth_name;
-        emit_file(out_dir_ / (filename_for(synth_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
-        emit_file(out_dir_ / (filename_for(synth_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
+        emit_type_files(synth_name, *synthetic, mod);
     }
 }
 
@@ -2679,38 +2363,21 @@ void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
             : std::get<ast::SetOfType>(def.body).element.get();
         auto* ebt = std::get_if<ast::BuiltinType>(&elem_ptr->body);
         if (ebt && *ebt == ast::BuiltinType::Enumerated && !elem_ptr->enum_values.empty()) {
-            std::string elem_name = make_synthetic_name(cname, elem_ptr->name.empty() ? "Enum" : elem_ptr->name);
+            std::string elem_name = backend_.synthetic_name(cname, elem_ptr->name.empty() ? "Enum" : elem_ptr->name);
             if (!generated_names_.count(elem_name)) {
                 generated_names_.insert(elem_name);
                 auto synthetic = std::make_shared<ast::TypeDef>(*elem_ptr);
                 synthetic->name = elem_name;
+                synthetic->origin_label = elem_ptr->name.empty() ? def.name : elem_ptr->name;
                 auto save = current_type_;
                 current_type_ = elem_name;
-                emit_file(out_dir_ / (filename_for(elem_name) + ".hpp"), [&](auto& os){ emit_hpp(*synthetic, mod, os); });
-                emit_file(out_dir_ / (filename_for(elem_name) + ".cpp"), [&](auto& os){ emit_cpp(*synthetic, os); });
+                emit_type_files(elem_name, *synthetic, mod);
                 current_type_ = save;
             }
         }
     }
 
-    emit_file(out_dir_ / (filename_for(cname) + ".hpp"), [&](auto& os){ emit_hpp(def, mod, os); });
-
-    auto bt_is = [&](ast::BuiltinType t) {
-        auto* bt = std::get_if<ast::BuiltinType>(&def.body);
-        return bt && *bt == t;
-    };
-    auto is_named_builtin_alias = [&]() {
-        auto* bt = std::get_if<ast::BuiltinType>(&def.body);
-        if (!bt) return false;
-        return *bt != ast::BuiltinType::Enumerated && *bt != ast::BuiltinType::Integer;
-    };
-    bool needs_cpp = def.is_sequence() || def.is_set() || def.is_choice()
-        || def.is_seq_of() || def.is_set_of()
-        || bt_is(ast::BuiltinType::Enumerated)
-        || bt_is(ast::BuiltinType::Integer)
-        || is_named_builtin_alias();
-    if (needs_cpp)
-        emit_file(out_dir_ / (filename_for(cname) + ".cpp"), [&](auto& os){ emit_cpp(def, os); });
+    emit_type_files(cname, def, mod);
 }
 
 /// @brief Append to `worklist` all ASN.1 type names directly referenced by `def`.

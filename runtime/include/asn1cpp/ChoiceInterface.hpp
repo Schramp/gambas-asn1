@@ -25,11 +25,14 @@ public:
     // Generic emplace: destroy current occupant then placement-new the new alternative.
     // Single pointer assignment replaces old separate destroy_fn_ / move_fn_ writes.
     // alt.type_descriptor->lifecycle must be fully populated (guaranteed for all
-    // TypeDescriptors referenced from ChoiceSpec::alternatives).
+    // TypeDescriptors referenced from ChoiceSpec::alternatives) — except when
+    // alt.boxed_lifecycle overrides it for a self-referential (unique_ptr-boxed)
+    // alternative, whose storage isn't a plain T (see MemberDescriptor's doc).
     void emplace_alt(const MemberDescriptor& alt) noexcept {
+        const TypeLifecycleOps& ops = alt.boxed_lifecycle ? *alt.boxed_lifecycle : alt.type_descriptor->lifecycle;
         active_lifecycle->destroy(val_);
-        alt.type_descriptor->lifecycle.construct(val_);
-        active_lifecycle = &alt.type_descriptor->lifecycle;
+        ops.construct(val_);
+        active_lifecycle = &ops;
     }
 };
 
@@ -45,6 +48,21 @@ struct ChoiceOps {
     static const Asn1Object* get_const(const Asn1Object* p) {
         return std::launder(
             reinterpret_cast<const AltT*>(static_cast<const ChoiceInterface*>(p)->val_));
+    }
+};
+
+// Accessor for a self-referential CHOICE alternative boxed as
+// std::unique_ptr<AltT> (see TypeLifecycleOps's BoxedTypeTag constructor) —
+// val_ holds the unique_ptr itself, not an AltT, so an extra ->get() applies.
+template<typename AltT>
+struct BoxedChoiceOps {
+    static Asn1Object* get_mut(Asn1Object* p) {
+        return std::launder(reinterpret_cast<std::unique_ptr<AltT>*>(
+            static_cast<ChoiceInterface*>(p)->val_))->get();
+    }
+    static const Asn1Object* get_const(const Asn1Object* p) {
+        return std::launder(reinterpret_cast<const std::unique_ptr<AltT>*>(
+            static_cast<const ChoiceInterface*>(p)->val_))->get();
     }
 };
 

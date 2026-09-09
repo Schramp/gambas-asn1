@@ -1,0 +1,22 @@
+[package]
+name = "xval-target"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Materialized by asn1cpp-validation-tools/xval_sweep for a single (schema, PDU) target — see etsitools/asn1cpp/randgen-rust/Cargo.toml for the hand-maintained ETSI original this generalizes."
+
+[lib]
+name = "randgen_rust"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ber-to-xer"
+path = "src/bin/ber_to_xer.rs"
+
+[[bin]]
+name = "xer-to-ber"
+path = "src/bin/xer_to_ber.rs"
+
+[dependencies]
+asn1cpp-ber = { path = "__ASN1CPP_BER_CRATE__" }

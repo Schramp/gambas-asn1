@@ -51,6 +51,12 @@ jobs:
           sudo cp -r ~/.reflex/include/reflex /usr/local/include/
           sudo cp ~/.reflex/lib/libreflex.a /usr/local/lib/
 
+      # Rust toolchain (gambas-asn1#218/#245): rustc/cargo on PATH so cmake's
+      # configure step detects them and turns on WITH_RUST_COMPILE_CHECK /
+      # WITH_BER_RUNTIME_TEST — without this, both silently no-op in CI.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Configure
         run: |
           SMOKE=${{ github.ref == 'refs/heads/main' && 'ON' || 'OFF' }}

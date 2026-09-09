@@ -1,0 +1,15 @@
+-- gambas-asn1#282: table-driven Rust SEQUENCE codegen broadened past
+-- INTEGER-only (#278/#219) to bool/OCTET STRING/one string type. Flat,
+-- single-layer SEQUENCE mixing all four member kinds now supported by the
+-- Rust Asn1Value trait's BER leg (rust-runtime/ber/src/value.rs).
+
+RustWideTypesTest DEFINITIONS ::= BEGIN
+
+    Widget ::= SEQUENCE {
+        id      INTEGER,
+        flag    BOOLEAN,
+        data    OCTET STRING,
+        label   IA5String
+    }
+
+END
