@@ -127,6 +127,7 @@ mod tests {
             range_bits,
             lower_bound: lower,
             upper_bound: upper,
+            ..Default::default()
         }
     }
 
@@ -137,6 +138,7 @@ mod tests {
             range_bits: 0,
             lower_bound: lower,
             upper_bound: 0,
+            ..Default::default()
         }
     }
 
