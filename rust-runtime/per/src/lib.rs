@@ -18,6 +18,7 @@
 //! built on top of this in a later pass — see the crate's own issue tracker
 //! entry for the phased plan.
 
+pub mod choice;
 pub mod constraints;
 pub mod integer;
 pub mod length;
