@@ -22,10 +22,13 @@ pub mod constraints;
 pub mod integer;
 pub mod length;
 pub mod reader;
+pub mod sequence;
 pub mod strings;
 pub mod uinteger;
+pub mod value;
 pub mod writer;
 
 pub use constraints::Constraints;
 pub use reader::{DecodeError, Reader};
+pub use value::PerValue;
 pub use writer::Writer;
