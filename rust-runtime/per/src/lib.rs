@@ -18,8 +18,11 @@
 //! built on top of this in a later pass — see the crate's own issue tracker
 //! entry for the phased plan.
 
+pub mod constraints;
+pub mod integer;
 pub mod reader;
 pub mod writer;
 
+pub use constraints::Constraints;
 pub use reader::{DecodeError, Reader};
 pub use writer::Writer;
