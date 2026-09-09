@@ -16,6 +16,40 @@
 
 namespace asn1::codegen {
 
+// ---------------------------------------------------------------------------
+// *Spec catalog
+// ---------------------------------------------------------------------------
+// `Generator` resolves every backend-agnostic decision from the AST into one
+// of the structs below; `Backend` (CppBackend/RustBackend) only turns that
+// already-resolved data into target-language text — see each struct's own
+// doc comment for the standard clause and rationale it encodes. One line per
+// struct, in file order:
+//
+//   TypeTagSpec            — a wire tag's class/number/constructed-ness (X.690 §8.1), the shared shape.
+//   MemberTagSpec           — TypeTagSpec + "did this come from an override" (member/alternative only).
+//   TaggedTypeSpec          — base for every named type: type_name/xer_name/asn1_name + its own top-level tag.
+//   IntStorageKind          — which native integer width/type an INTEGER resolves to (i64/u64/i128/arbitrary).
+//   TypeDescriptorRefKind   — which *form* a type-descriptor reference takes (builtin/class-scoped/free-standing/none).
+//   TypeDescriptorRefSpec   — a resolved type-descriptor reference (kind + builtin/name).
+//   SeqOfKind               — a member's collection kind, if any (SEQUENCE OF / SET OF / neither).
+//   ElemShape               — a SEQUENCE OF/SET OF element's shape, recursing through arbitrary nesting depth.
+//   NamedValue              — one ENUMERATED named value or INTEGER named number (X.680 §19.5/§20.6).
+//   EnumeratedSpec          — one ENUMERATED type (X.680 §20): named values + extension marker.
+//   IntegerSpec             — one named INTEGER type (X.680 §19): storage class, named constants, constraint bounds.
+//   BuiltinAliasSpec        — every other ASN.1 builtin type: SIZE/FROM-alphabet constraints, XER encoding.
+//   DefaultValueSpec        — a DEFAULT member's value (X.680 §25.1), not how a backend spells it as a literal.
+//   MemberTypeDescriptorSpec — one inline-constrained member's per-member TypeDescriptor (X.691 §26.5 / X.680 §19).
+//   SeqOfSpec               — one SEQUENCE OF/SET OF type (X.680 §25/26): element reference, SIZE constraint.
+//   TaggedMemberSpec        — base for every SEQUENCE/SET member and CHOICE alternative: resolved_tag + mbuiltin.
+//   SequenceMemberSpec      — one SEQUENCE/SET member: storage type, optionality, cycle/SeqOf-shape facts.
+//   SequenceSpec            — one SEQUENCE/SET type (X.680 §24/25): member list, extension/optional-count facts.
+//   ChoiceAlternativeSpec   — one CHOICE alternative: storage type, accessor name, resolved tag.
+//   ChoiceSpec              — one CHOICE type (X.680 §28): alternative list, BER dispatch tables.
+//
+// See `class Backend`'s own doc, below, for the pure-virtual-vs-throw-default
+// policy governing which methods every backend must implement to compile at
+// all versus which may stay unimplemented per construct.
+
 /// @brief Backend-agnostic BER tag decision (X.690 §8.1) — class, number,
 ///        and encoding form. No C++/Rust/etc. syntax; a backend formats
 ///        this into its own literal syntax (see CppBackend::format_tag_literal).
@@ -534,21 +568,40 @@ struct ChoiceSpec : TaggedTypeSpec {
     std::vector<std::pair<std::string,int>>  ber_tags; // {pre-formatted tag literal, alt index}
 };
 
-/// @brief Confines identifier-escaping and naming-convention decisions that
-///        are inherently target-language-specific.
-///
-/// `Generator` computes backend-agnostic decisions (`TagSpec`,
-/// `DefaultValueSpec`, `IntStorageKind`, ...) from the resolved AST and asks
-/// a `Backend` to turn ASN.1 names into valid identifiers for its target
-/// language. `CppBackend` is the only implementation today; a future Rust
-/// backend implements the same interface with its own keyword list and
-/// naming conventions.
 /// @brief Forward declaration — full definition below, after Backend. Only a
 ///        reference to it appears in Backend's own method signatures, so a
 ///        forward declaration is enough here; the .cpp files that call
 ///        `session.buffer(...)` see the full definition via this same header.
 class TypeOutputSession;
 
+/// @brief Confines identifier-escaping, naming-convention, and per-construct
+///        text-emission decisions that are inherently target-language-
+///        specific. `Generator` computes backend-agnostic decisions (see the
+///        `*Spec` catalog above) from the resolved AST and asks a `Backend`
+///        to turn both ASN.1 names and those decisions into valid,
+///        idiomatic source for its target language. `CppBackend` and
+///        `RustBackend` are the two implementations today.
+///
+/// Two tiers of virtual, by how a backend gets away with not implementing
+/// one yet:
+/// - **Naming primitives** (`type_name`, `member_name`, `value_name`,
+///   `escape`, `synthetic_name`) are pure virtual (`= 0`). Every other
+///   method on this class — every `emit_*`/`format_*` — calls into these to
+///   produce any output at all, so there is no "hasn't implemented naming
+///   yet" state a backend could usefully be in; a backend that can't name
+///   things can't do anything. Compiler-enforced: a `Backend` subclass
+///   that omits one fails to compile rather than merely failing at runtime.
+/// - **Per-construct decisions/emission** (`native_int_type`, `emit_enumerated`,
+///   `emit_forward_declaration`, and most of the rest of this class) default
+///   to a body that throws `std::logic_error`. This is deliberate, not an
+///   oversight — see `emit_enumerated`'s own doc: a backend that hasn't
+///   implemented ENUMERATED yet (or PER, or CHOICE extension groups, ...)
+///   stays a valid, instantiable `Backend` usable for everything it *does*
+///   support; it only fails, loudly, the moment generated output actually
+///   needs the unimplemented construct. Pure virtual here would force every
+///   partial/WIP backend to implement the entire interface before it could
+///   compile anything at all — the opposite of the incremental-backend
+///   goal this split exists for.
 class Backend {
 public:
     virtual ~Backend() = default;
