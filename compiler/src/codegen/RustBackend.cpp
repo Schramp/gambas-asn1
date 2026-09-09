@@ -323,6 +323,41 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << std::format("        asn1cpp_ber::enumerated::validate_enum(*self as i64, &{})\n", map_ident);
         os << "    }\n";
         os << "}\n\n";
+
+        // PER leg — `asn1cpp_per::enumerated` needs its ordinal table sorted
+        // ascending by value (X.691 §22: wire ordinal is sorted numeric
+        // position, not ASN.1 declaration order — matches asn1c and the
+        // C++ side's own sorted `EnumSpec::entries`/`asn_PER_..._value_order`,
+        // see EnumeratedPerHandler, runtime/src/PerCodec.cpp), so this is a
+        // second table, not a reuse of {map_ident} above (which stays in
+        // declaration order for BER/XER, where order is irrelevant).
+        std::vector<NamedValue> sorted_values = spec.values;
+        std::sort(sorted_values.begin(), sorted_values.end(),
+                   [](const NamedValue& a, const NamedValue& b) { return a.value < b.value; });
+        std::string per_entries_ident = std::format("{}_PER_ENTRIES", to_screaming_snake_case(tname));
+        os << std::format("static {}: [asn1cpp_per::enumerated::EnumEntry; {}] = [\n",
+                           per_entries_ident, sorted_values.size());
+        for (const auto& v : sorted_values) {
+            os << std::format("    asn1cpp_per::enumerated::EnumEntry {{ value: {} }},\n", v.value);
+        }
+        os << "];\n\n";
+
+        os << std::format("impl asn1cpp_per::PerValue for {} {{\n", tname);
+        os << "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {\n";
+        os << std::format(
+            "        asn1cpp_per::enumerated::encode_enum(w, &{}, {}, {}, *self as i64);\n",
+            per_entries_ident, spec.extensible ? "true" : "false", spec.root_count);
+        os << "    }\n\n";
+        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {\n";
+        os << std::format(
+            "        let v = asn1cpp_per::enumerated::decode_enum(r, &{}, {}, {})?;\n",
+            per_entries_ident, spec.extensible ? "true" : "false", spec.root_count);
+        os << std::format(
+            "        *self = std::convert::TryFrom::try_from(v).map_err(|_| asn1cpp_per::DecodeError::new(\"PER: ENUM value not in {}\", r.bit_pos()))?;\n",
+            tname);
+        os << "        Ok(())\n";
+        os << "    }\n";
+        os << "}\n\n";
     }
 }
 
