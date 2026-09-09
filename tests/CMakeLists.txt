@@ -132,6 +132,8 @@ add_custom_command(
             ${TOPLEVEL_TAG_GEN_DIR}/MyEnum.hpp   ${TOPLEVEL_TAG_GEN_DIR}/MyEnum.cpp
             ${TOPLEVEL_TAG_GEN_DIR}/MySeq.hpp    ${TOPLEVEL_TAG_GEN_DIR}/MySeq.cpp
             ${TOPLEVEL_TAG_GEN_DIR}/MySeqOf.hpp  ${TOPLEVEL_TAG_GEN_DIR}/MySeqOf.cpp
+            ${TOPLEVEL_TAG_GEN_DIR}/MyExplicitInt.hpp ${TOPLEVEL_TAG_GEN_DIR}/MyExplicitInt.cpp
+            ${TOPLEVEL_TAG_GEN_DIR}/MyExplicitChoice.hpp ${TOPLEVEL_TAG_GEN_DIR}/MyExplicitChoice.cpp
             ${TOPLEVEL_TAG_GEN_DIR}/Wrapper.hpp  ${TOPLEVEL_TAG_GEN_DIR}/Wrapper.cpp
             ${TOPLEVEL_TAG_GEN_DIR}/WrapperTso.hpp ${TOPLEVEL_TAG_GEN_DIR}/WrapperTso.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${TOPLEVEL_TAG_GEN_DIR}
@@ -146,6 +148,8 @@ add_executable(test_toplevel_tag
     ${TOPLEVEL_TAG_GEN_DIR}/MyEnum.cpp
     ${TOPLEVEL_TAG_GEN_DIR}/MySeq.cpp
     ${TOPLEVEL_TAG_GEN_DIR}/MySeqOf.cpp
+    ${TOPLEVEL_TAG_GEN_DIR}/MyExplicitInt.cpp
+    ${TOPLEVEL_TAG_GEN_DIR}/MyExplicitChoice.cpp
     ${TOPLEVEL_TAG_GEN_DIR}/Wrapper.cpp
     ${TOPLEVEL_TAG_GEN_DIR}/WrapperTso.cpp
 )
@@ -396,6 +400,7 @@ set(NESTED_SEQ_OF_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_nested_seq_of_test)
 add_custom_command(
     OUTPUT  ${NESTED_SEQ_OF_GEN_DIR}/Matrix.hpp ${NESTED_SEQ_OF_GEN_DIR}/Matrix.cpp
             ${NESTED_SEQ_OF_GEN_DIR}/MatrixRows.hpp ${NESTED_SEQ_OF_GEN_DIR}/MatrixRows.cpp
+            ${NESTED_SEQ_OF_GEN_DIR}/MatrixRowsAnon.hpp ${NESTED_SEQ_OF_GEN_DIR}/MatrixRowsAnon.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${NESTED_SEQ_OF_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/nested_seq_of_test.asn1
                                    -o ${NESTED_SEQ_OF_GEN_DIR}
@@ -406,6 +411,7 @@ add_executable(test_nested_seq_of
     seq/test_nested_seq_of.cpp
     ${NESTED_SEQ_OF_GEN_DIR}/Matrix.cpp
     ${NESTED_SEQ_OF_GEN_DIR}/MatrixRows.cpp
+    ${NESTED_SEQ_OF_GEN_DIR}/MatrixRowsAnon.cpp
 )
 target_include_directories(test_nested_seq_of PRIVATE ${NESTED_SEQ_OF_GEN_DIR})
 target_link_libraries(test_nested_seq_of PRIVATE asn1cpp_runtime)
@@ -1093,9 +1099,10 @@ target_link_libraries(test_cross_module_value PRIVATE asn1cpp_runtime)
 add_test(NAME cross_module_value COMMAND test_cross_module_value)
 set_tests_properties(cross_module_value PROPERTIES TIMEOUT 30)
 
-# test_xer_encoding_instr — XER encoding instruction [BASE64] on OCTET STRING (issue #68)
+# test_xer_encoding_instr — XER encoding instruction [BASE64] on OCTET STRING (issue #68),
+# plus ENCODING-CONTROL XER block form, legacy and standard (gambas-asn1#438)
 set(XER_ENC_INSTR_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_encoding_instr_test)
-set(XER_ENC_INSTR_TYPES InlineTest Base64Payload PayloadWrapper)
+set(XER_ENC_INSTR_TYPES InlineTest Base64Payload PayloadWrapper LegacyBase64 StandardBase64 NoInstruction Utf8Field)
 set(_xei_outputs)
 foreach(t IN LISTS XER_ENC_INSTR_TYPES)
     list(APPEND _xei_outputs ${XER_ENC_INSTR_GEN_DIR}/${t}.hpp ${XER_ENC_INSTR_GEN_DIR}/${t}.cpp)
@@ -1148,6 +1155,78 @@ target_include_directories(test_recursive_choice PRIVATE ${REC_CHOICE_GEN_DIR})
 target_link_libraries(test_recursive_choice PRIVATE asn1cpp_runtime)
 add_test(NAME recursive_choice COMMAND test_recursive_choice)
 set_tests_properties(recursive_choice PROPERTIES TIMEOUT 30)
+
+# test_self_ref_choice — direct recursive CHOICE, alternative typed as the
+# enclosing CHOICE itself, no OPTIONAL indirection to break the cycle (#436)
+set(SELF_REF_CHOICE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_self_ref_choice_test)
+add_custom_command(
+    OUTPUT  ${SELF_REF_CHOICE_GEN_DIR}/RecChoice.hpp ${SELF_REF_CHOICE_GEN_DIR}/RecChoice.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SELF_REF_CHOICE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/self_ref_choice_test.asn1
+                                   -o ${SELF_REF_CHOICE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/self_ref_choice_test.asn1
+    COMMENT "Generating C++ from self_ref_choice_test.asn1"
+)
+add_executable(test_self_ref_choice
+    seq/test_self_ref_choice.cpp
+    ${SELF_REF_CHOICE_GEN_DIR}/RecChoice.cpp
+)
+target_include_directories(test_self_ref_choice PRIVATE ${SELF_REF_CHOICE_GEN_DIR})
+target_link_libraries(test_self_ref_choice PRIVATE asn1cpp_runtime)
+add_test(NAME self_ref_choice COMMAND test_self_ref_choice)
+set_tests_properties(self_ref_choice PROPERTIES TIMEOUT 30)
+
+# test_nested_choice_201 — deeply nested anonymous CHOICE-in-CHOICE,
+# AUTOMATIC TAGS collision on a promoted type (#450)
+set(NESTED_CHOICE_201_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_nested_choice_201_test)
+set(NESTED_CHOICE_201_TYPES HandoverCommand HandoverCommandCriticalExtensions
+    HandoverCommandCriticalExtensionsR8 HandoverCommandCriticalExtensionsCriticalExtensions
+    HandoverCommandCriticalExtensionsCriticalExtensionsR11
+    HandoverCommandCriticalExtensionsCriticalExtensionsCriticalExtensions)
+set(_nc201_outputs)
+foreach(t IN LISTS NESTED_CHOICE_201_TYPES)
+    list(APPEND _nc201_outputs ${NESTED_CHOICE_201_GEN_DIR}/${t}.hpp ${NESTED_CHOICE_201_GEN_DIR}/${t}.cpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${_nc201_outputs}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${NESTED_CHOICE_201_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/201-nested-choice-name-collision-OK.asn1
+                                   -o ${NESTED_CHOICE_201_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/201-nested-choice-name-collision-OK.asn1
+    COMMENT "Generating C++ from 201-nested-choice-name-collision-OK.asn1"
+)
+set(_nc201_cpps)
+foreach(t IN LISTS NESTED_CHOICE_201_TYPES)
+    list(APPEND _nc201_cpps ${NESTED_CHOICE_201_GEN_DIR}/${t}.cpp)
+endforeach()
+add_executable(test_nested_choice_201
+    seq/test_nested_choice_201.cpp
+    ${_nc201_cpps}
+)
+target_include_directories(test_nested_choice_201 PRIVATE ${NESTED_CHOICE_201_GEN_DIR})
+target_link_libraries(test_nested_choice_201 PRIVATE asn1cpp_runtime)
+add_test(NAME nested_choice_201 COMMAND test_nested_choice_201)
+set_tests_properties(nested_choice_201 PROPERTIES TIMEOUT 30)
+
+# test_self_ref_choice_203 — AUTOMATIC TAGS EXPLICIT/IMPLICIT for a CHOICE
+# alternative referencing an already-tagged type (#448)
+set(SELF_REF_CHOICE_203_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_self_ref_choice_203_test)
+add_custom_command(
+    OUTPUT  ${SELF_REF_CHOICE_203_GEN_DIR}/RecChoice.hpp ${SELF_REF_CHOICE_203_GEN_DIR}/RecChoice.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SELF_REF_CHOICE_203_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/203-automatic-tags-OK.asn1
+                                   -pdu=RecChoice -o ${SELF_REF_CHOICE_203_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/203-automatic-tags-OK.asn1
+    COMMENT "Generating C++ from 203-automatic-tags-OK.asn1"
+)
+add_executable(test_self_ref_choice_203
+    seq/test_self_ref_choice_203.cpp
+    ${SELF_REF_CHOICE_203_GEN_DIR}/RecChoice.cpp
+)
+target_include_directories(test_self_ref_choice_203 PRIVATE ${SELF_REF_CHOICE_203_GEN_DIR})
+target_link_libraries(test_self_ref_choice_203 PRIVATE asn1cpp_runtime)
+add_test(NAME self_ref_choice_203 COMMAND test_self_ref_choice_203)
+set_tests_properties(self_ref_choice_203 PROPERTIES TIMEOUT 30)
 
 # test_random_roundtrip — randomised BER/XER round-trip for all primitive types (issue #29)
 set(ROUNDTRIP_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_roundtrip_test)
@@ -1317,6 +1396,298 @@ set_tests_properties(jer_bundle_roundtrip PROPERTIES
 # the test failed unconditionally in every CI run. #292 tracks re-adding it
 # in a CI-compatible way (vendor the script, or check out the sibling repo
 # in CI, or guard registration behind a path-exists check).
+
+# ---- Backend naming interface: CppBackend vs RustBackend (#216/#217/#226/#234) --
+add_executable(test_backend_naming
+    codegen/test_backend_naming.cpp
+    ${CMAKE_SOURCE_DIR}/compiler/src/codegen/CppBackend.cpp
+    ${CMAKE_SOURCE_DIR}/compiler/src/codegen/RustBackend.cpp)
+target_include_directories(test_backend_naming PRIVATE
+    ${CMAKE_SOURCE_DIR}/compiler/src
+    ${CMAKE_SOURCE_DIR}/runtime/include)
+add_test(NAME backend_naming COMMAND test_backend_naming)
+
+# ---- RustBackend output compile-check (gambas-asn1#258) --------------------
+if(WITH_RUST_COMPILE_CHECK)
+    add_test(NAME rust_compile_check
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/run_rust_tests.py
+                --rustc ${RUSTC_EXECUTABLE})
+    set_tests_properties(rust_compile_check PROPERTIES TIMEOUT 60 LABELS "rust")
+endif()
+
+# ---- rust-runtime/ber cargo test (gambas-asn1#218) -------------------------
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME ber_runtime_cargo_test
+        COMMAND ${CARGO_EXECUTABLE} test --manifest-path
+                ${CMAKE_SOURCE_DIR}/rust-runtime/ber/Cargo.toml)
+    set_tests_properties(ber_runtime_cargo_test PROPERTIES TIMEOUT 120 LABELS "rust")
+endif()
+
+# ---- codegen -> asn1cpp-ber roundtrip (gambas-asn1#219) --------------------
+#   Real asn1cpp --target=rust output (Point, from simple_seq.asn1) compiled
+#   and roundtrip-tested against the real asn1cpp-ber crate — not a hand-
+#   written stand-in. Reuses the exact same generation pattern as
+#   SIMPLE_SEQ_GEN_DIR/test_seq_simple above (add_custom_command running the
+#   compiler, output consumed by an ALL target so `cmake --build` always
+#   keeps it current) and the same cross-validated BER test vectors as
+#   seq/test_seq_simple.cpp — same schema, same test data, both languages.
+set(RUST_SIMPLE_SEQ_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_simple_seq)
+add_custom_command(
+    OUTPUT  ${RUST_SIMPLE_SEQ_GEN_DIR}/Point.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_SIMPLE_SEQ_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1
+                                   -o ${RUST_SIMPLE_SEQ_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/simple_seq.asn1
+    COMMENT "Generating Rust from simple_seq.asn1"
+)
+
+# gambas-asn1#282: broaden Rust SEQUENCE codegen past INTEGER-only (Point) to
+# a mixed-type flat SEQUENCE (bool/OCTET STRING/IA5String members). Own
+# output directory, not RUST_SIMPLE_SEQ_GEN_DIR — each asn1cpp invocation
+# deletes any .rs file in its out-dir that its own run didn't produce
+# (Generator::remove_stale_files, keeps generated dirs free of orphans from
+# renamed/removed types); two separate compiler invocations sharing one
+# out-dir would race to delete each other's output. build.rs
+# (tests/rust/roundtrip) copies Point.rs from RUST_SIMPLE_SEQ_GEN_DIR and
+# Widget.rs from this directory separately.
+set(RUST_WIDE_TYPES_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_wide_types)
+add_custom_command(
+    OUTPUT  ${RUST_WIDE_TYPES_GEN_DIR}/Widget.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_WIDE_TYPES_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_wide_types_test.asn1
+                                   -o ${RUST_WIDE_TYPES_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_wide_types_test.asn1
+    COMMENT "Generating Rust from rust_wide_types_test.asn1"
+)
+
+# gambas-asn1#284: table-driven Rust CHOICE codegen. Own output directory,
+# same reason as RUST_WIDE_TYPES_GEN_DIR above (separate compiler
+# invocations can't share one out-dir).
+set(RUST_CHOICE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_choice)
+add_custom_command(
+    OUTPUT  ${RUST_CHOICE_GEN_DIR}/Selector.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_CHOICE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_choice_test.asn1
+                                   -o ${RUST_CHOICE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_choice_test.asn1
+    COMMENT "Generating Rust from rust_choice_test.asn1"
+)
+
+# gambas-asn1#463: MemberDescriptor::validate real-codegen coverage — an
+# inline INTEGER value-range constraint. Own output directory, same reason
+# as RUST_WIDE_TYPES_GEN_DIR above.
+set(RUST_RANGE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_range)
+add_custom_command(
+    OUTPUT  ${RUST_RANGE_GEN_DIR}/Gauge.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_RANGE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_range_test.asn1
+                                   -o ${RUST_RANGE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_range_test.asn1
+    COMMENT "Generating Rust from rust_range_test.asn1"
+)
+
+# gambas-asn1#464: MemberDescriptor::validate real-codegen coverage — an
+# inline OCTET STRING / BIT STRING SIZE constraint. Own output directory,
+# same reason as RUST_WIDE_TYPES_GEN_DIR above.
+set(RUST_SIZE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_size)
+add_custom_command(
+    OUTPUT  ${RUST_SIZE_GEN_DIR}/Blob.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_SIZE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_size_test.asn1
+                                   -o ${RUST_SIZE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_size_test.asn1
+    COMMENT "Generating Rust from rust_size_test.asn1"
+)
+
+# gambas-asn1#466: MemberDescriptor::validate real-codegen coverage — an
+# inline FROM (PermittedAlphabet) constraint. Own output directory, same
+# reason as RUST_WIDE_TYPES_GEN_DIR above.
+set(RUST_ALPHABET_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_alphabet)
+add_custom_command(
+    OUTPUT  ${RUST_ALPHABET_GEN_DIR}/Code.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_ALPHABET_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_alphabet_test.asn1
+                                   -o ${RUST_ALPHABET_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/rust_alphabet_test.asn1
+    COMMENT "Generating Rust from rust_alphabet_test.asn1"
+)
+
+add_custom_target(gen_rust_simple_seq ALL DEPENDS
+    ${RUST_SIMPLE_SEQ_GEN_DIR}/Point.rs
+    ${RUST_WIDE_TYPES_GEN_DIR}/Widget.rs
+    ${RUST_CHOICE_GEN_DIR}/Selector.rs
+    ${RUST_RANGE_GEN_DIR}/Gauge.rs
+    ${RUST_SIZE_GEN_DIR}/Blob.rs
+    ${RUST_ALPHABET_GEN_DIR}/Code.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_roundtrip_test
+        COMMAND ${CARGO_EXECUTABLE} test --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/roundtrip/Cargo.toml)
+    set_tests_properties(rust_roundtrip_test PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_SIMPLE_SEQ_GEN_DIR};ASN1CPP_RUST_WIDE_GEN_DIR=${RUST_WIDE_TYPES_GEN_DIR};ASN1CPP_RUST_CHOICE_GEN_DIR=${RUST_CHOICE_GEN_DIR};ASN1CPP_RUST_RANGE_GEN_DIR=${RUST_RANGE_GEN_DIR};ASN1CPP_RUST_SIZE_GEN_DIR=${RUST_SIZE_GEN_DIR};ASN1CPP_RUST_ALPHABET_GEN_DIR=${RUST_ALPHABET_GEN_DIR}")
+endif()
+
+# gambas-asn1#323: Rust leg of the real asn1c data-62 BER-vector fixture
+# cross-validation — same schema (62-any-OK.asn1), same real ground-truth
+# .ber files, same check-62.c pass/fail semantics as the C++
+# ber_vectors_62 test above; see tests/rust/ber_vectors_62/src/main.rs for
+# the full port. Own output directory, same reason as RUST_WIDE_TYPES_GEN_DIR
+# above (a multi-type module can't share an out-dir with another compiler
+# invocation) — BER_VEC_62_GEN_DIR (the C++ leg's own generated dir) is
+# a different language's output entirely, not reusable here regardless.
+set(RUST_BV62_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_ber_vectors_62)
+add_custom_command(
+    OUTPUT  ${RUST_BV62_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_BV62_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/62-any-OK.asn1
+                                   -o ${RUST_BV62_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/62-any-OK.asn1
+    COMMENT "Generating Rust from 62-any-OK.asn1"
+)
+add_custom_target(gen_rust_ber_vectors_62 ALL DEPENDS ${RUST_BV62_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_ber_vectors_62
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/ber_vectors_62/Cargo.toml --
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-62)
+    set_tests_properties(rust_ber_vectors_62 PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_BV62_GEN_DIR=${RUST_BV62_GEN_DIR}")
+endif()
+
+# gambas-asn1#324: Rust leg of the real asn1c data-70 XER-vector fixture
+# cross-validation — same schema (70-xer-test-OK.asn1), same real
+# ground-truth .in files, same check-70.c pass/fail semantics as the C++
+# xer_vectors_70 test above; see tests/rust/xer_vectors_70/src/main.rs for
+# the full port. Own output directory, same reasoning as RUST_BV62_GEN_DIR
+# above.
+set(RUST_XV70_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_xer_vectors_70)
+add_custom_command(
+    OUTPUT  ${RUST_XV70_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_XV70_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/70-xer-test-OK.asn1
+                                   -o ${RUST_XV70_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/70-xer-test-OK.asn1
+    COMMENT "Generating Rust from 70-xer-test-OK.asn1"
+)
+add_custom_target(gen_rust_xer_vectors_70 ALL DEPENDS ${RUST_XV70_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_xer_vectors_70
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/xer_vectors_70/Cargo.toml --
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-70)
+    set_tests_properties(rust_xer_vectors_70 PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_XV70_GEN_DIR=${RUST_XV70_GEN_DIR}")
+endif()
+
+# Rust leg of the real asn1c data-202 XER-vector fixture cross-validation —
+# same schema (202-XIOTCertificate-OK.asn1), same real ground-truth s1.xer
+# fixture, same field-value/BER-round-trip assertions as the C++
+# xer_vectors_202 test above; see tests/rust/xer_vectors_202/src/main.rs for
+# the full port. Own output directory, same reasoning as RUST_XV70_GEN_DIR
+# above.
+set(RUST_XV202_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_xer_vectors_202)
+add_custom_command(
+    OUTPUT  ${RUST_XV202_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_XV202_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/202-XIOTCertificate-OK.asn1
+                                   -o ${RUST_XV202_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/202-XIOTCertificate-OK.asn1
+    COMMENT "Generating Rust from 202-XIOTCertificate-OK.asn1"
+)
+add_custom_target(gen_rust_xer_vectors_202 ALL DEPENDS ${RUST_XV202_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_xer_vectors_202
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/xer_vectors_202/Cargo.toml --
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-202)
+    set_tests_properties(rust_xer_vectors_202 PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_XV202_GEN_DIR=${RUST_XV202_GEN_DIR}")
+endif()
+
+# Rust leg of the deeply nested anonymous CHOICE-in-CHOICE regression
+# (201-nested-choice-name-collision-OK.asn1, #437) — see
+# tests/rust/nested_choice_201/src/main.rs for the full rationale.
+set(RUST_NC201_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_nested_choice_201)
+add_custom_command(
+    OUTPUT  ${RUST_NC201_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_NC201_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/201-nested-choice-name-collision-OK.asn1
+                                   -o ${RUST_NC201_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/201-nested-choice-name-collision-OK.asn1
+    COMMENT "Generating Rust from 201-nested-choice-name-collision-OK.asn1"
+)
+add_custom_target(gen_rust_nested_choice_201 ALL DEPENDS ${RUST_NC201_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_nested_choice_201
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/nested_choice_201/Cargo.toml)
+    set_tests_properties(rust_nested_choice_201 PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_NC201_GEN_DIR=${RUST_NC201_GEN_DIR}")
+endif()
+
+# Rust leg of the directly self-referential CHOICE regression
+# (203-automatic-tags-OK.asn1's RecChoice, #447) — see
+# tests/rust/self_ref_choice_203/src/main.rs for the full rationale.
+set(RUST_SRC203_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_self_ref_choice_203)
+add_custom_command(
+    OUTPUT  ${RUST_SRC203_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_SRC203_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/203-automatic-tags-OK.asn1
+                                   -o ${RUST_SRC203_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/203-automatic-tags-OK.asn1
+    COMMENT "Generating Rust from 203-automatic-tags-OK.asn1"
+)
+add_custom_target(gen_rust_self_ref_choice_203 ALL DEPENDS ${RUST_SRC203_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_self_ref_choice_203
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/self_ref_choice_203/Cargo.toml)
+    set_tests_properties(rust_self_ref_choice_203 PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_SRC203_GEN_DIR=${RUST_SRC203_GEN_DIR}")
+endif()
+
+# gambas-asn1#309: Rust-codegen sweep across tests/asn1/*.asn1 — the Rust
+# equivalent of validate_parser.py's C++ parser-conformance sweep (that one
+# lives outside this repo, asn1cpp-validation-tools/, because it also needs
+# asn1c; this one only needs asn1cpp + cargo, so it's wired into this repo's
+# own ctest like every other Rust check here). No requirement that every
+# fixture passes — validate_rust_codegen.py itself only exits non-zero on a
+# real codegen crash, never on a "construct not yet supported" compile
+# failure, so this test stays green as coverage gaps get found and fixed
+# incrementally rather than gating the build on 100% coverage.
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_codegen_sweep
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/validate_rust_codegen.py
+                --asn1cpp-bin $<TARGET_FILE:asn1cpp>
+                --cargo ${CARGO_EXECUTABLE})
+    set_tests_properties(rust_codegen_sweep PROPERTIES
+        TIMEOUT 300 LABELS "rust")
+endif()
 
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
 # Enable with: cmake -DWITH_SMOKE_MATRIX=ON  (default OFF; see Release Testing in doc/book.md)

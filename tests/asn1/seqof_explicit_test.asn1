@@ -1,0 +1,10 @@
+-- gambas-asn1#346: a SEQUENCE OF member with its own EXPLICIT tag must wrap
+-- the natural SEQUENCE OF encoding in an outer TLV, not substitute the tag
+-- (which would be IMPLICIT semantics, not EXPLICIT).
+SeqOfExplicitTest DEFINITIONS ::= BEGIN
+
+    HasExplicitSeqOf ::= SEQUENCE {
+        values [0] EXPLICIT SEQUENCE OF INTEGER
+    }
+
+END
