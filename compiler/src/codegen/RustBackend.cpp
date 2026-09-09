@@ -385,6 +385,28 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
         os << std::format("    v >= {} && v <= {}\n", spec.lower_s64, spec.upper_s64);
     }
     os << "}\n\n";
+
+    // asn1cpp_per::Constraints data for this type — read directly by a
+    // member's own MemberAccess::Constrained closure pair (a bare `i64`
+    // alias can't carry per-declaration PER encoding via a type-level
+    // trait impl; see rust-runtime/per/src/sequence.rs's own MemberAccess
+    // doc for why). Field values mirror IntegerSpec exactly, same source
+    // data the C++ side's Constraints table (Constraints.hpp) is built
+    // from — flags encode CONSTRAINED/SEMI_CONSTRAINED/EXTENSIBLE exactly
+    // as asn1cpp_per::constraints's own constants do.
+    std::string per_ident = std::format("{}_PER_CONSTRAINTS", to_screaming_snake_case(tname));
+    int per_flags = (spec.has_constraint
+                        ? (spec.semi_constrained || spec.hi_is_large ? 2 /* SEMI_CONSTRAINED */
+                                                                      : 1 /* CONSTRAINED */)
+                        : 0)
+                  | (spec.extensible ? 4 /* EXTENSIBLE */ : 0);
+    os << std::format(
+        "pub static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
+        "    flags: {}, range_bits: {}, lower_bound: {}, upper_bound: {}, "
+        "lower_u64: {}u64, upper_u64: {}u64, size_range_bits: 0, size_lower: 0, size_upper: 0,\n"
+        "}};\n\n",
+        per_ident, per_flags, spec.range_bits, spec.lower_s64, spec.upper_s64,
+        spec.lower_u64, spec.upper_u64);
 }
 
 void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const {
