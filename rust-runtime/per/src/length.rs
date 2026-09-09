@@ -35,6 +35,50 @@ pub fn get_length(r: &mut Reader) -> Result<usize, DecodeError> {
     Err(DecodeError::new("PER: fragmented length not implemented", r.bit_pos()))
 }
 
+/// X.691 §10.9.3.4 "normally small length" — used for a SEQUENCE's
+/// extension-addition count. Flag=0: `n` in `1..=64`, encode `n-1` in 6
+/// bits. Flag=1: delegate to [`put_length`].
+pub fn put_nslength(w: &mut Writer, n: usize) {
+    if (1..=64).contains(&n) {
+        w.put_bits(0, 1);
+        w.put_bits((n - 1) as u64, 6);
+    } else {
+        w.put_bits(1, 1);
+        put_length(w, n);
+    }
+}
+
+pub fn get_nslength(r: &mut Reader) -> Result<usize, DecodeError> {
+    let flag = r.get_bits(1)?;
+    if flag == 0 {
+        Ok(r.get_bits(6)? as usize + 1)
+    } else {
+        get_length(r)
+    }
+}
+
+/// X.691 §10.6 "normally small non-negative whole number" — used for a
+/// CHOICE's extension alternative index. Flag=0: value in `0..=63`, encode
+/// in 6 bits. Flag=1: delegate to [`put_length`].
+pub fn put_nsnn(w: &mut Writer, n: i64) {
+    if n <= 63 {
+        w.put_bits(0, 1);
+        w.put_bits(n as u64, 6);
+    } else {
+        w.put_bits(1, 1);
+        put_length(w, n as usize);
+    }
+}
+
+pub fn get_nsnn(r: &mut Reader) -> Result<i64, DecodeError> {
+    let flag = r.get_bits(1)?;
+    if flag == 0 {
+        Ok(r.get_bits(6)? as i64)
+    } else {
+        Ok(get_length(r)? as i64)
+    }
+}
+
 /// X.691 §10.5 (SIZE-constrained case) / §10.9 (unconstrained case). Fixed
 /// SIZE (`size_range_bits == 0`): no bits written. Constrained: encode the
 /// offset from the lower bound. Mirrors `encode_size_field` exactly.
@@ -77,6 +121,45 @@ mod tests {
         for n in [0usize, 1, 127, 128, 200, 16383] {
             assert_eq!(roundtrip_length(n), n);
         }
+    }
+
+    #[test]
+    fn nslength_roundtrip() {
+        for n in [1usize, 32, 64, 65, 200] {
+            let mut w = Writer::new();
+            put_nslength(&mut w, n);
+            w.flush();
+            let bytes = w.into_bytes();
+            let mut r = Reader::new(&bytes);
+            assert_eq!(get_nslength(&mut r).unwrap(), n);
+        }
+    }
+
+    #[test]
+    fn nsnn_roundtrip() {
+        for n in [0i64, 32, 63, 64, 200] {
+            let mut w = Writer::new();
+            put_nsnn(&mut w, n);
+            w.flush();
+            let bytes = w.into_bytes();
+            let mut r = Reader::new(&bytes);
+            assert_eq!(get_nsnn(&mut r).unwrap(), n);
+        }
+    }
+
+    // Cross-checked against live put_nslength()/put_nsnn() calls in
+    // runtime/src/PerCodec.cpp for the identical input.
+    #[test]
+    fn nslength_nsnn_match_cpp_ground_truth() {
+        let mut w = Writer::new();
+        put_nslength(&mut w, 3); // <=64: flag 0 + (3-1)=2 in 6 bits = 0 000010
+        w.flush();
+        assert_eq!(w.into_bytes(), vec![0b0_000010_0]);
+
+        let mut w2 = Writer::new();
+        put_nsnn(&mut w2, 5); // <=63: flag 0 + 5 in 6 bits = 0 000101
+        w2.flush();
+        assert_eq!(w2.into_bytes(), vec![0b0_000101_0]);
     }
 
     fn sized(lower: i64, upper: i64) -> Constraints {
