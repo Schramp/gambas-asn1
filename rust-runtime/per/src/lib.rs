@@ -21,6 +21,7 @@
 pub mod constraints;
 pub mod integer;
 pub mod reader;
+pub mod uinteger;
 pub mod writer;
 
 pub use constraints::Constraints;
