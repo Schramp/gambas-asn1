@@ -1168,6 +1168,22 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
     return {};
 }
 
+// See TypeRefPerClass's own doc (Generator.hpp) and TaggedMemberSpec::
+// RefTargetKind's (Backend.hpp) for what's classified and why only
+// ENUMERATED/named-INTEGER targets are safe to resolve here — same
+// resolver-access rationale as classify_member_setter just above.
+Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRef& tr) const {
+    using BT = ast::BuiltinType;
+    auto resolved = resolver_.resolve_ref(tr);
+    if (!resolved) return {};
+    auto* rbt = std::get_if<BT>(&resolved->body);
+    if (!rbt) return {};
+    if (*rbt == BT::Enumerated) return {TaggedMemberSpec::RefTargetKind::Enumerated, IntStorageKind::S64};
+    if (*rbt == BT::Integer)
+        return {TaggedMemberSpec::RefTargetKind::IntegerAlias, classify_integer_storage(*resolved)};
+    return {};
+}
+
 // ---------------------------------------------------------------------------
 // Emit SEQUENCE / SET
 // ---------------------------------------------------------------------------
@@ -1403,6 +1419,10 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             // already made to produce row.mtype above — threaded
             // through as structured data too, not re-derived from mtype text.
             if (*bt == ast::BuiltinType::Integer) row.storage_kind = classify_integer_storage(m);
+        } else if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+            auto per_class = classify_typeref_for_per(*tr);
+            row.ref_kind = per_class.kind;
+            row.ref_storage_kind = per_class.storage_kind;
         }
         if (m.is_seq_of()) {
             row.seq_of_kind = SeqOfKind::SeqOf;
@@ -1642,6 +1662,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind storage_kind = IntStorageKind::S64;
             std::optional<MemberTagSpec> resolved_tag;
+            TaggedMemberSpec::RefTargetKind ref_kind = TaggedMemberSpec::RefTargetKind::NotRef;
+            IntStorageKind ref_storage_kind = IntStorageKind::S64;
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1664,12 +1686,19 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             }
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind alt_storage_kind = IntStorageKind::S64;
+            TaggedMemberSpec::RefTargetKind alt_ref_kind = TaggedMemberSpec::RefTargetKind::NotRef;
+            IntStorageKind alt_ref_storage_kind = IntStorageKind::S64;
             if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
                 mbuiltin = *bt;
                 if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
+            } else if (auto* atr = std::get_if<ast::TypeRef>(&m->body)) {
+                auto per_class = classify_typeref_for_per(*atr);
+                alt_ref_kind = per_class.kind;
+                alt_ref_storage_kind = per_class.storage_kind;
             }
             rows.push_back({ m->name, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag });
+                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag,
+                             alt_ref_kind, alt_ref_storage_kind });
             ++auto_tag_num;
           }
         }
@@ -1704,6 +1733,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.mbuiltin = r.mbuiltin;
             alt.storage_kind = r.storage_kind;
             alt.resolved_tag = r.resolved_tag;
+            alt.ref_kind = r.ref_kind;
+            alt.ref_storage_kind = r.ref_storage_kind;
             spec.alternatives.push_back(std::move(alt));
         }
 
