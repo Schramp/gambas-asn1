@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -443,12 +444,17 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
                                                                       : 1 /* CONSTRAINED */)
                         : 0)
                   | (spec.extensible ? 4 /* EXTENSIBLE */ : 0);
+    // Constraints::range_bits is u32 (rust-runtime/per/src/constraints.rs)
+    // — spec.range_bits is -1 for a semi-constrained/unbounded range (no
+    // fixed bit width), which integer::encode_int/decode_int never reads
+    // in that branch, but which can't format as a negative u32 literal;
+    // clamp to 0 rather than emit invalid Rust.
     os << std::format(
         "pub static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
         "    flags: {}, range_bits: {}, lower_bound: {}, upper_bound: {}, "
         "lower_u64: {}u64, upper_u64: {}u64, size_range_bits: 0, size_lower: 0, size_upper: 0,\n"
         "}};\n\n",
-        per_ident, per_flags, spec.range_bits, spec.lower_s64, spec.upper_s64,
+        per_ident, per_flags, std::max(spec.range_bits, 0), spec.lower_s64, spec.upper_s64,
         spec.lower_u64, spec.upper_u64);
 }
 
@@ -690,6 +696,17 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         // MemberDescriptor.validate is `None`), matching or exceeding the
         // C++ side's own correctness rather than replicating its latent
         // I128/ARBITRARY static_cast bug (Validate.hpp) in Rust too.
+        // PER leg — same table shape emit_integer_definition emits for a
+        // standalone named INTEGER type ({NAME}_PER_CONSTRAINTS), built
+        // here instead from this member's own inline constraint
+        // (X.691 §19). Referenced by emit_sequence_definition's PER member
+        // row via the same `{cname}_PER` naming this function's own BER
+        // `{cname}` already establishes — read directly by that member's
+        // MemberAccess::Constrained closure pair (see
+        // rust-runtime/per/src/sequence.rs's own MemberAccess doc for why a
+        // shared native type can't carry per-declaration PER shape via a
+        // type-level trait impl).
+        std::string per_cname = std::format("{}_PER", cname);
         if (spec.storage_kind == IntStorageKind::S64) {
             // hi_is_large's upper bound may exceed i64::MAX (X.691 §10.5.6,
             // e.g. UINT64_MAX) and isn't exactly representable as an i64
@@ -703,6 +720,14 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
                 "    flags: {}, lower_bound: {}, upper_bound: {}, lower_u64: 0, upper_u64: 0, size_lower: 0, size_upper: 0, encode_table: None,\n"
                 "}};\n\n",
                 cname, flags, spec.lower_s64, spec.upper_s64);
+            int per_flags = (semi ? 2 /* SEMI_CONSTRAINED */ : 1 /* CONSTRAINED */) |
+                            (spec.extensible ? 4 /* EXTENSIBLE */ : 0);
+            os << std::format(
+                "static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
+                "    flags: {}, range_bits: {}, lower_bound: {}, upper_bound: {}, "
+                "lower_u64: 0u64, upper_u64: 0u64, size_range_bits: 0, size_lower: 0, size_upper: 0,\n"
+                "}};\n\n",
+                per_cname, per_flags, std::max(spec.range_bits, 0), spec.lower_s64, spec.upper_s64);
         } else if (spec.storage_kind == IntStorageKind::U64) {
             int flags = (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0) |
                         (spec.semi_constrained ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED);
@@ -711,6 +736,14 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
                 "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: {}u64, upper_u64: {}u64, size_lower: 0, size_upper: 0, encode_table: None,\n"
                 "}};\n\n",
                 cname, flags, spec.lower_u64, spec.upper_u64);
+            int per_flags = (spec.semi_constrained ? 2 /* SEMI_CONSTRAINED */ : 1 /* CONSTRAINED */) |
+                            (spec.extensible ? 4 /* EXTENSIBLE */ : 0);
+            os << std::format(
+                "static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
+                "    flags: {}, range_bits: {}, lower_bound: 0, upper_bound: 0, "
+                "lower_u64: {}u64, upper_u64: {}u64, size_range_bits: 0, size_lower: 0, size_upper: 0,\n"
+                "}};\n\n",
+                per_cname, per_flags, std::max(spec.range_bits, 0), spec.lower_u64, spec.upper_u64);
         }
         return;
     }
@@ -1150,6 +1183,33 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         if (!m.mbuiltin) return "OPTIONAL member of an untagged type has no tag to detect presence";
         return "builtin type/storage combination not yet supported";
     };
+    // PER coverage, whole-type granularity: unlike BER's per-row
+    // `Unsupported` stub (asn1cpp_per::sequence::MemberAccess has no
+    // equivalent variant — see its own doc), a single not-yet-representable
+    // member disqualifies the entire type's PER table rather than getting
+    // its own stub row. Scope for now: a member whose ASN.1 type is
+    // *directly* a builtin INTEGER (S64/U64 storage), untagged/unretagged
+    // (PER carries no tags — X.691 has nothing corresponding to EXPLICIT/
+    // IMPLICIT, but a per-member `[n]` override on this backend's own BER
+    // path currently only ever accompanies a member that also needs
+    // BER-specific wrapping, so retagged members are excluded here too
+    // until that's disentangled). TypeRef members (`!m.mbuiltin` — named
+    // INTEGER aliases, ENUMERATED, nested SEQUENCE/CHOICE) are excluded:
+    // codegen has no way yet to tell *which* kind a TypeRef resolves to
+    // (needed to know whether the referenced type has emitted a PerValue
+    // impl at all), so this is a deliberate follow-up, not an oversight.
+    auto per_member_covered = [](const SequenceMemberSpec& m) -> bool {
+        if (m.seq_of_kind != SeqOfKind::None) return false;
+        if (m.is_explicit) return false;
+        if (m.resolved_tag && m.resolved_tag->tag_is_override) return false;
+        if (!m.mbuiltin || *m.mbuiltin != ast::BuiltinType::Integer) return false;
+        return m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64;
+    };
+    bool per_covered = !spec.members.empty();
+    for (const auto& m : spec.members) {
+        if (!per_member_covered(m)) { per_covered = false; break; }
+    }
+    std::ostringstream per_members_os;
     {
         // Emitted unconditionally, even for an empty SEQUENCE {} (0
         // members, e.g. an ASN.1 extension-marker placeholder like
@@ -1281,6 +1341,60 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             }
             os << std::format("        set_default: {},\n", set_default_expr);
             os << std::format("        is_default_equal: {},\n", is_default_equal_expr);
+            if (per_covered) {
+                // Only reached for a member `per_member_covered` already
+                // accepted: a direct, untagged/unretagged builtin INTEGER
+                // (S64 or U64 storage) — see that lambda's own doc for the
+                // exact scope and why TypeRef members aren't included yet.
+                // `set_default_expr`/`is_default_equal_expr` are reused
+                // verbatim: both crates' `MemberDescriptor::set_default`/
+                // `is_default_equal` are `Option<fn(&mut T)>`/
+                // `Option<fn(&T) -> bool>`, the identical signature, so the
+                // same closure text is valid Rust in either table.
+                per_members_os << "    asn1cpp_per::sequence::MemberDescriptor {\n";
+                per_members_os << std::format("        name: \"{}\",\n", m.asn1_name);
+                per_members_os << std::format("        optional: {},\n", m.optional ? "true" : "false");
+                per_members_os << std::format("        is_present: |{}| {},\n",
+                                               m.optional ? "v" : "_v",
+                                               m.optional ? std::format("v.{}.is_some()", m.mname) : "true");
+                per_members_os << std::format("        set_default: {},\n", set_default_expr);
+                per_members_os << std::format("        is_default_equal: {},\n", is_default_equal_expr);
+                std::string field = m.optional ? std::format("v.{}.unwrap()", m.mname) : std::format("v.{}", m.mname);
+                std::string field_mut = m.optional ? std::format("v.{} = Some(x)", m.mname) : std::format("v.{} = x", m.mname);
+                const char* fn_ns = m.storage_kind == IntStorageKind::S64 ? "integer" : "uinteger";
+                const char* fn_ty = m.storage_kind == IntStorageKind::S64 ? "encode_int" : "encode_uint";
+                const char* fn_dec = m.storage_kind == IntStorageKind::S64 ? "decode_int" : "decode_uint";
+                if (m.tdref.starts_with("&asn_TYP_")) {
+                    // Inline-constrained (X.691 §19) — {per_cname} was
+                    // emitted by emit_member_type_descriptor alongside its
+                    // BER counterpart.
+                    std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname));
+                    std::string per_cname = base + "_CONSTRAINTS_PER";
+                    per_members_os << std::format(
+                        "        access: asn1cpp_per::sequence::MemberAccess::Constrained {{\n"
+                        "            encode: |v, w| asn1cpp_per::{}::{}(w, &{}, {}),\n"
+                        "            decode: |v, r| {{ let x = asn1cpp_per::{}::{}(r, &{})?; {}; Ok(()) }},\n"
+                        "        }},\n",
+                        fn_ns, fn_ty, per_cname, field, fn_ns, fn_dec, per_cname, field_mut);
+                } else {
+                    // No inline constraint (X.691 §10.8 unconstrained whole
+                    // number) — the bare `encode_unconstrained_int`/
+                    // `decode_unconstrained_int` primitives, no Constraints
+                    // table needed at all. U64 storage round-trips through
+                    // the signed primitive's raw bit pattern, same approach
+                    // `uinteger::encode_uint`'s own unconstrained branch
+                    // takes (see that module's doc).
+                    std::string cast_in = m.storage_kind == IntStorageKind::U64 ? " as i64" : "";
+                    std::string cast_out = m.storage_kind == IntStorageKind::U64 ? " as u64" : "";
+                    per_members_os << std::format(
+                        "        access: asn1cpp_per::sequence::MemberAccess::Constrained {{\n"
+                        "            encode: |v, w| asn1cpp_per::integer::encode_unconstrained_int(w, {}{}),\n"
+                        "            decode: |v, r| {{ let x = asn1cpp_per::integer::decode_unconstrained_int(r)?{}; {}; Ok(()) }},\n"
+                        "        }},\n",
+                        field, cast_in, cast_out, field_mut);
+                }
+                per_members_os << "    },\n";
+            }
             // `emit_member_type_descriptor` (above) already emitted a
             // `static ... Constraints` table for a direct INTEGER/Sizeable
             // member with an inline X.680 §19/§25/§26/§51 constraint —
@@ -1458,6 +1572,38 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "        Ok(())\n";
         os << "    }\n";
         os << "}\n\n";
+
+        // PER leg — emitted only when `per_covered` (every member a direct,
+        // untagged builtin INTEGER; see `per_member_covered`'s own doc for
+        // the exact scope and what's deliberately excluded so far). Unlike
+        // the BER/XER `impl` above, not unconditional: asn1cpp_per has no
+        // per-row `Unsupported` stub, so a type outside this scope simply
+        // gets no PerValue impl at all yet, rather than a partial/panicking
+        // one.
+        if (per_covered) {
+            std::string per_members_ident = std::format("{}_PER_MEMBERS", to_screaming_snake_case(spec.type_name));
+            std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(spec.type_name));
+            os << std::format("static {}: [asn1cpp_per::sequence::MemberDescriptor<{}>; {}] = [\n",
+                               per_members_ident, spec.type_name, spec.members.size());
+            os << per_members_os.str();
+            os << "];\n\n";
+            os << std::format(
+                "pub static {}: asn1cpp_per::sequence::SequenceSpec<{}> = asn1cpp_per::sequence::SequenceSpec {{\n",
+                per_spec_ident, spec.type_name);
+            os << std::format("    members: &{},\n", per_members_ident);
+            os << std::format("    ext_at: {},\n", spec.ext_at);
+            os << "};\n\n";
+
+            os << std::format("impl asn1cpp_per::PerValue for {} {{\n", spec.type_name);
+            os << "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {\n";
+            os << std::format("        asn1cpp_per::sequence::encode_sequence_content(&{}, w, self);\n", per_spec_ident);
+            os << "    }\n\n";
+            os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {\n";
+            os << std::format("        *self = asn1cpp_per::sequence::decode_sequence_content(&{}, r)?;\n", per_spec_ident);
+            os << "        Ok(())\n";
+            os << "    }\n";
+            os << "}\n\n";
+        }
     }
 }
 
