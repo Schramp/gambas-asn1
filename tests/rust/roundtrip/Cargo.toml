@@ -11,3 +11,4 @@ path = "src/lib.rs"
 
 [dependencies]
 asn1cpp-ber = { path = "../../../rust-runtime/ber" }
+asn1cpp-per = { path = "../../../rust-runtime/per" }

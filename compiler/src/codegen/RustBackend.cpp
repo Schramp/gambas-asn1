@@ -252,10 +252,18 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // generically by enumerated::xer_encode_enum/xer_decode_enum below
         // (no per-value logic in this generated file itself, table-driven
         // same as every SEQUENCE/CHOICE member table this backend emits).
+        // Sorted ascending by value — BER/XER lookup doesn't care about
+        // order, but PER's own ordinal table below (`{tname}_PER_ENTRIES`)
+        // *must* be sorted this way (X.691 §22), so this table is sorted
+        // too rather than carrying two different orderings of the same
+        // data through this file.
+        std::vector<NamedValue> sorted_values = spec.values;
+        std::sort(sorted_values.begin(), sorted_values.end(),
+                   [](const NamedValue& a, const NamedValue& b) { return a.value < b.value; });
         std::string map_ident = std::format("{}_MAP", to_screaming_snake_case(tname));
         os << std::format("static {}: [asn1cpp_ber::enumerated::EnumEntry; {}] = [\n",
-                           map_ident, spec.values.size());
-        for (const auto& v : spec.values) {
+                           map_ident, sorted_values.size());
+        for (const auto& v : sorted_values) {
             os << std::format("    asn1cpp_ber::enumerated::EnumEntry {{ value: {}, name: \"{}\" }},\n",
                                v.value, v.asn1_name);
         }
@@ -321,6 +329,41 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // a stub, for parity with the other constraint kinds.
         os << "    fn validate(&self) -> i64 {\n";
         os << std::format("        asn1cpp_ber::enumerated::validate_enum(*self as i64, &{})\n", map_ident);
+        os << "    }\n";
+        os << "}\n\n";
+
+        // PER leg — reuses {sorted_values} above (X.691 §22: wire ordinal is
+        // the value's sorted position, matches asn1c and the C++ side's own
+        // sorted `EnumSpec::entries`/`asn_PER_..._value_order`, see
+        // EnumeratedPerHandler, runtime/src/PerCodec.cpp). A distinct table
+        // from {map_ident}, not a reference to it — `asn1cpp_per::
+        // enumerated::EnumEntry` (value only) and `asn1cpp_ber::enumerated::
+        // EnumEntry` (value + name) are different types in different
+        // crates, so the data has to be duplicated once per crate either
+        // way; keeping both tables in the same sorted order at least makes
+        // them visibly the same data instead of two divergent orderings.
+        std::string per_entries_ident = std::format("{}_PER_ENTRIES", to_screaming_snake_case(tname));
+        os << std::format("static {}: [asn1cpp_per::enumerated::EnumEntry; {}] = [\n",
+                           per_entries_ident, sorted_values.size());
+        for (const auto& v : sorted_values) {
+            os << std::format("    asn1cpp_per::enumerated::EnumEntry {{ value: {} }},\n", v.value);
+        }
+        os << "];\n\n";
+
+        os << std::format("impl asn1cpp_per::PerValue for {} {{\n", tname);
+        os << "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {\n";
+        os << std::format(
+            "        asn1cpp_per::enumerated::encode_enum(w, &{}, {}, {}, *self as i64);\n",
+            per_entries_ident, spec.extensible ? "true" : "false", spec.root_count);
+        os << "    }\n\n";
+        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {\n";
+        os << std::format(
+            "        let v = asn1cpp_per::enumerated::decode_enum(r, &{}, {}, {})?;\n",
+            per_entries_ident, spec.extensible ? "true" : "false", spec.root_count);
+        os << std::format(
+            "        *self = std::convert::TryFrom::try_from(v).map_err(|_| asn1cpp_per::DecodeError::new(\"PER: ENUM value not in {}\", r.bit_pos()))?;\n",
+            tname);
+        os << "        Ok(())\n";
         os << "    }\n";
         os << "}\n\n";
     }

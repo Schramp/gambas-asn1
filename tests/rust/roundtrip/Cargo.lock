@@ -7,8 +7,13 @@ name = "asn1cpp-ber"
 version = "0.1.0"
 
 [[package]]
+name = "asn1cpp-per"
+version = "0.1.0"
+
+[[package]]
 name = "roundtrip-test"
 version = "0.1.0"
 dependencies = [
  "asn1cpp-ber",
+ "asn1cpp-per",
 ]
