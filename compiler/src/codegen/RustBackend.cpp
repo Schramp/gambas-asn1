@@ -2057,6 +2057,85 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             os << "    }\n";
         }
         os << "}\n\n";
+
+        // PER leg — covers every alternative directly (no per-row stub;
+        // one uncovered alternative disqualifies the whole type, same
+        // policy as emit_sequence_definition's own `per_covered` gate —
+        // see that check's doc). Scope: a direct builtin INTEGER (S64/U64
+        // storage) alternative. Unlike the SEQUENCE case, a `[n]` override
+        // or AUTOMATIC-assigned context tag on the alternative is *not*
+        // excluded here: X.691 has no tag concept at all (the CHOICE index
+        // itself already identifies which alternative is present, X.691
+        // §22-23), so an alternative's PER content is always its plain
+        // untagged encoding regardless of what BER tag it carries —
+        // `is_explicit`/`resolved_tag` are BER-only concerns for a CHOICE
+        // alternative specifically (unlike a SEQUENCE member, where an
+        // EXPLICIT wrap genuinely does add an extra layer PER's own
+        // open-type wrapping would have to reproduce — out of scope here).
+        auto per_alt_covered = [](const ChoiceAlternativeSpec& a) -> bool {
+            if (!a.mbuiltin || *a.mbuiltin != ast::BuiltinType::Integer) return false;
+            return a.storage_kind == IntStorageKind::S64 || a.storage_kind == IntStorageKind::U64;
+        };
+        bool per_alts_covered = !spec.alternatives.empty();
+        for (const auto& a : spec.alternatives) {
+            if (!per_alt_covered(a)) { per_alts_covered = false; break; }
+        }
+        if (per_alts_covered) {
+            std::string per_alts_ident = std::format("{}_PER_ALTERNATIVES", to_screaming_snake_case(spec.type_name));
+            std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(spec.type_name));
+            os << std::format("static {}: [asn1cpp_per::choice::AlternativeSpec<{}>; {}] = [\n",
+                               per_alts_ident, spec.type_name, spec.alternatives.size());
+            for (const auto& a : spec.alternatives) {
+                std::string vname = variant_name(*this, a.asn1_name);
+                std::string variant_path = std::format("{}::{}", spec.type_name, vname);
+                const char* fn_ns = a.storage_kind == IntStorageKind::S64 ? "integer" : "uinteger";
+                const char* fn_ty = a.storage_kind == IntStorageKind::S64 ? "encode_int" : "encode_uint";
+                const char* fn_dec = a.storage_kind == IntStorageKind::S64 ? "decode_int" : "decode_uint";
+                os << "    asn1cpp_per::choice::AlternativeSpec {\n";
+                os << std::format("        name: \"{}\",\n", a.asn1_name);
+                if (a.tdref.starts_with("&asn_TYP_")) {
+                    // Same naming convention as emit_sequence_definition's
+                    // own Constrained rows — `emit_member_type_descriptor`
+                    // (Generator's alternative pass) already emitted this
+                    // static under this exact deterministic name.
+                    std::string per_cname = to_screaming_snake_case(
+                        std::format("asn_TYP_{}_{}", spec.type_name, a.accessor_name)) + "_CONSTRAINTS_PER";
+                    os << std::format(
+                        "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_per::{}::{}(w, &{}, *x); true }} else {{ false }},\n",
+                        variant_path, fn_ns, fn_ty, per_cname);
+                    os << std::format(
+                        "        per_decode_into: |r| Ok({}(asn1cpp_per::{}::{}(r, &{})?)),\n",
+                        variant_path, fn_ns, fn_dec, per_cname);
+                } else {
+                    std::string cast_in = a.storage_kind == IntStorageKind::U64 ? " as i64" : "";
+                    std::string cast_out = a.storage_kind == IntStorageKind::U64 ? " as u64" : "";
+                    os << std::format(
+                        "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_per::integer::encode_unconstrained_int(w, *x{}); true }} else {{ false }},\n",
+                        variant_path, cast_in);
+                    os << std::format(
+                        "        per_decode_into: |r| Ok({}(asn1cpp_per::integer::decode_unconstrained_int(r)?{})),\n",
+                        variant_path, cast_out);
+                }
+                os << "    },\n";
+            }
+            os << "];\n\n";
+            os << std::format(
+                "static {}: asn1cpp_per::choice::ChoiceSpec<{}> = asn1cpp_per::choice::ChoiceSpec {{\n",
+                per_spec_ident, spec.type_name);
+            os << std::format("    alternatives: &{},\n", per_alts_ident);
+            os << std::format("    ext_at: {},\n", spec.ext_at);
+            os << "};\n\n";
+
+            os << std::format("impl asn1cpp_per::PerValue for {} {{\n", spec.type_name);
+            os << "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {\n";
+            os << std::format("        asn1cpp_per::choice::encode_choice_content(&{}, w, self);\n", per_spec_ident);
+            os << "    }\n\n";
+            os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {\n";
+            os << std::format("        *self = asn1cpp_per::choice::decode_choice_content(&{}, r)?;\n", per_spec_ident);
+            os << "        Ok(())\n";
+            os << "    }\n";
+            os << "}\n\n";
+        }
     }
 }
 
