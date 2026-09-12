@@ -46,6 +46,21 @@ pub enum MemberAccess<T: 'static> {
         encode: fn(&T, &mut Writer),
         decode: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
     },
+    /// A member/alternative shape this crate doesn't implement PER for yet
+    /// (ANY, SEQUENCE OF/SET OF, OCTET STRING/BIT STRING, wide-char or
+    /// FROM-alphabet-constrained strings, an EXPLICIT/retagged member —
+    /// see `RustBackend`'s own `per_member_covered`/`per_alt_covered` for
+    /// the exact current list). Mirrors `asn1cpp_ber::sequence::
+    /// MemberAccess::Unsupported` exactly, and exists for the same
+    /// reason: encoding/decoding *other* members of this same SEQUENCE is
+    /// completely unaffected by one member being a stub — panics only if
+    /// this specific member is actually reached (present on the wire, or
+    /// requested for encode). This is what lets `RustBackend` emit a real
+    /// `PerValue` impl for every SEQUENCE/CHOICE unconditionally, instead
+    /// of withholding the whole type's PER support whenever any one
+    /// member isn't covered yet — the same "always real, some rows may be
+    /// stubs" contract BER has always had.
+    Unsupported { reason: &'static str },
 }
 
 /// One row in a `SequenceSpec<T>` table — mirrors `MemberDescriptor`
@@ -95,6 +110,7 @@ fn access_encode<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
     match m.access {
         MemberAccess::Scalar { get, .. } => get(value).per_encode(w),
         MemberAccess::Constrained { encode, .. } => encode(value, w),
+        MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
     }
 }
 
@@ -102,6 +118,7 @@ fn access_decode<T>(m: &MemberDescriptor<T>, result: &mut T, r: &mut Reader) -> 
     match m.access {
         MemberAccess::Scalar { get_mut, .. } => get_mut(result).per_decode_into(r),
         MemberAccess::Constrained { decode, .. } => decode(result, r),
+        MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
     }
 }
 
@@ -412,5 +429,63 @@ mod tests {
         encode_sequence_content(&SIMPLE_SPEC, &mut w2, &v2);
         w2.flush();
         assert_eq!(w2.into_bytes(), vec![0x28]);
+    }
+
+    #[derive(Debug, Default, PartialEq)]
+    struct WithUnsupported {
+        a: i64,
+        skip: i64,
+    }
+
+    const UNSUPPORTED_SPEC: SequenceSpec<WithUnsupported> = SequenceSpec {
+        members: &[
+            MemberDescriptor {
+                name: "a",
+                optional: false,
+                is_present: |_| true,
+                set_default: None,
+                is_default_equal: None,
+                access: MemberAccess::Constrained {
+                    encode: |t, w| encode_int(w, &DOGFOOD_CONSTRAINED, t.a),
+                    decode: |t, r| {
+                        t.a = decode_int(r, &DOGFOOD_CONSTRAINED)?;
+                        Ok(())
+                    },
+                },
+            },
+            MemberDescriptor {
+                name: "skip",
+                optional: false,
+                is_present: |_| true,
+                set_default: None,
+                is_default_equal: None,
+                access: MemberAccess::Unsupported { reason: "test stub" },
+            },
+        ],
+        ext_at: -1,
+    };
+
+    // A real member alongside an `Unsupported` one — mirrors what
+    // RustBackend now emits unconditionally for every SEQUENCE (real rows
+    // for covered members, `Unsupported` for the rest), rather than
+    // withholding the whole type's PER support when any one member isn't
+    // covered yet.
+    #[test]
+    fn unsupported_member_does_not_affect_other_members() {
+        let mut w = Writer::new();
+        // Only the covered member is ever accessed here — the point is
+        // that a table containing an Unsupported row still compiles and
+        // that row simply isn't reached unless something tries to
+        // encode/decode it specifically.
+        access_encode(&UNSUPPORTED_SPEC.members[0], &WithUnsupported { a: 5, skip: 0 }, &mut w);
+        w.flush();
+        assert_eq!(w.into_bytes(), vec![0x50]);
+    }
+
+    #[test]
+    #[should_panic(expected = "member 'skip' not supported: test stub")]
+    fn unsupported_member_panics_if_actually_reached() {
+        let mut w = Writer::new();
+        access_encode(&UNSUPPORTED_SPEC.members[1], &WithUnsupported { a: 5, skip: 0 }, &mut w);
     }
 }
