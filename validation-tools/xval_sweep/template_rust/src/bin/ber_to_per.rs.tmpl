@@ -1,0 +1,110 @@
+// ber-to-per — decode raw BER stream, re-encode each record to UPER, emit
+// length-prefixed PER records to stdout. Same 4-byte-big-endian-length +
+// bytes framing as the C++ ber-to-per (template_cpp/src/ber-to-per.cpp) —
+// PER has no self-delimiting record boundary the way BER's TLV framing
+// does (X.691 has nothing corresponding to it).
+//
+// Materialized by asn1cpp-validation-tools/xval_sweep/xval_sweep.py --
+// only when the target type has a `PerValue` impl (grepped from the
+// generated .rs source before this template is materialized at all; see
+// xval_sweep.py's own build_rust doc).
+//
+// Usage: ber-to-per --type __PDU_TYPE__ [FILE]
+use asn1cpp_per::PerValue;
+use std::io::{Read, Write};
+
+const TYPES: &[&str] = &["__PDU_TYPE__"];
+
+fn slurp(mut r: impl Read) -> Vec<u8> {
+    let mut buf = Vec::new();
+    r.read_to_end(&mut buf).expect("read failed");
+    buf
+}
+
+fn list_types() {
+    for t in TYPES {
+        eprintln!("  {t}");
+    }
+}
+
+fn encode_one(type_name: &str, data: &[u8]) -> Result<(Vec<u8>, usize), asn1cpp_ber::DecodeError> {
+    let mut r = asn1cpp_ber::Reader::new(data);
+    match type_name {
+        "__PDU_TYPE__" => {
+            let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
+            <randgen_rust::__PDU_MODULE__::__PDU_IDENT__ as asn1cpp_ber::value::Asn1Value>::ber_decode_into(&mut v, &mut r)?;
+            let mut w = asn1cpp_per::Writer::new();
+            v.per_encode(&mut w);
+            w.flush();
+            Ok((w.into_bytes(), r.pos()))
+        }
+        _ => unreachable!("checked by caller"),
+    }
+}
+
+fn main() {
+    let mut type_name = String::new();
+    let mut input_file: Option<String> = None;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--type" {
+            type_name = args.next().unwrap_or_else(|| {
+                eprintln!("--type requires an argument");
+                std::process::exit(1);
+            });
+        } else if !arg.starts_with('-') {
+            input_file = Some(arg);
+        } else {
+            eprintln!("Unknown option: {arg}");
+            std::process::exit(1);
+        }
+    }
+
+    if type_name.is_empty() || type_name == "list" {
+        eprintln!("Available types:");
+        list_types();
+        std::process::exit(if type_name.is_empty() { 1 } else { 0 });
+    }
+    if !TYPES.contains(&type_name.as_str()) {
+        eprintln!("Unknown type: {type_name}\nAvailable:");
+        list_types();
+        std::process::exit(1);
+    }
+
+    let data = match &input_file {
+        Some(path) => slurp(std::fs::File::open(path).unwrap_or_else(|e| {
+            eprintln!("Cannot open: {path}: {e}");
+            std::process::exit(1);
+        })),
+        None => slurp(std::io::stdin()),
+    };
+
+    let mut n = 0;
+    let mut errors = 0;
+    let mut offset = 0usize;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+
+    while offset < data.len() {
+        match encode_one(&type_name, &data[offset..]) {
+            Ok((per_bytes, consumed)) => {
+                if consumed == 0 {
+                    eprintln!("Zero bytes consumed at offset {offset}");
+                    break;
+                }
+                offset += consumed;
+                out.write_all(&(per_bytes.len() as u32).to_be_bytes()).unwrap();
+                out.write_all(&per_bytes).unwrap();
+                n += 1;
+            }
+            Err(e) => {
+                eprintln!("BER decode failed record #{n} at offset {offset}: {}", e.message);
+                errors += 1;
+                break;
+            }
+        }
+    }
+
+    eprintln!("{n} records processed, {errors} errors");
+    std::process::exit(if errors != 0 { 1 } else { 0 });
+}

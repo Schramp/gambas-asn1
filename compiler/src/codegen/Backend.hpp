@@ -447,6 +447,16 @@ struct TaggedMemberSpec {
     // own AST node). `mtype` (declared per-derived-struct) already carries
     // the target's Rust identifier — no separate name field needed here.
     IntStorageKind ref_storage_kind = IntStorageKind::S64;
+
+    // True when a direct builtin character-string member/alternative
+    // carries an X.680 §51.4 FROM (PermittedAlphabet) constraint —
+    // meaningless otherwise. `asn1cpp_per::strings::encode_string`/
+    // `decode_string`'s core path (rust-runtime/per) only implements the
+    // *natural* alphabet (X.691 §26.5.3/§26.5.6), not FROM-alphabet index
+    // remapping, so a backend's own PER coverage gate for a string member
+    // must exclude this case explicitly rather than silently encoding
+    // with the wrong (too-wide) bit width per character.
+    bool has_from_alphabet = false;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. Several
