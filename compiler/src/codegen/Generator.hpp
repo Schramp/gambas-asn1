@@ -158,7 +158,21 @@ public:
     ///       needs the first time through.
     void generate(const ast::ParseResult& pr) {
         if (backend_.needs_coverage_fixed_point()) {
-            for (int iter = 0; iter < 25; ++iter) {
+            // Upper bound on how many passes a fixed point can possibly
+            // need, not a guess: in the worst case, a straight-line
+            // dependency chain of N composite types declared in the
+            // "wrong" order (each type before the one it references)
+            // resolves exactly one more type per pass, so it's fully
+            // decided after at most N passes — one per named type in the
+            // program. Real schemas converge far faster (a handful of
+            // passes even for a large real-world one), this is only the
+            // safety-valve ceiling for the pathological case.
+            std::size_t max_passes = 0;
+            for (const auto& mod : pr.modules)
+                for (const auto& def : mod->assignments)
+                    if (!def->name.empty() && !def->is_extension_marker)
+                        ++max_passes;
+            for (std::size_t iter = 0; iter < max_passes; ++iter) {
                 Generator warmup(out_dir_, resolver_, backend_);
                 warmup.default_int_kind_ = default_int_kind_;
                 warmup.namespace_ = namespace_;
