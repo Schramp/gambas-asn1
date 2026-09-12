@@ -200,19 +200,34 @@ public:
     // precedes `UL-CCCH-MessageType`, which precedes the message types it
     // dispatches to) — so a single top-to-bottom pass through the module
     // list isn't enough to always have an answer by the time it's needed.
-    // main.cpp's own driver handles this by re-running the whole
-    // `Generator::generate()` pass repeatedly (discarding each pass's
-    // file output, since it's superseded by the next) until this map
-    // stops changing between consecutive passes — a fixed point over the
-    // type dependency graph, computed by brute-force re-derivation rather
-    // than an explicit graph structure, since re-deriving is cheap
-    // (compile time only, paid once per schema) and needs no new data
-    // structures beyond this map itself. `per_coverage_snapshot()` is
-    // what that driver loop compares between passes.
+    // `Generator::generate()` handles this generically via
+    // `needs_coverage_fixed_point()`/`coverage_converged()` below,
+    // re-running the whole pass (discarding each pass's file output,
+    // since it's superseded by the next) until this map stops changing
+    // between consecutive passes — a fixed point over the type dependency
+    // graph, computed by brute-force re-derivation rather than an
+    // explicit graph structure, since re-deriving is cheap (compile time
+    // only, paid once per schema) and needs no new data structures beyond
+    // this map itself.
     mutable std::unordered_map<std::string, bool> per_type_covered_;
+    // Snapshot of `per_type_covered_` as of the end of the *previous*
+    // pass — `coverage_converged()`'s own comparison baseline; updated by
+    // that same call, never read anywhere else.
+    mutable std::unordered_map<std::string, bool> per_type_covered_prev_;
 
 public:
-    std::unordered_map<std::string, bool> per_coverage_snapshot() const { return per_type_covered_; }
+    // PER support is still being rolled out construct-by-construct (this
+    // registry is exactly that rollout's bookkeeping) — see
+    // `Backend::needs_coverage_fixed_point`'s own doc for why this is a
+    // Rust-only, temporary need, not a permanent cpp-vs-rust asymmetry:
+    // C++'s own PER support is already unconditional for every construct,
+    // same as BER/XER are for both backends, so neither needs this at all.
+    bool needs_coverage_fixed_point() const override { return true; }
+    bool coverage_converged() const override {
+        bool same = per_type_covered_ == per_type_covered_prev_;
+        per_type_covered_prev_ = per_type_covered_;
+        return same;
+    }
 
 private:
     // Split declaration/definition halves — kept as private helpers so the

@@ -1087,6 +1087,37 @@ public:
         (void)out_dir;
     }
 
+    /// @brief Whether this backend needs `Generator::generate()` to run
+    ///        the whole codegen pass more than once, feeding each pass's
+    ///        outcome back into the next, before its real (kept) output.
+    ///        Default `false` — a backend whose codec support for a given
+    ///        wire format is unconditional for every construct (CppBackend's
+    ///        BER/XER/PER alike, RustBackend's own BER/XER) never needs
+    ///        this: a composite member's descriptor/impl is always real
+    ///        regardless of declaration order, so one top-to-bottom pass
+    ///        always has everything it needs. It exists for a backend with
+    ///        a codec still being rolled out construct-by-construct, where
+    ///        whether a composite member is representable depends on
+    ///        whether its own referenced type turned out representable —
+    ///        unknowable within a single pass when (as real schemas
+    ///        commonly do) a type is declared before the other types that
+    ///        reference it. See RustBackend::needs_coverage_fixed_point's
+    ///        own override doc for the concrete motivating case (PER).
+    virtual bool needs_coverage_fixed_point() const { return false; }
+
+    /// @brief Called once after each extra pass `needs_coverage_fixed_point()`
+    ///        triggers, never called at all when it returns `false`.
+    ///        Returns `true` once another pass would change nothing (a
+    ///        fixed point over whatever cross-type dependency the backend
+    ///        itself is tracking) — `Generator::generate()` stops looping
+    ///        as soon as this returns `true`, always running at least one
+    ///        further (real, output-producing) pass afterward regardless.
+    ///        Default `true` (converged immediately) — paired with the
+    ///        `false` default above, so a backend that never overrides
+    ///        either gets exactly the single-pass behavior every backend
+    ///        had before this hook existed.
+    virtual bool coverage_converged() const { return true; }
+
 protected:
     /// @brief Write `text` into both the declaration and definition
     ///        buffers — shared by every backend's emit_namespace_open/close,

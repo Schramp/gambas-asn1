@@ -141,7 +141,37 @@ public:
 
     /// @brief Run codegen over all modules in `pr`, writing `.hpp`/`.cpp` files to `out_dir_`.
     /// @param pr  Resolved parse result containing all input modules.
+    /// @note Backend-agnostic: calls `generate_once()` exactly once for a
+    ///       backend whose codec support is unconditional for every
+    ///       construct (`Backend::needs_coverage_fixed_point()` default
+    ///       `false` — every backend before this method existed). For a
+    ///       backend still rolling out some codec construct-by-construct
+    ///       (RustBackend's own PER work), it re-runs the whole pass first
+    ///       — via a fresh `Generator` per iteration, not `this`, so none
+    ///       of this instance's own per-run bookkeeping (collision/known-
+    ///       file tracking, `generated_names_`) accumulates stale state
+    ///       across iterations — letting the backend accumulate/compare
+    ///       its own cross-type coverage state until `coverage_converged()`
+    ///       reports a fixed point, then does the real (kept) pass. See
+    ///       `Backend::needs_coverage_fixed_point`'s own doc for why a
+    ///       single top-to-bottom pass can't always have every answer it
+    ///       needs the first time through.
     void generate(const ast::ParseResult& pr) {
+        if (backend_.needs_coverage_fixed_point()) {
+            for (int iter = 0; iter < 25; ++iter) {
+                Generator warmup(out_dir_, resolver_, backend_);
+                warmup.default_int_kind_ = default_int_kind_;
+                warmup.namespace_ = namespace_;
+                warmup.pdu_roots_ = pdu_roots_;
+                warmup.generate_once(pr);
+                if (backend_.coverage_converged()) break;
+            }
+        }
+        generate_once(pr);
+    }
+
+private:
+    void generate_once(const ast::ParseResult& pr) {
         fs::create_directories(out_dir_);
 
         // First pass: detect type-name collisions across modules.
