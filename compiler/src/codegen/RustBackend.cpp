@@ -915,6 +915,23 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
         "}};\n\n",
         cname, flags, spec.size_lower, size_upper);
 
+    // PER leg — same table shape as every other {cname}_PER static in this
+    // file (Integer/Sizeable member constraints): the collection's own
+    // SIZE constraint (X.691 §19/§20 combined with §10.9), read directly
+    // by a covered SEQUENCE OF/SET OF member's own Constrained closure
+    // (emit_sequence_definition) via this type's cross-module path — same
+    // "always wire, real bounds or not" convention as {cname} above.
+    std::string per_cname = std::format("{}_PER", cname);
+    int per_flags = spec.has_size_constraint
+        ? (8 /* SIZE_CONSTRAINED */ | (spec.extensible ? 4 /* EXTENSIBLE */ : 0))
+        : 0;
+    os << std::format(
+        "pub static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
+        "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0u64, upper_u64: 0u64, "
+        "size_range_bits: {}, size_lower: {}, size_upper: {},\n"
+        "}};\n\n",
+        per_cname, per_flags, spec.range_bits, spec.size_lower, size_upper);
+
     std::string natural_tag = std::format("asn1cpp_ber::sequence::{}", spec.is_set_of ? "SET_TAG" : "SEQUENCE_TAG");
     // Honor a top-level [n] IMPLICIT/EXPLICIT tag on this type assignment
     // itself (X.690 §8.14) — same fix emit_sequence_definition already has.
@@ -1263,7 +1280,22 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // module uses `AUTOMATIC TAGS` throughout, which would otherwise
     // exclude nearly every member in the schema.
     auto per_member_covered = [](const SequenceMemberSpec& m) -> bool {
-        if (m.seq_of_kind != SeqOfKind::None) return false;
+        if (m.seq_of_kind != SeqOfKind::None) {
+            // Narrow first slice: a direct, genuinely unconstrained builtin
+            // INTEGER element (no nesting) — `ElemShape::has_constraint`
+            // is only a yes/no signal (its own doc, Backend.hpp), not
+            // extracted bounds, so an inline-constrained element
+            // (`OF INTEGER(0..15)`) can't be told apart from a
+            // differently-bounded one and is conservatively excluded
+            // rather than risking the wrong (too-wide) per-element bit
+            // width. The collection's own SIZE constraint is unaffected —
+            // that's always fully known via the promoted synthetic type's
+            // own {SYNTH}_CONSTRAINTS_PER (emit_seq_of_definition).
+            return m.elem_shape.kind == SeqOfKind::None && m.elem_shape.builtin.has_value() &&
+                   *m.elem_shape.builtin == ast::BuiltinType::Integer && !m.elem_shape.has_constraint &&
+                   (m.elem_shape.storage_kind == IntStorageKind::S64 ||
+                    m.elem_shape.storage_kind == IntStorageKind::U64);
+        }
         if (m.mbuiltin) {
             if (*m.mbuiltin == ast::BuiltinType::Integer)
                 return m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64;
@@ -1445,6 +1477,44 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     per_members_os << std::format(
                         "        access: asn1cpp_per::sequence::MemberAccess::Unsupported {{ reason: \"{}\" }},\n",
                         per_stub_reason(m));
+                } else if (m.seq_of_kind != SeqOfKind::None) {
+                    // Genuinely unconstrained builtin INTEGER element (the
+                    // only shape `per_member_covered` accepts here) — a
+                    // manual size-field + per-element loop, not
+                    // `asn1cpp_per::seq_of`'s generic `T: PerValue` helpers:
+                    // a bare i64/u64 element has no PerValue impl of its
+                    // own (same shared-native-type reason INTEGER members
+                    // need Constrained rather than Scalar generally), so
+                    // there's no `T` to be generic over here. The
+                    // collection's own SIZE constraint (if any) still
+                    // applies, via the promoted synthetic type's own
+                    // {SYNTH}_CONSTRAINTS_PER.
+                    std::string synth = synthetic_name(spec.type_name, m.asn1_name);
+                    std::string per_cname = std::format("crate::{}::{}_CONSTRAINTS_PER",
+                                                         to_snake_case(synth), to_screaming_snake_case(synth));
+                    const char* wrapper = m.seq_of_kind == SeqOfKind::SeqOf ? "SeqOf" : "SetOf";
+                    std::string cast_in = m.elem_shape.storage_kind == IntStorageKind::U64 ? " as i64" : "";
+                    std::string cast_out = m.elem_shape.storage_kind == IntStorageKind::U64 ? " as u64" : "";
+                    std::string field = m.optional ? std::format("v.{}.as_ref().unwrap()", m.mname)
+                                                    : std::format("v.{}", m.mname);
+                    std::string field_mut = m.optional
+                        ? std::format("v.{} = Some(asn1cpp_ber::sequence::{}(items))", m.mname, wrapper)
+                        : std::format("v.{} = asn1cpp_ber::sequence::{}(items)", m.mname, wrapper);
+                    per_members_os << std::format(
+                        "        access: asn1cpp_per::sequence::MemberAccess::Constrained {{\n"
+                        "            encode: |v, w| {{\n"
+                        "                asn1cpp_per::length::encode_size_field(w, &{0}, {1}.len());\n"
+                        "                for x in {1}.iter() {{ asn1cpp_per::integer::encode_unconstrained_int(w, *x{2}); }}\n"
+                        "            }},\n"
+                        "            decode: |v, r| {{\n"
+                        "                let count = asn1cpp_per::length::decode_size_field(r, &{0})?;\n"
+                        "                let mut items = Vec::with_capacity(count);\n"
+                        "                for _ in 0..count {{ items.push(asn1cpp_per::integer::decode_unconstrained_int(r)?{3}); }}\n"
+                        "                {4};\n"
+                        "                Ok(())\n"
+                        "            }},\n"
+                        "        }},\n",
+                        per_cname, field, cast_in, cast_out, field_mut);
                 } else if (!m.mbuiltin && (m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
                                             m.ref_kind == SequenceMemberSpec::RefTargetKind::Other)) {
                     // TypeRef to ENUMERATED, or to another named SEQUENCE/
