@@ -458,6 +458,11 @@ static bool is_type_assignment(const ast::TypeDef& def) {
 ///        (type_descriptor_ref_for, below) renders it via
 ///        backend_.format_type_descriptor_ref.
 /// @see TypeDescriptorRefSpec (Backend.hpp) for the field-by-field contract.
+/// @note Its own TypeRef-resolution branch below overlaps with
+///       classify_typeref_for_per's resolve-and-check-is_sequence/
+///       is_set/is_choice/Enumerated step (same underlying classification,
+///       computed independently for a different purpose and variant set)
+///       — deliberately left unfactored; see that function's own doc.
 TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef& def) {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
@@ -1168,6 +1173,41 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
     return {};
 }
 
+// See TypeRefPerClass's own doc (Generator.hpp) and TaggedMemberSpec::
+// RefTargetKind's (Backend.hpp) for what's classified and why only
+// ENUMERATED/named-INTEGER targets are safe to resolve here — same
+// resolver-access rationale as classify_member_setter just above.
+// Overlaps with type_descriptor_ref_spec_for's own resolve-and-check-
+// is_sequence/is_set/is_choice/Enumerated step below (same underlying
+// classification, computed independently for a different purpose and a
+// different variant set — this one also cares about Integer, that one
+// doesn't). Deliberately left unfactored rather than sharing a helper —
+// see this function's own doc for why.
+Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRef& tr) const {
+    using BT = ast::BuiltinType;
+    auto resolved = resolver_.resolve_ref(tr);
+    if (!resolved) return {};
+    if (auto* rbt = std::get_if<BT>(&resolved->body)) {
+        if (*rbt == BT::Enumerated) return {TaggedMemberSpec::RefTargetKind::Enumerated, IntStorageKind::S64};
+        if (*rbt == BT::Integer)
+            return {TaggedMemberSpec::RefTargetKind::IntegerAlias, classify_integer_storage(*resolved)};
+        return {};
+    }
+    // A TypeRef resolving to a named SEQUENCE/SET/CHOICE — always
+    // PER-representable via a Scalar access to the target's own PerValue
+    // impl, which RustBackend now emits unconditionally for every
+    // SEQUENCE/CHOICE (real rows for covered members, `Unsupported` stubs
+    // for the rest — see asn1cpp_per::sequence::MemberAccess::Unsupported's
+    // own doc). No dependency on the referenced type's own coverage state
+    // to track here, unlike an earlier version of this function.
+    if (std::holds_alternative<ast::SequenceType>(resolved->body) ||
+        std::holds_alternative<ast::SetType>(resolved->body) ||
+        std::holds_alternative<ast::ChoiceType>(resolved->body)) {
+        return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+    }
+    return {};
+}
+
 // ---------------------------------------------------------------------------
 // Emit SEQUENCE / SET
 // ---------------------------------------------------------------------------
@@ -1403,6 +1443,17 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             // already made to produce row.mtype above — threaded
             // through as structured data too, not re-derived from mtype text.
             if (*bt == ast::BuiltinType::Integer) row.storage_kind = classify_integer_storage(m);
+            // X.691 §26.5.4/§26.5.7 FROM-alphabet — not UTF8String, which
+            // isn't a known-multiplier character string at all (X.691
+            // §26.6: FROM constraints on it aren't PER-enforced), same
+            // exclusion build_member_type_descriptor_spec's own Sizeable
+            // branch already applies.
+            if (*bt != ast::BuiltinType::Utf8String)
+                row.has_from_alphabet = !extract_from_alphabet(m).empty();
+        } else if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+            auto per_class = classify_typeref_for_per(*tr);
+            row.ref_kind = per_class.kind;
+            row.ref_storage_kind = per_class.storage_kind;
         }
         if (m.is_seq_of()) {
             row.seq_of_kind = SeqOfKind::SeqOf;
@@ -1642,6 +1693,9 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind storage_kind = IntStorageKind::S64;
             std::optional<MemberTagSpec> resolved_tag;
+            TaggedMemberSpec::RefTargetKind ref_kind = TaggedMemberSpec::RefTargetKind::NotRef;
+            IntStorageKind ref_storage_kind = IntStorageKind::S64;
+            bool has_from_alphabet = false;
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1664,12 +1718,22 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             }
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind alt_storage_kind = IntStorageKind::S64;
+            TaggedMemberSpec::RefTargetKind alt_ref_kind = TaggedMemberSpec::RefTargetKind::NotRef;
+            IntStorageKind alt_ref_storage_kind = IntStorageKind::S64;
+            bool alt_has_from_alphabet = false;
             if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
                 mbuiltin = *bt;
                 if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
+                if (*bt != ast::BuiltinType::Utf8String)
+                    alt_has_from_alphabet = !extract_from_alphabet(*m).empty();
+            } else if (auto* atr = std::get_if<ast::TypeRef>(&m->body)) {
+                auto per_class = classify_typeref_for_per(*atr);
+                alt_ref_kind = per_class.kind;
+                alt_ref_storage_kind = per_class.storage_kind;
             }
             rows.push_back({ m->name, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag });
+                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag,
+                             alt_ref_kind, alt_ref_storage_kind, alt_has_from_alphabet });
             ++auto_tag_num;
           }
         }
@@ -1704,6 +1768,9 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.mbuiltin = r.mbuiltin;
             alt.storage_kind = r.storage_kind;
             alt.resolved_tag = r.resolved_tag;
+            alt.ref_kind = r.ref_kind;
+            alt.ref_storage_kind = r.ref_storage_kind;
+            alt.has_from_alphabet = r.has_from_alphabet;
             spec.alternatives.push_back(std::move(alt));
         }
 

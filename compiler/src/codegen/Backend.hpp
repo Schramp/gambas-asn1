@@ -422,6 +422,41 @@ struct TaggedMemberSpec {
     // rather than string-matching `mtype`, since `mtype` only coincidentally
     // matches what `native_int_type(IntStorageKind::S64)` returns.
     IntStorageKind storage_kind = IntStorageKind::S64;
+
+    // Set only for a TypeRef member/alternative (mbuiltin unset above) whose
+    // resolved target is itself ENUMERATED or a named INTEGER type —
+    // Generator resolves this once at collect-time (Generator::
+    // classify_typeref_for_per, which needs resolver_ access Backend
+    // doesn't have) so a backend never needs its own resolver to know
+    // whether a TypeRef member has a knowable PER shape. Both cases are
+    // always-covered regardless of any other type's own state: ENUMERATED
+    // unconditionally gets a PerValue impl whenever it has at least one
+    // value (X.680 §20.1 requires ≥1, so this is effectively always) and a
+    // named INTEGER type unconditionally gets a {NAME}_PER_CONSTRAINTS
+    // static whenever its storage is S64/U64 — neither depends on the
+    // *referencing* type's own members the way, say, a TypeRef to
+    // SEQUENCE/CHOICE would (that target's own PER coverage is itself
+    // data-dependent on its members, so is deliberately left unclassified
+    // here — `Other`, same as today).
+    enum class RefTargetKind { NotRef, Enumerated, IntegerAlias, Other };
+    RefTargetKind ref_kind = RefTargetKind::NotRef;
+    // Meaningful only when ref_kind == IntegerAlias — the resolved target
+    // type's own storage kind (this member's own `storage_kind` above
+    // stays at its harmless S64 default for every TypeRef member, since
+    // TypeRef members never populate `mbuiltin`/`storage_kind` from their
+    // own AST node). `mtype` (declared per-derived-struct) already carries
+    // the target's Rust identifier — no separate name field needed here.
+    IntStorageKind ref_storage_kind = IntStorageKind::S64;
+
+    // True when a direct builtin character-string member/alternative
+    // carries an X.680 §51.4 FROM (PermittedAlphabet) constraint —
+    // meaningless otherwise. `asn1cpp_per::strings::encode_string`/
+    // `decode_string`'s core path (rust-runtime/per) only implements the
+    // *natural* alphabet (X.691 §26.5.3/§26.5.6), not FROM-alphabet index
+    // remapping, so a backend's own PER coverage gate for a string member
+    // must exclude this case explicitly rather than silently encoding
+    // with the wrong (too-wide) bit width per character.
+    bool has_from_alphabet = false;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. Several

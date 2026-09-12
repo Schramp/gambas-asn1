@@ -62,6 +62,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ASN1CPP_ROOT = os.path.dirname(os.path.dirname(HERE))
 ASNCPP_BIN = os.path.join(ASN1CPP_ROOT, "build/compiler/asn1cpp")
 ASN1CPP_BER_CRATE = os.path.join(ASN1CPP_ROOT, "rust-runtime/ber")
+ASN1CPP_PER_CRATE = os.path.join(ASN1CPP_ROOT, "rust-runtime/per")
 
 TEMPLATE_CPP = os.path.join(HERE, "template_cpp")
 TEMPLATE_RUST = os.path.join(HERE, "template_rust")
@@ -193,6 +194,57 @@ def x2b(tool: str, type_name: str, xer_text: str) -> tuple[bytes, str]:
     """XER string → BER bytes. Returns (ber_bytes, stderr)."""
     r = run(tool, "--type", type_name, input=xer_text.encode(errors=_TEXT_ERRORS))
     return r.stdout, r.stderr.decode(errors="replace").strip()
+
+
+def b2p_file(tool: str, type_name: str, ber_path: str) -> tuple[bytes, str]:
+    """BER file -> length-prefixed PER byte stream. Returns (per_bytes, stderr)."""
+    r = run(tool, "--type", type_name, ber_path)
+    return r.stdout, r.stderr.decode(errors="replace").strip()
+
+
+def p2b(tool: str, type_name: str, per_bytes: bytes) -> tuple[bytes, str]:
+    """Length-prefixed PER byte stream -> BER bytes. Returns (ber_bytes, stderr)."""
+    r = run(tool, "--type", type_name, input=per_bytes)
+    return r.stdout, r.stderr.decode(errors="replace").strip()
+
+
+def split_per_records(data: bytes) -> list[bytes]:
+    """Split a 4-byte-big-endian-length-prefixed PER byte stream (ber-to-per's
+    own output framing, both cpp and rust legs — see template_cpp/src/
+    ber-to-per.cpp's own doc for why PER itself needs this, unlike BER's
+    self-delimiting TLVs) into per-record byte strings (prefix stripped,
+    same shape split_ber_records/split_xer_records already return)."""
+    records = []
+    offset = 0
+    while offset + 4 <= len(data):
+        length = int.from_bytes(data[offset:offset + 4], "big")
+        offset += 4
+        if offset + length > len(data):
+            break
+        records.append(data[offset:offset + length])
+        offset += length
+    return records
+
+
+def compare_per(label: str, per_a: bytes, per_b: bytes, verbose: bool) -> tuple[int, int]:
+    recs_a = split_per_records(per_a)
+    recs_b = split_per_records(per_b)
+    n = min(len(recs_a), len(recs_b))
+    if n == 0:
+        print(f"  [{label}] no records to compare")
+        return 0, 0
+    matches = mismatches = 0
+    for i in range(n):
+        if recs_a[i] == recs_b[i]:
+            matches += 1
+        else:
+            mismatches += 1
+            if verbose:
+                print(f"  MISMATCH record #{i + 1}: "
+                      f"expected {len(recs_a[i])} bytes, got {len(recs_b[i])}")
+    status = "OK" if mismatches == 0 else "FAIL"
+    print(f"  [{label}] {matches}/{n} match, {mismatches} mismatch  [{status}]")
+    return matches, mismatches
 
 
 def asn1c_b2x(tool: str, pdu_type: str, ber_path: str) -> tuple[str, str]:
@@ -352,6 +404,7 @@ def discover_ident(gen_dir, ext, pdu_type):
 def build_cpp(target_dir, asn1_files_abs, pdu_type):
     cpp_dir = os.path.join(target_dir, "cpp")
     for name in ["randgen.cpp", "ber-to-xer.cpp", "xer-to-ber.cpp",
+                 "ber-to-per.cpp", "per-to-ber.cpp",
                  "type_registry.hpp", "type_registry.cpp"]:
         copy_verbatim(os.path.join(TEMPLATE_CPP, "src", name),
                       os.path.join(cpp_dir, "src", name))
@@ -381,6 +434,8 @@ def build_cpp(target_dir, asn1_files_abs, pdu_type):
         "randgen": os.path.join(cpp_dir, "randgen"),
         "b2x": os.path.join(cpp_dir, "ber-to-xer"),
         "x2b": os.path.join(cpp_dir, "xer-to-ber"),
+        "b2p": os.path.join(cpp_dir, "ber-to-per"),
+        "p2b": os.path.join(cpp_dir, "per-to-ber"),
     }
 
 
@@ -397,7 +452,8 @@ def build_rust(target_dir, asn1_files_abs, pdu_type):
                  "__PDU_TYPE__": pdu_type})
     materialize(os.path.join(TEMPLATE_RUST, "Cargo.toml.tmpl"),
                 os.path.join(rust_dir, "Cargo.toml"),
-                {"__ASN1CPP_BER_CRATE__": ASN1CPP_BER_CRATE})
+                {"__ASN1CPP_BER_CRATE__": ASN1CPP_BER_CRATE,
+                 "__ASN1CPP_PER_CRATE__": ASN1CPP_PER_CRATE})
 
     if not run_make(rust_dir, "gen", label="Rust codegen"):
         return None
@@ -423,12 +479,54 @@ def build_rust(target_dir, asn1_files_abs, pdu_type):
                 os.path.join(rust_dir, "src", "bin", "xer_to_ber.rs"),
                 {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
 
+    # PER coverage is data-dependent (RustBackend's own per_covered/
+    # per_alts_covered gates, RustBackend.cpp) — a type only gets a
+    # `PerValue` impl when every one of its members/alternatives is one of
+    # the currently-covered shapes. Detected here by grepping the already-
+    # generated source for the literal impl line, rather than trying to
+    # predict coverage from the schema — same "ask the actual output"
+    # approach discover_ident already uses instead of guessing an escaping
+    # rule. Materializing ber-to-per/per-to-ber only when covered avoids a
+    # guaranteed compile error (calling `.per_encode()` on a type with no
+    # `PerValue` impl) for the common case a target isn't PER-covered yet.
+    per_covered = False
+    gen_file = os.path.join(rust_dir, "gen", f"{ident}.rs")
+    if os.path.isfile(gen_file):
+        with open(gen_file, errors="replace") as f:
+            per_covered = f"impl asn1cpp_per::PerValue for {ident} " in f.read()
+    # Remove any stale ber_to_per.rs/per_to_ber.rs from a prior run of this
+    # same target directory before deciding whether to re-materialize them
+    # — cargo auto-discovers every src/bin/*.rs file as its own binary
+    # target regardless of Cargo.toml's explicit [[bin]] list (which is
+    # itself freshly rewritten every run via materialize() above), so a
+    # leftover file from a target that *used* to be PER-covered (or a
+    # stale build predating this leg entirely) would otherwise still get
+    # compiled and fail on a type that's no longer covered.
+    for stale in ("ber_to_per.rs", "per_to_ber.rs"):
+        stale_path = os.path.join(rust_dir, "src", "bin", stale)
+        if os.path.isfile(stale_path):
+            os.remove(stale_path)
+    if per_covered:
+        materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "ber_to_per.rs.tmpl"),
+                    os.path.join(rust_dir, "src", "bin", "ber_to_per.rs"),
+                    {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
+        materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "per_to_ber.rs.tmpl"),
+                    os.path.join(rust_dir, "src", "bin", "per_to_ber.rs"),
+                    {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
+        with open(os.path.join(rust_dir, "Cargo.toml"), "a") as f:
+            f.write('\n[[bin]]\nname = "ber-to-per"\npath = "src/bin/ber_to_per.rs"\n'
+                    '\n[[bin]]\nname = "per-to-ber"\npath = "src/bin/per_to_ber.rs"\n')
+
     if not run_make(rust_dir, "build", label="Rust cargo build"):
         return None
-    return {
+    result = {
         "b2x": os.path.join(rust_dir, "target/release/ber-to-xer"),
         "x2b": os.path.join(rust_dir, "target/release/xer-to-ber"),
     }
+    if per_covered:
+        result["b2p"] = os.path.join(rust_dir, "target/release/ber-to-per")
+        result["p2b"] = os.path.join(rust_dir, "target/release/per-to-ber")
+    return result
 
 
 def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin):
@@ -546,6 +644,41 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
 
     ber_cross2, _ = x2b(cpp_tools["x2b"], pdu_type, xer_rust)
     tally(compare_ber("orig vs cpp.X2B(rust.XER)", ber_orig, ber_cross2, verbose))
+
+    # PER leg — only when the Rust side actually has a `PerValue` impl for
+    # this target (build_rust's own per_covered detection; "b2p"/"p2b"
+    # keys are absent from rust_tools otherwise). C++ always supports PER
+    # (its generic TypeDescriptor-driven PerCodec has no per-type
+    # coverage gate the way RustBackend's codegen currently does), so this
+    # entire leg is gated on Rust alone. Same matrix shape as the XER
+    # legs above — cpp vs rust, both round-trips, both cross combinations
+    # — using the 4-byte-length-prefixed PER record framing (PER has no
+    # self-delimiting record boundary of its own, see ber-to-per.cpp's own
+    # doc); an untested target isn't a failure, just narrower coverage
+    # than the BER/XER legs, printed but not gated.
+    if "b2p" in rust_tools:
+        per_cpp, err_cpp_per = b2p_file(cpp_tools["b2p"], pdu_type, ber_path)
+        if err_cpp_per:
+            print(f"  cpp b2p stderr: {err_cpp_per}")
+        per_rust, err_rust_per = b2p_file(rust_tools["b2p"], pdu_type, ber_path)
+        if err_rust_per:
+            print(f"  rust b2p stderr: {err_rust_per}")
+
+        tally(compare_per("cpp.PER vs rust.PER", per_cpp, per_rust, verbose))
+
+        ber_cpp_per2, _ = p2b(cpp_tools["p2b"], pdu_type, per_cpp)
+        tally(compare_ber("orig vs cpp.P2B(cpp.PER)", ber_orig, ber_cpp_per2, verbose))
+
+        ber_rust_per2, _ = p2b(rust_tools["p2b"], pdu_type, per_rust)
+        tally(compare_ber("orig vs rust.P2B(rust.PER)", ber_orig, ber_rust_per2, verbose))
+
+        ber_per_cross1, _ = p2b(rust_tools["p2b"], pdu_type, per_cpp)
+        tally(compare_ber("orig vs rust.P2B(cpp.PER)", ber_orig, ber_per_cross1, verbose))
+
+        ber_per_cross2, _ = p2b(cpp_tools["p2b"], pdu_type, per_rust)
+        tally(compare_ber("orig vs cpp.P2B(rust.PER)", ber_orig, ber_per_cross2, verbose))
+    else:
+        print("  PER leg: skipped (Rust codegen doesn't cover this type's members/alternatives yet)")
 
     if asn1c_tools:
         xer_asn1c, err_asn1c = asn1c_b2x(asn1c_tools["tool"], pdu_type, ber_path)
