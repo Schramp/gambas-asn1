@@ -1263,7 +1263,12 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         if (m.mbuiltin) {
             if (*m.mbuiltin == ast::BuiltinType::Integer)
                 return m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64;
-            return per_string_params(*m.mbuiltin).has_value();
+            // A FROM-alphabet constraint needs index remapping
+            // (X.691 §26.5.4/§26.5.7) that asn1cpp_per::strings'
+            // core path doesn't implement yet (that module's own doc) —
+            // encoding as if unconstrained-alphabet would silently
+            // produce the wrong (too-wide) bit width per character.
+            return !m.has_from_alphabet && per_string_params(*m.mbuiltin).has_value();
         }
         return m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
                m.ref_kind == SequenceMemberSpec::RefTargetKind::IntegerAlias;
@@ -2217,7 +2222,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             if (a.mbuiltin) {
                 if (*a.mbuiltin == ast::BuiltinType::Integer)
                     return a.storage_kind == IntStorageKind::S64 || a.storage_kind == IntStorageKind::U64;
-                return per_string_params(*a.mbuiltin).has_value();
+                return !a.has_from_alphabet && per_string_params(*a.mbuiltin).has_value();
             }
             return a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
                    a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias;

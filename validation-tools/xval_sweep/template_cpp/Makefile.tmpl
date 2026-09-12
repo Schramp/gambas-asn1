@@ -30,7 +30,7 @@ FMT_LIBS := $(shell pkg-config --libs fmt 2>/dev/null)
 LIBS     := $(LIB) $(RUNTIME_LIB) $(FMT_LIBS)
 
 REGISTRY_OBJS := src/type_registry.o src/types.o
-PROGRAMS      := randgen ber-to-xer xer-to-ber
+PROGRAMS      := randgen ber-to-xer xer-to-ber ber-to-per per-to-ber
 
 # Two-step build, driven explicitly by the Python driver (not chained here)
 # — same reason template_rust/Makefile.tmpl splits gen/build: the PDU
@@ -76,6 +76,12 @@ ber-to-xer: src/ber-to-xer.cpp $(REGISTRY_OBJS) $(LIB) $(RUNTIME_LIB)
 
 xer-to-ber: src/xer-to-ber.cpp $(REGISTRY_OBJS) $(LIB) $(RUNTIME_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ src/xer-to-ber.cpp $(REGISTRY_OBJS) $(LIBS)
+
+ber-to-per: src/ber-to-per.cpp $(REGISTRY_OBJS) $(LIB) $(RUNTIME_LIB)
+	$(CXX) $(CXXFLAGS) -o $@ src/ber-to-per.cpp $(REGISTRY_OBJS) $(LIBS)
+
+per-to-ber: src/per-to-ber.cpp $(REGISTRY_OBJS) $(LIB) $(RUNTIME_LIB)
+	$(CXX) $(CXXFLAGS) -o $@ src/per-to-ber.cpp $(REGISTRY_OBJS) $(LIBS)
 
 clean:
 	rm -rf $(PROGRAMS) $(GEN_DIR) obj lib src/*.o
