@@ -647,6 +647,7 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
     // uses one level up).
     if (auto* bt = std::get_if<ast::BuiltinType>(&elem.body)) {
         shape.builtin = *bt;
+        shape.has_constraint = !elem.constraints.empty();
         if (*bt == ast::BuiltinType::Integer) shape.storage_kind = classify_integer_storage(elem);
     }
     return shape;
