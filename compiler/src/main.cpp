@@ -184,6 +184,39 @@ int main(int argc, char** argv) {
         ? static_cast<asn1::codegen::Backend&>(rust_backend)
         : static_cast<asn1::codegen::Backend&>(cpp_backend);
 
+    // Rust PER coverage for a TypeRef-to-composite member/alternative
+    // depends on the *referenced* type's own coverage (RustBackend's own
+    // per_type_covered_ registry doc, RustBackend.hpp) — real schemas
+    // commonly declare a composite type before the other composite types
+    // that reference it (e.g. 3GPP RRC's own top-level PDU types precede
+    // the message-dispatch CHOICEs they contain), so a single top-to-
+    // bottom codegen pass can't always know a referenced type's coverage
+    // by the time it's needed. Re-run the whole pass repeatedly, letting
+    // RustBackend's registry accumulate, until it stops changing between
+    // consecutive passes (a fixed point over the type dependency graph) —
+    // each pass's file output is superseded by the next, so only the
+    // final pass's output matters; the cost is compile-time only, paid
+    // once per schema. A fresh Generator per pass (not the same instance
+    // re-run) avoids any risk of Generator's own per-run bookkeeping
+    // (collision/known-file tracking) accumulating stale state across
+    // passes; RustBackend itself is the one piece of state meant to
+    // survive between them. Capped at 25 passes as a safety valve — no
+    // real schema's composite-reference chain should ever need that many
+    // levels to stabilize.
+    if (target == "rust") {
+        auto prev = rust_backend.per_coverage_snapshot();
+        for (int iter = 0; iter < 25; ++iter) {
+            asn1::codegen::Generator warmup(out_dir, resolver, backend);
+            warmup.set_default_int_kind(default_int_kind);
+            if (!ns_prefix.empty()) warmup.set_namespace(ns_prefix);
+            for (const auto& t : pdu_types) warmup.add_pdu_type(t);
+            warmup.generate(pr);
+            auto cur = rust_backend.per_coverage_snapshot();
+            if (cur == prev) break;
+            prev = std::move(cur);
+        }
+    }
+
     asn1::codegen::Generator gen(out_dir, resolver, backend);
     gen.set_default_int_kind(default_int_kind);
     if (!ns_prefix.empty()) gen.set_namespace(ns_prefix);

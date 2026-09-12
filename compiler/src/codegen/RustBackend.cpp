@@ -1253,10 +1253,14 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // (`m.ref_kind`, always covered regardless of any other type's state —
     // see TaggedMemberSpec::RefTargetKind's own doc, Backend.hpp, for why
     // those two specifically). A TypeRef to SEQUENCE/CHOICE
-    // (`RefTargetKind::Other`) stays excluded: that target's own PER
-    // coverage is itself data-dependent, and codegen doesn't yet track
-    // which named types got a PerValue impl to check against.
-    auto per_member_covered = [](const SequenceMemberSpec& m) -> bool {
+    // (`RefTargetKind::Other`) is covered iff `per_type_covered_` (this
+    // backend's own whole-program registry — see its own doc) already
+    // has a `true` entry for the referenced type: unlike ENUMERATED/named-
+    // INTEGER, a composite target's own coverage genuinely depends on its
+    // members, so this is the one case where processing order matters —
+    // main.cpp's driver loop re-runs codegen to a fixed point specifically
+    // so this lookup is always complete and correct by the final pass.
+    auto per_member_covered = [this](const SequenceMemberSpec& m) -> bool {
         if (m.seq_of_kind != SeqOfKind::None) return false;
         if (m.is_explicit) return false;
         if (m.resolved_tag && m.resolved_tag->tag_is_override) return false;
@@ -1270,13 +1274,24 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // produce the wrong (too-wide) bit width per character.
             return !m.has_from_alphabet && per_string_params(*m.mbuiltin).has_value();
         }
-        return m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
-               m.ref_kind == SequenceMemberSpec::RefTargetKind::IntegerAlias;
+        if (m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
+            m.ref_kind == SequenceMemberSpec::RefTargetKind::IntegerAlias)
+            return true;
+        if (m.ref_kind == SequenceMemberSpec::RefTargetKind::Other) {
+            auto it = per_type_covered_.find(m.mtype);
+            return it != per_type_covered_.end() && it->second;
+        }
+        return false;
     };
     bool per_covered = !spec.members.empty();
     for (const auto& m : spec.members) {
         if (!per_member_covered(m)) { per_covered = false; break; }
     }
+    // Record into the whole-program registry immediately — before any
+    // other type this pass processes might need to look this one up as a
+    // TypeRef-to-composite member (see per_type_covered_'s own doc,
+    // RustBackend.hpp).
+    per_type_covered_[spec.type_name] = per_covered;
     std::ostringstream per_members_os;
     {
         // Emitted unconditionally, even for an empty SEQUENCE {} (0
@@ -1427,11 +1442,14 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                                                m.optional ? std::format("v.{}.is_some()", m.mname) : "true");
                 per_members_os << std::format("        set_default: {},\n", set_default_expr);
                 per_members_os << std::format("        is_default_equal: {},\n", is_default_equal_expr);
-                if (!m.mbuiltin && m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated) {
-                    // TypeRef to ENUMERATED — the target already has an
-                    // unconditional `PerValue` impl (emit_enumerated_
-                    // definition), so this is the trait-based Scalar path,
-                    // same shape as the BER Scalar row just above.
+                if (!m.mbuiltin && (m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
+                                     m.ref_kind == SequenceMemberSpec::RefTargetKind::Other)) {
+                    // TypeRef to ENUMERATED (always covered) or to a named
+                    // SEQUENCE/CHOICE confirmed covered via
+                    // `per_type_covered_` (`per_member_covered`'s own
+                    // doc) — either way the target already has a real
+                    // `PerValue` impl, so this is the trait-based Scalar
+                    // path, same shape as the BER Scalar row just above.
                     per_members_os << std::format(
                         "        access: asn1cpp_per::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n",
                         m.mname);
@@ -2218,19 +2236,26 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         // SEQUENCE member, where an EXPLICIT wrap genuinely does add an
         // extra layer PER's own open-type wrapping would have to
         // reproduce — out of scope here).
-        auto per_alt_covered = [](const ChoiceAlternativeSpec& a) -> bool {
+        auto per_alt_covered = [this](const ChoiceAlternativeSpec& a) -> bool {
             if (a.mbuiltin) {
                 if (*a.mbuiltin == ast::BuiltinType::Integer)
                     return a.storage_kind == IntStorageKind::S64 || a.storage_kind == IntStorageKind::U64;
                 return !a.has_from_alphabet && per_string_params(*a.mbuiltin).has_value();
             }
-            return a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
-                   a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias;
+            if (a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
+                a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias)
+                return true;
+            if (a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other) {
+                auto it = per_type_covered_.find(a.mtype);
+                return it != per_type_covered_.end() && it->second;
+            }
+            return false;
         };
         bool per_alts_covered = !spec.alternatives.empty();
         for (const auto& a : spec.alternatives) {
             if (!per_alt_covered(a)) { per_alts_covered = false; break; }
         }
+        per_type_covered_[spec.type_name] = per_alts_covered;
         if (per_alts_covered) {
             std::string per_alts_ident = std::format("{}_PER_ALTERNATIVES", to_screaming_snake_case(spec.type_name));
             std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(spec.type_name));
@@ -2241,10 +2266,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 std::string variant_path = std::format("{}::{}", spec.type_name, vname);
                 os << "    asn1cpp_per::choice::AlternativeSpec {\n";
                 os << std::format("        name: \"{}\",\n", a.asn1_name);
-                if (!a.mbuiltin && a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated) {
-                    // TypeRef to ENUMERATED — the target already has an
-                    // unconditional `PerValue` impl; the alternative's
-                    // payload type is that enum directly, so this dispatches
+                if (!a.mbuiltin && (a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
+                                    a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other)) {
+                    // TypeRef to ENUMERATED (always covered) or to a named
+                    // SEQUENCE/CHOICE confirmed covered via
+                    // `per_type_covered_` — either way the target already
+                    // has a real `PerValue` impl, so this dispatches
                     // through the trait rather than integer::encode_int.
                     os << std::format(
                         "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_per::PerValue::per_encode(x, w); true }} else {{ false }},\n",

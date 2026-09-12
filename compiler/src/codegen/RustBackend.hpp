@@ -179,6 +179,41 @@ public:
     std::string declaration_extension() const override { return "rs"; }
     std::string definition_extension() const override { return "rs"; }
 
+    // Whole-program PER coverage registry — records, for every named
+    // SEQUENCE/CHOICE/SET type this backend has emitted so far in the
+    // current `Generator::generate()` call, whether it got a real
+    // `PerValue` impl. Consulted by `per_member_covered`/`per_alt_covered`
+    // (RustBackend.cpp) for a TypeRef member/alternative whose resolved
+    // target is itself a named composite (`RefTargetKind::Other`) — a
+    // case genuinely different from ENUMERATED/named-INTEGER TypeRefs
+    // (always covered regardless of anything else): a composite target's
+    // own coverage depends on ITS members, so it can only be known once
+    // that type has itself been processed.
+    //
+    // `mutable` because it's written from `emit_sequence_definition`/
+    // `emit_choice_definition`, both `const` overrides (Backend's
+    // interface is const-qua-"doesn't mutate the AST/spec it's handed",
+    // which this registry isn't part of).
+    //
+    // Real ASN.1 schemas commonly declare a composite type *before* the
+    // other composite types that reference it (RRC's own `UL-CCCH-Message`
+    // precedes `UL-CCCH-MessageType`, which precedes the message types it
+    // dispatches to) — so a single top-to-bottom pass through the module
+    // list isn't enough to always have an answer by the time it's needed.
+    // main.cpp's own driver handles this by re-running the whole
+    // `Generator::generate()` pass repeatedly (discarding each pass's
+    // file output, since it's superseded by the next) until this map
+    // stops changing between consecutive passes — a fixed point over the
+    // type dependency graph, computed by brute-force re-derivation rather
+    // than an explicit graph structure, since re-deriving is cheap
+    // (compile time only, paid once per schema) and needs no new data
+    // structures beyond this map itself. `per_coverage_snapshot()` is
+    // what that driver loop compares between passes.
+    mutable std::unordered_map<std::string, bool> per_type_covered_;
+
+public:
+    std::unordered_map<std::string, bool> per_coverage_snapshot() const { return per_type_covered_; }
+
 private:
     // Split declaration/definition halves — kept as private helpers so the
     // per-construct emission bodies don't need reshaping; the public emit_*

@@ -1176,11 +1176,21 @@ Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRe
     using BT = ast::BuiltinType;
     auto resolved = resolver_.resolve_ref(tr);
     if (!resolved) return {};
-    auto* rbt = std::get_if<BT>(&resolved->body);
-    if (!rbt) return {};
-    if (*rbt == BT::Enumerated) return {TaggedMemberSpec::RefTargetKind::Enumerated, IntStorageKind::S64};
-    if (*rbt == BT::Integer)
-        return {TaggedMemberSpec::RefTargetKind::IntegerAlias, classify_integer_storage(*resolved)};
+    if (auto* rbt = std::get_if<BT>(&resolved->body)) {
+        if (*rbt == BT::Enumerated) return {TaggedMemberSpec::RefTargetKind::Enumerated, IntStorageKind::S64};
+        if (*rbt == BT::Integer)
+            return {TaggedMemberSpec::RefTargetKind::IntegerAlias, classify_integer_storage(*resolved)};
+        return {};
+    }
+    // A TypeRef resolving to a named SEQUENCE/SET/CHOICE — its own PER
+    // coverage depends on its own members, unknowable from here (a
+    // backend-side whole-program registry decides this; see
+    // RustBackend::per_type_covered_'s own doc for why).
+    if (std::holds_alternative<ast::SequenceType>(resolved->body) ||
+        std::holds_alternative<ast::SetType>(resolved->body) ||
+        std::holds_alternative<ast::ChoiceType>(resolved->body)) {
+        return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+    }
     return {};
 }
 
