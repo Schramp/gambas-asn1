@@ -1237,29 +1237,33 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         if (!m.mbuiltin) return "OPTIONAL member of an untagged type has no tag to detect presence";
         return "builtin type/storage combination not yet supported";
     };
-    // PER coverage, whole-type granularity: unlike BER's per-row
-    // `Unsupported` stub (asn1cpp_per::sequence::MemberAccess has no
-    // equivalent variant — see its own doc), a single not-yet-representable
-    // member disqualifies the entire type's PER table rather than getting
-    // its own stub row. Scope for now: a member whose ASN.1 type is
+    // PER coverage, per-row granularity — mirrors BER's own
+    // `sequence_member_covered`: a not-yet-representable member gets its
+    // own `asn1cpp_per::sequence::MemberAccess::Unsupported` stub row
+    // (panics only if actually reached) rather than withholding the whole
+    // type's `PerValue` impl. Scope for now: a member whose ASN.1 type is
     // *directly* a builtin INTEGER (S64/U64 storage) or a single-byte-per-
     // character string kind (`per_string_params`'s own doc for exactly
-    // which), untagged/unretagged (PER carries no tags — X.691 has nothing
-    // corresponding to EXPLICIT/IMPLICIT, but a per-member `[n]` override
-    // on this backend's own BER path currently only ever accompanies a
-    // member that also needs BER-specific wrapping, so retagged members
-    // are excluded here too until that's disentangled) — or a TypeRef
-    // member whose resolved target is ENUMERATED or a named INTEGER type
-    // (`m.ref_kind`, always covered regardless of any other type's state —
-    // see TaggedMemberSpec::RefTargetKind's own doc, Backend.hpp, for why
-    // those two specifically). A TypeRef to SEQUENCE/CHOICE
-    // (`RefTargetKind::Other`) stays excluded: that target's own PER
-    // coverage is itself data-dependent, and codegen doesn't yet track
-    // which named types got a PerValue impl to check against.
+    // which), or a TypeRef member whose resolved target is ENUMERATED, a
+    // named INTEGER type, or another named SEQUENCE/CHOICE/SET
+    // (`m.ref_kind`; all three are always representable regardless of
+    // anything else, since the referenced type either always gets a
+    // PerValue impl unconditionally (ENUMERATED, a named INTEGER's own
+    // PER_CONSTRAINTS) or — for a composite `Other` target — is *itself*
+    // guaranteed a PerValue impl by this same unconditional-emission
+    // policy, recursively). `m.is_explicit`/`m.resolved_tag->
+    // tag_is_override` are deliberately *not* checked: X.691 defines PER
+    // encoding purely in terms of a type's abstract value structure — a
+    // tag (natural, IMPLICIT-retagged including AUTOMATIC TAGS, or even
+    // EXPLICIT) never changes a member's PER wire bytes at all. Confirmed
+    // empirically against a live PerCodec run: `a [0] INTEGER(0..15)`,
+    // `a [0] EXPLICIT INTEGER(0..15)`, and the same field under `AUTOMATIC
+    // TAGS` with no `[n]` written at all, all three encode to identical
+    // PER bytes. This matters in practice: 3GPP RRC's own PDU-definitions
+    // module uses `AUTOMATIC TAGS` throughout, which would otherwise
+    // exclude nearly every member in the schema.
     auto per_member_covered = [](const SequenceMemberSpec& m) -> bool {
         if (m.seq_of_kind != SeqOfKind::None) return false;
-        if (m.is_explicit) return false;
-        if (m.resolved_tag && m.resolved_tag->tag_is_override) return false;
         if (m.mbuiltin) {
             if (*m.mbuiltin == ast::BuiltinType::Integer)
                 return m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64;
@@ -1271,12 +1275,20 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return !m.has_from_alphabet && per_string_params(*m.mbuiltin).has_value();
         }
         return m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
-               m.ref_kind == SequenceMemberSpec::RefTargetKind::IntegerAlias;
+               m.ref_kind == SequenceMemberSpec::RefTargetKind::IntegerAlias ||
+               m.ref_kind == SequenceMemberSpec::RefTargetKind::Other;
     };
-    bool per_covered = !spec.members.empty();
-    for (const auto& m : spec.members) {
-        if (!per_member_covered(m)) { per_covered = false; break; }
-    }
+    // Human-readable reason baked into an Unsupported PER row's stub
+    // panic message — mirrors the BER-side `stub_reason` lambda above,
+    // separate function since the PER and BER coverage boundaries differ
+    // (e.g. SEQUENCE OF is BER-covered but PER-Unsupported).
+    auto per_stub_reason = [](const SequenceMemberSpec& m) -> const char* {
+        if (m.seq_of_kind != SeqOfKind::None) return "SEQUENCE OF/SET OF PER encoding not yet supported";
+        if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any) return "ANY has no PER encoding";
+        if (m.mbuiltin && m.has_from_alphabet) return "FROM-alphabet constraint not yet supported for PER";
+        if (m.mbuiltin) return "builtin type/storage combination not yet supported for PER";
+        return "referenced type has no PerValue impl";
+    };
     std::ostringstream per_members_os;
     {
         // Emitted unconditionally, even for an empty SEQUENCE {} (0
@@ -1409,11 +1421,13 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             }
             os << std::format("        set_default: {},\n", set_default_expr);
             os << std::format("        is_default_equal: {},\n", is_default_equal_expr);
-            if (per_covered) {
-                // Only reached for a member `per_member_covered` already
-                // accepted — see that lambda's own doc for the three
-                // covered shapes (direct builtin INTEGER; TypeRef to
-                // ENUMERATED; TypeRef to a named INTEGER type).
+            {
+                // Always emitted, real or `Unsupported` — mirrors BER's
+                // own unconditional per-row emission (`sequence_member_
+                // covered`'s doc): a member `per_member_covered` rejects
+                // gets a stub row (panics only if actually reached, other
+                // members are completely unaffected) instead of
+                // withholding this whole type's `PerValue` impl.
                 // `set_default_expr`/`is_default_equal_expr` are reused
                 // verbatim: both crates' `MemberDescriptor::set_default`/
                 // `is_default_equal` are `Option<fn(&mut T)>`/
@@ -1427,11 +1441,19 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                                                m.optional ? std::format("v.{}.is_some()", m.mname) : "true");
                 per_members_os << std::format("        set_default: {},\n", set_default_expr);
                 per_members_os << std::format("        is_default_equal: {},\n", is_default_equal_expr);
-                if (!m.mbuiltin && m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated) {
-                    // TypeRef to ENUMERATED — the target already has an
-                    // unconditional `PerValue` impl (emit_enumerated_
-                    // definition), so this is the trait-based Scalar path,
-                    // same shape as the BER Scalar row just above.
+                if (!per_member_covered(m)) {
+                    per_members_os << std::format(
+                        "        access: asn1cpp_per::sequence::MemberAccess::Unsupported {{ reason: \"{}\" }},\n",
+                        per_stub_reason(m));
+                } else if (!m.mbuiltin && (m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
+                                            m.ref_kind == SequenceMemberSpec::RefTargetKind::Other)) {
+                    // TypeRef to ENUMERATED, or to another named SEQUENCE/
+                    // CHOICE/SET — either way the target already has an
+                    // unconditional `PerValue` impl (ENUMERATED always;
+                    // a composite target recursively, via this exact same
+                    // unconditional-emission policy), so this is the
+                    // trait-based Scalar path, same shape as the BER
+                    // Scalar row just above.
                     per_members_os << std::format(
                         "        access: asn1cpp_per::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n",
                         m.mname);
@@ -1715,14 +1737,12 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    }\n";
         os << "}\n\n";
 
-        // PER leg — emitted only when `per_covered` (every member a direct,
-        // untagged builtin INTEGER; see `per_member_covered`'s own doc for
-        // the exact scope and what's deliberately excluded so far). Unlike
-        // the BER/XER `impl` above, not unconditional: asn1cpp_per has no
-        // per-row `Unsupported` stub, so a type outside this scope simply
-        // gets no PerValue impl at all yet, rather than a partial/panicking
-        // one.
-        if (per_covered) {
+        // PER leg — emitted unconditionally, same as the BER/XER `impl`
+        // above: every SEQUENCE/SET always gets a real `PerValue` impl now,
+        // any not-yet-representable member is an `Unsupported` stub row
+        // (`per_member_covered`'s own doc) rather than a reason to
+        // withhold the whole type's PER support.
+        {
             std::string per_members_ident = std::format("{}_PER_MEMBERS", to_screaming_snake_case(spec.type_name));
             std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(spec.type_name));
             os << std::format("static {}: [asn1cpp_per::sequence::MemberDescriptor<{}>; {}] = [\n",
@@ -2200,24 +2220,28 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         }
         os << "}\n\n";
 
-        // PER leg — covers every alternative directly (no per-row stub;
-        // one uncovered alternative disqualifies the whole type, same
-        // policy as emit_sequence_definition's own `per_covered` gate —
-        // see that check's doc). Scope: a direct builtin INTEGER (S64/U64
-        // storage) alternative, or a TypeRef to ENUMERATED/a named INTEGER
-        // type (`a.ref_kind` — same two always-covered cases
-        // `per_member_covered` accepts; see TaggedMemberSpec::
-        // RefTargetKind's own doc, Backend.hpp). Unlike the SEQUENCE case,
-        // a `[n]` override or AUTOMATIC-assigned context tag on the
-        // alternative is *not* excluded here: X.691 has no tag concept at
-        // all (the CHOICE index itself already identifies which
-        // alternative is present, X.691 §22-23), so an alternative's PER
-        // content is always its plain untagged encoding regardless of what
-        // BER tag it carries — `is_explicit`/`resolved_tag` are BER-only
-        // concerns for a CHOICE alternative specifically (unlike a
-        // SEQUENCE member, where an EXPLICIT wrap genuinely does add an
-        // extra layer PER's own open-type wrapping would have to
-        // reproduce — out of scope here).
+        // PER leg — emitted unconditionally, per-alternative granularity:
+        // mirrors emit_sequence_definition's own per-row policy (see that
+        // function's doc). Scope: a direct builtin INTEGER (S64/U64
+        // storage) alternative, a single-byte-per-character string
+        // alternative, or a TypeRef to ENUMERATED/a named INTEGER type/
+        // another named SEQUENCE/CHOICE/SET (`a.ref_kind` — same
+        // always-covered cases `per_member_covered` accepts; see
+        // TaggedMemberSpec::RefTargetKind's own doc, Backend.hpp). Unlike
+        // the SEQUENCE case, a `[n]` override or AUTOMATIC-assigned
+        // context tag on the alternative is *not* excluded here: X.691 has
+        // no tag concept at all (the CHOICE index itself already
+        // identifies which alternative is present, X.691 §22-23), so an
+        // alternative's PER content is always its plain untagged encoding
+        // regardless of what BER tag it carries — `is_explicit`/
+        // `resolved_tag` are BER-only concerns for a CHOICE alternative
+        // specifically (unlike a SEQUENCE member, where an EXPLICIT wrap
+        // genuinely does add an extra layer PER's own open-type wrapping
+        // would have to reproduce — out of scope here). An uncovered
+        // alternative gets `unimplemented!()` stub closures — no enum
+        // variant needed the way `MemberAccess::Unsupported` is for
+        // SEQUENCE, since `AlternativeSpec` is already closure-based
+        // (mirrors the equivalent BER CHOICE stub above in this file).
         auto per_alt_covered = [](const ChoiceAlternativeSpec& a) -> bool {
             if (a.mbuiltin) {
                 if (*a.mbuiltin == ast::BuiltinType::Integer)
@@ -2225,13 +2249,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 return !a.has_from_alphabet && per_string_params(*a.mbuiltin).has_value();
             }
             return a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
-                   a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias;
+                   a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias ||
+                   a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other;
         };
-        bool per_alts_covered = !spec.alternatives.empty();
-        for (const auto& a : spec.alternatives) {
-            if (!per_alt_covered(a)) { per_alts_covered = false; break; }
-        }
-        if (per_alts_covered) {
+        {
             std::string per_alts_ident = std::format("{}_PER_ALTERNATIVES", to_screaming_snake_case(spec.type_name));
             std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(spec.type_name));
             os << std::format("static {}: [asn1cpp_per::choice::AlternativeSpec<{}>; {}] = [\n",
@@ -2241,17 +2262,39 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 std::string variant_path = std::format("{}::{}", spec.type_name, vname);
                 os << "    asn1cpp_per::choice::AlternativeSpec {\n";
                 os << std::format("        name: \"{}\",\n", a.asn1_name);
-                if (!a.mbuiltin && a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated) {
-                    // TypeRef to ENUMERATED — the target already has an
-                    // unconditional `PerValue` impl; the alternative's
-                    // payload type is that enum directly, so this dispatches
-                    // through the trait rather than integer::encode_int.
+                if (!per_alt_covered(a)) {
+                    os << std::format(
+                        "        per_encode: |_v, _w| unimplemented!(\"alternative '{}' not supported for PER\"),\n",
+                        a.asn1_name);
+                    os << std::format(
+                        "        per_decode_into: |_r| unimplemented!(\"alternative '{}' not supported for PER\"),\n",
+                        a.asn1_name);
+                    os << "    },\n";
+                    continue;
+                }
+                if (!a.mbuiltin && (a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
+                                    a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other)) {
+                    // TypeRef to ENUMERATED, or to another named
+                    // SEQUENCE/CHOICE/SET — either way the target already
+                    // has an unconditional `PerValue` impl; the
+                    // alternative's payload type is that type directly, so
+                    // this dispatches through the trait rather than
+                    // integer::encode_int. `asn1cpp_per::value::Box<T>`'s
+                    // own blanket `PerValue` impl makes `x: &Box<T>` (a
+                    // directly self-referential alternative — see
+                    // emit_choice_declaration's own `Box<>` comment) work
+                    // through `PerValue::per_encode` unchanged; only the
+                    // decode constructor needs an explicit `Box::new(..)`
+                    // wrap, since a plain `T` never coerces to `Box<T>`
+                    // the way a reference does.
+                    bool boxed = (a.mtype == spec.type_name);
+                    std::string ctor = boxed ? std::format("Box::new(x)") : "x";
                     os << std::format(
                         "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_per::PerValue::per_encode(x, w); true }} else {{ false }},\n",
                         variant_path);
                     os << std::format(
-                        "        per_decode_into: |r| {{ let mut x = {}::default(); asn1cpp_per::PerValue::per_decode_into(&mut x, r)?; Ok({}(x)) }},\n",
-                        a.mtype, variant_path);
+                        "        per_decode_into: |r| {{ let mut x = {}::default(); asn1cpp_per::PerValue::per_decode_into(&mut x, r)?; Ok({}({})) }},\n",
+                        a.mtype, variant_path, ctor);
                     os << "    },\n";
                     continue;
                 }
