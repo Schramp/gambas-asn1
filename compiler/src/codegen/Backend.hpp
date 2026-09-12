@@ -197,6 +197,17 @@ struct ElemShape {
     std::optional<ast::BuiltinType> builtin;           // meaningful when kind == None
     IntStorageKind storage_kind = IntStorageKind::S64;  // meaningful when builtin == Integer
     std::shared_ptr<ElemShape> nested;  // meaningful when kind != None; recurses to unbounded depth
+    // True when the element itself carries any X.680 constraint (a value
+    // range on an INTEGER element, a SIZE/FROM on a sizeable one, etc.) —
+    // meaningful only when kind == None && builtin has a value. Not the
+    // constraint's actual bounds (no PER-shaped Constraints data is
+    // extracted for an element the way IntegerSpec/MemberTypeDescriptorSpec
+    // extract one for a named/inline-constrained member — this is only
+    // enough to distinguish "genuinely unconstrained, safe to encode as
+    // such" from "has bounds this backend doesn't yet thread through",
+    // used by RustBackend's own PER coverage gate for a SEQUENCE OF/SET OF
+    // member's element).
+    bool has_constraint = false;
 };
 
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —
