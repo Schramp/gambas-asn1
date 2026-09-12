@@ -1419,6 +1419,13 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             // already made to produce row.mtype above — threaded
             // through as structured data too, not re-derived from mtype text.
             if (*bt == ast::BuiltinType::Integer) row.storage_kind = classify_integer_storage(m);
+            // X.691 §26.5.4/§26.5.7 FROM-alphabet — not UTF8String, which
+            // isn't a known-multiplier character string at all (X.691
+            // §26.6: FROM constraints on it aren't PER-enforced), same
+            // exclusion build_member_type_descriptor_spec's own Sizeable
+            // branch already applies.
+            if (*bt != ast::BuiltinType::Utf8String)
+                row.has_from_alphabet = !extract_from_alphabet(m).empty();
         } else if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
             auto per_class = classify_typeref_for_per(*tr);
             row.ref_kind = per_class.kind;
@@ -1664,6 +1671,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::optional<MemberTagSpec> resolved_tag;
             TaggedMemberSpec::RefTargetKind ref_kind = TaggedMemberSpec::RefTargetKind::NotRef;
             IntStorageKind ref_storage_kind = IntStorageKind::S64;
+            bool has_from_alphabet = false;
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1688,9 +1696,12 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             IntStorageKind alt_storage_kind = IntStorageKind::S64;
             TaggedMemberSpec::RefTargetKind alt_ref_kind = TaggedMemberSpec::RefTargetKind::NotRef;
             IntStorageKind alt_ref_storage_kind = IntStorageKind::S64;
+            bool alt_has_from_alphabet = false;
             if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
                 mbuiltin = *bt;
                 if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
+                if (*bt != ast::BuiltinType::Utf8String)
+                    alt_has_from_alphabet = !extract_from_alphabet(*m).empty();
             } else if (auto* atr = std::get_if<ast::TypeRef>(&m->body)) {
                 auto per_class = classify_typeref_for_per(*atr);
                 alt_ref_kind = per_class.kind;
@@ -1698,7 +1709,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             }
             rows.push_back({ m->name, tdref, alt_type, is_explicit,
                              tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag,
-                             alt_ref_kind, alt_ref_storage_kind });
+                             alt_ref_kind, alt_ref_storage_kind, alt_has_from_alphabet });
             ++auto_tag_num;
           }
         }
@@ -1735,6 +1746,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.resolved_tag = r.resolved_tag;
             alt.ref_kind = r.ref_kind;
             alt.ref_storage_kind = r.ref_storage_kind;
+            alt.has_from_alphabet = r.has_from_alphabet;
             spec.alternatives.push_back(std::move(alt));
         }
 
