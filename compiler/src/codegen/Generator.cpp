@@ -458,6 +458,11 @@ static bool is_type_assignment(const ast::TypeDef& def) {
 ///        (type_descriptor_ref_for, below) renders it via
 ///        backend_.format_type_descriptor_ref.
 /// @see TypeDescriptorRefSpec (Backend.hpp) for the field-by-field contract.
+/// @note Its own TypeRef-resolution branch below overlaps with
+///       classify_typeref_for_per's resolve-and-check-is_sequence/
+///       is_set/is_choice/Enumerated step (same underlying classification,
+///       computed independently for a different purpose and variant set)
+///       — deliberately left unfactored; see that function's own doc.
 TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef& def) {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
@@ -1172,6 +1177,12 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
 // RefTargetKind's (Backend.hpp) for what's classified and why only
 // ENUMERATED/named-INTEGER targets are safe to resolve here — same
 // resolver-access rationale as classify_member_setter just above.
+// Overlaps with type_descriptor_ref_spec_for's own resolve-and-check-
+// is_sequence/is_set/is_choice/Enumerated step below (same underlying
+// classification, computed independently for a different purpose and a
+// different variant set — this one also cares about Integer, that one
+// doesn't). Deliberately left unfactored rather than sharing a helper —
+// see this function's own doc for why.
 Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRef& tr) const {
     using BT = ast::BuiltinType;
     auto resolved = resolver_.resolve_ref(tr);
