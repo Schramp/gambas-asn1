@@ -34,6 +34,34 @@ pub trait PerValue {
     }
 }
 
+/// `Box<T>` forwarding — mirrors `asn1cpp_ber::value::Asn1Value`'s own
+/// identical blanket impl exactly, and for the same reason: the heap
+/// indirection `RustBackend` gives a self-referential/mutually-recursive
+/// member (`SequenceMemberSpec::member_type_in_cycle`, `RustBackend.cpp`;
+/// Rust gives a plain field no indirection at all unlike C++'s
+/// pointer-by-default `unique_ptr`, so a genuine recursive ASN.1 type chain
+/// needs one explicitly or the struct has infinite size) is purely a Rust
+/// ownership/storage concern — the PER wire encoding is identical to `T`
+/// itself, so both methods just forward through the box. Without this, a
+/// `Scalar`-access boxed member's `get: |v| &v.field` (field type
+/// `Option<Box<T>>` or bare `Box<T>`) fails to coerce to `&dyn PerValue`,
+/// since `Box<T>` doesn't implement `PerValue` on its own even when `T`
+/// does — Rust's unsizing coercion to a trait object needs the concrete
+/// type itself to implement the trait, not merely something it derefs to.
+impl<T: PerValue> PerValue for Box<T> {
+    fn is_present(&self) -> bool {
+        (**self).is_present()
+    }
+
+    fn per_encode(&self, w: &mut Writer) {
+        (**self).per_encode(w)
+    }
+
+    fn per_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        (**self).per_decode_into(r)
+    }
+}
+
 /// OPTIONAL member support. An `Option<V>` field (what codegen emits for an
 /// OPTIONAL member, matching `asn1cpp_ber`'s own convention so a struct's
 /// fields serve both BER and PER encoding without a second parallel
