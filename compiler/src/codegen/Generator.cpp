@@ -649,22 +649,14 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
         shape.builtin = *bt;
         if (*bt == ast::BuiltinType::Integer) {
             shape.storage_kind = classify_integer_storage(elem);
-            // Reuse build_member_type_descriptor_spec's own Integer branch
-            // (same range-bit computation as IntegerSpec) rather than
-            // recomputing it a third time; parent_cname/mname are unused
-            // (only feed spec.tname, which this call site never reads).
-            auto d = build_member_type_descriptor_spec(elem, "", "elem");
-            if (d && d->kind == MemberTypeDescriptorSpec::Kind::Integer) {
-                shape.has_constraint = true;
-                shape.extensible = d->extensible;
-                shape.semi_constrained = d->semi_constrained;
-                shape.hi_is_large = d->hi_is_large;
-                shape.range_bits = d->range_bits;
-                shape.lower_s64 = d->lower_s64;
-                shape.upper_s64 = d->upper_s64;
-                shape.lower_u64 = d->lower_u64;
-                shape.upper_u64 = d->upper_u64;
-            }
+            // Real identifier, not re-derived data: emit_seq_of_definition
+            // already ran (generate_inline_types always precedes the
+            // containing SEQUENCE's own member spec) and, if this element
+            // carries a real constraint, recorded the exact tname its own
+            // emit_member_type_descriptor call used, keyed by this same
+            // AST node's address.
+            auto it = seq_of_elem_constraint_tname_.find(&elem);
+            if (it != seq_of_elem_constraint_tname_.end()) shape.constraint_tname = it->second;
         }
     }
     return shape;
@@ -2223,6 +2215,15 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     // Writes directly into `os` (== session.buffer(definition_extension())),
     // before the SeqOfSpec it's referenced from is emitted later.
     spec.elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", session);
+    // Record the real tname the call above used (if it built a real
+    // Integer-kind spec) so build_elem_shape can look it up by this same
+    // element node's identity later, instead of any backend re-deriving
+    // the naming convention independently (ElemShape::constraint_tname's
+    // own doc).
+    if (auto d = build_member_type_descriptor_spec(elem_node, cname, "elem");
+        d && d->kind == MemberTypeDescriptorSpec::Kind::Integer) {
+        seq_of_elem_constraint_tname_[&elem_node] = d->tname;
+    }
 
     // X.693 §12: declared element identifier overrides the XER tag at the use site.
     // Exception: asn1c uses <NULL/> for NULL-typed elements regardless of declared name.
