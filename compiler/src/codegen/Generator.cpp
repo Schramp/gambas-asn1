@@ -982,7 +982,7 @@ std::string Generator::emit_member_type_descriptor(
 ///         descriptor — caller falls back to type_descriptor_ref_for().
 /// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
 std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_spec(
-    const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname)
+    const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname) const
 {
     using BT = ast::BuiltinType;
     auto* bt = std::get_if<BT>(&m.body);
@@ -2205,6 +2205,21 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     // Writes directly into `os` (== session.buffer(definition_extension())),
     // before the SeqOfSpec it's referenced from is emitted later.
     spec.elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", session);
+    // Real bounds for RustBackend's own always-wired element Constraints
+    // table (SeqOfSpec's own doc) — CppBackend never reads these, elem_ref
+    // above already gives it a valid same-file reference either way.
+    if (auto d = build_member_type_descriptor_spec(elem_node, cname, "elem");
+        d && d->kind == MemberTypeDescriptorSpec::Kind::Integer) {
+        spec.has_elem_constraint = true;
+        spec.elem_extensible = d->extensible;
+        spec.elem_semi_constrained = d->semi_constrained;
+        spec.elem_hi_is_large = d->hi_is_large;
+        spec.elem_range_bits = d->range_bits;
+        spec.elem_lower_s64 = d->lower_s64;
+        spec.elem_upper_s64 = d->upper_s64;
+        spec.elem_lower_u64 = d->lower_u64;
+        spec.elem_upper_u64 = d->upper_u64;
+    }
 
     // X.693 §12: declared element identifier overrides the XER tag at the use site.
     // Exception: asn1c uses <NULL/> for NULL-typed elements regardless of declared name.

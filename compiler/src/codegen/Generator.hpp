@@ -341,7 +341,7 @@ private:
     /// @return nullopt when the member has no inline constraint worth a
     ///         dedicated descriptor — caller falls back to type_descriptor_ref_for().
     std::optional<MemberTypeDescriptorSpec> build_member_type_descriptor_spec(
-        const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname);
+        const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname) const;
     /// @brief Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
     /// @param tag         The member's (possibly absent) tag override.
     /// @param constructed True if the encoding form is constructed, not primitive.
