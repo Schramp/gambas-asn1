@@ -341,7 +341,7 @@ private:
     /// @return nullopt when the member has no inline constraint worth a
     ///         dedicated descriptor — caller falls back to type_descriptor_ref_for().
     std::optional<MemberTypeDescriptorSpec> build_member_type_descriptor_spec(
-        const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname);
+        const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname) const;
     /// @brief Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
     /// @param tag         The member's (possibly absent) tag override.
     /// @param constructed True if the encoding form is constructed, not primitive.
@@ -435,6 +435,16 @@ private:
 
     // Choose INTEGER storage class from constraint analysis.
     IntStorageKind classify_integer_storage(const ast::TypeDef& def) const;
+
+    // Classifies a TypeRef member/alternative's resolved target for PER
+    // codegen purposes — see TaggedMemberSpec::RefTargetKind's own doc
+    // (Backend.hpp) for what each case means and why only these two are
+    // safe to resolve without tracking the target's own coverage state.
+    struct TypeRefPerClass {
+        TaggedMemberSpec::RefTargetKind kind = TaggedMemberSpec::RefTargetKind::NotRef;
+        IntStorageKind storage_kind = IntStorageKind::S64;
+    };
+    TypeRefPerClass classify_typeref_for_per(const ast::TypeRef& tr) const;
 
     // Recursive shape of a SEQUENCE OF/SET OF element — see ElemShape's
     // own doc (Backend.hpp) for why this can't be a flat field.

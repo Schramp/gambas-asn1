@@ -1424,6 +1424,14 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(ber_runtime_cargo_test PROPERTIES TIMEOUT 120 LABELS "rust")
 endif()
 
+# ---- rust-runtime/per cargo test --------------------------------------------
+if(WITH_PER_RUNTIME_TEST)
+    add_test(NAME per_runtime_cargo_test
+        COMMAND ${CARGO_EXECUTABLE} test --manifest-path
+                ${CMAKE_SOURCE_DIR}/rust-runtime/per/Cargo.toml)
+    set_tests_properties(per_runtime_cargo_test PROPERTIES TIMEOUT 120 LABELS "rust")
+endif()
+
 # ---- codegen -> asn1cpp-ber roundtrip (gambas-asn1#219) --------------------
 #   Real asn1cpp --target=rust output (Point, from simple_seq.asn1) compiled
 #   and roundtrip-tested against the real asn1cpp-ber crate — not a hand-

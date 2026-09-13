@@ -35,6 +35,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]  # asn1cpp/
 RUST_RUNTIME_BER = REPO / "rust-runtime/ber"
+RUST_RUNTIME_PER = REPO / "rust-runtime/per"
 TEST_DIR = REPO / "tests/asn1"
 
 CARGO_TOML_TEMPLATE = """\
@@ -49,6 +50,7 @@ path = "src/lib.rs"
 
 [dependencies]
 asn1cpp-ber = {{ path = "{rust_runtime_ber}" }}
+asn1cpp-per = {{ path = "{rust_runtime_per}" }}
 """
 
 
@@ -114,6 +116,7 @@ def validate_one(asncpp: Path, cargo: str, asn1_file: Path, verbose: bool) -> tu
             CARGO_TOML_TEMPLATE.format(
                 name=asn1_file.stem.lower().replace("_", "-"),
                 rust_runtime_ber=RUST_RUNTIME_BER,
+                rust_runtime_per=RUST_RUNTIME_PER,
             )
         )
 
