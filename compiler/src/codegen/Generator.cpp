@@ -647,17 +647,7 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
     // uses one level up).
     if (auto* bt = std::get_if<ast::BuiltinType>(&elem.body)) {
         shape.builtin = *bt;
-        if (*bt == ast::BuiltinType::Integer) {
-            shape.storage_kind = classify_integer_storage(elem);
-            // Real identifier, not re-derived data: emit_seq_of_definition
-            // already ran (generate_inline_types always precedes the
-            // containing SEQUENCE's own member spec) and, if this element
-            // carries a real constraint, recorded the exact tname its own
-            // emit_member_type_descriptor call used, keyed by this same
-            // AST node's address.
-            auto it = seq_of_elem_constraint_tname_.find(&elem);
-            if (it != seq_of_elem_constraint_tname_.end()) shape.constraint_tname = it->second;
-        }
+        if (*bt == ast::BuiltinType::Integer) shape.storage_kind = classify_integer_storage(elem);
     }
     return shape;
 }
@@ -2215,14 +2205,20 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     // Writes directly into `os` (== session.buffer(definition_extension())),
     // before the SeqOfSpec it's referenced from is emitted later.
     spec.elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", session);
-    // Record the real tname the call above used (if it built a real
-    // Integer-kind spec) so build_elem_shape can look it up by this same
-    // element node's identity later, instead of any backend re-deriving
-    // the naming convention independently (ElemShape::constraint_tname's
-    // own doc).
+    // Real bounds for RustBackend's own always-wired element Constraints
+    // table (SeqOfSpec's own doc) — CppBackend never reads these, elem_ref
+    // above already gives it a valid same-file reference either way.
     if (auto d = build_member_type_descriptor_spec(elem_node, cname, "elem");
         d && d->kind == MemberTypeDescriptorSpec::Kind::Integer) {
-        seq_of_elem_constraint_tname_[&elem_node] = d->tname;
+        spec.has_elem_constraint = true;
+        spec.elem_extensible = d->extensible;
+        spec.elem_semi_constrained = d->semi_constrained;
+        spec.elem_hi_is_large = d->hi_is_large;
+        spec.elem_range_bits = d->range_bits;
+        spec.elem_lower_s64 = d->lower_s64;
+        spec.elem_upper_s64 = d->upper_s64;
+        spec.elem_lower_u64 = d->lower_u64;
+        spec.elem_upper_u64 = d->upper_u64;
     }
 
     // X.693 §12: declared element identifier overrides the XER tag at the use site.
