@@ -649,11 +649,22 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
         shape.builtin = *bt;
         if (*bt == ast::BuiltinType::Integer) {
             shape.storage_kind = classify_integer_storage(elem);
-            // Same precise "does this element have a real value range"
-            // check build_member_type_descriptor_spec's own Integer branch
-            // uses (extract_integer_range(m).has_value) — not a naming
-            // context it needs (parent_cname/mname), just this fact.
-            shape.has_constraint = extract_integer_range(elem).has_value;
+            // Reuse build_member_type_descriptor_spec's own Integer branch
+            // (same range-bit computation as IntegerSpec) rather than
+            // recomputing it a third time; parent_cname/mname are unused
+            // (only feed spec.tname, which this call site never reads).
+            auto d = build_member_type_descriptor_spec(elem, "", "elem");
+            if (d && d->kind == MemberTypeDescriptorSpec::Kind::Integer) {
+                shape.has_constraint = true;
+                shape.extensible = d->extensible;
+                shape.semi_constrained = d->semi_constrained;
+                shape.hi_is_large = d->hi_is_large;
+                shape.range_bits = d->range_bits;
+                shape.lower_s64 = d->lower_s64;
+                shape.upper_s64 = d->upper_s64;
+                shape.lower_u64 = d->lower_u64;
+                shape.upper_u64 = d->upper_u64;
+            }
         }
     }
     return shape;
@@ -989,7 +1000,7 @@ std::string Generator::emit_member_type_descriptor(
 ///         descriptor — caller falls back to type_descriptor_ref_for().
 /// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
 std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_spec(
-    const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname)
+    const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname) const
 {
     using BT = ast::BuiltinType;
     auto* bt = std::get_if<BT>(&m.body);
