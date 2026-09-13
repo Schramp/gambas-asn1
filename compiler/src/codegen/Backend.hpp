@@ -375,6 +375,22 @@ struct SeqOfSpec : TaggedTypeSpec {
                                               // EXTENSIBLE for a SEQUENCE OF/SET OF's own SIZE constraint.
     std::optional<std::string> elem_xer_name; // X.693 §12: element's declared identifier, if any
     bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
+
+    // Element's own INTEGER value range (X.680 §19), when the element is a
+    // direct builtin INTEGER — same fields/meaning as IntegerSpec's own
+    // constraint block. has_elem_constraint=false -> element is genuinely
+    // unconstrained; RustBackend still always wires a Constraints table for
+    // it (flags=0), the same "always wire, real bounds or not" convention
+    // already used for has_size_constraint/range_bits/size_lower/size_upper
+    // above. CppBackend needs none of this: elem_ref already carries a
+    // valid same-file reference either way.
+    bool     has_elem_constraint = false;
+    bool     elem_extensible = false;
+    bool     elem_semi_constrained = false;
+    bool     elem_hi_is_large = false;
+    int      elem_range_bits = 0;
+    int64_t  elem_lower_s64 = 0, elem_upper_s64 = 0;
+    uint64_t elem_lower_u64 = 0, elem_upper_u64 = 0;
 };
 
 /// @brief Backend-agnostic tag-bearing fields shared by every construct that

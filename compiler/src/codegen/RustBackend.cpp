@@ -748,14 +748,14 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
             int flags = (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0) |
                         (semi ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED);
             os << std::format(
-                "static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
+                "pub static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
                 "    flags: {}, lower_bound: {}, upper_bound: {}, lower_u64: 0, upper_u64: 0, size_lower: 0, size_upper: 0, encode_table: None,\n"
                 "}};\n\n",
                 cname, flags, spec.lower_s64, spec.upper_s64);
             int per_flags = (semi ? 2 /* SEMI_CONSTRAINED */ : 1 /* CONSTRAINED */) |
                             (spec.extensible ? 4 /* EXTENSIBLE */ : 0);
             os << std::format(
-                "static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
+                "pub static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
                 "    flags: {}, range_bits: {}, lower_bound: {}, upper_bound: {}, "
                 "lower_u64: 0u64, upper_u64: 0u64, size_range_bits: 0, size_lower: 0, size_upper: 0,\n"
                 "}};\n\n",
@@ -764,14 +764,14 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
             int flags = (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0) |
                         (spec.semi_constrained ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED);
             os << std::format(
-                "static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
+                "pub static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
                 "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: {}u64, upper_u64: {}u64, size_lower: 0, size_upper: 0, encode_table: None,\n"
                 "}};\n\n",
                 cname, flags, spec.lower_u64, spec.upper_u64);
             int per_flags = (spec.semi_constrained ? 2 /* SEMI_CONSTRAINED */ : 1 /* CONSTRAINED */) |
                             (spec.extensible ? 4 /* EXTENSIBLE */ : 0);
             os << std::format(
-                "static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
+                "pub static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
                 "    flags: {}, range_bits: {}, lower_bound: 0, upper_bound: 0, "
                 "lower_u64: {}u64, upper_u64: {}u64, size_range_bits: 0, size_lower: 0, size_upper: 0,\n"
                 "}};\n\n",
@@ -831,7 +831,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         encode_table_expr = std::format("Some(&{})", enc_ident);
     }
     os << std::format(
-        "static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
+        "pub static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
         "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: {}, size_upper: {}, encode_table: {},\n"
         "}};\n\n",
         cname, flags, spec.size_lower, size_upper, encode_table_expr);
@@ -852,7 +852,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
                         ? (8 /* SIZE_CONSTRAINED */ | (spec.extensible ? 4 /* EXTENSIBLE */ : 0))
                         : 0);
     os << std::format(
-        "static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
+        "pub static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
         "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0u64, upper_u64: 0u64, "
         "size_range_bits: {}, size_lower: {}, size_upper: {},\n"
         "}};\n\n",
@@ -914,6 +914,44 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
         "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: {}, size_upper: {}, encode_table: None,\n"
         "}};\n\n",
         cname, flags, spec.size_lower, size_upper);
+
+    // PER leg — same table shape as every other {cname}_PER static in this
+    // file (Integer/Sizeable member constraints): the collection's own
+    // SIZE constraint (X.691 §19/§20 combined with §10.9), read directly
+    // by a covered SEQUENCE OF/SET OF member's own Constrained closure
+    // (emit_sequence_definition) via this type's cross-module path — same
+    // "always wire, real bounds or not" convention as {cname} above.
+    std::string per_cname = std::format("{}_PER", cname);
+    int per_flags = spec.has_size_constraint
+        ? (8 /* SIZE_CONSTRAINED */ | (spec.extensible ? 4 /* EXTENSIBLE */ : 0))
+        : 0;
+    os << std::format(
+        "pub static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
+        "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0u64, upper_u64: 0u64, "
+        "size_range_bits: {}, size_lower: {}, size_upper: {},\n"
+        "}};\n\n",
+        per_cname, per_flags, spec.range_bits, spec.size_lower, size_upper);
+
+    // Element's own INTEGER value range (X.680 §19) — a covered SEQUENCE
+    // OF/SET OF INTEGER member's own per-element encode/decode
+    // (emit_sequence_definition) always calls integer::encode_int/decode_int
+    // against ASN_TYP_{TYPE}_ELEM_CONSTRAINTS_PER, never a different
+    // function for the unconstrained case, so that reference is a pure
+    // function of this type's own name alone — no per-element signal needs
+    // to travel back to the containing SEQUENCE's own spec at all. When the
+    // element genuinely has no constraint, emit the flags: 0 fallback under
+    // that exact name here; when it does, `emit_member_type_descriptor`
+    // (called just above for `elem_ref`) already emitted the real static
+    // under this same deterministic name — emitting it again here would be
+    // a duplicate definition.
+    if (!spec.has_elem_constraint) {
+        os << std::format(
+            "pub static ASN_TYP_{0}_ELEM_CONSTRAINTS_PER: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
+            "    flags: 0, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0u64, upper_u64: 0u64, "
+            "size_range_bits: 0, size_lower: 0, size_upper: 0,\n"
+            "}};\n\n",
+            to_screaming_snake_case(spec.type_name));
+    }
 
     std::string natural_tag = std::format("asn1cpp_ber::sequence::{}", spec.is_set_of ? "SET_TAG" : "SEQUENCE_TAG");
     // Honor a top-level [n] IMPLICIT/EXPLICIT tag on this type assignment
@@ -1263,7 +1301,20 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // module uses `AUTOMATIC TAGS` throughout, which would otherwise
     // exclude nearly every member in the schema.
     auto per_member_covered = [](const SequenceMemberSpec& m) -> bool {
-        if (m.seq_of_kind != SeqOfKind::None) return false;
+        if (m.seq_of_kind != SeqOfKind::None) {
+            // A direct builtin INTEGER element (no nesting), constrained
+            // or not — either way the promoted synthetic type's own
+            // ASN_TYP_{SYNTH}_ELEM_CONSTRAINTS_PER static (always wired,
+            // see emit_seq_of_definition's own doc) carries the real bounds
+            // or a flags: 0 sentinel, so this branch doesn't need to know
+            // which. The collection's own SIZE constraint is unaffected
+            // either way — that's always fully known via the promoted
+            // synthetic type's own {SYNTH}_CONSTRAINTS_PER.
+            return m.elem_shape.kind == SeqOfKind::None && m.elem_shape.builtin.has_value() &&
+                   *m.elem_shape.builtin == ast::BuiltinType::Integer &&
+                   (m.elem_shape.storage_kind == IntStorageKind::S64 ||
+                    m.elem_shape.storage_kind == IntStorageKind::U64);
+        }
         if (m.mbuiltin) {
             if (*m.mbuiltin == ast::BuiltinType::Integer)
                 return m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64;
@@ -1445,6 +1496,62 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     per_members_os << std::format(
                         "        access: asn1cpp_per::sequence::MemberAccess::Unsupported {{ reason: \"{}\" }},\n",
                         per_stub_reason(m));
+                } else if (m.seq_of_kind != SeqOfKind::None) {
+                    // Direct builtin INTEGER element, constrained or not
+                    // (the only shape `per_member_covered` accepts here) —
+                    // a manual size-field + per-element loop, not
+                    // `asn1cpp_per::seq_of`'s generic `T: PerValue` helpers:
+                    // a bare i64/u64 element has no PerValue impl of its
+                    // own (same shared-native-type reason INTEGER members
+                    // need Constrained rather than Scalar generally), so
+                    // there's no `T` to be generic over here. The
+                    // collection's own SIZE constraint (if any) still
+                    // applies, via the promoted synthetic type's own
+                    // {SYNTH}_CONSTRAINTS_PER — the element's own value-range
+                    // constraint (if any) is a separate, always-wired table
+                    // the promoted type unconditionally emits under this
+                    // same deterministic name (RustBackend::emit_seq_of_
+                    // definition's own doc), real bounds or flags: 0 either
+                    // way — no per-element signal needs to reach this row at
+                    // all, so `encode_int`/`decode_int` (never a separate
+                    // "unconstrained" function) is always the right call.
+                    std::string synth = synthetic_name(spec.type_name, m.asn1_name);
+                    std::string per_cname = std::format("crate::{}::{}_CONSTRAINTS_PER",
+                                                         to_snake_case(synth), to_screaming_snake_case(synth));
+                    std::string elem_cname = std::format("crate::{}::ASN_TYP_{}_ELEM_CONSTRAINTS_PER",
+                                                          to_snake_case(synth), to_screaming_snake_case(synth));
+                    const char* wrapper = m.seq_of_kind == SeqOfKind::SeqOf ? "SeqOf" : "SetOf";
+                    std::string field = m.optional ? std::format("v.{}.as_ref().unwrap()", m.mname)
+                                                    : std::format("v.{}", m.mname);
+                    std::string field_mut = m.optional
+                        ? std::format("v.{} = Some(asn1cpp_ber::sequence::{}(items))", m.mname, wrapper)
+                        : std::format("v.{} = asn1cpp_ber::sequence::{}(items)", m.mname, wrapper);
+                    const char* fn_ns = m.elem_shape.storage_kind == IntStorageKind::S64 ? "integer" : "uinteger";
+                    const char* fn_ty = m.elem_shape.storage_kind == IntStorageKind::S64 ? "encode_int" : "encode_uint";
+                    const char* fn_dec = m.elem_shape.storage_kind == IntStorageKind::S64 ? "decode_int" : "decode_uint";
+                    // Always the constraint-aware call, against the always-
+                    // wired static above — encode_int/decode_int already
+                    // fall through to the unconstrained wire shape at
+                    // runtime when flags == 0 (integer.rs's own is_constrained/
+                    // is_semi_constrained checks), so there is no separate
+                    // "unconstrained" function to choose between here.
+                    std::string encode_elem = std::format("asn1cpp_per::{}::{}(w, &{}, *x)", fn_ns, fn_ty, elem_cname);
+                    std::string decode_elem = std::format("asn1cpp_per::{}::{}(r, &{})?", fn_ns, fn_dec, elem_cname);
+                    per_members_os << std::format(
+                        "        access: asn1cpp_per::sequence::MemberAccess::Constrained {{\n"
+                        "            encode: |v, w| {{\n"
+                        "                asn1cpp_per::length::encode_size_field(w, &{0}, {1}.len());\n"
+                        "                for x in {1}.iter() {{ {2}; }}\n"
+                        "            }},\n"
+                        "            decode: |v, r| {{\n"
+                        "                let count = asn1cpp_per::length::decode_size_field(r, &{0})?;\n"
+                        "                let mut items = Vec::with_capacity(count);\n"
+                        "                for _ in 0..count {{ items.push({3}); }}\n"
+                        "                {4};\n"
+                        "                Ok(())\n"
+                        "            }},\n"
+                        "        }},\n",
+                        per_cname, field, encode_elem, decode_elem, field_mut);
                 } else if (!m.mbuiltin && (m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
                                             m.ref_kind == SequenceMemberSpec::RefTargetKind::Other)) {
                     // TypeRef to ENUMERATED, or to another named SEQUENCE/
