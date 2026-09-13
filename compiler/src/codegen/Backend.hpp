@@ -197,20 +197,19 @@ struct ElemShape {
     std::optional<ast::BuiltinType> builtin;           // meaningful when kind == None
     IntStorageKind storage_kind = IntStorageKind::S64;  // meaningful when builtin == Integer
     std::shared_ptr<ElemShape> nested;  // meaningful when kind != None; recurses to unbounded depth
-    // True when Generator::emit_seq_of_definition's own
-    // emit_member_type_descriptor(elem_node, ...) call built a real
-    // MemberTypeDescriptorSpec for this element (X.680 §19 INTEGER value
-    // range, or a sizeable type's own SIZE/FROM) — the exact same
-    // "did build_member_type_descriptor_spec return a real spec" fact
-    // that call's own tdref result already encodes (a leading "&asn_TYP_"
-    // vs a plain fallback reference), just surfaced as a plain bool
-    // instead of parsed back out of formatted text. Meaningful only when
-    // kind == None && builtin has a value. When true, the element's own
-    // {NAME}_CONSTRAINTS_PER static (built under the same
-    // "asn_TYP_{seqof_type}_elem" deterministic name
-    // emit_member_type_descriptor always uses) carries its real bounds;
-    // when false, the element is genuinely unconstrained.
-    bool has_constraint = false;
+
+    // INTEGER value range (X.680 §19), meaningful only when kind == None &&
+    // builtin == Integer. Mirrors IntegerSpec's own constraint fields exactly
+    // (same source computation, via build_member_type_descriptor_spec's
+    // Integer branch) so a backend can emit the real bounds as an inline
+    // Constraints literal — never a name to a separately-emitted static.
+    bool     has_constraint = false;  // false -> unconstrained; fields below meaningless
+    bool     extensible = false;
+    bool     semi_constrained = false;  // true -> upper endpoint was MAX; no upper cap
+    bool     hi_is_large = false;       // true -> upper was a positive literal > INT64_MAX
+    int      range_bits = 0;            // -1 when semi_constrained
+    int64_t  lower_s64 = 0, upper_s64 = 0;
+    uint64_t lower_u64 = 0, upper_u64 = 0;
 };
 
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —

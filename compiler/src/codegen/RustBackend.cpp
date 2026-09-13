@@ -1487,11 +1487,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // there's no `T` to be generic over here. The
                     // collection's own SIZE constraint (if any) still
                     // applies, via the promoted synthetic type's own
-                    // {SYNTH}_CONSTRAINTS_PER — a separate table from the
-                    // element's own {SYNTH}_elem_CONSTRAINTS_PER below
-                    // (`ElemShape::has_constraint`'s own doc), since
-                    // Generator emits both from the same underlying
-                    // machinery under different deterministic names.
+                    // {SYNTH}_CONSTRAINTS_PER — the element's own value-range
+                    // constraint (if any, `ElemShape`'s own doc) is a
+                    // separate, per-element fact, emitted below as an inline
+                    // literal rather than a reference to another static.
                     std::string synth = synthetic_name(spec.type_name, m.asn1_name);
                     std::string per_cname = std::format("crate::{}::{}_CONSTRAINTS_PER",
                                                          to_snake_case(synth), to_screaming_snake_case(synth));
@@ -1506,16 +1505,24 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     const char* fn_dec = m.elem_shape.storage_kind == IntStorageKind::S64 ? "decode_int" : "decode_uint";
                     std::string encode_elem, decode_elem;
                     if (m.elem_shape.has_constraint) {
-                        // Real per-element Constraints — emitted by
-                        // emit_member_type_descriptor via emit_seq_of_
-                        // definition's own `emit_member_type_descriptor(
-                        // elem_node, cname, "elem", session)` call, under
-                        // this exact deterministic name.
-                        std::string elem_cname = std::format("crate::{}::{}_CONSTRAINTS_PER",
-                            to_snake_case(synth),
-                            to_screaming_snake_case(std::format("asn_TYP_{}_elem", synth)));
-                        encode_elem = std::format("asn1cpp_per::{}::{}(w, &{}, *x)", fn_ns, fn_ty, elem_cname);
-                        decode_elem = std::format("asn1cpp_per::{}::{}(r, &{})?", fn_ns, fn_dec, elem_cname);
+                        // Real per-element bounds, carried directly on
+                        // ElemShape (Generator::build_elem_shape, same
+                        // computation as IntegerSpec's own constraint
+                        // fields) — emitted here as an inline literal, same
+                        // pattern as the unconstrained fallback below, so
+                        // there is no separately-emitted static to name or
+                        // cross-module path to reconstruct.
+                        int elem_flags = (m.elem_shape.semi_constrained || m.elem_shape.hi_is_large
+                                              ? 2 /* SEMI_CONSTRAINED */ : 1 /* CONSTRAINED */)
+                                       | (m.elem_shape.extensible ? 4 /* EXTENSIBLE */ : 0);
+                        std::string elem_lit = std::format(
+                            "asn1cpp_per::Constraints {{ flags: {}, range_bits: {}, lower_bound: {}, "
+                            "upper_bound: {}, lower_u64: {}u64, upper_u64: {}u64, size_range_bits: 0, "
+                            "size_lower: 0, size_upper: 0 }}",
+                            elem_flags, std::max(m.elem_shape.range_bits, 0), m.elem_shape.lower_s64,
+                            m.elem_shape.upper_s64, m.elem_shape.lower_u64, m.elem_shape.upper_u64);
+                        encode_elem = std::format("asn1cpp_per::{}::{}(w, &{}, *x)", fn_ns, fn_ty, elem_lit);
+                        decode_elem = std::format("asn1cpp_per::{}::{}(r, &{})?", fn_ns, fn_dec, elem_lit);
                     } else {
                         std::string cast_in = m.elem_shape.storage_kind == IntStorageKind::U64 ? " as i64" : "";
                         std::string cast_out = m.elem_shape.storage_kind == IntStorageKind::U64 ? " as u64" : "";
