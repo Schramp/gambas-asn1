@@ -647,8 +647,14 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
     // uses one level up).
     if (auto* bt = std::get_if<ast::BuiltinType>(&elem.body)) {
         shape.builtin = *bt;
-        shape.has_constraint = !elem.constraints.empty();
-        if (*bt == ast::BuiltinType::Integer) shape.storage_kind = classify_integer_storage(elem);
+        if (*bt == ast::BuiltinType::Integer) {
+            shape.storage_kind = classify_integer_storage(elem);
+            // Same precise "does this element have a real value range"
+            // check build_member_type_descriptor_spec's own Integer branch
+            // uses (extract_integer_range(m).has_value) — not a naming
+            // context it needs (parent_cname/mname), just this fact.
+            shape.has_constraint = extract_integer_range(elem).has_value;
+        }
     }
     return shape;
 }

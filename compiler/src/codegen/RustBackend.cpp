@@ -748,14 +748,14 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
             int flags = (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0) |
                         (semi ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED);
             os << std::format(
-                "static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
+                "pub static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
                 "    flags: {}, lower_bound: {}, upper_bound: {}, lower_u64: 0, upper_u64: 0, size_lower: 0, size_upper: 0, encode_table: None,\n"
                 "}};\n\n",
                 cname, flags, spec.lower_s64, spec.upper_s64);
             int per_flags = (semi ? 2 /* SEMI_CONSTRAINED */ : 1 /* CONSTRAINED */) |
                             (spec.extensible ? 4 /* EXTENSIBLE */ : 0);
             os << std::format(
-                "static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
+                "pub static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
                 "    flags: {}, range_bits: {}, lower_bound: {}, upper_bound: {}, "
                 "lower_u64: 0u64, upper_u64: 0u64, size_range_bits: 0, size_lower: 0, size_upper: 0,\n"
                 "}};\n\n",
@@ -764,14 +764,14 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
             int flags = (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0) |
                         (spec.semi_constrained ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED);
             os << std::format(
-                "static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
+                "pub static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
                 "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: {}u64, upper_u64: {}u64, size_lower: 0, size_upper: 0, encode_table: None,\n"
                 "}};\n\n",
                 cname, flags, spec.lower_u64, spec.upper_u64);
             int per_flags = (spec.semi_constrained ? 2 /* SEMI_CONSTRAINED */ : 1 /* CONSTRAINED */) |
                             (spec.extensible ? 4 /* EXTENSIBLE */ : 0);
             os << std::format(
-                "static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
+                "pub static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
                 "    flags: {}, range_bits: {}, lower_bound: 0, upper_bound: 0, "
                 "lower_u64: {}u64, upper_u64: {}u64, size_range_bits: 0, size_lower: 0, size_upper: 0,\n"
                 "}};\n\n",
@@ -831,7 +831,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         encode_table_expr = std::format("Some(&{})", enc_ident);
     }
     os << std::format(
-        "static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
+        "pub static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
         "    flags: {}, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: {}, size_upper: {}, encode_table: {},\n"
         "}};\n\n",
         cname, flags, spec.size_lower, size_upper, encode_table_expr);
@@ -852,7 +852,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
                         ? (8 /* SIZE_CONSTRAINED */ | (spec.extensible ? 4 /* EXTENSIBLE */ : 0))
                         : 0);
     os << std::format(
-        "static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
+        "pub static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
         "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0u64, upper_u64: 0u64, "
         "size_range_bits: {}, size_lower: {}, size_upper: {},\n"
         "}};\n\n",
@@ -1281,18 +1281,17 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // exclude nearly every member in the schema.
     auto per_member_covered = [](const SequenceMemberSpec& m) -> bool {
         if (m.seq_of_kind != SeqOfKind::None) {
-            // Narrow first slice: a direct, genuinely unconstrained builtin
-            // INTEGER element (no nesting) — `ElemShape::has_constraint`
-            // is only a yes/no signal (its own doc, Backend.hpp), not
-            // extracted bounds, so an inline-constrained element
-            // (`OF INTEGER(0..15)`) can't be told apart from a
-            // differently-bounded one and is conservatively excluded
-            // rather than risking the wrong (too-wide) per-element bit
-            // width. The collection's own SIZE constraint is unaffected —
-            // that's always fully known via the promoted synthetic type's
-            // own {SYNTH}_CONSTRAINTS_PER (emit_seq_of_definition).
+            // A direct builtin INTEGER element (no nesting), constrained
+            // or not — `ElemShape::has_constraint` (its own doc,
+            // Backend.hpp) says which, and either way the real per-element
+            // Constraints (when true) or fully-unconstrained encoding
+            // (when false) is available; see the emission side below for
+            // exactly how each is reached. The collection's own SIZE
+            // constraint is unaffected either way — that's always fully
+            // known via the promoted synthetic type's own
+            // {SYNTH}_CONSTRAINTS_PER (emit_seq_of_definition).
             return m.elem_shape.kind == SeqOfKind::None && m.elem_shape.builtin.has_value() &&
-                   *m.elem_shape.builtin == ast::BuiltinType::Integer && !m.elem_shape.has_constraint &&
+                   *m.elem_shape.builtin == ast::BuiltinType::Integer &&
                    (m.elem_shape.storage_kind == IntStorageKind::S64 ||
                     m.elem_shape.storage_kind == IntStorageKind::U64);
         }
@@ -1478,9 +1477,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                         "        access: asn1cpp_per::sequence::MemberAccess::Unsupported {{ reason: \"{}\" }},\n",
                         per_stub_reason(m));
                 } else if (m.seq_of_kind != SeqOfKind::None) {
-                    // Genuinely unconstrained builtin INTEGER element (the
-                    // only shape `per_member_covered` accepts here) — a
-                    // manual size-field + per-element loop, not
+                    // Direct builtin INTEGER element, constrained or not
+                    // (the only shape `per_member_covered` accepts here) —
+                    // a manual size-field + per-element loop, not
                     // `asn1cpp_per::seq_of`'s generic `T: PerValue` helpers:
                     // a bare i64/u64 element has no PerValue impl of its
                     // own (same shared-native-type reason INTEGER members
@@ -1488,33 +1487,56 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // there's no `T` to be generic over here. The
                     // collection's own SIZE constraint (if any) still
                     // applies, via the promoted synthetic type's own
-                    // {SYNTH}_CONSTRAINTS_PER.
+                    // {SYNTH}_CONSTRAINTS_PER — a separate table from the
+                    // element's own {SYNTH}_elem_CONSTRAINTS_PER below
+                    // (`ElemShape::has_constraint`'s own doc), since
+                    // Generator emits both from the same underlying
+                    // machinery under different deterministic names.
                     std::string synth = synthetic_name(spec.type_name, m.asn1_name);
                     std::string per_cname = std::format("crate::{}::{}_CONSTRAINTS_PER",
                                                          to_snake_case(synth), to_screaming_snake_case(synth));
                     const char* wrapper = m.seq_of_kind == SeqOfKind::SeqOf ? "SeqOf" : "SetOf";
-                    std::string cast_in = m.elem_shape.storage_kind == IntStorageKind::U64 ? " as i64" : "";
-                    std::string cast_out = m.elem_shape.storage_kind == IntStorageKind::U64 ? " as u64" : "";
                     std::string field = m.optional ? std::format("v.{}.as_ref().unwrap()", m.mname)
                                                     : std::format("v.{}", m.mname);
                     std::string field_mut = m.optional
                         ? std::format("v.{} = Some(asn1cpp_ber::sequence::{}(items))", m.mname, wrapper)
                         : std::format("v.{} = asn1cpp_ber::sequence::{}(items)", m.mname, wrapper);
+                    const char* fn_ns = m.elem_shape.storage_kind == IntStorageKind::S64 ? "integer" : "uinteger";
+                    const char* fn_ty = m.elem_shape.storage_kind == IntStorageKind::S64 ? "encode_int" : "encode_uint";
+                    const char* fn_dec = m.elem_shape.storage_kind == IntStorageKind::S64 ? "decode_int" : "decode_uint";
+                    std::string encode_elem, decode_elem;
+                    if (m.elem_shape.has_constraint) {
+                        // Real per-element Constraints — emitted by
+                        // emit_member_type_descriptor via emit_seq_of_
+                        // definition's own `emit_member_type_descriptor(
+                        // elem_node, cname, "elem", session)` call, under
+                        // this exact deterministic name.
+                        std::string elem_cname = std::format("crate::{}::{}_CONSTRAINTS_PER",
+                            to_snake_case(synth),
+                            to_screaming_snake_case(std::format("asn_TYP_{}_elem", synth)));
+                        encode_elem = std::format("asn1cpp_per::{}::{}(w, &{}, *x)", fn_ns, fn_ty, elem_cname);
+                        decode_elem = std::format("asn1cpp_per::{}::{}(r, &{})?", fn_ns, fn_dec, elem_cname);
+                    } else {
+                        std::string cast_in = m.elem_shape.storage_kind == IntStorageKind::U64 ? " as i64" : "";
+                        std::string cast_out = m.elem_shape.storage_kind == IntStorageKind::U64 ? " as u64" : "";
+                        encode_elem = std::format("asn1cpp_per::integer::encode_unconstrained_int(w, *x{})", cast_in);
+                        decode_elem = std::format("asn1cpp_per::integer::decode_unconstrained_int(r)?{}", cast_out);
+                    }
                     per_members_os << std::format(
                         "        access: asn1cpp_per::sequence::MemberAccess::Constrained {{\n"
                         "            encode: |v, w| {{\n"
                         "                asn1cpp_per::length::encode_size_field(w, &{0}, {1}.len());\n"
-                        "                for x in {1}.iter() {{ asn1cpp_per::integer::encode_unconstrained_int(w, *x{2}); }}\n"
+                        "                for x in {1}.iter() {{ {2}; }}\n"
                         "            }},\n"
                         "            decode: |v, r| {{\n"
                         "                let count = asn1cpp_per::length::decode_size_field(r, &{0})?;\n"
                         "                let mut items = Vec::with_capacity(count);\n"
-                        "                for _ in 0..count {{ items.push(asn1cpp_per::integer::decode_unconstrained_int(r)?{3}); }}\n"
+                        "                for _ in 0..count {{ items.push({3}); }}\n"
                         "                {4};\n"
                         "                Ok(())\n"
                         "            }},\n"
                         "        }},\n",
-                        per_cname, field, cast_in, cast_out, field_mut);
+                        per_cname, field, encode_elem, decode_elem, field_mut);
                 } else if (!m.mbuiltin && (m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
                                             m.ref_kind == SequenceMemberSpec::RefTargetKind::Other)) {
                     // TypeRef to ENUMERATED, or to another named SEQUENCE/
