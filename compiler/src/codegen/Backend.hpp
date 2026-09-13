@@ -197,16 +197,19 @@ struct ElemShape {
     std::optional<ast::BuiltinType> builtin;           // meaningful when kind == None
     IntStorageKind storage_kind = IntStorageKind::S64;  // meaningful when builtin == Integer
     std::shared_ptr<ElemShape> nested;  // meaningful when kind != None; recurses to unbounded depth
-    // True when the element itself carries any X.680 constraint (a value
-    // range on an INTEGER element, a SIZE/FROM on a sizeable one, etc.) —
-    // meaningful only when kind == None && builtin has a value. Not the
-    // constraint's actual bounds (no PER-shaped Constraints data is
-    // extracted for an element the way IntegerSpec/MemberTypeDescriptorSpec
-    // extract one for a named/inline-constrained member — this is only
-    // enough to distinguish "genuinely unconstrained, safe to encode as
-    // such" from "has bounds this backend doesn't yet thread through",
-    // used by RustBackend's own PER coverage gate for a SEQUENCE OF/SET OF
-    // member's element).
+    // True when Generator::emit_seq_of_definition's own
+    // emit_member_type_descriptor(elem_node, ...) call built a real
+    // MemberTypeDescriptorSpec for this element (X.680 §19 INTEGER value
+    // range, or a sizeable type's own SIZE/FROM) — the exact same
+    // "did build_member_type_descriptor_spec return a real spec" fact
+    // that call's own tdref result already encodes (a leading "&asn_TYP_"
+    // vs a plain fallback reference), just surfaced as a plain bool
+    // instead of parsed back out of formatted text. Meaningful only when
+    // kind == None && builtin has a value. When true, the element's own
+    // {NAME}_CONSTRAINTS_PER static (built under the same
+    // "asn_TYP_{seqof_type}_elem" deterministic name
+    // emit_member_type_descriptor always uses) carries its real bounds;
+    // when false, the element is genuinely unconstrained.
     bool has_constraint = false;
 };
 
