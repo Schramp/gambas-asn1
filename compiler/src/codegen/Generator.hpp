@@ -100,16 +100,6 @@ class Generator {
     // OF/SET OF needs a *free* asn_DEF_X reference, not a class-scoped
     // X::asn_DEF one).
     std::set<std::string>   seq_of_synthetic_names_;
-    // AST identity -> the real tname emit_member_type_descriptor gave a
-    // SEQUENCE OF/SET OF element's own inline-constrained TypeDescriptor
-    // (populated by emit_seq_of_definition, consulted by build_elem_shape).
-    // Keyed by the element TypeDefPtr's address, not a re-derived name —
-    // the element node is the same shared_ptr target both call sites see
-    // (both read it off the same ast::SequenceOfType/SetOfType::element),
-    // and generate_inline_types (which reaches emit_seq_of_definition)
-    // always runs before the containing SEQUENCE's own member spec is
-    // built, so the entry exists by the time build_elem_shape looks it up.
-    std::unordered_map<const ast::TypeDef*, std::string> seq_of_elem_constraint_tname_;
     std::set<std::string>   collision_types_;   // ASN.1 type names defined in >1 module
     std::string             current_module_;    // module being generated right now
     std::string             current_type_;      // C++ name of type currently being generated
