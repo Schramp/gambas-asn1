@@ -1282,14 +1282,13 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     auto per_member_covered = [](const SequenceMemberSpec& m) -> bool {
         if (m.seq_of_kind != SeqOfKind::None) {
             // A direct builtin INTEGER element (no nesting), constrained
-            // or not — `ElemShape::has_constraint` (its own doc,
-            // Backend.hpp) says which, and either way the real per-element
-            // Constraints (when true) or fully-unconstrained encoding
-            // (when false) is available; see the emission side below for
-            // exactly how each is reached. The collection's own SIZE
-            // constraint is unaffected either way — that's always fully
-            // known via the promoted synthetic type's own
-            // {SYNTH}_CONSTRAINTS_PER (emit_seq_of_definition).
+            // or not — `ElemShape::constraint_tname` (its own doc,
+            // Backend.hpp) names the real per-element Constraints static
+            // when constrained, empty when genuinely unconstrained; see the
+            // emission side below for exactly how each is reached. The
+            // collection's own SIZE constraint is unaffected either way —
+            // that's always fully known via the promoted synthetic type's
+            // own {SYNTH}_CONSTRAINTS_PER (emit_seq_of_definition).
             return m.elem_shape.kind == SeqOfKind::None && m.elem_shape.builtin.has_value() &&
                    *m.elem_shape.builtin == ast::BuiltinType::Integer &&
                    (m.elem_shape.storage_kind == IntStorageKind::S64 ||
@@ -1504,25 +1503,18 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     const char* fn_ty = m.elem_shape.storage_kind == IntStorageKind::S64 ? "encode_int" : "encode_uint";
                     const char* fn_dec = m.elem_shape.storage_kind == IntStorageKind::S64 ? "decode_int" : "decode_uint";
                     std::string encode_elem, decode_elem;
-                    if (m.elem_shape.has_constraint) {
-                        // Real per-element bounds, carried directly on
-                        // ElemShape (Generator::build_elem_shape, same
-                        // computation as IntegerSpec's own constraint
-                        // fields) — emitted here as an inline literal, same
-                        // pattern as the unconstrained fallback below, so
-                        // there is no separately-emitted static to name or
-                        // cross-module path to reconstruct.
-                        int elem_flags = (m.elem_shape.semi_constrained || m.elem_shape.hi_is_large
-                                              ? 2 /* SEMI_CONSTRAINED */ : 1 /* CONSTRAINED */)
-                                       | (m.elem_shape.extensible ? 4 /* EXTENSIBLE */ : 0);
-                        std::string elem_lit = std::format(
-                            "asn1cpp_per::Constraints {{ flags: {}, range_bits: {}, lower_bound: {}, "
-                            "upper_bound: {}, lower_u64: {}u64, upper_u64: {}u64, size_range_bits: 0, "
-                            "size_lower: 0, size_upper: 0 }}",
-                            elem_flags, std::max(m.elem_shape.range_bits, 0), m.elem_shape.lower_s64,
-                            m.elem_shape.upper_s64, m.elem_shape.lower_u64, m.elem_shape.upper_u64);
-                        encode_elem = std::format("asn1cpp_per::{}::{}(w, &{}, *x)", fn_ns, fn_ty, elem_lit);
-                        decode_elem = std::format("asn1cpp_per::{}::{}(r, &{})?", fn_ns, fn_dec, elem_lit);
+                    if (!m.elem_shape.constraint_tname.empty()) {
+                        // Reference the real static emit_member_type_descriptor
+                        // already emitted for this element (Generator::
+                        // emit_seq_of_definition's own call, same one CppBackend's
+                        // SeqOfSpec::elem_ref points at same-file) — same
+                        // "case a known real identifier" mechanism already used
+                        // just below for a TypeRef-to-named-INTEGER member,
+                        // never a re-derived naming guess.
+                        std::string elem_cname = std::format("crate::{}::{}_CONSTRAINTS_PER",
+                            to_snake_case(synth), to_screaming_snake_case(m.elem_shape.constraint_tname));
+                        encode_elem = std::format("asn1cpp_per::{}::{}(w, &{}, *x)", fn_ns, fn_ty, elem_cname);
+                        decode_elem = std::format("asn1cpp_per::{}::{}(r, &{})?", fn_ns, fn_dec, elem_cname);
                     } else {
                         std::string cast_in = m.elem_shape.storage_kind == IntStorageKind::U64 ? " as i64" : "";
                         std::string cast_out = m.elem_shape.storage_kind == IntStorageKind::U64 ? " as u64" : "";

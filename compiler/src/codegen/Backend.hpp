@@ -198,18 +198,19 @@ struct ElemShape {
     IntStorageKind storage_kind = IntStorageKind::S64;  // meaningful when builtin == Integer
     std::shared_ptr<ElemShape> nested;  // meaningful when kind != None; recurses to unbounded depth
 
-    // INTEGER value range (X.680 §19), meaningful only when kind == None &&
-    // builtin == Integer. Mirrors IntegerSpec's own constraint fields exactly
-    // (same source computation, via build_member_type_descriptor_spec's
-    // Integer branch) so a backend can emit the real bounds as an inline
-    // Constraints literal — never a name to a separately-emitted static.
-    bool     has_constraint = false;  // false -> unconstrained; fields below meaningless
-    bool     extensible = false;
-    bool     semi_constrained = false;  // true -> upper endpoint was MAX; no upper cap
-    bool     hi_is_large = false;       // true -> upper was a positive literal > INT64_MAX
-    int      range_bits = 0;            // -1 when semi_constrained
-    int64_t  lower_s64 = 0, upper_s64 = 0;
-    uint64_t lower_u64 = 0, upper_u64 = 0;
+    // Name of the element's own inline-constrained TypeDescriptor (X.680
+    // §19 INTEGER value range), meaningful only when kind == None &&
+    // builtin == Integer. Empty -> genuinely unconstrained. This is the
+    // exact `tname` Generator::emit_seq_of_definition's own
+    // emit_member_type_descriptor(elem_node, ...) call already used to
+    // emit a real static (Generator::seq_of_elem_constraint_tname_ threads
+    // it here, keyed by AST identity — never re-derived from a naming
+    // convention). CppBackend doesn't need this at all: SeqOfSpec::elem_ref
+    // is already a same-file pointer to that exact static. RustBackend
+    // derives its own cross-module reference from this real identifier the
+    // same way it already does for a TypeRef-to-named-INTEGER member
+    // (casing a known name, not guessing one).
+    std::string constraint_tname;
 };
 
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —
