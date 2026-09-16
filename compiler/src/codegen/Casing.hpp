@@ -94,6 +94,13 @@ inline std::string to_upper_camel_case(std::string_view s) {
     for (char c : s) {
         if (c == '-') { new_word = true; continue; }
         if (new_word) {
+            // A hyphen immediately before a digit is ambiguous once dropped:
+            // "sfnsfndrift-1" and "sfnsfndrift1" (real X.680 ENUMERATED
+            // sibling value names, 3GPP TS 25.331 SFN-SFN-Drift) would both
+            // collapse to "Sfnsfndrift1". Every other word boundary (hyphen
+            // before a letter) stays pure PascalCase; only this one case
+            // keeps a literal separator to stay distinguishable.
+            if (!out.empty() && std::isdigit(static_cast<unsigned char>(c))) out += '_';
             out += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
             new_word = false;
         } else {
