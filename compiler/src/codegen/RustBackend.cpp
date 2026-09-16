@@ -938,13 +938,15 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // against ASN_TYP_{TYPE}_ELEM_CONSTRAINTS_PER, never a different
     // function for the unconstrained case, so that reference is a pure
     // function of this type's own name alone — no per-element signal needs
-    // to travel back to the containing SEQUENCE's own spec at all. When the
-    // element genuinely has no constraint, emit the flags: 0 fallback under
-    // that exact name here; when it does, `emit_member_type_descriptor`
-    // (called just above for `elem_ref`) already emitted the real static
-    // under this same deterministic name — emitting it again here would be
-    // a duplicate definition.
-    if (!spec.has_elem_constraint) {
+    // to travel back to the containing SEQUENCE's own spec at all. Only
+    // emit the flags: 0 fallback under that exact name when
+    // emit_member_type_descriptor (called just above for `elem_ref`) built
+    // no descriptor at all for this element (elem_descriptor_emitted is
+    // false for BOTH "no constraint at all" and "constraint isn't
+    // Integer-kind" — checking has_elem_constraint alone would wrongly
+    // re-emit a duplicate of a Sizeable-kind element's own real static,
+    // e.g. a BIT STRING element with its own SIZE constraint).
+    if (!spec.elem_descriptor_emitted) {
         os << std::format(
             "pub static ASN_TYP_{0}_ELEM_CONSTRAINTS_PER: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
             "    flags: 0, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0u64, upper_u64: 0u64, "

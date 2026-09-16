@@ -2208,17 +2208,19 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     // Real bounds for RustBackend's own always-wired element Constraints
     // table (SeqOfSpec's own doc) — CppBackend never reads these, elem_ref
     // above already gives it a valid same-file reference either way.
-    if (auto d = build_member_type_descriptor_spec(elem_node, cname, "elem");
-        d && d->kind == MemberTypeDescriptorSpec::Kind::Integer) {
-        spec.has_elem_constraint = true;
-        spec.elem_extensible = d->extensible;
-        spec.elem_semi_constrained = d->semi_constrained;
-        spec.elem_hi_is_large = d->hi_is_large;
-        spec.elem_range_bits = d->range_bits;
-        spec.elem_lower_s64 = d->lower_s64;
-        spec.elem_upper_s64 = d->upper_s64;
-        spec.elem_lower_u64 = d->lower_u64;
-        spec.elem_upper_u64 = d->upper_u64;
+    if (auto d = build_member_type_descriptor_spec(elem_node, cname, "elem")) {
+        spec.elem_descriptor_emitted = true;
+        if (d->kind == MemberTypeDescriptorSpec::Kind::Integer) {
+            spec.has_elem_constraint = true;
+            spec.elem_extensible = d->extensible;
+            spec.elem_semi_constrained = d->semi_constrained;
+            spec.elem_hi_is_large = d->hi_is_large;
+            spec.elem_range_bits = d->range_bits;
+            spec.elem_lower_s64 = d->lower_s64;
+            spec.elem_upper_s64 = d->upper_s64;
+            spec.elem_lower_u64 = d->lower_u64;
+            spec.elem_upper_u64 = d->upper_u64;
+        }
     }
 
     // X.693 §12: declared element identifier overrides the XER tag at the use site.

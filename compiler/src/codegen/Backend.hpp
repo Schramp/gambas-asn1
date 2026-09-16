@@ -376,14 +376,26 @@ struct SeqOfSpec : TaggedTypeSpec {
     std::optional<std::string> elem_xer_name; // X.693 §12: element's declared identifier, if any
     bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
 
+    // True whenever emit_member_type_descriptor (elem_ref's own call)
+    // already emitted a real per-element TypeDescriptor for the element —
+    // Integer-kind (value range) or Sizeable-kind (SIZE/FROM on a BIT
+    // STRING/OCTET STRING/string element) alike. RustBackend's own
+    // always-wired ASN_TYP_{TYPE}_ELEM_CONSTRAINTS_PER fallback must only
+    // fire when this is false — the Sizeable case already got a real
+    // static under that exact deterministic name from the same call;
+    // emitting a second one under it is a duplicate-definition error, not
+    // just a wasted table (confirmed against a real SEQUENCE (SIZE(1..4))
+    // OF BIT STRING (SIZE(1..512)) schema, 3GPP TS 25.331 GSM-MessageList).
+    bool     elem_descriptor_emitted = false;
     // Element's own INTEGER value range (X.680 §19), when the element is a
     // direct builtin INTEGER — same fields/meaning as IntegerSpec's own
     // constraint block. has_elem_constraint=false -> element is genuinely
-    // unconstrained; RustBackend still always wires a Constraints table for
-    // it (flags=0), the same "always wire, real bounds or not" convention
-    // already used for has_size_constraint/range_bits/size_lower/size_upper
-    // above. CppBackend needs none of this: elem_ref already carries a
-    // valid same-file reference either way.
+    // unconstrained (Integer or otherwise); RustBackend still always wires
+    // a Constraints table for a direct-Integer element (flags=0), the same
+    // "always wire, real bounds or not" convention already used for
+    // has_size_constraint/range_bits/size_lower/size_upper above.
+    // CppBackend needs none of this: elem_ref already carries a valid
+    // same-file reference either way.
     bool     has_elem_constraint = false;
     bool     elem_extensible = false;
     bool     elem_semi_constrained = false;
