@@ -18,11 +18,13 @@
 //! built on top of this in a later pass — see the crate's own issue tracker
 //! entry for the phased plan.
 
+pub mod bit_string;
 pub mod choice;
 pub mod constraints;
 pub mod enumerated;
 pub mod integer;
 pub mod length;
+pub mod octet_string;
 pub mod reader;
 pub mod seq_of;
 pub mod sequence;

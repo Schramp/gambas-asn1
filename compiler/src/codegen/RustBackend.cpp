@@ -1318,6 +1318,13 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         if (m.mbuiltin) {
             if (*m.mbuiltin == ast::BuiltinType::Integer)
                 return m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64;
+            // OCTET STRING/BIT STRING (X.691 §16/§17) — no alphabet concept
+            // at all, unconditionally covered by asn1cpp_per::octet_string/
+            // bit_string regardless of SIZE constraint (both always-wire
+            // real bounds or a flags: 0 fallback, same convention as every
+            // other Sizeable kind).
+            if (*m.mbuiltin == ast::BuiltinType::OctetString || *m.mbuiltin == ast::BuiltinType::BitString)
+                return true;
             // A FROM-alphabet constraint needs index remapping
             // (X.691 §26.5.4/§26.5.7) that asn1cpp_per::strings'
             // core path doesn't implement yet (that module's own doc) —
@@ -1564,6 +1571,48 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     per_members_os << std::format(
                         "        access: asn1cpp_per::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n",
                         m.mname);
+                } else if (m.mbuiltin && (*m.mbuiltin == ast::BuiltinType::OctetString ||
+                                           *m.mbuiltin == ast::BuiltinType::BitString)) {
+                    // OCTET STRING/BIT STRING (X.691 §16/§17) — Constrained,
+                    // same per_cname derivation as the string branch below
+                    // (an inline SIZE constraint's own {cname}_CONSTRAINTS_PER
+                    // when tdref names one, the shared flags: 0 literal
+                    // otherwise). BitString needs its own unused-bits count
+                    // threaded through (bit_count(), not .len()) — its Rust
+                    // field is a `{bytes, unused_bits}` struct, not a plain
+                    // byte newtype, same reason its BER validate_expr above
+                    // uses a different accessor than OctetString's.
+                    bool is_bits = *m.mbuiltin == ast::BuiltinType::BitString;
+                    std::string per_cname;
+                    if (m.tdref.starts_with("&asn_TYP_")) {
+                        std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname));
+                        per_cname = base + "_CONSTRAINTS_PER";
+                    } else {
+                        per_cname = "asn1cpp_per::Constraints { flags: 0, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_range_bits: 0, size_lower: 0, size_upper: 0 }";
+                    }
+                    std::string field = m.optional ? std::format("v.{}.as_ref().unwrap()", m.mname)
+                                                    : std::format("v.{}", m.mname);
+                    if (is_bits) {
+                        std::string ctor = std::format("asn1cpp_ber::bit_string::BitString {{ bytes, unused_bits: unused }}");
+                        std::string field_mut = m.optional ? std::format("v.{} = Some({})", m.mname, ctor)
+                                                            : std::format("v.{} = {}", m.mname, ctor);
+                        per_members_os << std::format(
+                            "        access: asn1cpp_per::sequence::MemberAccess::Constrained {{\n"
+                            "            encode: |v, w| asn1cpp_per::bit_string::encode_bit_string(w, &{0}, &{1}.bytes, {1}.bit_count()),\n"
+                            "            decode: |v, r| {{ let (bytes, unused) = asn1cpp_per::bit_string::decode_bit_string(r, &{0})?; {2}; Ok(()) }},\n"
+                            "        }},\n",
+                            per_cname, field, field_mut);
+                    } else {
+                        std::string ctor = "asn1cpp_ber::octet_string::OctetString(bytes)";
+                        std::string field_mut = m.optional ? std::format("v.{} = Some({})", m.mname, ctor)
+                                                            : std::format("v.{} = {}", m.mname, ctor);
+                        per_members_os << std::format(
+                            "        access: asn1cpp_per::sequence::MemberAccess::Constrained {{\n"
+                            "            encode: |v, w| asn1cpp_per::octet_string::encode_octet_string(w, &{0}, &{1}.0),\n"
+                            "            decode: |v, r| {{ let bytes = asn1cpp_per::octet_string::decode_octet_string(r, &{0})?; {2}; Ok(()) }},\n"
+                            "        }},\n",
+                            per_cname, field, field_mut);
+                    }
                 } else if (m.mbuiltin && per_string_params(*m.mbuiltin).has_value()) {
                     // Single-byte-per-character string kind — Constrained,
                     // since the field's Rust type (bare `String` for
@@ -2353,6 +2402,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             if (a.mbuiltin) {
                 if (*a.mbuiltin == ast::BuiltinType::Integer)
                     return a.storage_kind == IntStorageKind::S64 || a.storage_kind == IntStorageKind::U64;
+                if (*a.mbuiltin == ast::BuiltinType::OctetString || *a.mbuiltin == ast::BuiltinType::BitString)
+                    return true;
                 return !a.has_from_alphabet && per_string_params(*a.mbuiltin).has_value();
             }
             return a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
@@ -2402,6 +2453,39 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     os << std::format(
                         "        per_decode_into: |r| {{ let mut x = {}::default(); asn1cpp_per::PerValue::per_decode_into(&mut x, r)?; Ok({}({})) }},\n",
                         a.mtype, variant_path, ctor);
+                    os << "    },\n";
+                    continue;
+                }
+                if (a.mbuiltin && (*a.mbuiltin == ast::BuiltinType::OctetString ||
+                                    *a.mbuiltin == ast::BuiltinType::BitString)) {
+                    // OCTET STRING/BIT STRING (X.691 §16/§17) — see
+                    // emit_sequence_definition's identical member-side
+                    // branch for the per_cname/field-shape rationale.
+                    bool is_bits = *a.mbuiltin == ast::BuiltinType::BitString;
+                    std::string per_cname;
+                    if (a.tdref.starts_with("&asn_TYP_")) {
+                        std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, a.accessor_name));
+                        per_cname = base + "_CONSTRAINTS_PER";
+                    } else {
+                        per_cname = "asn1cpp_per::Constraints { flags: 0, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_range_bits: 0, size_lower: 0, size_upper: 0 }";
+                    }
+                    if (is_bits) {
+                        os << std::format(
+                            "        per_encode: |v, w| if let {0}(x) = v {{ asn1cpp_per::bit_string::encode_bit_string(w, &{1}, &x.bytes, x.bit_count()); true }} else {{ false }},\n",
+                            variant_path, per_cname);
+                        os << std::format(
+                            "        per_decode_into: |r| {{ let (bytes, unused) = asn1cpp_per::bit_string::decode_bit_string(r, &{})?; "
+                            "Ok({}(asn1cpp_ber::bit_string::BitString {{ bytes, unused_bits: unused }})) }},\n",
+                            per_cname, variant_path);
+                    } else {
+                        os << std::format(
+                            "        per_encode: |v, w| if let {0}(x) = v {{ asn1cpp_per::octet_string::encode_octet_string(w, &{1}, &x.0); true }} else {{ false }},\n",
+                            variant_path, per_cname);
+                        os << std::format(
+                            "        per_decode_into: |r| {{ let bytes = asn1cpp_per::octet_string::decode_octet_string(r, &{})?; "
+                            "Ok({}(asn1cpp_ber::octet_string::OctetString(bytes))) }},\n",
+                            per_cname, variant_path);
+                    }
                     os << "    },\n";
                     continue;
                 }
