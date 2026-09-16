@@ -38,6 +38,22 @@ static std::string variant_name(const RustBackend& backend, const std::string& a
     return backend.escape(to_upper_camel_case(asn1_name));
 }
 
+// `ChoiceAlternativeSpec::accessor_name` is escaped as a raw identifier
+// (`r#present`) when the ASN.1 alternative name collides with a reserved
+// word from `emit_choice_declaration`'s own extra-list ("present",
+// "set_present", ...) — correct when the name is used standalone
+// (CppBackend's own `accessor_name`-as-a-method-name use), but every
+// RustBackend use instead splices it into a larger compound identifier
+// (`{prefix}_get_{accessor_name}`, `asn_TYP_{type}_{accessor_name}`).
+// `r#` is only valid Rust syntax as a standalone token — gluing it into a
+// longer name produces an "unknown prefix" parse error (`..._get_r#present`
+// gets lexed as identifier `..._get_r` followed by `#present`). The plain
+// snake_case text alone can't collide with a keyword once other text
+// surrounds it, so strip the escape before splicing.
+static std::string unescape_raw_ident(const std::string& s) {
+    return s.starts_with("r#") ? s.substr(2) : s;
+}
+
 // Per-builtin-kind lookup tables shared by
 // emit_sequence_definition (SEQUENCE members, SEQUENCE OF elements) and
 // emit_choice_definition (CHOICE alternatives), file-scoped so there's
@@ -1975,7 +1991,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // irrefutable-pattern special-case must not fire for it.
     bool single_alt = spec.alternatives.size() == 1 && spec.ext_at < 0;
     for (const auto& a : spec.alternatives) {
-        std::string fname = escape(std::format("{}_get_{}", prefix, a.accessor_name));
+        std::string fname = escape(std::format("{}_get_{}", prefix, unescape_raw_ident(a.accessor_name)));
         os << std::format("pub fn {}(x: &mut {}) -> &mut {} {{\n", fname, spec.type_name, rust_seqof_alt_mtype(a.mtype));
         if (single_alt) {
             os << std::format("    let {}::{}(v) = x;\n    v\n",
@@ -2412,7 +2428,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     bool is_bits = *a.mbuiltin == ast::BuiltinType::BitString;
                     std::string per_cname;
                     if (a.tdref.starts_with("&asn_TYP_")) {
-                        std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, a.accessor_name));
+                        std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name)));
                         per_cname = base + "_CONSTRAINTS";
                     } else {
                         per_cname = "asn1cpp_per::constraints::UNCONSTRAINED";
@@ -2445,7 +2461,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     auto [bits, natural] = *per_string_params(*a.mbuiltin);
                     std::string per_cname;
                     if (a.tdref.starts_with("&asn_TYP_")) {
-                        std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, a.accessor_name));
+                        std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name)));
                         per_cname = base + "_CONSTRAINTS";
                     } else {
                         per_cname = "asn1cpp_per::constraints::UNCONSTRAINED";
@@ -2485,7 +2501,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     // (Generator's alternative pass) already emitted this
                     // static under this exact deterministic name.
                     std::string per_cname = to_screaming_snake_case(
-                        std::format("asn_TYP_{}_{}", spec.type_name, a.accessor_name)) + "_CONSTRAINTS";
+                        std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name))) + "_CONSTRAINTS";
                     os << std::format(
                         "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_per::{}::{}(w, &{}, *x); true }} else {{ false }},\n",
                         variant_path, fn_ns, fn_ty, per_cname);
