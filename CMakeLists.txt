@@ -81,11 +81,19 @@ find_program(CARGO_EXECUTABLE cargo
 cmake_dependent_option(WITH_BER_RUNTIME_TEST
     "Run rust-runtime/ber's cargo test via ctest"
     ON "CARGO_EXECUTABLE" OFF)
+cmake_dependent_option(WITH_PER_RUNTIME_TEST
+    "Run rust-runtime/per's cargo test via ctest"
+    ON "CARGO_EXECUTABLE" OFF)
 
 if(WITH_BER_RUNTIME_TEST)
     message(STATUS "rust-runtime/ber cargo test: ON  (${CARGO_EXECUTABLE})")
 else()
     message(STATUS "rust-runtime/ber cargo test: OFF (cargo not found)")
+endif()
+if(WITH_PER_RUNTIME_TEST)
+    message(STATUS "rust-runtime/per cargo test: ON  (${CARGO_EXECUTABLE})")
+else()
+    message(STATUS "rust-runtime/per cargo test: OFF (cargo not found)")
 endif()
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
