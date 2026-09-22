@@ -7,6 +7,11 @@
 //! (`get_bits`/`put_bits`, no TLV, no byte alignment — UPER never aligns to
 //! a byte boundary except implicitly at the end of an encoding), so there
 //! is nothing to share with the BER crate's TLV-oriented `Reader`/`Writer`.
+//! `Constraints` itself (`constraints` module) is the one exception: it's
+//! plain metadata, not stream logic, computed identically for both wire
+//! encodings by the same compiler pass, so it lives in a small third crate
+//! (`asn1cpp_constraints`) both `asn1cpp_ber` and `asn1cpp_per` depend on
+//! — never on each other.
 //! Ground truth for wire semantics is `runtime/src/PerCodec.cpp` and
 //! `runtime/include/asn1cpp/codec/PerCodec.hpp`, cross-checked against
 //! X.691 (`asn1-docs/`) — same references the C++ runtime was built
