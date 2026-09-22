@@ -7,3 +7,6 @@ description = "Native Rust BER codec primitives (gambas-asn1#218) — no FFI to 
 [lib]
 name = "asn1cpp_ber"
 path = "src/lib.rs"
+
+[dependencies]
+asn1cpp-constraints = { path = "../constraints" }

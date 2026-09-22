@@ -1406,10 +1406,12 @@ impl DefaultPoint {
     // descriptor` now emits for a real constrained INTEGER member.
     static RANGED_POINT_X_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
         flags: crate::constraints::Constraints::CONSTRAINED,
+        range_bits: 0,
         lower_bound: 0,
         upper_bound: 100,
         lower_u64: 0,
         upper_u64: 0,
+        size_range_bits: 0,
         size_lower: 0,
         size_upper: 0,
         encode_table: None,
@@ -1476,10 +1478,12 @@ impl DefaultPoint {
 
     static SIZED_BLOB_DATA_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
         flags: crate::constraints::Constraints::SIZE_CONSTRAINED,
+        range_bits: 0,
         lower_bound: 0,
         upper_bound: 0,
         lower_u64: 0,
         upper_u64: 0,
+        size_range_bits: 0,
         size_lower: 1,
         size_upper: 4,
         encode_table: None,
@@ -1554,10 +1558,12 @@ impl DefaultPoint {
 
     static NAMED_TAGS_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
         flags: crate::constraints::Constraints::SIZE_CONSTRAINED,
+        range_bits: 0,
         lower_bound: 0,
         upper_bound: 0,
         lower_u64: 0,
         upper_u64: 0,
+        size_range_bits: 0,
         size_lower: 1,
         size_upper: 3,
         encode_table: None,
@@ -1595,10 +1601,12 @@ impl DefaultPoint {
 
     static BASKET_INLINE_TAGS_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
         flags: crate::constraints::Constraints::SIZE_CONSTRAINED,
+        range_bits: 0,
         lower_bound: 0,
         upper_bound: 0,
         lower_u64: 0,
         upper_u64: 0,
+        size_range_bits: 0,
         size_lower: 1,
         size_upper: 2,
         encode_table: None,
