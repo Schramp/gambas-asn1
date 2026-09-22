@@ -1200,6 +1200,26 @@ Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRe
         if (*rbt == BT::Enumerated) return {TaggedMemberSpec::RefTargetKind::Enumerated, IntStorageKind::S64};
         if (*rbt == BT::Integer)
             return {TaggedMemberSpec::RefTargetKind::IntegerAlias, classify_integer_storage(*resolved)};
+        // A named builtin-alias type (X.680 §19) with its own PerValue impl
+        // now (RustBackend::emit_builtin_alias_definition's own doc) —
+        // OCTET STRING/BIT STRING unconditionally (X.691 §16/§17, no
+        // alphabet concept), a known-multiplier character string kind only
+        // when it has no FROM constraint of its own. This duplicates
+        // RustBackend's own per_string_params (its exact kind set) rather
+        // than sharing it — same already-accepted, already-tracked overlap
+        // this function's own doc notes for type_descriptor_ref_spec_for
+        // (gambas-asn1#518); the alternative (Backend gaining resolver
+        // access to let RustBackend classify this itself) is a bigger
+        // boundary change, deliberately out of scope here too.
+        if (*rbt == BT::OctetString || *rbt == BT::BitString)
+            return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+        static const std::set<BT> kPerStringKinds = {
+            BT::NumericString, BT::Ia5String, BT::PrintableString, BT::VisibleString,
+            BT::Utf8String, BT::T61String, BT::GeneralString, BT::GraphicString,
+            BT::VideotexString, BT::ObjectDescriptor,
+        };
+        if (kPerStringKinds.count(*rbt) && extract_from_alphabet(*resolved).empty())
+            return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
         return {};
     }
     // A TypeRef resolving to a named SEQUENCE/SET/CHOICE — always

@@ -263,9 +263,10 @@ int main() {
               rust_os.find("impl asn1cpp_ber::value::Asn1Value for MyBytes {") != std::string::npos &&
               rust_os.find("\"MyBytes\"") != std::string::npos,
               rust_os);
-        check("emit_builtin_alias: Rust produces a real size-check function",
-              rust_os.find("pub fn my_bytes_size_ok(v: &asn1cpp_ber::octet_string::OctetString) -> bool {") != std::string::npos &&
-              rust_os.find("(v.len() as i64) >= 1 && (v.len() as i64) <= 10") != std::string::npos,
+        check("emit_builtin_alias: Rust produces a table-driven validate(), not a generated bounds-check function",
+              rust_os.find("static MY_BYTES_CONSTRAINTS: asn1cpp_ber::constraints::Constraints") != std::string::npos &&
+              rust_os.find("size_range_bits: 4, size_lower: 1, size_upper: 10") != std::string::npos &&
+              rust_os.find("asn1cpp_ber::constraints::validate_size(self.0.len(), &MY_BYTES_CONSTRAINTS)") != std::string::npos,
               rust_os);
     }
 
