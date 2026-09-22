@@ -197,6 +197,17 @@ struct ElemShape {
     std::optional<ast::BuiltinType> builtin;           // meaningful when kind == None
     IntStorageKind storage_kind = IntStorageKind::S64;  // meaningful when builtin == Integer
     std::shared_ptr<ElemShape> nested;  // meaningful when kind != None; recurses to unbounded depth
+    // True when the element carries a real inline constraint of its own
+    // (X.680 §19 INTEGER value range, or §25/§26/§51 SIZE/FROM on a
+    // Sizeable kind) — meaningful only when kind == None && builtin has a
+    // value. Names the promoted SEQUENCE OF/SET OF type's own
+    // ASN_TYP_{TYPE}_ELEM_CONSTRAINTS_PER static (emit_seq_of_definition's
+    // own emit_member_type_descriptor call always builds this exact,
+    // predictable name whenever true); false means genuinely unconstrained,
+    // in which case a backend references the shared "no constraint"
+    // constant instead (asn1cpp_per::constraints::UNCONSTRAINED) rather
+    // than needing anything emitted for this element at all.
+    bool has_own_descriptor = false;
 };
 
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —
@@ -375,22 +386,6 @@ struct SeqOfSpec : TaggedTypeSpec {
                                               // EXTENSIBLE for a SEQUENCE OF/SET OF's own SIZE constraint.
     std::optional<std::string> elem_xer_name; // X.693 §12: element's declared identifier, if any
     bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
-
-    // Element's own INTEGER value range (X.680 §19), when the element is a
-    // direct builtin INTEGER — same fields/meaning as IntegerSpec's own
-    // constraint block. has_elem_constraint=false -> element is genuinely
-    // unconstrained; RustBackend still always wires a Constraints table for
-    // it (flags=0), the same "always wire, real bounds or not" convention
-    // already used for has_size_constraint/range_bits/size_lower/size_upper
-    // above. CppBackend needs none of this: elem_ref already carries a
-    // valid same-file reference either way.
-    bool     has_elem_constraint = false;
-    bool     elem_extensible = false;
-    bool     elem_semi_constrained = false;
-    bool     elem_hi_is_large = false;
-    int      elem_range_bits = 0;
-    int64_t  elem_lower_s64 = 0, elem_upper_s64 = 0;
-    uint64_t elem_lower_u64 = 0, elem_upper_u64 = 0;
 };
 
 /// @brief Backend-agnostic tag-bearing fields shared by every construct that
