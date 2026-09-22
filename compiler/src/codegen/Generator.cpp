@@ -648,6 +648,15 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
     if (auto* bt = std::get_if<ast::BuiltinType>(&elem.body)) {
         shape.builtin = *bt;
         if (*bt == ast::BuiltinType::Integer) shape.storage_kind = classify_integer_storage(elem);
+        // Same check build_member_type_descriptor_spec's own callers use to
+        // decide whether it built a real spec at all (Integer or Sizeable
+        // alike) — a pure function, cheap to call again here. Lets
+        // RustBackend's SEQUENCE OF row pick between the element's own real
+        // ASN_TYP_{TYPE}_ELEM_CONSTRAINTS_PER (emit_seq_of_definition's own
+        // emit_member_type_descriptor call) and the shared
+        // asn1cpp_per::constraints::UNCONSTRAINED constant, without
+        // reconstructing a name or needing a per-type fallback emission.
+        shape.has_own_descriptor = build_member_type_descriptor_spec(elem, "", "elem").has_value();
     }
     return shape;
 }
@@ -2205,23 +2214,6 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     // Writes directly into `os` (== session.buffer(definition_extension())),
     // before the SeqOfSpec it's referenced from is emitted later.
     spec.elem_ref = emit_member_type_descriptor(elem_node, cname, "elem", session);
-    // Real bounds for RustBackend's own always-wired element Constraints
-    // table (SeqOfSpec's own doc) — CppBackend never reads these, elem_ref
-    // above already gives it a valid same-file reference either way.
-    if (auto d = build_member_type_descriptor_spec(elem_node, cname, "elem")) {
-        spec.elem_descriptor_emitted = true;
-        if (d->kind == MemberTypeDescriptorSpec::Kind::Integer) {
-            spec.has_elem_constraint = true;
-            spec.elem_extensible = d->extensible;
-            spec.elem_semi_constrained = d->semi_constrained;
-            spec.elem_hi_is_large = d->hi_is_large;
-            spec.elem_range_bits = d->range_bits;
-            spec.elem_lower_s64 = d->lower_s64;
-            spec.elem_upper_s64 = d->upper_s64;
-            spec.elem_lower_u64 = d->lower_u64;
-            spec.elem_upper_u64 = d->upper_u64;
-        }
-    }
 
     // X.693 §12: declared element identifier overrides the XER tag at the use site.
     // Exception: asn1c uses <NULL/> for NULL-typed elements regardless of declared name.

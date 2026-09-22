@@ -932,29 +932,6 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
         "}};\n\n",
         per_cname, per_flags, spec.range_bits, spec.size_lower, size_upper);
 
-    // Element's own INTEGER value range (X.680 §19) — a covered SEQUENCE
-    // OF/SET OF INTEGER member's own per-element encode/decode
-    // (emit_sequence_definition) always calls integer::encode_int/decode_int
-    // against ASN_TYP_{TYPE}_ELEM_CONSTRAINTS_PER, never a different
-    // function for the unconstrained case, so that reference is a pure
-    // function of this type's own name alone — no per-element signal needs
-    // to travel back to the containing SEQUENCE's own spec at all. Only
-    // emit the flags: 0 fallback under that exact name when
-    // emit_member_type_descriptor (called just above for `elem_ref`) built
-    // no descriptor at all for this element (elem_descriptor_emitted is
-    // false for BOTH "no constraint at all" and "constraint isn't
-    // Integer-kind" — checking has_elem_constraint alone would wrongly
-    // re-emit a duplicate of a Sizeable-kind element's own real static,
-    // e.g. a BIT STRING element with its own SIZE constraint).
-    if (!spec.elem_descriptor_emitted) {
-        os << std::format(
-            "pub static ASN_TYP_{0}_ELEM_CONSTRAINTS_PER: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
-            "    flags: 0, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0u64, upper_u64: 0u64, "
-            "size_range_bits: 0, size_lower: 0, size_upper: 0,\n"
-            "}};\n\n",
-            to_screaming_snake_case(spec.type_name));
-    }
-
     std::string natural_tag = std::format("asn1cpp_ber::sequence::{}", spec.is_set_of ? "SET_TAG" : "SEQUENCE_TAG");
     // Honor a top-level [n] IMPLICIT/EXPLICIT tag on this type assignment
     // itself (X.690 §8.14) — same fix emit_sequence_definition already has.
@@ -1304,14 +1281,14 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // exclude nearly every member in the schema.
     auto per_member_covered = [](const SequenceMemberSpec& m) -> bool {
         if (m.seq_of_kind != SeqOfKind::None) {
-            // A direct builtin INTEGER element (no nesting), constrained
-            // or not — either way the promoted synthetic type's own
-            // ASN_TYP_{SYNTH}_ELEM_CONSTRAINTS_PER static (always wired,
-            // see emit_seq_of_definition's own doc) carries the real bounds
-            // or a flags: 0 sentinel, so this branch doesn't need to know
-            // which. The collection's own SIZE constraint is unaffected
-            // either way — that's always fully known via the promoted
-            // synthetic type's own {SYNTH}_CONSTRAINTS_PER.
+            // A direct builtin INTEGER element (no nesting), constrained or
+            // not — either way there's a valid Constraints reference to use
+            // (its own real static, or the shared UNCONSTRAINED constant;
+            // ElemShape::has_own_descriptor's own doc), so this branch
+            // doesn't need to know which. The collection's own SIZE
+            // constraint is unaffected either way — that's always fully
+            // known via the promoted synthetic type's own
+            // {SYNTH}_CONSTRAINTS_PER.
             return m.elem_shape.kind == SeqOfKind::None && m.elem_shape.builtin.has_value() &&
                    *m.elem_shape.builtin == ast::BuiltinType::Integer &&
                    (m.elem_shape.storage_kind == IntStorageKind::S64 ||
@@ -1517,18 +1494,25 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // collection's own SIZE constraint (if any) still
                     // applies, via the promoted synthetic type's own
                     // {SYNTH}_CONSTRAINTS_PER — the element's own value-range
-                    // constraint (if any) is a separate, always-wired table
-                    // the promoted type unconditionally emits under this
-                    // same deterministic name (RustBackend::emit_seq_of_
-                    // definition's own doc), real bounds or flags: 0 either
-                    // way — no per-element signal needs to reach this row at
-                    // all, so `encode_int`/`decode_int` (never a separate
-                    // "unconstrained" function) is always the right call.
+                    // constraint (if any) is a separate fact. When the
+                    // element has its own real constraint,
+                    // emit_seq_of_definition's own emit_member_type_descriptor
+                    // call already emitted it under this exact deterministic
+                    // name (ElemShape::has_own_descriptor's own doc); when it
+                    // doesn't, reference the shared "no constraint" constant
+                    // instead of anything emitted per-type — encode_int/
+                    // decode_int already fall through to the unconstrained
+                    // wire shape at runtime when flags == 0 (integer.rs's own
+                    // is_constrained/is_semi_constrained checks), so there is
+                    // no separate "unconstrained" function to choose between
+                    // here either way.
                     std::string synth = synthetic_name(spec.type_name, m.asn1_name);
                     std::string per_cname = std::format("crate::{}::{}_CONSTRAINTS_PER",
                                                          to_snake_case(synth), to_screaming_snake_case(synth));
-                    std::string elem_cname = std::format("crate::{}::ASN_TYP_{}_ELEM_CONSTRAINTS_PER",
-                                                          to_snake_case(synth), to_screaming_snake_case(synth));
+                    std::string elem_cname = m.elem_shape.has_own_descriptor
+                        ? std::format("crate::{}::ASN_TYP_{}_ELEM_CONSTRAINTS_PER",
+                                       to_snake_case(synth), to_screaming_snake_case(synth))
+                        : "asn1cpp_per::constraints::UNCONSTRAINED";
                     const char* wrapper = m.seq_of_kind == SeqOfKind::SeqOf ? "SeqOf" : "SetOf";
                     std::string field = m.optional ? std::format("v.{}.as_ref().unwrap()", m.mname)
                                                     : std::format("v.{}", m.mname);
@@ -1538,12 +1522,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     const char* fn_ns = m.elem_shape.storage_kind == IntStorageKind::S64 ? "integer" : "uinteger";
                     const char* fn_ty = m.elem_shape.storage_kind == IntStorageKind::S64 ? "encode_int" : "encode_uint";
                     const char* fn_dec = m.elem_shape.storage_kind == IntStorageKind::S64 ? "decode_int" : "decode_uint";
-                    // Always the constraint-aware call, against the always-
-                    // wired static above — encode_int/decode_int already
-                    // fall through to the unconstrained wire shape at
-                    // runtime when flags == 0 (integer.rs's own is_constrained/
-                    // is_semi_constrained checks), so there is no separate
-                    // "unconstrained" function to choose between here.
                     std::string encode_elem = std::format("asn1cpp_per::{}::{}(w, &{}, *x)", fn_ns, fn_ty, elem_cname);
                     std::string decode_elem = std::format("asn1cpp_per::{}::{}(r, &{})?", fn_ns, fn_dec, elem_cname);
                     per_members_os << std::format(
