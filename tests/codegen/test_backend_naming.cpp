@@ -317,7 +317,7 @@ int main() {
               cpp_os);
         check("emit_member_type_descriptor: Rust produces a real Constraints table, not a function",
               rust_os.find("static ASN_TYP_MY_SEQ_MY_FIELD_CONSTRAINTS: asn1cpp_ber::constraints::Constraints") != std::string::npos &&
-              rust_os.find("flags: 1, lower_bound: 0, upper_bound: 100") != std::string::npos,
+              rust_os.find("flags: 1, range_bits: 7, lower_bound: 0, upper_bound: 100") != std::string::npos,
               rust_os);
     }
 
@@ -347,7 +347,7 @@ int main() {
               cpp_os);
         check("emit_seq_of: Rust produces a real Constraints table, not a function",
               rust_os.find("static MY_LIST_CONSTRAINTS: asn1cpp_ber::constraints::Constraints") != std::string::npos &&
-              rust_os.find("flags: 8, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: 1, size_upper: 10") != std::string::npos &&
+              rust_os.find("flags: 8, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_range_bits: 4, size_lower: 1, size_upper: 10") != std::string::npos &&
               rust_os.find("fn validate(&self) -> i64 {\n        asn1cpp_ber::constraints::validate_size(self.0.len(), &MY_LIST_CONSTRAINTS)\n    }") != std::string::npos,
               rust_os);
     }

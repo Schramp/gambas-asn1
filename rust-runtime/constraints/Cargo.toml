@@ -1,0 +1,9 @@
+[package]
+name = "asn1cpp-constraints"
+version = "0.1.0"
+edition = "2021"
+description = "Shared X.680 §51 SubtypeConstraint data — plain struct, no codec logic; asn1cpp-ber and asn1cpp-per both depend on this, never on each other."
+
+[lib]
+name = "asn1cpp_constraints"
+path = "src/lib.rs"

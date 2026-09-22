@@ -7,3 +7,6 @@ description = "Native Rust PER (unaligned) codec primitives — no FFI to the C+
 [lib]
 name = "asn1cpp_per"
 path = "src/lib.rs"
+
+[dependencies]
+asn1cpp-constraints = { path = "../constraints" }

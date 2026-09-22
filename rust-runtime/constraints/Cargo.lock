@@ -3,12 +3,5 @@
 version = 4
 
 [[package]]
-name = "asn1cpp-ber"
-version = "0.1.0"
-dependencies = [
- "asn1cpp-constraints",
-]
-
-[[package]]
 name = "asn1cpp-constraints"
 version = "0.1.0"

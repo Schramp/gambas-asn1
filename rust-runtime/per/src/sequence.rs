@@ -300,6 +300,7 @@ mod tests {
         size_range_bits: 0,
         size_lower: 0,
         size_upper: 0,
+        encode_table: None,
     };
 
     #[derive(Debug, Default, PartialEq)]
