@@ -76,3 +76,4 @@ tests/asn1/rust_range_test.asn1        Gauge
 tests/asn1/rust_size_test.asn1         Blob
 tests/asn1/rust_seqof_size_test.asn1   Basket
 tests/asn1/rust_alphabet_test.asn1     Code
+examples/sample.source.RRC/asn1-files/rrc-7.1.0.asn1    UL-CCCH-Message
