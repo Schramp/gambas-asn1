@@ -484,7 +484,7 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
     os << std::format(
         "pub static {}: asn1cpp_per::Constraints = asn1cpp_per::Constraints {{\n"
         "    flags: {}, range_bits: {}, lower_bound: {}, upper_bound: {}, "
-        "lower_u64: {}u64, upper_u64: {}u64, size_range_bits: 0, size_lower: 0, size_upper: 0,\n"
+        "lower_u64: {}u64, upper_u64: {}u64, size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None,\n"
         "}};\n\n",
         per_ident, per_flags, std::max(spec.range_bits, 0), spec.lower_s64, spec.upper_s64,
         spec.lower_u64, spec.upper_u64);
