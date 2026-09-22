@@ -172,16 +172,17 @@ int main() {
         check("emit_integer: C++ produces a using-alias to asn1::UInteger",
               cpp_hpp.find("using MyInt = asn1::UInteger;") != std::string::npos,
               cpp_hpp);
-        check("emit_integer: Rust produces a real type alias (not a stub)",
-              rust_hpp.find("pub type MyInt = u64;") != std::string::npos,
+        check("emit_integer: Rust produces a real newtype (not a bare alias)",
+              rust_hpp.find("pub struct MyInt(pub u64);") != std::string::npos,
               rust_hpp);
         check("emit_integer: C++ produces a Constraints-bearing TypeDescriptor",
               cpp_cpp.find("asn_DEF_MyInt") != std::string::npos &&
               cpp_cpp.find(".range_bits=7") != std::string::npos,
               cpp_cpp);
-        check("emit_integer: Rust produces a real range-check function",
-              rust_cpp.find("pub fn my_int_in_range(v: i64) -> bool {") != std::string::npos &&
-              rust_cpp.find("v >= 0 && v <= 100") != std::string::npos,
+        check("emit_integer: Rust produces a real Asn1Value::validate() using the type's own Constraints",
+              rust_cpp.find("static MY_INT_CONSTRAINTS: asn1cpp_ber::constraints::Constraints") != std::string::npos &&
+              rust_cpp.find("flags: 1, range_bits: 7, lower_bound: 0, upper_bound: 0, lower_u64: 0u64, upper_u64: 100u64") != std::string::npos &&
+              rust_cpp.find("asn1cpp_ber::constraints::validate_u64(self.0, &MY_INT_CONSTRAINTS)") != std::string::npos,
               rust_cpp);
     }
 
