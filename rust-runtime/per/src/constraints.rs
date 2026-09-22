@@ -32,6 +32,26 @@ pub struct Constraints {
     pub size_upper: i64,
 }
 
+/// The shared "no constraint at all" value — every field zero, `flags == 0`.
+/// A single instance of this exact value covers every unconstrained case
+/// codegen needs a `&Constraints` reference for, so generated code can
+/// reference this one runtime-owned constant instead of each caller
+/// emitting its own always-present fallback static (mirrors the C++ side's
+/// own equivalent: falling back to a builtin type's already-existing
+/// generic descriptor, e.g. `asn1::asn_DEF_Integer`, rather than emitting a
+/// new one per use site).
+pub const UNCONSTRAINED: Constraints = Constraints {
+    flags: 0,
+    range_bits: 0,
+    lower_bound: 0,
+    upper_bound: 0,
+    lower_u64: 0,
+    upper_u64: 0,
+    size_range_bits: 0,
+    size_lower: 0,
+    size_upper: 0,
+};
+
 impl Constraints {
     pub fn is_constrained(&self) -> bool {
         self.flags & CONSTRAINED != 0
