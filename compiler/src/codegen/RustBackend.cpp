@@ -136,22 +136,6 @@ static const char* rust_tag_for_builtin_or_alias(std::optional<ast::BuiltinType>
     return builtin_ber_tag(*mbuiltin, mtype);
 }
 
-// SIZE-check function generators (emit_builtin_alias_
-// definition, emit_member_type_descriptor) generically emit `v.len()`
-// for every SIZE-constrained builtin type, assuming a `Vec<T>`/`String`-
-// like native storage type. BitString's own native type (`bit_string::
-// BitString`) has no `.len()` — and even if it exposed one via `.bytes`,
-// X.680's SIZE constraint on BIT STRING counts *bits*, not bytes
-// (`asn1::BitString::validate` on the C++ side compares against
-// `bit_count()`, never raw byte length) — so the expression itself has to
-// differ, not just its spelling. Every other currently-SIZE-constrainable
-// covered kind (OCTET STRING, the character-string kinds) genuinely does
-// mean "length of the native storage" for its own native type, so `.len()`
-// stays their correct expression.
-static const char* size_check_len_expr(ast::BuiltinType bt) {
-    return bt == ast::BuiltinType::BitString ? "v.bit_count()" : "v.len()";
-}
-
 /// @brief True for the 12 character-string builtins X.680 §51 SIZE
 ///        validation covers — the same set
 ///        `Generator::build_member_type_descriptor_spec`'s
@@ -645,6 +629,31 @@ std::string RustBackend::format_tag_literal(const TypeTagSpec& tag_spec) const {
 ///       pairing's hi_is_large note).
 void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
+    using BT = ast::BuiltinType;
+    bool is_bits = spec.builtin_type == BT::BitString;
+    bool is_octets = spec.builtin_type == BT::OctetString;
+    // SIZE-able kinds (X.691 §16/§17/§26.5): OCTET STRING/BIT STRING plus
+    // every character-string kind, wide-char included — validate() is
+    // pure byte-length checking either way, no PER-specific alphabet
+    // concern. Table-driven throughout (per review on #473: "all
+    // constraints should be table based... never put it in code"),
+    // always wired regardless of has_size_constraint (flags: 0 when
+    // unconstrained) so validate() and, when covered, PerValue both read
+    // the exact same static — no generated per-type bounds-check function.
+    bool sizeable = is_bits || is_octets || is_sizeable_string_kind(spec.builtin_type);
+    std::string cname = to_screaming_snake_case(tname) + "_CONSTRAINTS";
+    if (sizeable) {
+        int flags = spec.has_size_constraint
+            ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
+            : 0;
+        int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
+        os << std::format(
+            "pub static {}: asn1cpp_ber::constraints::Constraints = asn1cpp_ber::constraints::Constraints {{\n"
+            "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, "
+            "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: None,\n"
+            "}};\n\n",
+            cname, flags, spec.size_range_bits, spec.size_lower, size_upper);
+    }
 
     os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", tname);
     os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
@@ -688,23 +697,66 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << "        self.0.xer_decode_into(r)\n";
         os << "    }\n";
     }
-    os << "}\n\n";
-
-    if (!spec.has_size_constraint) return;
-
-    std::string fname = escape(to_snake_case(tname) + "_size_ok");
-    const char* len_expr = size_check_len_expr(spec.builtin_type);
-    os << std::format("pub fn {}(v: &{}) -> bool {{\n", fname, native_builtin_type(spec.builtin_type));
-    if (spec.size_bounded) {
-        os << std::format("    ({0} as i64) >= {1} && ({0} as i64) <= {2}\n",
-                           len_expr, spec.size_lower, spec.size_upper);
-    } else {
-        // Semi-constrained (SIZE(n..MAX)) — no upper cap, same rationale as
-        // IntegerSpec's semi_constrained handling.
-        os << std::format("    ({} as i64) >= {} // semi-constrained, no upper cap\n",
-                           len_expr, spec.size_lower);
+    if (sizeable) {
+        const char* method = is_bits ? "bit_count" : "len";
+        os << std::format("\n    fn validate(&self) -> i64 {{\n        asn1cpp_ber::constraints::validate_size(self.0.{}(), &{})\n    }}\n",
+                           method, cname);
     }
     os << "}\n\n";
+
+    // PER coverage (X.691 §16/§17/§26.5) — OCTET STRING/BIT STRING
+    // unconditionally (no alphabet concept), a known-multiplier character
+    // string kind when it has no FROM constraint (per_string_params'
+    // own doc: PER encode/decode here doesn't implement alphabet
+    // remapping yet — same exclusion per_member_covered's own Sizeable
+    // branch already applies to a direct member of this kind; wide-char
+    // kinds are excluded too, per_string_params' own scope). A named
+    // alias's own PerValue impl means any TypeRef to it dispatches
+    // through the trait (Scalar), never needing this type's own
+    // Constraints referenced from anywhere else.
+    auto str_params = per_string_params(spec.builtin_type);
+    bool per_covered = is_bits || is_octets || (str_params.has_value() && spec.alphabet.empty());
+    if (per_covered) {
+        os << std::format("impl asn1cpp_per::PerValue for {} {{\n", tname);
+        os << "    fn is_present(&self) -> bool { true }\n";
+        if (is_bits) {
+            os << std::format(
+                "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {{\n"
+                "        asn1cpp_per::bit_string::encode_bit_string(w, &{0}, &self.0.bytes, self.0.bit_count());\n    }}\n",
+                cname);
+            os << std::format(
+                "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {{\n"
+                "        let (bytes, unused) = asn1cpp_per::bit_string::decode_bit_string(r, &{0})?;\n"
+                "        self.0 = asn1cpp_ber::bit_string::BitString {{ bytes, unused_bits: unused }};\n        Ok(())\n    }}\n",
+                cname);
+        } else if (is_octets) {
+            os << std::format(
+                "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {{\n"
+                "        asn1cpp_per::octet_string::encode_octet_string(w, &{0}, &self.0.0);\n    }}\n",
+                cname);
+            os << std::format(
+                "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {{\n"
+                "        self.0 = asn1cpp_ber::octet_string::OctetString(asn1cpp_per::octet_string::decode_octet_string(r, &{0})?);\n"
+                "        Ok(())\n    }}\n",
+                cname);
+        } else {
+            auto [bits, natural] = *str_params;
+            bool bare_string = spec.builtin_type == BT::Ia5String;
+            std::string ctor = bare_string
+                ? "String::from_utf8(x).unwrap_or_default()"
+                : std::format("{}(String::from_utf8(x).unwrap_or_default())", native_builtin_type(spec.builtin_type));
+            os << std::format(
+                "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {{\n"
+                "        let _ = asn1cpp_per::strings::encode_string(w, &{0}, {1}, 1, asn1cpp_per::strings::NaturalAlphabet::{2}, self.0.as_bytes());\n    }}\n",
+                cname, bits, natural);
+            os << std::format(
+                "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {{\n"
+                "        let x = asn1cpp_per::strings::decode_string(r, &{0}, {1}, 1)?;\n"
+                "        self.0 = {2};\n        Ok(())\n    }}\n",
+                cname, bits, ctor);
+        }
+        os << "}\n\n";
+    }
 }
 
 /// @brief Emit a Rust default-value accessor function for a SEQUENCE/SET
