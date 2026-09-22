@@ -1316,6 +1316,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         if (m.mbuiltin) {
             if (*m.mbuiltin == ast::BuiltinType::Integer)
                 return m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64;
+            // NULL (X.691 §14) — zero bits either direction, unconditionally
+            // covered by the blanket `impl PerValue for ()`.
+            if (*m.mbuiltin == ast::BuiltinType::Null) return true;
             // OCTET STRING/BIT STRING (X.691 §16/§17) — no alphabet concept
             // at all, unconditionally covered by asn1cpp_per::octet_string/
             // bit_string regardless of SIZE constraint (both always-wire
@@ -1559,16 +1562,18 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                         "            }},\n"
                         "        }},\n",
                         per_cname, field, encode_elem, decode_elem, field_mut);
-                } else if (!m.mbuiltin && (m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
-                                            m.ref_kind == SequenceMemberSpec::RefTargetKind::IntegerAlias ||
-                                            m.ref_kind == SequenceMemberSpec::RefTargetKind::Other)) {
+                } else if ((!m.mbuiltin && (m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
+                                             m.ref_kind == SequenceMemberSpec::RefTargetKind::IntegerAlias ||
+                                             m.ref_kind == SequenceMemberSpec::RefTargetKind::Other)) ||
+                           (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Null)) {
                     // TypeRef to ENUMERATED, to a named INTEGER type (a real
                     // newtype with its own PerValue impl — emit_integer_
-                    // definition's own doc), or to another named SEQUENCE/
-                    // CHOICE/SET — either way the target already has an
-                    // unconditional `PerValue` impl, so this is the
-                    // trait-based Scalar path, same shape as the BER
-                    // Scalar row just above.
+                    // definition's own doc), to another named SEQUENCE/
+                    // CHOICE/SET, or a direct NULL member (X.691 §14, the
+                    // blanket `impl PerValue for ()`) — either way the
+                    // target already has an unconditional `PerValue` impl,
+                    // so this is the trait-based Scalar path, same shape as
+                    // the BER Scalar row just above.
                     per_members_os << std::format(
                         "        access: asn1cpp_per::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n",
                         m.mname);
@@ -2391,6 +2396,9 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     return a.storage_kind == IntStorageKind::S64 || a.storage_kind == IntStorageKind::U64;
                 if (*a.mbuiltin == ast::BuiltinType::OctetString || *a.mbuiltin == ast::BuiltinType::BitString)
                     return true;
+                // NULL (X.691 §14) — zero bits either direction, a common
+                // 3GPP "spare"/reserved-placeholder alternative pattern.
+                if (*a.mbuiltin == ast::BuiltinType::Null) return true;
                 return !a.has_from_alphabet && per_string_params(*a.mbuiltin).has_value();
             }
             return a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
@@ -2417,16 +2425,19 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     os << "    },\n";
                     continue;
                 }
-                if (!a.mbuiltin && (a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
-                                    a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias ||
-                                    a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other)) {
+                if ((!a.mbuiltin && (a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
+                                     a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias ||
+                                     a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other)) ||
+                    (a.mbuiltin && *a.mbuiltin == ast::BuiltinType::Null)) {
                     // TypeRef to ENUMERATED, to a named INTEGER type (a real
-                    // newtype now — emit_integer_definition's own doc), or
-                    // to another named SEQUENCE/CHOICE/SET — either way the
-                    // target already has an unconditional `PerValue` impl; the
-                    // alternative's payload type is that type directly, so
-                    // this dispatches through the trait rather than
-                    // integer::encode_int. `asn1cpp_per::value::Box<T>`'s
+                    // newtype now — emit_integer_definition's own doc), to
+                    // another named SEQUENCE/CHOICE/SET, or a direct NULL
+                    // alternative (X.691 §14, the blanket `impl PerValue for
+                    // ()`) — either way the target already has an
+                    // unconditional `PerValue` impl; the alternative's
+                    // payload type is that type directly, so this dispatches
+                    // through the trait rather than integer::encode_int.
+                    // `asn1cpp_per::value::Box<T>`'s
                     // own blanket `PerValue` impl makes `x: &Box<T>` (a
                     // directly self-referential alternative — see
                     // emit_choice_declaration's own `Box<>` comment) work
@@ -2436,12 +2447,15 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     // the way a reference does.
                     bool boxed = (a.mtype == spec.type_name);
                     std::string ctor = boxed ? std::format("Box::new(x)") : "x";
+                    // `()::default()` isn't valid syntax for the unit type —
+                    // `()` is already the (only) value, no Default call needed.
+                    std::string default_expr = a.mtype == "()" ? "()" : std::format("{}::default()", a.mtype);
                     os << std::format(
                         "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_per::PerValue::per_encode(x, w); true }} else {{ false }},\n",
                         variant_path);
                     os << std::format(
-                        "        per_decode_into: |r| {{ let mut x = {}::default(); asn1cpp_per::PerValue::per_decode_into(&mut x, r)?; Ok({}({})) }},\n",
-                        a.mtype, variant_path, ctor);
+                        "        per_decode_into: |r| {{ let mut x = {}; asn1cpp_per::PerValue::per_decode_into(&mut x, r)?; Ok({}({})) }},\n",
+                        default_expr, variant_path, ctor);
                     os << "    },\n";
                     continue;
                 }
