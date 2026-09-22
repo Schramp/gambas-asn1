@@ -68,6 +68,7 @@ mod tests {
         size_range_bits: 0,
         size_lower: 0,
         size_upper: 0,
+        encode_table: None,
     };
 
     fn sized(lower: i64, upper: i64) -> Constraints {
