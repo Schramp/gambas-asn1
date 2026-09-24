@@ -34,6 +34,17 @@ pub trait PerValue {
     }
 }
 
+/// NULL (X.691 §14): contributes zero bits to the encoding either
+/// direction — mirrors `NullPerHandler` (`runtime/src/PerCodec.cpp`)
+/// exactly. `()` is `native_builtin_type`'s own mapping for NULL
+/// (`RustBackend.cpp`), same as the BER side's `impl Asn1Value for ()`.
+impl PerValue for () {
+    fn per_encode(&self, _w: &mut Writer) {}
+    fn per_decode_into(&mut self, _r: &mut Reader) -> Result<(), DecodeError> {
+        Ok(())
+    }
+}
+
 /// `Box<T>` forwarding — mirrors `asn1cpp_ber::value::Asn1Value`'s own
 /// identical blanket impl exactly, and for the same reason: the heap
 /// indirection `RustBackend` gives a self-referential/mutually-recursive
