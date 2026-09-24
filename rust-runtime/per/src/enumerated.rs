@@ -37,16 +37,28 @@ fn range_bits(range: usize) -> u32 {
     bits
 }
 
-/// `root_count`: entries before the first extension-addition value, or `0`
-/// when the ASN.1 ENUMERATED has no `...` marker — mirrors
-/// `EnumeratedPerHandler`'s own `rcount = root_count > 0 ? root_count :
-/// entries.len()` fallback exactly (`EnumeratedSpec::root_count`,
-/// `Backend.hpp`).
-pub fn encode_enum(w: &mut Writer, entries: &[EnumEntry], extensible: bool, root_count: usize, value: i64) {
-    let rcount = if root_count > 0 { root_count } else { entries.len() };
-    let ordinal = entries.iter().position(|e| e.value == value);
+/// One ENUMERATED's complete PER metadata — mirrors `EnumSpec`
+/// (`runtime/include/asn1cpp/TypeDescriptor.hpp`: `entries`/`extensible`/
+/// `root_count` bundled in one table) and this crate's own
+/// `sequence::SequenceSpec`/`choice::ChoiceSpec` (one static per type,
+/// referenced by the generated `PerValue` impl, rather than `extensible`/
+/// `root_count` passed as separate literal arguments at each call site).
+pub struct EnumSpec {
+    pub entries: &'static [EnumEntry],
+    /// True if the ASN.1 ENUMERATED has an extension marker (`...`).
+    pub extensible: bool,
+    /// Entries before the first extension-addition value. `0` means the
+    /// type has no extension marker — mirrors `EnumeratedPerHandler`'s own
+    /// `rcount = root_count > 0 ? root_count : entries.len()` fallback
+    /// exactly (`EnumeratedSpec::root_count`, `Backend.hpp`).
+    pub root_count: usize,
+}
+
+pub fn encode_enum(w: &mut Writer, spec: &EnumSpec, value: i64) {
+    let rcount = if spec.root_count > 0 { spec.root_count } else { spec.entries.len() };
+    let ordinal = spec.entries.iter().position(|e| e.value == value);
     let is_ext = !matches!(ordinal, Some(o) if o < rcount);
-    if extensible {
+    if spec.extensible {
         w.put_bits(is_ext as u64, 1);
     }
     if !is_ext {
@@ -59,10 +71,10 @@ pub fn encode_enum(w: &mut Writer, entries: &[EnumEntry], extensible: bool, root
 }
 
 /// Decode counterpart of [`encode_enum`].
-pub fn decode_enum(r: &mut Reader, entries: &[EnumEntry], extensible: bool, root_count: usize) -> Result<i64, DecodeError> {
-    let rcount = if root_count > 0 { root_count } else { entries.len() };
+pub fn decode_enum(r: &mut Reader, spec: &EnumSpec) -> Result<i64, DecodeError> {
+    let rcount = if spec.root_count > 0 { spec.root_count } else { spec.entries.len() };
     let mut is_ext = false;
-    if extensible {
+    if spec.extensible {
         is_ext = r.get_bits(1)? != 0;
     }
     if !is_ext {
@@ -70,14 +82,14 @@ pub fn decode_enum(r: &mut Reader, entries: &[EnumEntry], extensible: bool, root
         if idx >= rcount {
             return Err(DecodeError::new("PER: ENUM index out of range", r.bit_pos()));
         }
-        Ok(entries[idx].value)
+        Ok(spec.entries[idx].value)
     } else {
         let ord = get_nsnn(r)? as usize;
         let ext_entry = rcount + ord;
-        if ext_entry >= entries.len() {
+        if ext_entry >= spec.entries.len() {
             return Err(DecodeError::new("PER: ENUM extension index out of range", r.bit_pos()));
         }
-        Ok(entries[ext_entry].value)
+        Ok(spec.entries[ext_entry].value)
     }
 }
 
@@ -91,19 +103,21 @@ mod tests {
         EnumEntry { value: 2 },
     ];
 
-    fn roundtrip(entries: &[EnumEntry], extensible: bool, root_count: usize, value: i64) -> i64 {
+    fn roundtrip(spec: &EnumSpec, value: i64) -> i64 {
         let mut w = Writer::new();
-        encode_enum(&mut w, entries, extensible, root_count, value);
+        encode_enum(&mut w, spec, value);
         w.flush();
         let bytes = w.into_bytes();
         let mut r = Reader::new(&bytes);
-        decode_enum(&mut r, entries, extensible, root_count).unwrap()
+        decode_enum(&mut r, spec).unwrap()
     }
+
+    const ROOT_ONLY_SPEC: EnumSpec = EnumSpec { entries: &ROOT_ONLY, extensible: false, root_count: 0 };
 
     #[test]
     fn root_values_roundtrip() {
         for v in [0, 1, 2] {
-            assert_eq!(roundtrip(&ROOT_ONLY, false, 0, v), v);
+            assert_eq!(roundtrip(&ROOT_ONLY_SPEC, v), v);
         }
     }
 
@@ -113,15 +127,16 @@ mod tests {
         EnumEntry { value: 2 },
         EnumEntry { value: 3 },
     ];
+    const WITH_EXT_SPEC: EnumSpec = EnumSpec { entries: &WITH_EXT, extensible: true, root_count: 3 };
 
     #[test]
     fn root_value_with_extension_marker_present() {
-        assert_eq!(roundtrip(&WITH_EXT, true, 3, 1), 1);
+        assert_eq!(roundtrip(&WITH_EXT_SPEC, 1), 1);
     }
 
     #[test]
     fn extension_value() {
-        assert_eq!(roundtrip(&WITH_EXT, true, 3, 3), 3);
+        assert_eq!(roundtrip(&WITH_EXT_SPEC, 3), 3);
     }
 
     #[test]
@@ -129,7 +144,7 @@ mod tests {
         // range_bits(3) == 2 bits; idx 3 (`11`) is out of the 3-entry root
         // range — must land in the "index out of range" error path.
         let mut r = Reader::new(&[0b11_000000]);
-        let err = decode_enum(&mut r, &ROOT_ONLY, false, 0).unwrap_err();
+        let err = decode_enum(&mut r, &ROOT_ONLY_SPEC).unwrap_err();
         assert!(err.message.contains("out of range"));
     }
 
@@ -140,7 +155,7 @@ mod tests {
     #[test]
     fn matches_cpp_ground_truth() {
         let mut w = Writer::new();
-        encode_enum(&mut w, &ROOT_ONLY, false, 0, 1);
+        encode_enum(&mut w, &ROOT_ONLY_SPEC, 1);
         w.flush();
         assert_eq!(w.into_bytes(), vec![0b0100_0000]);
     }

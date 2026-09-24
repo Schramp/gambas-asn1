@@ -170,36 +170,20 @@ static bool is_sizeable_string_kind(ast::BuiltinType bt) {
     }
 }
 
-/// @brief (bits, natural-alphabet) for a single-byte-per-character string
-///        kind's PER encoding (X.691 §26.5), mirroring `string_params`
-///        (runtime/src/PerCodec.cpp). Wide-char kinds (BmpString bpc=2,
-///        UniversalString bpc=4) are deliberately excluded (nullopt): PER
-///        string coverage reuses `asn1cpp_per::strings::encode_string`/
-///        `decode_string`, whose core-path scope doc already limits it to
-///        the natural-alphabet case, and this backend's Rust field for
-///        those two kinds is a plain `String` requiring valid UTF-8 either
-///        way — the code-point-vs-byte accounting a wide-char SIZE
-///        constraint needs is a deliberate follow-up.
-/// @return `{bits, "Numeric"|"Ia5"|"None"}` (the `asn1cpp_per::strings::
-///         NaturalAlphabet` variant name) when covered; `nullopt` otherwise.
-static std::optional<std::pair<uint32_t, const char*>> per_string_params(ast::BuiltinType bt) {
-    using BT = ast::BuiltinType;
-    switch (bt) {
-    case BT::NumericString: return std::make_pair(4u, "Numeric");
-    case BT::Ia5String: return std::make_pair(7u, "Ia5");
-    case BT::PrintableString:
-    case BT::VisibleString:
-        return std::make_pair(7u, "None");
-    case BT::Utf8String:
-    case BT::T61String:
-    case BT::GeneralString:
-    case BT::GraphicString:
-    case BT::VideotexString:
-    case BT::ObjectDescriptor:
-        return std::make_pair(8u, "None");
-    default:
-        return std::nullopt;
-    }
+/// @brief Whether `bt` is a known-multiplier character string kind PER
+///        encoding (X.691 §26.5) covers — exactly `is_sizeable_string_kind`'s
+///        own set (every character-string kind, wide-char included).
+///        (bits, bytes-per-char, natural alphabet) is no longer decided
+///        here: `asn1cpp_per::strings::encode_string`/`decode_string` take
+///        the type's own universal tag number and look the rest up
+///        themselves (that crate's own `string_params` table, mirroring
+///        `runtime/src/PerCodec.cpp`'s identical one) — codegen's only job
+///        is picking the right tag constant (`builtin_ber_tag`, already
+///        used for the BER leg) and, since the Rust field representation
+///        genuinely does differ by kind, the byte-source/constructor shape
+///        (Vec<u8> pass-through for wide-char, String::from_utf8 otherwise).
+static bool per_string_covered(ast::BuiltinType bt) {
+    return is_sizeable_string_kind(bt);
 }
 
 void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
@@ -383,16 +367,22 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         }
         os << "];\n\n";
 
+        // Bundled into one EnumSpec static (entries + extensible + root_count)
+        // rather than passed as separate literal arguments at the call
+        // site — mirrors SequenceSpec/ChoiceSpec (one static per type,
+        // referenced by the generated PerValue impl).
+        std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(tname));
+        os << std::format(
+            "static {}: asn1cpp_per::enumerated::EnumSpec = asn1cpp_per::enumerated::EnumSpec {{\n"
+            "    entries: &{}, extensible: {}, root_count: {},\n}};\n\n",
+            per_spec_ident, per_entries_ident, spec.extensible ? "true" : "false", spec.root_count);
+
         os << std::format("impl asn1cpp_per::PerValue for {} {{\n", tname);
         os << "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {\n";
-        os << std::format(
-            "        asn1cpp_per::enumerated::encode_enum(w, &{}, {}, {}, *self as i64);\n",
-            per_entries_ident, spec.extensible ? "true" : "false", spec.root_count);
+        os << std::format("        asn1cpp_per::enumerated::encode_enum(w, &{}, *self as i64);\n", per_spec_ident);
         os << "    }\n\n";
         os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {\n";
-        os << std::format(
-            "        let v = asn1cpp_per::enumerated::decode_enum(r, &{}, {}, {})?;\n",
-            per_entries_ident, spec.extensible ? "true" : "false", spec.root_count);
+        os << std::format("        let v = asn1cpp_per::enumerated::decode_enum(r, &{})?;\n", per_spec_ident);
         os << std::format(
             "        *self = std::convert::TryFrom::try_from(v).map_err(|_| asn1cpp_per::DecodeError::new(\"PER: ENUM value not in {}\", r.bit_pos()))?;\n",
             tname);
@@ -706,16 +696,15 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
 
     // PER coverage (X.691 §16/§17/§26.5) — OCTET STRING/BIT STRING
     // unconditionally (no alphabet concept), a known-multiplier character
-    // string kind when it has no FROM constraint (per_string_params'
-    // own doc: PER encode/decode here doesn't implement alphabet
-    // remapping yet — same exclusion per_member_covered's own Sizeable
-    // branch already applies to a direct member of this kind; wide-char
-    // kinds are excluded too, per_string_params' own scope). A named
-    // alias's own PerValue impl means any TypeRef to it dispatches
+    // string kind (wide-char BmpString/UniversalString included) when it
+    // has no FROM constraint (PER encode/decode here doesn't implement
+    // alphabet remapping yet — same exclusion per_member_covered's own
+    // Sizeable branch already applies to a direct member of this kind). A
+    // named alias's own PerValue impl means any TypeRef to it dispatches
     // through the trait (Scalar), never needing this type's own
     // Constraints referenced from anywhere else.
-    auto str_params = per_string_params(spec.builtin_type);
-    bool per_covered = is_bits || is_octets || (str_params.has_value() && spec.alphabet.empty());
+    bool str_covered = per_string_covered(spec.builtin_type);
+    bool per_covered = is_bits || is_octets || (str_covered && spec.alphabet.empty());
     if (per_covered) {
         os << std::format("impl asn1cpp_per::PerValue for {} {{\n", tname);
         os << "    fn is_present(&self) -> bool { true }\n";
@@ -740,20 +729,22 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
                 "        Ok(())\n    }}\n",
                 cname);
         } else {
-            auto [bits, natural] = *str_params;
+            std::string tag_num = std::format("{}.number", builtin_ber_tag(spec.builtin_type, ""));
             bool bare_string = spec.builtin_type == BT::Ia5String;
-            std::string ctor = bare_string
-                ? "String::from_utf8(x).unwrap_or_default()"
-                : std::format("{}(String::from_utf8(x).unwrap_or_default())", native_builtin_type(spec.builtin_type));
+            bool wide = spec.builtin_type == BT::BmpString || spec.builtin_type == BT::UniversalString;
+            std::string bytes_expr = wide ? "&self.0.0" : "self.0.as_bytes()";
+            std::string ctor = wide ? std::format("{}(x)", native_builtin_type(spec.builtin_type))
+                              : bare_string ? "String::from_utf8(x).unwrap_or_default()"
+                                            : std::format("{}(String::from_utf8(x).unwrap_or_default())", native_builtin_type(spec.builtin_type));
             os << std::format(
                 "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {{\n"
-                "        let _ = asn1cpp_per::strings::encode_string(w, &{0}, {1}, 1, asn1cpp_per::strings::NaturalAlphabet::{2}, self.0.as_bytes());\n    }}\n",
-                cname, bits, natural);
+                "        let _ = asn1cpp_per::strings::encode_string(w, &{0}, {1}, {2});\n    }}\n",
+                cname, tag_num, bytes_expr);
             os << std::format(
                 "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {{\n"
-                "        let x = asn1cpp_per::strings::decode_string(r, &{0}, {1}, 1)?;\n"
+                "        let x = asn1cpp_per::strings::decode_string(r, &{0}, {1})?;\n"
                 "        self.0 = {2};\n        Ok(())\n    }}\n",
-                cname, bits, ctor);
+                cname, tag_num, ctor);
         }
         os << "}\n\n";
     }
@@ -1330,9 +1321,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // own `asn1cpp_per::sequence::MemberAccess::Unsupported` stub row
     // (panics only if actually reached) rather than withholding the whole
     // type's `PerValue` impl. Scope for now: a member whose ASN.1 type is
-    // *directly* a builtin INTEGER (S64/U64 storage) or a single-byte-per-
-    // character string kind (`per_string_params`'s own doc for exactly
-    // which), or a TypeRef member whose resolved target is ENUMERATED, a
+    // *directly* a builtin INTEGER (S64/U64 storage) or a character string
+    // kind (`per_string_covered`'s own doc for exactly which), or a
+    // TypeRef member whose resolved target is ENUMERATED, a
     // named INTEGER type, or another named SEQUENCE/CHOICE/SET
     // (`m.ref_kind`; all three are always representable regardless of
     // anything else, since the referenced type either always gets a
@@ -1383,7 +1374,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // core path doesn't implement yet (that module's own doc) —
             // encoding as if unconstrained-alphabet would silently
             // produce the wrong (too-wide) bit width per character.
-            return !m.has_from_alphabet && per_string_params(*m.mbuiltin).has_value();
+            return !m.has_from_alphabet && per_string_covered(*m.mbuiltin);
         }
         return m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
                m.ref_kind == SequenceMemberSpec::RefTargetKind::IntegerAlias ||
@@ -1671,8 +1662,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                             "        }},\n",
                             per_cname, field, field_mut);
                     }
-                } else if (m.mbuiltin && per_string_params(*m.mbuiltin).has_value()) {
-                    // Single-byte-per-character string kind — Constrained,
+                } else if (m.mbuiltin && per_string_covered(*m.mbuiltin)) {
+                    // Character string kind — Constrained,
                     // since the field's Rust type (bare `String` for
                     // IA5String, a newtype `Deref<Target=String>` for every
                     // other kind — rust-runtime/ber/src/strings.rs's own
@@ -1692,7 +1683,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // equivalent flag on `Writer` yet, so it silently
                     // produces no bytes for that field instead, a known gap
                     // versus the C++ side's own (still soft) failure signal.
-                    auto [bits, natural] = *per_string_params(*m.mbuiltin);
+                    std::string tag_num = std::format("{}.number", builtin_ber_tag(*m.mbuiltin, m.mtype));
                     std::string per_cname;
                     if (m.tdref.starts_with("&asn_TYP_")) {
                         std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname));
@@ -1701,18 +1692,22 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                         per_cname = "asn1cpp_per::constraints::UNCONSTRAINED";
                     }
                     bool bare_string = *m.mbuiltin == ast::BuiltinType::Ia5String;
-                    std::string bytes_expr = m.optional ? std::format("v.{}.as_ref().unwrap().as_bytes()", m.mname)
-                                                         : std::format("v.{}.as_bytes()", m.mname);
-                    std::string ctor = bare_string ? "String::from_utf8(x).unwrap_or_default()"
+                    bool wide = *m.mbuiltin == ast::BuiltinType::BmpString || *m.mbuiltin == ast::BuiltinType::UniversalString;
+                    std::string bytes_expr = wide
+                        ? (m.optional ? std::format("&v.{}.as_ref().unwrap().0", m.mname) : std::format("&v.{}.0", m.mname))
+                        : (m.optional ? std::format("v.{}.as_ref().unwrap().as_bytes()", m.mname)
+                                      : std::format("v.{}.as_bytes()", m.mname));
+                    std::string ctor = wide ? std::format("{}(x)", m.mtype)
+                                      : bare_string ? "String::from_utf8(x).unwrap_or_default()"
                                                     : std::format("{}(String::from_utf8(x).unwrap_or_default())", m.mtype);
                     std::string field_mut = m.optional ? std::format("v.{} = Some({})", m.mname, ctor)
                                                         : std::format("v.{} = {}", m.mname, ctor);
                     per_members_os << std::format(
                         "        access: asn1cpp_per::sequence::MemberAccess::Constrained {{\n"
-                        "            encode: |v, w| {{ let _ = asn1cpp_per::strings::encode_string(w, &{}, {}, 1, asn1cpp_per::strings::NaturalAlphabet::{}, {}); }},\n"
-                        "            decode: |v, r| {{ let x = asn1cpp_per::strings::decode_string(r, &{}, {}, 1)?; {}; Ok(()) }},\n"
+                        "            encode: |v, w| {{ let _ = asn1cpp_per::strings::encode_string(w, &{}, {}, {}); }},\n"
+                        "            decode: |v, r| {{ let x = asn1cpp_per::strings::decode_string(r, &{}, {})?; {}; Ok(()) }},\n"
                         "        }},\n",
-                        per_cname, bits, natural, bytes_expr, per_cname, bits, field_mut);
+                        per_cname, tag_num, bytes_expr, per_cname, tag_num, field_mut);
                 } else {
                     // Direct builtin INTEGER member — TypeRef to a named
                     // INTEGER type is caught by the Scalar branch above now
@@ -2451,7 +2446,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // NULL (X.691 §14) — zero bits either direction, a common
                 // 3GPP "spare"/reserved-placeholder alternative pattern.
                 if (*a.mbuiltin == ast::BuiltinType::Null) return true;
-                return !a.has_from_alphabet && per_string_params(*a.mbuiltin).has_value();
+                return !a.has_from_alphabet && per_string_covered(*a.mbuiltin);
             }
             return a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
                    a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias ||
@@ -2544,12 +2539,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     os << "    },\n";
                     continue;
                 }
-                if (a.mbuiltin && per_string_params(*a.mbuiltin).has_value()) {
-                    // Single-byte-per-character string kind — see
-                    // emit_sequence_definition's identical branch for the
-                    // field-shape/error-handling rationale (this crate's
-                    // `AlternativeSpec::per_encode` has no `Result` either).
-                    auto [bits, natural] = *per_string_params(*a.mbuiltin);
+                if (a.mbuiltin && per_string_covered(*a.mbuiltin)) {
+                    // Character string kind — see emit_sequence_definition's
+                    // identical branch for the field-shape/error-handling
+                    // rationale (this crate's `AlternativeSpec::per_encode`
+                    // has no `Result` either).
+                    std::string tag_num = std::format("{}.number", builtin_ber_tag(*a.mbuiltin, a.mtype));
                     std::string per_cname;
                     if (a.tdref.starts_with("&asn_TYP_")) {
                         std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name)));
@@ -2558,14 +2553,17 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                         per_cname = "asn1cpp_per::constraints::UNCONSTRAINED";
                     }
                     bool bare_string = *a.mbuiltin == ast::BuiltinType::Ia5String;
-                    std::string ctor = bare_string ? "String::from_utf8(x).unwrap_or_default()"
+                    bool wide = *a.mbuiltin == ast::BuiltinType::BmpString || *a.mbuiltin == ast::BuiltinType::UniversalString;
+                    std::string bytes_expr = wide ? "&x.0" : "x.as_bytes()";
+                    std::string ctor = wide ? std::format("{}(x)", a.mtype)
+                                      : bare_string ? "String::from_utf8(x).unwrap_or_default()"
                                                     : std::format("{}(String::from_utf8(x).unwrap_or_default())", a.mtype);
                     os << std::format(
-                        "        per_encode: |v, w| if let {}(x) = v {{ let _ = asn1cpp_per::strings::encode_string(w, &{}, {}, 1, asn1cpp_per::strings::NaturalAlphabet::{}, x.as_bytes()); true }} else {{ false }},\n",
-                        variant_path, per_cname, bits, natural);
+                        "        per_encode: |v, w| if let {}(x) = v {{ let _ = asn1cpp_per::strings::encode_string(w, &{}, {}, {}); true }} else {{ false }},\n",
+                        variant_path, per_cname, tag_num, bytes_expr);
                     os << std::format(
-                        "        per_decode_into: |r| {{ let x = asn1cpp_per::strings::decode_string(r, &{}, {}, 1)?; Ok({}({})) }},\n",
-                        per_cname, bits, variant_path, ctor);
+                        "        per_decode_into: |r| {{ let x = asn1cpp_per::strings::decode_string(r, &{}, {})?; Ok({}({})) }},\n",
+                        per_cname, tag_num, variant_path, ctor);
                     os << "    },\n";
                     continue;
                 }

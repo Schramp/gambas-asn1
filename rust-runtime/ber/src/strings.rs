@@ -165,11 +165,105 @@ char_string_type!(VideotexString, VIDEOTEX_STRING_TAG, universal::VIDEOTEX_STRIN
 char_string_type!(VisibleString, VISIBLE_STRING_TAG, universal::VISIBLE_STRING, "VisibleString");
 char_string_type!(GraphicString, GRAPHIC_STRING_TAG, universal::GRAPHIC_STRING, "GraphicString");
 char_string_type!(GeneralString, GENERAL_STRING_TAG, universal::GENERAL_STRING, "GeneralString");
-char_string_type!(UniversalString, UNIVERSAL_STRING_TAG, universal::UNIVERSAL_STRING, "UniversalString");
-char_string_type!(BmpString, BMP_STRING_TAG, universal::BMP_STRING, "BMPString");
 char_string_type!(ObjectDescriptor, OBJECT_DESCRIPTOR_TAG, universal::OBJECT_DESCRIPTOR, "ObjectDescriptor");
 char_string_type!(UtcTime, UTC_TIME_TAG, universal::UTC_TIME, "UTCTime");
 char_string_type!(GeneralizedTime, GENERALIZED_TIME_TAG, universal::GENERALIZED_TIME, "GeneralizedTime");
+
+/// XER text form for a wide-char string's raw `bpc`-byte-per-codepoint
+/// content — decode each big-endian codepoint group to a `char` and hand
+/// the resulting Unicode text to the same entity-escaper every other
+/// string kind uses. Mirrors `xer_detail::encode_wide_string<N>`
+/// (`runtime/src/XerCodec.cpp`).
+fn encode_wide_string_xer(bytes: &[u8], bpc: usize, out: &mut String) {
+    let mut text = String::with_capacity(bytes.len() / bpc);
+    for chunk in bytes.chunks_exact(bpc) {
+        let mut cp: u32 = 0;
+        for &b in chunk {
+            cp = (cp << 8) | b as u32;
+        }
+        text.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+    }
+    crate::xer::escape(&text, out);
+}
+
+/// Reverse of [`encode_wide_string_xer`]: each Unicode scalar value in the
+/// (already-unescaped) XER text becomes one big-endian `bpc`-byte group.
+/// Mirrors the decode side of `BmpStringXerHandler`/`UniversalStringXerHandler`
+/// (`runtime/src/XerCodec.cpp`).
+fn decode_wide_string_xer(text: &str, bpc: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.chars().count() * bpc);
+    for c in text.chars() {
+        let cp = c as u32;
+        for i in (0..bpc).rev() {
+            out.push(((cp >> (8 * i)) & 0xFF) as u8);
+        }
+    }
+    out
+}
+
+/// Define one wide-char string newtype (`BMPString` bpc=2, `UniversalString`
+/// bpc=4 — X.680 §41.14/§41.17). Unlike [`char_string_type!`], the wrapped
+/// storage is `Vec<u8>` holding the raw `bpc`-byte-per-codepoint wire bytes
+/// directly, not a UTF-8 `String` — same representation `AsnStringBase` uses
+/// on the C++ side (a byte buffer, not necessarily valid UTF-8; see
+/// `rust-runtime/per/src/strings.rs`'s own module doc, which already
+/// documented this representation as the PER-side expectation). A `String`
+/// can't hold this losslessly: a UCS-2BE/UCS-4BE code point outside the
+/// ASCII range doesn't round-trip through `String::from_utf8`, and even an
+/// ASCII-range one has the wrong byte count (1 UTF-8 byte vs 2/4 wire bytes).
+macro_rules! wide_char_string_type {
+    ($name:ident, $tag_const:ident, $tag_num:expr, $asn1_name:expr, $bpc:expr) => {
+        pub const $tag_const: Tag = Tag::universal($tag_num, false);
+
+        #[derive(Debug, Clone, Default, PartialEq, Eq)]
+        pub struct $name(pub Vec<u8>);
+
+        impl std::ops::Deref for $name {
+            type Target = Vec<u8>;
+            fn deref(&self) -> &Vec<u8> {
+                &self.0
+            }
+        }
+
+        impl std::ops::DerefMut for $name {
+            fn deref_mut(&mut self) -> &mut Vec<u8> {
+                &mut self.0
+            }
+        }
+
+        impl Asn1Value for $name {
+            fn ber_natural_tag(&self) -> Tag {
+                $tag_const
+            }
+
+            fn xer_element_name(&self) -> &'static str {
+                $asn1_name
+            }
+
+            fn ber_encode_content(&self, out: &mut Vec<u8>) {
+                out.extend_from_slice(&self.0);
+            }
+
+            fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+                self.0 = content.to_vec();
+                Ok(())
+            }
+
+            fn xer_encode(&self, out: &mut String, _depth: usize) {
+                encode_wide_string_xer(&self.0, $bpc, out);
+            }
+
+            fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+                let text = r.read_text_content();
+                self.0 = decode_wide_string_xer(&crate::xer::unescape(text), $bpc);
+                Ok(())
+            }
+        }
+    };
+}
+
+wide_char_string_type!(UniversalString, UNIVERSAL_STRING_TAG, universal::UNIVERSAL_STRING, "UniversalString", 4);
+wide_char_string_type!(BmpString, BMP_STRING_TAG, universal::BMP_STRING, "BMPString", 2);
 
 #[cfg(test)]
 mod tests {
