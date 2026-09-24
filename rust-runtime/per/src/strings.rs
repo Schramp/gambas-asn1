@@ -7,17 +7,17 @@
 //! extensible out-of-root open-type escape are separate follow-up phases —
 //! not implemented here yet.
 //!
-//! Operates on raw bytes, not `&str`: for `bpc > 1` (BMPString/
-//! UniversalString), each code point is `bpc` bytes with a wide-char
+//! Operates on raw bytes, not `&str`: for a wide-char kind (BMPString/
+//! UniversalString), each code point is 2/4 bytes with a wide-char
 //! encoding, same representation `AsnStringBase::str()` uses on the C++
 //! side (a `std::string` holding raw encoded bytes, not necessarily valid
-//! UTF-8). `bits`/`bpc` are supplied by the caller rather than looked up
-//! from a tag number — this crate has no BER/tag dependency; the eventual
-//! RustBackend codegen decides which (bits, bpc) pair a given string kind
-//! uses, mirroring `string_params`'s table (`runtime/src/PerCodec.cpp`):
-//! NumericString (4,1), PrintableString/VisibleString/UTCTime/
-//! GeneralizedTime/Ia5String (7,1), BMPString (8,2), UniversalString (8,4),
-//! default (8,1).
+//! UTF-8). `encode_string`/`decode_string` take the type's own universal
+//! tag number and look up its (bits, bytes-per-char, natural alphabet) via
+//! this module's own `string_params` table — not a `Tag`/enum reference
+//! into `asn1cpp_ber` (this crate's declared independence from that one),
+//! just the bare tag number the generated caller already has. Mirrors
+//! `string_params` (`runtime/src/PerCodec.cpp`) exactly, so this table only
+//! needs updating in one Rust-side place, not per call site.
 
 use crate::constraints::Constraints;
 use crate::length::{decode_size_field, encode_size_field};
@@ -73,14 +73,42 @@ pub enum NaturalAlphabet {
     None,
 }
 
-pub fn encode_string(
-    w: &mut Writer,
-    pc: &Constraints,
-    bits: u32,
-    bpc: u32,
-    natural: NaturalAlphabet,
-    bytes: &[u8],
-) -> Result<(), EncodeError> {
+// X.680 §41 universal class tag numbers for the known-multiplier character
+// string kinds this module covers — duplicated as plain integers (not a
+// `Tag`/enum reference into `asn1cpp_ber`) to keep this crate's declared
+// independence from that one (this crate's own top-level doc); the
+// generated caller, which does link both crates, already has a `Tag`
+// constant for its own kind and passes `.number` straight through.
+const TAG_NUMERIC_STRING: u32 = 18;
+const TAG_PRINTABLE_STRING: u32 = 19;
+const TAG_IA5_STRING: u32 = 22;
+const TAG_UTC_TIME: u32 = 23;
+const TAG_GENERALIZED_TIME: u32 = 24;
+const TAG_VISIBLE_STRING: u32 = 26;
+const TAG_UNIVERSAL_STRING: u32 = 28;
+const TAG_BMP_STRING: u32 = 30;
+
+/// (bits, bytes-per-char, natural alphabet) for a known-multiplier
+/// character string kind's own universal tag number, used only when the
+/// type has no FROM constraint (X.691 §26.5). Mirrors `string_params`
+/// (`runtime/src/PerCodec.cpp`) exactly — same table, same default arm for
+/// every other single-byte kind (UTF8String, T61String, GeneralString,
+/// GraphicString, VideotexString, ObjectDescriptor).
+fn string_params(tag_num: u32) -> (u32, u32, NaturalAlphabet) {
+    match tag_num {
+        TAG_NUMERIC_STRING => (4, 1, NaturalAlphabet::Numeric),
+        TAG_IA5_STRING => (7, 1, NaturalAlphabet::Ia5),
+        TAG_PRINTABLE_STRING | TAG_VISIBLE_STRING | TAG_UTC_TIME | TAG_GENERALIZED_TIME => {
+            (7, 1, NaturalAlphabet::None)
+        }
+        TAG_BMP_STRING => (8, 2, NaturalAlphabet::None),
+        TAG_UNIVERSAL_STRING => (8, 4, NaturalAlphabet::None),
+        _ => (8, 1, NaturalAlphabet::None),
+    }
+}
+
+pub fn encode_string(w: &mut Writer, pc: &Constraints, tag_num: u32, bytes: &[u8]) -> Result<(), EncodeError> {
+    let (bits, bpc, natural) = string_params(tag_num);
     let char_count = bytes.len() / bpc as usize;
 
     if pc.is_size_constrained()
@@ -131,12 +159,8 @@ pub fn encode_string(
     Ok(())
 }
 
-pub fn decode_string(
-    r: &mut Reader,
-    pc: &Constraints,
-    bits: u32,
-    bpc: u32,
-) -> Result<Vec<u8>, DecodeError> {
+pub fn decode_string(r: &mut Reader, pc: &Constraints, tag_num: u32) -> Result<Vec<u8>, DecodeError> {
+    let (bits, bpc, _natural) = string_params(tag_num);
     let char_count = decode_size_field(r, pc)?;
     let byte_count = char_count * bpc as usize;
     let mut result = Vec::with_capacity(byte_count);
@@ -176,25 +200,25 @@ mod tests {
         }
     }
 
-    fn roundtrip(pc: &Constraints, bits: u32, bpc: u32, bytes: &[u8]) -> Vec<u8> {
+    fn roundtrip(pc: &Constraints, tag_num: u32, bytes: &[u8]) -> Vec<u8> {
         let mut w = Writer::new();
-        encode_string(&mut w, pc, bits, bpc, NaturalAlphabet::None, bytes).unwrap();
+        encode_string(&mut w, pc, tag_num, bytes).unwrap();
         w.flush();
         let out = w.into_bytes();
         let mut r = Reader::new(&out);
-        decode_string(&mut r, pc, bits, bpc).unwrap()
+        decode_string(&mut r, pc, tag_num).unwrap()
     }
 
     #[test]
     fn numeric_string_roundtrip() {
         let pc = sized(1, 8);
-        assert_eq!(roundtrip(&pc, 4, 1, b"12345"), b"12345");
+        assert_eq!(roundtrip(&pc, TAG_NUMERIC_STRING, b"12345"), b"12345");
     }
 
     #[test]
     fn ia5_string_roundtrip() {
         let pc = Constraints::default();
-        assert_eq!(roundtrip(&pc, 7, 1, b"hello"), b"hello");
+        assert_eq!(roundtrip(&pc, TAG_IA5_STRING, b"hello"), b"hello");
     }
 
     #[test]
@@ -202,14 +226,31 @@ mod tests {
         // Wide chars: 2 bytes/codepoint, e.g. U+0041 'A' = 00 41.
         let pc = Constraints::default();
         let bytes = [0x00u8, 0x41, 0x00, 0x42];
-        assert_eq!(roundtrip(&pc, 8, 2, &bytes), bytes);
+        assert_eq!(roundtrip(&pc, TAG_BMP_STRING, &bytes), bytes);
+    }
+
+    #[test]
+    fn universal_string_roundtrip() {
+        // 4 bytes/codepoint, e.g. U+0041 'A' = 00 00 00 41.
+        let pc = Constraints::default();
+        let bytes = [0x00u8, 0x00, 0x00, 0x41, 0x00, 0x00, 0x00, 0x42];
+        assert_eq!(roundtrip(&pc, TAG_UNIVERSAL_STRING, &bytes), bytes);
+    }
+
+    #[test]
+    fn default_arm_roundtrip() {
+        // Any single-byte kind with no dedicated table entry (UTF8String,
+        // T61String, GeneralString, GraphicString, VideotexString,
+        // ObjectDescriptor) falls to string_params's (8, 1, None) default.
+        let pc = Constraints::default();
+        assert_eq!(roundtrip(&pc, /* Utf8String */ 12, b"hello"), b"hello");
     }
 
     #[test]
     fn size_violation_rejected() {
         let pc = sized(5, 5);
         let mut w = Writer::new();
-        let err = encode_string(&mut w, &pc, 8, 1, NaturalAlphabet::None, b"abc").unwrap_err();
+        let err = encode_string(&mut w, &pc, TAG_IA5_STRING, b"abc").unwrap_err();
         assert!(err.message.contains("SIZE"));
     }
 
@@ -217,8 +258,7 @@ mod tests {
     fn numeric_alphabet_violation_rejected() {
         let pc = Constraints::default();
         let mut w = Writer::new();
-        let err =
-            encode_string(&mut w, &pc, 4, 1, NaturalAlphabet::Numeric, b"12a45").unwrap_err();
+        let err = encode_string(&mut w, &pc, TAG_NUMERIC_STRING, b"12a45").unwrap_err();
         assert!(err.message.contains("NumericString"));
     }
 
@@ -226,8 +266,7 @@ mod tests {
     fn ia5_alphabet_violation_rejected() {
         let pc = Constraints::default();
         let mut w = Writer::new();
-        let err =
-            encode_string(&mut w, &pc, 7, 1, NaturalAlphabet::Ia5, &[0xFF]).unwrap_err();
+        let err = encode_string(&mut w, &pc, TAG_IA5_STRING, &[0xFF]).unwrap_err();
         assert!(err.message.contains("IA5String"));
     }
 
@@ -237,19 +276,19 @@ mod tests {
     fn matches_cpp_ground_truth() {
         let pc = sized(1, 8); // range_bits=3
         let mut w = Writer::new();
-        encode_string(&mut w, &pc, 4, 1, NaturalAlphabet::Numeric, b"12345").unwrap();
+        encode_string(&mut w, &pc, TAG_NUMERIC_STRING, b"12345").unwrap();
         w.flush();
         assert_eq!(w.into_bytes(), vec![0x84, 0x68, 0xac]);
 
         let unconstrained = Constraints::default();
         let mut w2 = Writer::new();
-        encode_string(&mut w2, &unconstrained, 7, 1, NaturalAlphabet::Ia5, b"hello").unwrap();
+        encode_string(&mut w2, &unconstrained, TAG_IA5_STRING, b"hello").unwrap();
         w2.flush();
         assert_eq!(w2.into_bytes(), vec![0x05, 0xd1, 0x97, 0x66, 0xcd, 0xe0]);
 
         let mut w3 = Writer::new();
         let ab = [0x00u8, 0x41, 0x00, 0x42];
-        encode_string(&mut w3, &unconstrained, 8, 2, NaturalAlphabet::None, &ab).unwrap();
+        encode_string(&mut w3, &unconstrained, TAG_BMP_STRING, &ab).unwrap();
         w3.flush();
         assert_eq!(w3.into_bytes(), vec![0x02, 0x00, 0x41, 0x00, 0x42]);
     }
