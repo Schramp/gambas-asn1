@@ -1220,7 +1220,7 @@ Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRe
         // OCTET STRING/BIT STRING unconditionally (X.691 §16/§17, no
         // alphabet concept), a known-multiplier character string kind only
         // when it has no FROM constraint of its own. This duplicates
-        // RustBackend's own per_string_params (its exact kind set) rather
+        // RustBackend's own is_sizeable_string_kind (its exact kind set) rather
         // than sharing it — same already-accepted, already-tracked overlap
         // this function's own doc notes for type_descriptor_ref_spec_for
         // (gambas-asn1#518); the alternative (Backend gaining resolver
