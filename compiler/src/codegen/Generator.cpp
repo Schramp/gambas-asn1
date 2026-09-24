@@ -1195,7 +1195,22 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
 Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRef& tr) const {
     using BT = ast::BuiltinType;
     auto resolved = resolver_.resolve_ref(tr);
-    if (!resolved) return {};
+    if (!resolved) {
+        // A synthetic-promoted target (generate_inline_types) was never
+        // registered with the Resolver — resolve_ref failing here is the
+        // normal case for every such promotion, not "genuinely unresolved"
+        // (same fallback type_descriptor_ref_spec_for's own doc already
+        // relies on for its C++ TypeDescriptor reference). generate_inline_
+        // types only ever promotes a SEQUENCE/CHOICE/SET/ENUMERATED body to
+        // a synthetic name — except a nested anonymous SEQUENCE OF/SET OF
+        // element (seq_of_synthetic_names_), whose promoted wrapper type
+        // has no PerValue impl of its own (SEQUENCE OF PER support lives in
+        // the *containing* SEQUENCE's own member row, not on the collection
+        // type itself) and so isn't Scalar-safe the way the others are.
+        auto n = cpp_name_for_typeref(tr);
+        if (seq_of_synthetic_names_.count(n)) return {};
+        return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+    }
     if (auto* rbt = std::get_if<BT>(&resolved->body)) {
         if (*rbt == BT::Enumerated) return {TaggedMemberSpec::RefTargetKind::Enumerated, IntStorageKind::S64};
         if (*rbt == BT::Integer)
@@ -1483,6 +1498,17 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             auto per_class = classify_typeref_for_per(*tr);
             row.ref_kind = per_class.kind;
             row.ref_storage_kind = per_class.storage_kind;
+        } else if (m.is_sequence() || m.is_choice() || m.is_set()) {
+            // Inline anonymous SEQUENCE/CHOICE/SET member (e.g. 3GPP's
+            // common "laterNonCriticalExtensions SEQUENCE { ... }" pattern)
+            // — native_member_type_for already named it via synthetic_name
+            // above; m.body never becomes a TypeRef for this case (unlike a
+            // TypeRef-to-named-composite member), so classify_typeref_for_per
+            // is never reached. The promoted synthetic type gets the exact
+            // same unconditional PerValue impl any other SEQUENCE/CHOICE/SET
+            // does (Unsupported-stub design) — Scalar-safe here for the same
+            // reason RefTargetKind::Other already is for a real TypeRef.
+            row.ref_kind = SequenceMemberSpec::RefTargetKind::Other;
         }
         if (m.is_seq_of()) {
             row.seq_of_kind = SeqOfKind::SeqOf;
@@ -1759,6 +1785,16 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                 auto per_class = classify_typeref_for_per(*atr);
                 alt_ref_kind = per_class.kind;
                 alt_ref_storage_kind = per_class.storage_kind;
+            } else if (m->is_sequence() || m->is_choice() || m->is_set()) {
+                // Inline anonymous SEQUENCE/CHOICE/SET alternative — same
+                // synthetic-promotion shape as an inline SEQUENCE member
+                // (build_sequence_member_spec's collect lambda): m->body
+                // never becomes a TypeRef here, so classify_typeref_for_per
+                // is never reached. The promoted type gets the same
+                // unconditional PerValue impl any other SEQUENCE/CHOICE/SET
+                // does, so it's Scalar-safe here for the same reason
+                // RefTargetKind::Other already is for a real TypeRef.
+                alt_ref_kind = TaggedMemberSpec::RefTargetKind::Other;
             }
             rows.push_back({ m->name, tdref, alt_type, is_explicit,
                              tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag,
