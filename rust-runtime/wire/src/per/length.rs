@@ -7,8 +7,8 @@
 //! returns a decode error for that case rather than supporting it).
 
 use crate::constraints::Constraints;
-use crate::reader::{DecodeError, Reader};
-use crate::writer::Writer;
+use crate::per::reader::{DecodeError, Reader};
+use crate::per::writer::Writer;
 
 /// X.691 §10.9 general length determinant: short form (≤127, one octet) or
 /// long form (≤16383, two octets with the top two bits as a 0b10 marker).

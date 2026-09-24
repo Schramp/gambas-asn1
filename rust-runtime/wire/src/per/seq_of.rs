@@ -5,7 +5,7 @@
 //! fixed-SIZE/constrained/unconstrained count-encoding logic — this module
 //! only adds the per-element loop around it.
 //!
-//! Generic over the element type (`T: PerValue`) rather than tied to a
+//! Generic over the element type (`T: Asn1Value`) rather than tied to a
 //! specific wrapper — `RustBackend`'s own `SeqOf<T>`/`SetOf<T>` newtypes
 //! (`rust-runtime/ber/src/sequence.rs`) both `Deref`/`DerefMut` to `Vec<T>`,
 //! so a member's `Constrained` access closure calls these functions
@@ -14,19 +14,19 @@
 //! here at all.
 
 use crate::constraints::Constraints;
-use crate::length::{decode_size_field, encode_size_field};
-use crate::reader::{DecodeError, Reader};
-use crate::value::PerValue;
-use crate::writer::Writer;
+use crate::per::length::{decode_size_field, encode_size_field};
+use crate::per::reader::{DecodeError, Reader};
+use crate::value::Asn1Value;
+use crate::per::writer::Writer;
 
-pub fn encode_seq_of_content<T: PerValue>(w: &mut Writer, pc: &Constraints, items: &[T]) {
+pub fn encode_seq_of_content<T: Asn1Value>(w: &mut Writer, pc: &Constraints, items: &[T]) {
     encode_size_field(w, pc, items.len());
     for item in items {
         item.per_encode(w);
     }
 }
 
-pub fn decode_seq_of_content<T: PerValue + Default>(
+pub fn decode_seq_of_content<T: Asn1Value + Default>(
     r: &mut Reader,
     pc: &Constraints,
 ) -> Result<Vec<T>, DecodeError> {
@@ -43,12 +43,15 @@ pub fn decode_seq_of_content<T: PerValue + Default>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integer::{decode_int, encode_int};
+    use crate::per::integer::{decode_int, encode_int};
 
     // Dogfood-only fixture (#[cfg(test)]-gated, never public API).
     #[derive(Debug, Default, PartialEq)]
     struct DogfoodInt(i64);
-    impl PerValue for DogfoodInt {
+    impl Asn1Value for DogfoodInt {
+        fn ber_natural_tag(&self) -> crate::tag::Tag { unimplemented!() }
+        fn ber_encode_content(&self, _out: &mut Vec<u8>) { unimplemented!() }
+        fn ber_decode_content(&mut self, _content: &[u8]) -> Result<(), crate::reader::DecodeError> { unimplemented!() }
         fn per_encode(&self, w: &mut Writer) {
             encode_int(w, &ELEM_CONSTRAINED, self.0);
         }
