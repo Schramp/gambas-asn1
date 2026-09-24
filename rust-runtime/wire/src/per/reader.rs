@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn writer_reader_roundtrip() {
-        use crate::writer::Writer;
+        use crate::per::writer::Writer;
         let mut w = Writer::new();
         w.put_bits(0b10110, 5);
         w.put_bits(0b1, 1);

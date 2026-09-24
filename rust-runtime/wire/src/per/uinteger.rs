@@ -1,6 +1,6 @@
 //! Unsigned INTEGER PER encode/decode. Mirrors `UIntegerPerHandler`
 //! (`runtime/src/PerCodec.cpp`) exactly — same structure as
-//! [`crate::integer`]'s signed encode/decode, using the `lower_u64`/
+//! [`crate::per::integer`]'s signed encode/decode, using the `lower_u64`/
 //! `upper_u64` bounds instead.
 //!
 //! The unconstrained/out-of-root escape path reuses the *signed*
@@ -14,9 +14,9 @@
 //! round-trips through the signed primitive unchanged either way.
 
 use crate::constraints::Constraints;
-use crate::integer::{decode_unconstrained_int, encode_unconstrained_int};
-use crate::reader::{DecodeError, Reader};
-use crate::writer::Writer;
+use crate::per::integer::{decode_unconstrained_int, encode_unconstrained_int};
+use crate::per::reader::{DecodeError, Reader};
+use crate::per::writer::Writer;
 
 pub fn encode_uint(w: &mut Writer, pc: &Constraints, value: u64) {
     if pc.is_constrained() {

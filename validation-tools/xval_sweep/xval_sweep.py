@@ -479,21 +479,26 @@ def build_rust(target_dir, asn1_files_abs, pdu_type):
                 os.path.join(rust_dir, "src", "bin", "xer_to_ber.rs"),
                 {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
 
-    # PER coverage is data-dependent (RustBackend's own per_covered/
-    # per_alts_covered gates, RustBackend.cpp) — a type only gets a
-    # `PerValue` impl when every one of its members/alternatives is one of
-    # the currently-covered shapes. Detected here by grepping the already-
-    # generated source for the literal impl line, rather than trying to
-    # predict coverage from the schema — same "ask the actual output"
-    # approach discover_ident already uses instead of guessing an escaping
-    # rule. Materializing ber-to-per/per-to-ber only when covered avoids a
-    # guaranteed compile error (calling `.per_encode()` on a type with no
-    # `PerValue` impl) for the common case a target isn't PER-covered yet.
+    # Every generated type gets one merged `impl asn1cpp_ber::value::
+    # Asn1Value for {ident}` (BER/XER/PER all three methods on the same
+    # trait/impl block since gambas-asn1#537 — previously two separate
+    # impls, `asn1cpp_ber::value::Asn1Value` and `asn1cpp_per::PerValue`,
+    # detected here by grepping for the latter's now-nonexistent literal
+    # text). Whole-type PER coverage is no longer a meaningful question for
+    # SEQUENCE/CHOICE (every member/alternative not yet representable is
+    # its own per-row `unimplemented!()` stub, RustBackend.cpp's
+    # `per_member_covered`/`per_alt_covered`) — the impl always exists, so
+    # this just confirms the type itself was actually generated, same "ask
+    # the actual output" approach `discover_ident` already uses instead of
+    # guessing an escaping rule. A `.per_encode()` call on a genuinely
+    # uncovered field panics at runtime (an informational per-record skip
+    # elsewhere in this sweep), not a compile error, so there's no longer a
+    # coverage gate to avoid tripping here.
     per_covered = False
     gen_file = os.path.join(rust_dir, "gen", f"{ident}.rs")
     if os.path.isfile(gen_file):
         with open(gen_file, errors="replace") as f:
-            per_covered = f"impl asn1cpp_per::PerValue for {ident} " in f.read()
+            per_covered = f"impl asn1cpp_ber::value::Asn1Value for {ident} " in f.read()
     # Remove any stale ber_to_per.rs/per_to_ber.rs from a prior run of this
     # same target directory before deciding whether to re-materialize them
     # — cargo auto-discovers every src/bin/*.rs file as its own binary
@@ -645,9 +650,9 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
     ber_cross2, _ = x2b(cpp_tools["x2b"], pdu_type, xer_rust)
     tally(compare_ber("orig vs cpp.X2B(rust.XER)", ber_orig, ber_cross2, verbose))
 
-    # PER leg — only when the Rust side actually has a `PerValue` impl for
-    # this target (build_rust's own per_covered detection; "b2p"/"p2b"
-    # keys are absent from rust_tools otherwise). C++ always supports PER
+    # PER leg — only when the Rust side actually generated the type
+    # (build_rust's own per_covered detection; "b2p"/"p2b" keys are absent
+    # from rust_tools otherwise). C++ always supports PER
     # (its generic TypeDescriptor-driven PerCodec has no per-type
     # coverage gate the way RustBackend's codegen currently does), so this
     # entire leg is gated on Rust alone. Same matrix shape as the XER

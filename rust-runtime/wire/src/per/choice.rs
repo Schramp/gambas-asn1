@@ -16,9 +16,9 @@
 //! `asn1cpp_ber`'s own CHOICE decode has for a closed (non-extensible)
 //! CHOICE with no capture mechanism.
 
-use crate::length::{get_length, get_nsnn, put_length, put_nsnn};
-use crate::reader::{DecodeError, Reader};
-use crate::writer::Writer;
+use crate::per::length::{get_length, get_nsnn, put_length, put_nsnn};
+use crate::per::reader::{DecodeError, Reader};
+use crate::per::writer::Writer;
 
 /// One alternative row — mirrors `asn1cpp_ber::choice::AlternativeSpec`'s
 /// `ber_encode`/`ber_decode_into` shape exactly: `per_encode` tries `value`
@@ -141,7 +141,7 @@ pub fn decode_choice_content<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integer::{decode_unconstrained_int, encode_unconstrained_int};
+    use crate::per::integer::{decode_unconstrained_int, encode_unconstrained_int};
 
     // Dogfood-only fixture (#[cfg(test)]-gated, never public API).
     #[derive(Debug, PartialEq)]
