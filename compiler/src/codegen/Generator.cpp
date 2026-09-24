@@ -1231,7 +1231,7 @@ Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRe
         static const std::set<BT> kPerStringKinds = {
             BT::NumericString, BT::Ia5String, BT::PrintableString, BT::VisibleString,
             BT::Utf8String, BT::T61String, BT::GeneralString, BT::GraphicString,
-            BT::VideotexString, BT::ObjectDescriptor,
+            BT::VideotexString, BT::ObjectDescriptor, BT::BmpString, BT::UniversalString,
         };
         if (kPerStringKinds.count(*rbt) && extract_from_alphabet(*resolved).empty())
             return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
