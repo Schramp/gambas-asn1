@@ -2,11 +2,11 @@
 name = "asn1cpp-ber"
 version = "0.1.0"
 edition = "2021"
-description = "Native Rust BER codec primitives (gambas-asn1#218) — no FFI to the C++ runtime."
+description = "Thin re-export shim over asn1cpp-wire (gambas-asn1#537) — kept for external path compatibility. See asn1cpp-wire for the actual implementation."
 
 [lib]
 name = "asn1cpp_ber"
 path = "src/lib.rs"
 
 [dependencies]
-asn1cpp-constraints = { path = "../constraints" }
+asn1cpp-wire = { path = "../wire" }

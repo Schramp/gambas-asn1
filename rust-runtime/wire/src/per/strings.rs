@@ -20,9 +20,9 @@
 //! needs updating in one Rust-side place, not per call site.
 
 use crate::constraints::Constraints;
-use crate::length::{decode_size_field, encode_size_field};
-use crate::reader::{DecodeError, Reader};
-use crate::writer::Writer;
+use crate::per::length::{decode_size_field, encode_size_field};
+use crate::per::reader::{DecodeError, Reader};
+use crate::per::writer::Writer;
 
 /// Encode failure — a constraint violation detected during encode (SIZE
 /// range, natural-alphabet membership). Mirrors the *meaning* of

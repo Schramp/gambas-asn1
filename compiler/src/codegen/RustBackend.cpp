@@ -286,17 +286,47 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         }
         os << "];\n\n";
 
-        // BER leg (matches every other Asn1Value impl this backend emits)
-        // and XER leg (BASIC-XER EmptyElementBoolean-style content, same as
-        // `bool`'s own Asn1Value impl above in this file — mirrors
-        // EnumeratedXerHandler's member-embedded form,
-        // runtime/src/XerCodec.cpp). Makes this type usable as a
-        // SEQUENCE/CHOICE member the same way i64/bool/etc already are.
-        // `as i64`/
-        // TryFrom<i64> convert through the shared wire representation
-        // (X.690 §8.4); the XER leg goes through {map_ident} instead —
-        // BER's wire value and XER's value *name* are different
-        // representations of the same table, not two independent lookups.
+        // PER data (X.691 §22: wire ordinal is the value's sorted position,
+        // matches asn1c and the C++ side's own sorted `EnumSpec::entries`/
+        // `asn_PER_..._value_order`, see EnumeratedPerHandler,
+        // runtime/src/PerCodec.cpp) — emitted ahead of the merged impl
+        // block below so its `per_encode`/`per_decode_into` methods have
+        // something to reference. A distinct table from {map_ident}, not a
+        // reference to it — `asn1cpp_per::enumerated::EnumEntry` (value
+        // only) and `asn1cpp_ber::enumerated::EnumEntry` (value + name) are
+        // different types, so the data is duplicated once either way;
+        // keeping both tables in the same sorted order at least makes them
+        // visibly the same data instead of two divergent orderings.
+        std::string per_entries_ident = std::format("{}_PER_ENTRIES", to_screaming_snake_case(tname));
+        os << std::format("static {}: [asn1cpp_per::enumerated::EnumEntry; {}] = [\n",
+                           per_entries_ident, sorted_values.size());
+        for (const auto& v : sorted_values) {
+            os << std::format("    asn1cpp_per::enumerated::EnumEntry {{ value: {} }},\n", v.value);
+        }
+        os << "];\n\n";
+
+        // Bundled into one EnumSpec static (entries + extensible + root_count)
+        // rather than passed as separate literal arguments at the call
+        // site — mirrors SequenceSpec/ChoiceSpec (one static per type,
+        // referenced by the merged impl's per_encode/per_decode_into below).
+        std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(tname));
+        os << std::format(
+            "static {}: asn1cpp_per::enumerated::EnumSpec = asn1cpp_per::enumerated::EnumSpec {{\n"
+            "    entries: &{}, extensible: {}, root_count: {},\n}};\n\n",
+            per_spec_ident, per_entries_ident, spec.extensible ? "true" : "false", spec.root_count);
+
+        // One merged Asn1Value impl (gambas-asn1#537 unified what used to be
+        // two separate traits/impl blocks, asn1cpp_ber::value::Asn1Value
+        // and asn1cpp_per::PerValue) — BER leg (matches every other
+        // Asn1Value impl this backend emits), XER leg (BASIC-XER
+        // EmptyElementBoolean-style content, same as `bool`'s own impl
+        // above in this file — mirrors EnumeratedXerHandler's
+        // member-embedded form, runtime/src/XerCodec.cpp), and PER leg
+        // together. `as i64`/`TryFrom<i64>` convert through the shared wire
+        // representation (X.690 §8.4); the XER leg goes through
+        // {map_ident} instead — BER's wire value and XER's value *name*
+        // are different representations of the same table, not two
+        // independent lookups.
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", tname);
         os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
         os << "        asn1cpp_ber::enumerated::ENUMERATED_TAG\n";
@@ -346,38 +376,8 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // a stub, for parity with the other constraint kinds.
         os << "    fn validate(&self) -> i64 {\n";
         os << std::format("        asn1cpp_ber::enumerated::validate_enum(*self as i64, &{})\n", map_ident);
-        os << "    }\n";
-        os << "}\n\n";
+        os << "    }\n\n";
 
-        // PER leg — reuses {sorted_values} above (X.691 §22: wire ordinal is
-        // the value's sorted position, matches asn1c and the C++ side's own
-        // sorted `EnumSpec::entries`/`asn_PER_..._value_order`, see
-        // EnumeratedPerHandler, runtime/src/PerCodec.cpp). A distinct table
-        // from {map_ident}, not a reference to it — `asn1cpp_per::
-        // enumerated::EnumEntry` (value only) and `asn1cpp_ber::enumerated::
-        // EnumEntry` (value + name) are different types in different
-        // crates, so the data has to be duplicated once per crate either
-        // way; keeping both tables in the same sorted order at least makes
-        // them visibly the same data instead of two divergent orderings.
-        std::string per_entries_ident = std::format("{}_PER_ENTRIES", to_screaming_snake_case(tname));
-        os << std::format("static {}: [asn1cpp_per::enumerated::EnumEntry; {}] = [\n",
-                           per_entries_ident, sorted_values.size());
-        for (const auto& v : sorted_values) {
-            os << std::format("    asn1cpp_per::enumerated::EnumEntry {{ value: {} }},\n", v.value);
-        }
-        os << "];\n\n";
-
-        // Bundled into one EnumSpec static (entries + extensible + root_count)
-        // rather than passed as separate literal arguments at the call
-        // site — mirrors SequenceSpec/ChoiceSpec (one static per type,
-        // referenced by the generated PerValue impl).
-        std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(tname));
-        os << std::format(
-            "static {}: asn1cpp_per::enumerated::EnumSpec = asn1cpp_per::enumerated::EnumSpec {{\n"
-            "    entries: &{}, extensible: {}, root_count: {},\n}};\n\n",
-            per_spec_ident, per_entries_ident, spec.extensible ? "true" : "false", spec.root_count);
-
-        os << std::format("impl asn1cpp_per::PerValue for {} {{\n", tname);
         os << "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {\n";
         os << std::format("        asn1cpp_per::enumerated::encode_enum(w, &{}, *self as i64);\n", per_spec_ident);
         os << "    }\n\n";
@@ -499,15 +499,13 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
     os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_ber::DecodeError> {\n        self.0.ber_decode_content(content)\n    }\n\n";
     os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n        self.0.xer_encode(out, depth);\n    }\n\n";
     os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n        self.0.xer_decode_into(r)\n    }\n\n";
-    os << std::format("    fn validate(&self) -> i64 {{\n        asn1cpp_ber::constraints::{}(self.0, &{})\n    }}\n", validate_fn, cname);
-    os << "}\n\n";
+    os << std::format("    fn validate(&self) -> i64 {{\n        asn1cpp_ber::constraints::{}(self.0, &{})\n    }}\n\n", validate_fn, cname);
 
-    // `PerValue`: X.691 wire shape is exactly `integer::encode_int`/
-    // `uinteger::encode_uint` against this same table — no separate
-    // unconstrained function needed, they already fall through to the
-    // unconstrained wire shape at runtime when flags == 0.
-    os << std::format("impl asn1cpp_per::PerValue for {} {{\n", tname);
-    os << "    fn is_present(&self) -> bool { true }\n";
+    // PER leg (merged into the same impl block, gambas-asn1#537): X.691
+    // wire shape is exactly `integer::encode_int`/`uinteger::encode_uint`
+    // against this same table — no separate unconstrained function needed,
+    // they already fall through to the unconstrained wire shape at runtime
+    // when flags == 0.
     os << std::format("    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {{\n        asn1cpp_per::{}::{}(w, &{}, self.0);\n    }}\n", fn_ns, fn_ty, cname);
     os << std::format(
         "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {{\n"
@@ -692,22 +690,25 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << std::format("\n    fn validate(&self) -> i64 {{\n        asn1cpp_ber::constraints::validate_size(self.0.{}(), &{})\n    }}\n",
                            method, cname);
     }
-    os << "}\n\n";
 
-    // PER coverage (X.691 §16/§17/§26.5) — OCTET STRING/BIT STRING
-    // unconditionally (no alphabet concept), a known-multiplier character
-    // string kind (wide-char BmpString/UniversalString included) when it
-    // has no FROM constraint (PER encode/decode here doesn't implement
-    // alphabet remapping yet — same exclusion per_member_covered's own
-    // Sizeable branch already applies to a direct member of this kind). A
-    // named alias's own PerValue impl means any TypeRef to it dispatches
-    // through the trait (Scalar), never needing this type's own
-    // Constraints referenced from anywhere else.
+    // PER leg (merged into the same impl block, gambas-asn1#537) — OCTET
+    // STRING/BIT STRING unconditionally (no alphabet concept), a
+    // known-multiplier character string kind (wide-char BmpString/
+    // UniversalString included) when it has no FROM constraint (PER
+    // encode/decode here doesn't implement alphabet remapping yet — same
+    // exclusion per_member_covered's own Sizeable branch already applies
+    // to a direct member of this kind). When not covered, `Asn1Value`'s
+    // own panicking defaults for `per_encode`/`per_decode_into` apply —
+    // same real-or-panic-stub policy an individual SEQUENCE/CHOICE member
+    // row already gets (`MemberAccess::Unsupported`). A named alias's own
+    // real `per_encode`/`per_decode_into` means any TypeRef to it
+    // dispatches through the trait (Scalar) regardless of whether it's
+    // actually covered — the panic, if ever reached, happens inside this
+    // impl, not at the TypeRef site.
     bool str_covered = per_string_covered(spec.builtin_type);
     bool per_covered = is_bits || is_octets || (str_covered && spec.alphabet.empty());
     if (per_covered) {
-        os << std::format("impl asn1cpp_per::PerValue for {} {{\n", tname);
-        os << "    fn is_present(&self) -> bool { true }\n";
+        os << "\n";
         if (is_bits) {
             os << std::format(
                 "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {{\n"
@@ -746,8 +747,8 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
                 "        self.0 = {2};\n        Ok(())\n    }}\n",
                 cname, tag_num, ctor);
         }
-        os << "}\n\n";
     }
+    os << "}\n\n";
 }
 
 /// @brief Emit a Rust default-value accessor function for a SEQUENCE/SET
@@ -1900,14 +1901,37 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    }\n";
         os << "}\n\n";
 
+        // PER member table + spec — emitted ahead of the merged impl block
+        // below so its `per_encode`/`per_decode_into` methods have
+        // something to reference. Unconditional, same as the BER/XER
+        // methods: every SEQUENCE/SET always gets real PER support now,
+        // any not-yet-representable member is an `Unsupported` stub row
+        // (`per_member_covered`'s own doc) rather than a reason to
+        // withhold the whole type's PER support.
+        std::string per_members_ident = std::format("{}_PER_MEMBERS", to_screaming_snake_case(spec.type_name));
+        std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(spec.type_name));
+        os << std::format("static {}: [asn1cpp_per::sequence::MemberDescriptor<{}>; {}] = [\n",
+                           per_members_ident, spec.type_name, spec.members.size());
+        os << per_members_os.str();
+        os << "];\n\n";
+        os << std::format(
+            "pub static {}: asn1cpp_per::sequence::SequenceSpec<{}> = asn1cpp_per::sequence::SequenceSpec {{\n",
+            per_spec_ident, spec.type_name);
+        os << std::format("    members: &{},\n", per_members_ident);
+        os << std::format("    ext_at: {},\n", spec.ext_at);
+        os << "};\n\n";
+
         // Makes this type usable as a nested composite member elsewhere —
         // emitted unconditionally whenever this type has at least one
         // member, same as the table above. A member/alternative referencing
         // this type never needs to check anything about it in advance (see
         // sequence_member_covered's own doc) — it's always real,
-        // BER and XER both; any individual member row that isn't itself
-        // representable yet is an Unsupported stub (panics only if actually
-        // reached), not a reason to withhold this whole impl.
+        // BER/XER/PER all three; any individual member row that isn't
+        // itself representable yet is an Unsupported stub (panics only if
+        // actually reached), not a reason to withhold this whole impl.
+        // One merged Asn1Value impl (gambas-asn1#537 unified what used to
+        // be two separate traits/impl blocks, asn1cpp_ber::value::Asn1Value
+        // and asn1cpp_per::PerValue).
         os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", spec.type_name);
         os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
         os << std::format("        {}.tag\n", spec_ident);
@@ -1929,38 +1953,17 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
         os << std::format("        *self = asn1cpp_ber::xer::decode_sequence_xer_from(&{}, r)?;\n", spec_ident);
         os << "        Ok(())\n";
+        os << "    }\n\n";
+
+        // PER leg (merged into the same impl block, gambas-asn1#537).
+        os << "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {\n";
+        os << std::format("        asn1cpp_per::sequence::encode_sequence_content(&{}, w, self);\n", per_spec_ident);
+        os << "    }\n\n";
+        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {\n";
+        os << std::format("        *self = asn1cpp_per::sequence::decode_sequence_content(&{}, r)?;\n", per_spec_ident);
+        os << "        Ok(())\n";
         os << "    }\n";
         os << "}\n\n";
-
-        // PER leg — emitted unconditionally, same as the BER/XER `impl`
-        // above: every SEQUENCE/SET always gets a real `PerValue` impl now,
-        // any not-yet-representable member is an `Unsupported` stub row
-        // (`per_member_covered`'s own doc) rather than a reason to
-        // withhold the whole type's PER support.
-        {
-            std::string per_members_ident = std::format("{}_PER_MEMBERS", to_screaming_snake_case(spec.type_name));
-            std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(spec.type_name));
-            os << std::format("static {}: [asn1cpp_per::sequence::MemberDescriptor<{}>; {}] = [\n",
-                               per_members_ident, spec.type_name, spec.members.size());
-            os << per_members_os.str();
-            os << "];\n\n";
-            os << std::format(
-                "pub static {}: asn1cpp_per::sequence::SequenceSpec<{}> = asn1cpp_per::sequence::SequenceSpec {{\n",
-                per_spec_ident, spec.type_name);
-            os << std::format("    members: &{},\n", per_members_ident);
-            os << std::format("    ext_at: {},\n", spec.ext_at);
-            os << "};\n\n";
-
-            os << std::format("impl asn1cpp_per::PerValue for {} {{\n", spec.type_name);
-            os << "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {\n";
-            os << std::format("        asn1cpp_per::sequence::encode_sequence_content(&{}, w, self);\n", per_spec_ident);
-            os << "    }\n\n";
-            os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {\n";
-            os << std::format("        *self = asn1cpp_per::sequence::decode_sequence_content(&{}, r)?;\n", per_spec_ident);
-            os << "        Ok(())\n";
-            os << "    }\n";
-            os << "}\n\n";
-        }
     }
 }
 
@@ -2326,95 +2329,6 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "    }\n";
         os << "}\n\n";
 
-        // Makes this type usable as a nested composite member elsewhere —
-        // see emit_sequence_definition's identical Asn1Value impl for the
-        // full rationale (always emitted now, BER and XER both, once this
-        // CHOICE has at least one taggable alternative).
-        os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", spec.type_name);
-        os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
-        os << "        unreachable!(\"CHOICE has no natural tag (X.680 §28) — never invoked, a CHOICE-typed member/alternative is always EXPLICIT-wrapped when tagged (X.680 §30.6)\")\n";
-        os << "    }\n\n";
-        os << "    fn xer_element_name(&self) -> &'static str {\n";
-        os << std::format("        \"{}\"\n", spec.xer_name);
-        os << "    }\n\n";
-        // CHOICE has no separate content representation to hand back
-        // (its wire form already IS "whichever alternative's own tag +
-        // content", self-delimiting per X.690 §8.13) — so, like
-        // `Option<V>` in value.rs, it overrides the whole-TLV methods
-        // directly instead of composing them from natural_tag + content.
-        os << "    fn ber_encode_content(&self, _out: &mut Vec<u8>) {\n";
-        os << "        unreachable!(\"CHOICE has no content-only representation — ber_encode is overridden directly\")\n";
-        os << "    }\n\n";
-        os << "    fn ber_decode_content(&mut self, _content: &[u8]) -> Result<(), asn1cpp_ber::DecodeError> {\n";
-        os << "        unreachable!(\"CHOICE has no content-only representation — ber_decode_into is overridden directly\")\n";
-        os << "    }\n\n";
-        os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
-        os << std::format("        asn1cpp_ber::choice::encode_choice_into(&{}, self, out);\n", spec_ident);
-        os << "    }\n\n";
-        os << "    fn ber_decode_into(&mut self, r: &mut asn1cpp_ber::Reader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
-        os << std::format("        *self = asn1cpp_ber::choice::decode_choice_from(&{}, r)?;\n", spec_ident);
-        os << "        Ok(())\n";
-        os << "    }\n\n";
-        // `encode_choice_xer_into` deliberately ends right after the
-        // chosen alternative's own closing tag — no trailing `\n` +
-        // `indent(depth)` (its own doc, rust-runtime/ber/src/choice.rs).
-        // A CHOICE-typed member's own wrapper (`<mname>`, written by
-        // `encode_sequence_xer_content`) does immediately follow, so
-        // `xer_encode` itself (used for exactly that context) adds that
-        // trailing bit here — mirrors `SequenceXerHandler`'s own
-        // CHOICE-typed-member special case in C++, which writes its own
-        // `s.indent(1) << "</" << mbr.name` closing line external to
-        // `ChoiceXerHandler` for the very same reason.
-        os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
-        os << std::format("        asn1cpp_ber::choice::encode_choice_xer_into(&{}, self, out, depth);\n", spec_ident);
-        os << "        out.push('\\n');\n";
-        os << "        out.push_str(&asn1cpp_ber::xer::indent(depth));\n";
-        os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
-        os << std::format("        *self = asn1cpp_ber::choice::decode_choice_xer_from(&{}, r)?;\n", spec_ident);
-        os << "        Ok(())\n";
-        os << "    }\n\n";
-        // X.693: as a SEQUENCE OF/SET OF element, a CHOICE has no wrapper
-        // of its own — the chosen alternative's own tag already serves as
-        // the element tag, so this calls `encode_choice_xer_into` directly,
-        // *not* `self.xer_encode` (whose trailing bit above is specific to
-        // the member-wrapper case — no per-element wrapper follows a
-        // SEQUENCE OF/SET OF element for it to position). The trailing
-        // `\n` here instead matches `ChoiceXerHandler`'s own unconditional
-        // "always end with `\n`" convention (`encode_choice_xer_into`'s own
-        // doc, rust-runtime/ber/src/choice.rs) — `encode_seq_of_xer_named`
-        // (sequence.rs) checks for it to avoid doubling up with its own
-        // trailing separator.
-        os << "    fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, _name_override: std::option::Option<&str>) {\n";
-        os << std::format("        asn1cpp_ber::choice::encode_choice_xer_into(&{}, self, out, depth + 1);\n", spec_ident);
-        os << "        out.push('\\n');\n";
-        os << "    }\n\n";
-        os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_ber::xer::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_ber::DecodeError> {\n";
-        os << "        self.xer_decode_into(r)\n";
-        os << "    }\n";
-        if (spec.tag) {
-            // Only reachable when this CHOICE has its own declared [n]
-            // (X.680 §30.6, own_tag above): AUTOMATIC TAGS can then assign
-            // an IMPLICIT tag to a member/alternative that's a plain
-            // reference to this type (X.680 §22.5/§28.4 — an already-tagged
-            // CHOICE is a TaggedType for retagging purposes, not a bare
-            // untagged CHOICE, so it's no longer forced EXPLICIT), reaching
-            // Asn1Value::ber_encode_tagged/ber_decode_into_tagged generically
-            // (MemberAccess::TaggedScalar / the generic-tagged AlternativeSpec
-            // branch). The trait's own defaults assume a natural-tag/content
-            // split CHOICE can't support (X.680 §28, no universal tag) — see
-            // encode_choice_tagged/decode_choice_tagged's own doc (choice.rs)
-            // for the actual logic; this is a one-line delegate to it.
-            os << "    fn ber_encode_tagged(&self, tag: asn1cpp_ber::Tag, out: &mut Vec<u8>) {\n";
-            os << std::format("        asn1cpp_ber::choice::encode_choice_tagged(&{}, self, tag, out);\n", spec_ident);
-            os << "    }\n\n";
-            os << "    fn ber_decode_into_tagged(&mut self, r: &mut asn1cpp_ber::Reader, tag: asn1cpp_ber::Tag) -> Result<(), asn1cpp_ber::DecodeError> {\n";
-            os << std::format("        *self = asn1cpp_ber::choice::decode_choice_tagged(&{}, r, tag)?;\n", spec_ident);
-            os << "        Ok(())\n";
-            os << "    }\n";
-        }
-        os << "}\n\n";
-
         // PER leg — emitted unconditionally, per-alternative granularity:
         // mirrors emit_sequence_definition's own per-row policy (see that
         // function's doc). Scope: a direct builtin INTEGER (S64/U64
@@ -2607,16 +2521,107 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             os << std::format("    ext_at: {},\n", spec.ext_at);
             os << "};\n\n";
 
-            os << std::format("impl asn1cpp_per::PerValue for {} {{\n", spec.type_name);
-            os << "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {\n";
-            os << std::format("        asn1cpp_per::choice::encode_choice_content(&{}, w, self);\n", per_spec_ident);
+        // Makes this type usable as a nested composite member elsewhere —
+        // see emit_sequence_definition's identical Asn1Value impl for the
+        // full rationale (always emitted now, BER/XER/PER all three, once
+        // this CHOICE has at least one taggable alternative). One merged
+        // Asn1Value impl (gambas-asn1#537 unified what used to be two
+        // separate traits/impl blocks, asn1cpp_ber::value::Asn1Value and
+        // asn1cpp_per::PerValue).
+        os << std::format("impl asn1cpp_ber::value::Asn1Value for {} {{\n", spec.type_name);
+        os << "    fn ber_natural_tag(&self) -> asn1cpp_ber::Tag {\n";
+        os << "        unreachable!(\"CHOICE has no natural tag (X.680 §28) — never invoked, a CHOICE-typed member/alternative is always EXPLICIT-wrapped when tagged (X.680 §30.6)\")\n";
+        os << "    }\n\n";
+        os << "    fn xer_element_name(&self) -> &'static str {\n";
+        os << std::format("        \"{}\"\n", spec.xer_name);
+        os << "    }\n\n";
+        // CHOICE has no separate content representation to hand back
+        // (its wire form already IS "whichever alternative's own tag +
+        // content", self-delimiting per X.690 §8.13) — so, like
+        // `Option<V>` in value.rs, it overrides the whole-TLV methods
+        // directly instead of composing them from natural_tag + content.
+        os << "    fn ber_encode_content(&self, _out: &mut Vec<u8>) {\n";
+        os << "        unreachable!(\"CHOICE has no content-only representation — ber_encode is overridden directly\")\n";
+        os << "    }\n\n";
+        os << "    fn ber_decode_content(&mut self, _content: &[u8]) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << "        unreachable!(\"CHOICE has no content-only representation — ber_decode_into is overridden directly\")\n";
+        os << "    }\n\n";
+        os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
+        os << std::format("        asn1cpp_ber::choice::encode_choice_into(&{}, self, out);\n", spec_ident);
+        os << "    }\n\n";
+        os << "    fn ber_decode_into(&mut self, r: &mut asn1cpp_ber::Reader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << std::format("        *self = asn1cpp_ber::choice::decode_choice_from(&{}, r)?;\n", spec_ident);
+        os << "        Ok(())\n";
+        os << "    }\n\n";
+        // `encode_choice_xer_into` deliberately ends right after the
+        // chosen alternative's own closing tag — no trailing `\n` +
+        // `indent(depth)` (its own doc, rust-runtime/ber/src/choice.rs).
+        // A CHOICE-typed member's own wrapper (`<mname>`, written by
+        // `encode_sequence_xer_content`) does immediately follow, so
+        // `xer_encode` itself (used for exactly that context) adds that
+        // trailing bit here — mirrors `SequenceXerHandler`'s own
+        // CHOICE-typed-member special case in C++, which writes its own
+        // `s.indent(1) << "</" << mbr.name` closing line external to
+        // `ChoiceXerHandler` for the very same reason.
+        os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
+        os << std::format("        asn1cpp_ber::choice::encode_choice_xer_into(&{}, self, out, depth);\n", spec_ident);
+        os << "        out.push('\\n');\n";
+        os << "        out.push_str(&asn1cpp_ber::xer::indent(depth));\n";
+        os << "    }\n\n";
+        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_ber::xer::XerReader) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << std::format("        *self = asn1cpp_ber::choice::decode_choice_xer_from(&{}, r)?;\n", spec_ident);
+        os << "        Ok(())\n";
+        os << "    }\n\n";
+        // X.693: as a SEQUENCE OF/SET OF element, a CHOICE has no wrapper
+        // of its own — the chosen alternative's own tag already serves as
+        // the element tag, so this calls `encode_choice_xer_into` directly,
+        // *not* `self.xer_encode` (whose trailing bit above is specific to
+        // the member-wrapper case — no per-element wrapper follows a
+        // SEQUENCE OF/SET OF element for it to position). The trailing
+        // `\n` here instead matches `ChoiceXerHandler`'s own unconditional
+        // "always end with `\n`" convention (`encode_choice_xer_into`'s own
+        // doc, rust-runtime/ber/src/choice.rs) — `encode_seq_of_xer_named`
+        // (sequence.rs) checks for it to avoid doubling up with its own
+        // trailing separator.
+        os << "    fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, _name_override: std::option::Option<&str>) {\n";
+        os << std::format("        asn1cpp_ber::choice::encode_choice_xer_into(&{}, self, out, depth + 1);\n", spec_ident);
+        os << "        out.push('\\n');\n";
+        os << "    }\n\n";
+        os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_ber::xer::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+        os << "        self.xer_decode_into(r)\n";
+        os << "    }\n";
+        if (spec.tag) {
+            // Only reachable when this CHOICE has its own declared [n]
+            // (X.680 §30.6, own_tag above): AUTOMATIC TAGS can then assign
+            // an IMPLICIT tag to a member/alternative that's a plain
+            // reference to this type (X.680 §22.5/§28.4 — an already-tagged
+            // CHOICE is a TaggedType for retagging purposes, not a bare
+            // untagged CHOICE, so it's no longer forced EXPLICIT), reaching
+            // Asn1Value::ber_encode_tagged/ber_decode_into_tagged generically
+            // (MemberAccess::TaggedScalar / the generic-tagged AlternativeSpec
+            // branch). The trait's own defaults assume a natural-tag/content
+            // split CHOICE can't support (X.680 §28, no universal tag) — see
+            // encode_choice_tagged/decode_choice_tagged's own doc (choice.rs)
+            // for the actual logic; this is a one-line delegate to it.
+            os << "    fn ber_encode_tagged(&self, tag: asn1cpp_ber::Tag, out: &mut Vec<u8>) {\n";
+            os << std::format("        asn1cpp_ber::choice::encode_choice_tagged(&{}, self, tag, out);\n", spec_ident);
             os << "    }\n\n";
-            os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {\n";
-            os << std::format("        *self = asn1cpp_per::choice::decode_choice_content(&{}, r)?;\n", per_spec_ident);
+            os << "    fn ber_decode_into_tagged(&mut self, r: &mut asn1cpp_ber::Reader, tag: asn1cpp_ber::Tag) -> Result<(), asn1cpp_ber::DecodeError> {\n";
+            os << std::format("        *self = asn1cpp_ber::choice::decode_choice_tagged(&{}, r, tag)?;\n", spec_ident);
             os << "        Ok(())\n";
             os << "    }\n";
-            os << "}\n\n";
         }
+
+        // PER leg (merged into the same impl block, gambas-asn1#537).
+        os << "    fn per_encode(&self, w: &mut asn1cpp_per::Writer) {\n";
+        os << std::format("        asn1cpp_per::choice::encode_choice_content(&{}, w, self);\n", per_spec_ident);
+        os << "    }\n\n";
+        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_per::Reader) -> Result<(), asn1cpp_per::DecodeError> {\n";
+        os << std::format("        *self = asn1cpp_per::choice::decode_choice_content(&{}, r)?;\n", per_spec_ident);
+        os << "        Ok(())\n";
+        os << "    }\n";
+        os << "}\n\n";
+    }
     }
 }
 

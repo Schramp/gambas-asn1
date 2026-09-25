@@ -9,9 +9,9 @@
 //! real field type, same pattern already used for character strings.
 
 use crate::constraints::Constraints;
-use crate::length::{decode_size_field, encode_size_field};
-use crate::reader::{DecodeError, Reader};
-use crate::writer::Writer;
+use crate::per::length::{decode_size_field, encode_size_field};
+use crate::per::reader::{DecodeError, Reader};
+use crate::per::writer::Writer;
 
 pub fn encode_octet_string(w: &mut Writer, pc: &Constraints, bytes: &[u8]) {
     encode_size_field(w, pc, bytes.len());

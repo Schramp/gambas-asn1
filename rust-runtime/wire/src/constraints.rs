@@ -1,10 +1,10 @@
 //! Generic X.680 §51 SubtypeConstraint validators — the Rust analogue of
 //! `Integer::validate`/`UInteger::validate`/`OctetString::validate`/
 //! `BitString::validate`/`AsnString<N>::validate` (`runtime/include/
-//! asn1cpp/types/*.hpp`). The `Constraints` data itself is shared with
-//! `asn1cpp_per` — see `asn1cpp_constraints` — since both
-//! crates need the exact same superset the compiler already computes once
-//! (`Generator`'s backend-agnostic `IntegerSpec`/`MemberTypeDescriptorSpec`).
+//! asn1cpp/types/*.hpp`). The `Constraints` struct itself (below) is read
+//! by both this module's callers and `per`'s — the exact same superset the
+//! compiler already computes once (`Generator`'s backend-agnostic
+//! `IntegerSpec`/`MemberTypeDescriptorSpec`) for both codecs.
 //!
 //! Per review on #473 ("all constraints should be table based, fix it in
 //! the runtime. Never put it in code. By using code, there is no way to
@@ -18,7 +18,58 @@
 //! member" shape (`TypeDescriptor.hpp`'s `MemberDescriptor`/`SeqOfSpec`
 //! embed a `Constraints` value the same way).
 
-pub use asn1cpp_constraints::{Constraints, CONSTRAINED, EXTENSIBLE, SEMI_CONSTRAINED, SIZE_CONSTRAINED, UNCONSTRAINED};
+
+pub const CONSTRAINED: u32 = 1;
+pub const SEMI_CONSTRAINED: u32 = 2;
+pub const EXTENSIBLE: u32 = 4;
+pub const SIZE_CONSTRAINED: u32 = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Constraints {
+    pub flags: u32,
+    pub range_bits: u32,
+    pub lower_bound: i64,
+    pub upper_bound: i64,
+    pub lower_u64: u64,
+    pub upper_u64: u64,
+    pub size_range_bits: u32,
+    pub size_lower: i64,
+    pub size_upper: i64,
+    pub encode_table: Option<&'static [u16; 256]>,
+}
+
+pub const UNCONSTRAINED: Constraints = Constraints {
+    flags: 0,
+    range_bits: 0,
+    lower_bound: 0,
+    upper_bound: 0,
+    lower_u64: 0,
+    upper_u64: 0,
+    size_range_bits: 0,
+    size_lower: 0,
+    size_upper: 0,
+    encode_table: None,
+};
+
+impl Constraints {
+    pub const CONSTRAINED: u32 = CONSTRAINED;
+    pub const SEMI_CONSTRAINED: u32 = SEMI_CONSTRAINED;
+    pub const EXTENSIBLE: u32 = EXTENSIBLE;
+    pub const SIZE_CONSTRAINED: u32 = SIZE_CONSTRAINED;
+
+    pub fn is_constrained(&self) -> bool {
+        self.flags & CONSTRAINED != 0
+    }
+    pub fn is_semi_constrained(&self) -> bool {
+        self.flags & SEMI_CONSTRAINED != 0
+    }
+    pub fn is_extensible(&self) -> bool {
+        self.flags & EXTENSIBLE != 0
+    }
+    pub fn is_size_constrained(&self) -> bool {
+        self.flags & SIZE_CONSTRAINED != 0
+    }
+}
 
 /// X.680 §19 INTEGER value-range check, `i64` storage. Mirrors
 /// `Integer::validate` (`runtime/include/asn1cpp/types/Integer.hpp`)

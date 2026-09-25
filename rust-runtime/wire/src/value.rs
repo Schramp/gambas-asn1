@@ -255,6 +255,27 @@ pub trait Asn1Value {
         r.consume_close_tag(name)?;
         Ok(())
     }
+
+    /// X.691 unaligned PER encoding of this value. Default panics — most
+    /// types are never reached through this trait for PER at all (a direct/
+    /// primitive member's PER encoding goes through a generic free function
+    /// called from a `MemberAccess::Constrained` closure, `sequence.rs`, not
+    /// through `&dyn Asn1Value`); only a handful of generic wrappers
+    /// (`Option<V>`, `Box<T>`) and codegen-emitted named types (SEQUENCE/
+    /// CHOICE/ENUMERATED/named INTEGER/named builtin-alias) — reached via
+    /// `MemberAccess::Scalar` for a `TypeRef` member — override this for
+    /// real. Same "real-or-panic-stub" shape `asn1cpp_per::sequence::
+    /// MemberAccess::Unsupported` already gives an individual member row;
+    /// this is that same policy applied at the whole-type granularity for
+    /// types this trait doesn't otherwise need to cover.
+    fn per_encode(&self, _w: &mut crate::per::writer::Writer) {
+        unimplemented!("PER encode not implemented for this type")
+    }
+
+    /// Decode counterpart of `per_encode`.
+    fn per_decode_into(&mut self, _r: &mut crate::per::reader::Reader) -> Result<(), crate::per::reader::DecodeError> {
+        Err(crate::per::reader::DecodeError::new("PER decode not implemented for this type", 0))
+    }
 }
 
 /// EXPLICIT tagging (X.690 §8.14.3), generic over any
@@ -381,6 +402,24 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
         let mut v = V::default();
         v.xer_decode_into(r)?;
+        *self = Some(v);
+        Ok(())
+    }
+
+    /// X.691 §14: an OPTIONAL member's own bitmap bit (encoded by the
+    /// generic SEQUENCE walker, `per::sequence::encode_sequence_content`)
+    /// already decides whether this value's bits appear on the wire at
+    /// all — `per_encode`/`per_decode_into` here only handle the *present*
+    /// case, mirroring `is_present`'s own role for the BER/XER legs.
+    fn per_encode(&self, w: &mut crate::per::writer::Writer) {
+        if let Some(v) = self {
+            v.per_encode(w);
+        }
+    }
+
+    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader) -> Result<(), crate::per::reader::DecodeError> {
+        let mut v = V::default();
+        v.per_decode_into(r)?;
         *self = Some(v);
         Ok(())
     }
@@ -600,6 +639,13 @@ impl Asn1Value for () {
                 return Err(DecodeError::new("XER: expected </NULL>".to_string(), 0));
             }
         }
+        Ok(())
+    }
+
+    /// X.691 §14: contributes zero bits to the encoding either direction —
+    /// mirrors `NullPerHandler` (`runtime/src/PerCodec.cpp`) exactly.
+    fn per_encode(&self, _w: &mut crate::per::writer::Writer) {}
+    fn per_decode_into(&mut self, _r: &mut crate::per::reader::Reader) -> Result<(), crate::per::reader::DecodeError> {
         Ok(())
     }
 }
@@ -998,6 +1044,14 @@ impl<T: Asn1Value> Asn1Value for Box<T> {
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
         (**self).xer_decode_into(r)
+    }
+
+    fn per_encode(&self, w: &mut crate::per::writer::Writer) {
+        (**self).per_encode(w)
+    }
+
+    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader) -> Result<(), crate::per::reader::DecodeError> {
+        (**self).per_decode_into(r)
     }
 }
 

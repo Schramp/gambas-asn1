@@ -9,9 +9,9 @@
 //! closure bridges to/from the real field type.
 
 use crate::constraints::Constraints;
-use crate::length::{decode_size_field, encode_size_field};
-use crate::reader::{DecodeError, Reader};
-use crate::writer::Writer;
+use crate::per::length::{decode_size_field, encode_size_field};
+use crate::per::reader::{DecodeError, Reader};
+use crate::per::writer::Writer;
 
 /// `bit_count` is the logical length (`bytes.len() * 8 - unused_bits` in the
 /// caller's own representation) — passed explicitly rather than derived

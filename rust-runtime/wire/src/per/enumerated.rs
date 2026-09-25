@@ -6,9 +6,9 @@
 //! (X.691 §10.5.6) for a root value, `normally small non-negative whole
 //! number` (X.691 §10.6) for an extension-addition value.
 
-use crate::length::{get_nsnn, put_nsnn};
-use crate::reader::{DecodeError, Reader};
-use crate::writer::Writer;
+use crate::per::length::{get_nsnn, put_nsnn};
+use crate::per::reader::{DecodeError, Reader};
+use crate::per::writer::Writer;
 
 /// One row of an ENUMERATED's PER ordinal table. Codegen must emit this
 /// table sorted ascending by `value` (mirrors the `std::sort` `CppBackend`
@@ -41,7 +41,7 @@ fn range_bits(range: usize) -> u32 {
 /// (`runtime/include/asn1cpp/TypeDescriptor.hpp`: `entries`/`extensible`/
 /// `root_count` bundled in one table) and this crate's own
 /// `sequence::SequenceSpec`/`choice::ChoiceSpec` (one static per type,
-/// referenced by the generated `PerValue` impl, rather than `extensible`/
+/// referenced by the generated `Asn1Value` impl, rather than `extensible`/
 /// `root_count` passed as separate literal arguments at each call site).
 pub struct EnumSpec {
     pub entries: &'static [EnumEntry],
