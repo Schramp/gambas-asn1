@@ -8,15 +8,15 @@
 //! `MemberAccess::{Scalar, TaggedScalar, ExplicitScalar, ...}`) — see
 //! `value` module doc for why PER never needs more than one shape.
 
-use crate::length::{get_length, get_nslength, put_length, put_nslength};
-use crate::reader::{DecodeError, Reader};
-use crate::value::PerValue;
-use crate::writer::Writer;
+use crate::per::length::{get_length, get_nslength, put_length, put_nslength};
+use crate::per::reader::{DecodeError, Reader};
+use crate::value::Asn1Value;
+use crate::per::writer::Writer;
 
 /// How a member's value is reached and (de)serialized.
 ///
 /// `Scalar` works for a member whose own concrete type genuinely owns a
-/// `PerValue` impl — SEQUENCE/CHOICE/SEQUENCE OF newtypes, ENUMERATED (a
+/// `Asn1Value` impl — SEQUENCE/CHOICE/SEQUENCE OF newtypes, ENUMERATED (a
 /// real, distinct Rust enum per ASN.1 type), or any hand-written newtype.
 ///
 /// `Constrained` is for a member whose Rust field type is a *shared*
@@ -29,7 +29,7 @@ use crate::writer::Writer;
 /// declared range only matters for `Asn1Value::validate()`, a separate
 /// post-decode check), PER's wire shape *is* the constraint (constrained
 /// → fixed-width field, semi-constrained → offset encoding, unconstrained
-/// → variable-length) — so a single `impl PerValue for i64` can't be
+/// → variable-length) — so a single `impl Asn1Value for i64` can't be
 /// correct for two differently-constrained INTEGER declarations that both
 /// happen to alias `i64`. `Constrained`'s closures are supplied by codegen
 /// with this member's own `Constraints` already baked in (calling
@@ -39,8 +39,8 @@ use crate::writer::Writer;
 #[derive(Clone, Copy)]
 pub enum MemberAccess<T: 'static> {
     Scalar {
-        get: fn(&T) -> &dyn PerValue,
-        get_mut: fn(&mut T) -> &mut dyn PerValue,
+        get: fn(&T) -> &dyn Asn1Value,
+        get_mut: fn(&mut T) -> &mut dyn Asn1Value,
     },
     Constrained {
         encode: fn(&T, &mut Writer),
@@ -56,7 +56,7 @@ pub enum MemberAccess<T: 'static> {
     /// completely unaffected by one member being a stub — panics only if
     /// this specific member is actually reached (present on the wire, or
     /// requested for encode). This is what lets `RustBackend` emit a real
-    /// `PerValue` impl for every SEQUENCE/CHOICE unconditionally, instead
+    /// `Asn1Value` impl for every SEQUENCE/CHOICE unconditionally, instead
     /// of withholding the whole type's PER support whenever any one
     /// member isn't covered yet — the same "always real, some rows may be
     /// stubs" contract BER has always had.
@@ -70,7 +70,7 @@ pub struct MemberDescriptor<T: 'static> {
     pub name: &'static str,
     pub optional: bool,
     /// Presence check — kept as its own closure rather than reusing
-    /// `PerValue::is_present` (which only exists for `Scalar` members
+    /// `Asn1Value::is_present` (which only exists for `Scalar` members
     /// anyway) so both `access` variants share one uniform mechanism,
     /// mirroring how `optional_ops.is_present(src)` is already a genuinely
     /// separate concern from a member's own type on the C++ side.
@@ -266,9 +266,9 @@ pub fn decode_sequence_content<T: Default>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integer::{decode_int, encode_int};
-    use crate::integer::{decode_unconstrained_int, encode_unconstrained_int};
-    use crate::Constraints;
+    use crate::per::integer::{decode_int, encode_int};
+    use crate::per::integer::{decode_unconstrained_int, encode_unconstrained_int};
+    use crate::constraints::Constraints;
 
     // Dogfood-only fixtures (#[cfg(test)]-gated, never public API — mirrors
     // asn1cpp_ber's own no-public-test-fixtures convention).
@@ -276,11 +276,14 @@ mod tests {
     // `a` is a bare `i64` (Constrained access — the shape a real
     // codegen'd INTEGER alias needs, see MemberAccess's own doc);
     // `b`/`ext1` are `Option<DogfoodInt>`, a real newtype with its own
-    // PerValue impl (Scalar access) — together these exercise both
+    // Asn1Value impl (Scalar access) — together these exercise both
     // MemberAccess variants in the same table.
     #[derive(Debug, Default, PartialEq)]
     struct DogfoodInt(i64);
-    impl PerValue for DogfoodInt {
+    impl Asn1Value for DogfoodInt {
+        fn ber_natural_tag(&self) -> crate::tag::Tag { unimplemented!() }
+        fn ber_encode_content(&self, _out: &mut Vec<u8>) { unimplemented!() }
+        fn ber_decode_content(&mut self, _content: &[u8]) -> Result<(), crate::reader::DecodeError> { unimplemented!() }
         fn per_encode(&self, w: &mut Writer) {
             encode_unconstrained_int(w, self.0);
         }

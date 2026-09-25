@@ -1,44 +1,22 @@
-//! Native Rust PER (Packed Encoding Rules, X.691) codec primitives —
-//! unaligned variant (UPER) only, matching the C++ runtime's own scope.
-//!
-//! Standalone — no FFI to the C++ runtime (`runtime/` at the repo root),
-//! and no dependency on the sibling `asn1cpp_ber` crate: PER's bit-level,
-//! non-self-delimiting framing needs different stream primitives entirely
-//! (`get_bits`/`put_bits`, no TLV, no byte alignment — UPER never aligns to
-//! a byte boundary except implicitly at the end of an encoding), so there
-//! is nothing to share with the BER crate's TLV-oriented `Reader`/`Writer`.
-//! `Constraints` itself (`constraints` module) is the one exception: it's
-//! plain metadata, not stream logic, computed identically for both wire
-//! encodings by the same compiler pass, so it lives in a small third crate
-//! (`asn1cpp_constraints`) both `asn1cpp_ber` and `asn1cpp_per` depend on
-//! — never on each other.
-//! Ground truth for wire semantics is `runtime/src/PerCodec.cpp` and
-//! `runtime/include/asn1cpp/codec/PerCodec.hpp`, cross-checked against
-//! X.691 (`asn1-docs/`) — same references the C++ runtime was built
-//! against, not a port of the C++ code itself.
-//!
-//! Scope so far: bit-level `Reader`/`Writer` only (this crate's foundation).
-//! Table-driven SEQUENCE/CHOICE/INTEGER/string encode-decode, mirroring
-//! `rust-runtime/ber`'s `SequenceSpec<T>`/`MemberDescriptor<T>` shape, is
-//! built on top of this in a later pass — see the crate's own issue tracker
-//! entry for the phased plan.
+//! Thin re-export shim over `asn1cpp_wire` — kept as a separate crate name
+//! purely so every existing external path (`asn1cpp_per::sequence::...`,
+//! generated code, `RustBackend.cpp`'s emitted paths) keeps working
+//! unchanged. All actual PER code lives in `asn1cpp_wire::per` now, merged
+//! there with BER/XER (`asn1cpp_ber`, same shim treatment) around one
+//! shared `Asn1Value` trait (gambas-asn1#537) — see that crate's own
+//! top-level doc for why a shared trait needed a shared crate. `PerValue`
+//! is kept as an alias for `Asn1Value` (the same trait, not a distinct
+//! one) purely so a stray external reference to the old name doesn't break;
+//! new code should just use `Asn1Value`.
 
-pub mod bit_string;
-pub mod choice;
-pub mod constraints;
-pub mod enumerated;
-pub mod integer;
-pub mod length;
-pub mod octet_string;
-pub mod reader;
-pub mod seq_of;
-pub mod sequence;
-pub mod strings;
-pub mod uinteger;
-pub mod value;
-pub mod writer;
+pub use asn1cpp_wire::constraints;
+pub use asn1cpp_wire::per::{
+    bit_string, choice, enumerated, integer, length, octet_string, reader, seq_of, sequence, strings, uinteger,
+    writer,
+};
+pub use asn1cpp_wire::value;
 
-pub use constraints::Constraints;
-pub use reader::{DecodeError, Reader};
-pub use value::PerValue;
-pub use writer::Writer;
+pub use asn1cpp_wire::constraints::Constraints;
+pub use asn1cpp_wire::per::reader::{DecodeError, Reader};
+pub use asn1cpp_wire::per::writer::Writer;
+pub use asn1cpp_wire::value::Asn1Value as PerValue;

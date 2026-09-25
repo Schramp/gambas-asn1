@@ -5,8 +5,8 @@
 //! unconstrained form).
 
 use crate::constraints::Constraints;
-use crate::reader::{DecodeError, Reader};
-use crate::writer::Writer;
+use crate::per::reader::{DecodeError, Reader};
+use crate::per::writer::Writer;
 
 /// X.691 §10.8 "Encoding of an unconstrained whole number" — 2's-complement,
 /// minimum octets, preceded by an 8-bit octet count.
