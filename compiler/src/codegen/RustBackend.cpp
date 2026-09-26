@@ -374,14 +374,14 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // before a Rust enum instance can exist — see
         // enumerated::validate_enum's own doc), but a real override, not
         // a stub, for parity with the other constraint kinds.
-        os << "    fn validate(&self) -> i64 {\n";
+        os << "    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {\n";
         os << std::format("        asn1cpp_wire::enumerated::validate_enum(*self as i64, &{})\n", map_ident);
         os << "    }\n\n";
 
-        os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer) {\n";
+        os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {\n";
         os << std::format("        asn1cpp_wire::per::enumerated::encode_enum(w, &{}, *self as i64);\n", per_spec_ident);
         os << "    }\n\n";
-        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {\n";
+        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {\n";
         os << std::format("        let v = asn1cpp_wire::per::enumerated::decode_enum(r, &{})?;\n", per_spec_ident);
         os << std::format(
             "        *self = std::convert::TryFrom::try_from(v).map_err(|_| asn1cpp_wire::per::reader::DecodeError::new(\"PER: ENUM value not in {}\", r.bit_pos()))?;\n",
@@ -499,16 +499,16 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
     os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n        self.0.ber_decode_content(content)\n    }\n\n";
     os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n        self.0.xer_encode(out, depth);\n    }\n\n";
     os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n        self.0.xer_decode_into(r)\n    }\n\n";
-    os << std::format("    fn validate(&self) -> i64 {{\n        asn1cpp_wire::constraints::{}(self.0, &{})\n    }}\n\n", validate_fn, cname);
+    os << std::format("    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {{\n        asn1cpp_wire::constraints::{}(self.0, &{})\n    }}\n\n", validate_fn, cname);
 
     // PER leg (merged into the same impl block, gambas-asn1#537): X.691
     // wire shape is exactly `integer::encode_int`/`uinteger::encode_uint`
     // against this same table — no separate unconstrained function needed,
     // they already fall through to the unconstrained wire shape at runtime
     // when flags == 0.
-    os << std::format("    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer) {{\n        asn1cpp_wire::per::{}::{}(w, &{}, self.0);\n    }}\n", fn_ns, fn_ty, cname);
+    os << std::format("    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n        asn1cpp_wire::per::{}::{}(w, &{}, self.0);\n    }}\n", fn_ns, fn_ty, cname);
     os << std::format(
-        "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
+        "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
         "        self.0 = asn1cpp_wire::per::{}::{}(r, &{})?;\n        Ok(())\n    }}\n",
         fn_ns, fn_dec, cname);
     os << "}\n\n";
@@ -687,7 +687,7 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     }
     if (sizeable) {
         const char* method = is_bits ? "bit_count" : "len";
-        os << std::format("\n    fn validate(&self) -> i64 {{\n        asn1cpp_wire::constraints::validate_size(self.0.{}(), &{})\n    }}\n",
+        os << std::format("\n    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {{\n        asn1cpp_wire::constraints::validate_size(self.0.{}(), &{})\n    }}\n",
                            method, cname);
     }
 
@@ -711,21 +711,21 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << "\n";
         if (is_bits) {
             os << std::format(
-                "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer) {{\n"
+                "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
                 "        asn1cpp_wire::per::bit_string::encode_bit_string(w, &{0}, &self.0.bytes, self.0.bit_count());\n    }}\n",
                 cname);
             os << std::format(
-                "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
+                "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
                 "        let (bytes, unused) = asn1cpp_wire::per::bit_string::decode_bit_string(r, &{0})?;\n"
                 "        self.0 = asn1cpp_wire::bit_string::BitString {{ bytes, unused_bits: unused }};\n        Ok(())\n    }}\n",
                 cname);
         } else if (is_octets) {
             os << std::format(
-                "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer) {{\n"
+                "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
                 "        asn1cpp_wire::per::octet_string::encode_octet_string(w, &{0}, &self.0.0);\n    }}\n",
                 cname);
             os << std::format(
-                "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
+                "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
                 "        self.0 = asn1cpp_wire::octet_string::OctetString(asn1cpp_wire::per::octet_string::decode_octet_string(r, &{0})?);\n"
                 "        Ok(())\n    }}\n",
                 cname);
@@ -738,11 +738,11 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
                               : bare_string ? "String::from_utf8(x).unwrap_or_default()"
                                             : std::format("{}(String::from_utf8(x).unwrap_or_default())", native_builtin_type(spec.builtin_type));
             os << std::format(
-                "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer) {{\n"
+                "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
                 "        let _ = asn1cpp_wire::per::strings::encode_string(w, &{0}, {1}, {2});\n    }}\n",
                 cname, tag_num, bytes_expr);
             os << std::format(
-                "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
+                "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
                 "        let x = asn1cpp_wire::per::strings::decode_string(r, &{0}, {1})?;\n"
                 "        self.0 = {2};\n        Ok(())\n    }}\n",
                 cname, tag_num, ctor);
@@ -1045,7 +1045,7 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // type (unlike INTEGER's shared `i64`), so it can carry its own
     // constraint directly.
     if (spec.has_size_constraint) {
-        os << std::format("\n    fn validate(&self) -> i64 {{\n        asn1cpp_wire::constraints::validate_size(self.0.len(), &{})\n    }}\n", cname);
+        os << std::format("\n    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {{\n        asn1cpp_wire::constraints::validate_size(self.0.len(), &{})\n    }}\n", cname);
     }
     os << "}\n\n";
 }
@@ -1955,10 +1955,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    }\n\n";
 
         // PER leg (merged into the same impl block, gambas-asn1#537).
-        os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer) {\n";
+        os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {\n";
         os << std::format("        asn1cpp_wire::per::sequence::encode_sequence_content(&{}, w, self);\n", per_spec_ident);
         os << "    }\n\n";
-        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {\n";
+        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {\n";
         os << std::format("        *self = asn1cpp_wire::per::sequence::decode_sequence_content(&{}, r)?;\n", per_spec_ident);
         os << "        Ok(())\n";
         os << "    }\n";
@@ -2411,10 +2411,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     // `()` is already the (only) value, no Default call needed.
                     std::string default_expr = a.mtype == "()" ? "()" : std::format("{}::default()", a.mtype);
                     os << std::format(
-                        "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_wire::value::Asn1Value::per_encode(x, w); true }} else {{ false }},\n",
+                        "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_wire::value::Asn1Value::per_encode(x, w, &asn1cpp_wire::constraints::UNCONSTRAINED); true }} else {{ false }},\n",
                         variant_path);
                     os << std::format(
-                        "        per_decode_into: |r| {{ let mut x = {}; asn1cpp_wire::value::Asn1Value::per_decode_into(&mut x, r)?; Ok({}({})) }},\n",
+                        "        per_decode_into: |r| {{ let mut x = {}; asn1cpp_wire::value::Asn1Value::per_decode_into(&mut x, r, &asn1cpp_wire::constraints::UNCONSTRAINED)?; Ok({}({})) }},\n",
                         default_expr, variant_path, ctor);
                     os << "    },\n";
                     continue;
@@ -2612,10 +2612,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         }
 
         // PER leg (merged into the same impl block, gambas-asn1#537).
-        os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer) {\n";
+        os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {\n";
         os << std::format("        asn1cpp_wire::per::choice::encode_choice_content(&{}, w, self);\n", per_spec_ident);
         os << "    }\n\n";
-        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {\n";
+        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {\n";
         os << std::format("        *self = asn1cpp_wire::per::choice::decode_choice_content(&{}, r)?;\n", per_spec_ident);
         os << "        Ok(())\n";
         os << "    }\n";

@@ -108,7 +108,7 @@ fn root_end<T>(spec: &SequenceSpec<T>) -> usize {
 
 fn access_encode<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
     match m.access {
-        MemberAccess::Scalar { get, .. } => get(value).per_encode(w),
+        MemberAccess::Scalar { get, .. } => get(value).per_encode(w, &crate::constraints::UNCONSTRAINED),
         MemberAccess::Constrained { encode, .. } => encode(value, w),
         MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
     }
@@ -116,7 +116,7 @@ fn access_encode<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
 
 fn access_decode<T>(m: &MemberDescriptor<T>, result: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
     match m.access {
-        MemberAccess::Scalar { get_mut, .. } => get_mut(result).per_decode_into(r),
+        MemberAccess::Scalar { get_mut, .. } => get_mut(result).per_decode_into(r, &crate::constraints::UNCONSTRAINED),
         MemberAccess::Constrained { decode, .. } => decode(result, r),
         MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
     }
@@ -284,10 +284,10 @@ mod tests {
         fn ber_natural_tag(&self) -> crate::tag::Tag { unimplemented!() }
         fn ber_encode_content(&self, _out: &mut Vec<u8>) { unimplemented!() }
         fn ber_decode_content(&mut self, _content: &[u8]) -> Result<(), crate::reader::DecodeError> { unimplemented!() }
-        fn per_encode(&self, w: &mut Writer) {
+        fn per_encode(&self, w: &mut Writer, _c: &Constraints) {
             encode_unconstrained_int(w, self.0);
         }
-        fn per_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        fn per_decode_into(&mut self, r: &mut Reader, _c: &Constraints) -> Result<(), DecodeError> {
             self.0 = decode_unconstrained_int(r)?;
             Ok(())
         }

@@ -1551,7 +1551,7 @@ impl DefaultPoint {
             self.0 = decode_seq_of_content(content)?;
             Ok(())
         }
-        fn validate(&self) -> i64 {
+        fn validate(&self, _c: &crate::constraints::Constraints) -> i64 {
             crate::constraints::validate_size(self.0.len(), &NAMED_TAGS_CONSTRAINTS)
         }
     }
