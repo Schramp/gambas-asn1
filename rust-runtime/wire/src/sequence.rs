@@ -79,6 +79,15 @@ pub struct MemberDescriptor<T: 'static> {
     /// generated type, checked through `ber_encode_tagged`'s own
     /// `validate::check`) or has none.
     pub constraints: Option<&'static Constraints>,
+    /// `Some(reason)` for a member PER cannot encode/decode yet (a FROM-
+    /// alphabet or wide-char string, ANY, ...): the PER walker panics with
+    /// `reason` only if this member is actually reached, every other member
+    /// of the SEQUENCE is unaffected. `None` for every PER-covered member.
+    /// BER/XER ignore it; PER ignores `tag` and the retag flavour of
+    /// `access` (X.691 has no tags) and reads the member through
+    /// [`MemberAccess::accessors`] with `constraints` (UNCONSTRAINED when
+    /// `None`).
+    pub per_unsupported: Option<&'static str>,
 }
 
 impl<T: 'static> MemberDescriptor<T> {
@@ -185,7 +194,27 @@ pub enum MemberAccess<T: 'static> {
     /// encode or decode panics unconditionally.
     Unsupported {
         reason: &'static str,
+        /// The field is still reachable for the codecs that do not depend
+        /// on BER's tag/presence shape (PER reads it through
+        /// [`MemberAccess::accessors`]).
+        get: fn(&T) -> &dyn Asn1Value,
+        get_mut: fn(&mut T) -> &mut dyn Asn1Value,
     },
+}
+
+impl<T: 'static> MemberAccess<T> {
+    /// The plain field accessors, for a codec (PER) that reads a member
+    /// through the `Asn1Value` trait regardless of how BER tags it.
+    /// `None` only for `ExplicitAny`, which has no `Asn1Value` accessor.
+    pub fn accessors(&self) -> Option<(fn(&T) -> &dyn Asn1Value, fn(&mut T) -> &mut dyn Asn1Value)> {
+        match self {
+            MemberAccess::Scalar { get, get_mut }
+            | MemberAccess::TaggedScalar { get, get_mut }
+            | MemberAccess::ExplicitScalar { get, get_mut }
+            | MemberAccess::Unsupported { get, get_mut, .. } => Some((*get, *get_mut)),
+            MemberAccess::ExplicitAny { .. } => None,
+        }
+    }
 }
 
 /// Shared SEQUENCE-OF wire logic — one outer `SEQUENCE_TAG` TLV wrapping
@@ -544,6 +573,10 @@ pub struct SequenceSpec<T: 'static> {
     pub name: &'static str,
     pub tag: Tag,
     pub members: &'static [MemberDescriptor<T>],
+    /// Index of the first extension-addition member (X.680 §25.4's `...`);
+    /// `< 0` for none. Read by PER only, matching `SequenceSpec::ext_at`
+    /// (`TypeDescriptor.hpp`).
+    pub ext_at: i32,
 }
 
 /// Member-loop content of a SEQUENCE encoding, without the outer TLV —
@@ -563,7 +596,7 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
             MemberAccess::TaggedScalar { get, .. } => get(value).ber_encode_tagged(m.tag, content),
             MemberAccess::ExplicitScalar { get, .. } => get(value).ber_encode_explicit(content, m.tag),
             MemberAccess::ExplicitAny { ber_encode, .. } => ber_encode(value, content),
-            MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
+            MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
         }
         if let Some(delta) = m.validate_delta(value) {
             crate::validate::check_delta(delta, m.name, "encode");
@@ -692,7 +725,7 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
                     ber_decode_into(&mut result, inner)?;
                 }
             }
-            MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
+            MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
         }
     }
     Ok(result)
@@ -744,6 +777,7 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
         set_default: None,
         is_default_equal: None,
+        per_unsupported: None,
         constraints: None,
     },
     MemberDescriptor {
@@ -753,12 +787,13 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
         set_default: None,
         is_default_equal: None,
+        per_unsupported: None,
         constraints: None,
     },
 ];
 
 static POINT_SPEC: SequenceSpec<Point> =
-    SequenceSpec { name: "Point", tag: SEQUENCE_TAG, members: &POINT_MEMBERS };
+    SequenceSpec { name: "Point", tag: SEQUENCE_TAG, members: &POINT_MEMBERS, ext_at: -1 };
 
 impl Point {
     pub fn encode(&self) -> Vec<u8> {
@@ -795,6 +830,7 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
         set_default: None,
         is_default_equal: None,
+        per_unsupported: None,
         constraints: None,
     },
     MemberDescriptor {
@@ -804,12 +840,13 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
         set_default: None,
         is_default_equal: None,
+        per_unsupported: None,
         constraints: None,
     },
 ];
 
 static OPT_POINT_SPEC: SequenceSpec<OptPoint> =
-    SequenceSpec { name: "OptPoint", tag: SEQUENCE_TAG, members: &OPT_POINT_MEMBERS };
+    SequenceSpec { name: "OptPoint", tag: SEQUENCE_TAG, members: &OPT_POINT_MEMBERS, ext_at: -1 };
 
 impl OptPoint {
     pub fn encode(&self) -> Vec<u8> {
@@ -847,11 +884,12 @@ static COORDS_MEMBERS: [MemberDescriptor<Coords>; 1] = [MemberDescriptor {
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
     set_default: None,
     is_default_equal: None,
+    per_unsupported: None,
     constraints: None,
 }];
 
 static COORDS_SPEC: SequenceSpec<Coords> =
-    SequenceSpec { name: "Coords", tag: SEQUENCE_TAG, members: &COORDS_MEMBERS };
+    SequenceSpec { name: "Coords", tag: SEQUENCE_TAG, members: &COORDS_MEMBERS, ext_at: -1 };
 
 impl Coords {
     pub fn encode(&self) -> Vec<u8> {
@@ -889,11 +927,12 @@ static OPT_COORDS_MEMBERS: [MemberDescriptor<OptCoords>; 1] = [MemberDescriptor 
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
     set_default: None,
     is_default_equal: None,
+    per_unsupported: None,
     constraints: None,
 }];
 
 static OPT_COORDS_SPEC: SequenceSpec<OptCoords> =
-    SequenceSpec { name: "OptCoords", tag: SEQUENCE_TAG, members: &OPT_COORDS_MEMBERS };
+    SequenceSpec { name: "OptCoords", tag: SEQUENCE_TAG, members: &OPT_COORDS_MEMBERS, ext_at: -1 };
 
 impl OptCoords {
     pub fn encode(&self) -> Vec<u8> {
@@ -932,11 +971,12 @@ static SET_COORDS_MEMBERS: [MemberDescriptor<SetCoords>; 1] = [MemberDescriptor 
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
     set_default: None,
     is_default_equal: None,
+    per_unsupported: None,
     constraints: None,
 }];
 
 static SET_COORDS_SPEC: SequenceSpec<SetCoords> =
-    SequenceSpec { name: "SetCoords", tag: SEQUENCE_TAG, members: &SET_COORDS_MEMBERS };
+    SequenceSpec { name: "SetCoords", tag: SEQUENCE_TAG, members: &SET_COORDS_MEMBERS, ext_at: -1 };
 
 impl SetCoords {
     pub fn encode(&self) -> Vec<u8> {
@@ -970,6 +1010,7 @@ static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
         set_default: None,
         is_default_equal: None,
+        per_unsupported: None,
         constraints: None,
     },
     MemberDescriptor {
@@ -979,12 +1020,13 @@ static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
         set_default: Some(|v| v.y = Some(default_point_y_default())),
         is_default_equal: Some(|v| v.y == Some(default_point_y_default())),
+        per_unsupported: None,
         constraints: None,
     },
 ];
 
 static DEFAULT_POINT_SPEC: SequenceSpec<DefaultPoint> =
-    SequenceSpec { name: "DefaultPoint", tag: SEQUENCE_TAG, members: &DEFAULT_POINT_MEMBERS };
+    SequenceSpec { name: "DefaultPoint", tag: SEQUENCE_TAG, members: &DEFAULT_POINT_MEMBERS, ext_at: -1 };
 
 impl DefaultPoint {
     pub fn encode(&self) -> Vec<u8> {
@@ -1114,6 +1156,7 @@ impl DefaultPoint {
                 access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
                 set_default: None,
                 is_default_equal: None,
+                per_unsupported: None,
                 constraints: None,
             },
             MemberDescriptor {
@@ -1123,11 +1166,12 @@ impl DefaultPoint {
                 access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
                 set_default: None,
                 is_default_equal: None,
+                per_unsupported: None,
                 constraints: None,
             },
         ];
         static A_SET_SPEC: SequenceSpec<Point> =
-            SequenceSpec { name: "APointSet", tag: SET_TAG, members: &SET_MEMBERS };
+            SequenceSpec { name: "APointSet", tag: SET_TAG, members: &SET_MEMBERS, ext_at: -1 };
 
         let p = Point { x: Integer(1), y: Integer(2) };
         let bytes = encode_sequence(&A_SET_SPEC, &p);
@@ -1491,6 +1535,7 @@ impl DefaultPoint {
             access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
             set_default: None,
             is_default_equal: None,
+            per_unsupported: None,
             constraints: Some(&RANGED_POINT_X_CONSTRAINTS),
         },
         MemberDescriptor {
@@ -1500,12 +1545,13 @@ impl DefaultPoint {
             access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
             set_default: None,
             is_default_equal: None,
+            per_unsupported: None,
             constraints: None,
         },
     ];
 
     static RANGED_POINT_SPEC: SequenceSpec<RangedPoint> =
-        SequenceSpec { name: "RangedPoint", tag: SEQUENCE_TAG, members: &RANGED_POINT_MEMBERS };
+        SequenceSpec { name: "RangedPoint", tag: SEQUENCE_TAG, members: &RANGED_POINT_MEMBERS, ext_at: -1 };
 
     #[test]
     fn encode_of_an_in_range_member_does_not_bump_the_validate_counter() {
@@ -1562,11 +1608,12 @@ impl DefaultPoint {
         access: MemberAccess::Scalar { get: |v| &v.data, get_mut: |v| &mut v.data },
         set_default: None,
         is_default_equal: None,
+        per_unsupported: None,
         constraints: Some(&SIZED_BLOB_DATA_CONSTRAINTS),
     }];
 
     static SIZED_BLOB_SPEC: SequenceSpec<SizedBlob> =
-        SequenceSpec { name: "SizedBlob", tag: SEQUENCE_TAG, members: &SIZED_BLOB_MEMBERS };
+        SequenceSpec { name: "SizedBlob", tag: SEQUENCE_TAG, members: &SIZED_BLOB_MEMBERS, ext_at: -1 };
 
     #[test]
     fn encode_of_an_in_range_size_member_does_not_bump_the_validate_counter() {
@@ -1685,11 +1732,12 @@ impl DefaultPoint {
         access: MemberAccess::Scalar { get: |v| &v.inline_tags, get_mut: |v| &mut v.inline_tags },
         set_default: None,
         is_default_equal: None,
+        per_unsupported: None,
         constraints: Some(&BASKET_INLINE_TAGS_CONSTRAINTS),
     }];
 
     static BASKET_SPEC: SequenceSpec<Basket> =
-        SequenceSpec { name: "Basket", tag: SEQUENCE_TAG, members: &BASKET_MEMBERS };
+        SequenceSpec { name: "Basket", tag: SEQUENCE_TAG, members: &BASKET_MEMBERS, ext_at: -1 };
 
     #[test]
     fn inline_seqof_in_range_does_not_bump_the_validate_counter() {
