@@ -327,7 +327,7 @@ fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut S
             // see MemberAccess::Unsupported's doc), so this genuinely is
             // reachable whenever a type has an ANY member — not dead code.
             MemberAccess::ExplicitAny { .. } => panic!("member '{}': ANY has no defined XER form", m.name),
-            MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
+            MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
         }
     }
     if any {
@@ -379,7 +379,7 @@ fn decode_sequence_xer_content<T: Default>(spec: &SequenceSpec<T>, r: &mut XerRe
             MemberAccess::Scalar { get_mut, .. } | MemberAccess::TaggedScalar { get_mut, .. } | MemberAccess::ExplicitScalar { get_mut, .. } =>
                 get_mut(&mut result).xer_decode_into(r)?,
             MemberAccess::ExplicitAny { .. } => panic!("member '{}': ANY has no defined XER form", m.name),
-            MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
+            MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
         }
         r.consume_close_tag(m.name)?;
     }
