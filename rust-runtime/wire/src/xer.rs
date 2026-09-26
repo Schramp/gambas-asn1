@@ -20,7 +20,7 @@
 //! streaming parser) — matches the C++ side's own scope note.
 
 use crate::reader::DecodeError;
-use crate::sequence::SequenceSpec;
+use crate::spec::sequence::SequenceSpec;
 
 /// Append `s` to `out` with XER's three encode-time escapes (X.693 §8.2).
 /// Mirrors `xer_detail::xer_escape`.
@@ -302,7 +302,7 @@ pub fn write_close_tag(out: &mut String, name: &str) {
 /// exactly this loop, wrapped in the *member's* tag by the caller, same
 /// contract `Asn1Value::xer_encode` already documents for every other type).
 fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut String, depth: usize) {
-    use crate::sequence::MemberAccess;
+    use crate::spec::sequence::MemberAccess;
     let mut any = false;
     for m in spec.members {
         match &m.access {
@@ -365,7 +365,7 @@ pub fn encode_sequence_xer_into<T>(spec: &SequenceSpec<T>, value: &T, out: &mut 
 /// consumed, same linear-scan/canonical-order assumption `decode_sequence`'s
 /// BER leg documents.
 fn decode_sequence_xer_content<T: Default>(spec: &SequenceSpec<T>, r: &mut XerReader) -> Result<T, DecodeError> {
-    use crate::sequence::MemberAccess;
+    use crate::spec::sequence::MemberAccess;
     let mut result = T::default();
     for m in spec.members {
         if m.optional {
