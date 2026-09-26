@@ -6,9 +6,9 @@
 //! alternatives as a `normally small non-negative whole number` index
 //! (X.691 §10.6) plus open-type wrapping.
 //!
-//! `own_tag` (a CHOICE type's own top-level `[n]` override, X.680 §30.6)
-//! has no PER equivalent, unlike `asn1cpp_ber::choice::ChoiceSpec` — UPER
-//! has no tags at all, so this genuinely doesn't apply, not an omission.
+//! Reads the same `choice::ChoiceSpec` table BER and XER use. `own_tag`,
+//! `ber_tags` and each alternative's `ber` framing are BER-only: UPER has
+//! no tags at all, the alternative's position is its identity.
 //!
 //! `unknown_extension` capture (an extension alternative index the decoder
 //! doesn't recognize) is a follow-up: for now `decode_choice_content`
@@ -16,28 +16,15 @@
 //! `asn1cpp_ber`'s own CHOICE decode has for a closed (non-extensible)
 //! CHOICE with no capture mechanism.
 
+use crate::choice::{Alternative, ChoiceSpec};
 use crate::per::length::{get_length, get_nsnn, put_length, put_nsnn};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 
-/// One alternative row — mirrors `asn1cpp_ber::choice::AlternativeSpec`'s
-/// `ber_encode`/`ber_decode_into` shape exactly: `per_encode` tries `value`
-/// as this alternative, writing content and returning `true` only on a
-/// match (nothing written otherwise, since a non-matching closure body is
-/// just a failed pattern match); `per_decode_into` decodes this
-/// alternative's content and constructs the whole enum value.
-pub struct AlternativeSpec<T: 'static> {
-    pub name: &'static str,
-    pub per_encode: fn(&T, &mut Writer) -> bool,
-    pub per_decode_into: fn(&mut Reader) -> Result<T, DecodeError>,
-}
-
-pub struct ChoiceSpec<T: 'static> {
-    pub alternatives: &'static [AlternativeSpec<T>],
-    /// `>= 0` when the schema has a `...` extension marker (X.680 §29.6) —
-    /// the index of the first extension alternative, matching `ChoiceSpec`
-    /// (`Backend.hpp`)/`sequence::SequenceSpec::ext_at`'s own convention.
-    pub ext_at: i32,
+fn per_unsupported<T>(alt: &Alternative<T>) {
+    if let Some(reason) = alt.per_unsupported {
+        panic!("alternative '{}' not supported: {}", alt.name, reason);
+    }
 }
 
 /// X.691 §10.5.6 unaligned variant: minimum bit width to represent values
@@ -65,18 +52,10 @@ fn root_count<T>(spec: &ChoiceSpec<T>) -> usize {
 }
 
 pub fn encode_choice_content<T>(spec: &ChoiceSpec<T>, w: &mut Writer, value: &T) {
-    // Probe each alternative's closure against a throwaway buffer to find
-    // which one matches `value` — same "try each in table order" cost
-    // model `asn1cpp_ber::choice::encode_choice_dispatch` already accepts,
-    // needed here because (unlike BER) the matched *index* itself has to
-    // be written to the stream before that alternative's own content.
-    let def_idx = match spec.alternatives.iter().position(|alt| {
-        let mut probe = Writer::new();
-        (alt.per_encode)(value, &mut probe)
-    }) {
-        Some(i) => i,
-        None => return, // codegen-bug backstop: no alternative matched a real generated enum.
+    let Some((def_idx, alt, payload)) = crate::choice::active_alt(spec, value) else {
+        return; // codegen-bug backstop: no alternative matched a real generated enum.
     };
+    per_unsupported(alt);
 
     let root_count = root_count(spec);
     let in_ext = spec.ext_at >= 0 && def_idx >= root_count;
@@ -88,11 +67,11 @@ pub fn encode_choice_content<T>(spec: &ChoiceSpec<T>, w: &mut Writer, value: &T)
         if bits > 0 {
             w.put_bits(def_idx as u64, bits);
         }
-        (spec.alternatives[def_idx].per_encode)(value, w);
+        payload.per_encode(w, alt.constraints);
     } else {
         put_nsnn(w, (def_idx - root_count) as i64);
         let mut tmp = Writer::new();
-        (spec.alternatives[def_idx].per_encode)(value, &mut tmp);
+        payload.per_encode(&mut tmp, alt.constraints);
         tmp.flush();
         let bytes = tmp.into_bytes();
         put_length(w, bytes.len());
@@ -102,7 +81,7 @@ pub fn encode_choice_content<T>(spec: &ChoiceSpec<T>, w: &mut Writer, value: &T)
     }
 }
 
-pub fn decode_choice_content<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<T, DecodeError> {
+pub fn decode_choice_content_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
     let root_count = root_count(spec);
     let mut in_ext = false;
     if spec.ext_at >= 0 {
@@ -114,7 +93,9 @@ pub fn decode_choice_content<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<
         if def_idx >= root_count {
             return Err(DecodeError::new("PER: CHOICE index out of range", r.bit_pos()));
         }
-        (spec.alternatives[def_idx].per_decode_into)(r)
+        let alt = &spec.alternatives[def_idx];
+        per_unsupported(alt);
+        (alt.emplace)(value).per_decode_into(r, alt.constraints)
     } else {
         let ext_idx = get_nsnn(r)?;
         let def_idx = root_count + ext_idx as usize;
@@ -134,119 +115,151 @@ pub fn decode_choice_content<T>(spec: &ChoiceSpec<T>, r: &mut Reader) -> Result<
             bytes.push(r.get_bits(8)? as u8);
         }
         let mut inner = Reader::new(&bytes);
-        (spec.alternatives[def_idx].per_decode_into)(&mut inner)
+        let alt = &spec.alternatives[def_idx];
+        per_unsupported(alt);
+        (alt.emplace)(value).per_decode_into(&mut inner, alt.constraints)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::per::integer::{decode_unconstrained_int, encode_unconstrained_int};
+    use crate::choice::{Alternative, BerTagging};
+    use crate::constraints::UNCONSTRAINED;
+    use crate::integer::Integer;
 
     // Dogfood-only fixture (#[cfg(test)]-gated, never public API).
     #[derive(Debug, PartialEq)]
     enum Dogfood {
-        A(i64),
-        B(i64),
-        ExtC(i64),
+        A(Integer),
+        B(Integer),
+        ExtC(Integer),
     }
 
+    impl Default for Dogfood {
+        fn default() -> Self {
+            Dogfood::A(Integer(0))
+        }
+    }
+
+    const ALT_A: Alternative<Dogfood> = Alternative {
+        name: "a",
+        ber: BerTagging::Delegate,
+        active: |v| match v {
+            Dogfood::A(x) => Some(x),
+            _ => None,
+        },
+        emplace: |v| {
+            *v = Dogfood::A(Default::default());
+            match v {
+                Dogfood::A(x) => x,
+                _ => unreachable!(),
+            }
+        },
+        constraints: &UNCONSTRAINED,
+        per_unsupported: None,
+    };
+    const ALT_B: Alternative<Dogfood> = Alternative {
+        name: "b",
+        ber: BerTagging::Delegate,
+        active: |v| match v {
+            Dogfood::B(x) => Some(x),
+            _ => None,
+        },
+        emplace: |v| {
+            *v = Dogfood::B(Default::default());
+            match v {
+                Dogfood::B(x) => x,
+                _ => unreachable!(),
+            }
+        },
+        constraints: &UNCONSTRAINED,
+        per_unsupported: None,
+    };
+    const ALT_EXT_C: Alternative<Dogfood> = Alternative {
+        name: "extC",
+        ber: BerTagging::Delegate,
+        active: |v| match v {
+            Dogfood::ExtC(x) => Some(x),
+            _ => None,
+        },
+        emplace: |v| {
+            *v = Dogfood::ExtC(Default::default());
+            match v {
+                Dogfood::ExtC(x) => x,
+                _ => unreachable!(),
+            }
+        },
+        constraints: &UNCONSTRAINED,
+        per_unsupported: None,
+    };
+
     const SPEC: ChoiceSpec<Dogfood> = ChoiceSpec {
-        alternatives: &[
-            AlternativeSpec {
-                name: "a",
-                per_encode: |v, w| {
-                    if let Dogfood::A(x) = v {
-                        encode_unconstrained_int(w, *x);
-                        true
-                    } else {
-                        false
-                    }
-                },
-                per_decode_into: |r| Ok(Dogfood::A(decode_unconstrained_int(r)?)),
-            },
-            AlternativeSpec {
-                name: "b",
-                per_encode: |v, w| {
-                    if let Dogfood::B(x) = v {
-                        encode_unconstrained_int(w, *x);
-                        true
-                    } else {
-                        false
-                    }
-                },
-                per_decode_into: |r| Ok(Dogfood::B(decode_unconstrained_int(r)?)),
-            },
-        ],
+        name: "Dogfood",
+        alternatives: &[ALT_A, ALT_B],
+        ber_tags: &[],
+        unknown_extension: None,
+        own_tag: None,
         ext_at: -1,
     };
 
-    fn roundtrip(v: &Dogfood) -> Dogfood {
+    fn roundtrip_with(spec: &ChoiceSpec<Dogfood>, v: &Dogfood) -> Dogfood {
         let mut w = Writer::new();
-        encode_choice_content(&SPEC, &mut w, v);
+        encode_choice_content(spec, &mut w, v);
         w.flush();
         let bytes = w.into_bytes();
         let mut r = Reader::new(&bytes);
-        decode_choice_content(&SPEC, &mut r).unwrap()
+        let mut out = Dogfood::default();
+        decode_choice_content_into(spec, &mut out, &mut r).unwrap();
+        out
     }
 
     #[test]
     fn root_alternative_a() {
-        assert_eq!(roundtrip(&Dogfood::A(5)), Dogfood::A(5));
+        assert_eq!(roundtrip_with(&SPEC, &Dogfood::A(Integer(5))), Dogfood::A(Integer(5)));
     }
 
     #[test]
     fn root_alternative_b() {
-        assert_eq!(roundtrip(&Dogfood::B(7)), Dogfood::B(7));
+        assert_eq!(roundtrip_with(&SPEC, &Dogfood::B(Integer(7))), Dogfood::B(Integer(7)));
     }
 
     const EXT_SPEC: ChoiceSpec<Dogfood> = ChoiceSpec {
-        alternatives: &[
-            AlternativeSpec {
-                name: "a",
-                per_encode: |v, w| {
-                    if let Dogfood::A(x) = v {
-                        encode_unconstrained_int(w, *x);
-                        true
-                    } else {
-                        false
-                    }
-                },
-                per_decode_into: |r| Ok(Dogfood::A(decode_unconstrained_int(r)?)),
-            },
-            AlternativeSpec {
-                name: "extC",
-                per_encode: |v, w| {
-                    if let Dogfood::ExtC(x) = v {
-                        encode_unconstrained_int(w, *x);
-                        true
-                    } else {
-                        false
-                    }
-                },
-                per_decode_into: |r| Ok(Dogfood::ExtC(decode_unconstrained_int(r)?)),
-            },
-        ],
+        name: "Dogfood",
+        alternatives: &[ALT_A, ALT_EXT_C],
+        ber_tags: &[],
+        unknown_extension: None,
+        own_tag: None,
         ext_at: 1,
     };
 
-    fn roundtrip_ext(v: &Dogfood) -> Dogfood {
-        let mut w = Writer::new();
-        encode_choice_content(&EXT_SPEC, &mut w, v);
-        w.flush();
-        let bytes = w.into_bytes();
-        let mut r = Reader::new(&bytes);
-        decode_choice_content(&EXT_SPEC, &mut r).unwrap()
-    }
-
     #[test]
     fn root_alternative_with_extension_marker_present() {
-        assert_eq!(roundtrip_ext(&Dogfood::A(9)), Dogfood::A(9));
+        assert_eq!(roundtrip_with(&EXT_SPEC, &Dogfood::A(Integer(9))), Dogfood::A(Integer(9)));
     }
 
     #[test]
     fn extension_alternative() {
-        assert_eq!(roundtrip_ext(&Dogfood::ExtC(123)), Dogfood::ExtC(123));
+        assert_eq!(roundtrip_with(&EXT_SPEC, &Dogfood::ExtC(Integer(123))), Dogfood::ExtC(Integer(123)));
+    }
+
+    #[test]
+    fn unsupported_alternative_panics_only_when_reached() {
+        const STUB: Alternative<Dogfood> = Alternative { per_unsupported: Some("test stub"), ..ALT_B };
+        let spec: ChoiceSpec<Dogfood> = ChoiceSpec {
+            name: "Dogfood",
+            alternatives: &[ALT_A, STUB],
+            ber_tags: &[],
+            unknown_extension: None,
+            own_tag: None,
+            ext_at: -1,
+        };
+        assert_eq!(roundtrip_with(&spec, &Dogfood::A(Integer(1))), Dogfood::A(Integer(1)));
+        let r = std::panic::catch_unwind(|| {
+            let mut w = Writer::new();
+            encode_choice_content(&spec, &mut w, &Dogfood::B(Integer(2)));
+        });
+        assert!(r.is_err());
     }
 
     // Cross-checked against a live PerCodec::instance().encode() run
@@ -256,12 +269,12 @@ mod tests {
     #[test]
     fn matches_cpp_ground_truth() {
         let mut w = Writer::new();
-        encode_choice_content(&SPEC, &mut w, &Dogfood::A(5));
+        encode_choice_content(&SPEC, &mut w, &Dogfood::A(Integer(5)));
         w.flush();
         assert_eq!(w.into_bytes(), vec![0x00, 0x82, 0x80]);
 
         let mut w2 = Writer::new();
-        encode_choice_content(&SPEC, &mut w2, &Dogfood::B(7));
+        encode_choice_content(&SPEC, &mut w2, &Dogfood::B(Integer(7)));
         w2.flush();
         assert_eq!(w2.into_bytes(), vec![0x80, 0x83, 0x80]);
     }
