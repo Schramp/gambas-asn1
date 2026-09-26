@@ -61,8 +61,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASN1CPP_ROOT = os.path.dirname(os.path.dirname(HERE))
 ASNCPP_BIN = os.path.join(ASN1CPP_ROOT, "build/compiler/asn1cpp")
-ASN1CPP_BER_CRATE = os.path.join(ASN1CPP_ROOT, "rust-runtime/ber")
-ASN1CPP_PER_CRATE = os.path.join(ASN1CPP_ROOT, "rust-runtime/per")
+ASN1CPP_WIRE_CRATE = os.path.join(ASN1CPP_ROOT, "rust-runtime/wire")
 
 TEMPLATE_CPP = os.path.join(HERE, "template_cpp")
 TEMPLATE_RUST = os.path.join(HERE, "template_rust")
@@ -452,8 +451,7 @@ def build_rust(target_dir, asn1_files_abs, pdu_type):
                  "__PDU_TYPE__": pdu_type})
     materialize(os.path.join(TEMPLATE_RUST, "Cargo.toml.tmpl"),
                 os.path.join(rust_dir, "Cargo.toml"),
-                {"__ASN1CPP_BER_CRATE__": ASN1CPP_BER_CRATE,
-                 "__ASN1CPP_PER_CRATE__": ASN1CPP_PER_CRATE})
+                {"__ASN1CPP_WIRE_CRATE__": ASN1CPP_WIRE_CRATE})
 
     if not run_make(rust_dir, "gen", label="Rust codegen"):
         return None
@@ -479,26 +477,29 @@ def build_rust(target_dir, asn1_files_abs, pdu_type):
                 os.path.join(rust_dir, "src", "bin", "xer_to_ber.rs"),
                 {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
 
-    # Every generated type gets one merged `impl asn1cpp_ber::value::
+    # Every generated type gets one merged `impl asn1cpp_wire::value::
     # Asn1Value for {ident}` (BER/XER/PER all three methods on the same
     # trait/impl block since gambas-asn1#537 — previously two separate
-    # impls, `asn1cpp_ber::value::Asn1Value` and `asn1cpp_per::PerValue`,
-    # detected here by grepping for the latter's now-nonexistent literal
-    # text). Whole-type PER coverage is no longer a meaningful question for
-    # SEQUENCE/CHOICE (every member/alternative not yet representable is
-    # its own per-row `unimplemented!()` stub, RustBackend.cpp's
-    # `per_member_covered`/`per_alt_covered`) — the impl always exists, so
-    # this just confirms the type itself was actually generated, same "ask
-    # the actual output" approach `discover_ident` already uses instead of
-    # guessing an escaping rule. A `.per_encode()` call on a genuinely
-    # uncovered field panics at runtime (an informational per-record skip
-    # elsewhere in this sweep), not a compile error, so there's no longer a
-    # coverage gate to avoid tripping here.
+    # impls in two separate crates, detected here by grepping for the now-
+    # nonexistent literal text of the old `asn1cpp_per::PerValue` impl;
+    # gambas-asn1#539 then removed the asn1cpp-ber/asn1cpp-per/
+    # asn1cpp-constraints shim crates entirely, so generated code now
+    # references asn1cpp_wire:: directly). Whole-type PER coverage is no
+    # longer a meaningful question for SEQUENCE/CHOICE (every member/
+    # alternative not yet representable is its own per-row
+    # `unimplemented!()` stub, RustBackend.cpp's `per_member_covered`/
+    # `per_alt_covered`) — the impl always exists, so this just confirms
+    # the type itself was actually generated, same "ask the actual output"
+    # approach `discover_ident` already uses instead of guessing an
+    # escaping rule. A `.per_encode()` call on a genuinely uncovered field
+    # panics at runtime (an informational per-record skip elsewhere in
+    # this sweep), not a compile error, so there's no longer a coverage
+    # gate to avoid tripping here.
     per_covered = False
     gen_file = os.path.join(rust_dir, "gen", f"{ident}.rs")
     if os.path.isfile(gen_file):
         with open(gen_file, errors="replace") as f:
-            per_covered = f"impl asn1cpp_ber::value::Asn1Value for {ident} " in f.read()
+            per_covered = f"impl asn1cpp_wire::value::Asn1Value for {ident} " in f.read()
     # Remove any stale ber_to_per.rs/per_to_ber.rs from a prior run of this
     # same target directory before deciding whether to re-materialize them
     # — cargo auto-discovers every src/bin/*.rs file as its own binary

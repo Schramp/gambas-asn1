@@ -3,20 +3,6 @@
 version = 4
 
 [[package]]
-name = "asn1cpp-ber"
-version = "0.1.0"
-dependencies = [
- "asn1cpp-wire",
-]
-
-[[package]]
-name = "asn1cpp-per"
-version = "0.1.0"
-dependencies = [
- "asn1cpp-wire",
-]
-
-[[package]]
 name = "asn1cpp-wire"
 version = "0.1.0"
 
@@ -24,6 +10,5 @@ version = "0.1.0"
 name = "xer-vectors-70-test"
 version = "0.1.0"
 dependencies = [
- "asn1cpp-ber",
- "asn1cpp-per",
+ "asn1cpp-wire",
 ]

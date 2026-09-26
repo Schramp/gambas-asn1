@@ -205,7 +205,7 @@ struct ElemShape {
     // own emit_member_type_descriptor call always builds this exact,
     // predictable name whenever true); false means genuinely unconstrained,
     // in which case a backend references the shared "no constraint"
-    // constant instead (asn1cpp_per::constraints::UNCONSTRAINED) rather
+    // constant instead (asn1cpp_wire::constraints::UNCONSTRAINED) rather
     // than needing anything emitted for this element at all.
     bool has_own_descriptor = false;
 };
@@ -461,8 +461,8 @@ struct TaggedMemberSpec {
 
     // True when a direct builtin character-string member/alternative
     // carries an X.680 §51.4 FROM (PermittedAlphabet) constraint —
-    // meaningless otherwise. `asn1cpp_per::strings::encode_string`/
-    // `decode_string`'s core path (rust-runtime/per) only implements the
+    // meaningless otherwise. `asn1cpp_wire::per::strings::encode_string`/
+    // `decode_string`'s core path (rust-runtime/wire/src/per) only implements the
     // *natural* alphabet (X.691 §26.5.3/§26.5.6), not FROM-alphabet index
     // remapping, so a backend's own PER coverage gate for a string member
     // must exclude this case explicitly rather than silently encoding

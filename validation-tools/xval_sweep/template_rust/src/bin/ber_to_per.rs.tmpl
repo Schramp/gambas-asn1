@@ -10,7 +10,7 @@
 // xval_sweep.py's own build_rust doc).
 //
 // Usage: ber-to-per --type __PDU_TYPE__ [FILE]
-use asn1cpp_per::PerValue;
+use asn1cpp_wire::value::Asn1Value;
 use std::io::{Read, Write};
 
 const TYPES: &[&str] = &["__PDU_TYPE__"];
@@ -27,13 +27,13 @@ fn list_types() {
     }
 }
 
-fn encode_one(type_name: &str, data: &[u8]) -> Result<(Vec<u8>, usize), asn1cpp_ber::DecodeError> {
-    let mut r = asn1cpp_ber::Reader::new(data);
+fn encode_one(type_name: &str, data: &[u8]) -> Result<(Vec<u8>, usize), asn1cpp_wire::DecodeError> {
+    let mut r = asn1cpp_wire::Reader::new(data);
     match type_name {
         "__PDU_TYPE__" => {
             let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
-            <randgen_rust::__PDU_MODULE__::__PDU_IDENT__ as asn1cpp_ber::value::Asn1Value>::ber_decode_into(&mut v, &mut r)?;
-            let mut w = asn1cpp_per::Writer::new();
+            <randgen_rust::__PDU_MODULE__::__PDU_IDENT__ as asn1cpp_wire::value::Asn1Value>::ber_decode_into(&mut v, &mut r)?;
+            let mut w = asn1cpp_wire::per::writer::Writer::new();
             v.per_encode(&mut w);
             w.flush();
             Ok((w.into_bytes(), r.pos()))
