@@ -5,6 +5,10 @@
 //! fixed-SIZE/constrained/unconstrained count-encoding logic — this module
 //! only adds the per-element loop around it.
 //!
+//! `pc` is the collection's constraint: its own `size_*` fields drive the
+//! count encoding and `pc.element` (X.691 §19/§20) the per-element
+//! encoding.
+//!
 //! Generic over the element type (`T: Asn1Value`) rather than tied to a
 //! specific wrapper — `RustBackend`'s own `SeqOf<T>`/`SetOf<T>` newtypes
 //! (`rust-runtime/ber/src/sequence.rs`) both `Deref`/`DerefMut` to `Vec<T>`,
@@ -21,8 +25,9 @@ use crate::per::writer::Writer;
 
 pub fn encode_seq_of_content<T: Asn1Value>(w: &mut Writer, pc: &Constraints, items: &[T]) {
     encode_size_field(w, pc, items.len());
+    let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
     for item in items {
-        item.per_encode(w, &crate::constraints::UNCONSTRAINED);
+        item.per_encode(w, elem);
     }
 }
 
@@ -31,10 +36,11 @@ pub fn decode_seq_of_content<T: Asn1Value + Default>(
     pc: &Constraints,
 ) -> Result<Vec<T>, DecodeError> {
     let count = decode_size_field(r, pc)?;
+    let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
     let mut result = Vec::with_capacity(count);
     for _ in 0..count {
         let mut v = T::default();
-        v.per_decode_into(r, &crate::constraints::UNCONSTRAINED)?;
+        v.per_decode_into(r, elem)?;
         result.push(v);
     }
     Ok(result)
@@ -71,7 +77,7 @@ mod tests {
         size_range_bits: 0,
         size_lower: 0,
         size_upper: 0,
-        encode_table: None,
+        encode_table: None, element: None,
     };
 
     fn sized(lower: i64, upper: i64) -> Constraints {

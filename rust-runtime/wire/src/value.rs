@@ -1223,6 +1223,31 @@ mod per_blanket_tests {
     }
 
     #[test]
+    fn seq_of_integer_via_trait_matches_size_field_plus_element_loop() {
+        static ELEM: Constraints = Constraints {
+            flags: Constraints::CONSTRAINED, range_bits: 4, lower_bound: 0, upper_bound: 15,
+            lower_u64: 0, upper_u64: 0, size_range_bits: 0, size_lower: 0, size_upper: 0,
+            encode_table: None, element: None,
+        };
+        let coll = Constraints {
+            flags: Constraints::SIZE_CONSTRAINED, size_range_bits: 3, size_lower: 0, size_upper: 7,
+            element: Some(&ELEM), ..Default::default()
+        };
+        let v = crate::sequence::SeqOf(vec![1i64, 9, 15]);
+        let via_trait = bytes_of(|w| v.per_encode(w, &coll));
+        let manual = bytes_of(|w| {
+            crate::per::length::encode_size_field(w, &coll, 3);
+            for x in [1i64, 9, 15] {
+                crate::per::integer::encode_int(w, &ELEM, x);
+            }
+        });
+        assert_eq!(via_trait, manual);
+        let mut back = crate::sequence::SeqOf::<i64>(vec![]);
+        back.per_decode_into(&mut Reader::new(&via_trait), &coll).unwrap();
+        assert_eq!(back.0, vec![1, 9, 15]);
+    }
+
+    #[test]
     fn wide_string_trait_path_roundtrips_raw_bytes() {
         let c = crate::constraints::UNCONSTRAINED;
         let v = crate::strings::BmpString(vec![0x00, 0x41, 0x00, 0x42]);

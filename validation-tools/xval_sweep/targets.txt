@@ -82,3 +82,4 @@ tests/asn1/rust_range_test.asn1        Gauge
 tests/asn1/rust_size_test.asn1         Blob
 tests/asn1/rust_seqof_size_test.asn1   Basket
 tests/asn1/rust_alphabet_test.asn1     Code
+tests/asn1/rust_seqof_int_per_test.asn1   Bag
