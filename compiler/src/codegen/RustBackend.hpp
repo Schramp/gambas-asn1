@@ -90,10 +90,10 @@ public:
 
     std::string native_int_type(IntStorageKind kind) const override {
         switch (kind) {
-            case IntStorageKind::U64:       return "u64";
-            case IntStorageKind::I128:      return "i128";  // Rust has a real 128-bit type — no C++-style stub
+            case IntStorageKind::U64:       return "asn1cpp_wire::integer::UInteger";
+            case IntStorageKind::I128:      return "asn1cpp_wire::integer::BigInteger";  // Rust has a real 128-bit type — no C++-style stub
             case IntStorageKind::ARBITRARY: return "asn1cpp_wire::integer::ArbitraryInteger";
-            default:                        return "i64";
+            default:                        return "asn1cpp_wire::integer::Integer";
         }
     }
 

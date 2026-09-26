@@ -13,6 +13,11 @@ use crate::writer::write_primitive;
 
 pub const NULL_TAG: Tag = Tag::universal(universal::NULL, false);
 
+/// NULL (X.680 §23) — the single value, as a real type carrying its own
+/// `Asn1Value` impl.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Null;
+
 pub fn write_null(out: &mut Vec<u8>) {
     write_null_tagged(out, NULL_TAG);
 }

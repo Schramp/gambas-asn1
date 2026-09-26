@@ -75,7 +75,7 @@ fn main() {
             // critical DEFAULT FALSE but s1.xer sets it to true
             check("s1.xer  extension critical present", ext.critical.is_some(), &mut failures);
             if let Some(critical) = ext.critical {
-                check("s1.xer  extension critical == true", critical, &mut failures);
+                check("s1.xer  extension critical == true", *critical, &mut failures);
             }
             // extnValue OCTET STRING: hex "30030101FF" = 5 bytes
             check("s1.xer  extnValue byte size == 5", ext.extn_value.len() == 5, &mut failures);
