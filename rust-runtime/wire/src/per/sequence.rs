@@ -4,94 +4,16 @@
 //! count + bitmap + open-type wrapping for extension-addition members
 //! (X.691 §18.8).
 //!
-//! No tag-based member-access variants (unlike `asn1cpp_ber`'s
-//! `MemberAccess::{Scalar, TaggedScalar, ExplicitScalar, ...}`) — see
-//! `value` module doc for why PER never needs more than one shape.
+//! Reads the same `sequence::SequenceSpec`/`MemberDescriptor` table BER and
+//! XER walk. PER has no tags, so every retag flavour of `MemberAccess`
+//! reads the field the same way (`MemberAccess::accessors`), and a member
+//! PER cannot encode yet carries `per_unsupported`.
 
+use crate::constraints::{Constraints, UNCONSTRAINED};
 use crate::per::length::{get_length, get_nslength, put_length, put_nslength};
 use crate::per::reader::{DecodeError, Reader};
-use crate::constraints::Constraints;
-use crate::value::Asn1Value;
 use crate::per::writer::Writer;
-
-/// How a member's value is reached and (de)serialized.
-///
-/// `Scalar` reaches the field through an `Asn1Value` trait object — every
-/// covered member, whether its Rust field type owns a per-declaration
-/// newtype (SEQUENCE/CHOICE/ENUMERATED, a named INTEGER, a generated
-/// SEQUENCE OF) or is a shared native type (`i64`/`u64`/`OctetString`/
-/// `BitString`/`String`/a string newtype, `SeqOf<T>`/`SetOf<T>`). PER's wire
-/// shape depends on the declared constraint (constrained → fixed-width
-/// field, semi-constrained → offset encoding, unconstrained →
-/// variable-length), so a shared native type cannot know it from its own
-/// type: the row's `constraints` field carries it and the walker passes it
-/// to `Asn1Value::per_encode`/`per_decode_into`. A type that owns its
-/// constraint (a named generated type) ignores the argument. This mirrors
-/// how the C++ side carries `Constraints` in the per-usage `TypeDescriptor`.
-#[derive(Clone, Copy)]
-pub enum MemberAccess<T: 'static> {
-    Scalar {
-        get: fn(&T) -> &dyn Asn1Value,
-        get_mut: fn(&mut T) -> &mut dyn Asn1Value,
-    },
-    /// A member/alternative shape this crate doesn't implement PER for yet
-    /// (ANY, wide-char or
-    /// FROM-alphabet-constrained strings, an EXPLICIT/retagged member —
-    /// see `RustBackend`'s own `per_member_covered`/`per_alt_covered` for
-    /// the exact current list). Mirrors `asn1cpp_ber::sequence::
-    /// MemberAccess::Unsupported` exactly, and exists for the same
-    /// reason: encoding/decoding *other* members of this same SEQUENCE is
-    /// completely unaffected by one member being a stub — panics only if
-    /// this specific member is actually reached (present on the wire, or
-    /// requested for encode). This is what lets `RustBackend` emit a real
-    /// `Asn1Value` impl for every SEQUENCE/CHOICE unconditionally, instead
-    /// of withholding the whole type's PER support whenever any one
-    /// member isn't covered yet — the same "always real, some rows may be
-    /// stubs" contract BER has always had.
-    Unsupported { reason: &'static str },
-}
-
-/// One row in a `SequenceSpec<T>` table — mirrors `MemberDescriptor`
-/// (`TypeDescriptor.hpp`)/`asn1cpp_ber::sequence::MemberDescriptor`, minus
-/// the tag-related fields neither PER nor this crate need (see module doc).
-pub struct MemberDescriptor<T: 'static> {
-    pub name: &'static str,
-    pub optional: bool,
-    /// Presence check — kept as its own closure rather than reusing
-    /// `Asn1Value::is_present` (which only exists for `Scalar` members
-    /// anyway) so both `access` variants share one uniform mechanism,
-    /// mirroring how `optional_ops.is_present(src)` is already a genuinely
-    /// separate concern from a member's own type on the C++ side.
-    pub is_present: fn(&T) -> bool,
-    /// `Some` for a DEFAULT-valued member (X.680 §25.1) — called when the
-    /// member is absent from the wire, filling the schema default instead
-    /// of leaving the field however `T::default()` left it. Same shape and
-    /// role as `asn1cpp_ber::sequence::MemberDescriptor::set_default`.
-    pub set_default: Option<fn(&mut T)>,
-    /// PER encode gate (X.691 skips a DEFAULT-valued member equal to its
-    /// schema default, same as BER — X.680 §25.1 is encoding-agnostic):
-    /// `Some`, returning `true`, for exactly the members `set_default` is
-    /// `Some` for. Mirrors `is_default_equal`'s exact role in the BER crate.
-    pub is_default_equal: Option<fn(&T) -> bool>,
-    pub access: MemberAccess<T>,
-    /// The declaration's own `Constraints`, handed to the member's
-    /// `Asn1Value::per_encode`/`per_decode_into` for a `Scalar` access — a
-    /// shared native type (`i64`, `String`, ...) has no constraint of its
-    /// own, so this is where its declared range/SIZE reaches the encoder.
-    /// `UNCONSTRAINED` for a member whose type owns its constraint (a named
-    /// generated type) or has none, and unused by `Unsupported`.
-    pub constraints: &'static Constraints,
-}
-
-/// Backend-agnostic decision for one SEQUENCE/SET type — mirrors
-/// `asn1cpp_ber::sequence::SequenceSpec<T>`. `ext_at < 0` means no
-/// extension marker (X.680 §25.4's `...`); otherwise it's the index of the
-/// first extension-addition member, matching `SequenceSpec::ext_at`
-/// (`TypeDescriptor.hpp`) exactly.
-pub struct SequenceSpec<T: 'static> {
-    pub members: &'static [MemberDescriptor<T>],
-    pub ext_at: i32,
-}
+use crate::sequence::{MemberDescriptor, SequenceSpec};
 
 fn root_end<T>(spec: &SequenceSpec<T>) -> usize {
     if spec.ext_at >= 0 {
@@ -101,18 +23,32 @@ fn root_end<T>(spec: &SequenceSpec<T>) -> usize {
     }
 }
 
+fn member_constraints<T>(m: &MemberDescriptor<T>) -> &'static Constraints {
+    m.constraints.unwrap_or(&UNCONSTRAINED)
+}
+
+/// Presence of an OPTIONAL/DEFAULT member through its `Asn1Value` accessor
+/// (`Option<V>` reports `is_some`, every other type `true`); a member with
+/// no accessor (ANY) is treated as present, its own `per_unsupported`
+/// stub decides what happens next.
+fn is_present<T>(m: &MemberDescriptor<T>, value: &T) -> bool {
+    m.access.accessors().map_or(true, |(get, _)| get(value).is_present())
+}
+
 fn access_encode<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
-    match m.access {
-        MemberAccess::Scalar { get, .. } => get(value).per_encode(w, m.constraints),
-        MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
+    if let Some(reason) = m.per_unsupported {
+        panic!("member '{}' not supported: {}", m.name, reason);
     }
+    let (get, _) = m.access.accessors().expect("PER-covered member has an accessor");
+    get(value).per_encode(w, member_constraints(m));
 }
 
 fn access_decode<T>(m: &MemberDescriptor<T>, result: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
-    match m.access {
-        MemberAccess::Scalar { get_mut, .. } => get_mut(result).per_decode_into(r, m.constraints),
-        MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
+    if let Some(reason) = m.per_unsupported {
+        panic!("member '{}' not supported: {}", m.name, reason);
     }
+    let (_, get_mut) = m.access.accessors().expect("PER-covered member has an accessor");
+    get_mut(result).per_decode_into(r, member_constraints(m))
 }
 
 /// X.691 §10.2 "Open type fields" — encode this member's value to a
@@ -155,7 +91,7 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, w: &mut Writer, value:
     let root_end = root_end(spec);
     let mut has_ext = false;
     if spec.ext_at >= 0 {
-        has_ext = spec.members[root_end..].iter().any(|m| (m.is_present)(value));
+        has_ext = spec.members[root_end..].iter().any(|m| is_present(m, value));
         w.put_bits(has_ext as u64, 1);
     }
     for m in &spec.members[..root_end] {
@@ -163,11 +99,11 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, w: &mut Writer, value:
             continue;
         }
         let suppress = m.is_default_equal.map_or(false, |f| f(value));
-        let present = (m.is_present)(value) && !suppress;
+        let present = is_present(m, value) && !suppress;
         w.put_bits(present as u64, 1);
     }
     for m in &spec.members[..root_end] {
-        if m.optional && !(m.is_present)(value) {
+        if m.optional && !is_present(m, value) {
             continue;
         }
         if let Some(f) = m.is_default_equal {
@@ -181,10 +117,10 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, w: &mut Writer, value:
         let n_ext = spec.members.len() - root_end;
         put_nslength(w, n_ext);
         for m in &spec.members[root_end..] {
-            w.put_bits((m.is_present)(value) as u64, 1);
+            w.put_bits(is_present(m, value) as u64, 1);
         }
         for m in &spec.members[root_end..] {
-            if !(m.is_present)(value) {
+            if !is_present(m, value) {
                 continue;
             }
             encode_open_type(m, value, w);
@@ -259,6 +195,8 @@ pub fn decode_sequence_content<T: Default>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sequence::{MemberAccess, SEQUENCE_TAG};
+    use crate::value::Asn1Value;
     use crate::per::integer::{decode_unconstrained_int, encode_unconstrained_int};
     use crate::constraints::Constraints;
 
@@ -303,23 +241,27 @@ mod tests {
     }
 
     const SIMPLE_SPEC: SequenceSpec<Simple> = SequenceSpec {
+        name: "T",
+        tag: SEQUENCE_TAG,
         members: &[
             MemberDescriptor {
                 name: "a",
+                tag: SEQUENCE_TAG,
                 optional: false,
-                is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                constraints: &DOGFOOD_CONSTRAINED,
+                constraints: Some(&DOGFOOD_CONSTRAINED),
+                per_unsupported: None,
                 access: MemberAccess::Scalar { get: |t| &t.a, get_mut: |t| &mut t.a },
             },
             MemberDescriptor {
                 name: "b",
+                tag: SEQUENCE_TAG,
                 optional: true,
-                is_present: |t| t.b.is_some(),
                 set_default: None,
                 is_default_equal: None,
-                constraints: &crate::constraints::UNCONSTRAINED,
+                constraints: Some(&crate::constraints::UNCONSTRAINED),
+                per_unsupported: None,
                 access: MemberAccess::Scalar { get: |t| &t.b, get_mut: |t| &mut t.b },
             },
         ],
@@ -354,23 +296,27 @@ mod tests {
     }
 
     const EXT_SPEC: SequenceSpec<WithExtension> = SequenceSpec {
+        name: "T",
+        tag: SEQUENCE_TAG,
         members: &[
             MemberDescriptor {
                 name: "a",
+                tag: SEQUENCE_TAG,
                 optional: false,
-                is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                constraints: &DOGFOOD_CONSTRAINED,
+                constraints: Some(&DOGFOOD_CONSTRAINED),
+                per_unsupported: None,
                 access: MemberAccess::Scalar { get: |t| &t.a, get_mut: |t| &mut t.a },
             },
             MemberDescriptor {
                 name: "ext1",
+                tag: SEQUENCE_TAG,
                 optional: true,
-                is_present: |t| t.ext1.is_some(),
                 set_default: None,
                 is_default_equal: None,
-                constraints: &crate::constraints::UNCONSTRAINED,
+                constraints: Some(&crate::constraints::UNCONSTRAINED),
+                per_unsupported: None,
                 access: MemberAccess::Scalar { get: |t| &t.ext1, get_mut: |t| &mut t.ext1 },
             },
         ],
@@ -424,24 +370,28 @@ mod tests {
     }
 
     const UNSUPPORTED_SPEC: SequenceSpec<WithUnsupported> = SequenceSpec {
+        name: "T",
+        tag: SEQUENCE_TAG,
         members: &[
             MemberDescriptor {
                 name: "a",
+                tag: SEQUENCE_TAG,
                 optional: false,
-                is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                constraints: &DOGFOOD_CONSTRAINED,
+                constraints: Some(&DOGFOOD_CONSTRAINED),
+                per_unsupported: None,
                 access: MemberAccess::Scalar { get: |t| &t.a, get_mut: |t| &mut t.a },
             },
             MemberDescriptor {
                 name: "skip",
+                tag: SEQUENCE_TAG,
                 optional: false,
-                is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                constraints: &crate::constraints::UNCONSTRAINED,
-                access: MemberAccess::Unsupported { reason: "test stub" },
+                constraints: None,
+                per_unsupported: Some("test stub"),
+                access: MemberAccess::Scalar { get: |t| &t.skip, get_mut: |t| &mut t.skip },
             },
         ],
         ext_at: -1,
@@ -480,15 +430,18 @@ mod tests {
     }
 
     const SCALAR_INT_SPEC: SequenceSpec<ScalarInt> = SequenceSpec {
+        name: "T",
+        tag: SEQUENCE_TAG,
         ext_at: -1,
         members: &[MemberDescriptor {
             name: "a",
+            tag: SEQUENCE_TAG,
             optional: false,
-            is_present: |_| true,
             set_default: None,
             is_default_equal: None,
             access: MemberAccess::Scalar { get: |t| &t.a, get_mut: |t| &mut t.a },
-            constraints: &DOGFOOD_CONSTRAINED,
+            constraints: Some(&DOGFOOD_CONSTRAINED),
+            per_unsupported: None,
         }],
     };
 
