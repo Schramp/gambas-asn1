@@ -726,13 +726,14 @@ pub fn decode_sequence<T: Default>(spec: &SequenceSpec<T>, data: &[u8]) -> Resul
 
 #[cfg(test)]
 mod tests {
+    use crate::integer::Integer;
     use super::*;
 
 /// `Point ::= SEQUENCE { x INTEGER, y INTEGER }`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Point {
-    pub x: i64,
-    pub y: i64,
+    pub x: Integer,
+    pub y: Integer,
 }
 
 static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
@@ -782,8 +783,8 @@ impl Point {
 /// same role `Point` plays for required-only members.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct OptPoint {
-    pub x: i64,
-    pub y: Option<i64>,
+    pub x: Integer,
+    pub y: Option<Integer>,
 }
 
 static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
@@ -830,13 +831,13 @@ impl OptPoint {
 
 /// `Coords ::= SEQUENCE { values SEQUENCE OF INTEGER }` — worked example +
 /// test subject for a SEQUENCE OF member, same role `Point`/`OptPoint`
-/// play for their own features. `values` is `SeqOf<i64>`, not a raw
-/// `Vec<i64>` — a real `Asn1Value` impl, so this goes through the ordinary
+/// play for their own features. `values` is `SeqOf<Integer>`, not a raw
+/// `Vec<Integer>` — a real `Asn1Value` impl, so this goes through the ordinary
 /// `MemberAccess::Scalar` path exactly like any other composite member, no
 /// dedicated SeqOf-shaped closures needed.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Coords {
-    pub values: SeqOf<i64>,
+    pub values: SeqOf<Integer>,
 }
 
 static COORDS_MEMBERS: [MemberDescriptor<Coords>; 1] = [MemberDescriptor {
@@ -872,13 +873,13 @@ impl Coords {
 
 /// `OptCoords ::= SEQUENCE { values SEQUENCE OF INTEGER OPTIONAL }` — worked
 /// example + test subject for OPTIONAL SEQUENCE OF member support, same
-/// role `OptPoint` plays for OPTIONAL scalars. `Option<SeqOf<i64>>` gets
+/// role `OptPoint` plays for OPTIONAL scalars. `Option<SeqOf<Integer>>` gets
 /// presence detection for free from the existing blanket
 /// `impl<V: Asn1Value + Default> Asn1Value for Option<V>` (`value.rs`) —
 /// no dedicated `is_present` closure needed.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct OptCoords {
-    pub values: Option<SeqOf<i64>>,
+    pub values: Option<SeqOf<Integer>>,
 }
 
 static OPT_COORDS_MEMBERS: [MemberDescriptor<OptCoords>; 1] = [MemberDescriptor {
@@ -914,14 +915,14 @@ impl OptCoords {
 
 /// `SetCoords ::= SEQUENCE { values SET OF INTEGER }` — worked example +
 /// test subject for a SET OF *member*, distinct from `Coords`'s SEQUENCE
-/// OF: `values` is `SetOf<i64>`, whose own `ber_natural_tag()` is SET_TAG
+/// OF: `values` is `SetOf<Integer>`, whose own `ber_natural_tag()` is SET_TAG
 /// (universal 17), not SEQUENCE_TAG (universal 16) — `APointSet` below
 /// already covers a top-level SET's own tag; this is the member-level
 /// case. Same `MemberAccess::Scalar` path as `Coords`, just a different
 /// field type.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SetCoords {
-    pub values: SetOf<i64>,
+    pub values: SetOf<Integer>,
 }
 
 static SET_COORDS_MEMBERS: [MemberDescriptor<SetCoords>; 1] = [MemberDescriptor {
@@ -953,12 +954,12 @@ impl SetCoords {
 /// same role `OptPoint`'s `y` plays for plain OPTIONAL (no default value).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DefaultPoint {
-    pub x: i64,
-    pub y: Option<i64>,
+    pub x: Integer,
+    pub y: Option<Integer>,
 }
 
-fn default_point_y_default() -> i64 {
-    42
+fn default_point_y_default() -> Integer {
+    Integer(42)
 }
 
 static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
@@ -998,7 +999,7 @@ impl DefaultPoint {
 
     #[test]
     fn encodes_hand_computed_vector() {
-        let p = Point { x: 1, y: 2 };
+        let p = Point { x: Integer(1), y: Integer(2) };
         // SEQUENCE (0x30), length 6, then two INTEGER TLVs (0x02 0x01 0x01, 0x02 0x01 0x02).
         assert_eq!(
             p.encode(),
@@ -1008,7 +1009,7 @@ impl DefaultPoint {
 
     #[test]
     fn round_trips() {
-        let p = Point { x: -5, y: 300 };
+        let p = Point { x: Integer(-5), y: Integer(300) };
         let bytes = p.encode();
         assert_eq!(Point::decode(&bytes).unwrap(), p);
     }
@@ -1030,20 +1031,20 @@ impl DefaultPoint {
     fn xer_encodes_hand_computed_vector() {
         // Matches SequenceXerHandler's output shape (runtime/src/XerCodec.cpp):
         // <Point>\n    <x>3</x>\n    <y>4</y>\n</Point>\n
-        let p = Point { x: 3, y: 4 };
+        let p = Point { x: Integer(3), y: Integer(4) };
         assert_eq!(p.encode_xer(), "<Point>\n    <x>3</x>\n    <y>4</y>\n</Point>\n");
     }
 
     #[test]
     fn xer_round_trips() {
-        let p = Point { x: -5, y: 300 };
+        let p = Point { x: Integer(-5), y: Integer(300) };
         let xml = p.encode_xer();
         assert_eq!(Point::decode_xer(&xml).unwrap(), p);
     }
 
     #[test]
     fn xer_zero_round_trips() {
-        let p = Point { x: 0, y: 0 };
+        let p = Point { x: Integer(0), y: Integer(0) };
         let xml = p.encode_xer();
         assert_eq!(xml, "<Point>\n    <x>0</x>\n    <y>0</y>\n</Point>\n");
         assert_eq!(Point::decode_xer(&xml).unwrap(), p);
@@ -1063,7 +1064,7 @@ impl DefaultPoint {
 
     #[test]
     fn opt_present_ber_round_trips() {
-        let p = OptPoint { x: 1, y: Some(2) };
+        let p = OptPoint { x: Integer(1), y: Some(Integer(2)) };
         let bytes = p.encode();
         assert_eq!(bytes, vec![0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02]);
         assert_eq!(OptPoint::decode(&bytes).unwrap(), p);
@@ -1071,7 +1072,7 @@ impl DefaultPoint {
 
     #[test]
     fn opt_absent_ber_round_trips() {
-        let p = OptPoint { x: 1, y: None };
+        let p = OptPoint { x: Integer(1), y: None };
         let bytes = p.encode();
         // Only the required member's TLV — no trace of y at all.
         assert_eq!(bytes, vec![0x30, 0x03, 0x02, 0x01, 0x01]);
@@ -1080,7 +1081,7 @@ impl DefaultPoint {
 
     #[test]
     fn opt_present_xer_round_trips() {
-        let p = OptPoint { x: 1, y: Some(2) };
+        let p = OptPoint { x: Integer(1), y: Some(Integer(2)) };
         let xml = p.encode_xer();
         assert_eq!(xml, "<OptPoint>\n    <x>1</x>\n    <y>2</y>\n</OptPoint>\n");
         assert_eq!(OptPoint::decode_xer(&xml).unwrap(), p);
@@ -1088,7 +1089,7 @@ impl DefaultPoint {
 
     #[test]
     fn opt_absent_xer_round_trips() {
-        let p = OptPoint { x: 1, y: None };
+        let p = OptPoint { x: Integer(1), y: None };
         let xml = p.encode_xer();
         // No <y> element at all when absent.
         assert_eq!(xml, "<OptPoint>\n    <x>1</x>\n</OptPoint>\n");
@@ -1128,7 +1129,7 @@ impl DefaultPoint {
         static A_SET_SPEC: SequenceSpec<Point> =
             SequenceSpec { name: "APointSet", tag: SET_TAG, members: &SET_MEMBERS };
 
-        let p = Point { x: 1, y: 2 };
+        let p = Point { x: Integer(1), y: Integer(2) };
         let bytes = encode_sequence(&A_SET_SPEC, &p);
         // 0x31 = constructed (0x20) | SET's own tag number (17 = 0x11),
         // not 0x30 (SEQUENCE, universal 16).
@@ -1145,7 +1146,7 @@ impl DefaultPoint {
 
     #[test]
     fn seq_of_ber_round_trips() {
-        let c = Coords { values: SeqOf(vec![1, 2, 3]) };
+        let c = Coords { values: SeqOf(vec![Integer(1), Integer(2), Integer(3)]) };
         let bytes = c.encode();
         // Outer SEQUENCE (0x30) wraps the member's own SEQUENCE (0x30) of
         // three INTEGER TLVs.
@@ -1170,7 +1171,7 @@ impl DefaultPoint {
 
     #[test]
     fn seq_of_xer_round_trips() {
-        let c = Coords { values: SeqOf(vec![1, 2, 3]) };
+        let c = Coords { values: SeqOf(vec![Integer(1), Integer(2), Integer(3)]) };
         let xml = c.encode_xer();
         assert_eq!(
             xml,
@@ -1191,7 +1192,7 @@ impl DefaultPoint {
 
     #[test]
     fn optional_seq_of_present_ber_round_trips() {
-        let c = OptCoords { values: Some(SeqOf(vec![1, 2])) };
+        let c = OptCoords { values: Some(SeqOf(vec![Integer(1), Integer(2)])) };
         let bytes = c.encode();
         assert_eq!(
             bytes,
@@ -1221,7 +1222,7 @@ impl DefaultPoint {
 
     #[test]
     fn optional_seq_of_present_xer_round_trips() {
-        let c = OptCoords { values: Some(SeqOf(vec![1, 2])) };
+        let c = OptCoords { values: Some(SeqOf(vec![Integer(1), Integer(2)])) };
         let xml = c.encode_xer();
         assert_eq!(
             xml,
@@ -1243,7 +1244,7 @@ impl DefaultPoint {
 
     #[test]
     fn set_of_member_ber_round_trips() {
-        let c = SetCoords { values: SetOf(vec![1, 2]) };
+        let c = SetCoords { values: SetOf(vec![Integer(1), Integer(2)]) };
         let bytes = c.encode();
         // Outer SEQUENCE (0x30) wraps the member's own SET (0x31 — universal
         // constructed 17, not 0x30/SEQUENCE) of two INTEGER TLVs.
@@ -1260,7 +1261,7 @@ impl DefaultPoint {
         // SEQUENCE OF (0x30) instead of SET OF (0x31) at the same position
         // — confirms decode actually checks the tag, not just any
         // constructed TLV.
-        let coords_bytes = Coords { values: SeqOf(vec![1, 2]) }.encode();
+        let coords_bytes = Coords { values: SeqOf(vec![Integer(1), Integer(2)]) }.encode();
         assert!(SetCoords::decode(&coords_bytes).is_err());
     }
 
@@ -1270,63 +1271,63 @@ impl DefaultPoint {
     fn tagged_seq_of_uses_the_given_tag_not_the_natural_one() {
         let context_3 = Tag::context(3, true);
         let mut buf = Vec::new();
-        encode_seq_of_tagged(&mut buf, context_3, &[1i64, 2i64]);
+        encode_seq_of_tagged(&mut buf, context_3, &[Integer(1), Integer(2)]);
         // context constructed 3 (0xA3), not 0x30 (universal SEQUENCE).
         assert_eq!(buf, vec![0xA3, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02]);
         let mut r = Reader::new(&buf);
-        let decoded: Vec<i64> = decode_seq_of_tagged(&mut r, context_3).unwrap();
+        let decoded: Vec<Integer> = decode_seq_of_tagged(&mut r, context_3).unwrap();
         assert_eq!(decoded, vec![1, 2]);
     }
 
     #[test]
     fn tagged_seq_of_rejects_the_natural_tag() {
         let mut buf = Vec::new();
-        encode_seq_of(&mut buf, &[1i64]); // natural SEQUENCE_TAG
+        encode_seq_of(&mut buf, &[Integer(1)]); // natural SEQUENCE_TAG
         let mut r = Reader::new(&buf);
-        let result: Result<Vec<i64>, _> = decode_seq_of_tagged(&mut r, Tag::context(3, true));
+        let result: Result<Vec<Integer>, _> = decode_seq_of_tagged(&mut r, Tag::context(3, true));
         assert!(result.is_err());
     }
 
     #[test]
     fn seq_of_ber_round_trips_through_the_trait() {
-        let v = SeqOf(vec![1i64, 2, 3]);
+        let v = SeqOf(vec![Integer(1), Integer(2), Integer(3)]);
         let mut out = Vec::new();
         v.ber_encode(&mut out);
         assert_eq!(out, vec![0x30, 0x09, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03]);
 
         let mut r = Reader::new(&out);
-        let mut got = SeqOf::<i64>::default();
+        let mut got = SeqOf::<Integer>::default();
         got.ber_decode_into(&mut r).unwrap();
         assert_eq!(got, v);
     }
 
     #[test]
     fn nested_seq_of_seq_of_ber_round_trips_through_the_trait() {
-        // SeqOf<SeqOf<i64>> — mirrors an unnamed `SEQUENCE OF SEQUENCE OF
+        // SeqOf<SeqOf<Integer>> — mirrors an unnamed `SEQUENCE OF SEQUENCE OF
         // INTEGER` element (RustBackend's ElemShape/rust_wrap_elem_shape,
         // Backend.hpp/RustBackend.cpp) at the runtime layer directly, since
         // this crate has no codegen wired in. Confirms the blanket
         // `impl<T: Asn1Value + Default> Asn1Value for SeqOf<T>` composes
-        // with itself — SeqOf<i64> is itself Asn1Value + Default, so
-        // SeqOf<SeqOf<i64>> just works, no special-casing needed at any
+        // with itself — SeqOf<Integer> is itself Asn1Value + Default, so
+        // SeqOf<SeqOf<Integer>> just works, no special-casing needed at any
         // nesting depth.
-        let v = SeqOf(vec![SeqOf(vec![1i64, 2]), SeqOf(vec![3i64])]);
+        let v = SeqOf(vec![SeqOf(vec![Integer(1), Integer(2)]), SeqOf(vec![Integer(3)])]);
         let mut out = Vec::new();
         v.ber_encode(&mut out);
 
         let mut r = Reader::new(&out);
-        let mut got = SeqOf::<SeqOf<i64>>::default();
+        let mut got = SeqOf::<SeqOf<Integer>>::default();
         got.ber_decode_into(&mut r).unwrap();
         assert_eq!(got, v);
     }
 
     #[test]
     fn nested_seq_of_set_of_ber_round_trips_with_the_correct_wire_tags() {
-        // SeqOf<SetOf<i64>> — mixed nesting (outer SEQUENCE OF, inner SET
+        // SeqOf<SetOf<Integer>> — mixed nesting (outer SEQUENCE OF, inner SET
         // OF): confirms each level gets its own distinct natural tag
         // (SEQUENCE_TAG outer, SET_TAG inner), not the same one forced at
         // every depth.
-        let v = SeqOf(vec![SetOf(vec![1i64, 2])]);
+        let v = SeqOf(vec![SetOf(vec![Integer(1), Integer(2)])]);
         let mut out = Vec::new();
         v.ber_encode(&mut out);
         // Outer: SEQUENCE (0x30) wrapping one element.
@@ -1336,14 +1337,14 @@ impl DefaultPoint {
         assert_eq!(out[2], 0x31);
 
         let mut r = Reader::new(&out);
-        let mut got = SeqOf::<SetOf<i64>>::default();
+        let mut got = SeqOf::<SetOf<Integer>>::default();
         got.ber_decode_into(&mut r).unwrap();
         assert_eq!(got, v);
     }
 
     #[test]
     fn seq_of_xer_round_trips_wrapped_by_hand() {
-        let v = SeqOf(vec![1i64, 2]);
+        let v = SeqOf(vec![Integer(1), Integer(2)]);
         let mut out = String::new();
         crate::xer::write_open_tag(&mut out, "items");
         v.xer_encode(&mut out, 0);
@@ -1352,7 +1353,7 @@ impl DefaultPoint {
 
         let mut r = XerReader::new(&out);
         r.consume_open_tag("items").unwrap();
-        let mut got = SeqOf::<i64>::default();
+        let mut got = SeqOf::<Integer>::default();
         got.xer_decode_into(&mut r).unwrap();
         r.consume_close_tag("items").unwrap();
         assert_eq!(got, v);
@@ -1360,28 +1361,28 @@ impl DefaultPoint {
 
     #[test]
     fn seq_of_derefs_to_the_inner_vec() {
-        let v = SeqOf(vec![1i64, 2, 3]);
+        let v = SeqOf(vec![Integer(1), Integer(2), Integer(3)]);
         assert_eq!(v.len(), 3);
         assert_eq!(&v[..], &[1, 2, 3]);
     }
 
     #[test]
     fn set_of_ber_round_trips_through_the_trait_with_its_own_natural_tag() {
-        let v = SetOf(vec![1i64, 2]);
+        let v = SetOf(vec![Integer(1), Integer(2)]);
         let mut out = Vec::new();
         v.ber_encode(&mut out);
         // SET (0x31 — universal constructed 17), not SEQUENCE (0x30).
         assert_eq!(out, vec![0x31, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02]);
 
         let mut r = Reader::new(&out);
-        let mut got = SetOf::<i64>::default();
+        let mut got = SetOf::<Integer>::default();
         got.ber_decode_into(&mut r).unwrap();
         assert_eq!(got, v);
     }
 
     #[test]
     fn set_of_xer_round_trips_wrapped_by_hand() {
-        let v = SetOf(vec![1i64, 2]);
+        let v = SetOf(vec![Integer(1), Integer(2)]);
         let mut out = String::new();
         crate::xer::write_open_tag(&mut out, "items");
         v.xer_encode(&mut out, 0);
@@ -1390,7 +1391,7 @@ impl DefaultPoint {
 
         let mut r = XerReader::new(&out);
         r.consume_open_tag("items").unwrap();
-        let mut got = SetOf::<i64>::default();
+        let mut got = SetOf::<Integer>::default();
         got.xer_decode_into(&mut r).unwrap();
         r.consume_close_tag("items").unwrap();
         assert_eq!(got, v);
@@ -1398,7 +1399,7 @@ impl DefaultPoint {
 
     #[test]
     fn set_of_derefs_to_the_inner_vec() {
-        let v = SetOf(vec![1i64, 2, 3]);
+        let v = SetOf(vec![Integer(1), Integer(2), Integer(3)]);
         assert_eq!(v.len(), 3);
         assert_eq!(&v[..], &[1, 2, 3]);
     }
@@ -1407,7 +1408,7 @@ impl DefaultPoint {
 
     #[test]
     fn default_member_present_on_the_wire_uses_its_real_value_not_the_default() {
-        let p = DefaultPoint { x: 1, y: Some(7) };
+        let p = DefaultPoint { x: Integer(1), y: Some(Integer(7)) };
         let decoded = DefaultPoint::decode(&p.encode()).unwrap();
         assert_eq!(decoded, p);
     }
@@ -1417,12 +1418,12 @@ impl DefaultPoint {
         // Hand-encode just `x` — same bytes as if `y` had never been
         // written (the real "absent from the wire" case DEFAULT exists for).
         let mut bytes = Vec::new();
-        1i64.ber_encode(&mut bytes);
+        Integer(1).ber_encode(&mut bytes);
         let mut wire = Vec::new();
         crate::writer::write_constructed(&mut wire, SEQUENCE_TAG, &bytes);
 
         let decoded = DefaultPoint::decode(&wire).unwrap();
-        assert_eq!(decoded, DefaultPoint { x: 1, y: Some(42) });
+        assert_eq!(decoded, DefaultPoint { x: Integer(1), y: Some(Integer(42)) });
     }
 
     #[test]
@@ -1430,10 +1431,10 @@ impl DefaultPoint {
         // X.690 §11.5 (mirrored by is_default_equal, MemberDescriptor's own
         // doc): a member whose value equals the schema DEFAULT must not be
         // encoded at all — same wire bytes as if `y` had never been set,
-        // not `Some(42)` written out explicitly.
-        let p = DefaultPoint { x: 1, y: Some(42) };
+        // not `Some(Integer(42))` written out explicitly.
+        let p = DefaultPoint { x: Integer(1), y: Some(Integer(42)) };
         let mut expected = Vec::new();
-        1i64.ber_encode(&mut expected);
+        Integer(1).ber_encode(&mut expected);
         let mut expected_wire = Vec::new();
         crate::writer::write_constructed(&mut expected_wire, SEQUENCE_TAG, &expected);
 
@@ -1445,16 +1446,16 @@ impl DefaultPoint {
 
     #[test]
     fn default_member_not_equal_to_the_default_is_still_encoded() {
-        let p = DefaultPoint { x: 1, y: Some(7) };
+        let p = DefaultPoint { x: Integer(1), y: Some(Integer(7)) };
         let bytes = p.encode();
         assert_eq!(DefaultPoint::decode(&bytes).unwrap(), p);
         // Distinct from the suppressed (default-valued) case above.
-        assert_ne!(bytes, DefaultPoint { x: 1, y: Some(42) }.encode());
+        assert_ne!(bytes, DefaultPoint { x: Integer(1), y: Some(Integer(42)) }.encode());
     }
 
     /// `RangedPoint ::= SEQUENCE { x INTEGER (0..100), y INTEGER }` — a
     /// dogfood type proving `MemberDescriptor::validate` (not
-    /// `Asn1Value::validate()`, which a bare `i64` member can't override
+    /// `Asn1Value::validate()`, which a bare `Integer` member can't override
     /// per-member) is actually reached by the generic walker, same role
     /// `validate.rs`'s own `NonNegative` dogfood type plays for the
     /// type-level path. Delta convention matches `Integer::validate`
@@ -1462,8 +1463,8 @@ impl DefaultPoint {
     /// lower bound, negative = above upper bound.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
     struct RangedPoint {
-        x: i64,
-        y: i64,
+        x: Integer,
+        y: Integer,
     }
 
     // Plain `static` data, not a generated per-member function (gambas-
@@ -1510,7 +1511,7 @@ impl DefaultPoint {
     fn encode_of_an_in_range_member_does_not_bump_the_validate_counter() {
         let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
         crate::validate::reset_validate_fail_count();
-        let p = RangedPoint { x: 50, y: 1 };
+        let p = RangedPoint { x: Integer(50), y: Integer(1) };
         let _ = encode_sequence(&RANGED_POINT_SPEC, &p);
         assert_eq!(crate::validate::validate_fail_count(), 0);
     }
@@ -1519,7 +1520,7 @@ impl DefaultPoint {
     fn encode_of_an_out_of_range_member_bumps_the_validate_counter() {
         let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
         crate::validate::reset_validate_fail_count();
-        let p = RangedPoint { x: 500, y: 1 };
+        let p = RangedPoint { x: Integer(500), y: Integer(1) };
         let _ = encode_sequence(&RANGED_POINT_SPEC, &p);
         assert_eq!(crate::validate::validate_fail_count(), 1);
     }
@@ -1528,7 +1529,7 @@ impl DefaultPoint {
     fn decode_of_an_out_of_range_member_bumps_the_validate_counter() {
         let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
         crate::validate::reset_validate_fail_count();
-        let bytes = encode_sequence(&POINT_SPEC, &Point { x: -5, y: 1 });
+        let bytes = encode_sequence(&POINT_SPEC, &Point { x: Integer(-5), y: Integer(1) });
         let _ = decode_sequence::<RangedPoint>(&RANGED_POINT_SPEC, &bytes).unwrap();
         assert_eq!(crate::validate::validate_fail_count(), 1);
     }
@@ -1603,7 +1604,7 @@ impl DefaultPoint {
     /// fn-pointer — the mechanism `RustBackend::emit_seq_of_definition`
     /// actually generates for a real named SEQUENCE OF/SET OF type.
     #[derive(Debug, Clone, Default, PartialEq)]
-    struct NamedTags(Vec<i64>);
+    struct NamedTags(Vec<Integer>);
 
     impl Asn1Value for NamedTags {
         fn ber_natural_tag(&self) -> Tag {
@@ -1639,7 +1640,7 @@ impl DefaultPoint {
         let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
         crate::validate::reset_validate_fail_count();
         let mut out = Vec::new();
-        NamedTags(vec![1, 2]).ber_encode(&mut out);
+        NamedTags(vec![Integer(1), Integer(2)]).ber_encode(&mut out);
         assert_eq!(crate::validate::validate_fail_count(), 0);
     }
 
@@ -1648,20 +1649,20 @@ impl DefaultPoint {
         let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
         crate::validate::reset_validate_fail_count();
         let mut out = Vec::new();
-        NamedTags(vec![1, 2, 3, 4]).ber_encode(&mut out);
+        NamedTags(vec![Integer(1), Integer(2), Integer(3), Integer(4)]).ber_encode(&mut out);
         assert_eq!(crate::validate::validate_fail_count(), 1);
     }
 
     /// `Basket ::= SEQUENCE { inlineTags SEQUENCE (SIZE(1..2)) OF INTEGER }`
     /// — dogfood for the *inline* case: the field's own Rust type is the
-    /// generic `SeqOf<i64>` wrapper (shared across every inline collection
+    /// generic `SeqOf<Integer>` wrapper (shared across every inline collection
     /// member, coherence-blocked from its own `Asn1Value` impl), so it
     /// needs `MemberDescriptor::validate` like INTEGER/OCTET STRING, not a
     /// trait override — same shape `RustBackend`'s row-loop wires against
     /// the synthetic promoted type's own `Constraints` table.
     #[derive(Debug, Clone, Default, PartialEq)]
     struct Basket {
-        inline_tags: SeqOf<i64>,
+        inline_tags: SeqOf<Integer>,
     }
 
     static BASKET_INLINE_TAGS_CONSTRAINTS: crate::constraints::Constraints = crate::constraints::Constraints {
@@ -1694,7 +1695,7 @@ impl DefaultPoint {
     fn inline_seqof_in_range_does_not_bump_the_validate_counter() {
         let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
         crate::validate::reset_validate_fail_count();
-        let b = Basket { inline_tags: SeqOf(vec![1]) };
+        let b = Basket { inline_tags: SeqOf(vec![Integer(1)]) };
         let _ = encode_sequence(&BASKET_SPEC, &b);
         assert_eq!(crate::validate::validate_fail_count(), 0);
     }
@@ -1703,7 +1704,7 @@ impl DefaultPoint {
     fn inline_seqof_too_many_elements_bumps_the_validate_counter() {
         let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
         crate::validate::reset_validate_fail_count();
-        let b = Basket { inline_tags: SeqOf(vec![1, 2, 3]) };
+        let b = Basket { inline_tags: SeqOf(vec![Integer(1), Integer(2), Integer(3)]) };
         let _ = encode_sequence(&BASKET_SPEC, &b);
         assert_eq!(crate::validate::validate_fail_count(), 1);
     }

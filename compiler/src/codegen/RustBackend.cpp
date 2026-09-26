@@ -71,7 +71,7 @@ static std::string unescape_raw_ident(const std::string& s) {
 ///       deleted, since a future direct caller could still reach it.
 static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype) {
     switch (bt) {
-    case ast::BuiltinType::Integer:     return mtype == "i64" ? "asn1cpp_wire::integer::INTEGER_TAG" : nullptr;
+    case ast::BuiltinType::Integer:     return mtype == "asn1cpp_wire::integer::Integer" ? "asn1cpp_wire::integer::INTEGER_TAG" : nullptr;
     case ast::BuiltinType::Boolean:     return "asn1cpp_wire::boolean::BOOLEAN_TAG";
     case ast::BuiltinType::OctetString: return "asn1cpp_wire::octet_string::OCTET_STRING_TAG";
     case ast::BuiltinType::Null:        return "asn1cpp_wire::null::NULL_TAG";
@@ -126,7 +126,7 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
 static const char* rust_tag_for_builtin_or_alias(std::optional<ast::BuiltinType> mbuiltin,
                                                   IntStorageKind storage_kind,
                                                   const std::string& mtype) {
-    if (!mbuiltin) return mtype == "i64" ? "asn1cpp_wire::integer::INTEGER_TAG" : nullptr;
+    if (!mbuiltin) return mtype == "asn1cpp_wire::integer::Integer" ? "asn1cpp_wire::integer::INTEGER_TAG" : nullptr;
     if (*mbuiltin == ast::BuiltinType::Integer)
         // Same INTEGER_TAG regardless of storage width — the Rust *type*
         // varies (i64/u64/i128/ArbitraryInteger), the wire tag never does.
@@ -445,7 +445,10 @@ void RustBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream
 
     for (const auto& v : spec.named_values) {
         os << std::format("/// ASN.1: `{}`\n", v.asn1_name);
-        os << std::format("pub const {}: {} = {};\n", value_name(v.asn1_name), native_int_type(spec.storage_kind), v.value);
+        if (spec.storage_kind == IntStorageKind::ARBITRARY)
+            os << std::format("pub const {}: {} = {};\n", value_name(v.asn1_name), native_int_type(spec.storage_kind), v.value);
+        else
+            os << std::format("pub const {}: {} = {}({});\n", value_name(v.asn1_name), native_int_type(spec.storage_kind), native_int_type(spec.storage_kind), v.value);
     }
     if (!spec.named_values.empty()) os << "\n";
 }
@@ -500,18 +503,18 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
     os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n        self.0.xer_encode(out, depth);\n    }\n\n";
     os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n        self.0.xer_decode_into(r)\n    }\n\n";
     os << std::format("    fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {{\n        &{}\n    }}\n\n", cname);
-    os << std::format("    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {{\n        asn1cpp_wire::constraints::{}(self.0, &{})\n    }}\n\n", validate_fn, cname);
+    os << std::format("    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {{\n        asn1cpp_wire::constraints::{}(*self.0, &{})\n    }}\n\n", validate_fn, cname);
 
     // PER leg (merged into the same impl block, gambas-asn1#537): X.691
     // wire shape is exactly `integer::encode_int`/`uinteger::encode_uint`
     // against this same table — no separate unconstrained function needed,
     // they already fall through to the unconstrained wire shape at runtime
     // when flags == 0.
-    os << std::format("    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n        asn1cpp_wire::per::{}::{}(w, &{}, self.0);\n    }}\n", fn_ns, fn_ty, cname);
+    os << std::format("    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n        asn1cpp_wire::per::{}::{}(w, &{}, *self.0);\n    }}\n", fn_ns, fn_ty, cname);
     os << std::format(
         "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
-        "        self.0 = asn1cpp_wire::per::{}::{}(r, &{})?;\n        Ok(())\n    }}\n",
-        fn_ns, fn_dec, cname);
+        "        self.0 = {}(asn1cpp_wire::per::{}::{}(r, &{})?);\n        Ok(())\n    }}\n",
+        native_int_type(spec.storage_kind), fn_ns, fn_dec, cname);
     os << "}\n\n";
 }
 
@@ -553,9 +556,9 @@ void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
 std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     using BT = ast::BuiltinType;
     switch (bt) {
-    case BT::Boolean:          return "bool";
-    case BT::Real:             return "f64";
-    case BT::Null:             return "()";
+    case BT::Boolean:          return "asn1cpp_wire::boolean::Boolean";
+    case BT::Real:             return "asn1cpp_wire::real::Real";
+    case BT::Null:             return "asn1cpp_wire::null::Null";
     case BT::BitString:        return "asn1cpp_wire::bit_string::BitString";
     case BT::OctetString:      return "asn1cpp_wire::octet_string::OctetString";
     case BT::ObjectIdentifier: return "asn1cpp_wire::oid::ObjectIdentifier";
@@ -564,7 +567,7 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     case BT::NumericString:    return "asn1cpp_wire::strings::NumericString";
     case BT::PrintableString:  return "asn1cpp_wire::strings::PrintableString";
     case BT::T61String:        return "asn1cpp_wire::strings::T61String";
-    case BT::Ia5String:        return "String";
+    case BT::Ia5String:        return "asn1cpp_wire::strings::Ia5String";
     case BT::VisibleString:    return "asn1cpp_wire::strings::VisibleString";
     case BT::GeneralString:    return "asn1cpp_wire::strings::GeneralString";
     case BT::GraphicString:    return "asn1cpp_wire::strings::GraphicString";
@@ -574,7 +577,7 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     case BT::ObjectDescriptor: return "asn1cpp_wire::strings::ObjectDescriptor";
     case BT::UtcTime:          return "asn1cpp_wire::strings::UtcTime";
     case BT::GeneralizedTime:  return "asn1cpp_wire::strings::GeneralizedTime";
-    case BT::Any:              return "Vec<u8>";
+    case BT::Any:              return "asn1cpp_wire::any::Any";
     default:                   return "Vec<u8>";  // Integer/Enumerated: unreachable here
     }
 }
@@ -733,12 +736,10 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
                 cname);
         } else {
             std::string tag_num = std::format("{}.number", builtin_ber_tag(spec.builtin_type, ""));
-            bool bare_string = spec.builtin_type == BT::Ia5String;
             bool wide = spec.builtin_type == BT::BmpString || spec.builtin_type == BT::UniversalString;
             std::string bytes_expr = wide ? "&self.0.0" : "self.0.as_bytes()";
             std::string ctor = wide ? std::format("{}(x)", native_builtin_type(spec.builtin_type))
-                              : bare_string ? "String::from_utf8(x).unwrap_or_default()"
-                                            : std::format("{}(String::from_utf8(x).unwrap_or_default())", native_builtin_type(spec.builtin_type));
+                              : std::format("{}(String::from_utf8(x).unwrap_or_default())", native_builtin_type(spec.builtin_type));
             os << std::format(
                 "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
                 "        let _ = asn1cpp_wire::per::strings::encode_string(w, &{0}, {1}, {2});\n    }}\n",
@@ -774,16 +775,18 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
     std::string rust_type, literal;
     switch (spec.kind) {
     case Kind::Bool:
-        rust_type = "bool";
-        literal = spec.bool_val ? "true" : "false";
+        rust_type = "asn1cpp_wire::boolean::Boolean";
+        literal = spec.bool_val ? "asn1cpp_wire::boolean::Boolean(true)" : "asn1cpp_wire::boolean::Boolean(false)";
         break;
     case Kind::Int:
         rust_type = type_name;
-        literal = std::format("{}", spec.int_val);
+        literal = type_name.starts_with("asn1cpp_wire::integer::") && !type_name.ends_with("ArbitraryInteger")
+                      ? std::format("{}({})", type_name, spec.int_val)
+                      : std::format("{}", spec.int_val);
         break;
     case Kind::String:
-        rust_type = "String";
-        literal = std::format("\"{}\".to_string()", escape_string_literal(spec.string_val));
+        rust_type = "asn1cpp_wire::strings::Ia5String";
+        literal = std::format("asn1cpp_wire::strings::Ia5String(\"{}\".to_string())", escape_string_literal(spec.string_val));
         break;
     case Kind::EnumRef:
         rust_type = type_name;
@@ -1374,7 +1377,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             if (*m.mbuiltin == ast::BuiltinType::Integer)
                 return m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64;
             // NULL (X.691 §14) — zero bits either direction, unconditionally
-            // covered by the blanket `impl PerValue for ()`.
+            // covered by the `Null` wrapper's own Asn1Value impl.
             if (*m.mbuiltin == ast::BuiltinType::Null) return true;
             // OCTET STRING/BIT STRING (X.691 §16/§17) — no alphabet concept
             // at all, unconditionally covered by asn1cpp_wire::per::octet_string/
@@ -2238,7 +2241,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 std::string ctor = boxed ? "Box::new(x)" : "x";
                 // `()::default()` isn't valid syntax for the unit type —
                 // `()` is already the (only) value, no Default call needed.
-                std::string default_expr = a.mtype == "()" ? "()" : std::format("{}::default()", a.mtype);
+                std::string default_expr = std::format("{}::default()", a.mtype);
                 os << std::format(
                     "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_wire::value::Asn1Value::per_encode(x, w, {}); true }} else {{ false }},\n",
                     variant_path, alt_constraints);

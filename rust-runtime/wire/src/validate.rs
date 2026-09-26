@@ -104,6 +104,7 @@ fn report(delta: i64, name: &str, phase: &str) {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::integer::Integer;
     use super::*;
     use crate::reader::Reader;
     use crate::tag::{universal, Tag};
@@ -138,7 +139,7 @@ pub(crate) mod tests {
     // real X.680 constraint kind (those are separate, not-yet-implemented
     // follow-on issues), just enough to drive `validate()` deterministically.
     #[derive(Default)]
-    struct NonNegative(i64);
+    struct NonNegative(Integer);
 
     impl Asn1Value for NonNegative {
         fn ber_natural_tag(&self) -> Tag {
@@ -151,8 +152,8 @@ pub(crate) mod tests {
             self.0.ber_decode_content(content)
         }
         fn validate(&self, _c: &crate::constraints::Constraints) -> i64 {
-            if self.0 < 0 {
-                -self.0 // delta back to the nearest valid bound (0)
+            if *self.0 < 0 {
+                -*self.0 // delta back to the nearest valid bound (0)
             } else {
                 0
             }
@@ -164,7 +165,7 @@ pub(crate) mod tests {
         let _guard = COUNTER_LOCK.lock().unwrap();
         reset_validate_fail_count();
         let mut out = Vec::new();
-        NonNegative(-5).ber_encode(&mut out);
+        NonNegative(Integer(-5)).ber_encode(&mut out);
         assert_eq!(validate_fail_count(), 1);
     }
 
@@ -173,7 +174,7 @@ pub(crate) mod tests {
         let _guard = COUNTER_LOCK.lock().unwrap();
         reset_validate_fail_count();
         let mut out = Vec::new();
-        NonNegative(5).ber_encode(&mut out);
+        NonNegative(Integer(5)).ber_encode(&mut out);
         assert_eq!(validate_fail_count(), 0);
     }
 
@@ -182,7 +183,7 @@ pub(crate) mod tests {
         let _guard = COUNTER_LOCK.lock().unwrap();
         reset_validate_fail_count();
         let mut bytes = Vec::new();
-        (-5i64).ber_encode(&mut bytes); // valid encode: only the *decoded* NonNegative is checked
+        Integer(-5).ber_encode(&mut bytes); // valid encode: only the *decoded* NonNegative is checked
         let mut r = Reader::new(&bytes);
         let mut v = NonNegative::default();
         v.ber_decode_into(&mut r).unwrap();

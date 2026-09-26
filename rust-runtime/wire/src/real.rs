@@ -17,6 +17,30 @@ use crate::writer::write_primitive;
 
 pub const REAL_TAG: Tag = Tag::universal(universal::REAL, false);
 
+/// REAL (X.680 §21) — a real type carrying its own `Asn1Value` impl.
+#[derive(Debug, Clone, Copy, Default, PartialEq, PartialOrd)]
+pub struct Real(pub f64);
+
+impl std::ops::Deref for Real {
+    type Target = f64;
+    fn deref(&self) -> &f64 {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Real {
+    fn deref_mut(&mut self) -> &mut f64 {
+        &mut self.0
+    }
+}
+
+impl PartialEq<f64> for Real {
+    fn eq(&self, other: &f64) -> bool {
+        self.0 == *other
+    }
+}
+
+
 pub fn write_real(out: &mut Vec<u8>, value: f64) {
     write_real_tagged(out, REAL_TAG, value);
 }

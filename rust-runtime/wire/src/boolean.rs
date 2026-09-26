@@ -11,6 +11,30 @@ use crate::writer::write_primitive;
 
 pub const BOOLEAN_TAG: Tag = Tag::universal(universal::BOOLEAN, false);
 
+/// BOOLEAN (X.680 §22) — a real type carrying its own `Asn1Value` impl.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Boolean(pub bool);
+
+impl std::ops::Deref for Boolean {
+    type Target = bool;
+    fn deref(&self) -> &bool {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Boolean {
+    fn deref_mut(&mut self) -> &mut bool {
+        &mut self.0
+    }
+}
+
+impl PartialEq<bool> for Boolean {
+    fn eq(&self, other: &bool) -> bool {
+        self.0 == *other
+    }
+}
+
+
 /// X.690 §8.2.2 DER-strict encode value: `TRUE`.
 const DER_TRUE: u8 = 0xFF;
 /// X.690 §8.2.2 DER-strict encode value: `FALSE`.
