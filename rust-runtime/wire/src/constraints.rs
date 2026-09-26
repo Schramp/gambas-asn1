@@ -36,6 +36,12 @@ pub struct Constraints {
     pub size_lower: i64,
     pub size_upper: i64,
     pub encode_table: Option<&'static [u16; 256]>,
+    /// For a SEQUENCE OF / SET OF: the element type's own constraints
+    /// (X.691 §19/§20 — the collection's SIZE is this table's own
+    /// `size_*` fields, each element is then encoded against `element`).
+    /// Mirrors `SeqOfSpec`'s element descriptor on the C++ side. `None`
+    /// for every non-collection type and for an unconstrained element.
+    pub element: Option<&'static Constraints>,
 }
 
 pub const UNCONSTRAINED: Constraints = Constraints {
@@ -48,7 +54,7 @@ pub const UNCONSTRAINED: Constraints = Constraints {
     size_range_bits: 0,
     size_lower: 0,
     size_upper: 0,
-    encode_table: None,
+    encode_table: None, element: None,
 };
 
 impl Constraints {

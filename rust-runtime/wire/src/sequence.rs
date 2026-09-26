@@ -419,6 +419,22 @@ impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
     fn validate(&self, c: &Constraints) -> i64 {
         crate::constraints::validate_size(self.0.len(), c)
     }
+
+    /// X.691 §19/§20: the collection's SIZE is `c`'s own `size_*` fields,
+    /// each element is encoded against `c.element` (a shared native element
+    /// type such as `i64` takes its range from there).
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &Constraints) {
+        crate::per::seq_of::encode_seq_of_content(w, c, &self.0);
+    }
+
+    fn per_decode_into(
+        &mut self,
+        r: &mut crate::per::reader::Reader,
+        c: &Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
+        self.0 = crate::per::seq_of::decode_seq_of_content(r, c)?;
+        Ok(())
+    }
 }
 
 /// SET OF analogue of `SeqOf<T>` — identical shape, only `ber_natural_tag`
@@ -476,6 +492,22 @@ impl<T: Asn1Value + Default> Asn1Value for SetOf<T> {
     /// constraint arrives as the row's `Constraints` (X.680 §51).
     fn validate(&self, c: &Constraints) -> i64 {
         crate::constraints::validate_size(self.0.len(), c)
+    }
+
+    /// X.691 §19/§20: the collection's SIZE is `c`'s own `size_*` fields,
+    /// each element is encoded against `c.element` (a shared native element
+    /// type such as `i64` takes its range from there).
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &Constraints) {
+        crate::per::seq_of::encode_seq_of_content(w, c, &self.0);
+    }
+
+    fn per_decode_into(
+        &mut self,
+        r: &mut crate::per::reader::Reader,
+        c: &Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
+        self.0 = crate::per::seq_of::decode_seq_of_content(r, c)?;
+        Ok(())
     }
 }
 
@@ -1447,7 +1479,7 @@ impl DefaultPoint {
         size_range_bits: 0,
         size_lower: 0,
         size_upper: 0,
-        encode_table: None,
+        encode_table: None, element: None,
     };
 
     static RANGED_POINT_MEMBERS: [MemberDescriptor<RangedPoint>; 2] = [
@@ -1519,7 +1551,7 @@ impl DefaultPoint {
         size_range_bits: 0,
         size_lower: 1,
         size_upper: 4,
-        encode_table: None,
+        encode_table: None, element: None,
     };
 
     static SIZED_BLOB_MEMBERS: [MemberDescriptor<SizedBlob>; 1] = [MemberDescriptor {
@@ -1599,7 +1631,7 @@ impl DefaultPoint {
         size_range_bits: 0,
         size_lower: 1,
         size_upper: 3,
-        encode_table: None,
+        encode_table: None, element: None,
     };
 
     #[test]
@@ -1642,7 +1674,7 @@ impl DefaultPoint {
         size_range_bits: 0,
         size_lower: 1,
         size_upper: 2,
-        encode_table: None,
+        encode_table: None, element: None,
     };
 
     static BASKET_MEMBERS: [MemberDescriptor<Basket>; 1] = [MemberDescriptor {
