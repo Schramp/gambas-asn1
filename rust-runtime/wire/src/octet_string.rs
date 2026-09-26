@@ -92,6 +92,19 @@ impl Asn1Value for OctetString {
         self.0 = bytes;
         Ok(())
     }
+
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+        crate::per::octet_string::encode_octet_string(w, c, &self.0);
+    }
+
+    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader, c: &crate::constraints::Constraints) -> Result<(), crate::per::reader::DecodeError> {
+        self.0 = crate::per::octet_string::decode_octet_string(r, c)?;
+        Ok(())
+    }
+
+    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+        crate::constraints::validate_size(self.0.len(), c)
+    }
 }
 
 /// BASE64 XER representation (X.693 §21) for an OCTET STRING-derived type

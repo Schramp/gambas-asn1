@@ -71,7 +71,7 @@ pub fn check<T: crate::value::Asn1Value + ?Sized>(v: &T, phase: &str) {
     if crate::debug::debug_flags() & crate::debug::DBG_NO_VALIDATE != 0 {
         return;
     }
-    report(v.validate(), std::any::type_name::<T>(), phase);
+    report(v.validate(&crate::constraints::UNCONSTRAINED), std::any::type_name::<T>(), phase);
 }
 
 /// Gate + report a delta already computed by the caller — the same shape
@@ -150,7 +150,7 @@ pub(crate) mod tests {
         fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), crate::reader::DecodeError> {
             self.0.ber_decode_content(content)
         }
-        fn validate(&self) -> i64 {
+        fn validate(&self, _c: &crate::constraints::Constraints) -> i64 {
             if self.0 < 0 {
                 -self.0 // delta back to the nearest valid bound (0)
             } else {
