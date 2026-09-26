@@ -23,7 +23,15 @@ fn copy_neutralizing_inner_doc_comment(src: &std::path::Path, dst: &std::path::P
         .map(|line| if let Some(rest) = line.strip_prefix("//!") { format!("//{rest}") } else { line.to_string() })
         .collect::<Vec<_>>()
         .join("\n");
-    fs::write(dst, content).unwrap_or_else(|e| panic!("failed to write {}: {}", dst.display(), e));
+    write_if_changed(dst, &content);
+}
+
+// Identical content keeps the file's mtime, so rustc/cargo see no change.
+fn write_if_changed(path: &std::path::Path, data: &str) {
+    if fs::read_to_string(path).map(|old| old == data).unwrap_or(false) {
+        return;
+    }
+    fs::write(path, data).unwrap_or_else(|e| panic!("failed to write {}: {}", path.display(), e));
 }
 
 fn main() {
@@ -52,20 +60,15 @@ fn main() {
         let src = PathBuf::from(&gen_dir).join(fname);
         let dst = PathBuf::from(&out_dir).join(fname);
         copy_neutralizing_inner_doc_comment(&src, &dst);
-        // rust-probe/src/ is wiped and regenerated wholesale by this
-        // crate's own Makefile on every invocation, so every file's mtime
-        // genuinely changes on a real regeneration (unlike an incremental
-        // rebuild that leaves most files untouched) — cargo's mtime-based
-        // rerun-if-changed still works correctly here, it just can't be
-        // narrowed to "only the files that actually changed" the way an
-        // incremental build's dependency graph could.
+        // Generated files are checksum-synced by this crate's Makefile, so
+        // a file's mtime only moves when its content really changed.
         println!("cargo:rerun-if-changed={}", src.display());
 
         rewritten.push_str(&format!("#[path = \"{}\"", dst.display()));
         rewritten.push_str(&line[after_quote + end + 1..]);
         rewritten.push('\n');
     }
-    fs::write(PathBuf::from(&out_dir).join("lib_paths.rs"), rewritten).unwrap();
+    write_if_changed(&PathBuf::from(&out_dir).join("lib_paths.rs"), &rewritten);
 
     println!("cargo:rerun-if-changed={}", lib_src.display());
     println!("cargo:rerun-if-env-changed=ASN1CPP_RUST_ETSI_GEN_DIR");
