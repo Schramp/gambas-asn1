@@ -16,7 +16,7 @@
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
 
-use asn1cpp_ber::value::Asn1Value;
+use asn1cpp_wire::value::Asn1Value;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};

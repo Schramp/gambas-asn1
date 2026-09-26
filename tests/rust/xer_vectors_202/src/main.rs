@@ -31,7 +31,7 @@ fn main() {
     let xer_path = format!("{datadir}/s1.xer");
     let xml = std::fs::read_to_string(&xer_path).unwrap_or_else(|e| panic!("failed to read {xer_path}: {e}"));
 
-    let cert = asn1cpp_ber::xer::decode_sequence_xer_lenient(&certificate::CERTIFICATE_SPEC, &xml);
+    let cert = asn1cpp_wire::xer::decode_sequence_xer_lenient(&certificate::CERTIFICATE_SPEC, &xml);
     check("s1.xer  XER decode ok", cert.is_ok(), &mut failures);
     let cert = match cert {
         Ok(c) => c,

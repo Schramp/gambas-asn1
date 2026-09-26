@@ -9,4 +9,4 @@ description = "gambas-asn1#299: best-effort --target=rust build of the real ETSI
 path = "src/lib.rs"
 
 [dependencies]
-asn1cpp-ber = { path = "../../../rust-runtime/ber" }
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }

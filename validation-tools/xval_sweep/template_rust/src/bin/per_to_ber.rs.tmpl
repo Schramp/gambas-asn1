@@ -6,7 +6,7 @@
 // only when the target type has a `PerValue` impl.
 //
 // Usage: per-to-ber --type __PDU_TYPE__ [FILE]
-use asn1cpp_per::PerValue;
+use asn1cpp_wire::value::Asn1Value;
 use std::io::{Read, Write};
 
 const TYPES: &[&str] = &["__PDU_TYPE__"];
@@ -23,8 +23,8 @@ fn list_types() {
     }
 }
 
-fn decode_one(type_name: &str, per_bytes: &[u8]) -> Result<Vec<u8>, asn1cpp_per::DecodeError> {
-    let mut r = asn1cpp_per::Reader::new(per_bytes);
+fn decode_one(type_name: &str, per_bytes: &[u8]) -> Result<Vec<u8>, asn1cpp_wire::per::reader::DecodeError> {
+    let mut r = asn1cpp_wire::per::reader::Reader::new(per_bytes);
     match type_name {
         "__PDU_TYPE__" => {
             let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
