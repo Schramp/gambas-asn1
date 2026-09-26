@@ -132,7 +132,7 @@ int main() {
               rust_cpp);
         check("emit_enumerated: Rust produces a real validate() reusing the MAP table",
               rust_cpp.find("fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {\n"
-                             "        asn1cpp_wire::enumerated::validate_enum(*self as i64, &MY_ENUM_MAP)\n"
+                             "        asn1cpp_wire::enumerated::validate_enum(*self as i64, &MY_ENUM_ENUM_SPEC)\n"
                              "    }") != std::string::npos,
               rust_cpp);
     }

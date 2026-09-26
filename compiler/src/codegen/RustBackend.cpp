@@ -264,56 +264,26 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
                            tname, variant_name(*this, spec.values.front().asn1_name));
         os << "}\n\n";
 
-        // Value/name table — mirrors CppBackend's asn_MAP_ (EnumSpec::entries,
-        // TypeDescriptor.hpp) exactly: one static data table, consumed
-        // generically by enumerated::xer_encode_enum/xer_decode_enum below
-        // (no per-value logic in this generated file itself, table-driven
-        // same as every SEQUENCE/CHOICE member table this backend emits).
-        // Sorted ascending by value — BER/XER lookup doesn't care about
-        // order, but PER's own ordinal table below (`{tname}_PER_ENTRIES`)
-        // *must* be sorted this way (X.691 §22), so this table is sorted
-        // too rather than carrying two different orderings of the same
-        // data through this file.
+        // One codec-agnostic table (X.680 §20): BER/PER read `value`, XER
+        // reads `name`. Sorted ascending by value — the PER ordinal is the
+        // sorted position (X.691 §22, matches asn1c and C++'s own sorted
+        // EnumSpec::entries). Root layout (count, index width) is
+        // precomputed here so no codec walker recounts it.
         std::vector<NamedValue> sorted_values = spec.values;
         std::sort(sorted_values.begin(), sorted_values.end(),
                    [](const NamedValue& a, const NamedValue& b) { return a.value < b.value; });
-        std::string map_ident = std::format("{}_MAP", to_screaming_snake_case(tname));
-        os << std::format("static {}: [asn1cpp_wire::enumerated::EnumEntry; {}] = [\n",
-                           map_ident, sorted_values.size());
+        size_t root_count = spec.root_count > 0 ? static_cast<size_t>(spec.root_count) : sorted_values.size();
+        unsigned root_bits = 0;
+        for (size_t r = root_count > 1 ? root_count - 1 : 0; r > 0; r >>= 1) ++root_bits;
+        std::string map_ident = std::format("{}_ENUM_SPEC", to_screaming_snake_case(tname));
+        os << std::format("static {}: asn1cpp_wire::enumerated::EnumSpec = asn1cpp_wire::enumerated::EnumSpec {{\n    entries: &[\n",
+                           map_ident);
         for (const auto& v : sorted_values) {
-            os << std::format("    asn1cpp_wire::enumerated::EnumEntry {{ value: {}, name: \"{}\" }},\n",
+            os << std::format("        asn1cpp_wire::enumerated::EnumEntry {{ value: {}, name: \"{}\" }},\n",
                                v.value, v.asn1_name);
         }
-        os << "];\n\n";
-
-        // PER data (X.691 §22: wire ordinal is the value's sorted position,
-        // matches asn1c and the C++ side's own sorted `EnumSpec::entries`/
-        // `asn_PER_..._value_order`, see EnumeratedPerHandler,
-        // runtime/src/PerCodec.cpp) — emitted ahead of the merged impl
-        // block below so its `per_encode`/`per_decode_into` methods have
-        // something to reference. A distinct table from {map_ident}, not a
-        // reference to it — `asn1cpp_wire::per::enumerated::EnumEntry` (value
-        // only) and `asn1cpp_wire::enumerated::EnumEntry` (value + name) are
-        // different types, so the data is duplicated once either way;
-        // keeping both tables in the same sorted order at least makes them
-        // visibly the same data instead of two divergent orderings.
-        std::string per_entries_ident = std::format("{}_PER_ENTRIES", to_screaming_snake_case(tname));
-        os << std::format("static {}: [asn1cpp_wire::per::enumerated::EnumEntry; {}] = [\n",
-                           per_entries_ident, sorted_values.size());
-        for (const auto& v : sorted_values) {
-            os << std::format("    asn1cpp_wire::per::enumerated::EnumEntry {{ value: {} }},\n", v.value);
-        }
-        os << "];\n\n";
-
-        // Bundled into one EnumSpec static (entries + extensible + root_count)
-        // rather than passed as separate literal arguments at the call
-        // site — mirrors SequenceSpec/ChoiceSpec (one static per type,
-        // referenced by the merged impl's per_encode/per_decode_into below).
-        std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(tname));
-        os << std::format(
-            "static {}: asn1cpp_wire::per::enumerated::EnumSpec = asn1cpp_wire::per::enumerated::EnumSpec {{\n"
-            "    entries: &{}, extensible: {}, root_count: {},\n}};\n\n",
-            per_spec_ident, per_entries_ident, spec.extensible ? "true" : "false", spec.root_count);
+        os << std::format("    ],\n    extensible: {}, root_count: {}, root_bits: {},\n}};\n\n",
+                           spec.extensible ? "true" : "false", root_count, root_bits);
 
         // One merged Asn1Value impl (gambas-asn1#537 unified what used to be
         // two separate traits/impl blocks, asn1cpp_wire::value::Asn1Value
@@ -379,10 +349,10 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "    }\n\n";
 
         os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {\n";
-        os << std::format("        asn1cpp_wire::per::enumerated::encode_enum(w, &{}, *self as i64);\n", per_spec_ident);
+        os << std::format("        asn1cpp_wire::per::enumerated::encode_enum(w, &{}, *self as i64);\n", map_ident);
         os << "    }\n\n";
         os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {\n";
-        os << std::format("        let v = asn1cpp_wire::per::enumerated::decode_enum(r, &{})?;\n", per_spec_ident);
+        os << std::format("        let v = asn1cpp_wire::per::enumerated::decode_enum(r, &{})?;\n", map_ident);
         os << std::format(
             "        *self = std::convert::TryFrom::try_from(v).map_err(|_| asn1cpp_wire::per::reader::DecodeError::new(\"PER: ENUM value not in {}\", r.bit_pos()))?;\n",
             tname);
