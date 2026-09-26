@@ -63,8 +63,13 @@ pub trait Asn1Value {
     /// consumed and checked by the caller) into `self`.
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError>;
 
-    /// Checks `self` against this type's X.680 §51 SubtypeConstraint
-    /// (SIZE, value range, FROM alphabet, ...), if it has one.
+    /// Checks `self` against an X.680 §51 SubtypeConstraint (SIZE, value
+    /// range, FROM alphabet, ...). `c` is the *declaration's own* constraint
+    /// data (a member row's `Constraints`): a shared native type (`i64`,
+    /// `String`, ...) has no constraint of its own, so its blanket impl
+    /// checks against whatever the caller passes. A named type (a generated
+    /// newtype/ENUMERATED/SEQUENCE OF) already owns its constraint in a
+    /// static and ignores `c`.
     ///
     /// The Rust analogue of each C++ type's own
     /// `validate(const Constraints&)` (`runtime/include/asn1cpp/types/
@@ -92,7 +97,7 @@ pub trait Asn1Value {
     /// bound) — same convention as the C++ side, so a future
     /// `RandomFiller`-equivalent can reuse the delta to retry a sample
     /// in-bounds rather than merely reporting failure.
-    fn validate(&self) -> i64 {
+    fn validate(&self, _c: &crate::constraints::Constraints) -> i64 {
         0
     }
 
@@ -256,24 +261,37 @@ pub trait Asn1Value {
         Ok(())
     }
 
-    /// X.691 unaligned PER encoding of this value. Default panics — most
-    /// types are never reached through this trait for PER at all (a direct/
-    /// primitive member's PER encoding goes through a generic free function
-    /// called from a `MemberAccess::Constrained` closure, `sequence.rs`, not
-    /// through `&dyn Asn1Value`); only a handful of generic wrappers
-    /// (`Option<V>`, `Box<T>`) and codegen-emitted named types (SEQUENCE/
-    /// CHOICE/ENUMERATED/named INTEGER/named builtin-alias) — reached via
-    /// `MemberAccess::Scalar` for a `TypeRef` member — override this for
-    /// real. Same "real-or-panic-stub" shape `asn1cpp_per::sequence::
-    /// MemberAccess::Unsupported` already gives an individual member row;
-    /// this is that same policy applied at the whole-type granularity for
-    /// types this trait doesn't otherwise need to cover.
-    fn per_encode(&self, _w: &mut crate::per::writer::Writer) {
+    /// The constraint this type itself owns — a generated INTEGER newtype's
+    /// range, a builtin-alias newtype's SIZE, a SEQUENCE OF newtype's SIZE.
+    /// `UNCONSTRAINED` for every type without one: a shared native type
+    /// (`i64`, `String`, ...) takes its constraint from the declaration
+    /// that uses it (the member row), and SEQUENCE/CHOICE/ENUMERATED carry
+    /// theirs in their own spec tables. A caller with no enclosing member
+    /// row (a top-level PDU) passes `value.constraints()` as the `c`
+    /// argument of `per_encode`/`per_decode_into`/`validate`.
+    fn constraints(&self) -> &'static crate::constraints::Constraints {
+        &crate::constraints::UNCONSTRAINED
+    }
+
+    /// X.691 unaligned PER encoding of this value. `c` is the declaration's
+    /// own `Constraints` (range bits, SIZE, ...): PER's wire shape depends on
+    /// the declared constraint, so a shared native type (`i64`, `String`,
+    /// ...) encodes against whatever the caller passes. A named type
+    /// (SEQUENCE/CHOICE/ENUMERATED/named INTEGER/named builtin-alias) owns
+    /// its constraint in a static and ignores `c`. Default panics for a
+    /// type PER doesn't cover yet — the same "real-or-panic-stub" policy
+    /// `MemberAccess::Unsupported` gives an individual member row, applied
+    /// to a whole type.
+    fn per_encode(&self, _w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {
         unimplemented!("PER encode not implemented for this type")
     }
 
     /// Decode counterpart of `per_encode`.
-    fn per_decode_into(&mut self, _r: &mut crate::per::reader::Reader) -> Result<(), crate::per::reader::DecodeError> {
+    fn per_decode_into(
+        &mut self,
+        _r: &mut crate::per::reader::Reader,
+        _c: &crate::constraints::Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
         Err(crate::per::reader::DecodeError::new("PER decode not implemented for this type", 0))
     }
 }
@@ -411,17 +429,25 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
     /// already decides whether this value's bits appear on the wire at
     /// all — `per_encode`/`per_decode_into` here only handle the *present*
     /// case, mirroring `is_present`'s own role for the BER/XER legs.
-    fn per_encode(&self, w: &mut crate::per::writer::Writer) {
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
         if let Some(v) = self {
-            v.per_encode(w);
+            v.per_encode(w, c);
         }
     }
 
-    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader) -> Result<(), crate::per::reader::DecodeError> {
+    fn per_decode_into(
+        &mut self,
+        r: &mut crate::per::reader::Reader,
+        c: &crate::constraints::Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
         let mut v = V::default();
-        v.per_decode_into(r)?;
+        v.per_decode_into(r, c)?;
         *self = Some(v);
         Ok(())
+    }
+
+    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+        self.as_ref().map_or(0, |v| v.validate(c))
     }
 }
 
@@ -453,6 +479,19 @@ impl Asn1Value for i64 {
             DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
         })?;
         Ok(())
+    }
+
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+        crate::per::integer::encode_int(w, c, *self);
+    }
+
+    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader, c: &crate::constraints::Constraints) -> Result<(), crate::per::reader::DecodeError> {
+        *self = crate::per::integer::decode_int(r, c)?;
+        Ok(())
+    }
+
+    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+        crate::constraints::validate_s64(*self, c)
     }
 }
 
@@ -488,6 +527,19 @@ impl Asn1Value for u64 {
             DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
         })?;
         Ok(())
+    }
+
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+        crate::per::uinteger::encode_uint(w, c, *self);
+    }
+
+    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader, c: &crate::constraints::Constraints) -> Result<(), crate::per::reader::DecodeError> {
+        *self = crate::per::uinteger::decode_uint(r, c)?;
+        Ok(())
+    }
+
+    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+        crate::constraints::validate_u64(*self, c)
     }
 }
 
@@ -644,8 +696,12 @@ impl Asn1Value for () {
 
     /// X.691 §14: contributes zero bits to the encoding either direction —
     /// mirrors `NullPerHandler` (`runtime/src/PerCodec.cpp`) exactly.
-    fn per_encode(&self, _w: &mut crate::per::writer::Writer) {}
-    fn per_decode_into(&mut self, _r: &mut crate::per::reader::Reader) -> Result<(), crate::per::reader::DecodeError> {
+    fn per_encode(&self, _w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {}
+    fn per_decode_into(
+        &mut self,
+        _r: &mut crate::per::reader::Reader,
+        _c: &crate::constraints::Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
         Ok(())
     }
 }
@@ -779,6 +835,20 @@ impl Asn1Value for crate::bit_string::BitString {
         };
         *self = crate::bit_string::BitString { bytes, unused_bits };
         Ok(())
+    }
+
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+        crate::per::bit_string::encode_bit_string(w, c, &self.bytes, self.bit_count());
+    }
+
+    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader, c: &crate::constraints::Constraints) -> Result<(), crate::per::reader::DecodeError> {
+        let (bytes, unused_bits) = crate::per::bit_string::decode_bit_string(r, c)?;
+        *self = crate::bit_string::BitString { bytes, unused_bits };
+        Ok(())
+    }
+
+    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+        crate::constraints::validate_size(self.bit_count(), c)
     }
 }
 
@@ -991,6 +1061,20 @@ impl Asn1Value for String {
         *self = crate::xer::unescape(text);
         Ok(())
     }
+
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+        let _ = crate::per::strings::encode_string(w, c, crate::tag::universal::IA5_STRING, self.as_bytes());
+    }
+
+    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader, c: &crate::constraints::Constraints) -> Result<(), crate::per::reader::DecodeError> {
+        let x = crate::per::strings::decode_string(r, c, crate::tag::universal::IA5_STRING)?;
+        *self = String::from_utf8(x).unwrap_or_default();
+        Ok(())
+    }
+
+    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+        crate::constraints::validate_string(self, c)
+    }
 }
 
 /// `Box<T>` forwarding — the heap indirection `RustBackend` gives a
@@ -1046,12 +1130,106 @@ impl<T: Asn1Value> Asn1Value for Box<T> {
         (**self).xer_decode_into(r)
     }
 
-    fn per_encode(&self, w: &mut crate::per::writer::Writer) {
-        (**self).per_encode(w)
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+        (**self).per_encode(w, c)
     }
 
-    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader) -> Result<(), crate::per::reader::DecodeError> {
-        (**self).per_decode_into(r)
+    fn per_decode_into(
+        &mut self,
+        r: &mut crate::per::reader::Reader,
+        c: &crate::constraints::Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
+        (**self).per_decode_into(r, c)
+    }
+
+    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+        (**self).validate(c)
+    }
+
+    fn constraints(&self) -> &'static crate::constraints::Constraints {
+        (**self).constraints()
+    }
+}
+
+#[cfg(test)]
+mod per_blanket_tests {
+    use super::*;
+    use crate::constraints::Constraints;
+    use crate::per::{reader::Reader, writer::Writer};
+
+    fn ranged(lo: i64, hi: i64) -> Constraints {
+        Constraints {
+            flags: Constraints::CONSTRAINED,
+            range_bits: (64 - ((hi - lo) as u64).leading_zeros()),
+            lower_bound: lo,
+            upper_bound: hi,
+            ..Default::default()
+        }
+    }
+
+    fn bytes_of(f: impl FnOnce(&mut Writer)) -> Vec<u8> {
+        let mut w = Writer::new();
+        f(&mut w);
+        w.flush();
+        w.into_bytes()
+    }
+
+    #[test]
+    fn i64_trait_path_matches_free_function_and_roundtrips() {
+        let c = ranged(0, 15);
+        let via_trait = bytes_of(|w| 9i64.per_encode(w, &c));
+        let direct = bytes_of(|w| crate::per::integer::encode_int(w, &c, 9));
+        assert_eq!(via_trait, direct);
+        let mut back = 0i64;
+        back.per_decode_into(&mut Reader::new(&via_trait), &c).unwrap();
+        assert_eq!(back, 9);
+    }
+
+    #[test]
+    fn a_type_without_its_own_constraint_reports_unconstrained_and_box_forwards() {
+        assert_eq!(5i64.constraints(), &crate::constraints::UNCONSTRAINED);
+        assert_eq!(Box::new(5i64).constraints(), &crate::constraints::UNCONSTRAINED);
+    }
+
+    #[test]
+    fn i64_validate_uses_the_passed_constraints() {
+        let c = ranged(0, 15);
+        assert_eq!(20i64.validate(&c), -5);
+        assert_eq!(5i64.validate(&c), 0);
+        assert_eq!(20i64.validate(&crate::constraints::UNCONSTRAINED), 0);
+    }
+
+    #[test]
+    fn octet_string_trait_path_roundtrips_and_validates_size() {
+        let c = Constraints { flags: Constraints::SIZE_CONSTRAINED, size_range_bits: 2, size_lower: 1, size_upper: 3, ..Default::default() };
+        let v = crate::octet_string::OctetString(vec![1, 2]);
+        let enc = bytes_of(|w| v.per_encode(w, &c));
+        let mut back = crate::octet_string::OctetString::default();
+        back.per_decode_into(&mut Reader::new(&enc), &c).unwrap();
+        assert_eq!(back, v);
+        assert_eq!(crate::octet_string::OctetString(vec![0; 5]).validate(&c), -2);
+    }
+
+    #[test]
+    fn string_kinds_use_their_own_tag_for_the_alphabet_width() {
+        let c = crate::constraints::UNCONSTRAINED;
+        let num = crate::strings::NumericString("12345".to_string());
+        let ia5 = "12345".to_string();
+        // NumericString packs 4 bits/char, IA5String 7 — different lengths on the wire.
+        assert_ne!(bytes_of(|w| num.per_encode(w, &c)), bytes_of(|w| ia5.per_encode(w, &c)));
+        let mut back = crate::strings::NumericString::default();
+        back.per_decode_into(&mut Reader::new(&bytes_of(|w| num.per_encode(w, &c))), &c).unwrap();
+        assert_eq!(back, num);
+    }
+
+    #[test]
+    fn wide_string_trait_path_roundtrips_raw_bytes() {
+        let c = crate::constraints::UNCONSTRAINED;
+        let v = crate::strings::BmpString(vec![0x00, 0x41, 0x00, 0x42]);
+        let enc = bytes_of(|w| v.per_encode(w, &c));
+        let mut back = crate::strings::BmpString::default();
+        back.per_decode_into(&mut Reader::new(&enc), &c).unwrap();
+        assert_eq!(back, v);
     }
 }
 

@@ -10,6 +10,7 @@
 
 use crate::per::length::{get_length, get_nslength, put_length, put_nslength};
 use crate::per::reader::{DecodeError, Reader};
+use crate::constraints::Constraints;
 use crate::value::Asn1Value;
 use crate::per::writer::Writer;
 
@@ -86,6 +87,14 @@ pub struct MemberDescriptor<T: 'static> {
     /// `Some` for. Mirrors `is_default_equal`'s exact role in the BER crate.
     pub is_default_equal: Option<fn(&T) -> bool>,
     pub access: MemberAccess<T>,
+    /// The declaration's own `Constraints`, handed to the member's
+    /// `Asn1Value::per_encode`/`per_decode_into` for a `Scalar` access — a
+    /// shared native type (`i64`, `String`, ...) has no constraint of its
+    /// own, so this is where its declared range/SIZE reaches the encoder.
+    /// `UNCONSTRAINED` for a member whose type owns its constraint (a named
+    /// generated type) or has none, and unused by `Constrained`/
+    /// `Unsupported`.
+    pub constraints: &'static Constraints,
 }
 
 /// Backend-agnostic decision for one SEQUENCE/SET type — mirrors
@@ -108,7 +117,7 @@ fn root_end<T>(spec: &SequenceSpec<T>) -> usize {
 
 fn access_encode<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
     match m.access {
-        MemberAccess::Scalar { get, .. } => get(value).per_encode(w),
+        MemberAccess::Scalar { get, .. } => get(value).per_encode(w, m.constraints),
         MemberAccess::Constrained { encode, .. } => encode(value, w),
         MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
     }
@@ -116,7 +125,7 @@ fn access_encode<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
 
 fn access_decode<T>(m: &MemberDescriptor<T>, result: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
     match m.access {
-        MemberAccess::Scalar { get_mut, .. } => get_mut(result).per_decode_into(r),
+        MemberAccess::Scalar { get_mut, .. } => get_mut(result).per_decode_into(r, m.constraints),
         MemberAccess::Constrained { decode, .. } => decode(result, r),
         MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
     }
@@ -284,10 +293,10 @@ mod tests {
         fn ber_natural_tag(&self) -> crate::tag::Tag { unimplemented!() }
         fn ber_encode_content(&self, _out: &mut Vec<u8>) { unimplemented!() }
         fn ber_decode_content(&mut self, _content: &[u8]) -> Result<(), crate::reader::DecodeError> { unimplemented!() }
-        fn per_encode(&self, w: &mut Writer) {
+        fn per_encode(&self, w: &mut Writer, _c: &Constraints) {
             encode_unconstrained_int(w, self.0);
         }
-        fn per_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        fn per_decode_into(&mut self, r: &mut Reader, _c: &Constraints) -> Result<(), DecodeError> {
             self.0 = decode_unconstrained_int(r)?;
             Ok(())
         }
@@ -320,6 +329,7 @@ mod tests {
                 is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
+                constraints: &crate::constraints::UNCONSTRAINED,
                 access: MemberAccess::Constrained {
                     encode: |t, w| encode_int(w, &DOGFOOD_CONSTRAINED, t.a),
                     decode: |t, r| {
@@ -334,6 +344,7 @@ mod tests {
                 is_present: |t| t.b.is_some(),
                 set_default: None,
                 is_default_equal: None,
+                constraints: &crate::constraints::UNCONSTRAINED,
                 access: MemberAccess::Scalar { get: |t| &t.b, get_mut: |t| &mut t.b },
             },
         ],
@@ -375,6 +386,7 @@ mod tests {
                 is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
+                constraints: &crate::constraints::UNCONSTRAINED,
                 access: MemberAccess::Constrained {
                     encode: |t, w| encode_int(w, &DOGFOOD_CONSTRAINED, t.a),
                     decode: |t, r| {
@@ -389,6 +401,7 @@ mod tests {
                 is_present: |t| t.ext1.is_some(),
                 set_default: None,
                 is_default_equal: None,
+                constraints: &crate::constraints::UNCONSTRAINED,
                 access: MemberAccess::Scalar { get: |t| &t.ext1, get_mut: |t| &mut t.ext1 },
             },
         ],
@@ -449,6 +462,7 @@ mod tests {
                 is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
+                constraints: &crate::constraints::UNCONSTRAINED,
                 access: MemberAccess::Constrained {
                     encode: |t, w| encode_int(w, &DOGFOOD_CONSTRAINED, t.a),
                     decode: |t, r| {
@@ -463,6 +477,7 @@ mod tests {
                 is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
+                constraints: &crate::constraints::UNCONSTRAINED,
                 access: MemberAccess::Unsupported { reason: "test stub" },
             },
         ],
@@ -491,5 +506,40 @@ mod tests {
     fn unsupported_member_panics_if_actually_reached() {
         let mut w = Writer::new();
         access_encode(&UNSUPPORTED_SPEC.members[1], &WithUnsupported { a: 5, skip: 0 }, &mut w);
+    }
+
+    // A bare `i64` reached through a plain `Scalar` accessor, with its
+    // declared range carried by the row's `constraints` — the encoding is
+    // identical to the `Constrained` closure path above.
+    #[derive(Debug, Default, PartialEq)]
+    struct ScalarInt {
+        a: i64,
+    }
+
+    const SCALAR_INT_SPEC: SequenceSpec<ScalarInt> = SequenceSpec {
+        ext_at: -1,
+        members: &[MemberDescriptor {
+            name: "a",
+            optional: false,
+            is_present: |_| true,
+            set_default: None,
+            is_default_equal: None,
+            access: MemberAccess::Scalar { get: |t| &t.a, get_mut: |t| &mut t.a },
+            constraints: &DOGFOOD_CONSTRAINED,
+        }],
+    };
+
+    #[test]
+    fn scalar_row_with_constraints_matches_constrained_row() {
+        let mut w = Writer::new();
+        encode_sequence_content(&SCALAR_INT_SPEC, &mut w, &ScalarInt { a: 9 });
+        w.flush();
+        let bytes = w.into_bytes();
+        let mut direct = Writer::new();
+        crate::per::integer::encode_int(&mut direct, &DOGFOOD_CONSTRAINED, 9);
+        direct.flush();
+        assert_eq!(bytes, direct.into_bytes());
+        let mut r = Reader::new(&bytes);
+        assert_eq!(decode_sequence_content(&SCALAR_INT_SPEC, &mut r).unwrap(), ScalarInt { a: 9 });
     }
 }
