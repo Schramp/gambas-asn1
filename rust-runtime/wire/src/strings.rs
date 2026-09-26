@@ -153,6 +153,24 @@ macro_rules! char_string_type {
                 self.0 = crate::xer::unescape(text);
                 Ok(())
             }
+
+            fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+                let _ = crate::per::strings::encode_string(w, c, $tag_num, self.0.as_bytes());
+            }
+
+            fn per_decode_into(
+                &mut self,
+                r: &mut crate::per::reader::Reader,
+                c: &crate::constraints::Constraints,
+            ) -> Result<(), crate::per::reader::DecodeError> {
+                let x = crate::per::strings::decode_string(r, c, $tag_num)?;
+                self.0 = String::from_utf8(x).unwrap_or_default();
+                Ok(())
+            }
+
+            fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+                crate::constraints::validate_string(&self.0, c)
+            }
         }
     };
 }
@@ -257,6 +275,23 @@ macro_rules! wide_char_string_type {
                 let text = r.read_text_content();
                 self.0 = decode_wide_string_xer(&crate::xer::unescape(text), $bpc);
                 Ok(())
+            }
+
+            fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+                let _ = crate::per::strings::encode_string(w, c, $tag_num, &self.0);
+            }
+
+            fn per_decode_into(
+                &mut self,
+                r: &mut crate::per::reader::Reader,
+                c: &crate::constraints::Constraints,
+            ) -> Result<(), crate::per::reader::DecodeError> {
+                self.0 = crate::per::strings::decode_string(r, c, $tag_num)?;
+                Ok(())
+            }
+
+            fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+                crate::constraints::validate_size(self.0.len(), c)
             }
         }
     };

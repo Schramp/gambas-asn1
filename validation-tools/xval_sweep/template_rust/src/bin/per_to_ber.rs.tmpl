@@ -28,7 +28,7 @@ fn decode_one(type_name: &str, per_bytes: &[u8]) -> Result<Vec<u8>, asn1cpp_wire
     match type_name {
         "__PDU_TYPE__" => {
             let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
-            v.per_decode_into(&mut r)?;
+            v.per_decode_into(&mut r, v.constraints())?;
             Ok(v.encode())
         }
         _ => unreachable!("checked by caller"),
