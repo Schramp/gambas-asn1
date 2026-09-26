@@ -16,6 +16,7 @@
 //! part of this crate's public API) — a worked example doesn't need to be
 //! a permanent public type just to be readable as one.
 
+use crate::constraints::Constraints;
 use crate::reader::{DecodeError, Reader};
 use crate::tag::{universal, Tag};
 use crate::value::Asn1Value;
@@ -62,20 +63,38 @@ pub struct MemberDescriptor<T: 'static> {
     /// `encode_sequence_content` skips the member entirely when this
     /// returns `true`, same as a genuinely absent OPTIONAL member.
     pub is_default_equal: Option<fn(&T) -> bool>,
-    /// `Some` for a member with a real X.680 §51 SubtypeConstraint this
-    /// crate can check (INTEGER range so far — other constraint kinds are
-    /// separate follow-on issues). Takes the whole containing struct (same
-    /// shape as `set_default`/`is_default_equal`) because the member's own
-    /// field type (e.g. a bare `i64` INTEGER alias) is shared across every
-    /// member regardless of its individual bound, so `Asn1Value::validate()`
-    /// can't carry a per-member check the way it carries a per-type one.
-    /// Returns the delta convention `Asn1Value::validate()` itself
+    /// `Some` for a member with its own X.680 §51 SubtypeConstraint table
+    /// (INTEGER range, OCTET/BIT STRING and character string SIZE/FROM,
+    /// SEQUENCE OF/SET OF SIZE) — the declaration's own `Constraints`,
+    /// handed to the member's `Asn1Value::validate` through the same
+    /// `get` accessor the encode/decode paths use (a shared native type
+    /// like a bare `i64` has no constraint of its own, so the row carries
+    /// it). Returns the delta convention `Asn1Value::validate()` itself
     /// documents: `0` valid, positive = below lower bound, negative =
     /// above upper bound. Checked by `encode_sequence_content`/
     /// `decode_sequence_content` via `validate::check_delta` whenever the
     /// member actually has a value (present on the wire, or filled by
     /// `set_default`) — not for a genuinely absent OPTIONAL member.
-    pub validate: Option<fn(&T) -> i64>,
+    /// `None` for a member whose type owns its constraint (a named
+    /// generated type, checked through `ber_encode_tagged`'s own
+    /// `validate::check`) or has none.
+    pub constraints: Option<&'static Constraints>,
+}
+
+impl<T: 'static> MemberDescriptor<T> {
+    /// Runs this member's declared-constraint check against its current
+    /// value in `value` (see `constraints`). `None` when the row carries no
+    /// constraint or its access shape has no `Asn1Value` accessor
+    /// (`ExplicitAny`/`Unsupported`).
+    fn validate_delta(&self, value: &T) -> Option<i64> {
+        let c = self.constraints?;
+        match &self.access {
+            MemberAccess::Scalar { get, .. }
+            | MemberAccess::TaggedScalar { get, .. }
+            | MemberAccess::ExplicitScalar { get, .. } => Some(get(value).validate(c)),
+            MemberAccess::ExplicitAny { .. } | MemberAccess::Unsupported { .. } => None,
+        }
+    }
 }
 
 /// How a member's value is reached and (de)serialized.
@@ -393,6 +412,13 @@ impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
         self.0 = decode_seq_of_xer(r)?;
         Ok(())
     }
+
+    /// An inline SEQUENCE OF/SET OF member has no constraint of its own
+    /// (this generic wrapper is shared by every such member) — its SIZE
+    /// constraint arrives as the row's `Constraints` (X.680 §51).
+    fn validate(&self, c: &Constraints) -> i64 {
+        crate::constraints::validate_size(self.0.len(), c)
+    }
 }
 
 /// SET OF analogue of `SeqOf<T>` — identical shape, only `ber_natural_tag`
@@ -443,6 +469,13 @@ impl<T: Asn1Value + Default> Asn1Value for SetOf<T> {
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
         self.0 = decode_seq_of_xer(r)?;
         Ok(())
+    }
+
+    /// An inline SEQUENCE OF/SET OF member has no constraint of its own
+    /// (this generic wrapper is shared by every such member) — its SIZE
+    /// constraint arrives as the row's `Constraints` (X.680 §51).
+    fn validate(&self, c: &Constraints) -> i64 {
+        crate::constraints::validate_size(self.0.len(), c)
     }
 }
 
@@ -500,8 +533,8 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
             MemberAccess::ExplicitAny { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
         }
-        if let Some(validate) = m.validate {
-            crate::validate::check_delta(validate(value), m.name, "encode");
+        if let Some(delta) = m.validate_delta(value) {
+            crate::validate::check_delta(delta, m.name, "encode");
         }
     }
 }
@@ -575,8 +608,8 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
                     get_mut(&mut result).ber_decode_into(inner)?;
                 }
                 if has_value {
-                    if let Some(validate) = m.validate {
-                        crate::validate::check_delta(validate(&result), m.name, "decode");
+                    if let Some(delta) = m.validate_delta(&result) {
+                        crate::validate::check_delta(delta, m.name, "decode");
                     }
                 }
             }
@@ -594,8 +627,8 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
                     get_mut(&mut result).ber_decode_into_tagged(inner, m.tag)?;
                 }
                 if has_value {
-                    if let Some(validate) = m.validate {
-                        crate::validate::check_delta(validate(&result), m.name, "decode");
+                    if let Some(delta) = m.validate_delta(&result) {
+                        crate::validate::check_delta(delta, m.name, "decode");
                     }
                 }
             }
@@ -613,8 +646,8 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
                     get_mut(&mut result).ber_decode_into_explicit(inner, m.tag)?;
                 }
                 if has_value {
-                    if let Some(validate) = m.validate {
-                        crate::validate::check_delta(validate(&result), m.name, "decode");
+                    if let Some(delta) = m.validate_delta(&result) {
+                        crate::validate::check_delta(delta, m.name, "decode");
                     }
                 }
             }
@@ -678,7 +711,7 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
         set_default: None,
         is_default_equal: None,
-        validate: None,
+        constraints: None,
     },
     MemberDescriptor {
         name: "y",
@@ -687,7 +720,7 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
         set_default: None,
         is_default_equal: None,
-        validate: None,
+        constraints: None,
     },
 ];
 
@@ -729,7 +762,7 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
         set_default: None,
         is_default_equal: None,
-        validate: None,
+        constraints: None,
     },
     MemberDescriptor {
         name: "y",
@@ -738,7 +771,7 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
         set_default: None,
         is_default_equal: None,
-        validate: None,
+        constraints: None,
     },
 ];
 
@@ -781,7 +814,7 @@ static COORDS_MEMBERS: [MemberDescriptor<Coords>; 1] = [MemberDescriptor {
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
     set_default: None,
     is_default_equal: None,
-    validate: None,
+    constraints: None,
 }];
 
 static COORDS_SPEC: SequenceSpec<Coords> =
@@ -823,7 +856,7 @@ static OPT_COORDS_MEMBERS: [MemberDescriptor<OptCoords>; 1] = [MemberDescriptor 
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
     set_default: None,
     is_default_equal: None,
-    validate: None,
+    constraints: None,
 }];
 
 static OPT_COORDS_SPEC: SequenceSpec<OptCoords> =
@@ -866,7 +899,7 @@ static SET_COORDS_MEMBERS: [MemberDescriptor<SetCoords>; 1] = [MemberDescriptor 
     access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
     set_default: None,
     is_default_equal: None,
-    validate: None,
+    constraints: None,
 }];
 
 static SET_COORDS_SPEC: SequenceSpec<SetCoords> =
@@ -904,7 +937,7 @@ static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
         set_default: None,
         is_default_equal: None,
-        validate: None,
+        constraints: None,
     },
     MemberDescriptor {
         name: "y",
@@ -913,7 +946,7 @@ static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
         access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
         set_default: Some(|v| v.y = Some(default_point_y_default())),
         is_default_equal: Some(|v| v.y == Some(default_point_y_default())),
-        validate: None,
+        constraints: None,
     },
 ];
 
@@ -1048,7 +1081,7 @@ impl DefaultPoint {
                 access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
                 set_default: None,
                 is_default_equal: None,
-                validate: None,
+                constraints: None,
             },
             MemberDescriptor {
                 name: "y",
@@ -1057,7 +1090,7 @@ impl DefaultPoint {
                 access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
                 set_default: None,
                 is_default_equal: None,
-                validate: None,
+                constraints: None,
             },
         ];
         static A_SET_SPEC: SequenceSpec<Point> =
@@ -1425,7 +1458,7 @@ impl DefaultPoint {
             access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
             set_default: None,
             is_default_equal: None,
-            validate: Some(|v| crate::constraints::validate_s64(v.x, &RANGED_POINT_X_CONSTRAINTS)),
+            constraints: Some(&RANGED_POINT_X_CONSTRAINTS),
         },
         MemberDescriptor {
             name: "y",
@@ -1434,7 +1467,7 @@ impl DefaultPoint {
             access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
             set_default: None,
             is_default_equal: None,
-            validate: None,
+            constraints: None,
         },
     ];
 
@@ -1496,7 +1529,7 @@ impl DefaultPoint {
         access: MemberAccess::Scalar { get: |v| &v.data, get_mut: |v| &mut v.data },
         set_default: None,
         is_default_equal: None,
-        validate: Some(|v| crate::constraints::validate_size(v.data.len(), &SIZED_BLOB_DATA_CONSTRAINTS)),
+        constraints: Some(&SIZED_BLOB_DATA_CONSTRAINTS),
     }];
 
     static SIZED_BLOB_SPEC: SequenceSpec<SizedBlob> =
@@ -1619,7 +1652,7 @@ impl DefaultPoint {
         access: MemberAccess::Scalar { get: |v| &v.inline_tags, get_mut: |v| &mut v.inline_tags },
         set_default: None,
         is_default_equal: None,
-        validate: Some(|v| crate::constraints::validate_size(v.inline_tags.len(), &BASKET_INLINE_TAGS_CONSTRAINTS)),
+        constraints: Some(&BASKET_INLINE_TAGS_CONSTRAINTS),
     }];
 
     static BASKET_SPEC: SequenceSpec<Basket> =

@@ -1535,6 +1535,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // `is_default_equal` are `Option<fn(&mut T)>`/
                 // `Option<fn(&T) -> bool>`, the identical signature, so the
                 // same closure text is valid Rust in either table.
+                std::string row_constraints = "&asn1cpp_wire::constraints::UNCONSTRAINED";
                 per_members_os << "    asn1cpp_wire::per::sequence::MemberDescriptor {\n";
                 per_members_os << std::format("        name: \"{}\",\n", m.asn1_name);
                 per_members_os << std::format("        optional: {},\n", m.optional ? "true" : "false");
@@ -1620,138 +1621,28 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     per_members_os << std::format(
                         "        access: asn1cpp_wire::per::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n",
                         m.mname);
-                } else if (m.mbuiltin && (*m.mbuiltin == ast::BuiltinType::OctetString ||
-                                           *m.mbuiltin == ast::BuiltinType::BitString)) {
-                    // OCTET STRING/BIT STRING (X.691 §16/§17) — Constrained,
-                    // same per_cname derivation as the string branch below
-                    // (an inline SIZE constraint's own {cname}_CONSTRAINTS
-                    // when tdref names one, the shared flags: 0 literal
-                    // otherwise). BitString needs its own unused-bits count
-                    // threaded through (bit_count(), not .len()) — its Rust
-                    // field is a `{bytes, unused_bits}` struct, not a plain
-                    // byte newtype, same reason its BER validate_expr above
-                    // uses a different accessor than OctetString's.
-                    bool is_bits = *m.mbuiltin == ast::BuiltinType::BitString;
-                    std::string per_cname;
-                    if (m.tdref.starts_with("&asn_TYP_")) {
-                        std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname));
-                        per_cname = base + "_CONSTRAINTS";
-                    } else {
-                        per_cname = "asn1cpp_wire::constraints::UNCONSTRAINED";
-                    }
-                    std::string field = m.optional ? std::format("v.{}.as_ref().unwrap()", m.mname)
-                                                    : std::format("v.{}", m.mname);
-                    if (is_bits) {
-                        std::string ctor = std::format("asn1cpp_wire::bit_string::BitString {{ bytes, unused_bits: unused }}");
-                        std::string field_mut = m.optional ? std::format("v.{} = Some({})", m.mname, ctor)
-                                                            : std::format("v.{} = {}", m.mname, ctor);
-                        per_members_os << std::format(
-                            "        access: asn1cpp_wire::per::sequence::MemberAccess::Constrained {{\n"
-                            "            encode: |v, w| asn1cpp_wire::per::bit_string::encode_bit_string(w, &{0}, &{1}.bytes, {1}.bit_count()),\n"
-                            "            decode: |v, r| {{ let (bytes, unused) = asn1cpp_wire::per::bit_string::decode_bit_string(r, &{0})?; {2}; Ok(()) }},\n"
-                            "        }},\n",
-                            per_cname, field, field_mut);
-                    } else {
-                        std::string ctor = "asn1cpp_wire::octet_string::OctetString(bytes)";
-                        std::string field_mut = m.optional ? std::format("v.{} = Some({})", m.mname, ctor)
-                                                            : std::format("v.{} = {}", m.mname, ctor);
-                        per_members_os << std::format(
-                            "        access: asn1cpp_wire::per::sequence::MemberAccess::Constrained {{\n"
-                            "            encode: |v, w| asn1cpp_wire::per::octet_string::encode_octet_string(w, &{0}, &{1}.0),\n"
-                            "            decode: |v, r| {{ let bytes = asn1cpp_wire::per::octet_string::decode_octet_string(r, &{0})?; {2}; Ok(()) }},\n"
-                            "        }},\n",
-                            per_cname, field, field_mut);
-                    }
-                } else if (m.mbuiltin && per_string_covered(*m.mbuiltin)) {
-                    // Character string kind — Constrained,
-                    // since the field's Rust type (bare `String` for
-                    // IA5String, a newtype `Deref<Target=String>` for every
-                    // other kind — rust-runtime/wire/src/strings.rs's own
-                    // module doc) is shared across every differently-
-                    // constrained declaration of that kind, same reasoning
-                    // as INTEGER. `.as_bytes()` resolves through `Deref`
-                    // uniformly for both shapes; only the decoded-value
-                    // constructor differs (bare `String` vs `TypeName(..)`
-                    // newtype), handled below. Encode errors (SIZE/
-                    // natural-alphabet violation, `strings::EncodeError`)
-                    // are discarded rather than propagated — `MemberAccess::
-                    // Constrained::encode` has no `Result` in its signature
-                    // (mirrors every other Constrained closure here), same
-                    // as `StringPerHandler::encode`'s own `set_encode_failed`
-                    // flag-and-continue behavior (runtime/src/PerCodec.cpp)
-                    // rather than a hard error — this Rust path has no
-                    // equivalent flag on `Writer` yet, so it silently
-                    // produces no bytes for that field instead, a known gap
-                    // versus the C++ side's own (still soft) failure signal.
-                    std::string tag_num = std::format("{}.number", builtin_ber_tag(*m.mbuiltin, m.mtype));
-                    std::string per_cname;
-                    if (m.tdref.starts_with("&asn_TYP_")) {
-                        std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname));
-                        per_cname = base + "_CONSTRAINTS";
-                    } else {
-                        per_cname = "asn1cpp_wire::constraints::UNCONSTRAINED";
-                    }
-                    bool bare_string = *m.mbuiltin == ast::BuiltinType::Ia5String;
-                    bool wide = *m.mbuiltin == ast::BuiltinType::BmpString || *m.mbuiltin == ast::BuiltinType::UniversalString;
-                    std::string bytes_expr = wide
-                        ? (m.optional ? std::format("&v.{}.as_ref().unwrap().0", m.mname) : std::format("&v.{}.0", m.mname))
-                        : (m.optional ? std::format("v.{}.as_ref().unwrap().as_bytes()", m.mname)
-                                      : std::format("v.{}.as_bytes()", m.mname));
-                    std::string ctor = wide ? std::format("{}(x)", m.mtype)
-                                      : bare_string ? "String::from_utf8(x).unwrap_or_default()"
-                                                    : std::format("{}(String::from_utf8(x).unwrap_or_default())", m.mtype);
-                    std::string field_mut = m.optional ? std::format("v.{} = Some({})", m.mname, ctor)
-                                                        : std::format("v.{} = {}", m.mname, ctor);
-                    per_members_os << std::format(
-                        "        access: asn1cpp_wire::per::sequence::MemberAccess::Constrained {{\n"
-                        "            encode: |v, w| {{ let _ = asn1cpp_wire::per::strings::encode_string(w, &{}, {}, {}); }},\n"
-                        "            decode: |v, r| {{ let x = asn1cpp_wire::per::strings::decode_string(r, &{}, {})?; {}; Ok(()) }},\n"
-                        "        }},\n",
-                        per_cname, tag_num, bytes_expr, per_cname, tag_num, field_mut);
                 } else {
-                    // Direct builtin INTEGER member — TypeRef to a named
-                    // INTEGER type is caught by the Scalar branch above now
-                    // (a real newtype with its own PerValue impl,
-                    // emit_integer_definition's own doc). A bare inline
-                    // i64/u64 field still needs Constrained: it has no
-                    // per-declaration identity of its own to carry PER
-                    // encoding via a type-level trait impl.
-                    std::string field = m.optional ? std::format("v.{}.unwrap()", m.mname) : std::format("v.{}", m.mname);
-                    std::string field_mut = m.optional ? std::format("v.{} = Some(x)", m.mname) : std::format("v.{} = x", m.mname);
-                    const char* fn_ns = m.storage_kind == IntStorageKind::S64 ? "integer" : "uinteger";
-                    const char* fn_ty = m.storage_kind == IntStorageKind::S64 ? "encode_int" : "encode_uint";
-                    const char* fn_dec = m.storage_kind == IntStorageKind::S64 ? "decode_int" : "decode_uint";
+                    // Direct builtin member of a covered shape — INTEGER
+                    // (S64/U64), OCTET STRING/BIT STRING (X.691 §16/§17) or
+                    // a character string kind (§26.5). Its Rust field is a
+                    // shared native type (`i64`/`u64`/`OctetString`/
+                    // `BitString`/`String`/a string newtype), whose blanket
+                    // `Asn1Value::per_encode`/`per_decode_into` encodes
+                    // against whatever `Constraints` the row hands it — the
+                    // inline SIZE/range table `emit_member_type_descriptor`
+                    // emitted when `tdref` names one, the shared
+                    // unconstrained value otherwise (an unconstrained
+                    // INTEGER's wire shape is exactly what `encode_int`/
+                    // `encode_uint` produce for flags == 0, X.691 §10.8).
+                    // Same plain `Scalar` accessor every other member uses.
                     if (m.tdref.starts_with("&asn_TYP_")) {
-                        // Inline-constrained (X.691 §19) — {per_cname} was
-                        // emitted by emit_member_type_descriptor alongside
-                        // its BER counterpart.
-                        std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname));
-                        std::string per_cname = base + "_CONSTRAINTS";
-                        per_members_os << std::format(
-                            "        access: asn1cpp_wire::per::sequence::MemberAccess::Constrained {{\n"
-                            "            encode: |v, w| asn1cpp_wire::per::{}::{}(w, &{}, {}),\n"
-                            "            decode: |v, r| {{ let x = asn1cpp_wire::per::{}::{}(r, &{})?; {}; Ok(()) }},\n"
-                            "        }},\n",
-                            fn_ns, fn_ty, per_cname, field, fn_ns, fn_dec, per_cname, field_mut);
-                    } else {
-                        // No inline constraint (X.691 §10.8 unconstrained
-                        // whole number) — the bare `encode_unconstrained_int`/
-                        // `decode_unconstrained_int` primitives, no
-                        // Constraints table needed at all. U64 storage
-                        // round-trips through the signed primitive's raw
-                        // bit pattern, same approach `uinteger::encode_uint`'s
-                        // own unconstrained branch takes (see that module's
-                        // doc).
-                        std::string cast_in = m.storage_kind == IntStorageKind::U64 ? " as i64" : "";
-                        std::string cast_out = m.storage_kind == IntStorageKind::U64 ? " as u64" : "";
-                        per_members_os << std::format(
-                            "        access: asn1cpp_wire::per::sequence::MemberAccess::Constrained {{\n"
-                            "            encode: |v, w| asn1cpp_wire::per::integer::encode_unconstrained_int(w, {}{}),\n"
-                            "            decode: |v, r| {{ let x = asn1cpp_wire::per::integer::decode_unconstrained_int(r)?{}; {}; Ok(()) }},\n"
-                            "        }},\n",
-                            field, cast_in, cast_out, field_mut);
+                        row_constraints = "&" + to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)) + "_CONSTRAINTS";
                     }
+                    per_members_os << std::format(
+                        "        access: asn1cpp_wire::per::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n",
+                        m.mname);
                 }
+                per_members_os << std::format("        constraints: {},\n", row_constraints);
                 per_members_os << "    },\n";
             }
             // `emit_member_type_descriptor` (above) already emitted a
@@ -1780,78 +1671,44 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // `encode_sequence_content`/`decode_sequence_content`
             // (`sequence.rs`) already give a `set_default`-less absent
             // member.
-            std::string validate_expr = "None";
-            if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Integer &&
-                m.tdref.starts_with("&asn_TYP_") &&
-                (m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64)) {
-                std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
-                const char* fn = m.storage_kind == IntStorageKind::S64 ? "validate_s64" : "validate_u64";
-                validate_expr = m.optional
-                    ? std::format("Some(|v| v.{}.map_or(0, |x| asn1cpp_wire::constraints::{}(x, &{})))", m.mname, fn, cname)
-                    : std::format("Some(|v| asn1cpp_wire::constraints::{}(v.{}, &{}))", fn, m.mname, cname);
-            } else if (m.mbuiltin && (*m.mbuiltin == ast::BuiltinType::OctetString || *m.mbuiltin == ast::BuiltinType::BitString) &&
-                       m.tdref.starts_with("&asn_TYP_")) {
-                std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
-                const char* method = *m.mbuiltin == ast::BuiltinType::BitString ? "bit_count" : "len";
-                validate_expr = m.optional
-                    ? std::format("Some(|v| v.{}.as_ref().map_or(0, |x| asn1cpp_wire::constraints::validate_size(x.{}(), &{})))",
-                                   m.mname, method, cname)
-                    : std::format("Some(|v| asn1cpp_wire::constraints::validate_size(v.{}.{}(), &{}))", m.mname, method, cname);
-            } else if (m.mbuiltin && is_sizeable_string_kind(*m.mbuiltin) && m.tdref.starts_with("&asn_TYP_")) {
-                // X.680 §51.4 FROM alphabet, combined with
-                // SIZE via `constraints::validate_string` — the table
-                // (`{cname}`, above) may or may not have a real
-                // `encode_table`; `validate_string`/`validate_alphabet`
-                // treat `None` as "no FROM constraint" uniformly, so this
-                // wiring is identical whether the member actually has a
-                // FROM clause or not, same "always wire, table decides"
-                // shape the other constraint kinds use. `&str` coercion
-                // chains through the newtype's own `Deref<Target=String>`
-                // (`strings.rs`) automatically — no explicit `.as_str()`
-                // needed, works for bare `String` (IA5String) too.
-                std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
-                validate_expr = m.optional
-                    ? std::format("Some(|v| v.{}.as_ref().map_or(0, |x| asn1cpp_wire::constraints::validate_string(x, &{})))", m.mname, cname)
-                    : std::format("Some(|v| asn1cpp_wire::constraints::validate_string(&v.{}, &{}))", m.mname, cname);
+            // The declaration's own Constraints table, when this member has
+            // one (`tdref` is "&" + tname only when
+            // `build_member_type_descriptor_spec` built a spec for it): the
+            // walker hands it to the member's `Asn1Value::validate` through
+            // the row's own accessor, so no per-kind closure is needed —
+            // INTEGER (S64/U64), OCTET STRING/BIT STRING and every
+            // character string kind (SIZE, plus the FROM alphabet's
+            // `encode_table` for the string kinds) all read the same table
+            // shape. A member whose type owns its constraint (a named
+            // generated type) gets `None`: its own `validate` is reached
+            // through `ber_encode_tagged`'s `validate::check`.
+            std::string constraints_expr = "None";
+            bool own_table = m.tdref.starts_with("&asn_TYP_");
+            if (m.mbuiltin && own_table &&
+                ((*m.mbuiltin == ast::BuiltinType::Integer &&
+                  (m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64)) ||
+                 *m.mbuiltin == ast::BuiltinType::OctetString || *m.mbuiltin == ast::BuiltinType::BitString ||
+                 is_sizeable_string_kind(*m.mbuiltin))) {
+                constraints_expr = std::format("Some(&{}_CONSTRAINTS)",
+                    to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
             } else if (m.seq_of_kind != SeqOfKind::None) {
                 // Inline SEQUENCE OF/SET OF member: the field's own Rust
-                // type is the generic `SeqOf<T>`/`SetOf<T>` wrapper (shared
-                // across every inline collection member, coherence-blocked
-                // from a bare `Vec<T>` impl — `SeqOf<T>`'s own doc), not a
-                // distinct type each member could carry its own
-                // `Asn1Value::validate()` override on — same reason
-                // INTEGER/OCTET STRING need `MemberDescriptor::validate`
-                // instead of a trait override. `Generator::collect` always
-                // promotes an inline SEQUENCE OF/SET OF member to its own
-                // synthetic named type as a side effect (`synthetic_name`
-                // below reproduces that exact name), and
-                // `emit_seq_of_definition` (above) always emits that
-                // synthetic type's own `..._CONSTRAINTS` table
-                // unconditionally — real bounds or `flags: 0` — so this
-                // reference is always valid, constrained or not.
-                //
+                // type is the generic `SeqOf<T>`/`SetOf<T>` wrapper shared
+                // by every inline collection member, so it carries no
+                // constraint of its own. `Generator::collect` always
+                // promotes an inline collection member to its own synthetic
+                // named type as a side effect (`synthetic_name` reproduces
+                // that exact name), and `emit_seq_of_definition` always
+                // emits that type's `..._CONSTRAINTS` table — real bounds
+                // or `flags: 0` — so the reference is always valid.
                 // Fully qualified (`crate::{module}::{const}`), not a bare
                 // reference: the synthetic type lives in its own generated
-                // file/module (`Generator::emit_seq_of` runs it through its
-                // own `TypeOutputSession`, separate from this SEQUENCE's
-                // own), and this is the first thing in this file that ever
-                // references it by name — `needs_seqof_wrapper_reference()`
-                // is `false` for Rust (the field itself never names the
-                // synthetic type, only the generic wrapper), so Generator's
-                // own `use crate::X;` bookkeeping was never told to emit
-                // one here. Fully qualifying sidesteps needing a `use` line
-                // at all; the module name is the same `to_snake_case` of
-                // the synthetic type name every other cross-module
-                // reference in this codebase already derives it as.
+                // module, and nothing else in this file names it.
                 std::string synth = synthetic_name(spec.type_name, m.asn1_name);
-                std::string cname = std::format("crate::{}::{}_CONSTRAINTS", to_snake_case(synth),
-                                                 to_screaming_snake_case(synth));
-                validate_expr = m.optional
-                    ? std::format("Some(|v| v.{}.as_ref().map_or(0, |x| asn1cpp_wire::constraints::validate_size(x.len(), &{})))",
-                                   m.mname, cname)
-                    : std::format("Some(|v| asn1cpp_wire::constraints::validate_size(v.{}.len(), &{}))", m.mname, cname);
+                constraints_expr = std::format("Some(&crate::{}::{}_CONSTRAINTS)", to_snake_case(synth),
+                                                to_screaming_snake_case(synth));
             }
-            os << std::format("        validate: {},\n", validate_expr);
+            os << std::format("        constraints: {},\n", constraints_expr);
             os << "    },\n";
         }
         os << "];\n\n";
@@ -2385,131 +2242,36 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                     os << "    },\n";
                     continue;
                 }
-                if ((!a.mbuiltin && (a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
-                                     a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias ||
-                                     a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other)) ||
-                    (a.mbuiltin && *a.mbuiltin == ast::BuiltinType::Null)) {
-                    // TypeRef to ENUMERATED, to a named INTEGER type (a real
-                    // newtype now — emit_integer_definition's own doc), to
-                    // another named SEQUENCE/CHOICE/SET, or a direct NULL
-                    // alternative (X.691 §14, the blanket `impl PerValue for
-                    // ()`) — either way the target already has an
-                    // unconditional `PerValue` impl; the alternative's
-                    // payload type is that type directly, so this dispatches
-                    // through the trait rather than integer::encode_int.
-                    // `asn1cpp_wire::value::Box<T>`'s
-                    // own blanket `PerValue` impl makes `x: &Box<T>` (a
-                    // directly self-referential alternative — see
-                    // emit_choice_declaration's own `Box<>` comment) work
-                    // through `PerValue::per_encode` unchanged; only the
-                    // decode constructor needs an explicit `Box::new(..)`
-                    // wrap, since a plain `T` never coerces to `Box<T>`
-                    // the way a reference does.
-                    bool boxed = (a.mtype == spec.type_name);
-                    std::string ctor = boxed ? std::format("Box::new(x)") : "x";
-                    // `()::default()` isn't valid syntax for the unit type —
-                    // `()` is already the (only) value, no Default call needed.
-                    std::string default_expr = a.mtype == "()" ? "()" : std::format("{}::default()", a.mtype);
-                    os << std::format(
-                        "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_wire::value::Asn1Value::per_encode(x, w, &asn1cpp_wire::constraints::UNCONSTRAINED); true }} else {{ false }},\n",
-                        variant_path);
-                    os << std::format(
-                        "        per_decode_into: |r| {{ let mut x = {}; asn1cpp_wire::value::Asn1Value::per_decode_into(&mut x, r, &asn1cpp_wire::constraints::UNCONSTRAINED)?; Ok({}({})) }},\n",
-                        default_expr, variant_path, ctor);
-                    os << "    },\n";
-                    continue;
+                // Every covered alternative reaches its payload through the
+                // payload type's own `Asn1Value::per_encode`/
+                // `per_decode_into`: a named type (ENUMERATED, named
+                // INTEGER, SEQUENCE/CHOICE/SET, a direct NULL — X.691 §14)
+                // owns its constraint and ignores the argument; a shared
+                // native type (`i64`/`u64`/`OctetString`/`BitString`/
+                // `String`/a string newtype) encodes against the inline
+                // SIZE/range table `emit_member_type_descriptor` emitted
+                // for this alternative when `tdref` names one, the shared
+                // unconstrained value otherwise. `Box<T>`'s blanket impl
+                // (a directly self-referential alternative — see
+                // emit_choice_declaration's own `Box<>` comment) forwards
+                // through unchanged; only the decode constructor needs an
+                // explicit `Box::new(..)`, since a plain `T` never coerces
+                // to `Box<T>` the way a reference does.
+                std::string alt_constraints = "&asn1cpp_wire::constraints::UNCONSTRAINED";
+                if (a.mbuiltin && a.tdref.starts_with("&asn_TYP_")) {
+                    alt_constraints = "&" + to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name))) + "_CONSTRAINTS";
                 }
-                if (a.mbuiltin && (*a.mbuiltin == ast::BuiltinType::OctetString ||
-                                    *a.mbuiltin == ast::BuiltinType::BitString)) {
-                    // OCTET STRING/BIT STRING (X.691 §16/§17) — see
-                    // emit_sequence_definition's identical member-side
-                    // branch for the per_cname/field-shape rationale.
-                    bool is_bits = *a.mbuiltin == ast::BuiltinType::BitString;
-                    std::string per_cname;
-                    if (a.tdref.starts_with("&asn_TYP_")) {
-                        std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name)));
-                        per_cname = base + "_CONSTRAINTS";
-                    } else {
-                        per_cname = "asn1cpp_wire::constraints::UNCONSTRAINED";
-                    }
-                    if (is_bits) {
-                        os << std::format(
-                            "        per_encode: |v, w| if let {0}(x) = v {{ asn1cpp_wire::per::bit_string::encode_bit_string(w, &{1}, &x.bytes, x.bit_count()); true }} else {{ false }},\n",
-                            variant_path, per_cname);
-                        os << std::format(
-                            "        per_decode_into: |r| {{ let (bytes, unused) = asn1cpp_wire::per::bit_string::decode_bit_string(r, &{})?; "
-                            "Ok({}(asn1cpp_wire::bit_string::BitString {{ bytes, unused_bits: unused }})) }},\n",
-                            per_cname, variant_path);
-                    } else {
-                        os << std::format(
-                            "        per_encode: |v, w| if let {0}(x) = v {{ asn1cpp_wire::per::octet_string::encode_octet_string(w, &{1}, &x.0); true }} else {{ false }},\n",
-                            variant_path, per_cname);
-                        os << std::format(
-                            "        per_decode_into: |r| {{ let bytes = asn1cpp_wire::per::octet_string::decode_octet_string(r, &{})?; "
-                            "Ok({}(asn1cpp_wire::octet_string::OctetString(bytes))) }},\n",
-                            per_cname, variant_path);
-                    }
-                    os << "    },\n";
-                    continue;
-                }
-                if (a.mbuiltin && per_string_covered(*a.mbuiltin)) {
-                    // Character string kind — see emit_sequence_definition's
-                    // identical branch for the field-shape/error-handling
-                    // rationale (this crate's `AlternativeSpec::per_encode`
-                    // has no `Result` either).
-                    std::string tag_num = std::format("{}.number", builtin_ber_tag(*a.mbuiltin, a.mtype));
-                    std::string per_cname;
-                    if (a.tdref.starts_with("&asn_TYP_")) {
-                        std::string base = to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name)));
-                        per_cname = base + "_CONSTRAINTS";
-                    } else {
-                        per_cname = "asn1cpp_wire::constraints::UNCONSTRAINED";
-                    }
-                    bool bare_string = *a.mbuiltin == ast::BuiltinType::Ia5String;
-                    bool wide = *a.mbuiltin == ast::BuiltinType::BmpString || *a.mbuiltin == ast::BuiltinType::UniversalString;
-                    std::string bytes_expr = wide ? "&x.0" : "x.as_bytes()";
-                    std::string ctor = wide ? std::format("{}(x)", a.mtype)
-                                      : bare_string ? "String::from_utf8(x).unwrap_or_default()"
-                                                    : std::format("{}(String::from_utf8(x).unwrap_or_default())", a.mtype);
-                    os << std::format(
-                        "        per_encode: |v, w| if let {}(x) = v {{ let _ = asn1cpp_wire::per::strings::encode_string(w, &{}, {}, {}); true }} else {{ false }},\n",
-                        variant_path, per_cname, tag_num, bytes_expr);
-                    os << std::format(
-                        "        per_decode_into: |r| {{ let x = asn1cpp_wire::per::strings::decode_string(r, &{}, {})?; Ok({}({})) }},\n",
-                        per_cname, tag_num, variant_path, ctor);
-                    os << "    },\n";
-                    continue;
-                }
-                // Direct builtin INTEGER alternative only — TypeRef to a
-                // named INTEGER type is caught by the Scalar branch above
-                // now (a real newtype with its own PerValue impl,
-                // emit_integer_definition's own doc).
-                const char* fn_ns = a.storage_kind == IntStorageKind::S64 ? "integer" : "uinteger";
-                const char* fn_ty = a.storage_kind == IntStorageKind::S64 ? "encode_int" : "encode_uint";
-                const char* fn_dec = a.storage_kind == IntStorageKind::S64 ? "decode_int" : "decode_uint";
-                if (a.tdref.starts_with("&asn_TYP_")) {
-                    // Same naming convention as emit_sequence_definition's
-                    // own Constrained rows — `emit_member_type_descriptor`
-                    // (Generator's alternative pass) already emitted this
-                    // static under this exact deterministic name.
-                    std::string per_cname = to_screaming_snake_case(
-                        std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name))) + "_CONSTRAINTS";
-                    os << std::format(
-                        "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_wire::per::{}::{}(w, &{}, *x); true }} else {{ false }},\n",
-                        variant_path, fn_ns, fn_ty, per_cname);
-                    os << std::format(
-                        "        per_decode_into: |r| Ok({}(asn1cpp_wire::per::{}::{}(r, &{})?)),\n",
-                        variant_path, fn_ns, fn_dec, per_cname);
-                } else {
-                    std::string cast_in = a.storage_kind == IntStorageKind::U64 ? " as i64" : "";
-                    std::string cast_out = a.storage_kind == IntStorageKind::U64 ? " as u64" : "";
-                    os << std::format(
-                        "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_wire::per::integer::encode_unconstrained_int(w, *x{}); true }} else {{ false }},\n",
-                        variant_path, cast_in);
-                    os << std::format(
-                        "        per_decode_into: |r| Ok({}(asn1cpp_wire::per::integer::decode_unconstrained_int(r)?{})),\n",
-                        variant_path, cast_out);
-                }
+                bool boxed = (a.mtype == spec.type_name);
+                std::string ctor = boxed ? "Box::new(x)" : "x";
+                // `()::default()` isn't valid syntax for the unit type —
+                // `()` is already the (only) value, no Default call needed.
+                std::string default_expr = a.mtype == "()" ? "()" : std::format("{}::default()", a.mtype);
+                os << std::format(
+                    "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_wire::value::Asn1Value::per_encode(x, w, {}); true }} else {{ false }},\n",
+                    variant_path, alt_constraints);
+                os << std::format(
+                    "        per_decode_into: |r| {{ let mut x = {}; asn1cpp_wire::value::Asn1Value::per_decode_into(&mut x, r, {})?; Ok({}({})) }},\n",
+                    default_expr, alt_constraints, variant_path, ctor);
                 os << "    },\n";
             }
             os << "];\n\n";
