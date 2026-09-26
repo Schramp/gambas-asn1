@@ -182,7 +182,8 @@ int main() {
         check("emit_integer: Rust produces a real Asn1Value::validate() using the type's own Constraints",
               rust_cpp.find("static MY_INT_CONSTRAINTS: asn1cpp_wire::constraints::Constraints") != std::string::npos &&
               rust_cpp.find("flags: 1, range_bits: 7, lower_bound: 0, upper_bound: 0, lower_u64: 0u64, upper_u64: 100u64") != std::string::npos &&
-              rust_cpp.find("asn1cpp_wire::constraints::validate_u64(self.0, &MY_INT_CONSTRAINTS)") != std::string::npos,
+              rust_cpp.find("asn1cpp_wire::constraints::validate_u64(self.0, &MY_INT_CONSTRAINTS)") != std::string::npos &&
+              rust_cpp.find("fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {\n        &MY_INT_CONSTRAINTS\n    }") != std::string::npos,
               rust_cpp);
     }
 

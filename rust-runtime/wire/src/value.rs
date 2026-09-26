@@ -261,6 +261,18 @@ pub trait Asn1Value {
         Ok(())
     }
 
+    /// The constraint this type itself owns — a generated INTEGER newtype's
+    /// range, a builtin-alias newtype's SIZE, a SEQUENCE OF newtype's SIZE.
+    /// `UNCONSTRAINED` for every type without one: a shared native type
+    /// (`i64`, `String`, ...) takes its constraint from the declaration
+    /// that uses it (the member row), and SEQUENCE/CHOICE/ENUMERATED carry
+    /// theirs in their own spec tables. A caller with no enclosing member
+    /// row (a top-level PDU) passes `value.constraints()` as the `c`
+    /// argument of `per_encode`/`per_decode_into`/`validate`.
+    fn constraints(&self) -> &'static crate::constraints::Constraints {
+        &crate::constraints::UNCONSTRAINED
+    }
+
     /// X.691 unaligned PER encoding of this value. `c` is the declaration's
     /// own `Constraints` (range bits, SIZE, ...): PER's wire shape depends on
     /// the declared constraint, so a shared native type (`i64`, `String`,
@@ -1133,6 +1145,10 @@ impl<T: Asn1Value> Asn1Value for Box<T> {
     fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
         (**self).validate(c)
     }
+
+    fn constraints(&self) -> &'static crate::constraints::Constraints {
+        (**self).constraints()
+    }
 }
 
 #[cfg(test)]
@@ -1167,6 +1183,12 @@ mod per_blanket_tests {
         let mut back = 0i64;
         back.per_decode_into(&mut Reader::new(&via_trait), &c).unwrap();
         assert_eq!(back, 9);
+    }
+
+    #[test]
+    fn a_type_without_its_own_constraint_reports_unconstrained_and_box_forwards() {
+        assert_eq!(5i64.constraints(), &crate::constraints::UNCONSTRAINED);
+        assert_eq!(Box::new(5i64).constraints(), &crate::constraints::UNCONSTRAINED);
     }
 
     #[test]

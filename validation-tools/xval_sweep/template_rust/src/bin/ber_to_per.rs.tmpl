@@ -34,7 +34,7 @@ fn encode_one(type_name: &str, data: &[u8]) -> Result<(Vec<u8>, usize), asn1cpp_
             let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
             <randgen_rust::__PDU_MODULE__::__PDU_IDENT__ as asn1cpp_wire::value::Asn1Value>::ber_decode_into(&mut v, &mut r)?;
             let mut w = asn1cpp_wire::per::writer::Writer::new();
-            v.per_encode(&mut w, &asn1cpp_wire::constraints::UNCONSTRAINED);
+            v.per_encode(&mut w, v.constraints());
             w.flush();
             Ok((w.into_bytes(), r.pos()))
         }
