@@ -11,6 +11,80 @@ use crate::writer::write_primitive;
 
 pub const INTEGER_TAG: Tag = Tag::universal(universal::INTEGER, false);
 
+/// INTEGER whose declared range fits `i64` (X.680 §19). A real type, not the
+/// bare native, so it has its own `Asn1Value` impl (natural tag, XER name,
+/// PER against the row's `Constraints`, validation) like every other
+/// builtin; `Deref`/`DerefMut` keep arithmetic and comparison ergonomic.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Integer(pub i64);
+
+impl std::ops::Deref for Integer {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Integer {
+    fn deref_mut(&mut self) -> &mut i64 {
+        &mut self.0
+    }
+}
+
+impl PartialEq<i64> for Integer {
+    fn eq(&self, other: &i64) -> bool {
+        self.0 == *other
+    }
+}
+
+/// INTEGER whose range needs unsigned 64-bit storage (`IntStorageKind::U64`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UInteger(pub u64);
+
+impl std::ops::Deref for UInteger {
+    type Target = u64;
+    fn deref(&self) -> &u64 {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for UInteger {
+    fn deref_mut(&mut self) -> &mut u64 {
+        &mut self.0
+    }
+}
+
+impl PartialEq<u64> for UInteger {
+    fn eq(&self, other: &u64) -> bool {
+        self.0 == *other
+    }
+}
+
+/// INTEGER whose range needs 128-bit storage (`IntStorageKind::I128`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BigInteger(pub i128);
+
+impl std::ops::Deref for BigInteger {
+    type Target = i128;
+    fn deref(&self) -> &i128 {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for BigInteger {
+    fn deref_mut(&mut self) -> &mut i128 {
+        &mut self.0
+    }
+}
+
+impl PartialEq<i128> for BigInteger {
+    fn eq(&self, other: &i128) -> bool {
+        self.0 == *other
+    }
+}
+
+
+
 /// `IntStorageKind::ARBITRARY` storage (`RustBackend::native_int_type`) —
 /// an INTEGER whose constrained range exceeds `i128` (unconstrained or very
 /// wide, e.g. cryptographic keys). Its own newtype, not a direct

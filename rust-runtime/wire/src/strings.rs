@@ -54,8 +54,6 @@ use crate::value::Asn1Value;
 use crate::writer::write_primitive;
 use crate::xer::XerReader;
 
-pub const IA5_STRING_TAG: Tag = Tag::universal(universal::IA5_STRING, false);
-
 /// Content octets only (X.690 §8.7 — the raw UTF-8 bytes) — shared by every
 /// character string kind, `IA5String` included. `kind` is only used to name
 /// the offending type in a decode error message.
@@ -175,6 +173,7 @@ macro_rules! char_string_type {
     };
 }
 
+char_string_type!(Ia5String, IA5_STRING_TAG, universal::IA5_STRING, "IA5String");
 char_string_type!(Utf8String, UTF8_STRING_TAG, universal::UTF8_STRING, "UTF8String");
 char_string_type!(NumericString, NUMERIC_STRING_TAG, universal::NUMERIC_STRING, "NumericString");
 char_string_type!(PrintableString, PRINTABLE_STRING_TAG, universal::PRINTABLE_STRING, "PrintableString");

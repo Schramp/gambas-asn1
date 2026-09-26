@@ -166,14 +166,14 @@ int main() {
         check("native_int_type: C++ maps U64 to asn1::UInteger",
               c.native_int_type(IntStorageKind::U64) == "asn1::UInteger",
               c.native_int_type(IntStorageKind::U64));
-        check("native_int_type: Rust maps U64 to u64",
-              r.native_int_type(IntStorageKind::U64) == "u64",
+        check("native_int_type: Rust maps U64 to UInteger",
+              r.native_int_type(IntStorageKind::U64) == "asn1cpp_wire::integer::UInteger",
               r.native_int_type(IntStorageKind::U64));
         check("emit_integer: C++ produces a using-alias to asn1::UInteger",
               cpp_hpp.find("using MyInt = asn1::UInteger;") != std::string::npos,
               cpp_hpp);
         check("emit_integer: Rust produces a real newtype (not a bare alias)",
-              rust_hpp.find("pub struct MyInt(pub u64);") != std::string::npos,
+              rust_hpp.find("pub struct MyInt(pub asn1cpp_wire::integer::UInteger);") != std::string::npos,
               rust_hpp);
         check("emit_integer: C++ produces a Constraints-bearing TypeDescriptor",
               cpp_cpp.find("asn_DEF_MyInt") != std::string::npos &&
@@ -182,7 +182,7 @@ int main() {
         check("emit_integer: Rust produces a real Asn1Value::validate() using the type's own Constraints",
               rust_cpp.find("static MY_INT_CONSTRAINTS: asn1cpp_wire::constraints::Constraints") != std::string::npos &&
               rust_cpp.find("flags: 1, range_bits: 7, lower_bound: 0, upper_bound: 0, lower_u64: 0u64, upper_u64: 100u64") != std::string::npos &&
-              rust_cpp.find("asn1cpp_wire::constraints::validate_u64(self.0, &MY_INT_CONSTRAINTS)") != std::string::npos &&
+              rust_cpp.find("asn1cpp_wire::constraints::validate_u64(*self.0, &MY_INT_CONSTRAINTS)") != std::string::npos &&
               rust_cpp.find("fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {\n        &MY_INT_CONSTRAINTS\n    }") != std::string::npos,
               rust_cpp);
     }
@@ -280,7 +280,7 @@ int main() {
 
         TypeOutputSession cpp_session, rust_session;
         c.emit_default_setter(spec, "int64_t", "MySeq", "myField", cpp_session);
-        r.emit_default_setter(spec, "i64", "MySeq", "myField", rust_session);
+        r.emit_default_setter(spec, "asn1cpp_wire::integer::Integer", "MySeq", "myField", rust_session);
         std::string cpp_os = buf_str(cpp_session, c.definition_extension());
         std::string rust_os = buf_str(rust_session, r.definition_extension());
 
@@ -289,7 +289,7 @@ int main() {
               cpp_os.find("_isdef_MySeq_myField") != std::string::npos,
               cpp_os);
         check("emit_default_setter: Rust produces a real accessor function (not a stub)",
-              rust_os.find("pub fn my_seq_myField_default() -> i64 {") != std::string::npos &&
+              rust_os.find("pub fn my_seq_myField_default() -> asn1cpp_wire::integer::Integer {") != std::string::npos &&
               rust_os.find("42") != std::string::npos,
               rust_os);
     }
