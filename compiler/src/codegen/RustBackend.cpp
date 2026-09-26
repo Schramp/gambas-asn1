@@ -1378,7 +1378,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         if (m.mbuiltin) return "builtin type/storage combination not yet supported for PER";
         return "referenced type has no PerValue impl";
     };
-    std::ostringstream per_members_os;
     {
         // Emitted unconditionally, even for an empty SEQUENCE {} (0
         // members, e.g. an ASN.1 extension-marker placeholder like
@@ -1426,7 +1425,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             if (!sequence_member_covered(m)) {
                 os << "        tag: asn1cpp_wire::sequence::SEQUENCE_TAG,\n";
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                os << std::format("        access: asn1cpp_wire::sequence::MemberAccess::Unsupported {{ reason: \"{}\" }},\n", stub_reason(m));
+                os << std::format("        access: asn1cpp_wire::sequence::MemberAccess::Unsupported {{ reason: \"{}\", get: |v| &v.{}, get_mut: |v| &mut v.{} }},\n",
+                                  stub_reason(m), m.mname, m.mname);
             } else if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any) {
                 // `[n] ANY` — always EXPLICIT (sequence_member_covered
                 // only lets this branch's precondition through when so).
@@ -1510,87 +1510,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             }
             os << std::format("        set_default: {},\n", set_default_expr);
             os << std::format("        is_default_equal: {},\n", is_default_equal_expr);
-            {
-                // Always emitted, real or `Unsupported` — mirrors BER's
-                // own unconditional per-row emission (`sequence_member_
-                // covered`'s doc): a member `per_member_covered` rejects
-                // gets a stub row (panics only if actually reached, other
-                // members are completely unaffected) instead of
-                // withholding this whole type's `PerValue` impl.
-                // `set_default_expr`/`is_default_equal_expr` are reused
-                // verbatim: both crates' `MemberDescriptor::set_default`/
-                // `is_default_equal` are `Option<fn(&mut T)>`/
-                // `Option<fn(&T) -> bool>`, the identical signature, so the
-                // same closure text is valid Rust in either table.
-                std::string row_constraints = "&asn1cpp_wire::constraints::UNCONSTRAINED";
-                per_members_os << "    asn1cpp_wire::per::sequence::MemberDescriptor {\n";
-                per_members_os << std::format("        name: \"{}\",\n", m.asn1_name);
-                per_members_os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                per_members_os << std::format("        is_present: |{}| {},\n",
-                                               m.optional ? "v" : "_v",
-                                               m.optional ? std::format("v.{}.is_some()", m.mname) : "true");
-                per_members_os << std::format("        set_default: {},\n", set_default_expr);
-                per_members_os << std::format("        is_default_equal: {},\n", is_default_equal_expr);
-                if (!per_member_covered(m)) {
-                    per_members_os << std::format(
-                        "        access: asn1cpp_wire::per::sequence::MemberAccess::Unsupported {{ reason: \"{}\" }},\n",
-                        per_stub_reason(m));
-                } else if (m.seq_of_kind != SeqOfKind::None) {
-                    // Inline SEQUENCE OF/SET OF of direct builtin INTEGER
-                    // elements (the only shape `per_member_covered`
-                    // accepts here). The field is the generic `SeqOf<T>`/
-                    // `SetOf<T>` wrapper, whose own `Asn1Value::per_encode`
-                    // writes the count against the promoted synthetic
-                    // type's `{TYPE}_CONSTRAINTS` (X.691 §19/§20 SIZE) and
-                    // each element against that table's `element` — the
-                    // element's own range table, or unconstrained
-                    // (`emit_seq_of_definition`). Same plain `Scalar`
-                    // accessor every other member uses.
-                    std::string synth = synthetic_name(spec.type_name, m.asn1_name);
-                    row_constraints = std::format("&crate::{}::{}_CONSTRAINTS", to_snake_case(synth),
-                                                   to_screaming_snake_case(synth));
-                    per_members_os << std::format(
-                        "        access: asn1cpp_wire::per::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n",
-                        m.mname);
-                } else if ((!m.mbuiltin && (m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
-                                             m.ref_kind == SequenceMemberSpec::RefTargetKind::IntegerAlias ||
-                                             m.ref_kind == SequenceMemberSpec::RefTargetKind::Other)) ||
-                           (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Null)) {
-                    // TypeRef to ENUMERATED, to a named INTEGER type (a real
-                    // newtype with its own PerValue impl — emit_integer_
-                    // definition's own doc), to another named SEQUENCE/
-                    // CHOICE/SET, or a direct NULL member (X.691 §14, the
-                    // blanket `impl PerValue for ()`) — either way the
-                    // target already has an unconditional `PerValue` impl,
-                    // so this is the trait-based Scalar path, same shape as
-                    // the BER Scalar row just above.
-                    per_members_os << std::format(
-                        "        access: asn1cpp_wire::per::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n",
-                        m.mname);
-                } else {
-                    // Direct builtin member of a covered shape — INTEGER
-                    // (S64/U64), OCTET STRING/BIT STRING (X.691 §16/§17) or
-                    // a character string kind (§26.5). Its Rust field is a
-                    // shared native type (`i64`/`u64`/`OctetString`/
-                    // `BitString`/`String`/a string newtype), whose blanket
-                    // `Asn1Value::per_encode`/`per_decode_into` encodes
-                    // against whatever `Constraints` the row hands it — the
-                    // inline SIZE/range table `emit_member_type_descriptor`
-                    // emitted when `tdref` names one, the shared
-                    // unconstrained value otherwise (an unconstrained
-                    // INTEGER's wire shape is exactly what `encode_int`/
-                    // `encode_uint` produce for flags == 0, X.691 §10.8).
-                    // Same plain `Scalar` accessor every other member uses.
-                    if (m.tdref.starts_with("&asn_TYP_")) {
-                        row_constraints = "&" + to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)) + "_CONSTRAINTS";
-                    }
-                    per_members_os << std::format(
-                        "        access: asn1cpp_wire::per::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n",
-                        m.mname);
-                }
-                per_members_os << std::format("        constraints: {},\n", row_constraints);
-                per_members_os << "    },\n";
-            }
             // `emit_member_type_descriptor` (above) already emitted a
             // `static ... Constraints` table for a direct INTEGER/Sizeable
             // member with an inline X.680 §19/§25/§26/§51 constraint —
@@ -1655,6 +1574,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                                                 to_screaming_snake_case(synth));
             }
             os << std::format("        constraints: {},\n", constraints_expr);
+            // PER reads the same row; `per_unsupported` names the reason
+            // this member has no PER encoding yet (`per_member_covered`).
+            os << std::format("        per_unsupported: {},\n",
+                              per_member_covered(m) ? std::string("None")
+                                                    : std::format("Some(\"{}\")", per_stub_reason(m)));
             os << "    },\n";
         }
         os << "];\n\n";
@@ -1686,6 +1610,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                           spec.tag ? format_tag_literal(*spec.tag)
                                    : std::format("asn1cpp_wire::sequence::{}", spec.is_set ? "SET_TAG" : "SEQUENCE_TAG"));
         os << std::format("    members: &{},\n", members_ident);
+        os << std::format("    ext_at: {},\n", spec.ext_at);
         os << "};\n\n";
 
         os << std::format("impl {} {{\n", spec.type_name);
@@ -1703,25 +1628,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    }\n";
         os << "}\n\n";
 
-        // PER member table + spec — emitted ahead of the merged impl block
-        // below so its `per_encode`/`per_decode_into` methods have
-        // something to reference. Unconditional, same as the BER/XER
-        // methods: every SEQUENCE/SET always gets real PER support now,
-        // any not-yet-representable member is an `Unsupported` stub row
-        // (`per_member_covered`'s own doc) rather than a reason to
-        // withhold the whole type's PER support.
-        std::string per_members_ident = std::format("{}_PER_MEMBERS", to_screaming_snake_case(spec.type_name));
-        std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(spec.type_name));
-        os << std::format("static {}: [asn1cpp_wire::per::sequence::MemberDescriptor<{}>; {}] = [\n",
-                           per_members_ident, spec.type_name, spec.members.size());
-        os << per_members_os.str();
-        os << "];\n\n";
-        os << std::format(
-            "pub static {}: asn1cpp_wire::per::sequence::SequenceSpec<{}> = asn1cpp_wire::per::sequence::SequenceSpec {{\n",
-            per_spec_ident, spec.type_name);
-        os << std::format("    members: &{},\n", per_members_ident);
-        os << std::format("    ext_at: {},\n", spec.ext_at);
-        os << "};\n\n";
 
         // Makes this type usable as a nested composite member elsewhere —
         // emitted unconditionally whenever this type has at least one
@@ -1759,10 +1665,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
 
         // PER leg (merged into the same impl block, gambas-asn1#537).
         os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {\n";
-        os << std::format("        asn1cpp_wire::per::sequence::encode_sequence_content(&{}, w, self);\n", per_spec_ident);
+        os << std::format("        asn1cpp_wire::per::sequence::encode_sequence_content(&{}, w, self);\n", spec_ident);
         os << "    }\n\n";
         os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {\n";
-        os << std::format("        *self = asn1cpp_wire::per::sequence::decode_sequence_content(&{}, r)?;\n", per_spec_ident);
+        os << std::format("        *self = asn1cpp_wire::per::sequence::decode_sequence_content(&{}, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n";
         os << "}\n\n";
