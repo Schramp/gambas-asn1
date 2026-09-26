@@ -1841,161 +1841,105 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // the common case (a normal alternative always contributes exactly one
     // entry to `ber_tags` too), duplicated only for a CHOICE-of-CHOICE
     // alternative.
-    struct EmitRow { const ChoiceAlternativeSpec* alt; std::string tag_lit; };
-    std::vector<EmitRow> rows;
+    // BER dispatch: wire tag -> alternative index, precomputed here.
+    // `spec.ber_tags` (Backend.hpp) already flattens an untagged
+    // CHOICE-typed alternative into one entry per tag of the inner CHOICE
+    // (X.690 §8.13); otherwise each tagged alternative contributes its own.
+    std::vector<std::pair<std::string, size_t>> dispatch;
     if (spec.has_ber_table) {
-        for (const auto& [tag_lit, idx] : spec.ber_tags)
-            rows.push_back({&spec.alternatives[idx], tag_lit});
+        for (const auto& [tag_lit, idx] : spec.ber_tags) dispatch.emplace_back(tag_lit, idx);
     } else {
-        for (const auto& a : spec.alternatives)
-            if (choice_alternative_has_tag(a))
-                rows.push_back({&a, format_tag_literal(*a.resolved_tag)});
+        for (size_t i = 0; i < spec.alternatives.size(); ++i)
+            if (choice_alternative_has_tag(spec.alternatives[i]))
+                dispatch.emplace_back(format_tag_literal(*spec.alternatives[i].resolved_tag), i);
     }
-    if (!rows.empty()) {
+    if (!dispatch.empty()) {
         std::string alts_ident = std::format("{}_ALTERNATIVES", to_screaming_snake_case(spec.type_name));
+        std::string tags_ident = std::format("{}_BER_TAGS", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
 
-        os << std::format("static {}: [asn1cpp_wire::choice::AlternativeSpec<{}>; {}] = [\n",
-                          alts_ident, spec.type_name, rows.size());
-        for (const auto& row : rows) {
-            const auto& a = *row.alt;
+        auto per_alt_covered = [](const ChoiceAlternativeSpec& a) -> bool {
+            if (a.mbuiltin) {
+                if (*a.mbuiltin == ast::BuiltinType::Integer)
+                    return a.storage_kind == IntStorageKind::S64 || a.storage_kind == IntStorageKind::U64;
+                if (*a.mbuiltin == ast::BuiltinType::OctetString || *a.mbuiltin == ast::BuiltinType::BitString)
+                    return true;
+                // NULL (X.691 §14) — zero bits either direction, a common
+                // 3GPP "spare"/reserved-placeholder alternative pattern.
+                if (*a.mbuiltin == ast::BuiltinType::Null) return true;
+                return !a.has_from_alphabet && per_string_covered(*a.mbuiltin);
+            }
+            return a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
+                   a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias ||
+                   a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other;
+        };
+
+        os << std::format("static {}: [asn1cpp_wire::choice::Alternative<{}>; {}] = [\n",
+                          alts_ident, spec.type_name, spec.alternatives.size());
+        for (const auto& a : spec.alternatives) {
             std::string vname = variant_name(*this, a.asn1_name);
-            // Directly self-referential alternative (see
-            // emit_choice_declaration's Box<> comment) — `v` binds as
-            // `&Box<Self>`/`&mut Box<Self>` here, but every body_line below
-            // was written assuming `v: &Self`/`&mut Self` (the unboxed
-            // shape every other alternative has). Reborrowing through one
-            // extra deref right after the match keeps every body_line
-            // untouched instead of special-casing each one.
-            bool boxed = (a.mtype == spec.type_name);
-            const char* box_deref = boxed ? "let v = &**v; " : "";
-            // `fn(T) -> C` constructor passed to choice::decode_alt*
-            // (choice.rs) — a bare tuple-variant path is itself a valid
-            // fn item; the boxed case needs a small non-capturing closure
-            // instead (still coerces to the same fn-pointer type).
-            std::string ctor_expr = boxed
-                ? std::format("|v| {}::{}(Box::new(v))", spec.type_name, vname)
-                : std::format("{}::{}", spec.type_name, vname);
-            // choice::alt_match! (rust-runtime/wire/src/choice.rs) owns the
-            // if-let/else-false plumbing generically, including the
-            // single-alternative-CHOICE irrefutable-pattern
-            // case — one line here regardless of alternative count.
             std::string variant_path = std::format("{}::{}", spec.type_name, vname);
-            auto emit_encode_closure = [&](const char* field, const std::string& body_line) {
-                os << std::format("        {}: |x, out| asn1cpp_wire::choice::alt_match!(x, {}, |v| {{ {}{} true }}),\n",
-                                  field, variant_path, box_deref, body_line);
-            };
-            // `xer_encode` carries a third (`depth: usize`) parameter no
-            // other closure field here does (`AlternativeSpec::xer_encode`'s
-            // own doc, choice.rs) — a dedicated emitter, not another
-            // `emit_encode_closure` parameter, since every call site wants
-            // the exact same fixed shape (`x, out, depth`), never a mix.
-            auto emit_xer_encode_closure = [&](const std::string& body_line) {
-                os << std::format("        xer_encode: |x, out, depth| asn1cpp_wire::choice::alt_match!(x, {}, |v| {{ {}{} true }}),\n",
-                                  variant_path, box_deref, body_line);
-            };
-            os << "    asn1cpp_wire::choice::AlternativeSpec {\n";
-            os << std::format("        name: \"{}\",\n", a.asn1_name);
+            // How BER frames the payload; XER and PER read the same
+            // payload through `active`/`emplace` and ignore it.
+            std::string ber;
             if (!choice_alternative_covered(a)) {
-                // Not yet representable (a builtin type/storage combination
-                // with no Asn1Value impl, or a TypeRef to an
-                // ARBITRARY-storage INTEGER alias) — stub every closure.
-                // Graceful per-alternative, unlike a SEQUENCE Unsupported
-                // row: encoding/decoding *other* alternatives of this same
-                // CHOICE is completely unaffected, since encode only panics
-                // when this specific variant is the active one and decode
-                // dispatch only reaches this row when its own tag matched.
-                os << std::format("        tag: {},\n", row.tag_lit);
-                // Not `emit_encode_closure`/`emit_xer_encode_closure`: their
-                // `out`/`depth` closure params are unused here
-                // (`unimplemented!()` needs none of them), which would warn
-                // under this crate's `-D warnings` bar — `_out`/`_depth`
-                // params plus alt_match!'s bound value as `_v`. Rust's
-                // leading-underscore convention suppresses the unused-
-                // variable warning on a real identifier; a bare `_` can't be
-                // used here instead, since it's its own reserved token in
-                // the language grammar, not an identifier — `:ident`
-                // fragments in macro_rules! only ever match identifiers.
-                auto emit_stub_encode_closure = [&](const char* field, const char* params = "x, _out") {
-                    os << std::format(
-                        "        {}: |{}| asn1cpp_wire::choice::alt_match!(x, {}, |_v| unimplemented!(\"alternative not yet supported\")),\n",
-                        field, params, variant_path);
-                };
-                emit_stub_encode_closure("ber_encode");
-                os << std::format("        ber_decode_into: |_r| unimplemented!(\"alternative not yet supported\"),\n");
-                emit_stub_encode_closure("xer_encode", "x, _out, _depth");
-                os << std::format("        xer_decode_into: |_r| unimplemented!(\"alternative not yet supported\"),\n");
-                os << "    },\n";
-                continue;
-            }
-            if (a.resolved_tag && a.is_explicit && a.resolved_tag->tag_is_override) {
-                // EXPLICIT — wrap the alternative's natural
-                // Asn1Value encoding in an outer TLV via value::
-                // encode_explicit/decode_explicit, generic over the
-                // alternative's type (same reasoning as the SEQUENCE scalar
-                // EXPLICIT branch above). Only a real `[n]` written on this
-                // alternative itself (tag_is_override) reaches here — see
-                // the `else` branch below for the bare-type-reference case,
-                // where the referenced type's own Asn1Value impl already
-                // wraps itself (own_tag, choice.rs) and a second wrap here
-                // would double it (X.680 §30.1/30.3 — no TaggedType
-                // construction on this alternative means no extra layer).
-                os << std::format("        tag: {},\n", row.tag_lit);
-                emit_encode_closure("ber_encode", std::format("asn1cpp_wire::value::encode_explicit(out, {}, v);", row.tag_lit));
-                os << std::format("        ber_decode_into: |r| asn1cpp_wire::choice::decode_alt_explicit(r, {}, {}),\n", row.tag_lit, ctor_expr);
+                ber = "asn1cpp_wire::choice::BerTagging::Unsupported(\"alternative not yet supported\")";
+            } else if (a.resolved_tag && a.is_explicit && a.resolved_tag->tag_is_override) {
+                // EXPLICIT (X.690 §8.14.3): an outer TLV around the payload.
+                ber = std::format("asn1cpp_wire::choice::BerTagging::Explicit({})", format_tag_literal(*a.resolved_tag));
             } else if (a.resolved_tag && a.is_explicit) {
-                // A bare type reference (no `[n]` of its own) to a type that
-                // is itself EXPLICIT-tagged (e.g. an alternative referencing
-                // `T4 ::= [53] CHOICE {...}`) — `row.tag_lit` is only needed
-                // here for `decode_choice_from`'s dispatch match; the actual
-                // wrap already happens inside the referenced type's own
-                // Asn1Value impl, so delegate straight to it, same as the
-                // untagged-CHOICE-alternative branch further below.
-                os << std::format("        tag: {},\n", row.tag_lit);
-                emit_encode_closure("ber_encode", "asn1cpp_wire::value::Asn1Value::ber_encode(v, out);");
-                os << std::format("        ber_decode_into: |r| asn1cpp_wire::choice::decode_alt(r, {}),\n", ctor_expr);
+                // A bare reference to an EXPLICIT-tagged type: it wraps
+                // itself, a second wrap here would double it (X.680 §30).
+                ber = "asn1cpp_wire::choice::BerTagging::Delegate";
             } else if (a.resolved_tag) {
-                // Every other tagged alternative — whether IMPLICIT-retagged
-                // or using its own natural tag — dispatches through one
-                // generic pair, `Asn1Value::ber_encode_tagged`/
-                // `ber_decode_into_tagged` (value.rs), using this row's own
-                // tag whatever it is: the natural-tag case is
-                // indistinguishable from an override at this level
-                // (ber_encode_tagged's fast path makes them produce
-                // identical bytes when the two coincide), so no per-kind or
-                // override-vs-natural branching is needed here at all.
-                os << std::format("        tag: {},\n", row.tag_lit);
-                emit_encode_closure("ber_encode", std::format("asn1cpp_wire::value::Asn1Value::ber_encode_tagged(v, {}, out);", row.tag_lit));
-                os << std::format("        ber_decode_into: |r| asn1cpp_wire::choice::decode_alt_tagged(r, {}, {}),\n", row.tag_lit, ctor_expr);
+                // IMPLICIT retag, or the natural tag when they coincide.
+                ber = std::format("asn1cpp_wire::choice::BerTagging::Implicit({})", format_tag_literal(*a.resolved_tag));
             } else {
-                // No tag of its own at all (X.680 §28 — a CHOICE-of-CHOICE
-                // alternative, only reachable when `spec.has_ber_table`):
-                // this row's `tag` is one of the *referenced* CHOICE's own
-                // flattened alternative tags (`row.tag_lit`), used purely to
-                // get `decode_choice_from`'s linear scan to try this row —
-                // once tried, the actual decode/encode delegates to the
-                // referenced type's own natural (non-tag-substituting)
-                // Asn1Value::ber_encode/ber_decode_into, since the value
-                // already carries its own real tag (whichever of the
-                // referenced CHOICE's alternatives it turns out to be).
-                os << std::format("        tag: {},\n", row.tag_lit);
-                emit_encode_closure("ber_encode", "asn1cpp_wire::value::Asn1Value::ber_encode(v, out);");
-                os << std::format("        ber_decode_into: |r| asn1cpp_wire::choice::decode_alt(r, {}),\n", ctor_expr);
+                // No tag of its own (an untagged CHOICE payload, X.680 §28):
+                // the payload's own encoding already carries its tag.
+                ber = "asn1cpp_wire::choice::BerTagging::Delegate";
             }
-            emit_xer_encode_closure("asn1cpp_wire::value::Asn1Value::xer_encode(v, out, depth);");
-            os << std::format("        xer_decode_into: |r| asn1cpp_wire::choice::decode_alt_xer(r, {}),\n", ctor_expr);
+            // The PER constraints table the alternative's payload encodes
+            // against: the inline SIZE/range table emitted for it when
+            // `tdref` names one, the shared unconstrained value otherwise.
+            std::string alt_constraints = "&asn1cpp_wire::constraints::UNCONSTRAINED";
+            if (a.mbuiltin && a.tdref.starts_with("&asn_TYP_")) {
+                alt_constraints = "&" + to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name))) + "_CONSTRAINTS";
+            }
+            // A single-variant enum (not extensible) needs an irrefutable
+            // `let` instead of `match`, which would warn on its wildcard arm.
+            std::string active = single_alt
+                ? std::format("|x| {{ let {0}(v) = x; Some(v) }}", variant_path)
+                : std::format("|x| match x {{ {0}(v) => Some(v), _ => None }}", variant_path);
+            std::string emplace = single_alt
+                ? std::format("|x| {{ *x = {0}(Default::default()); let {0}(v) = x; v }}", variant_path)
+                : std::format("|x| {{ *x = {0}(Default::default()); match x {{ {0}(v) => v, _ => unreachable!() }} }}", variant_path);
+            os << "    asn1cpp_wire::choice::Alternative {\n";
+            os << std::format("        name: \"{}\",\n", a.asn1_name);
+            os << std::format("        ber: {},\n", ber);
+            os << std::format("        active: {},\n", active);
+            os << std::format("        emplace: {},\n", emplace);
+            os << std::format("        constraints: {},\n", alt_constraints);
+            os << std::format("        per_unsupported: {},\n",
+                              per_alt_covered(a) ? std::string("None") : std::string("Some(\"alternative not yet supported for PER\")"));
             os << "    },\n";
         }
+        os << "];\n\n";
+
+        os << std::format("static {}: [asn1cpp_wire::choice::BerDispatch; {}] = [\n", tags_ident, dispatch.size());
+        for (const auto& [tag_lit, idx] : dispatch)
+            os << std::format("    asn1cpp_wire::choice::BerDispatch {{ tag: {}, alt: {} }},\n", tag_lit, idx);
         os << "];\n\n";
 
         os << std::format(
             "static {}: asn1cpp_wire::choice::ChoiceSpec<{}> = asn1cpp_wire::choice::ChoiceSpec {{\n",
             spec_ident, spec.type_name);
         // X.693 §8.3.1 — document-root XMLTypedValue wrapper name, used only
-        // by encode_choice_xer/decode_choice_xer (never by the _into/_from
+        // by encode_choice_xer/decode_choice_xer (never by the _into
         // nested variants, and never for BER).
         os << std::format("    name: \"{}\",\n", spec.xer_name);
         os << std::format("    alternatives: &{},\n", alts_ident);
+        os << std::format("    ber_tags: &{},\n", tags_ident);
         if (spec.ext_at >= 0) {
             // Wire the UnknownExtension variant (declared
             // in emit_choice_declaration) into the runtime's fallback path —
@@ -2020,6 +1964,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         } else {
             os << "    own_tag: None,\n";
         }
+        os << std::format("    ext_at: {},\n", spec.ext_at);
         os << "};\n\n";
 
         os << std::format("impl {} {{\n", spec.type_name);
@@ -2037,102 +1982,6 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "    }\n";
         os << "}\n\n";
 
-        // PER leg — emitted unconditionally, per-alternative granularity:
-        // mirrors emit_sequence_definition's own per-row policy (see that
-        // function's doc). Scope: a direct builtin INTEGER (S64/U64
-        // storage) alternative, a single-byte-per-character string
-        // alternative, or a TypeRef to ENUMERATED/a named INTEGER type/
-        // another named SEQUENCE/CHOICE/SET (`a.ref_kind` — same
-        // always-covered cases `per_member_covered` accepts; see
-        // TaggedMemberSpec::RefTargetKind's own doc, Backend.hpp). Unlike
-        // the SEQUENCE case, a `[n]` override or AUTOMATIC-assigned
-        // context tag on the alternative is *not* excluded here: X.691 has
-        // no tag concept at all (the CHOICE index itself already
-        // identifies which alternative is present, X.691 §22-23), so an
-        // alternative's PER content is always its plain untagged encoding
-        // regardless of what BER tag it carries — `is_explicit`/
-        // `resolved_tag` are BER-only concerns for a CHOICE alternative
-        // specifically (unlike a SEQUENCE member, where an EXPLICIT wrap
-        // genuinely does add an extra layer PER's own open-type wrapping
-        // would have to reproduce — out of scope here). An uncovered
-        // alternative gets `unimplemented!()` stub closures — no enum
-        // variant needed the way `MemberAccess::Unsupported` is for
-        // SEQUENCE, since `AlternativeSpec` is already closure-based
-        // (mirrors the equivalent BER CHOICE stub above in this file).
-        auto per_alt_covered = [](const ChoiceAlternativeSpec& a) -> bool {
-            if (a.mbuiltin) {
-                if (*a.mbuiltin == ast::BuiltinType::Integer)
-                    return a.storage_kind == IntStorageKind::S64 || a.storage_kind == IntStorageKind::U64;
-                if (*a.mbuiltin == ast::BuiltinType::OctetString || *a.mbuiltin == ast::BuiltinType::BitString)
-                    return true;
-                // NULL (X.691 §14) — zero bits either direction, a common
-                // 3GPP "spare"/reserved-placeholder alternative pattern.
-                if (*a.mbuiltin == ast::BuiltinType::Null) return true;
-                return !a.has_from_alphabet && per_string_covered(*a.mbuiltin);
-            }
-            return a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
-                   a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias ||
-                   a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other;
-        };
-        {
-            std::string per_alts_ident = std::format("{}_PER_ALTERNATIVES", to_screaming_snake_case(spec.type_name));
-            std::string per_spec_ident = std::format("{}_PER_SPEC", to_screaming_snake_case(spec.type_name));
-            os << std::format("static {}: [asn1cpp_wire::per::choice::AlternativeSpec<{}>; {}] = [\n",
-                               per_alts_ident, spec.type_name, spec.alternatives.size());
-            for (const auto& a : spec.alternatives) {
-                std::string vname = variant_name(*this, a.asn1_name);
-                std::string variant_path = std::format("{}::{}", spec.type_name, vname);
-                os << "    asn1cpp_wire::per::choice::AlternativeSpec {\n";
-                os << std::format("        name: \"{}\",\n", a.asn1_name);
-                if (!per_alt_covered(a)) {
-                    os << std::format(
-                        "        per_encode: |_v, _w| unimplemented!(\"alternative '{}' not supported for PER\"),\n",
-                        a.asn1_name);
-                    os << std::format(
-                        "        per_decode_into: |_r| unimplemented!(\"alternative '{}' not supported for PER\"),\n",
-                        a.asn1_name);
-                    os << "    },\n";
-                    continue;
-                }
-                // Every covered alternative reaches its payload through the
-                // payload type's own `Asn1Value::per_encode`/
-                // `per_decode_into`: a named type (ENUMERATED, named
-                // INTEGER, SEQUENCE/CHOICE/SET, a direct NULL — X.691 §14)
-                // owns its constraint and ignores the argument; a shared
-                // native type (`i64`/`u64`/`OctetString`/`BitString`/
-                // `String`/a string newtype) encodes against the inline
-                // SIZE/range table `emit_member_type_descriptor` emitted
-                // for this alternative when `tdref` names one, the shared
-                // unconstrained value otherwise. `Box<T>`'s blanket impl
-                // (a directly self-referential alternative — see
-                // emit_choice_declaration's own `Box<>` comment) forwards
-                // through unchanged; only the decode constructor needs an
-                // explicit `Box::new(..)`, since a plain `T` never coerces
-                // to `Box<T>` the way a reference does.
-                std::string alt_constraints = "&asn1cpp_wire::constraints::UNCONSTRAINED";
-                if (a.mbuiltin && a.tdref.starts_with("&asn_TYP_")) {
-                    alt_constraints = "&" + to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name))) + "_CONSTRAINTS";
-                }
-                bool boxed = (a.mtype == spec.type_name);
-                std::string ctor = boxed ? "Box::new(x)" : "x";
-                // `()::default()` isn't valid syntax for the unit type —
-                // `()` is already the (only) value, no Default call needed.
-                std::string default_expr = std::format("{}::default()", a.mtype);
-                os << std::format(
-                    "        per_encode: |v, w| if let {}(x) = v {{ asn1cpp_wire::value::Asn1Value::per_encode(x, w, {}); true }} else {{ false }},\n",
-                    variant_path, alt_constraints);
-                os << std::format(
-                    "        per_decode_into: |r| {{ let mut x = {}; asn1cpp_wire::value::Asn1Value::per_decode_into(&mut x, r, {})?; Ok({}({})) }},\n",
-                    default_expr, alt_constraints, variant_path, ctor);
-                os << "    },\n";
-            }
-            os << "];\n\n";
-            os << std::format(
-                "static {}: asn1cpp_wire::per::choice::ChoiceSpec<{}> = asn1cpp_wire::per::choice::ChoiceSpec {{\n",
-                per_spec_ident, spec.type_name);
-            os << std::format("    alternatives: &{},\n", per_alts_ident);
-            os << std::format("    ext_at: {},\n", spec.ext_at);
-            os << "};\n\n";
 
         // Makes this type usable as a nested composite member elsewhere —
         // see emit_sequence_definition's identical Asn1Value impl for the
@@ -2163,7 +2012,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << std::format("        asn1cpp_wire::choice::encode_choice_into(&{}, self, out);\n", spec_ident);
         os << "    }\n\n";
         os << "    fn ber_decode_into(&mut self, r: &mut asn1cpp_wire::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << std::format("        *self = asn1cpp_wire::choice::decode_choice_from(&{}, r)?;\n", spec_ident);
+        os << std::format("        asn1cpp_wire::choice::decode_choice_into(&{}, self, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n\n";
         // `encode_choice_xer_into` deliberately ends right after the
@@ -2182,7 +2031,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "        out.push_str(&asn1cpp_wire::xer::indent(depth));\n";
         os << "    }\n\n";
         os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << std::format("        *self = asn1cpp_wire::choice::decode_choice_xer_from(&{}, r)?;\n", spec_ident);
+        os << std::format("        asn1cpp_wire::choice::decode_choice_xer_into(&{}, self, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n\n";
         // X.693: as a SEQUENCE OF/SET OF element, a CHOICE has no wrapper
@@ -2220,21 +2069,20 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             os << std::format("        asn1cpp_wire::choice::encode_choice_tagged(&{}, self, tag, out);\n", spec_ident);
             os << "    }\n\n";
             os << "    fn ber_decode_into_tagged(&mut self, r: &mut asn1cpp_wire::Reader, tag: asn1cpp_wire::Tag) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-            os << std::format("        *self = asn1cpp_wire::choice::decode_choice_tagged(&{}, r, tag)?;\n", spec_ident);
+            os << std::format("        asn1cpp_wire::choice::decode_choice_tagged_into(&{}, self, r, tag)?;\n", spec_ident);
             os << "        Ok(())\n";
             os << "    }\n";
         }
 
         // PER leg (merged into the same impl block, gambas-asn1#537).
         os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {\n";
-        os << std::format("        asn1cpp_wire::per::choice::encode_choice_content(&{}, w, self);\n", per_spec_ident);
+        os << std::format("        asn1cpp_wire::per::choice::encode_choice_content(&{}, w, self);\n", spec_ident);
         os << "    }\n\n";
         os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {\n";
-        os << std::format("        *self = asn1cpp_wire::per::choice::decode_choice_content(&{}, r)?;\n", per_spec_ident);
+        os << std::format("        asn1cpp_wire::per::choice::decode_choice_content_into(&{}, self, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n";
         os << "}\n\n";
-    }
     }
 }
 
