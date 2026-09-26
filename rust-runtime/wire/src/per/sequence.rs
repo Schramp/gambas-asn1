@@ -16,39 +16,26 @@ use crate::per::writer::Writer;
 
 /// How a member's value is reached and (de)serialized.
 ///
-/// `Scalar` works for a member whose own concrete type genuinely owns a
-/// `Asn1Value` impl — SEQUENCE/CHOICE/SEQUENCE OF newtypes, ENUMERATED (a
-/// real, distinct Rust enum per ASN.1 type), or any hand-written newtype.
-///
-/// `Constrained` is for a member whose Rust field type is a *shared*
-/// native type (`i64`/`u64`/`Vec<u8>`/`String`/`bool`) rather than a
-/// per-declaration newtype — INTEGER (`pub type X = i64;`, a plain alias:
-/// `X` and `i64` are literally the same type) is the clearest case, but
-/// OCTET STRING (`Vec<u8>`) and most character-string kinds share the same
-/// shape. Unlike BER, where a shared native type's wire encoding never
-/// varies by declared constraint (2's-complement TLV either way — the
-/// declared range only matters for `Asn1Value::validate()`, a separate
-/// post-decode check), PER's wire shape *is* the constraint (constrained
-/// → fixed-width field, semi-constrained → offset encoding, unconstrained
-/// → variable-length) — so a single `impl Asn1Value for i64` can't be
-/// correct for two differently-constrained INTEGER declarations that both
-/// happen to alias `i64`. `Constrained`'s closures are supplied by codegen
-/// with this member's own `Constraints` already baked in (calling
-/// `integer::encode_int`/`decode_int` or similar internally) — no trait
-/// needed for this case at all, mirroring how the C++ side carries
-/// `Constraints` in the per-usage `TypeDescriptor`, never in the type itself.
+/// `Scalar` reaches the field through an `Asn1Value` trait object — every
+/// covered member, whether its Rust field type owns a per-declaration
+/// newtype (SEQUENCE/CHOICE/ENUMERATED, a named INTEGER, a generated
+/// SEQUENCE OF) or is a shared native type (`i64`/`u64`/`OctetString`/
+/// `BitString`/`String`/a string newtype, `SeqOf<T>`/`SetOf<T>`). PER's wire
+/// shape depends on the declared constraint (constrained → fixed-width
+/// field, semi-constrained → offset encoding, unconstrained →
+/// variable-length), so a shared native type cannot know it from its own
+/// type: the row's `constraints` field carries it and the walker passes it
+/// to `Asn1Value::per_encode`/`per_decode_into`. A type that owns its
+/// constraint (a named generated type) ignores the argument. This mirrors
+/// how the C++ side carries `Constraints` in the per-usage `TypeDescriptor`.
 #[derive(Clone, Copy)]
 pub enum MemberAccess<T: 'static> {
     Scalar {
         get: fn(&T) -> &dyn Asn1Value,
         get_mut: fn(&mut T) -> &mut dyn Asn1Value,
     },
-    Constrained {
-        encode: fn(&T, &mut Writer),
-        decode: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
-    },
     /// A member/alternative shape this crate doesn't implement PER for yet
-    /// (ANY, SEQUENCE OF/SET OF, OCTET STRING/BIT STRING, wide-char or
+    /// (ANY, wide-char or
     /// FROM-alphabet-constrained strings, an EXPLICIT/retagged member —
     /// see `RustBackend`'s own `per_member_covered`/`per_alt_covered` for
     /// the exact current list). Mirrors `asn1cpp_ber::sequence::
@@ -92,8 +79,7 @@ pub struct MemberDescriptor<T: 'static> {
     /// shared native type (`i64`, `String`, ...) has no constraint of its
     /// own, so this is where its declared range/SIZE reaches the encoder.
     /// `UNCONSTRAINED` for a member whose type owns its constraint (a named
-    /// generated type) or has none, and unused by `Constrained`/
-    /// `Unsupported`.
+    /// generated type) or has none, and unused by `Unsupported`.
     pub constraints: &'static Constraints,
 }
 
@@ -118,7 +104,6 @@ fn root_end<T>(spec: &SequenceSpec<T>) -> usize {
 fn access_encode<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
     match m.access {
         MemberAccess::Scalar { get, .. } => get(value).per_encode(w, m.constraints),
-        MemberAccess::Constrained { encode, .. } => encode(value, w),
         MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
     }
 }
@@ -126,7 +111,6 @@ fn access_encode<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
 fn access_decode<T>(m: &MemberDescriptor<T>, result: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
     match m.access {
         MemberAccess::Scalar { get_mut, .. } => get_mut(result).per_decode_into(r, m.constraints),
-        MemberAccess::Constrained { decode, .. } => decode(result, r),
         MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {}", m.name, reason),
     }
 }
@@ -275,18 +259,15 @@ pub fn decode_sequence_content<T: Default>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::per::integer::{decode_int, encode_int};
     use crate::per::integer::{decode_unconstrained_int, encode_unconstrained_int};
     use crate::constraints::Constraints;
 
     // Dogfood-only fixtures (#[cfg(test)]-gated, never public API — mirrors
     // asn1cpp_ber's own no-public-test-fixtures convention).
     //
-    // `a` is a bare `i64` (Constrained access — the shape a real
-    // codegen'd INTEGER alias needs, see MemberAccess's own doc);
-    // `b`/`ext1` are `Option<DogfoodInt>`, a real newtype with its own
-    // Asn1Value impl (Scalar access) — together these exercise both
-    // MemberAccess variants in the same table.
+    // `a` is a bare `i64` reached through a `Scalar` row whose `constraints`
+    // carry its declared range; `b`/`ext1` are `Option<DogfoodInt>`, a real
+    // newtype with its own Asn1Value impl that ignores the row's constraints.
     #[derive(Debug, Default, PartialEq)]
     struct DogfoodInt(i64);
     impl Asn1Value for DogfoodInt {
@@ -312,7 +293,7 @@ mod tests {
         size_range_bits: 0,
         size_lower: 0,
         size_upper: 0,
-        encode_table: None,
+        encode_table: None, element: None,
     };
 
     #[derive(Debug, Default, PartialEq)]
@@ -329,14 +310,8 @@ mod tests {
                 is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                constraints: &crate::constraints::UNCONSTRAINED,
-                access: MemberAccess::Constrained {
-                    encode: |t, w| encode_int(w, &DOGFOOD_CONSTRAINED, t.a),
-                    decode: |t, r| {
-                        t.a = decode_int(r, &DOGFOOD_CONSTRAINED)?;
-                        Ok(())
-                    },
-                },
+                constraints: &DOGFOOD_CONSTRAINED,
+                access: MemberAccess::Scalar { get: |t| &t.a, get_mut: |t| &mut t.a },
             },
             MemberDescriptor {
                 name: "b",
@@ -386,14 +361,8 @@ mod tests {
                 is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                constraints: &crate::constraints::UNCONSTRAINED,
-                access: MemberAccess::Constrained {
-                    encode: |t, w| encode_int(w, &DOGFOOD_CONSTRAINED, t.a),
-                    decode: |t, r| {
-                        t.a = decode_int(r, &DOGFOOD_CONSTRAINED)?;
-                        Ok(())
-                    },
-                },
+                constraints: &DOGFOOD_CONSTRAINED,
+                access: MemberAccess::Scalar { get: |t| &t.a, get_mut: |t| &mut t.a },
             },
             MemberDescriptor {
                 name: "ext1",
@@ -462,14 +431,8 @@ mod tests {
                 is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                constraints: &crate::constraints::UNCONSTRAINED,
-                access: MemberAccess::Constrained {
-                    encode: |t, w| encode_int(w, &DOGFOOD_CONSTRAINED, t.a),
-                    decode: |t, r| {
-                        t.a = decode_int(r, &DOGFOOD_CONSTRAINED)?;
-                        Ok(())
-                    },
-                },
+                constraints: &DOGFOOD_CONSTRAINED,
+                access: MemberAccess::Scalar { get: |t| &t.a, get_mut: |t| &mut t.a },
             },
             MemberDescriptor {
                 name: "skip",
@@ -510,7 +473,7 @@ mod tests {
 
     // A bare `i64` reached through a plain `Scalar` accessor, with its
     // declared range carried by the row's `constraints` — the encoding is
-    // identical to the `Constrained` closure path above.
+    // identical to the row in `SIMPLE_SPEC` above.
     #[derive(Debug, Default, PartialEq)]
     struct ScalarInt {
         a: i64,
