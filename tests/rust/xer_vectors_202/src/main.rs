@@ -31,7 +31,7 @@ fn main() {
     let xer_path = format!("{datadir}/s1.xer");
     let xml = std::fs::read_to_string(&xer_path).unwrap_or_else(|e| panic!("failed to read {xer_path}: {e}"));
 
-    let cert = asn1cpp_ber::xer::decode_sequence_xer_lenient(&certificate::CERTIFICATE_SPEC, &xml);
+    let cert = asn1cpp_wire::xer::decode_sequence_xer_lenient(&certificate::CERTIFICATE_SPEC, &xml);
     check("s1.xer  XER decode ok", cert.is_ok(), &mut failures);
     let cert = match cert {
         Ok(c) => c,
@@ -75,7 +75,7 @@ fn main() {
             // critical DEFAULT FALSE but s1.xer sets it to true
             check("s1.xer  extension critical present", ext.critical.is_some(), &mut failures);
             if let Some(critical) = ext.critical {
-                check("s1.xer  extension critical == true", critical, &mut failures);
+                check("s1.xer  extension critical == true", *critical, &mut failures);
             }
             // extnValue OCTET STRING: hex "30030101FF" = 5 bytes
             check("s1.xer  extnValue byte size == 5", ext.extn_value.len() == 5, &mut failures);

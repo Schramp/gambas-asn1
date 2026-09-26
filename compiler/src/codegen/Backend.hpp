@@ -197,6 +197,17 @@ struct ElemShape {
     std::optional<ast::BuiltinType> builtin;           // meaningful when kind == None
     IntStorageKind storage_kind = IntStorageKind::S64;  // meaningful when builtin == Integer
     std::shared_ptr<ElemShape> nested;  // meaningful when kind != None; recurses to unbounded depth
+    // True when the element carries a real inline constraint of its own
+    // (X.680 §19 INTEGER value range, or §25/§26/§51 SIZE/FROM on a
+    // Sizeable kind) — meaningful only when kind == None && builtin has a
+    // value. Names the promoted SEQUENCE OF/SET OF type's own
+    // ASN_TYP_{TYPE}_ELEM_CONSTRAINTS_PER static (emit_seq_of_definition's
+    // own emit_member_type_descriptor call always builds this exact,
+    // predictable name whenever true); false means genuinely unconstrained,
+    // in which case a backend references the shared "no constraint"
+    // constant instead (asn1cpp_wire::constraints::UNCONSTRAINED) rather
+    // than needing anything emitted for this element at all.
+    bool has_own_descriptor = false;
 };
 
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —
@@ -422,6 +433,41 @@ struct TaggedMemberSpec {
     // rather than string-matching `mtype`, since `mtype` only coincidentally
     // matches what `native_int_type(IntStorageKind::S64)` returns.
     IntStorageKind storage_kind = IntStorageKind::S64;
+
+    // Set only for a TypeRef member/alternative (mbuiltin unset above) whose
+    // resolved target is itself ENUMERATED or a named INTEGER type —
+    // Generator resolves this once at collect-time (Generator::
+    // classify_typeref_for_per, which needs resolver_ access Backend
+    // doesn't have) so a backend never needs its own resolver to know
+    // whether a TypeRef member has a knowable PER shape. Both cases are
+    // always-covered regardless of any other type's own state: ENUMERATED
+    // unconditionally gets a PerValue impl whenever it has at least one
+    // value (X.680 §20.1 requires ≥1, so this is effectively always) and a
+    // named INTEGER type unconditionally gets a {NAME}_PER_CONSTRAINTS
+    // static whenever its storage is S64/U64 — neither depends on the
+    // *referencing* type's own members the way, say, a TypeRef to
+    // SEQUENCE/CHOICE would (that target's own PER coverage is itself
+    // data-dependent on its members, so is deliberately left unclassified
+    // here — `Other`, same as today).
+    enum class RefTargetKind { NotRef, Enumerated, IntegerAlias, Other };
+    RefTargetKind ref_kind = RefTargetKind::NotRef;
+    // Meaningful only when ref_kind == IntegerAlias — the resolved target
+    // type's own storage kind (this member's own `storage_kind` above
+    // stays at its harmless S64 default for every TypeRef member, since
+    // TypeRef members never populate `mbuiltin`/`storage_kind` from their
+    // own AST node). `mtype` (declared per-derived-struct) already carries
+    // the target's Rust identifier — no separate name field needed here.
+    IntStorageKind ref_storage_kind = IntStorageKind::S64;
+
+    // True when a direct builtin character-string member/alternative
+    // carries an X.680 §51.4 FROM (PermittedAlphabet) constraint —
+    // meaningless otherwise. `asn1cpp_wire::per::strings::encode_string`/
+    // `decode_string`'s core path (rust-runtime/wire/src/per) only implements the
+    // *natural* alphabet (X.691 §26.5.3/§26.5.6), not FROM-alphabet index
+    // remapping, so a backend's own PER coverage gate for a string member
+    // must exclude this case explicitly rather than silently encoding
+    // with the wrong (too-wide) bit width per character.
+    bool has_from_alphabet = false;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. Several

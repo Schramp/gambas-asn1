@@ -90,10 +90,10 @@ public:
 
     std::string native_int_type(IntStorageKind kind) const override {
         switch (kind) {
-            case IntStorageKind::U64:       return "u64";
-            case IntStorageKind::I128:      return "i128";  // Rust has a real 128-bit type — no C++-style stub
-            case IntStorageKind::ARBITRARY: return "asn1cpp_ber::integer::ArbitraryInteger";
-            default:                        return "i64";
+            case IntStorageKind::U64:       return "asn1cpp_wire::integer::UInteger";
+            case IntStorageKind::I128:      return "asn1cpp_wire::integer::BigInteger";  // Rust has a real 128-bit type — no C++-style stub
+            case IntStorageKind::ARBITRARY: return "asn1cpp_wire::integer::ArbitraryInteger";
+            default:                        return "asn1cpp_wire::integer::Integer";
         }
     }
 
@@ -118,7 +118,7 @@ public:
     // tags via mbuiltin instead), but must stay valid Rust in case that
     // changes (e.g. CHOICE-member coverage).
     std::string format_no_tag_literal() const override {
-        return "asn1cpp_ber::tag::Tag { class: asn1cpp_ber::tag::TagClass::Context, number: 0, constructed: false }";
+        return "asn1cpp_wire::tag::Tag { class: asn1cpp_wire::tag::TagClass::Context, number: 0, constructed: false }";
     }
 
     // tdref is populated unconditionally for every
@@ -199,7 +199,7 @@ private:
     // Per-row real-vs-stub predicates for emit_sequence_definition/
     // emit_choice_definition — every generated SEQUENCE/SET/CHOICE always
     // gets a real table and `Asn1Value` impl (see
-    // `sequence::MemberAccess::Unsupported`'s doc, rust-runtime/ber). These
+    // `sequence::MemberAccess::Unsupported`'s doc, rust-runtime/wire). These
     // predicates do not gate whether a *type* gets emitted at all; they only
     // decide whether a given member/alternative's own row is a real access
     // closure or an `Unsupported` stub. A referenced composite type (a

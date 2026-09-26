@@ -16,8 +16,8 @@
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
 
-use asn1cpp_ber::value::Asn1Value;
-use asn1cpp_ber::xer::XerReader;
+use asn1cpp_wire::value::Asn1Value;
+use asn1cpp_wire::xer::XerReader;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -157,7 +157,7 @@ fn process_inner(path: &Path, name: &str) -> (bool, i32) {
     }
 
     let mut val2 = pdu::PDU::default();
-    let ber_ok = val2.ber_decode_into(&mut asn1cpp_ber::Reader::new(&ber)).is_ok();
+    let ber_ok = val2.ber_decode_into(&mut asn1cpp_wire::Reader::new(&ber)).is_ok();
     check(&format!("{name}  BER decode ok"), ber_ok, &mut failures);
     if !ber_ok {
         return (false, failures);

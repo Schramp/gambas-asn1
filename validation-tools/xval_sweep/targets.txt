@@ -55,6 +55,12 @@
 #     gets the X.693 §8.3.1 document-element wrapper asn1c always emits,
 #     in both C++ (XerCodec.cpp) and Rust (choice.rs).
 
+# RRC first: the slowest target to build (real 3GPP schema) but the one
+# that matters most for PER work — running it first surfaces its result as
+# soon as its own build finishes, instead of after every smaller target's
+# build too.
+examples/sample.source.RRC/asn1-files/rrc-7.1.0.asn1    UL-CCCH-Message
+
 tests/asn1/roundtrip_test.asn1        Container
 tests/asn1/explicit_tag_test.asn1     Mixed
 tests/asn1/choice_test.asn1           Alt4
@@ -76,3 +82,4 @@ tests/asn1/rust_range_test.asn1        Gauge
 tests/asn1/rust_size_test.asn1         Blob
 tests/asn1/rust_seqof_size_test.asn1   Basket
 tests/asn1/rust_alphabet_test.asn1     Code
+tests/asn1/rust_seqof_int_per_test.asn1   Bag

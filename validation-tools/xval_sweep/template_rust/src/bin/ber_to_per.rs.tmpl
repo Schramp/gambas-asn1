@@ -1,12 +1,16 @@
-// ber-to-xer — decode raw BER stream and emit XER to stdout.
+// ber-to-per — decode raw BER stream, re-encode each record to UPER, emit
+// length-prefixed PER records to stdout. Same 4-byte-big-endian-length +
+// bytes framing as the C++ ber-to-per (template_cpp/src/ber-to-per.cpp) —
+// PER has no self-delimiting record boundary the way BER's TLV framing
+// does (X.691 has nothing corresponding to it).
 //
-// Materialized by asn1cpp-validation-tools/xval_sweep/xval_sweep.py from
-// ber_to_xer.rs.tmpl for a single (schema, PDU) target — same CLI
-// contract as etsitools/asn1cpp/randgen-rust/src/bin/ber_to_xer.rs (the
-// hand-maintained ETSI version this template generalizes), just one
-// `--type` value instead of a fixed match arm list.
+// Materialized by asn1cpp-validation-tools/xval_sweep/xval_sweep.py --
+// only when the target type has a `PerValue` impl (grepped from the
+// generated .rs source before this template is materialized at all; see
+// xval_sweep.py's own build_rust doc).
 //
-// Usage: ber-to-xer --type __PDU_TYPE__ [FILE]
+// Usage: ber-to-per --type __PDU_TYPE__ [FILE]
+use asn1cpp_wire::value::Asn1Value;
 use std::io::{Read, Write};
 
 const TYPES: &[&str] = &["__PDU_TYPE__"];
@@ -23,13 +27,16 @@ fn list_types() {
     }
 }
 
-fn decode_one(type_name: &str, data: &[u8]) -> Result<(String, usize), asn1cpp_wire::DecodeError> {
+fn encode_one(type_name: &str, data: &[u8]) -> Result<(Vec<u8>, usize), asn1cpp_wire::DecodeError> {
     let mut r = asn1cpp_wire::Reader::new(data);
     match type_name {
         "__PDU_TYPE__" => {
             let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
             <randgen_rust::__PDU_MODULE__::__PDU_IDENT__ as asn1cpp_wire::value::Asn1Value>::ber_decode_into(&mut v, &mut r)?;
-            Ok((v.encode_xer(), r.pos()))
+            let mut w = asn1cpp_wire::per::writer::Writer::new();
+            v.per_encode(&mut w, v.constraints());
+            w.flush();
+            Ok((w.into_bytes(), r.pos()))
         }
         _ => unreachable!("checked by caller"),
     }
@@ -79,15 +86,15 @@ fn main() {
     let mut out = stdout.lock();
 
     while offset < data.len() {
-        match decode_one(&type_name, &data[offset..]) {
-            Ok((xer, consumed)) => {
+        match encode_one(&type_name, &data[offset..]) {
+            Ok((per_bytes, consumed)) => {
                 if consumed == 0 {
                     eprintln!("Zero bytes consumed at offset {offset}");
                     break;
                 }
                 offset += consumed;
-                out.write_all(xer.as_bytes()).unwrap();
-                out.write_all(b"\n").unwrap();
+                out.write_all(&(per_bytes.len() as u32).to_be_bytes()).unwrap();
+                out.write_all(&per_bytes).unwrap();
                 n += 1;
             }
             Err(e) => {

@@ -1,0 +1,9 @@
+[package]
+name = "asn1cpp-wire"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust BER/XER/PER codec primitives, merged into one crate around a single Asn1Value trait (gambas-asn1#537) — no FFI to the C++ runtime. asn1cpp-ber/asn1cpp-per/asn1cpp-constraints are thin re-export crates over this one, kept for external path compatibility."
+
+[lib]
+name = "asn1cpp_wire"
+path = "src/lib.rs"

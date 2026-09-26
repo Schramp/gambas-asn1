@@ -1416,12 +1416,16 @@ if(WITH_RUST_COMPILE_CHECK)
     set_tests_properties(rust_compile_check PROPERTIES TIMEOUT 60 LABELS "rust")
 endif()
 
-# ---- rust-runtime/ber cargo test (gambas-asn1#218) -------------------------
-if(WITH_BER_RUNTIME_TEST)
-    add_test(NAME ber_runtime_cargo_test
+# ---- rust-runtime/wire cargo test (gambas-asn1#218/#537/#539) --------------
+#   asn1cpp-ber and asn1cpp-per merged into one asn1cpp-wire crate (#537),
+#   which then absorbed their tests too once the shim crates were removed
+#   (#539) — one test covers what used to be two (ber_runtime_cargo_test/
+#   per_runtime_cargo_test).
+if(WITH_BER_RUNTIME_TEST OR WITH_PER_RUNTIME_TEST)
+    add_test(NAME wire_runtime_cargo_test
         COMMAND ${CARGO_EXECUTABLE} test --manifest-path
-                ${CMAKE_SOURCE_DIR}/rust-runtime/ber/Cargo.toml)
-    set_tests_properties(ber_runtime_cargo_test PROPERTIES TIMEOUT 120 LABELS "rust")
+                ${CMAKE_SOURCE_DIR}/rust-runtime/wire/Cargo.toml)
+    set_tests_properties(wire_runtime_cargo_test PROPERTIES TIMEOUT 120 LABELS "rust")
 endif()
 
 # ---- codegen -> asn1cpp-ber roundtrip (gambas-asn1#219) --------------------

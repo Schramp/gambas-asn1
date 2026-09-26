@@ -1,12 +1,12 @@
-// ber-to-xer — decode raw BER stream and emit XER to stdout.
+// per-to-ber — read length-prefixed UPER records (same framing
+// ber-to-per, this directory, produces) and re-encode each to BER,
+// writing the concatenated (self-delimiting) BER TLVs to stdout.
 //
-// Materialized by asn1cpp-validation-tools/xval_sweep/xval_sweep.py from
-// ber_to_xer.rs.tmpl for a single (schema, PDU) target — same CLI
-// contract as etsitools/asn1cpp/randgen-rust/src/bin/ber_to_xer.rs (the
-// hand-maintained ETSI version this template generalizes), just one
-// `--type` value instead of a fixed match arm list.
+// Materialized by asn1cpp-validation-tools/xval_sweep/xval_sweep.py --
+// only when the target type has a `PerValue` impl.
 //
-// Usage: ber-to-xer --type __PDU_TYPE__ [FILE]
+// Usage: per-to-ber --type __PDU_TYPE__ [FILE]
+use asn1cpp_wire::value::Asn1Value;
 use std::io::{Read, Write};
 
 const TYPES: &[&str] = &["__PDU_TYPE__"];
@@ -23,13 +23,13 @@ fn list_types() {
     }
 }
 
-fn decode_one(type_name: &str, data: &[u8]) -> Result<(String, usize), asn1cpp_wire::DecodeError> {
-    let mut r = asn1cpp_wire::Reader::new(data);
+fn decode_one(type_name: &str, per_bytes: &[u8]) -> Result<Vec<u8>, asn1cpp_wire::per::reader::DecodeError> {
+    let mut r = asn1cpp_wire::per::reader::Reader::new(per_bytes);
     match type_name {
         "__PDU_TYPE__" => {
             let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
-            <randgen_rust::__PDU_MODULE__::__PDU_IDENT__ as asn1cpp_wire::value::Asn1Value>::ber_decode_into(&mut v, &mut r)?;
-            Ok((v.encode_xer(), r.pos()))
+            v.per_decode_into(&mut r, v.constraints())?;
+            Ok(v.encode())
         }
         _ => unreachable!("checked by caller"),
     }
@@ -79,19 +79,26 @@ fn main() {
     let mut out = stdout.lock();
 
     while offset < data.len() {
-        match decode_one(&type_name, &data[offset..]) {
-            Ok((xer, consumed)) => {
-                if consumed == 0 {
-                    eprintln!("Zero bytes consumed at offset {offset}");
-                    break;
-                }
-                offset += consumed;
-                out.write_all(xer.as_bytes()).unwrap();
-                out.write_all(b"\n").unwrap();
+        if offset + 4 > data.len() {
+            eprintln!("Truncated length prefix at offset {offset}");
+            errors += 1;
+            break;
+        }
+        let len = u32::from_be_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        if offset + len > data.len() {
+            eprintln!("Truncated PER record at offset {offset}");
+            errors += 1;
+            break;
+        }
+        match decode_one(&type_name, &data[offset..offset + len]) {
+            Ok(ber_bytes) => {
+                offset += len;
+                out.write_all(&ber_bytes).unwrap();
                 n += 1;
             }
             Err(e) => {
-                eprintln!("BER decode failed record #{n} at offset {offset}: {}", e.message);
+                eprintln!("PER decode failed record #{n}: {}", e.message);
                 errors += 1;
                 break;
             }

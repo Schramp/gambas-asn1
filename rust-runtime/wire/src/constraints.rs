@@ -1,57 +1,80 @@
-//! X.680 §51 SubtypeConstraint data + generic validators — the Rust
-//! analogue of `runtime/include/asn1cpp/codec/Constraints.hpp` +
+//! Generic X.680 §51 SubtypeConstraint validators — the Rust analogue of
 //! `Integer::validate`/`UInteger::validate`/`OctetString::validate`/
 //! `BitString::validate`/`AsnString<N>::validate` (`runtime/include/
-//! asn1cpp/types/*.hpp`).
+//! asn1cpp/types/*.hpp`). The `Constraints` struct itself (below) is read
+//! by both this module's callers and `per`'s — the exact same superset the
+//! compiler already computes once (`Generator`'s backend-agnostic
+//! `IntegerSpec`/`MemberTypeDescriptorSpec`) for both codecs.
 //!
 //! Per review on #473 ("all constraints should be table based, fix it in
 //! the runtime. Never put it in code. By using code, there is no way to
 //! extract the information by any of the parsers."): codegen emits a
 //! `static Constraints` value (plain data, the same shape a C++/PER/XSD
 //! tool could introspect without executing anything) per constrained
-//! member/type, never a bespoke per-member function. The three
-//! `validate_*` functions here are the *only* code — generic, identical
-//! for every member of a given value shape, exactly mirroring C++'s own
-//! "one `validate(const Constraints&)` method per type, data varies per
+//! member/type, never a bespoke per-member function. The `validate_*`
+//! functions here are the *only* code — generic, identical for every
+//! member of a given value shape, exactly mirroring C++'s own "one
+//! `validate(const Constraints&)` method per type, data varies per
 //! member" shape (`TypeDescriptor.hpp`'s `MemberDescriptor`/`SeqOfSpec`
 //! embed a `Constraints` value the same way).
-//!
-//! Field subset: only what INTEGER range and SIZE validation actually use
-//! today (`lower_bound`/`upper_bound`/`lower_u64`/`upper_u64`/
-//! `size_lower`/`size_upper`) — `range_bits`/`int_kind`/the 128-bit
-//! fields/the FROM-alphabet fields are C++-side PER/alphabet metadata this
-//! crate doesn't consume yet (`FROM` is gambas-asn1#466, not this file);
-//! adding them later is a field addition, not a shape change, so nothing
-//! here forecloses it.
 
-/// Mirrors `asn1::Constraints` (`Constraints.hpp`) — same field names
-/// where the shape overlaps, so the same mental model (and the same
-/// flag bits) applies whether reading a C++ or a Rust `Constraints` value.
+
+pub const CONSTRAINED: u32 = 1;
+pub const SEMI_CONSTRAINED: u32 = 2;
+pub const EXTENSIBLE: u32 = 4;
+pub const SIZE_CONSTRAINED: u32 = 8;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Constraints {
-    pub flags: u8,
+    pub flags: u32,
+    pub range_bits: u32,
     pub lower_bound: i64,
     pub upper_bound: i64,
     pub lower_u64: u64,
     pub upper_u64: u64,
+    pub size_range_bits: u32,
     pub size_lower: i64,
     pub size_upper: i64,
-    /// X.680 §51.4 PermittedAlphabet (gambas-asn1#466) — `encode_table[b]`
-    /// for byte `b` gives its position in the permitted alphabet, or
-    /// `0xFFFF` if `b` isn't permitted at all. Mirrors `Constraints::
-    /// encode_table` (`Constraints.hpp`) exactly, minus the decode-direction
-    /// `alphabet`/`alphabet_size` fields (PER-only; this crate's BER/XER
-    /// codecs never need the reverse mapping, only `validate_alphabet`
-    /// does the forward one). `None` — not `Some(&ALL_0XFFFF)` — means "no
-    /// FROM constraint", checked before indexing at all.
     pub encode_table: Option<&'static [u16; 256]>,
+    /// For a SEQUENCE OF / SET OF: the element type's own constraints
+    /// (X.691 §19/§20 — the collection's SIZE is this table's own
+    /// `size_*` fields, each element is then encoded against `element`).
+    /// Mirrors `SeqOfSpec`'s element descriptor on the C++ side. `None`
+    /// for every non-collection type and for an unconstrained element.
+    pub element: Option<&'static Constraints>,
 }
 
+pub const UNCONSTRAINED: Constraints = Constraints {
+    flags: 0,
+    range_bits: 0,
+    lower_bound: 0,
+    upper_bound: 0,
+    lower_u64: 0,
+    upper_u64: 0,
+    size_range_bits: 0,
+    size_lower: 0,
+    size_upper: 0,
+    encode_table: None, element: None,
+};
+
 impl Constraints {
-    pub const CONSTRAINED: u8 = 1;
-    pub const SEMI_CONSTRAINED: u8 = 2;
-    pub const EXTENSIBLE: u8 = 4;
-    pub const SIZE_CONSTRAINED: u8 = 8;
+    pub const CONSTRAINED: u32 = CONSTRAINED;
+    pub const SEMI_CONSTRAINED: u32 = SEMI_CONSTRAINED;
+    pub const EXTENSIBLE: u32 = EXTENSIBLE;
+    pub const SIZE_CONSTRAINED: u32 = SIZE_CONSTRAINED;
+
+    pub fn is_constrained(&self) -> bool {
+        self.flags & CONSTRAINED != 0
+    }
+    pub fn is_semi_constrained(&self) -> bool {
+        self.flags & SEMI_CONSTRAINED != 0
+    }
+    pub fn is_extensible(&self) -> bool {
+        self.flags & EXTENSIBLE != 0
+    }
+    pub fn is_size_constrained(&self) -> bool {
+        self.flags & SIZE_CONSTRAINED != 0
+    }
 }
 
 /// X.680 §19 INTEGER value-range check, `i64` storage. Mirrors
@@ -176,7 +199,7 @@ pub fn validate_string(s: &str, c: &Constraints) -> i64 {
 mod tests {
     use super::*;
 
-    fn c(flags: u8, lower_bound: i64, upper_bound: i64) -> Constraints {
+    fn c(flags: u32, lower_bound: i64, upper_bound: i64) -> Constraints {
         Constraints { flags, lower_bound, upper_bound, ..Default::default() }
     }
 
@@ -214,7 +237,7 @@ mod tests {
         assert_eq!(validate_s64(-1_000_000, &Constraints::default()), 0);
     }
 
-    fn cu(flags: u8, lower_u64: u64, upper_u64: u64) -> Constraints {
+    fn cu(flags: u32, lower_u64: u64, upper_u64: u64) -> Constraints {
         Constraints { flags, lower_u64, upper_u64, ..Default::default() }
     }
 
@@ -239,7 +262,7 @@ mod tests {
         assert_eq!(validate_u64(u64::MAX, &cu(Constraints::CONSTRAINED, 0, 0)), i64::MIN);
     }
 
-    fn cs(flags: u8, size_lower: i64, size_upper: i64) -> Constraints {
+    fn cs(flags: u32, size_lower: i64, size_upper: i64) -> Constraints {
         Constraints { flags, size_lower, size_upper, ..Default::default() }
     }
 

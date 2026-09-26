@@ -458,6 +458,11 @@ static bool is_type_assignment(const ast::TypeDef& def) {
 ///        (type_descriptor_ref_for, below) renders it via
 ///        backend_.format_type_descriptor_ref.
 /// @see TypeDescriptorRefSpec (Backend.hpp) for the field-by-field contract.
+/// @note Its own TypeRef-resolution branch below overlaps with
+///       classify_typeref_for_per's resolve-and-check-is_sequence/
+///       is_set/is_choice/Enumerated step (same underlying classification,
+///       computed independently for a different purpose and variant set)
+///       — deliberately left unfactored; see that function's own doc.
 TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef& def) {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
@@ -643,6 +648,15 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
     if (auto* bt = std::get_if<ast::BuiltinType>(&elem.body)) {
         shape.builtin = *bt;
         if (*bt == ast::BuiltinType::Integer) shape.storage_kind = classify_integer_storage(elem);
+        // Same check build_member_type_descriptor_spec's own callers use to
+        // decide whether it built a real spec at all (Integer or Sizeable
+        // alike) — a pure function, cheap to call again here. Lets
+        // RustBackend's SEQUENCE OF row pick between the element's own real
+        // ASN_TYP_{TYPE}_ELEM_CONSTRAINTS_PER (emit_seq_of_definition's own
+        // emit_member_type_descriptor call) and the shared
+        // asn1cpp_wire::constraints::UNCONSTRAINED constant, without
+        // reconstructing a name or needing a per-type fallback emission.
+        shape.has_own_descriptor = build_member_type_descriptor_spec(elem, "", "elem").has_value();
     }
     return shape;
 }
@@ -977,7 +991,7 @@ std::string Generator::emit_member_type_descriptor(
 ///         descriptor — caller falls back to type_descriptor_ref_for().
 /// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
 std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_spec(
-    const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname)
+    const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname) const
 {
     using BT = ast::BuiltinType;
     auto* bt = std::get_if<BT>(&m.body);
@@ -1164,6 +1178,76 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
             return {ct, false, false, true};
         default: return {};
         }
+    }
+    return {};
+}
+
+// See TypeRefPerClass's own doc (Generator.hpp) and TaggedMemberSpec::
+// RefTargetKind's (Backend.hpp) for what's classified and why only
+// ENUMERATED/named-INTEGER targets are safe to resolve here — same
+// resolver-access rationale as classify_member_setter just above.
+// Overlaps with type_descriptor_ref_spec_for's own resolve-and-check-
+// is_sequence/is_set/is_choice/Enumerated step below (same underlying
+// classification, computed independently for a different purpose and a
+// different variant set — this one also cares about Integer, that one
+// doesn't). Deliberately left unfactored rather than sharing a helper —
+// see this function's own doc for why.
+Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRef& tr) const {
+    using BT = ast::BuiltinType;
+    auto resolved = resolver_.resolve_ref(tr);
+    if (!resolved) {
+        // A synthetic-promoted target (generate_inline_types) was never
+        // registered with the Resolver — resolve_ref failing here is the
+        // normal case for every such promotion, not "genuinely unresolved"
+        // (same fallback type_descriptor_ref_spec_for's own doc already
+        // relies on for its C++ TypeDescriptor reference). generate_inline_
+        // types only ever promotes a SEQUENCE/CHOICE/SET/ENUMERATED body to
+        // a synthetic name — except a nested anonymous SEQUENCE OF/SET OF
+        // element (seq_of_synthetic_names_), whose promoted wrapper type
+        // has no PerValue impl of its own (SEQUENCE OF PER support lives in
+        // the *containing* SEQUENCE's own member row, not on the collection
+        // type itself) and so isn't Scalar-safe the way the others are.
+        auto n = cpp_name_for_typeref(tr);
+        if (seq_of_synthetic_names_.count(n)) return {};
+        return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+    }
+    if (auto* rbt = std::get_if<BT>(&resolved->body)) {
+        if (*rbt == BT::Enumerated) return {TaggedMemberSpec::RefTargetKind::Enumerated, IntStorageKind::S64};
+        if (*rbt == BT::Integer)
+            return {TaggedMemberSpec::RefTargetKind::IntegerAlias, classify_integer_storage(*resolved)};
+        // A named builtin-alias type (X.680 §19) with its own PerValue impl
+        // now (RustBackend::emit_builtin_alias_definition's own doc) —
+        // OCTET STRING/BIT STRING unconditionally (X.691 §16/§17, no
+        // alphabet concept), a known-multiplier character string kind only
+        // when it has no FROM constraint of its own. This duplicates
+        // RustBackend's own is_sizeable_string_kind (its exact kind set) rather
+        // than sharing it — same already-accepted, already-tracked overlap
+        // this function's own doc notes for type_descriptor_ref_spec_for
+        // (gambas-asn1#518); the alternative (Backend gaining resolver
+        // access to let RustBackend classify this itself) is a bigger
+        // boundary change, deliberately out of scope here too.
+        if (*rbt == BT::OctetString || *rbt == BT::BitString)
+            return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+        static const std::set<BT> kPerStringKinds = {
+            BT::NumericString, BT::Ia5String, BT::PrintableString, BT::VisibleString,
+            BT::Utf8String, BT::T61String, BT::GeneralString, BT::GraphicString,
+            BT::VideotexString, BT::ObjectDescriptor, BT::BmpString, BT::UniversalString,
+        };
+        if (kPerStringKinds.count(*rbt) && extract_from_alphabet(*resolved).empty())
+            return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+        return {};
+    }
+    // A TypeRef resolving to a named SEQUENCE/SET/CHOICE — always
+    // PER-representable via a Scalar access to the target's own PerValue
+    // impl, which RustBackend now emits unconditionally for every
+    // SEQUENCE/CHOICE (real rows for covered members, `Unsupported` stubs
+    // for the rest — see asn1cpp_wire::per::sequence::MemberAccess::Unsupported's
+    // own doc). No dependency on the referenced type's own coverage state
+    // to track here, unlike an earlier version of this function.
+    if (std::holds_alternative<ast::SequenceType>(resolved->body) ||
+        std::holds_alternative<ast::SetType>(resolved->body) ||
+        std::holds_alternative<ast::ChoiceType>(resolved->body)) {
+        return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
     }
     return {};
 }
@@ -1403,6 +1487,28 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             // already made to produce row.mtype above — threaded
             // through as structured data too, not re-derived from mtype text.
             if (*bt == ast::BuiltinType::Integer) row.storage_kind = classify_integer_storage(m);
+            // X.691 §26.5.4/§26.5.7 FROM-alphabet — not UTF8String, which
+            // isn't a known-multiplier character string at all (X.691
+            // §26.6: FROM constraints on it aren't PER-enforced), same
+            // exclusion build_member_type_descriptor_spec's own Sizeable
+            // branch already applies.
+            if (*bt != ast::BuiltinType::Utf8String)
+                row.has_from_alphabet = !extract_from_alphabet(m).empty();
+        } else if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+            auto per_class = classify_typeref_for_per(*tr);
+            row.ref_kind = per_class.kind;
+            row.ref_storage_kind = per_class.storage_kind;
+        } else if (m.is_sequence() || m.is_choice() || m.is_set()) {
+            // Inline anonymous SEQUENCE/CHOICE/SET member (e.g. 3GPP's
+            // common "laterNonCriticalExtensions SEQUENCE { ... }" pattern)
+            // — native_member_type_for already named it via synthetic_name
+            // above; m.body never becomes a TypeRef for this case (unlike a
+            // TypeRef-to-named-composite member), so classify_typeref_for_per
+            // is never reached. The promoted synthetic type gets the exact
+            // same unconditional PerValue impl any other SEQUENCE/CHOICE/SET
+            // does (Unsupported-stub design) — Scalar-safe here for the same
+            // reason RefTargetKind::Other already is for a real TypeRef.
+            row.ref_kind = SequenceMemberSpec::RefTargetKind::Other;
         }
         if (m.is_seq_of()) {
             row.seq_of_kind = SeqOfKind::SeqOf;
@@ -1642,6 +1748,9 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind storage_kind = IntStorageKind::S64;
             std::optional<MemberTagSpec> resolved_tag;
+            TaggedMemberSpec::RefTargetKind ref_kind = TaggedMemberSpec::RefTargetKind::NotRef;
+            IntStorageKind ref_storage_kind = IntStorageKind::S64;
+            bool has_from_alphabet = false;
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1664,12 +1773,32 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             }
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind alt_storage_kind = IntStorageKind::S64;
+            TaggedMemberSpec::RefTargetKind alt_ref_kind = TaggedMemberSpec::RefTargetKind::NotRef;
+            IntStorageKind alt_ref_storage_kind = IntStorageKind::S64;
+            bool alt_has_from_alphabet = false;
             if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
                 mbuiltin = *bt;
                 if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
+                if (*bt != ast::BuiltinType::Utf8String)
+                    alt_has_from_alphabet = !extract_from_alphabet(*m).empty();
+            } else if (auto* atr = std::get_if<ast::TypeRef>(&m->body)) {
+                auto per_class = classify_typeref_for_per(*atr);
+                alt_ref_kind = per_class.kind;
+                alt_ref_storage_kind = per_class.storage_kind;
+            } else if (m->is_sequence() || m->is_choice() || m->is_set()) {
+                // Inline anonymous SEQUENCE/CHOICE/SET alternative — same
+                // synthetic-promotion shape as an inline SEQUENCE member
+                // (build_sequence_member_spec's collect lambda): m->body
+                // never becomes a TypeRef here, so classify_typeref_for_per
+                // is never reached. The promoted type gets the same
+                // unconditional PerValue impl any other SEQUENCE/CHOICE/SET
+                // does, so it's Scalar-safe here for the same reason
+                // RefTargetKind::Other already is for a real TypeRef.
+                alt_ref_kind = TaggedMemberSpec::RefTargetKind::Other;
             }
             rows.push_back({ m->name, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag });
+                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag,
+                             alt_ref_kind, alt_ref_storage_kind, alt_has_from_alphabet });
             ++auto_tag_num;
           }
         }
@@ -1704,6 +1833,9 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.mbuiltin = r.mbuiltin;
             alt.storage_kind = r.storage_kind;
             alt.resolved_tag = r.resolved_tag;
+            alt.ref_kind = r.ref_kind;
+            alt.ref_storage_kind = r.ref_storage_kind;
+            alt.has_from_alphabet = r.has_from_alphabet;
             spec.alternatives.push_back(std::move(alt));
         }
 

@@ -1,4 +1,4 @@
-//! Generated-code + asn1cpp-ber roundtrip check (gambas-asn1#219) — proves
+//! Generated-code + asn1cpp-wire roundtrip check (gambas-asn1#219) — proves
 //! the actual codegen -> runtime pipeline, not just that the two pieces are
 //! compatible by hand. `point_generated.rs` (via `include!`) is produced by
 //! `build.rs`, which pulls in the real `asn1cpp --target=rust` compiler's
@@ -55,7 +55,7 @@ mod tests {
     use super::Point;
 
     fn ber_roundtrip(x: i64, y: i64) -> bool {
-        let p = Point { x, y };
+        let p = Point { x: asn1cpp_wire::integer::Integer(x), y: asn1cpp_wire::integer::Integer(y) };
         match Point::decode(&p.encode()) {
             Ok(got) => got == p,
             Err(_) => false,
@@ -63,7 +63,7 @@ mod tests {
     }
 
     fn ber_encodes_as(x: i64, y: i64, expected: &[u8]) -> bool {
-        Point { x, y }.encode() == expected
+        Point { x: asn1cpp_wire::integer::Integer(x), y: asn1cpp_wire::integer::Integer(y) }.encode() == expected
     }
 
     #[test]
@@ -105,7 +105,7 @@ mod tests {
     use super::Widget;
 
     fn widget(id: i64, flag: bool, data: &[u8], label: &str) -> Widget {
-        Widget { id, flag, data: asn1cpp_ber::octet_string::OctetString(data.to_vec()), label: label.to_string() }
+        Widget { id: asn1cpp_wire::integer::Integer(id), flag: asn1cpp_wire::boolean::Boolean(flag), data: asn1cpp_wire::octet_string::OctetString(data.to_vec()), label: asn1cpp_wire::strings::Ia5String(label.to_string()) }
     }
 
     #[test]
@@ -181,31 +181,31 @@ mod tests {
 
     #[test]
     fn selector_num_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Num(7).encode(), vec![0x02, 0x01, 0x07]);
+        assert_eq!(Selector::Num(asn1cpp_wire::integer::Integer(7)).encode(), vec![0x02, 0x01, 0x07]);
     }
 
     #[test]
     fn selector_flag_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Flag(true).encode(), vec![0x01, 0x01, 0xff]);
+        assert_eq!(Selector::Flag(asn1cpp_wire::boolean::Boolean(true)).encode(), vec![0x01, 0x01, 0xff]);
     }
 
     #[test]
     fn selector_data_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Data(asn1cpp_ber::octet_string::OctetString(vec![0x68, 0x69])).encode(), vec![0x04, 0x02, 0x68, 0x69]);
+        assert_eq!(Selector::Data(asn1cpp_wire::octet_string::OctetString(vec![0x68, 0x69])).encode(), vec![0x04, 0x02, 0x68, 0x69]);
     }
 
     #[test]
     fn selector_label_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Label("hi".to_string()).encode(), vec![0x16, 0x02, 0x68, 0x69]);
+        assert_eq!(Selector::Label(asn1cpp_wire::strings::Ia5String("hi".to_string())).encode(), vec![0x16, 0x02, 0x68, 0x69]);
     }
 
     #[test]
     fn selector_round_trips_every_alternative() {
         for s in [
-            Selector::Num(-42),
-            Selector::Flag(false),
-            Selector::Data(asn1cpp_ber::octet_string::OctetString(vec![0xAA, 0xBB])),
-            Selector::Label("round-trip".to_string()),
+            Selector::Num(asn1cpp_wire::integer::Integer(-42)),
+            Selector::Flag(asn1cpp_wire::boolean::Boolean(false)),
+            Selector::Data(asn1cpp_wire::octet_string::OctetString(vec![0xAA, 0xBB])),
+            Selector::Label(asn1cpp_wire::strings::Ia5String("round-trip".to_string())),
         ] {
             let bytes = s.encode();
             assert_eq!(Selector::decode(&bytes).unwrap(), s);
@@ -225,31 +225,31 @@ mod tests {
 
     #[test]
     fn selector_num_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Num(7).encode_xer(), "<Selector>\n    <num>7</num>\n</Selector>\n");
+        assert_eq!(Selector::Num(asn1cpp_wire::integer::Integer(7)).encode_xer(), "<Selector>\n    <num>7</num>\n</Selector>\n");
     }
 
     #[test]
     fn selector_flag_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Flag(true).encode_xer(), "<Selector>\n    <flag><true/></flag>\n</Selector>\n");
+        assert_eq!(Selector::Flag(asn1cpp_wire::boolean::Boolean(true)).encode_xer(), "<Selector>\n    <flag><true/></flag>\n</Selector>\n");
     }
 
     #[test]
     fn selector_data_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Data(asn1cpp_ber::octet_string::OctetString(vec![0x68, 0x69])).encode_xer(), "<Selector>\n    <data>6869</data>\n</Selector>\n");
+        assert_eq!(Selector::Data(asn1cpp_wire::octet_string::OctetString(vec![0x68, 0x69])).encode_xer(), "<Selector>\n    <data>6869</data>\n</Selector>\n");
     }
 
     #[test]
     fn selector_label_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Label("hi".to_string()).encode_xer(), "<Selector>\n    <label>hi</label>\n</Selector>\n");
+        assert_eq!(Selector::Label(asn1cpp_wire::strings::Ia5String("hi".to_string())).encode_xer(), "<Selector>\n    <label>hi</label>\n</Selector>\n");
     }
 
     #[test]
     fn selector_xer_round_trips_every_alternative() {
         for s in [
-            Selector::Num(-42),
-            Selector::Flag(false),
-            Selector::Data(asn1cpp_ber::octet_string::OctetString(vec![0xAA, 0xBB])),
-            Selector::Label("round-trip".to_string()),
+            Selector::Num(asn1cpp_wire::integer::Integer(-42)),
+            Selector::Flag(asn1cpp_wire::boolean::Boolean(false)),
+            Selector::Data(asn1cpp_wire::octet_string::OctetString(vec![0xAA, 0xBB])),
+            Selector::Label(asn1cpp_wire::strings::Ia5String("round-trip".to_string())),
         ] {
             let xml = s.encode_xer();
             assert_eq!(Selector::decode_xer(&xml).unwrap(), s);
@@ -275,19 +275,19 @@ mod tests {
     #[test]
     fn gauge_in_range_member_round_trips_and_does_not_bump_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
-        let g = Gauge { level: 50, note: -7, hint: Some(3) };
+        asn1cpp_wire::validate::reset_validate_fail_count();
+        let g = Gauge { level: asn1cpp_wire::integer::Integer(50), note: asn1cpp_wire::integer::Integer(-7), hint: Some(asn1cpp_wire::integer::Integer(3)) };
         assert_eq!(Gauge::decode(&g.encode()).unwrap(), g);
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 0);
     }
 
     #[test]
     fn gauge_out_of_range_member_bumps_the_validate_counter_on_encode() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
-        let g = Gauge { level: 500, note: 1, hint: None };
+        asn1cpp_wire::validate::reset_validate_fail_count();
+        let g = Gauge { level: asn1cpp_wire::integer::Integer(500), note: asn1cpp_wire::integer::Integer(1), hint: None };
         let _ = g.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
     }
 
     // Regression: `hint`'s field is `Option<i64>` (OPTIONAL + constrained),
@@ -298,25 +298,25 @@ mod tests {
     #[test]
     fn gauge_absent_optional_constrained_member_does_not_bump_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
-        let g = Gauge { level: 50, note: 1, hint: None };
+        asn1cpp_wire::validate::reset_validate_fail_count();
+        let g = Gauge { level: asn1cpp_wire::integer::Integer(50), note: asn1cpp_wire::integer::Integer(1), hint: None };
         let _ = g.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 0);
     }
 
     #[test]
     fn gauge_out_of_range_optional_constrained_member_bumps_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
-        let g = Gauge { level: 50, note: 1, hint: Some(500) };
+        asn1cpp_wire::validate::reset_validate_fail_count();
+        let g = Gauge { level: asn1cpp_wire::integer::Integer(50), note: asn1cpp_wire::integer::Integer(1), hint: Some(asn1cpp_wire::integer::Integer(500)) };
         let _ = g.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
     }
 
     #[test]
     fn gauge_out_of_range_member_bumps_the_validate_counter_on_decode() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
+        asn1cpp_wire::validate::reset_validate_fail_count();
         // level == -5 is invalid per Gauge's own schema (0..100), but BER
         // itself has no notion of "invalid content" for a plain INTEGER —
         // building the wire bytes with a sibling in-range Gauge's encoder
@@ -324,73 +324,73 @@ mod tests {
         // counter), so hand-assemble the two-member SEQUENCE content
         // directly via the runtime's own low-level integer writer.
         let mut level_bytes = Vec::new();
-        asn1cpp_ber::integer::write_integer_tagged(&mut level_bytes, asn1cpp_ber::integer::INTEGER_TAG, -5);
+        asn1cpp_wire::integer::write_integer_tagged(&mut level_bytes, asn1cpp_wire::integer::INTEGER_TAG, -5);
         let mut note_bytes = Vec::new();
-        asn1cpp_ber::integer::write_integer_tagged(&mut note_bytes, asn1cpp_ber::integer::INTEGER_TAG, 1);
+        asn1cpp_wire::integer::write_integer_tagged(&mut note_bytes, asn1cpp_wire::integer::INTEGER_TAG, 1);
         let mut content = level_bytes;
         content.extend_from_slice(&note_bytes);
         let mut wire = Vec::new();
-        asn1cpp_ber::writer::write_constructed(&mut wire, asn1cpp_ber::sequence::SEQUENCE_TAG, &content);
+        asn1cpp_wire::writer::write_constructed(&mut wire, asn1cpp_wire::sequence::SEQUENCE_TAG, &content);
 
         let g = Gauge::decode(&wire).unwrap();
         assert_eq!(g.level, -5);
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
     }
 
     // gambas-asn1#464: real-codegen MemberDescriptor::validate coverage for
     // OCTET STRING / BIT STRING SIZE.
-    use asn1cpp_ber::bit_string::BitString;
-    use asn1cpp_ber::octet_string::OctetString;
+    use asn1cpp_wire::bit_string::BitString;
+    use asn1cpp_wire::octet_string::OctetString;
 
     fn blob(data: Vec<u8>, flags_bytes: Vec<u8>, flags_unused_bits: u8) -> Blob {
         Blob {
             data: OctetString(data),
             flags: BitString { bytes: flags_bytes, unused_bits: flags_unused_bits },
             tag: OctetString(vec![]),
-            label: "ok".to_string(),
-            note: asn1cpp_ber::strings::Utf8String("hi".to_string()),
+            label: asn1cpp_wire::strings::Ia5String("ok".to_string()),
+            note: asn1cpp_wire::strings::Utf8String("hi".to_string()),
         }
     }
 
     #[test]
     fn blob_in_size_members_round_trip_and_do_not_bump_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
+        asn1cpp_wire::validate::reset_validate_fail_count();
         let b = blob(vec![1, 2], vec![0xFF], 4);
         assert_eq!(Blob::decode(&b.encode()).unwrap(), b);
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 0);
     }
 
     #[test]
     fn blob_too_long_octet_string_bumps_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
+        asn1cpp_wire::validate::reset_validate_fail_count();
         let b = blob(vec![1, 2, 3, 4, 5], vec![0xFF], 4);
         let _ = b.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
     }
 
     #[test]
     fn blob_too_short_bit_string_bumps_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
+        asn1cpp_wire::validate::reset_validate_fail_count();
         // bit_count() == 0 (empty bytes, no unused_bits) — below the
         // SIZE(1..16) lower bound.
         let b = blob(vec![1], vec![], 0);
         let _ = b.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
     }
 
     #[test]
     fn blob_unconstrained_octet_string_member_never_bumps_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
+        asn1cpp_wire::validate::reset_validate_fail_count();
         // `tag` has no SIZE constraint at all — arbitrarily long is fine.
         let b = blob(vec![1], vec![0xFF], 4);
         let mut b = b;
         b.tag = OctetString(vec![0; 1000]);
         let _ = b.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 0);
     }
 
     // gambas-asn1#465: character-string SIZE — `label` (IA5String, bare
@@ -401,41 +401,41 @@ mod tests {
     #[test]
     fn blob_too_short_ia5_string_bumps_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
+        asn1cpp_wire::validate::reset_validate_fail_count();
         let mut b = blob(vec![1], vec![0xFF], 4);
-        b.label = "".to_string(); // below SIZE(1..8)
+        b.label = asn1cpp_wire::strings::Ia5String("".to_string()); // below SIZE(1..8)
         let _ = b.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
     }
 
     #[test]
     fn blob_too_long_ia5_string_bumps_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
+        asn1cpp_wire::validate::reset_validate_fail_count();
         let mut b = blob(vec![1], vec![0xFF], 4);
-        b.label = "123456789".to_string(); // above SIZE(1..8)
+        b.label = asn1cpp_wire::strings::Ia5String("123456789".to_string()); // above SIZE(1..8)
         let _ = b.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
     }
 
     #[test]
     fn blob_too_long_utf8_string_bumps_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
+        asn1cpp_wire::validate::reset_validate_fail_count();
         let mut b = blob(vec![1], vec![0xFF], 4);
-        b.note = asn1cpp_ber::strings::Utf8String("123456".to_string()); // above SIZE(0..5)
+        b.note = asn1cpp_wire::strings::Utf8String("123456".to_string()); // above SIZE(0..5)
         let _ = b.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
     }
 
     #[test]
     fn blob_empty_utf8_string_is_in_range_and_does_not_bump_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
+        asn1cpp_wire::validate::reset_validate_fail_count();
         let mut b = blob(vec![1], vec![0xFF], 4);
-        b.note = asn1cpp_ber::strings::Utf8String(String::new()); // SIZE(0..5): empty is valid
+        b.note = asn1cpp_wire::strings::Utf8String(String::new()); // SIZE(0..5): empty is valid
         let _ = b.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 0);
     }
 
     // gambas-asn1#466: real-codegen MemberDescriptor::validate coverage
@@ -444,39 +444,39 @@ mod tests {
     #[test]
     fn code_in_alphabet_and_size_round_trips_and_does_not_bump_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
-        let c = Code { digits: asn1cpp_ber::strings::NumericString("12345".to_string()), tag: "a".to_string() };
+        asn1cpp_wire::validate::reset_validate_fail_count();
+        let c = Code { digits: asn1cpp_wire::strings::NumericString("12345".to_string()), tag: asn1cpp_wire::strings::Ia5String("a".to_string()) };
         assert_eq!(Code::decode(&c.encode()).unwrap(), c);
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 0);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 0);
     }
 
     #[test]
     fn code_disallowed_character_bumps_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
+        asn1cpp_wire::validate::reset_validate_fail_count();
         // 'a' is not in the FROM("0".."9") alphabet.
-        let c = Code { digits: asn1cpp_ber::strings::NumericString("12a45".to_string()), tag: "a".to_string() };
+        let c = Code { digits: asn1cpp_wire::strings::NumericString("12a45".to_string()), tag: asn1cpp_wire::strings::Ia5String("a".to_string()) };
         let _ = c.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
     }
 
     #[test]
     fn code_too_long_bumps_the_validate_counter_before_alphabet_is_even_checked() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
+        asn1cpp_wire::validate::reset_validate_fail_count();
         // SIZE(1..6): 7 chars is too long, even though every character is
         // in the permitted alphabet — SIZE is checked first.
-        let c = Code { digits: asn1cpp_ber::strings::NumericString("1234567".to_string()), tag: "a".to_string() };
+        let c = Code { digits: asn1cpp_wire::strings::NumericString("1234567".to_string()), tag: asn1cpp_wire::strings::Ia5String("a".to_string()) };
         let _ = c.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
     }
 
     #[test]
     fn code_too_short_bumps_the_validate_counter() {
         let _guard = COUNTER_LOCK.lock().unwrap();
-        asn1cpp_ber::validate::reset_validate_fail_count();
-        let c = Code { digits: asn1cpp_ber::strings::NumericString(String::new()), tag: "a".to_string() };
+        asn1cpp_wire::validate::reset_validate_fail_count();
+        let c = Code { digits: asn1cpp_wire::strings::NumericString(String::new()), tag: asn1cpp_wire::strings::Ia5String("a".to_string()) };
         let _ = c.encode();
-        assert_eq!(asn1cpp_ber::validate::validate_fail_count(), 1);
+        assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
     }
 }

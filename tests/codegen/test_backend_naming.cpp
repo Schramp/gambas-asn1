@@ -131,8 +131,8 @@ int main() {
               rust_cpp.find("0 => Ok(MyEnum::Foo)") != std::string::npos,
               rust_cpp);
         check("emit_enumerated: Rust produces a real validate() reusing the MAP table",
-              rust_cpp.find("fn validate(&self) -> i64 {\n"
-                             "        asn1cpp_ber::enumerated::validate_enum(*self as i64, &MY_ENUM_MAP)\n"
+              rust_cpp.find("fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {\n"
+                             "        asn1cpp_wire::enumerated::validate_enum(*self as i64, &MY_ENUM_ENUM_SPEC)\n"
                              "    }") != std::string::npos,
               rust_cpp);
     }
@@ -166,22 +166,24 @@ int main() {
         check("native_int_type: C++ maps U64 to asn1::UInteger",
               c.native_int_type(IntStorageKind::U64) == "asn1::UInteger",
               c.native_int_type(IntStorageKind::U64));
-        check("native_int_type: Rust maps U64 to u64",
-              r.native_int_type(IntStorageKind::U64) == "u64",
+        check("native_int_type: Rust maps U64 to UInteger",
+              r.native_int_type(IntStorageKind::U64) == "asn1cpp_wire::integer::UInteger",
               r.native_int_type(IntStorageKind::U64));
         check("emit_integer: C++ produces a using-alias to asn1::UInteger",
               cpp_hpp.find("using MyInt = asn1::UInteger;") != std::string::npos,
               cpp_hpp);
-        check("emit_integer: Rust produces a real type alias (not a stub)",
-              rust_hpp.find("pub type MyInt = u64;") != std::string::npos,
+        check("emit_integer: Rust produces a real newtype (not a bare alias)",
+              rust_hpp.find("pub struct MyInt(pub asn1cpp_wire::integer::UInteger);") != std::string::npos,
               rust_hpp);
         check("emit_integer: C++ produces a Constraints-bearing TypeDescriptor",
               cpp_cpp.find("asn_DEF_MyInt") != std::string::npos &&
               cpp_cpp.find(".range_bits=7") != std::string::npos,
               cpp_cpp);
-        check("emit_integer: Rust produces a real range-check function",
-              rust_cpp.find("pub fn my_int_in_range(v: i64) -> bool {") != std::string::npos &&
-              rust_cpp.find("v >= 0 && v <= 100") != std::string::npos,
+        check("emit_integer: Rust produces a real Asn1Value::validate() using the type's own Constraints",
+              rust_cpp.find("static MY_INT_CONSTRAINTS: asn1cpp_wire::constraints::Constraints") != std::string::npos &&
+              rust_cpp.find("flags: 1, range_bits: 7, lower_bound: 0, upper_bound: 0, lower_u64: 0u64, upper_u64: 100u64") != std::string::npos &&
+              rust_cpp.find("asn1cpp_wire::constraints::validate_u64(*self.0, &MY_INT_CONSTRAINTS)") != std::string::npos &&
+              rust_cpp.find("fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {\n        &MY_INT_CONSTRAINTS\n    }") != std::string::npos,
               rust_cpp);
     }
 
@@ -256,15 +258,16 @@ int main() {
               cpp_os.find("asn_DEF_MyBytes") != std::string::npos,
               cpp_os);
         check("emit_builtin_alias: Rust produces a real newtype wrapper (not a plain alias)",
-              rust_os.find("pub struct MyBytes(pub asn1cpp_ber::octet_string::OctetString);") != std::string::npos,
+              rust_os.find("pub struct MyBytes(pub asn1cpp_wire::octet_string::OctetString);") != std::string::npos,
               rust_os);
         check("emit_builtin_alias: Rust newtype's own Asn1Value impl reports its own XER element name",
-              rust_os.find("impl asn1cpp_ber::value::Asn1Value for MyBytes {") != std::string::npos &&
+              rust_os.find("impl asn1cpp_wire::value::Asn1Value for MyBytes {") != std::string::npos &&
               rust_os.find("\"MyBytes\"") != std::string::npos,
               rust_os);
-        check("emit_builtin_alias: Rust produces a real size-check function",
-              rust_os.find("pub fn my_bytes_size_ok(v: &asn1cpp_ber::octet_string::OctetString) -> bool {") != std::string::npos &&
-              rust_os.find("(v.len() as i64) >= 1 && (v.len() as i64) <= 10") != std::string::npos,
+        check("emit_builtin_alias: Rust produces a table-driven validate(), not a generated bounds-check function",
+              rust_os.find("static MY_BYTES_CONSTRAINTS: asn1cpp_wire::constraints::Constraints") != std::string::npos &&
+              rust_os.find("size_range_bits: 4, size_lower: 1, size_upper: 10") != std::string::npos &&
+              rust_os.find("asn1cpp_wire::constraints::validate_size(self.0.len(), &MY_BYTES_CONSTRAINTS)") != std::string::npos,
               rust_os);
     }
 
@@ -277,7 +280,7 @@ int main() {
 
         TypeOutputSession cpp_session, rust_session;
         c.emit_default_setter(spec, "int64_t", "MySeq", "myField", cpp_session);
-        r.emit_default_setter(spec, "i64", "MySeq", "myField", rust_session);
+        r.emit_default_setter(spec, "asn1cpp_wire::integer::Integer", "MySeq", "myField", rust_session);
         std::string cpp_os = buf_str(cpp_session, c.definition_extension());
         std::string rust_os = buf_str(rust_session, r.definition_extension());
 
@@ -286,7 +289,7 @@ int main() {
               cpp_os.find("_isdef_MySeq_myField") != std::string::npos,
               cpp_os);
         check("emit_default_setter: Rust produces a real accessor function (not a stub)",
-              rust_os.find("pub fn my_seq_myField_default() -> i64 {") != std::string::npos &&
+              rust_os.find("pub fn my_seq_myField_default() -> asn1cpp_wire::integer::Integer {") != std::string::npos &&
               rust_os.find("42") != std::string::npos,
               rust_os);
     }
@@ -316,8 +319,8 @@ int main() {
               cpp_os.find("asn_TYP_MySeq_myField") != std::string::npos,
               cpp_os);
         check("emit_member_type_descriptor: Rust produces a real Constraints table, not a function",
-              rust_os.find("static ASN_TYP_MY_SEQ_MY_FIELD_CONSTRAINTS: asn1cpp_ber::constraints::Constraints") != std::string::npos &&
-              rust_os.find("flags: 1, lower_bound: 0, upper_bound: 100") != std::string::npos,
+              rust_os.find("static ASN_TYP_MY_SEQ_MY_FIELD_CONSTRAINTS: asn1cpp_wire::constraints::Constraints") != std::string::npos &&
+              rust_os.find("flags: 1, range_bits: 7, lower_bound: 0, upper_bound: 100") != std::string::npos,
               rust_os);
     }
 
@@ -346,9 +349,9 @@ int main() {
               cpp_os.find("asn_DEF_MyList") != std::string::npos,
               cpp_os);
         check("emit_seq_of: Rust produces a real Constraints table, not a function",
-              rust_os.find("static MY_LIST_CONSTRAINTS: asn1cpp_ber::constraints::Constraints") != std::string::npos &&
-              rust_os.find("flags: 8, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_lower: 1, size_upper: 10") != std::string::npos &&
-              rust_os.find("fn validate(&self) -> i64 {\n        asn1cpp_ber::constraints::validate_size(self.0.len(), &MY_LIST_CONSTRAINTS)\n    }") != std::string::npos,
+              rust_os.find("static MY_LIST_CONSTRAINTS: asn1cpp_wire::constraints::Constraints") != std::string::npos &&
+              rust_os.find("flags: 8, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_range_bits: 4, size_lower: 1, size_upper: 10") != std::string::npos &&
+              rust_os.find("fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {\n        asn1cpp_wire::constraints::validate_size(self.0.len(), &MY_LIST_CONSTRAINTS)\n    }") != std::string::npos,
               rust_os);
     }
 
@@ -587,7 +590,7 @@ int main() {
               c.format_tag_literal(universal));
         check("format_tag_literal: RustBackend universal tag",
               r.format_tag_literal(universal) ==
-                  "asn1cpp_ber::tag::Tag { class: asn1cpp_ber::tag::TagClass::Universal, number: 2, constructed: false }",
+                  "asn1cpp_wire::tag::Tag { class: asn1cpp_wire::tag::TagClass::Universal, number: 2, constructed: false }",
               r.format_tag_literal(universal));
 
         TypeTagSpec context_explicit{asn1::ast::TagClass::Context, 1, true};
@@ -596,7 +599,7 @@ int main() {
               c.format_tag_literal(context_explicit));
         check("format_tag_literal: RustBackend context/constructed tag",
               r.format_tag_literal(context_explicit) ==
-                  "asn1cpp_ber::tag::Tag { class: asn1cpp_ber::tag::TagClass::Context, number: 1, constructed: true }",
+                  "asn1cpp_wire::tag::Tag { class: asn1cpp_wire::tag::TagClass::Context, number: 1, constructed: true }",
               r.format_tag_literal(context_explicit));
 
         TypeTagSpec application{asn1::ast::TagClass::Application, 5, false};

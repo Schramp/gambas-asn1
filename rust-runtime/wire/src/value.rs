@@ -63,8 +63,13 @@ pub trait Asn1Value {
     /// consumed and checked by the caller) into `self`.
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError>;
 
-    /// Checks `self` against this type's X.680 §51 SubtypeConstraint
-    /// (SIZE, value range, FROM alphabet, ...), if it has one.
+    /// Checks `self` against an X.680 §51 SubtypeConstraint (SIZE, value
+    /// range, FROM alphabet, ...). `c` is the *declaration's own* constraint
+    /// data (a member row's `Constraints`): a shared native type (`i64`,
+    /// `String`, ...) has no constraint of its own, so its blanket impl
+    /// checks against whatever the caller passes. A named type (a generated
+    /// newtype/ENUMERATED/SEQUENCE OF) already owns its constraint in a
+    /// static and ignores `c`.
     ///
     /// The Rust analogue of each C++ type's own
     /// `validate(const Constraints&)` (`runtime/include/asn1cpp/types/
@@ -92,7 +97,7 @@ pub trait Asn1Value {
     /// bound) — same convention as the C++ side, so a future
     /// `RandomFiller`-equivalent can reuse the delta to retry a sample
     /// in-bounds rather than merely reporting failure.
-    fn validate(&self) -> i64 {
+    fn validate(&self, _c: &crate::constraints::Constraints) -> i64 {
         0
     }
 
@@ -255,6 +260,40 @@ pub trait Asn1Value {
         r.consume_close_tag(name)?;
         Ok(())
     }
+
+    /// The constraint this type itself owns — a generated INTEGER newtype's
+    /// range, a builtin-alias newtype's SIZE, a SEQUENCE OF newtype's SIZE.
+    /// `UNCONSTRAINED` for every type without one: a shared native type
+    /// (`i64`, `String`, ...) takes its constraint from the declaration
+    /// that uses it (the member row), and SEQUENCE/CHOICE/ENUMERATED carry
+    /// theirs in their own spec tables. A caller with no enclosing member
+    /// row (a top-level PDU) passes `value.constraints()` as the `c`
+    /// argument of `per_encode`/`per_decode_into`/`validate`.
+    fn constraints(&self) -> &'static crate::constraints::Constraints {
+        &crate::constraints::UNCONSTRAINED
+    }
+
+    /// X.691 unaligned PER encoding of this value. `c` is the declaration's
+    /// own `Constraints` (range bits, SIZE, ...): PER's wire shape depends on
+    /// the declared constraint, so a shared native type (`i64`, `String`,
+    /// ...) encodes against whatever the caller passes. A named type
+    /// (SEQUENCE/CHOICE/ENUMERATED/named INTEGER/named builtin-alias) owns
+    /// its constraint in a static and ignores `c`. Default panics for a
+    /// type PER doesn't cover yet — the same "real-or-panic-stub" policy
+    /// `MemberAccess::Unsupported` gives an individual member row, applied
+    /// to a whole type.
+    fn per_encode(&self, _w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {
+        unimplemented!("PER encode not implemented for this type")
+    }
+
+    /// Decode counterpart of `per_encode`.
+    fn per_decode_into(
+        &mut self,
+        _r: &mut crate::per::reader::Reader,
+        _c: &crate::constraints::Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
+        Err(crate::per::reader::DecodeError::new("PER decode not implemented for this type", 0))
+    }
 }
 
 /// EXPLICIT tagging (X.690 §8.14.3), generic over any
@@ -288,13 +327,13 @@ pub fn encode_explicit_any(out: &mut Vec<u8>, tag: crate::tag::Tag, raw: &[u8]) 
     crate::writer::write_explicit(out, tag, |inner| inner.extend_from_slice(raw));
 }
 
-pub fn decode_explicit_any(r: &mut Reader, tag: crate::tag::Tag) -> Result<Vec<u8>, DecodeError> {
-    crate::reader::read_explicit(r, tag, |inner| Ok(inner.remaining().to_vec()))
+pub fn decode_explicit_any(r: &mut Reader, tag: crate::tag::Tag) -> Result<crate::any::Any, DecodeError> {
+    crate::reader::read_explicit(r, tag, |inner| Ok(crate::any::Any(inner.remaining().to_vec())))
 }
 
 /// `encode_explicit_any` for an OPTIONAL `[n] ANY` member — see
 /// `encode_explicit_opt`'s matching doc for why this exists.
-pub fn encode_explicit_any_opt(out: &mut Vec<u8>, tag: crate::tag::Tag, opt: &Option<Vec<u8>>) {
+pub fn encode_explicit_any_opt(out: &mut Vec<u8>, tag: crate::tag::Tag, opt: &Option<crate::any::Any>) {
     if let Some(raw) = opt {
         encode_explicit_any(out, tag, raw);
     }
@@ -384,9 +423,35 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
         *self = Some(v);
         Ok(())
     }
+
+    /// X.691 §14: an OPTIONAL member's own bitmap bit (encoded by the
+    /// generic SEQUENCE walker, `per::sequence::encode_sequence_content`)
+    /// already decides whether this value's bits appear on the wire at
+    /// all — `per_encode`/`per_decode_into` here only handle the *present*
+    /// case, mirroring `is_present`'s own role for the BER/XER legs.
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+        if let Some(v) = self {
+            v.per_encode(w, c);
+        }
+    }
+
+    fn per_decode_into(
+        &mut self,
+        r: &mut crate::per::reader::Reader,
+        c: &crate::constraints::Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
+        let mut v = V::default();
+        v.per_decode_into(r, c)?;
+        *self = Some(v);
+        Ok(())
+    }
+
+    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+        self.as_ref().map_or(0, |v| v.validate(c))
+    }
 }
 
-impl Asn1Value for i64 {
+impl Asn1Value for crate::integer::Integer {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::integer::INTEGER_TAG
     }
@@ -396,11 +461,11 @@ impl Asn1Value for i64 {
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&crate::integer::encode_integer_bytes(*self));
+        out.extend_from_slice(&crate::integer::encode_integer_bytes(self.0));
     }
 
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        *self = crate::integer::decode_integer_bytes(content)?;
+        self.0 = crate::integer::decode_integer_bytes(content)?;
         Ok(())
     }
 
@@ -410,10 +475,23 @@ impl Asn1Value for i64 {
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
         let text = r.read_text_content();
-        *self = text.trim().parse::<i64>().map_err(|_| {
+        self.0 = text.trim().parse::<i64>().map_err(|_| {
             DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
         })?;
         Ok(())
+    }
+
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+        crate::per::integer::encode_int(w, c, self.0);
+    }
+
+    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader, c: &crate::constraints::Constraints) -> Result<(), crate::per::reader::DecodeError> {
+        self.0 = crate::per::integer::decode_int(r, c)?;
+        Ok(())
+    }
+
+    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+        crate::constraints::validate_s64(self.0, c)
     }
 }
 
@@ -421,7 +499,7 @@ impl Asn1Value for i64 {
 /// i64::MAX/MIN — `IntStorageKind::U64`/`I128`, `RustBackend::native_int_type`).
 /// XER leg is plain decimal text, same shape as `i64`'s own impl below,
 /// just unsigned.
-impl Asn1Value for u64 {
+impl Asn1Value for crate::integer::UInteger {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::integer::INTEGER_TAG
     }
@@ -431,11 +509,11 @@ impl Asn1Value for u64 {
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&crate::integer::encode_integer_bytes_u64(*self));
+        out.extend_from_slice(&crate::integer::encode_integer_bytes_u64(self.0));
     }
 
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        *self = crate::integer::decode_integer_bytes_u64(content)?;
+        self.0 = crate::integer::decode_integer_bytes_u64(content)?;
         Ok(())
     }
 
@@ -445,15 +523,28 @@ impl Asn1Value for u64 {
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
         let text = r.read_text_content();
-        *self = text.trim().parse::<u64>().map_err(|_| {
+        self.0 = text.trim().parse::<u64>().map_err(|_| {
             DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
         })?;
         Ok(())
     }
+
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+        crate::per::uinteger::encode_uint(w, c, self.0);
+    }
+
+    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader, c: &crate::constraints::Constraints) -> Result<(), crate::per::reader::DecodeError> {
+        self.0 = crate::per::uinteger::decode_uint(r, c)?;
+        Ok(())
+    }
+
+    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+        crate::constraints::validate_u64(self.0, c)
+    }
 }
 
 /// i128 analogue of the `u64` impl above.
-impl Asn1Value for i128 {
+impl Asn1Value for crate::integer::BigInteger {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::integer::INTEGER_TAG
     }
@@ -463,11 +554,11 @@ impl Asn1Value for i128 {
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&crate::integer::encode_integer_bytes_i128(*self));
+        out.extend_from_slice(&crate::integer::encode_integer_bytes_i128(self.0));
     }
 
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        *self = crate::integer::decode_integer_bytes_i128(content)?;
+        self.0 = crate::integer::decode_integer_bytes_i128(content)?;
         Ok(())
     }
 
@@ -477,7 +568,7 @@ impl Asn1Value for i128 {
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
         let text = r.read_text_content();
-        *self = text.trim().parse::<i128>().map_err(|_| {
+        self.0 = text.trim().parse::<i128>().map_err(|_| {
             DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
         })?;
         Ok(())
@@ -490,7 +581,7 @@ impl Asn1Value for i128 {
 /// also accepts EXTENDED-XER §10 TextBoolean (plain `"true"`/`"false"`
 /// content) when `XerReader::lenient()` is set — the non-standard asn1c
 /// extension `XerDecodeMode::Lenient` allows on the C++ side.
-impl Asn1Value for bool {
+impl Asn1Value for crate::boolean::Boolean {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::boolean::BOOLEAN_TAG
     }
@@ -500,16 +591,16 @@ impl Asn1Value for bool {
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&crate::boolean::encode_boolean_content(*self));
+        out.extend_from_slice(&crate::boolean::encode_boolean_content(self.0));
     }
 
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        *self = crate::boolean::decode_boolean_content(content)?;
+        self.0 = crate::boolean::decode_boolean_content(content)?;
         Ok(())
     }
 
     fn xer_encode(&self, out: &mut String, _depth: usize) {
-        out.push_str(if *self { "<true/>" } else { "<false/>" });
+        out.push_str(if self.0 { "<true/>" } else { "<false/>" });
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
@@ -525,17 +616,17 @@ impl Asn1Value for bool {
                 return Err(DecodeError::new("XER BOOLEAN: expected <true/> or <false/>".to_string(), 0));
             }
             return match text {
-                "true" => { *self = true; Ok(()) }
-                "false" => { *self = false; Ok(()) }
+                "true" => { self.0 = true; Ok(()) }
+                "false" => { self.0 = false; Ok(()) }
                 _ => Err(DecodeError::new("XER BOOLEAN: expected true or false".to_string(), 0)),
             };
         }
         let ti = r.consume_tag();
         if ti.self_closing && ti.name == "true" {
-            *self = true;
+            self.0 = true;
             Ok(())
         } else if ti.self_closing && ti.name == "false" {
-            *self = false;
+            self.0 = false;
             Ok(())
         } else {
             Err(DecodeError::new("XER BOOLEAN: expected <true/> or <false/>".to_string(), 0))
@@ -552,7 +643,7 @@ impl Asn1Value for bool {
 /// asn1c-compat quirk), never a member's field-name-derived tag, so
 /// `Asn1Value` (member-embedded content only, per this trait's own doc
 /// comment) never needs that branch.
-impl Asn1Value for () {
+impl Asn1Value for crate::null::Null {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::null::NULL_TAG
     }
@@ -600,6 +691,17 @@ impl Asn1Value for () {
                 return Err(DecodeError::new("XER: expected </NULL>".to_string(), 0));
             }
         }
+        Ok(())
+    }
+
+    /// X.691 §14: contributes zero bits to the encoding either direction —
+    /// mirrors `NullPerHandler` (`runtime/src/PerCodec.cpp`) exactly.
+    fn per_encode(&self, _w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {}
+    fn per_decode_into(
+        &mut self,
+        _r: &mut crate::per::reader::Reader,
+        _c: &crate::constraints::Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
         Ok(())
     }
 }
@@ -734,6 +836,20 @@ impl Asn1Value for crate::bit_string::BitString {
         *self = crate::bit_string::BitString { bytes, unused_bits };
         Ok(())
     }
+
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+        crate::per::bit_string::encode_bit_string(w, c, &self.bytes, self.bit_count());
+    }
+
+    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader, c: &crate::constraints::Constraints) -> Result<(), crate::per::reader::DecodeError> {
+        let (bytes, unused_bits) = crate::per::bit_string::decode_bit_string(r, c)?;
+        *self = crate::bit_string::BitString { bytes, unused_bits };
+        Ok(())
+    }
+
+    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+        crate::constraints::validate_size(self.bit_count(), c)
+    }
 }
 
 /// Maps ASN.1 OBJECT IDENTIFIER — `native_builtin_type`'s
@@ -844,7 +960,7 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
 /// shape as `bool`'s `<true/>`/`<false/>`), `0`/`-0` as the literal text
 /// `"0"`, everything else as `%.15f` with trailing zeros trimmed (keeping
 /// at least one digit after the decimal point).
-impl Asn1Value for f64 {
+impl Asn1Value for crate::real::Real {
     fn ber_natural_tag(&self) -> crate::tag::Tag {
         crate::real::REAL_TAG
     }
@@ -854,11 +970,11 @@ impl Asn1Value for f64 {
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        crate::real::encode_real_content(out, *self);
+        crate::real::encode_real_content(out, self.0);
     }
 
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        *self = crate::real::decode_real_value(content, 0)?;
+        self.0 = crate::real::decode_real_value(content, 0)?;
         Ok(())
     }
 
@@ -866,11 +982,11 @@ impl Asn1Value for f64 {
         if self.is_nan() {
             out.push_str("<NOT-A-NUMBER/>");
         } else if self.is_infinite() {
-            out.push_str(if *self > 0.0 { "<PLUS-INFINITY/>" } else { "<MINUS-INFINITY/>" });
-        } else if *self == 0.0 {
+            out.push_str(if self.0 > 0.0 { "<PLUS-INFINITY/>" } else { "<MINUS-INFINITY/>" });
+        } else if self.0 == 0.0 {
             out.push('0');
         } else {
-            let mut buf = format!("{self:.15}");
+            let mut buf = format!("{:.15}", self.0);
             if let Some(dot) = buf.find('.') {
                 let mut last = buf.len() - 1;
                 while last > dot + 1 && buf.as_bytes()[last] == b'0' {
@@ -886,7 +1002,7 @@ impl Asn1Value for f64 {
         let peek = r.peek_tag();
         if !peek.name.is_empty() {
             let ti = r.consume_tag();
-            *self = match ti.name.as_str() {
+            self.0 = match ti.name.as_str() {
                 "PLUS-INFINITY" => f64::INFINITY,
                 "MINUS-INFINITY" => f64::NEG_INFINITY,
                 "NOT-A-NUMBER" => f64::NAN,
@@ -907,7 +1023,7 @@ impl Asn1Value for f64 {
         }
         let text = r.read_text_content();
         let trimmed = text.trim();
-        *self = trimmed
+        self.0 = trimmed
             .parse::<f64>()
             .map_err(|_| DecodeError::new(format!("XER: invalid REAL value: {trimmed}"), 0))?;
         Ok(())
@@ -918,34 +1034,7 @@ impl Asn1Value for f64 {
 /// string kinds; this impl is scoped to IA5String's wire tag specifically,
 /// see `strings.rs`'s module doc on widening to the others). Mirrors
 /// `XerStringHandler`: escaped text content, via `xer::escape`/`xer::unescape`.
-impl Asn1Value for String {
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
-        crate::strings::IA5_STRING_TAG
-    }
 
-    fn xer_element_name(&self) -> &'static str {
-        "IA5String"
-    }
-
-    fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.as_bytes());
-    }
-
-    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        *self = crate::strings::decode_string_content(content, "IA5String")?;
-        Ok(())
-    }
-
-    fn xer_encode(&self, out: &mut String, _depth: usize) {
-        crate::xer::escape(self, out);
-    }
-
-    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        let text = r.read_text_content();
-        *self = crate::xer::unescape(text);
-        Ok(())
-    }
-}
 
 /// `Box<T>` forwarding — the heap indirection `RustBackend` gives a
 /// self-referential/mutually-recursive member (`SequenceMemberSpec::
@@ -999,20 +1088,152 @@ impl<T: Asn1Value> Asn1Value for Box<T> {
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
         (**self).xer_decode_into(r)
     }
+
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+        (**self).per_encode(w, c)
+    }
+
+    fn per_decode_into(
+        &mut self,
+        r: &mut crate::per::reader::Reader,
+        c: &crate::constraints::Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
+        (**self).per_decode_into(r, c)
+    }
+
+    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+        (**self).validate(c)
+    }
+
+    fn constraints(&self) -> &'static crate::constraints::Constraints {
+        (**self).constraints()
+    }
+}
+
+#[cfg(test)]
+mod per_blanket_tests {
+    use super::*;
+    use crate::integer::Integer;
+    use crate::constraints::Constraints;
+    use crate::per::{reader::Reader, writer::Writer};
+
+    fn ranged(lo: i64, hi: i64) -> Constraints {
+        Constraints {
+            flags: Constraints::CONSTRAINED,
+            range_bits: (64 - ((hi - lo) as u64).leading_zeros()),
+            lower_bound: lo,
+            upper_bound: hi,
+            ..Default::default()
+        }
+    }
+
+    fn bytes_of(f: impl FnOnce(&mut Writer)) -> Vec<u8> {
+        let mut w = Writer::new();
+        f(&mut w);
+        w.flush();
+        w.into_bytes()
+    }
+
+    #[test]
+    fn i64_trait_path_matches_free_function_and_roundtrips() {
+        let c = ranged(0, 15);
+        let via_trait = bytes_of(|w| Integer(9).per_encode(w, &c));
+        let direct = bytes_of(|w| crate::per::integer::encode_int(w, &c, 9));
+        assert_eq!(via_trait, direct);
+        let mut back = Integer(0);
+        back.per_decode_into(&mut Reader::new(&via_trait), &c).unwrap();
+        assert_eq!(back, 9);
+    }
+
+    #[test]
+    fn a_type_without_its_own_constraint_reports_unconstrained_and_box_forwards() {
+        assert_eq!(Integer(5).constraints(), &crate::constraints::UNCONSTRAINED);
+        assert_eq!(Box::new(Integer(5)).constraints(), &crate::constraints::UNCONSTRAINED);
+    }
+
+    #[test]
+    fn i64_validate_uses_the_passed_constraints() {
+        let c = ranged(0, 15);
+        assert_eq!(Integer(20).validate(&c), -5);
+        assert_eq!(Integer(5).validate(&c), 0);
+        assert_eq!(Integer(20).validate(&crate::constraints::UNCONSTRAINED), 0);
+    }
+
+    #[test]
+    fn octet_string_trait_path_roundtrips_and_validates_size() {
+        let c = Constraints { flags: Constraints::SIZE_CONSTRAINED, size_range_bits: 2, size_lower: 1, size_upper: 3, ..Default::default() };
+        let v = crate::octet_string::OctetString(vec![1, 2]);
+        let enc = bytes_of(|w| v.per_encode(w, &c));
+        let mut back = crate::octet_string::OctetString::default();
+        back.per_decode_into(&mut Reader::new(&enc), &c).unwrap();
+        assert_eq!(back, v);
+        assert_eq!(crate::octet_string::OctetString(vec![0; 5]).validate(&c), -2);
+    }
+
+    #[test]
+    fn string_kinds_use_their_own_tag_for_the_alphabet_width() {
+        let c = crate::constraints::UNCONSTRAINED;
+        let num = crate::strings::NumericString("12345".to_string());
+        let ia5 = crate::strings::Ia5String("12345".to_string());
+        // NumericString packs 4 bits/char, IA5String 7 — different lengths on the wire.
+        assert_ne!(bytes_of(|w| num.per_encode(w, &c)), bytes_of(|w| ia5.per_encode(w, &c)));
+        let mut back = crate::strings::NumericString::default();
+        back.per_decode_into(&mut Reader::new(&bytes_of(|w| num.per_encode(w, &c))), &c).unwrap();
+        assert_eq!(back, num);
+    }
+
+    #[test]
+    fn seq_of_integer_via_trait_matches_size_field_plus_element_loop() {
+        static ELEM: Constraints = Constraints {
+            flags: Constraints::CONSTRAINED, range_bits: 4, lower_bound: 0, upper_bound: 15,
+            lower_u64: 0, upper_u64: 0, size_range_bits: 0, size_lower: 0, size_upper: 0,
+            encode_table: None, element: None,
+        };
+        let coll = Constraints {
+            flags: Constraints::SIZE_CONSTRAINED, size_range_bits: 3, size_lower: 0, size_upper: 7,
+            element: Some(&ELEM), ..Default::default()
+        };
+        let v = crate::sequence::SeqOf(vec![Integer(1), Integer(9), Integer(15)]);
+        let via_trait = bytes_of(|w| v.per_encode(w, &coll));
+        let manual = bytes_of(|w| {
+            crate::per::length::encode_size_field(w, &coll, 3);
+            for x in [1i64, 9, 15] {
+                crate::per::integer::encode_int(w, &ELEM, x);
+            }
+        });
+        assert_eq!(via_trait, manual);
+        let mut back = crate::sequence::SeqOf::<Integer>(vec![]);
+        back.per_decode_into(&mut Reader::new(&via_trait), &coll).unwrap();
+        assert_eq!(back.0, vec![Integer(1), Integer(9), Integer(15)]);
+    }
+
+    #[test]
+    fn wide_string_trait_path_roundtrips_raw_bytes() {
+        let c = crate::constraints::UNCONSTRAINED;
+        let v = crate::strings::BmpString(vec![0x00, 0x41, 0x00, 0x42]);
+        let enc = bytes_of(|w| v.per_encode(w, &c));
+        let mut back = crate::strings::BmpString::default();
+        back.per_decode_into(&mut Reader::new(&enc), &c).unwrap();
+        assert_eq!(back, v);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::boolean::Boolean;
+    use crate::integer::Integer;
+    use crate::null::Null;
+    use crate::real::Real;
 
     #[test]
     fn i64_round_trips_through_the_trait() {
         let mut out = Vec::new();
-        300i64.ber_encode(&mut out);
+        Integer(300).ber_encode(&mut out);
         assert_eq!(out, vec![0x02, 0x02, 0x01, 0x2C]);
 
         let mut r = Reader::new(&out);
-        let mut got: i64 = 0;
+        let mut got = Integer(0);
         got.ber_decode_into(&mut r).unwrap();
         assert_eq!(got, 300);
     }
@@ -1023,13 +1244,13 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "x");
-        1i64.xer_encode(&mut out, 0);
+        Integer(1).xer_encode(&mut out, 0);
         write_close_tag(&mut out, "x");
         assert_eq!(out, "<x>1</x>");
 
         let mut r = XerReader::new(&out);
         r.consume_open_tag("x").unwrap();
-        let mut got: i64 = 0;
+        let mut got = Integer(0);
         got.xer_decode_into(&mut r).unwrap();
         r.consume_close_tag("x").unwrap();
         assert_eq!(got, 1);
@@ -1038,11 +1259,11 @@ mod tests {
     #[test]
     fn i64_xer_negative_and_whitespace() {
         let mut out = String::new();
-        (-42i64).xer_encode(&mut out, 0);
+        Integer(-42).xer_encode(&mut out, 0);
         assert_eq!(out, "-42");
 
         let mut r = XerReader::new("  -42  ");
-        let mut got: i64 = 0;
+        let mut got = Integer(0);
         got.xer_decode_into(&mut r).unwrap();
         assert_eq!(got, -42);
     }
@@ -1050,32 +1271,32 @@ mod tests {
     #[test]
     fn i64_xer_invalid_text_is_error() {
         let mut r = XerReader::new("not-a-number");
-        let mut got: i64 = 0;
+        let mut got = Integer(0);
         assert!(got.xer_decode_into(&mut r).is_err());
     }
 
     #[test]
     fn bool_ber_round_trips_through_the_trait() {
         let mut out = Vec::new();
-        true.ber_encode(&mut out);
+        Boolean(true).ber_encode(&mut out);
         assert_eq!(out, vec![0x01, 0x01, 0xFF]);
 
         let mut r = Reader::new(&out);
-        let mut got = false;
+        let mut got = Boolean(false);
         got.ber_decode_into(&mut r).unwrap();
-        assert!(got);
+        assert!(got.0);
     }
 
     #[test]
     fn unit_ber_round_trips_through_the_trait() {
         let mut out = Vec::new();
-        ().ber_encode(&mut out);
+        Null.ber_encode(&mut out);
         assert_eq!(out, vec![0x05, 0x00]);
 
         let mut r = Reader::new(&out);
-        let mut got = ();
+        let mut got = Null;
         got.ber_decode_into(&mut r).unwrap();
-        assert_eq!(got, ());
+        assert_eq!(got, Null);
     }
 
     #[test]
@@ -1084,16 +1305,16 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "flag");
-        ().xer_encode(&mut out, 0);
+        Null.xer_encode(&mut out, 0);
         write_close_tag(&mut out, "flag");
         assert_eq!(out, "<flag></flag>");
 
         let mut r = XerReader::new(&out);
         r.consume_open_tag("flag").unwrap();
-        let mut got = ();
+        let mut got = Null;
         got.xer_decode_into(&mut r).unwrap();
         r.consume_close_tag("flag").unwrap();
-        assert_eq!(got, ());
+        assert_eq!(got, Null);
     }
 
     #[test]
@@ -1299,10 +1520,10 @@ mod tests {
     #[test]
     fn f64_ber_round_trips_through_the_trait() {
         let mut out = Vec::new();
-        1.5f64.ber_encode(&mut out);
+        Real(1.5).ber_encode(&mut out);
 
         let mut r = Reader::new(&out);
-        let mut got: f64 = 0.0;
+        let mut got = Real(0.0);
         got.ber_decode_into(&mut r).unwrap();
         assert_eq!(got, 1.5);
     }
@@ -1313,13 +1534,13 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "x");
-        1.5f64.xer_encode(&mut out, 0);
+        Real(1.5).xer_encode(&mut out, 0);
         write_close_tag(&mut out, "x");
         assert_eq!(out, "<x>1.5</x>");
 
         let mut r = XerReader::new(&out);
         r.consume_open_tag("x").unwrap();
-        let mut got: f64 = 0.0;
+        let mut got = Real(0.0);
         got.xer_decode_into(&mut r).unwrap();
         r.consume_close_tag("x").unwrap();
         assert_eq!(got, 1.5);
@@ -1328,30 +1549,30 @@ mod tests {
     #[test]
     fn f64_xer_zero_encodes_as_bare_zero() {
         let mut out = String::new();
-        0.0f64.xer_encode(&mut out, 0);
+        Real(0.0).xer_encode(&mut out, 0);
         assert_eq!(out, "0");
 
         let mut out2 = String::new();
-        (-0.0f64).xer_encode(&mut out2, 0);
+        Real(-0.0).xer_encode(&mut out2, 0);
         assert_eq!(out2, "0");
     }
 
     #[test]
     fn f64_xer_special_values_round_trip() {
-        for v in [f64::INFINITY, f64::NEG_INFINITY] {
+        for v in [Real(f64::INFINITY), Real(f64::NEG_INFINITY)] {
             let mut out = String::new();
             v.xer_encode(&mut out, 0);
             let mut r = XerReader::new(&out);
-            let mut got: f64 = 0.0;
+            let mut got = Real(0.0);
             got.xer_decode_into(&mut r).unwrap();
             assert_eq!(got, v);
         }
 
         let mut out = String::new();
-        f64::NAN.xer_encode(&mut out, 0);
+        Real(f64::NAN).xer_encode(&mut out, 0);
         assert_eq!(out, "<NOT-A-NUMBER/>");
         let mut r = XerReader::new(&out);
-        let mut got: f64 = 0.0;
+        let mut got = Real(0.0);
         got.xer_decode_into(&mut r).unwrap();
         assert!(got.is_nan());
     }
@@ -1359,14 +1580,14 @@ mod tests {
     #[test]
     fn f64_xer_trims_trailing_zeros_but_keeps_one_digit() {
         let mut out = String::new();
-        2.0f64.xer_encode(&mut out, 0);
+        Real(2.0).xer_encode(&mut out, 0);
         assert_eq!(out, "2.0");
     }
 
     #[test]
     fn f64_xer_invalid_text_is_error() {
         let mut r = XerReader::new("not-a-number");
-        let mut got: f64 = 0.0;
+        let mut got = Real(0.0);
         assert!(got.xer_decode_into(&mut r).is_err());
     }
 
@@ -1376,68 +1597,68 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "flag");
-        true.xer_encode(&mut out, 0);
+        Boolean(true).xer_encode(&mut out, 0);
         write_close_tag(&mut out, "flag");
         assert_eq!(out, "<flag><true/></flag>");
 
         let mut r = XerReader::new(&out);
         r.consume_open_tag("flag").unwrap();
-        let mut got = false;
+        let mut got = Boolean(false);
         got.xer_decode_into(&mut r).unwrap();
         r.consume_close_tag("flag").unwrap();
-        assert!(got);
+        assert!(got.0);
     }
 
     #[test]
     fn bool_xer_false_round_trips() {
         let mut out = String::new();
-        false.xer_encode(&mut out, 0);
+        Boolean(false).xer_encode(&mut out, 0);
         assert_eq!(out, "<false/>");
 
         let mut r = XerReader::new("<false/>");
-        let mut got = true;
+        let mut got = Boolean(true);
         got.xer_decode_into(&mut r).unwrap();
-        assert!(!got);
+        assert!(!got.0);
     }
 
     #[test]
     fn bool_xer_rejects_non_empty_element_form() {
         let mut r = XerReader::new("true");
-        let mut got = false;
+        let mut got = Boolean(false);
         assert!(got.xer_decode_into(&mut r).is_err());
     }
 
     #[test]
     fn bool_xer_lenient_accepts_text_content() {
         let mut r = XerReader::new_lenient("true");
-        let mut got = false;
+        let mut got = Boolean(false);
         got.xer_decode_into(&mut r).unwrap();
-        assert!(got);
+        assert!(got.0);
 
         let mut r = XerReader::new_lenient("false");
-        let mut got = true;
+        let mut got = Boolean(true);
         got.xer_decode_into(&mut r).unwrap();
-        assert!(!got);
+        assert!(!got.0);
     }
 
     #[test]
     fn bool_xer_lenient_still_accepts_empty_element_form() {
         let mut r = XerReader::new_lenient("<true/>");
-        let mut got = false;
+        let mut got = Boolean(false);
         got.xer_decode_into(&mut r).unwrap();
-        assert!(got);
+        assert!(got.0);
     }
 
     #[test]
     fn string_ber_round_trips_through_the_trait() {
         let mut out = Vec::new();
-        "hi".to_string().ber_encode(&mut out);
+        crate::strings::Ia5String("hi".to_string()).ber_encode(&mut out);
         assert_eq!(out, vec![0x16, 0x02, 0x68, 0x69]);
 
         let mut r = Reader::new(&out);
-        let mut got = String::new();
+        let mut got = crate::strings::Ia5String::default();
         got.ber_decode_into(&mut r).unwrap();
-        assert_eq!(got, "hi");
+        assert_eq!(got.0, "hi");
     }
 
     #[test]
@@ -1446,28 +1667,28 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "label");
-        "a<b>&c".to_string().xer_encode(&mut out, 0);
+        crate::strings::Ia5String("a<b>&c".to_string()).xer_encode(&mut out, 0);
         write_close_tag(&mut out, "label");
         assert_eq!(out, "<label>a&lt;b&gt;&amp;c</label>");
 
         let mut r = XerReader::new(&out);
         r.consume_open_tag("label").unwrap();
-        let mut got = String::new();
+        let mut got = crate::strings::Ia5String::default();
         got.xer_decode_into(&mut r).unwrap();
         r.consume_close_tag("label").unwrap();
-        assert_eq!(got, "a<b>&c");
+        assert_eq!(got.0, "a<b>&c");
     }
 
     #[test]
     fn explicit_generic_wraps_and_round_trips_any_asn1value() {
         let mut buf = Vec::new();
-        encode_explicit(&mut buf, crate::tag::Tag::context(7, true), &42i64);
+        encode_explicit(&mut buf, crate::tag::Tag::context(7, true), &Integer(42));
         // [7] EXPLICIT (0xA7), wrapping the natural INTEGER encoding
         // (0x02 0x01 0x2A) unchanged — not a tag substitution.
         assert_eq!(buf, vec![0xA7, 0x03, 0x02, 0x01, 0x2A]);
 
         let mut r = Reader::new(&buf);
-        let got: i64 = decode_explicit(&mut r, crate::tag::Tag::context(7, true)).unwrap();
+        let got: Integer = decode_explicit(&mut r, crate::tag::Tag::context(7, true)).unwrap();
         assert_eq!(got, 42);
     }
 
@@ -1482,7 +1703,7 @@ mod tests {
 
         let mut r = Reader::new(&buf);
         let got = decode_explicit_any(&mut r, crate::tag::Tag::context(1, true)).unwrap();
-        assert_eq!(got, inner_tlv);
+        assert_eq!(*got, inner_tlv);
     }
 
     #[test]
@@ -1499,9 +1720,9 @@ mod tests {
     #[test]
     fn tagged_matching_natural_tag_is_identical_to_plain_encode() {
         let mut a = Vec::new();
-        42i64.ber_encode(&mut a);
+        Integer(42).ber_encode(&mut a);
         let mut b = Vec::new();
-        42i64.ber_encode_tagged(crate::integer::INTEGER_TAG, &mut b);
+        Integer(42).ber_encode_tagged(crate::integer::INTEGER_TAG, &mut b);
         assert_eq!(a, b);
     }
 
@@ -1509,11 +1730,11 @@ mod tests {
     fn tagged_substitutes_the_tag_for_a_scalar() {
         let context_0 = crate::tag::Tag::context(0, false);
         let mut out = Vec::new();
-        42i64.ber_encode_tagged(context_0, &mut out);
+        Integer(42).ber_encode_tagged(context_0, &mut out);
         assert_eq!(out, vec![0x80, 0x01, 0x2A]); // context primitive 0, not universal INTEGER (0x02)
 
         let mut r = Reader::new(&out);
-        let mut got: i64 = 0;
+        let mut got = Integer(0);
         got.ber_decode_into_tagged(&mut r, context_0).unwrap();
         assert_eq!(got, 42);
     }
@@ -1541,10 +1762,10 @@ mod tests {
         let context_0 = crate::tag::Tag::context(0, false);
         let context_1 = crate::tag::Tag::context(1, false);
         let mut out = Vec::new();
-        42i64.ber_encode_tagged(context_0, &mut out);
+        Integer(42).ber_encode_tagged(context_0, &mut out);
 
         let mut r = Reader::new(&out);
-        let mut got: i64 = 0;
+        let mut got = Integer(0);
         assert!(got.ber_decode_into_tagged(&mut r, context_1).is_err());
     }
 
@@ -1560,7 +1781,7 @@ mod tests {
 
     #[test]
     fn none_through_tagged_path_writes_nothing() {
-        let v: Option<i64> = None;
+        let v: Option<Integer> = None;
         let context_0 = crate::tag::Tag::context(0, false);
         let mut out = Vec::new();
         v.ber_encode_tagged(context_0, &mut out);
@@ -1569,15 +1790,15 @@ mod tests {
 
     #[test]
     fn some_through_tagged_path_round_trips() {
-        let v: Option<i64> = Some(7);
+        let v: Option<Integer> = Some(Integer(7));
         let context_0 = crate::tag::Tag::context(0, false);
         let mut out = Vec::new();
         v.ber_encode_tagged(context_0, &mut out);
         assert_eq!(out, vec![0x80, 0x01, 0x07]); // context primitive 0, not universal INTEGER
 
         let mut r = Reader::new(&out);
-        let mut got: Option<i64> = None;
+        let mut got: Option<Integer> = None;
         got.ber_decode_into_tagged(&mut r, context_0).unwrap();
-        assert_eq!(got, Some(7));
+        assert_eq!(got, Some(Integer(7)));
     }
 }
