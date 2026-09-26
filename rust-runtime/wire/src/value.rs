@@ -1222,7 +1222,7 @@ mod per_blanket_tests {
 mod tests {
     use super::*;
     use crate::boolean::Boolean;
-    use crate::integer::{BigInteger, Integer, UInteger};
+    use crate::integer::Integer;
     use crate::null::Null;
     use crate::real::Real;
 

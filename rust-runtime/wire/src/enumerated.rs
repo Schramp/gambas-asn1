@@ -58,6 +58,22 @@ pub struct EnumEntry {
     pub name: &'static str,
 }
 
+/// One ENUMERATED's complete, codec-agnostic metadata (X.680 §20): BER
+/// and PER read `value`, XER reads `name`. Codegen emits `entries` sorted
+/// ascending by `value` (X.691 §22 — the PER ordinal is the position in
+/// this order) and precomputes the root layout, so no walker recounts it.
+#[derive(Clone, Copy)]
+pub struct EnumSpec {
+    pub entries: &'static [EnumEntry],
+    /// True if the ENUMERATED has an extension marker (`...`).
+    pub extensible: bool,
+    /// Number of root entries (leading in `entries`); equals
+    /// `entries.len()` when the type is not extensible.
+    pub root_count: usize,
+    /// X.691 §10.5.6 unaligned index width for `root_count` root values.
+    pub root_bits: u32,
+}
+
 /// BASIC-XER form for ENUMERATED (X.693 §19 — same
 /// EmptyElementBoolean-style nested self-closing tag `boolean`'s own
 /// `Asn1Value` impl uses, `value.rs`) — mirrors `EnumeratedXerHandler`'s
@@ -67,8 +83,8 @@ pub struct EnumEntry {
 /// `else os << v;` branch) if `value` isn't in `entries` — defensive, not
 /// reachable for a value that actually came from the enum's own valid
 /// range.
-pub fn xer_encode_enum(out: &mut String, entries: &[EnumEntry], value: i64) {
-    match entries.iter().find(|e| e.value == value) {
+pub fn xer_encode_enum(out: &mut String, spec: &EnumSpec, value: i64) {
+    match spec.entries.iter().find(|e| e.value == value) {
         Some(e) => {
             out.push('<');
             out.push_str(e.name);
@@ -78,12 +94,12 @@ pub fn xer_encode_enum(out: &mut String, entries: &[EnumEntry], value: i64) {
     }
 }
 
-pub fn xer_decode_enum<T: TryFrom<i64>>(r: &mut XerReader, entries: &[EnumEntry]) -> Result<T, DecodeError> {
+pub fn xer_decode_enum<T: TryFrom<i64>>(r: &mut XerReader, spec: &EnumSpec) -> Result<T, DecodeError> {
     let ti = r.consume_tag();
     if !ti.self_closing {
         return Err(DecodeError::new("XER ENUMERATED: expected self-closing enum value tag".to_string(), 0));
     }
-    let raw = entries.iter().find(|e| e.name == ti.name).map(|e| e.value)
+    let raw = spec.entries.iter().find(|e| e.name == ti.name).map(|e| e.value)
         .ok_or_else(|| DecodeError::new(format!("XER ENUMERATED: unknown enum value: {}", ti.name), 0))?;
     T::try_from(raw).map_err(|_| DecodeError::new(format!("invalid ENUMERATED value: {}", ti.name), 0))
 }
@@ -110,8 +126,8 @@ pub fn xer_decode_enum<T: TryFrom<i64>>(r: &mut XerReader, entries: &[EnumEntry]
 /// defined behavior for the (currently unreachable) case a `T::default()`
 /// or other non-decode construction path ever produces an out-of-table
 /// discriminant.
-pub fn validate_enum(v: i64, entries: &[EnumEntry]) -> i64 {
-    if entries.iter().any(|e| e.value == v) {
+pub fn validate_enum(v: i64, spec: &EnumSpec) -> i64 {
+    if spec.entries.iter().any(|e| e.value == v) {
         0
     } else {
         1
@@ -154,10 +170,15 @@ mod tests {
         assert!(read_enumerated_tagged::<i64>(&mut r, ENUMERATED_TAG).is_err());
     }
 
-    const ENTRIES: [EnumEntry; 2] = [
-        EnumEntry { value: 1, name: "resultUnknown" },
-        EnumEntry { value: 2, name: "aaaFailed" },
-    ];
+    const ENTRIES: EnumSpec = EnumSpec {
+        entries: &[
+            EnumEntry { value: 1, name: "resultUnknown" },
+            EnumEntry { value: 2, name: "aaaFailed" },
+        ],
+        extensible: false,
+        root_count: 2,
+        root_bits: 1,
+    };
 
     #[test]
     fn xer_encodes_value_name() {
