@@ -298,7 +298,7 @@ mod tests {
 
     #[derive(Debug, Default, PartialEq)]
     struct Simple {
-        a: i64,
+        a: crate::integer::Integer,
         b: Option<DogfoodInt>,
     }
 
@@ -337,19 +337,19 @@ mod tests {
 
     #[test]
     fn mandatory_and_absent_optional() {
-        let v = Simple { a: 5, b: None };
+        let v = Simple { a: crate::integer::Integer(5), b: None };
         assert_eq!(roundtrip(&v), v);
     }
 
     #[test]
     fn mandatory_and_present_optional() {
-        let v = Simple { a: 5, b: Some(DogfoodInt(99)) };
+        let v = Simple { a: crate::integer::Integer(5), b: Some(DogfoodInt(99)) };
         assert_eq!(roundtrip(&v), v);
     }
 
     #[derive(Debug, Default, PartialEq)]
     struct WithExtension {
-        a: i64,
+        a: crate::integer::Integer,
         ext1: Option<DogfoodInt>,
     }
 
@@ -388,13 +388,13 @@ mod tests {
 
     #[test]
     fn extension_absent() {
-        let v = WithExtension { a: 3, ext1: None };
+        let v = WithExtension { a: crate::integer::Integer(3), ext1: None };
         assert_eq!(roundtrip_ext(&v), v);
     }
 
     #[test]
     fn extension_present() {
-        let v = WithExtension { a: 3, ext1: Some(DogfoodInt(123)) };
+        let v = WithExtension { a: crate::integer::Integer(3), ext1: Some(DogfoodInt(123)) };
         assert_eq!(roundtrip_ext(&v), v);
     }
 
@@ -404,13 +404,13 @@ mod tests {
     // INTEGER) and values.
     #[test]
     fn matches_cpp_ground_truth() {
-        let v = Simple { a: 5, b: Some(DogfoodInt(99)) };
+        let v = Simple { a: crate::integer::Integer(5), b: Some(DogfoodInt(99)) };
         let mut w = Writer::new();
         encode_sequence_content(&SIMPLE_SPEC, &mut w, &v);
         w.flush();
         assert_eq!(w.into_bytes(), vec![0xa8, 0x0b, 0x18]);
 
-        let v2 = Simple { a: 5, b: None };
+        let v2 = Simple { a: crate::integer::Integer(5), b: None };
         let mut w2 = Writer::new();
         encode_sequence_content(&SIMPLE_SPEC, &mut w2, &v2);
         w2.flush();
@@ -419,8 +419,8 @@ mod tests {
 
     #[derive(Debug, Default, PartialEq)]
     struct WithUnsupported {
-        a: i64,
-        skip: i64,
+        a: crate::integer::Integer,
+        skip: crate::integer::Integer,
     }
 
     const UNSUPPORTED_SPEC: SequenceSpec<WithUnsupported> = SequenceSpec {
@@ -459,7 +459,7 @@ mod tests {
         // that a table containing an Unsupported row still compiles and
         // that row simply isn't reached unless something tries to
         // encode/decode it specifically.
-        access_encode(&UNSUPPORTED_SPEC.members[0], &WithUnsupported { a: 5, skip: 0 }, &mut w);
+        access_encode(&UNSUPPORTED_SPEC.members[0], &WithUnsupported { a: crate::integer::Integer(5), skip: crate::integer::Integer(0) }, &mut w);
         w.flush();
         assert_eq!(w.into_bytes(), vec![0x50]);
     }
@@ -468,7 +468,7 @@ mod tests {
     #[should_panic(expected = "member 'skip' not supported: test stub")]
     fn unsupported_member_panics_if_actually_reached() {
         let mut w = Writer::new();
-        access_encode(&UNSUPPORTED_SPEC.members[1], &WithUnsupported { a: 5, skip: 0 }, &mut w);
+        access_encode(&UNSUPPORTED_SPEC.members[1], &WithUnsupported { a: crate::integer::Integer(5), skip: crate::integer::Integer(0) }, &mut w);
     }
 
     // A bare `i64` reached through a plain `Scalar` accessor, with its
@@ -476,7 +476,7 @@ mod tests {
     // identical to the row in `SIMPLE_SPEC` above.
     #[derive(Debug, Default, PartialEq)]
     struct ScalarInt {
-        a: i64,
+        a: crate::integer::Integer,
     }
 
     const SCALAR_INT_SPEC: SequenceSpec<ScalarInt> = SequenceSpec {
@@ -495,7 +495,7 @@ mod tests {
     #[test]
     fn scalar_row_with_constraints_matches_constrained_row() {
         let mut w = Writer::new();
-        encode_sequence_content(&SCALAR_INT_SPEC, &mut w, &ScalarInt { a: 9 });
+        encode_sequence_content(&SCALAR_INT_SPEC, &mut w, &ScalarInt { a: crate::integer::Integer(9) });
         w.flush();
         let bytes = w.into_bytes();
         let mut direct = Writer::new();
@@ -503,6 +503,6 @@ mod tests {
         direct.flush();
         assert_eq!(bytes, direct.into_bytes());
         let mut r = Reader::new(&bytes);
-        assert_eq!(decode_sequence_content(&SCALAR_INT_SPEC, &mut r).unwrap(), ScalarInt { a: 9 });
+        assert_eq!(decode_sequence_content(&SCALAR_INT_SPEC, &mut r).unwrap(), ScalarInt { a: crate::integer::Integer(9) });
     }
 }

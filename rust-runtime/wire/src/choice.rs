@@ -497,13 +497,14 @@ pub fn decode_alt_xer<T: crate::value::Asn1Value + Default, C>(
 
 #[cfg(test)]
 mod tests {
+    use crate::integer::Integer;
     use super::*;
     use crate::value::Asn1Value;
 
 /// `Choice ::= CHOICE { num INTEGER, data OCTET STRING }`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Choice {
-    Num(i64),
+    Num(Integer),
     Data(crate::octet_string::OctetString),
 }
 
@@ -520,7 +521,7 @@ static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
             }
         },
         ber_decode_into: |r| {
-            let mut v: i64 = Default::default();
+            let mut v: Integer = Default::default();
             v.ber_decode_into(r)?;
             Ok(Choice::Num(v))
         },
@@ -533,7 +534,7 @@ static CHOICE_ALTERNATIVES: [AlternativeSpec<Choice>; 2] = [
             }
         },
         xer_decode_into: |r| {
-            let mut v: i64 = Default::default();
+            let mut v: Integer = Default::default();
             v.xer_decode_into(r)?;
             Ok(Choice::Num(v))
         },
@@ -593,7 +594,7 @@ impl Choice {
 
     #[test]
     fn encodes_num_alternative() {
-        assert_eq!(Choice::Num(5).encode(), vec![0x02, 0x01, 0x05]);
+        assert_eq!(Choice::Num(Integer(5)).encode(), vec![0x02, 0x01, 0x05]);
     }
 
     #[test]
@@ -603,7 +604,7 @@ impl Choice {
 
     #[test]
     fn round_trips_both_alternatives() {
-        for c in [Choice::Num(-42), Choice::Data(crate::octet_string::OctetString(vec![0xAA, 0xBB]))] {
+        for c in [Choice::Num(Integer(-42)), Choice::Data(crate::octet_string::OctetString(vec![0xAA, 0xBB]))] {
             let bytes = c.encode();
             assert_eq!(Choice::decode(&bytes).unwrap(), c);
         }
@@ -628,11 +629,11 @@ impl Choice {
             constructed: true,
         };
         let spec = ChoiceSpec { name: "Choice", alternatives: &CHOICE_ALTERNATIVES, unknown_extension: None, own_tag: Some(tag) };
-        let enc = encode_choice(&spec, &Choice::Num(42));
+        let enc = encode_choice(&spec, &Choice::Num(Integer(42)));
         assert_eq!(enc, vec![0xa9, 0x03, 0x02, 0x01, 0x2a]);
 
         let decoded = decode_choice(&spec, &enc).unwrap();
-        assert_eq!(decoded, Choice::Num(42));
+        assert_eq!(decoded, Choice::Num(Integer(42)));
     }
 
     #[test]
@@ -644,7 +645,7 @@ impl Choice {
     fn xer_encodes_num_alternative() {
         // Ground truth from the real C++ runtime (XerCodec::encode): root
         // CHOICE gets the X.693 §8.3.1 document-element wrapper.
-        assert_eq!(Choice::Num(7).encode_xer(), "<Choice>\n    <num>7</num>\n</Choice>\n");
+        assert_eq!(Choice::Num(Integer(7)).encode_xer(), "<Choice>\n    <num>7</num>\n</Choice>\n");
     }
 
     #[test]
@@ -654,7 +655,7 @@ impl Choice {
 
     #[test]
     fn xer_round_trips_both_alternatives() {
-        for c in [Choice::Num(-42), Choice::Data(crate::octet_string::OctetString(vec![0xAA, 0xBB]))] {
+        for c in [Choice::Num(Integer(-42)), Choice::Data(crate::octet_string::OctetString(vec![0xAA, 0xBB]))] {
             let xml = c.encode_xer();
             assert_eq!(Choice::decode_xer(&xml).unwrap(), c);
         }
@@ -765,7 +766,7 @@ impl Choice {
     /// more.
     #[derive(Debug, Clone, PartialEq)]
     enum ExtChoice {
-        Num(i64),
+        Num(Integer),
         UnknownExtension(Tag, Vec<u8>),
     }
 
@@ -776,7 +777,7 @@ impl Choice {
         tag: NUM_TAG,
         ber_encode: |x, out| {
             if let ExtChoice::Num(v) = x {
-                crate::integer::write_integer_tagged(out, NUM_TAG, *v);
+                crate::integer::write_integer_tagged(out, NUM_TAG, **v);
                 true
             } else {
                 false
@@ -784,7 +785,7 @@ impl Choice {
         },
         ber_decode_into: |r| {
             let v = crate::integer::read_integer_tagged(r, NUM_TAG)?;
-            Ok(ExtChoice::Num(v))
+            Ok(ExtChoice::Num(Integer(v)))
         },
         xer_encode: |_, _, _| false,
         xer_decode_into: |_| Err(DecodeError::new("xer not exercised in this test", 0)),
@@ -805,7 +806,7 @@ impl Choice {
 
     #[test]
     fn known_alternative_still_decodes_normally() {
-        let v = ExtChoice::Num(42);
+        let v = ExtChoice::Num(Integer(42));
         let enc = encode_choice(&EXT_CHOICE_SPEC, &v);
         assert_eq!(decode_choice(&EXT_CHOICE_SPEC, &enc).unwrap(), v);
     }
@@ -848,12 +849,12 @@ impl Choice {
     /// delegates to.
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Inner {
-        A(i64),
-        B(i64),
+        A(Integer),
+        B(Integer),
     }
 
     impl Default for Inner {
-        fn default() -> Self { Inner::A(0) }
+        fn default() -> Self { Inner::A(Integer(0)) }
     }
 
     const INNER_A_TAG: Tag = Tag::context(1, false);
@@ -868,13 +869,13 @@ impl Choice {
                 true
             } else { false },
             ber_decode_into: |r| {
-                let mut v: i64 = Default::default();
+                let mut v: Integer = Default::default();
                 Asn1Value::ber_decode_into_tagged(&mut v, r, INNER_A_TAG)?;
                 Ok(Inner::A(v))
             },
             xer_encode: |x, out, depth| if let Inner::A(v) = x { v.xer_encode(out, depth); true } else { false },
             xer_decode_into: |r| {
-                let mut v: i64 = Default::default();
+                let mut v: Integer = Default::default();
                 v.xer_decode_into(r)?;
                 Ok(Inner::A(v))
             },
@@ -887,13 +888,13 @@ impl Choice {
                 true
             } else { false },
             ber_decode_into: |r| {
-                let mut v: i64 = Default::default();
+                let mut v: Integer = Default::default();
                 Asn1Value::ber_decode_into_tagged(&mut v, r, INNER_B_TAG)?;
                 Ok(Inner::B(v))
             },
             xer_encode: |x, out, depth| if let Inner::B(v) = x { v.xer_encode(out, depth); true } else { false },
             xer_decode_into: |r| {
-                let mut v: i64 = Default::default();
+                let mut v: Integer = Default::default();
                 v.xer_decode_into(r)?;
                 Ok(Inner::B(v))
             },
@@ -1011,7 +1012,7 @@ impl Choice {
 
     #[test]
     fn untagged_choice_of_choice_alternative_round_trips_every_flattened_tag() {
-        for v in [Outer::Wrapped(Inner::A(5)), Outer::Wrapped(Inner::B(-3)), Outer::Direct(crate::octet_string::OctetString(vec![1, 2, 3]))] {
+        for v in [Outer::Wrapped(Inner::A(Integer(5))), Outer::Wrapped(Inner::B(Integer(-3))), Outer::Direct(crate::octet_string::OctetString(vec![1, 2, 3]))] {
             let bytes = v.encode();
             assert_eq!(Outer::decode(&bytes).unwrap(), v);
         }
@@ -1022,7 +1023,7 @@ impl Choice {
         // No extra wrapper is written for the untagged `inner` alternative —
         // the wire tag is directly Inner::A's own tag (context, primitive,
         // number 1 = 0x81), not some synthetic outer tag.
-        let bytes = Outer::Wrapped(Inner::A(5)).encode();
+        let bytes = Outer::Wrapped(Inner::A(Integer(5))).encode();
         assert_eq!(bytes[0], 0x81);
     }
 

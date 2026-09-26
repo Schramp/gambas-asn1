@@ -38,6 +38,7 @@
 //! Definite-length BER only; indefinite-length (X.690 §8.1.3.2) isn't
 //! implemented (see `reader` module docs).
 
+pub mod any;
 pub mod bit_string;
 pub mod boolean;
 pub mod choice;
