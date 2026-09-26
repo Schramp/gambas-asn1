@@ -34,8 +34,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]  # asn1cpp/
-RUST_RUNTIME_BER = REPO / "rust-runtime/ber"
-RUST_RUNTIME_PER = REPO / "rust-runtime/per"
+RUST_RUNTIME_WIRE = REPO / "rust-runtime/wire"
 TEST_DIR = REPO / "tests/asn1"
 
 CARGO_TOML_TEMPLATE = """\
@@ -49,8 +48,7 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-asn1cpp-ber = {{ path = "{rust_runtime_ber}" }}
-asn1cpp-per = {{ path = "{rust_runtime_per}" }}
+asn1cpp-wire = {{ path = "{rust_runtime_wire}" }}
 """
 
 
@@ -115,8 +113,7 @@ def validate_one(asncpp: Path, cargo: str, asn1_file: Path, verbose: bool) -> tu
         (crate_dir / "Cargo.toml").write_text(
             CARGO_TOML_TEMPLATE.format(
                 name=asn1_file.stem.lower().replace("_", "-"),
-                rust_runtime_ber=RUST_RUNTIME_BER,
-                rust_runtime_per=RUST_RUNTIME_PER,
+                rust_runtime_wire=RUST_RUNTIME_WIRE,
             )
         )
 
@@ -138,8 +135,8 @@ def main() -> int:
     if not asncpp.exists():
         print(f"asn1cpp binary not found: {asncpp}", file=sys.stderr)
         return 1
-    if not RUST_RUNTIME_BER.exists():
-        print(f"rust-runtime/ber not found: {RUST_RUNTIME_BER}", file=sys.stderr)
+    if not RUST_RUNTIME_WIRE.exists():
+        print(f"rust-runtime/wire not found: {RUST_RUNTIME_WIRE}", file=sys.stderr)
         return 1
 
     files = sorted(TEST_DIR.glob("*.asn1"))

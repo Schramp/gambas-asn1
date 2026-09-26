@@ -654,7 +654,7 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
         // RustBackend's SEQUENCE OF row pick between the element's own real
         // ASN_TYP_{TYPE}_ELEM_CONSTRAINTS_PER (emit_seq_of_definition's own
         // emit_member_type_descriptor call) and the shared
-        // asn1cpp_per::constraints::UNCONSTRAINED constant, without
+        // asn1cpp_wire::constraints::UNCONSTRAINED constant, without
         // reconstructing a name or needing a per-type fallback emission.
         shape.has_own_descriptor = build_member_type_descriptor_spec(elem, "", "elem").has_value();
     }
@@ -1241,7 +1241,7 @@ Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRe
     // PER-representable via a Scalar access to the target's own PerValue
     // impl, which RustBackend now emits unconditionally for every
     // SEQUENCE/CHOICE (real rows for covered members, `Unsupported` stubs
-    // for the rest — see asn1cpp_per::sequence::MemberAccess::Unsupported's
+    // for the rest — see asn1cpp_wire::per::sequence::MemberAccess::Unsupported's
     // own doc). No dependency on the referenced type's own coverage state
     // to track here, unlike an earlier version of this function.
     if (std::holds_alternative<ast::SequenceType>(resolved->body) ||
