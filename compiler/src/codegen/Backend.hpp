@@ -1152,6 +1152,23 @@ protected:
         default:                         return 3;  // Context
         }
     }
+
+public:
+    /// @brief X.691 §26.5.4/§26.5.7 unaligned-PER FROM-alphabet bit width:
+    ///        ceil(log2(alphabet_size)), clamped to [1, inf) — both backends
+    ///        compute this identically from `BuiltinAliasSpec::alphabet`/
+    ///        `MemberTypeDescriptorSpec::alphabet`'s size; kept here once
+    ///        rather than duplicated per backend (was CppBackend-only
+    ///        `compute_alphabet_bits`). Public (unlike `tag_class_index`,
+    ///        `write_to_both`): called from free functions in both
+    ///        backends' .cpp files, not just Backend-subclass methods.
+    /// @param alphabet_size Number of distinct permitted characters.
+    /// @return Bit width per remapped character; 1 for a 0- or 1-symbol alphabet.
+    static int alphabet_bits_for(int alphabet_size) {
+        int bits = 0;
+        for (int r = alphabet_size - 1; r > 0; r >>= 1) ++bits;
+        return (bits == 0) ? 1 : bits;
+    }
 };
 
 /// @brief Per-type output session. Backend decides file

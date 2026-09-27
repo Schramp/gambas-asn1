@@ -1284,7 +1284,7 @@ impl DefaultPoint {
         size_range_bits: 0,
         size_lower: 0,
         size_upper: 0,
-        encode_table: None, element: None,
+        encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,
     };
 
     static RANGED_POINT_MEMBERS: [MemberDescriptor<RangedPoint>; 2] = [
@@ -1358,7 +1358,7 @@ impl DefaultPoint {
         size_range_bits: 0,
         size_lower: 1,
         size_upper: 4,
-        encode_table: None, element: None,
+        encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,
     };
 
     static SIZED_BLOB_MEMBERS: [MemberDescriptor<SizedBlob>; 1] = [MemberDescriptor {
@@ -1439,7 +1439,7 @@ impl DefaultPoint {
         size_range_bits: 0,
         size_lower: 1,
         size_upper: 3,
-        encode_table: None, element: None,
+        encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,
     };
 
     #[test]
@@ -1482,7 +1482,7 @@ impl DefaultPoint {
         size_range_bits: 0,
         size_lower: 1,
         size_upper: 2,
-        encode_table: None, element: None,
+        encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,
     };
 
     static BASKET_MEMBERS: [MemberDescriptor<Basket>; 1] = [MemberDescriptor {
