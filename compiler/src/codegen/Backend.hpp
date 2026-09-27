@@ -286,7 +286,6 @@ struct BuiltinAliasSpec : TaggedTypeSpec {
     // builtin-alias types are never CHOICE, the only case natural-tag
     // resolution returns nullopt for.
     std::vector<uint8_t>   alphabet;    // FROM-alphabet constraint (restricted string types); empty = none
-    int      alphabet_bits = 0;         // X.691 §26.5.4 unaligned variant: ceil(log2(alphabet.size())); 0 when alphabet is empty
     bool     has_size_constraint;       // true if a SIZE constraint is present at all (bounded or semi-constrained)
     bool     size_bounded;              // true iff the SIZE constraint has a finite upper bound;
                                          // false for SIZE(n..MAX) — semi-constrained, no upper cap.
@@ -366,10 +365,6 @@ struct MemberTypeDescriptorSpec {
     // Kind::Sizeable — mirrors BuiltinAliasSpec's SIZE/FROM-alphabet fields.
     ast::BuiltinType      builtin_type;
     std::vector<uint8_t>  alphabet;      // empty = no FROM-alphabet constraint
-    // X.691 §26.5.4 unaligned variant: ceil(log2(alphabet.size())); 0 when
-    // alphabet is empty. Computed once alongside alphabet (Generator.cpp),
-    // not recomputed by RustBackend's own emission or by the PER runtime.
-    int                    alphabet_bits = 0;
     std::string           alpha_prefix;  // empty = no FROM-alphabet arrays needed
     bool     has_size_constraint; // true if a SIZE constraint is present at all
     bool     size_bounded;        // true iff the SIZE constraint has a finite upper bound
@@ -1156,6 +1151,23 @@ protected:
         case ast::TagClass::Private:     return 2;
         default:                         return 3;  // Context
         }
+    }
+
+public:
+    /// @brief X.691 §26.5.4/§26.5.7 unaligned-PER FROM-alphabet bit width:
+    ///        ceil(log2(alphabet_size)), clamped to [1, inf) — both backends
+    ///        compute this identically from `BuiltinAliasSpec::alphabet`/
+    ///        `MemberTypeDescriptorSpec::alphabet`'s size; kept here once
+    ///        rather than duplicated per backend (was CppBackend-only
+    ///        `compute_alphabet_bits`). Public (unlike `tag_class_index`,
+    ///        `write_to_both`): called from free functions in both
+    ///        backends' .cpp files, not just Backend-subclass methods.
+    /// @param alphabet_size Number of distinct permitted characters.
+    /// @return Bit width per remapped character; 1 for a 0- or 1-symbol alphabet.
+    static int alphabet_bits_for(int alphabet_size) {
+        int bits = 0;
+        for (int r = alphabet_size - 1; r > 0; r >>= 1) ++bits;
+        return (bits == 0) ? 1 : bits;
     }
 };
 

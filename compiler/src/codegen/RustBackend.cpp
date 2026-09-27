@@ -1000,7 +1000,9 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // code, identical for every alphabet-constrained member.
     std::string encode_table_expr = "None";
     std::string alphabet_expr = "None";
+    int alphabet_bits = 0;
     if (!spec.alphabet.empty()) {
+        alphabet_bits = Backend::alphabet_bits_for(static_cast<int>(spec.alphabet.size()));
         std::string enc_ident = std::format("{}_ENC", to_screaming_snake_case(spec.tname));
         std::array<uint16_t, 256> table;
         table.fill(0xFFFFu);
@@ -1039,7 +1041,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         "alphabet_bits: {}, alphabet: {}, alphabet_size: {}, element: None,\n"
         "}};\n\n",
         cname, flags, spec.size_range_bits, spec.size_lower, size_upper, encode_table_expr,
-        spec.alphabet_bits, alphabet_expr, spec.alphabet.size());
+        alphabet_bits, alphabet_expr, spec.alphabet.size());
 }
 
 /// @brief Emit a Rust size-check function for a SEQUENCE OF / SET OF type's
