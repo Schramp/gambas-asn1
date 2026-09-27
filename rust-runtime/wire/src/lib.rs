@@ -4,63 +4,44 @@
 //! `Asn1Object`/`TypeDescriptor` model serving every codec (`ICodec`
 //! dispatches BER/XER/JER/PER off the same table).
 //!
-//! Merged from what were three separate crates (`asn1cpp-ber`,
-//! `asn1cpp-per`, `asn1cpp-constraints`) once unifying `Asn1Value`/
-//! `PerValue` (gambas-asn1#537) made keeping BER/XER and PER's runtime
-//! logic in separate crates untenable: `Asn1Value`'s BER-only convenience
-//! defaults (`ber_encode_tagged`, `ber_decode_into_explicit`, ...) are
-//! genuinely overridden per-type (`Option<V>`'s own impl, `value.rs`) —
-//! Rust has no specialization, so a trait method that needs per-type
-//! override capability must live on the *same* trait as the type's other
-//! methods, not a separate blanket-default extension trait. Since those
-//! defaults need BER's TLV `Reader`/`Writer`/`validate::check`/tag
-//! machinery, and PER's own methods need PER's bit-level `Reader`/`Writer`,
-//! the trait itself needs both — which only works cleanly with both
-//! implementations in one crate. `asn1cpp-ber`/`asn1cpp-per`/
-//! `asn1cpp-constraints` still exist as thin re-export crates (unchanged
-//! external paths, so generated code and `RustBackend.cpp`'s emitted paths
-//! needed zero changes beyond merging each type's two `impl` blocks into
-//! one).
-//!
 //! ## Layout
 //!
-//! Root-level modules are BER/XER (formerly `asn1cpp-ber`): TLV primitives
-//! (`reader`, `writer`, `tag`), XER (`xer`), and encode/decode for every
-//! builtin kind plus SEQUENCE/CHOICE (`sequence`, `choice`, `enumerated`,
-//! `integer`, `oid`, `relative_oid`, `octet_string`, `bit_string`,
-//! `strings`, `null`, `boolean`, `real`). `per` is PER (X.691 unaligned,
-//! formerly `asn1cpp-per`) — its own bit-level `reader`/`writer` and
-//! per-construct encode/decode, module-nested to avoid name collisions
-//! with the (unrelated, TLV-shaped) root-level modules of the same name.
-//! `constraints` (X.680 §51 SubtypeConstraint data) is shared at the root —
-//! plain data both BER/XER and PER read, computed once at codegen time.
+//! `spec` holds the codec-agnostic tables codegen emits
+//! (`SequenceSpec`/`ChoiceSpec`/`EnumSpec`), `value` the shared
+//! `Asn1Value` trait, `constraints` the shared X.680 §51 SubtypeConstraint
+//! data — all three read by every codec. `ber` is BER's TLV stream
+//! primitives (`reader`, `writer`, `tag`) plus the SEQUENCE/CHOICE/
+//! ENUMERATED walkers that drive the shared tables for BER. `xer` is XER's
+//! own stream primitives and walkers. `per` is PER (X.691 unaligned) —
+//! its own bit-level `reader`/`writer` and per-construct encode/decode,
+//! module-nested to avoid name collisions with `ber`'s TLV-shaped modules
+//! of the same name. Every per-type wrapper module at the root (`integer`,
+//! `boolean`, `octet_string`, ...) implements `Asn1Value` once against
+//! all three — one `impl` block per type covers BER, XER and PER together
+//! (`value` module doc explains why Rust's lack of specialization forces
+//! this).
 //!
 //! Definite-length BER only; indefinite-length (X.690 §8.1.3.2) isn't
-//! implemented (see `reader` module docs).
+//! implemented (see `ber::reader` module docs).
 
 pub mod any;
+pub mod ber;
 pub mod bit_string;
 pub mod boolean;
-pub mod choice;
 pub mod constraints;
 pub mod debug;
-pub mod enumerated;
 pub mod integer;
 pub mod null;
 pub mod octet_string;
 pub mod oid;
 pub mod per;
-pub mod reader;
 pub mod real;
 pub mod relative_oid;
-pub mod sequence;
 pub mod spec;
 pub mod strings;
-pub mod tag;
 pub mod validate;
 pub mod value;
-pub mod writer;
 pub mod xer;
 
-pub use reader::{DecodeError, Reader, Tlv};
-pub use tag::{Tag, TagClass};
+pub use ber::reader::{DecodeError, Reader, Tlv};
+pub use ber::tag::{Tag, TagClass};

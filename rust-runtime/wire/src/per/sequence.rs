@@ -209,9 +209,9 @@ mod tests {
     #[derive(Debug, Default, PartialEq)]
     struct DogfoodInt(i64);
     impl Asn1Value for DogfoodInt {
-        fn ber_natural_tag(&self) -> crate::tag::Tag { unimplemented!() }
+        fn ber_natural_tag(&self) -> crate::ber::tag::Tag { unimplemented!() }
         fn ber_encode_content(&self, _out: &mut Vec<u8>) { unimplemented!() }
-        fn ber_decode_content(&mut self, _content: &[u8]) -> Result<(), crate::reader::DecodeError> { unimplemented!() }
+        fn ber_decode_content(&mut self, _content: &[u8]) -> Result<(), crate::ber::reader::DecodeError> { unimplemented!() }
         fn per_encode(&self, w: &mut Writer, _c: &Constraints) {
             encode_unconstrained_int(w, self.0);
         }

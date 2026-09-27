@@ -5,7 +5,7 @@
 //! indefinite-length support (X.690 §8.1.3.2 — see `Reader::read_tlv`'s
 //! own doc for how the two forms end up producing identical `.value` bytes).
 
-use crate::tag::{read_tag, Tag};
+use crate::ber::tag::{read_tag, Tag};
 use std::fmt;
 
 /// Decode failure with a human-readable reason and the byte offset it
@@ -216,7 +216,7 @@ pub fn read_explicit<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tag::universal;
+    use crate::ber::tag::universal;
 
     #[test]
     fn reads_primitive_tlv() {

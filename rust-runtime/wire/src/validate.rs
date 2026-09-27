@@ -106,8 +106,8 @@ fn report(delta: i64, name: &str, phase: &str) {
 pub(crate) mod tests {
     use crate::integer::Integer;
     use super::*;
-    use crate::reader::Reader;
-    use crate::tag::{universal, Tag};
+    use crate::ber::reader::Reader;
+    use crate::ber::tag::{universal, Tag};
     use crate::value::Asn1Value;
     use std::sync::Mutex;
 
@@ -148,7 +148,7 @@ pub(crate) mod tests {
         fn ber_encode_content(&self, out: &mut Vec<u8>) {
             self.0.ber_encode_content(out);
         }
-        fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), crate::reader::DecodeError> {
+        fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), crate::ber::reader::DecodeError> {
             self.0.ber_decode_content(content)
         }
         fn validate(&self, _c: &crate::constraints::Constraints) -> i64 {

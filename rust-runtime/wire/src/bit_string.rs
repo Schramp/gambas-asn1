@@ -11,9 +11,9 @@
 //! trait impl per concrete type — same reasoning `strings.rs`'s module doc
 //! gives for the 11 restricted-character-string newtypes).
 
-use crate::reader::{DecodeError, Reader};
-use crate::tag::{universal, Tag};
-use crate::writer::write_primitive;
+use crate::ber::reader::{DecodeError, Reader};
+use crate::ber::tag::{universal, Tag};
+use crate::ber::writer::write_primitive;
 
 pub const BIT_STRING_TAG: Tag = Tag::universal(universal::BIT_STRING, false);
 

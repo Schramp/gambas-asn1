@@ -6,7 +6,7 @@
 //! `Vec<u8>` first. Simpler, and the extra allocation doesn't matter for a
 //! from-scratch codec that hasn't been performance-tuned yet.
 
-use crate::tag::{write_tag, Tag};
+use crate::ber::tag::{write_tag, Tag};
 
 /// Encode and append the length octets for `len` bytes — short form
 /// (`len < 128`) or long form (base-256, MSB set on the length-of-length byte).
@@ -67,7 +67,7 @@ pub fn write_explicit(out: &mut Vec<u8>, tag: Tag, inner_encode: impl FnOnce(&mu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tag::universal;
+    use crate::ber::tag::universal;
 
     #[test]
     fn short_form_length() {

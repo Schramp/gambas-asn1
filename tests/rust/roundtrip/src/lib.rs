@@ -330,7 +330,7 @@ mod tests {
         let mut content = level_bytes;
         content.extend_from_slice(&note_bytes);
         let mut wire = Vec::new();
-        asn1cpp_wire::writer::write_constructed(&mut wire, asn1cpp_wire::spec::sequence::SEQUENCE_TAG, &content);
+        asn1cpp_wire::ber::writer::write_constructed(&mut wire, asn1cpp_wire::spec::sequence::SEQUENCE_TAG, &content);
 
         let g = Gauge::decode(&wire).unwrap();
         assert_eq!(g.level, -5);
