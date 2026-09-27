@@ -186,6 +186,76 @@ static bool per_string_covered(ast::BuiltinType bt) {
     return is_sizeable_string_kind(bt);
 }
 
+// Whole-program truth table for "does builtin kind `bt` have a real
+// `Asn1Value::per_encode`/`per_decode_into`?" — an exhaustive switch,
+// not an if-chain of early `return true` cases: `-Wswitch` (`-Wall`,
+// enabled project-wide) then flags any `ast::BuiltinType` enumerator
+// this function doesn't mention, so a future kind gaining a real PER
+// impl (or a new enumerator altogether) can't silently stay
+// unconsidered here the way BOOLEAN, inline ENUMERATED and REAL each
+// did until this pass found them. `storage_kind`/`has_from_alphabet`
+// only matter for the two builtin kinds whose coverage is conditional
+// (INTEGER's width, a string's own FROM constraint); every other case
+// ignores them.
+static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind,
+                                 bool has_from_alphabet) {
+    using BT = ast::BuiltinType;
+    switch (bt) {
+    case BT::Integer:
+        return storage_kind == IntStorageKind::S64 || storage_kind == IntStorageKind::U64;
+    // BOOLEAN (X.691 §12): one bit, no alignment.
+    case BT::Boolean:
+    // NULL (X.691 §14): zero bits either direction.
+    case BT::Null:
+    // OCTET STRING/BIT STRING (X.691 §16/§17): no alphabet concept at
+    // all, unconditionally covered regardless of SIZE constraint (both
+    // always-wire real bounds or a flags: 0 fallback).
+    case BT::OctetString:
+    case BT::BitString:
+    // REAL (X.691 §16): not bit-packed — the value's own BER content
+    // bytes, length-prefixed.
+    case BT::Real:
+    // An inline `ENUMERATED { ... }` member/alternative (X.680 §20) —
+    // its own synthetic type (native_member_type_for) always gets a
+    // real PerValue impl (emit_enumerated_definition's own doc), same
+    // as a TypeRef to a named ENUMERATED; the inline case's own AST
+    // node just never becomes a TypeRef, so it needs its own case here.
+    case BT::Enumerated:
+        return true;
+    // Known-multiplier character strings (X.691 §26) — a FROM
+    // constraint needs index remapping (X.691 §26.5.4/§26.5.7) that
+    // asn1cpp_wire::per::strings' core path doesn't implement yet
+    // (that module's own doc): encoding as if unconstrained-alphabet
+    // would silently produce the wrong (too-wide) bit width per
+    // character, so only the unconstrained-alphabet case is covered.
+    case BT::Utf8String:
+    case BT::NumericString:
+    case BT::PrintableString:
+    case BT::T61String:
+    case BT::Ia5String:
+    case BT::VisibleString:
+    case BT::GeneralString:
+    case BT::GraphicString:
+    case BT::UniversalString:
+    case BT::BmpString:
+    case BT::VideotexString:
+    case BT::ObjectDescriptor:
+        return !has_from_alphabet;
+    // Genuinely not wired up yet: OBJECT IDENTIFIER/RELATIVE-OID (X.691
+    // §23/§24 — no per::oid/per::relative_oid module exists), UTCTime/
+    // GeneralizedTime (their strings.rs `char_string_type!` impl has a
+    // BER+XER leg only, no PER), and ANY (X.208 legacy, no PER
+    // encoding defined for it at all).
+    case BT::ObjectIdentifier:
+    case BT::RelativeOid:
+    case BT::UtcTime:
+    case BT::GeneralizedTime:
+    case BT::Any:
+        return false;
+    }
+    return false;
+}
+
 void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
@@ -1361,36 +1431,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                    (m.elem_shape.storage_kind == IntStorageKind::S64 ||
                     m.elem_shape.storage_kind == IntStorageKind::U64);
         }
-        if (m.mbuiltin) {
-            if (*m.mbuiltin == ast::BuiltinType::Integer)
-                return m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64;
-            // NULL (X.691 §14) — zero bits either direction, unconditionally
-            // covered by the `Null` wrapper's own Asn1Value impl.
-            if (*m.mbuiltin == ast::BuiltinType::Null) return true;
-            // BOOLEAN (X.691 §12) — one bit, no alignment, unconditionally
-            // covered by the `Boolean` wrapper's own Asn1Value impl.
-            if (*m.mbuiltin == ast::BuiltinType::Boolean) return true;
-            // An inline `ENUMERATED { ... }` member (X.680 §20) — its own
-            // synthetic type (native_member_type_for) always gets a real
-            // PerValue impl (emit_enumerated_definition's own doc), same
-            // as a TypeRef to a named ENUMERATED (RefTargetKind::Enumerated
-            // below); this member's `m.body` just never becomes a TypeRef
-            // for the inline case, so it needs its own check here too.
-            if (*m.mbuiltin == ast::BuiltinType::Enumerated) return true;
-            // OCTET STRING/BIT STRING (X.691 §16/§17) — no alphabet concept
-            // at all, unconditionally covered by asn1cpp_wire::per::octet_string/
-            // bit_string regardless of SIZE constraint (both always-wire
-            // real bounds or a flags: 0 fallback, same convention as every
-            // other Sizeable kind).
-            if (*m.mbuiltin == ast::BuiltinType::OctetString || *m.mbuiltin == ast::BuiltinType::BitString)
-                return true;
-            // A FROM-alphabet constraint needs index remapping
-            // (X.691 §26.5.4/§26.5.7) that asn1cpp_wire::per::strings'
-            // core path doesn't implement yet (that module's own doc) —
-            // encoding as if unconstrained-alphabet would silently
-            // produce the wrong (too-wide) bit width per character.
-            return !m.has_from_alphabet && per_string_covered(*m.mbuiltin);
-        }
+        if (m.mbuiltin)
+            return per_builtin_covered(*m.mbuiltin, m.storage_kind, m.has_from_alphabet);
         return m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
                m.ref_kind == SequenceMemberSpec::RefTargetKind::IntegerAlias ||
                m.ref_kind == SequenceMemberSpec::RefTargetKind::Other;
@@ -1923,21 +1965,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
 
         auto per_alt_covered = [](const ChoiceAlternativeSpec& a) -> bool {
-            if (a.mbuiltin) {
-                if (*a.mbuiltin == ast::BuiltinType::Integer)
-                    return a.storage_kind == IntStorageKind::S64 || a.storage_kind == IntStorageKind::U64;
-                if (*a.mbuiltin == ast::BuiltinType::OctetString || *a.mbuiltin == ast::BuiltinType::BitString)
-                    return true;
-                // NULL (X.691 §14) — zero bits either direction, a common
-                // 3GPP "spare"/reserved-placeholder alternative pattern.
-                if (*a.mbuiltin == ast::BuiltinType::Null) return true;
-                // BOOLEAN (X.691 §12) — one bit, no alignment.
-                if (*a.mbuiltin == ast::BuiltinType::Boolean) return true;
-                // An inline `ENUMERATED { ... }` alternative — same
-                // reasoning as the SEQUENCE member case above.
-                if (*a.mbuiltin == ast::BuiltinType::Enumerated) return true;
-                return !a.has_from_alphabet && per_string_covered(*a.mbuiltin);
-            }
+            if (a.mbuiltin)
+                return per_builtin_covered(*a.mbuiltin, a.storage_kind, a.has_from_alphabet);
             return a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
                    a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias ||
                    a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other;

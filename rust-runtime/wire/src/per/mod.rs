@@ -14,6 +14,7 @@ pub mod enumerated;
 pub mod integer;
 pub mod length;
 pub mod octet_string;
+pub mod real;
 pub mod reader;
 pub mod seq_of;
 pub mod sequence;
