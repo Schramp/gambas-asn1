@@ -666,6 +666,10 @@ IntStorageKind Generator::classify_integer_storage(const ast::TypeDef& def) cons
     return IntStorageKind::S64;
 }
 
+// Forward-declared here; defined later in this file (free function, not a
+// Generator member — see its own definition site for why).
+static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def);
+
 ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
     ElemShape shape;
     if (elem.is_seq_of()) {
@@ -687,6 +691,12 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
     if (auto* bt = std::get_if<ast::BuiltinType>(&elem.body)) {
         shape.builtin = *bt;
         if (*bt == ast::BuiltinType::Integer) shape.storage_kind = classify_integer_storage(elem);
+        // X.691 §26.5.4/§26.5.7 FROM-alphabet — same UTF8String exclusion
+        // build_sequence_member_spec's own identical check applies one
+        // level up (X.691 §26.6: FROM constraints on it aren't PER-
+        // enforced).
+        if (*bt != ast::BuiltinType::Utf8String)
+            shape.has_from_alphabet = !extract_from_alphabet(elem).empty();
         // Same check build_member_type_descriptor_spec's own callers use to
         // decide whether it built a real spec at all (Integer or Sizeable
         // alike) — a pure function, cheap to call again here. Lets
