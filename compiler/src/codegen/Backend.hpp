@@ -602,6 +602,11 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
 struct ChoiceSpec : TaggedTypeSpec {
     int count;
     int ext_at;
+    // PER (X.691 §22.6): bit width of the root-alternative index, i.e.
+    // range_bits(root_count) where root_count is ext_at (or count, when
+    // not extensible). Computed once here rather than recomputed by every
+    // codec call — same convention SequenceSpec::roms_count follows.
+    int range_bits;
     std::vector<ChoiceAlternativeSpec> alternatives;
 
     // O(1) context-tag dispatch table (density-heuristic gated).

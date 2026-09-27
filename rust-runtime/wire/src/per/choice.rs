@@ -27,22 +27,6 @@ fn per_unsupported<T>(alt: &Alternative<T>) {
     }
 }
 
-/// X.691 §10.5.6 unaligned variant: minimum bit width to represent values
-/// in `0..range`. Mirrors the file-local `range_bits` helper in
-/// `runtime/src/PerCodec.cpp`.
-fn range_bits(range: usize) -> u32 {
-    if range <= 1 {
-        return 0;
-    }
-    let mut bits = 0;
-    let mut r = range - 1;
-    while r > 0 {
-        bits += 1;
-        r >>= 1;
-    }
-    bits
-}
-
 fn root_count<T>(spec: &ChoiceSpec<T>) -> usize {
     if spec.ext_at >= 0 {
         spec.ext_at as usize
@@ -63,9 +47,10 @@ pub fn encode_choice_content<T>(spec: &ChoiceSpec<T>, w: &mut Writer, value: &T)
         w.put_bits(in_ext as u64, 1);
     }
     if !in_ext {
-        let bits = range_bits(root_count);
-        if bits > 0 {
-            w.put_bits(def_idx as u64, bits);
+        // Precomputed by codegen (spec.range_bits) rather than
+        // recomputed here.
+        if spec.range_bits > 0 {
+            w.put_bits(def_idx as u64, spec.range_bits);
         }
         payload.per_encode(w, alt.constraints);
     } else {
@@ -88,8 +73,7 @@ pub fn decode_choice_content_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mu
         in_ext = r.get_bits(1)? != 0;
     }
     if !in_ext {
-        let bits = range_bits(root_count);
-        let def_idx = if bits > 0 { r.get_bits(bits)? as usize } else { 0 };
+        let def_idx = if spec.range_bits > 0 { r.get_bits(spec.range_bits)? as usize } else { 0 };
         if def_idx >= root_count {
             return Err(DecodeError::new("PER: CHOICE index out of range", r.bit_pos()));
         }
@@ -201,6 +185,7 @@ mod tests {
         unknown_extension: None,
         own_tag: None,
         ext_at: -1,
+        range_bits: 1,
     };
 
     fn roundtrip_with(spec: &ChoiceSpec<Dogfood>, v: &Dogfood) -> Dogfood {
@@ -231,6 +216,7 @@ mod tests {
         unknown_extension: None,
         own_tag: None,
         ext_at: 1,
+        range_bits: 0,
     };
 
     #[test]
@@ -253,6 +239,7 @@ mod tests {
             unknown_extension: None,
             own_tag: None,
             ext_at: -1,
+            range_bits: 1,
         };
         assert_eq!(roundtrip_with(&spec, &Dogfood::A(Integer(1))), Dogfood::A(Integer(1)));
         let r = std::panic::catch_unwind(|| {
