@@ -400,3 +400,7 @@ mod tests {
         assert_eq!(base64_decode("YW55IGNhcm5hbCBwbGVhc3VyZQ=="), b"any carnal pleasure");
     }
 }
+
+impl crate::type_tag::TypeTag for OctetString {
+    const TAG: Option<Tag> = Some(OCTET_STRING_TAG);
+}

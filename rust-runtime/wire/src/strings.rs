@@ -118,6 +118,10 @@ macro_rules! char_string_type {
             }
         }
 
+        impl crate::type_tag::TypeTag for $name {
+            const TAG: Option<Tag> = Some($tag_const);
+        }
+
         impl std::ops::DerefMut for $name {
             fn deref_mut(&mut self) -> &mut String {
                 &mut self.0
@@ -246,6 +250,10 @@ macro_rules! wide_char_string_type {
             fn deref_mut(&mut self) -> &mut Vec<u8> {
                 &mut self.0
             }
+        }
+
+        impl crate::type_tag::TypeTag for $name {
+            const TAG: Option<Tag> = Some($tag_const);
         }
 
         impl Asn1Value for $name {
