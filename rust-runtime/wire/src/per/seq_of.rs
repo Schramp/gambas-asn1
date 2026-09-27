@@ -77,7 +77,7 @@ mod tests {
         size_range_bits: 0,
         size_lower: 0,
         size_upper: 0,
-        encode_table: None, element: None,
+        encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,
     };
 
     fn sized(lower: i64, upper: i64) -> Constraints {

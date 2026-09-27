@@ -1224,7 +1224,7 @@ mod per_blanket_tests {
         static ELEM: Constraints = Constraints {
             flags: Constraints::CONSTRAINED, range_bits: 4, lower_bound: 0, upper_bound: 15,
             lower_u64: 0, upper_u64: 0, size_range_bits: 0, size_lower: 0, size_upper: 0,
-            encode_table: None, element: None,
+            encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,
         };
         let coll = Constraints {
             flags: Constraints::SIZE_CONSTRAINED, size_range_bits: 3, size_lower: 0, size_upper: 7,

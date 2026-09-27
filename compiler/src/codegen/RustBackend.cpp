@@ -193,29 +193,26 @@ static bool per_string_covered(ast::BuiltinType bt) {
 // this function doesn't mention, so a future kind gaining a real PER
 // impl (or a new enumerator altogether) can't silently stay
 // unconsidered here the way BOOLEAN, inline ENUMERATED and REAL each
-// did until this pass found them. `storage_kind`/`has_from_alphabet`
-// only matter for the two builtin kinds whose coverage is conditional
-// (INTEGER's width, a string's own FROM constraint); every other case
-// ignores them.
+// did until this pass found them. `storage_kind` only matters for
+// INTEGER, the one builtin kind whose coverage is still conditional;
+// every other case ignores it.
 //
 // DELETE ONCE PER IS COMPLETE: no case below returns an unconditional
 // `false` anymore — every builtin kind's PER encoding exists in the
 // runtime (X.691 covers all of them, ANY/OID/RELATIVE-OID included as
-// open-type fields, X.691 §10.2 — confirmed against asn1c's own
-// `ANY_uper.c`/`OID`+`RELATIVE-OID` handling and this codebase's own
-// `AnyPerHandler`/`OidPerHandler`/`RelOidPerHandler`, `runtime/src/
-// PerCodec.cpp`). Two conditionals remain, both tracking real,
-// independently-tracked implementation gaps rather than anything
-// structural: INTEGER's storage-kind check (I128/ARBITRARY PER not
-// wired) and the string kinds' `has_from_alphabet` check (FROM-alphabet
-// index remapping not implemented in `per::strings`). Once both close,
-// this whole function collapses to `return true;` unconditionally —
-// delete it then, fold `per_member_covered`/`per_alt_covered`'s
-// `m.mbuiltin`/`a.mbuiltin` branches into an unconditional `true`, and
-// delete `per_stub_reason`'s builtin-kind text (only the SEQUENCE-OF
-// reason would remain).
-static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind,
-                                 bool has_from_alphabet) {
+// open-type fields, X.691 §10.2, and the twelve character-string kinds'
+// FROM-alphabet remapping, X.691 §26.5.4/§26.5.7 — confirmed against
+// asn1c's own reference handlers and this codebase's own C++ runtime,
+// `runtime/src/PerCodec.cpp`). One conditional remains, tracking a real,
+// independently-tracked implementation gap rather than anything
+// structural: INTEGER's storage-kind check (I128/ARBITRARY storage has
+// no PER encoding wired up yet). Once it closes, this whole function
+// collapses to
+// `return true;` unconditionally — delete it then, fold
+// `per_member_covered`/`per_alt_covered`'s `m.mbuiltin`/`a.mbuiltin`
+// branches into an unconditional `true`, and delete `per_stub_reason`'s
+// builtin-kind text (only the SEQUENCE-OF reason would remain).
+static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind) {
     using BT = ast::BuiltinType;
     switch (bt) {
     case BT::Integer:
@@ -239,12 +236,15 @@ static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind
     // node just never becomes a TypeRef, so it needs its own case here.
     case BT::Enumerated:
         return true;
-    // Known-multiplier character strings (X.691 §26) — a FROM
-    // constraint needs index remapping (X.691 §26.5.4/§26.5.7) that
-    // asn1cpp_wire::per::strings' core path doesn't implement yet
-    // (that module's own doc): encoding as if unconstrained-alphabet
-    // would silently produce the wrong (too-wide) bit width per
-    // character, so only the unconstrained-alphabet case is covered.
+    // Known-multiplier character strings (X.691 §26), FROM-constrained or
+    // not: `asn1cpp_wire::per::strings::encode_string`/`decode_string`
+    // remap to the declared alphabet's own ordinal width (X.691 §26.5.4/
+    // §26.5.7) via the row's own `encode_table`/`alphabet` — the same
+    // table `has_own_descriptor` already threads for any builtin kind.
+    // The one thing still unimplemented, the extensible SIZE/FROM
+    // out-of-root open-type escape, panics loudly at runtime rather than
+    // corrupting output (`per::strings`'s own doc) — no schema exercises
+    // it, so it's not excluded here either.
     case BT::Utf8String:
     case BT::NumericString:
     case BT::PrintableString:
@@ -263,7 +263,7 @@ static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind
     // narrower macro variant.
     case BT::UtcTime:
     case BT::GeneralizedTime:
-        return !has_from_alphabet;
+        return true;
     // ANY (X.208 legacy, X.691 §10.2 open-type encoding) — length-
     // prefixed raw captured bytes, unconditionally covered by `Any`'s own
     // Asn1Value impl (any.rs).
@@ -290,7 +290,7 @@ static bool per_elem_shape_covered(const ElemShape& shape) {
     if (shape.kind != SeqOfKind::None)
         return shape.nested && per_elem_shape_covered(*shape.nested);
     if (shape.builtin)
-        return per_builtin_covered(*shape.builtin, shape.storage_kind, shape.has_from_alphabet);
+        return per_builtin_covered(*shape.builtin, shape.storage_kind);
     // A composite (TypeRef/SEQUENCE/CHOICE) leaf always owns its own
     // constraint and ignores whatever `element` this row's `Constraints`
     // hands it — unconditionally safe, same reasoning
@@ -561,14 +561,14 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
         os << std::format(
             "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
             "    flags: {}, range_bits: {}, lower_bound: {}, upper_bound: {}, lower_u64: 0, upper_u64: 0, "
-            "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, element: None,\n"
+            "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,\n"
             "}};\n\n",
             cname, flags, std::max(spec.range_bits, 0), spec.lower_s64, spec.upper_s64);
     } else {
         os << std::format(
             "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
             "    flags: {}, range_bits: {}, lower_bound: 0, upper_bound: 0, lower_u64: {}u64, upper_u64: {}u64, "
-            "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, element: None,\n"
+            "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,\n"
             "}};\n\n",
             cname, flags, std::max(spec.range_bits, 0), spec.lower_u64, spec.upper_u64);
     }
@@ -737,7 +737,7 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << std::format(
             "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
             "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, "
-            "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: None, element: None,\n"
+            "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,\n"
             "}};\n\n",
             cname, flags, spec.size_range_bits, spec.size_lower, size_upper);
     }
@@ -948,7 +948,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
             os << std::format(
                 "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
                 "    flags: {}, range_bits: {}, lower_bound: {}, upper_bound: {}, lower_u64: 0, upper_u64: 0, "
-                "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, element: None,\n"
+                "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,\n"
                 "}};\n\n",
                 cname, flags, std::max(spec.range_bits, 0), spec.lower_s64, spec.upper_s64);
         } else if (spec.storage_kind == IntStorageKind::U64) {
@@ -957,7 +957,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
             os << std::format(
                 "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
                 "    flags: {}, range_bits: {}, lower_bound: 0, upper_bound: 0, lower_u64: {}u64, upper_u64: {}u64, "
-                "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, element: None,\n"
+                "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,\n"
                 "}};\n\n",
                 cname, flags, std::max(spec.range_bits, 0), spec.lower_u64, spec.upper_u64);
         }
@@ -999,6 +999,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // `validate_string` (rust-runtime/wire/src/constraints.rs) are the only
     // code, identical for every alphabet-constrained member.
     std::string encode_table_expr = "None";
+    std::string alphabet_expr = "None";
     if (!spec.alphabet.empty()) {
         std::string enc_ident = std::format("{}_ENC", to_screaming_snake_case(spec.tname));
         std::array<uint16_t, 256> table;
@@ -1013,23 +1014,32 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         }
         os << "];\n\n";
         encode_table_expr = std::format("Some(&{})", enc_ident);
+        // Decode-direction counterpart (X.691 §26.5.4/§26.5.7 decode:
+        // ordinal -> character) — `per::strings::decode_string`'s own
+        // table, `spec.alphabet` already sorted ascending by
+        // `extract_from_alphabet` (its own doc).
+        std::string alpha_ident = std::format("{}_ALPHA", to_screaming_snake_case(spec.tname));
+        os << std::format("static {}: [u8; {}] = [", alpha_ident, spec.alphabet.size());
+        for (size_t i = 0; i < spec.alphabet.size(); ++i)
+            os << std::format("{}{}", spec.alphabet[i], i + 1 < spec.alphabet.size() ? ", " : "");
+        os << "];\n\n";
+        alphabet_expr = std::format("Some(&{})", alpha_ident);
     }
     // One combined table serves both legs: BER's `constraints::
     // validate_size`/`validate_alphabet` (rust-runtime/wire) read
     // flags/size_lower/size_upper/encode_table; PER's `strings::
-    // encode_string`/`decode_string` (rust-runtime/wire/src/per) additionally read
-    // size_range_bits. FROM-alphabet constraints aren't threaded into the
-    // PER leg's own encoding — `strings::encode_string`/`decode_string`
-    // only implement the natural-alphabet core path so far (that module's
-    // own doc) — but `encode_table` is still carried on this shared table
-    // regardless, since BER's own validate_alphabet reads it from the same
-    // value PER's encode/decode calls use for size_range_bits.
+    // encode_string`/`decode_string` (rust-runtime/wire/src/per)
+    // additionally read size_range_bits and, for a FROM-constrained
+    // member, alphabet_bits/encode_table/alphabet/alphabet_size (X.691
+    // §26.5.4/§26.5.7 remapping).
     os << std::format(
         "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
         "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, "
-        "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: {}, element: None,\n"
+        "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: {}, "
+        "alphabet_bits: {}, alphabet: {}, alphabet_size: {}, element: None,\n"
         "}};\n\n",
-        cname, flags, spec.size_range_bits, spec.size_lower, size_upper, encode_table_expr);
+        cname, flags, spec.size_range_bits, spec.size_lower, size_upper, encode_table_expr,
+        spec.alphabet_bits, alphabet_expr, spec.alphabet.size());
 }
 
 /// @brief Emit a Rust size-check function for a SEQUENCE OF / SET OF type's
@@ -1101,7 +1111,7 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << std::format(
         "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
         "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, "
-        "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: None, element: {},\n"
+        "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: {},\n"
         "}};\n\n",
         cname, flags, spec.range_bits, spec.size_lower, size_upper, element_expr);
 
@@ -1479,7 +1489,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             return per_elem_shape_covered(m.elem_shape);
         }
         if (m.mbuiltin)
-            return per_builtin_covered(*m.mbuiltin, m.storage_kind, m.has_from_alphabet);
+            return per_builtin_covered(*m.mbuiltin, m.storage_kind);
         return m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
                m.ref_kind == SequenceMemberSpec::RefTargetKind::IntegerAlias ||
                m.ref_kind == SequenceMemberSpec::RefTargetKind::Other;
@@ -1490,7 +1500,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // (e.g. SEQUENCE OF is BER-covered but PER-Unsupported).
     auto per_stub_reason = [](const SequenceMemberSpec& m) -> const char* {
         if (m.seq_of_kind != SeqOfKind::None) return "SEQUENCE OF/SET OF PER encoding not yet supported";
-        if (m.mbuiltin && m.has_from_alphabet) return "FROM-alphabet constraint not yet supported for PER";
         if (m.mbuiltin) return "builtin type/storage combination not yet supported for PER";
         return "referenced type has no PerValue impl";
     };
@@ -2012,7 +2021,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
 
         auto per_alt_covered = [](const ChoiceAlternativeSpec& a) -> bool {
             if (a.mbuiltin)
-                return per_builtin_covered(*a.mbuiltin, a.storage_kind, a.has_from_alphabet);
+                return per_builtin_covered(*a.mbuiltin, a.storage_kind);
             return a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
                    a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias ||
                    a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other;

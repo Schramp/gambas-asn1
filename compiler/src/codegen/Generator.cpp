@@ -1155,6 +1155,7 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
             if (!alphabet.empty()) {
                 spec.alpha_prefix = std::format("asn_FROM_{}_{}", parent_cname, mname);
                 spec.alphabet = alphabet;
+                spec.alphabet_bits = range_bits_for(static_cast<int>(alphabet.size()));
             }
             // Use the matching asn_DEF_*'s public name as the XER tag name —
             // BerCodec / XerCodec consult it for primitive type names.
@@ -2258,10 +2259,19 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
 
     spec.alphabet = extract_from_alphabet(def);
+    spec.alphabet_bits = range_bits_for(static_cast<int>(spec.alphabet.size()));
     auto size_range = extract_size_range(def);
     spec.has_size_constraint = size_range.has_value();
     spec.size_bounded = size_range.has_value()
         && size_range->second != std::numeric_limits<int64_t>::max();
+    // Both backends format these fields into their generated Constraints
+    // tables unconditionally (gated on has_size_constraint/a flags bit at
+    // read time, not at codegen time) — always default-initialize
+    // explicitly when there's no SIZE constraint, don't rely on the
+    // struct's own (absent) defaults.
+    spec.size_range_bits = 0;
+    spec.size_lower = 0;
+    spec.size_upper = 0;
     if (size_range) {
         auto sc = compute_size_constraint(size_range);
         spec.size_range_bits = sc.range_bits;

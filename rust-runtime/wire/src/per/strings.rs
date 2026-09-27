@@ -1,11 +1,20 @@
-//! Known-multiplier character string PER encode/decode (X.691 §26.5), core
-//! path: SIZE-constrained or unconstrained length, natural (non-FROM)
-//! alphabet, no extensibility. Mirrors `StringPerHandler`
-//! (`runtime/src/PerCodec.cpp`) for that subset.
+//! Known-multiplier character string PER encode/decode (X.691 §26.5):
+//! SIZE-constrained or unconstrained length, natural or FROM-restricted
+//! alphabet. Mirrors `StringPerHandler` (`runtime/src/PerCodec.cpp`).
 //!
-//! FROM-alphabet remapping (`encode_table`/`alphabet_bits`) and the
-//! extensible out-of-root open-type escape are separate follow-up phases —
-//! not implemented here yet.
+//! FROM-alphabet remapping (X.691 §26.5.4/§26.5.7): each character is
+//! written as its ordinal position in the declared alphabet subset
+//! (`pc.alphabet_bits` wide) rather than its natural code point width —
+//! `pc.encode_table`/`pc.alphabet` (`constraints.rs`) are the encode-
+//! direction (`byte -> ordinal`) and decode-direction (`ordinal -> byte`)
+//! tables, built by codegen from the schema's own `FROM (...)` clause.
+//!
+//! Not implemented: the extensible out-of-root open-type escape (X.691
+//! §18.8 applied to a SIZE/FROM-extensible string) — `encode_string`/
+//! `decode_string` panic if asked to handle one (`pc.flags &
+//! Constraints::EXTENSIBLE` alongside `alphabet_bits > 0`), rather than
+//! silently producing wrong bytes for a construct no current schema
+//! exercises.
 //!
 //! Operates on raw bytes, not `&str`: for a wide-char kind (BMPString/
 //! UniversalString), each code point is 2/4 bytes with a wide-char
@@ -107,39 +116,81 @@ fn string_params(tag_num: u32) -> (u32, u32, NaturalAlphabet) {
     }
 }
 
+/// `true` when `pc` carries a real FROM constraint this module can act on
+/// (mirrors `StringPerHandler::encode`'s own `has_alpha` exactly: built-in
+/// kinds may carry an `encode_table` for `validate()` alone with
+/// `alphabet_bits == 0`, which must *not* trigger the remap path).
+fn has_alphabet(pc: &Constraints) -> bool {
+    pc.alphabet_bits > 0 && pc.encode_table.is_some()
+}
+
 pub fn encode_string(w: &mut Writer, pc: &Constraints, tag_num: u32, bytes: &[u8]) -> Result<(), EncodeError> {
     let (bits, bpc, natural) = string_params(tag_num);
     let char_count = bytes.len() / bpc as usize;
+    let has_alpha = has_alphabet(pc);
+
+    // The extensible out-of-root escape (X.691 §18.8) isn't implemented —
+    // fail loudly rather than silently encode wrong bytes for a construct
+    // no current schema exercises (this module's own doc).
+    if pc.is_extensible() && (pc.is_size_constrained() || has_alpha) {
+        panic!("PER: extensible SIZE/FROM-constrained string encoding not yet supported");
+    }
 
     if pc.is_size_constrained()
         && (char_count < pc.size_lower as usize || char_count > pc.size_upper as usize)
     {
         return Err(EncodeError::new("string length violates SIZE constraint"));
     }
-    match natural {
-        NaturalAlphabet::Numeric => {
-            for &c in bytes {
-                if c != b' ' && !(b'0'..=b'9').contains(&c) {
-                    return Err(EncodeError::new(
-                        "character not in NumericString natural alphabet",
-                    ));
+    // X.691 §26.5.3/§26.5.6: the type-intrinsic natural-alphabet check only
+    // applies with no FROM constraint — a FROM constraint replaces it with
+    // membership in the declared subset (checked per-character below).
+    if !has_alpha {
+        match natural {
+            NaturalAlphabet::Numeric => {
+                for &c in bytes {
+                    if c != b' ' && !(b'0'..=b'9').contains(&c) {
+                        return Err(EncodeError::new(
+                            "character not in NumericString natural alphabet",
+                        ));
+                    }
                 }
             }
-        }
-        NaturalAlphabet::Ia5 => {
-            for &c in bytes {
-                if c > 0x7F {
-                    return Err(EncodeError::new(
-                        "character not in IA5String natural alphabet",
-                    ));
+            NaturalAlphabet::Ia5 => {
+                for &c in bytes {
+                    if c > 0x7F {
+                        return Err(EncodeError::new(
+                            "character not in IA5String natural alphabet",
+                        ));
+                    }
                 }
             }
+            NaturalAlphabet::None => {}
         }
-        NaturalAlphabet::None => {}
     }
 
     encode_size_field(w, pc, char_count);
-    if bpc > 1 {
+    if has_alpha {
+        // X.691 §26.5.4/§26.5.7: one `encode_table` lookup per character —
+        // validates membership and maps to the ordinal in one step. For a
+        // wide-char kind (bpc>1), every high byte must be 0x00 (Basic
+        // Latin plane); the low byte is the alphabet index key.
+        let table = pc.encode_table.expect("has_alphabet already checked encode_table.is_some()");
+        for chunk in bytes.chunks(bpc as usize) {
+            if bpc > 1 {
+                for &b in &chunk[..chunk.len() - 1] {
+                    if b != 0 {
+                        return Err(EncodeError::new("codepoint outside Basic Latin in FROM alphabet"));
+                    }
+                }
+            }
+            let lo = chunk[chunk.len() - 1];
+            let idx = table[lo as usize];
+            if idx == 0xFFFF {
+                return Err(EncodeError::new("character not in FROM alphabet"));
+            }
+            w.put_bits(idx as u64, pc.alphabet_bits);
+        }
+    } else if bpc > 1 {
         for &b in bytes {
             w.put_bits(b as u64, 8);
         }
@@ -161,11 +212,31 @@ pub fn encode_string(w: &mut Writer, pc: &Constraints, tag_num: u32, bytes: &[u8
 
 pub fn decode_string(r: &mut Reader, pc: &Constraints, tag_num: u32) -> Result<Vec<u8>, DecodeError> {
     let (bits, bpc, _natural) = string_params(tag_num);
+    let has_alpha = has_alphabet(pc);
+
+    if pc.is_extensible() && (pc.is_size_constrained() || has_alpha) {
+        panic!("PER: extensible SIZE/FROM-constrained string decoding not yet supported");
+    }
+
     let char_count = decode_size_field(r, pc)?;
-    let byte_count = char_count * bpc as usize;
-    let mut result = Vec::with_capacity(byte_count);
-    if bpc > 1 {
-        for _ in 0..byte_count {
+    let mut result = Vec::with_capacity(char_count * bpc as usize);
+    if has_alpha {
+        // X.691 §26.5.4/§26.5.7 decode counterpart: read `alphabet_bits`,
+        // look up the character via the decode-direction `alphabet` table.
+        let alphabet = pc.alphabet.expect("has_alphabet implies a decode-direction table exists too");
+        for _ in 0..char_count {
+            let idx = r.get_bits(pc.alphabet_bits)? as usize;
+            if idx >= pc.alphabet_size as usize {
+                return Err(DecodeError::new("PER: alphabet index out of range", r.bit_pos()));
+            }
+            let lo = alphabet[idx];
+            for _ in 0..bpc - 1 {
+                result.push(0);
+            }
+            result.push(lo);
+        }
+    } else if bpc > 1 {
+        for _ in 0..char_count * bpc as usize {
             result.push(r.get_bits(8)? as u8);
         }
     } else if bits == 4 {
@@ -291,5 +362,79 @@ mod tests {
         encode_string(&mut w3, &unconstrained, TAG_BMP_STRING, &ab).unwrap();
         w3.flush();
         assert_eq!(w3.into_bytes(), vec![0x02, 0x00, 0x41, 0x00, 0x42]);
+    }
+
+    // FROM alphabet remapping (X.691 §26.5.4/§26.5.7) — mirrors
+    // `Code ::= SEQUENCE { tag IA5String (FROM ("a"|"b"|"c")) }`
+    // (tests/asn1/rust_alphabet_test.asn1): 3-character alphabet,
+    // alphabet_bits = ceil(log2(3)) = 2.
+    fn abc_alphabet() -> Constraints {
+        static TABLE: [u16; 256] = {
+            let mut t = [0xFFFFu16; 256];
+            t[b'a' as usize] = 0;
+            t[b'b' as usize] = 1;
+            t[b'c' as usize] = 2;
+            t
+        };
+        static ALPHABET: [u8; 3] = [b'a', b'b', b'c'];
+        Constraints {
+            alphabet_bits: 2,
+            encode_table: Some(&TABLE),
+            alphabet: Some(&ALPHABET),
+            alphabet_size: 3,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn from_alphabet_round_trips() {
+        let pc = abc_alphabet();
+        let mut w = Writer::new();
+        encode_string(&mut w, &pc, TAG_IA5_STRING, b"cab").unwrap();
+        w.flush();
+        let bytes = w.into_bytes();
+        let mut r = Reader::new(&bytes);
+        assert_eq!(decode_string(&mut r, &pc, TAG_IA5_STRING).unwrap(), b"cab");
+    }
+
+    #[test]
+    fn from_alphabet_uses_the_ordinal_bit_width_not_the_natural_one() {
+        // Unconstrained length (3, one byte) then 'a'/'b'/'c' as ordinals
+        // 0/1/2 in 2 bits each (6 bits, padded to one byte) — not
+        // IA5String's natural 7 bits/char.
+        let pc = abc_alphabet();
+        let mut w = Writer::new();
+        encode_string(&mut w, &pc, TAG_IA5_STRING, b"abc").unwrap();
+        w.flush();
+        assert_eq!(w.into_bytes(), vec![0x03, 0b00_01_10_00]);
+    }
+
+    #[test]
+    fn from_alphabet_violation_is_rejected() {
+        let pc = abc_alphabet();
+        let mut w = Writer::new();
+        let err = encode_string(&mut w, &pc, TAG_IA5_STRING, b"abz").unwrap_err();
+        assert!(err.message.contains("FROM alphabet"));
+    }
+
+    #[test]
+    fn from_alphabet_decode_rejects_out_of_range_index() {
+        let pc = abc_alphabet();
+        let mut w = Writer::new();
+        crate::per::length::encode_size_field(&mut w, &pc, 1); // 1 character
+        w.put_bits(3, 2); // index 3 — one past the 3-entry alphabet
+        w.flush();
+        let bytes = w.into_bytes();
+        let mut r = Reader::new(&bytes);
+        assert!(decode_string(&mut r, &pc, TAG_IA5_STRING).is_err());
+    }
+
+    #[test]
+    #[should_panic(expected = "extensible")]
+    fn extensible_from_alphabet_is_not_yet_supported() {
+        let mut pc = abc_alphabet();
+        pc.flags |= crate::constraints::Constraints::EXTENSIBLE;
+        let mut w = Writer::new();
+        let _ = encode_string(&mut w, &pc, TAG_IA5_STRING, b"a");
     }
 }
