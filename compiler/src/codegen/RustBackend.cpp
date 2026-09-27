@@ -1046,6 +1046,21 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     if (spec.has_size_constraint) {
         os << std::format("\n    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {{\n        asn1cpp_wire::constraints::validate_size(self.0.len(), &{})\n    }}\n", cname);
     }
+    // PER leg (X.691 §19/§20 — SIZE against this type's own {cname}
+    // table, each element against {cname}'s own `element` field, exactly
+    // the same runtime pair a member-embedded SeqOf<T>/SetOf<T> already
+    // calls, `ber::sequence`'s own impl) — a named SEQUENCE OF/SET OF
+    // owns its constraint, same convention SEQUENCE/CHOICE/ENUMERATED use,
+    // so `_c` (the caller's row-level constraint, meaningless for a type
+    // that carries its own) is ignored.
+    os << std::format(
+        "\n    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
+        "        asn1cpp_wire::per::seq_of::encode_seq_of_content(w, &{0}, &self.0);\n    }}\n",
+        cname);
+    os << std::format(
+        "\n    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
+        "        self.0 = asn1cpp_wire::per::seq_of::decode_seq_of_content(r, &{0})?;\n        Ok(())\n    }}\n",
+        cname);
     os << "}\n\n";
 }
 
@@ -1352,6 +1367,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // NULL (X.691 §14) — zero bits either direction, unconditionally
             // covered by the `Null` wrapper's own Asn1Value impl.
             if (*m.mbuiltin == ast::BuiltinType::Null) return true;
+            // BOOLEAN (X.691 §12) — one bit, no alignment, unconditionally
+            // covered by the `Boolean` wrapper's own Asn1Value impl.
+            if (*m.mbuiltin == ast::BuiltinType::Boolean) return true;
+            // An inline `ENUMERATED { ... }` member (X.680 §20) — its own
+            // synthetic type (native_member_type_for) always gets a real
+            // PerValue impl (emit_enumerated_definition's own doc), same
+            // as a TypeRef to a named ENUMERATED (RefTargetKind::Enumerated
+            // below); this member's `m.body` just never becomes a TypeRef
+            // for the inline case, so it needs its own check here too.
+            if (*m.mbuiltin == ast::BuiltinType::Enumerated) return true;
             // OCTET STRING/BIT STRING (X.691 §16/§17) — no alphabet concept
             // at all, unconditionally covered by asn1cpp_wire::per::octet_string/
             // bit_string regardless of SIZE constraint (both always-wire
@@ -1906,6 +1931,11 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // NULL (X.691 §14) — zero bits either direction, a common
                 // 3GPP "spare"/reserved-placeholder alternative pattern.
                 if (*a.mbuiltin == ast::BuiltinType::Null) return true;
+                // BOOLEAN (X.691 §12) — one bit, no alignment.
+                if (*a.mbuiltin == ast::BuiltinType::Boolean) return true;
+                // An inline `ENUMERATED { ... }` alternative — same
+                // reasoning as the SEQUENCE member case above.
+                if (*a.mbuiltin == ast::BuiltinType::Enumerated) return true;
                 return !a.has_from_alphabet && per_string_covered(*a.mbuiltin);
             }
             return a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
