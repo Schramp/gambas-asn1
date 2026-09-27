@@ -40,3 +40,8 @@ impl Asn1Value for Any {
         Ok(())
     }
 }
+
+impl crate::type_tag::TypeTag for Any {
+    // ANY (X.208 legacy) has no fixed tag of its own.
+    const TAG: Option<crate::ber::tag::Tag> = None;
+}

@@ -437,3 +437,7 @@ mod tests {
     }
 
 }
+
+impl crate::type_tag::TypeTag for ArbitraryInteger {
+    const TAG: Option<Tag> = Some(INTEGER_TAG);
+}

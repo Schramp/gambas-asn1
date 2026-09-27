@@ -1802,3 +1802,33 @@ mod tests {
         assert_eq!(got, Some(Integer(7)));
     }
 }
+
+// TypeTag impls (gambas-asn1#549) — kept separate from the Asn1Value
+// blocks above (see type_tag.rs's own module doc for why).
+impl crate::type_tag::TypeTag for crate::integer::Integer {
+    const TAG: Option<crate::ber::tag::Tag> = Some(crate::integer::INTEGER_TAG);
+}
+impl crate::type_tag::TypeTag for crate::integer::UInteger {
+    const TAG: Option<crate::ber::tag::Tag> = Some(crate::integer::INTEGER_TAG);
+}
+impl crate::type_tag::TypeTag for crate::integer::BigInteger {
+    const TAG: Option<crate::ber::tag::Tag> = Some(crate::integer::INTEGER_TAG);
+}
+impl crate::type_tag::TypeTag for crate::boolean::Boolean {
+    const TAG: Option<crate::ber::tag::Tag> = Some(crate::boolean::BOOLEAN_TAG);
+}
+impl crate::type_tag::TypeTag for crate::null::Null {
+    const TAG: Option<crate::ber::tag::Tag> = Some(crate::null::NULL_TAG);
+}
+impl crate::type_tag::TypeTag for crate::bit_string::BitString {
+    const TAG: Option<crate::ber::tag::Tag> = Some(crate::bit_string::BIT_STRING_TAG);
+}
+impl crate::type_tag::TypeTag for crate::oid::ObjectIdentifier {
+    const TAG: Option<crate::ber::tag::Tag> = Some(crate::oid::OBJECT_IDENTIFIER_TAG);
+}
+impl crate::type_tag::TypeTag for crate::relative_oid::RelativeOid {
+    const TAG: Option<crate::ber::tag::Tag> = Some(crate::relative_oid::RELATIVE_OID_TAG);
+}
+impl crate::type_tag::TypeTag for crate::real::Real {
+    const TAG: Option<crate::ber::tag::Tag> = Some(crate::real::REAL_TAG);
+}

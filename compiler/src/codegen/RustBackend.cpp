@@ -359,6 +359,11 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "        Ok(())\n";
         os << "    }\n";
         os << "}\n\n";
+        // ENUMERATED's natural tag never varies by declaration.
+        os << "\n";
+        os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", tname);
+        os << "    const TAG: Option<asn1cpp_wire::Tag> = Some(asn1cpp_wire::ber::enumerated::ENUMERATED_TAG);\n";
+        os << "}\n\n";
     }
 }
 
@@ -486,6 +491,12 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
         "        self.0 = {}(asn1cpp_wire::per::{}::{}(r, &{})?);\n        Ok(())\n    }}\n",
         native_int_type(spec.storage_kind), fn_ns, fn_dec, cname);
     os << "}\n\n";
+    // Mirrors ber_natural_tag() (delegates to the wrapped primitive's
+    // own TAG — INTEGER_TAG regardless of storage width).
+    os << "\n";
+    os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", tname);
+    os << std::format("    const TAG: Option<asn1cpp_wire::Tag> = <{} as asn1cpp_wire::type_tag::TypeTag>::TAG;\n", native_int_type(spec.storage_kind));
+    os << "}\n\n";
 }
 
 void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const {
@@ -558,9 +569,10 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
 ///        syntax instead of C++'s. `Tag`/`TagClass` are both `pub` with
 ///        `pub` fields (`rust-runtime/wire/src/tag.rs`), constructible this
 ///        way from outside the crate; no named constant lookup needed
-///        (unlike `rust_member_ber_tag` in `emit_sequence_definition`,
-///        which picks a specific `..._TAG` constant per builtin type for
-///        *natural* tags) since this covers arbitrary class/number/
+///        (unlike a covered builtin member's *natural* tag, which asks
+///        the member's own Rust type via `type_tag::TypeTag` instead —
+///        `emit_sequence_definition`'s own doc) since this covers arbitrary
+///        class/number/
 ///        constructed combinations, including EXPLICIT/IMPLICIT/auto-tag
 ///        context tags that have no named constant.
 std::string RustBackend::format_tag_literal(const TypeTagSpec& tag_spec) const {
@@ -705,7 +717,7 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
                 "        Ok(())\n    }}\n",
                 cname);
         } else {
-            std::string tag_num = std::format("{}.number", builtin_ber_tag(spec.builtin_type, ""));
+            std::string tag_num = std::format("<{} as asn1cpp_wire::type_tag::TypeTag>::TAG.unwrap().number", native_builtin_type(spec.builtin_type));
             bool wide = spec.builtin_type == BT::BmpString || spec.builtin_type == BT::UniversalString;
             std::string bytes_expr = wide ? "&self.0.0" : "self.0.as_bytes()";
             std::string ctor = wide ? std::format("{}(x)", native_builtin_type(spec.builtin_type))
@@ -1286,15 +1298,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // Rust storage type classify_integer_storage/native_int_type actually
     // picked for it (i64 default; u64/i128/ArbitraryInteger for wider
     // ranges — same IntStorageKind the C++ side also branches on).
-    // `rust_tag_for_builtin_or_alias` routes the Integer case through
-    // `storage_kind` (a real enum) rather than `builtin_ber_tag`'s own
-    // `mtype == "i64"` string check, which only ever matched the S64
-    // default — Asn1Value now has real impls for i64/u64/i128/
-    // ArbitraryInteger alike, so every storage kind gets the same
-    // INTEGER_TAG unconditionally, no gating needed.
-    auto rust_member_ber_tag = [](const SequenceMemberSpec& m) -> const char* {
-        return rust_tag_for_builtin_or_alias(m.mbuiltin, m.storage_kind, m.mtype);
-    };
     // Human-readable reason baked into an Unsupported row's stub panic
     // message — best-effort diagnosability, not meant to be exhaustive.
     auto stub_reason = [](const SequenceMemberSpec& m) -> const char* {
@@ -1500,10 +1503,15 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // (only OPTIONAL presence-peek reads it), so the
                 // placeholder in that last case is inert, not a claim
                 // this member actually carries tag [0].
+                // Asks the member's own Rust type for its tag
+                // instead of a per-builtin-kind switch —
+                // works uniformly for every covered builtin, since every
+                // one now implements `type_tag::TypeTag` (#547 gave each
+                // one a real wrapper type).
                 std::string tag_text = !m.mbuiltin
                     ? (m.resolved_tag ? format_tag_literal(*m.resolved_tag)
                                        : "asn1cpp_wire::spec::sequence::SEQUENCE_TAG /* untagged CHOICE member: no fixed tag, inert for required members */")
-                    : rust_member_ber_tag(m);
+                    : std::format("<{} as asn1cpp_wire::type_tag::TypeTag>::TAG.unwrap()", m.mtype);
                 os << std::format("        tag: {},\n", tag_text);
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
                 os << std::format("        access: asn1cpp_wire::spec::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
@@ -1671,6 +1679,13 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << std::format("        *self = asn1cpp_wire::per::sequence::decode_sequence_content(&{}, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n";
+        os << "}\n\n";
+        // Mirrors this type's own ber_natural_tag() — a member/
+        // alternative referencing this type by name can ask for its
+        // tag without an Asn1Value in hand.
+        os << "\n";
+        os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", spec.type_name);
+        os << std::format("    const TAG: Option<asn1cpp_wire::Tag> = Some({}.tag);\n", spec_ident);
         os << "}\n\n";
     }
 }
@@ -2082,6 +2097,11 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << std::format("        asn1cpp_wire::per::choice::decode_choice_content_into(&{}, self, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n";
+        os << "}\n\n";
+        // CHOICE has no natural tag (X.680 §28).
+        os << "\n";
+        os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", spec.type_name);
+        os << "    const TAG: Option<asn1cpp_wire::Tag> = None;\n";
         os << "}\n\n";
     }
 }
