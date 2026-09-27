@@ -38,6 +38,7 @@ pub mod per;
 pub mod real;
 pub mod relative_oid;
 pub mod spec;
+pub mod type_tag;
 pub mod strings;
 pub mod validate;
 pub mod value;
