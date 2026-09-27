@@ -1973,6 +1973,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             os << "    own_tag: None,\n";
         }
         os << std::format("    ext_at: {},\n", spec.ext_at);
+        // X.691 §22.6 — bit width of the root-alternative index, already
+        // computed backend-agnostically (Generator.cpp); per::choice reads
+        // it instead of recomputing it per call.
+        os << std::format("    range_bits: {},\n", spec.range_bits);
         os << "};\n\n";
 
         os << std::format("impl {} {{\n", spec.type_name);
