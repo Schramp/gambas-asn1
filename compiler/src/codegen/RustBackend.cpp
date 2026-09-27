@@ -198,14 +198,16 @@ static bool per_string_covered(ast::BuiltinType bt) {
 // (INTEGER's width, a string's own FROM constraint); every other case
 // ignores them.
 //
-// DELETE ONCE PER IS COMPLETE: once every case below returns `true`
-// except `Any` (ANY has no PER encoding at all, X.208/X.691 — a genuine
-// standard limitation, not an implementation gap, so that one case never
-// goes away), this function collapses to `return bt != BT::Any;` — at
-// that point delete it, delete `per_member_covered`/`per_alt_covered`'s
-// `m.mbuiltin`/`a.mbuiltin` branches (fold into the same one-line
-// `!= Any` check), and delete `per_stub_reason`'s builtin-kind text
-// (only the ANY/from-alphabet/SEQUENCE-OF reasons would remain).
+// DELETE ONCE PER IS COMPLETE: once every case below returns `true`,
+// delete this function, delete `per_member_covered`/`per_alt_covered`'s
+// `m.mbuiltin`/`a.mbuiltin` branches (fold into an unconditional `true`),
+// and delete `per_stub_reason`'s builtin-kind text (only the from-alphabet/
+// SEQUENCE-OF reasons would remain). Every ASN.1 construct has a defined
+// PER encoding (X.691 covers all of them, ANY included as an open type,
+// X.691 §10.2 — confirmed against asn1c's own `ANY_uper.c`/`ANY_aper.c`
+// and this codebase's own `AnyPerHandler`, `runtime/src/PerCodec.cpp`),
+// so nothing here is a permanent exception the way it might look today —
+// nothing needs a "return false forever" case.
 static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind,
                                  bool has_from_alphabet) {
     using BT = ast::BuiltinType;
@@ -256,12 +258,15 @@ static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind
     case BT::UtcTime:
     case BT::GeneralizedTime:
         return !has_from_alphabet;
+    // ANY (X.208 legacy, X.691 §10.2 open-type encoding) — length-
+    // prefixed raw captured bytes, unconditionally covered by `Any`'s own
+    // Asn1Value impl (any.rs).
+    case BT::Any:
+        return true;
     // Genuinely not wired up yet: OBJECT IDENTIFIER/RELATIVE-OID (X.691
-    // §23/§24 — no per::oid/per::relative_oid module exists), and ANY
-    // (X.208 legacy, no PER encoding defined for it at all).
+    // §23/§24 — no per::oid/per::relative_oid module exists).
     case BT::ObjectIdentifier:
     case BT::RelativeOid:
-    case BT::Any:
         return false;
     }
     return false;
@@ -1454,7 +1459,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // (e.g. SEQUENCE OF is BER-covered but PER-Unsupported).
     auto per_stub_reason = [](const SequenceMemberSpec& m) -> const char* {
         if (m.seq_of_kind != SeqOfKind::None) return "SEQUENCE OF/SET OF PER encoding not yet supported";
-        if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any) return "ANY has no PER encoding";
         if (m.mbuiltin && m.has_from_alphabet) return "FROM-alphabet constraint not yet supported for PER";
         if (m.mbuiltin) return "builtin type/storage combination not yet supported for PER";
         return "referenced type has no PerValue impl";
