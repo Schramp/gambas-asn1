@@ -118,7 +118,7 @@ public:
     // tags via mbuiltin instead), but must stay valid Rust in case that
     // changes (e.g. CHOICE-member coverage).
     std::string format_no_tag_literal() const override {
-        return "asn1cpp_wire::tag::Tag { class: asn1cpp_wire::tag::TagClass::Context, number: 0, constructed: false }";
+        return "asn1cpp_wire::ber::tag::Tag { class: asn1cpp_wire::ber::tag::TagClass::Context, number: 0, constructed: false }";
     }
 
     // tdref is populated unconditionally for every

@@ -17,11 +17,11 @@
 //! a permanent public type just to be readable as one.
 
 use crate::constraints::Constraints;
-use crate::reader::{DecodeError, Reader};
-use crate::tag::Tag;
+use crate::ber::reader::{DecodeError, Reader};
+use crate::ber::tag::Tag;
 use crate::spec::sequence::{MemberAccess, SequenceSpec, SEQUENCE_TAG, SET_TAG};
 use crate::value::Asn1Value;
-use crate::writer::write_constructed;
+use crate::ber::writer::write_constructed;
 use crate::xer::XerReader;
 
 /// Shared SEQUENCE-OF wire logic — one outer `SEQUENCE_TAG` TLV wrapping
@@ -1234,7 +1234,7 @@ impl DefaultPoint {
         let mut bytes = Vec::new();
         Integer(1).ber_encode(&mut bytes);
         let mut wire = Vec::new();
-        crate::writer::write_constructed(&mut wire, SEQUENCE_TAG, &bytes);
+        crate::ber::writer::write_constructed(&mut wire, SEQUENCE_TAG, &bytes);
 
         let decoded = DefaultPoint::decode(&wire).unwrap();
         assert_eq!(decoded, DefaultPoint { x: Integer(1), y: Some(Integer(42)) });
@@ -1250,7 +1250,7 @@ impl DefaultPoint {
         let mut expected = Vec::new();
         Integer(1).ber_encode(&mut expected);
         let mut expected_wire = Vec::new();
-        crate::writer::write_constructed(&mut expected_wire, SEQUENCE_TAG, &expected);
+        crate::ber::writer::write_constructed(&mut expected_wire, SEQUENCE_TAG, &expected);
 
         assert_eq!(p.encode(), expected_wire);
         // Round-trips back to the same value even though the wire never

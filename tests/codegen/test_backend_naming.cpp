@@ -590,7 +590,7 @@ int main() {
               c.format_tag_literal(universal));
         check("format_tag_literal: RustBackend universal tag",
               r.format_tag_literal(universal) ==
-                  "asn1cpp_wire::tag::Tag { class: asn1cpp_wire::tag::TagClass::Universal, number: 2, constructed: false }",
+                  "asn1cpp_wire::ber::tag::Tag { class: asn1cpp_wire::ber::tag::TagClass::Universal, number: 2, constructed: false }",
               r.format_tag_literal(universal));
 
         TypeTagSpec context_explicit{asn1::ast::TagClass::Context, 1, true};
@@ -599,7 +599,7 @@ int main() {
               c.format_tag_literal(context_explicit));
         check("format_tag_literal: RustBackend context/constructed tag",
               r.format_tag_literal(context_explicit) ==
-                  "asn1cpp_wire::tag::Tag { class: asn1cpp_wire::tag::TagClass::Context, number: 1, constructed: true }",
+                  "asn1cpp_wire::ber::tag::Tag { class: asn1cpp_wire::ber::tag::TagClass::Context, number: 1, constructed: true }",
               r.format_tag_literal(context_explicit));
 
         TypeTagSpec application{asn1::ast::TagClass::Application, 5, false};

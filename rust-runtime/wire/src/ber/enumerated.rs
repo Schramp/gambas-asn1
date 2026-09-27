@@ -15,9 +15,9 @@
 //! the type's own base impl).
 
 use crate::integer::{decode_integer_bytes, encode_integer_bytes};
-use crate::reader::{DecodeError, Reader};
-use crate::tag::{universal, Tag};
-use crate::writer::write_primitive;
+use crate::ber::reader::{DecodeError, Reader};
+use crate::ber::tag::{universal, Tag};
+use crate::ber::writer::write_primitive;
 use crate::spec::enumerated::EnumSpec;
 use crate::xer::XerReader;
 

@@ -19,7 +19,7 @@
 //! Definite in-memory document only (mirrors `XerDecodeStream`, no
 //! streaming parser) — matches the C++ side's own scope note.
 
-use crate::reader::DecodeError;
+use crate::ber::reader::DecodeError;
 use crate::spec::sequence::SequenceSpec;
 
 /// Append `s` to `out` with XER's three encode-time escapes (X.693 §8.2).

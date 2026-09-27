@@ -4,10 +4,10 @@
 //! `BerTraits<Integer>::decode_value` (`runtime/include/asn1cpp/types/Integer.hpp`):
 //! minimal two's-complement big-endian value bytes.
 
-use crate::reader::{DecodeError, Reader};
-use crate::tag::{universal, Tag};
+use crate::ber::reader::{DecodeError, Reader};
+use crate::ber::tag::{universal, Tag};
 use crate::value::Asn1Value;
-use crate::writer::write_primitive;
+use crate::ber::writer::write_primitive;
 
 pub const INTEGER_TAG: Tag = Tag::universal(universal::INTEGER, false);
 

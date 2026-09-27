@@ -15,9 +15,9 @@
 //! newtype too (`relative_oid::RelativeOid`), same "distinct type per
 //! ASN.1 kind" convention as every other kind in this crate.
 
-use crate::reader::{DecodeError, Reader};
-use crate::tag::{universal, Tag};
-use crate::writer::write_primitive;
+use crate::ber::reader::{DecodeError, Reader};
+use crate::ber::tag::{universal, Tag};
+use crate::ber::writer::write_primitive;
 
 pub const OBJECT_IDENTIFIER_TAG: Tag = Tag::universal(universal::OBJECT_IDENTIFIER, false);
 

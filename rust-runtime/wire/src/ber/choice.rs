@@ -49,10 +49,10 @@
 //! public API) — a worked example doesn't need to be a permanent public
 //! type just to be readable as one.
 
-use crate::reader::{read_explicit, DecodeError, Reader};
-use crate::tag::Tag;
+use crate::ber::reader::{read_explicit, DecodeError, Reader};
+use crate::ber::tag::Tag;
 use crate::spec::choice::{active_alt, BerTagging, ChoiceSpec};
-use crate::writer::{write_constructed, write_explicit, write_primitive};
+use crate::ber::writer::{write_constructed, write_explicit, write_primitive};
 use crate::xer::{write_close_tag, write_open_tag, XerReader};
 
 /// Generic CHOICE encoder — the Rust analogue of `ChoiceBerHandler::encode`.
@@ -343,8 +343,8 @@ impl Choice {
     // the same construct: a9 03 02 01 2a.
     #[test]
     fn own_tag_wraps_the_alternative_dispatch_encoding() {
-        let tag = crate::tag::Tag {
-            class: crate::tag::TagClass::Context,
+        let tag = crate::ber::tag::Tag {
+            class: crate::ber::tag::TagClass::Context,
             number: 9,
             constructed: true,
         };
