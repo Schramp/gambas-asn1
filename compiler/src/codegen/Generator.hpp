@@ -388,10 +388,11 @@ private:
     std::optional<TypeTagSpec> underlying_natural_tag_spec_for(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
     // alt_idx: 0-based index of the alternative in its parent CHOICE.
-    // Appends {tag_literal, alt_idx} pairs; recurses if alt resolves to untagged CHOICE.
+    // Appends BerTagEntry rows (raw class/number + formatted literal +
+    // alt_idx); recurses if alt resolves to untagged CHOICE.
     // visited: set of type names already on the recursion stack (cycle guard).
     void collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
-                               std::vector<std::pair<std::string,int>>& out,
+                               std::vector<BerTagEntry>& out,
                                std::set<std::string>& visited);
     std::optional<int64_t> resolve_int_value(const ast::Value& v) const;
     std::optional<uint64_t> resolve_uint_value(const ast::Value& v) const;
