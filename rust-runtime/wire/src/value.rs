@@ -993,6 +993,22 @@ impl Asn1Value for crate::real::Real {
             .map_err(|_| DecodeError::new(format!("XER: invalid REAL value: {trimmed}"), 0))?;
         Ok(())
     }
+
+    /// X.691 §16: not bit-packed like INTEGER/ENUMERATED — the value's own
+    /// BER content bytes, length-prefixed (mirrors `RealPerHandler`,
+    /// `runtime/src/PerCodec.cpp`, exactly). No `Constraints` apply to REAL.
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {
+        crate::per::real::encode_real(w, self.0);
+    }
+
+    fn per_decode_into(
+        &mut self,
+        r: &mut crate::per::reader::Reader,
+        _c: &crate::constraints::Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
+        self.0 = crate::per::real::decode_real(r)?;
+        Ok(())
+    }
 }
 
 /// Maps `IA5String` (`native_builtin_type`'s `String` choice covers all 12
