@@ -12,6 +12,22 @@
 
 namespace asn1::codegen {
 
+/// @brief X.691 §10.5.6 unaligned variant: minimum bit width to represent
+///        values in `0..range`. Mirrors `range_bits` in
+///        `runtime/src/PerCodec.cpp` and `rust-runtime/wire/src/per/
+///        choice.rs` exactly — codegen precomputes the same value both
+///        codecs need at encode/decode time, rather than each recomputing
+///        it per call.
+/// @param range Number of distinct values (e.g. a CHOICE's root
+///        alternative count).
+/// @return Bit width; 0 for `range <= 1`.
+static int range_bits_for(int range) {
+    if (range <= 1) return 0;
+    int bits = 0;
+    for (int r = range - 1; r > 0; r >>= 1) ++bits;
+    return bits;
+}
+
 Generator::Generator(fs::path out_dir, sema::Resolver& res)
     : out_dir_(std::move(out_dir)), resolver_(res),
       owned_backend_(std::make_unique<CppBackend>()), backend_(*owned_backend_) {}
@@ -1731,6 +1747,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
     spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
     spec.count = count;
     spec.ext_at = ext_at;
+    spec.range_bits = range_bits_for(ext_at >= 0 ? ext_at : count);
 
     // X.680 §30.6 — CHOICE has no universal tag; a declared [n] on the type
     // assignment itself is always EXPLICIT (wraps the chosen alternative's

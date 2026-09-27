@@ -1156,7 +1156,10 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
         os << "    nullptr,\n";
     os << std::format("    {},\n", spec.count);
     os << std::format("    {}, /* ext_at */\n", spec.ext_at);
-    os << "    {} /* PER: constraints */\n";
+    // X.691 §22.6 — bit width of the root-alternative index, precomputed
+    // once by Generator rather than recomputed by ChoicePerHandler per call.
+    os << std::format("    {{ .flags=asn1::Constraints::CONSTRAINED, .range_bits={} }} /* PER: constraints */\n",
+                      spec.range_bits);
     if (spec.has_ber_table)
         os << std::format("    , asn_BER_{0}, {1} /* ber_tags */\n", cname, (int)spec.ber_tags.size());
     else if (spec.has_tag_index)
