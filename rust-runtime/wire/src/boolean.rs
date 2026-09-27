@@ -5,9 +5,9 @@
 //! `runtime/src/BerCodec.cpp`): DER-strict on encode (`FALSE` = `0x00`,
 //! `TRUE` = `0xFF`), BER-lenient on decode (any nonzero byte is `TRUE`).
 
-use crate::reader::{DecodeError, Reader};
-use crate::tag::{universal, Tag};
-use crate::writer::write_primitive;
+use crate::ber::reader::{DecodeError, Reader};
+use crate::ber::tag::{universal, Tag};
+use crate::ber::writer::write_primitive;
 
 pub const BOOLEAN_TAG: Tag = Tag::universal(universal::BOOLEAN, false);
 

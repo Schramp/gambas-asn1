@@ -48,10 +48,10 @@
 //! separate `time.rs` module or macro duplication for what the standard
 //! itself already classifies as the same kind of thing.
 
-use crate::reader::{DecodeError, Reader};
-use crate::tag::{universal, Tag};
+use crate::ber::reader::{DecodeError, Reader};
+use crate::ber::tag::{universal, Tag};
 use crate::value::Asn1Value;
-use crate::writer::write_primitive;
+use crate::ber::writer::write_primitive;
 use crate::xer::XerReader;
 
 /// Content octets only (X.690 §8.7 — the raw UTF-8 bytes) — shared by every

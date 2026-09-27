@@ -19,7 +19,7 @@
 //! every generated C++ type inherits from) plays in `TypeDescriptor.hpp`,
 //! done via a trait object instead of inheritance.
 
-use crate::reader::{DecodeError, Reader};
+use crate::ber::reader::{DecodeError, Reader};
 use crate::xer::XerReader;
 
 /// A BER/XER-encodable/decodable value reachable through a
@@ -54,7 +54,7 @@ pub trait Asn1Value {
     /// natural tag (X.680 §28); a CHOICE member/alternative is always
     /// EXPLICIT-wrapped when tagged (X.680 §30.6), so its generated impl
     /// uses `unreachable!()`.
-    fn ber_natural_tag(&self) -> crate::tag::Tag;
+    fn ber_natural_tag(&self) -> crate::ber::tag::Tag;
 
     /// Writes just the TLV value octets (X.690 §8.1.3) — no tag, no length.
     fn ber_encode_content(&self, out: &mut Vec<u8>);
@@ -124,17 +124,17 @@ pub trait Asn1Value {
     /// `debug::debug_flags()` the same way every other
     /// `ASN1CPP_DEBUG` bit is (`debug.rs`): on by default, `DBG_NO_VALIDATE`
     /// opts out, `DBG_VALIDATE_TRACE` additionally prints each failure.
-    fn ber_encode_tagged(&self, tag: crate::tag::Tag, out: &mut Vec<u8>) {
+    fn ber_encode_tagged(&self, tag: crate::ber::tag::Tag, out: &mut Vec<u8>) {
         crate::validate::check(self, "encode");
         let mut content = Vec::new();
         self.ber_encode_content(&mut content);
-        crate::writer::write_primitive(out, tag, &content);
+        crate::ber::writer::write_primitive(out, tag, &content);
     }
 
     /// Decode counterpart of `ber_encode_tagged` — same `validate()` call
     /// site rationale, checked after a successful decode (mirrors
     /// `BerCodec::decode`'s own `res.has_value() && ...` guard, C++).
-    fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
+    fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<(), DecodeError> {
         let tlv = r.read_tlv()?;
         if tlv.tag != tag {
             return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
@@ -154,13 +154,13 @@ pub trait Asn1Value {
     /// tagged member through the same `get`/`get_mut: fn(&mut T) -> &mut
     /// dyn Asn1Value` accessor `Scalar`/`TaggedScalar` already use, instead
     /// of a per-member closure duplicating that same field access.
-    fn ber_encode_explicit(&self, out: &mut Vec<u8>, tag: crate::tag::Tag) {
-        crate::writer::write_explicit(out, tag, |inner| self.ber_encode(inner));
+    fn ber_encode_explicit(&self, out: &mut Vec<u8>, tag: crate::ber::tag::Tag) {
+        crate::ber::writer::write_explicit(out, tag, |inner| self.ber_encode(inner));
     }
 
     /// Decode counterpart of `ber_encode_explicit`.
-    fn ber_decode_into_explicit(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
-        crate::reader::read_explicit(r, tag, |inner| self.ber_decode_into(inner))
+    fn ber_decode_into_explicit(&mut self, r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<(), DecodeError> {
+        crate::ber::reader::read_explicit(r, tag, |inner| self.ber_decode_into(inner))
     }
 
     fn xer_encode(&self, _out: &mut String, _depth: usize) {
@@ -305,12 +305,12 @@ pub trait Asn1Value {
 /// *shape* differs per kind; EXPLICIT only ever adds one outer wrapper
 /// around whatever the natural encoding already is, so one generic pair
 /// covers every `Asn1Value` impl instead of needing one per kind.
-pub fn encode_explicit<T: Asn1Value>(out: &mut Vec<u8>, tag: crate::tag::Tag, value: &T) {
-    crate::writer::write_explicit(out, tag, |inner| value.ber_encode(inner));
+pub fn encode_explicit<T: Asn1Value>(out: &mut Vec<u8>, tag: crate::ber::tag::Tag, value: &T) {
+    crate::ber::writer::write_explicit(out, tag, |inner| value.ber_encode(inner));
 }
 
-pub fn decode_explicit<T: Asn1Value + Default>(r: &mut Reader, tag: crate::tag::Tag) -> Result<T, DecodeError> {
-    crate::reader::read_explicit(r, tag, |inner| {
+pub fn decode_explicit<T: Asn1Value + Default>(r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<T, DecodeError> {
+    crate::ber::reader::read_explicit(r, tag, |inner| {
         let mut tmp = T::default();
         tmp.ber_decode_into(inner)?;
         Ok(tmp)
@@ -323,17 +323,17 @@ pub fn decode_explicit<T: Asn1Value + Default>(r: &mut Reader, tag: crate::tag::
 /// Unlike `encode_explicit`/`decode_explicit`, not generic over
 /// `Asn1Value`: ANY's content is whatever raw bytes are on the wire, not a
 /// typed decode — `raw` is captured/replayed verbatim, tag and all.
-pub fn encode_explicit_any(out: &mut Vec<u8>, tag: crate::tag::Tag, raw: &[u8]) {
-    crate::writer::write_explicit(out, tag, |inner| inner.extend_from_slice(raw));
+pub fn encode_explicit_any(out: &mut Vec<u8>, tag: crate::ber::tag::Tag, raw: &[u8]) {
+    crate::ber::writer::write_explicit(out, tag, |inner| inner.extend_from_slice(raw));
 }
 
-pub fn decode_explicit_any(r: &mut Reader, tag: crate::tag::Tag) -> Result<crate::any::Any, DecodeError> {
-    crate::reader::read_explicit(r, tag, |inner| Ok(crate::any::Any(inner.remaining().to_vec())))
+pub fn decode_explicit_any(r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<crate::any::Any, DecodeError> {
+    crate::ber::reader::read_explicit(r, tag, |inner| Ok(crate::any::Any(inner.remaining().to_vec())))
 }
 
 /// `encode_explicit_any` for an OPTIONAL `[n] ANY` member — see
 /// `encode_explicit_opt`'s matching doc for why this exists.
-pub fn encode_explicit_any_opt(out: &mut Vec<u8>, tag: crate::tag::Tag, opt: &Option<crate::any::Any>) {
+pub fn encode_explicit_any_opt(out: &mut Vec<u8>, tag: crate::ber::tag::Tag, opt: &Option<crate::any::Any>) {
     if let Some(raw) = opt {
         encode_explicit_any(out, tag, raw);
     }
@@ -356,7 +356,7 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
     }
 
     // The tag depends only on `V`'s type, never its value.
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
+    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         V::default().ber_natural_tag()
     }
 
@@ -381,13 +381,13 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
         Ok(())
     }
 
-    fn ber_encode_tagged(&self, tag: crate::tag::Tag, out: &mut Vec<u8>) {
+    fn ber_encode_tagged(&self, tag: crate::ber::tag::Tag, out: &mut Vec<u8>) {
         if let Some(v) = self {
             v.ber_encode_tagged(tag, out);
         }
     }
 
-    fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
+    fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<(), DecodeError> {
         let mut v = V::default();
         v.ber_decode_into_tagged(r, tag)?;
         *self = Some(v);
@@ -398,13 +398,13 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
     // SEQUENCE walker (`decode_sequence_content`, `sequence.rs`) peeks the
     // wire tag before calling in, same as it already does for Scalar/
     // TaggedScalar, so `None` only writes here on the encode side.
-    fn ber_encode_explicit(&self, out: &mut Vec<u8>, tag: crate::tag::Tag) {
+    fn ber_encode_explicit(&self, out: &mut Vec<u8>, tag: crate::ber::tag::Tag) {
         if let Some(v) = self {
             v.ber_encode_explicit(out, tag);
         }
     }
 
-    fn ber_decode_into_explicit(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
+    fn ber_decode_into_explicit(&mut self, r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<(), DecodeError> {
         let mut v = V::default();
         v.ber_decode_into_explicit(r, tag)?;
         *self = Some(v);
@@ -452,7 +452,7 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
 }
 
 impl Asn1Value for crate::integer::Integer {
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
+    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::integer::INTEGER_TAG
     }
 
@@ -500,7 +500,7 @@ impl Asn1Value for crate::integer::Integer {
 /// XER leg is plain decimal text, same shape as `i64`'s own impl below,
 /// just unsigned.
 impl Asn1Value for crate::integer::UInteger {
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
+    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::integer::INTEGER_TAG
     }
 
@@ -545,7 +545,7 @@ impl Asn1Value for crate::integer::UInteger {
 
 /// i128 analogue of the `u64` impl above.
 impl Asn1Value for crate::integer::BigInteger {
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
+    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::integer::INTEGER_TAG
     }
 
@@ -582,7 +582,7 @@ impl Asn1Value for crate::integer::BigInteger {
 /// content) when `XerReader::lenient()` is set — the non-standard asn1c
 /// extension `XerDecodeMode::Lenient` allows on the C++ side.
 impl Asn1Value for crate::boolean::Boolean {
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
+    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::boolean::BOOLEAN_TAG
     }
 
@@ -644,7 +644,7 @@ impl Asn1Value for crate::boolean::Boolean {
 /// `Asn1Value` (member-embedded content only, per this trait's own doc
 /// comment) never needs that branch.
 impl Asn1Value for crate::null::Null {
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
+    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::null::NULL_TAG
     }
 
@@ -722,7 +722,7 @@ impl Asn1Value for crate::null::Null {
 /// from hex, matches the C++ heuristic); any `2`-`9`/`A`-`F`/`a`-`f`
 /// character makes it unambiguous and requires lenient mode.
 impl Asn1Value for crate::bit_string::BitString {
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
+    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::bit_string::BIT_STRING_TAG
     }
 
@@ -859,7 +859,7 @@ impl Asn1Value for crate::bit_string::BitString {
 /// (`runtime/include/asn1cpp/codec/XerCodec.hpp`'s `format_arcs`/
 /// `parse_arcs`): dotted-decimal arcs, e.g. `2.5.4.3`.
 impl Asn1Value for crate::oid::ObjectIdentifier {
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
+    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::oid::OBJECT_IDENTIFIER_TAG
     }
 
@@ -910,7 +910,7 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
 /// is purely a BER encoding concern anyway): dotted-decimal arcs, e.g.
 /// `8571.1`.
 impl Asn1Value for crate::relative_oid::RelativeOid {
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
+    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::relative_oid::RELATIVE_OID_TAG
     }
 
@@ -961,7 +961,7 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
 /// `"0"`, everything else as `%.15f` with trailing zeros trimmed (keeping
 /// at least one digit after the decimal point).
 impl Asn1Value for crate::real::Real {
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
+    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::real::REAL_TAG
     }
 
@@ -1049,7 +1049,7 @@ impl<T: Asn1Value> Asn1Value for Box<T> {
         (**self).is_present()
     }
 
-    fn ber_natural_tag(&self) -> crate::tag::Tag {
+    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         (**self).ber_natural_tag()
     }
 
@@ -1073,11 +1073,11 @@ impl<T: Asn1Value> Asn1Value for Box<T> {
         (**self).ber_decode_into(r)
     }
 
-    fn ber_encode_tagged(&self, tag: crate::tag::Tag, out: &mut Vec<u8>) {
+    fn ber_encode_tagged(&self, tag: crate::ber::tag::Tag, out: &mut Vec<u8>) {
         (**self).ber_encode_tagged(tag, out)
     }
 
-    fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::tag::Tag) -> Result<(), DecodeError> {
+    fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<(), DecodeError> {
         (**self).ber_decode_into_tagged(r, tag)
     }
 
@@ -1193,7 +1193,7 @@ mod per_blanket_tests {
             flags: Constraints::SIZE_CONSTRAINED, size_range_bits: 3, size_lower: 0, size_upper: 7,
             element: Some(&ELEM), ..Default::default()
         };
-        let v = crate::sequence::SeqOf(vec![Integer(1), Integer(9), Integer(15)]);
+        let v = crate::ber::sequence::SeqOf(vec![Integer(1), Integer(9), Integer(15)]);
         let via_trait = bytes_of(|w| v.per_encode(w, &coll));
         let manual = bytes_of(|w| {
             crate::per::length::encode_size_field(w, &coll, 3);
@@ -1202,7 +1202,7 @@ mod per_blanket_tests {
             }
         });
         assert_eq!(via_trait, manual);
-        let mut back = crate::sequence::SeqOf::<Integer>(vec![]);
+        let mut back = crate::ber::sequence::SeqOf::<Integer>(vec![]);
         back.per_decode_into(&mut Reader::new(&via_trait), &coll).unwrap();
         assert_eq!(back.0, vec![Integer(1), Integer(9), Integer(15)]);
     }
@@ -1682,13 +1682,13 @@ mod tests {
     #[test]
     fn explicit_generic_wraps_and_round_trips_any_asn1value() {
         let mut buf = Vec::new();
-        encode_explicit(&mut buf, crate::tag::Tag::context(7, true), &Integer(42));
+        encode_explicit(&mut buf, crate::ber::tag::Tag::context(7, true), &Integer(42));
         // [7] EXPLICIT (0xA7), wrapping the natural INTEGER encoding
         // (0x02 0x01 0x2A) unchanged — not a tag substitution.
         assert_eq!(buf, vec![0xA7, 0x03, 0x02, 0x01, 0x2A]);
 
         let mut r = Reader::new(&buf);
-        let got: Integer = decode_explicit(&mut r, crate::tag::Tag::context(7, true)).unwrap();
+        let got: Integer = decode_explicit(&mut r, crate::ber::tag::Tag::context(7, true)).unwrap();
         assert_eq!(got, 42);
     }
 
@@ -1698,21 +1698,21 @@ mod tests {
         // whole point is to capture that unparsed, tag and all.
         let inner_tlv = [0x02u8, 0x01, 0x2A]; // INTEGER 42
         let mut buf = Vec::new();
-        encode_explicit_any(&mut buf, crate::tag::Tag::context(1, true), &inner_tlv);
+        encode_explicit_any(&mut buf, crate::ber::tag::Tag::context(1, true), &inner_tlv);
         assert_eq!(buf, vec![0xA1, 0x03, 0x02, 0x01, 0x2A]);
 
         let mut r = Reader::new(&buf);
-        let got = decode_explicit_any(&mut r, crate::tag::Tag::context(1, true)).unwrap();
+        let got = decode_explicit_any(&mut r, crate::ber::tag::Tag::context(1, true)).unwrap();
         assert_eq!(*got, inner_tlv);
     }
 
     #[test]
     fn explicit_any_rejects_wrong_wrapper_tag() {
         let mut buf = Vec::new();
-        encode_explicit_any(&mut buf, crate::tag::Tag::context(1, true), &[0x02, 0x01, 0x2A]);
+        encode_explicit_any(&mut buf, crate::ber::tag::Tag::context(1, true), &[0x02, 0x01, 0x2A]);
 
         let mut r = Reader::new(&buf);
-        assert!(decode_explicit_any(&mut r, crate::tag::Tag::context(2, true)).is_err());
+        assert!(decode_explicit_any(&mut r, crate::ber::tag::Tag::context(2, true)).is_err());
     }
 
     // ---- generic IMPLICIT retagging (ber_encode_tagged/ber_decode_into_tagged) ----
@@ -1728,7 +1728,7 @@ mod tests {
 
     #[test]
     fn tagged_substitutes_the_tag_for_a_scalar() {
-        let context_0 = crate::tag::Tag::context(0, false);
+        let context_0 = crate::ber::tag::Tag::context(0, false);
         let mut out = Vec::new();
         Integer(42).ber_encode_tagged(context_0, &mut out);
         assert_eq!(out, vec![0x80, 0x01, 0x2A]); // context primitive 0, not universal INTEGER (0x02)
@@ -1746,7 +1746,7 @@ mod tests {
         // splice-and-resplice untouched.
         use crate::bit_string::BitString;
         let v = BitString { bytes: vec![0b1010_1000, 0xFF], unused_bits: 2 };
-        let context_3 = crate::tag::Tag::context(3, false);
+        let context_3 = crate::ber::tag::Tag::context(3, false);
         let mut out = Vec::new();
         v.ber_encode_tagged(context_3, &mut out);
         assert_eq!(out[0], 0x83); // context primitive 3
@@ -1759,8 +1759,8 @@ mod tests {
 
     #[test]
     fn tagged_decode_rejects_wrong_tag() {
-        let context_0 = crate::tag::Tag::context(0, false);
-        let context_1 = crate::tag::Tag::context(1, false);
+        let context_0 = crate::ber::tag::Tag::context(0, false);
+        let context_1 = crate::ber::tag::Tag::context(1, false);
         let mut out = Vec::new();
         Integer(42).ber_encode_tagged(context_0, &mut out);
 
@@ -1782,7 +1782,7 @@ mod tests {
     #[test]
     fn none_through_tagged_path_writes_nothing() {
         let v: Option<Integer> = None;
-        let context_0 = crate::tag::Tag::context(0, false);
+        let context_0 = crate::ber::tag::Tag::context(0, false);
         let mut out = Vec::new();
         v.ber_encode_tagged(context_0, &mut out);
         assert!(out.is_empty());
@@ -1791,7 +1791,7 @@ mod tests {
     #[test]
     fn some_through_tagged_path_round_trips() {
         let v: Option<Integer> = Some(Integer(7));
-        let context_0 = crate::tag::Tag::context(0, false);
+        let context_0 = crate::ber::tag::Tag::context(0, false);
         let mut out = Vec::new();
         v.ber_encode_tagged(context_0, &mut out);
         assert_eq!(out, vec![0x80, 0x01, 0x07]); // context primitive 0, not universal INTEGER

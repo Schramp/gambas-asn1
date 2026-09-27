@@ -7,9 +7,9 @@
 //! `()`, so this impl lives on `()` itself (`value.rs`), not a newtype —
 //! there's nothing to wrap.
 
-use crate::reader::{DecodeError, Reader};
-use crate::tag::{universal, Tag};
-use crate::writer::write_primitive;
+use crate::ber::reader::{DecodeError, Reader};
+use crate::ber::tag::{universal, Tag};
+use crate::ber::writer::write_primitive;
 
 pub const NULL_TAG: Tag = Tag::universal(universal::NULL, false);
 

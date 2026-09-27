@@ -6,8 +6,8 @@
 //! (`sequence.rs`), never through the natural-tag/content split, and has
 //! no defined XER or PER form here.
 
-use crate::reader::DecodeError;
-use crate::tag::Tag;
+use crate::ber::reader::DecodeError;
+use crate::ber::tag::Tag;
 use crate::value::Asn1Value;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
