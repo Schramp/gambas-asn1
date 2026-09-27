@@ -16,7 +16,7 @@
 //! `asn1cpp_ber`'s own CHOICE decode has for a closed (non-extensible)
 //! CHOICE with no capture mechanism.
 
-use crate::choice::{Alternative, ChoiceSpec};
+use crate::spec::choice::{active_alt, Alternative, ChoiceSpec};
 use crate::per::length::{get_length, get_nsnn, put_length, put_nsnn};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
@@ -52,7 +52,7 @@ fn root_count<T>(spec: &ChoiceSpec<T>) -> usize {
 }
 
 pub fn encode_choice_content<T>(spec: &ChoiceSpec<T>, w: &mut Writer, value: &T) {
-    let Some((def_idx, alt, payload)) = crate::choice::active_alt(spec, value) else {
+    let Some((def_idx, alt, payload)) = active_alt(spec, value) else {
         return; // codegen-bug backstop: no alternative matched a real generated enum.
     };
     per_unsupported(alt);
@@ -124,7 +124,7 @@ pub fn decode_choice_content_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::choice::{Alternative, BerTagging};
+    use crate::spec::choice::{Alternative, BerTagging};
     use crate::constraints::UNCONSTRAINED;
     use crate::integer::Integer;
 
