@@ -429,97 +429,69 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
     }
 }
 
-impl Asn1Value for crate::integer::Integer {
-    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
-        crate::integer::INTEGER_TAG
-    }
+/// Shared `Asn1Value` shape for `Integer`/`UInteger` (`IntStorageKind::
+/// S64`/`U64`): identical structure across signed/unsigned width, only the
+/// byte-codec functions (`crate::integer`), PER module (`crate::per`) and
+/// `validate` function (`crate::constraints`) differ. `BigInteger`
+/// (`I128`) isn't covered — no PER/validate wiring exists for it yet
+/// (nothing generates one today; see `integer.rs`'s own doc), so it keeps
+/// its own hand-written impl rather than forcing a shape this macro
+/// doesn't fit.
+macro_rules! fixed_width_integer {
+    ($name:ty, $prim:ty, $encode_bytes:ident, $decode_bytes:ident,
+     $per_mod:ident, $per_encode_fn:ident, $per_decode_fn:ident, $validate_fn:ident) => {
+        impl Asn1Value for $name {
+            fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
+                crate::integer::INTEGER_TAG
+            }
 
-    fn xer_element_name(&self) -> &'static str {
-        "INTEGER"
-    }
+            fn xer_element_name(&self) -> &'static str {
+                "INTEGER"
+            }
 
-    fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&crate::integer::encode_integer_bytes(self.0));
-    }
+            fn ber_encode_content(&self, out: &mut Vec<u8>) {
+                out.extend_from_slice(&crate::integer::$encode_bytes(self.0));
+            }
 
-    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        self.0 = crate::integer::decode_integer_bytes(content)?;
-        Ok(())
-    }
+            fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
+                self.0 = crate::integer::$decode_bytes(content)?;
+                Ok(())
+            }
 
-    fn xer_encode(&self, out: &mut String, _depth: usize) {
-        out.push_str(&self.to_string());
-    }
+            fn xer_encode(&self, out: &mut String, _depth: usize) {
+                out.push_str(&self.to_string());
+            }
 
-    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        let text = r.read_text_content();
-        self.0 = text.trim().parse::<i64>().map_err(|_| {
-            DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
-        })?;
-        Ok(())
-    }
+            fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+                let text = r.read_text_content();
+                self.0 = text.trim().parse::<$prim>().map_err(|_| {
+                    DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
+                })?;
+                Ok(())
+            }
 
-    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
-        crate::per::integer::encode_int(w, c, self.0);
-    }
+            fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
+                crate::per::$per_mod::$per_encode_fn(w, c, self.0);
+            }
 
-    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader, c: &crate::constraints::Constraints) -> Result<(), crate::per::reader::DecodeError> {
-        self.0 = crate::per::integer::decode_int(r, c)?;
-        Ok(())
-    }
+            fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader, c: &crate::constraints::Constraints) -> Result<(), crate::per::reader::DecodeError> {
+                self.0 = crate::per::$per_mod::$per_decode_fn(r, c)?;
+                Ok(())
+            }
 
-    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
-        crate::constraints::validate_s64(self.0, c)
-    }
+            fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
+                crate::constraints::$validate_fn(self.0, c)
+            }
+        }
+    };
 }
 
-/// Wide-range INTEGER storage (a constrained range whose bound exceeds
-/// i64::MAX/MIN — `IntStorageKind::U64`/`I128`, `RustBackend::native_int_type`).
-/// XER leg is plain decimal text, same shape as `i64`'s own impl below,
-/// just unsigned.
-impl Asn1Value for crate::integer::UInteger {
-    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
-        crate::integer::INTEGER_TAG
-    }
-
-    fn xer_element_name(&self) -> &'static str {
-        "INTEGER"
-    }
-
-    fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&crate::integer::encode_integer_bytes_u64(self.0));
-    }
-
-    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        self.0 = crate::integer::decode_integer_bytes_u64(content)?;
-        Ok(())
-    }
-
-    fn xer_encode(&self, out: &mut String, _depth: usize) {
-        out.push_str(&self.to_string());
-    }
-
-    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        let text = r.read_text_content();
-        self.0 = text.trim().parse::<u64>().map_err(|_| {
-            DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
-        })?;
-        Ok(())
-    }
-
-    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
-        crate::per::uinteger::encode_uint(w, c, self.0);
-    }
-
-    fn per_decode_into(&mut self, r: &mut crate::per::reader::Reader, c: &crate::constraints::Constraints) -> Result<(), crate::per::reader::DecodeError> {
-        self.0 = crate::per::uinteger::decode_uint(r, c)?;
-        Ok(())
-    }
-
-    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
-        crate::constraints::validate_u64(self.0, c)
-    }
-}
+fixed_width_integer!(crate::integer::Integer, i64, encode_integer_bytes, decode_integer_bytes,
+    integer, encode_int, decode_int, validate_s64);
+// Wide-range INTEGER storage (a constrained range whose bound exceeds
+// i64::MAX/MIN — IntStorageKind::U64, RustBackend::native_int_type).
+fixed_width_integer!(crate::integer::UInteger, u64, encode_integer_bytes_u64, decode_integer_bytes_u64,
+    uinteger, encode_uint, decode_uint, validate_u64);
 
 /// i128 analogue of the `u64` impl above.
 impl Asn1Value for crate::integer::BigInteger {
