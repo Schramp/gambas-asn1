@@ -1,0 +1,14 @@
+[package]
+name = "xer-vectors-126-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "decode/UPER-encode/binary-compare/UPER-decode/re-encode every real asn1c data-126 fixture against compiler-generated 126-per-extensions-OK.asn1 types, mirroring tests/seq/test_xer_vectors_126.cpp's check-126.-gen-UPER.c semantics. build.rs pulls the generated PDU.rs/PDU_2.rs/Singleton.rs/lib.rs from the directory named by ASN1CPP_RUST_XV126_GEN_DIR (set by tests/CMakeLists.txt's rust_xer_vectors_126) — needs that env var set, so this isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "xer_vectors_126"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }
