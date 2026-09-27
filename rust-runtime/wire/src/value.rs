@@ -582,6 +582,21 @@ impl Asn1Value for crate::boolean::Boolean {
             Err(DecodeError::new("XER BOOLEAN: expected <true/> or <false/>".to_string(), 0))
         }
     }
+
+    /// X.691 §12: one bit, no alignment — 1 for TRUE, 0 for FALSE. Mirrors
+    /// `BooleanPerHandler` (`runtime/src/PerCodec.cpp`) exactly.
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {
+        w.put_bits(self.0 as u64, 1);
+    }
+
+    fn per_decode_into(
+        &mut self,
+        r: &mut crate::per::reader::Reader,
+        _c: &crate::constraints::Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
+        self.0 = r.get_bits(1)? != 0;
+        Ok(())
+    }
 }
 
 /// Maps ASN.1 NULL — `native_builtin_type`'s `()` choice,

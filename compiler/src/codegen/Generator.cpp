@@ -1288,6 +1288,14 @@ Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRe
         std::holds_alternative<ast::ChoiceType>(resolved->body)) {
         return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
     }
+    // A TypeRef resolving to a named SEQUENCE OF/SET OF — same Scalar
+    // access, now that `RustBackend::emit_seq_of_definition` gives every
+    // named collection type a real `per_encode`/`per_decode_into` (X.691
+    // §19/§20) unconditionally, whatever its element type is.
+    if (std::holds_alternative<ast::SequenceOfType>(resolved->body) ||
+        std::holds_alternative<ast::SetOfType>(resolved->body)) {
+        return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+    }
     return {};
 }
 
