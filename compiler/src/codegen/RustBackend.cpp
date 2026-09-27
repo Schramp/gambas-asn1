@@ -1608,6 +1608,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                                    : std::format("asn1cpp_wire::spec::sequence::{}", spec.is_set ? "SET_TAG" : "SEQUENCE_TAG"));
         os << std::format("    members: &{},\n", members_ident);
         os << std::format("    ext_at: {},\n", spec.ext_at);
+        // Root OPTIONAL/DEFAULT member count (X.691 §18.1 preamble bitmap
+        // width) — already computed backend-agnostically (Generator.cpp),
+        // read here rather than recounted at runtime.
+        os << std::format("    roms_count: {},\n", spec.roms_count);
         os << "};\n\n";
 
         os << std::format("impl {} {{\n", spec.type_name);
