@@ -11,77 +11,57 @@ use crate::ber::writer::write_primitive;
 
 pub const INTEGER_TAG: Tag = Tag::universal(universal::INTEGER, false);
 
-/// INTEGER whose declared range fits `i64` (X.680 §19). A real type, not the
-/// bare native, so it has its own `Asn1Value` impl (natural tag, XER name,
-/// PER against the row's `Constraints`, validation) like every other
-/// builtin; `Deref`/`DerefMut` keep arithmetic and comparison ergonomic.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Integer(pub i64);
+/// Newtype-wrapper boilerplate shared by every fixed-width INTEGER storage
+/// kind (`Integer`/`UInteger`/`BigInteger` below) — struct, `Deref`/
+/// `DerefMut` (arithmetic/comparison ergonomics), and `PartialEq<$prim>`
+/// (compare directly against a literal without `.0`). Each still needs its
+/// own `Asn1Value` impl (`value.rs`) since the wire behavior genuinely
+/// differs (signed vs unsigned two's-complement, PER encode function) —
+/// only the type/trait boilerplate is identical across widths.
+macro_rules! int_newtype {
+    ($(#[$meta:meta])* $name:ident, $prim:ty) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct $name(pub $prim);
 
-impl std::ops::Deref for Integer {
-    type Target = i64;
-    fn deref(&self) -> &i64 {
-        &self.0
-    }
+        impl std::ops::Deref for $name {
+            type Target = $prim;
+            fn deref(&self) -> &$prim {
+                &self.0
+            }
+        }
+
+        impl std::ops::DerefMut for $name {
+            fn deref_mut(&mut self) -> &mut $prim {
+                &mut self.0
+            }
+        }
+
+        impl PartialEq<$prim> for $name {
+            fn eq(&self, other: &$prim) -> bool {
+                self.0 == *other
+            }
+        }
+    };
 }
 
-impl std::ops::DerefMut for Integer {
-    fn deref_mut(&mut self) -> &mut i64 {
-        &mut self.0
-    }
-}
+int_newtype!(
+    /// INTEGER whose declared range fits `i64` (X.680 §19). A real type, not
+    /// the bare native, so it has its own `Asn1Value` impl (natural tag, XER
+    /// name, PER against the row's `Constraints`, validation) like every
+    /// other builtin.
+    Integer, i64
+);
 
-impl PartialEq<i64> for Integer {
-    fn eq(&self, other: &i64) -> bool {
-        self.0 == *other
-    }
-}
+int_newtype!(
+    /// INTEGER whose range needs unsigned 64-bit storage (`IntStorageKind::U64`).
+    UInteger, u64
+);
 
-/// INTEGER whose range needs unsigned 64-bit storage (`IntStorageKind::U64`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct UInteger(pub u64);
-
-impl std::ops::Deref for UInteger {
-    type Target = u64;
-    fn deref(&self) -> &u64 {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for UInteger {
-    fn deref_mut(&mut self) -> &mut u64 {
-        &mut self.0
-    }
-}
-
-impl PartialEq<u64> for UInteger {
-    fn eq(&self, other: &u64) -> bool {
-        self.0 == *other
-    }
-}
-
-/// INTEGER whose range needs 128-bit storage (`IntStorageKind::I128`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BigInteger(pub i128);
-
-impl std::ops::Deref for BigInteger {
-    type Target = i128;
-    fn deref(&self) -> &i128 {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for BigInteger {
-    fn deref_mut(&mut self) -> &mut i128 {
-        &mut self.0
-    }
-}
-
-impl PartialEq<i128> for BigInteger {
-    fn eq(&self, other: &i128) -> bool {
-        self.0 == *other
-    }
-}
+int_newtype!(
+    /// INTEGER whose range needs 128-bit storage (`IntStorageKind::I128`).
+    BigInteger, i128
+);
 
 
 

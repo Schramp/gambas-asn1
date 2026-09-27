@@ -2,7 +2,6 @@
 //! (`xer.rs`) and PER (`per::sequence`).
 
 use crate::constraints::Constraints;
-use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::{universal, Tag};
 use crate::value::Asn1Value;
 
