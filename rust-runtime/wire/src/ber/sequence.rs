@@ -364,7 +364,6 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
             MemberAccess::Scalar { get, .. } => get(value).ber_encode(content),
             MemberAccess::TaggedScalar { get, .. } => get(value).ber_encode_tagged(m.tag, content),
             MemberAccess::ExplicitScalar { get, .. } => get(value).ber_encode_explicit(content, m.tag),
-            MemberAccess::ExplicitAny { ber_encode, .. } => ber_encode(value, content),
             MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
         }
         if let Some(delta) = m.validate_delta(value) {
@@ -483,15 +482,6 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
                     if let Some(delta) = m.validate_delta(&result) {
                         crate::validate::check_delta(delta, m.name, "decode");
                     }
-                }
-            }
-            MemberAccess::ExplicitAny { ber_decode_into, .. } => {
-                if m.optional {
-                    if inner.peek_tag() == Some(m.tag) {
-                        ber_decode_into(&mut result, inner)?;
-                    }
-                } else {
-                    ber_decode_into(&mut result, inner)?;
                 }
             }
             MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),

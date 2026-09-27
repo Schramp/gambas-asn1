@@ -1163,7 +1163,7 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 ///       here; optional members become `Option<T>` rather than C++'s
 ///       `unique_ptr<T>`, Rust's natural equivalent.
 /// @brief Does `m` get a real access closure (Scalar/TaggedScalar/
-///        ExplicitScalar/SeqOf/ExplicitAny), or an `Unsupported` stub?
+///        ExplicitScalar/SeqOf), or an `Unsupported` stub?
 ///        Every SEQUENCE/SET always gets a full table now regardless of the
 ///        answer (see `sequence::MemberAccess::Unsupported`'s doc,
 ///        rust-runtime/wire) — this only decides this one row's shape.
@@ -1433,27 +1433,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             } else if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any) {
                 // `[n] ANY` — always EXPLICIT (sequence_member_covered
                 // only lets this branch's precondition through when so).
-                // Raw-capture pair, not the generic Asn1Value-based
-                // ExplicitScalar path: the field is `Vec<u8>`, but holds an
-                // unparsed captured TLV, not OCTET STRING content, so it
-                // can't go through `Vec<u8>`'s own Asn1Value impl.
+                // The field is `Any`/`Option<Any>` (native_builtin_type),
+                // a real `Asn1Value` whose own `ber_encode`/`ber_decode_into`
+                // replay/capture the raw TLV verbatim (any.rs's own doc),
+                // so this goes through the same generic ExplicitScalar
+                // path every other EXPLICIT-tagged member uses — no
+                // per-member closure needed.
                 std::string tag_lit = format_tag_literal(*m.resolved_tag);
                 os << std::format("        tag: {},\n", tag_lit);
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                // value::encode_explicit_any_opt/encode_explicit_any keep
-                // this closure a one-line call either way — the Some/None
-                // presence check for the optional case lives in the
-                // runtime function, not duplicated here (see
-                // encode_explicit_opt's doc, value.rs).
-                os << "        access: asn1cpp_wire::spec::sequence::MemberAccess::ExplicitAny {\n";
-                if (m.optional) {
-                    os << std::format("            ber_encode: |v, out| asn1cpp_wire::value::encode_explicit_any_opt(out, {1}, &v.{0}),\n", m.mname, tag_lit);
-                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_wire::value::decode_explicit_any(r, {1})?); Ok(()) }},\n", m.mname, tag_lit);
-                } else {
-                    os << std::format("            ber_encode: |v, out| asn1cpp_wire::value::encode_explicit_any(out, {1}, &v.{0}),\n", m.mname, tag_lit);
-                    os << std::format("            ber_decode_into: |v, r| {{ v.{0} = asn1cpp_wire::value::decode_explicit_any(r, {1})?; Ok(()) }},\n", m.mname, tag_lit);
-                }
-                os << "        },\n";
+                os << std::format("        access: asn1cpp_wire::spec::sequence::MemberAccess::ExplicitScalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
             } else if (m.resolved_tag && m.is_explicit && m.resolved_tag->tag_is_override) {
                 // EXPLICIT tagging (X.690 §8.14.3) — wraps the member's
                 // natural Asn1Value encoding in a constructed outer TLV via
