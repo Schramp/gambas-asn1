@@ -208,15 +208,6 @@ struct ElemShape {
     // constant instead (asn1cpp_wire::constraints::UNCONSTRAINED) rather
     // than needing anything emitted for this element at all.
     bool has_own_descriptor = false;
-    // True when the element itself carries an inline X.680 §51.4 FROM
-    // (PermittedAlphabet) constraint — meaningful only when kind == None
-    // && builtin is a character-string kind. Mirrors
-    // SequenceMemberSpec::has_from_alphabet one level up: PER's
-    // per::strings encoder can't yet remap a restricted alphabet's index
-    // width (that module's own doc), so a member/alternative referencing
-    // a SEQUENCE OF/SET OF whose element has this set can't be PER-
-    // covered the same way a plain member with the same constraint can't.
-    bool has_from_alphabet = false;
 };
 
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —
@@ -467,16 +458,6 @@ struct TaggedMemberSpec {
     // own AST node). `mtype` (declared per-derived-struct) already carries
     // the target's Rust identifier — no separate name field needed here.
     IntStorageKind ref_storage_kind = IntStorageKind::S64;
-
-    // True when a direct builtin character-string member/alternative
-    // carries an X.680 §51.4 FROM (PermittedAlphabet) constraint —
-    // meaningless otherwise. `asn1cpp_wire::per::strings::encode_string`/
-    // `decode_string`'s core path (rust-runtime/wire/src/per) only implements the
-    // *natural* alphabet (X.691 §26.5.3/§26.5.6), not FROM-alphabet index
-    // remapping, so a backend's own PER coverage gate for a string member
-    // must exclude this case explicitly rather than silently encoding
-    // with the wrong (too-wide) bit width per character.
-    bool has_from_alphabet = false;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. Several
