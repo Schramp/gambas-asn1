@@ -32,14 +32,14 @@ fn member_constraints<T>(m: &MemberDescriptor<T>) -> &'static Constraints {
 /// no accessor (ANY) is treated as present, its own `per_unsupported`
 /// stub decides what happens next.
 fn is_present<T>(m: &MemberDescriptor<T>, value: &T) -> bool {
-    m.access.accessors().map_or(true, |(get, _)| get(value).is_present())
+    { let (get, _) = m.access.accessors(); get(value).is_present() }
 }
 
 fn access_encode<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
     if let Some(reason) = m.per_unsupported {
         panic!("member '{}' not supported: {}", m.name, reason);
     }
-    let (get, _) = m.access.accessors().expect("PER-covered member has an accessor");
+    let (get, _) = m.access.accessors();
     get(value).per_encode(w, member_constraints(m));
 }
 
@@ -47,7 +47,7 @@ fn access_decode<T>(m: &MemberDescriptor<T>, result: &mut T, r: &mut Reader) -> 
     if let Some(reason) = m.per_unsupported {
         panic!("member '{}' not supported: {}", m.name, reason);
     }
-    let (_, get_mut) = m.access.accessors().expect("PER-covered member has an accessor");
+    let (_, get_mut) = m.access.accessors();
     get_mut(result).per_decode_into(r, member_constraints(m))
 }
 

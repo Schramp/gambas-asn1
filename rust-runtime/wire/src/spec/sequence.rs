@@ -77,14 +77,14 @@ impl<T: 'static> MemberDescriptor<T> {
     /// Runs this member's declared-constraint check against its current
     /// value in `value` (see `constraints`). `None` when the row carries no
     /// constraint or its access shape has no `Asn1Value` accessor
-    /// (`ExplicitAny`/`Unsupported`).
+    /// (`Unsupported`).
     pub(crate) fn validate_delta(&self, value: &T) -> Option<i64> {
         let c = self.constraints?;
         match &self.access {
             MemberAccess::Scalar { get, .. }
             | MemberAccess::TaggedScalar { get, .. }
             | MemberAccess::ExplicitScalar { get, .. } => Some(get(value).validate(c)),
-            MemberAccess::ExplicitAny { .. } | MemberAccess::Unsupported { .. } => None,
+            MemberAccess::Unsupported { .. } => None,
         }
     }
 }
@@ -137,28 +137,6 @@ pub enum MemberAccess<T: 'static> {
         get: fn(&T) -> &dyn Asn1Value,
         get_mut: fn(&mut T) -> &mut dyn Asn1Value,
     },
-    /// A `[n] ANY` member — X.208 legacy type, not defined in the current
-    /// standard (X.680/X.690 don't mention it; X.691's own note treats a
-    /// legacy ANY as an open type). No discriminant of its own (unlike
-    /// CHOICE or a real open type keyed by a companion field) — an ANY
-    /// member is not "one of several known types", it's raw captured bytes
-    /// with no schema-visible way to know what they are. Always
-    /// EXPLICIT-tagged when tagged (see `value::encode_explicit_any`'s
-    /// doc) — field type is `Vec<u8>`, holding raw captured TLV bytes with
-    /// no ASN.1 semantic type at all, so it goes through its own raw
-    /// closures rather than any `Asn1Value` impl (`octet_string::
-    /// OctetString`'s included — reusing it would wrap the capture in an
-    /// extra OCTET STRING TLV). Mirrors the C++ side's
-    /// `AnyBerHandler`/`asn_DEF_Any` (`runtime/src/BerCodec.cpp`/
-    /// `BuiltinTypes.cpp`), which represent ANY the same way: an
-    /// EXPLICIT-tagged member (`is_explicit = true` in the generated
-    /// `MemberDescriptor`) storing raw bytes (`TypeLifecycleOps(TypeTag<
-    /// OctetString>{})`), not a typed value. BER-only: ANY has no defined
-    /// XER form here, no `get`/`get_mut`.
-    ExplicitAny {
-        ber_encode: fn(&T, &mut Vec<u8>),
-        ber_decode_into: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
-    },
     /// A member whose type/tag/optionality combination genuinely has no
     /// `Asn1Value` coverage yet in this crate. Every generated SEQUENCE/SET
     /// always gets a real table and `Asn1Value` impl now — nothing gates
@@ -187,15 +165,15 @@ pub enum MemberAccess<T: 'static> {
 
 impl<T: 'static> MemberAccess<T> {
     /// The plain field accessors, for a codec (PER) that reads a member
-    /// through the `Asn1Value` trait regardless of how BER tags it.
-    /// `None` only for `ExplicitAny`, which has no `Asn1Value` accessor.
-    pub fn accessors(&self) -> Option<(fn(&T) -> &dyn Asn1Value, fn(&mut T) -> &mut dyn Asn1Value)> {
+    /// through the `Asn1Value` trait regardless of how BER tags it. Every
+    /// variant carries one now (ANY reaches the wire through
+    /// `ExplicitScalar` like any other EXPLICIT-tagged member).
+    pub fn accessors(&self) -> (fn(&T) -> &dyn Asn1Value, fn(&mut T) -> &mut dyn Asn1Value) {
         match self {
             MemberAccess::Scalar { get, get_mut }
             | MemberAccess::TaggedScalar { get, get_mut }
             | MemberAccess::ExplicitScalar { get, get_mut }
-            | MemberAccess::Unsupported { get, get_mut, .. } => Some((*get, *get_mut)),
-            MemberAccess::ExplicitAny { .. } => None,
+            | MemberAccess::Unsupported { get, get_mut, .. } => (*get, *get_mut),
         }
     }
 }

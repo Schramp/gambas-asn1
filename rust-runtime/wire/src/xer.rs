@@ -321,12 +321,10 @@ fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut S
                 val.xer_encode(out, depth + 1);
                 write_close_tag(out, m.name);
             }
-            // ANY has no defined XER form here. Every generated type now
-            // always gets a real xer_encode override (RustBackend.cpp no
-            // longer gates emission on every member being XER-ready first —
-            // see MemberAccess::Unsupported's doc), so this genuinely is
-            // reachable whenever a type has an ANY member — not dead code.
-            MemberAccess::ExplicitAny { .. } => panic!("member '{}': ANY has no defined XER form", m.name),
+            // ANY has no defined XER form here — `Any`'s own `xer_encode`
+            // uses `Asn1Value`'s default (`unimplemented!`), reached
+            // through the combined `Scalar`/`TaggedScalar`/`ExplicitScalar`
+            // arm above only if this member is actually written.
             MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
         }
     }
@@ -378,7 +376,6 @@ fn decode_sequence_xer_content<T: Default>(spec: &SequenceSpec<T>, r: &mut XerRe
         match &m.access {
             MemberAccess::Scalar { get_mut, .. } | MemberAccess::TaggedScalar { get_mut, .. } | MemberAccess::ExplicitScalar { get_mut, .. } =>
                 get_mut(&mut result).xer_decode_into(r)?,
-            MemberAccess::ExplicitAny { .. } => panic!("member '{}': ANY has no defined XER form", m.name),
             MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
         }
         r.consume_close_tag(m.name)?;
