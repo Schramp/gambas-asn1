@@ -291,7 +291,7 @@ static CHOICE_TAGS: [BerDispatch; 2] = [
     BerDispatch { tag: crate::octet_string::OCTET_STRING_TAG, alt: 1 },
 ];
 
-static CHOICE_SPEC: ChoiceSpec<Choice> = ChoiceSpec { name: "Choice", alternatives: &CHOICE_ALTERNATIVES, ber_tags: &CHOICE_TAGS, unknown_extension: None, own_tag: None, ext_at: -1 };
+static CHOICE_SPEC: ChoiceSpec<Choice> = ChoiceSpec { name: "Choice", alternatives: &CHOICE_ALTERNATIVES, ber_tags: &CHOICE_TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 1 };
 
 impl Choice {
     pub fn encode(&self) -> Vec<u8> {
@@ -348,7 +348,7 @@ impl Choice {
             number: 9,
             constructed: true,
         };
-        let spec = ChoiceSpec { name: "Choice", alternatives: &CHOICE_ALTERNATIVES, ber_tags: &CHOICE_TAGS, unknown_extension: None, own_tag: Some(tag), ext_at: -1 };
+        let spec = ChoiceSpec { name: "Choice", alternatives: &CHOICE_ALTERNATIVES, ber_tags: &CHOICE_TAGS, unknown_extension: None, own_tag: Some(tag), ext_at: -1, range_bits: 1 };
         let enc = encode_choice(&spec, &Choice::Num(Integer(42)));
         assert_eq!(enc, vec![0xa9, 0x03, 0x02, 0x01, 0x2a]);
 
@@ -444,7 +444,7 @@ impl Choice {
     static TWO_OCTETS_EXPLICIT_TAGS: [BerDispatch; 2] = [BerDispatch { tag: TAG_1, alt: 0 }, BerDispatch { tag: TAG_2, alt: 1 }];
 
     static TWO_OCTETS_EXPLICIT_SPEC: ChoiceSpec<TwoOctetsExplicit> =
-        ChoiceSpec { name: "TwoOctetsExplicit", alternatives: &TWO_OCTETS_EXPLICIT_ALTERNATIVES, ber_tags: &TWO_OCTETS_EXPLICIT_TAGS, unknown_extension: None, own_tag: None, ext_at: -1 };
+        ChoiceSpec { name: "TwoOctetsExplicit", alternatives: &TWO_OCTETS_EXPLICIT_ALTERNATIVES, ber_tags: &TWO_OCTETS_EXPLICIT_TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 1 };
 
     #[test]
     fn explicit_disambiguates_two_alternatives_of_the_same_builtin_kind() {
@@ -521,6 +521,7 @@ impl Choice {
         }),
         own_tag: None,
         ext_at: 1,
+        range_bits: 0,
     };
 
     #[test]
@@ -606,7 +607,7 @@ impl Choice {
 
     static INNER_TAGS: [BerDispatch; 2] = [BerDispatch { tag: INNER_A_TAG, alt: 0 }, BerDispatch { tag: INNER_B_TAG, alt: 1 }];
 
-    static INNER_SPEC: ChoiceSpec<Inner> = ChoiceSpec { name: "Inner", alternatives: &INNER_ALTERNATIVES, ber_tags: &INNER_TAGS, unknown_extension: None, own_tag: None, ext_at: -1 };
+    static INNER_SPEC: ChoiceSpec<Inner> = ChoiceSpec { name: "Inner", alternatives: &INNER_ALTERNATIVES, ber_tags: &INNER_TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 1 };
 
     impl Asn1Value for Inner {
         fn ber_natural_tag(&self) -> Tag { unreachable!("CHOICE has no natural tag") }
@@ -685,7 +686,7 @@ impl Choice {
         BerDispatch { tag: OUTER_DIRECT_TAG, alt: 1 },
     ];
 
-    static OUTER_SPEC: ChoiceSpec<Outer> = ChoiceSpec { name: "Outer", alternatives: &OUTER_ALTERNATIVES, ber_tags: &OUTER_TAGS, unknown_extension: None, own_tag: None, ext_at: -1 };
+    static OUTER_SPEC: ChoiceSpec<Outer> = ChoiceSpec { name: "Outer", alternatives: &OUTER_ALTERNATIVES, ber_tags: &OUTER_TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 1 };
 
     impl Outer {
         fn encode(&self) -> Vec<u8> { encode_choice(&OUTER_SPEC, self) }
@@ -749,7 +750,7 @@ impl Choice {
         }];
         // Deliberately the wrong constructed bit in the dispatch tag.
         static TAGS: [BerDispatch; 1] = [BerDispatch { tag: Tag::context(1, false), alt: 0 }];
-        static SPEC: ChoiceSpec<Solo> = ChoiceSpec { name: "Solo", alternatives: &ROW, ber_tags: &TAGS, unknown_extension: None, own_tag: None, ext_at: -1 };
+        static SPEC: ChoiceSpec<Solo> = ChoiceSpec { name: "Solo", alternatives: &ROW, ber_tags: &TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 0 };
 
         let mut wire = Vec::new();
         write_primitive(&mut wire, Tag::context(1, true), &[0x05]); // constructed=true on the wire

@@ -89,6 +89,13 @@ pub struct ChoiceSpec<T: 'static> {
     /// Index of the first extension alternative (X.680 §29.6); `< 0` when
     /// the CHOICE is not extensible. Read by PER only.
     pub ext_at: i32,
+    /// X.691 §22.6: bit width of the root-alternative index — `range_bits`
+    /// of the root alternative count (`ext_at`, or `alternatives.len()`
+    /// when not extensible). Precomputed by codegen, matching C++'s
+    /// `ChoiceSpec::constraints.range_bits` (`TypeDescriptor.hpp`), so
+    /// `per::choice` reads it instead of recomputing it per call.
+    /// PER-only; BER/XER ignore it.
+    pub range_bits: u32,
 }
 
 /// The alternative `value` currently holds, with its payload.

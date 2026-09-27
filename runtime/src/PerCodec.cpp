@@ -1000,7 +1000,9 @@ public:
         if (spec.ext_at >= 0) stream.put_bits(in_ext ? 1 : 0, 1, "CHO.ext");
         if (!in_ext) {
             // Generator emits root alternatives in canonical tag order — def_idx IS canonical.
-            int bits = range_bits(root_count);
+            // Precomputed by Generator (spec.range_bits) rather than
+            // recomputed here — matches spec.constraints.range_bits exactly.
+            int bits = spec.constraints.range_bits;
             if (bits > 0) stream.put_bits(static_cast<uint64_t>(def_idx), bits, "CHO.index");
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
@@ -1033,7 +1035,7 @@ public:
         }
         if (!in_ext) {
             // Generator emits root alternatives in canonical tag order — index IS canonical.
-            int bits = range_bits(root_count);
+            int bits = spec.constraints.range_bits;
             int def_idx = 0;
             if (bits > 0) {
                 auto v = stream.get_bits(bits);
