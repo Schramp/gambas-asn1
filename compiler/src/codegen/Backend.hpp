@@ -599,6 +599,18 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
 ///       density-heuristic / tag-flattening decision logic (X.691 §22.6)
 ///       decides *whether* and *what*; CppBackend formats the resulting
 ///       arrays and ChoiceSpec aggregate fields into C++ text.
+/// @brief One entry of a CHOICE's flattened BER dispatch table
+///        (`ChoiceSpec::ber_tags`) — the tag's raw class/number (for a
+///        class/number sort, X.690 §8.13's tag lookup key) alongside the
+///        already-formatted literal text (backend-specific, produced by
+///        `Backend::format_tag_literal`) and which alternative it selects.
+struct BerTagEntry {
+    ast::TagClass cls;
+    int64_t       number;
+    std::string   tag_literal;
+    int           alt_index;
+};
+
 struct ChoiceSpec : TaggedTypeSpec {
     int count;
     int ext_at;
@@ -615,8 +627,10 @@ struct ChoiceSpec : TaggedTypeSpec {
     std::vector<int16_t>  tag_index_table; // -1 = no alternative at this tag; size == range
 
     // Flattened BER dispatch table (untagged-CHOICE-alternative case).
-    bool                                     has_ber_table = false;
-    std::vector<std::pair<std::string,int>>  ber_tags; // {pre-formatted tag literal, alt index}
+    // Sorted by (cls, number) — see BerTagEntry's own doc — so a backend
+    // can binary-search it instead of a linear scan.
+    bool                       has_ber_table = false;
+    std::vector<BerTagEntry>   ber_tags;
 };
 
 /// @brief Forward declaration — full definition below, after Backend. Only a

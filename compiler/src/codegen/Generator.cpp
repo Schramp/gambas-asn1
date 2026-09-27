@@ -28,6 +28,28 @@ static int range_bits_for(int range) {
     return bits;
 }
 
+/// @brief X.690 §8.1.2.2 class-bit encoding (Universal=00, Application=01,
+///        Context=10, Private=11) as a sort rank — not `ast::TagClass`'s
+///        own declaration order. Mirrors `Tag::identifier_key`
+///        (`rust-runtime/wire/src/ber/tag.rs`) exactly: both sides must
+///        agree so a CHOICE's flattened BER dispatch table, sorted here,
+///        stays sorted from the binary-searching decoder's point of view.
+/// @param cls Tag class to rank.
+/// @return 0-3 for a real tag class; `ast::TagClass::Implicit` (a tagging
+///        *mode*, never a real tag's class) never reaches a resolved
+///        `BerTagEntry` in practice — ranked last defensively, not
+///        asserted unreachable, since a defensive rank is cheaper than a
+///        crash for something that should never happen.
+static int tag_class_rank(ast::TagClass cls) {
+    switch (cls) {
+    case ast::TagClass::Universal:   return 0;
+    case ast::TagClass::Application: return 1;
+    case ast::TagClass::Context:     return 2;
+    case ast::TagClass::Private:     return 3;
+    default:                         return 4;
+    }
+}
+
 Generator::Generator(fs::path out_dir, sema::Resolver& res)
     : out_dir_(std::move(out_dir)), resolver_(res),
       owned_backend_(std::make_unique<CppBackend>()), backend_(*owned_backend_) {}
@@ -409,19 +431,19 @@ bool Generator::member_type_in_cycle(const ast::TypeDef& m, const std::string& e
 // If it resolves to an untagged CHOICE (empty natural tag), recurse into its
 // alternatives so the outer CHOICE can dispatch by the inner type's tags.
 void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
-                                      std::vector<std::pair<std::string,int>>& out,
+                                      std::vector<BerTagEntry>& out,
                                       std::set<std::string>& visited)
 {
     // Explicit outer tag: use it directly.
     if (alt.tag.present()) {
         bool constr = alt.is_sequence() || alt.is_choice() ||
                       alt.is_seq_of()  || alt.is_set_of() || alt.is_set();
-        out.emplace_back(tag_literal(alt.tag, constr), alt_idx);
+        if (auto spec = tag_spec_for(alt.tag, constr))
+            out.push_back({spec->cls, spec->number, backend_.format_tag_literal(*spec), alt_idx});
         return;
     }
-    std::string nat = natural_tag_for(alt);
-    if (!nat.empty()) {
-        out.emplace_back(nat, alt_idx);
+    if (auto spec = natural_tag_spec_for(alt)) {
+        out.push_back({spec->cls, spec->number, backend_.format_tag_literal(*spec), alt_idx});
         return;
     }
     // No tag: resolve TypeRef to find the actual type.
@@ -437,7 +459,8 @@ void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
     if (inner->tag.present()) {
         bool constr = inner->is_sequence() || inner->is_choice() ||
                       inner->is_seq_of()   || inner->is_set_of() || inner->is_set();
-        out.emplace_back(tag_literal(inner->tag, constr), alt_idx);
+        if (auto spec = tag_spec_for(inner->tag, constr))
+            out.push_back({spec->cls, spec->number, backend_.format_tag_literal(*spec), alt_idx});
         return;
     }
     // Truly untagged CHOICE: flatten its inner alternatives for dispatch.
@@ -1879,7 +1902,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
     // Compute flattened BER dispatch table (needed when any alternative is an untagged
     // CHOICE that contributes its inner tags for outer dispatch).
     // When AUTOMATIC TAGS is applied, all alternatives have distinct context tags — no table needed.
-    std::vector<std::pair<std::string,int>> ber_tags; // {tag_literal, 0-based alt_index}
+    std::vector<BerTagEntry> ber_tags;
     bool needs_ber_table = false;
     if (!apply_auto_tags) {
         int ai = 0;
@@ -1893,6 +1916,11 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
         }
     }
     if (needs_ber_table && !ber_tags.empty()) {
+        // Sorted by (class, number) so a backend can binary-search this
+        // table (X.690 §8.13 tag lookup) instead of scanning it linearly.
+        std::sort(ber_tags.begin(), ber_tags.end(), [](const BerTagEntry& a, const BerTagEntry& b) {
+            return std::pair(tag_class_rank(a.cls), a.number) < std::pair(tag_class_rank(b.cls), b.number);
+        });
         spec.has_ber_table = true;
         spec.ber_tags = std::move(ber_tags);
     }
