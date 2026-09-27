@@ -1598,6 +1598,65 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_XV70_GEN_DIR=${RUST_XV70_GEN_DIR}")
 endif()
 
+# Rust leg of the real asn1c data-119 XER/UPER-vector fixture
+# cross-validation — same schema (119-per-strings-OK.asn1), same real
+# ground-truth .in fixtures, same check-119.c pass/fail semantics as the
+# C++ xer_vectors_119 test above (KNOWN_P skip set mirrored exactly); see
+# tests/rust/xer_vectors_119/src/main.rs for the full port, including the
+# Rust-only skip set for the two fixtures that exercise the still-
+# unimplemented X.691 §18.8 extension-addition escape. Own output
+# directory, same reasoning as RUST_XV70_GEN_DIR above.
+set(RUST_XV119_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_xer_vectors_119)
+add_custom_command(
+    OUTPUT  ${RUST_XV119_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_XV119_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/119-per-strings-OK.asn1
+                                   -o ${RUST_XV119_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/119-per-strings-OK.asn1
+    COMMENT "Generating Rust from 119-per-strings-OK.asn1"
+)
+add_custom_target(gen_rust_xer_vectors_119 ALL DEPENDS ${RUST_XV119_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_xer_vectors_119
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/xer_vectors_119/Cargo.toml --
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-119)
+    set_tests_properties(rust_xer_vectors_119 PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_XV119_GEN_DIR=${RUST_XV119_GEN_DIR}")
+endif()
+
+# Rust leg of the real asn1c data-126 XER/UPER-vector fixture
+# cross-validation — same schema (126-per-extensions-OK.asn1), same real
+# ground-truth .in/.out fixtures, same check-126.-gen-UPER.c pass/fail
+# semantics as the C++ xer_vectors_126 test above (KNOWN_PERMISSIVE
+# mirrored exactly); see tests/rust/xer_vectors_126/src/main.rs for the
+# full port. Own output directory, same reasoning as RUST_XV70_GEN_DIR
+# above.
+set(RUST_XV126_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_xer_vectors_126)
+add_custom_command(
+    OUTPUT  ${RUST_XV126_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_XV126_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/126-per-extensions-OK.asn1
+                                   -o ${RUST_XV126_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/126-per-extensions-OK.asn1
+    COMMENT "Generating Rust from 126-per-extensions-OK.asn1"
+)
+add_custom_target(gen_rust_xer_vectors_126 ALL DEPENDS ${RUST_XV126_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_xer_vectors_126
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/xer_vectors_126/Cargo.toml --
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-126)
+    set_tests_properties(rust_xer_vectors_126 PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_XV126_GEN_DIR=${RUST_XV126_GEN_DIR}")
+endif()
+
 # Rust leg of the real asn1c data-202 XER-vector fixture cross-validation —
 # same schema (202-XIOTCertificate-OK.asn1), same real ground-truth s1.xer
 # fixture, same field-value/BER-round-trip assertions as the C++
