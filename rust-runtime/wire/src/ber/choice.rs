@@ -145,7 +145,16 @@ pub fn decode_choice_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mut Reader
 /// schema's forward-compatibility promise.
 fn decode_choice_dispatch<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
     let tag = r.peek_tag().ok_or_else(|| DecodeError::new("empty CHOICE input".to_string(), 0))?;
-    if let Some(d) = spec.ber_tags.iter().find(|d| d.tag.matches_identifier(&tag)) {
+    debug_assert!(
+        spec.ber_tags.windows(2).all(|w| w[0].tag.identifier_key() <= w[1].tag.identifier_key()),
+        "ChoiceSpec::ber_tags must be sorted by Tag::identifier_key for binary_search_by_key (codegen bug)"
+    );
+    let found = spec
+        .ber_tags
+        .binary_search_by_key(&tag.identifier_key(), |d| d.tag.identifier_key())
+        .ok()
+        .map(|i| &spec.ber_tags[i]);
+    if let Some(d) = found {
         let alt = &spec.alternatives[d.alt];
         let payload = (alt.emplace)(value);
         return match alt.ber {

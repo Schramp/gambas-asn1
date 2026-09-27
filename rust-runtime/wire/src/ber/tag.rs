@@ -64,6 +64,23 @@ impl Tag {
     pub fn matches_identifier(&self, other: &Tag) -> bool {
         self.class == other.class && self.number == other.number
     }
+
+    /// A total, `Ord`-consistent ordering key on (class, number) alone —
+    /// ignores `constructed`, same as `matches_identifier`. Class order is
+    /// the X.690 §8.1.2.2 class-bit encoding (Universal=00, Application=01,
+    /// Context=10, Private=11), not `TagClass`'s own derive order — codegen
+    /// sorts a CHOICE's `ber_tags` dispatch table by this key so
+    /// `decode_choice_dispatch` (`ber::choice`) can binary-search it (X.690
+    /// §8.13 tag lookup) instead of a linear scan.
+    pub fn identifier_key(&self) -> (u8, u32) {
+        let class_rank = match self.class {
+            TagClass::Universal => 0,
+            TagClass::Application => 1,
+            TagClass::Context => 2,
+            TagClass::Private => 3,
+        };
+        (class_rank, self.number)
+    }
 }
 
 /// Universal class tag numbers used by the constructs this crate implements

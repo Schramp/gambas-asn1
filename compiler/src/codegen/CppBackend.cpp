@@ -1143,8 +1143,8 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
     // Flattened BER dispatch table.
     if (spec.has_ber_table) {
         os << std::format("static const asn1::ChoiceTagEntry asn_BER_{}[] = {{\n", cname);
-        for (const auto& [tag_lit, idx] : spec.ber_tags)
-            os << std::format("    {{ {}, {} }},\n", tag_lit, idx);
+        for (const auto& e : spec.ber_tags)
+            os << std::format("    {{ {}, {} }},\n", e.tag_literal, e.alt_index);
         os << "};\n\n";
     }
 
