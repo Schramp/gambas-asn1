@@ -317,28 +317,6 @@ pub fn decode_explicit<T: Asn1Value + Default>(r: &mut Reader, tag: crate::ber::
     })
 }
 
-/// EXPLICIT-wrapped ANY (X.208 legacy type; ANY has no fixed tag of its
-/// own, so a `[n] ANY` member is always EXPLICIT even under IMPLICIT/
-/// AUTOMATIC TAGS — same exception CHOICE gets, X.680 §30.6/§30.7).
-/// Unlike `encode_explicit`/`decode_explicit`, not generic over
-/// `Asn1Value`: ANY's content is whatever raw bytes are on the wire, not a
-/// typed decode — `raw` is captured/replayed verbatim, tag and all.
-pub fn encode_explicit_any(out: &mut Vec<u8>, tag: crate::ber::tag::Tag, raw: &[u8]) {
-    crate::ber::writer::write_explicit(out, tag, |inner| inner.extend_from_slice(raw));
-}
-
-pub fn decode_explicit_any(r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<crate::any::Any, DecodeError> {
-    crate::ber::reader::read_explicit(r, tag, |inner| Ok(crate::any::Any(inner.remaining().to_vec())))
-}
-
-/// `encode_explicit_any` for an OPTIONAL `[n] ANY` member — see
-/// `encode_explicit_opt`'s matching doc for why this exists.
-pub fn encode_explicit_any_opt(out: &mut Vec<u8>, tag: crate::ber::tag::Tag, opt: &Option<crate::any::Any>) {
-    if let Some(raw) = opt {
-        encode_explicit_any(out, tag, raw);
-    }
-}
-
 /// OPTIONAL member support. An `Option<V>` field (what
 /// `RustBackend` emits for an OPTIONAL member, mirroring C++'s
 /// `std::optional<T>`/`unique_ptr<T>`) becomes wire-absent exactly when
@@ -1698,21 +1676,23 @@ mod tests {
         // whole point is to capture that unparsed, tag and all.
         let inner_tlv = [0x02u8, 0x01, 0x2A]; // INTEGER 42
         let mut buf = Vec::new();
-        encode_explicit_any(&mut buf, crate::ber::tag::Tag::context(1, true), &inner_tlv);
+        crate::any::Any(inner_tlv.to_vec()).ber_encode_explicit(&mut buf, crate::ber::tag::Tag::context(1, true));
         assert_eq!(buf, vec![0xA1, 0x03, 0x02, 0x01, 0x2A]);
 
         let mut r = Reader::new(&buf);
-        let got = decode_explicit_any(&mut r, crate::ber::tag::Tag::context(1, true)).unwrap();
+        let mut got = crate::any::Any::default();
+        got.ber_decode_into_explicit(&mut r, crate::ber::tag::Tag::context(1, true)).unwrap();
         assert_eq!(*got, inner_tlv);
     }
 
     #[test]
     fn explicit_any_rejects_wrong_wrapper_tag() {
         let mut buf = Vec::new();
-        encode_explicit_any(&mut buf, crate::ber::tag::Tag::context(1, true), &[0x02, 0x01, 0x2A]);
+        crate::any::Any(vec![0x02, 0x01, 0x2A]).ber_encode_explicit(&mut buf, crate::ber::tag::Tag::context(1, true));
 
         let mut r = Reader::new(&buf);
-        assert!(decode_explicit_any(&mut r, crate::ber::tag::Tag::context(2, true)).is_err());
+        let mut got = crate::any::Any::default();
+        assert!(got.ber_decode_into_explicit(&mut r, crate::ber::tag::Tag::context(2, true)).is_err());
     }
 
     // ---- generic IMPLICIT retagging (ber_encode_tagged/ber_decode_into_tagged) ----
