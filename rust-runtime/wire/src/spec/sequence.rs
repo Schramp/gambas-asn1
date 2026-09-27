@@ -215,4 +215,11 @@ pub struct SequenceSpec<T: 'static> {
     /// `< 0` for none. Read by PER only, matching `SequenceSpec::ext_at`
     /// (`TypeDescriptor.hpp`).
     pub ext_at: i32,
+    /// Root OPTIONAL/DEFAULT member count — the width of the PER preamble
+    /// bitmap (X.691 §18.1). Extension members have their own bitmap,
+    /// sized off the wire, not counted here. Precomputed by codegen
+    /// (matching `SequenceSpec::roms_count`, `TypeDescriptor.hpp`) so
+    /// `per::sequence::decode_sequence_content` reads it instead of
+    /// recounting `members` on every call. PER-only; BER/XER ignore it.
+    pub roms_count: usize,
 }
