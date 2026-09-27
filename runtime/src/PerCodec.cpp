@@ -916,9 +916,10 @@ public:
             if (!b) return decode_err(b.error());
             ext_flag = (*b != 0);
         }
-        int roms = 0;
-        for (int i = 0; i < root_end; ++i)
-            if (spec.members[i].optional) ++roms;
+        // Precomputed at codegen time (Generator::emit_sequence_definition) —
+        // the width of the root-level presence bitmap never depends on the
+        // wire, only on the schema, so it's read here, not recounted.
+        int roms = spec.roms_count;
         bool bitmap[64] = {};
         for (int i = 0; i < roms && i < 64; ++i) {
             auto bit = stream.get_bits(1);

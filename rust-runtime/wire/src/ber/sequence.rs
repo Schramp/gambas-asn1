@@ -553,7 +553,7 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
 ];
 
 static POINT_SPEC: SequenceSpec<Point> =
-    SequenceSpec { name: "Point", tag: SEQUENCE_TAG, members: &POINT_MEMBERS, ext_at: -1 };
+    SequenceSpec { name: "Point", tag: SEQUENCE_TAG, members: &POINT_MEMBERS, ext_at: -1, roms_count: 0 };
 
 impl Point {
     pub fn encode(&self) -> Vec<u8> {
@@ -606,7 +606,7 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
 ];
 
 static OPT_POINT_SPEC: SequenceSpec<OptPoint> =
-    SequenceSpec { name: "OptPoint", tag: SEQUENCE_TAG, members: &OPT_POINT_MEMBERS, ext_at: -1 };
+    SequenceSpec { name: "OptPoint", tag: SEQUENCE_TAG, members: &OPT_POINT_MEMBERS, ext_at: -1, roms_count: 1 };
 
 impl OptPoint {
     pub fn encode(&self) -> Vec<u8> {
@@ -649,7 +649,7 @@ static COORDS_MEMBERS: [MemberDescriptor<Coords>; 1] = [MemberDescriptor {
 }];
 
 static COORDS_SPEC: SequenceSpec<Coords> =
-    SequenceSpec { name: "Coords", tag: SEQUENCE_TAG, members: &COORDS_MEMBERS, ext_at: -1 };
+    SequenceSpec { name: "Coords", tag: SEQUENCE_TAG, members: &COORDS_MEMBERS, ext_at: -1, roms_count: 2 };
 
 impl Coords {
     pub fn encode(&self) -> Vec<u8> {
@@ -692,7 +692,7 @@ static OPT_COORDS_MEMBERS: [MemberDescriptor<OptCoords>; 1] = [MemberDescriptor 
 }];
 
 static OPT_COORDS_SPEC: SequenceSpec<OptCoords> =
-    SequenceSpec { name: "OptCoords", tag: SEQUENCE_TAG, members: &OPT_COORDS_MEMBERS, ext_at: -1 };
+    SequenceSpec { name: "OptCoords", tag: SEQUENCE_TAG, members: &OPT_COORDS_MEMBERS, ext_at: -1, roms_count: 2 };
 
 impl OptCoords {
     pub fn encode(&self) -> Vec<u8> {
@@ -736,7 +736,7 @@ static SET_COORDS_MEMBERS: [MemberDescriptor<SetCoords>; 1] = [MemberDescriptor 
 }];
 
 static SET_COORDS_SPEC: SequenceSpec<SetCoords> =
-    SequenceSpec { name: "SetCoords", tag: SEQUENCE_TAG, members: &SET_COORDS_MEMBERS, ext_at: -1 };
+    SequenceSpec { name: "SetCoords", tag: SEQUENCE_TAG, members: &SET_COORDS_MEMBERS, ext_at: -1, roms_count: 1 };
 
 impl SetCoords {
     pub fn encode(&self) -> Vec<u8> {
@@ -786,7 +786,7 @@ static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
 ];
 
 static DEFAULT_POINT_SPEC: SequenceSpec<DefaultPoint> =
-    SequenceSpec { name: "DefaultPoint", tag: SEQUENCE_TAG, members: &DEFAULT_POINT_MEMBERS, ext_at: -1 };
+    SequenceSpec { name: "DefaultPoint", tag: SEQUENCE_TAG, members: &DEFAULT_POINT_MEMBERS, ext_at: -1, roms_count: 1 };
 
 impl DefaultPoint {
     pub fn encode(&self) -> Vec<u8> {
@@ -931,7 +931,7 @@ impl DefaultPoint {
             },
         ];
         static A_SET_SPEC: SequenceSpec<Point> =
-            SequenceSpec { name: "APointSet", tag: SET_TAG, members: &SET_MEMBERS, ext_at: -1 };
+            SequenceSpec { name: "APointSet", tag: SET_TAG, members: &SET_MEMBERS, ext_at: -1, roms_count: 0 };
 
         let p = Point { x: Integer(1), y: Integer(2) };
         let bytes = encode_sequence(&A_SET_SPEC, &p);
@@ -1311,7 +1311,7 @@ impl DefaultPoint {
     ];
 
     static RANGED_POINT_SPEC: SequenceSpec<RangedPoint> =
-        SequenceSpec { name: "RangedPoint", tag: SEQUENCE_TAG, members: &RANGED_POINT_MEMBERS, ext_at: -1 };
+        SequenceSpec { name: "RangedPoint", tag: SEQUENCE_TAG, members: &RANGED_POINT_MEMBERS, ext_at: -1, roms_count: 0 };
 
     #[test]
     fn encode_of_an_in_range_member_does_not_bump_the_validate_counter() {
@@ -1373,7 +1373,7 @@ impl DefaultPoint {
     }];
 
     static SIZED_BLOB_SPEC: SequenceSpec<SizedBlob> =
-        SequenceSpec { name: "SizedBlob", tag: SEQUENCE_TAG, members: &SIZED_BLOB_MEMBERS, ext_at: -1 };
+        SequenceSpec { name: "SizedBlob", tag: SEQUENCE_TAG, members: &SIZED_BLOB_MEMBERS, ext_at: -1, roms_count: 0 };
 
     #[test]
     fn encode_of_an_in_range_size_member_does_not_bump_the_validate_counter() {
@@ -1497,7 +1497,7 @@ impl DefaultPoint {
     }];
 
     static BASKET_SPEC: SequenceSpec<Basket> =
-        SequenceSpec { name: "Basket", tag: SEQUENCE_TAG, members: &BASKET_MEMBERS, ext_at: -1 };
+        SequenceSpec { name: "Basket", tag: SEQUENCE_TAG, members: &BASKET_MEMBERS, ext_at: -1, roms_count: 0 };
 
     #[test]
     fn inline_seqof_in_range_does_not_bump_the_validate_counter() {

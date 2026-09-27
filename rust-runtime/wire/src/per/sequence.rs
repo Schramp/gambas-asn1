@@ -140,7 +140,9 @@ pub fn decode_sequence_content<T: Default>(
         ext_flag = r.get_bits(1)? != 0;
     }
 
-    let roms = spec.members[..root_end_idx].iter().filter(|m| m.optional).count();
+    // Precomputed by codegen — the root bitmap width never depends on the
+    // wire, only on the schema.
+    let roms = spec.roms_count;
     // 64-member cap on the root-level presence bitmap matches
     // SequencePerHandler::decode's own fixed-size `bitmap[64]` — real
     // schemas stay well under this (see that handler's own comment).
@@ -266,6 +268,7 @@ mod tests {
             },
         ],
         ext_at: -1,
+        roms_count: 1,
     };
 
     fn roundtrip(value: &Simple) -> Simple {
@@ -321,6 +324,7 @@ mod tests {
             },
         ],
         ext_at: 1,
+        roms_count: 0,
     };
 
     fn roundtrip_ext(value: &WithExtension) -> WithExtension {
@@ -395,6 +399,7 @@ mod tests {
             },
         ],
         ext_at: -1,
+        roms_count: 0,
     };
 
     // A real member alongside an `Unsupported` one — mirrors what
@@ -443,6 +448,7 @@ mod tests {
             constraints: Some(&DOGFOOD_CONSTRAINED),
             per_unsupported: None,
         }],
+        roms_count: 0,
     };
 
     #[test]
