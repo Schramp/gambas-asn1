@@ -286,6 +286,7 @@ struct BuiltinAliasSpec : TaggedTypeSpec {
     // builtin-alias types are never CHOICE, the only case natural-tag
     // resolution returns nullopt for.
     std::vector<uint8_t>   alphabet;    // FROM-alphabet constraint (restricted string types); empty = none
+    int      alphabet_bits = 0;         // X.691 §26.5.4 unaligned variant: ceil(log2(alphabet.size())); 0 when alphabet is empty
     bool     has_size_constraint;       // true if a SIZE constraint is present at all (bounded or semi-constrained)
     bool     size_bounded;              // true iff the SIZE constraint has a finite upper bound;
                                          // false for SIZE(n..MAX) — semi-constrained, no upper cap.
@@ -365,6 +366,10 @@ struct MemberTypeDescriptorSpec {
     // Kind::Sizeable — mirrors BuiltinAliasSpec's SIZE/FROM-alphabet fields.
     ast::BuiltinType      builtin_type;
     std::vector<uint8_t>  alphabet;      // empty = no FROM-alphabet constraint
+    // X.691 §26.5.4 unaligned variant: ceil(log2(alphabet.size())); 0 when
+    // alphabet is empty. Computed once alongside alphabet (Generator.cpp),
+    // not recomputed by RustBackend's own emission or by the PER runtime.
+    int                    alphabet_bits = 0;
     std::string           alpha_prefix;  // empty = no FROM-alphabet arrays needed
     bool     has_size_constraint; // true if a SIZE constraint is present at all
     bool     size_bounded;        // true iff the SIZE constraint has a finite upper bound

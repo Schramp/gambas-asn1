@@ -36,6 +36,17 @@ pub struct Constraints {
     pub size_lower: i64,
     pub size_upper: i64,
     pub encode_table: Option<&'static [u16; 256]>,
+    /// X.691 §26.5.4 FROM (PermittedAlphabet) — bit width per character
+    /// (`ceil(log2(alphabet_size))`); `0` means no FROM constraint (use
+    /// the type's natural alphabet width instead). Mirrors
+    /// `Constraints::alphabet_bits` (`Constraints.hpp`) exactly.
+    pub alphabet_bits: u32,
+    /// Decode-direction table: `alphabet[ordinal] -> character byte`,
+    /// `alphabet_size` entries, sorted ascending (matches `encode_table`'s
+    /// own encode-direction mapping, `byte -> ordinal`). `None` when
+    /// `alphabet_bits == 0`.
+    pub alphabet: Option<&'static [u8]>,
+    pub alphabet_size: u8,
     /// For a SEQUENCE OF / SET OF: the element type's own constraints
     /// (X.691 §19/§20 — the collection's SIZE is this table's own
     /// `size_*` fields, each element is then encoded against `element`).
@@ -54,7 +65,7 @@ pub const UNCONSTRAINED: Constraints = Constraints {
     size_range_bits: 0,
     size_lower: 0,
     size_upper: 0,
-    encode_table: None, element: None,
+    encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,
 };
 
 impl Constraints {
