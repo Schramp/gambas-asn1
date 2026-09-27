@@ -13,7 +13,7 @@ use crate::constraints::{Constraints, UNCONSTRAINED};
 use crate::per::length::{get_length, get_nslength, put_length, put_nslength};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
-use crate::sequence::{MemberDescriptor, SequenceSpec};
+use crate::spec::sequence::{MemberDescriptor, SequenceSpec};
 
 fn root_end<T>(spec: &SequenceSpec<T>) -> usize {
     if spec.ext_at >= 0 {
@@ -195,7 +195,7 @@ pub fn decode_sequence_content<T: Default>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sequence::{MemberAccess, SEQUENCE_TAG};
+    use crate::spec::sequence::{MemberAccess, SEQUENCE_TAG};
     use crate::value::Asn1Value;
     use crate::per::integer::{decode_unconstrained_int, encode_unconstrained_int};
     use crate::constraints::Constraints;

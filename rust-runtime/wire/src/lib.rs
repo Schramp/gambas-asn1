@@ -54,6 +54,7 @@ pub mod reader;
 pub mod real;
 pub mod relative_oid;
 pub mod sequence;
+pub mod spec;
 pub mod strings;
 pub mod tag;
 pub mod validate;

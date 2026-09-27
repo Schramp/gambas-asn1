@@ -276,10 +276,10 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         unsigned root_bits = 0;
         for (size_t r = root_count > 1 ? root_count - 1 : 0; r > 0; r >>= 1) ++root_bits;
         std::string map_ident = std::format("{}_ENUM_SPEC", to_screaming_snake_case(tname));
-        os << std::format("static {}: asn1cpp_wire::enumerated::EnumSpec = asn1cpp_wire::enumerated::EnumSpec {{\n    entries: &[\n",
+        os << std::format("static {}: asn1cpp_wire::spec::enumerated::EnumSpec = asn1cpp_wire::spec::enumerated::EnumSpec {{\n    entries: &[\n",
                            map_ident);
         for (const auto& v : sorted_values) {
-            os << std::format("        asn1cpp_wire::enumerated::EnumEntry {{ value: {}, name: \"{}\" }},\n",
+            os << std::format("        asn1cpp_wire::spec::enumerated::EnumEntry {{ value: {}, name: \"{}\" }},\n",
                                v.value, v.asn1_name);
         }
         os << std::format("    ],\n    extensible: {}, root_count: {}, root_bits: {},\n}};\n\n",
@@ -345,7 +345,7 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // enumerated::validate_enum's own doc), but a real override, not
         // a stub, for parity with the other constraint kinds.
         os << "    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {\n";
-        os << std::format("        asn1cpp_wire::enumerated::validate_enum(*self as i64, &{})\n", map_ident);
+        os << std::format("        asn1cpp_wire::spec::enumerated::validate_enum(*self as i64, &{})\n", map_ident);
         os << "    }\n\n";
 
         os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {\n";
@@ -980,7 +980,7 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
         "}};\n\n",
         cname, flags, spec.range_bits, spec.size_lower, size_upper, element_expr);
 
-    std::string natural_tag = std::format("asn1cpp_wire::sequence::{}", spec.is_set_of ? "SET_TAG" : "SEQUENCE_TAG");
+    std::string natural_tag = std::format("asn1cpp_wire::spec::sequence::{}", spec.is_set_of ? "SET_TAG" : "SEQUENCE_TAG");
     // Honor a top-level [n] IMPLICIT/EXPLICIT tag on this type assignment
     // itself (X.690 §8.14) — same fix emit_sequence_definition already has.
     std::string tag_expr = spec.tag ? format_tag_literal(*spec.tag) : natural_tag;
@@ -1392,10 +1392,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         std::string members_ident = std::format("{}_MEMBERS", to_screaming_snake_case(spec.type_name));
         std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
 
-        os << std::format("static {}: [asn1cpp_wire::sequence::MemberDescriptor<{}>; {}] = [\n",
+        os << std::format("static {}: [asn1cpp_wire::spec::sequence::MemberDescriptor<{}>; {}] = [\n",
                           members_ident, spec.type_name, spec.members.size());
         for (const auto& m : spec.members) {
-            os << "    asn1cpp_wire::sequence::MemberDescriptor {\n";
+            os << "    asn1cpp_wire::spec::sequence::MemberDescriptor {\n";
             os << std::format("        name: \"{}\",\n", m.asn1_name);
             // DEFAULT value (X.680 §25.1) — `m.has_default` alone doesn't
             // guarantee `Generator::emit_default_setter` actually emitted a
@@ -1423,9 +1423,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 is_default_equal_expr = std::format("Some(|v| v.{} == Some({}()))", m.mname, fname);
             }
             if (!sequence_member_covered(m)) {
-                os << "        tag: asn1cpp_wire::sequence::SEQUENCE_TAG,\n";
+                os << "        tag: asn1cpp_wire::spec::sequence::SEQUENCE_TAG,\n";
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                os << std::format("        access: asn1cpp_wire::sequence::MemberAccess::Unsupported {{ reason: \"{}\", get: |v| &v.{}, get_mut: |v| &mut v.{} }},\n",
+                os << std::format("        access: asn1cpp_wire::spec::sequence::MemberAccess::Unsupported {{ reason: \"{}\", get: |v| &v.{}, get_mut: |v| &mut v.{} }},\n",
                                   stub_reason(m), m.mname, m.mname);
             } else if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any) {
                 // `[n] ANY` — always EXPLICIT (sequence_member_covered
@@ -1442,7 +1442,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // presence check for the optional case lives in the
                 // runtime function, not duplicated here (see
                 // encode_explicit_opt's doc, value.rs).
-                os << "        access: asn1cpp_wire::sequence::MemberAccess::ExplicitAny {\n";
+                os << "        access: asn1cpp_wire::spec::sequence::MemberAccess::ExplicitAny {\n";
                 if (m.optional) {
                     os << std::format("            ber_encode: |v, out| asn1cpp_wire::value::encode_explicit_any_opt(out, {1}, &v.{0}),\n", m.mname, tag_lit);
                     os << std::format("            ber_decode_into: |v, r| {{ v.{0} = Some(asn1cpp_wire::value::decode_explicit_any(r, {1})?); Ok(()) }},\n", m.mname, tag_lit);
@@ -1473,7 +1473,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 std::string tag_lit = format_tag_literal(*m.resolved_tag);
                 os << std::format("        tag: {},\n", tag_lit);
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                os << std::format("        access: asn1cpp_wire::sequence::MemberAccess::ExplicitScalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
+                os << std::format("        access: asn1cpp_wire::spec::sequence::MemberAccess::ExplicitScalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
             } else if (m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit) {
                 // IMPLICIT retag (X.690 §8.14.2) — same content,
                 // different outer tag. `MemberAccess::TaggedScalar` has no
@@ -1487,7 +1487,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 std::string tag_lit = format_tag_literal(*m.resolved_tag);
                 os << std::format("        tag: {},\n", tag_lit);
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                os << std::format("        access: asn1cpp_wire::sequence::MemberAccess::TaggedScalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
+                os << std::format("        access: asn1cpp_wire::spec::sequence::MemberAccess::TaggedScalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
             } else {
                 // A member whose type is a TypeRef (mbuiltin unset)
                 // reaches here either with its natural tag
@@ -1502,11 +1502,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // this member actually carries tag [0].
                 std::string tag_text = !m.mbuiltin
                     ? (m.resolved_tag ? format_tag_literal(*m.resolved_tag)
-                                       : "asn1cpp_wire::sequence::SEQUENCE_TAG /* untagged CHOICE member: no fixed tag, inert for required members */")
+                                       : "asn1cpp_wire::spec::sequence::SEQUENCE_TAG /* untagged CHOICE member: no fixed tag, inert for required members */")
                     : rust_member_ber_tag(m);
                 os << std::format("        tag: {},\n", tag_text);
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                os << std::format("        access: asn1cpp_wire::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
+                os << std::format("        access: asn1cpp_wire::spec::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
             }
             os << std::format("        set_default: {},\n", set_default_expr);
             os << std::format("        is_default_equal: {},\n", is_default_equal_expr);
@@ -1588,7 +1588,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         // directly (encode_sequence_tagged/decode_sequence_tagged) when this
         // type is IMPLICITLY retagged as one of its members.
         os << std::format(
-            "pub static {}: asn1cpp_wire::sequence::SequenceSpec<{}> = asn1cpp_wire::sequence::SequenceSpec {{\n",
+            "pub static {}: asn1cpp_wire::spec::sequence::SequenceSpec<{}> = asn1cpp_wire::spec::sequence::SequenceSpec {{\n",
             spec_ident, spec.type_name);
         // The real ASN.1/XER element name (spec.xer_name — may contain
         // hyphens the Rust identifier spec.type_name had to strip, e.g.
@@ -1608,7 +1608,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         // already has for this same case.
         os << std::format("    tag: {},\n",
                           spec.tag ? format_tag_literal(*spec.tag)
-                                   : std::format("asn1cpp_wire::sequence::{}", spec.is_set ? "SET_TAG" : "SEQUENCE_TAG"));
+                                   : std::format("asn1cpp_wire::spec::sequence::{}", spec.is_set ? "SET_TAG" : "SEQUENCE_TAG"));
         os << std::format("    members: &{},\n", members_ident);
         os << std::format("    ext_at: {},\n", spec.ext_at);
         os << "};\n\n";
@@ -1874,7 +1874,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                    a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other;
         };
 
-        os << std::format("static {}: [asn1cpp_wire::choice::Alternative<{}>; {}] = [\n",
+        os << std::format("static {}: [asn1cpp_wire::spec::choice::Alternative<{}>; {}] = [\n",
                           alts_ident, spec.type_name, spec.alternatives.size());
         for (const auto& a : spec.alternatives) {
             std::string vname = variant_name(*this, a.asn1_name);
@@ -1883,21 +1883,21 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             // payload through `active`/`emplace` and ignore it.
             std::string ber;
             if (!choice_alternative_covered(a)) {
-                ber = "asn1cpp_wire::choice::BerTagging::Unsupported(\"alternative not yet supported\")";
+                ber = "asn1cpp_wire::spec::choice::BerTagging::Unsupported(\"alternative not yet supported\")";
             } else if (a.resolved_tag && a.is_explicit && a.resolved_tag->tag_is_override) {
                 // EXPLICIT (X.690 §8.14.3): an outer TLV around the payload.
-                ber = std::format("asn1cpp_wire::choice::BerTagging::Explicit({})", format_tag_literal(*a.resolved_tag));
+                ber = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", format_tag_literal(*a.resolved_tag));
             } else if (a.resolved_tag && a.is_explicit) {
                 // A bare reference to an EXPLICIT-tagged type: it wraps
                 // itself, a second wrap here would double it (X.680 §30).
-                ber = "asn1cpp_wire::choice::BerTagging::Delegate";
+                ber = "asn1cpp_wire::spec::choice::BerTagging::Delegate";
             } else if (a.resolved_tag) {
                 // IMPLICIT retag, or the natural tag when they coincide.
-                ber = std::format("asn1cpp_wire::choice::BerTagging::Implicit({})", format_tag_literal(*a.resolved_tag));
+                ber = std::format("asn1cpp_wire::spec::choice::BerTagging::Implicit({})", format_tag_literal(*a.resolved_tag));
             } else {
                 // No tag of its own (an untagged CHOICE payload, X.680 §28):
                 // the payload's own encoding already carries its tag.
-                ber = "asn1cpp_wire::choice::BerTagging::Delegate";
+                ber = "asn1cpp_wire::spec::choice::BerTagging::Delegate";
             }
             // The PER constraints table the alternative's payload encodes
             // against: the inline SIZE/range table emitted for it when
@@ -1914,7 +1914,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             std::string emplace = single_alt
                 ? std::format("|x| {{ *x = {0}(Default::default()); let {0}(v) = x; v }}", variant_path)
                 : std::format("|x| {{ *x = {0}(Default::default()); match x {{ {0}(v) => v, _ => unreachable!() }} }}", variant_path);
-            os << "    asn1cpp_wire::choice::Alternative {\n";
+            os << "    asn1cpp_wire::spec::choice::Alternative {\n";
             os << std::format("        name: \"{}\",\n", a.asn1_name);
             os << std::format("        ber: {},\n", ber);
             os << std::format("        active: {},\n", active);
@@ -1926,13 +1926,13 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         }
         os << "];\n\n";
 
-        os << std::format("static {}: [asn1cpp_wire::choice::BerDispatch; {}] = [\n", tags_ident, dispatch.size());
+        os << std::format("static {}: [asn1cpp_wire::spec::choice::BerDispatch; {}] = [\n", tags_ident, dispatch.size());
         for (const auto& [tag_lit, idx] : dispatch)
-            os << std::format("    asn1cpp_wire::choice::BerDispatch {{ tag: {}, alt: {} }},\n", tag_lit, idx);
+            os << std::format("    asn1cpp_wire::spec::choice::BerDispatch {{ tag: {}, alt: {} }},\n", tag_lit, idx);
         os << "];\n\n";
 
         os << std::format(
-            "static {}: asn1cpp_wire::choice::ChoiceSpec<{}> = asn1cpp_wire::choice::ChoiceSpec {{\n",
+            "static {}: asn1cpp_wire::spec::choice::ChoiceSpec<{}> = asn1cpp_wire::spec::choice::ChoiceSpec {{\n",
             spec_ident, spec.type_name);
         // X.693 §8.3.1 — document-root XMLTypedValue wrapper name, used only
         // by encode_choice_xer/decode_choice_xer (never by the _into
@@ -1945,7 +1945,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             // in emit_choice_declaration) into the runtime's fallback path —
             // construct captures an unrecognized-tag TLV on decode, extract
             // hands it back to encode_choice for byte-identical re-encoding.
-            os << "    unknown_extension: Some(asn1cpp_wire::choice::UnknownExtensionOps {\n";
+            os << "    unknown_extension: Some(asn1cpp_wire::spec::choice::UnknownExtensionOps {\n";
             os << std::format("        construct: |tag, bytes| {}::UnknownExtension(tag, bytes),\n",
                                spec.type_name);
             os << "        extract: |x| match x {\n";

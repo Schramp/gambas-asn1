@@ -6,7 +6,7 @@
 //! (X.691 §10.5.6) for a root value, `normally small non-negative whole
 //! number` (X.691 §10.6) for an extension-addition value.
 
-use crate::enumerated::EnumSpec;
+use crate::spec::enumerated::EnumSpec;
 use crate::per::length::{get_nsnn, put_nsnn};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
@@ -53,7 +53,7 @@ pub fn decode_enum(r: &mut Reader, spec: &EnumSpec) -> Result<i64, DecodeError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enumerated::EnumEntry;
+    use crate::spec::enumerated::EnumEntry;
 
     const fn entry(value: i64) -> EnumEntry {
         EnumEntry { value, name: "" }
