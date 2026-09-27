@@ -17,10 +17,10 @@
 //! (`RustBackend.cpp`'s `rust_mtype_is_unusable_vec`) as a direct
 //! consequence.
 
-use crate::reader::{DecodeError, Reader};
-use crate::tag::{universal, Tag};
+use crate::ber::reader::{DecodeError, Reader};
+use crate::ber::tag::{universal, Tag};
 use crate::value::Asn1Value;
-use crate::writer::write_primitive;
+use crate::ber::writer::write_primitive;
 use crate::xer::XerReader;
 
 pub const OCTET_STRING_TAG: Tag = Tag::universal(universal::OCTET_STRING, false);
@@ -253,7 +253,7 @@ pub fn utf8_encode(input: &[u8], out: &mut String) {
 /// the per-type decode logic. Stops (without consuming) at the first tag
 /// that isn't a recognized control-character empty-element tag — that's
 /// the caller's own closing tag.
-pub fn utf8_decode(r: &mut crate::xer::XerReader) -> Result<Vec<u8>, crate::reader::DecodeError> {
+pub fn utf8_decode(r: &mut crate::xer::XerReader) -> Result<Vec<u8>, crate::ber::reader::DecodeError> {
     let mut out = Vec::new();
     loop {
         out.extend_from_slice(crate::xer::unescape(r.read_text_content()).as_bytes());

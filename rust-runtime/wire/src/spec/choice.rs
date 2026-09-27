@@ -2,7 +2,7 @@
 //! and PER (`per::choice`).
 
 use crate::constraints::Constraints;
-use crate::tag::Tag;
+use crate::ber::tag::Tag;
 use crate::value::Asn1Value;
 
 /// How BER frames an alternative's payload (X.690 §8.13/§8.14).
