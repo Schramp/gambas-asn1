@@ -279,6 +279,26 @@ static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind
     return false;
 }
 
+/// @brief Does a SEQUENCE OF/SET OF element's own shape have a real
+///        `Asn1Value::per_encode`/`per_decode_into`? Recurses through
+///        nested collections to unbounded depth (`ElemShape::nested`),
+///        matching `SeqOf<T>`/`SetOf<T>`'s own fully generic PER impl,
+///        which never inspects `T` beyond calling its trait methods.
+/// @param shape Resolved, backend-agnostic element shape (`ElemShape`).
+/// @return Whether this element's leaf type is PER-representable.
+static bool per_elem_shape_covered(const ElemShape& shape) {
+    if (shape.kind != SeqOfKind::None)
+        return shape.nested && per_elem_shape_covered(*shape.nested);
+    if (shape.builtin)
+        return per_builtin_covered(*shape.builtin, shape.storage_kind, shape.has_from_alphabet);
+    // A composite (TypeRef/SEQUENCE/CHOICE) leaf always owns its own
+    // constraint and ignores whatever `element` this row's `Constraints`
+    // hands it — unconditionally safe, same reasoning
+    // `SequenceMemberSpec::ref_kind == Other`'s own coverage gives a
+    // plain composite member one level up.
+    return true;
+}
+
 void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
@@ -1441,18 +1461,22 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // exclude nearly every member in the schema.
     auto per_member_covered = [](const SequenceMemberSpec& m) -> bool {
         if (m.seq_of_kind != SeqOfKind::None) {
-            // A direct builtin INTEGER element (no nesting), constrained or
-            // not — either way there's a valid Constraints reference to use
-            // (its own real static, or the shared UNCONSTRAINED constant;
-            // ElemShape::has_own_descriptor's own doc), so this branch
-            // doesn't need to know which. The collection's own SIZE
-            // constraint is unaffected either way — that's always fully
-            // known via the promoted synthetic type's own
-            // {SYNTH}_CONSTRAINTS.
-            return m.elem_shape.kind == SeqOfKind::None && m.elem_shape.builtin.has_value() &&
-                   *m.elem_shape.builtin == ast::BuiltinType::Integer &&
-                   (m.elem_shape.storage_kind == IntStorageKind::S64 ||
-                    m.elem_shape.storage_kind == IntStorageKind::U64);
+            // `SeqOf<T>`/`SetOf<T>`'s own PER impl (`ber::sequence`) is
+            // fully generic over `T: Asn1Value` — it never inspects `T`'s
+            // kind, just calls `T::per_encode`/`per_decode_into` per
+            // element against the collection's own `element` Constraints
+            // (`emit_seq_of_definition`'s own doc). So this only needs to
+            // ask whether the element's *own* shape has a real PerValue
+            // impl — recursing through any nesting depth — not whether
+            // it's specifically INTEGER. A composite (TypeRef/SEQUENCE/
+            // CHOICE) leaf is always safe: it owns its own constraint and
+            // ignores whatever `element` is passed, same as any other
+            // composite member. A builtin leaf is safe under the exact
+            // same rule `per_builtin_covered` already applies one level
+            // up — `has_own_descriptor`/`elem_ref` already threads a real
+            // per-element constraint table generically for any builtin
+            // kind (not just INTEGER), so nothing new is needed there.
+            return per_elem_shape_covered(m.elem_shape);
         }
         if (m.mbuiltin)
             return per_builtin_covered(*m.mbuiltin, m.storage_kind, m.has_from_alphabet);

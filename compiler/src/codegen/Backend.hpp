@@ -208,6 +208,15 @@ struct ElemShape {
     // constant instead (asn1cpp_wire::constraints::UNCONSTRAINED) rather
     // than needing anything emitted for this element at all.
     bool has_own_descriptor = false;
+    // True when the element itself carries an inline X.680 §51.4 FROM
+    // (PermittedAlphabet) constraint — meaningful only when kind == None
+    // && builtin is a character-string kind. Mirrors
+    // SequenceMemberSpec::has_from_alphabet one level up: PER's
+    // per::strings encoder can't yet remap a restricted alphabet's index
+    // width (that module's own doc), so a member/alternative referencing
+    // a SEQUENCE OF/SET OF whose element has this set can't be PER-
+    // covered the same way a plain member with the same constraint can't.
+    bool has_from_alphabet = false;
 };
 
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —
