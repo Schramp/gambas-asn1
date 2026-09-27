@@ -198,16 +198,22 @@ static bool per_string_covered(ast::BuiltinType bt) {
 // (INTEGER's width, a string's own FROM constraint); every other case
 // ignores them.
 //
-// DELETE ONCE PER IS COMPLETE: once every case below returns `true`,
-// delete this function, delete `per_member_covered`/`per_alt_covered`'s
-// `m.mbuiltin`/`a.mbuiltin` branches (fold into an unconditional `true`),
-// and delete `per_stub_reason`'s builtin-kind text (only the from-alphabet/
-// SEQUENCE-OF reasons would remain). Every ASN.1 construct has a defined
-// PER encoding (X.691 covers all of them, ANY included as an open type,
-// X.691 §10.2 — confirmed against asn1c's own `ANY_uper.c`/`ANY_aper.c`
-// and this codebase's own `AnyPerHandler`, `runtime/src/PerCodec.cpp`),
-// so nothing here is a permanent exception the way it might look today —
-// nothing needs a "return false forever" case.
+// DELETE ONCE PER IS COMPLETE: no case below returns an unconditional
+// `false` anymore — every builtin kind's PER encoding exists in the
+// runtime (X.691 covers all of them, ANY/OID/RELATIVE-OID included as
+// open-type fields, X.691 §10.2 — confirmed against asn1c's own
+// `ANY_uper.c`/`OID`+`RELATIVE-OID` handling and this codebase's own
+// `AnyPerHandler`/`OidPerHandler`/`RelOidPerHandler`, `runtime/src/
+// PerCodec.cpp`). Two conditionals remain, both tracking real,
+// independently-tracked implementation gaps rather than anything
+// structural: INTEGER's storage-kind check (I128/ARBITRARY PER not
+// wired) and the string kinds' `has_from_alphabet` check (FROM-alphabet
+// index remapping not implemented in `per::strings`). Once both close,
+// this whole function collapses to `return true;` unconditionally —
+// delete it then, fold `per_member_covered`/`per_alt_covered`'s
+// `m.mbuiltin`/`a.mbuiltin` branches into an unconditional `true`, and
+// delete `per_stub_reason`'s builtin-kind text (only the SEQUENCE-OF
+// reason would remain).
 static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind,
                                  bool has_from_alphabet) {
     using BT = ast::BuiltinType;
@@ -262,12 +268,13 @@ static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind
     // prefixed raw captured bytes, unconditionally covered by `Any`'s own
     // Asn1Value impl (any.rs).
     case BT::Any:
-        return true;
-    // Genuinely not wired up yet: OBJECT IDENTIFIER/RELATIVE-OID (X.691
-    // §23/§24 — no per::oid/per::relative_oid module exists).
+    // OBJECT IDENTIFIER/RELATIVE-OID (X.691 §23/§24, also a §10.2
+    // open-type field — same length-prefixed BER-content shape as
+    // REAL/ANY), unconditionally covered by `ObjectIdentifier`'s/
+    // `RelativeOid`'s own Asn1Value impl.
     case BT::ObjectIdentifier:
     case BT::RelativeOid:
-        return false;
+        return true;
     }
     return false;
 }

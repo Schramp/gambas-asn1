@@ -841,6 +841,34 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
         Ok(())
     }
 
+    /// X.691 §23/§10.2 "Open type fields": length-prefixed raw BER
+    /// content bytes, no bit-packing — mirrors `OidPerHandler`
+    /// (`runtime/src/PerCodec.cpp`, `per_detail::encode_ber_content<Oid>`)
+    /// exactly.
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {
+        let mut content = Vec::new();
+        crate::oid::encode_object_identifier_content(&mut content, self);
+        crate::per::length::put_length(w, content.len());
+        for b in content {
+            w.put_bits(b as u64, 8);
+        }
+    }
+
+    fn per_decode_into(
+        &mut self,
+        r: &mut crate::per::reader::Reader,
+        _c: &crate::constraints::Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
+        let len = crate::per::length::get_length(r)?;
+        let mut content = Vec::with_capacity(len);
+        for _ in 0..len {
+            content.push(r.get_bits(8)? as u8);
+        }
+        *self = crate::oid::decode_object_identifier_content(&content)
+            .map_err(|e| crate::per::reader::DecodeError::new(e.message, r.bit_pos()))?;
+        Ok(())
+    }
+
     fn xer_encode(&self, out: &mut String, _depth: usize) {
         for (i, arc) in self.0.iter().enumerate() {
             if i > 0 {
@@ -889,6 +917,34 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
 
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
         *self = crate::relative_oid::decode_relative_oid_content(content)?;
+        Ok(())
+    }
+
+    /// X.691 §24/§10.2 "Open type fields": length-prefixed raw BER content
+    /// bytes, no bit-packing — mirrors `RelOidPerHandler`
+    /// (`runtime/src/PerCodec.cpp`, `per_detail::encode_ber_content<
+    /// RelativeOid>`) exactly.
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {
+        let mut content = Vec::new();
+        crate::relative_oid::encode_relative_oid_content(&mut content, self);
+        crate::per::length::put_length(w, content.len());
+        for b in content {
+            w.put_bits(b as u64, 8);
+        }
+    }
+
+    fn per_decode_into(
+        &mut self,
+        r: &mut crate::per::reader::Reader,
+        _c: &crate::constraints::Constraints,
+    ) -> Result<(), crate::per::reader::DecodeError> {
+        let len = crate::per::length::get_length(r)?;
+        let mut content = Vec::with_capacity(len);
+        for _ in 0..len {
+            content.push(r.get_bits(8)? as u8);
+        }
+        *self = crate::relative_oid::decode_relative_oid_content(&content)
+            .map_err(|e| crate::per::reader::DecodeError::new(e.message, r.bit_pos()))?;
         Ok(())
     }
 
@@ -1783,6 +1839,48 @@ mod tests {
         let mut got: Option<Integer> = None;
         got.ber_decode_into_tagged(&mut r, context_0).unwrap();
         assert_eq!(got, Some(Integer(7)));
+    }
+
+    #[test]
+    fn oid_per_round_trips() {
+        use crate::oid::ObjectIdentifier;
+        let v = ObjectIdentifier(vec![1, 2, 840, 113549]);
+        let mut w = crate::per::writer::Writer::new();
+        v.per_encode(&mut w, &crate::constraints::UNCONSTRAINED);
+        w.flush();
+        let bytes = w.into_bytes();
+        let mut r = crate::per::reader::Reader::new(&bytes);
+        let mut got = ObjectIdentifier::default();
+        got.per_decode_into(&mut r, &crate::constraints::UNCONSTRAINED).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn oid_per_length_prefix_matches_ber_content_byte_count() {
+        use crate::oid::ObjectIdentifier;
+        let v = ObjectIdentifier(vec![2, 5, 4, 3]); // commonName, 3 content bytes
+        let mut ber_content = Vec::new();
+        crate::oid::encode_object_identifier_content(&mut ber_content, &v);
+        let mut w = crate::per::writer::Writer::new();
+        v.per_encode(&mut w, &crate::constraints::UNCONSTRAINED);
+        w.flush();
+        let per_bytes = w.into_bytes();
+        assert_eq!(per_bytes[0] as usize, ber_content.len());
+        assert_eq!(&per_bytes[1..], &ber_content[..]);
+    }
+
+    #[test]
+    fn relative_oid_per_round_trips() {
+        use crate::relative_oid::RelativeOid;
+        let v = RelativeOid(vec![8571, 1]);
+        let mut w = crate::per::writer::Writer::new();
+        v.per_encode(&mut w, &crate::constraints::UNCONSTRAINED);
+        w.flush();
+        let bytes = w.into_bytes();
+        let mut r = crate::per::reader::Reader::new(&bytes);
+        let mut got = RelativeOid::default();
+        got.per_decode_into(&mut r, &crate::constraints::UNCONSTRAINED).unwrap();
+        assert_eq!(got, v);
     }
 }
 
