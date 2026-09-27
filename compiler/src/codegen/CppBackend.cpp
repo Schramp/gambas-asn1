@@ -73,13 +73,6 @@ std::string xer_encoding_literal(ast::XerEncoding enc) {
     }
 }
 
-/// @brief Returns ceil(log2(n)) clamped to [1,∞) — bits per character for an n-symbol alphabet.
-static int compute_alphabet_bits(int n) {
-    int bits = 0;
-    for (int r = n - 1; r > 0; r >>= 1) ++bits;
-    return (bits == 0) ? 1 : bits;
-}
-
 /// @brief Returns the name of the global `asn_DEF_*` descriptor for a
 ///        restricted built-in string type, or nullptr for types without a
 ///        fixed alphabet (UTF8String, etc.).
@@ -168,7 +161,7 @@ std::string make_string_constraints_init(
     int val_lb      = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
     int val_ub      = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
     int alpha_bits  = alphabet.empty() ? 0
-        : compute_alphabet_bits(static_cast<int>(alphabet.size()));
+        : Backend::alphabet_bits_for(static_cast<int>(alphabet.size()));
     // When builtin_bt is set, alphabet_bits comes from builtin_alphabet_refs — omit here
     // to avoid emitting the designator twice (which is a C++ error even when values match).
     std::string s;
