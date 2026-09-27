@@ -1527,3 +1527,11 @@ impl DefaultPoint {
         assert_eq!(crate::validate::validate_fail_count(), 1);
     }
 }
+
+impl<T> crate::type_tag::TypeTag for SeqOf<T> {
+    const TAG: Option<Tag> = Some(SEQUENCE_TAG);
+}
+
+impl<T> crate::type_tag::TypeTag for SetOf<T> {
+    const TAG: Option<Tag> = Some(SET_TAG);
+}
