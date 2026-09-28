@@ -2379,16 +2379,19 @@ void RustBackend::emit_typeref_alias_declaration(const std::string& type_name, c
 ///        path — assumes a generated crate root (main.cpp, --target=rust)
 ///        declares one module per generated file.
 /// @note module *identifier* is snake_case
-///       (to_snake_case(filename)), not the raw filename — see
+///       (escape(to_snake_case(filename))), not the raw filename — see
 ///       finalize_output's own `#[path = ...]` module declaration. `filename`
 ///       here is still the on-disk file stem (PascalCase, matching
 ///       `type_name`), so it must be re-derived into the same snake_case
 ///       identifier finalize_output declared the module under, or this
-///       `use` path wouldn't resolve.
+///       `use` path wouldn't resolve. The `escape()` wrap matters for a type
+///       named e.g. "Type" — its snake_case module name "type" collides with
+///       the Rust keyword and needs `r#type` raw-identifier escaping,
+///       exactly the same mechanism member_name() already applies.
 void RustBackend::emit_type_reference(const std::string& type_name, const std::string& filename,
                                        TypeOutputSession& session) const {
     session.buffer(declaration_extension())
-        << std::format("use crate::{}::{};\n", to_snake_case(filename), type_name);
+        << std::format("use crate::{}::{};\n", escape(to_snake_case(filename)), type_name);
 }
 
 /// @brief Rust has no forward-declaration concept — a type is visible
@@ -2420,8 +2423,8 @@ void RustBackend::emit_optional_member_ops(const std::string&, const std::string
 ///       keeps the on-disk filename PascalCase (matching `type_name`/
 ///       `filename_for`) while giving the module itself a snake_case Rust
 ///       identifier — emit_type_reference's `use` paths re-derive the same
-///       to_snake_case(filename) so the two stay in sync without a second
-///       source of truth.
+///       escape(to_snake_case(filename)) so the two stay in sync without a
+///       second source of truth.
 void RustBackend::finalize_output(const std::string& out_dir) const {
     namespace fs = std::filesystem;
     fs::path lib_rs = fs::path(out_dir) / "lib.rs";
@@ -2429,7 +2432,7 @@ void RustBackend::finalize_output(const std::string& out_dir) const {
     for (const auto& entry : fs::directory_iterator(out_dir)) {
         if (entry.path().extension() != ".rs" || entry.path() == lib_rs) continue;
         std::string stem = entry.path().stem().string();
-        lib << std::format("#[path = \"{}.rs\"] pub mod {};\n", stem, to_snake_case(stem));
+        lib << std::format("#[path = \"{}.rs\"] pub mod {};\n", stem, escape(to_snake_case(stem)));
     }
 }
 
