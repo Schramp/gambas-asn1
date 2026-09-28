@@ -879,7 +879,7 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
                 offset_expr,
                 r.tdref, ops,
                 r.is_explicit ? "true" : "false",
-                (r.resolved_tag && !r.resolved_tag->tag_is_override) ? "false" : "true",
+                (r.resolved_tag && r.resolved_tag->tag_is_override) ? "true" : "false",
                 r.def_setter, def_cmp);
         }
         os << "};\n";
@@ -1090,7 +1090,7 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
             os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, {}, nullptr, nullptr,\n",
                 r.asn1_name, (r.resolved_tag ? format_tag_literal(*r.resolved_tag) : format_no_tag_literal()),
                 r.tdref, r.is_explicit ? "true" : "false",
-                (r.resolved_tag && !r.resolved_tag->tag_is_override) ? "false" : "true");
+                (r.resolved_tag && r.resolved_tag->tag_is_override) ? "true" : "false");
             if (boxed) {
                 os << std::format(
                     "      &asn1::BoxedChoiceOps<{0}>::get_mut, &asn1::BoxedChoiceOps<{0}>::get_const, &asn_BOXLC_{0}_{1} }},\n",
