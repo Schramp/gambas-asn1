@@ -1750,6 +1750,23 @@ if(WITH_BER_RUNTIME_TEST)
                 --cargo ${CARGO_EXECUTABLE})
     set_tests_properties(rust_codegen_sweep PROPERTIES
         TIMEOUT 300 LABELS "rust")
+
+    # Same sweep, ~3x the file count (tests-asn1c-compiler/'s ~207 files vs
+    # tests/asn1/'s 68) — kept as its own ctest entry rather than folded
+    # into --corpus=all above, so a slow/flaky run in the much bigger,
+    # never-written-for-this-compiler corpus doesn't block the fast one on
+    # every build. See validate_rust_codegen.py's own module doc for what
+    # "codegen" (gating) vs "reject" (informational) means for this corpus
+    # specifically, and tests/rust_codegen_known_crashes.txt for already-
+    # filed, already-tracked hard crashes.
+    add_test(NAME rust_codegen_sweep_asn1c_compiler
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/validate_rust_codegen.py
+                --asn1cpp-bin $<TARGET_FILE:asn1cpp>
+                --cargo ${CARGO_EXECUTABLE}
+                --corpus asn1c-compiler)
+    set_tests_properties(rust_codegen_sweep_asn1c_compiler PROPERTIES
+        TIMEOUT 300 LABELS "rust")
 endif()
 
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------
