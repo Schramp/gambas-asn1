@@ -38,21 +38,38 @@ second-guesses `make`/`cargo`'s own up-to-date check either; a bare rerun
 of this script is always safe and cheap when nothing changed.
 
 Usage:
-  python3 xval_sweep.py [--count N] [--seed S] [--target NAME] [--verbose]
+  python3 xval_sweep.py [--count N] [--seed S] [--target NAME] [--limit N] [--verbose]
                         [--asn1c-dir DIR] [--no-asn1c] [-j N] [--reuse asn1c,cpp]
+                        [--corpus {targets,asn1c-compiler}] [--with-asn1c]
 
   --target NAME    only run the target whose schema path or PDU type
                    matches NAME (substring match); default: all targets.
+  --limit N        cap the target list to the first N (after --target
+                   filtering) — a quick sanity slice before a full run.
   --asn1c-dir DIR  directory containing the asn1c binary (overrides
                    ASN1C_BIN_DIR env var / PATH / /usr/local/bin search).
-  --no-asn1c       skip the asn1c leg even if asn1c is found.
+  --no-asn1c       skip the asn1c leg even if asn1c is found (--corpus=targets only).
   -j, --jobs N     run N targets in parallel (default min(4, cpus/3)).
   --reuse LEGS     comma list (asn1c, cpp): skip codegen+build of those legs
                    when their key (schema + tool/runtime signature) matches
                    the previous build. Codegen output is always checksum-
                    synced, so unchanged files are never rebuilt either way.
+  --corpus C       'targets' (default): the curated targets.txt list, every
+                   entry hand-verified — a failure here is a real
+                   regression and keeps gating the exit code.
+                   'asn1c-compiler': auto-discover a PDU-type candidate
+                   from every *-OK.asn1 in tests/tests-asn1c-compiler/
+                   instead (see discover_pdu_type()) — a broad, one-off
+                   probe of the ~207-file corpus. Always exits 0: a
+                   failure here is a finding to read and act on (many are
+                   already-known/-filed gaps), not a build gate. Defaults
+                   --count to 3 (build cost per target dominates, not
+                   record count) and skips the asn1c leg (pass
+                   --with-asn1c to opt in — ~200 extra asn1c builds is the
+                   single biggest cost multiplier for a broad probe).
 
-Exit code: 0 if every target's every comparison passed, 1 otherwise.
+Exit code: for --corpus=targets (default), 0 if every target's every
+comparison passed, 1 otherwise. For --corpus=asn1c-compiler, always 0.
 """
 import argparse
 import difflib
@@ -75,6 +92,39 @@ TEMPLATE_CPP = os.path.join(HERE, "template_cpp")
 TEMPLATE_RUST = os.path.join(HERE, "template_rust")
 TESTBUILD = os.path.join(HERE, "testbuild")
 TARGETS_FILE = os.path.join(HERE, "targets.txt")
+ASN1C_COMPILER_CORPUS_DIR = os.path.join(ASN1CPP_ROOT, "tests/tests-asn1c-compiler")
+
+# A bare top-level "Name ::= SEQUENCE/SET/CHOICE {" — deliberately excludes
+# "SEQUENCE OF"/"SET OF" (no '{' directly after the keyword: those forms
+# name an element type instead) and any scalar alias (INTEGER, an
+# existing type reference, etc.) — same "real top-level PDU/message type,
+# not a scalar alias" qualification targets.txt's own header documents,
+# just applied automatically instead of by hand.
+_PDU_CANDIDATE_RE = re.compile(
+    r"^\s*([A-Za-z][\w-]*)\s*::=\s*(?:SEQUENCE|SET|CHOICE)\s*\{", re.MULTILINE)
+
+
+def discover_pdu_type(asn1_path):
+    """Best-effort top-level PDU/message type name for an auto-discovered
+    (not manually curated) schema file, or None if this file doesn't
+    qualify. Returns None (skip) for:
+      - a file with any IMPORTS clause — cross-file dependency, same
+        "multi-file schemas aren't supported by this first pass" limit
+        targets.txt's own header already documents for the curated list.
+      - a file with no bare top-level SEQUENCE/SET/CHOICE assignment.
+    Otherwise: a type literally named "PDU" if one exists (the common
+    convention in asn1c's own test suite), else the last candidate found
+    (heuristic — the outer/message type is usually declared after the
+    types it's built from, not before)."""
+    text = open(asn1_path, errors="replace").read()
+    if re.search(r"\bIMPORTS\b", text):
+        return None
+    candidates = _PDU_CANDIDATE_RE.findall(text)
+    if not candidates:
+        return None
+    if "PDU" in candidates:
+        return "PDU"
+    return candidates[-1]
 
 
 def find_asn1c(override_dir=None):
@@ -848,15 +898,36 @@ class _ThreadStdout:
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--count", type=int, default=20)
+    ap.add_argument("--count", type=int, default=None,
+                     help="records per target (default: 20 for --corpus=targets, "
+                          "3 for --corpus=asn1c-compiler — a much larger, one-off-probe "
+                          "corpus where build cost per target dominates, not record count)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--target", default=None,
                      help="only run targets whose schema path or PDU type contains this substring")
+    ap.add_argument("--limit", type=int, default=None,
+                     help="cap the target list to the first N (after --target filtering) — "
+                          "useful for a quick sanity pass over a small slice of a large "
+                          "--corpus=asn1c-compiler run before committing to the full sweep")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--asn1c-dir", default=None,
                      help="directory containing the asn1c binary (overrides ASN1C_BIN_DIR/PATH search)")
     ap.add_argument("--no-asn1c", action="store_true",
                      help="skip the asn1c leg even if asn1c is found")
+    ap.add_argument("--corpus", default="targets", choices=["targets", "asn1c-compiler"],
+                     help="'targets' (default): the curated, manually-verified list in "
+                          "targets.txt. 'asn1c-compiler': auto-discover a PDU-type candidate "
+                          "from every *-OK.asn1 in tests/tests-asn1c-compiler/ instead (see "
+                          "discover_pdu_type()) — a broad, unverified probe of the ~207-file "
+                          "corpus, not a curated/gating list; failures are reported, not a "
+                          "reason to treat the whole run as red (same spirit as "
+                          "validate_rust_codegen.py's own --corpus=asn1c-compiler).")
+    ap.add_argument("--with-asn1c", action="store_true",
+                     help="with --corpus=asn1c-compiler, also build+run the asn1c leg per "
+                          "target (off by default for this corpus — ~200 extra asn1c builds "
+                          "is the single biggest cost multiplier for a broad probe; the "
+                          "curated --corpus=targets list keeps its own auto-detect+--no-asn1c "
+                          "behavior unchanged)")
     ap.add_argument("-j", "--jobs", type=int,
                      default=min(4, max(1, (os.cpu_count() or 4) // 3)),
                      help="targets to build/run in parallel (default: min(4, cpus/3)); "
@@ -866,22 +937,50 @@ def main():
                           "inputs are unchanged: asn1c, cpp (keyed on schema + tool/runtime signature)")
     opts = ap.parse_args()
 
+    if opts.count is None:
+        opts.count = 3 if opts.corpus == "asn1c-compiler" else 20
+
     if not os.path.isfile(ASNCPP_BIN):
         print(f"asn1cpp compiler not built: {ASNCPP_BIN}\nRun: cmake --build {ASN1CPP_ROOT}/build")
         sys.exit(1)
 
-    asn1c_bin = None if opts.no_asn1c else find_asn1c(opts.asn1c_dir)
-    if asn1c_bin:
-        print(f"asn1c leg: ON  ({asn1c_bin})")
-    else:
-        print("asn1c leg: OFF (asn1c not found — set ASN1C_BIN_DIR or --asn1c-dir to enable)")
+    if opts.corpus == "asn1c-compiler":
+        asn1c_bin = find_asn1c(opts.asn1c_dir) if opts.with_asn1c else None
+        if asn1c_bin:
+            print(f"asn1c leg: ON  ({asn1c_bin})")
+        else:
+            print("asn1c leg: OFF (--corpus=asn1c-compiler default; pass --with-asn1c to enable)")
 
-    targets = parse_targets(TARGETS_FILE)
+        skipped = []
+        targets = []
+        for name in sorted(os.listdir(ASN1C_COMPILER_CORPUS_DIR)):
+            if not name.endswith("-OK.asn1"):
+                continue
+            path = os.path.join(ASN1C_COMPILER_CORPUS_DIR, name)
+            pdu_type = discover_pdu_type(path)
+            if pdu_type is None:
+                skipped.append(name)
+                continue
+            rel = os.path.relpath(path, ASN1CPP_ROOT)
+            targets.append((rel, pdu_type, None))
+        print(f"auto-discovered {len(targets)} target(s) from {ASN1C_COMPILER_CORPUS_DIR} "
+              f"({len(skipped)} skipped: no qualifying top-level SEQUENCE/SET/CHOICE, or IMPORTS present)")
+    else:
+        asn1c_bin = None if opts.no_asn1c else find_asn1c(opts.asn1c_dir)
+        if asn1c_bin:
+            print(f"asn1c leg: ON  ({asn1c_bin})")
+        else:
+            print("asn1c leg: OFF (asn1c not found — set ASN1C_BIN_DIR or --asn1c-dir to enable)")
+
+        targets = parse_targets(TARGETS_FILE)
+
     if opts.target:
         targets = [t for t in targets if opts.target in t[0] or opts.target in t[1]]
         if not targets:
             print(f"no target matches {opts.target!r}")
             sys.exit(1)
+    if opts.limit is not None:
+        targets = targets[:opts.limit]
 
     os.makedirs(TESTBUILD, exist_ok=True)
 
@@ -953,6 +1052,15 @@ def main():
             failed += 1
         print(f"  [{status}] {schema_rel} :: {pdu_type}")
     print(f"\n{len(results) - failed}/{len(results)} targets passed")
+    # --corpus=asn1c-compiler is a broad, unverified probe (--corpus help
+    # text's own words) — a failure there is a finding to report, same as
+    # validate_rust_codegen.py's own --corpus=asn1c-compiler treats a
+    # non-crash "reject" as informational, not a reason to fail the run.
+    # The curated --corpus=targets list is unaffected: every one of its
+    # entries was hand-verified to pass, so a failure there is a real
+    # regression and keeps gating as before.
+    if opts.corpus == "asn1c-compiler":
+        sys.exit(0)
     sys.exit(1 if failed else 0)
 
 
