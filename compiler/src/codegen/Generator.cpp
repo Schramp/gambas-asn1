@@ -1107,7 +1107,30 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
             hi_is_large = vhi_is_large;
         }
     });
-    if (lo && hi) return IntRange{true, *lo, *hi, truly_max, hi_u64, hi_is_large};
+    if (lo && hi) {
+        // X.691 defines PER bit-width minimization only for a constraint
+        // with a real finite lower bound: "constrained" (both bounds
+        // finite) or "semi-constrained" (lower bound only, X.691 §10.5.6
+        // — `truly_max` above). An upper-bound-only range (`MIN..N`, no
+        // real lower bound) has no such minimization defined — ground-
+        // truthed against asn1c's own generated table for exactly this
+        // shape (`(MIN..10)`): `asn_PER_memb_second_constr_4` is
+        // APC_UNCONSTRAINED, not semi-constrained. Treating `INT64_MIN`
+        // as if it were a genuine finite lower bound here (rather than
+        // "no lower bound at all") previously fed `hi - lo + 1` into the
+        // constrained-range bit-width computation, overflowing int64
+        // arithmetic and corrupting the encoded value — this returns
+        // "no constraint" instead, the same "general integer" shape
+        // asn1c's own APC_UNCONSTRAINED produces. asn1c additionally
+        // still enforces `value <= N` via a separate constraint-check
+        // callback, independent of its PER table; this codebase has no
+        // equivalent upper-bound-only validation path yet for either
+        // codec — a real, separate, narrower gap, not fixed here.
+        bool no_real_lower_bound = (*lo == std::numeric_limits<int64_t>::min());
+        if (no_real_lower_bound && !truly_max)
+            return IntRange{false, 0, 0, false, 0, false};
+        return IntRange{true, *lo, *hi, truly_max, hi_u64, hi_is_large};
+    }
     return IntRange{false, 0, 0, false, 0, false};
 }
 
