@@ -1627,7 +1627,18 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     : std::format("<{} as asn1cpp_wire::type_tag::TypeTag>::TAG.unwrap()", m.mtype);
                 os << std::format("        tag: {},\n", tag_text);
                 os << std::format("        optional: {},\n", m.optional ? "true" : "false");
-                os << std::format("        access: asn1cpp_wire::spec::sequence::MemberAccess::Scalar {{ get: |v| &v.{0}, get_mut: |v| &mut v.{0} }},\n", m.mname);
+                // BASE64 XER instruction (X.693 §21) on a direct, untagged
+                // OCTET STRING member: MemberAccess::Base64Scalar instead of
+                // the plain Scalar path — see that variant's own doc.
+                // Combined with a tag override (EXPLICIT/IMPLICIT) this
+                // still falls through the ordinary Scalar path above/below
+                // instead (no Base64*Tagged*Scalar variant yet) — narrower
+                // in scope than CppBackend's own per-member TypeDescriptor,
+                // which reads xer_encoding independently of tagging.
+                bool base64_scalar = m.mbuiltin && *m.mbuiltin == ast::BuiltinType::OctetString
+                                   && m.xer_encoding == ast::XerEncoding::Base64;
+                os << std::format("        access: asn1cpp_wire::spec::sequence::MemberAccess::{} {{ get: |v| &v.{}, get_mut: |v| &mut v.{} }},\n",
+                                  base64_scalar ? "Base64Scalar" : "Scalar", m.mname, m.mname);
             }
             os << std::format("        set_default: {},\n", set_default_expr);
             os << std::format("        is_default_equal: {},\n", is_default_equal_expr);

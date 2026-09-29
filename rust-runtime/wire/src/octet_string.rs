@@ -93,6 +93,16 @@ impl Asn1Value for OctetString {
         Ok(())
     }
 
+    fn xer_encode_base64(&self, out: &mut String) {
+        out.push_str(&base64_encode(&self.0));
+    }
+
+    fn xer_decode_into_base64(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        let text = r.read_text_content();
+        self.0 = base64_decode(text.trim());
+        Ok(())
+    }
+
     fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
         crate::per::octet_string::encode_octet_string(w, c, &self.0);
     }
@@ -353,6 +363,31 @@ mod tests {
         let mut out = String::new();
         OctetString(vec![0x68, 0x69]).xer_encode(&mut out, 0);
         assert_eq!(out, "6869");
+    }
+
+    #[test]
+    fn xer_encode_base64_matches_base64_encode() {
+        let mut out = String::new();
+        OctetString(b"hi".to_vec()).xer_encode_base64(&mut out);
+        assert_eq!(out, "aGk=");
+    }
+
+    #[test]
+    fn xer_decode_into_base64_round_trips() {
+        use crate::xer::{write_close_tag, write_open_tag, XerReader};
+
+        let mut out = String::new();
+        write_open_tag(&mut out, "data");
+        OctetString(b"hi".to_vec()).xer_encode_base64(&mut out);
+        write_close_tag(&mut out, "data");
+        assert_eq!(out, "<data>aGk=</data>");
+
+        let mut r = XerReader::new(&out);
+        r.consume_open_tag("data").unwrap();
+        let mut got = OctetString::default();
+        got.xer_decode_into_base64(&mut r).unwrap();
+        r.consume_close_tag("data").unwrap();
+        assert_eq!(got.0, b"hi");
     }
 
     #[test]
