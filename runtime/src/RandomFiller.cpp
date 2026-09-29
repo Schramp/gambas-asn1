@@ -63,6 +63,34 @@ std::string RandomFiller::random_from_alphabet(std::string_view alpha, int len) 
     return s;
 }
 
+// Free function (not a RandomFiller member) so resize_in_place — a static
+// function with its own std::mt19937& rather than a RandomFiller instance
+// (see its own doc) — can share it instead of duplicating the surrogate-
+// exclusion/BMP-clamp logic.
+static std::string gen_wide_chars(int unit_bytes, int len, std::mt19937& rng) {
+    // BmpString (2 bytes/char) is BMP-only: 0x0000-0xFFFF excluding the
+    // UTF-16 surrogate range (X.680 §41 — BMPString has no surrogate
+    // pairs, unlike UTF-16 proper). UniversalString (4 bytes/char) covers
+    // the full Unicode scalar-value range 0x0-0x10FFFF, same surrogate
+    // exclusion (a surrogate code point has no defined XML/XER text
+    // representation on its own either way).
+    const uint32_t max_cp = (unit_bytes == 2) ? 0xFFFF : 0x10FFFF;
+    std::uniform_int_distribution<uint32_t> pick{0x20, max_cp};
+    std::string s;
+    s.reserve(static_cast<std::size_t>(len) * unit_bytes);
+    for (int i = 0; i < len; ++i) {
+        uint32_t cp;
+        do { cp = pick(rng); } while (cp >= 0xD800 && cp <= 0xDFFF);
+        for (int b = unit_bytes - 1; b >= 0; --b)
+            s += static_cast<char>(static_cast<uint8_t>((cp >> (8 * b)) & 0xFF));
+    }
+    return s;
+}
+
+std::string RandomFiller::random_wide_chars(int unit_bytes, int len) {
+    return gen_wide_chars(unit_bytes, len, rng_);
+}
+
 // ---------------------------------------------------------------------------
 // top-level dispatch
 // ---------------------------------------------------------------------------
@@ -125,6 +153,17 @@ static bool resize_in_place(Asn1Object* obj, const TypeDescriptor& def,
         static_cast<BitString*>(obj)->set(std::move(v), unused);
         return true;
     }
+    // Fixed-width wide-char code units (see gen_wide_chars's own doc) — len
+    // here is character count, same unit the caller (try_fill_primitive's
+    // SIZE-nudge path) derives from size_lower/size_upper for every string
+    // kind alike.
+    case UniversalTag::UniversalString:
+    case UniversalTag::BmpString: {
+        int unit_bytes = (def.tag.number == UniversalTag::BmpString) ? 2 : 4;
+        static_cast<AsnStringBase*>(obj)->str().assign(
+            gen_wide_chars(unit_bytes, static_cast<int>(len), rng));
+        return true;
+    }
     case UniversalTag::Utf8String:
     case UniversalTag::NumericString:
     case UniversalTag::PrintableString:
@@ -134,8 +173,6 @@ static bool resize_in_place(Asn1Object* obj, const TypeDescriptor& def,
     case UniversalTag::GraphicString:
     case UniversalTag::VisibleString:
     case UniversalTag::GeneralString:
-    case UniversalTag::UniversalString:
-    case UniversalTag::BmpString:
     case UniversalTag::ObjectDescriptor: {
         std::string s;
         s.reserve(len);
@@ -619,6 +656,30 @@ void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
         break;
     }
 
+    // UniversalString (UCS-4) / BmpString (UCS-2): AsnStringBase::str() holds
+    // fixed-width big-endian code units here, not one byte per character
+    // like every other string kind below — see random_wide_chars's own doc.
+    // A FROM constraint still uses the narrow single-byte alphabet path
+    // (c.alphabet's own representation is byte-valued, X.691 §26.5 — see
+    // Generator::extract_from_alphabet — so this only covers a FROM set
+    // drawn from the byte range, same as any real-world FROM("A".."Z")
+    // seen on these types in practice, e.g. tests-asn1c-compiler's own
+    // 119-per-strings-OK.asn1 bm-c/us-c).
+    case UT::UniversalString:
+    case UT::BmpString: {
+        const auto& c = def.constraints;
+        auto [lo, hi] = size_range(c, cfg_.min_str_len, cfg_.max_str_len);
+        int len = rand_int(lo, hi);
+        if (c.alphabet_bits > 0 && c.alphabet != nullptr) {
+            std::string_view from_view(reinterpret_cast<const char*>(c.alphabet), c.alphabet_size);
+            static_cast<AsnStringBase*>(obj)->str().assign(random_from_alphabet(from_view, len));
+        } else {
+            int unit_bytes = (def.tag.number == UT::BmpString) ? 2 : 4;
+            static_cast<AsnStringBase*>(obj)->str().assign(random_wide_chars(unit_bytes, len));
+        }
+        break;
+    }
+
     // All string types (AsnString<N>, UtcTime, GeneralizedTime) inherit AsnStringBase.
     case UT::Utf8String:
     case UT::NumericString:
@@ -627,8 +688,6 @@ void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
     case UT::Ia5String:
     case UT::VisibleString:
     case UT::GeneralString:
-    case UT::UniversalString:
-    case UT::BmpString:
     case UT::ObjectDescriptor:
     case UT::VideotexString:
     case UT::GraphicString:
