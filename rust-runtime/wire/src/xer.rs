@@ -321,6 +321,18 @@ fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut S
                 val.xer_encode(out, depth + 1);
                 write_close_tag(out, m.name);
             }
+            MemberAccess::Base64Scalar { get, .. } => {
+                let val = get(value);
+                if !val.is_present() {
+                    continue;
+                }
+                any = true;
+                out.push('\n');
+                out.push_str(&indent(depth + 1));
+                write_open_tag(out, m.name);
+                val.xer_encode_base64(out);
+                write_close_tag(out, m.name);
+            }
             // ANY has no defined XER form here — `Any`'s own `xer_encode`
             // uses `Asn1Value`'s default (`unimplemented!`), reached
             // through the combined `Scalar`/`TaggedScalar`/`ExplicitScalar`
@@ -376,6 +388,7 @@ fn decode_sequence_xer_content<T: Default>(spec: &SequenceSpec<T>, r: &mut XerRe
         match &m.access {
             MemberAccess::Scalar { get_mut, .. } | MemberAccess::TaggedScalar { get_mut, .. } | MemberAccess::ExplicitScalar { get_mut, .. } =>
                 get_mut(&mut result).xer_decode_into(r)?,
+            MemberAccess::Base64Scalar { get_mut, .. } => get_mut(&mut result).xer_decode_into_base64(r)?,
             MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
         }
         r.consume_close_tag(m.name)?;

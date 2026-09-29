@@ -361,7 +361,7 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
             }
         }
         match &m.access {
-            MemberAccess::Scalar { get, .. } => get(value).ber_encode(content),
+            MemberAccess::Scalar { get, .. } | MemberAccess::Base64Scalar { get, .. } => get(value).ber_encode(content),
             MemberAccess::TaggedScalar { get, .. } => get(value).ber_encode_tagged(m.tag, content),
             MemberAccess::ExplicitScalar { get, .. } => get(value).ber_encode_explicit(content, m.tag),
             MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
@@ -427,7 +427,7 @@ pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut R
     let mut result = T::default();
     for m in spec.members {
         match &m.access {
-            MemberAccess::Scalar { get_mut, .. } => {
+            MemberAccess::Scalar { get_mut, .. } | MemberAccess::Base64Scalar { get_mut, .. } => {
                 let mut has_value = true;
                 if m.optional {
                     if inner.peek_tag() == Some(m.tag) {

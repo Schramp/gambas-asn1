@@ -82,7 +82,8 @@ impl<T: 'static> MemberDescriptor<T> {
         match &self.access {
             MemberAccess::Scalar { get, .. }
             | MemberAccess::TaggedScalar { get, .. }
-            | MemberAccess::ExplicitScalar { get, .. } => Some(get(value).validate(c)),
+            | MemberAccess::ExplicitScalar { get, .. }
+            | MemberAccess::Base64Scalar { get, .. } => Some(get(value).validate(c)),
             MemberAccess::Unsupported { .. } => None,
         }
     }
@@ -136,6 +137,20 @@ pub enum MemberAccess<T: 'static> {
         get: fn(&T) -> &dyn Asn1Value,
         get_mut: fn(&mut T) -> &mut dyn Asn1Value,
     },
+    /// An OCTET STRING member under an `ENCODING-CONTROL XER ... BASE64`
+    /// (or legacy `::= base64`) instruction — X.693 §21. Identical to
+    /// `Scalar` for BER/PER (base64 vs. hex is an XER-only distinction);
+    /// XER encode/decode calls `Asn1Value::xer_encode_base64`/
+    /// `xer_decode_into_base64` instead of the plain `xer_encode`/
+    /// `xer_decode_into` pair — see that method's own doc for why this is
+    /// a member-row flag rather than requiring the member to be promoted
+    /// to its own named alias type first (the only option before this
+    /// variant existed, since `OctetString` itself has no per-instance way
+    /// to pick hex vs. base64).
+    Base64Scalar {
+        get: fn(&T) -> &dyn Asn1Value,
+        get_mut: fn(&mut T) -> &mut dyn Asn1Value,
+    },
     /// A member whose type/tag/optionality combination genuinely has no
     /// `Asn1Value` coverage yet in this crate. Every generated SEQUENCE/SET
     /// always gets a real table and `Asn1Value` impl now — nothing gates
@@ -172,6 +187,7 @@ impl<T: 'static> MemberAccess<T> {
             MemberAccess::Scalar { get, get_mut }
             | MemberAccess::TaggedScalar { get, get_mut }
             | MemberAccess::ExplicitScalar { get, get_mut }
+            | MemberAccess::Base64Scalar { get, get_mut }
             | MemberAccess::Unsupported { get, get_mut, .. } => (*get, *get_mut),
         }
     }
