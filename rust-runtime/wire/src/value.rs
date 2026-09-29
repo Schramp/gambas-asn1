@@ -171,6 +171,27 @@ pub trait Asn1Value {
         Err(DecodeError::new("XER leg not yet wired for this type".to_string(), 0))
     }
 
+    /// BASE64 XER representation (X.693 §21) for an `ENCODING-CONTROL XER
+    /// ... BASE64` (or legacy `::= base64`)-marked OCTET STRING member —
+    /// the alternative to `xer_encode`'s own default (unspaced uppercase
+    /// hex). Unreachable by default: only `OctetString` overrides it, and
+    /// only a `spec::sequence::MemberAccess::Base64Scalar` row (emitted
+    /// when `RustBackend` sees the member's own `xer_encoding == Base64`)
+    /// ever calls it — every other member/type keeps using plain
+    /// `xer_encode`/`xer_decode_into` (`MemberAccess::Scalar` and friends).
+    /// Trait-dispatched (not a free function `RustBackend::
+    /// emit_builtin_alias_definition` bakes into a lifted alias type's own
+    /// method body) so a member can get base64 XER encoding without being
+    /// promoted to its own named type first.
+    fn xer_encode_base64(&self, _out: &mut String) {
+        unreachable!("xer_encode_base64 called on a type with no base64 XER representation")
+    }
+
+    /// Decode counterpart of `xer_encode_base64`.
+    fn xer_decode_into_base64(&mut self, _r: &mut XerReader) -> Result<(), DecodeError> {
+        unreachable!("xer_decode_into_base64 called on a type with no base64 XER representation")
+    }
+
     /// Whether this value should appear on the wire at all — always `true`
     /// except for `Option<V>::None` (see the blanket impl below). Lets the
     /// generic SEQUENCE walkers (`encode_sequence_xer`'s outer-tag wrapping;

@@ -1551,6 +1551,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         row.asn1_name = m.name;
         row.mname = backend_.member_name(m.name);
         row.mtype = native_member_type_for(m);
+        row.xer_encoding = m.xer_encoding;
         if (auto* bt = std::get_if<ast::BuiltinType>(&m.body)) {
             row.mbuiltin = *bt;
             // Same decision native_member_type_for's own Integer branch

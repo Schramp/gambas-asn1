@@ -543,6 +543,15 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     bool        setter_is_move = false;
     bool        setter_is_int_alias = false;
     bool        setter_is_uint_alias = false;
+    // X.693 §21 XER representation override (ENCODING-CONTROL XER, or the
+    // legacy `::= base64`/`::= utf8` forms) — meaningful only when
+    // mbuiltin == OctetString; RustBackend reads Base64 to pick
+    // MemberAccess::Base64Scalar over the plain Scalar path (see that
+    // variant's own doc — OctetString has no per-instance way to choose
+    // hex vs. base64 otherwise). CppBackend needs no equivalent: its
+    // per-member TypeDescriptor (MemberTypeDescriptorSpec::xer_encoding,
+    // already threaded independently) is read at runtime instead.
+    ast::XerEncoding xer_encoding = ast::XerEncoding::Default;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET type (X.680 §24/25).
