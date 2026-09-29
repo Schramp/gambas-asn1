@@ -1033,6 +1033,27 @@ public:
     ///       it's settled.
     virtual bool needs_seqof_wrapper_reference() const { return true; }
 
+    /// @brief Does a bare top-level TypeRef alias (`Alias ::= Target`) whose
+    ///        target cycles back to `Alias` (Generator::bare_alias_would_cycle)
+    ///        need Target forward-declared instead of fully referenced?
+    /// @note True for C++ (the default): a single-pass `#pragma once` header
+    ///       chain destructively truncates on a genuine cycle unless broken
+    ///       by a forward declaration (`class Target;` needs only a
+    ///       declaration for a `using Alias = Target;` alias itself, per
+    ///       Generator::bare_alias_would_cycle's own doc).
+    /// @note False for Rust: whole-crate name resolution means a `use
+    ///       crate::target::Target;` import is unaffected by declaration
+    ///       order or cycles at all — confirmed empirically (gambas-asn1,
+    ///       the 73-circular-OK.asn1 test schema compiles as Rust with
+    ///       nothing but ordinary `use` imports, no special-casing).
+    ///       Emitting a forward declaration instead there would be worse
+    ///       than a no-op: RustBackend::emit_forward_declaration is a true
+    ///       no-op (Rust has no forward-declaration concept), so following
+    ///       this flag's C++ answer for Rust would silently *drop* the
+    ///       `use` import a cyclic alias still needs for name resolution,
+    ///       even though it never needed it for completeness.
+    virtual bool needs_forward_declare_for_cyclic_alias() const { return true; }
+
     /// @brief Emit a forward declaration for a type this file only needs as
     ///        an incomplete type (e.g. an optional member stored behind a
     ///        pointer, to break a circular #include). Backends with no

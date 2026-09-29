@@ -426,6 +426,117 @@ bool Generator::member_type_in_cycle(const ast::TypeDef& m, const std::string& e
     return type_reaches(*member_def, enclosing_name, visited);
 }
 
+// Like type_reaches, but also follows SEQUENCE OF/SET OF element types
+// (direct, or through a further TypeRef) — the shape a container-mediated
+// cycle (X.680 §3.6.55's recursive-definition case) actually takes: e.g.
+// `Type { data SEQUENCE OF EpytRef }`, `EpytRef ::= Epyt`,
+// `Epyt { stype SET OF Type }`. type_reaches deliberately skips containers
+// (member_type_in_cycle's Box<T> decision doesn't need them — a
+// std::vector<T>/Vec<T> member never needs T complete just to be declared),
+// so it alone would miss this shape entirely.
+bool Generator::type_reaches_via_containers(const ast::TypeDef& from, const std::string& target,
+                                             std::set<std::string>& visited) const {
+    for (const auto& m : from.members) {
+        if (!m || m->is_extension_marker) continue;
+        const ast::TypeDef* probe = m.get();
+        if (probe->is_seq_of())
+            probe = std::get<ast::SequenceOfType>(probe->body).element.get();
+        else if (probe->is_set_of())
+            probe = std::get<ast::SetOfType>(probe->body).element.get();
+
+        const ast::TypeDef* member_def = nullptr;
+        std::string member_key;
+        if (probe->is_sequence() || probe->is_choice() || probe->is_set()) {
+            member_def = probe;
+            member_key = std::format("$anon:{}", static_cast<const void*>(probe));
+        } else if (auto* tr = std::get_if<ast::TypeRef>(&probe->body)) {
+            if (tr->type_name == target) return true;
+            auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
+            if (direct) {
+                member_def = direct.get();
+                member_key = tr->type_name;
+            }
+        }
+        if (!member_def) continue;
+        if (member_key == target) return true;
+        if (!visited.insert(member_key).second) continue;
+        if (type_reaches_via_containers(*member_def, target, visited)) return true;
+    }
+    return false;
+}
+
+/// @brief Decide whether a bare top-level TypeRef alias (`Alias ::= Target`)
+///        should forward-declare `Target` instead of #including its header
+///        (emit_type_body's TypeRef branch).
+/// @param target_name Resolved target type's own generated name.
+/// @param alias_name  This alias's own name (`Alias`, not `Target`).
+/// @return True when Target's structure reaches back to `alias_name` via any
+///         member path (direct, inline, or SEQUENCE OF/SET OF-mediated) —
+///         #including Target's header in that case would recurse back into
+///         this alias's own header before either type is ever fully
+///         defined, permanently truncating both via #pragma once (X.690
+///         gives no ordering that breaks a genuine cycle; only forward
+///         declaration does). False (the common, non-cyclic case) leaves
+///         today's plain #include behavior untouched.
+/// @see X.680 §3.6.55 — recursive definitions are permitted; this is the
+///      codegen-side mechanics of representing one.
+bool Generator::bare_alias_would_cycle(const std::string& target_name, const std::string& alias_name) const {
+    auto target_def = resolver_.lookup_direct(target_name, current_module_);
+    if (!target_def || !(target_def->is_sequence() || target_def->is_choice() || target_def->is_set()))
+        return false;
+    std::set<std::string> visited;
+    return type_reaches_via_containers(*target_def, alias_name, visited);
+}
+
+void Generator::collect_class_types_reachable(const ast::TypeDef& from, std::set<std::string>& out) const {
+    for (const auto& m : from.members) {
+        if (!m || m->is_extension_marker) continue;
+        const ast::TypeDef* probe = m.get();
+        if (probe->is_seq_of())
+            probe = std::get<ast::SequenceOfType>(probe->body).element.get();
+        else if (probe->is_set_of())
+            probe = std::get<ast::SetOfType>(probe->body).element.get();
+
+        const ast::TypeDef* member_def = nullptr;
+        std::string member_key;
+        if (probe->is_sequence() || probe->is_choice() || probe->is_set()) {
+            member_def = probe;
+            member_key = std::format("$anon:{}", static_cast<const void*>(probe));
+        } else if (auto* tr = std::get_if<ast::TypeRef>(&probe->body)) {
+            auto concrete = resolver_.resolve_ref(*tr, current_module_);
+            if (concrete && (concrete->is_sequence() || concrete->is_choice() || concrete->is_set())) {
+                member_def = concrete.get();
+                member_key = effective_cpp_name(concrete->name, current_module_);
+            }
+        }
+        if (!member_def) continue;
+        if (!out.insert(member_key).second) continue; // already visited
+        collect_class_types_reachable(*member_def, out);
+    }
+}
+
+std::vector<std::string> Generator::collect_extra_includes_for(const std::string& elem_type_name,
+                                                                 const std::string& self_name) const {
+    ast::TypeRef elem_ref;
+    elem_ref.type_name = elem_type_name;
+    auto concrete = resolver_.resolve_ref(elem_ref, current_module_);
+    if (!concrete || !(concrete->is_sequence() || concrete->is_choice() || concrete->is_set()))
+        return {};
+    std::set<std::string> reachable;
+    reachable.insert(effective_cpp_name(concrete->name, current_module_));
+    collect_class_types_reachable(*concrete, reachable);
+    reachable.erase(self_name);
+    // An anonymous inline member's "$anon:<ptr>" placeholder (see
+    // collect_class_types_reachable's own doc) is only meaningful as a
+    // visited-set cycle terminator — it names no real generated file, so
+    // it must never reach write_type_reference as an #include target.
+    std::vector<std::string> out;
+    for (auto& name : reachable) {
+        if (!name.starts_with("$anon:")) out.push_back(name);
+    }
+    return out;
+}
+
 // Collect flattened BER dispatch tags for one CHOICE alternative (X.690 §8.13,
 // X.680 §24.6). If the alternative has its own BER tag, add one entry.
 // If it resolves to an untagged CHOICE (empty natural tag), recurse into its
@@ -1504,6 +1615,49 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         backend_.emit_special_members(cname, session);
     }
 
+    // SEQUENCE OF/SET OF member whose element (possibly through a bare
+    // TypeRef alias) cycles back to this enclosing type: VectorSeqOf<T>'s
+    // own declaration never needs T complete (bare_alias_would_cycle's own
+    // doc), but TypeLifecycleOps::make_clone_fn<{cname}>'s instantiation
+    // right below does — it needs the element type's real copy
+    // constructor, and — since `cname` itself has no OPTIONAL members
+    // here in the has_optional_members==false case, so its own copy ctor
+    // is implicit/inline — that copy ctor's *own* transitive member types
+    // too (collect_extra_includes_for's own doc). The normal #include
+    // chain already provides all of this in the non-cyclic case; only a
+    // genuine cycle needs the extra direct #includes here
+    // (bare_alias_would_cycle's forward-declare is what breaks the chain
+    // that would otherwise provide it). Gated on
+    // needs_forward_declare_for_cyclic_alias() for the same reason that
+    // flag exists at all: Rust's whole-crate resolution never took the
+    // forward-declare branch in the first place, so it never has this gap
+    // to fill either — these extra references would just be dead
+    // (unused-import warning) weight there.
+    if (backend_.needs_forward_declare_for_cyclic_alias()) {
+        bool emitted_extra = false;
+        auto emit_seqof_elem_include = [&](const ast::TypeDef& m) {
+            if (!m.is_seq_of() && !m.is_set_of()) return;
+            const auto& elem = m.is_seq_of()
+                ? std::get<ast::SequenceOfType>(m.body).element
+                : std::get<ast::SetOfType>(m.body).element;
+            auto* tr = std::get_if<ast::TypeRef>(&elem->body);
+            if (!tr) return;
+            auto concrete = resolver_.resolve_ref(*tr, current_module_);
+            if (!concrete || !(concrete->is_sequence() || concrete->is_choice() || concrete->is_set()))
+                return;
+            std::set<std::string> visited;
+            if (!type_reaches_via_containers(*concrete, cname, visited)) return;
+            auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+            for (const auto& extra : collect_extra_includes_for(tr->type_name, cname)) {
+                write_type_reference(extra, inc_os);
+                emitted_extra = true;
+            }
+        };
+        for (auto* m : sm_root) emit_seqof_elem_include(*m);
+        for (auto* m : sm_ext)  emit_seqof_elem_include(*m);
+        if (emitted_extra) { auto& nl_os = pre_ns_os_ ? *pre_ns_os_ : os; nl_os << "\n"; }
+    }
+
     // Count root-only optional members (for PER preamble bitmap width).
     // Extension members are NOT counted — they have their own extension bitmap.
     int roms_count = static_cast<int>(
@@ -2108,7 +2262,16 @@ void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, 
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto inc = cpp_name_for_typeref(*tr);
         auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : decl_body;
-        write_type_reference(inc, inc_os);
+        // A bare alias declaration (`using Alias = Target;`) only needs
+        // Target declared, never complete — forward-declare instead of
+        // #including when Target's own structure cycles back to this
+        // alias (bare_alias_would_cycle's own doc), so the #pragma once
+        // chain doesn't destructively truncate before either type is ever
+        // fully defined.
+        if (backend_.needs_forward_declare_for_cyclic_alias() && bare_alias_would_cycle(inc, cname))
+            write_forward_declaration(inc, inc_os);
+        else
+            write_type_reference(inc, inc_os);
         backend_.emit_typeref_alias_declaration(cname, inc, dispatch);
     }
 
@@ -2319,6 +2482,28 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     const auto& elem_node = def.is_seq_of()
         ? *std::get<ast::SequenceOfType>(def.body).element
         : *std::get<ast::SetOfType>(def.body).element;
+
+    // Element type (possibly through a bare TypeRef alias) needing extra
+    // .cpp-side #includes beyond the normal chain — same rationale as
+    // emit_sequence_definition's own identical block: VectorSeqOf<T>'s
+    // declaration never needs T complete, but instantiating T's (implicit,
+    // since a plain seq-of wrapper carries no OPTIONAL members of its own)
+    // copy constructor for TypeLifecycleOps::make_clone_fn<VectorSeqOf<T>>
+    // does, transitively through T's own members.
+    if (backend_.needs_forward_declare_for_cyclic_alias()) {
+        if (auto* tr = std::get_if<ast::TypeRef>(&elem_node.body)) {
+            auto concrete = resolver_.resolve_ref(*tr, current_module_);
+            if (concrete && (concrete->is_sequence() || concrete->is_choice() || concrete->is_set())) {
+                std::ostream& inc_os = session.buffer(backend_.definition_extension());
+                bool emitted_extra = false;
+                for (const auto& extra : collect_extra_includes_for(tr->type_name, cname)) {
+                    write_type_reference(extra, inc_os);
+                    emitted_extra = true;
+                }
+                if (emitted_extra) inc_os << "\n";
+            }
+        }
+    }
 
     SeqOfSpec spec;
     spec.type_name = cname;
