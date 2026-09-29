@@ -165,6 +165,13 @@ public:
     // grows real BER/XER dispatch tables for SEQUENCE OF/SET OF members.
     bool needs_seqof_wrapper_reference() const override { return false; }
 
+    // See Backend::needs_forward_declare_for_cyclic_alias's own doc: Rust's
+    // whole-crate name resolution needs the ordinary `use` import
+    // regardless of cycles, and RustBackend::emit_forward_declaration below
+    // is a true no-op — following the C++ default here would silently drop
+    // that import for a cyclic bare-alias reference.
+    bool needs_forward_declare_for_cyclic_alias() const override { return false; }
+
     void emit_forward_declaration(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_special_members(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_optional_member_ops(const std::string& type_name, const std::string& member_name,

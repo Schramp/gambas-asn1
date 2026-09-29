@@ -480,6 +480,40 @@ private:
     bool type_reaches(const ast::TypeDef& from, const std::string& target,
                        std::set<std::string>& visited) const;
     bool member_type_in_cycle(const ast::TypeDef& m, const std::string& enclosing_name) const;
+
+    // Cycle detection for a bare top-level TypeRef alias's own #include-vs-
+    // forward-declare decision (emit_type_body) — see
+    // bare_alias_would_cycle's own doc for the full rationale. Unlike
+    // type_reaches (member_type_in_cycle's traversal, scalar class-typed
+    // members only), this also follows SEQUENCE OF/SET OF element types,
+    // since a container-mediated cycle needs no boxing (VectorSeqOf<T>'s
+    // declaration never needs T complete) but does need the alias sitting
+    // on the cycle to forward-declare, or the #pragma once chain
+    // destructively truncates before any type in the cycle is ever fully
+    // defined.
+    bool type_reaches_via_containers(const ast::TypeDef& from, const std::string& target,
+                                      std::set<std::string>& visited) const;
+    bool bare_alias_would_cycle(const std::string& target_name, const std::string& alias_name) const;
+
+    // Full transitive closure of class-typed names reachable from `from` via
+    // any member path (direct, inline, or SEQUENCE OF/SET OF-mediated) —
+    // collect_extra_includes_for's own doc for why a single direct level
+    // (bare_alias_would_cycle's own check) isn't always enough: a class
+    // without OPTIONAL members gets an *implicit* (compiler-generated,
+    // inline) copy constructor, so instantiating it wherever needed
+    // transitively needs every type it touches complete too, not just its
+    // own direct members. An anonymous inline member has no independent
+    // ASN.1 name, so it's recorded as a "$anon:<ptr>" placeholder — only
+    // meaningful for terminating this DFS, never a real #include target
+    // (collect_extra_includes_for filters these back out before returning).
+    void collect_class_types_reachable(const ast::TypeDef& from, std::set<std::string>& out) const;
+    // Extra #include set a type wrapping `elem_type_name` (a SEQUENCE OF/SET
+    // OF element, direct or a class type) needs in its own .cpp, beyond
+    // what the normal #include chain already provides — the full
+    // transitive closure via collect_class_types_reachable, minus
+    // `self_name` (already complete in that file).
+    std::vector<std::string> collect_extra_includes_for(const std::string& elem_type_name,
+                                                         const std::string& self_name) const;
 };
 
 } // namespace asn1::codegen
