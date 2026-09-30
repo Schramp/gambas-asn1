@@ -1,0 +1,23 @@
+-- OK: Everything is fine
+-- X.683 ParameterArgumentList is a genuine comma-separated list (see
+-- asn1c's own libasn1parser/asn1p_y.y ParameterArgumentList production),
+-- so a parameterized type may take more than one formal parameter,
+-- mixing a type parameter with a value parameter. Exercises two distinct
+-- instantiations of the same two-parameter generic.
+
+ModuleTestMultiParam
+	{ iso org(3) dod(6) internet(1) private(4) enterprise(1)
+		spelio(9363) software(1) asn1c(5) test(1) 1004 }
+	DEFINITIONS ::=
+BEGIN
+
+	Bounded { Elem, INTEGER:maxSize } ::= SEQUENCE {
+		items	SEQUENCE (SIZE(0..maxSize)) OF Elem
+	}
+
+	Bunch ::= SEQUENCE {
+		small	Bounded { INTEGER, 4 },
+		large	Bounded { IA5String, 255 }
+	}
+
+END

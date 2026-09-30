@@ -659,11 +659,17 @@ ParameterArgumentName:
 	| BasicTypeId ':' TypeRefName      { $$ = $3; }       /* {INTEGER:Name}    → "Name"  */
 	;
 
-/* Actual parameter list: Flag{INTEGER{red(0),green(1),blue(5)}}.
-   Type-valued actuals (UntaggedType) are captured as TypeDefPtrs so the resolver
-   can inspect their named-value lists when validating DEFAULT names.
-   Value-valued actuals (SimpleValue, DefinedValue, ValueSet) are stored as nullptr
-   since we do not currently validate DEFAULT names against them. */
+/* Actual parameter list: Flag{INTEGER{red(0),green(1),blue(5)}}, or
+   Bounded{INTEGER, 4} (X.683 — a formal parameter may be governed by a
+   Type, in which case its actuals are types, or by a value's Type, in
+   which case its actuals are values).
+   Type-valued actuals (UntaggedType) are captured as TypeDefPtrs directly.
+   Value-valued actuals (SimpleValue, DefinedValue) are wrapped in a
+   TypeDefPtr with only `value_literal` set (body stays monostate) so
+   sema/resolve_parameterized_instantiations can substitute a formal value
+   parameter's uses with the actual value at each instantiation site.
+   ValueSet actuals remain nullptr — X.683's value-set/object/object-set
+   governors are out of scope (see resolve_parameterized_instantiations). */
 ActualParameterList:
 	  ActualParameter
 	    { $$ = std::vector<TypeDefPtr>{std::move($1)}; }
@@ -673,8 +679,18 @@ ActualParameterList:
 
 ActualParameter:
 	  UntaggedType { $$ = std::move($1); }
-	| SimpleValue  { $$ = nullptr; }
-	| DefinedValue { $$ = nullptr; }
+	| SimpleValue
+	{
+	    auto t = std::make_shared<TypeDef>();
+	    t->value_literal = std::move($1);
+	    $$ = t;
+	}
+	| DefinedValue
+	{
+	    auto t = std::make_shared<TypeDef>();
+	    t->value_literal = std::move($1);
+	    $$ = t;
+	}
 	| ValueSet     { $$ = nullptr; }
 	;
 
