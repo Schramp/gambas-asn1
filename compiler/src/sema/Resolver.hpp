@@ -337,6 +337,39 @@ public:
                 check_and_resolve(def, mod->name);
     }
 
+    /// @brief Resolve every X.681 §14 Information Object Class field-type
+    ///        reference (`ClassName.&field`, TypeRef::class_field) into its
+    ///        real type, in place, before any codegen logic ever sees the
+    ///        placeholder. Must run after collect() (needs the module/global
+    ///        symbol tables populated).
+    ///
+    /// A bare type-field reference (`&Type`, no fixed type given in the
+    /// class body — X.681 §14.1 TypeFieldSpec) has no single answer without
+    /// picking a specific object from an object set — resolving that
+    /// properly needs per-object dynamic dispatch (parameterization +
+    /// relational constraints, X.681 §14.6/§15), which this deliberately
+    /// does not attempt. Every such reference resolves to ANY (X.691 §10.2
+    /// open-type octets) instead — a wire-correct but imprecise fallback,
+    /// the same shape asn1c's own generated OER/PER tables fall back to for
+    /// the field's own storage when no explicit per-alternative dispatch is
+    /// wired (this codebase has none at all yet).
+    ///
+    /// A fixed-type field (`&id INTEGER`, X.681 §14.1 FixedTypeValueFieldSpec
+    /// — the *value*'s type never varies by object) resolves exactly, every
+    /// time, regardless of which object set is named in the reference's own
+    /// `{...}` constraint (already discarded by the parser action that
+    /// built this TypeRef — see DefinedType's own grammar action).
+    ///
+    /// An unresolvable class name or field name (malformed input, or a
+    /// multi-level field chain like `&Foo.&Bar` this pass doesn't attempt to
+    /// walk) also falls back to ANY rather than leaving the placeholder
+    /// TypeRef in place for codegen to choke on.
+    void resolve_class_field_refs(const ast::ParseResult& pr) {
+        for (const auto& mod : pr.modules)
+            for (const auto& def : mod->assignments)
+                resolve_class_field_refs_in(def, mod->name);
+    }
+
     // Phase: check top-level value assignments for undefined and circular references.
     // `alpha INTEGER ::= beta` is a value assignment: body=Integer, default_value=NamedValueRef.
     // Undefined: beta not in symbol table → error.
@@ -487,6 +520,44 @@ public:
     }
 
 private:
+    // Resolve a single class-field TypeRef into its real type, in place —
+    // resolve_class_field_refs's own doc for the fixed-field/open-field/
+    // unresolvable-fallback rules. `def->body` already holds the TypeRef
+    // being resolved; overwritten with the result.
+    void resolve_one_class_field_ref(const ast::TypeDefPtr& def, const std::string& from_module) {
+        auto* tr = std::get_if<ast::TypeRef>(&def->body);
+        if (!tr || tr->class_field.empty()) return;
+        auto class_def = lookup_direct(tr->type_name, from_module);
+        if (class_def) {
+            for (const auto& field : class_def->members) {
+                if (field && field->name == tr->class_field) {
+                    if (!std::holds_alternative<std::monostate>(field->body)) {
+                        def->body = field->body; // fixed-type field: exact answer
+                        return;
+                    }
+                    break; // found the field, but it's a bare/open TypeFieldSpec
+                }
+            }
+        }
+        def->body = ast::BuiltinType::Any; // open field, or class/field not found
+    }
+
+    // Walk every member/element reachable from `def`, resolving any class-
+    // field TypeRef found along the way. Mirrors the shape of Generator's
+    // own member-collection walkers (SEQUENCE/SET/CHOICE members, SEQUENCE
+    // OF/SET OF element) — this pass only needs to *see* every TypeDef that
+    // could hold one, not classify what kind of member it is.
+    void resolve_class_field_refs_in(const ast::TypeDefPtr& def, const std::string& from_module) {
+        if (!def) return;
+        resolve_one_class_field_ref(def, from_module);
+        for (const auto& m : def->members)
+            resolve_class_field_refs_in(m, from_module);
+        if (auto* sof = std::get_if<ast::SequenceOfType>(&def->body))
+            resolve_class_field_refs_in(sof->element, from_module);
+        else if (auto* sof = std::get_if<ast::SetOfType>(&def->body))
+            resolve_class_field_refs_in(sof->element, from_module);
+    }
+
     // --- Tag-distinctness helpers ------------------------------------------------
     struct TagSet {
         using Key = std::pair<uint8_t /*TagClass*/, uint32_t /*tag number*/>;

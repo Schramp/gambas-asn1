@@ -2719,7 +2719,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 seqof_td->tag = ast::Tag{};
                 if (!elem_type_name.empty()) {
                     auto named_elem = std::make_shared<ast::TypeDef>();
-                    named_elem->body = ast::TypeRef{"", elem_type_name, {}};
+                    named_elem->body = ast::TypeRef{"", elem_type_name, {}, ""};
                     if (m->is_seq_of())
                         seqof_td->body = ast::SequenceOfType{named_elem};
                     else
