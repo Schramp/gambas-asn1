@@ -209,6 +209,7 @@ int main(int argc, char** argv) {
     resolver.resolve_imports(pr);
     resolver.resolve_types(pr);
     resolver.resolve_class_field_refs(pr);
+    resolver.resolve_parameterized_instantiations(pr);
     resolver.resolve_value_assignments(pr);
 
     for (const auto& w : resolver.warnings())
