@@ -25,8 +25,22 @@ static const struct option long_opts[] = {
     {"pdu",                  required_argument, nullptr, 'D'},
     {"integer-type",         required_argument, nullptr, 'I'},
     {"target",               required_argument, nullptr, 'T'},
+    {"stdlib-dir",           required_argument, nullptr, 'S'},
     {nullptr, 0, nullptr, 0}
 };
+
+#ifndef ASN1CPP_STDLIB_DIR
+#define ASN1CPP_STDLIB_DIR ""
+#endif
+
+// X.681 Annex A/B (TYPE-IDENTIFIER, ABSTRACT-SYNTAX) and X.208 §34
+// (EXTERNAL) are implicitly available in every module without an
+// IMPORTS clause. Rather than hand-building their AST, parse the real
+// .asn1 module that defines them (verbatim copy of asn1c's own
+// skeletons/standard-modules/ASN1C-UsefulInformationObjectClasses.asn1 —
+// asn1c is this project's ground-truth reference compiler) through the
+// same grammar as any user file, before the user's own modules.
+static const char* kStdlibModuleFile = "ASN1C-UsefulInformationObjectClasses.asn1";
 
 static void print_help(const char* prog) {
     std::cout <<
@@ -48,7 +62,11 @@ static void print_help(const char* prog) {
         "                              -pdu=all is accepted as an alias for the default.\n"
         "  --integer-type=<kind>       Integer storage: int64 (default), uint64,\n"
         "                              int128 (unimplemented), arbitrary (unimplemented)\n"
-        "  --target=<lang>             Output language: cpp (default) or rust (WIP).\n";
+        "  --target=<lang>             Output language: cpp (default) or rust (WIP).\n"
+        "  --stdlib-dir=<dir>          Directory containing " << kStdlibModuleFile << "\n"
+        "                              (X.681 TYPE-IDENTIFIER/ABSTRACT-SYNTAX + X.208\n"
+        "                              EXTERNAL, auto-included in every module).\n"
+        "                              Default: " ASN1CPP_STDLIB_DIR "\n";
 }
 
 static void usage(const char* prog) {
@@ -56,7 +74,7 @@ static void usage(const char* prog) {
               << " [-E] [-o outdir] [-fallow-newer-modules] [-fbless-SIZE]"
                  " [-fprefix=<name>] [-pdu=<TypeName>]"
                  " [--integer-type=int64|uint64|int128|arbitrary]"
-                 " [--target=cpp|rust]"
+                 " [--target=cpp|rust] [--stdlib-dir=<dir>]"
                  " file.asn1 [file2.asn1 ...]\n"
                  "Try '" << prog << " --help' for more information.\n";
     std::exit(1);
@@ -71,6 +89,7 @@ int main(int argc, char** argv) {
     bool parse_only = false;
     asn1::codegen::IntStorageKind default_int_kind = asn1::codegen::IntStorageKind::S64;
     std::string target = "cpp";
+    std::string stdlib_dir = ASN1CPP_STDLIB_DIR;
     std::vector<std::string> input_files;
 
     int opt;
@@ -114,6 +133,9 @@ int main(int argc, char** argv) {
                 usage(argv[0]);
             }
             break;
+        case 'S':
+            stdlib_dir = optarg;
+            break;
         default: usage(argv[0]);
         }
     }
@@ -136,6 +158,24 @@ int main(int argc, char** argv) {
     }
 
     asn1::ast::ParseResult pr;
+
+    if (!stdlib_dir.empty()) {
+        fs::path stdlib_path = fs::path(stdlib_dir) / kStdlibModuleFile;
+        std::ifstream stdlib_in(stdlib_path);
+        if (!stdlib_in) {
+            std::cerr << "error: cannot open predefined-classes module " << stdlib_path
+                      << " (see --stdlib-dir)\n";
+            return 1;
+        }
+        std::string stdlib_src((std::istreambuf_iterator<char>(stdlib_in)),
+                                std::istreambuf_iterator<char>());
+        Lexer stdlib_lexer(reflex::Input(stdlib_src), std::cerr);
+        yy::parser stdlib_parser(stdlib_lexer, pr);
+        if (stdlib_parser.parse() != 0) {
+            std::cerr << "Parse error in " << stdlib_path << "\n";
+            return 1;
+        }
+    }
 
     for (const auto& path : input_files) {
         std::ifstream in(path);
@@ -168,6 +208,7 @@ int main(int argc, char** argv) {
     resolver.collect(pr);
     resolver.resolve_imports(pr);
     resolver.resolve_types(pr);
+    resolver.resolve_class_field_refs(pr);
     resolver.resolve_value_assignments(pr);
 
     for (const auto& w : resolver.warnings())

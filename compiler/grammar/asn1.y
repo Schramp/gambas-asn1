@@ -189,7 +189,8 @@
 
 /* References */
 %type <std::string>                 TypeRefName
-%type <std::string>                 ComplexTypeReference ComplexTypeReferenceAmpList
+%type <TypeRef>                     ComplexTypeReference
+%type <std::string>                 ComplexTypeReferenceAmpList
 %type <std::string>                 ComplexTypeReferenceElement PrimitiveFieldReference
 %type <std::string>                 FieldName DefinedObjectClass
 
@@ -761,7 +762,7 @@ ConcreteTypeDeclaration:
 	| TOK_INSTANCE TOK_OF ComplexTypeReference
 	{
 	    auto t = std::make_shared<TypeDef>();
-	    t->body = InstanceOfType{$3};
+	    t->body = InstanceOfType{$3.type_name};
 	    $$ = t;
 	}
 	;
@@ -854,38 +855,46 @@ DefinedType:
 	  ComplexTypeReference
 	{
 	    auto t = std::make_shared<TypeDef>();
-	    auto s = $1;
-	    auto dot = s.find('.');
-	    if (dot != std::string::npos && s.find('&') == std::string::npos)
-	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), {}};
-	    else
-	        t->body = TypeRef{"", s, {}};
+	    t->body = std::move($1);
 	    $$ = t;
 	}
 	| ComplexTypeReference '{' ActualParameterList '}'
 	{
 	    auto t = std::make_shared<TypeDef>();
-	    auto s = $1;
-	    auto dot = s.find('.');
-	    if (dot != std::string::npos && s.find('&') == std::string::npos)
-	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), std::move($3)};
-	    else
-	        t->body = TypeRef{"", s, std::move($3)};
+	    auto tr = std::move($1);
+	    // A trailing `{...}` on a class-field reference (X.681 §14) is an
+	    // object-set/relational constraint, not a real parameter list —
+	    // $3 is deliberately discarded: resolving that constraint would
+	    // mean full per-object dynamic type dispatch, which
+	    // resolve_class_field_refs's own doc explains this pass does not
+	    // attempt — every reference to this class field resolves to the
+	    // same one answer (the field's fixed type, or ANY) regardless of
+	    // which object set is named here.
+	    if (tr.class_field.empty())
+	        tr.params = std::move($3);
+	    t->body = std::move(tr);
 	    $$ = t;
 	}
 	;
 
 ComplexTypeReference:
 	  TOK_typereference
-	    { $$ = $1; }
+	    { $$ = TypeRef{"", $1, {}, ""}; }
 	| TOK_capitalreference
-	    { $$ = $1; }
+	    { $$ = TypeRef{"", $1, {}, ""}; }
 	| TOK_typereference '.' TypeRefName
-	    { $$ = $1 + "." + $3; }
+	    { $$ = TypeRef{$1, $3, {}, ""}; }
 	| TOK_capitalreference '.' TypeRefName
-	    { $$ = $1 + "." + $3; }
+	    { $$ = TypeRef{$1, $3, {}, ""}; }
 	| TOK_capitalreference '.' ComplexTypeReferenceAmpList
-	    { $$ = $1 + "." + $3; }
+	    // X.681 §14 Information Object Class field-type reference
+	    // (`ClassName.&field`, e.g. `DCLASS.&id`) — ComplexTypeReferenceAmpList
+	    // only ever reduces through PrimitiveFieldReference
+	    // (TOK_typefieldreference/TOK_valuefieldreference, i.e. an
+	    // identifier starting with '&'), so this production is the
+	    // syntactic marker for a class-field reference; no need to
+	    // re-derive it later by scanning the text for '&'.
+	    { $$ = TypeRef{"", $1, {}, $3}; }
 	;
 
 ComplexTypeReferenceAmpList:
@@ -1028,7 +1037,7 @@ ComponentType:
 	| TOK_COMPONENTS TOK_OF MaybeIndirectTaggedType
 	{
 	    auto t = std::make_shared<TypeDef>();
-	    t->body = TypeRef{"", "__COMPONENTS_OF__", {$3}};
+	    t->body = TypeRef{"", "__COMPONENTS_OF__", {$3}, ""};
 	    $$ = t;
 	}
 	| ExtensionAndException { $$ = $1; }
@@ -1129,8 +1138,17 @@ ClassField:
 	}
 	| TOK_valuefieldreference Type optUNIQUE optMarker
 	{
+	    // FixedTypeValueFieldSpec (X.681 §14.1, e.g. `&id INTEGER`): the
+	    // field's *value* always has this fixed type, so a type-position
+	    // reference to it (`DCLASS.&id`) always resolves to it too,
+	    // regardless of which object in a set is selected — unlike a bare
+	    // TypeFieldSpec (`&Type` alone, the branch above/below with no
+	    // Type given), which has no single answer without picking a
+	    // specific object. See sema/resolve_class_field_refs's own doc for
+	    // where this stored body is actually consumed.
 	    auto t = std::make_shared<TypeDef>();
 	    t->name   = $1;
+	    t->body   = $2->body;
 	    t->marker = $4.marker;
 	    $$ = t;
 	}
