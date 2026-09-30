@@ -973,8 +973,21 @@ DefaultValueSpec Generator::default_value_spec_for(const ast::TypeDef& m) const 
 
     if (auto* b = std::get_if<bool>(&m.default_value))
         return { DefaultValueSpec::Kind::Bool, *b, 0, "", "" };
-    if (auto* i = std::get_if<int64_t>(&m.default_value))
+    if (auto* i = std::get_if<int64_t>(&m.default_value)) {
+        // A parameterized type's DEFAULT literal is written against the
+        // formal parameter, not its eventual actual type (X.683) — e.g.
+        // `TestType{Parameter} ::= SEQUENCE { common Parameter DEFAULT 0 }`
+        // instantiated with Parameter=BOOLEAN. asn1c accepts this leniently
+        // (its BOOLEAN_t is a plain C int, so `0` needs no coercion); ported
+        // here as an explicit int->bool coercion since Rust's real `bool`
+        // has none for free.
+        const ast::TypeDef* base = resolve_underlying(m, resolver_);
+        bool is_bool = base && std::holds_alternative<ast::BuiltinType>(base->body)
+            && std::get<ast::BuiltinType>(base->body) == ast::BuiltinType::Boolean;
+        if (is_bool)
+            return { DefaultValueSpec::Kind::Bool, *i != 0, 0, "", "" };
         return { DefaultValueSpec::Kind::Int, false, *i, "", "" };
+    }
     if (auto* s = std::get_if<std::string>(&m.default_value))
         return { DefaultValueSpec::Kind::String, false, 0, *s, "" };
     if (auto* nr = std::get_if<ast::NamedValueRef>(&m.default_value)) {

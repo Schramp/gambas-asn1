@@ -151,7 +151,7 @@ public:
         std::unordered_map<std::string, std::string> first_module;
         for (const auto& mod : pr.modules)
             for (const auto& def : mod->assignments)
-                if (!def->name.empty() && !def->is_extension_marker) {
+                if (!def->name.empty() && !def->is_extension_marker && !def->is_parameterized) {
                     auto cpp = backend_.type_name(def->name);
                     auto [it, inserted] = first_module.emplace(cpp, mod->name);
                     if (!inserted && it->second != mod->name)
@@ -176,7 +176,14 @@ public:
             // this module's real default.
             current_tag_default_ = mod->tag_default;
             for (const auto& def : mod->assignments)
-                if (!def->name.empty() && !def->is_extension_marker) {
+                if (!def->name.empty() && !def->is_extension_marker && !def->is_parameterized) {
+                    // A parameterized type (X.683) has no independent wire
+                    // representation of its own — resolve_parameterized_
+                    // instantiations already monomorphized every actual
+                    // reference to it into its own concrete type (or, if
+                    // never referenced, it's genuinely dead). Mirrors
+                    // ground-truth asn1c, which forward-declares but never
+                    // defines the un-instantiated generic.
                     if (!pdu_roots_.empty() && !reachable_asn_names_.count(def->name)) continue;
                     generated_names_.insert(effective_cpp_name(def->name, mod->name));
                     generate_inline_types(*def, *mod);

@@ -1,6 +1,8 @@
 #pragma once
 #include <algorithm>
+#include <cctype>
 #include <climits>
+#include <cstdint>
 #include <set>
 #include <string>
 #include <string_view>
@@ -370,6 +372,61 @@ public:
                 resolve_class_field_refs_in(def, mod->name);
     }
 
+    /// @brief Monomorphize every X.683 parameterized-type instantiation
+    ///        (`Generic{actual, ...}`) into its own concrete type, in place,
+    ///        before codegen — a parameterized type is a template, not a
+    ///        runtime generic (X.683's own semantics: each distinct
+    ///        actual-parameter list is a separate wire type with its own tag
+    ///        structure, confirmed against ground-truth asn1c's own codegen,
+    ///        which never emits a definition for the un-instantiated
+    ///        generic, only forward-declares it).
+    ///
+    /// For each instantiation site (a TypeRef with non-empty `params`
+    /// naming a generic with `is_parameterized == true`): zips
+    /// `formal_params` with the actual arguments positionally (arbitrary
+    /// arity), deep-clones the generic's body, substitutes every use of a
+    /// formal — as a type (TypeRef::type_name) or as a value (inside a
+    /// DEFAULT or constraint bound) — with the corresponding actual, and
+    /// registers the result as a new top-level type in the same module
+    /// (name synthesized from the actual arguments). Identical
+    /// instantiations (same generic + same actual-argument signature) from
+    /// multiple sites collapse to one generated type. The reference site is
+    /// rewritten to a plain TypeRef naming the new concrete type.
+    ///
+    /// Scope limit: only plain Type and plain Value formal-parameter
+    /// governors (the shapes X.683's own corpus exercises via asn1c).
+    /// Value-set/object/object-set governors (X.683's more exotic cases,
+    /// e.g. `ActualParameter: ValueSet`) aren't captured by the parser at
+    /// all (ValueSet actuals parse to nullptr — see asn1.y's
+    /// ActualParameter) and so are silently left unresolved here — the
+    /// reference site keeps its (now-permanently-unresolvable)
+    /// TypeRef::params, which surfaces downstream as an ordinary
+    /// undefined-type diagnostic rather than silently wrong output.
+    /// Recursive parameterization (a parameterized type instantiating
+    /// another using its own formal as an actual) is also out of scope:
+    /// this pass makes a single substitution pass per site, not a
+    /// fixed-point iteration.
+    ///
+    /// Must run after collect() (needs symbol tables) and after
+    /// resolve_class_field_refs (an IOC field's fixed type may itself need
+    /// to be in its final form before an instantiation using it can be
+    /// named/signed for dedup).
+    void resolve_parameterized_instantiations(ast::ParseResult& pr) {
+        std::unordered_map<std::string, ast::TypeDefPtr> cache;
+        std::unordered_set<std::string> used_names;
+        for (const auto& mod : pr.modules) {
+            std::vector<ast::TypeDefPtr> new_instances;
+            // Snapshot: walk only the originally-parsed assignments. A
+            // freshly-substituted instance is already parameter-free (see
+            // scope limit above), so it never needs a second pass.
+            auto original = mod->assignments;
+            for (const auto& def : original)
+                resolve_parameterized_instantiations_in(def, mod->name, cache, used_names, new_instances);
+            for (auto& inst : new_instances)
+                mod->assignments.push_back(std::move(inst));
+        }
+    }
+
     // Phase: check top-level value assignments for undefined and circular references.
     // `alpha INTEGER ::= beta` is a value assignment: body=Integer, default_value=NamedValueRef.
     // Undefined: beta not in symbol table → error.
@@ -556,6 +613,255 @@ private:
             resolve_class_field_refs_in(sof->element, from_module);
         else if (auto* sof = std::get_if<ast::SetOfType>(&def->body))
             resolve_class_field_refs_in(sof->element, from_module);
+    }
+
+    // --- X.683 parameterized-type monomorphization helpers -----------------------
+
+    // Deep-clone a Constraint tree. Needed because a generic's constraints
+    // (e.g. SIZE(0..maxSize)) are shared ConstraintPtrs — substituting a
+    // formal value parameter's uses must not mutate the generic's own
+    // definition, which other instantiation sites still need untouched.
+    static ast::ConstraintPtr clone_constraint(const ast::ConstraintPtr& src) {
+        if (!src) return nullptr;
+        auto dst = std::make_shared<ast::Constraint>(*src);
+        if (auto* sc = std::get_if<ast::SizeConstraint>(&dst->body)) sc->inner = clone_constraint(sc->inner);
+        else if (auto* fc = std::get_if<ast::FromConstraint>(&dst->body)) fc->inner = clone_constraint(fc->inner);
+        else if (auto* wc = std::get_if<ast::WithComponent>(&dst->body)) wc->inner = clone_constraint(wc->inner);
+        else if (auto* ic = std::get_if<ast::IntersectionConstraint>(&dst->body))
+            for (auto& op : ic->operands) op = clone_constraint(op);
+        else if (auto* uc = std::get_if<ast::UnionConstraint>(&dst->body))
+            for (auto& op : uc->operands) op = clone_constraint(op);
+        return dst;
+    }
+
+    // Deep-clone a TypeDef tree (members, SEQUENCE OF/SET OF element,
+    // constraints) — same reasoning as clone_constraint: a monomorphized
+    // instance must be a fully independent copy of the generic's body, since
+    // substitution mutates in place and other instantiation sites share the
+    // same generic definition.
+    static ast::TypeDefPtr clone_typedef(const ast::TypeDefPtr& src) {
+        if (!src) return nullptr;
+        auto dst = std::make_shared<ast::TypeDef>(*src);
+        for (auto& m : dst->members) m = clone_typedef(m);
+        for (auto& c : dst->constraints) c = clone_constraint(c);
+        if (auto* sof = std::get_if<ast::SequenceOfType>(&dst->body)) sof->element = clone_typedef(sof->element);
+        else if (auto* sof = std::get_if<ast::SetOfType>(&dst->body)) sof->element = clone_typedef(sof->element);
+        return dst;
+    }
+
+    // Canonical string for a single Value, for building a dedup signature.
+    static std::string value_signature(const ast::Value& v) {
+        if (auto* i = std::get_if<int64_t>(&v))  return std::to_string(*i);
+        if (auto* u = std::get_if<uint64_t>(&v)) return std::to_string(*u);
+        if (auto* d = std::get_if<double>(&v))   return std::to_string(*d);
+        if (auto* b = std::get_if<bool>(&v))     return *b ? "T" : "F";
+        if (auto* s = std::get_if<std::string>(&v)) return "\"" + *s + "\"";
+        if (auto* n = std::get_if<ast::NamedValueRef>(&v)) return n->module_name + "." + n->name;
+        return "-";
+    }
+
+    // Canonical string for a Constraint tree, for building a dedup
+    // signature — two actual parameters that differ only in constraint
+    // bounds (`INTEGER (1..10)` vs `INTEGER (1..20)`) must never collapse
+    // to the same cached instantiation.
+    static std::string constraint_signature(const ast::ConstraintPtr& c) {
+        if (!c) return "";
+        std::string s;
+        if (auto* vr = std::get_if<ast::ValueRange>(&c->body))
+            s = "R[" + value_signature(vr->lower.value) + ".." + value_signature(vr->upper.value) + "]";
+        else if (auto* v = std::get_if<ast::Value>(&c->body))
+            s = "V(" + value_signature(*v) + ")";
+        else if (auto* sc = std::get_if<ast::SizeConstraint>(&c->body))
+            s = "SIZE(" + constraint_signature(sc->inner) + ")";
+        else if (auto* fc = std::get_if<ast::FromConstraint>(&c->body))
+            s = "FROM(" + constraint_signature(fc->inner) + ")";
+        else if (auto* wc = std::get_if<ast::WithComponent>(&c->body))
+            s = "WC(" + constraint_signature(wc->inner) + ")";
+        else if (auto* pc = std::get_if<ast::PatternConstraint>(&c->body))
+            s = "PAT(" + pc->pattern + ")";
+        else if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c->body)) {
+            s = "AND(";
+            for (auto& op : ic->operands) s += constraint_signature(op) + ",";
+            s += ")";
+        } else if (auto* uc = std::get_if<ast::UnionConstraint>(&c->body)) {
+            s = "OR(";
+            for (auto& op : uc->operands) s += constraint_signature(op) + ",";
+            s += ")";
+        }
+        if (c->extensible) s += "+";
+        return s;
+    }
+
+    // Canonical string identifying one actual parameter, for the
+    // instantiation-dedup cache key. A composite/anonymous actual (no clean
+    // type/value spelling) falls back to its own AST node's pointer
+    // identity — safe (never over-dedups two textually-identical-but-
+    // separately-parsed anonymous actuals into one), just misses an
+    // optimization opportunity for that rare shape.
+    static std::string actual_signature(const ast::TypeDefPtr& p) {
+        if (!p) return "<null>";
+        if (p->value_literal) return "v:" + value_signature(*p->value_literal);
+        if (auto* tr = std::get_if<ast::TypeRef>(&p->body)) {
+            std::string s = "t:" + tr->module_name + "." + tr->type_name;
+            for (auto& c : p->constraints) s += constraint_signature(c);
+            for (auto& pp : tr->params) s += "," + actual_signature(pp);
+            return s;
+        }
+        if (auto* bt = std::get_if<ast::BuiltinType>(&p->body)) {
+            std::string s = std::string("t:") + builtin_type_name(*bt);
+            for (auto& c : p->constraints) s += constraint_signature(c);
+            return s;
+        }
+        return "t:anon:" + std::to_string(reinterpret_cast<uintptr_t>(p.get()));
+    }
+
+    // Human-readable name for a monomorphized instance, e.g.
+    // "Collection_REAL" or "Bounded_INTEGER_4". Falls back to "P" for an
+    // actual with no clean spelling (composite/anonymous) — the caller
+    // guards against the resulting collision risk with a used-names set.
+    static std::string instance_name_part(const ast::TypeDefPtr& p) {
+        std::string part;
+        if (p) {
+            if (p->value_literal) part = value_signature(*p->value_literal);
+            else if (auto* tr = std::get_if<ast::TypeRef>(&p->body)) part = tr->type_name;
+            else if (auto* bt = std::get_if<ast::BuiltinType>(&p->body)) part = builtin_type_name(*bt);
+        }
+        std::string sanitized;
+        for (char c : part) {
+            if (std::isalnum(static_cast<unsigned char>(c))) sanitized += c;
+            else if (c == '-') sanitized += '_';
+        }
+        return sanitized.empty() ? "P" : sanitized;
+    }
+
+    // Substitute a formal value-parameter reference inside a Value node, in
+    // place — e.g. `Parameter DEFAULT 0` where `Parameter`'s use as a value
+    // (not a type) needs the actual value literal spliced in.
+    static void substitute_value_in(ast::Value& v,
+            const std::unordered_map<std::string, ast::TypeDefPtr>& subst) {
+        if (auto* nvr = std::get_if<ast::NamedValueRef>(&v)) {
+            if (nvr->module_name.empty()) {
+                auto it = subst.find(nvr->name);
+                if (it != subst.end() && it->second && it->second->value_literal)
+                    v = *it->second->value_literal;
+            }
+        }
+    }
+
+    static void substitute_value_in_constraint(const ast::ConstraintPtr& c,
+            const std::unordered_map<std::string, ast::TypeDefPtr>& subst) {
+        if (!c) return;
+        if (auto* vr = std::get_if<ast::ValueRange>(&c->body)) {
+            substitute_value_in(vr->lower.value, subst);
+            substitute_value_in(vr->upper.value, subst);
+        } else if (auto* v = std::get_if<ast::Value>(&c->body)) {
+            substitute_value_in(*v, subst);
+        } else if (auto* sc = std::get_if<ast::SizeConstraint>(&c->body)) {
+            substitute_value_in_constraint(sc->inner, subst);
+        } else if (auto* fc = std::get_if<ast::FromConstraint>(&c->body)) {
+            substitute_value_in_constraint(fc->inner, subst);
+        } else if (auto* wc = std::get_if<ast::WithComponent>(&c->body)) {
+            substitute_value_in_constraint(wc->inner, subst);
+        } else if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c->body)) {
+            for (auto& op : ic->operands) substitute_value_in_constraint(op, subst);
+        } else if (auto* uc = std::get_if<ast::UnionConstraint>(&c->body)) {
+            for (auto& op : uc->operands) substitute_value_in_constraint(op, subst);
+        }
+        if (c->exception) substitute_value_in(*c->exception, subst);
+    }
+
+    // Walk a monomorphized instance's cloned body, substituting every use
+    // of a formal parameter — as a type or as a value — with the
+    // corresponding actual. `node` is mutated in place.
+    void substitute_params_in(const ast::TypeDefPtr& node,
+            const std::unordered_map<std::string, ast::TypeDefPtr>& subst) {
+        if (!node) return;
+        if (auto* tr = std::get_if<ast::TypeRef>(&node->body)) {
+            if (tr->module_name.empty() && tr->class_field.empty()) {
+                auto it = subst.find(tr->type_name);
+                if (it != subst.end() && it->second && !it->second->value_literal) {
+                    const auto& actual = it->second;
+                    node->body = actual->body;
+                    node->members = actual->members;
+                    node->enum_values = actual->enum_values;
+                    // The actual's own constraints (e.g. the `(1..10)` in
+                    // `TestType{INTEGER (1..10)}`) apply in addition to
+                    // whatever the formal-parameter reference site itself
+                    // already carried.
+                    for (auto& c : actual->constraints)
+                        node->constraints.push_back(clone_constraint(c));
+                }
+            }
+        }
+        for (auto& c : node->constraints) substitute_value_in_constraint(c, subst);
+        if (node->marker == ast::Marker::Default) substitute_value_in(node->default_value, subst);
+        for (auto& m : node->members) substitute_params_in(m, subst);
+        if (auto* sof = std::get_if<ast::SequenceOfType>(&node->body)) substitute_params_in(sof->element, subst);
+        else if (auto* sof = std::get_if<ast::SetOfType>(&node->body)) substitute_params_in(sof->element, subst);
+    }
+
+    // Find and monomorphize every parameterized-type instantiation site
+    // reachable from `def` (mirrors resolve_class_field_refs_in's walk
+    // shape: top-level def, members, SEQUENCE OF/SET OF element).
+    void resolve_parameterized_instantiations_in(const ast::TypeDefPtr& def,
+            const std::string& from_module,
+            std::unordered_map<std::string, ast::TypeDefPtr>& cache,
+            std::unordered_set<std::string>& used_names,
+            std::vector<ast::TypeDefPtr>& new_instances) {
+        if (!def) return;
+        if (auto* tr = std::get_if<ast::TypeRef>(&def->body)) {
+            if (!tr->params.empty() && tr->class_field.empty()) {
+                auto generic = lookup_direct(tr->type_name, from_module);
+                if (generic && generic->is_parameterized
+                        && generic->formal_params.size() == tr->params.size()) {
+                    std::string key = from_module + "::" + tr->type_name;
+                    for (const auto& p : tr->params) key += "|" + actual_signature(p);
+
+                    auto cit = cache.find(key);
+                    ast::TypeDefPtr instance;
+                    if (cit != cache.end()) {
+                        instance = cit->second;
+                    } else {
+                        std::unordered_map<std::string, ast::TypeDefPtr> subst;
+                        for (std::size_t i = 0; i < generic->formal_params.size(); ++i)
+                            subst[generic->formal_params[i]] = tr->params[i];
+
+                        instance = clone_typedef(generic);
+                        instance->is_parameterized = false;
+                        instance->formal_params.clear();
+                        substitute_params_in(instance, subst);
+
+                        std::string name = tr->type_name;
+                        for (const auto& p : tr->params) name += "_" + instance_name_part(p);
+                        while (used_names.count(name)) name += "_";
+                        used_names.insert(name);
+                        instance->name = name;
+
+                        new_instances.push_back(instance);
+                        cache[key] = instance;
+                        // Symbol tables were populated by collect(), before
+                        // this pass ran — register the new instance now so
+                        // resolve_ref/lookup_direct (used throughout
+                        // codegen, e.g. Generator::type_descriptor_ref_spec_for)
+                        // can find it like any other named type.
+                        module_symbols_[from_module][instance->name] = instance;
+                        global_[instance->name] = instance;
+                    }
+                    def->body = ast::TypeRef{"", instance->name, {}, ""};
+                }
+                // Mismatched arity, unresolvable generic, or an unsupported
+                // governor (a ValueSet actual parses to nullptr — see
+                // asn1.y's ActualParameter) is left as-is: the reference
+                // keeps its TypeRef::params, which surfaces downstream as
+                // an ordinary undefined-type diagnostic.
+            }
+        }
+        for (const auto& m : def->members)
+            resolve_parameterized_instantiations_in(m, from_module, cache, used_names, new_instances);
+        if (auto* sof = std::get_if<ast::SequenceOfType>(&def->body))
+            resolve_parameterized_instantiations_in(sof->element, from_module, cache, used_names, new_instances);
+        else if (auto* sof = std::get_if<ast::SetOfType>(&def->body))
+            resolve_parameterized_instantiations_in(sof->element, from_module, cache, used_names, new_instances);
     }
 
     // --- Tag-distinctness helpers ------------------------------------------------

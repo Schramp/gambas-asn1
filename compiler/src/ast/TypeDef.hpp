@@ -128,6 +128,15 @@ struct TypeDef : Node {
     bool is_parameterized{false};
     std::vector<std::string> formal_params;  // formal parameter names, e.g. {"Color"} in Flag{Color}
 
+    // X.683 actual parameter that is a bare value (e.g. the `4` in
+    // `Bounded{INTEGER, 4}`), as opposed to a Type. Set only on a TypeDefPtr
+    // appearing inside a TypeRef::params list; `body` stays std::monostate
+    // for such a node. sema/resolve_parameterized_instantiations reads this
+    // to substitute a formal value parameter's uses (inside DEFAULT values
+    // and constraint bounds) with the actual value at each instantiation
+    // site.
+    std::optional<Value> value_literal;
+
     // Helpers
     bool is_optional()  const { return marker == Marker::Optional || marker == Marker::Default; }
     bool has_default()  const { return marker == Marker::Default; }
