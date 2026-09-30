@@ -59,3 +59,9 @@ endif()
 target_include_directories(asn1cpp PRIVATE /usr/local/include)
 
 target_compile_options(asn1cpp PRIVATE -Wall -Wextra -Wno-unused-parameter)
+
+# Default location of the X.681/X.208 predefined-classes module
+# (TYPE-IDENTIFIER, ABSTRACT-SYNTAX, EXTERNAL) — overridable at runtime
+# via --stdlib-dir.
+target_compile_definitions(asn1cpp PRIVATE
+    ASN1CPP_STDLIB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/predefined")
