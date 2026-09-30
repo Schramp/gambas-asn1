@@ -582,7 +582,9 @@ def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None):
     lib_rs_path = os.path.join(rust_dir, "gen", "lib.rs")
     with open(lib_rs_path) as f:
         lib_rs = f.read()
-    m = re.search(rf'#\[path = "{re.escape(ident)}\.rs"\]\s*pub mod (\w+);', lib_rs)
+    # Module name may be a raw identifier (`r#type`) when the PDU name
+    # collides with a Rust keyword (RustBackend's rust_escape()).
+    m = re.search(rf'#\[path = "{re.escape(ident)}\.rs"\]\s*pub mod (r#\w+|\w+);', lib_rs)
     if not m:
         print(f"  could not find module for {ident}.rs in {lib_rs_path}")
         return None
