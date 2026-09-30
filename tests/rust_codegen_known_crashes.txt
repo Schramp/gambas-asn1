@@ -5,9 +5,3 @@
 # doesn't gate ctest red. Remove an entry here when its issue is fixed —
 # the sweep should then report PASS (or a non-gating FAIL/reject) on its
 # own, and a stale entry here would silently hide a regression.
-
-# gambas-asn1#578: unnamed CHOICE alternatives (old pre-1994 ASN.1 syntax,
-# no identifier before the type) collide on the empty-string fallback name
-# RustBackend gives them, and the collision path throws instead of
-# returning a graceful compiler error.
-87-old-syntax-OK.asn1
