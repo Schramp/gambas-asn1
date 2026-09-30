@@ -1046,7 +1046,13 @@ void JerCodec::encode(IEncodeStream& dst,
 #endif
     auto& s = static_cast<JerEncodeStream&>(dst);
     if (def.kind == TypeKind::Primitive)
-        prim_dispatch_[def.tag.number]->encode(*this, s, def, src);
+        // prim_dispatch_ is indexed by the type's NATURAL (universal) tag
+        // number — never def.tag itself, which is the wire tag and can be
+        // a different (context/application/private) class after an [n]
+        // override; an EXPLICIT override's outer tag number can coincide
+        // with a *different* builtin's universal tag number (see the
+        // matching comment in XerCodec::encode).
+        prim_dispatch_[def.is_explicit ? def.natural_tag.number : def.tag.number]->encode(*this, s, def, src);
     else
         comp_dispatch_[(int)def.kind]->encode(*this, s, def, src);
 }
@@ -1057,7 +1063,8 @@ DecodeResult JerCodec::decode(IDecodeStream& src,
 {
     auto& s = static_cast<JerDecodeStream&>(src);
     DecodeResult res = def.kind == TypeKind::Primitive
-        ? prim_dispatch_[def.tag.number]->decode(*this, s, def, dest)
+        // See the matching comment in encode() above.
+        ? prim_dispatch_[def.is_explicit ? def.natural_tag.number : def.tag.number]->decode(*this, s, def, dest)
         : comp_dispatch_[(int)def.kind]->decode(*this, s, def, dest);
 #if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_DECODE)
     if (res.has_value() && !def.is_any && !(debug_flags() & DBG_NO_VALIDATE)) {
