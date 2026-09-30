@@ -35,9 +35,69 @@
 
 %code {
     #include "Lexer.hpp"
+    #include <iostream>
 
     static yy::parser::symbol_type yylex(Lexer& lexer, ParseResult&) {
         return lexer.lex();
+    }
+
+    // Old X.208-style CHOICE/SET/SEQUENCE members may omit their
+    // identifier entirely (`CHOICE { INTEGER, BOOLEAN }`). Ported from
+    // asn1c's own _fixup_anonymous_identifier (libasn1parser/asn1p_y.y):
+    // synthesize a name from the member's own type keyword (or, for a
+    // reference to a named type, that type's name), lower-cased with
+    // spaces/hyphens folded to '_'. asn1c does not deduplicate the result
+    // either — a resulting clash is a later semantic error, same as a
+    // human picking a colliding name by hand.
+    static std::string asn1_keyword_for_body(const TypeDef::TypeBody& body) {
+        if (auto* bt = std::get_if<BuiltinType>(&body)) {
+            switch (*bt) {
+            case BuiltinType::Boolean:          return "BOOLEAN";
+            case BuiltinType::Integer:           return "INTEGER";
+            case BuiltinType::BitString:         return "BIT STRING";
+            case BuiltinType::OctetString:       return "OCTET STRING";
+            case BuiltinType::Null:              return "NULL";
+            case BuiltinType::ObjectIdentifier:  return "OBJECT IDENTIFIER";
+            case BuiltinType::RelativeOid:       return "RELATIVE-OID";
+            case BuiltinType::Real:              return "REAL";
+            case BuiltinType::Enumerated:        return "ENUMERATED";
+            case BuiltinType::Utf8String:        return "UTF8String";
+            case BuiltinType::NumericString:     return "NumericString";
+            case BuiltinType::PrintableString:   return "PrintableString";
+            case BuiltinType::T61String:         return "T61String";
+            case BuiltinType::VideotexString:    return "VideotexString";
+            case BuiltinType::Ia5String:         return "IA5String";
+            case BuiltinType::GraphicString:     return "GraphicString";
+            case BuiltinType::VisibleString:     return "VisibleString";
+            case BuiltinType::GeneralString:     return "GeneralString";
+            case BuiltinType::UniversalString:   return "UniversalString";
+            case BuiltinType::BmpString:         return "BMPString";
+            case BuiltinType::ObjectDescriptor:  return "ObjectDescriptor";
+            case BuiltinType::UtcTime:           return "UTCTime";
+            case BuiltinType::GeneralizedTime:   return "GeneralizedTime";
+            case BuiltinType::Any:               return "ANY";
+            }
+        }
+        if (auto* tr = std::get_if<TypeRef>(&body)) return tr->type_name;
+        if (std::get_if<SequenceType>(&body))   return "SEQUENCE";
+        if (std::get_if<SetType>(&body))        return "SET";
+        if (std::get_if<ChoiceType>(&body))     return "CHOICE";
+        if (std::get_if<SequenceOfType>(&body)) return "SEQUENCE OF";
+        if (std::get_if<SetOfType>(&body))      return "SET OF";
+        if (std::get_if<InstanceOfType>(&body)) return "INSTANCE OF";
+        return "unnamed";
+    }
+
+    static void fixup_anonymous_identifier(const TypeDefPtr& def, int lineno) {
+        std::string ident = asn1_keyword_for_body(def->body);
+        std::cerr << "warning: line " << lineno
+                  << ": obsolete X.208 syntax — unnamed " << ident
+                  << " member, assigning a temporary identifier\n";
+        for (char& c : ident) {
+            if (c >= 'A' && c <= 'Z') c += 32;
+            else if (c == ' ' || c == '-') c = '_';
+        }
+        def->name = ident;
     }
 }
 
@@ -1030,6 +1090,7 @@ ComponentType:
 	}
 	| MaybeIndirectTaggedType optMarker
 	{
+	    fixup_anonymous_identifier($1, @1.begin.line);
 	    $1->marker = $2.marker;
 	    $1->default_value = std::move($2.default_value);
 	    $$ = $1;
@@ -1067,7 +1128,11 @@ AlternativeType:
 	    $$ = $2;
 	}
 	| ExtensionAndException { $$ = $1; }
-	| MaybeIndirectTaggedType { $$ = $1; }
+	| MaybeIndirectTaggedType
+	{
+	    fixup_anonymous_identifier($1, @1.begin.line);
+	    $$ = $1;
+	}
 	;
 
 ExtensionAndException:
