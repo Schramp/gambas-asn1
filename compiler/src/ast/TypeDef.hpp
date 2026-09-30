@@ -22,6 +22,16 @@ struct TypeRef {
     std::string module_name;   // empty if same-module or unqualified
     std::string type_name;
     std::vector<TypeDefPtr> params;  // for parameterised type instantiation
+    // X.681 §14 Information Object Class field-type reference
+    // (`ClassName.&FieldName`, e.g. `DCLASS.&id`) — non-empty (including
+    // the leading '&') only for this shape; empty for an ordinary type
+    // reference. `type_name` holds the class name (`DCLASS`), not the
+    // referenced type — a dedicated post-parse pass
+    // (sema/resolve_class_field_refs) resolves this into the field's real
+    // type before any codegen logic ever sees it, since name-computation
+    // helpers like Generator::cpp_name_for_typeref read `type_name`
+    // directly without following aliases.
+    std::string class_field;
 };
 
 // Primitive / built-in type tags

@@ -856,10 +856,19 @@ DefinedType:
 	    auto t = std::make_shared<TypeDef>();
 	    auto s = $1;
 	    auto dot = s.find('.');
-	    if (dot != std::string::npos && s.find('&') == std::string::npos)
-	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), {}};
+	    auto amp = s.find('&');
+	    if (dot != std::string::npos && amp == std::string::npos)
+	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), {}, ""};
+	    else if (dot != std::string::npos && amp > dot)
+	        // X.681 §14 Information Object Class field-type reference
+	        // (`ClassName.&field`, e.g. `DCLASS.&id`) — see TypeRef::
+	        // class_field's own doc. The '&' appearing after the dot (not
+	        // before it — a class name is never itself amp-prefixed) is
+	        // what distinguishes this from an ordinary module-qualified
+	        // reference on the branch above.
+	        t->body = TypeRef{"", s.substr(0, dot), {}, s.substr(dot + 1)};
 	    else
-	        t->body = TypeRef{"", s, {}};
+	        t->body = TypeRef{"", s, {}, ""};
 	    $$ = t;
 	}
 	| ComplexTypeReference '{' ActualParameterList '}'
@@ -867,10 +876,24 @@ DefinedType:
 	    auto t = std::make_shared<TypeDef>();
 	    auto s = $1;
 	    auto dot = s.find('.');
-	    if (dot != std::string::npos && s.find('&') == std::string::npos)
-	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), std::move($3)};
+	    auto amp = s.find('&');
+	    if (dot != std::string::npos && amp == std::string::npos)
+	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), std::move($3), ""};
+	    else if (dot != std::string::npos && amp > dot)
+	        // Same class-field shape as above, but with a trailing
+	        // `{...}` — for a real parameterized type this is the actual
+	        // parameter list, but a class field reference has no such
+	        // thing; X.681's own trailing `{ObjectSet}`/`{@field}`
+	        // constraint syntax merely looks like one syntactically. $3
+	        // is deliberately discarded: resolving that constraint would
+	        // mean full per-object dynamic type dispatch, which
+	        // resolve_class_field_refs's own doc explains this pass does
+	        // not attempt — every reference to this class field resolves
+	        // to the same one answer (the field's fixed type, or ANY)
+	        // regardless of which object set is named here.
+	        t->body = TypeRef{"", s.substr(0, dot), {}, s.substr(dot + 1)};
 	    else
-	        t->body = TypeRef{"", s, std::move($3)};
+	        t->body = TypeRef{"", s, std::move($3), ""};
 	    $$ = t;
 	}
 	;
@@ -1028,7 +1051,7 @@ ComponentType:
 	| TOK_COMPONENTS TOK_OF MaybeIndirectTaggedType
 	{
 	    auto t = std::make_shared<TypeDef>();
-	    t->body = TypeRef{"", "__COMPONENTS_OF__", {$3}};
+	    t->body = TypeRef{"", "__COMPONENTS_OF__", {$3}, ""};
 	    $$ = t;
 	}
 	| ExtensionAndException { $$ = $1; }
@@ -1129,8 +1152,17 @@ ClassField:
 	}
 	| TOK_valuefieldreference Type optUNIQUE optMarker
 	{
+	    // FixedTypeValueFieldSpec (X.681 §14.1, e.g. `&id INTEGER`): the
+	    // field's *value* always has this fixed type, so a type-position
+	    // reference to it (`DCLASS.&id`) always resolves to it too,
+	    // regardless of which object in a set is selected — unlike a bare
+	    // TypeFieldSpec (`&Type` alone, the branch above/below with no
+	    // Type given), which has no single answer without picking a
+	    // specific object. See sema/resolve_class_field_refs's own doc for
+	    // where this stored body is actually consumed.
 	    auto t = std::make_shared<TypeDef>();
 	    t->name   = $1;
+	    t->body   = $2->body;
 	    t->marker = $4.marker;
 	    $$ = t;
 	}
