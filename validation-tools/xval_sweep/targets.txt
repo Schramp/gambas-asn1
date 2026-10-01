@@ -83,3 +83,4 @@ tests/asn1/rust_size_test.asn1         Blob
 tests/asn1/rust_seqof_size_test.asn1   Basket
 tests/asn1/rust_alphabet_test.asn1     Code
 tests/asn1/rust_seqof_int_per_test.asn1   Bag
+tests/tests-asn1c-compiler/33-misc-OK.asn1   T2
