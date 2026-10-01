@@ -103,22 +103,86 @@ ASN1C_COMPILER_CORPUS_DIR = os.path.join(ASN1CPP_ROOT, "tests/tests-asn1c-compil
 _PDU_CANDIDATE_RE = re.compile(
     r"^\s*([A-Za-z][\w-]*)\s*::=\s*(?:SEQUENCE|SET|CHOICE)\s*\{", re.MULTILINE)
 
+# A module header: "ModuleName", optionally followed by its definitive OID
+# ("{ iso org(3) ... }"), then the DEFINITIONS keyword. Used both to find
+# every module a single file defines (a file may define more than one —
+# asn1c's own IMPORTS test fixtures commonly put the importing and
+# imported module in the same file) and, corpus-wide, to build a
+# module-name -> file index for the rarer genuinely cross-file case.
+_MODULE_HEADER_RE = re.compile(
+    r"^\s*([A-Za-z][\w-]*)\s*(?:\{[^}]*\})?\s*DEFINITIONS\b", re.MULTILINE)
+
+# "FROM <ModuleName>" inside an IMPORTS clause (X.680 §34) — may repeat
+# when one IMPORTS statement pulls from several modules.
+_IMPORT_FROM_RE = re.compile(r"\bFROM\s+([A-Za-z][\w-]*)")
+
+
+def build_module_index(corpus_dir):
+    """Map every ASN.1 module name defined anywhere in `corpus_dir` to the
+    (basename) file that defines it — for resolve_imports's genuinely
+    cross-file case. A name defined in more than one file is dropped
+    (ambiguous — resolve_imports treats it as unresolvable rather than
+    guessing which file an importer meant)."""
+    index = {}
+    ambiguous = set()
+    for name in sorted(os.listdir(corpus_dir)):
+        if not name.endswith(".asn1"):
+            continue
+        text = open(os.path.join(corpus_dir, name), errors="replace").read()
+        for m in _MODULE_HEADER_RE.finditer(text):
+            mod = m.group(1)
+            if mod in index and index[mod] != name:
+                ambiguous.add(mod)
+            else:
+                index[mod] = name
+    for mod in ambiguous:
+        del index[mod]
+    return index
+
+
+def resolve_imports(asn1_path, module_index):
+    """Resolve every module an IMPORTS clause in `asn1_path` names.
+
+    Most of asn1c's own IMPORTS test fixtures define the importing and
+    imported module in the *same* file (multi-module file) — the
+    compiler already parses a single file's multiple modules into one
+    shared ParseResult, so these need no extra files at all. A module
+    not defined in this file but defined in exactly one *other* corpus
+    file is a genuine cross-file dependency — that file is added to the
+    returned extra-files list. A module this file imports that isn't
+    defined anywhere in the corpus (and isn't ambiguous across files) is
+    usually a deliberately-broken fixture testing the compiler's own
+    "module not found" diagnostic (e.g. 49-real-life-OK.asn1,
+    14-resolver-OK.asn1) — not a real schema this tooling can build, so
+    returns None (skip) in that case, same as the old
+    "any IMPORTS -> skip" behavior for these specific files.
+
+    Returns (extra_files: list[str] of corpus-relative basenames) or None.
+    """
+    text = open(asn1_path, errors="replace").read()
+    imported = set(_IMPORT_FROM_RE.findall(text))
+    if not imported:
+        return []
+    defined_here = set(_MODULE_HEADER_RE.findall(text))
+    extra_files = set()
+    for mod in imported - defined_here:
+        other = module_index.get(mod)
+        if other is None:
+            return None
+        extra_files.add(other)
+    return sorted(extra_files)
+
 
 def discover_pdu_type(asn1_path):
     """Best-effort top-level PDU/message type name for an auto-discovered
     (not manually curated) schema file, or None if this file doesn't
-    qualify. Returns None (skip) for:
-      - a file with any IMPORTS clause — cross-file dependency, same
-        "multi-file schemas aren't supported by this first pass" limit
-        targets.txt's own header already documents for the curated list.
-      - a file with no bare top-level SEQUENCE/SET/CHOICE assignment.
-    Otherwise: a type literally named "PDU" if one exists (the common
-    convention in asn1c's own test suite), else the last candidate found
-    (heuristic — the outer/message type is usually declared after the
-    types it's built from, not before)."""
+    qualify — no bare top-level SEQUENCE/SET/CHOICE assignment anywhere in
+    the file. (IMPORTS resolution is a separate concern — see
+    resolve_imports.) Otherwise: a type literally named "PDU" if one
+    exists (the common convention in asn1c's own test suite), else the
+    last candidate found (heuristic — the outer/message type is usually
+    declared after the types it's built from, not before)."""
     text = open(asn1_path, errors="replace").read()
-    if re.search(r"\bIMPORTS\b", text):
-        return None
     candidates = _PDU_CANDIDATE_RE.findall(text)
     if not candidates:
         return None
@@ -384,7 +448,7 @@ def compare_ber(label: str, ber_a: bytes, ber_b: bytes, verbose: bool) -> tuple[
 # Target build orchestration
 
 def parse_targets(path):
-    """Returns a list of (schema, pdu_type, skip_asn1c_reason_or_None).
+    """Returns a list of (schema, pdu_type, skip_asn1c_reason_or_None, extra_files).
 
     A line is normally "<schema> <PduType>". A third token+ marks a known,
     already-filed divergence between asn1c and asn1cpp for this specific
@@ -392,7 +456,9 @@ def parse_targets(path):
     the asn1c leg is skipped (not run at all) rather than failing the
     target on a gap that's already tracked elsewhere. The remaining
     tokens are the skip reason, printed verbatim (e.g. an issue number).
-    """
+    extra_files is always [] here — the curated list is single-file only;
+    only --corpus=asn1c-compiler's auto-discovery populates it (see
+    resolve_imports)."""
     targets = []
     with open(path) as f:
         for lineno, line in enumerate(f, 1):
@@ -404,7 +470,7 @@ def parse_targets(path):
                 print(f"{path}:{lineno}: expected '<schema> <PduType> [skip-asn1c-reason]', got: {line!r}")
                 sys.exit(1)
             reason = " ".join(parts[2:]) if len(parts) > 2 else None
-            targets.append((parts[0], parts[1], reason))
+            targets.append((parts[0], parts[1], reason, []))
     return targets
 
 
@@ -728,12 +794,14 @@ def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, reuse=False, jo
 
 
 def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c_reason=None,
-               slot=None, cpp_jobs=4, cargo_jobs=None, reuse=()):
+               slot=None, cpp_jobs=4, cargo_jobs=None, reuse=(), extra_files=()):
     slug = os.path.splitext(os.path.basename(schema_rel))[0] + "_" + pdu_type
     target_dir = os.path.join(TESTBUILD, slug)
     asn1_files_abs = [os.path.join(ASN1CPP_ROOT, schema_rel)]
+    asn1_files_abs += [os.path.join(ASN1CPP_ROOT, f) for f in extra_files]
 
-    print(f"\n=== {schema_rel} :: {pdu_type} ===")
+    extra_note = f" (+ {', '.join(extra_files)})" if extra_files else ""
+    print(f"\n=== {schema_rel} :: {pdu_type}{extra_note} ===")
     if skip_asn1c_reason:
         print(f"  asn1c leg: skipped ({skip_asn1c_reason})")
 
@@ -953,6 +1021,7 @@ def main():
         else:
             print("asn1c leg: OFF (--corpus=asn1c-compiler default; pass --with-asn1c to enable)")
 
+        module_index = build_module_index(ASN1C_COMPILER_CORPUS_DIR)
         skipped = []
         targets = []
         for name in sorted(os.listdir(ASN1C_COMPILER_CORPUS_DIR)):
@@ -963,8 +1032,14 @@ def main():
             if pdu_type is None:
                 skipped.append(name)
                 continue
+            extra = resolve_imports(path, module_index)
+            if extra is None:
+                skipped.append(name)
+                continue
             rel = os.path.relpath(path, ASN1CPP_ROOT)
-            targets.append((rel, pdu_type, None))
+            extra_rel = [os.path.relpath(os.path.join(ASN1C_COMPILER_CORPUS_DIR, f), ASN1CPP_ROOT)
+                         for f in extra]
+            targets.append((rel, pdu_type, None, extra_rel))
         print(f"auto-discovered {len(targets)} target(s) from {ASN1C_COMPILER_CORPUS_DIR} "
               f"({len(skipped)} skipped: no qualifying top-level SEQUENCE/SET/CHOICE, or IMPORTS present)")
     else:
@@ -1020,12 +1095,13 @@ def main():
 
     def worker(slot, indices):
         for i in indices:
-            schema_rel, pdu_type, skip_asn1c_reason = targets[i]
+            schema_rel, pdu_type, skip_asn1c_reason, extra_files = targets[i]
             tl_out.tl.buf = []
             try:
                 oks[i] = run_target(schema_rel, pdu_type, opts.count, opts.seed, opts.verbose,
                                     asn1c_bin, skip_asn1c_reason, slot=slot,
-                                    cpp_jobs=cpp_jobs, cargo_jobs=cargo_jobs, reuse=reuse)
+                                    cpp_jobs=cpp_jobs, cargo_jobs=cargo_jobs, reuse=reuse,
+                                    extra_files=extra_files)
             except Exception as e:  # keep the sweep going; report as a failed target
                 print(f"  EXCEPTION: {e!r}")
                 oks[i] = False
