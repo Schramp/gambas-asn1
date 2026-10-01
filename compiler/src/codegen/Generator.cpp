@@ -1062,7 +1062,7 @@ DefaultValueSpec Generator::default_value_spec_for(const ast::TypeDef& m) const 
             && std::get<ast::BuiltinType>(base->body) == ast::BuiltinType::Boolean;
         if (is_bool)
             return { DefaultValueSpec::Kind::Bool, *i != 0, 0, "", "" };
-        return { DefaultValueSpec::Kind::Int, false, *i, "", "" };
+        return { DefaultValueSpec::Kind::Int, false, *i, "", "", classify_integer_storage(m) };
     }
     if (auto* s = std::get_if<std::string>(&m.default_value))
         return { DefaultValueSpec::Kind::String, false, 0, *s, "" };

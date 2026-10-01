@@ -303,6 +303,13 @@ struct DefaultValueSpec {
     int64_t       int_val  = 0;
     std::string   string_val;  // Kind::String — raw (unescaped) value
     std::string   enum_name;   // Kind::EnumRef — ASN.1 name of the named value
+    // Kind::Int only. The member's resolved INTEGER storage kind (follows
+    // a named-alias chain, e.g. `Foo ::= INTEGER; member Foo DEFAULT 3`) —
+    // RustBackend needs this to decide whether the literal must be
+    // constructed through a newtype wrapper (`Foo(3)`) or left bare; a
+    // plain `type_name` string carries no such signal for a named alias
+    // the way it does for an inline member's own native_int_type() text.
+    IntStorageKind int_storage_kind = IntStorageKind::S64;
 };
 
 /// @brief Escape a raw byte string for embedding in a quoted string literal.
