@@ -749,12 +749,29 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     os << "    fn xer_element_name(&self) -> &'static str {\n";
     os << std::format("        \"{}\"\n", spec.xer_name);
     os << "    }\n\n";
-    os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
-    os << "        self.0.ber_encode_content(out);\n";
-    os << "    }\n\n";
-    os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-    os << "        self.0.ber_decode_content(content)\n";
-    os << "    }\n\n";
+    if (spec.is_explicit) {
+        // X.690 §8.14.3 / X.680 §31: this alias re-tags an already-tagged
+        // (and therefore constructed/wrapping) type — IMPLICIT-retagging
+        // preserves that wrapping rather than erasing it, so the content
+        // under this alias's own outer tag is the *complete* inner TLV
+        // (the wrapped type's own natural tag + length + its content), not
+        // the wrapped type's bare content. `self.0.ber_encode`/
+        // `ber_decode_into` write/read exactly that full inner TLV.
+        os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
+        os << "        self.0.ber_encode(out);\n";
+        os << "    }\n\n";
+        os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << "        let mut r = asn1cpp_wire::Reader::new(content);\n";
+        os << "        self.0.ber_decode_into(&mut r)\n";
+        os << "    }\n\n";
+    } else {
+        os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
+        os << "        self.0.ber_encode_content(out);\n";
+        os << "    }\n\n";
+        os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << "        self.0.ber_decode_content(content)\n";
+        os << "    }\n\n";
+    }
     // BASE64/utf8 (X.693 §21, ENCODING-CONTROL XER ... BASE64 <TypeName> /
     // legacy `<TypeName> OCTET STRING ::= base64`/`::= utf8`) replaces this
     // alias's own xer_encode/xer_decode_into with the matching helper
