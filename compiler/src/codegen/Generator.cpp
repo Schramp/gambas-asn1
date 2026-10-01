@@ -1122,10 +1122,24 @@ std::string Generator::emit_default_setter(
     return std::format("&_setdef_{}_{}", parent_cname, mname);
 }
 
-// True if any top-level constraint carries a trailing '...'.
+// True if any constraint carries a trailing '...' (X.680 §51.8.3) — including one
+// attached to a SIZE(...)/FROM(...) wrapper's own inner range (`SIZE(1..4, ...)`),
+// not just a top-level constraint clause (INTEGER's `(1..256) (1..255,...)`).
+static bool constraint_tree_extensible(const ast::Constraint& c) {
+    if (c.extensible) return true;
+    if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c.body))
+        for (const auto& op : ic->operands)
+            if (op && constraint_tree_extensible(*op)) return true;
+    if (auto* sc = std::get_if<ast::SizeConstraint>(&c.body))
+        if (sc->inner && constraint_tree_extensible(*sc->inner)) return true;
+    if (auto* fc = std::get_if<ast::FromConstraint>(&c.body))
+        if (fc->inner && constraint_tree_extensible(*fc->inner)) return true;
+    return false;
+}
+
 static bool is_constraint_extensible(const ast::TypeDef& def) {
     for (const auto& cptr : def.constraints)
-        if (cptr && cptr->extensible) return true;
+        if (cptr && constraint_tree_extensible(*cptr)) return true;
     return false;
 }
 
