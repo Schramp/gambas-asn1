@@ -854,7 +854,7 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
                               : std::format("{}(String::from_utf8(x).unwrap_or_default())", native_builtin_type(spec.builtin_type));
             os << std::format(
                 "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
-                "        let _ = asn1cpp_wire::per::strings::encode_string(w, &{0}, {1}, {2});\n    }}\n",
+                "        if let Err(e) = asn1cpp_wire::per::strings::encode_string(w, &{0}, {1}, {2}) {{ w.set_encode_failed(&e.message); }}\n    }}\n",
                 cname, tag_num, bytes_expr);
             os << std::format(
                 "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"

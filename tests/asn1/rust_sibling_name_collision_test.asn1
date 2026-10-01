@@ -1,0 +1,18 @@
+RustSiblingNameCollisionTest DEFINITIONS ::= BEGIN
+    -- gambas-asn1#612: sibling members whose raw ASN.1 identifiers fold to
+    -- the same Rust-styled name under a lossy transform (case folding
+    -- and/or hyphen-to-underscore). "field-one"/"fieldOne" both style to
+    -- "field_one" under snake_case (struct field / accessor names and
+    -- SCREAMING_SNAKE_CASE constraint table names); "fieldOne"/"fieldONE"
+    -- collide under SCREAMING_SNAKE_CASE specifically but not under
+    -- CHOICE's own UpperCamelCase variant-name transform.
+    HasCollidingMembers ::= SEQUENCE {
+        field-one INTEGER (1..10),
+        fieldOne  OCTET STRING (SIZE(1..5))
+    }
+
+    HasCollidingAlternatives ::= CHOICE {
+        fieldOne INTEGER (1..10),
+        fieldONE OCTET STRING (SIZE(1..5))
+    }
+END

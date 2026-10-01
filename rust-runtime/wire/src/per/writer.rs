@@ -14,6 +14,7 @@ pub struct Writer {
     buf: Vec<u8>,
     current: u8,
     bits: u8,
+    encode_failed: bool,
 }
 
 impl Writer {
@@ -55,6 +56,23 @@ impl Writer {
             self.current = 0;
             self.bits = 0;
         }
+    }
+
+    /// Signal a constraint violation during encode (mirrors
+    /// `PerEncodeStream::set_encode_failed`, `PerCodec.hpp`). The caller
+    /// must return immediately after calling this; bits already written to
+    /// the buffer are not retracted and are discarded by the call site on
+    /// encode failure.
+    pub fn set_encode_failed(&mut self, reason: &str) {
+        self.encode_failed = true;
+        if crate::debug::debug_flags() & crate::debug::DBG_PER != 0 {
+            eprintln!("[PER-ENC] constraint violation: {reason}");
+        }
+    }
+
+    /// True if any constraint violation was signalled during this encode.
+    pub fn encode_failed(&self) -> bool {
+        self.encode_failed
     }
 
     /// Consume the writer, returning the accumulated bytes. Caller must

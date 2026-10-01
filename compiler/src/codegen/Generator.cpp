@@ -801,6 +801,45 @@ split_members(const ast::TypeDef& def)
     return {root, ext};
 }
 
+/// @brief Assign each member a unique styled name within its own sibling
+///        list, in case the style function (member_name/type_name/
+///        to_screaming_snake_case, ...) folds two distinct ASN.1 identifiers
+///        to the same text (X.680 §11.2 identifiers are case-sensitive and
+///        hyphen-delimited; a backend's styled form is not guaranteed to
+///        preserve that distinctness — e.g. "field-one" and "fieldOne" both
+///        style to "field_one" under snake_case). ASN.1 guarantees the raw
+///        names are distinct within one SEQUENCE/SET/CHOICE; this is the one
+///        place that guarantee is re-established for the styled form.
+/// @param members  One construct's own sibling member list (root+extension
+///                  together — they share one Rust struct/enum scope).
+/// @param style    Per-member styling function (whatever namespace is being
+///                  deduplicated: field name, table identifier, enum variant).
+/// @return Map from member pointer to its final, unique styled name. First
+///         occurrence of a given styled name keeps it as-is; each later
+///         collision gets a numeric "_2", "_3", ... suffix (not an arbitrary
+///         postfix — a numeric one can't itself re-collide with a
+///         differently-but-similarly-named sibling the way text could).
+template <typename F>
+static std::unordered_map<const ast::TypeDef*, std::string> dedupe_styled_names(
+        const std::vector<const ast::TypeDef*>& members, F&& style) {
+    std::unordered_map<const ast::TypeDef*, std::string> result;
+    std::unordered_map<std::string, int> seen;
+    for (const auto* m : members) {
+        std::string base = style(*m);
+        auto it = seen.find(base);
+        if (it == seen.end()) {
+            seen.emplace(base, 1);
+            result[m] = base;
+            continue;
+        }
+        std::string candidate;
+        do { candidate = base + "_" + std::to_string(++it->second); } while (seen.count(candidate));
+        seen.emplace(candidate, 1);
+        result[m] = candidate;
+    }
+    return result;
+}
+
 // ---------------------------------------------------------------------------
 // Emit ENUMERATED
 // ---------------------------------------------------------------------------
@@ -1833,16 +1872,26 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
     spec.is_explicit = type_is_explicit(def);
     if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
 
+    // All sibling fields (root+extension) share one Rust struct/enum scope —
+    // ASN.1 guarantees their raw names are distinct, but member_name()'s
+    // styling can fold two distinct raw names together (dedupe_styled_names'
+    // own doc). Computed once, used everywhere a member's field name is
+    // needed below, so every consumer sees the same (possibly suffixed) name.
+    std::vector<const ast::TypeDef*> all_members(sm_root.begin(), sm_root.end());
+    all_members.insert(all_members.end(), sm_ext.begin(), sm_ext.end());
+    auto mname_of = dedupe_styled_names(all_members,
+        [&](const ast::TypeDef& m) { return backend_.member_name(m.name); });
+
     // Storage-ops helper for optional member callbacks — one per optional
     // member. Must be written before the collect() pass below:
     // emit_default_setter's generated static functions reference these
     // types directly by name.
     for (auto* m : sm_root) {
         if (!m->is_optional()) continue;
-        backend_.emit_optional_member_ops(cname, backend_.member_name(m->name), native_member_type_for(*m), session);
+        backend_.emit_optional_member_ops(cname, mname_of.at(m), native_member_type_for(*m), session);
     }
     for (auto* m : sm_ext) {
-        backend_.emit_optional_member_ops(cname, backend_.member_name(m->name), native_member_type_for(*m), session);
+        backend_.emit_optional_member_ops(cname, mname_of.at(m), native_member_type_for(*m), session);
     }
     os << "\n";
 
@@ -1855,7 +1904,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
     auto collect = [&](const ast::TypeDef& m, bool optional) {
         SequenceMemberSpec row;
         row.asn1_name = m.name;
-        row.mname = backend_.member_name(m.name);
+        row.mname = mname_of.at(&m);
         row.mtype = native_member_type_for(m);
         row.xer_encoding = m.xer_encoding;
         if (auto* bt = std::get_if<ast::BuiltinType>(&m.body)) {
@@ -2072,14 +2121,25 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
     bool apply_auto_tags_hpp = should_apply_auto_tags(def);
     auto canon_members = canonical_choice_members(def, apply_auto_tags_hpp);
 
+    // Two independent namespaces (accessor method names vs enum variant
+    // names) can each fold distinct sibling ASN.1 identifiers together under
+    // their own styling (dedupe_styled_names' own doc) — deduped separately,
+    // since a collision in one doesn't imply one in the other.
+    auto accessor_name_of = dedupe_styled_names(canon_members, [&](const ast::TypeDef& m) {
+        return backend_.member_name(m.name,
+            {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
+             "s_alternatives", "s_alternative_count"});
+    });
+    auto pr_name_of = dedupe_styled_names(canon_members, [&](const ast::TypeDef& m) {
+        return backend_.escape(backend_.type_name(m.name), {"NOTHING"});
+    });
+
     std::vector<ChoiceAlternativeSpec> alts;
     for (const auto* m : canon_members) {
         ChoiceAlternativeSpec alt;
         alt.mtype = native_member_type_for(*m);
-        alt.accessor_name = backend_.member_name(m->name,
-            {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
-             "s_alternatives", "s_alternative_count"});
-        alt.pr_name = backend_.escape(backend_.type_name(m->name), {"NOTHING"});
+        alt.accessor_name = accessor_name_of.at(m);
+        alt.pr_name = pr_name_of.at(m);
         // Not otherwise needed by the declaration side — carried along
         // purely so emit_choice's zip can assert the two independently
         // computed canonical orderings actually agree, index by index.
@@ -2123,12 +2183,24 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             IntStorageKind ref_storage_kind = IntStorageKind::S64;
         };
         std::vector<AltRow> rows;
+        // Local to this per-member TypeDescriptor naming only (never exposed
+        // as the alternative's public accessor/variant name, which
+        // emit_choice_declaration computes and dedupes separately) — still
+        // needs its own dedup so two siblings' own inline-constraint tables
+        // (emit_member_type_descriptor's tdref) don't collide (dedupe_styled_names'
+        // own doc).
+        std::vector<const ast::TypeDef*> all_alts;
+        for (const auto& m : def.members)
+            if (!m->is_extension_marker) all_alts.push_back(m.get());
+        auto mname_of = dedupe_styled_names(all_alts,
+            [&](const ast::TypeDef& m) { return backend_.member_name(m.name); });
+
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
         // TypeDescriptors must be emitted before the alternatives array references them.
         { int auto_tag_num = 0;
           for (const auto& m : def.members) {
             if (m->is_extension_marker) continue;
-            std::string mname = backend_.member_name(m->name);
+            std::string mname = mname_of.at(m.get());
             auto [resolved_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, session);
             std::string alt_type = native_member_type_for(*m);
