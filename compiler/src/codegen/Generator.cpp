@@ -228,6 +228,11 @@ std::optional<TypeTagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& d
     if (def.tag.present()) {
         bool is_constr = def.is_sequence() || def.is_choice() ||
                          def.is_seq_of()   || def.is_set_of() || def.is_set();
+        if (!is_constr && std::holds_alternative<ast::TypeRef>(def.body)) {
+            bool chain_constructed = false;
+            resolve_alias_chain(def, chain_constructed);
+            is_constr = chain_constructed;
+        }
         bool is_exp = member_is_explicit(def.tag, def);
         return tag_spec_for(def.tag, is_exp || is_constr);
     }
@@ -251,6 +256,18 @@ std::optional<TypeTagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& d
     if (def.is_set_of())
         return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
+        // Resolve one hop before falling back to resolve_ref's blind
+        // full-chain flattening: if that hop itself carries a retagged
+        // descriptor (has_own_retagged_descriptor's own doc), it must be
+        // used directly — resolve_ref would skip past it to whatever it
+        // ultimately aliases, losing the override.
+        if (tr->class_field.empty()) {
+            auto direct = tr->module_name.empty()
+                ? resolver_.lookup_direct(tr->type_name, current_module_)
+                : resolver_.resolve_in_module(tr->type_name, tr->module_name);
+            if (direct && has_own_retagged_descriptor(*direct))
+                return natural_tag_spec_for(*direct);
+        }
         auto base = resolver_.resolve_ref(*tr);
         if (base) return natural_tag_spec_for(*base);
     }
@@ -259,7 +276,48 @@ std::optional<TypeTagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& d
 
 bool Generator::type_is_explicit(const ast::TypeDef& def) const {
     if (!def.tag.present()) return false;
-    return member_is_explicit(def.tag, def);
+    if (member_is_explicit(def.tag, def)) return true;
+    // Even when this type's own tag is IMPLICIT, re-tagging an alias whose
+    // referenced chain is itself constructed (SEQUENCE/CHOICE/.../or an
+    // intermediate EXPLICIT hop) must still wrap, not substitute — see
+    // resolve_alias_chain's own doc.
+    if (std::holds_alternative<ast::TypeRef>(def.body)) {
+        bool chain_constructed = false;
+        resolve_alias_chain(def, chain_constructed);
+        return chain_constructed;
+    }
+    return false;
+}
+
+const ast::TypeDef* Generator::resolve_alias_chain(const ast::TypeDef& def, bool& out_constructed) const {
+    const ast::TypeDef* cur = &def;
+    out_constructed = cur->is_sequence() || cur->is_choice() ||
+                       cur->is_seq_of()  || cur->is_set_of() || cur->is_set();
+    for (int depth = 0; depth < 64 && !out_constructed; ++depth) {
+        auto* tr = std::get_if<ast::TypeRef>(&cur->body);
+        if (!tr) break;
+        auto next = resolver_.resolve_ref(*tr);
+        if (!next) break;
+        cur = next.get();
+        if (cur->is_sequence() || cur->is_choice() || cur->is_seq_of() || cur->is_set_of() || cur->is_set()
+                || (cur->tag.present() && member_is_explicit(cur->tag, *cur)))
+            out_constructed = true;
+    }
+    while (auto* tr = std::get_if<ast::TypeRef>(&cur->body)) {
+        auto next = resolver_.resolve_ref(*tr);
+        if (!next) break;
+        cur = next.get();
+    }
+    return cur;
+}
+
+bool Generator::has_own_retagged_descriptor(const ast::TypeDef& def) const {
+    if (!def.tag.present() || !std::holds_alternative<ast::TypeRef>(def.body)) return false;
+    bool ignored = false;
+    auto* ultimate = resolve_alias_chain(def, ignored);
+    if (!ultimate) return false;
+    auto* ubt = std::get_if<ast::BuiltinType>(&ultimate->body);
+    return ubt && *ubt != ast::BuiltinType::Enumerated && *ubt != ast::BuiltinType::Integer;
 }
 
 std::optional<TypeTagSpec> Generator::underlying_natural_tag_spec_for(const ast::TypeDef& def) const {
@@ -630,6 +688,24 @@ TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef
     // C++ `using` declaration — no asn_DEF_. Follow the chain until reaching a type that
     // generates its own descriptor (BuiltinType with constraints, SEQUENCE, CHOICE, etc.).
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
+        // If this reference names a type that itself carries a distinct
+        // [n] tag override on a TypeRef body (`Label2 ::= [1] Label`),
+        // that type gets its own standalone descriptor now
+        // (emit_type_body's retag_alias_to_builtin path) — resolve_ref's
+        // blind alias-chain-following below would skip past it straight
+        // to Label's own descriptor, losing the override. Stop here
+        // instead: only one hop deep (matches retag_alias_to_builtin's own
+        // scope — a deeper chain of re-tagged aliases isn't attempted).
+        if (tr->class_field.empty()) {
+            auto direct = tr->module_name.empty()
+                ? resolver_.lookup_direct(tr->type_name, current_module_)
+                : resolver_.resolve_in_module(tr->type_name, tr->module_name);
+            if (direct && has_own_retagged_descriptor(*direct)) {
+                auto mod = tr->module_name.empty() ? current_module_ : tr->module_name;
+                auto n = effective_cpp_name(direct->name, mod);
+                return TypeDescriptorRefSpec{TypeDescriptorRefKind::FreeStanding, {}, n};
+            }
+        }
         // For collision types, resolve_ref uses global_ and may pick the wrong module's version.
         // Prefer the current-module's definition (local shadows global), fall back to resolve_ref.
         // Skip this logic for qualified references (module_name set) — they pin the source module.
@@ -2246,9 +2322,21 @@ void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, 
     }
     backend_.emit_declaration_preamble(module_comment, session);
 
+    // A top-level type alias that also carries its own [n] tag override
+    // (`Label2 ::= [1] Label`) needs a real descriptor, not a bare `using`
+    // sharing the referenced type's descriptor wholesale — see
+    // resolve_alias_chain's own doc. Only handled when the referenced
+    // chain ultimately resolves to a plain builtin scalar (not
+    // ENUMERATED/INTEGER, which have their own richer emit_enumerated/
+    // emit_integer paths, or SEQUENCE/CHOICE/SEQUENCE OF/SET OF, which
+    // would need real member-forwarding, not just a scalar wrapper) —
+    // narrower cases fall back to the pre-existing bare-alias behavior.
+    bool retag_alias_to_builtin = has_own_retagged_descriptor(def);
+
     bool has_definition = def.is_sequence() || def.is_set() || def.is_choice()
         || def.is_seq_of() || def.is_set_of()
-        || std::holds_alternative<ast::BuiltinType>(def.body);
+        || std::holds_alternative<ast::BuiltinType>(def.body)
+        || retag_alias_to_builtin;
     if (has_definition) backend_.emit_definition_preamble(filename_for(cname), session);
 
     // When namespace wrapping is active, cross-type #include "X.hpp" directives must land
@@ -2295,6 +2383,9 @@ void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, 
     } else if (def.is_seq_of() || def.is_set_of()) {
         current_type_ = cname;
         emit_seq_of(def, dispatch);
+    } else if (retag_alias_to_builtin) {
+        current_type_ = cname;
+        emit_builtin_alias(def, dispatch);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto inc = cpp_name_for_typeref(*tr);
         auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : decl_body;
@@ -2429,12 +2520,24 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     spec.type_name = type_name;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
     spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
-    // Defensive fallback (unreachable in practice — this is only called from
-    // emit_definition's dispatch after confirming def.body is a BuiltinType): if
-    // absent, fall back to Utf8String, whose LUT entries are the generic
-    // string handlers, matching the original defensive fallback.
+    // def.body is normally a BuiltinType directly. It can also be a
+    // TypeRef when this call comes from the re-tagged-alias dispatch
+    // (`Label2 ::= [1] Label`, where Label itself resolves to a builtin
+    // scalar) — resolve_alias_chain finds the ultimate builtin. Falls back
+    // to Utf8String (whose LUT entries are the generic string handlers) if
+    // truly unresolvable — defensive only, unreachable for a def the
+    // dispatch already confirmed resolves to a builtin scalar.
     auto* bt = std::get_if<ast::BuiltinType>(&def.body);
-    spec.builtin_type = bt ? *bt : ast::BuiltinType::Utf8String;
+    ast::BuiltinType builtin = ast::BuiltinType::Utf8String;
+    if (bt) {
+        builtin = *bt;
+    } else {
+        bool ignored = false;
+        if (auto* ultimate = resolve_alias_chain(def, ignored))
+            if (auto* ubt = std::get_if<ast::BuiltinType>(&ultimate->body))
+                builtin = *ubt;
+    }
+    spec.builtin_type = builtin;
     spec.tag = natural_tag_spec_for(def);
     spec.is_explicit = type_is_explicit(def);
     if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
