@@ -122,13 +122,22 @@ public:
     }
 
     // tdref is populated unconditionally for every
-    // SEQUENCE/CHOICE member (see Backend::format_type_descriptor_ref's own
-    // doc), but RustBackend has no codec dispatch table wired up yet to read
-    // it — same status as needs_seqof_wrapper_reference()
-    // below. Empty string is a valid, harmlessly-unused default; revisit
-    // together with needs_seqof_wrapper_reference() once Rust grows its own
-    // per-member descriptor table.
-    std::string format_type_descriptor_ref(const TypeDescriptorRefSpec&) const override { return {}; }
+    // Every kind but MemberOwnTable has no codec dispatch table wired up yet
+    // for Rust to read (see Backend::format_type_descriptor_ref's own doc) —
+    // same status as needs_seqof_wrapper_reference() below. Empty string is
+    // a valid, harmlessly-unused default there; revisit together with
+    // needs_seqof_wrapper_reference() once Rust grows its own per-member
+    // descriptor table for those kinds. MemberOwnTable is real: it's how a
+    // member's own inline-constraint Constraints table (already emitted by
+    // emit_member_type_descriptor) gets found by name — returned bare, with
+    // no decoration, since every consumer (SeqOf element constraint lookup,
+    // the own-table checks for SEQUENCE members/CHOICE alternatives) only
+    // ever needs the plain base name to build its own
+    // `{SCREAMING_SNAKE_CASE}_CONSTRAINTS` reference from.
+    std::string format_type_descriptor_ref(const TypeDescriptorRefSpec& spec) const override {
+        if (spec.kind == TypeDescriptorRefKind::MemberOwnTable) return spec.name;
+        return {};
+    }
 
     std::string wrap_collection_type(const std::string& elem_type) const override {
         return std::format("Vec<{}>", elem_type);

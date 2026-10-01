@@ -57,6 +57,7 @@ std::string CppBackend::format_type_descriptor_ref(const TypeDescriptorRefSpec& 
         }
     case TypeDescriptorRefKind::ClassScoped:  return std::format("&{}::asn_DEF", spec.name);
     case TypeDescriptorRefKind::FreeStanding: return std::format("&asn_DEF_{}", spec.name);
+    case TypeDescriptorRefKind::MemberOwnTable: return "&" + spec.name;
     case TypeDescriptorRefKind::None:
     default:                                  return "nullptr";
     }

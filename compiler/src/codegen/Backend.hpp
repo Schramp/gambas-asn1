@@ -147,6 +147,10 @@ enum class TypeDescriptorRefKind {
     Builtin,       // a universal builtin type — see TypeDescriptorRefSpec::builtin
     ClassScoped,   // reference to a generated class's own static descriptor member
     FreeStanding,  // reference to a free-standing generated descriptor symbol
+    MemberOwnTable,// reference to a member's own inline-constraint descriptor
+                   // table (TypeDescriptorRefSpec::name is the table's already-
+                   // complete base identifier, e.g. "asn_TYP_Parent_Member" —
+                   // distinct from FreeStanding's "asn_DEF_" convention).
     None,          // no descriptor exists for this reference
 };
 
