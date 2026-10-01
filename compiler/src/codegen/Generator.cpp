@@ -1243,7 +1243,8 @@ std::string Generator::emit_member_type_descriptor(
     auto spec = build_member_type_descriptor_spec(m, parent_cname, mname);
     if (!spec) return type_descriptor_ref_for(m);
     backend_.emit_member_type_descriptor(*spec, session);
-    return "&" + spec->tname;
+    return backend_.format_type_descriptor_ref(
+        TypeDescriptorRefSpec{TypeDescriptorRefKind::MemberOwnTable, {}, spec->tname});
 }
 
 /// @brief Decide the resolved MemberTypeDescriptorSpec for an inline-

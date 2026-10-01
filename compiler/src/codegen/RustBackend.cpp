@@ -1123,15 +1123,15 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // type's cross-module path, same
     // "always wire, real bounds or not" convention as everywhere else.
     // The element's own constraint table, when it has one: the element's
-    // `emit_member_type_descriptor` output (`elem_ref` is "&" + its name,
-    // the same "&asn_TYP_" idiom `tdref` uses) sits in this same module, so
-    // the collection's constraint can point at it (X.691 §19/§20 — each
-    // element is encoded against `element`, the count against this table's
-    // own SIZE fields).
+    // `emit_member_type_descriptor` output (MemberOwnTable — a bare base
+    // name, empty when the element has no own table) sits in this same
+    // module, so the collection's constraint can point at it (X.691
+    // §19/§20 — each element is encoded against `element`, the count
+    // against this table's own SIZE fields).
     std::string element_expr = "None";
-    if (spec.elem_ref.starts_with("&asn_TYP_")) {
+    if (!spec.elem_ref.empty()) {
         element_expr = std::format("Some(&{}_CONSTRAINTS)",
-            to_screaming_snake_case(spec.elem_ref.substr(1)));
+            to_screaming_snake_case(spec.elem_ref));
     }
     os << std::format(
         "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
@@ -1703,7 +1703,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // generated type) gets `None`: its own `validate` is reached
             // through `ber_encode_tagged`'s `validate::check`.
             std::string constraints_expr = "None";
-            bool own_table = m.tdref.starts_with("&asn_TYP_");
+            bool own_table = !m.tdref.empty();
             if (m.mbuiltin && own_table &&
                 ((*m.mbuiltin == ast::BuiltinType::Integer &&
                   (m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64)) ||
@@ -2092,7 +2092,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             // against: the inline SIZE/range table emitted for it when
             // `tdref` names one, the shared unconstrained value otherwise.
             std::string alt_constraints = "&asn1cpp_wire::constraints::UNCONSTRAINED";
-            if (a.mbuiltin && a.tdref.starts_with("&asn_TYP_")) {
+            if (a.mbuiltin && !a.tdref.empty()) {
                 alt_constraints = "&" + to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name))) + "_CONSTRAINTS";
             }
             // A single-variant enum (not extensible) needs an irrefutable
