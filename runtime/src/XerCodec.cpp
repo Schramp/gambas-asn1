@@ -986,7 +986,15 @@ void XerCodec::encode(IEncodeStream& dst,
     bool wrap = scope.is_root() && def.kind == TypeKind::Choice;
     if (wrap) s.os() << '<' << def.name << '>';
     if (def.kind == TypeKind::Primitive)
-        prim_dispatch_[def.tag.number]->encode(*this, s, def, src);
+        // prim_dispatch_ is indexed by the type's NATURAL (universal) tag
+        // number, to pick which XER rendering style applies — never by
+        // def.tag itself, which is the type's *wire* tag and can be
+        // context/application/private class after an [n] override (X.690
+        // §8.1.2). An EXPLICIT override's outer tag number can coincide
+        // with a *different* builtin's universal tag number (e.g. a
+        // context-class [1] override numerically matches BOOLEAN's
+        // universal tag 1) — def.natural_tag is the real one in that case.
+        prim_dispatch_[def.is_explicit ? def.natural_tag.number : def.tag.number]->encode(*this, s, def, src);
     else
         comp_dispatch_[(int)def.kind]->encode(*this, s, def, src);
     if (wrap) s.os() << '\n' << "</" << def.name << ">\n";
@@ -1004,7 +1012,8 @@ DecodeResult XerCodec::decode(IDecodeStream& src,
     }
     DecodeResult res = decode_ok();
     if (def.kind == TypeKind::Primitive)
-        res = prim_dispatch_[def.tag.number]->decode(*this, s, def, dest);
+        // See the matching comment in encode() above.
+        res = prim_dispatch_[def.is_explicit ? def.natural_tag.number : def.tag.number]->decode(*this, s, def, dest);
     else
         res = comp_dispatch_[(int)def.kind]->decode(*this, s, def, dest);
     if (!res) return res;

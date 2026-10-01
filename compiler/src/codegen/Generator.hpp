@@ -393,6 +393,39 @@ private:
     ///        present) rather than a refactor of it, to avoid touching that
     ///        function's existing, widely-used behavior.
     std::optional<TypeTagSpec> underlying_natural_tag_spec_for(const ast::TypeDef& def) const;
+    /// @brief Follow a chain of top-level TypeRef aliases from `def` to its
+    ///        ultimate non-TypeRef definition, reporting via `out_constructed`
+    ///        whether the resulting wire shape is CONSTRUCTED — either
+    ///        because the ultimate type is inherently constructed
+    ///        (SEQUENCE/SET/CHOICE/SEQUENCE OF/SET OF), or because some
+    ///        intermediate hop carries its own EXPLICIT tag (X.680 §31:
+    ///        EXPLICIT tagging always produces a constructed encoding, and
+    ///        further IMPLICIT re-tagging on top of it preserves that
+    ///        wrapped nature — ground-truthed against asn1c's own wire
+    ///        bytes for `Label2 ::= [1] Label; Label ::= [9] EXPLICIT
+    ///        UTF8String` in 33-misc-OK.asn1: `[1]` stays CONSTRUCTED,
+    ///        wrapping the UTF8String TLV, even though `[9]` never appears
+    ///        on the wire).
+    /// @param def             Type whose alias chain to follow.
+    /// @param out_constructed Set to whether the chain is constructed, as above.
+    /// @return The ultimate non-TypeRef TypeDef, or `def` itself if it isn't
+    ///         a TypeRef, or the last resolvable hop if the chain breaks.
+    const ast::TypeDef* resolve_alias_chain(const ast::TypeDef& def, bool& out_constructed) const;
+    /// @brief Does `def` (a top-level type or a referenced-type hop) carry
+    ///        its own [n] tag override on a TypeRef body whose ultimate
+    ///        chain resolves to a plain builtin scalar? If so it gets its
+    ///        own standalone descriptor (emit_type_body's
+    ///        retag_alias_to_builtin path) rather than a bare `using`
+    ///        alias sharing the referenced type's descriptor — any other
+    ///        code that resolves a TypeRef one hop at a time (rather than
+    ///        blindly flattening the whole chain) must stop here instead of
+    ///        continuing past it, or it silently loses the override (see
+    ///        resolve_alias_chain's own doc for the ground-truthed example).
+    ///        Not extended to ENUMERATED/INTEGER (own emit_enumerated/
+    ///        emit_integer paths) or SEQUENCE/CHOICE/SEQUENCE OF/SET OF
+    ///        ultimates (would need real member-forwarding) — narrower
+    ///        cases keep the pre-existing bare-alias behavior.
+    bool has_own_retagged_descriptor(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
     // alt_idx: 0-based index of the alternative in its parent CHOICE.
     // Appends BerTagEntry rows (raw class/number + formatted literal +
