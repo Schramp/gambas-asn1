@@ -57,6 +57,7 @@ std::string CppBackend::format_type_descriptor_ref(const TypeDescriptorRefSpec& 
         }
     case TypeDescriptorRefKind::ClassScoped:  return std::format("&{}::asn_DEF", spec.name);
     case TypeDescriptorRefKind::FreeStanding: return std::format("&asn_DEF_{}", spec.name);
+    case TypeDescriptorRefKind::MemberOwnTable: return "&" + spec.name;
     case TypeDescriptorRefKind::None:
     default:                                  return "nullptr";
     }
@@ -432,43 +433,6 @@ void CppBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& 
 void CppBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const {
     emit_integer_declaration(spec, session.buffer(declaration_extension()));
     emit_integer_definition(spec, session.buffer(definition_extension()));
-}
-
-/// @brief Map a builtin type to its C++ runtime type, for `TypeLifecycleOps<T>`.
-/// @param bt Built-in type tag (never SEQUENCE/CHOICE/TypeRef/INTEGER/
-///           ENUMERATED — `BuiltinAliasSpec` is only built for plain
-///           `ast::BuiltinType` bodies other than those two).
-/// @return C++ runtime type name, e.g. `"asn1::OctetString"`.
-/// @note A small, self-contained subset of what `Generator::native_member_type_for`
-///       computes for the general case (which also handles SEQUENCE/CHOICE/
-///       TypeRef/SEQUENCE OF — out of scope here).
-static std::string native_builtin_type(ast::BuiltinType bt) {
-    using BT = ast::BuiltinType;
-    switch (bt) {
-    case BT::Boolean:          return "asn1::Boolean";
-    case BT::Real:             return "asn1::Real";
-    case BT::Null:             return "asn1::Null";
-    case BT::BitString:        return "asn1::BitString";
-    case BT::OctetString:      return "asn1::OctetString";
-    case BT::ObjectIdentifier: return "asn1::Oid";
-    case BT::RelativeOid:      return "asn1::RelativeOid";
-    case BT::Utf8String:       return "asn1::Utf8String";
-    case BT::NumericString:    return "asn1::NumericString";
-    case BT::PrintableString:  return "asn1::PrintableString";
-    case BT::T61String:        return "asn1::T61String";
-    case BT::Ia5String:        return "asn1::Ia5String";
-    case BT::VisibleString:    return "asn1::VisibleString";
-    case BT::GeneralString:    return "asn1::GeneralString";
-    case BT::GraphicString:    return "asn1::GraphicString";
-    case BT::UniversalString:  return "asn1::UniversalString";
-    case BT::BmpString:        return "asn1::BmpString";
-    case BT::VideotexString:   return "asn1::VideotexString";
-    case BT::ObjectDescriptor: return "asn1::ObjectDescriptor";
-    case BT::UtcTime:          return "asn1::UtcTime";
-    case BT::GeneralizedTime:  return "asn1::GeneralizedTime";
-    case BT::Any:              return "asn1::OctetString";
-    default:                   return "asn1::OctetString";  // Integer/Enumerated: unreachable here
-    }
 }
 
 /// @brief Emit the `.cpp` TypeDescriptor for a builtin-alias type.

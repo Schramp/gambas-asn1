@@ -66,16 +66,16 @@ fn strip_ws(s: &str) -> String {
 // (same as asn1c's asn_fprint output format). The CHOICE decoder expects the
 // reader to start at the first alternative tag, so consume the outer
 // wrapper here.
-fn xer_decode(xml: &str) -> Option<pdu::PDU> {
+fn xer_decode(xml: &str) -> Option<PDU::PDU> {
     let mut r = XerReader::new(xml);
     r.consume_open_tag("PDU").ok()?;
-    let mut val = pdu::PDU::default();
+    let mut val = PDU::PDU::default();
     val.xer_decode_into(&mut r).ok()?;
     r.consume_close_tag("PDU").ok()?;
     Some(val)
 }
 
-fn xer_encode(val: &pdu::PDU) -> String {
+fn xer_encode(val: &PDU::PDU) -> String {
     let mut out = String::new();
     val.xer_encode(&mut out, 0);
     out
@@ -156,7 +156,7 @@ fn process_inner(path: &Path, name: &str) -> (bool, i32) {
         return (false, failures);
     }
 
-    let mut val2 = pdu::PDU::default();
+    let mut val2 = PDU::PDU::default();
     let ber_ok = val2.ber_decode_into(&mut asn1cpp_wire::Reader::new(&ber)).is_ok();
     check(&format!("{name}  BER decode ok"), ber_ok, &mut failures);
     if !ber_ok {
