@@ -10,6 +10,7 @@
 #include "HasRange8b.hpp"
 #include "HasRange1b.hpp"
 #include "HasFromSize.hpp"
+#include "HasFromSizeExt.hpp"
 
 using namespace asn1;
 
@@ -95,6 +96,35 @@ int main() {
         check("HasFromSize FROM+SIZE: \"AZ\" 'Z' not in alpha → fail", per_fails(HasFromSize::asn_DEF, &v));
         v.value = MyFromSize("");
         check("HasFromSize FROM+SIZE: \"\" len=0 too short  → fail",   per_fails(HasFromSize::asn_DEF, &v));
+    }
+
+    // HasFromSizeExt: MyFromSizeExt = VisibleString (FROM("A"|"D")) (SIZE(1..4,...))
+    // Regression for #481: extensible SIZE+FROM previously classified a
+    // value purely by size, never checking alphabet membership — an
+    // in-size value with an out-of-alphabet character was wrongly rejected
+    // as an encode failure instead of being encoded via the extensible
+    // open-type escape (X.691 §26.5.7's in-root test is SIZE AND alphabet).
+    {
+        HasFromSizeExt v;
+        v.value = MyFromSizeExt("AD");
+        check("HasFromSizeExt FROM+SIZE ext: \"AD\" in-size, in-alpha → ok", !per_fails(HasFromSizeExt::asn_DEF, &v));
+
+        v.value = MyFromSizeExt("AZ");
+        check("HasFromSizeExt FROM+SIZE ext: \"AZ\" in-size, 'Z' not in alpha → ok (out-of-root escape)",
+              !per_fails(HasFromSizeExt::asn_DEF, &v));
+
+        // Round-trip the out-of-alphabet-but-in-size case through the open-type
+        // escape path to confirm it's not just "doesn't crash" but byte-exact.
+        std::vector<uint8_t> buf;
+        PerEncodeStream es{buf};
+        PerCodec::instance().encode(es, HasFromSizeExt::asn_DEF, &v);
+        es.flush();
+        HasFromSizeExt back{};
+        PerDecodeStream ds{buf};
+        auto dec_ok = PerCodec::instance().decode(ds, HasFromSizeExt::asn_DEF, &back).has_value();
+        check("HasFromSizeExt FROM+SIZE ext: \"AZ\" round-trip decodes ok", dec_ok);
+        check("HasFromSizeExt FROM+SIZE ext: \"AZ\" round-trip byte-exact",
+              dec_ok && back.value.str() == v.value.str());
     }
 
     std::printf("\n  %d failed.\n", failures);

@@ -960,8 +960,8 @@ set_tests_properties(ber_gaps PROPERTIES TIMEOUT 30)
 
 # test_per_size_range — UPER SIZE range constraint rejection (issue #114)
 set(PER_SIZE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_per_size_range)
-set(PER_SIZE_TYPES HasFixed HasRange14 HasRange8b HasRange1b HasFromSize
-                   MyFixed3 MyRange14 MyRange0_180 MyRange180_181 MyFromSize)
+set(PER_SIZE_TYPES HasFixed HasRange14 HasRange8b HasRange1b HasFromSize HasFromSizeExt
+                   MyFixed3 MyRange14 MyRange0_180 MyRange180_181 MyFromSize MyFromSizeExt)
 set(_ps_outputs)
 foreach(t IN LISTS PER_SIZE_TYPES)
     list(APPEND _ps_outputs ${PER_SIZE_GEN_DIR}/${t}.hpp ${PER_SIZE_GEN_DIR}/${t}.cpp)
