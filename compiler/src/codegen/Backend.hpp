@@ -264,13 +264,13 @@ struct IntegerSpec : TaggedTypeSpec {
     IntStorageKind    storage_kind;
     std::vector<NamedValue> named_values;  // INTEGER { foo(0), bar(1) } style constants
 
-    bool     has_constraint;    // false -> unconstrained; all fields below are meaningless
-    bool     extensible;
-    bool     semi_constrained;  // true -> upper endpoint was MAX (X.680 semi-constrained); no upper cap
-    bool     hi_is_large;       // true -> upper was a positive literal > INT64_MAX
-    int      range_bits;        // -1 when semi_constrained (no fixed upper -> no fixed bit width)
-    int64_t  lower_s64, upper_s64;   // signed view (upper_s64 meaningless when hi_is_large)
-    uint64_t lower_u64, upper_u64;   // unsigned view (exact when hi_is_large)
+    bool     has_constraint = false;    // false -> unconstrained; all fields below are meaningless
+    bool     extensible = false;
+    bool     semi_constrained = false;  // true -> upper endpoint was MAX (X.680 semi-constrained); no upper cap
+    bool     hi_is_large = false;       // true -> upper was a positive literal > INT64_MAX
+    int      range_bits = 0;        // -1 when semi_constrained (no fixed upper -> no fixed bit width)
+    int64_t  lower_s64 = 0, upper_s64 = 0;   // signed view (upper_s64 meaningless when hi_is_large)
+    uint64_t lower_u64 = 0, upper_u64 = 0;   // unsigned view (exact when hi_is_large)
 };
 
 /// @brief Backend-agnostic decision for a builtin-alias type (X.680 §19) —
@@ -284,20 +284,20 @@ struct IntegerSpec : TaggedTypeSpec {
 ///       needs to distinguish OCTET STRING from BOOLEAN etc. the same way,
 ///       so the AST's own classification is already the right shape.
 struct BuiltinAliasSpec : TaggedTypeSpec {
-    ast::BuiltinType        builtin_type;
+    ast::BuiltinType        builtin_type = ast::BuiltinType::Null;
     // tag (inherited): natural tag (X.690 §8.1); always present in practice —
     // builtin-alias types are never CHOICE, the only case natural-tag
     // resolution returns nullopt for.
     std::vector<uint8_t>   alphabet;    // FROM-alphabet constraint (restricted string types); empty = none
-    bool     has_size_constraint;       // true if a SIZE constraint is present at all (bounded or semi-constrained)
-    bool     size_bounded;              // true iff the SIZE constraint has a finite upper bound;
+    bool     has_size_constraint = false; // true if a SIZE constraint is present at all (bounded or semi-constrained)
+    bool     size_bounded = false;      // true iff the SIZE constraint has a finite upper bound;
                                          // false for SIZE(n..MAX) — semi-constrained, no upper cap.
                                          // Distinct from has_size_constraint: a semi-constrained
                                          // SIZE is still "present" (has_size_constraint=true) but
                                          // not "bounded" (size_upper is meaningless when false).
-    int      size_range_bits;
-    int64_t  size_lower, size_upper;    // size_upper meaningful only when size_bounded
-    bool     extensible;
+    int      size_range_bits = 0;
+    int64_t  size_lower = 0, size_upper = 0;    // size_upper meaningful only when size_bounded
+    bool     extensible = false;
     ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // X.693 §21 OCTET STRING representation
 };
 
@@ -360,31 +360,31 @@ inline std::string escape_string_literal(const std::string& raw) {
 ///        which field group is meaningful (INTEGER value range vs SIZE-able
 ///        primitive SIZE/FROM-alphabet constraints).
 struct MemberTypeDescriptorSpec {
-    enum class Kind { Integer, Sizeable } kind;
+    enum class Kind { Integer, Sizeable } kind = Kind::Integer;
     std::string tname;            // static variable / synthetic identifier base, e.g. "asn_TYP_Parent_member"
 
     // Kind::Integer — mirrors IntegerSpec's constraint fields.
-    IntStorageKind storage_kind;
-    bool     extensible;
-    bool     semi_constrained;    // true -> upper endpoint was MAX; no upper cap
-    bool     hi_is_large;         // true -> upper was a positive literal > INT64_MAX
-    int      range_bits;          // -1 when semi_constrained
-    int64_t  lower_s64, upper_s64;
-    uint64_t lower_u64, upper_u64;
+    IntStorageKind storage_kind = IntStorageKind::S64;
+    bool     extensible = false;
+    bool     semi_constrained = false;    // true -> upper endpoint was MAX; no upper cap
+    bool     hi_is_large = false;         // true -> upper was a positive literal > INT64_MAX
+    int      range_bits = 0;          // -1 when semi_constrained
+    int64_t  lower_s64 = 0, upper_s64 = 0;
+    uint64_t lower_u64 = 0, upper_u64 = 0;
 
     // Kind::Sizeable — mirrors BuiltinAliasSpec's SIZE/FROM-alphabet fields.
-    ast::BuiltinType      builtin_type;
+    ast::BuiltinType      builtin_type = ast::BuiltinType::Null;
     std::vector<uint8_t>  alphabet;      // empty = no FROM-alphabet constraint
     std::string           alpha_prefix;  // empty = no FROM-alphabet arrays needed
-    bool     has_size_constraint; // true if a SIZE constraint is present at all
-    bool     size_bounded;        // true iff the SIZE constraint has a finite upper bound
-    int      size_range_bits;
-    int64_t  size_lower, size_upper; // size_upper meaningful only when size_bounded
+    bool     has_size_constraint = false; // true if a SIZE constraint is present at all
+    bool     size_bounded = false;        // true iff the SIZE constraint has a finite upper bound
+    int      size_range_bits = 0;
+    int64_t  size_lower = 0, size_upper = 0; // size_upper meaningful only when size_bounded
     ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // Kind::Integer never sets this
 
     // Both kinds — target-agnostic BER/XER facts (X.690/X.693), not code.
     std::string xer_type_name;    // e.g. "INTEGER", "OCTET_STRING"
-    int         universal_tag;    // asn1::UniversalTag::* value
+    int         universal_tag = 0;    // asn1::UniversalTag::* value
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE OF / SET OF type
@@ -396,15 +396,15 @@ struct MemberTypeDescriptorSpec {
 struct SeqOfSpec : TaggedTypeSpec {
     std::string elem_ref;        // reference expression to the element's TypeDescriptor
     std::string elem_type;       // element's native storage type (hpp `using X = VectorSeqOf<elem_type>` only)
-    int         range_bits;
-    int64_t     size_lower;
+    int         range_bits = 0;
+    int64_t     size_lower = 0;
     std::optional<int64_t> size_upper; // present = finite upper bound; absent = semi-constrained/unconstrained
     bool        has_size_constraint = false; // false -> no SIZE(...) at all (size_lower/size_upper both meaningless)
     bool        extensible = false;          // X.680 §51.8.3 SIZE(...,...) — drives whether
                                               // CppBackend::emit_seq_of_definition's Constraints table sets
                                               // EXTENSIBLE for a SEQUENCE OF/SET OF's own SIZE constraint.
     std::optional<std::string> elem_xer_name; // X.693 §12: element's declared identifier, if any
-    bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
+    bool        is_set_of = false;      // true -> natural tag is SET, else SEQUENCE
 };
 
 /// @brief Backend-agnostic tag-bearing fields shared by every construct that
