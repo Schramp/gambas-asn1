@@ -693,6 +693,37 @@ public:
     ///        e.g. "My-Type" -> "MyType" in C++.
     virtual std::string type_name(std::string_view asn1_name) const = 0;
 
+    /// @brief Final type identifier -> target-language module/file-scope
+    ///        identifier (Rust: the crate-relative module name a type's
+    ///        own generated file is declared under).
+    /// @note Deliberately the identity function for every backend, not a
+    ///       separately-styled name (gambas-asn1#597/#523: an earlier Rust
+    ///       implementation snake_cased this — `to_snake_case` folds case,
+    ///       not just the hyphen/separator folding `type_name` already
+    ///       does, so two distinct, already-unique type identifiers could
+    ///       still collide in that more lossy namespace, e.g.
+    ///       `SIGNED_REAL` vs `SignedREAL`). Module and type identifiers
+    ///       live in separate Rust namespaces, so reusing the type name
+    ///       verbatim as its own module name is valid (`mod Foo { pub
+    ///       struct Foo { ... } }`) and needs no non-snake-case lint
+    ///       workaround beyond a crate-wide `#![allow(non_snake_case)]`
+    ///       (already needed for the PascalCase types themselves). This
+    ///       also keeps generated code trivially debuggable — module name
+    ///       and type name are always textually identical, no second
+    ///       mental mapping between a file's module path and the type it
+    ///       declares. Since this namespace is never separately folded, it
+    ///       inherits the type-identifier namespace's own uniqueness
+    ///       guarantee (`Generator::effective_cpp_name`) for free — no
+    ///       separate collision check needed for this namespace at all.
+    /// @param final_type_name Already-resolved final type identifier (not
+    ///                   the raw ASN.1 name) — the caller is expected to
+    ///                   have already run type-namespace collision
+    ///                   disambiguation (`Generator::effective_cpp_name`)
+    ///                   before asking for this namespace's own name.
+    virtual std::string module_name(std::string_view final_type_name) const {
+        return std::string(final_type_name);
+    }
+
     /// @brief ASN.1 member/field name -> target-language member identifier,
     ///        escaped against keyword/extra-name collisions.
     /// @param asn1_name ASN.1 member name.
