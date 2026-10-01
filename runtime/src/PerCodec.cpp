@@ -32,11 +32,19 @@ namespace {
 // Standard reference: ITU-T Rec. X.691 (1997) — Packed Encoding Rules (PER)
 // File: asn1-docs/X.691-199712.txt  Grep: grep -n "<title>" X.691-199712.txt
 
+// X.691 §10.9.3.4 / §10.6 short-form bit-field width and value range shared by
+// "normally small length" (nslength) and "normally small non-negative whole
+// number" (nsnn) — both pack a short-form value into this many bits, falling
+// back to a general length determinant (per_detail::put_length) above it.
+static constexpr int kShortFormBits   = 6;
+static constexpr int kNsLengthMax     = 64; // nslength short-form: n in [1..64], stored as n-1
+static constexpr int kNsnnMax         = 63; // nsnn short-form: n in [0..63], stored as-is
+
 // X.691 §10.9.3.4 "Where the length determinant is a normally small length and
 // "n" is less than or equal to 64, a single-bit bit-field [...]"
-// Flag=0: n in [1..64], encode n-1 in 6 bits. Flag=1: delegate to put_length().
+// Flag=0: n in [1..64], encode n-1 in kShortFormBits bits. Flag=1: delegate to put_length().
 static void put_nslength(PerEncodeStream& stream, std::size_t n) {
-    if (n >= 1 && n <= 64) { stream.put_bits(0, 1); stream.put_bits(n - 1, 6); }
+    if (n >= 1 && n <= kNsLengthMax) { stream.put_bits(0, 1); stream.put_bits(n - 1, kShortFormBits); }
     else { stream.put_bits(1, 1); per_detail::put_length(stream, n); }
 }
 
@@ -45,7 +53,7 @@ static Expected<std::size_t, DecodeError> get_nslength(PerDecodeStream& stream) 
     auto b = stream.get_bits(1);
     if (!b) return make_unexpected<std::size_t, DecodeError>(b.error());
     if (*b == 0) {
-        auto v = stream.get_bits(6);
+        auto v = stream.get_bits(kShortFormBits);
         if (!v) return make_unexpected<std::size_t, DecodeError>(v.error());
         return *v + 1;
     }
@@ -54,9 +62,9 @@ static Expected<std::size_t, DecodeError> get_nslength(PerDecodeStream& stream) 
 
 
 // X.691 §10.6 "Encoding of a normally small non-negative whole number"
-// Flag=0: value in [0..63], encode in 6 bits. Flag=1: delegate to put_length().
+// Flag=0: value in [0..63], encode in kShortFormBits bits. Flag=1: delegate to put_length().
 static void put_nsnn(PerEncodeStream& stream, int n) {
-    if (n <= 63) { stream.put_bits(0, 1); stream.put_bits(static_cast<uint64_t>(n), 6); }
+    if (n <= kNsnnMax) { stream.put_bits(0, 1); stream.put_bits(static_cast<uint64_t>(n), kShortFormBits); }
     else { stream.put_bits(1, 1); per_detail::put_length(stream, static_cast<std::size_t>(n)); }
 }
 
@@ -65,7 +73,7 @@ static Expected<int, DecodeError> get_nsnn(PerDecodeStream& stream) {
     auto b = stream.get_bits(1);
     if (!b) return make_unexpected<int, DecodeError>(b.error());
     if (*b == 0) {
-        auto v = stream.get_bits(6);
+        auto v = stream.get_bits(kShortFormBits);
         if (!v) return make_unexpected<int, DecodeError>(v.error());
         return static_cast<int>(*v);
     }
