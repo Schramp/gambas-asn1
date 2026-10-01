@@ -415,15 +415,25 @@ public:
         std::unordered_map<std::string, ast::TypeDefPtr> cache;
         std::unordered_set<std::string> used_names;
         for (const auto& mod : pr.modules) {
-            std::vector<ast::TypeDefPtr> new_instances;
-            // Snapshot: walk only the originally-parsed assignments. A
-            // freshly-substituted instance is already parameter-free (see
-            // scope limit above), so it never needs a second pass.
-            auto original = mod->assignments;
-            for (const auto& def : original)
-                resolve_parameterized_instantiations_in(def, mod->name, cache, used_names, new_instances);
-            for (auto& inst : new_instances)
-                mod->assignments.push_back(std::move(inst));
+            // Iterate to a fixpoint: a freshly-substituted instance is itself
+            // parameter-free (no formal params of its own left), but its body
+            // may still contain a *nested* parameterized-type reference to a
+            // different generic (e.g. LowerLayer-List {...} ::= SEQUENCE OF
+            // SinglePacket {{Param}} — once LowerLayer-List itself is
+            // instantiated and Param becomes a concrete actual, that nested
+            // SinglePacket{{...}} reference only becomes resolvable now, and
+            // needs its own pass through this same function). Each round
+            // only walks that round's newly-added instances; stops once a
+            // round adds none.
+            std::vector<ast::TypeDefPtr> to_scan = mod->assignments;
+            while (!to_scan.empty()) {
+                std::vector<ast::TypeDefPtr> new_instances;
+                for (const auto& def : to_scan)
+                    resolve_parameterized_instantiations_in(def, mod->name, cache, used_names, new_instances);
+                for (const auto& inst : new_instances)
+                    mod->assignments.push_back(inst);
+                to_scan = std::move(new_instances);
+            }
         }
     }
 
