@@ -61,7 +61,7 @@ fn strip_ws(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-fn per_encode(val: &pdu::PDU) -> Vec<u8> {
+fn per_encode(val: &PDU::PDU) -> Vec<u8> {
     let mut w = Writer::new();
     val.per_encode(&mut w, &UNCONSTRAINED);
     w.flush();
@@ -70,7 +70,7 @@ fn per_encode(val: &pdu::PDU) -> Vec<u8> {
 
 fn per_decode(bytes: &[u8]) -> bool {
     let mut r = Reader::new(bytes);
-    let mut val = pdu::PDU::default();
+    let mut val = PDU::PDU::default();
     val.per_decode_into(&mut r, &UNCONSTRAINED).is_ok()
 }
 
@@ -85,7 +85,7 @@ fn process_inner(path: &Path, name: &str) -> i32 {
     let out_bytes = fs::read(&out_path).unwrap_or_else(|e| panic!("failed to read {}: {e}", out_path.display()));
 
     // 1. XER decode .in
-    let decoded = decode_sequence_xer(&pdu::PDU_SPEC, &input);
+    let decoded = decode_sequence_xer(&PDU::PDU_SPEC, &input);
     check(&format!("{name}  XER decode ok"), decoded.is_ok(), &mut failures);
     let Ok(val) = decoded else { return failures };
 
@@ -118,7 +118,7 @@ fn process_inner(path: &Path, name: &str) -> i32 {
     }
 
     // 5. Round-trip: UPER decode our own bytes -> XER re-encode -> compare to .in
-    let mut val2 = pdu::PDU::default();
+    let mut val2 = PDU::PDU::default();
     let rt_ok = {
         let mut r = Reader::new(&our_bytes);
         val2.per_decode_into(&mut r, &UNCONSTRAINED).is_ok()
@@ -128,7 +128,7 @@ fn process_inner(path: &Path, name: &str) -> i32 {
         return failures;
     }
 
-    let reenc = encode_sequence_xer(&pdu::PDU_SPEC, &val2);
+    let reenc = encode_sequence_xer(&PDU::PDU_SPEC, &val2);
     if kind == Kind::X {
         check(&format!("{name}  XER re-encode differs from .in (expected)"), strip_ws(&reenc) != strip_ws(&input), &mut failures);
     } else {

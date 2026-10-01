@@ -75,13 +75,13 @@ fn process(path: &Path, lenient: &HashSet<&str>, failures: &mut i32) -> bool {
     let raw = fs::read(path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
 
     if matches!(exp, Expect::Broken) {
-        let decoded = t::T::decode(&raw).is_ok();
+        let decoded = T::T::decode(&raw).is_ok();
         check(&name, !decoded, failures);
         return false;
     }
 
     // All non-broken files must decode successfully.
-    let val = match t::T::decode(&raw) {
+    let val = match T::T::decode(&raw) {
         Ok(v) => {
             check(&format!("{name}  decode ok"), true, failures);
             v
