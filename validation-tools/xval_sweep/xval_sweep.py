@@ -390,6 +390,50 @@ def asn1c_x2b(tool: str, pdu_type: str, xer_text: str) -> tuple[bytes, str]:
         os.unlink(xer_path)
 
 
+def asn1c_b2p(tool: str, pdu_type: str, ber_record: bytes) -> tuple[bytes, str]:
+    """One BER-record's bytes -> raw UPER bytes via asn1c's own converter-example.
+
+    One call per record, not the whole multi-record stream at once (#515):
+    unlike BER's self-delimiting TLVs, UPER has no record boundary of its
+    own, so a multi-PDU UPER stream can't be reliably split externally on
+    the Python side once asn1c has encoded it. Matches asn1c_x2b's own
+    per-record temp-file pattern — no dependency on whether asn1c's own
+    -iuper reader supports multiple concatenated PDUs per file at all.
+    """
+    fd, ber_path = tempfile.mkstemp(suffix=".ber")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(ber_record)
+        r = run(tool, "-p", pdu_type, "-iber", "-ouper", ber_path)
+        return r.stdout, r.stderr.decode(errors="replace").strip()
+    finally:
+        os.unlink(ber_path)
+
+
+def asn1c_p2b(tool: str, pdu_type: str, per_record: bytes) -> tuple[bytes, str]:
+    """One record's raw UPER bytes -> DER bytes via asn1c's own converter-example."""
+    fd, per_path = tempfile.mkstemp(suffix=".uper")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(per_record)
+        r = run(tool, "-p", pdu_type, "-iuper", "-oder", per_path)
+        return r.stdout, r.stderr.decode(errors="replace").strip()
+    finally:
+        os.unlink(per_path)
+
+
+def pack_per_records(records: list[bytes]) -> bytes:
+    """Inverse of split_per_records — reassemble individually-obtained PER
+    records (e.g. one asn1c_b2p call per record) into the same 4-byte-
+    length-prefixed framing compare_per expects, so the ground-truth PER
+    leg can reuse it exactly like the cpp/rust comparisons do."""
+    out = bytearray()
+    for r in records:
+        out += len(r).to_bytes(4, "big")
+        out += r
+    return bytes(out)
+
+
 def compare_records(recs_a: list[str], recs_b: list[str], verbose: bool) -> tuple[int, int]:
     n = min(len(recs_a), len(recs_b))
     matches = mismatches = 0
@@ -914,6 +958,62 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
 
         ber_per_cross2, _ = p2b(cpp_tools["p2b"], pdu_type, per_rust)
         tally(compare_ber("orig vs cpp.P2B(rust.PER)", ber_orig, ber_per_cross2, verbose))
+
+        if asn1c_tools:
+            # Both directions below are informational only, same rationale as
+            # the existing asn1c.X2B(asn1c.XER) check further down: *any*
+            # comparison that ends with asn1c producing DER inherits asn1c's
+            # own re-encoding-choice instability for certain values (e.g.
+            # REAL's binary vs decimal form) -- confirmed empirically on
+            # roundtrip_test.asn1::Container (REAL-bearing): asn1c.P2B of
+            # OUR OWN PER output mismatches orig for the exact same record
+            # #2 that asn1c.X2B(asn1c.XER) already independently flags as
+            # unstable, regardless of which wire format fed asn1c's DER
+            # encoder. Not a decode-side signal (asn1c correctly decoded our
+            # PER either way) -- genuinely nothing to gate on here.
+            cpp_recs = split_per_records(per_cpp)
+            rust_recs = split_per_records(per_rust)
+            der_from_cpp, der_from_rust = [], []
+            p2b_err = None
+            for rec in cpp_recs:
+                d, e = asn1c_p2b(asn1c_tools["tool"], pdu_type, rec)
+                der_from_cpp.append(d)
+                p2b_err = p2b_err or e
+            for rec in rust_recs:
+                d, e = asn1c_p2b(asn1c_tools["tool"], pdu_type, rec)
+                der_from_rust.append(d)
+                p2b_err = p2b_err or e
+            if p2b_err:
+                print(f"  asn1c p2b stderr: {p2b_err}")
+            compare_ber("orig vs asn1c.P2B(cpp.PER) [informational]", ber_orig, b"".join(der_from_cpp), verbose)
+            compare_ber("orig vs asn1c.P2B(rust.PER) [informational]", ber_orig, b"".join(der_from_rust), verbose)
+
+            # asn1c's own PER encoding of the original value, one record at
+            # a time (asn1c_b2p's own doc on why) -- same informational
+            # rationale as above.
+            ber_records = split_ber_records(ber_orig)
+            asn1c_per_records = []
+            asn1c_per_err = None
+            for rec in ber_records:
+                per_rec, err = asn1c_b2p(asn1c_tools["tool"], pdu_type, rec)
+                if err and not asn1c_per_err:
+                    asn1c_per_err = err
+                asn1c_per_records.append(per_rec)
+            if asn1c_per_err:
+                print(f"  asn1c b2p stderr: {asn1c_per_err}")
+            per_asn1c = pack_per_records(asn1c_per_records)
+
+            compare_per("asn1c.PER vs cpp.PER [informational]", per_asn1c, per_cpp, verbose)
+            compare_per("asn1c.PER vs rust.PER [informational]", per_asn1c, per_rust, verbose)
+
+            der_records = []
+            for per_rec in asn1c_per_records:
+                der_rec, _ = asn1c_p2b(asn1c_tools["tool"], pdu_type, per_rec)
+                der_records.append(der_rec)
+            ber_asn1c_per2 = b"".join(der_records)
+            compare_ber("orig vs asn1c.P2B(asn1c.PER) [informational]", ber_orig, ber_asn1c_per2, verbose)
+        elif not skip_asn1c_reason:
+            print("  asn1c PER leg: skipped (not found or unsupported for this target)")
     else:
         print("  PER leg: skipped (Rust codegen doesn't cover this type's members/alternatives yet)")
 
