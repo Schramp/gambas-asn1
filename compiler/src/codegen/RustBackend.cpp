@@ -1123,15 +1123,15 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // type's cross-module path, same
     // "always wire, real bounds or not" convention as everywhere else.
     // The element's own constraint table, when it has one: the element's
-    // `emit_member_type_descriptor` output (`elem_ref` is "&" + its name,
-    // the same "&asn_TYP_" idiom `tdref` uses) sits in this same module, so
-    // the collection's constraint can point at it (X.691 §19/§20 — each
-    // element is encoded against `element`, the count against this table's
-    // own SIZE fields).
+    // `emit_member_type_descriptor` output (MemberOwnTable — a bare base
+    // name, empty when the element has no own table) sits in this same
+    // module, so the collection's constraint can point at it (X.691
+    // §19/§20 — each element is encoded against `element`, the count
+    // against this table's own SIZE fields).
     std::string element_expr = "None";
-    if (spec.elem_ref.starts_with("&asn_TYP_")) {
+    if (!spec.elem_ref.empty()) {
         element_expr = std::format("Some(&{}_CONSTRAINTS)",
-            to_screaming_snake_case(spec.elem_ref.substr(1)));
+            to_screaming_snake_case(spec.elem_ref));
     }
     os << std::format(
         "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
@@ -1251,30 +1251,28 @@ static std::string rust_seqof_alt_mtype(const std::string& mtype) {
     return std::format("asn1cpp_wire::ber::sequence::SeqOf<{}>", mtype.substr(4, mtype.size() - 5));
 }
 
-/// @brief The unwrapped element type text for a SEQUENCE OF/SET OF member.
-///        `m.mtype` is always exactly `"Vec<ElemType>"` for such a member —
-///        `native_member_type_for`'s own is_seq_of/is_set_of branches always route
-///        through `wrap_collection_type` (Backend.hpp) — the same shape
-///        `rust_seqof_alt_mtype` above unwraps for a CHOICE alternative.
-///        Recurses per `ElemShape` (Backend.hpp) when the element is
-///        itself a nested SEQUENCE OF/SET OF, rewrapping each nesting
-///        level in the *correct* `SeqOf<T>`/`SetOf<T>` — text alone can't
-///        tell SEQUENCE OF from SET OF at any depth (both render
-///        identically as `"Vec<...>"`), so `ElemShape` supplies the fact
-///        the text itself can't.
-/// @param mtype One level of raw placeholder text still to resolve.
+/// @brief The real nested-collection element type for a SEQUENCE OF/SET OF
+///        member, built directly from `ElemShape` (Backend.hpp) — never
+///        from `m.mtype` text, which `native_member_type_for`'s own
+///        is_seq_of/is_set_of branches always flatten to the placeholder
+///        `"Vec<...>"` shape regardless of nesting depth or SEQUENCE-OF-
+///        vs-SET-OF kind at each level (the same placeholder
+///        `rust_seqof_alt_mtype` above unwraps for a CHOICE alternative —
+///        text alone can't tell them apart, which is exactly why
+///        `ElemShape` exists; see its own doc).
 /// @param shape This level's element shape — SeqOfKind::None is the base
-///              case (leaf: builtin/composite text, already correct).
-static std::string rust_wrap_elem_shape(const std::string& mtype, const ElemShape& shape) {
-    if (shape.kind == SeqOfKind::None) return mtype;
-    std::string inner_mtype = mtype.substr(4, mtype.size() - 5);  // strip this level's "Vec<...>"
-    std::string inner = shape.nested ? rust_wrap_elem_shape(inner_mtype, *shape.nested) : inner_mtype;
+///              case (leaf: `shape.leaf_native_type`, already correct,
+///              never itself wrapped in a collection type — no text to
+///              strip at any level).
+static std::string rust_wrap_elem_shape(const ElemShape& shape) {
+    if (shape.kind == SeqOfKind::None) return shape.leaf_native_type;
+    std::string inner = shape.nested ? rust_wrap_elem_shape(*shape.nested) : shape.leaf_native_type;
     return std::format("asn1cpp_wire::ber::sequence::{}<{}>",
                         shape.kind == SeqOfKind::SeqOf ? "SeqOf" : "SetOf", inner);
 }
 
 static std::string rust_seqof_elem_mtype(const SequenceMemberSpec& m) {
-    return rust_wrap_elem_shape(m.mtype.substr(4, m.mtype.size() - 5), m.elem_shape);
+    return rust_wrap_elem_shape(m.elem_shape);
 }
 
 /// @brief Recursive coverage check for a SEQUENCE OF/SET OF element's
@@ -1703,7 +1701,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // generated type) gets `None`: its own `validate` is reached
             // through `ber_encode_tagged`'s `validate::check`.
             std::string constraints_expr = "None";
-            bool own_table = m.tdref.starts_with("&asn_TYP_");
+            bool own_table = !m.tdref.empty();
             if (m.mbuiltin && own_table &&
                 ((*m.mbuiltin == ast::BuiltinType::Integer &&
                   (m.storage_kind == IntStorageKind::S64 || m.storage_kind == IntStorageKind::U64)) ||
@@ -1725,7 +1723,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // reference: the synthetic type lives in its own generated
                 // module, and nothing else in this file names it.
                 std::string synth = synthetic_name(spec.type_name, m.asn1_name);
-                constraints_expr = std::format("Some(&crate::{}::{}_CONSTRAINTS)", to_snake_case(synth),
+                constraints_expr = std::format("Some(&crate::{}::{}_CONSTRAINTS)", escape(synth),
                                                 to_screaming_snake_case(synth));
             }
             os << std::format("        constraints: {},\n", constraints_expr);
@@ -2092,7 +2090,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             // against: the inline SIZE/range table emitted for it when
             // `tdref` names one, the shared unconstrained value otherwise.
             std::string alt_constraints = "&asn1cpp_wire::constraints::UNCONSTRAINED";
-            if (a.mbuiltin && a.tdref.starts_with("&asn_TYP_")) {
+            if (a.mbuiltin && !a.tdref.empty()) {
                 alt_constraints = "&" + to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name))) + "_CONSTRAINTS";
             }
             // A single-variant enum (not extensible) needs an irrefutable
@@ -2412,20 +2410,21 @@ void RustBackend::emit_typeref_alias_declaration(const std::string& type_name, c
 /// @brief Reference another generated type via its crate-relative module
 ///        path — assumes a generated crate root (main.cpp, --target=rust)
 ///        declares one module per generated file.
-/// @note module *identifier* is snake_case
-///       (escape(to_snake_case(filename))), not the raw filename — see
-///       finalize_output's own `#[path = ...]` module declaration. `filename`
-///       here is still the on-disk file stem (PascalCase, matching
-///       `type_name`), so it must be re-derived into the same snake_case
-///       identifier finalize_output declared the module under, or this
-///       `use` path wouldn't resolve. The `escape()` wrap matters for a type
-///       named e.g. "Type" — its snake_case module name "type" collides with
-///       the Rust keyword and needs `r#type` raw-identifier escaping,
-///       exactly the same mechanism member_name() already applies.
+/// @note The module identifier is the type identifier itself, verbatim
+///       (Backend::module_name's own doc — gambas-asn1#597/#523: an
+///       earlier version snake_cased this, a strictly more lossy
+///       transform than type_name's own, letting two already-distinct
+///       type identifiers collide as module names). `filename` here is
+///       the on-disk file stem, always identical to `type_name` by
+///       construction (see finalize_output's own `#[path = ...]`
+///       declaration) — `escape()` still matters for the rare type
+///       whose own name happens to match a Rust keyword exactly (not a
+///       folded/lowercased collision, a literal one), same mechanism
+///       member_name() already applies.
 void RustBackend::emit_type_reference(const std::string& type_name, const std::string& filename,
                                        TypeOutputSession& session) const {
     session.buffer(declaration_extension())
-        << std::format("use crate::{}::{};\n", escape(to_snake_case(filename)), type_name);
+        << std::format("use crate::{}::{};\n", escape(filename), type_name);
 }
 
 /// @brief Rust has no forward-declaration concept — a type is visible
@@ -2466,7 +2465,16 @@ void RustBackend::finalize_output(const std::string& out_dir) const {
     for (const auto& entry : fs::directory_iterator(out_dir)) {
         if (entry.path().extension() != ".rs" || entry.path() == lib_rs) continue;
         std::string stem = entry.path().stem().string();
-        lib << std::format("#[path = \"{}.rs\"] pub mod {};\n", stem, escape(to_snake_case(stem)));
+        // Module identifiers are PascalCase (Backend::module_name's own
+        // doc — the type identifier verbatim, not a separately-folded
+        // name), which would otherwise trip rustc's non_snake_case lint.
+        // An *outer* attribute per declaration, not a crate-level `#![...]`
+        // inner attribute: this file isn't always literally the crate
+        // root — some consumers `include!()` it into their own lib.rs
+        // (e.g. the xval_sweep test harness), where an inner attribute at
+        // this position is rejected outright ("an inner attribute is not
+        // permitted in this context").
+        lib << std::format("#[allow(non_snake_case)]\n#[path = \"{}.rs\"] pub mod {};\n", stem, escape(stem));
     }
 }
 

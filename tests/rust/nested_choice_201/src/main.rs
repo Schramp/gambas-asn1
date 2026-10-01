@@ -25,10 +25,10 @@
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
 
-use handover_command::HandoverCommand;
-use handover_command_critical_extensions::HandoverCommandCriticalExtensions;
-use handover_command_critical_extensions_critical_extensions::HandoverCommandCriticalExtensionsCriticalExtensions;
-use handover_command_critical_extensions_critical_extensions_critical_extensions::HandoverCommandCriticalExtensionsCriticalExtensionsCriticalExtensions as Leaf;
+use HandoverCommand::HandoverCommand as HandoverCommandT;
+use HandoverCommandCriticalExtensions::HandoverCommandCriticalExtensions as HandoverCommandCriticalExtensionsT;
+use HandoverCommandCriticalExtensionsCriticalExtensions::HandoverCommandCriticalExtensionsCriticalExtensions as HandoverCommandCriticalExtensionsCriticalExtensionsT;
+use HandoverCommandCriticalExtensionsCriticalExtensionsCriticalExtensions::HandoverCommandCriticalExtensionsCriticalExtensionsCriticalExtensions as Leaf;
 
 fn check(label: &str, cond: bool, failures: &mut i32) {
     if cond {
@@ -62,10 +62,10 @@ fn main() {
 
     // Full nested round-trip through the previously-ambiguous middle-level
     // "criticalExtensions" alternative (gambas-asn1#450).
-    let hc = HandoverCommand {
+    let hc = HandoverCommandT {
         rrc_trans_id: asn1cpp_wire::integer::Integer(7),
-        critical_extensions: HandoverCommandCriticalExtensions::CriticalExtensions(
-            HandoverCommandCriticalExtensionsCriticalExtensions::CriticalExtensions(Leaf {}),
+        critical_extensions: HandoverCommandCriticalExtensionsT::CriticalExtensions(
+            HandoverCommandCriticalExtensionsCriticalExtensionsT::CriticalExtensions(Leaf {}),
         ),
     };
 
@@ -73,12 +73,12 @@ fn main() {
     let expected: &[u8] = &[0x30, 0x09, 0x80, 0x01, 0x07, 0xa1, 0x04, 0xa1, 0x02, 0xa1, 0x00];
     check("nested BER matches asn1c ground truth", bytes == expected, &mut failures);
 
-    let back = HandoverCommand::decode(&bytes);
+    let back = HandoverCommandT::decode(&bytes);
     check("nested BER decode ok", back.is_ok(), &mut failures);
     check("nested BER round-trip", back == Ok(hc.clone()), &mut failures);
 
     let xml = hc.encode_xer();
-    let back_xml = HandoverCommand::decode_xer(&xml);
+    let back_xml = HandoverCommandT::decode_xer(&xml);
     check("nested XER decode ok", back_xml.is_ok(), &mut failures);
     check("nested XER round-trip", back_xml == Ok(hc), &mut failures);
 

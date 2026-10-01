@@ -78,16 +78,16 @@ fn strip_ws(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-fn per_encode(val: &pdu::PDU) -> Vec<u8> {
+fn per_encode(val: &PDU::PDU) -> Vec<u8> {
     let mut w = Writer::new();
     val.per_encode(&mut w, &UNCONSTRAINED);
     w.flush();
     w.into_bytes()
 }
 
-fn per_decode(bytes: &[u8]) -> Result<pdu::PDU, asn1cpp_wire::per::reader::DecodeError> {
+fn per_decode(bytes: &[u8]) -> Result<PDU::PDU, asn1cpp_wire::per::reader::DecodeError> {
     let mut r = Reader::new(bytes);
-    let mut val = pdu::PDU::default();
+    let mut val = PDU::PDU::default();
     val.per_decode_into(&mut r, &UNCONSTRAINED)?;
     Ok(val)
 }
@@ -128,7 +128,7 @@ fn process_inner(path: &Path, name: &str) -> i32 {
     let mut failures = 0;
     let input = fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
 
-    let decoded = decode_sequence_xer(&pdu::PDU_SPEC, &input);
+    let decoded = decode_sequence_xer(&PDU::PDU_SPEC, &input);
     check(&format!("{name}  XER decode ok"), decoded.is_ok(), &mut failures);
     let Ok(val) = decoded else { return failures };
 
@@ -144,7 +144,7 @@ fn process_inner(path: &Path, name: &str) -> i32 {
 
     // encode_sequence_xer already includes the outer <PDU>...</PDU> wrapper
     // (decode_sequence_xer consumes the same wrapper on the way in).
-    let reenc = encode_sequence_xer(&pdu::PDU_SPEC, &val2);
+    let reenc = encode_sequence_xer(&PDU::PDU_SPEC, &val2);
     check(
         &format!("{name}  XER round-trip equal (whitespace-stripped)"),
         strip_ws(&reenc) == strip_ws(&input),

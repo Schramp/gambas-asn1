@@ -147,6 +147,10 @@ enum class TypeDescriptorRefKind {
     Builtin,       // a universal builtin type — see TypeDescriptorRefSpec::builtin
     ClassScoped,   // reference to a generated class's own static descriptor member
     FreeStanding,  // reference to a free-standing generated descriptor symbol
+    MemberOwnTable,// reference to a member's own inline-constraint descriptor
+                   // table (TypeDescriptorRefSpec::name is the table's already-
+                   // complete base identifier, e.g. "asn_TYP_Parent_Member" —
+                   // distinct from FreeStanding's "asn_DEF_" convention).
     None,          // no descriptor exists for this reference
 };
 
@@ -208,6 +212,14 @@ struct ElemShape {
     // constant instead (asn1cpp_wire::constraints::UNCONSTRAINED) rather
     // than needing anything emitted for this element at all.
     bool has_own_descriptor = false;
+    // This level's leaf native type text, already fully resolved
+    // (Generator::native_member_type_for — same call a non-nested member
+    // would get), meaningful only when kind == None. Never itself wrapped
+    // in a collection type — a backend building the final nested
+    // SeqOf<SetOf<...<leaf_native_type>...>> text (per this shape's own
+    // recursion) reads this directly instead of stripping it back out of
+    // an already-wrapped placeholder string.
+    std::string leaf_native_type;
 };
 
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —
@@ -680,6 +692,37 @@ public:
     /// @brief ASN.1 type name -> target-language type identifier.
     ///        e.g. "My-Type" -> "MyType" in C++.
     virtual std::string type_name(std::string_view asn1_name) const = 0;
+
+    /// @brief Final type identifier -> target-language module/file-scope
+    ///        identifier (Rust: the crate-relative module name a type's
+    ///        own generated file is declared under).
+    /// @note Deliberately the identity function for every backend, not a
+    ///       separately-styled name (gambas-asn1#597/#523: an earlier Rust
+    ///       implementation snake_cased this — `to_snake_case` folds case,
+    ///       not just the hyphen/separator folding `type_name` already
+    ///       does, so two distinct, already-unique type identifiers could
+    ///       still collide in that more lossy namespace, e.g.
+    ///       `SIGNED_REAL` vs `SignedREAL`). Module and type identifiers
+    ///       live in separate Rust namespaces, so reusing the type name
+    ///       verbatim as its own module name is valid (`mod Foo { pub
+    ///       struct Foo { ... } }`) and needs no non-snake-case lint
+    ///       workaround beyond a crate-wide `#![allow(non_snake_case)]`
+    ///       (already needed for the PascalCase types themselves). This
+    ///       also keeps generated code trivially debuggable — module name
+    ///       and type name are always textually identical, no second
+    ///       mental mapping between a file's module path and the type it
+    ///       declares. Since this namespace is never separately folded, it
+    ///       inherits the type-identifier namespace's own uniqueness
+    ///       guarantee (`Generator::effective_cpp_name`) for free — no
+    ///       separate collision check needed for this namespace at all.
+    /// @param final_type_name Already-resolved final type identifier (not
+    ///                   the raw ASN.1 name) — the caller is expected to
+    ///                   have already run type-namespace collision
+    ///                   disambiguation (`Generator::effective_cpp_name`)
+    ///                   before asking for this namespace's own name.
+    virtual std::string module_name(std::string_view final_type_name) const {
+        return std::string(final_type_name);
+    }
 
     /// @brief ASN.1 member/field name -> target-language member identifier,
     ///        escaped against keyword/extra-name collisions.
