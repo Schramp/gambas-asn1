@@ -552,31 +552,30 @@ public:
         // it is the number of wide characters, not the byte length.
         std::size_t char_count = str.size() / static_cast<std::size_t>(bpc);
         if (pc.flags & Constraints::EXTENSIBLE) {
-            bool in_root;
-            if (pc.flags & Constraints::SIZE_CONSTRAINED) {
-                in_root = (char_count >= static_cast<std::size_t>(pc.size_lower) &&
-                           char_count <= static_cast<std::size_t>(pc.size_upper));
-            } else if (has_alpha) {
-                // For wide-char types (bpc>1), iterate code points: all high bytes must be
-                // 0x00 (Basic Latin) AND low byte must be in the FROM alphabet.
-                in_root = true;
+            // For wide-char types (bpc>1), iterate code points: all high bytes must be
+            // 0x00 (Basic Latin) AND low byte must be in the FROM alphabet.
+            auto alphabet_in_root = [&]() {
                 if (bpc > 1) {
                     for (std::size_t i = 0; i + static_cast<std::size_t>(bpc) <= str.size(); i += bpc) {
                         for (int b = 0; b < bpc - 1; ++b)
-                            if (static_cast<unsigned char>(str[i + b]) != 0) { in_root = false; break; }
-                        if (!in_root) break;
+                            if (static_cast<unsigned char>(str[i + b]) != 0) return false;
                         unsigned char lo = static_cast<unsigned char>(str[i + bpc - 1]);
-                        if (pc.encode_table[lo] == 0xFFFFu)
-                            { in_root = false; break; }
+                        if (pc.encode_table[lo] == 0xFFFFu) return false;
                     }
                 } else {
                     for (unsigned char c : str)
-                        if (pc.encode_table[c] == 0xFFFFu)
-                            { in_root = false; break; }
+                        if (pc.encode_table[c] == 0xFFFFu) return false;
                 }
-            } else {
-                in_root = true;
+                return true;
+            };
+            bool in_root = true;
+            if (pc.flags & Constraints::SIZE_CONSTRAINED) {
+                in_root = (char_count >= static_cast<std::size_t>(pc.size_lower) &&
+                           char_count <= static_cast<std::size_t>(pc.size_upper));
             }
+            // Both SIZE and FROM can be present and extensible at once (X.691 §26.5.7):
+            // a value is only in-root when it satisfies size AND alphabet.
+            if (in_root && has_alpha) in_root = alphabet_in_root();
             stream.put_bits(in_root ? 0 : 1, 1);
             if (!in_root) {
                 // Out-of-root: encode as open type (X.691 §18.8) — byte-length prefixed raw bytes.
