@@ -25,15 +25,21 @@ PDU_TYPE   := __PDU_TYPE__
 
 all: build
 
-gen: $(ASN1_FILES) $(ASNCPP)
-	@rm -rf gen
-	@mkdir -p gen
-	$(ASNCPP) $(ASN1_FILES) -pdu=$(PDU_TYPE) --target=rust -o gen
-	@touch gen/.stamp
+gen: gen/.stamp
+
+# Output goes to a scratch dir and is checksum-synced into gen/, so an
+# identical regeneration keeps every file's mtime and cargo sees no change.
+gen/.stamp: $(ASN1_FILES) $(ASNCPP)
+	@rm -rf gen.new
+	@mkdir -p gen.new gen
+	$(ASNCPP) $(ASN1_FILES) -pdu=$(PDU_TYPE) --target=rust -o gen.new
+	@rsync -rc --delete --exclude=.stamp gen.new/ gen/
+	@rm -rf gen.new
+	@touch $@
 
 build:
 	ASN1CPP_RUST_ETSI_GEN_DIR=$(abspath gen) cargo build --release
 
 clean:
 	cargo clean
-	rm -rf gen Cargo.lock
+	rm -rf gen gen.new Cargo.lock

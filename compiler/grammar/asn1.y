@@ -35,9 +35,69 @@
 
 %code {
     #include "Lexer.hpp"
+    #include <iostream>
 
     static yy::parser::symbol_type yylex(Lexer& lexer, ParseResult&) {
         return lexer.lex();
+    }
+
+    // Old X.208-style CHOICE/SET/SEQUENCE members may omit their
+    // identifier entirely (`CHOICE { INTEGER, BOOLEAN }`). Ported from
+    // asn1c's own _fixup_anonymous_identifier (libasn1parser/asn1p_y.y):
+    // synthesize a name from the member's own type keyword (or, for a
+    // reference to a named type, that type's name), lower-cased with
+    // spaces/hyphens folded to '_'. asn1c does not deduplicate the result
+    // either — a resulting clash is a later semantic error, same as a
+    // human picking a colliding name by hand.
+    static std::string asn1_keyword_for_body(const TypeDef::TypeBody& body) {
+        if (auto* bt = std::get_if<BuiltinType>(&body)) {
+            switch (*bt) {
+            case BuiltinType::Boolean:          return "BOOLEAN";
+            case BuiltinType::Integer:           return "INTEGER";
+            case BuiltinType::BitString:         return "BIT STRING";
+            case BuiltinType::OctetString:       return "OCTET STRING";
+            case BuiltinType::Null:              return "NULL";
+            case BuiltinType::ObjectIdentifier:  return "OBJECT IDENTIFIER";
+            case BuiltinType::RelativeOid:       return "RELATIVE-OID";
+            case BuiltinType::Real:              return "REAL";
+            case BuiltinType::Enumerated:        return "ENUMERATED";
+            case BuiltinType::Utf8String:        return "UTF8String";
+            case BuiltinType::NumericString:     return "NumericString";
+            case BuiltinType::PrintableString:   return "PrintableString";
+            case BuiltinType::T61String:         return "T61String";
+            case BuiltinType::VideotexString:    return "VideotexString";
+            case BuiltinType::Ia5String:         return "IA5String";
+            case BuiltinType::GraphicString:     return "GraphicString";
+            case BuiltinType::VisibleString:     return "VisibleString";
+            case BuiltinType::GeneralString:     return "GeneralString";
+            case BuiltinType::UniversalString:   return "UniversalString";
+            case BuiltinType::BmpString:         return "BMPString";
+            case BuiltinType::ObjectDescriptor:  return "ObjectDescriptor";
+            case BuiltinType::UtcTime:           return "UTCTime";
+            case BuiltinType::GeneralizedTime:   return "GeneralizedTime";
+            case BuiltinType::Any:               return "ANY";
+            }
+        }
+        if (auto* tr = std::get_if<TypeRef>(&body)) return tr->type_name;
+        if (std::get_if<SequenceType>(&body))   return "SEQUENCE";
+        if (std::get_if<SetType>(&body))        return "SET";
+        if (std::get_if<ChoiceType>(&body))     return "CHOICE";
+        if (std::get_if<SequenceOfType>(&body)) return "SEQUENCE OF";
+        if (std::get_if<SetOfType>(&body))      return "SET OF";
+        if (std::get_if<InstanceOfType>(&body)) return "INSTANCE OF";
+        return "unnamed";
+    }
+
+    static void fixup_anonymous_identifier(const TypeDefPtr& def, int lineno) {
+        std::string ident = asn1_keyword_for_body(def->body);
+        std::cerr << "warning: line " << lineno
+                  << ": obsolete X.208 syntax — unnamed " << ident
+                  << " member, assigning a temporary identifier\n";
+        for (char& c : ident) {
+            if (c >= 'A' && c <= 'Z') c += 32;
+            else if (c == ' ' || c == '-') c = '_';
+        }
+        def->name = ident;
     }
 }
 
@@ -189,7 +249,8 @@
 
 /* References */
 %type <std::string>                 TypeRefName
-%type <std::string>                 ComplexTypeReference ComplexTypeReferenceAmpList
+%type <TypeRef>                     ComplexTypeReference
+%type <std::string>                 ComplexTypeReferenceAmpList
 %type <std::string>                 ComplexTypeReferenceElement PrimitiveFieldReference
 %type <std::string>                 FieldName DefinedObjectClass
 
@@ -598,11 +659,17 @@ ParameterArgumentName:
 	| BasicTypeId ':' TypeRefName      { $$ = $3; }       /* {INTEGER:Name}    → "Name"  */
 	;
 
-/* Actual parameter list: Flag{INTEGER{red(0),green(1),blue(5)}}.
-   Type-valued actuals (UntaggedType) are captured as TypeDefPtrs so the resolver
-   can inspect their named-value lists when validating DEFAULT names.
-   Value-valued actuals (SimpleValue, DefinedValue, ValueSet) are stored as nullptr
-   since we do not currently validate DEFAULT names against them. */
+/* Actual parameter list: Flag{INTEGER{red(0),green(1),blue(5)}}, or
+   Bounded{INTEGER, 4} (X.683 — a formal parameter may be governed by a
+   Type, in which case its actuals are types, or by a value's Type, in
+   which case its actuals are values).
+   Type-valued actuals (UntaggedType) are captured as TypeDefPtrs directly.
+   Value-valued actuals (SimpleValue, DefinedValue) are wrapped in a
+   TypeDefPtr with only `value_literal` set (body stays monostate) so
+   sema/resolve_parameterized_instantiations can substitute a formal value
+   parameter's uses with the actual value at each instantiation site.
+   ValueSet actuals remain nullptr — X.683's value-set/object/object-set
+   governors are out of scope (see resolve_parameterized_instantiations). */
 ActualParameterList:
 	  ActualParameter
 	    { $$ = std::vector<TypeDefPtr>{std::move($1)}; }
@@ -612,8 +679,18 @@ ActualParameterList:
 
 ActualParameter:
 	  UntaggedType { $$ = std::move($1); }
-	| SimpleValue  { $$ = nullptr; }
-	| DefinedValue { $$ = nullptr; }
+	| SimpleValue
+	{
+	    auto t = std::make_shared<TypeDef>();
+	    t->value_literal = std::move($1);
+	    $$ = t;
+	}
+	| DefinedValue
+	{
+	    auto t = std::make_shared<TypeDef>();
+	    t->value_literal = std::move($1);
+	    $$ = t;
+	}
 	| ValueSet     { $$ = nullptr; }
 	;
 
@@ -761,7 +838,7 @@ ConcreteTypeDeclaration:
 	| TOK_INSTANCE TOK_OF ComplexTypeReference
 	{
 	    auto t = std::make_shared<TypeDef>();
-	    t->body = InstanceOfType{$3};
+	    t->body = InstanceOfType{$3.type_name};
 	    $$ = t;
 	}
 	;
@@ -854,38 +931,46 @@ DefinedType:
 	  ComplexTypeReference
 	{
 	    auto t = std::make_shared<TypeDef>();
-	    auto s = $1;
-	    auto dot = s.find('.');
-	    if (dot != std::string::npos && s.find('&') == std::string::npos)
-	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), {}};
-	    else
-	        t->body = TypeRef{"", s, {}};
+	    t->body = std::move($1);
 	    $$ = t;
 	}
 	| ComplexTypeReference '{' ActualParameterList '}'
 	{
 	    auto t = std::make_shared<TypeDef>();
-	    auto s = $1;
-	    auto dot = s.find('.');
-	    if (dot != std::string::npos && s.find('&') == std::string::npos)
-	        t->body = TypeRef{s.substr(0, dot), s.substr(dot + 1), std::move($3)};
-	    else
-	        t->body = TypeRef{"", s, std::move($3)};
+	    auto tr = std::move($1);
+	    // A trailing `{...}` on a class-field reference (X.681 §14) is an
+	    // object-set/relational constraint, not a real parameter list —
+	    // $3 is deliberately discarded: resolving that constraint would
+	    // mean full per-object dynamic type dispatch, which
+	    // resolve_class_field_refs's own doc explains this pass does not
+	    // attempt — every reference to this class field resolves to the
+	    // same one answer (the field's fixed type, or ANY) regardless of
+	    // which object set is named here.
+	    if (tr.class_field.empty())
+	        tr.params = std::move($3);
+	    t->body = std::move(tr);
 	    $$ = t;
 	}
 	;
 
 ComplexTypeReference:
 	  TOK_typereference
-	    { $$ = $1; }
+	    { $$ = TypeRef{"", $1, {}, ""}; }
 	| TOK_capitalreference
-	    { $$ = $1; }
+	    { $$ = TypeRef{"", $1, {}, ""}; }
 	| TOK_typereference '.' TypeRefName
-	    { $$ = $1 + "." + $3; }
+	    { $$ = TypeRef{$1, $3, {}, ""}; }
 	| TOK_capitalreference '.' TypeRefName
-	    { $$ = $1 + "." + $3; }
+	    { $$ = TypeRef{$1, $3, {}, ""}; }
 	| TOK_capitalreference '.' ComplexTypeReferenceAmpList
-	    { $$ = $1 + "." + $3; }
+	    // X.681 §14 Information Object Class field-type reference
+	    // (`ClassName.&field`, e.g. `DCLASS.&id`) — ComplexTypeReferenceAmpList
+	    // only ever reduces through PrimitiveFieldReference
+	    // (TOK_typefieldreference/TOK_valuefieldreference, i.e. an
+	    // identifier starting with '&'), so this production is the
+	    // syntactic marker for a class-field reference; no need to
+	    // re-derive it later by scanning the text for '&'.
+	    { $$ = TypeRef{"", $1, {}, $3}; }
 	;
 
 ComplexTypeReferenceAmpList:
@@ -1021,6 +1106,7 @@ ComponentType:
 	}
 	| MaybeIndirectTaggedType optMarker
 	{
+	    fixup_anonymous_identifier($1, @1.begin.line);
 	    $1->marker = $2.marker;
 	    $1->default_value = std::move($2.default_value);
 	    $$ = $1;
@@ -1028,7 +1114,7 @@ ComponentType:
 	| TOK_COMPONENTS TOK_OF MaybeIndirectTaggedType
 	{
 	    auto t = std::make_shared<TypeDef>();
-	    t->body = TypeRef{"", "__COMPONENTS_OF__", {$3}};
+	    t->body = TypeRef{"", "__COMPONENTS_OF__", {$3}, ""};
 	    $$ = t;
 	}
 	| ExtensionAndException { $$ = $1; }
@@ -1058,7 +1144,11 @@ AlternativeType:
 	    $$ = $2;
 	}
 	| ExtensionAndException { $$ = $1; }
-	| MaybeIndirectTaggedType { $$ = $1; }
+	| MaybeIndirectTaggedType
+	{
+	    fixup_anonymous_identifier($1, @1.begin.line);
+	    $$ = $1;
+	}
 	;
 
 ExtensionAndException:
@@ -1129,8 +1219,17 @@ ClassField:
 	}
 	| TOK_valuefieldreference Type optUNIQUE optMarker
 	{
+	    // FixedTypeValueFieldSpec (X.681 §14.1, e.g. `&id INTEGER`): the
+	    // field's *value* always has this fixed type, so a type-position
+	    // reference to it (`DCLASS.&id`) always resolves to it too,
+	    // regardless of which object in a set is selected — unlike a bare
+	    // TypeFieldSpec (`&Type` alone, the branch above/below with no
+	    // Type given), which has no single answer without picking a
+	    // specific object. See sema/resolve_class_field_refs's own doc for
+	    // where this stored body is actually consumed.
 	    auto t = std::make_shared<TypeDef>();
 	    t->name   = $1;
+	    t->body   = $2->body;
 	    t->marker = $4.marker;
 	    $$ = t;
 	}

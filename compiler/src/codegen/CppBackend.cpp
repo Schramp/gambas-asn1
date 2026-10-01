@@ -57,6 +57,7 @@ std::string CppBackend::format_type_descriptor_ref(const TypeDescriptorRefSpec& 
         }
     case TypeDescriptorRefKind::ClassScoped:  return std::format("&{}::asn_DEF", spec.name);
     case TypeDescriptorRefKind::FreeStanding: return std::format("&asn_DEF_{}", spec.name);
+    case TypeDescriptorRefKind::MemberOwnTable: return "&" + spec.name;
     case TypeDescriptorRefKind::None:
     default:                                  return "nullptr";
     }
@@ -71,13 +72,6 @@ std::string xer_encoding_literal(ast::XerEncoding enc) {
     case ast::XerEncoding::Utf8:   return "asn1::XerEncoding::Utf8";
     default:                       return "asn1::XerEncoding::Default";
     }
-}
-
-/// @brief Returns ceil(log2(n)) clamped to [1,∞) — bits per character for an n-symbol alphabet.
-static int compute_alphabet_bits(int n) {
-    int bits = 0;
-    for (int r = n - 1; r > 0; r >>= 1) ++bits;
-    return (bits == 0) ? 1 : bits;
 }
 
 /// @brief Returns the name of the global `asn_DEF_*` descriptor for a
@@ -168,7 +162,7 @@ std::string make_string_constraints_init(
     int val_lb      = alphabet.empty() ? 0 : static_cast<int>(alphabet[0]);
     int val_ub      = alphabet.empty() ? 0 : static_cast<int>(alphabet.back());
     int alpha_bits  = alphabet.empty() ? 0
-        : compute_alphabet_bits(static_cast<int>(alphabet.size()));
+        : Backend::alphabet_bits_for(static_cast<int>(alphabet.size()));
     // When builtin_bt is set, alphabet_bits comes from builtin_alphabet_refs — omit here
     // to avoid emitting the designator twice (which is a C++ error even when values match).
     std::string s;
@@ -439,43 +433,6 @@ void CppBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& 
 void CppBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const {
     emit_integer_declaration(spec, session.buffer(declaration_extension()));
     emit_integer_definition(spec, session.buffer(definition_extension()));
-}
-
-/// @brief Map a builtin type to its C++ runtime type, for `TypeLifecycleOps<T>`.
-/// @param bt Built-in type tag (never SEQUENCE/CHOICE/TypeRef/INTEGER/
-///           ENUMERATED — `BuiltinAliasSpec` is only built for plain
-///           `ast::BuiltinType` bodies other than those two).
-/// @return C++ runtime type name, e.g. `"asn1::OctetString"`.
-/// @note A small, self-contained subset of what `Generator::native_member_type_for`
-///       computes for the general case (which also handles SEQUENCE/CHOICE/
-///       TypeRef/SEQUENCE OF — out of scope here).
-static std::string native_builtin_type(ast::BuiltinType bt) {
-    using BT = ast::BuiltinType;
-    switch (bt) {
-    case BT::Boolean:          return "asn1::Boolean";
-    case BT::Real:             return "asn1::Real";
-    case BT::Null:             return "asn1::Null";
-    case BT::BitString:        return "asn1::BitString";
-    case BT::OctetString:      return "asn1::OctetString";
-    case BT::ObjectIdentifier: return "asn1::Oid";
-    case BT::RelativeOid:      return "asn1::RelativeOid";
-    case BT::Utf8String:       return "asn1::Utf8String";
-    case BT::NumericString:    return "asn1::NumericString";
-    case BT::PrintableString:  return "asn1::PrintableString";
-    case BT::T61String:        return "asn1::T61String";
-    case BT::Ia5String:        return "asn1::Ia5String";
-    case BT::VisibleString:    return "asn1::VisibleString";
-    case BT::GeneralString:    return "asn1::GeneralString";
-    case BT::GraphicString:    return "asn1::GraphicString";
-    case BT::UniversalString:  return "asn1::UniversalString";
-    case BT::BmpString:        return "asn1::BmpString";
-    case BT::VideotexString:   return "asn1::VideotexString";
-    case BT::ObjectDescriptor: return "asn1::ObjectDescriptor";
-    case BT::UtcTime:          return "asn1::UtcTime";
-    case BT::GeneralizedTime:  return "asn1::GeneralizedTime";
-    case BT::Any:              return "asn1::OctetString";
-    default:                   return "asn1::OctetString";  // Integer/Enumerated: unreachable here
-    }
 }
 
 /// @brief Emit the `.cpp` TypeDescriptor for a builtin-alias type.
@@ -886,7 +843,7 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
                 offset_expr,
                 r.tdref, ops,
                 r.is_explicit ? "true" : "false",
-                (r.resolved_tag && !r.resolved_tag->tag_is_override) ? "false" : "true",
+                (r.resolved_tag && r.resolved_tag->tag_is_override) ? "true" : "false",
                 r.def_setter, def_cmp);
         }
         os << "};\n";
@@ -1097,7 +1054,7 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
             os << std::format("    {{ \"{}\", {}, false, false, asn1::kInvalidMemberOffset, {}, {{}}, {}, {}, nullptr, nullptr,\n",
                 r.asn1_name, (r.resolved_tag ? format_tag_literal(*r.resolved_tag) : format_no_tag_literal()),
                 r.tdref, r.is_explicit ? "true" : "false",
-                (r.resolved_tag && !r.resolved_tag->tag_is_override) ? "false" : "true");
+                (r.resolved_tag && r.resolved_tag->tag_is_override) ? "true" : "false");
             if (boxed) {
                 os << std::format(
                     "      &asn1::BoxedChoiceOps<{0}>::get_mut, &asn1::BoxedChoiceOps<{0}>::get_const, &asn_BOXLC_{0}_{1} }},\n",
@@ -1143,8 +1100,8 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
     // Flattened BER dispatch table.
     if (spec.has_ber_table) {
         os << std::format("static const asn1::ChoiceTagEntry asn_BER_{}[] = {{\n", cname);
-        for (const auto& [tag_lit, idx] : spec.ber_tags)
-            os << std::format("    {{ {}, {} }},\n", tag_lit, idx);
+        for (const auto& e : spec.ber_tags)
+            os << std::format("    {{ {}, {} }},\n", e.tag_literal, e.alt_index);
         os << "};\n\n";
     }
 
@@ -1156,7 +1113,10 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
         os << "    nullptr,\n";
     os << std::format("    {},\n", spec.count);
     os << std::format("    {}, /* ext_at */\n", spec.ext_at);
-    os << "    {} /* PER: constraints */\n";
+    // X.691 §22.6 — bit width of the root-alternative index, precomputed
+    // once by Generator rather than recomputed by ChoicePerHandler per call.
+    os << std::format("    {{ .flags=asn1::Constraints::CONSTRAINED, .range_bits={} }} /* PER: constraints */\n",
+                      spec.range_bits);
     if (spec.has_ber_table)
         os << std::format("    , asn_BER_{0}, {1} /* ber_tags */\n", cname, (int)spec.ber_tags.size());
     else if (spec.has_tag_index)

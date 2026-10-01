@@ -38,35 +38,157 @@ second-guesses `make`/`cargo`'s own up-to-date check either; a bare rerun
 of this script is always safe and cheap when nothing changed.
 
 Usage:
-  python3 xval_sweep.py [--count N] [--seed S] [--target NAME] [--verbose]
-                        [--asn1c-dir DIR] [--no-asn1c]
+  python3 xval_sweep.py [--count N] [--seed S] [--target NAME] [--limit N] [--verbose]
+                        [--asn1c-dir DIR] [--no-asn1c] [-j N] [--reuse asn1c,cpp]
+                        [--corpus {targets,asn1c-compiler}] [--with-asn1c]
 
   --target NAME    only run the target whose schema path or PDU type
                    matches NAME (substring match); default: all targets.
+  --limit N        cap the target list to the first N (after --target
+                   filtering) — a quick sanity slice before a full run.
   --asn1c-dir DIR  directory containing the asn1c binary (overrides
                    ASN1C_BIN_DIR env var / PATH / /usr/local/bin search).
-  --no-asn1c       skip the asn1c leg even if asn1c is found.
+  --no-asn1c       skip the asn1c leg even if asn1c is found (--corpus=targets only).
+  -j, --jobs N     run N targets in parallel (default min(4, cpus/3)).
+  --reuse LEGS     comma list (asn1c, cpp): skip codegen+build of those legs
+                   when their key (schema + tool/runtime signature) matches
+                   the previous build. Codegen output is always checksum-
+                   synced, so unchanged files are never rebuilt either way.
+  --corpus C       'targets' (default): the curated targets.txt list, every
+                   entry hand-verified — a failure here is a real
+                   regression and keeps gating the exit code.
+                   'asn1c-compiler': auto-discover a PDU-type candidate
+                   from every *-OK.asn1 in tests/tests-asn1c-compiler/
+                   instead (see discover_pdu_type()) — a broad, one-off
+                   probe of the ~207-file corpus. Always exits 0: a
+                   failure here is a finding to read and act on (many are
+                   already-known/-filed gaps), not a build gate. Defaults
+                   --count to 3 (build cost per target dominates, not
+                   record count) and skips the asn1c leg (pass
+                   --with-asn1c to opt in — ~200 extra asn1c builds is the
+                   single biggest cost multiplier for a broad probe).
 
-Exit code: 0 if every target's every comparison passed, 1 otherwise.
+Exit code: for --corpus=targets (default), 0 if every target's every
+comparison passed, 1 otherwise. For --corpus=asn1c-compiler, always 0.
 """
 import argparse
 import difflib
+import hashlib
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASN1CPP_ROOT = os.path.dirname(os.path.dirname(HERE))
 ASNCPP_BIN = os.path.join(ASN1CPP_ROOT, "build/compiler/asn1cpp")
-ASN1CPP_BER_CRATE = os.path.join(ASN1CPP_ROOT, "rust-runtime/ber")
+ASN1CPP_WIRE_CRATE = os.path.join(ASN1CPP_ROOT, "rust-runtime/wire")
 
 TEMPLATE_CPP = os.path.join(HERE, "template_cpp")
 TEMPLATE_RUST = os.path.join(HERE, "template_rust")
 TESTBUILD = os.path.join(HERE, "testbuild")
 TARGETS_FILE = os.path.join(HERE, "targets.txt")
+ASN1C_COMPILER_CORPUS_DIR = os.path.join(ASN1CPP_ROOT, "tests/tests-asn1c-compiler")
+
+# A bare top-level "Name ::= SEQUENCE/SET/CHOICE {" — deliberately excludes
+# "SEQUENCE OF"/"SET OF" (no '{' directly after the keyword: those forms
+# name an element type instead) and any scalar alias (INTEGER, an
+# existing type reference, etc.) — same "real top-level PDU/message type,
+# not a scalar alias" qualification targets.txt's own header documents,
+# just applied automatically instead of by hand.
+_PDU_CANDIDATE_RE = re.compile(
+    r"^\s*([A-Za-z][\w-]*)\s*::=\s*(?:SEQUENCE|SET|CHOICE)\s*\{", re.MULTILINE)
+
+# A module header: "ModuleName", optionally followed by its definitive OID
+# ("{ iso org(3) ... }"), then the DEFINITIONS keyword. Used both to find
+# every module a single file defines (a file may define more than one —
+# asn1c's own IMPORTS test fixtures commonly put the importing and
+# imported module in the same file) and, corpus-wide, to build a
+# module-name -> file index for the rarer genuinely cross-file case.
+_MODULE_HEADER_RE = re.compile(
+    r"^\s*([A-Za-z][\w-]*)\s*(?:\{[^}]*\})?\s*DEFINITIONS\b", re.MULTILINE)
+
+# "FROM <ModuleName>" inside an IMPORTS clause (X.680 §34) — may repeat
+# when one IMPORTS statement pulls from several modules.
+_IMPORT_FROM_RE = re.compile(r"\bFROM\s+([A-Za-z][\w-]*)")
+
+
+def build_module_index(corpus_dir):
+    """Map every ASN.1 module name defined anywhere in `corpus_dir` to the
+    (basename) file that defines it — for resolve_imports's genuinely
+    cross-file case. A name defined in more than one file is dropped
+    (ambiguous — resolve_imports treats it as unresolvable rather than
+    guessing which file an importer meant)."""
+    index = {}
+    ambiguous = set()
+    for name in sorted(os.listdir(corpus_dir)):
+        if not name.endswith(".asn1"):
+            continue
+        text = open(os.path.join(corpus_dir, name), errors="replace").read()
+        for m in _MODULE_HEADER_RE.finditer(text):
+            mod = m.group(1)
+            if mod in index and index[mod] != name:
+                ambiguous.add(mod)
+            else:
+                index[mod] = name
+    for mod in ambiguous:
+        del index[mod]
+    return index
+
+
+def resolve_imports(asn1_path, module_index):
+    """Resolve every module an IMPORTS clause in `asn1_path` names.
+
+    Most of asn1c's own IMPORTS test fixtures define the importing and
+    imported module in the *same* file (multi-module file) — the
+    compiler already parses a single file's multiple modules into one
+    shared ParseResult, so these need no extra files at all. A module
+    not defined in this file but defined in exactly one *other* corpus
+    file is a genuine cross-file dependency — that file is added to the
+    returned extra-files list. A module this file imports that isn't
+    defined anywhere in the corpus (and isn't ambiguous across files) is
+    usually a deliberately-broken fixture testing the compiler's own
+    "module not found" diagnostic (e.g. 49-real-life-OK.asn1,
+    14-resolver-OK.asn1) — not a real schema this tooling can build, so
+    returns None (skip) in that case, same as the old
+    "any IMPORTS -> skip" behavior for these specific files.
+
+    Returns (extra_files: list[str] of corpus-relative basenames) or None.
+    """
+    text = open(asn1_path, errors="replace").read()
+    imported = set(_IMPORT_FROM_RE.findall(text))
+    if not imported:
+        return []
+    defined_here = set(_MODULE_HEADER_RE.findall(text))
+    extra_files = set()
+    for mod in imported - defined_here:
+        other = module_index.get(mod)
+        if other is None:
+            return None
+        extra_files.add(other)
+    return sorted(extra_files)
+
+
+def discover_pdu_type(asn1_path):
+    """Best-effort top-level PDU/message type name for an auto-discovered
+    (not manually curated) schema file, or None if this file doesn't
+    qualify — no bare top-level SEQUENCE/SET/CHOICE assignment anywhere in
+    the file. (IMPORTS resolution is a separate concern — see
+    resolve_imports.) Otherwise: a type literally named "PDU" if one
+    exists (the common convention in asn1c's own test suite), else the
+    last candidate found (heuristic — the outer/message type is usually
+    declared after the types it's built from, not before)."""
+    text = open(asn1_path, errors="replace").read()
+    candidates = _PDU_CANDIDATE_RE.findall(text)
+    if not candidates:
+        return None
+    if "PDU" in candidates:
+        return "PDU"
+    return candidates[-1]
 
 
 def find_asn1c(override_dir=None):
@@ -195,6 +317,57 @@ def x2b(tool: str, type_name: str, xer_text: str) -> tuple[bytes, str]:
     return r.stdout, r.stderr.decode(errors="replace").strip()
 
 
+def b2p_file(tool: str, type_name: str, ber_path: str) -> tuple[bytes, str]:
+    """BER file -> length-prefixed PER byte stream. Returns (per_bytes, stderr)."""
+    r = run(tool, "--type", type_name, ber_path)
+    return r.stdout, r.stderr.decode(errors="replace").strip()
+
+
+def p2b(tool: str, type_name: str, per_bytes: bytes) -> tuple[bytes, str]:
+    """Length-prefixed PER byte stream -> BER bytes. Returns (ber_bytes, stderr)."""
+    r = run(tool, "--type", type_name, input=per_bytes)
+    return r.stdout, r.stderr.decode(errors="replace").strip()
+
+
+def split_per_records(data: bytes) -> list[bytes]:
+    """Split a 4-byte-big-endian-length-prefixed PER byte stream (ber-to-per's
+    own output framing, both cpp and rust legs — see template_cpp/src/
+    ber-to-per.cpp's own doc for why PER itself needs this, unlike BER's
+    self-delimiting TLVs) into per-record byte strings (prefix stripped,
+    same shape split_ber_records/split_xer_records already return)."""
+    records = []
+    offset = 0
+    while offset + 4 <= len(data):
+        length = int.from_bytes(data[offset:offset + 4], "big")
+        offset += 4
+        if offset + length > len(data):
+            break
+        records.append(data[offset:offset + length])
+        offset += length
+    return records
+
+
+def compare_per(label: str, per_a: bytes, per_b: bytes, verbose: bool) -> tuple[int, int]:
+    recs_a = split_per_records(per_a)
+    recs_b = split_per_records(per_b)
+    n = min(len(recs_a), len(recs_b))
+    if n == 0:
+        print(f"  [{label}] no records to compare")
+        return 0, 0
+    matches = mismatches = 0
+    for i in range(n):
+        if recs_a[i] == recs_b[i]:
+            matches += 1
+        else:
+            mismatches += 1
+            if verbose:
+                print(f"  MISMATCH record #{i + 1}: "
+                      f"expected {len(recs_a[i])} bytes, got {len(recs_b[i])}")
+    status = "OK" if mismatches == 0 else "FAIL"
+    print(f"  [{label}] {matches}/{n} match, {mismatches} mismatch  [{status}]")
+    return matches, mismatches
+
+
 def asn1c_b2x(tool: str, pdu_type: str, ber_path: str) -> tuple[str, str]:
     """BER file → XER string via asn1c's own converter-example. Returns (xer_text, stderr)."""
     r = run(tool, "-p", pdu_type, "-iber", "-oxer", ber_path)
@@ -275,7 +448,7 @@ def compare_ber(label: str, ber_a: bytes, ber_b: bytes, verbose: bool) -> tuple[
 # Target build orchestration
 
 def parse_targets(path):
-    """Returns a list of (schema, pdu_type, skip_asn1c_reason_or_None).
+    """Returns a list of (schema, pdu_type, skip_asn1c_reason_or_None, extra_files).
 
     A line is normally "<schema> <PduType>". A third token+ marks a known,
     already-filed divergence between asn1c and asn1cpp for this specific
@@ -283,7 +456,9 @@ def parse_targets(path):
     the asn1c leg is skipped (not run at all) rather than failing the
     target on a gap that's already tracked elsewhere. The remaining
     tokens are the skip reason, printed verbatim (e.g. an issue number).
-    """
+    extra_files is always [] here — the curated list is single-file only;
+    only --corpus=asn1c-compiler's auto-discovery populates it (see
+    resolve_imports)."""
     targets = []
     with open(path) as f:
         for lineno, line in enumerate(f, 1):
@@ -295,28 +470,79 @@ def parse_targets(path):
                 print(f"{path}:{lineno}: expected '<schema> <PduType> [skip-asn1c-reason]', got: {line!r}")
                 sys.exit(1)
             reason = " ".join(parts[2:]) if len(parts) > 2 else None
-            targets.append((parts[0], parts[1], reason))
+            targets.append((parts[0], parts[1], reason, []))
     return targets
 
 
-def materialize(template_path, dest_path, subs):
+def write_if_changed(path, data):
+    """Write `data` (str or bytes) only when it differs from what is on
+    disk, so an identical rewrite keeps the file's mtime and make/cargo
+    see nothing to rebuild."""
+    raw = data.encode() if isinstance(data, str) else data
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        with open(path, "rb") as f:
+            if f.read() == raw:
+                return
+    except FileNotFoundError:
+        pass
+    with open(path, "wb") as f:
+        f.write(raw)
+
+
+def render(template_path, subs):
     with open(template_path) as f:
         text = f.read()
     for k, v in subs.items():
         text = text.replace(k, v)
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-    with open(dest_path, "w") as f:
-        f.write(text)
+    return text
+
+
+def materialize(template_path, dest_path, subs):
+    write_if_changed(dest_path, render(template_path, subs))
 
 
 def copy_verbatim(src, dst):
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    shutil.copyfile(src, dst)
+    with open(src, "rb") as f:
+        write_if_changed(dst, f.read())
 
 
-def run_make(directory, *make_args, label=""):
+def sync_dir(src, dst):
+    """Content-based (checksum) sync of src into dst: files with identical
+    content keep their mtime, so a regeneration that produced the same
+    output triggers no rebuild. `delete` semantics are the Makefiles' own."""
+    os.makedirs(dst, exist_ok=True)
+    subprocess.run(["rsync", "-rc", src.rstrip("/") + "/", dst.rstrip("/") + "/"],
+                   check=True, capture_output=True)
+
+
+def file_sig(path):
+    st = os.stat(path)
+    return f"{path}:{st.st_size}:{st.st_mtime_ns}"
+
+
+def reuse_key(schema_files, *extra):
+    h = hashlib.sha256()
+    for f in schema_files:
+        with open(f, "rb") as fh:
+            h.update(fh.read())
+    for e in extra:
+        h.update(e.encode())
+    return h.hexdigest()
+
+
+def key_matches(key_path, key):
+    try:
+        with open(key_path) as f:
+            return f.read().strip() == key
+    except FileNotFoundError:
+        return False
+
+
+def run_make(directory, *make_args, label="", env=None):
     r = subprocess.run(["make", "-C", directory, *make_args],
-                        capture_output=True, text=True)
+                        capture_output=True, text=True,
+                        env={**os.environ, **env} if env else None)
     if r.returncode != 0:
         print(f"  BUILD FAILED ({label or ' '.join(make_args) or 'all'}):")
         print(r.stdout[-4000:])
@@ -349,9 +575,28 @@ def discover_ident(gen_dir, ext, pdu_type):
     return sorted(set(matches))
 
 
-def build_cpp(target_dir, asn1_files_abs, pdu_type):
+def cpp_tool_paths(cpp_dir):
+    return {
+        "randgen": os.path.join(cpp_dir, "randgen"),
+        "b2x": os.path.join(cpp_dir, "ber-to-xer"),
+        "x2b": os.path.join(cpp_dir, "xer-to-ber"),
+        "b2p": os.path.join(cpp_dir, "ber-to-per"),
+        "p2b": os.path.join(cpp_dir, "per-to-ber"),
+    }
+
+
+def build_cpp(target_dir, asn1_files_abs, pdu_type, jobs=4, reuse=False):
     cpp_dir = os.path.join(target_dir, "cpp")
+    tools = cpp_tool_paths(cpp_dir)
+    key_path = os.path.join(cpp_dir, ".reuse-key")
+    key = reuse_key(asn1_files_abs, pdu_type, file_sig(ASNCPP_BIN),
+                    file_sig(os.path.join(ASN1CPP_ROOT, "build/runtime/libasn1cpp_runtime.a")),
+                    file_sig(os.path.join(TEMPLATE_CPP, "Makefile.tmpl")))
+    if reuse and all(os.path.isfile(t) for t in tools.values()) and key_matches(key_path, key):
+        print("  cpp legs: reused")
+        return tools
     for name in ["randgen.cpp", "ber-to-xer.cpp", "xer-to-ber.cpp",
+                 "ber-to-per.cpp", "per-to-ber.cpp",
                  "type_registry.hpp", "type_registry.cpp"]:
         copy_verbatim(os.path.join(TEMPLATE_CPP, "src", name),
                       os.path.join(cpp_dir, "src", name))
@@ -375,16 +620,13 @@ def build_cpp(target_dir, asn1_files_abs, pdu_type):
     materialize(os.path.join(TEMPLATE_CPP, "src", "types.cpp.tmpl"),
                 os.path.join(cpp_dir, "src", "types.cpp"),
                 {"__PDU_IDENT__": ident, "__PDU_TYPE__": pdu_type})
-    if not run_make(cpp_dir, "build", "-j4", label="C++ build"):
+    if not run_make(cpp_dir, "build", f"-j{jobs}", label="C++ build"):
         return None
-    return {
-        "randgen": os.path.join(cpp_dir, "randgen"),
-        "b2x": os.path.join(cpp_dir, "ber-to-xer"),
-        "x2b": os.path.join(cpp_dir, "xer-to-ber"),
-    }
+    write_if_changed(key_path, key)
+    return tools
 
 
-def build_rust(target_dir, asn1_files_abs, pdu_type):
+def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None):
     rust_dir = os.path.join(target_dir, "rust")
     copy_verbatim(os.path.join(TEMPLATE_RUST, "build.rs"),
                   os.path.join(rust_dir, "build.rs"))
@@ -395,10 +637,6 @@ def build_rust(target_dir, asn1_files_abs, pdu_type):
                 {"__ASNCPP__": ASNCPP_BIN,
                  "__ASN1_FILES__": " ".join(asn1_files_abs),
                  "__PDU_TYPE__": pdu_type})
-    materialize(os.path.join(TEMPLATE_RUST, "Cargo.toml.tmpl"),
-                os.path.join(rust_dir, "Cargo.toml"),
-                {"__ASN1CPP_BER_CRATE__": ASN1CPP_BER_CRATE})
-
     if not run_make(rust_dir, "gen", label="Rust codegen"):
         return None
     idents = discover_ident(os.path.join(rust_dir, "gen"), ".rs", pdu_type)
@@ -410,7 +648,9 @@ def build_rust(target_dir, asn1_files_abs, pdu_type):
     lib_rs_path = os.path.join(rust_dir, "gen", "lib.rs")
     with open(lib_rs_path) as f:
         lib_rs = f.read()
-    m = re.search(rf'#\[path = "{re.escape(ident)}\.rs"\]\s*pub mod (\w+);', lib_rs)
+    # Module name may be a raw identifier (`r#type`) when the PDU name
+    # collides with a Rust keyword (RustBackend's rust_escape()).
+    m = re.search(rf'#\[path = "{re.escape(ident)}\.rs"\]\s*pub mod (r#\w+|\w+);', lib_rs)
     if not m:
         print(f"  could not find module for {ident}.rs in {lib_rs_path}")
         return None
@@ -423,60 +663,155 @@ def build_rust(target_dir, asn1_files_abs, pdu_type):
                 os.path.join(rust_dir, "src", "bin", "xer_to_ber.rs"),
                 {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
 
-    if not run_make(rust_dir, "build", label="Rust cargo build"):
+    # Every generated type gets one merged `impl asn1cpp_wire::value::
+    # Asn1Value for {ident}` (BER/XER/PER all three methods on the same
+    # trait/impl block since gambas-asn1#537 — previously two separate
+    # impls in two separate crates, detected here by grepping for the now-
+    # nonexistent literal text of the old `asn1cpp_per::PerValue` impl;
+    # gambas-asn1#539 then removed the asn1cpp-ber/asn1cpp-per/
+    # asn1cpp-constraints shim crates entirely, so generated code now
+    # references asn1cpp_wire:: directly). Whole-type PER coverage is no
+    # longer a meaningful question for SEQUENCE/CHOICE (every member/
+    # alternative not yet representable is its own per-row
+    # `unimplemented!()` stub, RustBackend.cpp's `per_member_covered`/
+    # `per_alt_covered`) — the impl always exists, so this just confirms
+    # the type itself was actually generated, same "ask the actual output"
+    # approach `discover_ident` already uses instead of guessing an
+    # escaping rule. A `.per_encode()` call on a genuinely uncovered field
+    # panics at runtime (an informational per-record skip elsewhere in
+    # this sweep), not a compile error, so there's no longer a coverage
+    # gate to avoid tripping here.
+    per_covered = False
+    gen_file = os.path.join(rust_dir, "gen", f"{ident}.rs")
+    if os.path.isfile(gen_file):
+        with open(gen_file, errors="replace") as f:
+            per_covered = f"impl asn1cpp_wire::value::Asn1Value for {ident} " in f.read()
+    # Remove any stale ber_to_per.rs/per_to_ber.rs from a prior run of this
+    # same target directory before deciding whether to re-materialize them
+    # — cargo auto-discovers every src/bin/*.rs file as its own binary
+    # target regardless of Cargo.toml's explicit [[bin]] list (which is
+    # itself freshly rewritten every run via materialize() above), so a
+    # leftover file from a target that *used* to be PER-covered (or a
+    # stale build predating this leg entirely) would otherwise still get
+    # compiled and fail on a type that's no longer covered.
+    for stale in ("ber_to_per.rs", "per_to_ber.rs"):
+        stale_path = os.path.join(rust_dir, "src", "bin", stale)
+        if os.path.isfile(stale_path):
+            os.remove(stale_path)
+    if per_covered:
+        materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "ber_to_per.rs.tmpl"),
+                    os.path.join(rust_dir, "src", "bin", "ber_to_per.rs"),
+                    {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
+        materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "per_to_ber.rs.tmpl"),
+                    os.path.join(rust_dir, "src", "bin", "per_to_ber.rs"),
+                    {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
+
+    # Written once, complete, and only if changed — an identical Cargo.toml
+    # keeps its mtime so cargo's fingerprint stays valid.
+    cargo_toml = render(os.path.join(TEMPLATE_RUST, "Cargo.toml.tmpl"),
+                        {"__ASN1CPP_WIRE_CRATE__": ASN1CPP_WIRE_CRATE})
+    if per_covered:
+        cargo_toml += ('\n[[bin]]\nname = "ber-to-per"\npath = "src/bin/ber_to_per.rs"\n'
+                       '\n[[bin]]\nname = "per-to-ber"\npath = "src/bin/per_to_ber.rs"\n')
+    write_if_changed(os.path.join(rust_dir, "Cargo.toml"), cargo_toml)
+
+    # One cargo target dir per worker slot (not per target): the wire
+    # crate compiles once per slot instead of once per target. A slot runs
+    # its targets sequentially, so the shared dir is never built
+    # concurrently.
+    env = {}
+    bin_dir = os.path.join(rust_dir, "target/release")
+    if slot is not None:
+        cargo_target = os.path.join(TESTBUILD, "_cargo", f"slot{slot}")
+        env["CARGO_TARGET_DIR"] = cargo_target
+        bin_dir = os.path.join(cargo_target, "release")
+    if jobs:
+        env["CARGO_BUILD_JOBS"] = str(jobs)
+    if not run_make(rust_dir, "build", label="Rust cargo build", env=env):
         return None
-    return {
-        "b2x": os.path.join(rust_dir, "target/release/ber-to-xer"),
-        "x2b": os.path.join(rust_dir, "target/release/xer-to-ber"),
+    result = {
+        "b2x": os.path.join(bin_dir, "ber-to-xer"),
+        "x2b": os.path.join(bin_dir, "xer-to-ber"),
     }
+    if per_covered:
+        result["b2p"] = os.path.join(bin_dir, "ber-to-per")
+        result["p2b"] = os.path.join(bin_dir, "per-to-ber")
+    return result
 
 
-def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin):
+def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, reuse=False, jobs=4):
     """Build asn1c's own converter-example tool for this target — ground
     truth leg (#440). Returns None (not a hard error) whenever asn1c
     itself can't handle this target's schema/construct — codegen or build
     failure just means this target's asn1c leg is skipped, same as
     "asn1c not found" globally; the C++/Rust legs never depend on this.
+
+    Codegen goes to a scratch dir and is checksum-synced into the build
+    dir, so unchanged generated files keep their mtime and `make` rebuilds
+    nothing.
     """
     c_dir = os.path.join(target_dir, "asn1c")
     os.makedirs(c_dir, exist_ok=True)
+    tool = os.path.join(c_dir, "converter-example")
+    key_path = os.path.join(c_dir, ".reuse-key")
+    key = reuse_key(asn1_files_abs, pdu_type, file_sig(asn1c_bin))
+    if reuse and os.path.isfile(tool) and key_matches(key_path, key):
+        print("  asn1c leg: reused")
+        return {"tool": tool}
+    scratch = c_dir + ".gen"
+    shutil.rmtree(scratch, ignore_errors=True)
+    os.makedirs(scratch)
     r = run(asn1c_bin, "-fcompound-names", "-fno-include-deps",
-            "-fallow-newer-modules", f"-pdu={pdu_type}", "-D", c_dir,
+            "-fallow-newer-modules", f"-pdu={pdu_type}", "-D", scratch,
             *asn1_files_abs)
     if r.returncode != 0:
         print(f"  asn1c leg: codegen failed, skipping — {r.stderr.decode(errors='replace')[-500:]}")
+        shutil.rmtree(scratch, ignore_errors=True)
         return None
+    sync_dir(scratch, c_dir)
+    shutil.rmtree(scratch, ignore_errors=True)
     mk = os.path.join(c_dir, "converter-example.mk")
     if not os.path.isfile(mk):
         print(f"  asn1c leg: no converter-example.mk produced, skipping")
         return None
-    r = run("make", "-C", c_dir, "-f", "converter-example.mk")
+    # asn1c bakes the -D directory into its makefiles as absolute paths;
+    # point them at the real build dir so the scratch dir can go away.
+    for name in os.listdir(c_dir):
+        if name.endswith(".mk") or name.startswith("Makefile"):
+            path = os.path.join(c_dir, name)
+            with open(path) as f:
+                text = f.read()
+            write_if_changed(path, text.replace(scratch, c_dir))
+    r = run("make", f"-j{jobs}", "-C", c_dir, "-f", "converter-example.mk")
     if r.returncode != 0:
         print(f"  asn1c leg: build failed, skipping — {r.stderr.decode(errors='replace')[-500:]}")
         return None
-    tool = os.path.join(c_dir, "converter-example")
     if not os.path.isfile(tool):
         print(f"  asn1c leg: converter-example binary not produced, skipping")
         return None
+    write_if_changed(key_path, key)
     return {"tool": tool}
 
 
-def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c_reason=None):
+def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c_reason=None,
+               slot=None, cpp_jobs=4, cargo_jobs=None, reuse=(), extra_files=()):
     slug = os.path.splitext(os.path.basename(schema_rel))[0] + "_" + pdu_type
     target_dir = os.path.join(TESTBUILD, slug)
     asn1_files_abs = [os.path.join(ASN1CPP_ROOT, schema_rel)]
+    asn1_files_abs += [os.path.join(ASN1CPP_ROOT, f) for f in extra_files]
 
-    print(f"\n=== {schema_rel} :: {pdu_type} ===")
+    extra_note = f" (+ {', '.join(extra_files)})" if extra_files else ""
+    print(f"\n=== {schema_rel} :: {pdu_type}{extra_note} ===")
     if skip_asn1c_reason:
         print(f"  asn1c leg: skipped ({skip_asn1c_reason})")
 
-    cpp_tools = build_cpp(target_dir, asn1_files_abs, pdu_type)
+    cpp_tools = build_cpp(target_dir, asn1_files_abs, pdu_type, cpp_jobs, "cpp" in reuse)
     if cpp_tools is None:
         return False
-    rust_tools = build_rust(target_dir, asn1_files_abs, pdu_type)
+    rust_tools = build_rust(target_dir, asn1_files_abs, pdu_type, slot, cargo_jobs)
     if rust_tools is None:
         return False
-    asn1c_tools = (build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin)
+    asn1c_tools = (build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, "asn1c" in reuse, cpp_jobs)
                    if asn1c_bin and not skip_asn1c_reason else None)
 
     ber_path = os.path.join(target_dir, "records.ber")
@@ -547,6 +882,41 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
     ber_cross2, _ = x2b(cpp_tools["x2b"], pdu_type, xer_rust)
     tally(compare_ber("orig vs cpp.X2B(rust.XER)", ber_orig, ber_cross2, verbose))
 
+    # PER leg — only when the Rust side actually generated the type
+    # (build_rust's own per_covered detection; "b2p"/"p2b" keys are absent
+    # from rust_tools otherwise). C++ always supports PER
+    # (its generic TypeDescriptor-driven PerCodec has no per-type
+    # coverage gate the way RustBackend's codegen currently does), so this
+    # entire leg is gated on Rust alone. Same matrix shape as the XER
+    # legs above — cpp vs rust, both round-trips, both cross combinations
+    # — using the 4-byte-length-prefixed PER record framing (PER has no
+    # self-delimiting record boundary of its own, see ber-to-per.cpp's own
+    # doc); an untested target isn't a failure, just narrower coverage
+    # than the BER/XER legs, printed but not gated.
+    if "b2p" in rust_tools:
+        per_cpp, err_cpp_per = b2p_file(cpp_tools["b2p"], pdu_type, ber_path)
+        if err_cpp_per:
+            print(f"  cpp b2p stderr: {err_cpp_per}")
+        per_rust, err_rust_per = b2p_file(rust_tools["b2p"], pdu_type, ber_path)
+        if err_rust_per:
+            print(f"  rust b2p stderr: {err_rust_per}")
+
+        tally(compare_per("cpp.PER vs rust.PER", per_cpp, per_rust, verbose))
+
+        ber_cpp_per2, _ = p2b(cpp_tools["p2b"], pdu_type, per_cpp)
+        tally(compare_ber("orig vs cpp.P2B(cpp.PER)", ber_orig, ber_cpp_per2, verbose))
+
+        ber_rust_per2, _ = p2b(rust_tools["p2b"], pdu_type, per_rust)
+        tally(compare_ber("orig vs rust.P2B(rust.PER)", ber_orig, ber_rust_per2, verbose))
+
+        ber_per_cross1, _ = p2b(rust_tools["p2b"], pdu_type, per_cpp)
+        tally(compare_ber("orig vs rust.P2B(cpp.PER)", ber_orig, ber_per_cross1, verbose))
+
+        ber_per_cross2, _ = p2b(cpp_tools["p2b"], pdu_type, per_rust)
+        tally(compare_ber("orig vs cpp.P2B(rust.PER)", ber_orig, ber_per_cross2, verbose))
+    else:
+        print("  PER leg: skipped (Rust codegen doesn't cover this type's members/alternatives yet)")
+
     if asn1c_tools:
         xer_asn1c, err_asn1c = asn1c_b2x(asn1c_tools["tool"], pdu_type, ber_path)
         if err_asn1c:
@@ -576,44 +946,181 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
     return total_mismatches == 0
 
 
+class _ThreadStdout:
+    """Per-thread stdout capture: a worker sets `tl.buf` to a list and its
+    prints accumulate there instead of interleaving with other workers."""
+
+    def __init__(self, real):
+        self.real = real
+        self.tl = threading.local()
+
+    def write(self, text):
+        buf = getattr(self.tl, "buf", None)
+        if buf is None:
+            return self.real.write(text)
+        buf.append(text)
+        return len(text)
+
+    def flush(self):
+        self.real.flush()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--count", type=int, default=20)
+    ap.add_argument("--count", type=int, default=None,
+                     help="records per target (default: 20 for --corpus=targets, "
+                          "3 for --corpus=asn1c-compiler — a much larger, one-off-probe "
+                          "corpus where build cost per target dominates, not record count)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--target", default=None,
                      help="only run targets whose schema path or PDU type contains this substring")
+    ap.add_argument("--limit", type=int, default=None,
+                     help="cap the target list to the first N (after --target filtering) — "
+                          "useful for a quick sanity pass over a small slice of a large "
+                          "--corpus=asn1c-compiler run before committing to the full sweep")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--asn1c-dir", default=None,
                      help="directory containing the asn1c binary (overrides ASN1C_BIN_DIR/PATH search)")
     ap.add_argument("--no-asn1c", action="store_true",
                      help="skip the asn1c leg even if asn1c is found")
+    ap.add_argument("--corpus", default="targets", choices=["targets", "asn1c-compiler"],
+                     help="'targets' (default): the curated, manually-verified list in "
+                          "targets.txt. 'asn1c-compiler': auto-discover a PDU-type candidate "
+                          "from every *-OK.asn1 in tests/tests-asn1c-compiler/ instead (see "
+                          "discover_pdu_type()) — a broad, unverified probe of the ~207-file "
+                          "corpus, not a curated/gating list; failures are reported, not a "
+                          "reason to treat the whole run as red (same spirit as "
+                          "validate_rust_codegen.py's own --corpus=asn1c-compiler).")
+    ap.add_argument("--with-asn1c", action="store_true",
+                     help="with --corpus=asn1c-compiler, also build+run the asn1c leg per "
+                          "target (off by default for this corpus — ~200 extra asn1c builds "
+                          "is the single biggest cost multiplier for a broad probe; the "
+                          "curated --corpus=targets list keeps its own auto-detect+--no-asn1c "
+                          "behavior unchanged)")
+    ap.add_argument("-j", "--jobs", type=int,
+                     default=min(4, max(1, (os.cpu_count() or 4) // 3)),
+                     help="targets to build/run in parallel (default: min(4, cpus/3)); "
+                          "each worker owns one cargo target dir")
+    ap.add_argument("--reuse", default="",
+                     help="comma list of legs to reuse without rebuilding when their "
+                          "inputs are unchanged: asn1c, cpp (keyed on schema + tool/runtime signature)")
     opts = ap.parse_args()
+
+    if opts.count is None:
+        opts.count = 3 if opts.corpus == "asn1c-compiler" else 20
 
     if not os.path.isfile(ASNCPP_BIN):
         print(f"asn1cpp compiler not built: {ASNCPP_BIN}\nRun: cmake --build {ASN1CPP_ROOT}/build")
         sys.exit(1)
 
-    asn1c_bin = None if opts.no_asn1c else find_asn1c(opts.asn1c_dir)
-    if asn1c_bin:
-        print(f"asn1c leg: ON  ({asn1c_bin})")
-    else:
-        print("asn1c leg: OFF (asn1c not found — set ASN1C_BIN_DIR or --asn1c-dir to enable)")
+    if opts.corpus == "asn1c-compiler":
+        asn1c_bin = find_asn1c(opts.asn1c_dir) if opts.with_asn1c else None
+        if asn1c_bin:
+            print(f"asn1c leg: ON  ({asn1c_bin})")
+        else:
+            print("asn1c leg: OFF (--corpus=asn1c-compiler default; pass --with-asn1c to enable)")
 
-    targets = parse_targets(TARGETS_FILE)
+        module_index = build_module_index(ASN1C_COMPILER_CORPUS_DIR)
+        skipped = []
+        targets = []
+        for name in sorted(os.listdir(ASN1C_COMPILER_CORPUS_DIR)):
+            if not name.endswith("-OK.asn1"):
+                continue
+            path = os.path.join(ASN1C_COMPILER_CORPUS_DIR, name)
+            pdu_type = discover_pdu_type(path)
+            if pdu_type is None:
+                skipped.append(name)
+                continue
+            extra = resolve_imports(path, module_index)
+            if extra is None:
+                skipped.append(name)
+                continue
+            rel = os.path.relpath(path, ASN1CPP_ROOT)
+            extra_rel = [os.path.relpath(os.path.join(ASN1C_COMPILER_CORPUS_DIR, f), ASN1CPP_ROOT)
+                         for f in extra]
+            targets.append((rel, pdu_type, None, extra_rel))
+        print(f"auto-discovered {len(targets)} target(s) from {ASN1C_COMPILER_CORPUS_DIR} "
+              f"({len(skipped)} skipped: no qualifying top-level SEQUENCE/SET/CHOICE, or IMPORTS present)")
+    else:
+        asn1c_bin = None if opts.no_asn1c else find_asn1c(opts.asn1c_dir)
+        if asn1c_bin:
+            print(f"asn1c leg: ON  ({asn1c_bin})")
+        else:
+            print("asn1c leg: OFF (asn1c not found — set ASN1C_BIN_DIR or --asn1c-dir to enable)")
+
+        targets = parse_targets(TARGETS_FILE)
+
     if opts.target:
         targets = [t for t in targets if opts.target in t[0] or opts.target in t[1]]
         if not targets:
             print(f"no target matches {opts.target!r}")
             sys.exit(1)
+    if opts.limit is not None:
+        targets = targets[:opts.limit]
 
     os.makedirs(TESTBUILD, exist_ok=True)
 
-    results = []
-    for schema_rel, pdu_type, skip_asn1c_reason in targets:
-        ok = run_target(schema_rel, pdu_type, opts.count, opts.seed, opts.verbose,
-                         asn1c_bin, skip_asn1c_reason)
-        results.append((schema_rel, pdu_type, ok))
+    reuse = {x for x in opts.reuse.split(",") if x}
+    unknown = reuse - {"asn1c", "cpp"}
+    if unknown:
+        print(f"--reuse: unknown leg(s) {sorted(unknown)}; valid: asn1c, cpp")
+        sys.exit(1)
+
+    jobs = max(1, min(opts.jobs, len(targets)))
+    cpus = os.cpu_count() or 4
+    cpp_jobs = max(2, cpus // jobs)
+    cargo_jobs = max(2, cpus // jobs)
+
+    # Deterministic slot assignment (greedy by rough build weight, RRC being
+    # the outlier), so a target lands in the same cargo target dir run after
+    # run and its incremental state survives.
+    def weight(t):
+        return 8 if "rrc" in t[0].lower() else 1
+    slots = [[] for _ in range(jobs)]
+    load = [0] * jobs
+    for i, t in sorted(enumerate(targets), key=lambda it: -weight(it[1])):
+        k = load.index(min(load))
+        slots[k].append(i)
+        load[k] += weight(t)
+    for lst in slots:
+        lst.sort()
+
+    real_stdout = sys.stdout
+    tl_out = _ThreadStdout(real_stdout)
+    sys.stdout = tl_out
+    outputs = [None] * len(targets)
+    done = [threading.Event() for _ in targets]
+    oks = [False] * len(targets)
+
+    def worker(slot, indices):
+        for i in indices:
+            schema_rel, pdu_type, skip_asn1c_reason, extra_files = targets[i]
+            tl_out.tl.buf = []
+            try:
+                oks[i] = run_target(schema_rel, pdu_type, opts.count, opts.seed, opts.verbose,
+                                    asn1c_bin, skip_asn1c_reason, slot=slot,
+                                    cpp_jobs=cpp_jobs, cargo_jobs=cargo_jobs, reuse=reuse,
+                                    extra_files=extra_files)
+            except Exception as e:  # keep the sweep going; report as a failed target
+                print(f"  EXCEPTION: {e!r}")
+                oks[i] = False
+            outputs[i] = "".join(tl_out.tl.buf)
+            tl_out.tl.buf = None
+            done[i].set()
+
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        for slot, indices in enumerate(slots):
+            pool.submit(worker, slot, indices)
+        # Print each target's block in original order as soon as it and
+        # every earlier target have finished.
+        for i in range(len(targets)):
+            done[i].wait()
+            real_stdout.write(outputs[i])
+            real_stdout.flush()
+    sys.stdout = real_stdout
+
+    results = [(t[0], t[1], oks[i]) for i, t in enumerate(targets)]
 
     print("\n=== Summary ===")
     failed = 0
@@ -623,6 +1130,15 @@ def main():
             failed += 1
         print(f"  [{status}] {schema_rel} :: {pdu_type}")
     print(f"\n{len(results) - failed}/{len(results)} targets passed")
+    # --corpus=asn1c-compiler is a broad, unverified probe (--corpus help
+    # text's own words) — a failure there is a finding to report, same as
+    # validate_rust_codegen.py's own --corpus=asn1c-compiler treats a
+    # non-crash "reject" as informational, not a reason to fail the run.
+    # The curated --corpus=targets list is unaffected: every one of its
+    # entries was hand-verified to pass, so a failure there is a real
+    # regression and keeps gating as before.
+    if opts.corpus == "asn1c-compiler":
+        sys.exit(0)
     sys.exit(1 if failed else 0)
 
 

@@ -12,6 +12,44 @@
 
 namespace asn1::codegen {
 
+/// @brief X.691 §10.5.6 unaligned variant: minimum bit width to represent
+///        values in `0..range`. Mirrors `range_bits` in
+///        `runtime/src/PerCodec.cpp` and `rust-runtime/wire/src/per/
+///        choice.rs` exactly — codegen precomputes the same value both
+///        codecs need at encode/decode time, rather than each recomputing
+///        it per call.
+/// @param range Number of distinct values (e.g. a CHOICE's root
+///        alternative count).
+/// @return Bit width; 0 for `range <= 1`.
+static int range_bits_for(int range) {
+    if (range <= 1) return 0;
+    int bits = 0;
+    for (int r = range - 1; r > 0; r >>= 1) ++bits;
+    return bits;
+}
+
+/// @brief X.690 §8.1.2.2 class-bit encoding (Universal=00, Application=01,
+///        Context=10, Private=11) as a sort rank — not `ast::TagClass`'s
+///        own declaration order. Mirrors `Tag::identifier_key`
+///        (`rust-runtime/wire/src/ber/tag.rs`) exactly: both sides must
+///        agree so a CHOICE's flattened BER dispatch table, sorted here,
+///        stays sorted from the binary-searching decoder's point of view.
+/// @param cls Tag class to rank.
+/// @return 0-3 for a real tag class; `ast::TagClass::Implicit` (a tagging
+///        *mode*, never a real tag's class) never reaches a resolved
+///        `BerTagEntry` in practice — ranked last defensively, not
+///        asserted unreachable, since a defensive rank is cheaper than a
+///        crash for something that should never happen.
+static int tag_class_rank(ast::TagClass cls) {
+    switch (cls) {
+    case ast::TagClass::Universal:   return 0;
+    case ast::TagClass::Application: return 1;
+    case ast::TagClass::Context:     return 2;
+    case ast::TagClass::Private:     return 3;
+    default:                         return 4;
+    }
+}
+
 Generator::Generator(fs::path out_dir, sema::Resolver& res)
     : out_dir_(std::move(out_dir)), resolver_(res),
       owned_backend_(std::make_unique<CppBackend>()), backend_(*owned_backend_) {}
@@ -49,7 +87,7 @@ static std::string filename_for(const std::string& cname) {
     return cname.substr(0, 220) + suffix;
 }
 
-std::string Generator::native_member_type_for(const ast::TypeDef& def) {
+std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
         switch (*bt) {
@@ -190,6 +228,11 @@ std::optional<TypeTagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& d
     if (def.tag.present()) {
         bool is_constr = def.is_sequence() || def.is_choice() ||
                          def.is_seq_of()   || def.is_set_of() || def.is_set();
+        if (!is_constr && std::holds_alternative<ast::TypeRef>(def.body)) {
+            bool chain_constructed = false;
+            resolve_alias_chain(def, chain_constructed);
+            is_constr = chain_constructed;
+        }
         bool is_exp = member_is_explicit(def.tag, def);
         return tag_spec_for(def.tag, is_exp || is_constr);
     }
@@ -213,6 +256,18 @@ std::optional<TypeTagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& d
     if (def.is_set_of())
         return TypeTagSpec{ast::TagClass::Universal, asn1::UniversalTag::Set, true};
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
+        // Resolve one hop before falling back to resolve_ref's blind
+        // full-chain flattening: if that hop itself carries a retagged
+        // descriptor (has_own_retagged_descriptor's own doc), it must be
+        // used directly — resolve_ref would skip past it to whatever it
+        // ultimately aliases, losing the override.
+        if (tr->class_field.empty()) {
+            auto direct = tr->module_name.empty()
+                ? resolver_.lookup_direct(tr->type_name, current_module_)
+                : resolver_.resolve_in_module(tr->type_name, tr->module_name);
+            if (direct && has_own_retagged_descriptor(*direct))
+                return natural_tag_spec_for(*direct);
+        }
         auto base = resolver_.resolve_ref(*tr);
         if (base) return natural_tag_spec_for(*base);
     }
@@ -221,7 +276,48 @@ std::optional<TypeTagSpec> Generator::natural_tag_spec_for(const ast::TypeDef& d
 
 bool Generator::type_is_explicit(const ast::TypeDef& def) const {
     if (!def.tag.present()) return false;
-    return member_is_explicit(def.tag, def);
+    if (member_is_explicit(def.tag, def)) return true;
+    // Even when this type's own tag is IMPLICIT, re-tagging an alias whose
+    // referenced chain is itself constructed (SEQUENCE/CHOICE/.../or an
+    // intermediate EXPLICIT hop) must still wrap, not substitute — see
+    // resolve_alias_chain's own doc.
+    if (std::holds_alternative<ast::TypeRef>(def.body)) {
+        bool chain_constructed = false;
+        resolve_alias_chain(def, chain_constructed);
+        return chain_constructed;
+    }
+    return false;
+}
+
+const ast::TypeDef* Generator::resolve_alias_chain(const ast::TypeDef& def, bool& out_constructed) const {
+    const ast::TypeDef* cur = &def;
+    out_constructed = cur->is_sequence() || cur->is_choice() ||
+                       cur->is_seq_of()  || cur->is_set_of() || cur->is_set();
+    for (int depth = 0; depth < 64 && !out_constructed; ++depth) {
+        auto* tr = std::get_if<ast::TypeRef>(&cur->body);
+        if (!tr) break;
+        auto next = resolver_.resolve_ref(*tr);
+        if (!next) break;
+        cur = next.get();
+        if (cur->is_sequence() || cur->is_choice() || cur->is_seq_of() || cur->is_set_of() || cur->is_set()
+                || (cur->tag.present() && member_is_explicit(cur->tag, *cur)))
+            out_constructed = true;
+    }
+    while (auto* tr = std::get_if<ast::TypeRef>(&cur->body)) {
+        auto next = resolver_.resolve_ref(*tr);
+        if (!next) break;
+        cur = next.get();
+    }
+    return cur;
+}
+
+bool Generator::has_own_retagged_descriptor(const ast::TypeDef& def) const {
+    if (!def.tag.present() || !std::holds_alternative<ast::TypeRef>(def.body)) return false;
+    bool ignored = false;
+    auto* ultimate = resolve_alias_chain(def, ignored);
+    if (!ultimate) return false;
+    auto* ubt = std::get_if<ast::BuiltinType>(&ultimate->body);
+    return ubt && *ubt != ast::BuiltinType::Enumerated && *ubt != ast::BuiltinType::Integer;
 }
 
 std::optional<TypeTagSpec> Generator::underlying_natural_tag_spec_for(const ast::TypeDef& def) const {
@@ -388,24 +484,135 @@ bool Generator::member_type_in_cycle(const ast::TypeDef& m, const std::string& e
     return type_reaches(*member_def, enclosing_name, visited);
 }
 
+// Like type_reaches, but also follows SEQUENCE OF/SET OF element types
+// (direct, or through a further TypeRef) — the shape a container-mediated
+// cycle (X.680 §3.6.55's recursive-definition case) actually takes: e.g.
+// `Type { data SEQUENCE OF EpytRef }`, `EpytRef ::= Epyt`,
+// `Epyt { stype SET OF Type }`. type_reaches deliberately skips containers
+// (member_type_in_cycle's Box<T> decision doesn't need them — a
+// std::vector<T>/Vec<T> member never needs T complete just to be declared),
+// so it alone would miss this shape entirely.
+bool Generator::type_reaches_via_containers(const ast::TypeDef& from, const std::string& target,
+                                             std::set<std::string>& visited) const {
+    for (const auto& m : from.members) {
+        if (!m || m->is_extension_marker) continue;
+        const ast::TypeDef* probe = m.get();
+        if (probe->is_seq_of())
+            probe = std::get<ast::SequenceOfType>(probe->body).element.get();
+        else if (probe->is_set_of())
+            probe = std::get<ast::SetOfType>(probe->body).element.get();
+
+        const ast::TypeDef* member_def = nullptr;
+        std::string member_key;
+        if (probe->is_sequence() || probe->is_choice() || probe->is_set()) {
+            member_def = probe;
+            member_key = std::format("$anon:{}", static_cast<const void*>(probe));
+        } else if (auto* tr = std::get_if<ast::TypeRef>(&probe->body)) {
+            if (tr->type_name == target) return true;
+            auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
+            if (direct) {
+                member_def = direct.get();
+                member_key = tr->type_name;
+            }
+        }
+        if (!member_def) continue;
+        if (member_key == target) return true;
+        if (!visited.insert(member_key).second) continue;
+        if (type_reaches_via_containers(*member_def, target, visited)) return true;
+    }
+    return false;
+}
+
+/// @brief Decide whether a bare top-level TypeRef alias (`Alias ::= Target`)
+///        should forward-declare `Target` instead of #including its header
+///        (emit_type_body's TypeRef branch).
+/// @param target_name Resolved target type's own generated name.
+/// @param alias_name  This alias's own name (`Alias`, not `Target`).
+/// @return True when Target's structure reaches back to `alias_name` via any
+///         member path (direct, inline, or SEQUENCE OF/SET OF-mediated) —
+///         #including Target's header in that case would recurse back into
+///         this alias's own header before either type is ever fully
+///         defined, permanently truncating both via #pragma once (X.690
+///         gives no ordering that breaks a genuine cycle; only forward
+///         declaration does). False (the common, non-cyclic case) leaves
+///         today's plain #include behavior untouched.
+/// @see X.680 §3.6.55 — recursive definitions are permitted; this is the
+///      codegen-side mechanics of representing one.
+bool Generator::bare_alias_would_cycle(const std::string& target_name, const std::string& alias_name) const {
+    auto target_def = resolver_.lookup_direct(target_name, current_module_);
+    if (!target_def || !(target_def->is_sequence() || target_def->is_choice() || target_def->is_set()))
+        return false;
+    std::set<std::string> visited;
+    return type_reaches_via_containers(*target_def, alias_name, visited);
+}
+
+void Generator::collect_class_types_reachable(const ast::TypeDef& from, std::set<std::string>& out) const {
+    for (const auto& m : from.members) {
+        if (!m || m->is_extension_marker) continue;
+        const ast::TypeDef* probe = m.get();
+        if (probe->is_seq_of())
+            probe = std::get<ast::SequenceOfType>(probe->body).element.get();
+        else if (probe->is_set_of())
+            probe = std::get<ast::SetOfType>(probe->body).element.get();
+
+        const ast::TypeDef* member_def = nullptr;
+        std::string member_key;
+        if (probe->is_sequence() || probe->is_choice() || probe->is_set()) {
+            member_def = probe;
+            member_key = std::format("$anon:{}", static_cast<const void*>(probe));
+        } else if (auto* tr = std::get_if<ast::TypeRef>(&probe->body)) {
+            auto concrete = resolver_.resolve_ref(*tr, current_module_);
+            if (concrete && (concrete->is_sequence() || concrete->is_choice() || concrete->is_set())) {
+                member_def = concrete.get();
+                member_key = effective_cpp_name(concrete->name, current_module_);
+            }
+        }
+        if (!member_def) continue;
+        if (!out.insert(member_key).second) continue; // already visited
+        collect_class_types_reachable(*member_def, out);
+    }
+}
+
+std::vector<std::string> Generator::collect_extra_includes_for(const std::string& elem_type_name,
+                                                                 const std::string& self_name) const {
+    ast::TypeRef elem_ref;
+    elem_ref.type_name = elem_type_name;
+    auto concrete = resolver_.resolve_ref(elem_ref, current_module_);
+    if (!concrete || !(concrete->is_sequence() || concrete->is_choice() || concrete->is_set()))
+        return {};
+    std::set<std::string> reachable;
+    reachable.insert(effective_cpp_name(concrete->name, current_module_));
+    collect_class_types_reachable(*concrete, reachable);
+    reachable.erase(self_name);
+    // An anonymous inline member's "$anon:<ptr>" placeholder (see
+    // collect_class_types_reachable's own doc) is only meaningful as a
+    // visited-set cycle terminator — it names no real generated file, so
+    // it must never reach write_type_reference as an #include target.
+    std::vector<std::string> out;
+    for (auto& name : reachable) {
+        if (!name.starts_with("$anon:")) out.push_back(name);
+    }
+    return out;
+}
+
 // Collect flattened BER dispatch tags for one CHOICE alternative (X.690 §8.13,
 // X.680 §24.6). If the alternative has its own BER tag, add one entry.
 // If it resolves to an untagged CHOICE (empty natural tag), recurse into its
 // alternatives so the outer CHOICE can dispatch by the inner type's tags.
 void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
-                                      std::vector<std::pair<std::string,int>>& out,
+                                      std::vector<BerTagEntry>& out,
                                       std::set<std::string>& visited)
 {
     // Explicit outer tag: use it directly.
     if (alt.tag.present()) {
         bool constr = alt.is_sequence() || alt.is_choice() ||
                       alt.is_seq_of()  || alt.is_set_of() || alt.is_set();
-        out.emplace_back(tag_literal(alt.tag, constr), alt_idx);
+        if (auto spec = tag_spec_for(alt.tag, constr))
+            out.push_back({spec->cls, spec->number, backend_.format_tag_literal(*spec), alt_idx});
         return;
     }
-    std::string nat = natural_tag_for(alt);
-    if (!nat.empty()) {
-        out.emplace_back(nat, alt_idx);
+    if (auto spec = natural_tag_spec_for(alt)) {
+        out.push_back({spec->cls, spec->number, backend_.format_tag_literal(*spec), alt_idx});
         return;
     }
     // No tag: resolve TypeRef to find the actual type.
@@ -421,7 +628,8 @@ void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
     if (inner->tag.present()) {
         bool constr = inner->is_sequence() || inner->is_choice() ||
                       inner->is_seq_of()   || inner->is_set_of() || inner->is_set();
-        out.emplace_back(tag_literal(inner->tag, constr), alt_idx);
+        if (auto spec = tag_spec_for(inner->tag, constr))
+            out.push_back({spec->cls, spec->number, backend_.format_tag_literal(*spec), alt_idx});
         return;
     }
     // Truly untagged CHOICE: flatten its inner alternatives for dispatch.
@@ -458,6 +666,11 @@ static bool is_type_assignment(const ast::TypeDef& def) {
 ///        (type_descriptor_ref_for, below) renders it via
 ///        backend_.format_type_descriptor_ref.
 /// @see TypeDescriptorRefSpec (Backend.hpp) for the field-by-field contract.
+/// @note Its own TypeRef-resolution branch below overlaps with
+///       classify_typeref_for_per's resolve-and-check-is_sequence/
+///       is_set/is_choice/Enumerated step (same underlying classification,
+///       computed independently for a different purpose and variant set)
+///       — deliberately left unfactored; see that function's own doc.
 TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef& def) {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
@@ -475,6 +688,24 @@ TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef
     // C++ `using` declaration — no asn_DEF_. Follow the chain until reaching a type that
     // generates its own descriptor (BuiltinType with constraints, SEQUENCE, CHOICE, etc.).
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
+        // If this reference names a type that itself carries a distinct
+        // [n] tag override on a TypeRef body (`Label2 ::= [1] Label`),
+        // that type gets its own standalone descriptor now
+        // (emit_type_body's retag_alias_to_builtin path) — resolve_ref's
+        // blind alias-chain-following below would skip past it straight
+        // to Label's own descriptor, losing the override. Stop here
+        // instead: only one hop deep (matches retag_alias_to_builtin's own
+        // scope — a deeper chain of re-tagged aliases isn't attempted).
+        if (tr->class_field.empty()) {
+            auto direct = tr->module_name.empty()
+                ? resolver_.lookup_direct(tr->type_name, current_module_)
+                : resolver_.resolve_in_module(tr->type_name, tr->module_name);
+            if (direct && has_own_retagged_descriptor(*direct)) {
+                auto mod = tr->module_name.empty() ? current_module_ : tr->module_name;
+                auto n = effective_cpp_name(direct->name, mod);
+                return TypeDescriptorRefSpec{TypeDescriptorRefKind::FreeStanding, {}, n};
+            }
+        }
         // For collision types, resolve_ref uses global_ and may pick the wrong module's version.
         // Prefer the current-module's definition (local shadows global), fall back to resolve_ref.
         // Skip this logic for qualified references (module_name set) — they pin the source module.
@@ -622,27 +853,65 @@ IntStorageKind Generator::classify_integer_storage(const ast::TypeDef& def) cons
     return IntStorageKind::S64;
 }
 
-ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
+// Forward-declared here; defined later in this file (free function, not a
+// Generator member — see its own definition site for why).
+static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def);
+
+ElemShape Generator::build_elem_shape(const ast::TypeDef& elem, const std::string& wrapping_member_name) const {
     ElemShape shape;
     if (elem.is_seq_of()) {
         shape.kind = SeqOfKind::SeqOf;
+        // "" below, not wrapping_member_name: that name only feeds the
+        // composite-anonymous-element special case immediately below, at
+        // the exact nesting depth where a *named* member directly wraps
+        // one — an inner SequenceOfType/SetOfType node (one more SEQUENCE
+        // OF/SET OF nested in the same member, X.680 §25/§26) is itself
+        // always anonymous, so native_member_type_for's own recursion
+        // never reaches that special case at any deeper level either.
         shape.nested = std::make_shared<ElemShape>(
-            build_elem_shape(*std::get<ast::SequenceOfType>(elem.body).element));
+            build_elem_shape(*std::get<ast::SequenceOfType>(elem.body).element, ""));
         return shape;
     }
     if (elem.is_set_of()) {
         shape.kind = SeqOfKind::SetOf;
         shape.nested = std::make_shared<ElemShape>(
-            build_elem_shape(*std::get<ast::SetOfType>(elem.body).element));
+            build_elem_shape(*std::get<ast::SetOfType>(elem.body).element, ""));
         return shape;
     }
     // Scalar leaf: a builtin (kind stays None, builtin set) or a composite
     // TypeRef/SEQUENCE/CHOICE/SET (kind stays None, builtin stays nullopt —
     // same "optional discriminant" convention SequenceMemberSpec::mbuiltin
     // uses one level up).
+    if (!wrapping_member_name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set())
+            && elem.name.empty()) {
+        // Mirrors native_member_type_for's own is_seq_of/is_set_of special
+        // case exactly (same two synthetic_name calls, same arguments) —
+        // the member's own name feeds the promoted type's name, not the
+        // (anonymous) element's. Needed because this leaf is computed one
+        // level below where native_member_type_for would see `def.name`
+        // itself; calling native_member_type_for(elem) directly here would
+        // silently fall through to its generic composite branch
+        // (current_type_ + "Anon", missing the member name entirely).
+        shape.leaf_native_type = backend_.synthetic_name(
+            backend_.synthetic_name(current_type_, wrapping_member_name), "Anon");
+    } else {
+        // native_member_type_for(elem) on a non-collection elem never wraps
+        // its result in a collection type, so this is always the correct,
+        // final leaf text — no caller needs to unwrap it further.
+        shape.leaf_native_type = native_member_type_for(elem);
+    }
     if (auto* bt = std::get_if<ast::BuiltinType>(&elem.body)) {
         shape.builtin = *bt;
         if (*bt == ast::BuiltinType::Integer) shape.storage_kind = classify_integer_storage(elem);
+        // Same check build_member_type_descriptor_spec's own callers use to
+        // decide whether it built a real spec at all (Integer or Sizeable
+        // alike) — a pure function, cheap to call again here. Lets
+        // RustBackend's SEQUENCE OF row pick between the element's own real
+        // ASN_TYP_{TYPE}_ELEM_CONSTRAINTS_PER (emit_seq_of_definition's own
+        // emit_member_type_descriptor call) and the shared
+        // asn1cpp_wire::constraints::UNCONSTRAINED constant, without
+        // reconstructing a name or needing a per-type fallback emission.
+        shape.has_own_descriptor = build_member_type_descriptor_spec(elem, "", "elem").has_value();
     }
     return shape;
 }
@@ -805,8 +1074,21 @@ DefaultValueSpec Generator::default_value_spec_for(const ast::TypeDef& m) const 
 
     if (auto* b = std::get_if<bool>(&m.default_value))
         return { DefaultValueSpec::Kind::Bool, *b, 0, "", "" };
-    if (auto* i = std::get_if<int64_t>(&m.default_value))
-        return { DefaultValueSpec::Kind::Int, false, *i, "", "" };
+    if (auto* i = std::get_if<int64_t>(&m.default_value)) {
+        // A parameterized type's DEFAULT literal is written against the
+        // formal parameter, not its eventual actual type (X.683) — e.g.
+        // `TestType{Parameter} ::= SEQUENCE { common Parameter DEFAULT 0 }`
+        // instantiated with Parameter=BOOLEAN. asn1c accepts this leniently
+        // (its BOOLEAN_t is a plain C int, so `0` needs no coercion); ported
+        // here as an explicit int->bool coercion since Rust's real `bool`
+        // has none for free.
+        const ast::TypeDef* base = resolve_underlying(m, resolver_);
+        bool is_bool = base && std::holds_alternative<ast::BuiltinType>(base->body)
+            && std::get<ast::BuiltinType>(base->body) == ast::BuiltinType::Boolean;
+        if (is_bool)
+            return { DefaultValueSpec::Kind::Bool, *i != 0, 0, "", "" };
+        return { DefaultValueSpec::Kind::Int, false, *i, "", "", classify_integer_storage(m) };
+    }
     if (auto* s = std::get_if<std::string>(&m.default_value))
         return { DefaultValueSpec::Kind::String, false, 0, *s, "" };
     if (auto* nr = std::get_if<ast::NamedValueRef>(&m.default_value)) {
@@ -840,10 +1122,24 @@ std::string Generator::emit_default_setter(
     return std::format("&_setdef_{}_{}", parent_cname, mname);
 }
 
-// True if any top-level constraint carries a trailing '...'.
+// True if any constraint carries a trailing '...' (X.680 §51.8.3) — including one
+// attached to a SIZE(...)/FROM(...) wrapper's own inner range (`SIZE(1..4, ...)`),
+// not just a top-level constraint clause (INTEGER's `(1..256) (1..255,...)`).
+static bool constraint_tree_extensible(const ast::Constraint& c) {
+    if (c.extensible) return true;
+    if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c.body))
+        for (const auto& op : ic->operands)
+            if (op && constraint_tree_extensible(*op)) return true;
+    if (auto* sc = std::get_if<ast::SizeConstraint>(&c.body))
+        if (sc->inner && constraint_tree_extensible(*sc->inner)) return true;
+    if (auto* fc = std::get_if<ast::FromConstraint>(&c.body))
+        if (fc->inner && constraint_tree_extensible(*fc->inner)) return true;
+    return false;
+}
+
 static bool is_constraint_extensible(const ast::TypeDef& def) {
     for (const auto& cptr : def.constraints)
-        if (cptr && cptr->extensible) return true;
+        if (cptr && constraint_tree_extensible(*cptr)) return true;
     return false;
 }
 
@@ -939,7 +1235,30 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
             hi_is_large = vhi_is_large;
         }
     });
-    if (lo && hi) return IntRange{true, *lo, *hi, truly_max, hi_u64, hi_is_large};
+    if (lo && hi) {
+        // X.691 defines PER bit-width minimization only for a constraint
+        // with a real finite lower bound: "constrained" (both bounds
+        // finite) or "semi-constrained" (lower bound only, X.691 §10.5.6
+        // — `truly_max` above). An upper-bound-only range (`MIN..N`, no
+        // real lower bound) has no such minimization defined — ground-
+        // truthed against asn1c's own generated table for exactly this
+        // shape (`(MIN..10)`): `asn_PER_memb_second_constr_4` is
+        // APC_UNCONSTRAINED, not semi-constrained. Treating `INT64_MIN`
+        // as if it were a genuine finite lower bound here (rather than
+        // "no lower bound at all") previously fed `hi - lo + 1` into the
+        // constrained-range bit-width computation, overflowing int64
+        // arithmetic and corrupting the encoded value — this returns
+        // "no constraint" instead, the same "general integer" shape
+        // asn1c's own APC_UNCONSTRAINED produces. asn1c additionally
+        // still enforces `value <= N` via a separate constraint-check
+        // callback, independent of its PER table; this codebase has no
+        // equivalent upper-bound-only validation path yet for either
+        // codec — a real, separate, narrower gap, not fixed here.
+        bool no_real_lower_bound = (*lo == std::numeric_limits<int64_t>::min());
+        if (no_real_lower_bound && !truly_max)
+            return IntRange{false, 0, 0, false, 0, false};
+        return IntRange{true, *lo, *hi, truly_max, hi_u64, hi_is_large};
+    }
     return IntRange{false, 0, 0, false, 0, false};
 }
 
@@ -963,7 +1282,8 @@ std::string Generator::emit_member_type_descriptor(
     auto spec = build_member_type_descriptor_spec(m, parent_cname, mname);
     if (!spec) return type_descriptor_ref_for(m);
     backend_.emit_member_type_descriptor(*spec, session);
-    return "&" + spec->tname;
+    return backend_.format_type_descriptor_ref(
+        TypeDescriptorRefSpec{TypeDescriptorRefKind::MemberOwnTable, {}, spec->tname});
 }
 
 /// @brief Decide the resolved MemberTypeDescriptorSpec for an inline-
@@ -977,7 +1297,7 @@ std::string Generator::emit_member_type_descriptor(
 ///         descriptor — caller falls back to type_descriptor_ref_for().
 /// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
 std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_spec(
-    const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname)
+    const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname) const
 {
     using BT = ast::BuiltinType;
     auto* bt = std::get_if<BT>(&m.body);
@@ -1168,6 +1488,103 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
     return {};
 }
 
+// See TypeRefPerClass's own doc (Generator.hpp) and TaggedMemberSpec::
+// RefTargetKind's (Backend.hpp) for what's classified and why only
+// ENUMERATED/named-INTEGER targets are safe to resolve here — same
+// resolver-access rationale as classify_member_setter just above.
+// Overlaps with type_descriptor_ref_spec_for's own resolve-and-check-
+// is_sequence/is_set/is_choice/Enumerated step below (same underlying
+// classification, computed independently for a different purpose and a
+// different variant set — this one also cares about Integer, that one
+// doesn't). Deliberately left unfactored rather than sharing a helper —
+// see this function's own doc for why.
+// DELETE ONCE PER IS COMPLETE: this function exists only to answer "has
+// RustBackend's per-type Asn1Value impl actually been written for the
+// referenced construct yet" (an implementation-completeness question,
+// not a standard one — X.691 defines PER for every construct; C++'s
+// PerCodec never needed this because it's one generic runtime
+// interpreter with no incremental per-type completeness state to
+// track). Once every branch below always returns
+// `{RefTargetKind::Other, IntStorageKind::S64}` (Enumerated/IntegerAlias
+// collapse into the same answer once every INTEGER storage width is
+// covered too), the whole function, `TypeRefPerClass`, and
+// `SequenceMemberSpec::ref_kind`/`ref_storage_kind`/
+// `ChoiceAlternativeSpec::ref_kind`/`ref_storage_kind` (Backend.hpp) can
+// be deleted — every caller currently branching on the result would
+// always take the "covered" path.
+Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRef& tr) const {
+    using BT = ast::BuiltinType;
+    auto resolved = resolver_.resolve_ref(tr);
+    if (!resolved) {
+        // A synthetic-promoted target (generate_inline_types) was never
+        // registered with the Resolver — resolve_ref failing here is the
+        // normal case for every such promotion, not "genuinely unresolved"
+        // (same fallback type_descriptor_ref_spec_for's own doc already
+        // relies on for its C++ TypeDescriptor reference). generate_inline_
+        // types only ever promotes a SEQUENCE/CHOICE/SET/ENUMERATED body to
+        // a synthetic name — except a nested anonymous SEQUENCE OF/SET OF
+        // element (seq_of_synthetic_names_), whose promoted wrapper type
+        // has no PerValue impl of its own (SEQUENCE OF PER support lives in
+        // the *containing* SEQUENCE's own member row, not on the collection
+        // type itself) and so isn't Scalar-safe the way the others are.
+        auto n = cpp_name_for_typeref(tr);
+        if (seq_of_synthetic_names_.count(n)) return {};
+        return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+    }
+    if (auto* rbt = std::get_if<BT>(&resolved->body)) {
+        if (*rbt == BT::Enumerated) return {TaggedMemberSpec::RefTargetKind::Enumerated, IntStorageKind::S64};
+        if (*rbt == BT::Integer)
+            return {TaggedMemberSpec::RefTargetKind::IntegerAlias, classify_integer_storage(*resolved)};
+        // A named builtin-alias type (X.680 §19) with its own PerValue impl
+        // now (RustBackend::emit_builtin_alias_definition's own doc) —
+        // OCTET STRING/BIT STRING unconditionally (X.691 §16/§17, no
+        // alphabet concept), a known-multiplier character string kind only
+        // when it has no FROM constraint of its own. This duplicates
+        // RustBackend's own is_sizeable_string_kind (its exact kind set) rather
+        // than sharing it — same already-accepted, already-tracked overlap
+        // this function's own doc notes for type_descriptor_ref_spec_for
+        // (gambas-asn1#518); the alternative (Backend gaining resolver
+        // access to let RustBackend classify this itself) is a bigger
+        // boundary change, deliberately out of scope here too.
+        if (*rbt == BT::OctetString || *rbt == BT::BitString)
+            return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+        // UtcTime/GeneralizedTime are generated by the same `char_string_
+        // type!` macro (rust-runtime/wire/src/strings.rs) as the other
+        // twelve kinds here and get the identical per_encode/per_decode_into
+        // pair from it — included alongside them, not excluded.
+        static const std::set<BT> kPerStringKinds = {
+            BT::NumericString, BT::Ia5String, BT::PrintableString, BT::VisibleString,
+            BT::Utf8String, BT::T61String, BT::GeneralString, BT::GraphicString,
+            BT::VideotexString, BT::ObjectDescriptor, BT::BmpString, BT::UniversalString,
+            BT::UtcTime, BT::GeneralizedTime,
+        };
+        if (kPerStringKinds.count(*rbt) && extract_from_alphabet(*resolved).empty())
+            return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+        return {};
+    }
+    // A TypeRef resolving to a named SEQUENCE/SET/CHOICE — always
+    // PER-representable via a Scalar access to the target's own PerValue
+    // impl, which RustBackend now emits unconditionally for every
+    // SEQUENCE/CHOICE (real rows for covered members, `Unsupported` stubs
+    // for the rest — see asn1cpp_wire::per::sequence::MemberAccess::Unsupported's
+    // own doc). No dependency on the referenced type's own coverage state
+    // to track here, unlike an earlier version of this function.
+    if (std::holds_alternative<ast::SequenceType>(resolved->body) ||
+        std::holds_alternative<ast::SetType>(resolved->body) ||
+        std::holds_alternative<ast::ChoiceType>(resolved->body)) {
+        return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+    }
+    // A TypeRef resolving to a named SEQUENCE OF/SET OF — same Scalar
+    // access, now that `RustBackend::emit_seq_of_definition` gives every
+    // named collection type a real `per_encode`/`per_decode_into` (X.691
+    // §19/§20) unconditionally, whatever its element type is.
+    if (std::holds_alternative<ast::SequenceOfType>(resolved->body) ||
+        std::holds_alternative<ast::SetOfType>(resolved->body)) {
+        return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
+    }
+    return {};
+}
+
 // ---------------------------------------------------------------------------
 // Emit SEQUENCE / SET
 // ---------------------------------------------------------------------------
@@ -1350,6 +1767,49 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         backend_.emit_special_members(cname, session);
     }
 
+    // SEQUENCE OF/SET OF member whose element (possibly through a bare
+    // TypeRef alias) cycles back to this enclosing type: VectorSeqOf<T>'s
+    // own declaration never needs T complete (bare_alias_would_cycle's own
+    // doc), but TypeLifecycleOps::make_clone_fn<{cname}>'s instantiation
+    // right below does — it needs the element type's real copy
+    // constructor, and — since `cname` itself has no OPTIONAL members
+    // here in the has_optional_members==false case, so its own copy ctor
+    // is implicit/inline — that copy ctor's *own* transitive member types
+    // too (collect_extra_includes_for's own doc). The normal #include
+    // chain already provides all of this in the non-cyclic case; only a
+    // genuine cycle needs the extra direct #includes here
+    // (bare_alias_would_cycle's forward-declare is what breaks the chain
+    // that would otherwise provide it). Gated on
+    // needs_forward_declare_for_cyclic_alias() for the same reason that
+    // flag exists at all: Rust's whole-crate resolution never took the
+    // forward-declare branch in the first place, so it never has this gap
+    // to fill either — these extra references would just be dead
+    // (unused-import warning) weight there.
+    if (backend_.needs_forward_declare_for_cyclic_alias()) {
+        bool emitted_extra = false;
+        auto emit_seqof_elem_include = [&](const ast::TypeDef& m) {
+            if (!m.is_seq_of() && !m.is_set_of()) return;
+            const auto& elem = m.is_seq_of()
+                ? std::get<ast::SequenceOfType>(m.body).element
+                : std::get<ast::SetOfType>(m.body).element;
+            auto* tr = std::get_if<ast::TypeRef>(&elem->body);
+            if (!tr) return;
+            auto concrete = resolver_.resolve_ref(*tr, current_module_);
+            if (!concrete || !(concrete->is_sequence() || concrete->is_choice() || concrete->is_set()))
+                return;
+            std::set<std::string> visited;
+            if (!type_reaches_via_containers(*concrete, cname, visited)) return;
+            auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
+            for (const auto& extra : collect_extra_includes_for(tr->type_name, cname)) {
+                write_type_reference(extra, inc_os);
+                emitted_extra = true;
+            }
+        };
+        for (auto* m : sm_root) emit_seqof_elem_include(*m);
+        for (auto* m : sm_ext)  emit_seqof_elem_include(*m);
+        if (emitted_extra) { auto& nl_os = pre_ns_os_ ? *pre_ns_os_ : os; nl_os << "\n"; }
+    }
+
     // Count root-only optional members (for PER preamble bitmap width).
     // Extension members are NOT counted — they have their own extension bitmap.
     int roms_count = static_cast<int>(
@@ -1397,19 +1857,35 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         row.asn1_name = m.name;
         row.mname = backend_.member_name(m.name);
         row.mtype = native_member_type_for(m);
+        row.xer_encoding = m.xer_encoding;
         if (auto* bt = std::get_if<ast::BuiltinType>(&m.body)) {
             row.mbuiltin = *bt;
             // Same decision native_member_type_for's own Integer branch
             // already made to produce row.mtype above — threaded
             // through as structured data too, not re-derived from mtype text.
             if (*bt == ast::BuiltinType::Integer) row.storage_kind = classify_integer_storage(m);
+        } else if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+            auto per_class = classify_typeref_for_per(*tr);
+            row.ref_kind = per_class.kind;
+            row.ref_storage_kind = per_class.storage_kind;
+        } else if (m.is_sequence() || m.is_choice() || m.is_set()) {
+            // Inline anonymous SEQUENCE/CHOICE/SET member (e.g. 3GPP's
+            // common "laterNonCriticalExtensions SEQUENCE { ... }" pattern)
+            // — native_member_type_for already named it via synthetic_name
+            // above; m.body never becomes a TypeRef for this case (unlike a
+            // TypeRef-to-named-composite member), so classify_typeref_for_per
+            // is never reached. The promoted synthetic type gets the exact
+            // same unconditional PerValue impl any other SEQUENCE/CHOICE/SET
+            // does (Unsupported-stub design) — Scalar-safe here for the same
+            // reason RefTargetKind::Other already is for a real TypeRef.
+            row.ref_kind = SequenceMemberSpec::RefTargetKind::Other;
         }
         if (m.is_seq_of()) {
             row.seq_of_kind = SeqOfKind::SeqOf;
-            row.elem_shape = build_elem_shape(*std::get<ast::SequenceOfType>(m.body).element);
+            row.elem_shape = build_elem_shape(*std::get<ast::SequenceOfType>(m.body).element, m.name);
         } else if (m.is_set_of()) {
             row.seq_of_kind = SeqOfKind::SetOf;
-            row.elem_shape = build_elem_shape(*std::get<ast::SetOfType>(m.body).element);
+            row.elem_shape = build_elem_shape(*std::get<ast::SetOfType>(m.body).element, m.name);
         }
         if (is_class_type(m))
             row.member_type_in_cycle = member_type_in_cycle(m, def.name);
@@ -1625,6 +2101,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
     spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
     spec.count = count;
     spec.ext_at = ext_at;
+    spec.range_bits = range_bits_for(ext_at >= 0 ? ext_at : count);
 
     // X.680 §30.6 — CHOICE has no universal tag; a declared [n] on the type
     // assignment itself is always EXPLICIT (wraps the chosen alternative's
@@ -1642,6 +2119,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind storage_kind = IntStorageKind::S64;
             std::optional<MemberTagSpec> resolved_tag;
+            TaggedMemberSpec::RefTargetKind ref_kind = TaggedMemberSpec::RefTargetKind::NotRef;
+            IntStorageKind ref_storage_kind = IntStorageKind::S64;
         };
         std::vector<AltRow> rows;
         // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
@@ -1664,12 +2143,29 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             }
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind alt_storage_kind = IntStorageKind::S64;
+            TaggedMemberSpec::RefTargetKind alt_ref_kind = TaggedMemberSpec::RefTargetKind::NotRef;
+            IntStorageKind alt_ref_storage_kind = IntStorageKind::S64;
             if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
                 mbuiltin = *bt;
                 if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
+            } else if (auto* atr = std::get_if<ast::TypeRef>(&m->body)) {
+                auto per_class = classify_typeref_for_per(*atr);
+                alt_ref_kind = per_class.kind;
+                alt_ref_storage_kind = per_class.storage_kind;
+            } else if (m->is_sequence() || m->is_choice() || m->is_set()) {
+                // Inline anonymous SEQUENCE/CHOICE/SET alternative — same
+                // synthetic-promotion shape as an inline SEQUENCE member
+                // (build_sequence_member_spec's collect lambda): m->body
+                // never becomes a TypeRef here, so classify_typeref_for_per
+                // is never reached. The promoted type gets the same
+                // unconditional PerValue impl any other SEQUENCE/CHOICE/SET
+                // does, so it's Scalar-safe here for the same reason
+                // RefTargetKind::Other already is for a real TypeRef.
+                alt_ref_kind = TaggedMemberSpec::RefTargetKind::Other;
             }
             rows.push_back({ m->name, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag });
+                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag,
+                             alt_ref_kind, alt_ref_storage_kind });
             ++auto_tag_num;
           }
         }
@@ -1704,6 +2200,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.mbuiltin = r.mbuiltin;
             alt.storage_kind = r.storage_kind;
             alt.resolved_tag = r.resolved_tag;
+            alt.ref_kind = r.ref_kind;
+            alt.ref_storage_kind = r.ref_storage_kind;
             spec.alternatives.push_back(std::move(alt));
         }
 
@@ -1730,7 +2228,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
     // Compute flattened BER dispatch table (needed when any alternative is an untagged
     // CHOICE that contributes its inner tags for outer dispatch).
     // When AUTOMATIC TAGS is applied, all alternatives have distinct context tags — no table needed.
-    std::vector<std::pair<std::string,int>> ber_tags; // {tag_literal, 0-based alt_index}
+    std::vector<BerTagEntry> ber_tags;
     bool needs_ber_table = false;
     if (!apply_auto_tags) {
         int ai = 0;
@@ -1744,6 +2242,11 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
         }
     }
     if (needs_ber_table && !ber_tags.empty()) {
+        // Sorted by (class, number) so a backend can binary-search this
+        // table (X.690 §8.13 tag lookup) instead of scanning it linearly.
+        std::sort(ber_tags.begin(), ber_tags.end(), [](const BerTagEntry& a, const BerTagEntry& b) {
+            return std::pair(tag_class_rank(a.cls), a.number) < std::pair(tag_class_rank(b.cls), b.number);
+        });
         spec.has_ber_table = true;
         spec.ber_tags = std::move(ber_tags);
     }
@@ -1859,9 +2362,21 @@ void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, 
     }
     backend_.emit_declaration_preamble(module_comment, session);
 
+    // A top-level type alias that also carries its own [n] tag override
+    // (`Label2 ::= [1] Label`) needs a real descriptor, not a bare `using`
+    // sharing the referenced type's descriptor wholesale — see
+    // resolve_alias_chain's own doc. Only handled when the referenced
+    // chain ultimately resolves to a plain builtin scalar (not
+    // ENUMERATED/INTEGER, which have their own richer emit_enumerated/
+    // emit_integer paths, or SEQUENCE/CHOICE/SEQUENCE OF/SET OF, which
+    // would need real member-forwarding, not just a scalar wrapper) —
+    // narrower cases fall back to the pre-existing bare-alias behavior.
+    bool retag_alias_to_builtin = has_own_retagged_descriptor(def);
+
     bool has_definition = def.is_sequence() || def.is_set() || def.is_choice()
         || def.is_seq_of() || def.is_set_of()
-        || std::holds_alternative<ast::BuiltinType>(def.body);
+        || std::holds_alternative<ast::BuiltinType>(def.body)
+        || retag_alias_to_builtin;
     if (has_definition) backend_.emit_definition_preamble(filename_for(cname), session);
 
     // When namespace wrapping is active, cross-type #include "X.hpp" directives must land
@@ -1908,10 +2423,22 @@ void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, 
     } else if (def.is_seq_of() || def.is_set_of()) {
         current_type_ = cname;
         emit_seq_of(def, dispatch);
+    } else if (retag_alias_to_builtin) {
+        current_type_ = cname;
+        emit_builtin_alias(def, dispatch);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
         auto inc = cpp_name_for_typeref(*tr);
         auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : decl_body;
-        write_type_reference(inc, inc_os);
+        // A bare alias declaration (`using Alias = Target;`) only needs
+        // Target declared, never complete — forward-declare instead of
+        // #including when Target's own structure cycles back to this
+        // alias (bare_alias_would_cycle's own doc), so the #pragma once
+        // chain doesn't destructively truncate before either type is ever
+        // fully defined.
+        if (backend_.needs_forward_declare_for_cyclic_alias() && bare_alias_would_cycle(inc, cname))
+            write_forward_declaration(inc, inc_os);
+        else
+            write_type_reference(inc, inc_os);
         backend_.emit_typeref_alias_declaration(cname, inc, dispatch);
     }
 
@@ -2033,12 +2560,24 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     spec.type_name = type_name;
     spec.xer_name  = def.xer_name.empty() ? def.name : def.xer_name;
     spec.asn1_name = !def.origin_label.empty() ? def.origin_label : def.name;
-    // Defensive fallback (unreachable in practice — this is only called from
-    // emit_definition's dispatch after confirming def.body is a BuiltinType): if
-    // absent, fall back to Utf8String, whose LUT entries are the generic
-    // string handlers, matching the original defensive fallback.
+    // def.body is normally a BuiltinType directly. It can also be a
+    // TypeRef when this call comes from the re-tagged-alias dispatch
+    // (`Label2 ::= [1] Label`, where Label itself resolves to a builtin
+    // scalar) — resolve_alias_chain finds the ultimate builtin. Falls back
+    // to Utf8String (whose LUT entries are the generic string handlers) if
+    // truly unresolvable — defensive only, unreachable for a def the
+    // dispatch already confirmed resolves to a builtin scalar.
     auto* bt = std::get_if<ast::BuiltinType>(&def.body);
-    spec.builtin_type = bt ? *bt : ast::BuiltinType::Utf8String;
+    ast::BuiltinType builtin = ast::BuiltinType::Utf8String;
+    if (bt) {
+        builtin = *bt;
+    } else {
+        bool ignored = false;
+        if (auto* ultimate = resolve_alias_chain(def, ignored))
+            if (auto* ubt = std::get_if<ast::BuiltinType>(&ultimate->body))
+                builtin = *ubt;
+    }
+    spec.builtin_type = builtin;
     spec.tag = natural_tag_spec_for(def);
     spec.is_explicit = type_is_explicit(def);
     if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
@@ -2048,6 +2587,14 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     spec.has_size_constraint = size_range.has_value();
     spec.size_bounded = size_range.has_value()
         && size_range->second != std::numeric_limits<int64_t>::max();
+    // Both backends format these fields into their generated Constraints
+    // tables unconditionally (gated on has_size_constraint/a flags bit at
+    // read time, not at codegen time) — always default-initialize
+    // explicitly when there's no SIZE constraint, don't rely on the
+    // struct's own (absent) defaults.
+    spec.size_range_bits = 0;
+    spec.size_lower = 0;
+    spec.size_upper = 0;
     if (size_range) {
         auto sc = compute_size_constraint(size_range);
         spec.size_range_bits = sc.range_bits;
@@ -2114,6 +2661,28 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     const auto& elem_node = def.is_seq_of()
         ? *std::get<ast::SequenceOfType>(def.body).element
         : *std::get<ast::SetOfType>(def.body).element;
+
+    // Element type (possibly through a bare TypeRef alias) needing extra
+    // .cpp-side #includes beyond the normal chain — same rationale as
+    // emit_sequence_definition's own identical block: VectorSeqOf<T>'s
+    // declaration never needs T complete, but instantiating T's (implicit,
+    // since a plain seq-of wrapper carries no OPTIONAL members of its own)
+    // copy constructor for TypeLifecycleOps::make_clone_fn<VectorSeqOf<T>>
+    // does, transitively through T's own members.
+    if (backend_.needs_forward_declare_for_cyclic_alias()) {
+        if (auto* tr = std::get_if<ast::TypeRef>(&elem_node.body)) {
+            auto concrete = resolver_.resolve_ref(*tr, current_module_);
+            if (concrete && (concrete->is_sequence() || concrete->is_choice() || concrete->is_set())) {
+                std::ostream& inc_os = session.buffer(backend_.definition_extension());
+                bool emitted_extra = false;
+                for (const auto& extra : collect_extra_includes_for(tr->type_name, cname)) {
+                    write_type_reference(extra, inc_os);
+                    emitted_extra = true;
+                }
+                if (emitted_extra) inc_os << "\n";
+            }
+        }
+    }
 
     SeqOfSpec spec;
     spec.type_name = cname;
@@ -2306,7 +2875,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 seqof_td->tag = ast::Tag{};
                 if (!elem_type_name.empty()) {
                     auto named_elem = std::make_shared<ast::TypeDef>();
-                    named_elem->body = ast::TypeRef{"", elem_type_name, {}};
+                    named_elem->body = ast::TypeRef{"", elem_type_name, {}, ""};
                     if (m->is_seq_of())
                         seqof_td->body = ast::SequenceOfType{named_elem};
                     else

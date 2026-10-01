@@ -30,7 +30,7 @@ FMT_LIBS := $(shell pkg-config --libs fmt 2>/dev/null)
 LIBS     := $(LIB) $(RUNTIME_LIB) $(FMT_LIBS)
 
 REGISTRY_OBJS := src/type_registry.o src/types.o
-PROGRAMS      := randgen ber-to-xer xer-to-ber
+PROGRAMS      := randgen ber-to-xer xer-to-ber ber-to-per per-to-ber
 
 # Two-step build, driven explicitly by the Python driver (not chained here)
 # — same reason template_rust/Makefile.tmpl splits gen/build: the PDU
@@ -46,27 +46,41 @@ build: $(PROGRAMS)
 # Codegen: re-runs whenever the schema source(s) or the compiler binary
 # change. A stamp file (not GEN_DIR itself) is the make target since
 # asn1cpp writes a variable, content-dependent set of files per PDU.
+# Output goes to a scratch dir and is checksum-synced into GEN_DIR, so a
+# regeneration that produced identical files leaves their mtimes alone
+# and nothing downstream rebuilds.
 $(GEN_DIR)/.stamp: $(ASN1_FILES) $(ASNCPP)
-	@rm -rf $(GEN_DIR)
-	@mkdir -p $(GEN_DIR)
-	$(ASNCPP) $(ASN1_FILES) -pdu=$(PDU_TYPE) --target=cpp -o $(GEN_DIR)
+	@rm -rf $(GEN_DIR).new
+	@mkdir -p $(GEN_DIR).new $(GEN_DIR)
+	$(ASNCPP) $(ASN1_FILES) -pdu=$(PDU_TYPE) --target=cpp -o $(GEN_DIR).new
+	@rsync -rc --delete --exclude=.stamp $(GEN_DIR).new/ $(GEN_DIR)/
+	@rm -rf $(GEN_DIR).new
 	@touch $@
 
-# One static lib from every generated .cpp — avoids hand-listing sources,
-# same "whatever got generated, compile all of it" approach
-# examples/sample.source.ETSI-LI-PS-PDU/Makefile uses for the real schema.
-$(LIB): $(GEN_DIR)/.stamp
-	@mkdir -p lib obj
-	@for f in $(GEN_DIR)/*.cpp; do \
-		$(CXX) $(CXXFLAGS) -c -o obj/$$(basename $$f .cpp).o $$f || exit 1; \
-	done
-	ar rcs $(LIB) obj/*.o
+# One static lib from every generated .cpp, one object per source with
+# -MMD header deps so only changed files (or files including a changed
+# header) recompile. GEN_SRCS is a wildcard evaluated when `make build`
+# starts, so codegen (`make gen`) must run as a separate, earlier
+# invocation — the driver always does.
+GEN_SRCS := $(wildcard $(GEN_DIR)/*.cpp)
+GEN_OBJS := $(patsubst $(GEN_DIR)/%.cpp,obj/%.o,$(GEN_SRCS))
+
+obj/%.o: $(GEN_DIR)/%.cpp
+	@mkdir -p obj
+	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+$(LIB): $(GEN_OBJS)
+	@mkdir -p lib
+	@rm -f $@
+	ar rcs $@ $(GEN_OBJS)
 
 src/type_registry.o: src/type_registry.cpp src/type_registry.hpp
-	$(CXX) $(CXXFLAGS) -c -o $@ src/type_registry.cpp
+	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ src/type_registry.cpp
 
-src/types.o: src/types.cpp src/type_registry.hpp $(GEN_DIR)/.stamp
-	$(CXX) $(CXXFLAGS) -c -o $@ src/types.cpp
+src/types.o: src/types.cpp src/type_registry.hpp
+	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ src/types.cpp
+
+-include $(GEN_OBJS:.o=.d) src/type_registry.d src/types.d
 
 randgen: src/randgen.cpp $(REGISTRY_OBJS) $(LIB) $(RUNTIME_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ src/randgen.cpp $(REGISTRY_OBJS) $(LIBS)
@@ -77,7 +91,13 @@ ber-to-xer: src/ber-to-xer.cpp $(REGISTRY_OBJS) $(LIB) $(RUNTIME_LIB)
 xer-to-ber: src/xer-to-ber.cpp $(REGISTRY_OBJS) $(LIB) $(RUNTIME_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ src/xer-to-ber.cpp $(REGISTRY_OBJS) $(LIBS)
 
+ber-to-per: src/ber-to-per.cpp $(REGISTRY_OBJS) $(LIB) $(RUNTIME_LIB)
+	$(CXX) $(CXXFLAGS) -o $@ src/ber-to-per.cpp $(REGISTRY_OBJS) $(LIBS)
+
+per-to-ber: src/per-to-ber.cpp $(REGISTRY_OBJS) $(LIB) $(RUNTIME_LIB)
+	$(CXX) $(CXXFLAGS) -o $@ src/per-to-ber.cpp $(REGISTRY_OBJS) $(LIBS)
+
 clean:
-	rm -rf $(PROGRAMS) $(GEN_DIR) obj lib src/*.o
+	rm -rf $(PROGRAMS) $(GEN_DIR) $(GEN_DIR).new obj lib src/*.o src/*.d
 
 .PHONY: all gen build clean

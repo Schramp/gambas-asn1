@@ -73,6 +73,16 @@ private:
     int  rand_int(int lo, int hi);   // inclusive
     std::string random_printable(int len);
     std::string random_from_alphabet(std::string_view alpha, int len);
+    // Wide-char string content for UniversalString (X.680: UCS-4, 4 raw
+    // bytes/char) and BmpString (UCS-2, 2 raw bytes/char) — unlike every
+    // other string kind, AsnStringBase::str() for these holds fixed-width
+    // big-endian code units, not one byte per character. `unit_bytes` is 4
+    // or 2; returns `len` code units (`len * unit_bytes` bytes total),
+    // each a valid Unicode scalar value in the type's own representable
+    // range (excludes the UTF-16 surrogate range for both, and clamps to
+    // the Basic Multilingual Plane for BmpString, which is defined over
+    // BMP code points only — X.680 §41).
+    std::string random_wide_chars(int unit_bytes, int len);
 
     std::mt19937& rng_;
     FillConfig    cfg_;

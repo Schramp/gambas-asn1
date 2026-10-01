@@ -20,7 +20,7 @@
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
 
-use rec_choice::RecChoice;
+use RecChoice::RecChoice as RecChoiceT;
 
 fn check(label: &str, cond: bool, failures: &mut i32) {
     if cond {
@@ -37,12 +37,12 @@ fn main() {
     let mut failures = 0;
 
     // Depth 1: RecChoice = c(a(7)).
-    let r = RecChoice::C(Box::new(RecChoice::A(7)));
+    let r = RecChoiceT::C(Box::new(RecChoiceT::A(asn1cpp_wire::integer::Integer(7))));
     let bytes = r.encode();
     let expected: &[u8] = &[0xa0, 0x05, 0xa2, 0x03, 0x80, 0x01, 0x07];
     check("depth-1 BER matches asn1c ground truth", bytes == expected, &mut failures);
 
-    let back = RecChoice::decode(&bytes);
+    let back = RecChoiceT::decode(&bytes);
     check("depth-1 BER decode ok", back.is_ok(), &mut failures);
     check("depth-1 BER round-trip", back == Ok(r.clone()), &mut failures);
 
@@ -50,17 +50,17 @@ fn main() {
     check("depth-1 BER idempotent", bytes == bytes2, &mut failures);
 
     // Depth 3: RecChoice = c(c(c(b(99)))).
-    let r3 = RecChoice::C(Box::new(RecChoice::C(Box::new(RecChoice::C(Box::new(RecChoice::B(99)))))));
+    let r3 = RecChoiceT::C(Box::new(RecChoiceT::C(Box::new(RecChoiceT::C(Box::new(RecChoiceT::B(asn1cpp_wire::integer::Integer(99))))))));
     let bytes3 = r3.encode();
-    let back3 = RecChoice::decode(&bytes3);
+    let back3 = RecChoiceT::decode(&bytes3);
     check("depth-3 BER decode ok", back3.is_ok(), &mut failures);
     check("depth-3 BER round-trip", back3 == Ok(r3), &mut failures);
 
     // XER round-trip.
-    let rx = RecChoice::C(Box::new(RecChoice::A(-13)));
+    let rx = RecChoiceT::C(Box::new(RecChoiceT::A(asn1cpp_wire::integer::Integer(-13))));
     let xml = rx.encode_xer();
     check("XER encode non-empty", !xml.is_empty(), &mut failures);
-    let back_xml = RecChoice::decode_xer(&xml);
+    let back_xml = RecChoiceT::decode_xer(&xml);
     check("XER decode ok", back_xml.is_ok(), &mut failures);
     check("XER round-trip", back_xml == Ok(rx), &mut failures);
 

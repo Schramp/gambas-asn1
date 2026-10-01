@@ -90,10 +90,10 @@ public:
 
     std::string native_int_type(IntStorageKind kind) const override {
         switch (kind) {
-            case IntStorageKind::U64:       return "u64";
-            case IntStorageKind::I128:      return "i128";  // Rust has a real 128-bit type — no C++-style stub
-            case IntStorageKind::ARBITRARY: return "asn1cpp_ber::integer::ArbitraryInteger";
-            default:                        return "i64";
+            case IntStorageKind::U64:       return "asn1cpp_wire::integer::UInteger";
+            case IntStorageKind::I128:      return "asn1cpp_wire::integer::BigInteger";  // Rust has a real 128-bit type — no C++-style stub
+            case IntStorageKind::ARBITRARY: return "asn1cpp_wire::integer::ArbitraryInteger";
+            default:                        return "asn1cpp_wire::integer::Integer";
         }
     }
 
@@ -118,17 +118,26 @@ public:
     // tags via mbuiltin instead), but must stay valid Rust in case that
     // changes (e.g. CHOICE-member coverage).
     std::string format_no_tag_literal() const override {
-        return "asn1cpp_ber::tag::Tag { class: asn1cpp_ber::tag::TagClass::Context, number: 0, constructed: false }";
+        return "asn1cpp_wire::ber::tag::Tag { class: asn1cpp_wire::ber::tag::TagClass::Context, number: 0, constructed: false }";
     }
 
     // tdref is populated unconditionally for every
-    // SEQUENCE/CHOICE member (see Backend::format_type_descriptor_ref's own
-    // doc), but RustBackend has no codec dispatch table wired up yet to read
-    // it — same status as needs_seqof_wrapper_reference()
-    // below. Empty string is a valid, harmlessly-unused default; revisit
-    // together with needs_seqof_wrapper_reference() once Rust grows its own
-    // per-member descriptor table.
-    std::string format_type_descriptor_ref(const TypeDescriptorRefSpec&) const override { return {}; }
+    // Every kind but MemberOwnTable has no codec dispatch table wired up yet
+    // for Rust to read (see Backend::format_type_descriptor_ref's own doc) —
+    // same status as needs_seqof_wrapper_reference() below. Empty string is
+    // a valid, harmlessly-unused default there; revisit together with
+    // needs_seqof_wrapper_reference() once Rust grows its own per-member
+    // descriptor table for those kinds. MemberOwnTable is real: it's how a
+    // member's own inline-constraint Constraints table (already emitted by
+    // emit_member_type_descriptor) gets found by name — returned bare, with
+    // no decoration, since every consumer (SeqOf element constraint lookup,
+    // the own-table checks for SEQUENCE members/CHOICE alternatives) only
+    // ever needs the plain base name to build its own
+    // `{SCREAMING_SNAKE_CASE}_CONSTRAINTS` reference from.
+    std::string format_type_descriptor_ref(const TypeDescriptorRefSpec& spec) const override {
+        if (spec.kind == TypeDescriptorRefKind::MemberOwnTable) return spec.name;
+        return {};
+    }
 
     std::string wrap_collection_type(const std::string& elem_type) const override {
         return std::format("Vec<{}>", elem_type);
@@ -165,6 +174,13 @@ public:
     // grows real BER/XER dispatch tables for SEQUENCE OF/SET OF members.
     bool needs_seqof_wrapper_reference() const override { return false; }
 
+    // See Backend::needs_forward_declare_for_cyclic_alias's own doc: Rust's
+    // whole-crate name resolution needs the ordinary `use` import
+    // regardless of cycles, and RustBackend::emit_forward_declaration below
+    // is a true no-op — following the C++ default here would silently drop
+    // that import for a cyclic bare-alias reference.
+    bool needs_forward_declare_for_cyclic_alias() const override { return false; }
+
     void emit_forward_declaration(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_special_members(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_optional_member_ops(const std::string& type_name, const std::string& member_name,
@@ -199,7 +215,7 @@ private:
     // Per-row real-vs-stub predicates for emit_sequence_definition/
     // emit_choice_definition — every generated SEQUENCE/SET/CHOICE always
     // gets a real table and `Asn1Value` impl (see
-    // `sequence::MemberAccess::Unsupported`'s doc, rust-runtime/ber). These
+    // `sequence::MemberAccess::Unsupported`'s doc, rust-runtime/wire). These
     // predicates do not gate whether a *type* gets emitted at all; they only
     // decide whether a given member/alternative's own row is a real access
     // closure or an `Unsupported` stub. A referenced composite type (a
