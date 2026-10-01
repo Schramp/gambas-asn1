@@ -32,11 +32,19 @@ namespace {
 // Standard reference: ITU-T Rec. X.691 (1997) — Packed Encoding Rules (PER)
 // File: asn1-docs/X.691-199712.txt  Grep: grep -n "<title>" X.691-199712.txt
 
+// X.691 §10.9.3.4 / §10.6 short-form bit-field width and value range shared by
+// "normally small length" (nslength) and "normally small non-negative whole
+// number" (nsnn) — both pack a short-form value into this many bits, falling
+// back to a general length determinant (per_detail::put_length) above it.
+static constexpr int kShortFormBits   = 6;
+static constexpr int kNsLengthMax     = 64; // nslength short-form: n in [1..64], stored as n-1
+static constexpr int kNsnnMax         = 63; // nsnn short-form: n in [0..63], stored as-is
+
 // X.691 §10.9.3.4 "Where the length determinant is a normally small length and
 // "n" is less than or equal to 64, a single-bit bit-field [...]"
-// Flag=0: n in [1..64], encode n-1 in 6 bits. Flag=1: delegate to put_length().
+// Flag=0: n in [1..64], encode n-1 in kShortFormBits bits. Flag=1: delegate to put_length().
 static void put_nslength(PerEncodeStream& stream, std::size_t n) {
-    if (n >= 1 && n <= 64) { stream.put_bits(0, 1); stream.put_bits(n - 1, 6); }
+    if (n >= 1 && n <= kNsLengthMax) { stream.put_bits(0, 1); stream.put_bits(n - 1, kShortFormBits); }
     else { stream.put_bits(1, 1); per_detail::put_length(stream, n); }
 }
 
@@ -45,7 +53,7 @@ static Expected<std::size_t, DecodeError> get_nslength(PerDecodeStream& stream) 
     auto b = stream.get_bits(1);
     if (!b) return make_unexpected<std::size_t, DecodeError>(b.error());
     if (*b == 0) {
-        auto v = stream.get_bits(6);
+        auto v = stream.get_bits(kShortFormBits);
         if (!v) return make_unexpected<std::size_t, DecodeError>(v.error());
         return *v + 1;
     }
@@ -54,9 +62,9 @@ static Expected<std::size_t, DecodeError> get_nslength(PerDecodeStream& stream) 
 
 
 // X.691 §10.6 "Encoding of a normally small non-negative whole number"
-// Flag=0: value in [0..63], encode in 6 bits. Flag=1: delegate to put_length().
+// Flag=0: value in [0..63], encode in kShortFormBits bits. Flag=1: delegate to put_length().
 static void put_nsnn(PerEncodeStream& stream, int n) {
-    if (n <= 63) { stream.put_bits(0, 1); stream.put_bits(static_cast<uint64_t>(n), 6); }
+    if (n <= kNsnnMax) { stream.put_bits(0, 1); stream.put_bits(static_cast<uint64_t>(n), kShortFormBits); }
     else { stream.put_bits(1, 1); per_detail::put_length(stream, static_cast<std::size_t>(n)); }
 }
 
@@ -65,7 +73,7 @@ static Expected<int, DecodeError> get_nsnn(PerDecodeStream& stream) {
     auto b = stream.get_bits(1);
     if (!b) return make_unexpected<int, DecodeError>(b.error());
     if (*b == 0) {
-        auto v = stream.get_bits(6);
+        auto v = stream.get_bits(kShortFormBits);
         if (!v) return make_unexpected<int, DecodeError>(v.error());
         return static_cast<int>(*v);
     }
@@ -552,31 +560,30 @@ public:
         // it is the number of wide characters, not the byte length.
         std::size_t char_count = str.size() / static_cast<std::size_t>(bpc);
         if (pc.flags & Constraints::EXTENSIBLE) {
-            bool in_root;
-            if (pc.flags & Constraints::SIZE_CONSTRAINED) {
-                in_root = (char_count >= static_cast<std::size_t>(pc.size_lower) &&
-                           char_count <= static_cast<std::size_t>(pc.size_upper));
-            } else if (has_alpha) {
-                // For wide-char types (bpc>1), iterate code points: all high bytes must be
-                // 0x00 (Basic Latin) AND low byte must be in the FROM alphabet.
-                in_root = true;
+            // For wide-char types (bpc>1), iterate code points: all high bytes must be
+            // 0x00 (Basic Latin) AND low byte must be in the FROM alphabet.
+            auto alphabet_in_root = [&]() {
                 if (bpc > 1) {
                     for (std::size_t i = 0; i + static_cast<std::size_t>(bpc) <= str.size(); i += bpc) {
                         for (int b = 0; b < bpc - 1; ++b)
-                            if (static_cast<unsigned char>(str[i + b]) != 0) { in_root = false; break; }
-                        if (!in_root) break;
+                            if (static_cast<unsigned char>(str[i + b]) != 0) return false;
                         unsigned char lo = static_cast<unsigned char>(str[i + bpc - 1]);
-                        if (pc.encode_table[lo] == 0xFFFFu)
-                            { in_root = false; break; }
+                        if (pc.encode_table[lo] == 0xFFFFu) return false;
                     }
                 } else {
                     for (unsigned char c : str)
-                        if (pc.encode_table[c] == 0xFFFFu)
-                            { in_root = false; break; }
+                        if (pc.encode_table[c] == 0xFFFFu) return false;
                 }
-            } else {
-                in_root = true;
+                return true;
+            };
+            bool in_root = true;
+            if (pc.flags & Constraints::SIZE_CONSTRAINED) {
+                in_root = (char_count >= static_cast<std::size_t>(pc.size_lower) &&
+                           char_count <= static_cast<std::size_t>(pc.size_upper));
             }
+            // Both SIZE and FROM can be present and extensible at once (X.691 §26.5.7):
+            // a value is only in-root when it satisfies size AND alphabet.
+            if (in_root && has_alpha) in_root = alphabet_in_root();
             stream.put_bits(in_root ? 0 : 1, 1);
             if (!in_root) {
                 // Out-of-root: encode as open type (X.691 §18.8) — byte-length prefixed raw bytes.
@@ -916,9 +923,10 @@ public:
             if (!b) return decode_err(b.error());
             ext_flag = (*b != 0);
         }
-        int roms = 0;
-        for (int i = 0; i < root_end; ++i)
-            if (spec.members[i].optional) ++roms;
+        // Precomputed at codegen time (Generator::emit_sequence_definition) —
+        // the width of the root-level presence bitmap never depends on the
+        // wire, only on the schema, so it's read here, not recounted.
+        int roms = spec.roms_count;
         bool bitmap[64] = {};
         for (int i = 0; i < roms && i < 64; ++i) {
             auto bit = stream.get_bits(1);
@@ -999,7 +1007,9 @@ public:
         if (spec.ext_at >= 0) stream.put_bits(in_ext ? 1 : 0, 1, "CHO.ext");
         if (!in_ext) {
             // Generator emits root alternatives in canonical tag order — def_idx IS canonical.
-            int bits = range_bits(root_count);
+            // Precomputed by Generator (spec.range_bits) rather than
+            // recomputed here — matches spec.constraints.range_bits exactly.
+            int bits = spec.constraints.range_bits;
             if (bits > 0) stream.put_bits(static_cast<uint64_t>(def_idx), bits, "CHO.index");
             const auto& alt = spec.alternatives[def_idx];
             if (!alt.type_descriptor) return;
@@ -1032,7 +1042,7 @@ public:
         }
         if (!in_ext) {
             // Generator emits root alternatives in canonical tag order — index IS canonical.
-            int bits = range_bits(root_count);
+            int bits = spec.constraints.range_bits;
             int def_idx = 0;
             if (bits > 0) {
                 auto v = stream.get_bits(bits);

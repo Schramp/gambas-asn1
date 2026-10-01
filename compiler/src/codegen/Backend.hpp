@@ -147,6 +147,10 @@ enum class TypeDescriptorRefKind {
     Builtin,       // a universal builtin type — see TypeDescriptorRefSpec::builtin
     ClassScoped,   // reference to a generated class's own static descriptor member
     FreeStanding,  // reference to a free-standing generated descriptor symbol
+    MemberOwnTable,// reference to a member's own inline-constraint descriptor
+                   // table (TypeDescriptorRefSpec::name is the table's already-
+                   // complete base identifier, e.g. "asn_TYP_Parent_Member" —
+                   // distinct from FreeStanding's "asn_DEF_" convention).
     None,          // no descriptor exists for this reference
 };
 
@@ -197,6 +201,25 @@ struct ElemShape {
     std::optional<ast::BuiltinType> builtin;           // meaningful when kind == None
     IntStorageKind storage_kind = IntStorageKind::S64;  // meaningful when builtin == Integer
     std::shared_ptr<ElemShape> nested;  // meaningful when kind != None; recurses to unbounded depth
+    // True when the element carries a real inline constraint of its own
+    // (X.680 §19 INTEGER value range, or §25/§26/§51 SIZE/FROM on a
+    // Sizeable kind) — meaningful only when kind == None && builtin has a
+    // value. Names the promoted SEQUENCE OF/SET OF type's own
+    // ASN_TYP_{TYPE}_ELEM_CONSTRAINTS_PER static (emit_seq_of_definition's
+    // own emit_member_type_descriptor call always builds this exact,
+    // predictable name whenever true); false means genuinely unconstrained,
+    // in which case a backend references the shared "no constraint"
+    // constant instead (asn1cpp_wire::constraints::UNCONSTRAINED) rather
+    // than needing anything emitted for this element at all.
+    bool has_own_descriptor = false;
+    // This level's leaf native type text, already fully resolved
+    // (Generator::native_member_type_for — same call a non-nested member
+    // would get), meaningful only when kind == None. Never itself wrapped
+    // in a collection type — a backend building the final nested
+    // SeqOf<SetOf<...<leaf_native_type>...>> text (per this shape's own
+    // recursion) reads this directly instead of stripping it back out of
+    // an already-wrapped placeholder string.
+    std::string leaf_native_type;
 };
 
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —
@@ -241,13 +264,13 @@ struct IntegerSpec : TaggedTypeSpec {
     IntStorageKind    storage_kind;
     std::vector<NamedValue> named_values;  // INTEGER { foo(0), bar(1) } style constants
 
-    bool     has_constraint;    // false -> unconstrained; all fields below are meaningless
-    bool     extensible;
-    bool     semi_constrained;  // true -> upper endpoint was MAX (X.680 semi-constrained); no upper cap
-    bool     hi_is_large;       // true -> upper was a positive literal > INT64_MAX
-    int      range_bits;        // -1 when semi_constrained (no fixed upper -> no fixed bit width)
-    int64_t  lower_s64, upper_s64;   // signed view (upper_s64 meaningless when hi_is_large)
-    uint64_t lower_u64, upper_u64;   // unsigned view (exact when hi_is_large)
+    bool     has_constraint = false;    // false -> unconstrained; all fields below are meaningless
+    bool     extensible = false;
+    bool     semi_constrained = false;  // true -> upper endpoint was MAX (X.680 semi-constrained); no upper cap
+    bool     hi_is_large = false;       // true -> upper was a positive literal > INT64_MAX
+    int      range_bits = 0;        // -1 when semi_constrained (no fixed upper -> no fixed bit width)
+    int64_t  lower_s64 = 0, upper_s64 = 0;   // signed view (upper_s64 meaningless when hi_is_large)
+    uint64_t lower_u64 = 0, upper_u64 = 0;   // unsigned view (exact when hi_is_large)
 };
 
 /// @brief Backend-agnostic decision for a builtin-alias type (X.680 §19) —
@@ -261,20 +284,20 @@ struct IntegerSpec : TaggedTypeSpec {
 ///       needs to distinguish OCTET STRING from BOOLEAN etc. the same way,
 ///       so the AST's own classification is already the right shape.
 struct BuiltinAliasSpec : TaggedTypeSpec {
-    ast::BuiltinType        builtin_type;
+    ast::BuiltinType        builtin_type = ast::BuiltinType::Null;
     // tag (inherited): natural tag (X.690 §8.1); always present in practice —
     // builtin-alias types are never CHOICE, the only case natural-tag
     // resolution returns nullopt for.
     std::vector<uint8_t>   alphabet;    // FROM-alphabet constraint (restricted string types); empty = none
-    bool     has_size_constraint;       // true if a SIZE constraint is present at all (bounded or semi-constrained)
-    bool     size_bounded;              // true iff the SIZE constraint has a finite upper bound;
+    bool     has_size_constraint = false; // true if a SIZE constraint is present at all (bounded or semi-constrained)
+    bool     size_bounded = false;      // true iff the SIZE constraint has a finite upper bound;
                                          // false for SIZE(n..MAX) — semi-constrained, no upper cap.
                                          // Distinct from has_size_constraint: a semi-constrained
                                          // SIZE is still "present" (has_size_constraint=true) but
                                          // not "bounded" (size_upper is meaningless when false).
-    int      size_range_bits;
-    int64_t  size_lower, size_upper;    // size_upper meaningful only when size_bounded
-    bool     extensible;
+    int      size_range_bits = 0;
+    int64_t  size_lower = 0, size_upper = 0;    // size_upper meaningful only when size_bounded
+    bool     extensible = false;
     ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // X.693 §21 OCTET STRING representation
 };
 
@@ -292,6 +315,13 @@ struct DefaultValueSpec {
     int64_t       int_val  = 0;
     std::string   string_val;  // Kind::String — raw (unescaped) value
     std::string   enum_name;   // Kind::EnumRef — ASN.1 name of the named value
+    // Kind::Int only. The member's resolved INTEGER storage kind (follows
+    // a named-alias chain, e.g. `Foo ::= INTEGER; member Foo DEFAULT 3`) —
+    // RustBackend needs this to decide whether the literal must be
+    // constructed through a newtype wrapper (`Foo(3)`) or left bare; a
+    // plain `type_name` string carries no such signal for a named alias
+    // the way it does for an inline member's own native_int_type() text.
+    IntStorageKind int_storage_kind = IntStorageKind::S64;
 };
 
 /// @brief Escape a raw byte string for embedding in a quoted string literal.
@@ -330,31 +360,31 @@ inline std::string escape_string_literal(const std::string& raw) {
 ///        which field group is meaningful (INTEGER value range vs SIZE-able
 ///        primitive SIZE/FROM-alphabet constraints).
 struct MemberTypeDescriptorSpec {
-    enum class Kind { Integer, Sizeable } kind;
+    enum class Kind { Integer, Sizeable } kind = Kind::Integer;
     std::string tname;            // static variable / synthetic identifier base, e.g. "asn_TYP_Parent_member"
 
     // Kind::Integer — mirrors IntegerSpec's constraint fields.
-    IntStorageKind storage_kind;
-    bool     extensible;
-    bool     semi_constrained;    // true -> upper endpoint was MAX; no upper cap
-    bool     hi_is_large;         // true -> upper was a positive literal > INT64_MAX
-    int      range_bits;          // -1 when semi_constrained
-    int64_t  lower_s64, upper_s64;
-    uint64_t lower_u64, upper_u64;
+    IntStorageKind storage_kind = IntStorageKind::S64;
+    bool     extensible = false;
+    bool     semi_constrained = false;    // true -> upper endpoint was MAX; no upper cap
+    bool     hi_is_large = false;         // true -> upper was a positive literal > INT64_MAX
+    int      range_bits = 0;          // -1 when semi_constrained
+    int64_t  lower_s64 = 0, upper_s64 = 0;
+    uint64_t lower_u64 = 0, upper_u64 = 0;
 
     // Kind::Sizeable — mirrors BuiltinAliasSpec's SIZE/FROM-alphabet fields.
-    ast::BuiltinType      builtin_type;
+    ast::BuiltinType      builtin_type = ast::BuiltinType::Null;
     std::vector<uint8_t>  alphabet;      // empty = no FROM-alphabet constraint
     std::string           alpha_prefix;  // empty = no FROM-alphabet arrays needed
-    bool     has_size_constraint; // true if a SIZE constraint is present at all
-    bool     size_bounded;        // true iff the SIZE constraint has a finite upper bound
-    int      size_range_bits;
-    int64_t  size_lower, size_upper; // size_upper meaningful only when size_bounded
+    bool     has_size_constraint = false; // true if a SIZE constraint is present at all
+    bool     size_bounded = false;        // true iff the SIZE constraint has a finite upper bound
+    int      size_range_bits = 0;
+    int64_t  size_lower = 0, size_upper = 0; // size_upper meaningful only when size_bounded
     ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // Kind::Integer never sets this
 
     // Both kinds — target-agnostic BER/XER facts (X.690/X.693), not code.
     std::string xer_type_name;    // e.g. "INTEGER", "OCTET_STRING"
-    int         universal_tag;    // asn1::UniversalTag::* value
+    int         universal_tag = 0;    // asn1::UniversalTag::* value
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE OF / SET OF type
@@ -366,15 +396,15 @@ struct MemberTypeDescriptorSpec {
 struct SeqOfSpec : TaggedTypeSpec {
     std::string elem_ref;        // reference expression to the element's TypeDescriptor
     std::string elem_type;       // element's native storage type (hpp `using X = VectorSeqOf<elem_type>` only)
-    int         range_bits;
-    int64_t     size_lower;
+    int         range_bits = 0;
+    int64_t     size_lower = 0;
     std::optional<int64_t> size_upper; // present = finite upper bound; absent = semi-constrained/unconstrained
     bool        has_size_constraint = false; // false -> no SIZE(...) at all (size_lower/size_upper both meaningless)
     bool        extensible = false;          // X.680 §51.8.3 SIZE(...,...) — drives whether
                                               // CppBackend::emit_seq_of_definition's Constraints table sets
                                               // EXTENSIBLE for a SEQUENCE OF/SET OF's own SIZE constraint.
     std::optional<std::string> elem_xer_name; // X.693 §12: element's declared identifier, if any
-    bool        is_set_of;              // true -> natural tag is SET, else SEQUENCE
+    bool        is_set_of = false;      // true -> natural tag is SET, else SEQUENCE
 };
 
 /// @brief Backend-agnostic tag-bearing fields shared by every construct that
@@ -422,6 +452,31 @@ struct TaggedMemberSpec {
     // rather than string-matching `mtype`, since `mtype` only coincidentally
     // matches what `native_int_type(IntStorageKind::S64)` returns.
     IntStorageKind storage_kind = IntStorageKind::S64;
+
+    // Set only for a TypeRef member/alternative (mbuiltin unset above) whose
+    // resolved target is itself ENUMERATED or a named INTEGER type —
+    // Generator resolves this once at collect-time (Generator::
+    // classify_typeref_for_per, which needs resolver_ access Backend
+    // doesn't have) so a backend never needs its own resolver to know
+    // whether a TypeRef member has a knowable PER shape. Both cases are
+    // always-covered regardless of any other type's own state: ENUMERATED
+    // unconditionally gets a PerValue impl whenever it has at least one
+    // value (X.680 §20.1 requires ≥1, so this is effectively always) and a
+    // named INTEGER type unconditionally gets a {NAME}_PER_CONSTRAINTS
+    // static whenever its storage is S64/U64 — neither depends on the
+    // *referencing* type's own members the way, say, a TypeRef to
+    // SEQUENCE/CHOICE would (that target's own PER coverage is itself
+    // data-dependent on its members, so is deliberately left unclassified
+    // here — `Other`, same as today).
+    enum class RefTargetKind { NotRef, Enumerated, IntegerAlias, Other };
+    RefTargetKind ref_kind = RefTargetKind::NotRef;
+    // Meaningful only when ref_kind == IntegerAlias — the resolved target
+    // type's own storage kind (this member's own `storage_kind` above
+    // stays at its harmless S64 default for every TypeRef member, since
+    // TypeRef members never populate `mbuiltin`/`storage_kind` from their
+    // own AST node). `mtype` (declared per-derived-struct) already carries
+    // the target's Rust identifier — no separate name field needed here.
+    IntStorageKind ref_storage_kind = IntStorageKind::S64;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. Several
@@ -507,6 +562,15 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     bool        setter_is_move = false;
     bool        setter_is_int_alias = false;
     bool        setter_is_uint_alias = false;
+    // X.693 §21 XER representation override (ENCODING-CONTROL XER, or the
+    // legacy `::= base64`/`::= utf8` forms) — meaningful only when
+    // mbuiltin == OctetString; RustBackend reads Base64 to pick
+    // MemberAccess::Base64Scalar over the plain Scalar path (see that
+    // variant's own doc — OctetString has no per-instance way to choose
+    // hex vs. base64 otherwise). CppBackend needs no equivalent: its
+    // per-member TypeDescriptor (MemberTypeDescriptorSpec::xer_encoding,
+    // already threaded independently) is read at runtime instead.
+    ast::XerEncoding xer_encoding = ast::XerEncoding::Default;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET type (X.680 §24/25).
@@ -553,9 +617,26 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
 ///       density-heuristic / tag-flattening decision logic (X.691 §22.6)
 ///       decides *whether* and *what*; CppBackend formats the resulting
 ///       arrays and ChoiceSpec aggregate fields into C++ text.
+/// @brief One entry of a CHOICE's flattened BER dispatch table
+///        (`ChoiceSpec::ber_tags`) — the tag's raw class/number (for a
+///        class/number sort, X.690 §8.13's tag lookup key) alongside the
+///        already-formatted literal text (backend-specific, produced by
+///        `Backend::format_tag_literal`) and which alternative it selects.
+struct BerTagEntry {
+    ast::TagClass cls;
+    int64_t       number;
+    std::string   tag_literal;
+    int           alt_index;
+};
+
 struct ChoiceSpec : TaggedTypeSpec {
     int count;
     int ext_at;
+    // PER (X.691 §22.6): bit width of the root-alternative index, i.e.
+    // range_bits(root_count) where root_count is ext_at (or count, when
+    // not extensible). Computed once here rather than recomputed by every
+    // codec call — same convention SequenceSpec::roms_count follows.
+    int range_bits;
     std::vector<ChoiceAlternativeSpec> alternatives;
 
     // O(1) context-tag dispatch table (density-heuristic gated).
@@ -564,8 +645,10 @@ struct ChoiceSpec : TaggedTypeSpec {
     std::vector<int16_t>  tag_index_table; // -1 = no alternative at this tag; size == range
 
     // Flattened BER dispatch table (untagged-CHOICE-alternative case).
-    bool                                     has_ber_table = false;
-    std::vector<std::pair<std::string,int>>  ber_tags; // {pre-formatted tag literal, alt index}
+    // Sorted by (cls, number) — see BerTagEntry's own doc — so a backend
+    // can binary-search it instead of a linear scan.
+    bool                       has_ber_table = false;
+    std::vector<BerTagEntry>   ber_tags;
 };
 
 /// @brief Forward declaration — full definition below, after Backend. Only a
@@ -609,6 +692,37 @@ public:
     /// @brief ASN.1 type name -> target-language type identifier.
     ///        e.g. "My-Type" -> "MyType" in C++.
     virtual std::string type_name(std::string_view asn1_name) const = 0;
+
+    /// @brief Final type identifier -> target-language module/file-scope
+    ///        identifier (Rust: the crate-relative module name a type's
+    ///        own generated file is declared under).
+    /// @note Deliberately the identity function for every backend, not a
+    ///       separately-styled name (gambas-asn1#597/#523: an earlier Rust
+    ///       implementation snake_cased this — `to_snake_case` folds case,
+    ///       not just the hyphen/separator folding `type_name` already
+    ///       does, so two distinct, already-unique type identifiers could
+    ///       still collide in that more lossy namespace, e.g.
+    ///       `SIGNED_REAL` vs `SignedREAL`). Module and type identifiers
+    ///       live in separate Rust namespaces, so reusing the type name
+    ///       verbatim as its own module name is valid (`mod Foo { pub
+    ///       struct Foo { ... } }`) and needs no non-snake-case lint
+    ///       workaround beyond a crate-wide `#![allow(non_snake_case)]`
+    ///       (already needed for the PascalCase types themselves). This
+    ///       also keeps generated code trivially debuggable — module name
+    ///       and type name are always textually identical, no second
+    ///       mental mapping between a file's module path and the type it
+    ///       declares. Since this namespace is never separately folded, it
+    ///       inherits the type-identifier namespace's own uniqueness
+    ///       guarantee (`Generator::effective_cpp_name`) for free — no
+    ///       separate collision check needed for this namespace at all.
+    /// @param final_type_name Already-resolved final type identifier (not
+    ///                   the raw ASN.1 name) — the caller is expected to
+    ///                   have already run type-namespace collision
+    ///                   disambiguation (`Generator::effective_cpp_name`)
+    ///                   before asking for this namespace's own name.
+    virtual std::string module_name(std::string_view final_type_name) const {
+        return std::string(final_type_name);
+    }
 
     /// @brief ASN.1 member/field name -> target-language member identifier,
     ///        escaped against keyword/extra-name collisions.
@@ -969,6 +1083,27 @@ public:
     ///       it's settled.
     virtual bool needs_seqof_wrapper_reference() const { return true; }
 
+    /// @brief Does a bare top-level TypeRef alias (`Alias ::= Target`) whose
+    ///        target cycles back to `Alias` (Generator::bare_alias_would_cycle)
+    ///        need Target forward-declared instead of fully referenced?
+    /// @note True for C++ (the default): a single-pass `#pragma once` header
+    ///       chain destructively truncates on a genuine cycle unless broken
+    ///       by a forward declaration (`class Target;` needs only a
+    ///       declaration for a `using Alias = Target;` alias itself, per
+    ///       Generator::bare_alias_would_cycle's own doc).
+    /// @note False for Rust: whole-crate name resolution means a `use
+    ///       crate::target::Target;` import is unaffected by declaration
+    ///       order or cycles at all — confirmed empirically (gambas-asn1,
+    ///       the 73-circular-OK.asn1 test schema compiles as Rust with
+    ///       nothing but ordinary `use` imports, no special-casing).
+    ///       Emitting a forward declaration instead there would be worse
+    ///       than a no-op: RustBackend::emit_forward_declaration is a true
+    ///       no-op (Rust has no forward-declaration concept), so following
+    ///       this flag's C++ answer for Rust would silently *drop* the
+    ///       `use` import a cyclic alias still needs for name resolution,
+    ///       even though it never needed it for completeness.
+    virtual bool needs_forward_declare_for_cyclic_alias() const { return true; }
+
     /// @brief Emit a forward declaration for a type this file only needs as
     ///        an incomplete type (e.g. an optional member stored behind a
     ///        pointer, to break a circular #include). Backends with no
@@ -1077,6 +1212,23 @@ protected:
         case ast::TagClass::Private:     return 2;
         default:                         return 3;  // Context
         }
+    }
+
+public:
+    /// @brief X.691 §26.5.4/§26.5.7 unaligned-PER FROM-alphabet bit width:
+    ///        ceil(log2(alphabet_size)), clamped to [1, inf) — both backends
+    ///        compute this identically from `BuiltinAliasSpec::alphabet`/
+    ///        `MemberTypeDescriptorSpec::alphabet`'s size; kept here once
+    ///        rather than duplicated per backend (was CppBackend-only
+    ///        `compute_alphabet_bits`). Public (unlike `tag_class_index`,
+    ///        `write_to_both`): called from free functions in both
+    ///        backends' .cpp files, not just Backend-subclass methods.
+    /// @param alphabet_size Number of distinct permitted characters.
+    /// @return Bit width per remapped character; 1 for a 0- or 1-symbol alphabet.
+    static int alphabet_bits_for(int alphabet_size) {
+        int bits = 0;
+        for (int r = alphabet_size - 1; r > 0; r >>= 1) ++bits;
+        return (bits == 0) ? 1 : bits;
     }
 };
 

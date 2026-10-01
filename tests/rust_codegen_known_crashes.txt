@@ -1,0 +1,7 @@
+# Known Rust-codegen crashes — one basename per line.
+# Comments (#) and blank lines are ignored.
+# validate_rust_codegen.py (rust_codegen_sweep) treats these as SKIP
+# instead of FAIL/codegen, so an already-filed, already-tracked crash
+# doesn't gate ctest red. Remove an entry here when its issue is fixed —
+# the sweep should then report PASS (or a non-gating FAIL/reject) on its
+# own, and a stale entry here would silently hide a regression.

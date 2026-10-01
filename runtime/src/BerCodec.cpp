@@ -74,7 +74,7 @@ static int encode_tag_to_buf(Tag t, uint8_t out[6]) {
 }
 
 static void ber_encode_implicit_tagged(const BerCodec& codec, BerWriter& w,
-                                       uint32_t ctx_tag_number,
+                                       TagClass tag_class, uint32_t ctx_tag_number,
                                        const TypeDescriptor& mdef, const Asn1Object* mptr,
                                        const char* parent_name, const char* member_name) {
     // Encode the member directly into w (writes [orig_tag | length | value]).
@@ -82,8 +82,11 @@ static void ber_encode_implicit_tagged(const BerCodec& codec, BerWriter& w,
     { BerEncodeStream ms{w}; codec.encode(ms, mdef, mptr); }
     if (w.pos() == tag_pos) return; // nothing written
 
-    // Build replacement context tag in a stack buffer.
-    Tag ctx{TagClass::Context, ctx_tag_number, mdef.tag.constructed};
+    // Build replacement tag in a stack buffer — the member's own override
+    // class (X.680 §30: [n], [APPLICATION n], or [PRIVATE n] are all
+    // equally valid TaggedType constructions, not just the [n]/context-
+    // implicit case), not hardcoded to Context.
+    Tag ctx{tag_class, ctx_tag_number, mdef.tag.constructed};
     uint8_t new_tag_buf[6];
     int new_tag_bytes = encode_tag_to_buf(ctx, new_tag_buf);
 
@@ -568,7 +571,7 @@ struct SequenceBerHandler final : IBerTypeHandler {
                 const auto& mdef = *mbr.type_descriptor;
                 ValidatePathScope _vps{mbr.name};
 
-                if (mbr.tag.cls == TagClass::Context && mbr.tag_is_override) {
+                if (mbr.tag_is_override) {
                     if (mbr.is_explicit) {
                         Tag exp_tag{mbr.tag.cls, mbr.tag.number, true};
                         if (debug_flags() & DBG_BER_WRITE)
@@ -576,7 +579,7 @@ struct SequenceBerHandler final : IBerTypeHandler {
                                          def.name, mbr.name, mbr.tag.number);
                         ber_encode_explicit_tagged(codec, inner, exp_tag, mdef, mptr);
                     } else {
-                        ber_encode_implicit_tagged(codec, inner, mbr.tag.number, mdef, mptr,
+                        ber_encode_implicit_tagged(codec, inner, mbr.tag.cls, mbr.tag.number, mdef, mptr,
                                                    def.name, mbr.name);
                     }
                 } else {
@@ -659,7 +662,7 @@ private:
             const auto& mdef = *mbr.type_descriptor;
             ValidatePathScope _vps{mbr.name};
 
-            if (mbr.tag.cls == TagClass::Context && mbr.tag_is_override) {
+            if (mbr.tag_is_override) {
                 auto outer = inner.read_tlv();
                 if (!outer) return decode_err(outer.error());
                 if (outer->tag.cls != mbr.tag.cls || outer->tag.number != mbr.tag.number) {
@@ -718,7 +721,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
         const auto& mdef = *alt.type_descriptor;
         ValidatePathScope _vps{alt.name};
 
-        if (alt.tag.cls == TagClass::Context && alt.tag_is_override) {
+        if (alt.tag_is_override) {
             if (alt.is_explicit) {
                 Tag exp_tag{alt.tag.cls, alt.tag.number, true};
                 if (debug_flags() & DBG_BER_WRITE)
@@ -726,7 +729,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                                  def.name, idx - 1, alt.name, alt.tag.number);
                 ber_encode_explicit_tagged(codec, w, exp_tag, mdef, mptr);
             } else {
-                ber_encode_implicit_tagged(codec, w, alt.tag.number, mdef, mptr,
+                ber_encode_implicit_tagged(codec, w, alt.tag.cls, alt.tag.number, mdef, mptr,
                                            def.name, alt.name);
             }
         } else {
@@ -755,7 +758,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 const auto& mdef = *alt.type_descriptor;
                 ValidatePathScope _vps{alt.name};
                 DecodeResult ok = decode_ok();
-                if (alt.tag.cls == TagClass::Context && alt.tag_is_override) {
+                if (alt.tag_is_override) {
                     auto outer = r.read_tlv();
                     if (!outer) return decode_err(outer.error());
                     if (alt.is_explicit) {
@@ -794,7 +797,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
                 const auto& mdef = *alt.type_descriptor;
                 ValidatePathScope _vps{alt.name};
                 DecodeResult ok = decode_ok();
-                if (alt.tag.cls == TagClass::Context && alt.tag_is_override) {
+                if (alt.tag_is_override) {
                     auto outer = r.read_tlv();
                     if (!outer) return decode_err(outer.error());
                     if (alt.is_explicit) {
@@ -826,7 +829,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             const auto& mdef = *alt.type_descriptor;
             ValidatePathScope _vps{alt.name};
             DecodeResult ok = decode_ok();
-            if (alt.tag.cls == TagClass::Context && alt.tag_is_override) {
+            if (alt.tag_is_override) {
                 auto outer = r.read_tlv();
                 if (!outer) return decode_err(outer.error());
                 if (alt.is_explicit) {

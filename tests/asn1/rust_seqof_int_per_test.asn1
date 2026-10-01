@@ -1,0 +1,15 @@
+-- PER cross-validation fixture for SEQUENCE OF / SET OF with INTEGER
+-- elements (X.691 §19/§20): a SIZE-constrained collection of constrained
+-- elements, an unconstrained collection, a fixed-size collection with a
+-- signed element range, and an OPTIONAL collection.
+
+RustSeqofIntPerTest DEFINITIONS ::= BEGIN
+
+    Bag ::= SEQUENCE {
+        counts   SEQUENCE (SIZE(1..4)) OF INTEGER (0..15),
+        anyInts  SEQUENCE OF INTEGER,
+        pair     SEQUENCE (SIZE(2)) OF INTEGER (-5..5),
+        maybe    SET OF INTEGER (0..255) OPTIONAL
+    }
+
+END

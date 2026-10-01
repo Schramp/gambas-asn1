@@ -151,7 +151,7 @@ public:
         std::unordered_map<std::string, std::string> first_module;
         for (const auto& mod : pr.modules)
             for (const auto& def : mod->assignments)
-                if (!def->name.empty() && !def->is_extension_marker) {
+                if (!def->name.empty() && !def->is_extension_marker && !def->is_parameterized) {
                     auto cpp = backend_.type_name(def->name);
                     auto [it, inserted] = first_module.emplace(cpp, mod->name);
                     if (!inserted && it->second != mod->name)
@@ -176,7 +176,14 @@ public:
             // this module's real default.
             current_tag_default_ = mod->tag_default;
             for (const auto& def : mod->assignments)
-                if (!def->name.empty() && !def->is_extension_marker) {
+                if (!def->name.empty() && !def->is_extension_marker && !def->is_parameterized) {
+                    // A parameterized type (X.683) has no independent wire
+                    // representation of its own — resolve_parameterized_
+                    // instantiations already monomorphized every actual
+                    // reference to it into its own concrete type (or, if
+                    // never referenced, it's genuinely dead). Mirrors
+                    // ground-truth asn1c, which forward-declares but never
+                    // defines the un-instantiated generic.
                     if (!pdu_roots_.empty() && !reachable_asn_names_.count(def->name)) continue;
                     generated_names_.insert(effective_cpp_name(def->name, mod->name));
                     generate_inline_types(*def, *mod);
@@ -323,7 +330,7 @@ private:
     std::vector<ChoiceAlternativeSpec> emit_choice_declaration(const ast::TypeDef& def, std::ostream& os);
     ChoiceSpec emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session);
 
-    std::string native_member_type_for(const ast::TypeDef& def);
+    std::string native_member_type_for(const ast::TypeDef& def) const;
     TypeDescriptorRefSpec type_descriptor_ref_spec_for(const ast::TypeDef& def);
     std::string type_descriptor_ref_for(const ast::TypeDef& def);
     bool        member_is_constructed(const ast::TypeDef& m) const;
@@ -341,7 +348,7 @@ private:
     /// @return nullopt when the member has no inline constraint worth a
     ///         dedicated descriptor — caller falls back to type_descriptor_ref_for().
     std::optional<MemberTypeDescriptorSpec> build_member_type_descriptor_spec(
-        const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname);
+        const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname) const;
     /// @brief Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
     /// @param tag         The member's (possibly absent) tag override.
     /// @param constructed True if the encoding form is constructed, not primitive.
@@ -386,12 +393,46 @@ private:
     ///        present) rather than a refactor of it, to avoid touching that
     ///        function's existing, widely-used behavior.
     std::optional<TypeTagSpec> underlying_natural_tag_spec_for(const ast::TypeDef& def) const;
+    /// @brief Follow a chain of top-level TypeRef aliases from `def` to its
+    ///        ultimate non-TypeRef definition, reporting via `out_constructed`
+    ///        whether the resulting wire shape is CONSTRUCTED — either
+    ///        because the ultimate type is inherently constructed
+    ///        (SEQUENCE/SET/CHOICE/SEQUENCE OF/SET OF), or because some
+    ///        intermediate hop carries its own EXPLICIT tag (X.680 §31:
+    ///        EXPLICIT tagging always produces a constructed encoding, and
+    ///        further IMPLICIT re-tagging on top of it preserves that
+    ///        wrapped nature — ground-truthed against asn1c's own wire
+    ///        bytes for `Label2 ::= [1] Label; Label ::= [9] EXPLICIT
+    ///        UTF8String` in 33-misc-OK.asn1: `[1]` stays CONSTRUCTED,
+    ///        wrapping the UTF8String TLV, even though `[9]` never appears
+    ///        on the wire).
+    /// @param def             Type whose alias chain to follow.
+    /// @param out_constructed Set to whether the chain is constructed, as above.
+    /// @return The ultimate non-TypeRef TypeDef, or `def` itself if it isn't
+    ///         a TypeRef, or the last resolvable hop if the chain breaks.
+    const ast::TypeDef* resolve_alias_chain(const ast::TypeDef& def, bool& out_constructed) const;
+    /// @brief Does `def` (a top-level type or a referenced-type hop) carry
+    ///        its own [n] tag override on a TypeRef body whose ultimate
+    ///        chain resolves to a plain builtin scalar? If so it gets its
+    ///        own standalone descriptor (emit_type_body's
+    ///        retag_alias_to_builtin path) rather than a bare `using`
+    ///        alias sharing the referenced type's descriptor — any other
+    ///        code that resolves a TypeRef one hop at a time (rather than
+    ///        blindly flattening the whole chain) must stop here instead of
+    ///        continuing past it, or it silently loses the override (see
+    ///        resolve_alias_chain's own doc for the ground-truthed example).
+    ///        Not extended to ENUMERATED/INTEGER (own emit_enumerated/
+    ///        emit_integer paths) or SEQUENCE/CHOICE/SEQUENCE OF/SET OF
+    ///        ultimates (would need real member-forwarding) — narrower
+    ///        cases keep the pre-existing bare-alias behavior.
+    bool has_own_retagged_descriptor(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
     // alt_idx: 0-based index of the alternative in its parent CHOICE.
-    // Appends {tag_literal, alt_idx} pairs; recurses if alt resolves to untagged CHOICE.
+    // Appends BerTagEntry rows (raw class/number + formatted literal +
+    // alt_idx); recurses if alt resolves to untagged CHOICE.
     // visited: set of type names already on the recursion stack (cycle guard).
     void collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
-                               std::vector<std::pair<std::string,int>>& out,
+                               std::vector<BerTagEntry>& out,
                                std::set<std::string>& visited);
     std::optional<int64_t> resolve_int_value(const ast::Value& v) const;
     std::optional<uint64_t> resolve_uint_value(const ast::Value& v) const;
@@ -436,9 +477,19 @@ private:
     // Choose INTEGER storage class from constraint analysis.
     IntStorageKind classify_integer_storage(const ast::TypeDef& def) const;
 
+    // Classifies a TypeRef member/alternative's resolved target for PER
+    // codegen purposes — see TaggedMemberSpec::RefTargetKind's own doc
+    // (Backend.hpp) for what each case means and why only these two are
+    // safe to resolve without tracking the target's own coverage state.
+    struct TypeRefPerClass {
+        TaggedMemberSpec::RefTargetKind kind = TaggedMemberSpec::RefTargetKind::NotRef;
+        IntStorageKind storage_kind = IntStorageKind::S64;
+    };
+    TypeRefPerClass classify_typeref_for_per(const ast::TypeRef& tr) const;
+
     // Recursive shape of a SEQUENCE OF/SET OF element — see ElemShape's
     // own doc (Backend.hpp) for why this can't be a flat field.
-    ElemShape build_elem_shape(const ast::TypeDef& elem) const;
+    ElemShape build_elem_shape(const ast::TypeDef& elem, const std::string& wrapping_member_name) const;
 
     // Shared helpers used by both SEQUENCE/SET and CHOICE codegen.
     struct MemberCount { int count; int ext_at; };
@@ -469,6 +520,40 @@ private:
     bool type_reaches(const ast::TypeDef& from, const std::string& target,
                        std::set<std::string>& visited) const;
     bool member_type_in_cycle(const ast::TypeDef& m, const std::string& enclosing_name) const;
+
+    // Cycle detection for a bare top-level TypeRef alias's own #include-vs-
+    // forward-declare decision (emit_type_body) — see
+    // bare_alias_would_cycle's own doc for the full rationale. Unlike
+    // type_reaches (member_type_in_cycle's traversal, scalar class-typed
+    // members only), this also follows SEQUENCE OF/SET OF element types,
+    // since a container-mediated cycle needs no boxing (VectorSeqOf<T>'s
+    // declaration never needs T complete) but does need the alias sitting
+    // on the cycle to forward-declare, or the #pragma once chain
+    // destructively truncates before any type in the cycle is ever fully
+    // defined.
+    bool type_reaches_via_containers(const ast::TypeDef& from, const std::string& target,
+                                      std::set<std::string>& visited) const;
+    bool bare_alias_would_cycle(const std::string& target_name, const std::string& alias_name) const;
+
+    // Full transitive closure of class-typed names reachable from `from` via
+    // any member path (direct, inline, or SEQUENCE OF/SET OF-mediated) —
+    // collect_extra_includes_for's own doc for why a single direct level
+    // (bare_alias_would_cycle's own check) isn't always enough: a class
+    // without OPTIONAL members gets an *implicit* (compiler-generated,
+    // inline) copy constructor, so instantiating it wherever needed
+    // transitively needs every type it touches complete too, not just its
+    // own direct members. An anonymous inline member has no independent
+    // ASN.1 name, so it's recorded as a "$anon:<ptr>" placeholder — only
+    // meaningful for terminating this DFS, never a real #include target
+    // (collect_extra_includes_for filters these back out before returning).
+    void collect_class_types_reachable(const ast::TypeDef& from, std::set<std::string>& out) const;
+    // Extra #include set a type wrapping `elem_type_name` (a SEQUENCE OF/SET
+    // OF element, direct or a class type) needs in its own .cpp, beyond
+    // what the normal #include chain already provides — the full
+    // transitive closure via collect_class_types_reachable, minus
+    // `self_name` (already complete in that file).
+    std::vector<std::string> collect_extra_includes_for(const std::string& elem_type_name,
+                                                         const std::string& self_name) const;
 };
 
 } // namespace asn1::codegen
