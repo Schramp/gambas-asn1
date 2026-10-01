@@ -873,12 +873,35 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
         rust_type = "asn1cpp_wire::boolean::Boolean";
         literal = spec.bool_val ? "asn1cpp_wire::boolean::Boolean(true)" : "asn1cpp_wire::boolean::Boolean(false)";
         break;
-    case Kind::Int:
+    case Kind::Int: {
         rust_type = type_name;
-        literal = type_name.starts_with("asn1cpp_wire::integer::") && !type_name.ends_with("ArbitraryInteger")
-                      ? std::format("{}({})", type_name, spec.int_val)
-                      : std::format("{}", spec.int_val);
+        // Inline member: type_name is native_int_type()'s own text, which
+        // already distinguishes the one bare-storage exception
+        // (ArbitraryInteger's inner Vec<u8> can't take an int literal
+        // either way — DEFAULT on that storage kind isn't really
+        // supported, see rust-runtime/wire/src/integer.rs's own doc).
+        // Named alias (e.g. `Int1 ::= INTEGER; member Int1 DEFAULT 3`):
+        // type_name is the alias's own identifier, carrying no such
+        // textual signal. Unlike the inline case, its inner field is
+        // itself a newtype (`struct Int1(pub asn1cpp_wire::integer::
+        // Integer)`, never a bare i64/u64/i128 — emit_integer_declaration
+        // always wraps through native_int_type()) — needs double
+        // construction: `Int1(Integer(3))`. Only ARBITRARY's Vec<u8>
+        // payload can't take an int literal either way — so
+        // spec.int_storage_kind (Generator::classify_integer_storage on
+        // the member) decides.
+        if (type_name.starts_with("asn1cpp_wire::integer::")) {
+            literal = type_name.ends_with("ArbitraryInteger")
+                ? std::format("{}", spec.int_val)
+                : std::format("{}({})", type_name, spec.int_val);
+        } else if (spec.int_storage_kind == IntStorageKind::ARBITRARY) {
+            literal = std::format("{}", spec.int_val);
+        } else {
+            literal = std::format("{}({}({}))", type_name,
+                                   native_int_type(spec.int_storage_kind), spec.int_val);
+        }
         break;
+    }
     case Kind::String:
         rust_type = "asn1cpp_wire::strings::Ia5String";
         literal = std::format("asn1cpp_wire::strings::Ia5String(\"{}\".to_string())", escape_string_literal(spec.string_val));
