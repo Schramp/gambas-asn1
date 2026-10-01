@@ -212,6 +212,14 @@ struct ElemShape {
     // constant instead (asn1cpp_wire::constraints::UNCONSTRAINED) rather
     // than needing anything emitted for this element at all.
     bool has_own_descriptor = false;
+    // This level's leaf native type text, already fully resolved
+    // (Generator::native_member_type_for — same call a non-nested member
+    // would get), meaningful only when kind == None. Never itself wrapped
+    // in a collection type — a backend building the final nested
+    // SeqOf<SetOf<...<leaf_native_type>...>> text (per this shape's own
+    // recursion) reads this directly instead of stripping it back out of
+    // an already-wrapped placeholder string.
+    std::string leaf_native_type;
 };
 
 /// @brief Backend-agnostic decision for one ENUMERATED type (X.680 §20) —

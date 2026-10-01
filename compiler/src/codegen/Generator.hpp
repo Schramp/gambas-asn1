@@ -330,7 +330,7 @@ private:
     std::vector<ChoiceAlternativeSpec> emit_choice_declaration(const ast::TypeDef& def, std::ostream& os);
     ChoiceSpec emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session);
 
-    std::string native_member_type_for(const ast::TypeDef& def);
+    std::string native_member_type_for(const ast::TypeDef& def) const;
     TypeDescriptorRefSpec type_descriptor_ref_spec_for(const ast::TypeDef& def);
     std::string type_descriptor_ref_for(const ast::TypeDef& def);
     bool        member_is_constructed(const ast::TypeDef& m) const;
@@ -489,7 +489,7 @@ private:
 
     // Recursive shape of a SEQUENCE OF/SET OF element — see ElemShape's
     // own doc (Backend.hpp) for why this can't be a flat field.
-    ElemShape build_elem_shape(const ast::TypeDef& elem) const;
+    ElemShape build_elem_shape(const ast::TypeDef& elem, const std::string& wrapping_member_name) const;
 
     // Shared helpers used by both SEQUENCE/SET and CHOICE codegen.
     struct MemberCount { int count; int ext_at; };

@@ -1251,30 +1251,28 @@ static std::string rust_seqof_alt_mtype(const std::string& mtype) {
     return std::format("asn1cpp_wire::ber::sequence::SeqOf<{}>", mtype.substr(4, mtype.size() - 5));
 }
 
-/// @brief The unwrapped element type text for a SEQUENCE OF/SET OF member.
-///        `m.mtype` is always exactly `"Vec<ElemType>"` for such a member —
-///        `native_member_type_for`'s own is_seq_of/is_set_of branches always route
-///        through `wrap_collection_type` (Backend.hpp) — the same shape
-///        `rust_seqof_alt_mtype` above unwraps for a CHOICE alternative.
-///        Recurses per `ElemShape` (Backend.hpp) when the element is
-///        itself a nested SEQUENCE OF/SET OF, rewrapping each nesting
-///        level in the *correct* `SeqOf<T>`/`SetOf<T>` — text alone can't
-///        tell SEQUENCE OF from SET OF at any depth (both render
-///        identically as `"Vec<...>"`), so `ElemShape` supplies the fact
-///        the text itself can't.
-/// @param mtype One level of raw placeholder text still to resolve.
+/// @brief The real nested-collection element type for a SEQUENCE OF/SET OF
+///        member, built directly from `ElemShape` (Backend.hpp) — never
+///        from `m.mtype` text, which `native_member_type_for`'s own
+///        is_seq_of/is_set_of branches always flatten to the placeholder
+///        `"Vec<...>"` shape regardless of nesting depth or SEQUENCE-OF-
+///        vs-SET-OF kind at each level (the same placeholder
+///        `rust_seqof_alt_mtype` above unwraps for a CHOICE alternative —
+///        text alone can't tell them apart, which is exactly why
+///        `ElemShape` exists; see its own doc).
 /// @param shape This level's element shape — SeqOfKind::None is the base
-///              case (leaf: builtin/composite text, already correct).
-static std::string rust_wrap_elem_shape(const std::string& mtype, const ElemShape& shape) {
-    if (shape.kind == SeqOfKind::None) return mtype;
-    std::string inner_mtype = mtype.substr(4, mtype.size() - 5);  // strip this level's "Vec<...>"
-    std::string inner = shape.nested ? rust_wrap_elem_shape(inner_mtype, *shape.nested) : inner_mtype;
+///              case (leaf: `shape.leaf_native_type`, already correct,
+///              never itself wrapped in a collection type — no text to
+///              strip at any level).
+static std::string rust_wrap_elem_shape(const ElemShape& shape) {
+    if (shape.kind == SeqOfKind::None) return shape.leaf_native_type;
+    std::string inner = shape.nested ? rust_wrap_elem_shape(*shape.nested) : shape.leaf_native_type;
     return std::format("asn1cpp_wire::ber::sequence::{}<{}>",
                         shape.kind == SeqOfKind::SeqOf ? "SeqOf" : "SetOf", inner);
 }
 
 static std::string rust_seqof_elem_mtype(const SequenceMemberSpec& m) {
-    return rust_wrap_elem_shape(m.mtype.substr(4, m.mtype.size() - 5), m.elem_shape);
+    return rust_wrap_elem_shape(m.elem_shape);
 }
 
 /// @brief Recursive coverage check for a SEQUENCE OF/SET OF element's

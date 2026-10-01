@@ -87,7 +87,7 @@ static std::string filename_for(const std::string& cname) {
     return cname.substr(0, 220) + suffix;
 }
 
-std::string Generator::native_member_type_for(const ast::TypeDef& def) {
+std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
         switch (*bt) {
@@ -857,24 +857,49 @@ IntStorageKind Generator::classify_integer_storage(const ast::TypeDef& def) cons
 // Generator member — see its own definition site for why).
 static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def);
 
-ElemShape Generator::build_elem_shape(const ast::TypeDef& elem) const {
+ElemShape Generator::build_elem_shape(const ast::TypeDef& elem, const std::string& wrapping_member_name) const {
     ElemShape shape;
     if (elem.is_seq_of()) {
         shape.kind = SeqOfKind::SeqOf;
+        // "" below, not wrapping_member_name: that name only feeds the
+        // composite-anonymous-element special case immediately below, at
+        // the exact nesting depth where a *named* member directly wraps
+        // one — an inner SequenceOfType/SetOfType node (one more SEQUENCE
+        // OF/SET OF nested in the same member, X.680 §25/§26) is itself
+        // always anonymous, so native_member_type_for's own recursion
+        // never reaches that special case at any deeper level either.
         shape.nested = std::make_shared<ElemShape>(
-            build_elem_shape(*std::get<ast::SequenceOfType>(elem.body).element));
+            build_elem_shape(*std::get<ast::SequenceOfType>(elem.body).element, ""));
         return shape;
     }
     if (elem.is_set_of()) {
         shape.kind = SeqOfKind::SetOf;
         shape.nested = std::make_shared<ElemShape>(
-            build_elem_shape(*std::get<ast::SetOfType>(elem.body).element));
+            build_elem_shape(*std::get<ast::SetOfType>(elem.body).element, ""));
         return shape;
     }
     // Scalar leaf: a builtin (kind stays None, builtin set) or a composite
     // TypeRef/SEQUENCE/CHOICE/SET (kind stays None, builtin stays nullopt —
     // same "optional discriminant" convention SequenceMemberSpec::mbuiltin
     // uses one level up).
+    if (!wrapping_member_name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set())
+            && elem.name.empty()) {
+        // Mirrors native_member_type_for's own is_seq_of/is_set_of special
+        // case exactly (same two synthetic_name calls, same arguments) —
+        // the member's own name feeds the promoted type's name, not the
+        // (anonymous) element's. Needed because this leaf is computed one
+        // level below where native_member_type_for would see `def.name`
+        // itself; calling native_member_type_for(elem) directly here would
+        // silently fall through to its generic composite branch
+        // (current_type_ + "Anon", missing the member name entirely).
+        shape.leaf_native_type = backend_.synthetic_name(
+            backend_.synthetic_name(current_type_, wrapping_member_name), "Anon");
+    } else {
+        // native_member_type_for(elem) on a non-collection elem never wraps
+        // its result in a collection type, so this is always the correct,
+        // final leaf text — no caller needs to unwrap it further.
+        shape.leaf_native_type = native_member_type_for(elem);
+    }
     if (auto* bt = std::get_if<ast::BuiltinType>(&elem.body)) {
         shape.builtin = *bt;
         if (*bt == ast::BuiltinType::Integer) shape.storage_kind = classify_integer_storage(elem);
@@ -1843,10 +1868,10 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         }
         if (m.is_seq_of()) {
             row.seq_of_kind = SeqOfKind::SeqOf;
-            row.elem_shape = build_elem_shape(*std::get<ast::SequenceOfType>(m.body).element);
+            row.elem_shape = build_elem_shape(*std::get<ast::SequenceOfType>(m.body).element, m.name);
         } else if (m.is_set_of()) {
             row.seq_of_kind = SeqOfKind::SetOf;
-            row.elem_shape = build_elem_shape(*std::get<ast::SetOfType>(m.body).element);
+            row.elem_shape = build_elem_shape(*std::get<ast::SetOfType>(m.body).element, m.name);
         }
         if (is_class_type(m))
             row.member_type_in_cycle = member_type_in_cycle(m, def.name);
