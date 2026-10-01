@@ -1723,7 +1723,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // reference: the synthetic type lives in its own generated
                 // module, and nothing else in this file names it.
                 std::string synth = synthetic_name(spec.type_name, m.asn1_name);
-                constraints_expr = std::format("Some(&crate::{}::{}_CONSTRAINTS)", to_snake_case(synth),
+                constraints_expr = std::format("Some(&crate::{}::{}_CONSTRAINTS)", escape(synth),
                                                 to_screaming_snake_case(synth));
             }
             os << std::format("        constraints: {},\n", constraints_expr);
@@ -2410,20 +2410,21 @@ void RustBackend::emit_typeref_alias_declaration(const std::string& type_name, c
 /// @brief Reference another generated type via its crate-relative module
 ///        path — assumes a generated crate root (main.cpp, --target=rust)
 ///        declares one module per generated file.
-/// @note module *identifier* is snake_case
-///       (escape(to_snake_case(filename))), not the raw filename — see
-///       finalize_output's own `#[path = ...]` module declaration. `filename`
-///       here is still the on-disk file stem (PascalCase, matching
-///       `type_name`), so it must be re-derived into the same snake_case
-///       identifier finalize_output declared the module under, or this
-///       `use` path wouldn't resolve. The `escape()` wrap matters for a type
-///       named e.g. "Type" — its snake_case module name "type" collides with
-///       the Rust keyword and needs `r#type` raw-identifier escaping,
-///       exactly the same mechanism member_name() already applies.
+/// @note The module identifier is the type identifier itself, verbatim
+///       (Backend::module_name's own doc — gambas-asn1#597/#523: an
+///       earlier version snake_cased this, a strictly more lossy
+///       transform than type_name's own, letting two already-distinct
+///       type identifiers collide as module names). `filename` here is
+///       the on-disk file stem, always identical to `type_name` by
+///       construction (see finalize_output's own `#[path = ...]`
+///       declaration) — `escape()` still matters for the rare type
+///       whose own name happens to match a Rust keyword exactly (not a
+///       folded/lowercased collision, a literal one), same mechanism
+///       member_name() already applies.
 void RustBackend::emit_type_reference(const std::string& type_name, const std::string& filename,
                                        TypeOutputSession& session) const {
     session.buffer(declaration_extension())
-        << std::format("use crate::{}::{};\n", escape(to_snake_case(filename)), type_name);
+        << std::format("use crate::{}::{};\n", escape(filename), type_name);
 }
 
 /// @brief Rust has no forward-declaration concept — a type is visible
@@ -2464,7 +2465,16 @@ void RustBackend::finalize_output(const std::string& out_dir) const {
     for (const auto& entry : fs::directory_iterator(out_dir)) {
         if (entry.path().extension() != ".rs" || entry.path() == lib_rs) continue;
         std::string stem = entry.path().stem().string();
-        lib << std::format("#[path = \"{}.rs\"] pub mod {};\n", stem, escape(to_snake_case(stem)));
+        // Module identifiers are PascalCase (Backend::module_name's own
+        // doc — the type identifier verbatim, not a separately-folded
+        // name), which would otherwise trip rustc's non_snake_case lint.
+        // An *outer* attribute per declaration, not a crate-level `#![...]`
+        // inner attribute: this file isn't always literally the crate
+        // root — some consumers `include!()` it into their own lib.rs
+        // (e.g. the xval_sweep test harness), where an inner attribute at
+        // this position is rejected outright ("an inner attribute is not
+        // permitted in this context").
+        lib << std::format("#[allow(non_snake_case)]\n#[path = \"{}.rs\"] pub mod {};\n", stem, escape(stem));
     }
 }
 
