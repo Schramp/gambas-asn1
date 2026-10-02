@@ -2,6 +2,11 @@ ChoiceTest DEFINITIONS ::= BEGIN
     HasAlt2 ::= SEQUENCE { val Alt2 }
     HasAlt4 ::= SEQUENCE { val Alt4 }
     Alt2 ::= CHOICE { num MyByte, flag BOOLEAN }
+    -- 4 untagged alternatives, needs a non-involutory X.680 8.6 canonical
+    -- reorder for PER. xval_sweep's asn1c.PER comparison for this target
+    -- is informational-only: asn1c's own generated canonical-order
+    -- tables are swapped for this exact shape, so its PER encoding
+    -- itself is wrong here, not ours.
     Alt4 ::= CHOICE { num MyByte, str MyStr, flag BOOLEAN, raw OCTET STRING }
     MyByte ::= INTEGER (0..255)
     MyStr  ::= VisibleString (SIZE (1..8))
