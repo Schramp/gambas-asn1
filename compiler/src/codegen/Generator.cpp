@@ -87,6 +87,12 @@ static std::string filename_for(const std::string& cname) {
     return cname.substr(0, 220) + suffix;
 }
 
+bool Generator::is_promotable_seqof_int_elem(const ast::TypeDef& elem) const {
+    auto* bt = std::get_if<ast::BuiltinType>(&elem.body);
+    return bt && *bt == ast::BuiltinType::Integer &&
+           build_member_type_descriptor_spec(elem, "", "elem").has_value();
+}
+
 std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
@@ -112,6 +118,15 @@ std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
         if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
             return backend_.wrap_collection_type(
                                backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Anon"));
+        // Directly-embedded constrained builtin element, promoted to a real
+        // type by generate_inline_types (gambas-asn1#521) under the name
+        // synthetic_name(synthetic_name(current_type_, def.name), "Elem") —
+        // mirror that exact formula rather than recursing into
+        // native_member_type_for(elem), which would return the element's
+        // bare native scalar type (the un-promoted, pre-#521 shape).
+        if (!def.name.empty() && is_promotable_seqof_int_elem(elem))
+            return backend_.wrap_collection_type(
+                               backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Elem"));
         return backend_.wrap_collection_type(native_member_type_for(elem));
     }
     if (def.is_set_of()) {
@@ -120,6 +135,9 @@ std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
         if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
             return backend_.wrap_collection_type(
                                backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Anon"));
+        if (!def.name.empty() && is_promotable_seqof_int_elem(elem))
+            return backend_.wrap_collection_type(
+                               backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Elem"));
         return backend_.wrap_collection_type(native_member_type_for(elem));
     }
     if (def.is_sequence() || def.is_choice() || def.is_set())
@@ -933,12 +951,27 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem, const std::strin
         // (current_type_ + "Anon", missing the member name entirely).
         shape.leaf_native_type = backend_.synthetic_name(
             backend_.synthetic_name(current_type_, wrapping_member_name), "Anon");
-    } else {
-        // native_member_type_for(elem) on a non-collection elem never wraps
-        // its result in a collection type, so this is always the correct,
-        // final leaf text — no caller needs to unwrap it further.
-        shape.leaf_native_type = native_member_type_for(elem);
+        return shape;
     }
+    if (!wrapping_member_name.empty() && is_promotable_seqof_int_elem(elem)) {
+        // Directly-embedded constrained builtin element, promoted to a real
+        // type by generate_inline_types (gambas-asn1#521) — same naming
+        // formula and same early-return shape as the composite case just
+        // above: the promoted type is a plain named Asn1Value in its own
+        // right now, so this leaf is treated like any other named-type
+        // reference (kind/builtin/storage_kind/has_own_descriptor all stay
+        // at their "not a raw builtin here" defaults) rather than the raw-
+        // bounds-inlining path below, which is for a builtin elem that
+        // *wasn't* promoted (semantically equivalent, but the promoted
+        // form is now Generator's one source of truth for this shape).
+        shape.leaf_native_type = backend_.synthetic_name(
+            backend_.synthetic_name(current_type_, wrapping_member_name), "Elem");
+        return shape;
+    }
+    // native_member_type_for(elem) on a non-collection elem never wraps
+    // its result in a collection type, so this is always the correct,
+    // final leaf text — no caller needs to unwrap it further.
+    shape.leaf_native_type = native_member_type_for(elem);
     if (auto* bt = std::get_if<ast::BuiltinType>(&elem.body)) {
         shape.builtin = *bt;
         if (*bt == ast::BuiltinType::Integer) shape.storage_kind = classify_integer_storage(elem);
@@ -1711,6 +1744,12 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
                         // in Rust). Same missing-import shape as the
                         // plain-TypeRef case above, different root name.
                         emit_inc(backend_.synthetic_name(synth, "Anon"));
+                    } else if (is_promotable_seqof_int_elem(*seqof_elem)) {
+                        // Directly-embedded constrained builtin element,
+                        // promoted to a real "Elem"-suffixed type
+                        // (gambas-asn1#521) — same missing-import shape as
+                        // the composite-anonymous-element case just above.
+                        emit_inc(backend_.synthetic_name(synth, "Elem"));
                     }
                 }
             } else {
@@ -2942,6 +2981,52 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
                     synthetic->name = elem_type_name;
                     synthetic->origin_label = was_anon ? m->name : elem.name;
+                    current_type_ = elem_type_name;
+                    emit_type_files(elem_type_name, *synthetic, mod);
+                }
+            } else if (is_promotable_seqof_int_elem(elem)) {
+                // Directly-embedded constrained INTEGER element (gambas-
+                // asn1#521) — e.g. `SEQUENCE (SIZE(0..8)) OF INTEGER
+                // (0..15)`. Every other anonymous element kind (composite,
+                // nested collection, enum, above) is promoted to a real
+                // named top-level type before the SeqOf wrapper is built;
+                // this was the one exception, instead emitting a bare
+                // Constraints table under an ad hoc name
+                // (emit_member_type_descriptor's own "asn_TYP_{..}_elem"
+                // convention) that the containing SEQUENCE's module had to
+                // independently re-derive to reference cross-file. Promoting
+                // it the same way as every other kind means the containing
+                // SEQUENCE references it through the ordinary already-tested
+                // TypeRef mechanism (same as a hand-written `Elem ::=
+                // INTEGER (0..15); List ::= SEQUENCE OF Elem` would produce)
+                // instead of a second, parallel per-element-table code path.
+                bool was_anon = elem.name.empty();
+                elem_type_name = backend_.synthetic_name(seqof_name, was_anon ? "Elem" : elem.name);
+                // This promoted type compiles to a plain `using X =
+                // asn1::Integer;` alias (CppBackend), not a real class, so
+                // a reference to its descriptor must use the free-standing
+                // "&asn_DEF_X" form, not "X::asn_DEF" (which — since X is
+                // only an alias — would silently resolve to
+                // asn1::Integer::asn_DEF, the shared/unconstrained
+                // descriptor, not this type's own constrained one).
+                // seq_of_synthetic_names_ is exactly the allowlist
+                // type_descriptor_ref_spec_for's own unresolved-TypeRef
+                // fallback already consults for this distinction (it was
+                // never registered with the Resolver either — same as every
+                // generate_inline_types promotion).
+                seq_of_synthetic_names_.insert(elem_type_name);
+                if (!generated_names_.count(elem_type_name)) {
+                    generated_names_.insert(elem_type_name);
+                    auto synthetic = std::make_shared<ast::TypeDef>(elem);
+                    synthetic->name = elem_type_name;
+                    synthetic->origin_label = was_anon ? m->name : elem.name;
+                    // Same reasoning as the composite/enum promotions above:
+                    // build_integer_spec's xer_name defaults to def.name
+                    // when def.xer_name is empty, which would otherwise
+                    // make this internal, compiler-invented identifier leak
+                    // into the wire XER tag (X.693 §12) instead of the
+                    // element's real ASN.1 keyword ("INTEGER").
+                    if (was_anon) synthetic->xer_name = "INTEGER";
                     current_type_ = elem_type_name;
                     emit_type_files(elem_type_name, *synthetic, mod);
                 }
