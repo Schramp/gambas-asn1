@@ -4,6 +4,7 @@
 #include <cstring>
 #include <asn1cpp/codec/PerCodec.hpp>
 #include <asn1cpp/codec/Alphabets.hpp>
+#include <asn1cpp/codec/Validation.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
 #include <asn1cpp/EnumValue.hpp>
 #include <asn1cpp/types/Boolean.hpp>
@@ -814,8 +815,18 @@ public:
             } else {
                 std::size_t enc_count = count;
                 if (enc_count < static_cast<std::size_t>(sc.size_lower)) {
-                    std::fprintf(stderr, "[PER-ENC] SOF %s: count=%zu below SIZE lower bound %lld\n",
-                                 def.name, count, (long long)sc.size_lower);
+                    // X.680 §47 SIZE lower bound violated by the actual element
+                    // count — caller's data is invalid for this type, not a
+                    // codec bug. Report through the same ValidationReport path
+                    // BerCodec's own validate()-on-encode hook uses (Validate.hpp's
+                    // convention: positive delta = value/size below lower bound),
+                    // instead of an unconditional stderr print.
+                    int64_t delta = static_cast<int64_t>(sc.size_lower) - static_cast<int64_t>(count);
+                    bump_validate_fail();
+                    record_validate_fail(def.name, delta, /*on_decode=*/false);
+                    if (debug_flags() & DBG_VALIDATE_TRACE)
+                        std::fprintf(stderr, "[VALIDATE-ENC][PER] %s SOF count=%zu below SIZE lower bound %lld delta=%lld\n",
+                                     def.name, count, (long long)sc.size_lower, (long long)delta);
                     enc_count = static_cast<std::size_t>(sc.size_lower);
                 }
                 stream.put_bits(enc_count - static_cast<std::size_t>(sc.size_lower), sc.size_range_bits, "SOF.size");
