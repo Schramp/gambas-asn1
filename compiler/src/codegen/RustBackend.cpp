@@ -308,6 +308,14 @@ void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::o
     if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     os << "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n";
     os << "#[repr(i64)]\n";
+    // type_name/synthetic_name preserve the ASN.1 identifier as closely as
+    // Rust syntax allows (hyphen -> underscore only, no word-split recase)
+    // rather than reflowing it to dodge style lints — a real-world schema's
+    // own naming (X.680 §11.2 allows ALL-CAPS, mixed case, etc.) routinely
+    // trips non_camel_case_types; suppressed per-item here instead of
+    // distorting the name, same tradeoff this backend already makes for
+    // `#[path = "..."]` module names (see finalize_output's own #[allow]).
+    os << "#[allow(non_camel_case_types)]\n";
     os << std::format("pub enum {} {{\n", tname);
     // variant_name's word-split conversion discards
     // whichever separator distinguished two ASN.1 value names (e.g. "a-b"
@@ -516,6 +524,7 @@ void RustBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream
         // per-member closure. `Deref`/`DerefMut` to the underlying
         // primitive keep arithmetic/comparison ergonomic.
         os << std::format("#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]\n");
+        os << "#[allow(non_camel_case_types)]\n";
         os << std::format("pub struct {}(pub {});\n\n", tname, native_int_type(spec.storage_kind));
         os << std::format("impl std::ops::Deref for {} {{\n    type Target = {};\n    fn deref(&self) -> &Self::Target {{ &self.0 }}\n}}\n\n",
                            tname, native_int_type(spec.storage_kind));
@@ -528,11 +537,13 @@ void RustBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream
         // MemberDescriptor.validate is None for I128/ARBITRARY members).
         // A future pairing extending constraint/PER support to these kinds
         // should give them the same newtype treatment above, not before.
+        os << "#[allow(non_camel_case_types)]\n";
         os << std::format("pub type {} = {};\n\n", tname, native_int_type(spec.storage_kind));
     }
 
     for (const auto& v : spec.named_values) {
         os << std::format("/// ASN.1: `{}`\n", v.asn1_name);
+        os << "#[allow(non_upper_case_globals)]\n";
         if (spec.storage_kind == IntStorageKind::ARBITRARY)
             os << std::format("pub const {}: {} = {};\n", value_name(v.asn1_name), native_int_type(spec.storage_kind), v.value);
         else
@@ -1420,6 +1431,7 @@ bool RustBackend::choice_alternative_has_tag(const ChoiceAlternativeSpec& a) con
 void RustBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostream& os) const {
     if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     os << "#[derive(Debug, Clone, Default, PartialEq)]\n";
+    os << "#[allow(non_camel_case_types, non_snake_case)]\n";
     os << std::format("pub struct {} {{\n", spec.type_name);
     for (const auto& m : spec.members) {
         // A member whose class type cycles back to this
@@ -1887,6 +1899,7 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
     // needed (variant_name(), just above emit_enumerated_declaration).
     if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     os << "#[derive(Debug, Clone, PartialEq)]\n";
+    os << "#[allow(non_camel_case_types)]\n";
     os << std::format("pub enum {} {{\n", spec.type_name);
     // Same collision guard as emit_enumerated_declaration —
     // variant_name's word-split conversion can map two distinct alternative
@@ -2370,6 +2383,7 @@ void RustBackend::emit_builtin_alias_declaration(const BuiltinAliasSpec& spec, s
     std::string native = native_builtin_type(spec.builtin_type);
     if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     os << "#[derive(Debug, Clone, Default, PartialEq)]\n";
+    os << "#[allow(non_camel_case_types)]\n";
     os << std::format("pub struct {}(pub {});\n\n", spec.type_name, native);
     os << std::format("impl std::ops::Deref for {} {{\n", spec.type_name);
     os << std::format("    type Target = {};\n", native);
@@ -2403,6 +2417,7 @@ void RustBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSes
 void RustBackend::emit_seq_of_declaration(const SeqOfSpec& spec, std::ostream& os) const {
     if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     os << "#[derive(Debug, Clone, Default, PartialEq)]\n";
+    os << "#[allow(non_camel_case_types)]\n";
     os << std::format("pub struct {}(pub Vec<{}>);\n\n", spec.type_name, spec.elem_type);
     os << std::format("impl std::ops::Deref for {} {{\n", spec.type_name);
     os << std::format("    type Target = Vec<{}>;\n", spec.elem_type);
@@ -2421,6 +2436,7 @@ void RustBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session)
 /// @brief Emit a plain type-reference alias (`MyType ::= OtherType`, X.680 §17).
 void RustBackend::emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
                                           TypeOutputSession& session) const {
+    session.buffer(declaration_extension()) << "#[allow(non_camel_case_types)]\n";
     session.buffer(declaration_extension()) << std::format("pub type {} = {};\n", type_name, target_type);
 }
 

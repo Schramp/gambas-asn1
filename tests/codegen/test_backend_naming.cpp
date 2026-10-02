@@ -38,37 +38,43 @@ int main() {
     const Backend& c = cpp;
     const Backend& r = rust;
 
-    // type_name: C++ replaces hyphens with underscores; Rust (gambas-asn1#306)
-    // wants a real word-split PascalCase instead — no underscore at all
-    // (rustc's non_camel_case_types lint flags the literal underscore, not
-    // acronym-style internal casing) — this is a real divergence, not the
-    // coincidental overlap it used to be before #306.
+    // type_name: both backends now use the same minimal transliteration
+    // (hyphen -> underscore only, no recase) — ASN.1 name fidelity in
+    // generated code is preferred over Rust style-guide conformance; the
+    // resulting non_camel_case_types lint is blanket-suppressed per
+    // generated file instead (see RustBackend::emit_declaration_preamble).
+    // An earlier version of this backend did a real word-split PascalCase
+    // recase here purely to dodge that lint, but two distinct ASN.1 names
+    // could fold to the same recased name (gambas-asn1#611) — fidelity
+    // plus a blanket #[allow] avoids the whole collision class.
     check("type_name: C++ hyphens -> underscores",
           c.type_name("My-Type") == "My_Type",
           c.type_name("My-Type"));
-    check("type_name: Rust real PascalCase, no underscore (gambas-asn1#306)",
-          r.type_name("My-Type") == "MyType",
+    check("type_name: Rust matches C++ (minimal transliteration, no recase)",
+          r.type_name("My-Type") == "My_Type",
           r.type_name("My-Type"));
 
-    // member_name: C++ wants lowerCamelCase, Rust wants snake_case — this is
-    // the real divergence the interface exists to capture.
-    check("member_name: C++ lowerCamelCase",
+    // member_name: both backends use minimal transliteration (lowercase
+    // first letter, hyphen -> underscore) — no full snake_case word-split,
+    // same reasoning as type_name above.
+    check("member_name: C++ lowerCamelCase-preserving",
           c.member_name("MyMember") == "myMember",
           c.member_name("MyMember"));
-    check("member_name: Rust snake_case",
-          r.member_name("MyMember") == "my_member",
+    check("member_name: Rust matches C++'s minimal transliteration",
+          r.member_name("MyMember") == "myMember",
           r.member_name("MyMember"));
-    check("member_name: Rust snake_case from hyphenated ASN.1 name",
-          r.member_name("Network-Identifier") == "network_identifier",
+    check("member_name: Rust hyphen -> underscore, case otherwise preserved",
+          r.member_name("Network-Identifier") == "network_Identifier",
           r.member_name("Network-Identifier"));
 
-    // value_name: C++ preserves case (hyphens -> underscores only), Rust
-    // constants want SCREAMING_SNAKE_CASE.
+    // value_name: both backends preserve case (hyphens -> underscores only)
+    // — Rust no longer reflows to SCREAMING_SNAKE_CASE; non_upper_case_globals
+    // is blanket-suppressed instead (see emit_declaration_preamble).
     check("value_name: C++ preserves case",
           c.value_name("someValue") == "someValue",
           c.value_name("someValue"));
-    check("value_name: Rust SCREAMING_SNAKE_CASE",
-          r.value_name("someValue") == "SOME_VALUE",
+    check("value_name: Rust matches C++ (case preserved, no reflow)",
+          r.value_name("someValue") == "someValue",
           r.value_name("someValue"));
 
     // escape: keyword collision handled by each language's own list, with
@@ -544,7 +550,7 @@ int main() {
               cpp_tr_hpp == "using MyAlias = OtherType;\n",
               cpp_tr_hpp);
         check("emit_typeref_alias_declaration: Rust produces a real pub type alias (not a stub)",
-              rust_tr_hpp == "pub type MyAlias = OtherType;\n",
+              rust_tr_hpp == "#[allow(non_camel_case_types)]\npub type MyAlias = OtherType;\n",
               rust_tr_hpp);
     }
 

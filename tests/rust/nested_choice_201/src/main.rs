@@ -63,8 +63,8 @@ fn main() {
     // Full nested round-trip through the previously-ambiguous middle-level
     // "criticalExtensions" alternative (gambas-asn1#450).
     let hc = HandoverCommandT {
-        rrc_trans_id: asn1cpp_wire::integer::Integer(7),
-        critical_extensions: HandoverCommandCriticalExtensionsT::CriticalExtensions(
+        rrcTransId: asn1cpp_wire::integer::Integer(7),
+        criticalExtensions: HandoverCommandCriticalExtensionsT::CriticalExtensions(
             HandoverCommandCriticalExtensionsCriticalExtensionsT::CriticalExtensions(Leaf {}),
         ),
     };
