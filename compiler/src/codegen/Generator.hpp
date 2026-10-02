@@ -100,6 +100,19 @@ class Generator {
     // OF/SET OF needs a *free* asn_DEF_X reference, not a class-scoped
     // X::asn_DEF one).
     std::set<std::string>   seq_of_synthetic_names_;
+    // Per-member primary synthetic name, as actually assigned by
+    // generate_inline_types' dedupe pass over all promotable siblings at a
+    // given level (SeqOf/SetOf wrapper, inline SEQUENCE/CHOICE/SET, inline
+    // non-empty ENUMERATED). Every other call site that independently needs
+    // "the synthetic name for member m" (native_member_type_for,
+    // type_descriptor_ref_spec_for, emit_sequence_declaration's/
+    // emit_choice_declaration's #include lambdas, ...) must look it up here
+    // instead of recomputing backend_.synthetic_name(parent, m.name) itself
+    // — two distinct raw member names can fold to the same styled name
+    // (e.g. Rust's "field-one"/"fieldOne"), and only the dedupe pass knows
+    // the disambiguated result. Keyed by the member TypeDef's own address,
+    // stable for the lifetime of one compile. See member_synth_name().
+    std::unordered_map<const ast::TypeDef*, std::string> promoted_member_name_;
     std::set<std::string>   collision_types_;   // ASN.1 type names defined in >1 module
     std::string             current_module_;    // module being generated right now
     std::string             current_type_;      // C++ name of type currently being generated
@@ -363,6 +376,16 @@ private:
     ///        pass can't yet verify end-to-end.
     /// @param elem The SEQUENCE OF/SET OF element to check.
     bool is_promotable_seqof_int_elem(const ast::TypeDef& elem) const;
+    /// @brief The actual, dedupe-disambiguated synthetic name for member `m`,
+    ///        as assigned by generate_inline_types' pass over its siblings —
+    ///        falls back to the raw (non-deduped) formula only if `m` was
+    ///        never registered there (e.g. called before that pass ran).
+    /// @param m             The member TypeDef to name.
+    /// @param parent_cname  Parent type's C++/Rust name (fallback formula's parent).
+    /// @param default_name  Raw ASN.1 name to style if `m` isn't in the map
+    ///                       (m.name, or a fixed placeholder for anonymous members).
+    std::string member_synth_name(const ast::TypeDef& m, const std::string& parent_cname,
+                                   const std::string& default_name) const;
     /// @brief Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
     /// @param tag         The member's (possibly absent) tag override.
     /// @param constructed True if the encoding form is constructed, not primitive.
@@ -533,7 +556,8 @@ private:
 
     // Recursive shape of a SEQUENCE OF/SET OF element — see ElemShape's
     // own doc (Backend.hpp) for why this can't be a flat field.
-    ElemShape build_elem_shape(const ast::TypeDef& elem, const std::string& wrapping_member_name) const;
+    ElemShape build_elem_shape(const ast::TypeDef& elem, const std::string& wrapping_member_name,
+                                const ast::TypeDef* wrapping_member = nullptr) const;
 
     // Shared helpers used by both SEQUENCE/SET and CHOICE codegen.
     struct MemberCount { int count; int ext_at; };
