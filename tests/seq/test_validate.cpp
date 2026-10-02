@@ -42,6 +42,7 @@
 #include "HasVisi.hpp"
 #include "HasColor.hpp"
 #include "HasShortList.hpp"
+#include "ShortList.hpp"
 #include "HasMidList.hpp"
 #include "HasByteCount.hpp"
 #include "HasHex.hpp"
@@ -401,6 +402,36 @@ int main() {
             std::printf("  \033[32mPASS\033[0m  roundtrip HasPct.v=200 → 2 entries (encode + decode)\n");
         } else {
             std::printf("  \033[31mFAIL\033[0m  roundtrip — got %zu entries\n", rpt.failures.size());
+            ++failures;
+        }
+    }
+    {
+        // gambas-asn1#482: PerCodec's SEQUENCE OF SIZE-lower clamp (count
+        // below SIZE(1..3)'s lower bound, padded up to stay encodable) must
+        // go through ValidationReport like every other constraint failure,
+        // not only an unconditional stderr print. No ValidatePathScope push
+        // happens for this type (empty ShortList encoded standalone, not as
+        // a SEQUENCE member) — path is expected empty; type_name/delta are
+        // what this case actually needs to verify.
+        ShortList empty{};
+        ValidationReport rpt;
+        ValidationReportScope _scope{rpt};
+        std::vector<uint8_t> buf;
+        PerEncodeStream es{buf};
+        PerCodec::instance().encode(es, asn_DEF_ShortList, &empty);
+        if (rpt.failures.size() == 1
+            && rpt.failures[0].delta == 1
+            && std::string(rpt.failures[0].type_name) == "ShortList"
+            && !rpt.failures[0].on_decode) {
+            std::printf("  \033[32mPASS\033[0m  PER encode ShortList{} (SIZE 1..3, count=0) → reported, delta=1\n");
+        } else {
+            std::printf("  \033[31mFAIL\033[0m  PER encode ShortList{} — got %zu failure(s)",
+                        rpt.failures.size());
+            if (!rpt.failures.empty())
+                std::printf(", delta=%lld type='%s'",
+                            (long long)rpt.failures[0].delta,
+                            rpt.failures[0].type_name ? rpt.failures[0].type_name : "?");
+            std::printf("\n");
             ++failures;
         }
     }
