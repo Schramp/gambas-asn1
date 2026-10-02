@@ -41,7 +41,7 @@ fn main() {
         }
     };
 
-    let tbs = &cert.tbs_certificate;
+    let tbs = &cert.tbsCertificate;
 
     // version = 2 (named value v3(2))
     check("s1.xer  version == 2", tbs.version == 2, &mut failures);
@@ -53,7 +53,7 @@ fn main() {
     // subjectPublicKey BIT STRING: hex "04AA..." = 32 bytes
     check(
         "s1.xer  subjectPublicKey byte size == 32",
-        tbs.subject_public_key_info.subject_public_key.bytes.len() == 32,
+        tbs.subjectPublicKeyInfo.subjectPublicKey.bytes.len() == 32,
         &mut failures,
     );
 
@@ -78,7 +78,7 @@ fn main() {
                 check("s1.xer  extension critical == true", *critical, &mut failures);
             }
             // extnValue OCTET STRING: hex "30030101FF" = 5 bytes
-            check("s1.xer  extnValue byte size == 5", ext.extn_value.len() == 5, &mut failures);
+            check("s1.xer  extnValue byte size == 5", ext.extnValue.len() == 5, &mut failures);
         }
     }
 
@@ -90,7 +90,7 @@ fn main() {
         let cert2 = Certificate::Certificate::decode(&ber);
         check("s1.xer  BER decode ok", cert2.is_ok(), &mut failures);
         if let Ok(cert2) = cert2 {
-            check("s1.xer  BER round-trip version", cert2.tbs_certificate.version == 2, &mut failures);
+            check("s1.xer  BER round-trip version", cert2.tbsCertificate.version == 2, &mut failures);
             check("s1.xer  BER round-trip signature size", cert2.signature.bytes.len() == 69, &mut failures);
         }
     }
