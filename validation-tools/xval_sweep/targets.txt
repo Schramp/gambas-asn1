@@ -63,8 +63,20 @@ examples/sample.source.RRC/asn1-files/rrc-7.1.0.asn1    UL-CCCH-Message
 
 tests/asn1/roundtrip_test.asn1        Container
 tests/asn1/explicit_tag_test.asn1     Mixed
+# Alt4's asn1c.PER comparisons are expected to mismatch (informational
+# only, not gating): asn1c's own generated code swaps its canonical-order
+# arrays for an untagged CHOICE whose declaration order needs a
+# non-involutory reorder to reach X.680 8.6 canonical (ascending-tag)
+# order -- our own BER/PER output is spec-correct and internally
+# consistent across backends; asn1c's isn't, for this specific shape.
 tests/asn1/choice_test.asn1           Alt4
 tests/asn1/self_ref_choice_test.asn1  RecChoice
+
+# Same asn1c divergence as Alt4 above -- kept as a separate, deliberately
+# minimal target (just the one CHOICE and a self-inverse control case,
+# nothing else) so the specific shape that triggers it stays isolated
+# and easy to re-check independently.
+tests/asn1/canon_choice_bug_test.asn1 Alt4
 
 # Probed from tests/tests-asn1c-compiler/*-OK.asn1 (asn1c's own mirrored
 # suite), confirmed to build and round-trip end-to-end.
