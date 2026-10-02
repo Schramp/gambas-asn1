@@ -971,6 +971,16 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
             # unstable, regardless of which wire format fed asn1c's DER
             # encoder. Not a decode-side signal (asn1c correctly decoded our
             # PER either way) -- genuinely nothing to gate on here.
+            #
+            # A second, unrelated known cause: choice_test.asn1::Alt4 (and
+            # canon_choice_bug_test.asn1::Alt4) mismatch asn1c.PER on every
+            # record, not just one unstable value. This is not a target for
+            # our own codec to match: asn1c's generated to_canonical_order/
+            # from_canonical_order arrays are swapped for any untagged
+            # CHOICE whose declaration order needs a non-involutory reorder
+            # to reach X.680 8.6 canonical (ascending-tag) order -- our own
+            # BER/PER output is spec-correct and internally consistent
+            # (cpp.PER == rust.PER, both round-trip), asn1c's is not.
             cpp_recs = split_per_records(per_cpp)
             rust_recs = split_per_records(per_rust)
             der_from_cpp, der_from_rust = [], []

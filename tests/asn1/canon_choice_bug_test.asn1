@@ -1,0 +1,38 @@
+-- Minimal, deliberately isolated repro of a confirmed asn1c PER codegen
+-- divergence: an untagged CHOICE needing a non-involutory reorder to
+-- reach X.680 8.6 canonical (ascending-tag) order gets its content
+-- placed at the wrong PER wire position by asn1c's generated code.
+-- Not visible via asn1c's own encode-then-decode round trip (its
+-- encode and decode sides apply each other's inverse consistently,
+-- so they still cancel out even though the wire bytes are wrong).
+-- Only visible by cross-checking the actual bytes against the
+-- standard or against another spec-correct PER implementation. Our
+-- own BER/PER output here is spec-correct and internally consistent
+-- across backends; xval_sweep's asn1c.PER comparison for this target
+-- is wired as informational-only (not gating) for exactly this
+-- reason; see validation-tools/xval_sweep/targets.txt and
+-- xval_sweep.py's own comment at the asn1c PER leg.
+--
+-- Declaration order:  num(INTEGER,tag2), str(VisibleString,tag26),
+--                      flag(BOOLEAN,tag1), raw(OCTET STRING,tag4)
+-- Correct canonical (ascending-tag) order: flag(1), num(2), raw(4), str(26)
+
+CanonChoiceBug DEFINITIONS ::= BEGIN
+
+    HasAlt4 ::= SEQUENCE { val Alt4 }
+    Alt4 ::= CHOICE {
+        num  INTEGER (0..255),
+        str  VisibleString (SIZE (1..8)),
+        flag BOOLEAN,
+        raw  OCTET STRING
+    }
+
+    -- Control: only needs a single transposition (self-inverse), so it
+    -- is NOT affected by the bug. Included to show the asymmetry.
+    HasAlt2 ::= SEQUENCE { val Alt2 }
+    Alt2 ::= CHOICE {
+        num  INTEGER (0..255),
+        flag BOOLEAN
+    }
+
+END
