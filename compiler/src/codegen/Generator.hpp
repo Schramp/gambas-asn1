@@ -349,6 +349,20 @@ private:
     ///         dedicated descriptor — caller falls back to type_descriptor_ref_for().
     std::optional<MemberTypeDescriptorSpec> build_member_type_descriptor_spec(
         const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname) const;
+    /// @brief True for a directly-embedded SEQUENCE OF/SET OF element worth
+    ///        promoting to a real named type (gambas-asn1#521) instead of an
+    ///        ad hoc per-usage constraint table — a constrained INTEGER
+    ///        element only for now (PR #520's original, confirmed-live
+    ///        scope). Not yet extended to SIZE-able builtins (OCTET STRING/
+    ///        BIT STRING/character strings): build_elem_shape doesn't
+    ///        populate MemberTypeDescriptorSpec::Kind::Sizeable data today
+    ///        (latent until #512/#513 land), and each of those kinds needs
+    ///        its own correct XER tag keyword threaded through promotion
+    ///        (synthetic->xer_name) the way Integer's "INTEGER" is here —
+    ///        left for that follow-up rather than promoting something this
+    ///        pass can't yet verify end-to-end.
+    /// @param elem The SEQUENCE OF/SET OF element to check.
+    bool is_promotable_seqof_int_elem(const ast::TypeDef& elem) const;
     /// @brief Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
     /// @param tag         The member's (possibly absent) tag override.
     /// @param constructed True if the encoding form is constructed, not primitive.
