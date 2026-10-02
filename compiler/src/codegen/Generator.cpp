@@ -93,6 +93,13 @@ bool Generator::is_promotable_seqof_int_elem(const ast::TypeDef& elem) const {
            build_member_type_descriptor_spec(elem, "", "elem").has_value();
 }
 
+std::string Generator::member_synth_name(const ast::TypeDef& m, const std::string& parent_cname,
+                                          const std::string& default_name) const {
+    auto it = promoted_member_name_.find(&m);
+    if (it != promoted_member_name_.end()) return it->second;
+    return backend_.synthetic_name(parent_cname, default_name);
+}
+
 std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
     using BT = ast::BuiltinType;
     if (auto* bt = std::get_if<BT>(&def.body)) {
@@ -100,11 +107,11 @@ std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
         case BT::Integer:
             return backend_.native_int_type(classify_integer_storage(def));
         case BT::Enumerated: {
-            auto n = capitalize_first(backend_.type_name(def.name.empty() ? "Enum" : def.name));
-            // Inline ENUMERATED member (has enum values, not top-level)
+            // Inline ENUMERATED member (has enum values, not top-level) — must
+            // agree with generate_inline_types' dedupe-disambiguated name.
             if (!current_type_.empty() && !def.enum_values.empty())
-                return current_type_ + n;
-            return n;
+                return member_synth_name(def, current_type_, def.name.empty() ? "Enum" : def.name);
+            return capitalize_first(backend_.type_name(def.name.empty() ? "Enum" : def.name));
         }
         default:
             return backend_.native_builtin_type(*bt);
@@ -117,7 +124,7 @@ std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
         const auto& elem = *sof.element;
         if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
             return backend_.wrap_collection_type(
-                               backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Anon"));
+                               backend_.synthetic_name(member_synth_name(def, current_type_, def.name), "Anon"));
         // Directly-embedded constrained builtin element, promoted to a real
         // type by generate_inline_types (gambas-asn1#521) under the name
         // synthetic_name(synthetic_name(current_type_, def.name), "Elem") —
@@ -126,7 +133,7 @@ std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
         // bare native scalar type (the un-promoted, pre-#521 shape).
         if (!def.name.empty() && is_promotable_seqof_int_elem(elem))
             return backend_.wrap_collection_type(
-                               backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Elem"));
+                               backend_.synthetic_name(member_synth_name(def, current_type_, def.name), "Elem"));
         return backend_.wrap_collection_type(native_member_type_for(elem));
     }
     if (def.is_set_of()) {
@@ -134,14 +141,14 @@ std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
         const auto& elem = *sof.element;
         if (!def.name.empty() && (elem.is_sequence() || elem.is_choice() || elem.is_set()) && elem.name.empty())
             return backend_.wrap_collection_type(
-                               backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Anon"));
+                               backend_.synthetic_name(member_synth_name(def, current_type_, def.name), "Anon"));
         if (!def.name.empty() && is_promotable_seqof_int_elem(elem))
             return backend_.wrap_collection_type(
-                               backend_.synthetic_name(backend_.synthetic_name(current_type_, def.name), "Elem"));
+                               backend_.synthetic_name(member_synth_name(def, current_type_, def.name), "Elem"));
         return backend_.wrap_collection_type(native_member_type_for(elem));
     }
     if (def.is_sequence() || def.is_choice() || def.is_set())
-        return backend_.synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
+        return member_synth_name(def, current_type_, def.name.empty() ? "Anon" : def.name);
     return backend_.native_builtin_type(BT::OctetString);
 }
 
@@ -698,7 +705,7 @@ TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef
     // Inline ENUMERATED member — use synthetic name (generates a class)
     if (auto* bt2 = std::get_if<BT>(&def.body);
         bt2 && *bt2 == BT::Enumerated && !def.enum_values.empty() && !current_type_.empty()) {
-        auto sname = backend_.synthetic_name(current_type_, def.name.empty() ? "Enum" : def.name);
+        auto sname = member_synth_name(def, current_type_, def.name.empty() ? "Enum" : def.name);
         return TypeDescriptorRefSpec{TypeDescriptorRefKind::ClassScoped, {}, sname};
     }
     // Named type reference.
@@ -771,20 +778,20 @@ TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef
     if (def.is_seq_of()) {
         if (!def.name.empty())
             return TypeDescriptorRefSpec{TypeDescriptorRefKind::FreeStanding, {},
-                                          backend_.synthetic_name(current_type_, def.name)};
+                                          member_synth_name(def, current_type_, def.name)};
         const auto& elem = std::get<ast::SequenceOfType>(def.body).element;
         return type_descriptor_ref_spec_for(*elem);
     }
     if (def.is_set_of()) {
         if (!def.name.empty())
             return TypeDescriptorRefSpec{TypeDescriptorRefKind::FreeStanding, {},
-                                          backend_.synthetic_name(current_type_, def.name)};
+                                          member_synth_name(def, current_type_, def.name)};
         const auto& elem = std::get<ast::SetOfType>(def.body).element;
         return type_descriptor_ref_spec_for(*elem);
     }
     // Inline SEQUENCE / CHOICE / SET member — synthetic name, generates a class
     if (def.is_sequence() || def.is_choice() || def.is_set()) {
-        auto sname = backend_.synthetic_name(current_type_, def.name.empty() ? "Anon" : def.name);
+        auto sname = member_synth_name(def, current_type_, def.name.empty() ? "Anon" : def.name);
         return TypeDescriptorRefSpec{TypeDescriptorRefKind::ClassScoped, {}, sname};
     }
     return TypeDescriptorRefSpec{};  // kind == None
@@ -914,7 +921,8 @@ IntStorageKind Generator::classify_integer_storage(const ast::TypeDef& def) cons
 // Generator member — see its own definition site for why).
 static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def);
 
-ElemShape Generator::build_elem_shape(const ast::TypeDef& elem, const std::string& wrapping_member_name) const {
+ElemShape Generator::build_elem_shape(const ast::TypeDef& elem, const std::string& wrapping_member_name,
+                                       const ast::TypeDef* wrapping_member) const {
     ElemShape shape;
     if (elem.is_seq_of()) {
         shape.kind = SeqOfKind::SeqOf;
@@ -949,8 +957,10 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem, const std::strin
         // itself; calling native_member_type_for(elem) directly here would
         // silently fall through to its generic composite branch
         // (current_type_ + "Anon", missing the member name entirely).
-        shape.leaf_native_type = backend_.synthetic_name(
-            backend_.synthetic_name(current_type_, wrapping_member_name), "Anon");
+        std::string seqof_name = wrapping_member
+            ? member_synth_name(*wrapping_member, current_type_, wrapping_member_name)
+            : backend_.synthetic_name(current_type_, wrapping_member_name);
+        shape.leaf_native_type = backend_.synthetic_name(seqof_name, "Anon");
         return shape;
     }
     if (!wrapping_member_name.empty() && is_promotable_seqof_int_elem(elem)) {
@@ -964,8 +974,10 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem, const std::strin
         // bounds-inlining path below, which is for a builtin elem that
         // *wasn't* promoted (semantically equivalent, but the promoted
         // form is now Generator's one source of truth for this shape).
-        shape.leaf_native_type = backend_.synthetic_name(
-            backend_.synthetic_name(current_type_, wrapping_member_name), "Elem");
+        std::string seqof_name2 = wrapping_member
+            ? member_synth_name(*wrapping_member, current_type_, wrapping_member_name)
+            : backend_.synthetic_name(current_type_, wrapping_member_name);
+        shape.leaf_native_type = backend_.synthetic_name(seqof_name2, "Elem");
         return shape;
     }
     // native_member_type_for(elem) on a non-collection elem never wraps
@@ -1715,7 +1727,7 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
                 auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body);
                 bool self_ref = tr_elem &&
                     (backend_.type_name(tr_elem->type_name) == backend_.type_name(def.name));
-                auto synth = backend_.synthetic_name(cname, m.name);
+                auto synth = member_synth_name(m, cname, m.name);
                 if (self_ref) {
                     post_class_includes.push_back(synth); // defer: needs current class complete
                 } else {
@@ -1763,12 +1775,12 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
                 }
             }
         } else if ((m.is_sequence() || m.is_choice() || m.is_set()) && !m.name.empty()) {
-            auto synth = backend_.synthetic_name(cname, m.name);
+            auto synth = member_synth_name(m, cname, m.name);
             optional ? emit_fwd(synth) : emit_inc(synth);
         } else {
             auto* mbt = std::get_if<ast::BuiltinType>(&m.body);
             if (mbt && *mbt == ast::BuiltinType::Enumerated && !m.enum_values.empty())
-                emit_inc(backend_.synthetic_name(cname, m.name));
+                emit_inc(member_synth_name(m, cname, m.name));
         }
     };
     for (auto* m : sm_root) emit_member_include(*m, m->is_optional());
@@ -1830,7 +1842,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
                 }
             } else if ((m.is_sequence() || m.is_choice() || m.is_set()) && !m.name.empty()) {
                 auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-                auto synth = backend_.synthetic_name(cname, m.name);
+                auto synth = member_synth_name(m, cname, m.name);
                 write_type_reference(synth, inc_os);
                 emitted_extra = true;
             }
@@ -1970,10 +1982,10 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         }
         if (m.is_seq_of()) {
             row.seq_of_kind = SeqOfKind::SeqOf;
-            row.elem_shape = build_elem_shape(*std::get<ast::SequenceOfType>(m.body).element, m.name);
+            row.elem_shape = build_elem_shape(*std::get<ast::SequenceOfType>(m.body).element, m.name, &m);
         } else if (m.is_set_of()) {
             row.seq_of_kind = SeqOfKind::SetOf;
-            row.elem_shape = build_elem_shape(*std::get<ast::SetOfType>(m.body).element, m.name);
+            row.elem_shape = build_elem_shape(*std::get<ast::SetOfType>(m.body).element, m.name, &m);
         }
         if (is_class_type(m))
             row.member_type_in_cycle = member_type_in_cycle(m, def.name);
@@ -2132,7 +2144,7 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
             emit_inc(cpp_name_for_typeref(*tr));
         } else if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
             // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
-            auto cn2 = cpp_name_for_ref(backend_.synthetic_name(cname, m->name), current_module_);
+            auto cn2 = cpp_name_for_ref(member_synth_name(*m, cname, m->name), current_module_);
             emit_wrapper_inc(cn2);
             // Also include the actual element type directly when it's a
             // plain TypeRef — see the matching rationale in
@@ -2147,15 +2159,15 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
                 // Anonymous inline element — see the matching fix in
                 // emit_member_include for the "Anon"-suffixed doubly-nested
                 // synthetic name rationale.
-                emit_inc(backend_.synthetic_name(backend_.synthetic_name(cname, m->name), "Anon"));
+                emit_inc(backend_.synthetic_name(member_synth_name(*m, cname, m->name), "Anon"));
             }
         } else if ((m->is_sequence() || m->is_choice() || m->is_set()) && !m->name.empty()) {
-            auto synth = backend_.synthetic_name(cname, m->name);
+            auto synth = member_synth_name(*m, cname, m->name);
             emit_inc(synth);
         } else {
             auto* mbt = std::get_if<ast::BuiltinType>(&m->body);
             if (mbt && *mbt == ast::BuiltinType::Enumerated && !m->enum_values.empty()) {
-                auto synth = backend_.synthetic_name(cname, m->name);
+                auto synth = member_synth_name(*m, cname, m->name);
                 emit_inc(synth);
             }
         }
@@ -2906,6 +2918,33 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
 
     if (!def.is_sequence() && !def.is_choice() && !def.is_set()) return;
 
+    // Every member promoted to a top-level synthesized type at this level
+    // (named SeqOf/SetOf wrapper, inline composite, inline non-empty enum)
+    // lands in the same sibling namespace as the others -- ASN.1 guarantees
+    // their raw names are distinct, but synthetic_name(parent, member)'s
+    // own styling can fold two distinct raw names together (dedupe_styled_
+    // names' own doc) the same way a SEQUENCE's own field names can.
+    // Computed once, used by both branches below, so a SeqOf member and an
+    // inline-enum member sharing a parent can't silently collide either.
+    std::vector<const ast::TypeDef*> promotable_members;
+    for (const auto& m : def.members) {
+        if (m->is_extension_marker || m->name.empty()) continue;
+        auto* mbt0 = std::get_if<ast::BuiltinType>(&m->body);
+        bool is_inline_enum0 = mbt0 && *mbt0 == ast::BuiltinType::Enumerated && !m->enum_values.empty();
+        if (m->is_seq_of() || m->is_set_of() || m->is_sequence() || m->is_choice() || m->is_set()
+                || is_inline_enum0)
+            promotable_members.push_back(m.get());
+    }
+    auto synth_name_of = dedupe_styled_names(promotable_members,
+        [&](const ast::TypeDef& mm) { return backend_.synthetic_name(parent_cname, mm.name); });
+    // Published for every other call site (native_member_type_for,
+    // type_descriptor_ref_spec_for, emit_sequence_declaration's/
+    // emit_choice_declaration's #include lambdas, ...) via member_synth_name()
+    // — they run later in the same type's generation and must agree with the
+    // name actually chosen here, not recompute their own un-deduped guess.
+    for (const auto* mp : promotable_members)
+        promoted_member_name_[mp] = synth_name_of.at(mp);
+
     for (const auto& m : def.members) {
         if (m->is_extension_marker) continue;
 
@@ -2917,7 +2956,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
             // Compute seqof_name first so anonymous element types are scoped under it,
             // preventing collisions when multiple SeqOf members have structurally-similar
             // but differently-constrained inline element types (e.g. ctfc2Bit vs ctfc6Bit).
-            std::string seqof_name = backend_.synthetic_name(parent_cname, m->name);
+            std::string seqof_name = synth_name_of.at(m.get());
             std::string elem_type_name;  // non-empty iff element was an inline complex type
             if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
                 bool was_anon = elem.name.empty();
@@ -3063,7 +3102,7 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
         if (!m->is_sequence() && !m->is_choice() && !m->is_set() && !is_inline_enum) continue;
         if (m->name.empty()) continue;
 
-        std::string synth_name = backend_.synthetic_name(parent_cname, m->name);
+        std::string synth_name = synth_name_of.at(m.get());
 
         if (generated_names_.count(synth_name)) continue;
         generated_names_.insert(synth_name);
