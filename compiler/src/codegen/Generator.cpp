@@ -1987,66 +1987,71 @@ void Generator::emit_sequence(const ast::TypeDef& def, TypeOutputSession& sessio
 // Emit CHOICE
 // ---------------------------------------------------------------------------
 
-/// @brief Map an ASN.1 tag to a (class, number) sort key for canonical PER ordering.
-/// @param tag            The tag to convert.
-/// @param apply_auto_tags True when the enclosing module uses AUTOMATIC TAGS.
-/// @param auto_n         Declaration-order position used as tag number when auto-tagging.
-/// @return (class, number) pair; tagless alternatives return (INT_MAX, INT_MAX) to sort last.
-/// @see X.691 §22.6 — CHOICE alternatives encoded in canonical tag order.
-static std::pair<int,int> canonical_tag_key(const ast::Tag& tag, bool apply_auto_tags, int auto_n) {
+std::pair<int,int> Generator::canonical_tag_key(const ast::Tag& tag, const ast::TypeDef& natural_tag_src,
+                                                  bool apply_auto_tags, int auto_n) const {
     if (apply_auto_tags && !tag.present())
         return { static_cast<int>(ast::TagClass::Context), auto_n };
     if (tag.present())
-        return { static_cast<int>(tag.cls), tag.number };
-    return { INT_MAX, INT_MAX };
+        return { static_cast<int>(tag.cls), static_cast<int>(tag.number) };
+    // X.691 §22.6 canonical ordering falls back to the alternative's own
+    // natural tag when it has no explicit [n] override (gambas-asn1#622) —
+    // natural_tag_spec_for already folds in any tag `natural_tag_src` itself
+    // carries, so this only actually differs from the `tag.present()` branch
+    // above when `tag` (an already-AUTOMATIC-TAGS-resolved or otherwise
+    // precomputed copy) and `natural_tag_src.tag` have diverged.
+    if (auto nat = natural_tag_spec_for(natural_tag_src))
+        return { static_cast<int>(nat->cls), static_cast<int>(nat->number) };
+    return { INT_MAX, INT_MAX }; // no natural tag either (e.g. a nested untagged CHOICE) — sort last.
 }
 
-/// @brief Less-than comparator for canonical PER tag ordering of CHOICE alternatives.
-/// @param a,b            Tags to compare.
-/// @param apply_auto_tags True when the enclosing module uses AUTOMATIC TAGS.
-/// @param auto_a,auto_b  Declaration-order positions for auto-tag resolution.
-/// @return True if a sorts before b in canonical order.
-static bool canonical_tag_less(const ast::Tag& a, const ast::Tag& b,
-                                bool apply_auto_tags, int auto_a, int auto_b) {
-    return canonical_tag_key(a, apply_auto_tags, auto_a)
-         < canonical_tag_key(b, apply_auto_tags, auto_b);
+bool Generator::canonical_tag_less(const ast::Tag& a, const ast::TypeDef& a_src,
+                                    const ast::Tag& b, const ast::TypeDef& b_src,
+                                    bool apply_auto_tags, int auto_a, int auto_b) const {
+    return canonical_tag_key(a, a_src, apply_auto_tags, auto_a)
+         < canonical_tag_key(b, b_src, apply_auto_tags, auto_b);
 }
 
 // Returns CHOICE members (no extension markers) in canonical PER tag order.
-/// @brief Build the canonical ordered alternative list for a CHOICE type.
-/// @param def             The CHOICE TypeDef from the AST.
-/// @param apply_auto_tags Whether AUTOMATIC TAGS mode is in effect for this module.
-/// @return Root alternatives (sorted by tag unless AUTOMATIC TAGS) followed by extension
-///         alternatives, with auto-generated tags applied if requested.
-/// @see X.680 §28 — CHOICE type; X.680 §24.8 — AUTOMATIC TAGS.
 // Root alternatives sorted by (tag_class, tag_number); extension alternatives
 // sorted by (tag_class, tag_number). For AUTOMATIC TAGS schemas, root alternatives
 // are Context[0],[1],[2]... — already canonical, so the sort is a no-op there.
 // Extension alternatives with explicit non-sequential tags (e.g. ext1=[1],ext0=[0])
 // are reordered here so the generator emits them in canonical order.
-static std::vector<const ast::TypeDef*> canonical_choice_members(
-    const ast::TypeDef& def, bool apply_auto_tags)
+std::vector<const ast::TypeDef*> Generator::canonical_choice_members(
+    const ast::TypeDef& def, bool apply_auto_tags) const
 {
     auto [root_alts, ext_alts] = split_members(def);
 
-    // Root: if not AUTOMATIC TAGS, sort by explicit tag (tagless go last).
+    // AUTOMATIC TAGS assigns sequential Context tags 0,1,2,... across the
+    // *whole* component list, root and extension alike (X.680 §24.8) — both
+    // halves are already in canonical (ascending Context-tag) order by
+    // construction, so neither needs sorting. Sorting the extension half
+    // anyway (gambas-asn1#622's own fix, which gave canonical_tag_less a
+    // real natural-tag fallback instead of a uniform sentinel) would reorder
+    // untagged extension alternatives by natural tag here while
+    // emit_choice_definition's own sort of the same members sees their
+    // *already-assigned* auto Context tags instead and leaves them in
+    // declaration order — the two independently-computed orderings must
+    // agree (emit_choice's own assert on this), so this module-wide skip has
+    // to mirror the root half's identical no-sort-needed reasoning exactly.
     if (!apply_auto_tags) {
         std::vector<std::pair<const ast::TypeDef*, int>> root_with_num;
         int n = 0;
         for (auto* r : root_alts) root_with_num.push_back({ r, n++ });
         std::stable_sort(root_with_num.begin(), root_with_num.end(),
             [&](const auto& a, const auto& b) {
-                return canonical_tag_less(a.first->tag, b.first->tag,
+                return canonical_tag_less(a.first->tag, *a.first, b.first->tag, *b.first,
                                          /*apply_auto_tags=*/false, a.second, b.second);
             });
         root_alts.clear();
         for (auto& [m, _] : root_with_num) root_alts.push_back(m);
+
+        // Extension: sort by explicit tag (tagless go last, same comparator for consistency).
+        std::stable_sort(ext_alts.begin(), ext_alts.end(),
+            [this](const ast::TypeDef* a, const ast::TypeDef* b) {
+                return canonical_tag_less(a->tag, *a, b->tag, *b, /*apply_auto_tags=*/false, 0, 0);
+            });
     }
-    // Extension: sort by explicit tag (tagless go last, same comparator for consistency).
-    std::stable_sort(ext_alts.begin(), ext_alts.end(),
-        [](const ast::TypeDef* a, const ast::TypeDef* b) {
-            return canonical_tag_less(a->tag, b->tag, /*apply_auto_tags=*/false, 0, 0);
-        });
 
     std::vector<const ast::TypeDef*> result(root_alts);
     result.insert(result.end(), ext_alts.begin(), ext_alts.end());
@@ -2169,6 +2174,11 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
     spec.tag = tag_spec_for(def.tag, /*constructed=*/true);
     spec.is_explicit = type_is_explicit(def);
 
+    // Populated inside the `count > 0` block below (needs `rows`, the
+    // already-canonical-order-sorted alternative list), consumed after it.
+    std::vector<BerTagEntry> ber_tags;
+    bool needs_ber_table = false;
+
     // Alternative descriptor table
     if (count > 0) {
         struct AltRow {
@@ -2176,6 +2186,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             bool is_explicit;
             int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
             ast::Tag full_tag;      // for canonical sort
+            const ast::TypeDef* src = nullptr;  // natural-tag fallback source for canonical sort
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind storage_kind = IntStorageKind::S64;
             std::optional<MemberTagSpec> resolved_tag;
@@ -2236,7 +2247,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                 alt_ref_kind = TaggedMemberSpec::RefTargetKind::Other;
             }
             rows.push_back({ m->name, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag, mbuiltin, alt_storage_kind, resolved_tag,
+                             tag_ctx_num, full_tag, m.get(), mbuiltin, alt_storage_kind, resolved_tag,
                              alt_ref_kind, alt_ref_storage_kind });
             ++auto_tag_num;
           }
@@ -2249,8 +2260,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
         // Tagless alternatives (full_tag not present) sort last, matching
         // canonical_choice_members() so PR enum indices stay aligned with s_alternatives[].
         { int ext_start = (ext_at >= 0) ? ext_at : count;
-          auto tag_cmp = [](const AltRow& a, const AltRow& b) {
-              return canonical_tag_less(a.full_tag, b.full_tag,
+          auto tag_cmp = [this](const AltRow& a, const AltRow& b) {
+              return canonical_tag_less(a.full_tag, *a.src, b.full_tag, *b.src,
                                        /*apply_auto_tags=*/false, 0, 0);
           };
           if (!apply_auto_tags)   // root already canonical for AUTOMATIC TAGS
@@ -2295,22 +2306,25 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             spec.tag_index_base = min_tag;
             spec.tag_index_table = std::move(idx_table);
         }
-    }
 
-    // Compute flattened BER dispatch table (needed when any alternative is an untagged
-    // CHOICE that contributes its inner tags for outer dispatch).
-    // When AUTOMATIC TAGS is applied, all alternatives have distinct context tags — no table needed.
-    std::vector<BerTagEntry> ber_tags;
-    bool needs_ber_table = false;
-    if (!apply_auto_tags) {
-        int ai = 0;
-        for (const auto& m : def.members) {
-            if (m->is_extension_marker) continue;
-            if (!m->tag.present() && natural_tag_for(*m).empty())
-                needs_ber_table = true;
-            std::set<std::string> visited;
-            collect_ber_tags_for(*m, ai, ber_tags, visited);
-            ++ai;
+        // Compute flattened BER dispatch table (needed when any alternative is
+        // an untagged CHOICE that contributes its inner tags for outer
+        // dispatch). When AUTOMATIC TAGS is applied, all alternatives have
+        // distinct context tags — no table needed.
+        // alt_idx must index into the final (canonical-order) s_alternatives[]
+        // array — iterate `rows` (already sorted into that order above), not
+        // def.members' raw declaration order, which no longer coincides with
+        // it once two alternatives' relative order actually changes
+        // (gambas-asn1#622: an untagged alternative now sorts by its own
+        // natural tag instead of always landing in declaration position).
+        if (!apply_auto_tags) {
+            for (int ai = 0; ai < static_cast<int>(rows.size()); ++ai) {
+                const ast::TypeDef& m = *rows[ai].src;
+                if (!m.tag.present() && natural_tag_for(m).empty())
+                    needs_ber_table = true;
+                std::set<std::string> visited;
+                collect_ber_tags_for(m, ai, ber_tags, visited);
+            }
         }
     }
     if (needs_ber_table && !ber_tags.empty()) {

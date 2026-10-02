@@ -393,6 +393,36 @@ private:
     ///        present) rather than a refactor of it, to avoid touching that
     ///        function's existing, widely-used behavior.
     std::optional<TypeTagSpec> underlying_natural_tag_spec_for(const ast::TypeDef& def) const;
+    /// @brief Map a CHOICE alternative's tag to a (class, number) sort key
+    ///        for canonical PER ordering (X.691 §22.6).
+    /// @param tag             The alternative's own `ast::Tag` (may already
+    ///                        carry an AUTOMATIC-TAGS-resolved context tag —
+    ///                        see call sites).
+    /// @param natural_tag_src The alternative's TypeDef, consulted via
+    ///                        natural_tag_spec_for() only when `tag` itself
+    ///                        isn't present — the canonical fallback X.691
+    ///                        requires for an alternative with no explicit
+    ///                        `[n]` override, previously missing (gambas-
+    ///                        asn1#622): every alternative had collapsed to
+    ///                        the same sentinel key in that case, leaving
+    ///                        them in declaration order instead.
+    /// @param apply_auto_tags True when the enclosing module uses AUTOMATIC TAGS.
+    /// @param auto_n          Declaration-order position used as tag number when auto-tagging.
+    /// @return (class, number) pair; an alternative with no tag at all
+    ///         (e.g. a nested untagged CHOICE) sorts last via (INT_MAX, INT_MAX).
+    std::pair<int,int> canonical_tag_key(const ast::Tag& tag, const ast::TypeDef& natural_tag_src,
+                                          bool apply_auto_tags, int auto_n) const;
+    /// @brief Less-than comparator for canonical_tag_key.
+    bool canonical_tag_less(const ast::Tag& a, const ast::TypeDef& a_src,
+                             const ast::Tag& b, const ast::TypeDef& b_src,
+                             bool apply_auto_tags, int auto_a, int auto_b) const;
+    /// @brief Build the canonical ordered alternative list for a CHOICE type.
+    /// @param def             The CHOICE TypeDef from the AST.
+    /// @param apply_auto_tags Whether AUTOMATIC TAGS mode is in effect for this module.
+    /// @return Root alternatives (sorted by tag unless AUTOMATIC TAGS) followed by extension
+    ///         alternatives, with auto-generated tags applied if requested.
+    /// @see X.680 §28 — CHOICE type; X.680 §24.8 — AUTOMATIC TAGS.
+    std::vector<const ast::TypeDef*> canonical_choice_members(const ast::TypeDef& def, bool apply_auto_tags) const;
     /// @brief Follow a chain of top-level TypeRef aliases from `def` to its
     ///        ultimate non-TypeRef definition, reporting via `out_constructed`
     ///        whether the resulting wire shape is CONSTRUCTED — either
