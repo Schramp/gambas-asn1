@@ -34,38 +34,48 @@ inline std::string rust_escape(std::string n,
 ///        naming interface is genuinely language-agnostic and not secretly
 ///        C++-shaped.
 ///
-/// Deliberately diverges from CppBackend where Rust convention differs —
-/// `member_name`/`value_name` are real snake_case/SCREAMING_SNAKE_CASE
-/// conversions, not a reuse of C++'s lowerCamelCase, and `escape` uses
-/// Rust's own keyword list + raw-identifier escaping (`r#...`), not C++'s
-/// trailing-underscore convention. `type_name`/`synthetic_name` reuse the
-/// same PascalCase transform as CppBackend because ASN.1 type names and
-/// Rust struct/enum names both want PascalCase — that overlap is
-/// coincidental, not an assumption baked into the interface.
+/// Deliberately diverges from CppBackend only where Rust *syntax* (not
+/// style) requires it — `escape` uses Rust's own keyword list +
+/// raw-identifier escaping (`r#...`), not C++'s trailing-underscore
+/// convention. `type_name`/`member_name`/`synthetic_name`/`value_name`
+/// otherwise reuse the same minimal, no-recase transliteration as
+/// CppBackend (hyphen -> underscore only): ASN.1 name fidelity in generated
+/// code is preferred over Rust style-guide conformance (naming lints are
+/// blanket-suppressed per generated file instead — see
+/// emit_declaration_preamble). An earlier version of this backend did a
+/// real word-split recase (to_upper_camel_case/to_snake_case/
+/// to_screaming_snake_case) purely to dodge those lints, but two distinct
+/// ASN.1 identifiers can fold to the same recased name (e.g. "field-one"
+/// and "fieldOne" both became "FieldOne") — a silent type/name collision,
+/// not just a style choice. Generator::dedupe_styled_names/
+/// promoted_member_name_ remain as a safety net for a genuine ASN.1-level
+/// clash (literal "foo-bar" vs "foo_bar" siblings), but are no longer the
+/// primary defense.
 class RustBackend : public Backend {
 public:
-    // Uses to_upper_camel_case (real word-split PascalCase), not to_cpp_name
-    // (hyphen->underscore only, no case normalization) — an ASN.1 type name
-    // written ALL-CAPS-WITH-HYPHENS (e.g. "TARGETACTIVITYMONITOR-1") or
-    // mixed-case-with-hyphens (e.g. "EpsHI2OperationsGA-PointWithUnCertainty")
-    // would otherwise keep its hyphen as a literal underscore in the
-    // generated Rust identifier ("TARGETACTIVITYMONITOR_1"), which fails
-    // rustc's non_camel_case_types lint — the lint only checks for a literal
-    // underscore in the identifier, not internal acronym casing, so simply
-    // not reintroducing the hyphen as an underscore is enough (confirmed
-    // empirically: an all-caps identifier with no underscore, e.g.
-    // "TARGETACTIVITYMONITOR1", does not warn).
     std::string type_name(std::string_view asn1_name) const override {
-        return to_upper_camel_case(asn1_name);
+        return to_cpp_name(asn1_name);
     }
 
+    // Minimal transliteration (hyphen -> underscore, lowercase first letter)
+    // — not Generator.hpp's to_member_name, which also runs C++'s own
+    // keyword list via safe_name; Rust keyword safety comes from the
+    // rust_escape() wrap below instead.
     std::string member_name(std::string_view asn1_name,
                              std::initializer_list<std::string_view> extra = {}) const override {
-        return rust_escape(to_snake_case(asn1_name), extra);
+        auto n = to_cpp_name(asn1_name);
+        if (!n.empty()) n[0] = (char)std::tolower((unsigned char)n[0]);
+        return rust_escape(std::move(n), extra);
     }
 
+    // Minimal transliteration (hyphen -> underscore only, case preserved,
+    // matching asn1c's own INTEGER-named-value convention) instead of
+    // to_screaming_snake_case. Unlike SCREAMING_SNAKE_CASE (all-uppercase,
+    // so never literally equal to a lowercase Rust keyword), a
+    // case-preserving name could collide with one — explicit rust_escape()
+    // needed here where it wasn't before.
     std::string value_name(std::string_view asn1_name) const override {
-        return to_screaming_snake_case(asn1_name);
+        return rust_escape(to_value_name(asn1_name));
     }
 
     std::string escape(std::string name,
@@ -73,19 +83,16 @@ public:
         return rust_escape(std::move(name), extra);
     }
 
-    // Uses parent + to_upper_camel_case(member_name), not
-    // make_synthetic_name's capitalize_first(to_cpp_name(...)) — must match
-    // Generator::native_member_type_for's own inline-ENUMERATED-member calculation
-    // (`current_type_ + capitalize_first(backend_.type_name(name))`,
-    // Generator.cpp), the *other* independent place that computes this same
-    // synthetic type's name when referencing it from a field/generic
-    // position. Diverging from that calculation produces an
-    // undefined-type-reference compile error on any real-world schema with
-    // hyphenated inline SEQUENCE/CHOICE/ENUMERATED member names (e.g. the
-    // ETSI LI PS-PDU schema).
+    // Reuses make_synthetic_name verbatim (CppBackend's own synthetic_name
+    // body) — now that type_name() is the same minimal transliteration
+    // CppBackend uses, this is byte-for-byte the same formula as
+    // Generator::native_member_type_for's own inline-ENUMERATED-member
+    // calculation (`member_synth_name`'s fallback,
+    // `current_type_ + capitalize_first(backend_.type_name(name))`), so the
+    // two can't drift apart the way two independent recase formulas could.
     std::string synthetic_name(const std::string& parent,
                                 const std::string& member_name) const override {
-        return parent + to_upper_camel_case(member_name);
+        return make_synthetic_name(parent, member_name);
     }
 
     std::string native_int_type(IntStorageKind kind) const override {
