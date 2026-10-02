@@ -20,8 +20,11 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <cstdio>
 #include "ICodec.hpp"
 #include "ValidateCounter.hpp"
+#include "Debug.hpp"
+#include "../Validate.hpp"
 
 namespace asn1 {
 
@@ -162,6 +165,47 @@ struct ValidatePathScope {
 struct ValidationReportScope { explicit ValidationReportScope(ValidationReport&) {} };
 
 #endif // ASN1CPP_VALIDATE_REPORT
+
+// Shared pre-encode/post-decode validate hook — every codec's public
+// encode()/decode() entry point calls one of these first/last instead of
+// carrying its own copy of the validate()+bump_validate_fail()+
+// record_validate_fail()+DBG_VALIDATE_TRACE block. BerCodec/JerCodec/
+// XerCodec/PerCodec all recurse back through their own public encode()/
+// decode() for every nested member (not a raw handler call), so this fires
+// per-member automatically, same as when each codec inlined the check
+// itself. `codec_tag` is the short name used in the trace line
+// ("BER"/"JER"/"XER"/"PER").
+inline void validate_on_encode(const char* codec_tag, const TypeDescriptor& def, const Asn1Object* src) {
+#if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_ENCODE)
+    if (def.is_any || (debug_flags() & DBG_NO_VALIDATE)) return;
+    int64_t delta = validate(def, src);
+    if (delta != 0) {
+        bump_validate_fail();
+        record_validate_fail(def.name, delta, /*on_decode=*/false);
+        if (debug_flags() & DBG_VALIDATE_TRACE)
+            std::fprintf(stderr, "[VALIDATE-ENC][%s] %s delta=%lld\n",
+                         codec_tag, def.name, static_cast<long long>(delta));
+    }
+#else
+    (void)codec_tag; (void)def; (void)src;
+#endif
+}
+
+inline void validate_on_decode(const char* codec_tag, const TypeDescriptor& def, const Asn1Object* dest) {
+#if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_DECODE)
+    if (def.is_any || (debug_flags() & DBG_NO_VALIDATE)) return;
+    int64_t delta = validate(def, dest);
+    if (delta != 0) {
+        bump_validate_fail();
+        record_validate_fail(def.name, delta, /*on_decode=*/true);
+        if (debug_flags() & DBG_VALIDATE_TRACE)
+            std::fprintf(stderr, "[VALIDATE-DEC][%s] %s delta=%lld\n",
+                         codec_tag, def.name, static_cast<long long>(delta));
+    }
+#else
+    (void)codec_tag; (void)def; (void)dest;
+#endif
+}
 
 // Encode wrapper that reports whether any validate-fail occurred during this
 // encode. When ASN1CPP_VALIDATE is OFF, always returns true. Strict policy is

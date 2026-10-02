@@ -817,16 +817,13 @@ public:
                 if (enc_count < static_cast<std::size_t>(sc.size_lower)) {
                     // X.680 §47 SIZE lower bound violated by the actual element
                     // count — caller's data is invalid for this type, not a
-                    // codec bug. Report through the same ValidationReport path
-                    // BerCodec's own validate()-on-encode hook uses (Validate.hpp's
-                    // convention: positive delta = value/size below lower bound),
-                    // instead of an unconditional stderr print.
-                    int64_t delta = static_cast<int64_t>(sc.size_lower) - static_cast<int64_t>(count);
-                    bump_validate_fail();
-                    record_validate_fail(def.name, delta, /*on_decode=*/false);
-                    if (debug_flags() & DBG_VALIDATE_TRACE)
-                        std::fprintf(stderr, "[VALIDATE-ENC][PER] %s SOF count=%zu below SIZE lower bound %lld delta=%lld\n",
-                                     def.name, count, (long long)sc.size_lower, (long long)delta);
+                    // codec bug. PerCodec::encode's own validate_on_encode()
+                    // call already reports this exact delta through
+                    // ValidationReport (SeqOfSpec::validate uses the identical
+                    // size_lower - count formula) before this handler ever
+                    // runs — this clamp only needs to keep the encoded count
+                    // in bounds so the wire stays well-formed, not report a
+                    // second time.
                     enc_count = static_cast<std::size_t>(sc.size_lower);
                 }
                 stream.put_bits(enc_count - static_cast<std::size_t>(sc.size_lower), sc.size_range_bits, "SOF.size");
@@ -1146,6 +1143,7 @@ void PerCodec::encode(IEncodeStream& dst,
                       const TypeDescriptor& def,
                       const Asn1Object* src) const
 {
+    validate_on_encode("PER", def, src);
     auto& stream = static_cast<PerEncodeStream&>(dst);
     def.per_handler->encode(*this, stream, def, src);
 }
@@ -1155,7 +1153,9 @@ DecodeResult PerCodec::decode(IDecodeStream& src,
                               Asn1Object* dest) const
 {
     auto& stream = static_cast<PerDecodeStream&>(src);
-    return def.per_handler->decode(*this, stream, def, dest);
+    DecodeResult res = def.per_handler->decode(*this, stream, def, dest);
+    if (res.has_value()) validate_on_decode("PER", def, dest);
+    return res;
 }
 
 } // namespace asn1

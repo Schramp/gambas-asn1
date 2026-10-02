@@ -3,6 +3,7 @@
 #include <asn1cpp/types/Integer.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
 #include <asn1cpp/EnumValue.hpp>
+#include <asn1cpp/codec/Validation.hpp>
 #include "HexEncoder.hpp"
 
 namespace asn1 {
@@ -981,6 +982,7 @@ void XerCodec::encode(IEncodeStream& dst,
                       const TypeDescriptor& def,
                       const Asn1Object* src) const
 {
+    validate_on_encode("XER", def, src);
     auto& s = static_cast<XerEncodeStream&>(dst);
     XerRecursionScope scope;
     bool wrap = scope.is_root() && def.kind == TypeKind::Choice;
@@ -1020,6 +1022,7 @@ DecodeResult XerCodec::decode(IDecodeStream& src,
     if (wrap) {
         if (auto r = xer_detail::consume_close_tag(s, def.name); !r) return r;
     }
+    validate_on_decode("XER", def, dest);
     return res;
 }
 
