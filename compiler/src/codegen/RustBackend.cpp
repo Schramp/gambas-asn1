@@ -23,19 +23,26 @@ namespace asn1::codegen {
 // value-lookup `impl TryFrom<i64>` (analogous to C++'s
 // EnumSpec::asn_MAP_value2enum — the piece a future BER/PER decoder needs
 // to turn a wire value back into a variant).
-// Rust convention wants UpperCamelCase enum variants (rustc lints
-// non_camel_case_types otherwise — a warning, not a compile error, but
-// worth doing idiomatically since it's free: ASN.1 ENUMERATED value names
-// are lowercase-first by convention, X.680 §11.2, so this needs an explicit
-// capitalize where CppBackend's C++ constant-in-class-scope style doesn't).
-// to_upper_camel_case (real word-split conversion), not
-// capitalize_first(type_name(...)) — the latter routes through
-// to_cpp_name's hyphen->underscore substitution first, so a hyphenated
-// multi-word value name (e.g. "eight-bit-binary") came out "Eight_bit_binary"
-// instead of "EightBitBinary". Operates on the raw ASN.1 name directly,
-// bypassing type_name(), so the hyphen is available to split on.
+// Minimal transliteration (to_cpp_name: hyphen -> underscore only, case
+// preserved) — not a real word-split recase (to_upper_camel_case), and
+// deliberately NOT capitalize_first either. The ASN.1-naming-fidelity
+// decision #628 made for type_name/member_name/synthetic_name/value_name
+// applies here too: two distinct ASN.1 value names (e.g. "eight-bit-binary"
+// and "eightBitBinary") must not fold to the same Rust variant, which real
+// recasing risks (gambas-asn1#611-class collision) and minimal
+// transliteration avoids. capitalize_first would reintroduce exactly that
+// risk for free — two values differing only in first-letter case (e.g.
+// "foo"/"Foo") would fold — for no benefit: unlike make_synthetic_name's
+// parent+member concatenation (where capitalize_first at least marks a
+// boundary, albeit a weaker one than inserting a separator would), a
+// variant name has no prefix to concatenate with, so there's no boundary
+// to mark at all. Any resulting non_camel_case_types lint is already
+// suppressed at the enclosing `pub enum`'s own #[allow(...)]
+// (emit_enumerated_declaration/emit_choice_declaration), same as every
+// other naming surface — rustc has no hard syntax requirement that a
+// variant start uppercase, only a style lint.
 static std::string variant_name(const RustBackend& backend, const std::string& asn1_name) {
-    return backend.escape(to_upper_camel_case(asn1_name));
+    return backend.escape(to_cpp_name(asn1_name));
 }
 
 // `ChoiceAlternativeSpec::accessor_name` is escaped as a raw identifier
