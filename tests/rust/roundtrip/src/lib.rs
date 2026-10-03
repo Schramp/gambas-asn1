@@ -181,31 +181,31 @@ mod tests {
 
     #[test]
     fn selector_num_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Num(asn1cpp_wire::integer::Integer(7)).encode(), vec![0x02, 0x01, 0x07]);
+        assert_eq!(Selector::num(asn1cpp_wire::integer::Integer(7)).encode(), vec![0x02, 0x01, 0x07]);
     }
 
     #[test]
     fn selector_flag_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Flag(asn1cpp_wire::boolean::Boolean(true)).encode(), vec![0x01, 0x01, 0xff]);
+        assert_eq!(Selector::flag(asn1cpp_wire::boolean::Boolean(true)).encode(), vec![0x01, 0x01, 0xff]);
     }
 
     #[test]
     fn selector_data_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Data(asn1cpp_wire::octet_string::OctetString(vec![0x68, 0x69])).encode(), vec![0x04, 0x02, 0x68, 0x69]);
+        assert_eq!(Selector::data(asn1cpp_wire::octet_string::OctetString(vec![0x68, 0x69])).encode(), vec![0x04, 0x02, 0x68, 0x69]);
     }
 
     #[test]
     fn selector_label_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Label(asn1cpp_wire::strings::Ia5String("hi".to_string())).encode(), vec![0x16, 0x02, 0x68, 0x69]);
+        assert_eq!(Selector::label(asn1cpp_wire::strings::Ia5String("hi".to_string())).encode(), vec![0x16, 0x02, 0x68, 0x69]);
     }
 
     #[test]
     fn selector_round_trips_every_alternative() {
         for s in [
-            Selector::Num(asn1cpp_wire::integer::Integer(-42)),
-            Selector::Flag(asn1cpp_wire::boolean::Boolean(false)),
-            Selector::Data(asn1cpp_wire::octet_string::OctetString(vec![0xAA, 0xBB])),
-            Selector::Label(asn1cpp_wire::strings::Ia5String("round-trip".to_string())),
+            Selector::num(asn1cpp_wire::integer::Integer(-42)),
+            Selector::flag(asn1cpp_wire::boolean::Boolean(false)),
+            Selector::data(asn1cpp_wire::octet_string::OctetString(vec![0xAA, 0xBB])),
+            Selector::label(asn1cpp_wire::strings::Ia5String("round-trip".to_string())),
         ] {
             let bytes = s.encode();
             assert_eq!(Selector::decode(&bytes).unwrap(), s);
@@ -225,31 +225,31 @@ mod tests {
 
     #[test]
     fn selector_num_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Num(asn1cpp_wire::integer::Integer(7)).encode_xer(), "<Selector>\n    <num>7</num>\n</Selector>\n");
+        assert_eq!(Selector::num(asn1cpp_wire::integer::Integer(7)).encode_xer(), "<Selector>\n    <num>7</num>\n</Selector>\n");
     }
 
     #[test]
     fn selector_flag_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Flag(asn1cpp_wire::boolean::Boolean(true)).encode_xer(), "<Selector>\n    <flag><true/></flag>\n</Selector>\n");
+        assert_eq!(Selector::flag(asn1cpp_wire::boolean::Boolean(true)).encode_xer(), "<Selector>\n    <flag><true/></flag>\n</Selector>\n");
     }
 
     #[test]
     fn selector_data_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Data(asn1cpp_wire::octet_string::OctetString(vec![0x68, 0x69])).encode_xer(), "<Selector>\n    <data>6869</data>\n</Selector>\n");
+        assert_eq!(Selector::data(asn1cpp_wire::octet_string::OctetString(vec![0x68, 0x69])).encode_xer(), "<Selector>\n    <data>6869</data>\n</Selector>\n");
     }
 
     #[test]
     fn selector_label_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(Selector::Label(asn1cpp_wire::strings::Ia5String("hi".to_string())).encode_xer(), "<Selector>\n    <label>hi</label>\n</Selector>\n");
+        assert_eq!(Selector::label(asn1cpp_wire::strings::Ia5String("hi".to_string())).encode_xer(), "<Selector>\n    <label>hi</label>\n</Selector>\n");
     }
 
     #[test]
     fn selector_xer_round_trips_every_alternative() {
         for s in [
-            Selector::Num(asn1cpp_wire::integer::Integer(-42)),
-            Selector::Flag(asn1cpp_wire::boolean::Boolean(false)),
-            Selector::Data(asn1cpp_wire::octet_string::OctetString(vec![0xAA, 0xBB])),
-            Selector::Label(asn1cpp_wire::strings::Ia5String("round-trip".to_string())),
+            Selector::num(asn1cpp_wire::integer::Integer(-42)),
+            Selector::flag(asn1cpp_wire::boolean::Boolean(false)),
+            Selector::data(asn1cpp_wire::octet_string::OctetString(vec![0xAA, 0xBB])),
+            Selector::label(asn1cpp_wire::strings::Ia5String("round-trip".to_string())),
         ] {
             let xml = s.encode_xer();
             assert_eq!(Selector::decode_xer(&xml).unwrap(), s);
