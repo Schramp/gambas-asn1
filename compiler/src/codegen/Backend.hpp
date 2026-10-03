@@ -629,6 +629,31 @@ struct BerTagEntry {
     int           alt_index;
 };
 
+/// @brief Canonical (class, number) sort key for X.690 §8.13 BER CHOICE
+///        dispatch — the single ranking every sorted/binary-searched BER
+///        dispatch table in this codebase must agree on: `Generator`'s own
+///        `ChoiceSpec::ber_tags` sort, `RustBackend`'s fallback dispatch
+///        build for CHOICEs that don't get a `ber_tags` table (AUTOMATIC
+///        TAGS — every alternative already has a distinct context tag, so
+///        `Generator` skips building one), and the Rust runtime's own
+///        `Tag::identifier_key` (`rust-runtime/wire/src/ber/tag.rs`), which
+///        a generated binary-search decode compares against at runtime.
+///        Deliberately a *different* ranking from `Backend::tag_class_index`
+///        just below — that one is an arbitrary per-backend literal-string
+///        array index for `format_tag_literal`, not a wire-order sort key;
+///        reusing it here would silently disagree with the Rust runtime's
+///        own `identifier_key`.
+/// @see X.690 §8.1.2.2 — tag class bit encoding.
+inline int ber_tag_class_rank(ast::TagClass cls) {
+    switch (cls) {
+    case ast::TagClass::Universal:   return 0;
+    case ast::TagClass::Application: return 1;
+    case ast::TagClass::Context:     return 2;
+    case ast::TagClass::Private:     return 3;
+    default:                         return 4;
+    }
+}
+
 struct ChoiceSpec : TaggedTypeSpec {
     int count;
     int ext_at;

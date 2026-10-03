@@ -2036,48 +2036,35 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // entry to `ber_tags` too), duplicated only for a CHOICE-of-CHOICE
     // alternative.
     // BER dispatch: wire tag -> alternative index, precomputed here.
-    // `spec.ber_tags` (Backend.hpp) already flattens an untagged
-    // CHOICE-typed alternative into one entry per tag of the inner CHOICE
-    // (X.690 §8.13); otherwise each tagged alternative contributes its own.
-    // X.690 §8.1.2.2 class-bit encoding — mirrors Generator.cpp's own
-    // `tag_class_rank` (used there to sort `spec.ber_tags`) and Rust's
-    // `Tag::identifier_key` (`ber::tag.rs`) exactly. Deliberately not
-    // `Backend::tag_class_index` (Backend.hpp) — that helper's
-    // Private/Context order is swapped relative to the wire encoding
-    // (fine for its own purpose, an arbitrary per-backend literal-string
-    // array index), which would silently disagree with the other two.
-    auto ber_choice_tag_class_rank = [](ast::TagClass cls) -> int {
-        switch (cls) {
-        case ast::TagClass::Universal:   return 0;
-        case ast::TagClass::Application: return 1;
-        case ast::TagClass::Context:     return 2;
-        case ast::TagClass::Private:     return 3;
-        default:                         return 4;
-        }
-    };
-    // Carries each row's own (class, number) — not just the formatted
-    // literal text — so the table can be sorted below regardless of which
-    // branch built it: `has_ber_table` rows arrive pre-sorted
-    // (`Generator::collect_ber_tags_for`'s own doc), the plain per-
-    // alternative case doesn't. `Tag::identifier_key`
-    // (`ber::tag.rs`)/`tag_class_rank` (`Generator.cpp`) agree on the same
-    // class-rank order, so a table built here sorts identically to how
-    // `ber::choice::decode_choice_dispatch` binary-searches it.
+    // `spec.ber_tags` (Backend.hpp) is populated by Generator whenever
+    // `collect_ber_tags_for` produces anything (every tagged alternative,
+    // flattened recursively through an untagged inner CHOICE per X.690
+    // §8.13) — not only in the `has_ber_table` case (that flag is purely
+    // CppBackend's own "do I need a separate asn_BER_X array" decision;
+    // RustBackend's binary-search dispatch needs the full table
+    // regardless). Already sorted by `ber_tag_class_rank` (Backend.hpp) —
+    // the single ranking every BER-dispatch sort in this codebase shares,
+    // matching the Rust runtime's own `Tag::identifier_key`
+    // (`ber::tag.rs`) exactly (gambas-asn1#633 — this used to be a second,
+    // independently-maintained copy of the same ranking). Only the
+    // AUTOMATIC-TAGS case (every alternative already has its own distinct
+    // context tag, so Generator doesn't bother building a table) needs a
+    // fallback built here, from `spec.alternatives` directly.
     struct DispatchRow { int cls_rank; int64_t number; std::string tag_lit; size_t idx; };
     std::vector<DispatchRow> dispatch;
-    if (spec.has_ber_table) {
+    if (!spec.ber_tags.empty()) {
         for (const auto& e : spec.ber_tags)
-            dispatch.push_back({ber_choice_tag_class_rank(e.cls), e.number, e.tag_literal, static_cast<size_t>(e.alt_index)});
+            dispatch.push_back({ber_tag_class_rank(e.cls), e.number, e.tag_literal, static_cast<size_t>(e.alt_index)});
     } else {
         for (size_t i = 0; i < spec.alternatives.size(); ++i)
             if (choice_alternative_has_tag(spec.alternatives[i])) {
                 const auto& t = *spec.alternatives[i].resolved_tag;
-                dispatch.push_back({ber_choice_tag_class_rank(t.cls), t.number, format_tag_literal(t), i});
+                dispatch.push_back({ber_tag_class_rank(t.cls), t.number, format_tag_literal(t), i});
             }
+        std::sort(dispatch.begin(), dispatch.end(), [](const DispatchRow& a, const DispatchRow& b) {
+            return std::pair(a.cls_rank, a.number) < std::pair(b.cls_rank, b.number);
+        });
     }
-    std::sort(dispatch.begin(), dispatch.end(), [](const DispatchRow& a, const DispatchRow& b) {
-        return std::pair(a.cls_rank, a.number) < std::pair(b.cls_rank, b.number);
-    });
     if (!dispatch.empty()) {
         std::string alts_ident = std::format("{}_ALTERNATIVES", to_screaming_snake_case(spec.type_name));
         std::string tags_ident = std::format("{}_BER_TAGS", to_screaming_snake_case(spec.type_name));
