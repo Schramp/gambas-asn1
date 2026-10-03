@@ -248,6 +248,10 @@ struct EnumeratedSpec : TaggedTypeSpec {
     std::vector<NamedValue> values; // declaration order, auto-numbering resolved
     bool              extensible;  // true if def.enum_values contained "..."
     int               root_count;  // count of values before the first extension marker
+    // `values` sorted ascending by value (X.691 §22 — PER ordinal is the
+    // sorted position) — computed once here so neither backend's own
+    // value2enum/root-ordinal table needs its own identical sort.
+    std::vector<NamedValue> sorted_values;
 };
 
 /// @brief Backend-agnostic decision for one named INTEGER type (X.680 §19) —

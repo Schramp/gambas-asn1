@@ -879,6 +879,9 @@ static EnumeratedSpec build_enumerated_spec(const ast::TypeDef& def,
         auto_val = v + 1;
         if (!past_ext) ++spec.root_count;
     }
+    spec.sorted_values = spec.values;
+    std::sort(spec.sorted_values.begin(), spec.sorted_values.end(),
+              [](const NamedValue& a, const NamedValue& b) { return a.value < b.value; });
     return spec;
 }
 
