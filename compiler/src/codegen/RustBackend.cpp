@@ -2512,16 +2512,15 @@ void RustBackend::emit_optional_member_ops(const std::string&, const std::string
 ///        emit_type_reference emits actually resolve.
 ///        WIP: flat mod-per-file list, no module tree mirroring
 ///        ASN.1 modules.
-/// @note module *identifier* is snake_case
-///       (`pub mod contact_list;`), not the PascalCase file stem — Rust
-///       convention wants snake_case module names even though the type
-///       inside is (correctly) PascalCase; a bare `pub mod ContactList;`
-///       fails rustc's non_snake_case lint. `#[path = "ContactList.rs"]`
-///       keeps the on-disk filename PascalCase (matching `type_name`/
-///       `filename_for`) while giving the module itself a snake_case Rust
-///       identifier — emit_type_reference's `use` paths re-derive the same
-///       escape(to_snake_case(filename)) so the two stay in sync without a
-///       second source of truth.
+/// @note The module *identifier* is the type identifier verbatim
+///       (`pub mod ContactList;`), matching the on-disk PascalCase file
+///       stem exactly — not a separately-folded snake_case name. The
+///       resulting non_snake_case lint is suppressed per-declaration
+///       below instead of reformatting the identifier (same ASN.1-
+///       naming-fidelity convention as every other generated name).
+///       emit_type_reference's `use` paths re-derive the same
+///       `escape(stem)` so the two stay in sync without a second
+///       source of truth.
 void RustBackend::finalize_output(const std::string& out_dir) const {
     namespace fs = std::filesystem;
     fs::path lib_rs = fs::path(out_dir) / "lib.rs";
