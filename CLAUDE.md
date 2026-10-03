@@ -31,15 +31,17 @@ Run compiler:
 ./build/compiler/asn1cpp <file.asn1> -o <outdir>
 ```
 
-Rust BER/XER runtime (`rust-runtime/ber/`, gambas-asn1#218/#280) — standalone crate, not
-part of the CMake build. Despite the crate name, BER and XER both live here: table-driven
-codegen means one `SequenceSpec<T>`/`MemberDescriptor<T>` table per type drives every wire
-encoding (`Asn1Value` carries both a `ber_*` and an `xer_*` leg per type), so XER only
-needed new tag-parsing primitives (`src/xer.rs`), not a separate table or crate. `per/`
-is still expected to be a genuine sibling crate under the `rust-runtime/` umbrella — PER's
-bit-level, non-self-delimiting framing needs different stream primitives entirely:
+Rust runtime — a single crate, `rust-runtime/wire/` (package `asn1cpp-wire`), not part
+of the CMake build. BER, XER, and PER all live here under one `Asn1Value` trait: a
+`SequenceSpec<T>`/`ChoiceSpec<T>`/`MemberDescriptor<T>` table per type drives every wire
+encoding, so XER only needed new tag-parsing primitives (`src/xer.rs`) and PER only needed
+its own bit-level stream primitives (`src/per/`), not a separate table or crate.
+`rust-runtime/ber/`, `rust-runtime/per/`, `rust-runtime/constraints/` are empty directories
+(no `Cargo.toml`/`src/`, left over from before the crates were unified) — `asn1cpp-wire`'s
+own description still calls them out as "thin re-export crates... kept for external path
+compatibility," but they currently hold nothing to re-export from:
 ```bash
-cd rust-runtime/ber && cargo test
+cd rust-runtime/wire && cargo test
 ```
 
 ### Architecture symmetry with the C++ side
@@ -54,6 +56,12 @@ table-driven codec, no per-type generated codec logic. Concretely:
 | `ICodec` + handler singletons (`IBerTypeHandler`, `ber_boolean_handler`, ...) | `Asn1Value` trait, default methods (`ber_encode`/`ber_decode_into`/... composed from required `ber_natural_tag`/`ber_encode_content`/`ber_decode_content`) |
 | offset + `void*` field access | generated accessor closure, unsize-coerced to `&dyn Asn1Value` (vtable lives on the fat pointer, not the data) |
 | one `ICodec` interface for BER/PER/XER/JER | one `Asn1Value` trait carrying both `ber_*` and `xer_*` legs |
+| `Oid` (`runtime/include/asn1cpp/Oid.hpp`) | `ObjectIdentifier` (`rust-runtime/wire/src/oid.rs`) |
+
+The last row is the one builtin wrapper whose name genuinely differs between the two
+runtimes (not a naming-fidelity issue — this is runtime-internal infrastructure, not a
+generated identifier) — noted here since grepping one runtime for the other's name finds
+nothing otherwise.
 
 `BerTraits<T>` (`runtime/include/asn1cpp/codec/BerTraits.hpp` + per-type
 specializations) is the one asymmetry: a template-based static-dispatch
