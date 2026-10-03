@@ -402,7 +402,14 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         size_t root_count = spec.root_count > 0 ? static_cast<size_t>(spec.root_count) : sorted_values.size();
         unsigned root_bits = 0;
         for (size_t r = root_count > 1 ? root_count - 1 : 0; r > 0; r >>= 1) ++root_bits;
-        std::string map_ident = std::format("{}_ENUM_SPEC", to_screaming_snake_case(tname));
+        // No screaming-snake-case reflow here: tname is already a real,
+        // deduped top-level type identifier (or empty-string-safe synthetic
+        // one) — recasing it would risk folding two distinct type names
+        // together the same way a recased type_name()/synthetic_name()
+        // would (ASN.1 naming-fidelity convention; the resulting
+        // non_upper_case_globals lint is suppressed below instead).
+        std::string map_ident = std::format("{}_ENUM_SPEC", tname);
+        os << "#[allow(non_upper_case_globals)]\n";
         os << std::format("static {}: asn1cpp_wire::spec::enumerated::EnumSpec = asn1cpp_wire::spec::enumerated::EnumSpec {{\n    entries: &[\n",
                            map_ident);
         for (const auto& v : sorted_values) {
@@ -566,7 +573,8 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
     bool semi = spec.semi_constrained || spec.hi_is_large;
     int flags = (spec.has_constraint ? (semi ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED) : 0)
               | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
-    std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(tname));
+    // No recase — see emit_enumerated_definition's matching note.
+    std::string cname = std::format("{}_CONSTRAINTS", tname);
     // One combined BER+PER table (asn1cpp_wire::constraints::Constraints, same
     // shape emit_member_type_descriptor's Integer branch emits) — this
     // type's own Asn1Value::validate() and PerValue::per_encode/decode
@@ -575,6 +583,7 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
     // semi-constrained/unbounded range (no fixed bit width, never read in
     // that case) but can't format as a negative u32 literal; clamp to 0.
     if (spec.storage_kind == IntStorageKind::S64) {
+        os << "#[allow(non_upper_case_globals)]\n";
         os << std::format(
             "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
             "    flags: {}, range_bits: {}, lower_bound: {}, upper_bound: {}, lower_u64: 0, upper_u64: 0, "
@@ -582,6 +591,7 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
             "}};\n\n",
             cname, flags, std::max(spec.range_bits, 0), spec.lower_s64, spec.upper_s64);
     } else {
+        os << "#[allow(non_upper_case_globals)]\n";
         os << std::format(
             "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
             "    flags: {}, range_bits: {}, lower_bound: 0, upper_bound: 0, lower_u64: {}u64, upper_u64: {}u64, "
@@ -745,12 +755,14 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     // unconstrained) so validate() and, when covered, PerValue both read
     // the exact same static — no generated per-type bounds-check function.
     bool sizeable = is_bits || is_octets || is_sizeable_string_kind(spec.builtin_type);
-    std::string cname = to_screaming_snake_case(tname) + "_CONSTRAINTS";
+    // No recase — see emit_enumerated_definition's matching note.
+    std::string cname = tname + "_CONSTRAINTS";
     if (sizeable) {
         int flags = spec.has_size_constraint
             ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
             : 0;
         int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
+        os << "#[allow(non_upper_case_globals)]\n";
         os << std::format(
             "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
             "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, "
@@ -1141,7 +1153,8 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // a deliberate improvement over C++'s own
     // Constraints (which skips validation entirely for a semi-constrained
     // SIZE — see OctetString::validate's own `SIZE_CONSTRAINED` gate).
-    std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(spec.type_name));
+    // No recase — see emit_enumerated_definition's matching note.
+    std::string cname = std::format("{}_CONSTRAINTS", spec.type_name);
     int flags = spec.has_size_constraint
         ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
         : 0;
@@ -1167,6 +1180,7 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
         element_expr = std::format("Some(&{}_CONSTRAINTS)",
             to_screaming_snake_case(spec.elem_ref));
     }
+    os << "#[allow(non_upper_case_globals)]\n";
     os << std::format(
         "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
         "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, "
@@ -1573,9 +1587,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         // composite member/alternative elsewhere (a deeply nested anonymous
         // CHOICE-in-CHOICE can promote exactly such a type — C++'s
         // CppBackend never had this guard).
-        std::string members_ident = std::format("{}_MEMBERS", to_screaming_snake_case(spec.type_name));
-        std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
+        // No recase — see emit_enumerated_definition's matching note.
+        std::string members_ident = std::format("{}_MEMBERS", spec.type_name);
+        std::string spec_ident = std::format("{}_SPEC", spec.type_name);
 
+        os << "#[allow(non_upper_case_globals)]\n";
         os << std::format("static {}: [asn1cpp_wire::spec::sequence::MemberDescriptor<{}>; {}] = [\n",
                           members_ident, spec.type_name, spec.members.size());
         for (const auto& m : spec.members) {
@@ -1762,8 +1778,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 // reference: the synthetic type lives in its own generated
                 // module, and nothing else in this file names it.
                 std::string synth = synthetic_name(spec.type_name, m.asn1_name);
-                constraints_expr = std::format("Some(&crate::{}::{}_CONSTRAINTS)", escape(synth),
-                                                to_screaming_snake_case(synth));
+                // No recase — matches emit_seq_of_definition's own
+                // {type_name}_CONSTRAINTS naming for this exact type.
+                constraints_expr = std::format("Some(&crate::{}::{}_CONSTRAINTS)", escape(synth), synth);
             }
             os << std::format("        constraints: {},\n", constraints_expr);
             // PER reads the same row; `per_unsupported` names the reason
@@ -1779,6 +1796,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         // elsewhere (a different generated module) needs to name this SPEC
         // directly (encode_sequence_tagged/decode_sequence_tagged) when this
         // type is IMPLICITLY retagged as one of its members.
+        os << "#[allow(non_upper_case_globals)]\n";
         os << std::format(
             "pub static {}: asn1cpp_wire::spec::sequence::SequenceSpec<{}> = asn1cpp_wire::spec::sequence::SequenceSpec {{\n",
             spec_ident, spec.type_name);
@@ -2076,9 +2094,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         });
     }
     if (!dispatch.empty()) {
-        std::string alts_ident = std::format("{}_ALTERNATIVES", to_screaming_snake_case(spec.type_name));
-        std::string tags_ident = std::format("{}_BER_TAGS", to_screaming_snake_case(spec.type_name));
-        std::string spec_ident = std::format("{}_SPEC", to_screaming_snake_case(spec.type_name));
+        // No recase — see emit_enumerated_definition's matching note.
+        std::string alts_ident = std::format("{}_ALTERNATIVES", spec.type_name);
+        std::string tags_ident = std::format("{}_BER_TAGS", spec.type_name);
+        std::string spec_ident = std::format("{}_SPEC", spec.type_name);
 
         auto per_alt_covered = [](const ChoiceAlternativeSpec& a) -> bool {
             if (a.mbuiltin)
@@ -2088,6 +2107,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                    a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other;
         };
 
+        os << "#[allow(non_upper_case_globals)]\n";
         os << std::format("static {}: [asn1cpp_wire::spec::choice::Alternative<{}>; {}] = [\n",
                           alts_ident, spec.type_name, spec.alternatives.size());
         for (const auto& a : spec.alternatives) {
@@ -2143,11 +2163,13 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         // Emitted in the sorted order computed above — matches
         // `Tag::identifier_key` (`ber::tag.rs`) so `ber::choice::
         // decode_choice_dispatch` can binary-search this table.
+        os << "#[allow(non_upper_case_globals)]\n";
         os << std::format("static {}: [asn1cpp_wire::spec::choice::BerDispatch; {}] = [\n", tags_ident, dispatch.size());
         for (const auto& row : dispatch)
             os << std::format("    asn1cpp_wire::spec::choice::BerDispatch {{ tag: {}, alt: {} }},\n", row.tag_lit, row.idx);
         os << "];\n\n";
 
+        os << "#[allow(non_upper_case_globals)]\n";
         os << std::format(
             "static {}: asn1cpp_wire::spec::choice::ChoiceSpec<{}> = asn1cpp_wire::spec::choice::ChoiceSpec {{\n",
             spec_ident, spec.type_name);
