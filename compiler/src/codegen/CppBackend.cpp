@@ -826,8 +826,7 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
             // representable yet (INTEGER with named values, arbitrary
             // IntegerLiteral, etc.). Without this gate the member table
             // would reference an undefined symbol. The reference text
-            // itself is built here, not handed down pre-formatted
-            // (gambas-asn1#635) — cname/r.mname are already in scope.
+            // itself is built here from cname/r.mname, already in scope.
             std::string def_setter = r.has_default_setter
                 ? std::format("&_setdef_{}_{}", cname, r.mname) : "nullptr";
             std::string def_cmp = r.has_default_setter
