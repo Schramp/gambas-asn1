@@ -28,27 +28,6 @@ static int range_bits_for(int range) {
     return bits;
 }
 
-/// @brief X.690 §8.1.2.2 class-bit encoding (Universal=00, Application=01,
-///        Context=10, Private=11) as a sort rank — not `ast::TagClass`'s
-///        own declaration order. Mirrors `Tag::identifier_key`
-///        (`rust-runtime/wire/src/ber/tag.rs`) exactly: both sides must
-///        agree so a CHOICE's flattened BER dispatch table, sorted here,
-///        stays sorted from the binary-searching decoder's point of view.
-/// @param cls Tag class to rank.
-/// @return 0-3 for a real tag class; `ast::TagClass::Implicit` (a tagging
-///        *mode*, never a real tag's class) never reaches a resolved
-///        `BerTagEntry` in practice — ranked last defensively, not
-///        asserted unreachable, since a defensive rank is cheaper than a
-///        crash for something that should never happen.
-static int tag_class_rank(ast::TagClass cls) {
-    switch (cls) {
-    case ast::TagClass::Universal:   return 0;
-    case ast::TagClass::Application: return 1;
-    case ast::TagClass::Context:     return 2;
-    case ast::TagClass::Private:     return 3;
-    default:                         return 4;
-    }
-}
 
 Generator::Generator(fs::path out_dir, sema::Resolver& res)
     : out_dir_(std::move(out_dir)), resolver_(res),
@@ -2378,13 +2357,21 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             }
         }
     }
-    if (needs_ber_table && !ber_tags.empty()) {
+    if (!ber_tags.empty()) {
         // Sorted by (class, number) so a backend can binary-search this
         // table (X.690 §8.13 tag lookup) instead of scanning it linearly.
+        // Kept (and sorted) whenever collect_ber_tags_for produced anything
+        // — not gated on needs_ber_table, which is purely CppBackend's own
+        // "do I need to emit a separate asn_BER_X array" decision (it
+        // doesn't, for the common all-tagged-alternatives case, since its
+        // own decode scans alternatives linearly). RustBackend's binary-
+        // search dispatch needs the full table regardless of whether
+        // CppBackend's own flattening need ever applied; it used to
+        // rebuild its own copy for exactly this case — see gambas-asn1#633.
         std::sort(ber_tags.begin(), ber_tags.end(), [](const BerTagEntry& a, const BerTagEntry& b) {
-            return std::pair(tag_class_rank(a.cls), a.number) < std::pair(tag_class_rank(b.cls), b.number);
+            return std::pair(ber_tag_class_rank(a.cls), a.number) < std::pair(ber_tag_class_rank(b.cls), b.number);
         });
-        spec.has_ber_table = true;
+        spec.has_ber_table = needs_ber_table;
         spec.ber_tags = std::move(ber_tags);
     }
 
