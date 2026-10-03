@@ -1488,7 +1488,7 @@ void RustBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostre
         std::string ftype = m.member_type_in_cycle ? std::format("Box<{}>", mtype) : mtype;
         os << std::format("    /// ASN.1: `{}`\n", m.asn1_name);
         os << std::format("    pub {}: {},\n", m.mname,
-                           m.optional ? std::format("::std::option::Option<{}>", ftype) : ftype);
+                           m.optional ? std::format("Option<{}>", ftype) : ftype);
     }
     os << "}\n\n";
 }
