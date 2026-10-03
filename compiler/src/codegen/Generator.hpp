@@ -620,7 +620,7 @@ private:
     // what the normal #include chain already provides — the full
     // transitive closure via collect_class_types_reachable, minus
     // `self_name` (already complete in that file).
-    std::vector<std::string> collect_extra_includes_for(const std::string& elem_type_name,
+    std::vector<std::string> collect_extra_includes_for(const ast::TypeRef& elem_ref,
                                                          const std::string& self_name) const;
 };
 
