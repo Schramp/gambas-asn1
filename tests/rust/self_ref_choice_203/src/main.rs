@@ -37,7 +37,7 @@ fn main() {
     let mut failures = 0;
 
     // Depth 1: RecChoice = c(a(7)).
-    let r = RecChoiceT::C(Box::new(RecChoiceT::A(asn1cpp_wire::integer::Integer(7))));
+    let r = RecChoiceT::c(Box::new(RecChoiceT::a(asn1cpp_wire::integer::Integer(7))));
     let bytes = r.encode();
     let expected: &[u8] = &[0xa0, 0x05, 0xa2, 0x03, 0x80, 0x01, 0x07];
     check("depth-1 BER matches asn1c ground truth", bytes == expected, &mut failures);
@@ -50,14 +50,14 @@ fn main() {
     check("depth-1 BER idempotent", bytes == bytes2, &mut failures);
 
     // Depth 3: RecChoice = c(c(c(b(99)))).
-    let r3 = RecChoiceT::C(Box::new(RecChoiceT::C(Box::new(RecChoiceT::C(Box::new(RecChoiceT::B(asn1cpp_wire::integer::Integer(99))))))));
+    let r3 = RecChoiceT::c(Box::new(RecChoiceT::c(Box::new(RecChoiceT::c(Box::new(RecChoiceT::b(asn1cpp_wire::integer::Integer(99))))))));
     let bytes3 = r3.encode();
     let back3 = RecChoiceT::decode(&bytes3);
     check("depth-3 BER decode ok", back3.is_ok(), &mut failures);
     check("depth-3 BER round-trip", back3 == Ok(r3), &mut failures);
 
     // XER round-trip.
-    let rx = RecChoiceT::C(Box::new(RecChoiceT::A(asn1cpp_wire::integer::Integer(-13))));
+    let rx = RecChoiceT::c(Box::new(RecChoiceT::a(asn1cpp_wire::integer::Integer(-13))));
     let xml = rx.encode_xer();
     check("XER encode non-empty", !xml.is_empty(), &mut failures);
     let back_xml = RecChoiceT::decode_xer(&xml);

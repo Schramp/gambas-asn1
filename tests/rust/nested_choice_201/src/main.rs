@@ -64,8 +64,8 @@ fn main() {
     // "criticalExtensions" alternative (gambas-asn1#450).
     let hc = HandoverCommandT {
         rrcTransId: asn1cpp_wire::integer::Integer(7),
-        criticalExtensions: HandoverCommandCriticalExtensionsT::CriticalExtensions(
-            HandoverCommandCriticalExtensionsCriticalExtensionsT::CriticalExtensions(Leaf {}),
+        criticalExtensions: HandoverCommandCriticalExtensionsT::criticalExtensions(
+            HandoverCommandCriticalExtensionsCriticalExtensionsT::criticalExtensions(Leaf {}),
         ),
     };
 
