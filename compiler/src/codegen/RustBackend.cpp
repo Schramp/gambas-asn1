@@ -962,10 +962,9 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
 ///       non-default XER encoding produce no Rust output — same "no runtime
 ///       wiring yet" scope as emit_builtin_alias_definition. Builds its own
 ///       constant-name base from `spec.parent_cname`/`spec.mname` via
-///       member_descriptor_base_name() — not a string shared with
-///       CppBackend's own convention (gambas-asn1#635: it used to reuse
-///       CppBackend's literal "asn_TYP_..." text, leaking that substring
-///       into generated Rust constant names).
+///       member_descriptor_base_name() — its own naming convention,
+///       independent of whatever text CppBackend's own implementation
+///       of that method produces.
 void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
     std::ostream& os = session.buffer(definition_extension());
     using Kind = MemberTypeDescriptorSpec::Kind;
@@ -1359,7 +1358,7 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 ///       (per SequenceMemberSpec's own doc) and unused here; optional members
 ///       become `Option<T>` rather than C++'s `unique_ptr<T>`, Rust's
 ///       natural equivalent. `tdref`/`has_default_setter` are genuinely
-///       backend-agnostic (gambas-asn1#635) and are used.
+///       backend-agnostic raw data, and are used.
 /// @brief Does `m` get a real access closure (Scalar/TaggedScalar/
 ///        ExplicitScalar/SeqOf), or an `Unsupported` stub?
 ///        Every SEQUENCE/SET always gets a full table now regardless of the
@@ -1588,10 +1587,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // `_default()` function for it (a default value kind it can't
             // represent leaves `m.has_default_setter` false, same signal
             // CppBackend itself gates its own `&_setdef_.../&_isdef_...`
-            // text on — see its own `has_default_setter` check). Plain bool
-            // (gambas-asn1#635 — this used to be a C++-only
-            // "&_setdef_Parent_member" vs "nullptr" reference-expression
-            // string, never actually consumed as text on the Rust side).
+            // text on — see its own `has_default_setter` check). A plain
+            // bool is all this side ever needs — the reference-expression
+            // text to the emitted function is C++-only, built by
+            // CppBackend itself, never consumed here.
             // `emit_default_setter` (above) already emitted the real
             // `{parent}_{member}_default()` free function under this exact
             // name whenever this condition holds.
@@ -1712,9 +1711,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // actually built a spec for this member; the plain/TypeRef-
             // aliased/no-constraint fallback (`type_descriptor_ref_for`)
             // leaves it empty. The Rust constant name itself is rebuilt
-            // here via `member_descriptor_base_name` (gambas-asn1#635 —
-            // not read back off `tdref`'s own text, which is CppBackend's
-            // reference syntax, not a name RustBackend can parse) — same
+            // here via `member_descriptor_base_name` — not read back off
+            // `tdref`'s own text, which is CppBackend's reference syntax,
+            // not a name RustBackend can parse — same
             // deterministic (parent, member) pair, same table
             // `constraints::validate_s64`/`validate_u64`/
             // `validate_size` (rust-runtime/wire/src/constraints.rs) read,

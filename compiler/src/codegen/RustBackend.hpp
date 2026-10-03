@@ -96,7 +96,7 @@ public:
     }
 
     // No "asn_TYP_" prefix (that's CppBackend's own static-variable
-    // convention, gambas-asn1#635) — an explicit "_" separator, not just a
+    // convention) — an explicit "_" separator, not just a
     // case transition, so to_screaming_snake_case's word-splitter finds the
     // parent/member boundary correctly even when mname is lowercase-first
     // (the common case, X.680 §11.2's own convention for member names) —
