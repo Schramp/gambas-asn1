@@ -198,7 +198,7 @@ public:
                     // ground-truth asn1c, which forward-declares but never
                     // defines the un-instantiated generic.
                     if (!pdu_roots_.empty() && !reachable_asn_names_.count(def->name)) continue;
-                    generated_names_.insert(effective_cpp_name(def->name, mod->name));
+                    generated_names_.insert(effective_type_name(def->name, mod->name));
                     generate_inline_types(*def, *mod);
                     generate_type(*def, *mod);
                 }
@@ -229,18 +229,20 @@ public:
         }
     }
 
-    // Returns the C++ name to use for a type, prefixing with module when colliding.
-    std::string effective_cpp_name(const std::string& asn_name,
-                                   const std::string& mod_name) const {
+    // Returns the generated name to use for a type (via backend_.type_name),
+    // prefixing with module when colliding. Backend-agnostic — "cpp" in the
+    // old name was misleading, this drives both CppBackend and RustBackend.
+    std::string effective_type_name(const std::string& asn_name,
+                                    const std::string& mod_name) const {
         auto cname = backend_.type_name(asn_name);
         if (!collision_types_.count(cname))
             return cname;
         return backend_.type_name(mod_name) + cname;
     }
 
-    // Returns the C++ name for a TypeRef encountered in `from_module`.
-    std::string cpp_name_for_ref(const std::string& type_name,
-                                 const std::string& from_module) const {
+    // Returns the generated name for a TypeRef encountered in `from_module`.
+    std::string resolved_name_for_ref(const std::string& type_name,
+                                      const std::string& from_module) const {
         auto cname = backend_.type_name(type_name);
         if (!collision_types_.count(cname))
             return cname;
@@ -249,14 +251,14 @@ public:
         return backend_.type_name(def_mod) + cname;
     }
 
-    // Returns the C++ name for a fully qualified TypeRef.
+    // Returns the generated name for a fully qualified TypeRef.
     // When module_name is set and the type is a collision type, uses module_name
     // directly instead of resolving through from_module imports.
-    std::string cpp_name_for_typeref(const ast::TypeRef& tr) const {
+    std::string resolved_name_for_typeref(const ast::TypeRef& tr) const {
         auto cname = backend_.type_name(tr.type_name);
         if (!tr.module_name.empty() && collision_types_.count(cname))
             return backend_.type_name(tr.module_name) + cname;
-        return cpp_name_for_ref(tr.type_name, current_module_);
+        return resolved_name_for_ref(tr.type_name, current_module_);
     }
 
 private:
