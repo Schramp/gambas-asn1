@@ -598,15 +598,13 @@ def run_make(directory, *make_args, label="", env=None):
 def discover_ident(gen_dir, ext, pdu_type):
     """Find the real generated identifier(s) for pdu_type in gen_dir.
 
-    asn1cpp's identifier escaping (hyphens, keyword collisions) differs
-    per backend and can't be predicted from the raw ASN.1 name alone —
-    confirmed divergent for a hyphenated name: C++ substitutes underscores
-    (`Foo-Bar` -> `Foo_Bar`), Rust collapses the hyphen and capitalizes
-    the next letter (`Foo-Bar` -> `FooBar`). Both backends emit the raw,
-    unescaped name verbatim as the type's own XER-name string literal
-    though (`"name": "<raw>"` in the generated TypeDescriptor/ChoiceSpec),
-    so grep for that instead of guessing a transform — file stem (minus
-    ext) is the real identifier.
+    asn1cpp's identifier escaping (keyword collisions, rare case/module
+    naming differences) can still differ per backend in edge cases and
+    can't be predicted from the raw ASN.1 name alone in general. Both
+    backends emit the raw, unescaped name verbatim as the type's own
+    XER-name string literal though (`"name": "<raw>"` in the generated
+    TypeDescriptor/ChoiceSpec), so grep for that instead of guessing a
+    transform — file stem (minus ext) is the real identifier.
     """
     needle = f'"{pdu_type}"'
     matches = []
