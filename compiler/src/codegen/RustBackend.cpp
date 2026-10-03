@@ -395,11 +395,10 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // One codec-agnostic table (X.680 §20): BER/PER read `value`, XER
         // reads `name`. Sorted ascending by value — the PER ordinal is the
         // sorted position (X.691 §22, matches asn1c and C++'s own sorted
-        // EnumSpec::entries). Root layout (count, index width) is
-        // precomputed here so no codec walker recounts it.
-        std::vector<NamedValue> sorted_values = spec.values;
-        std::sort(sorted_values.begin(), sorted_values.end(),
-                   [](const NamedValue& a, const NamedValue& b) { return a.value < b.value; });
+        // EnumSpec::entries), already computed once in spec.sorted_values.
+        // Root layout (count, index width) is precomputed here so no codec
+        // walker recounts it.
+        const auto& sorted_values = spec.sorted_values;
         size_t root_count = spec.root_count > 0 ? static_cast<size_t>(spec.root_count) : sorted_values.size();
         unsigned root_bits = 0;
         for (size_t r = root_count > 1 ? root_count - 1 : 0; r > 0; r >>= 1) ++root_bits;
