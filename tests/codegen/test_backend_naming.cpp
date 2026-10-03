@@ -302,7 +302,8 @@ int main() {
     {
         MemberTypeDescriptorSpec spec;
         spec.kind = MemberTypeDescriptorSpec::Kind::Integer;
-        spec.tname = "asn_TYP_MySeq_myField";
+        spec.parent_cname = "MySeq";
+        spec.mname = "myField";
         spec.storage_kind = IntStorageKind::S64;
         spec.extensible = false;
         spec.semi_constrained = false;
@@ -324,8 +325,8 @@ int main() {
         check("emit_member_type_descriptor: C++ produces a TypeDescriptor",
               cpp_os.find("asn_TYP_MySeq_myField") != std::string::npos,
               cpp_os);
-        check("emit_member_type_descriptor: Rust produces a real Constraints table, not a function",
-              rust_os.find("static ASN_TYP_MY_SEQ_MY_FIELD_CONSTRAINTS: asn1cpp_wire::constraints::Constraints") != std::string::npos &&
+        check("emit_member_type_descriptor: Rust produces a real Constraints table, not a function, own naming (#635)",
+              rust_os.find("static MY_SEQ_MY_FIELD_CONSTRAINTS: asn1cpp_wire::constraints::Constraints") != std::string::npos &&
               rust_os.find("flags: 1, range_bits: 7, lower_bound: 0, upper_bound: 100") != std::string::npos,
               rust_os);
     }
@@ -380,7 +381,6 @@ int main() {
         req.resolved_tag = MemberTagSpec{ TypeTagSpec{asn1::ast::TagClass::Universal, 2, false}, false };
         req.optional = false;
         req.tdref = "&asn_DEF_MyInt";
-        req.def_setter = "nullptr";
         spec.members.push_back(req);
 
         SequenceMemberSpec opt;
@@ -390,7 +390,6 @@ int main() {
         opt.resolved_tag = MemberTagSpec{ TypeTagSpec{asn1::ast::TagClass::Universal, 12, false}, false };
         opt.optional = true;
         opt.tdref = "&asn_DEF_Utf8String";
-        opt.def_setter = "nullptr";
         spec.members.push_back(opt);
 
         TypeOutputSession cpp_session, rust_session;
