@@ -334,15 +334,14 @@ private:
     SeqOfSpec emit_seq_of_declaration(const ast::TypeDef& def, std::ostream& os);
     SeqOfSpec emit_seq_of_definition(const ast::TypeDef& def, TypeOutputSession& session);
 
-    /// @brief CHOICE: declaration and definition compute their alternative
-    ///        lists via genuinely different passes (canonical_choice_members()
-    ///        vs. a separate tag-sort of `rows`) that are documented/relied-on
-    ///        to produce the same canonical order — emit_choice zips
-    ///        the declaration-only fields (mtype/accessor_name/pr_name) onto
-    ///        the definition-built ChoiceSpec by index before the combined
-    ///        backend_.emit_choice() call.
+    /// @brief CHOICE: one canonical-order pass (canonical_choice_members(),
+    ///        in emit_choice_definition) builds the complete ChoiceSpec,
+    ///        same one-Spec-reused-by-both-halves shape as SEQUENCE
+    ///        (emit_sequence_declaration returns only its own #include set,
+    ///        not a second alternative list). emit_choice_declaration is
+    ///        #include emission only.
     void emit_choice(const ast::TypeDef& def, TypeOutputSession& session);
-    std::vector<ChoiceAlternativeSpec> emit_choice_declaration(const ast::TypeDef& def, std::ostream& os);
+    void emit_choice_declaration(const ast::TypeDef& def, std::ostream& os);
     ChoiceSpec emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session);
 
     std::string native_member_type_for(const ast::TypeDef& def) const;

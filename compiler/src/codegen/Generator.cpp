@@ -2103,7 +2103,7 @@ std::vector<const ast::TypeDef*> Generator::canonical_choice_members(
 /// @param def  ASN.1 type definition (must satisfy is_choice()).
 /// @param os   Output stream for the generated header.
 /// @see X.680 §28 (CHOICE); X.690 §8.13 (BER CHOICE encoding); X.691 §22 (PER CHOICE).
-std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast::TypeDef& def, std::ostream& os) {
+void Generator::emit_choice_declaration(const ast::TypeDef& def, std::ostream& os) {
     std::string cname = effective_type_name(def.name, current_module_);
 
     auto [count, ext_at] = count_members(def);
@@ -2163,36 +2163,6 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
         }
     }
     if (count > 0) os << "\n";
-
-    bool apply_auto_tags_hpp = should_apply_auto_tags(def);
-    auto canon_members = canonical_choice_members(def, apply_auto_tags_hpp);
-
-    // Two independent namespaces (accessor method names vs enum variant
-    // names) can each fold distinct sibling ASN.1 identifiers together under
-    // their own styling (dedupe_styled_names' own doc) — deduped separately,
-    // since a collision in one doesn't imply one in the other.
-    auto accessor_name_of = dedupe_styled_names(canon_members, [&](const ast::TypeDef& m) {
-        return backend_.member_name(m.name,
-            {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
-             "s_alternatives", "s_alternative_count"});
-    });
-    auto pr_name_of = dedupe_styled_names(canon_members, [&](const ast::TypeDef& m) {
-        return backend_.escape(backend_.type_name(m.name), {"NOTHING"});
-    });
-
-    std::vector<ChoiceAlternativeSpec> alts;
-    for (const auto* m : canon_members) {
-        ChoiceAlternativeSpec alt;
-        alt.mtype = native_member_type_for(*m);
-        alt.accessor_name = accessor_name_of.at(m);
-        alt.pr_name = pr_name_of.at(m);
-        // Not otherwise needed by the declaration side — carried along
-        // purely so emit_choice's zip can assert the two independently
-        // computed canonical orderings actually agree, index by index.
-        alt.asn1_name = m->name;
-        alts.push_back(std::move(alt));
-    }
-    return alts;
 }
 
 ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session) {
@@ -2223,11 +2193,9 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
     // Alternative descriptor table
     if (count > 0) {
         struct AltRow {
-            std::string name, tdref, alt_type;
+            std::string name, tdref, alt_type, accessor_name, pr_name;
             bool is_explicit;
             int  tag_cls_int = -1;  // -1 = not context; >=0 = Context tag number
-            ast::Tag full_tag;      // for canonical sort
-            const ast::TypeDef* src = nullptr;  // natural-tag fallback source for canonical sort
             std::optional<ast::BuiltinType> mbuiltin;
             IntStorageKind storage_kind = IntStorageKind::S64;
             std::optional<MemberTagSpec> resolved_tag;
@@ -2235,33 +2203,50 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             IntStorageKind ref_storage_kind = IntStorageKind::S64;
         };
         std::vector<AltRow> rows;
-        // Local to this per-member TypeDescriptor naming only (never exposed
-        // as the alternative's public accessor/variant name, which
-        // emit_choice_declaration computes and dedupes separately) — still
-        // needs its own dedup so two siblings' own inline-constraint tables
-        // (emit_member_type_descriptor's tdref) don't collide (dedupe_styled_names'
-        // own doc).
-        std::vector<const ast::TypeDef*> all_alts;
-        for (const auto& m : def.members)
-            if (!m->is_extension_marker) all_alts.push_back(m.get());
-        auto mname_of = dedupe_styled_names(all_alts,
-            [&](const ast::TypeDef& m) { return backend_.member_name(m.name); });
 
-        // Pass 1: collect rows in declaration order + emit static TypeDescriptors.
-        // TypeDescriptors must be emitted before the alternatives array references them.
+        // Single canonical-order pass (X.691 §22.6: PER uses tag-ascending
+        // order within root and within extension separately) — every
+        // backend consumes this same order for both the generated enum
+        // and the alternatives table, so there is exactly one place that
+        // decides it.
+        auto canon_members = canonical_choice_members(def, apply_auto_tags);
+
+        // Local to this per-member TypeDescriptor naming only (never
+        // exposed as the alternative's public accessor/variant name below)
+        // — still needs its own dedup so two siblings' own inline-
+        // constraint tables (emit_member_type_descriptor's tdref) don't
+        // collide (dedupe_styled_names' own doc).
+        auto mname_of = dedupe_styled_names(canon_members,
+            [&](const ast::TypeDef& m) { return backend_.member_name(m.name); });
+        // Two independent namespaces (accessor method names vs enum variant
+        // names) can each fold distinct sibling ASN.1 identifiers together
+        // under their own styling (dedupe_styled_names' own doc) — deduped
+        // separately, since a collision in one doesn't imply one in the other.
+        auto accessor_name_of = dedupe_styled_names(canon_members, [&](const ast::TypeDef& m) {
+            return backend_.member_name(m.name,
+                {"present", "set_present", "val_", "val_storage_", "active_lifecycle",
+                 "s_alternatives", "s_alternative_count"});
+        });
+        auto pr_name_of = dedupe_styled_names(canon_members, [&](const ast::TypeDef& m) {
+            return backend_.escape(backend_.type_name(m.name), {"NOTHING"});
+        });
+
+        // Collect rows in canonical order + emit static TypeDescriptors.
+        // TypeDescriptors must be emitted before the alternatives array
+        // references them. AUTOMATIC TAGS assigns sequential Context tags
+        // across root and extension alike (X.680 §24.8) — auto_tag_num
+        // increments continuously across the single loop below, same as
+        // canon_members' own declaration-order-preserving no-sort-needed
+        // case for that tagging mode.
         { int auto_tag_num = 0;
-          for (const auto& m : def.members) {
-            if (m->is_extension_marker) continue;
-            std::string mname = mname_of.at(m.get());
+          for (const auto* m : canon_members) {
+            std::string mname = mname_of.at(m);
             auto [resolved_tag, is_explicit] = compute_member_tag(*m, apply_auto_tags, auto_tag_num);
             std::string tdref = emit_member_type_descriptor(*m, cname, mname, session);
             std::string alt_type = native_member_type_for(*m);
             int tag_ctx_num = -1;
-            ast::Tag full_tag = m->tag;
             if (apply_auto_tags && !m->tag.present()) {
                 tag_ctx_num = auto_tag_num;
-                full_tag.cls = ast::TagClass::Context;
-                full_tag.number = auto_tag_num;
             } else if (m->tag.present() && m->tag.cls == ast::TagClass::Context) {
                 tag_ctx_num = m->tag.number;
             }
@@ -2287,37 +2272,18 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                 // RefTargetKind::Other already is for a real TypeRef.
                 alt_ref_kind = TaggedMemberSpec::RefTargetKind::Other;
             }
-            rows.push_back({ m->name, tdref, alt_type, is_explicit,
-                             tag_ctx_num, full_tag, m.get(), mbuiltin, alt_storage_kind, resolved_tag,
+            rows.push_back({ m->name, tdref, alt_type, accessor_name_of.at(m), pr_name_of.at(m),
+                             is_explicit, tag_ctx_num, mbuiltin, alt_storage_kind, resolved_tag,
                              alt_ref_kind, alt_ref_storage_kind });
             ++auto_tag_num;
           }
-        }
-        // Sort root and extension alternatives separately into canonical tag order.
-        // X.691 §22.6: PER uses tag-ascending order; generator pre-sorts so runtime
-        // can use the array index directly without a canonical-map lookup.
-        // full_tag already incorporates auto-tags (resolved during pass 1), so sort
-        // with apply_auto_tags=false here — the effective tag is already in full_tag.
-        // Tagless alternatives (full_tag not present) sort last, matching
-        // canonical_choice_members() so PR enum indices stay aligned with s_alternatives[].
-        { int ext_start = (ext_at >= 0) ? ext_at : count;
-          auto tag_cmp = [this](const AltRow& a, const AltRow& b) {
-              return canonical_tag_less(a.full_tag, *a.src, b.full_tag, *b.src,
-                                       /*apply_auto_tags=*/false, 0, 0);
-          };
-          if (!apply_auto_tags)   // root already canonical for AUTOMATIC TAGS
-              std::stable_sort(rows.begin(), rows.begin() + ext_start, tag_cmp);
-          if (ext_at >= 0)
-              std::stable_sort(rows.begin() + ext_at, rows.end(), tag_cmp);
-          // Rebuild tag_ctx_num for the tag-index table after reorder.
-          for (auto& r : rows)
-              r.tag_cls_int = (r.full_tag.present() && r.full_tag.cls == ast::TagClass::Context)
-                              ? r.full_tag.number : -1;
         }
 
         for (const auto& r : rows) {
             ChoiceAlternativeSpec alt;
             alt.mtype = r.alt_type;
+            alt.accessor_name = r.accessor_name;
+            alt.pr_name = r.pr_name;
             alt.asn1_name = r.name;
             alt.tdref = r.tdref;
             alt.is_explicit = r.is_explicit;
@@ -2353,14 +2319,13 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
         // dispatch). When AUTOMATIC TAGS is applied, all alternatives have
         // distinct context tags — no table needed.
         // alt_idx must index into the final (canonical-order) s_alternatives[]
-        // array — iterate `rows` (already sorted into that order above), not
-        // def.members' raw declaration order, which no longer coincides with
-        // it once two alternatives' relative order actually changes
-        // (gambas-asn1#622: an untagged alternative now sorts by its own
-        // natural tag instead of always landing in declaration position).
+        // array — iterate `canon_members` (the same order rows was built
+        // from above), not def.members' raw declaration order, which can
+        // differ once an untagged alternative sorts by its own natural tag
+        // instead of always landing in declaration position.
         if (!apply_auto_tags) {
-            for (int ai = 0; ai < static_cast<int>(rows.size()); ++ai) {
-                const ast::TypeDef& m = *rows[ai].src;
+            for (int ai = 0; ai < static_cast<int>(canon_members.size()); ++ai) {
+                const ast::TypeDef& m = *canon_members[ai];
                 if (!m.tag.present() && natural_tag_for(m).empty())
                     needs_ber_table = true;
                 std::set<std::string> visited;
@@ -2392,29 +2357,13 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
 /// @brief Emit a CHOICE type's declaration+definition.
 /// @param def     CHOICE TypeDef.
 /// @param session Per-type output session.
-/// @note Zips the declaration-only fields (mtype/accessor_name/pr_name) from
-///       emit_choice_declaration onto the definition-built ChoiceSpec by
-///       index — see the class-level note on emit_choice_declaration/
-///       emit_choice_definition for why this is safe (both compute the same
-///       canonical order; the runtime already depends on that invariant
-///       today via the generated enum vs. alternatives table).
+/// @note emit_choice_definition's one canonical-order pass builds the
+///       complete ChoiceSpec; emit_choice_declaration only emits
+///       #includes. Same one-Spec-reused-by-both-halves shape as
+///       emit_sequence.
 void Generator::emit_choice(const ast::TypeDef& def, TypeOutputSession& session) {
-    auto decl_alts = emit_choice_declaration(def, session.buffer(backend_.declaration_extension()));
+    emit_choice_declaration(def, session.buffer(backend_.declaration_extension()));
     auto spec = emit_choice_definition(def, session);
-    assert(spec.alternatives.size() == decl_alts.size() &&
-           "emit_choice_declaration/emit_choice_definition disagree on alternative count");
-    for (std::size_t i = 0; i < spec.alternatives.size() && i < decl_alts.size(); ++i) {
-        // Both sides compute canonical PER tag order independently (see the
-        // header note on emit_choice_declaration/emit_choice_definition) —
-        // assert they actually agree index-by-index before trusting the
-        // zip; a silent divergence here would attach the wrong accessor
-        // name to the wrong alternative rather than crash.
-        assert(spec.alternatives[i].asn1_name == decl_alts[i].asn1_name &&
-               "emit_choice_declaration/emit_choice_definition canonical order mismatch");
-        spec.alternatives[i].mtype = decl_alts[i].mtype;
-        spec.alternatives[i].accessor_name = decl_alts[i].accessor_name;
-        spec.alternatives[i].pr_name = decl_alts[i].pr_name;
-    }
     backend_.emit_choice(spec, session);
 }
 
