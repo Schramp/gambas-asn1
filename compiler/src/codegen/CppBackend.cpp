@@ -276,11 +276,7 @@ void CppBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::ost
     const std::string& cname = spec.type_name;
 
     // value2enum table (sorted by value for binary search)
-    auto sorted = spec.values;
-    std::sort(sorted.begin(), sorted.end(),
-              [](const NamedValue& a, const NamedValue& b) {
-                  return a.value < b.value;
-              });
+    const auto& sorted = spec.sorted_values;
 
     os << std::format("const asn1::EnumEntry {}::asn_MAP_value2enum[] = {{\n", cname);
     for (const auto& v : sorted)
