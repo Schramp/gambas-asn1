@@ -516,7 +516,7 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // ENUMERATED's natural tag never varies by declaration.
         os << "\n";
         os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", tname);
-        os << "    const TAG: Option<asn1cpp_wire::Tag> = Some(asn1cpp_wire::ber::enumerated::ENUMERATED_TAG);\n";
+        os << "    const TAG: ::std::option::Option<asn1cpp_wire::Tag> = Some(asn1cpp_wire::ber::enumerated::ENUMERATED_TAG);\n";
         os << "}\n\n";
     }
 }
@@ -655,7 +655,7 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
     // own TAG — INTEGER_TAG regardless of storage width).
     os << "\n";
     os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", tname);
-    os << std::format("    const TAG: Option<asn1cpp_wire::Tag> = <{} as asn1cpp_wire::type_tag::TypeTag>::TAG;\n", native_int_type(spec.storage_kind));
+    os << std::format("    const TAG: ::std::option::Option<asn1cpp_wire::Tag> = <{} as asn1cpp_wire::type_tag::TypeTag>::TAG;\n", native_int_type(spec.storage_kind));
     os << "}\n\n";
 }
 
@@ -1907,7 +1907,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         // tag without an Asn1Value in hand.
         os << "\n";
         os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", spec.type_name);
-        os << std::format("    const TAG: Option<asn1cpp_wire::Tag> = Some({}.tag);\n", spec_ident);
+        os << std::format("    const TAG: ::std::option::Option<asn1cpp_wire::Tag> = Some({}.tag);\n", spec_ident);
         os << "}\n\n";
     }
 }
@@ -2341,7 +2341,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         // CHOICE has no natural tag (X.680 §28).
         os << "\n";
         os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", spec.type_name);
-        os << "    const TAG: Option<asn1cpp_wire::Tag> = None;\n";
+        os << "    const TAG: ::std::option::Option<asn1cpp_wire::Tag> = None;\n";
         os << "}\n\n";
     }
 }
