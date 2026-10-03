@@ -361,7 +361,16 @@ inline std::string escape_string_literal(const std::string& raw) {
 ///        primitive SIZE/FROM-alphabet constraints).
 struct MemberTypeDescriptorSpec {
     enum class Kind { Integer, Sizeable } kind = Kind::Integer;
-    std::string tname;            // static variable / synthetic identifier base, e.g. "asn_TYP_Parent_member"
+    // Raw (parent type, member) pair identifying this inline-constraint
+    // descriptor — NOT a pre-formatted identifier (gambas-asn1#635: a
+    // `std::format("asn_TYP_{}_{}", ...)` used to live here, a C++ static-
+    // variable naming convention Generator baked in; RustBackend then
+    // re-derived its own constant names from that C++-shaped string,
+    // leaking the literal substring "ASN_TYP_..." into generated Rust
+    // code). Each backend builds its own identifier from these two raw
+    // strings via member_descriptor_base_name().
+    std::string parent_cname;
+    std::string mname;
 
     // Kind::Integer — mirrors IntegerSpec's constraint fields.
     IntStorageKind storage_kind = IntStorageKind::S64;
@@ -479,14 +488,12 @@ struct TaggedMemberSpec {
     IntStorageKind ref_storage_kind = IntStorageKind::S64;
 };
 
-/// @brief Backend-agnostic decision for one SEQUENCE/SET member. Several
-///        fields are pre-formatted C++ expression text (`ops`, `def_setter`,
-///        `offset_expr`) rather than raw data — same rationale as
-///        SeqOfSpec::elem_ref: they reference C++-runtime-only constructs
-///        (UniquePtrOps aliases, static TypeDescriptor variables, offsetof
-///        macros) that only CppBackend's own emitted text can resolve.
-///        `tdref` is the one exception already split the "real" way:
-///        `Generator::type_descriptor_ref_spec_for`
+/// @brief Backend-agnostic decision for one SEQUENCE/SET member. `ops`/
+///        `offset_expr` are not struct fields at all — both are derivable
+///        by CppBackend alone from `mname`/`optional`/the enclosing type
+///        name (SequenceSpec::type_name), computed at emission time rather
+///        than carried as pre-formatted C++ expression text. `tdref` is
+///        split the "real" way: `Generator::type_descriptor_ref_spec_for`
 ///        decides the reference *kind* (needs Generator-private
 ///        resolver/collision-tracking state — `resolver_`, `collision_types_`,
 ///        `effective_type_name` — Backend has no access to), and
@@ -557,7 +564,15 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // `mname`/`optional` are right here), so CppBackend computes them
     // itself at emission time instead.
     std::string tdref;          // reference expression to the member's TypeDescriptor
-    std::string def_setter;     // "&_setdef_Parent_member" or "nullptr"
+    // True iff Generator::emit_default_setter actually emitted a
+    // `_default()` function for this member's DEFAULT value (some DEFAULT
+    // kinds it can't represent leave this false even when has_default is
+    // true). A bare bool, not a pre-formatted "&_setdef_Parent_member"/
+    // "nullptr" C++ reference-expression string (gambas-asn1#635) —
+    // RustBackend only ever needed the boolean signal; CppBackend builds
+    // its own reference text from cname/mname, already in scope where it's
+    // spliced into the member table.
+    bool        has_default_setter = false;
     std::string setter_param_type;   // empty = no set_<member>() emitted
     bool        setter_is_move = false;
     bool        setter_is_int_alias = false;
@@ -774,6 +789,16 @@ public:
     ///        member name.
     virtual std::string synthetic_name(const std::string& parent,
                                         const std::string& member_name) const = 0;
+
+    /// @brief Build this backend's own identifier base for an inline-
+    ///        constraint member descriptor (MemberTypeDescriptorSpec),
+    ///        from the raw (parent type, member) pair — e.g. CppBackend's
+    ///        "asn_TYP_{parent}_{member}" static-variable convention.
+    ///        Each backend decides its own convention; Generator never
+    ///        formats this text itself (gambas-asn1#635 — it used to,
+    ///        which leaked CppBackend's own convention into Rust output).
+    virtual std::string member_descriptor_base_name(const std::string& parent_cname,
+                                                      const std::string& mname) const = 0;
 
     /// @brief Map an INTEGER storage-class decision to this backend's native
     ///        type for an *inline member* of that INTEGER type (e.g.

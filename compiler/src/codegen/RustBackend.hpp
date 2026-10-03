@@ -95,6 +95,18 @@ public:
         return make_synthetic_name(parent, member_name);
     }
 
+    // No "asn_TYP_" prefix (that's CppBackend's own static-variable
+    // convention, gambas-asn1#635) — an explicit "_" separator, not just a
+    // case transition, so to_screaming_snake_case's word-splitter finds the
+    // parent/member boundary correctly even when mname is lowercase-first
+    // (the common case, X.680 §11.2's own convention for member names) —
+    // concatenating with no separator at all would merge the two into one
+    // run with no detectable boundary.
+    std::string member_descriptor_base_name(const std::string& parent_cname,
+                                              const std::string& mname) const override {
+        return parent_cname + "_" + mname;
+    }
+
     std::string native_int_type(IntStorageKind kind) const override {
         switch (kind) {
             case IntStorageKind::U64:       return "asn1cpp_wire::integer::UInteger";

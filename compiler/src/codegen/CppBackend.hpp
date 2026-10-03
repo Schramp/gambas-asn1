@@ -99,6 +99,11 @@ public:
         return make_synthetic_name(parent, member_name);
     }
 
+    std::string member_descriptor_base_name(const std::string& parent_cname,
+                                              const std::string& mname) const override {
+        return std::format("asn_TYP_{}_{}", parent_cname, mname);
+    }
+
     std::string native_int_type(IntStorageKind kind) const override {
         switch (kind) {
             case IntStorageKind::U64:       return "asn1::UInteger";
