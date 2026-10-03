@@ -126,9 +126,7 @@ pub trait Asn1Value {
     /// opts out, `DBG_VALIDATE_TRACE` additionally prints each failure.
     fn ber_encode_tagged(&self, tag: crate::ber::tag::Tag, out: &mut Vec<u8>) {
         crate::validate::check(self, "encode");
-        let mut content = Vec::new();
-        self.ber_encode_content(&mut content);
-        crate::ber::writer::write_primitive(out, tag, &content);
+        crate::ber::writer::write_tagged(out, tag, |buf| self.ber_encode_content(buf));
     }
 
     /// Decode counterpart of `ber_encode_tagged` — same `validate()` call

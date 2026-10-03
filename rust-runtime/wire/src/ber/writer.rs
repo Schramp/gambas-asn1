@@ -1,10 +1,12 @@
 //! BER output — appends TLVs to an in-memory buffer.
 //!
-//! Unlike `BerWriter` (`runtime/include/asn1cpp/codec/BerWriter.hpp`), which
-//! back-fills a constructed TLV's length in place to avoid an extra
-//! allocation, this simply builds each nested TLV's content into its own
-//! `Vec<u8>` first. Simpler, and the extra allocation doesn't matter for a
-//! from-scratch codec that hasn't been performance-tuned yet.
+//! `write_tagged` mirrors `BerWriter::write_constructed`
+//! (`runtime/include/asn1cpp/codec/BerWriter.hpp`): reserve a 3-byte length
+//! placeholder, let the caller write content directly into the shared
+//! buffer, then back-fill the real length and shift the content down to
+//! close the gap. This is `Asn1Value::ber_encode_tagged`'s (`value.rs`) one
+//! call site, so it applies uniformly to every TLV in a tree — leaf and
+//! constructed alike — without a separate `Vec<u8>` per node.
 
 use crate::ber::tag::{write_tag, Tag};
 
@@ -47,6 +49,47 @@ pub fn write_constructed(out: &mut Vec<u8>, t: Tag, content: &[u8]) {
     write_tag(out, t);
     write_length(out, content.len());
     out.extend_from_slice(content);
+}
+
+/// Write a TLV under `t` whose content length isn't known ahead of time:
+/// reserve 3 length-placeholder bytes, call `fill` to write content
+/// directly into `out`, then back-fill the real length and shift the
+/// content down to close the gap (mirrors `BerWriter::write_constructed`'s
+/// memmove-based collapse — same technique, used for every tag here since
+/// Rust's single `ber_encode_tagged` funnel handles leaf and constructed
+/// TLVs alike, unlike C++'s separate `write_primitive`/`write_constructed`).
+pub fn write_tagged(out: &mut Vec<u8>, t: Tag, fill: impl FnOnce(&mut Vec<u8>)) {
+    write_tag(out, t);
+    let len_pos = out.len();
+    out.resize(len_pos + 3, 0);
+    let content_start = out.len();
+
+    fill(out);
+
+    let content_size = out.len() - content_start;
+    if content_size < 128 {
+        out.copy_within(content_start..content_start + content_size, len_pos + 1);
+        out.truncate(len_pos + 1 + content_size);
+        out[len_pos] = content_size as u8;
+    } else if content_size < 256 {
+        out.copy_within(content_start..content_start + content_size, len_pos + 2);
+        out.truncate(len_pos + 2 + content_size);
+        out[len_pos] = 0x81;
+        out[len_pos + 1] = content_size as u8;
+    } else if content_size < 65536 {
+        // 3-byte length fits the pre-reserved gap exactly — no shift.
+        out[len_pos] = 0x82;
+        out[len_pos + 1] = ((content_size >> 8) & 0xFF) as u8;
+        out[len_pos + 2] = (content_size & 0xFF) as u8;
+    } else {
+        // >65535 bytes (up to 16 MiB): 4-byte length (0x83 + 3 bytes) —
+        // extend the reserved gap by inserting one byte before content.
+        out.insert(content_start, 0);
+        out[len_pos] = 0x83;
+        out[len_pos + 1] = ((content_size >> 16) & 0xFF) as u8;
+        out[len_pos + 2] = ((content_size >> 8) & 0xFF) as u8;
+        out[len_pos + 3] = (content_size & 0xFF) as u8;
+    }
 }
 
 /// EXPLICIT tagging (X.690 §8.14.3) — a constructed outer
