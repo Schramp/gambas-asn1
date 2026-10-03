@@ -140,7 +140,7 @@ enum class IntStorageKind {
 
 /// @brief Which reference form a resolved type-descriptor reference takes —
 ///        backend-agnostic *shape*, not text. `Generator::type_descriptor_ref_spec_for`
-///        decides this (needs resolver_/collision_types_/effective_cpp_name — Generator-
+///        decides this (needs resolver_/collision_types_/effective_type_name — Generator-
 ///        private state Backend has no access to); `Backend::format_type_descriptor_ref`
 ///        renders it as this backend's reference-expression syntax.
 enum class TypeDescriptorRefKind {
@@ -489,7 +489,7 @@ struct TaggedMemberSpec {
 ///        `Generator::type_descriptor_ref_spec_for`
 ///        decides the reference *kind* (needs Generator-private
 ///        resolver/collision-tracking state — `resolver_`, `collision_types_`,
-///        `effective_cpp_name` — Backend has no access to), and
+///        `effective_type_name` — Backend has no access to), and
 ///        `Backend::format_type_descriptor_ref` renders the actual syntax,
 ///        so `tdref` is real per-backend text (empty/unused on RustBackend
 ///        today), not a C++-only assumption baked into this field.
@@ -738,12 +738,12 @@ public:
     ///       mental mapping between a file's module path and the type it
     ///       declares. Since this namespace is never separately folded, it
     ///       inherits the type-identifier namespace's own uniqueness
-    ///       guarantee (`Generator::effective_cpp_name`) for free — no
+    ///       guarantee (`Generator::effective_type_name`) for free — no
     ///       separate collision check needed for this namespace at all.
     /// @param final_type_name Already-resolved final type identifier (not
     ///                   the raw ASN.1 name) — the caller is expected to
     ///                   have already run type-namespace collision
-    ///                   disambiguation (`Generator::effective_cpp_name`)
+    ///                   disambiguation (`Generator::effective_type_name`)
     ///                   before asking for this namespace's own name.
     virtual std::string module_name(std::string_view final_type_name) const {
         return std::string(final_type_name);
