@@ -1180,17 +1180,17 @@ DefaultValueSpec Generator::default_value_spec_for(const ast::TypeDef& m) const 
 /// @param parent_cname C++ name of the enclosing SEQUENCE/SET type.
 /// @param mname        Sanitised C++ member name.
 /// @param os           Output stream for the generated `.cpp` file.
-/// @return "&_setdef_<parent>_<member>", or "nullptr" if `m` has no DEFAULT.
-std::string Generator::emit_default_setter(
+/// @return True iff a `_default()` helper was actually emitted for `m`.
+bool Generator::emit_default_setter(
     const ast::TypeDef& m, const std::string& parent_cname,
     const std::string& mname, TypeOutputSession& session)
 {
     auto spec = default_value_spec_for(m);
-    if (spec.kind == DefaultValueSpec::Kind::None) return "nullptr";
+    if (spec.kind == DefaultValueSpec::Kind::None) return false;
 
     std::string mtype = native_member_type_for(m);
     backend_.emit_default_setter(spec, mtype, parent_cname, mname, session);
-    return std::format("&_setdef_{}_{}", parent_cname, mname);
+    return true;
 }
 
 // True if any constraint carries a trailing '...' (X.680 §51.8.3) — including one
@@ -1354,7 +1354,8 @@ std::string Generator::emit_member_type_descriptor(
     if (!spec) return type_descriptor_ref_for(m);
     backend_.emit_member_type_descriptor(*spec, session);
     return backend_.format_type_descriptor_ref(
-        TypeDescriptorRefSpec{TypeDescriptorRefKind::MemberOwnTable, {}, spec->tname});
+        TypeDescriptorRefSpec{TypeDescriptorRefKind::MemberOwnTable, {},
+            backend_.member_descriptor_base_name(spec->parent_cname, spec->mname)});
 }
 
 /// @brief Decide the resolved MemberTypeDescriptorSpec for an inline-
@@ -1381,7 +1382,8 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
         if (ir.has_value) {
             MemberTypeDescriptorSpec spec;
             spec.kind = MemberTypeDescriptorSpec::Kind::Integer;
-            spec.tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
+            spec.parent_cname = parent_cname;
+            spec.mname = mname;
             int64_t lo = ir.lo, hi = ir.hi;
             spec.extensible = is_constraint_extensible(m);
             spec.storage_kind = classify_integer_storage(m);
@@ -1504,7 +1506,8 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
             case BT::ObjectDescriptor: tn = "ObjectDescriptor";   break;
             default: break;
             }
-            spec.tname = std::format("asn_TYP_{}_{}", parent_cname, mname);
+            spec.parent_cname = parent_cname;
+            spec.mname = mname;
             spec.xer_type_name = tn;
             spec.universal_tag = *utag;
             spec.xer_encoding = m.xer_encoding;
@@ -1981,7 +1984,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         row.is_explicit = tag_result.is_explicit;
         row.resolved_tag = tag_result.resolved_tag;
         row.tdref = emit_member_type_descriptor(m, cname, row.mname, session);
-        row.def_setter = emit_default_setter(m, cname, row.mname, session);
+        row.has_default_setter = emit_default_setter(m, cname, row.mname, session);
         row.has_default = (m.marker == ast::Marker::Default);
         if (!optional) {
             auto si = classify_member_setter(m);
