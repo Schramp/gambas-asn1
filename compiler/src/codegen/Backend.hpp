@@ -597,13 +597,11 @@ struct SequenceSpec : TaggedTypeSpec {
     std::vector<SequenceMemberSpec> members; // root members first, then extension members
 };
 
-/// @brief Backend-agnostic decision for one CHOICE alternative. Field
-///        groups are pass-specific (see SequenceMemberSpec's note on the
-///        same pattern): `mtype`/`accessor_name`/`pr_name` are read by
-///        emit_choice_declaration; `asn1_name`/`eff_tag`/`tdref`/`is_explicit` by
-///        emit_choice_definition. `mtype` is shared by both (same value, computed
-///        once): the accessor return type in the header, and the
-///        `ChoiceOps<T>` template parameter in the alternatives table.
+/// @brief Backend-agnostic decision for one CHOICE alternative, built in one
+///        canonical-order pass (Generator::emit_choice_definition). `mtype`
+///        is read by both emit_choice_declaration (accessor return type)
+///        and emit_choice_definition (the `ChoiceOps<T>` template
+///        parameter in the alternatives table) — same value, computed once.
 struct ChoiceAlternativeSpec : TaggedMemberSpec {
     std::string mtype;
     std::string accessor_name;
@@ -619,11 +617,10 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
     // of MemberAccess::TaggedScalar.
 };
 
-/// @brief Backend-agnostic decision for one CHOICE type (X.680 §28). The
-///        `.hpp` and `.cpp` passes build independent `alternatives` lists
-///        (mirroring the original code's independent canonical-ordering
-///        computations for each — not unified here, to avoid any risk of
-///        introducing a reordering divergence between the two).
+/// @brief Backend-agnostic decision for one CHOICE type (X.680 §28). Built
+///        whole by Generator::emit_choice_definition's single canonical-
+///        order pass (canonical_choice_members()) — emit_choice_declaration
+///        only emits #includes, consuming no part of this spec.
 /// @note `tag_index_table`/`ber_tags` are raw resolved data (same
 ///       convention as every other spec) — Generator's existing
 ///       density-heuristic / tag-flattening decision logic (X.691 §22.6)
