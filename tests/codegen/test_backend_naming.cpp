@@ -124,9 +124,9 @@ int main() {
         check("emit_enumerated: Rust produces a real enum (not a stub)",
               rust_hpp.find("pub enum MyEnum") != std::string::npos,
               rust_hpp);
-        check("emit_enumerated: Rust variants use declared values, UpperCamelCase",
-              rust_hpp.find("Foo = 0") != std::string::npos &&
-              rust_hpp.find("Bar = 1") != std::string::npos,
+        check("emit_enumerated: Rust variants use declared values, ASN.1 name preserved verbatim (#634)",
+              rust_hpp.find("foo = 0") != std::string::npos &&
+              rust_hpp.find("bar = 1") != std::string::npos,
               rust_hpp);
         check("emit_enumerated: C++ produces EnumSpec + TypeDescriptor",
               cpp_cpp.find("asn_SPC") != std::string::npos &&
@@ -134,7 +134,7 @@ int main() {
               cpp_cpp);
         check("emit_enumerated: Rust produces a value-lookup impl",
               rust_cpp.find("impl std::convert::TryFrom<i64> for MyEnum") != std::string::npos &&
-              rust_cpp.find("0 => Ok(MyEnum::Foo)") != std::string::npos,
+              rust_cpp.find("0 => Ok(MyEnum::foo)") != std::string::npos,
               rust_cpp);
         check("emit_enumerated: Rust produces a real validate() reusing the MAP table",
               rust_cpp.find("fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {\n"
@@ -461,14 +461,14 @@ int main() {
         check("emit_choice: C++ produces an alternatives table",
               cpp_cpp.find("const asn1::MemberDescriptor MyChoice::s_alternatives[]") != std::string::npos,
               cpp_cpp);
-        check("emit_choice: Rust produces a real enum with variant payloads (not a stub)",
+        check("emit_choice: Rust produces a real enum with variant payloads, ASN.1 name preserved verbatim (#634)",
               rust_hpp.find("pub enum MyChoice {") != std::string::npos &&
-              rust_hpp.find("Num(int64_t),") != std::string::npos &&
-              rust_hpp.find("Label(String),") != std::string::npos,
+              rust_hpp.find("num(int64_t),") != std::string::npos &&
+              rust_hpp.find("label(String),") != std::string::npos,
               rust_hpp);
         check("emit_choice: Rust produces real exhaustive-match accessor functions",
               rust_cpp.find("pub fn my_choice_get_num(x: &mut MyChoice) -> &mut int64_t {") != std::string::npos &&
-              rust_cpp.find("match x { MyChoice::Num(v) => v, _ => panic!(\"wrong variant\") }") != std::string::npos &&
+              rust_cpp.find("match x { MyChoice::num(v) => v, _ => panic!(\"wrong variant\") }") != std::string::npos &&
               rust_cpp.find("pub fn my_choice_get_label(x: &mut MyChoice) -> &mut String {") != std::string::npos,
               rust_cpp);
     }
