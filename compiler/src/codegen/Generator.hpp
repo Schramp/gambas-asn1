@@ -518,9 +518,10 @@ private:
     };
 
     // For DEFAULT members in SEQUENCE/SET: emits a static helper that sets the
-    // optional and writes the DEFAULT value. Returns "&_setdef_..." or "nullptr".
-    std::string emit_default_setter(const ast::TypeDef& m, const std::string& parent_cname,
-                                    const std::string& mname, TypeOutputSession& session);
+    // optional and writes the DEFAULT value. Returns true iff a helper was
+    // actually emitted (some DEFAULT kinds aren't representable yet).
+    bool emit_default_setter(const ast::TypeDef& m, const std::string& parent_cname,
+                             const std::string& mname, TypeOutputSession& session);
     /// @brief Decide which DEFAULT value (X.680 §25.1) applies to a member, if any.
     /// @param m Member to inspect.
     /// @return The decision as plain data. `Kind::None` covers: no DEFAULT

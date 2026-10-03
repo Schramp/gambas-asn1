@@ -960,15 +960,15 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
 /// @param os   Output stream to write to.
 /// @note FROM-alphabet-only members and members whose only constraint is a
 ///       non-default XER encoding produce no Rust output — same "no runtime
-///       wiring yet" scope as emit_builtin_alias_definition. `spec.tname` follows
-///       CppBackend's static-variable naming convention
-///       ("asn_TYP_Parent_member"); reused as the Rust fn name base via
-///       to_snake_case, same coincidental-overlap rationale as type_name/
-///       synthetic_name.
+///       wiring yet" scope as emit_builtin_alias_definition. Builds its own
+///       constant-name base from `spec.parent_cname`/`spec.mname` via
+///       member_descriptor_base_name() — its own naming convention,
+///       independent of whatever text CppBackend's own implementation
+///       of that method produces.
 void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
     std::ostream& os = session.buffer(definition_extension());
     using Kind = MemberTypeDescriptorSpec::Kind;
-    std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(spec.tname));
+    std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(member_descriptor_base_name(spec.parent_cname, spec.mname)));
     if (spec.kind == Kind::Integer) {
         // Plain `static` data, not a generated per-member function — all
         // constraints are table based, never in code, so a parser/tool can
@@ -1026,7 +1026,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // FROM-alphabet-only or custom-XER-only member with no SIZE constraint
     // (Generator::build_member_type_descriptor_spec's Sizeable branch:
     // `if (sr || !alphabet.empty() || needs_xer)`), and RustBackend's own
-    // member-row loop only has `tdref`'s "&asn_TYP_..." prefix to tell
+    // member-row loop only has `tdref` being non-empty to tell
     // whether *some* spec was built for this member — not whether the
     // SIZE constraint within it is real. Keeping this table unconditional
     // (flags=0 when unconstrained, same as `Constraints::default()`) keeps
@@ -1061,7 +1061,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     int alphabet_bits = 0;
     if (!spec.alphabet.empty()) {
         alphabet_bits = Backend::alphabet_bits_for(static_cast<int>(spec.alphabet.size()));
-        std::string enc_ident = std::format("{}_ENC", to_screaming_snake_case(spec.tname));
+        std::string enc_ident = std::format("{}_ENC", to_screaming_snake_case(member_descriptor_base_name(spec.parent_cname, spec.mname)));
         std::array<uint16_t, 256> table;
         table.fill(0xFFFFu);
         for (size_t i = 0; i < spec.alphabet.size(); ++i) table[spec.alphabet[i]] = static_cast<uint16_t>(i);
@@ -1078,7 +1078,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         // ordinal -> character) — `per::strings::decode_string`'s own
         // table, `spec.alphabet` already sorted ascending by
         // `extract_from_alphabet` (its own doc).
-        std::string alpha_ident = std::format("{}_ALPHA", to_screaming_snake_case(spec.tname));
+        std::string alpha_ident = std::format("{}_ALPHA", to_screaming_snake_case(member_descriptor_base_name(spec.parent_cname, spec.mname)));
         os << std::format("static {}: [u8; {}] = [", alpha_ident, spec.alphabet.size());
         for (size_t i = 0; i < spec.alphabet.size(); ++i)
             os << std::format("{}{}", spec.alphabet[i], i + 1 < spec.alphabet.size() ? ", " : "");
@@ -1354,10 +1354,11 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 /// @param os   Output stream to write to.
 /// @note `spec.members[i].mtype` is treated as an opaque, already-Rust-
 ///       shaped type name string, always a real `Generator::native_member_type_for()`
-///       value under `--target=rust`. `ops`/`tdref`/`def_setter`/`offset_expr` are
-///       C++-runtime-only (per SequenceMemberSpec's own doc) and unused
-///       here; optional members become `Option<T>` rather than C++'s
-///       `unique_ptr<T>`, Rust's natural equivalent.
+///       value under `--target=rust`. `ops`/`offset_expr` are C++-runtime-only
+///       (per SequenceMemberSpec's own doc) and unused here; optional members
+///       become `Option<T>` rather than C++'s `unique_ptr<T>`, Rust's
+///       natural equivalent. `tdref`/`has_default_setter` are genuinely
+///       backend-agnostic raw data, and are used.
 /// @brief Does `m` get a real access closure (Scalar/TaggedScalar/
 ///        ExplicitScalar/SeqOf), or an `Unsupported` stub?
 ///        Every SEQUENCE/SET always gets a full table now regardless of the
@@ -1584,17 +1585,18 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // DEFAULT value (X.680 §25.1) — `m.has_default` alone doesn't
             // guarantee `Generator::emit_default_setter` actually emitted a
             // `_default()` function for it (a default value kind it can't
-            // represent leaves `m.def_setter == "nullptr"`, same sentinel
-            // CppBackend itself already gates on — see its own `has_default
-            // && def_setter != "nullptr"` check); only the function-name
-            // *text* is C++-only (`&_setdef_...`), so this reuses the
-            // boolean signal without needing a new Generator.cpp field.
+            // represent leaves `m.has_default_setter` false, same signal
+            // CppBackend itself gates its own `&_setdef_.../&_isdef_...`
+            // text on — see its own `has_default_setter` check). A plain
+            // bool is all this side ever needs — the reference-expression
+            // text to the emitted function is C++-only, built by
+            // CppBackend itself, never consumed here.
             // `emit_default_setter` (above) already emitted the real
             // `{parent}_{member}_default()` free function under this exact
             // name whenever this condition holds.
             std::string set_default_expr = "None";
             std::string is_default_equal_expr = "None";
-            if (m.has_default && m.def_setter != "nullptr") {
+            if (m.has_default && m.has_default_setter) {
                 std::string fname = escape(std::format("{}_{}_default", to_snake_case(spec.type_name), m.mname));
                 set_default_expr = std::format("Some(|v| v.{} = Some({}()))", m.mname, fname);
                 // X.690 §11.5 — a member whose value equals the schema
@@ -1705,13 +1707,15 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // only INT_S64/INT_U64 storage gets one for INTEGER (see that
             // emitter's own doc). No dedicated field needed to detect
             // this: `tdref` (already set on every row, both backends) is
-            // `"&" + tname` — the exact "asn_TYP_{parent}_{member}" text —
-            // only when `build_member_type_descriptor_spec` actually built
-            // a spec for this member; the plain/TypeRef-aliased/no-
-            // constraint fallback (`type_descriptor_ref_for`) never
-            // produces that prefix. `cname` itself is recomputed from
-            // `tname`'s deterministic naming, not read back off stored
-            // data — same table `constraints::validate_s64`/`validate_u64`/
+            // non-empty only when `build_member_type_descriptor_spec`
+            // actually built a spec for this member; the plain/TypeRef-
+            // aliased/no-constraint fallback (`type_descriptor_ref_for`)
+            // leaves it empty. The Rust constant name itself is rebuilt
+            // here via `member_descriptor_base_name` — not read back off
+            // `tdref`'s own text, which is CppBackend's reference syntax,
+            // not a name RustBackend can parse — same
+            // deterministic (parent, member) pair, same table
+            // `constraints::validate_s64`/`validate_u64`/
             // `validate_size` (rust-runtime/wire/src/constraints.rs) read,
             // never a per-member generated function.
             // `m.optional` also covers a DEFAULT-valued member (X.680
@@ -1726,7 +1730,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // (`sequence.rs`) already give a `set_default`-less absent
             // member.
             // The declaration's own Constraints table, when this member has
-            // one (`tdref` is "&" + tname only when
+            // one (`tdref` non-empty only when
             // `build_member_type_descriptor_spec` built a spec for it): the
             // walker hands it to the member's `Asn1Value::validate` through
             // the row's own accessor, so no per-kind closure is needed —
@@ -1744,7 +1748,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                  *m.mbuiltin == ast::BuiltinType::OctetString || *m.mbuiltin == ast::BuiltinType::BitString ||
                  is_sizeable_string_kind(*m.mbuiltin))) {
                 constraints_expr = std::format("Some(&{}_CONSTRAINTS)",
-                    to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, m.mname)));
+                    to_screaming_snake_case(member_descriptor_base_name(spec.type_name, m.mname)));
             } else if (m.seq_of_kind != SeqOfKind::None) {
                 // Inline SEQUENCE OF/SET OF member: the field's own Rust
                 // type is the generic `SeqOf<T>`/`SetOf<T>` wrapper shared
@@ -2115,7 +2119,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             // `tdref` names one, the shared unconstrained value otherwise.
             std::string alt_constraints = "&asn1cpp_wire::constraints::UNCONSTRAINED";
             if (a.mbuiltin && !a.tdref.empty()) {
-                alt_constraints = "&" + to_screaming_snake_case(std::format("asn_TYP_{}_{}", spec.type_name, unescape_raw_ident(a.accessor_name))) + "_CONSTRAINTS";
+                alt_constraints = "&" + to_screaming_snake_case(member_descriptor_base_name(spec.type_name, unescape_raw_ident(a.accessor_name))) + "_CONSTRAINTS";
             }
             // A single-variant enum (not extensible) needs an irrefutable
             // `let` instead of `match`, which would warn on its wildcard arm.

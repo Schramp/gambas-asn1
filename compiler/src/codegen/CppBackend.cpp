@@ -670,7 +670,7 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
         "{{ \"{}\", asn1::Tag::universal({}, false), "
         "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, {}, {}, "
         "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}){}}};\n",
-        spec.tname, spec.xer_type_name, spec.universal_tag, pc,
+        member_descriptor_base_name(spec.parent_cname, spec.mname), spec.xer_type_name, spec.universal_tag, pc,
         per_h, ber_h, cpp_t, xer_tail);
 }
 
@@ -820,15 +820,17 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
     if (spec.mcount > 0) {
         os << std::format("const asn1::MemberDescriptor {}::s_members[] = {{\n", cname);
         for (const auto& r : spec.members) {
-            // Emit &_isdef_… reference only when the default-value helper
-            // pair was actually emitted. emit_default_setter() returns
-            // "nullptr" (no _setdef_/_isdef_ generated) for default-value
-            // forms it doesn't understand yet — INTEGER with named values,
-            // arbitrary IntegerLiteral, etc. Without this gate the member
-            // table would reference an undefined _isdef_ symbol.
-            std::string def_cmp = (r.has_default && r.def_setter != "nullptr")
-                ? std::format("&_isdef_{}_{}", cname, r.mname)
-                : "nullptr";
+            // Emit &_setdef_…/&_isdef_… references only when the
+            // default-value helper pair was actually emitted
+            // (has_default_setter) — some default-value forms aren't
+            // representable yet (INTEGER with named values, arbitrary
+            // IntegerLiteral, etc.). Without this gate the member table
+            // would reference an undefined symbol. The reference text
+            // itself is built here from cname/r.mname, already in scope.
+            std::string def_setter = r.has_default_setter
+                ? std::format("&_setdef_{}_{}", cname, r.mname) : "nullptr";
+            std::string def_cmp = r.has_default_setter
+                ? std::format("&_isdef_{}_{}", cname, r.mname) : "nullptr";
             // offset_expr/ops are derivable here from cname/r.mname/r.optional
             // alone, no Generator-private state needed.
             std::string offset_expr = r.optional ? "asn1::kInvalidMemberOffset"
@@ -844,7 +846,7 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
                 r.tdref, ops,
                 r.is_explicit ? "true" : "false",
                 (r.resolved_tag && r.resolved_tag->tag_is_override) ? "true" : "false",
-                r.def_setter, def_cmp);
+                def_setter, def_cmp);
         }
         os << "};\n";
         os << std::format("const int {}::s_member_count = {};\n\n", cname, spec.mcount);
