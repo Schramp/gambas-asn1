@@ -568,7 +568,11 @@ void Generator::collect_class_types_reachable(const ast::TypeDef& from, std::set
             auto concrete = resolver_.resolve_ref(*tr, current_module_);
             if (concrete && (concrete->is_sequence() || concrete->is_choice() || concrete->is_set())) {
                 member_def = concrete.get();
-                member_key = effective_cpp_name(concrete->name, current_module_);
+                // cpp_name_for_typeref, not effective_cpp_name(concrete->name,
+                // current_module_) — `tr` may be a cross-module reference
+                // (gambas-asn1#643); current_module_ is only correct when
+                // `concrete` happens to be locally defined.
+                member_key = cpp_name_for_typeref(*tr);
             }
         }
         if (!member_def) continue;
@@ -577,15 +581,19 @@ void Generator::collect_class_types_reachable(const ast::TypeDef& from, std::set
     }
 }
 
-std::vector<std::string> Generator::collect_extra_includes_for(const std::string& elem_type_name,
+std::vector<std::string> Generator::collect_extra_includes_for(const ast::TypeRef& elem_ref,
                                                                  const std::string& self_name) const {
-    ast::TypeRef elem_ref;
-    elem_ref.type_name = elem_type_name;
     auto concrete = resolver_.resolve_ref(elem_ref, current_module_);
     if (!concrete || !(concrete->is_sequence() || concrete->is_choice() || concrete->is_set()))
         return {};
     std::set<std::string> reachable;
-    reachable.insert(effective_cpp_name(concrete->name, current_module_));
+    // cpp_name_for_typeref (not effective_cpp_name(concrete->name,
+    // current_module_)) — elem_ref may be an IMPORTS-resolved cross-module
+    // reference (gambas-asn1#643: a plain-string reconstruction here used
+    // to lose that module context, naming the #include after whichever
+    // module is currently being generated instead of the one that actually
+    // defines the type).
+    reachable.insert(cpp_name_for_typeref(elem_ref));
     collect_class_types_reachable(*concrete, reachable);
     reachable.erase(self_name);
     // An anonymous inline member's "$anon:<ptr>" placeholder (see
@@ -1869,7 +1877,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             std::set<std::string> visited;
             if (!type_reaches_via_containers(*concrete, cname, visited)) return;
             auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-            for (const auto& extra : collect_extra_includes_for(tr->type_name, cname)) {
+            for (const auto& extra : collect_extra_includes_for(*tr, cname)) {
                 write_type_reference(extra, inc_os);
                 emitted_extra = true;
             }
@@ -2799,7 +2807,7 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
             if (concrete && (concrete->is_sequence() || concrete->is_choice() || concrete->is_set())) {
                 std::ostream& inc_os = session.buffer(backend_.definition_extension());
                 bool emitted_extra = false;
-                for (const auto& extra : collect_extra_includes_for(tr->type_name, cname)) {
+                for (const auto& extra : collect_extra_includes_for(*tr, cname)) {
                     write_type_reference(extra, inc_os);
                     emitted_extra = true;
                 }
