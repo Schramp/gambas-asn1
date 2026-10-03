@@ -7,3 +7,11 @@ description = "Native Rust BER/XER/PER codec primitives, merged into one crate a
 [lib]
 name = "asn1cpp_wire"
 path = "src/lib.rs"
+
+[dependencies]
+# SSO backing for OctetString/char-string newtypes (octet_string.rs,
+# strings.rs) — matches C++'s OctetString using std::string specifically
+# for its SSO (runtime/include/asn1cpp/types/OctetString.hpp), which
+# Vec<u8>/String have no equivalent of.
+smallvec = "1.16.2"
+compact_str = "0.10.0"

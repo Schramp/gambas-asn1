@@ -328,12 +328,12 @@ impl Choice {
 
     #[test]
     fn encodes_data_alternative() {
-        assert_eq!(Choice::Data(crate::octet_string::OctetString(vec![1, 2, 3])).encode(), vec![0x04, 0x03, 0x01, 0x02, 0x03]);
+        assert_eq!(Choice::Data(crate::octet_string::OctetString(vec![1, 2, 3].into())).encode(), vec![0x04, 0x03, 0x01, 0x02, 0x03]);
     }
 
     #[test]
     fn round_trips_both_alternatives() {
-        for c in [Choice::Num(Integer(-42)), Choice::Data(crate::octet_string::OctetString(vec![0xAA, 0xBB]))] {
+        for c in [Choice::Num(Integer(-42)), Choice::Data(crate::octet_string::OctetString(vec![0xAA, 0xBB].into()))] {
             let bytes = c.encode();
             assert_eq!(Choice::decode(&bytes).unwrap(), c);
         }
@@ -379,12 +379,12 @@ impl Choice {
 
     #[test]
     fn xer_encodes_data_alternative() {
-        assert_eq!(Choice::Data(crate::octet_string::OctetString(vec![0x68, 0x69])).encode_xer(), "<Choice>\n    <data>6869</data>\n</Choice>\n");
+        assert_eq!(Choice::Data(crate::octet_string::OctetString(vec![0x68, 0x69].into())).encode_xer(), "<Choice>\n    <data>6869</data>\n</Choice>\n");
     }
 
     #[test]
     fn xer_round_trips_both_alternatives() {
-        for c in [Choice::Num(Integer(-42)), Choice::Data(crate::octet_string::OctetString(vec![0xAA, 0xBB]))] {
+        for c in [Choice::Num(Integer(-42)), Choice::Data(crate::octet_string::OctetString(vec![0xAA, 0xBB].into()))] {
             let xml = c.encode_xer();
             assert_eq!(Choice::decode_xer(&xml).unwrap(), c);
         }
@@ -457,8 +457,8 @@ impl Choice {
 
     #[test]
     fn explicit_disambiguates_two_alternatives_of_the_same_builtin_kind() {
-        let first = TwoOctetsExplicit::First(crate::octet_string::OctetString(vec![0xAA]));
-        let second = TwoOctetsExplicit::Second(crate::octet_string::OctetString(vec![0xAA])); // same content, different alternative
+        let first = TwoOctetsExplicit::First(crate::octet_string::OctetString(vec![0xAA].into()));
+        let second = TwoOctetsExplicit::Second(crate::octet_string::OctetString(vec![0xAA].into())); // same content, different alternative
 
         let enc_first = encode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &first);
         let enc_second = encode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &second);
@@ -470,11 +470,11 @@ impl Choice {
         assert_ne!(enc_first, enc_second);
 
         match decode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &enc_first).unwrap() {
-            TwoOctetsExplicit::First(v) => assert_eq!(v.0, vec![0xAA]),
+            TwoOctetsExplicit::First(v) => assert_eq!(v.0.to_vec(), vec![0xAA]),
             TwoOctetsExplicit::Second(_) => panic!("misdecoded First as Second"),
         }
         match decode_choice(&TWO_OCTETS_EXPLICIT_SPEC, &enc_second).unwrap() {
-            TwoOctetsExplicit::Second(v) => assert_eq!(v.0, vec![0xAA]),
+            TwoOctetsExplicit::Second(v) => assert_eq!(v.0.to_vec(), vec![0xAA]),
             TwoOctetsExplicit::First(_) => panic!("misdecoded Second as First"),
         }
     }
@@ -704,7 +704,7 @@ impl Choice {
 
     #[test]
     fn untagged_choice_of_choice_alternative_round_trips_every_flattened_tag() {
-        for v in [Outer::Wrapped(Inner::A(Integer(5))), Outer::Wrapped(Inner::B(Integer(-3))), Outer::Direct(crate::octet_string::OctetString(vec![1, 2, 3]))] {
+        for v in [Outer::Wrapped(Inner::A(Integer(5))), Outer::Wrapped(Inner::B(Integer(-3))), Outer::Direct(crate::octet_string::OctetString(vec![1, 2, 3].into()))] {
             let bytes = v.encode();
             assert_eq!(Outer::decode(&bytes).unwrap(), v);
         }

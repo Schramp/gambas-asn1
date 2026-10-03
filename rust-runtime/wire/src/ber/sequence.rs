@@ -1379,7 +1379,7 @@ impl DefaultPoint {
     fn encode_of_an_in_range_size_member_does_not_bump_the_validate_counter() {
         let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
         crate::validate::reset_validate_fail_count();
-        let b = SizedBlob { data: crate::octet_string::OctetString(vec![1, 2]) };
+        let b = SizedBlob { data: crate::octet_string::OctetString(vec![1, 2].into()) };
         let _ = encode_sequence(&SIZED_BLOB_SPEC, &b);
         assert_eq!(crate::validate::validate_fail_count(), 0);
     }
@@ -1388,7 +1388,7 @@ impl DefaultPoint {
     fn encode_of_a_too_long_size_member_bumps_the_validate_counter() {
         let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
         crate::validate::reset_validate_fail_count();
-        let b = SizedBlob { data: crate::octet_string::OctetString(vec![1, 2, 3, 4, 5]) };
+        let b = SizedBlob { data: crate::octet_string::OctetString(vec![1, 2, 3, 4, 5].into()) };
         let _ = encode_sequence(&SIZED_BLOB_SPEC, &b);
         assert_eq!(crate::validate::validate_fail_count(), 1);
     }
@@ -1397,7 +1397,7 @@ impl DefaultPoint {
     fn encode_of_a_too_short_size_member_bumps_the_validate_counter() {
         let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
         crate::validate::reset_validate_fail_count();
-        let b = SizedBlob { data: crate::octet_string::OctetString(vec![]) };
+        let b = SizedBlob { data: crate::octet_string::OctetString(vec![].into()) };
         let _ = encode_sequence(&SIZED_BLOB_SPEC, &b);
         assert_eq!(crate::validate::validate_fail_count(), 1);
     }

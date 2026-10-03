@@ -831,7 +831,7 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << "        out.push_str(&asn1cpp_wire::octet_string::base64_encode(&self.0));\n";
         os << "    }\n\n";
         os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        self.0.0 = asn1cpp_wire::octet_string::base64_decode(&r.read_text_content());\n";
+        os << "        self.0.0 = asn1cpp_wire::octet_string::base64_decode(&r.read_text_content()).into();\n";
         os << "        Ok(())\n";
         os << "    }\n";
     } else if (spec.xer_encoding == ast::XerEncoding::Utf8) {
@@ -839,7 +839,7 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << "        asn1cpp_wire::octet_string::utf8_encode(&self.0, out);\n";
         os << "    }\n\n";
         os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        self.0.0 = asn1cpp_wire::octet_string::utf8_decode(r)?;\n";
+        os << "        self.0.0 = asn1cpp_wire::octet_string::utf8_decode(r)?.into();\n";
         os << "        Ok(())\n";
         os << "    }\n";
     } else {
@@ -892,15 +892,15 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
                 cname);
             os << std::format(
                 "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
-                "        self.0 = asn1cpp_wire::octet_string::OctetString(asn1cpp_wire::per::octet_string::decode_octet_string(r, &{0})?);\n"
+                "        self.0 = asn1cpp_wire::octet_string::OctetString(asn1cpp_wire::per::octet_string::decode_octet_string(r, &{0})?.into());\n"
                 "        Ok(())\n    }}\n",
                 cname);
         } else {
             std::string tag_num = std::format("<{} as asn1cpp_wire::type_tag::TypeTag>::TAG.unwrap().number", native_builtin_type(spec.builtin_type));
             bool wide = spec.builtin_type == BT::BmpString || spec.builtin_type == BT::UniversalString;
             std::string bytes_expr = wide ? "&self.0.0" : "self.0.as_bytes()";
-            std::string ctor = wide ? std::format("{}(x)", native_builtin_type(spec.builtin_type))
-                              : std::format("{}(String::from_utf8(x).unwrap_or_default())", native_builtin_type(spec.builtin_type));
+            std::string ctor = wide ? std::format("{}(x.into())", native_builtin_type(spec.builtin_type))
+                              : std::format("{}(String::from_utf8(x).unwrap_or_default().into())", native_builtin_type(spec.builtin_type));
             os << std::format(
                 "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
                 "        if let Err(e) = asn1cpp_wire::per::strings::encode_string(w, &{0}, {1}, {2}) {{ w.set_encode_failed(&e.message); }}\n    }}\n",
@@ -970,7 +970,7 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
     }
     case Kind::String:
         rust_type = "asn1cpp_wire::strings::Ia5String";
-        literal = std::format("asn1cpp_wire::strings::Ia5String(\"{}\".to_string())", escape_string_literal(spec.string_val));
+        literal = std::format("asn1cpp_wire::strings::Ia5String(\"{}\".into())", escape_string_literal(spec.string_val));
         break;
     case Kind::EnumRef:
         rust_type = type_name;

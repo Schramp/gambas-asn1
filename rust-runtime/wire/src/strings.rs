@@ -53,12 +53,22 @@ use crate::ber::tag::{universal, Tag};
 use crate::value::Asn1Value;
 use crate::ber::writer::write_primitive;
 use crate::xer::XerReader;
+use compact_str::CompactString;
+use smallvec::SmallVec;
 
 /// Content octets only (X.690 §8.7 — the raw UTF-8 bytes) — shared by every
 /// character string kind, `IA5String` included. `kind` is only used to name
 /// the offending type in a decode error message.
-pub(crate) fn decode_string_content(content: &[u8], kind: &str) -> Result<String, DecodeError> {
-    String::from_utf8(content.to_vec()).map_err(|_| DecodeError::new(format!("{kind}: invalid UTF-8"), 0))
+///
+/// Validates via `str::from_utf8` on the borrowed slice, then converts
+/// straight to `CompactString` — unlike `String::from_utf8(content.to_vec())`,
+/// this never allocates for a short value (stays inline in `CompactString`'s
+/// own SSO buffer), matching C++'s `std::string`-backed `OctetString`
+/// (`runtime/include/asn1cpp/types/OctetString.hpp`).
+pub(crate) fn decode_string_content(content: &[u8], kind: &str) -> Result<CompactString, DecodeError> {
+    std::str::from_utf8(content)
+        .map(CompactString::from)
+        .map_err(|_| DecodeError::new(format!("{kind}: invalid UTF-8"), 0))
 }
 
 pub fn write_ia5_string(out: &mut Vec<u8>, value: &str) {
@@ -70,7 +80,7 @@ pub fn read_ia5_string(r: &mut Reader) -> Result<String, DecodeError> {
     if tlv.tag != IA5_STRING_TAG {
         return Err(DecodeError::new(format!("expected IA5String tag, got {:?}", tlv.tag), r.pos()));
     }
-    decode_string_content(tlv.value, "IA5String")
+    decode_string_content(tlv.value, "IA5String").map(|s| s.into())
 }
 
 /// Shared bytes-in/bytes-out logic for every character string kind — the
@@ -90,7 +100,7 @@ pub fn read_char_string(r: &mut Reader, tag: Tag, kind: &str) -> Result<String, 
     if tlv.tag != tag {
         return Err(DecodeError::new(format!("expected {kind} tag, got {:?}", tlv.tag), r.pos()));
     }
-    decode_string_content(tlv.value, kind)
+    decode_string_content(tlv.value, kind).map(|s| s.into())
 }
 
 /// Define one restricted-character-string newtype: its tag constant, the
@@ -105,15 +115,15 @@ pub fn read_char_string(r: &mut Reader, tag: Tag, kind: &str) -> Result<String, 
 /// needing to know or care that the value is wrapped.
 macro_rules! char_string_type {
     ($name:ident, $tag_const:ident, $tag_num:expr, $asn1_name:expr) => {
-        #[doc = concat!("`", $asn1_name, "` — X.680 §41. Newtype over `String`; see the module doc for why.")]
+        #[doc = concat!("`", $asn1_name, "` — X.680 §41. Newtype over `CompactString`; see the module doc for why.")]
         pub const $tag_const: Tag = Tag::universal($tag_num, false);
 
         #[derive(Debug, Clone, Default, PartialEq, Eq)]
-        pub struct $name(pub String);
+        pub struct $name(pub CompactString);
 
         impl std::ops::Deref for $name {
-            type Target = String;
-            fn deref(&self) -> &String {
+            type Target = str;
+            fn deref(&self) -> &str {
                 &self.0
             }
         }
@@ -123,7 +133,7 @@ macro_rules! char_string_type {
         }
 
         impl std::ops::DerefMut for $name {
-            fn deref_mut(&mut self) -> &mut String {
+            fn deref_mut(&mut self) -> &mut str {
                 &mut self.0
             }
         }
@@ -152,7 +162,11 @@ macro_rules! char_string_type {
 
             fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
                 let text = r.read_text_content();
-                self.0 = crate::xer::unescape(text);
+                // xer::unescape always returns an owned String (it has to
+                // build the unescaped text incrementally); not zero-copy
+                // like decode_string_content above, but XER isn't the
+                // profiled hot path this change targets.
+                self.0 = crate::xer::unescape(text).into();
                 Ok(())
             }
 
@@ -166,7 +180,7 @@ macro_rules! char_string_type {
                 c: &crate::constraints::Constraints,
             ) -> Result<(), crate::per::reader::DecodeError> {
                 let x = crate::per::strings::decode_string(r, c, $tag_num)?;
-                self.0 = String::from_utf8(x).unwrap_or_default();
+                self.0 = String::from_utf8(x).unwrap_or_default().into();
                 Ok(())
             }
 
@@ -237,17 +251,17 @@ macro_rules! wide_char_string_type {
         pub const $tag_const: Tag = Tag::universal($tag_num, false);
 
         #[derive(Debug, Clone, Default, PartialEq, Eq)]
-        pub struct $name(pub Vec<u8>);
+        pub struct $name(pub SmallVec<[u8; 23]>);
 
         impl std::ops::Deref for $name {
-            type Target = Vec<u8>;
-            fn deref(&self) -> &Vec<u8> {
+            type Target = [u8];
+            fn deref(&self) -> &[u8] {
                 &self.0
             }
         }
 
         impl std::ops::DerefMut for $name {
-            fn deref_mut(&mut self) -> &mut Vec<u8> {
+            fn deref_mut(&mut self) -> &mut [u8] {
                 &mut self.0
             }
         }
@@ -270,7 +284,10 @@ macro_rules! wide_char_string_type {
             }
 
             fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-                self.0 = content.to_vec();
+                // SmallVec::from_slice: no intermediate Vec<u8> allocation
+                // for a short value, same reasoning as OctetString's own
+                // ber_decode_content (octet_string.rs).
+                self.0 = SmallVec::from_slice(content);
                 Ok(())
             }
 
@@ -280,7 +297,7 @@ macro_rules! wide_char_string_type {
 
             fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
                 let text = r.read_text_content();
-                self.0 = decode_wide_string_xer(&crate::xer::unescape(text), $bpc);
+                self.0 = decode_wide_string_xer(&crate::xer::unescape(text), $bpc).into();
                 Ok(())
             }
 
@@ -293,7 +310,7 @@ macro_rules! wide_char_string_type {
                 r: &mut crate::per::reader::Reader,
                 c: &crate::constraints::Constraints,
             ) -> Result<(), crate::per::reader::DecodeError> {
-                self.0 = crate::per::strings::decode_string(r, c, $tag_num)?;
+                self.0 = crate::per::strings::decode_string(r, c, $tag_num)?.into();
                 Ok(())
             }
 
@@ -356,14 +373,14 @@ mod tests {
     #[test]
     fn numeric_string_ber_round_trips_and_uses_its_own_tag() {
         let mut buf = Vec::new();
-        NumericString("12345".to_string()).ber_encode(&mut buf);
+        NumericString("12345".into()).ber_encode(&mut buf);
         // NUMERIC_STRING tag (0x12), not IA5String's (0x16).
         assert_eq!(buf, vec![0x12, 0x05, b'1', b'2', b'3', b'4', b'5']);
 
         let mut r = Reader::new(&buf);
         let mut got = NumericString::default();
         got.ber_decode_into(&mut r).unwrap();
-        assert_eq!(got, NumericString("12345".to_string()));
+        assert_eq!(got, NumericString("12345".into()));
     }
 
     #[test]
@@ -379,13 +396,13 @@ mod tests {
     #[test]
     fn printable_string_xer_round_trips() {
         let mut out = String::new();
-        PrintableString("a<b".to_string()).xer_encode(&mut out, 0);
+        PrintableString("a<b".into()).xer_encode(&mut out, 0);
         assert_eq!(out, "a&lt;b");
 
         let mut r = XerReader::new(&out);
         let mut got = PrintableString::default();
         got.xer_decode_into(&mut r).unwrap();
-        assert_eq!(got, PrintableString("a<b".to_string()));
+        assert_eq!(got, PrintableString("a<b".into()));
     }
 
     // ---- UtcTime/GeneralizedTime --------------------------
@@ -393,7 +410,7 @@ mod tests {
     #[test]
     fn utc_time_ber_round_trips_and_uses_its_own_tag() {
         let mut buf = Vec::new();
-        UtcTime("240115143000Z".to_string()).ber_encode(&mut buf);
+        UtcTime("240115143000Z".into()).ber_encode(&mut buf);
         // UTCTime tag (0x17), not IA5String's (0x16) or GeneralizedTime's (0x18).
         assert_eq!(buf[0], 0x17);
         assert_eq!(buf.len(), 2 + "240115143000Z".len());
@@ -401,19 +418,19 @@ mod tests {
         let mut r = Reader::new(&buf);
         let mut got = UtcTime::default();
         got.ber_decode_into(&mut r).unwrap();
-        assert_eq!(got, UtcTime("240115143000Z".to_string()));
+        assert_eq!(got, UtcTime("240115143000Z".into()));
     }
 
     #[test]
     fn generalized_time_ber_round_trips_and_uses_its_own_tag() {
         let mut buf = Vec::new();
-        GeneralizedTime("20240115143000Z".to_string()).ber_encode(&mut buf);
+        GeneralizedTime("20240115143000Z".into()).ber_encode(&mut buf);
         assert_eq!(buf[0], 0x18);
 
         let mut r = Reader::new(&buf);
         let mut got = GeneralizedTime::default();
         got.ber_decode_into(&mut r).unwrap();
-        assert_eq!(got, GeneralizedTime("20240115143000Z".to_string()));
+        assert_eq!(got, GeneralizedTime("20240115143000Z".into()));
     }
 
     #[test]
@@ -429,24 +446,24 @@ mod tests {
     #[test]
     fn utc_time_xer_round_trips() {
         let mut out = String::new();
-        UtcTime("240115143000Z".to_string()).xer_encode(&mut out, 0);
+        UtcTime("240115143000Z".into()).xer_encode(&mut out, 0);
         assert_eq!(out, "240115143000Z");
 
         let mut r = XerReader::new(&out);
         let mut got = UtcTime::default();
         got.xer_decode_into(&mut r).unwrap();
-        assert_eq!(got, UtcTime("240115143000Z".to_string()));
+        assert_eq!(got, UtcTime("240115143000Z".into()));
     }
 
     #[test]
     fn generalized_time_xer_round_trips() {
         let mut out = String::new();
-        GeneralizedTime("20240115143000Z".to_string()).xer_encode(&mut out, 0);
+        GeneralizedTime("20240115143000Z".into()).xer_encode(&mut out, 0);
         assert_eq!(out, "20240115143000Z");
 
         let mut r = XerReader::new(&out);
         let mut got = GeneralizedTime::default();
         got.xer_decode_into(&mut r).unwrap();
-        assert_eq!(got, GeneralizedTime("20240115143000Z".to_string()));
+        assert_eq!(got, GeneralizedTime("20240115143000Z".into()));
     }
 }

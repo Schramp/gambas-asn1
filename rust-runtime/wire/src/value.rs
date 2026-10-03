@@ -1218,19 +1218,19 @@ mod per_blanket_tests {
     #[test]
     fn octet_string_trait_path_roundtrips_and_validates_size() {
         let c = Constraints { flags: Constraints::SIZE_CONSTRAINED, size_range_bits: 2, size_lower: 1, size_upper: 3, ..Default::default() };
-        let v = crate::octet_string::OctetString(vec![1, 2]);
+        let v = crate::octet_string::OctetString(vec![1, 2].into());
         let enc = bytes_of(|w| v.per_encode(w, &c));
         let mut back = crate::octet_string::OctetString::default();
         back.per_decode_into(&mut Reader::new(&enc), &c).unwrap();
         assert_eq!(back, v);
-        assert_eq!(crate::octet_string::OctetString(vec![0; 5]).validate(&c), -2);
+        assert_eq!(crate::octet_string::OctetString(vec![0; 5].into()).validate(&c), -2);
     }
 
     #[test]
     fn string_kinds_use_their_own_tag_for_the_alphabet_width() {
         let c = crate::constraints::UNCONSTRAINED;
-        let num = crate::strings::NumericString("12345".to_string());
-        let ia5 = crate::strings::Ia5String("12345".to_string());
+        let num = crate::strings::NumericString("12345".into());
+        let ia5 = crate::strings::Ia5String("12345".into());
         // NumericString packs 4 bits/char, IA5String 7 — different lengths on the wire.
         assert_ne!(bytes_of(|w| num.per_encode(w, &c)), bytes_of(|w| ia5.per_encode(w, &c)));
         let mut back = crate::strings::NumericString::default();
@@ -1266,7 +1266,7 @@ mod per_blanket_tests {
     #[test]
     fn wide_string_trait_path_roundtrips_raw_bytes() {
         let c = crate::constraints::UNCONSTRAINED;
-        let v = crate::strings::BmpString(vec![0x00, 0x41, 0x00, 0x42]);
+        let v = crate::strings::BmpString(vec![0x00, 0x41, 0x00, 0x42].into());
         let enc = bytes_of(|w| v.per_encode(w, &c));
         let mut back = crate::strings::BmpString::default();
         back.per_decode_into(&mut Reader::new(&enc), &c).unwrap();
@@ -1708,7 +1708,7 @@ mod tests {
     #[test]
     fn string_ber_round_trips_through_the_trait() {
         let mut out = Vec::new();
-        crate::strings::Ia5String("hi".to_string()).ber_encode(&mut out);
+        crate::strings::Ia5String("hi".into()).ber_encode(&mut out);
         assert_eq!(out, vec![0x16, 0x02, 0x68, 0x69]);
 
         let mut r = Reader::new(&out);
@@ -1723,7 +1723,7 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "label");
-        crate::strings::Ia5String("a<b>&c".to_string()).xer_encode(&mut out, 0);
+        crate::strings::Ia5String("a<b>&c".into()).xer_encode(&mut out, 0);
         write_close_tag(&mut out, "label");
         assert_eq!(out, "<label>a&lt;b&gt;&amp;c</label>");
 
