@@ -286,6 +286,26 @@ static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind
     return false;
 }
 
+/// @brief Shared PER-coverage question for a builtin-or-TypeRef leaf —
+///        the part of `per_member_covered`/`per_alt_covered` that's
+///        identical for a SEQUENCE member and a CHOICE alternative (only
+///        the SEQUENCE-OF-shaped case, handled separately by each caller,
+///        differs between the two).
+/// @param mbuiltin     Builtin discriminant, unset for TypeRef/SEQUENCE/
+///                     CHOICE/ENUMERATED (TaggedMemberSpec's own doc).
+/// @param storage_kind INTEGER storage class; unused otherwise.
+/// @param ref_kind     Resolved TypeRef-target classification
+///                     (TaggedMemberSpec::RefTargetKind), unset for a
+///                     direct builtin.
+static bool per_ref_or_builtin_covered(std::optional<ast::BuiltinType> mbuiltin,
+                                        IntStorageKind storage_kind,
+                                        TaggedMemberSpec::RefTargetKind ref_kind) {
+    if (mbuiltin) return per_builtin_covered(*mbuiltin, storage_kind);
+    return ref_kind == TaggedMemberSpec::RefTargetKind::Enumerated ||
+           ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias ||
+           ref_kind == TaggedMemberSpec::RefTargetKind::Other;
+}
+
 /// @brief Does a SEQUENCE OF/SET OF element's own shape have a real
 ///        `Asn1Value::per_encode`/`per_decode_into`? Recurses through
 ///        nested collections to unbounded depth (`ElemShape::nested`),
@@ -1561,11 +1581,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // kind (not just INTEGER), so nothing new is needed there.
             return per_elem_shape_covered(m.elem_shape);
         }
-        if (m.mbuiltin)
-            return per_builtin_covered(*m.mbuiltin, m.storage_kind);
-        return m.ref_kind == SequenceMemberSpec::RefTargetKind::Enumerated ||
-               m.ref_kind == SequenceMemberSpec::RefTargetKind::IntegerAlias ||
-               m.ref_kind == SequenceMemberSpec::RefTargetKind::Other;
+        return per_ref_or_builtin_covered(m.mbuiltin, m.storage_kind, m.ref_kind);
     };
     // Human-readable reason baked into an Unsupported PER row's stub
     // panic message — mirrors the BER-side `stub_reason` lambda above,
@@ -2100,11 +2116,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         std::string spec_ident = std::format("{}_SPEC", spec.type_name);
 
         auto per_alt_covered = [](const ChoiceAlternativeSpec& a) -> bool {
-            if (a.mbuiltin)
-                return per_builtin_covered(*a.mbuiltin, a.storage_kind);
-            return a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Enumerated ||
-                   a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::IntegerAlias ||
-                   a.ref_kind == ChoiceAlternativeSpec::RefTargetKind::Other;
+            return per_ref_or_builtin_covered(a.mbuiltin, a.storage_kind, a.ref_kind);
         };
 
         os << "#[allow(non_upper_case_globals)]\n";
