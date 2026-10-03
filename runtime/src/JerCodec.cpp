@@ -1032,18 +1032,7 @@ void JerCodec::encode(IEncodeStream& dst,
                       const TypeDescriptor& def,
                       const Asn1Object* src) const
 {
-#if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_ENCODE)
-    if (!def.is_any && !(debug_flags() & DBG_NO_VALIDATE)) {
-        int64_t delta = validate(def, src);
-        if (delta != 0) {
-            bump_validate_fail();
-            record_validate_fail(def.name, delta, /*on_decode=*/false);
-            if (debug_flags() & DBG_VALIDATE_TRACE)
-                std::fprintf(stderr, "[VALIDATE-ENC][JER] %s delta=%lld\n",
-                    def.name, static_cast<long long>(delta));
-        }
-    }
-#endif
+    validate_on_encode("JER", def, src);
     auto& s = static_cast<JerEncodeStream&>(dst);
     if (def.kind == TypeKind::Primitive)
         // prim_dispatch_ is indexed by the type's NATURAL (universal) tag
@@ -1066,18 +1055,7 @@ DecodeResult JerCodec::decode(IDecodeStream& src,
         // See the matching comment in encode() above.
         ? prim_dispatch_[def.is_explicit ? def.natural_tag.number : def.tag.number]->decode(*this, s, def, dest)
         : comp_dispatch_[(int)def.kind]->decode(*this, s, def, dest);
-#if defined(ASN1CPP_VALIDATE) && defined(ASN1CPP_VALIDATE_ON_DECODE)
-    if (res.has_value() && !def.is_any && !(debug_flags() & DBG_NO_VALIDATE)) {
-        int64_t delta = validate(def, dest);
-        if (delta != 0) {
-            bump_validate_fail();
-            record_validate_fail(def.name, delta, /*on_decode=*/true);
-            if (debug_flags() & DBG_VALIDATE_TRACE)
-                std::fprintf(stderr, "[VALIDATE-DEC][JER] %s delta=%lld\n",
-                    def.name, static_cast<long long>(delta));
-        }
-    }
-#endif
+    if (res.has_value()) validate_on_decode("JER", def, dest);
     return res;
 }
 
