@@ -97,7 +97,7 @@ std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
         }
     }
     if (auto* tr = std::get_if<ast::TypeRef>(&def.body))
-        return cpp_name_for_typeref(*tr);
+        return resolved_name_for_typeref(*tr);
     if (def.is_seq_of()) {
         const auto& sof = std::get<ast::SequenceOfType>(def.body);
         const auto& elem = *sof.element;
@@ -568,7 +568,11 @@ void Generator::collect_class_types_reachable(const ast::TypeDef& from, std::set
             auto concrete = resolver_.resolve_ref(*tr, current_module_);
             if (concrete && (concrete->is_sequence() || concrete->is_choice() || concrete->is_set())) {
                 member_def = concrete.get();
-                member_key = effective_cpp_name(concrete->name, current_module_);
+                // resolved_name_for_typeref, not effective_type_name(concrete->name,
+                // current_module_) — `tr` may be a cross-module reference
+                // (gambas-asn1#643); current_module_ is only correct when
+                // `concrete` happens to be locally defined.
+                member_key = resolved_name_for_typeref(*tr);
             }
         }
         if (!member_def) continue;
@@ -577,15 +581,19 @@ void Generator::collect_class_types_reachable(const ast::TypeDef& from, std::set
     }
 }
 
-std::vector<std::string> Generator::collect_extra_includes_for(const std::string& elem_type_name,
+std::vector<std::string> Generator::collect_extra_includes_for(const ast::TypeRef& elem_ref,
                                                                  const std::string& self_name) const {
-    ast::TypeRef elem_ref;
-    elem_ref.type_name = elem_type_name;
     auto concrete = resolver_.resolve_ref(elem_ref, current_module_);
     if (!concrete || !(concrete->is_sequence() || concrete->is_choice() || concrete->is_set()))
         return {};
     std::set<std::string> reachable;
-    reachable.insert(effective_cpp_name(concrete->name, current_module_));
+    // resolved_name_for_typeref (not effective_type_name(concrete->name,
+    // current_module_)) — elem_ref may be an IMPORTS-resolved cross-module
+    // reference (gambas-asn1#643: a plain-string reconstruction here used
+    // to lose that module context, naming the #include after whichever
+    // module is currently being generated instead of the one that actually
+    // defines the type).
+    reachable.insert(resolved_name_for_typeref(elem_ref));
     collect_class_types_reachable(*concrete, reachable);
     reachable.erase(self_name);
     // An anonymous inline member's "$anon:<ptr>" placeholder (see
@@ -665,8 +673,8 @@ static bool is_type_assignment(const ast::TypeDef& def) {
 /// @brief Decide which reference form a type-descriptor reference takes
 ///        (see TypeDescriptorRefSpec) — plain data, no C++ syntax. Needs
 ///        Generator-private resolver/collision state (resolver_,
-///        collision_types_, effective_cpp_name/cpp_name_for_ref/
-///        cpp_name_for_typeref), so stays a Generator method; the caller
+///        collision_types_, effective_type_name/resolved_name_for_ref/
+///        resolved_name_for_typeref), so stays a Generator method; the caller
 ///        (type_descriptor_ref_for, below) renders it via
 ///        backend_.format_type_descriptor_ref.
 /// @see TypeDescriptorRefSpec (Backend.hpp) for the field-by-field contract.
@@ -706,7 +714,7 @@ TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef
                 : resolver_.resolve_in_module(tr->type_name, tr->module_name);
             if (direct && has_own_retagged_descriptor(*direct)) {
                 auto mod = tr->module_name.empty() ? current_module_ : tr->module_name;
-                auto n = effective_cpp_name(direct->name, mod);
+                auto n = effective_type_name(direct->name, mod);
                 return TypeDescriptorRefSpec{TypeDescriptorRefKind::FreeStanding, {}, n};
             }
         }
@@ -720,7 +728,7 @@ TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef
                 if (td && std::get_if<ast::TypeRef>(&td->body))
                     return type_descriptor_ref_spec_for(*td);  // pure alias — follow chain
                 if (td) {
-                    auto n = effective_cpp_name(tr->type_name, def_mod);
+                    auto n = effective_type_name(tr->type_name, def_mod);
                     if (td->is_sequence() || td->is_set() || td->is_choice() ||
                         (std::get_if<BT>(&td->body) && std::get<BT>(td->body) == BT::Enumerated))
                         return TypeDescriptorRefSpec{TypeDescriptorRefKind::ClassScoped, {}, n};
@@ -737,10 +745,10 @@ TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef
             auto kind = is_class ? TypeDescriptorRefKind::ClassScoped : TypeDescriptorRefKind::FreeStanding;
             // Qualified ref: use explicit module for collision disambiguation on resolved name.
             if (!tr->module_name.empty() && collision_types_.count(backend_.type_name(resolved->name))) {
-                auto n = effective_cpp_name(resolved->name, tr->module_name);
+                auto n = effective_type_name(resolved->name, tr->module_name);
                 return TypeDescriptorRefSpec{kind, {}, n};
             }
-            auto n = cpp_name_for_ref(resolved->name, current_module_);
+            auto n = resolved_name_for_ref(resolved->name, current_module_);
             return TypeDescriptorRefSpec{kind, {}, n};
         }
         // Fallback: unresolved ref — synthetic types (compiler-generated
@@ -748,7 +756,7 @@ TypeDescriptorRefSpec Generator::type_descriptor_ref_spec_for(const ast::TypeDef
         // static member, except a promoted anonymous nested SEQUENCE OF/SET
         // OF (seq_of_synthetic_names_), which — like any
         // other SEQUENCE OF/SET OF — gets a free asn_DEF_X, not X::asn_DEF.
-        auto n = cpp_name_for_typeref(*tr);
+        auto n = resolved_name_for_typeref(*tr);
         auto kind = seq_of_synthetic_names_.count(n) ? TypeDescriptorRefKind::FreeStanding
                                                        : TypeDescriptorRefKind::ClassScoped;
         return TypeDescriptorRefSpec{kind, {}, n};
@@ -875,7 +883,7 @@ static EnumeratedSpec build_enumerated_spec(const ast::TypeDef& def,
 }
 
 void Generator::emit_enumerated(const ast::TypeDef& def, TypeOutputSession& session) {
-    auto spec = build_enumerated_spec(def, effective_cpp_name(def.name, current_module_));
+    auto spec = build_enumerated_spec(def, effective_type_name(def.name, current_module_));
     spec.tag = natural_tag_spec_for(def);
     spec.is_explicit = type_is_explicit(def);
     if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
@@ -1044,7 +1052,7 @@ IntegerSpec Generator::build_integer_spec(const ast::TypeDef& def, const std::st
 }
 
 void Generator::emit_integer(const ast::TypeDef& def, TypeOutputSession& session) {
-    auto spec = build_integer_spec(def, effective_cpp_name(def.name, current_module_));
+    auto spec = build_integer_spec(def, effective_type_name(def.name, current_module_));
     backend_.emit_integer(spec, session);
 }
 
@@ -1590,7 +1598,7 @@ Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRe
         // has no PerValue impl of its own (SEQUENCE OF PER support lives in
         // the *containing* SEQUENCE's own member row, not on the collection
         // type itself) and so isn't Scalar-safe the way the others are.
-        auto n = cpp_name_for_typeref(tr);
+        auto n = resolved_name_for_typeref(tr);
         if (seq_of_synthetic_names_.count(n)) return {};
         return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
     }
@@ -1657,7 +1665,7 @@ Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRe
 /// @param os   Output stream for the generated header.
 /// @see X.680 §24 (SEQUENCE), §26 (SET); X.690 §8.9 (BER SEQUENCE encoding).
 std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
+    std::string cname = effective_type_name(def.name, current_module_);
 
     // Count non-extension members
     auto [mcount, ext_at] = count_members(def);
@@ -1695,7 +1703,7 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
     };
     auto emit_member_include = [&](const ast::TypeDef& m, bool optional) {
         if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
-            auto cn = cpp_name_for_typeref(*tr);
+            auto cn = resolved_name_for_typeref(*tr);
             optional && is_class_type(m) ? emit_fwd(cn) : emit_inc(cn);
         } else if (m.is_seq_of() || m.is_set_of()) {
             if (!m.name.empty()) {
@@ -1724,7 +1732,7 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
                     // `use crate::CallId::CallId;` fails to compile (E0425)
                     // without this explicit include.
                     if (tr_elem) {
-                        emit_inc(cpp_name_for_typeref(*tr_elem));
+                        emit_inc(resolved_name_for_typeref(*tr_elem));
                     } else if (seqof_elem->is_sequence() || seqof_elem->is_choice() || seqof_elem->is_set()) {
                         // Anonymous inline element: native_member_type_for's SEQUENCE
                         // OF branch names the field type with a *second*,
@@ -1748,7 +1756,7 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
                     ? std::get<ast::SequenceOfType>(m.body).element
                     : std::get<ast::SetOfType>(m.body).element;
                 if (auto* tr2 = std::get_if<ast::TypeRef>(&elem->body)) {
-                    emit_inc(cpp_name_for_typeref(*tr2));
+                    emit_inc(resolved_name_for_typeref(*tr2));
                 } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
                     emit_inc(backend_.synthetic_name(cname, elem->name.empty() ? "Anon" : elem->name));
                 }
@@ -1787,7 +1795,7 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
 /// @see X.680 §24 — SEQUENCE type.
 SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOutputSession& session) {
     std::ostream& os = session.buffer(backend_.definition_extension());
-    std::string cname = effective_cpp_name(def.name, current_module_);
+    std::string cname = effective_type_name(def.name, current_module_);
     bool is_set = def.is_set();
 
     auto [mcount, ext_at] = count_members(def);
@@ -1805,7 +1813,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         auto emit_opt_include = [&](const ast::TypeDef& m) {
             if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
                 if (is_class_type(m)) {
-                    auto cn = cpp_name_for_typeref(*tr);
+                    auto cn = resolved_name_for_typeref(*tr);
                     // Self-referential member (e.g. `next Node OPTIONAL` inside
                     // Node itself): the enclosing type's own definition file
                     // already has full visibility of itself, so re-including/
@@ -1869,7 +1877,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             std::set<std::string> visited;
             if (!type_reaches_via_containers(*concrete, cname, visited)) return;
             auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
-            for (const auto& extra : collect_extra_includes_for(tr->type_name, cname)) {
+            for (const auto& extra : collect_extra_includes_for(*tr, cname)) {
                 write_type_reference(extra, inc_os);
                 emitted_extra = true;
             }
@@ -2093,7 +2101,7 @@ std::vector<const ast::TypeDef*> Generator::canonical_choice_members(
 /// @param os   Output stream for the generated header.
 /// @see X.680 §28 (CHOICE); X.690 §8.13 (BER CHOICE encoding); X.691 §22 (PER CHOICE).
 std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
+    std::string cname = effective_type_name(def.name, current_module_);
 
     auto [count, ext_at] = count_members(def);
 
@@ -2120,10 +2128,10 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
             if (backend_.needs_seqof_wrapper_reference()) emit_inc(cn);
         };
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
-            emit_inc(cpp_name_for_typeref(*tr));
+            emit_inc(resolved_name_for_typeref(*tr));
         } else if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
             // Named SEQUENCE OF alternative — include the synthetic SeqOf wrapper header
-            auto cn2 = cpp_name_for_ref(member_synth_name(*m, cname, m->name), current_module_);
+            auto cn2 = resolved_name_for_ref(member_synth_name(*m, cname, m->name), current_module_);
             emit_wrapper_inc(cn2);
             // Also include the actual element type directly when it's a
             // plain TypeRef — see the matching rationale in
@@ -2133,7 +2141,7 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
                 ? std::get<ast::SequenceOfType>(m->body).element
                 : std::get<ast::SetOfType>(m->body).element;
             if (auto* tr_elem = std::get_if<ast::TypeRef>(&seqof_elem->body)) {
-                emit_inc(cpp_name_for_typeref(*tr_elem));
+                emit_inc(resolved_name_for_typeref(*tr_elem));
             } else if (seqof_elem->is_sequence() || seqof_elem->is_choice() || seqof_elem->is_set()) {
                 // Anonymous inline element — see the matching fix in
                 // emit_member_include for the "Anon"-suffixed doubly-nested
@@ -2185,7 +2193,7 @@ std::vector<ChoiceAlternativeSpec> Generator::emit_choice_declaration(const ast:
 }
 
 ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
+    std::string cname = effective_type_name(def.name, current_module_);
 
     auto [count, ext_at] = count_members(def);
     bool apply_auto_tags = should_apply_auto_tags(def);
@@ -2467,7 +2475,7 @@ void Generator::write_forward_declaration(const std::string& type_name, std::ost
 /// @param mod     Owning module (provides tag default and OID for the file header comment).
 /// @param session The type's real output session (backing the final files).
 void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, TypeOutputSession& session) {
-    std::string cname = effective_cpp_name(def.name, mod.name);
+    std::string cname = effective_type_name(def.name, mod.name);
     const std::string decl_ext = backend_.declaration_extension();
     const std::string def_ext  = backend_.definition_extension();
     std::ostream& decl_os = session.buffer(decl_ext);
@@ -2551,7 +2559,7 @@ void Generator::emit_type_body(const ast::TypeDef& def, const ast::Module& mod, 
         current_type_ = cname;
         emit_builtin_alias(def, dispatch);
     } else if (auto* tr = std::get_if<ast::TypeRef>(&def.body)) {
-        auto inc = cpp_name_for_typeref(*tr);
+        auto inc = resolved_name_for_typeref(*tr);
         auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : decl_body;
         // A bare alias declaration (`using Alias = Target;`) only needs
         // Target declared, never complete — forward-declare instead of
@@ -2736,7 +2744,7 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
 ///            emit_enumerated).
 /// @param session Per-type output session.
 void Generator::emit_builtin_alias(const ast::TypeDef& def, TypeOutputSession& session) {
-    auto spec = build_builtin_alias_spec(def, effective_cpp_name(def.name, current_module_));
+    auto spec = build_builtin_alias_spec(def, effective_type_name(def.name, current_module_));
     backend_.emit_builtin_alias(spec, session);
 }
 
@@ -2749,14 +2757,14 @@ void Generator::emit_builtin_alias(const ast::TypeDef& def, TypeOutputSession& s
 /// @param def SEQUENCE OF / SET OF type definition.
 /// @param os  Output stream for the generated declaration file.
 SeqOfSpec Generator::emit_seq_of_declaration(const ast::TypeDef& def, std::ostream& os) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
+    std::string cname = effective_type_name(def.name, current_module_);
     const auto& elem = def.is_seq_of()
         ? std::get<ast::SequenceOfType>(def.body).element
         : std::get<ast::SetOfType>(def.body).element;
     // SeqOf element includes go before the namespace (each .hpp wraps itself).
     auto& inc_os = pre_ns_os_ ? *pre_ns_os_ : os;
     if (auto* tr = std::get_if<ast::TypeRef>(&elem->body)) {
-        auto inc = cpp_name_for_typeref(*tr);
+        auto inc = resolved_name_for_typeref(*tr);
         write_type_reference(inc, inc_os);
         inc_os << "\n";
     } else if (elem->is_sequence() || elem->is_choice() || elem->is_set()) {
@@ -2781,7 +2789,7 @@ SeqOfSpec Generator::emit_seq_of_declaration(const ast::TypeDef& def, std::ostre
 /// @param def     SEQUENCE OF / SET OF type definition.
 /// @param session Per-type output session.
 SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputSession& session) {
-    std::string cname = effective_cpp_name(def.name, current_module_);
+    std::string cname = effective_type_name(def.name, current_module_);
     const auto& elem_node = def.is_seq_of()
         ? *std::get<ast::SequenceOfType>(def.body).element
         : *std::get<ast::SetOfType>(def.body).element;
@@ -2799,7 +2807,7 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
             if (concrete && (concrete->is_sequence() || concrete->is_choice() || concrete->is_set())) {
                 std::ostream& inc_os = session.buffer(backend_.definition_extension());
                 bool emitted_extra = false;
-                for (const auto& extra : collect_extra_includes_for(tr->type_name, cname)) {
+                for (const auto& extra : collect_extra_includes_for(*tr, cname)) {
                     write_type_reference(extra, inc_os);
                     emitted_extra = true;
                 }
@@ -2875,7 +2883,7 @@ void Generator::emit_seq_of(const ast::TypeDef& def, TypeOutputSession& session)
 /// @param def  Parent type whose inline member types are to be generated.
 /// @param mod  Owning module.
 void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module& mod) {
-    std::string parent_cname = effective_cpp_name(def.name, mod.name);
+    std::string parent_cname = effective_type_name(def.name, mod.name);
 
     // Handle SEQUENCE OF / SET OF with inline anonymous element
     if (def.is_seq_of() || def.is_set_of()) {
@@ -3119,7 +3127,7 @@ void Generator::generate_type(const ast::TypeDef& def, const ast::Module& mod) {
     if (!is_type_assignment(def)) return;
 
     current_tag_default_ = mod.tag_default;
-    std::string cname = effective_cpp_name(def.name, mod.name);
+    std::string cname = effective_type_name(def.name, mod.name);
 
     // Pre-generate inline ENUMERATED element types for top-level SEQOF/SETOF.
     // (Analogous to the member-SEQOF path in generate_inline_types.)
