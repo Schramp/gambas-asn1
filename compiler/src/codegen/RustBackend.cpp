@@ -1475,20 +1475,23 @@ void RustBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostre
     os << "#[allow(non_camel_case_types, non_snake_case)]\n";
     os << std::format("pub struct {} {{\n", spec.type_name);
     for (const auto& m : spec.members) {
-        // A member whose class type cycles back to this
-        // enclosing type needs `Box<T>` — Rust (unlike C++'s
-        // pointer-by-default unique_ptr) gives a plain `T`/`Option<T>`
+        // A member whose class type cycles back to this enclosing type
+        // needs `Box<T>` unconditionally (Rust gives a plain `T`/`Option<T>`
         // field no heap indirection at all, so a genuine ASN.1
         // self-referential/mutually-recursive type chain is an
-        // infinite-size struct without it. Not applied to every class-typed
-        // member (see SequenceMemberSpec::member_type_in_cycle's doc,
-        // Backend.hpp, for why unconditional boxing — mirroring C++'s own
-        // unrelated unique_ptr-everywhere convention — was rejected).
+        // infinite-size struct without it). A class-typed OPTIONAL member
+        // that isn't on a cycle still gets boxed via `box_optional_member`
+        // — see its doc on `SequenceMemberSpec` (Backend.hpp) for the
+        // measured, size-driven reason.
         std::string mtype = rust_seqof_member_field_type(m);
         std::string ftype = m.member_type_in_cycle ? std::format("Box<{}>", mtype) : mtype;
         os << std::format("    /// ASN.1: `{}`\n", m.asn1_name);
-        os << std::format("    pub {}: {},\n", m.mname,
-                           m.optional ? std::format("Option<{}>", ftype) : ftype);
+        std::string field_type = ftype;
+        if (m.optional) {
+            field_type = m.box_optional_member ? std::format("Option<Box<{}>>", ftype)
+                                                : std::format("Option<{}>", ftype);
+        }
+        os << std::format("    pub {}: {},\n", m.mname, field_type);
     }
     os << "}\n\n";
 }
