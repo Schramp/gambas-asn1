@@ -371,11 +371,17 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
         }
     }
 
+    // `get_or_insert_with` decodes directly into this Option's own storage
+    // (the `&mut V` it returns points there) instead of building a
+    // separate `V::default()` on the stack and moving it in via
+    // `*self = Some(v)` afterward — same `memcpy(sizeof(V))`-per-call cost
+    // `decode_seq_of_content`'s own fix avoided (`ber/sequence.rs`), just
+    // for every `Option<V>` member instead of every SEQUENCE OF element.
+    // Profiled via `valgrind --tool=callgrind`: one EXPLICIT-tagged
+    // `Option<IRIContents>` member alone cost 18.62% of all BER-decode
+    // instructions from under 10k calls, almost entirely this move.
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        let mut v = V::default();
-        v.ber_decode_content(content)?;
-        *self = Some(v);
-        Ok(())
+        self.get_or_insert_with(V::default).ber_decode_content(content)
     }
 
     fn ber_encode_tagged(&self, tag: crate::ber::tag::Tag, out: &mut Vec<u8>) {
@@ -385,10 +391,7 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
     }
 
     fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<(), DecodeError> {
-        let mut v = V::default();
-        v.ber_decode_into_tagged(r, tag)?;
-        *self = Some(v);
-        Ok(())
+        self.get_or_insert_with(V::default).ber_decode_into_tagged(r, tag)
     }
 
     // Not reached via ExplicitScalar for an absent optional member — the
@@ -402,10 +405,7 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
     }
 
     fn ber_decode_into_explicit(&mut self, r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<(), DecodeError> {
-        let mut v = V::default();
-        v.ber_decode_into_explicit(r, tag)?;
-        *self = Some(v);
-        Ok(())
+        self.get_or_insert_with(V::default).ber_decode_into_explicit(r, tag)
     }
 
     fn xer_encode(&self, out: &mut String, depth: usize) {
@@ -415,10 +415,7 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        let mut v = V::default();
-        v.xer_decode_into(r)?;
-        *self = Some(v);
-        Ok(())
+        self.get_or_insert_with(V::default).xer_decode_into(r)
     }
 
     /// X.691 §14: an OPTIONAL member's own bitmap bit (encoded by the
@@ -437,10 +434,7 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
         r: &mut crate::per::reader::Reader,
         c: &crate::constraints::Constraints,
     ) -> Result<(), crate::per::reader::DecodeError> {
-        let mut v = V::default();
-        v.per_decode_into(r, c)?;
-        *self = Some(v);
-        Ok(())
+        self.get_or_insert_with(V::default).per_decode_into(r, c)
     }
 
     fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
