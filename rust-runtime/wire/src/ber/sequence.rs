@@ -21,7 +21,7 @@ use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::Tag;
 use crate::spec::sequence::{MemberAccess, SequenceSpec, SEQUENCE_TAG, SET_TAG};
 use crate::value::Asn1Value;
-use crate::ber::writer::write_constructed;
+use crate::ber::writer::write_tagged;
 use crate::xer::XerReader;
 
 /// Shared SEQUENCE-OF wire logic — one outer `SEQUENCE_TAG` TLV wrapping
@@ -44,9 +44,7 @@ pub fn decode_seq_of<V: Asn1Value + Default>(r: &mut Reader) -> Result<Vec<V>, D
 /// natural `SEQUENCE_TAG`/`SET_TAG` on the *outer* TLV only; element
 /// encoding/decoding is unaffected (elements keep their own natural tags).
 pub fn encode_seq_of_tagged<V: Asn1Value>(out: &mut Vec<u8>, tag: Tag, items: &[V]) {
-    let mut content = Vec::new();
-    encode_seq_of_content(&mut content, items);
-    write_constructed(out, tag, &content);
+    write_tagged(out, tag, |out| encode_seq_of_content(out, items));
 }
 
 pub fn decode_seq_of_tagged<V: Asn1Value + Default>(
@@ -426,10 +424,8 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
 /// different outer tag. Generic over any `SequenceSpec<T>`, so codegen needs
 /// no per-type wiring beyond passing the member's resolved tag.
 pub fn encode_sequence_tagged<T>(spec: &SequenceSpec<T>, value: &T, tag: Tag) -> Vec<u8> {
-    let mut content = Vec::new();
-    encode_sequence_content(spec, value, &mut content);
     let mut out = Vec::new();
-    write_constructed(&mut out, tag, &content);
+    write_tagged(&mut out, tag, |out| encode_sequence_content(spec, value, out));
     out
 }
 
@@ -437,8 +433,10 @@ pub fn encode_sequence_tagged<T>(spec: &SequenceSpec<T>, value: &T, tag: Tag) ->
 /// buffer — the shape `Asn1Value::ber_encode` needs (writes into a
 /// caller-owned `out`, not a fresh `Vec`) so a generated SEQUENCE/SET type
 /// can implement that trait and become usable as a nested composite member.
+/// In-place (`write_tagged`'s reserve-and-backfill), not a separate `Vec`
+/// copied in — this is the hot path for every nested SEQUENCE/SET member.
 pub fn encode_sequence_into<T>(spec: &SequenceSpec<T>, value: &T, out: &mut Vec<u8>) {
-    out.extend_from_slice(&encode_sequence_tagged(spec, value, spec.tag));
+    write_tagged(out, spec.tag, |out| encode_sequence_content(spec, value, out));
 }
 
 /// Generic SEQUENCE encoder — the Rust analogue of

@@ -41,10 +41,12 @@ pub fn write_primitive(out: &mut Vec<u8>, t: Tag, value: &[u8]) {
     out.extend_from_slice(value);
 }
 
-/// Write a constructed TLV: tag + length + already-encoded `content`
-/// (the caller builds `content` by writing its child TLVs into a separate
-/// `Vec<u8>` first — see module docs for why this differs from the C++
-/// in-place backfill).
+/// Write a constructed TLV when `content` is already a separate, fully-
+/// encoded byte slice — test fixtures building expected wire bytes by
+/// hand (`sequence.rs`'s tests), not the production encode path: every
+/// real SEQUENCE/SET/SEQUENCE OF/SET OF/CHOICE encoder uses `write_tagged`
+/// (in-place reserve-and-backfill) instead, so content never needs its
+/// own separate `Vec<u8>` just to be measured and copied in.
 pub fn write_constructed(out: &mut Vec<u8>, t: Tag, content: &[u8]) {
     write_tag(out, t);
     write_length(out, content.len());
@@ -102,9 +104,7 @@ pub fn write_tagged(out: &mut Vec<u8>, t: Tag, fill: impl FnOnce(&mut Vec<u8>)) 
 /// about the already-encoded bytes, not what produced them (mirrors the
 /// C++ runtime's `ber_encode_explicit_tagged`, `BerCodec.cpp`).
 pub fn write_explicit(out: &mut Vec<u8>, tag: Tag, inner_encode: impl FnOnce(&mut Vec<u8>)) {
-    let mut content = Vec::new();
-    inner_encode(&mut content);
-    write_constructed(out, tag, &content);
+    write_tagged(out, tag, inner_encode);
 }
 
 #[cfg(test)]
