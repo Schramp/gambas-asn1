@@ -103,6 +103,12 @@ pub fn read_char_string(r: &mut Reader, tag: Tag, kind: &str) -> Result<String, 
 /// for plain-`String` members (e.g. `.len()` in a SIZE-constraint check
 /// function, `emit_string_definition`) without each of those call sites
 /// needing to know or care that the value is wrapped.
+///
+/// Backed by plain `String`, not `compact_str::CompactString` or similar —
+/// see `octet_string.rs`'s module doc for the SSO attempt (tried twice on
+/// `OctetString`, measured, abandoned both times); `CompactString` was
+/// part of the same abandoned attempt here, same verdict (no measured win
+/// on this schema's real workload).
 macro_rules! char_string_type {
     ($name:ident, $tag_const:ident, $tag_num:expr, $asn1_name:expr) => {
         #[doc = concat!("`", $asn1_name, "` — X.680 §41. Newtype over `String`; see the module doc for why.")]
