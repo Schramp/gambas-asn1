@@ -315,6 +315,14 @@ impl Choice {
     pub fn decode_xer(xml: &str) -> Result<Choice, DecodeError> {
         decode_choice_xer(&CHOICE_SPEC, xml)
     }
+
+    pub fn encode_jer(&self) -> String {
+        crate::jer::choice::encode_choice_jer(&CHOICE_SPEC, self)
+    }
+
+    pub fn decode_jer(json: &str) -> Result<Choice, DecodeError> {
+        crate::jer::choice::decode_choice_jer(&CHOICE_SPEC, json)
+    }
 }
 
 
@@ -395,6 +403,42 @@ impl Choice {
     #[test]
     fn xer_empty_input_is_error() {
         assert!(Choice::decode_xer("").is_err());
+    }
+
+    #[test]
+    fn jer_encodes_num_alternative() {
+        // Ground truth from the real C++ runtime (JerCodec.cpp): single-key
+        // object, no outer document wrapper (JER has no X.693-§8.3.1-style
+        // document-element ceremony to mirror).
+        assert_eq!(Choice::Num(Integer(7)).encode_jer(), "{\"num\":7}");
+    }
+
+    #[test]
+    fn jer_encodes_data_alternative() {
+        assert_eq!(
+            Choice::Data(crate::octet_string::OctetString(vec![0x68, 0x69])).encode_jer(),
+            "{\"data\":\"6869\"}"
+        );
+    }
+
+    #[test]
+    fn jer_round_trips_both_alternatives() {
+        for c in [Choice::Num(Integer(-42)), Choice::Data(crate::octet_string::OctetString(vec![0xAA, 0xBB]))] {
+            let json = c.encode_jer();
+            assert_eq!(Choice::decode_jer(&json).unwrap(), c);
+        }
+    }
+
+    #[test]
+    fn jer_unrecognized_key_is_error() {
+        assert!(Choice::decode_jer("{\"nope\":1}").is_err());
+    }
+
+    #[test]
+    fn jer_empty_object_decodes_to_default() {
+        // No active alternative -> `{}`, not a panic (JER has no tag to be
+        // "wrong" about, unlike BER/XER).
+        assert_eq!(Choice::decode_jer("{}").unwrap(), Choice::default());
     }
 
     // ---- EXPLICIT tag disambiguation ---------------------
