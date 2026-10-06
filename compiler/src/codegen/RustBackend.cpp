@@ -472,6 +472,15 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << std::format("        *self = asn1cpp_wire::ber::enumerated::xer_decode_enum(r, &{})?;\n", map_ident);
         os << "        Ok(())\n";
         os << "    }\n\n";
+        // JER: quoted identifier string, same {map_ident} table (X.697 —
+        // no distinct value/name representation split from XER's own).
+        os << "    fn jer_encode(&self, out: &mut String) {\n";
+        os << std::format("        asn1cpp_wire::jer::enumerated::jer_encode_enum(out, &{}, *self as i64);\n", map_ident);
+        os << "    }\n\n";
+        os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << std::format("        *self = asn1cpp_wire::jer::enumerated::jer_decode_enum(r, &{})?;\n", map_ident);
+        os << "        Ok(())\n";
+        os << "    }\n\n";
         // X.693 §9.3: as a SEQUENCE OF/SET OF element, ENUMERATED is a bare
         // `<value-name/>` with no type-name wrapper and no X.693 §12
         // identifier override — `xer_encode`/`xer_decode_into` above
@@ -850,6 +859,17 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << "        self.0.xer_decode_into(r)\n";
         os << "    }\n";
     }
+    // JER has no BASE64/UTF8 ENCODING-CONTROL concept (X.697 has no
+    // equivalent grammar) — OCTET STRING is always hex regardless of the
+    // XER override above (confirmed against JerCodec.cpp's own comment,
+    // "hex, not base64, per asn1c behaviour"), so this always delegates
+    // straight to the wrapped type's own jer_encode/jer_decode_into.
+    os << "\n    fn jer_encode(&self, out: &mut String) {\n";
+    os << "        self.0.jer_encode(out);\n";
+    os << "    }\n\n";
+    os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+    os << "        self.0.jer_decode_into(r)\n";
+    os << "    }\n";
     if (sizeable) {
         os << std::format("\n    fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {{\n        &{}\n    }}\n\n", cname);
         const char* method = is_bits ? "bit_count" : "len";
@@ -1248,6 +1268,17 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     } else {
         os << "        self.0 = asn1cpp_wire::ber::sequence::decode_seq_of_xer(r)?;\n";
     }
+    os << "        Ok(())\n";
+    os << "    }\n";
+    // JER: plain JSON array, no X.693 §12 element-rename concept to mirror
+    // (`spec.elem_xer_name` is XER-only — a JSON array has no per-element
+    // tag to override).
+    os << "\n";
+    os << "    fn jer_encode(&self, out: &mut String) {\n";
+    os << "        asn1cpp_wire::jer::seq_of::encode_seq_of_jer(out, &self.0);\n";
+    os << "    }\n\n";
+    os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+    os << "        self.0 = asn1cpp_wire::jer::seq_of::decode_seq_of_jer(r)?;\n";
     os << "        Ok(())\n";
     os << "    }\n";
     // `Asn1Value::validate()`'s default (`value.rs`) is `0` — this override
@@ -1858,6 +1889,12 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    }\n\n";
         os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
         os << std::format("        asn1cpp_wire::xer::decode_sequence_xer(&{}, xml)\n", spec_ident);
+        os << "    }\n\n";
+        os << "    pub fn encode_jer(&self) -> String {\n";
+        os << std::format("        asn1cpp_wire::jer::sequence::encode_sequence_jer(&{}, self)\n", spec_ident);
+        os << "    }\n\n";
+        os << "    pub fn decode_jer(json: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
+        os << std::format("        asn1cpp_wire::jer::sequence::decode_sequence_jer(&{}, json)\n", spec_ident);
         os << "    }\n";
         os << "}\n\n";
 
@@ -1893,6 +1930,18 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    }\n\n";
         os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
         os << std::format("        *self = asn1cpp_wire::xer::decode_sequence_xer_from(&{}, r)?;\n", spec_ident);
+        os << "        Ok(())\n";
+        os << "    }\n\n";
+        // JER: every value (including a nested SEQUENCE-typed member) is
+        // self-delimiting JSON, so `_into` both writes/consumes this type's
+        // own `{`/`}` and is exactly what a parent's own jer_decode_into
+        // calls for this type as a nested member — no separate
+        // "outer braces already consumed" variant like XER's `_from`.
+        os << "    fn jer_encode(&self, out: &mut String) {\n";
+        os << std::format("        asn1cpp_wire::jer::sequence::encode_sequence_jer_into(&{}, self, out);\n", spec_ident);
+        os << "    }\n\n";
+        os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << std::format("        *self = asn1cpp_wire::jer::sequence::decode_sequence_jer_into(&{}, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n\n";
 
@@ -2237,6 +2286,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "    }\n\n";
         os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
         os << std::format("        asn1cpp_wire::ber::choice::decode_choice_xer(&{}, xml)\n", spec_ident);
+        os << "    }\n\n";
+        os << "    pub fn encode_jer(&self) -> String {\n";
+        os << std::format("        asn1cpp_wire::jer::choice::encode_choice_jer(&{}, self)\n", spec_ident);
+        os << "    }\n\n";
+        os << "    pub fn decode_jer(json: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
+        os << std::format("        asn1cpp_wire::jer::choice::decode_choice_jer(&{}, json)\n", spec_ident);
         os << "    }\n";
         os << "}\n\n";
 
@@ -2290,6 +2345,17 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "    }\n\n";
         os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
         os << std::format("        asn1cpp_wire::ber::choice::decode_choice_xer_into(&{}, self, r)?;\n", spec_ident);
+        os << "        Ok(())\n";
+        os << "    }\n\n";
+        // JER: single-key object `{"altName":value}`, self-delimiting like
+        // every other JER value — `_jer_into` is exactly right for both
+        // top-level use and a nested CHOICE-typed member/element, no
+        // trailing-newline bookkeeping the XER leg above needs.
+        os << "    fn jer_encode(&self, out: &mut String) {\n";
+        os << std::format("        asn1cpp_wire::jer::choice::encode_choice_jer_into(&{}, self, out);\n", spec_ident);
+        os << "    }\n\n";
+        os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << std::format("        asn1cpp_wire::jer::choice::decode_choice_jer_into(&{}, self, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n\n";
         // X.693: as a SEQUENCE OF/SET OF element, a CHOICE has no wrapper
