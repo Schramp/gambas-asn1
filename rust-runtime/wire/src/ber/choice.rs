@@ -52,7 +52,7 @@
 use crate::ber::reader::{read_explicit, DecodeError, Reader};
 use crate::ber::tag::Tag;
 use crate::spec::choice::{active_alt, BerTagging, ChoiceSpec};
-use crate::ber::writer::{write_constructed, write_explicit, write_primitive};
+use crate::ber::writer::{write_explicit, write_primitive, write_tagged};
 use crate::xer::{write_close_tag, write_open_tag, XerReader};
 
 /// Generic CHOICE encoder — the Rust analogue of `ChoiceBerHandler::encode`.
@@ -61,45 +61,43 @@ use crate::xer::{write_close_tag, write_open_tag, XerReader};
 /// tag+bytes back out unchanged. Panics if neither matches: cannot happen
 /// for a real generated `T`, so this is a codegen-bug backstop.
 pub fn encode_choice<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
-    let content = encode_choice_dispatch(spec, value);
-    match spec.own_tag {
-        Some(tag) => {
-            let mut out = Vec::new();
-            write_explicit(&mut out, tag, |inner| inner.extend_from_slice(&content));
-            out
-        }
-        None => content,
-    }
+    let mut out = Vec::new();
+    encode_choice_into(spec, value, &mut out);
+    out
 }
 
 /// The alternative-dispatch encoding (X.680 §28 — no outer wrapper of its
 /// own), before any `own_tag` wrap. Also the building block
-/// `encode_choice_tagged` reuses for IMPLICIT retagging.
-fn encode_choice_dispatch<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
+/// `encode_choice_tagged` reuses for IMPLICIT retagging. Writes directly
+/// into `out` (`write_tagged`'s in-place reserve-and-backfill, via each
+/// alternative's own `ber_encode*` call) — no separate `Vec` per CHOICE
+/// value encoded.
+fn encode_choice_dispatch_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut Vec<u8>) {
     if let Some((_, alt, payload)) = active_alt(spec, value) {
-        let mut out = Vec::new();
         match alt.ber {
-            BerTagging::Implicit(tag) => payload.ber_encode_tagged(tag, &mut out),
-            BerTagging::Explicit(tag) => payload.ber_encode_explicit(&mut out, tag),
-            BerTagging::Delegate => payload.ber_encode(&mut out),
+            BerTagging::Implicit(tag) => payload.ber_encode_tagged(tag, out),
+            BerTagging::Explicit(tag) => payload.ber_encode_explicit(out, tag),
+            BerTagging::Delegate => payload.ber_encode(out),
             BerTagging::Unsupported(reason) => panic!("alternative '{}' not supported: {}", alt.name, reason),
         }
-        return out;
+        return;
     }
     if let Some(ops) = &spec.unknown_extension {
         if let Some((tag, bytes)) = (ops.extract)(value) {
-            let mut out = Vec::new();
-            write_primitive(&mut out, tag, bytes);
-            return out;
+            write_primitive(out, tag, bytes);
+            return;
         }
     }
     panic!("encode_choice: no alternative matched — codegen/table mismatch");
 }
 
 /// Appends a CHOICE's encoding to an existing buffer — the shape
-/// `Asn1Value::ber_encode` needs.
+/// `Asn1Value::ber_encode` needs. In-place, no separate `Vec` copied in.
 pub fn encode_choice_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut Vec<u8>) {
-    out.extend_from_slice(&encode_choice(spec, value));
+    match spec.own_tag {
+        Some(tag) => write_explicit(out, tag, |inner| encode_choice_dispatch_into(spec, value, inner)),
+        None => encode_choice_dispatch_into(spec, value, out),
+    }
 }
 
 /// IMPLICIT-retags a CHOICE-with-own_tag value under `tag` instead of its
@@ -108,8 +106,7 @@ pub fn encode_choice_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut Vec<u8>)
 /// (X.690 §8.14.2). A generated CHOICE-with-own_tag type's
 /// `Asn1Value::ber_encode_tagged` is a one-line call to this.
 pub fn encode_choice_tagged<T>(spec: &ChoiceSpec<T>, value: &T, tag: Tag, out: &mut Vec<u8>) {
-    let content = encode_choice_dispatch(spec, value);
-    write_constructed(out, tag, &content);
+    write_tagged(out, tag, |out| encode_choice_dispatch_into(spec, value, out));
 }
 
 /// Decode counterpart of `encode_choice_tagged`.
