@@ -16,6 +16,25 @@
 //! special-case "is this an unusable bare `Vec<T>`" at several call sites
 //! (`RustBackend.cpp`'s `rust_mtype_is_unusable_vec`) as a direct
 //! consequence.
+//!
+//! **Backed by plain `Vec<u8>`, not a small-string-optimized inline
+//! buffer (`SmallVec`/similar) — tried twice, measured, abandoned both
+//! times.** C++'s `OctetString` gets SSO for free via `std::string`'s own
+//! layout; mirroring that with `SmallVec<[u8; N]>` was tried at N=23
+//! (matches `std::string`'s 32-byte footprint exactly) and N=8 (zero
+//! struct-size cost — `size_of::<SmallVec<[u8;8]>>() ==
+//! size_of::<Vec<u8>>()`). Both cut allocation *count* genuinely (N=8:
+//! 89 → 48 allocs/record on the real ETSI-LI-PS-PDU schema's decode path,
+//! counting-allocator-verified) but produced **zero measured improvement**
+//! in real accumulate-phase throughput or LL-cache-miss count — the
+//! allocation-count win didn't translate to less actual cache-miss cost,
+//! because this schema's dominant byte volume lives in fields larger than
+//! any realistic inline threshold (SSO never touches them). N=23
+//! additionally regressed BER encode by ~8% (struct grew 24→32 bytes,
+//! costing more to move during encode's traversal). Don't re-attempt this
+//! without a schema-specific allocation/footprint profile showing a real
+//! win first — it isn't a free lunch here the way it is for C++'s
+//! `std::string`.
 
 use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::{universal, Tag};
