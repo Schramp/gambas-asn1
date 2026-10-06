@@ -31,6 +31,7 @@ pub mod boolean;
 pub mod constraints;
 pub mod debug;
 pub mod integer;
+pub mod jer;
 pub mod null;
 pub mod octet_string;
 pub mod oid;
