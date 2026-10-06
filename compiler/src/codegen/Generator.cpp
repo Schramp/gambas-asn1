@@ -1983,6 +1983,8 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         if (is_class_type(m))
             row.member_type_in_cycle = member_type_in_cycle(m, def.name);
         row.optional = optional;
+        row.box_optional_member = optional && row.seq_of_kind == SeqOfKind::None &&
+                                   is_class_type(m) && !row.member_type_in_cycle;
         auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
         row.is_explicit = tag_result.is_explicit;
         row.resolved_tag = tag_result.resolved_tag;

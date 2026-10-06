@@ -520,16 +520,49 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // restriction against a type referencing itself, so real schemas do
     // this (e.g. the ETSI LI PS-PDU schema).
     //
-    // Deliberately NOT "is this member class-typed" alone: C++ boxes every
-    // OPTIONAL member unconditionally via `std::unique_ptr<T>`
-    // (CppBackend.cpp: "matches asn1c semantics", a lifecycle/forward-decl
-    // convention unrelated to recursion), but that's C++'s own reason, not
-    // a recursion requirement — Rust's `Option<T>` needs no heap indirection
-    // at all for the overwhelming majority of optional members (1 real
-    // cycle found across ~1044 types on the real schema), so boxing
-    // everything to mirror C++ would be needless indirection with no
-    // upside. Only cycle-participating members get boxed.
+    // Deliberately NOT "is this member class-typed" alone — a genuine
+    // ASN.1 self-reference/mutual-recursion cycle (1 found across ~1044
+    // types on the real schema) needs `Box<T>` to be representable at all
+    // (infinite size otherwise); `box_optional_member` below is the
+    // separate, size-driven reason most class-typed optional members get
+    // boxed too.
     bool        member_type_in_cycle = false;
+    // True when this OPTIONAL member's type is itself class-typed
+    // (SEQUENCE/CHOICE/SET, or a TypeRef resolving to one) and not a
+    // SEQUENCE OF/SET OF container (`seq_of_kind == SeqOfKind::None` —
+    // `Vec<T>`/`SeqOf<T>` is already a fixed 24-byte handle regardless of
+    // `T`, so boxing it saves nothing). RustBackend uses this to emit
+    // `Option<Box<T>>` instead of plain `Option<T>`.
+    //
+    // This mirrors C++'s own `std::unique_ptr<T>`-for-every-OPTIONAL-member
+    // convention (CppBackend.cpp: "matches asn1c semantics") — but unlike
+    // that unconditional C++ rule, this field is narrower, scoped to
+    // class-typed members specifically, not literally every `Option<T>`:
+    // a scalar/string-backed optional (`Option<Integer>`, `Option<
+    // OctetString>`) stores `T` inline either way at negligible cost
+    // (`OctetString`/`Vec<u8>` is 24 bytes regardless of content, same as
+    // a `Box` pointer) — boxing those would be pure indirection overhead
+    // with no size win, so they stay plain `Option<T>`.
+    //
+    // A prior version of this doc argued boxing-to-mirror-C++ was "needless
+    // indirection with no upside" and rejected it outright (citing only 1
+    // real recursion cycle across the schema as the sole case needing
+    // `Box<T>` at all). That assumed C++'s unique_ptr convention was purely
+    // a forward-declaration/lifecycle artifact with no performance
+    // rationale. Measured evidence (docs/rust-performance-chasing.md,
+    // outer ~/etsi repo) disproves that: plain `Option<T>` makes the
+    // containing struct pay `size_of::<T>()` unconditionally, present or
+    // not — for a class-typed `T`, repeated across dozens of optional
+    // members in a large SEQUENCE, and compounded through CHOICE
+    // max-variant-size selection, this reaches 22x struct-size bloat
+    // (`EpsHI2OperationsIRI_Parameters`: 15,064 bytes in Rust vs 680 in
+    // C++) and is the confirmed root cause of a ~2.6-3x live-heap-footprint
+    // gap that blows past this machine's LLC and dominates the whole
+    // accumulate-phase throughput difference between the two codecs. The
+    // narrower scope here (class-typed members only, not every `Option<T>`)
+    // keeps the original doc's correct half — a genuinely small optional
+    // gains nothing from boxing — while fixing the part that was wrong.
+    bool        box_optional_member = false;
     // SEQUENCE OF/SET OF member support. `seq_of_kind` is SeqOfKind::SeqOf
     // for a member whose body is ast::SequenceOfType, SetOf for
     // ast::SetOfType, None otherwise. `elem_shape` describes the element's
