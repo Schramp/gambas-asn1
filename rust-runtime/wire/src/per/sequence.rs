@@ -4,12 +4,13 @@
 //! count + bitmap + open-type wrapping for extension-addition members
 //! (X.691 §18.8).
 //!
-//! Reads the same `sequence::SequenceSpec`/`MemberDescriptor` table BER and
-//! XER walk. PER has no tags, so every retag flavour of `MemberAccess`
-//! reads the field the same way (`MemberAccess::accessors`), and a member
-//! PER cannot encode yet carries `per_unsupported`.
+//! Reads the same `sequence::SequenceSpec`/`MemberDescriptor` table BER,
+//! XER and JER walk — PER has no tags, so every member's own `per_encode`/
+//! `per_decode` closure (gambas-asn1#675: bakes in the member's own
+//! constraints table at codegen time, same reasoning as every other
+//! codec's fused accessor) reads the field the same way regardless of how
+//! BER tags it. A member PER cannot encode yet carries `per_unsupported`.
 
-use crate::constraints::{Constraints, UNCONSTRAINED};
 use crate::per::length::{get_length, get_nslength, put_length, put_nslength};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
@@ -23,32 +24,25 @@ fn root_end<T>(spec: &SequenceSpec<T>) -> usize {
     }
 }
 
-fn member_constraints<T>(m: &MemberDescriptor<T>) -> &'static Constraints {
-    m.constraints.unwrap_or(&UNCONSTRAINED)
-}
-
-/// Presence of an OPTIONAL/DEFAULT member through its `Asn1Value` accessor
-/// (`Option<V>` reports `is_some`, every other type `true`); a member with
-/// no accessor (ANY) is treated as present, its own `per_unsupported`
-/// stub decides what happens next.
+/// Presence of an OPTIONAL/DEFAULT member (`MemberDescriptor::is_present`'s
+/// own doc) — a member with no presence concept (ANY) is treated as
+/// present, its own `per_unsupported` stub decides what happens next.
 fn is_present<T>(m: &MemberDescriptor<T>, value: &T) -> bool {
-    { let (get, _) = m.access.accessors(); get(value).is_present() }
+    (m.is_present)(value)
 }
 
 fn access_encode<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
     if let Some(reason) = m.per_unsupported {
         panic!("member '{}' not supported: {}", m.name, reason);
     }
-    let (get, _) = m.access.accessors();
-    get(value).per_encode(w, member_constraints(m));
+    (m.per_encode)(value, w);
 }
 
 fn access_decode<T>(m: &MemberDescriptor<T>, result: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
     if let Some(reason) = m.per_unsupported {
         panic!("member '{}' not supported: {}", m.name, reason);
     }
-    let (_, get_mut) = m.access.accessors();
-    get_mut(result).per_decode_into(r, member_constraints(m))
+    (m.per_decode)(result, r)
 }
 
 /// X.691 §10.2 "Open type fields" — encode this member's value to a
@@ -197,7 +191,7 @@ pub fn decode_sequence_content<T: Default>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::sequence::{MemberAccess, SEQUENCE_TAG};
+    use crate::spec::sequence::SEQUENCE_TAG;
     use crate::value::Asn1Value;
     use crate::per::integer::{decode_unconstrained_int, encode_unconstrained_int};
     use crate::constraints::Constraints;
@@ -250,21 +244,37 @@ mod tests {
                 name: "a",
                 tag: SEQUENCE_TAG,
                 optional: false,
+                is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                constraints: Some(&DOGFOOD_CONSTRAINED),
+                validate: Some(|v| crate::constraints::validate_s64(*v.a, &DOGFOOD_CONSTRAINED)),
                 per_unsupported: None,
-                access: MemberAccess::Scalar { get: |t| &t.a, get_mut: |t| &mut t.a },
+                ber_encode: |v, out| v.a.ber_encode(out),
+                ber_decode: |v, r| v.a.ber_decode_into(r),
+                xer_encode: |v, out, depth| v.a.xer_encode(out, depth),
+                xer_decode: |v, r| v.a.xer_decode_into(r),
+                jer_encode: |v, out| v.a.jer_encode(out),
+                jer_decode: |v, r| v.a.jer_decode_into(r),
+                per_encode: |v, w| v.a.per_encode(w, &DOGFOOD_CONSTRAINED),
+                per_decode: |v, r| v.a.per_decode_into(r, &DOGFOOD_CONSTRAINED),
             },
             MemberDescriptor {
                 name: "b",
                 tag: SEQUENCE_TAG,
                 optional: true,
+                is_present: |v| v.b.is_some(),
                 set_default: None,
                 is_default_equal: None,
-                constraints: Some(&crate::constraints::UNCONSTRAINED),
+                validate: None,
                 per_unsupported: None,
-                access: MemberAccess::Scalar { get: |t| &t.b, get_mut: |t| &mut t.b },
+                ber_encode: |v, out| v.b.ber_encode(out),
+                ber_decode: |v, r| v.b.ber_decode_into(r),
+                xer_encode: |v, out, depth| v.b.xer_encode(out, depth),
+                xer_decode: |v, r| v.b.xer_decode_into(r),
+                jer_encode: |v, out| v.b.jer_encode(out),
+                jer_decode: |v, r| v.b.jer_decode_into(r),
+                per_encode: |v, w| v.b.per_encode(w, &crate::constraints::UNCONSTRAINED),
+                per_decode: |v, r| v.b.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
             },
         ],
         ext_at: -1,
@@ -306,21 +316,37 @@ mod tests {
                 name: "a",
                 tag: SEQUENCE_TAG,
                 optional: false,
+                is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                constraints: Some(&DOGFOOD_CONSTRAINED),
+                validate: Some(|v| crate::constraints::validate_s64(*v.a, &DOGFOOD_CONSTRAINED)),
                 per_unsupported: None,
-                access: MemberAccess::Scalar { get: |t| &t.a, get_mut: |t| &mut t.a },
+                ber_encode: |v, out| v.a.ber_encode(out),
+                ber_decode: |v, r| v.a.ber_decode_into(r),
+                xer_encode: |v, out, depth| v.a.xer_encode(out, depth),
+                xer_decode: |v, r| v.a.xer_decode_into(r),
+                jer_encode: |v, out| v.a.jer_encode(out),
+                jer_decode: |v, r| v.a.jer_decode_into(r),
+                per_encode: |v, w| v.a.per_encode(w, &DOGFOOD_CONSTRAINED),
+                per_decode: |v, r| v.a.per_decode_into(r, &DOGFOOD_CONSTRAINED),
             },
             MemberDescriptor {
                 name: "ext1",
                 tag: SEQUENCE_TAG,
                 optional: true,
+                is_present: |v| v.ext1.is_some(),
                 set_default: None,
                 is_default_equal: None,
-                constraints: Some(&crate::constraints::UNCONSTRAINED),
+                validate: None,
                 per_unsupported: None,
-                access: MemberAccess::Scalar { get: |t| &t.ext1, get_mut: |t| &mut t.ext1 },
+                ber_encode: |v, out| v.ext1.ber_encode(out),
+                ber_decode: |v, r| v.ext1.ber_decode_into(r),
+                xer_encode: |v, out, depth| v.ext1.xer_encode(out, depth),
+                xer_decode: |v, r| v.ext1.xer_decode_into(r),
+                jer_encode: |v, out| v.ext1.jer_encode(out),
+                jer_decode: |v, r| v.ext1.jer_decode_into(r),
+                per_encode: |v, w| v.ext1.per_encode(w, &crate::constraints::UNCONSTRAINED),
+                per_decode: |v, r| v.ext1.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
             },
         ],
         ext_at: 1,
@@ -381,21 +407,37 @@ mod tests {
                 name: "a",
                 tag: SEQUENCE_TAG,
                 optional: false,
+                is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                constraints: Some(&DOGFOOD_CONSTRAINED),
+                validate: Some(|v| crate::constraints::validate_s64(*v.a, &DOGFOOD_CONSTRAINED)),
                 per_unsupported: None,
-                access: MemberAccess::Scalar { get: |t| &t.a, get_mut: |t| &mut t.a },
+                ber_encode: |v, out| v.a.ber_encode(out),
+                ber_decode: |v, r| v.a.ber_decode_into(r),
+                xer_encode: |v, out, depth| v.a.xer_encode(out, depth),
+                xer_decode: |v, r| v.a.xer_decode_into(r),
+                jer_encode: |v, out| v.a.jer_encode(out),
+                jer_decode: |v, r| v.a.jer_decode_into(r),
+                per_encode: |v, w| v.a.per_encode(w, &DOGFOOD_CONSTRAINED),
+                per_decode: |v, r| v.a.per_decode_into(r, &DOGFOOD_CONSTRAINED),
             },
             MemberDescriptor {
                 name: "skip",
                 tag: SEQUENCE_TAG,
                 optional: false,
+                is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
-                constraints: None,
+                validate: None,
                 per_unsupported: Some("test stub"),
-                access: MemberAccess::Scalar { get: |t| &t.skip, get_mut: |t| &mut t.skip },
+                ber_encode: |v, out| v.skip.ber_encode(out),
+                ber_decode: |v, r| v.skip.ber_decode_into(r),
+                xer_encode: |v, out, depth| v.skip.xer_encode(out, depth),
+                xer_decode: |v, r| v.skip.xer_decode_into(r),
+                jer_encode: |v, out| v.skip.jer_encode(out),
+                jer_decode: |v, r| v.skip.jer_decode_into(r),
+                per_encode: |v, w| v.skip.per_encode(w, &crate::constraints::UNCONSTRAINED),
+                per_decode: |v, r| v.skip.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
             },
         ],
         ext_at: -1,
@@ -442,11 +484,19 @@ mod tests {
             name: "a",
             tag: SEQUENCE_TAG,
             optional: false,
+            is_present: |_| true,
             set_default: None,
             is_default_equal: None,
-            access: MemberAccess::Scalar { get: |t| &t.a, get_mut: |t| &mut t.a },
-            constraints: Some(&DOGFOOD_CONSTRAINED),
+            validate: Some(|v| crate::constraints::validate_s64(*v.a, &DOGFOOD_CONSTRAINED)),
             per_unsupported: None,
+            ber_encode: |v, out| v.a.ber_encode(out),
+            ber_decode: |v, r| v.a.ber_decode_into(r),
+            xer_encode: |v, out, depth| v.a.xer_encode(out, depth),
+            xer_decode: |v, r| v.a.xer_decode_into(r),
+            jer_encode: |v, out| v.a.jer_encode(out),
+            jer_decode: |v, r| v.a.jer_decode_into(r),
+            per_encode: |v, w| v.a.per_encode(w, &DOGFOOD_CONSTRAINED),
+            per_decode: |v, r| v.a.per_decode_into(r, &DOGFOOD_CONSTRAINED),
         }],
         roms_count: 0,
     };

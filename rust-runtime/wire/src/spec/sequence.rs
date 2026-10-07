@@ -1,9 +1,32 @@
-//! SEQUENCE/SET spec — X.680 §25/§26. Walked by BER (`sequence.rs`), XER
-//! (`xer.rs`) and PER (`per::sequence`).
+//! SEQUENCE/SET spec — X.680 §25/§26. Walked by BER (`ber::sequence`), XER
+//! (`xer::sequence`), JER (`jer::sequence`) and PER (`per::sequence`).
+//!
+//! **gambas-asn1#674/#675**: every member row's accessor performs its
+//! *entire* codec operation inline (`fn(&T, &mut Vec<u8>)`, not
+//! `fn(&T) -> &dyn Asn1Value`) — a plain, non-capturing function pointer,
+//! uniform across every member regardless of its concrete field type,
+//! with zero trait-object construction anywhere. Codegen emits, for a
+//! primitive member, a closure that calls that field's own `Asn1Value`
+//! method *statically* (`|v, out| v.x.ber_encode(out)`, monomorphized
+//! like a free-function call — Rust's dynamic dispatch only triggers on
+//! an actual `&dyn Trait` coercion, which this shape never performs); for
+//! a composite member, a closure that calls the inner type's own named
+//! static table directly (`|v, out| ber::sequence::encode_sequence_content(&COORDS_SPEC, &v.y, out)`),
+//! never a method call on the field. Either way, the field type's *other*
+//! three codecs' methods are never referenced by this row, so they're
+//! never monomorphized or linked for an application that only reaches
+//! this row through one codec. See `TypeDescriptor.hpp`'s `per_handler`/
+//! `ber_handler` fields and the codec-owned dispatch LUTs (`JerCodec.cpp`)
+//! for the C++ precedent this mirrors: dispatch lives in data (which
+//! function pointer this row happens to hold), never in the value's own
+//! type.
 
-use crate::constraints::Constraints;
+use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::{universal, Tag};
-use crate::value::Asn1Value;
+use crate::jer::reader::Reader as JerReader;
+use crate::per::reader::{DecodeError as PerDecodeError, Reader as PerReader};
+use crate::per::writer::Writer as PerWriter;
+use crate::xer::reader::XerReader;
 
 pub const SEQUENCE_TAG: Tag = Tag::universal(universal::SEQUENCE, true);
 
@@ -17,15 +40,20 @@ pub const SEQUENCE_TAG: Tag = Tag::universal(universal::SEQUENCE, true);
 pub const SET_TAG: Tag = Tag::universal(universal::SET, true);
 
 /// One row in a `SequenceSpec<T>` table — mirrors `MemberDescriptor`
-/// (`TypeDescriptor.hpp`), minus everything not yet needed by this crate's
-/// scope (EXPLICIT/IMPLICIT tagging beyond the member's own natural tag,
-/// CHOICE alternative dispatch — real gaps, not silently dropped:
-/// `Backend`/codegen simply doesn't emit members needing them yet).
+/// (`TypeDescriptor.hpp`'s offset + `type_descriptor` pointer shape, not
+/// Rust's old trait-object accessor). Every field below is a plain
+/// function pointer performing one codec's complete operation for this
+/// exact member — see the module doc for why this needs no trait object.
 pub struct MemberDescriptor<T: 'static> {
     pub name: &'static str,
     pub tag: Tag,
     pub optional: bool,
-    pub access: MemberAccess<T>,
+    /// Whether this member currently has a value to encode (checked
+    /// before BER/XER/JER/PER all alike skip a genuinely absent OPTIONAL
+    /// member). For a required member, always `true` — codegen emits
+    /// `|_| true`. For an `Option<V>` member, `|v| v.field.is_some()` —
+    /// a plain method call on the concrete `Option<V>`, not a trait call.
+    pub is_present: fn(&T) -> bool,
     /// `Some` for a DEFAULT-valued member (X.680 §25.1) whose default value
     /// this crate can represent — mirrors `MemberDescriptor::set_default`
     /// (`TypeDescriptor.hpp`)/`SequenceBerHandler::decode_body`'s own
@@ -33,8 +61,7 @@ pub struct MemberDescriptor<T: 'static> {
     /// `decode_sequence_content` calls this when the member's tag is absent
     /// from the wire, filling the schema default instead of leaving the
     /// field however `T::default()` left it. `None` for every other
-    /// member, DEFAULT-valued or not — same "optional discriminant" shape
-    /// `access`'s own variants use.
+    /// member, DEFAULT-valued or not.
     pub set_default: Option<fn(&mut T)>,
     /// BER encode gate (X.690 §11.5 — a member whose value equals the
     /// schema DEFAULT must not be encoded): `Some`, returning `true`, for
@@ -42,157 +69,40 @@ pub struct MemberDescriptor<T: 'static> {
     /// `MemberDescriptor::is_default_equal` (`TypeDescriptor.hpp`)/
     /// `SequenceBerHandler::encode`'s own `if (mbr.is_default_equal &&
     /// mbr.is_default_equal(src)) { continue; }` (`BerCodec.cpp`) exactly.
-    /// `encode_sequence_content` skips the member entirely when this
-    /// returns `true`, same as a genuinely absent OPTIONAL member.
     pub is_default_equal: Option<fn(&T) -> bool>,
     /// `Some` for a member with its own X.680 §51 SubtypeConstraint table
-    /// (INTEGER range, OCTET/BIT STRING and character string SIZE/FROM,
-    /// SEQUENCE OF/SET OF SIZE) — the declaration's own `Constraints`,
-    /// handed to the member's `Asn1Value::validate` through the same
-    /// `get` accessor the encode/decode paths use (a shared native type
-    /// like a bare `i64` has no constraint of its own, so the row carries
-    /// it). Returns the delta convention `Asn1Value::validate()` itself
-    /// documents: `0` valid, positive = below lower bound, negative =
-    /// above upper bound. Checked by `encode_sequence_content`/
-    /// `decode_sequence_content` via `validate::check_delta` whenever the
-    /// member actually has a value (present on the wire, or filled by
-    /// `set_default`) — not for a genuinely absent OPTIONAL member.
-    /// `None` for a member whose type owns its constraint (a named
-    /// generated type, checked through `ber_encode_tagged`'s own
-    /// `validate::check`) or has none.
-    pub constraints: Option<&'static Constraints>,
+    /// — bakes in both the field access *and* the constraints table at
+    /// codegen time (`|v| asn1cpp_wire::constraints::validate_s64(v.x, &X_CONSTRAINTS)`),
+    /// so there's no separate `constraints` field to look up generically.
+    /// Returns the delta convention `validate_size`/`validate_s64`/etc.
+    /// already document: `0` valid, positive = below lower bound,
+    /// negative = above upper bound. `None` for a member whose type owns
+    /// its own constraint internally, or has none.
+    pub validate: Option<fn(&T) -> i64>,
     /// `Some(reason)` for a member PER cannot encode/decode yet (a FROM-
     /// alphabet or wide-char string, ANY, ...): the PER walker panics with
-    /// `reason` only if this member is actually reached, every other member
-    /// of the SEQUENCE is unaffected. `None` for every PER-covered member.
-    /// BER/XER ignore it; PER ignores `tag` and the retag flavour of
-    /// `access` (X.691 has no tags) and reads the member through
-    /// [`MemberAccess::accessors`] with `constraints` (UNCONSTRAINED when
-    /// `None`).
+    /// `reason` only if this member is actually reached. `None` for every
+    /// PER-covered member.
     pub per_unsupported: Option<&'static str>,
+
+    pub ber_encode: fn(&T, &mut Vec<u8>),
+    pub ber_decode: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
+    pub xer_encode: fn(&T, &mut String, usize),
+    pub xer_decode: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
+    pub jer_encode: fn(&T, &mut String),
+    pub jer_decode: fn(&mut T, &mut JerReader) -> Result<(), DecodeError>,
+    pub per_encode: fn(&T, &mut PerWriter),
+    pub per_decode: fn(&mut T, &mut PerReader) -> Result<(), PerDecodeError>,
 }
 
 impl<T: 'static> MemberDescriptor<T> {
     /// Runs this member's declared-constraint check against its current
-    /// value in `value` (see `constraints`). `None` when the row carries no
-    /// constraint or its access shape has no `Asn1Value` accessor
-    /// (`Unsupported`).
+    /// value in `value` (see `validate`'s own doc). `None` when the row
+    /// carries no constraint.
     pub(crate) fn validate_delta(&self, value: &T) -> Option<i64> {
-        let c = self.constraints?;
-        match &self.access {
-            MemberAccess::Scalar { get, .. }
-            | MemberAccess::TaggedScalar { get, .. }
-            | MemberAccess::ExplicitScalar { get, .. }
-            | MemberAccess::Base64Scalar { get, .. } => Some(get(value).validate(c)),
-            MemberAccess::Unsupported { .. } => None,
-        }
+        self.validate.map(|f| f(value))
     }
 }
-
-/// How a member's value is reached and (de)serialized.
-///
-/// `Scalar` is the most common shape: the member is one field whose own
-/// concrete type already implements `Asn1Value` (`i64`, `bool`,
-/// `octet_string::OctetString`, `String`, an `Option<V>`/newtype-string,
-/// `SeqOf<T>`/`SetOf<T>` for a
-/// SEQUENCE OF/SET OF member — every kind `rust_member_ber_tag` currently
-/// covers), reached via the same accessor-function pair the crate has
-/// always used (`value.rs`'s module doc explains why a function, not an
-/// `offsetof`-equivalent). A SEQUENCE OF/SET OF member's field type is
-/// `SeqOf<T>`/`SetOf<T>` rather than a raw `Vec<ElementType>` precisely so
-/// it has a real `Asn1Value` impl and folds into this ordinary
-/// `Scalar`/`TaggedScalar`/`ExplicitScalar` dispatch, with no special-casing
-/// needed anywhere here.
-pub enum MemberAccess<T: 'static> {
-    Scalar {
-        get: fn(&T) -> &dyn Asn1Value,
-        get_mut: fn(&mut T) -> &mut dyn Asn1Value,
-    },
-    /// IMPLICIT tag override (X.690 §8.14). A member
-    /// declared with its own `[n]` tag (explicit-in-the-schema, or an
-    /// AUTOMATIC TAGS-assigned one) has that tag *replace* its type's
-    /// natural one on the wire. Same shape as `Scalar` (`get`/`get_mut`,
-    /// no closures) — the walker (`encode_sequence_content`/
-    /// `decode_sequence_content` below) calls `Asn1Value::
-    /// ber_encode_tagged`/`ber_decode_into_tagged` with the member's own
-    /// `tag` field instead of the plain `ber_encode`/`ber_decode_into`
-    /// `Scalar` uses; one generic trait method (`value.rs`) covers every
-    /// kind, so no per-kind `*_tagged` primitive selection is needed here
-    /// (or in codegen) at all. XER is unaffected either way — XER element
-    /// tags are always field-name-derived, never type-derived (`xer.rs`'s
-    /// module doc), so `get`/`get_mut` alone are already correct for that leg.
-    TaggedScalar {
-        get: fn(&T) -> &dyn Asn1Value,
-        get_mut: fn(&mut T) -> &mut dyn Asn1Value,
-    },
-    /// EXPLICIT tagging (X.690 §8.14.3) — wraps the member's natural
-    /// encoding in an outer TLV, rather than substituting the tag like
-    /// `TaggedScalar`. Same shape as `TaggedScalar` (`get`/`get_mut` only)
-    /// via `Asn1Value::ber_encode_explicit`/`ber_decode_into_explicit`
-    /// (`value.rs`) — the object-safe methods that let this member's own
-    /// EXPLICIT wrap/unwrap happen through the same trait-object accessor
-    /// `TaggedScalar` uses for its IMPLICIT retag, instead of a per-member
-    /// closure re-deriving `v.{field}` a second time.
-    ExplicitScalar {
-        get: fn(&T) -> &dyn Asn1Value,
-        get_mut: fn(&mut T) -> &mut dyn Asn1Value,
-    },
-    /// An OCTET STRING member under an `ENCODING-CONTROL XER ... BASE64`
-    /// (or legacy `::= base64`) instruction — X.693 §21. Identical to
-    /// `Scalar` for BER/PER (base64 vs. hex is an XER-only distinction);
-    /// XER encode/decode calls `Asn1Value::xer_encode_base64`/
-    /// `xer_decode_into_base64` instead of the plain `xer_encode`/
-    /// `xer_decode_into` pair — see that method's own doc for why this is
-    /// a member-row flag rather than requiring the member to be promoted
-    /// to its own named alias type first (the only option before this
-    /// variant existed, since `OctetString` itself has no per-instance way
-    /// to pick hex vs. base64).
-    Base64Scalar {
-        get: fn(&T) -> &dyn Asn1Value,
-        get_mut: fn(&mut T) -> &mut dyn Asn1Value,
-    },
-    /// A member whose type/tag/optionality combination genuinely has no
-    /// `Asn1Value` coverage yet in this crate. Every generated SEQUENCE/SET
-    /// always gets a real table and `Asn1Value` impl now — nothing gates
-    /// emission on every member being individually wire-representable
-    /// first — so a member that isn't (a builtin storage/tag combination
-    /// not yet implemented, or a member whose presence can't be safely
-    /// detected at all, e.g. OPTIONAL typed by an untagged CHOICE with no
-    /// tag to peek for) gets this instead: a struct containing one simply
-    /// can't be successfully encoded/decoded via the generated methods
-    /// yet, but every *other* member is unaffected, and — the actual
-    /// point — any type that merely *references* this one as a composite
-    /// member gets real coverage of its own regardless, since `Asn1Value`
-    /// is always implemented, just not always successfully callable. No
-    /// presence-detection is attempted (there's nothing safe to peek for
-    /// in the cases that reach here) — reaching this row during either
-    /// encode or decode panics unconditionally.
-    Unsupported {
-        reason: &'static str,
-        /// The field is still reachable for the codecs that do not depend
-        /// on BER's tag/presence shape (PER reads it through
-        /// [`MemberAccess::accessors`]).
-        get: fn(&T) -> &dyn Asn1Value,
-        get_mut: fn(&mut T) -> &mut dyn Asn1Value,
-    },
-}
-
-impl<T: 'static> MemberAccess<T> {
-    /// The plain field accessors, for a codec (PER) that reads a member
-    /// through the `Asn1Value` trait regardless of how BER tags it. Every
-    /// variant carries one now (ANY reaches the wire through
-    /// `ExplicitScalar` like any other EXPLICIT-tagged member).
-    pub fn accessors(&self) -> (fn(&T) -> &dyn Asn1Value, fn(&mut T) -> &mut dyn Asn1Value) {
-        match self {
-            MemberAccess::Scalar { get, get_mut }
-            | MemberAccess::TaggedScalar { get, get_mut }
-            | MemberAccess::ExplicitScalar { get, get_mut }
-            | MemberAccess::Base64Scalar { get, get_mut }
-            | MemberAccess::Unsupported { get, get_mut, .. } => (*get, *get_mut),
-        }
-    }
-}
-
 
 /// SEQUENCE/SET member table — mirrors `SequenceSpec` (`TypeDescriptor.hpp`).
 ///
@@ -200,29 +110,8 @@ impl<T: 'static> MemberAccess<T> {
 /// `TypeDescriptor::name`, used by `SequenceXerHandler` — X.693's outer
 /// element is the *type* name, unlike each member's own tag which is
 /// *field*-name-derived). BER doesn't need it (BER dispatch is by `tag`
-/// alone), but one table drives both encodings (see `lib.rs`'s XER module
+/// alone), but one table drives every encoding (see `lib.rs`'s module
 /// doc), so it lives here rather than in a second, XER-only struct.
-///
-/// **Deliberate layering divergence from both C++ codebases**: in
-/// `runtime/include/asn1cpp/TypeDescriptor.hpp`
-/// `name` lives on the outer `TypeDescriptor`, a sibling to
-/// `sequence_spec`/`choice_spec`/`enum_spec` — never inside `SequenceSpec`
-/// itself. Same split in asn1c (`asn_TYPE_descriptor_s::name` vs.
-/// `asn_SEQUENCE_specifics_s`, which carries no name at all). That layer
-/// exists in both C++ codebases because their dispatch is runtime
-/// polymorphic — one `TypeDescriptor*`/`asn_TYPE_descriptor_t*` has to
-/// carry `name` regardless of *which* construct (`SEQUENCE`/`CHOICE`/
-/// `ENUMERATED`) it points at, since the codec picks the handler at
-/// runtime via `TypeKind`/`tag2el`. Rust's design has no such layer:
-/// dispatch is by generic parameter (`SequenceSpec<T>`) resolved at compile
-/// time, so there is no shared runtime "type descriptor" object for `name`
-/// to live on once, and introducing one here would only exist to satisfy
-/// field-sharing, not to do anything. Each construct-specific spec (this
-/// one, and `ChoiceSpec<T>` in `choice.rs`) carries its own
-/// `name` — cheap (`&'static str`, one word, no allocation), and avoids
-/// inventing indirection with no other purpose. Documented here so the
-/// repetition in `ChoiceSpec<T>` reads as intentional, not a
-/// copy-paste that forgot to deduplicate.
 pub struct SequenceSpec<T: 'static> {
     pub name: &'static str,
     pub tag: Tag,

@@ -1,13 +1,13 @@
-//! Compile-time BER tag lookup, kept off the object-safe `value::Asn1Value`
-//! trait itself. An associated const makes a trait non-object-safe (Rust
-//! has no exception for a defaulted const — `dyn Asn1Value` is load-bearing
-//! throughout this crate, via `MemberDescriptor`/`Alternative`'s accessor
-//! closures), so `TypeTag` is a separate trait: codegen names a member's
-//! own concrete Rust type directly (never through a trait object) to ask
-//! `<Type as TypeTag>::TAG`, replacing the C++-side per-builtin-kind tag
-//! switch (`RustBackend::builtin_ber_tag`) with one generic lookup that
-//! works for every builtin wrapper and every generated SEQUENCE/CHOICE/
-//! ENUMERATED/named-INTEGER type alike.
+//! Compile-time BER tag lookup, kept off `value::Asn1Value` itself. An
+//! associated const makes a trait non-object-safe — moot for
+//! `Asn1Value`'s *own* object-safety now (gambas-asn1#675 removed every
+//! `&dyn Asn1Value` accessor it used to need to stay object-safe for),
+//! but still a separate trait here since codegen names a member's own
+//! concrete Rust type directly to ask `<Type as TypeTag>::TAG`, replacing
+//! the C++-side per-builtin-kind tag switch (`RustBackend::
+//! builtin_ber_tag`) with one generic lookup that works for every
+//! builtin wrapper and every generated SEQUENCE/CHOICE/ENUMERATED/
+//! named-INTEGER type alike.
 
 use crate::ber::tag::Tag;
 

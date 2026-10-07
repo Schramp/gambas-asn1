@@ -36,7 +36,7 @@ fn root_count<T>(spec: &ChoiceSpec<T>) -> usize {
 }
 
 pub fn encode_choice_content<T>(spec: &ChoiceSpec<T>, w: &mut Writer, value: &T) {
-    let Some((def_idx, alt, payload)) = active_alt(spec, value) else {
+    let Some((def_idx, alt)) = active_alt(spec, value) else {
         return; // codegen-bug backstop: no alternative matched a real generated enum.
     };
     per_unsupported(alt);
@@ -52,11 +52,11 @@ pub fn encode_choice_content<T>(spec: &ChoiceSpec<T>, w: &mut Writer, value: &T)
         if spec.range_bits > 0 {
             w.put_bits(def_idx as u64, spec.range_bits);
         }
-        payload.per_encode(w, alt.constraints);
+        (alt.per_encode)(value, w);
     } else {
         put_nsnn(w, (def_idx - root_count) as i64);
         let mut tmp = Writer::new();
-        payload.per_encode(&mut tmp, alt.constraints);
+        (alt.per_encode)(value, &mut tmp);
         tmp.flush();
         let bytes = tmp.into_bytes();
         put_length(w, bytes.len());
@@ -79,7 +79,7 @@ pub fn decode_choice_content_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mu
         }
         let alt = &spec.alternatives[def_idx];
         per_unsupported(alt);
-        (alt.emplace)(value).per_decode_into(r, alt.constraints)
+        (alt.per_decode)(value, r)
     } else {
         let ext_idx = get_nsnn(r)?;
         let def_idx = root_count + ext_idx as usize;
@@ -101,7 +101,7 @@ pub fn decode_choice_content_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mu
         let mut inner = Reader::new(&bytes);
         let alt = &spec.alternatives[def_idx];
         per_unsupported(alt);
-        (alt.emplace)(value).per_decode_into(&mut inner, alt.constraints)
+        (alt.per_decode)(value, &mut inner)
     }
 }
 
@@ -109,8 +109,8 @@ pub fn decode_choice_content_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mu
 mod tests {
     use super::*;
     use crate::spec::choice::{Alternative, BerTagging};
-    use crate::constraints::UNCONSTRAINED;
     use crate::integer::Integer;
+    use crate::value::Asn1Value;
 
     // Dogfood-only fixture (#[cfg(test)]-gated, never public API).
     #[derive(Debug, PartialEq)]
@@ -126,57 +126,31 @@ mod tests {
         }
     }
 
-    const ALT_A: Alternative<Dogfood> = Alternative {
-        name: "a",
-        ber: BerTagging::Delegate,
-        active: |v| match v {
-            Dogfood::A(x) => Some(x),
-            _ => None,
-        },
-        emplace: |v| {
-            *v = Dogfood::A(Default::default());
-            match v {
-                Dogfood::A(x) => x,
-                _ => unreachable!(),
+    // gambas-asn1#675: no trait object, no `constraints`/`emplace` fields
+    // — each operation is a plain closure performing the whole thing for
+    // this one alternative's variant.
+    macro_rules! dogfood_alt {
+        ($name:expr, $Variant:ident) => {
+            Alternative {
+                name: $name,
+                ber: BerTagging::Delegate,
+                is_active: |v| matches!(v, Dogfood::$Variant(_)),
+                per_unsupported: None,
+                ber_encode: |v, out| match v { Dogfood::$Variant(x) => x.ber_encode(out), _ => unreachable!() },
+                ber_decode: |v, r| { *v = Dogfood::$Variant(Default::default()); match v { Dogfood::$Variant(x) => x.ber_decode_into(r), _ => unreachable!() } },
+                xer_encode: |v, out, depth| match v { Dogfood::$Variant(x) => x.xer_encode(out, depth), _ => unreachable!() },
+                xer_decode: |v, r| { *v = Dogfood::$Variant(Default::default()); match v { Dogfood::$Variant(x) => x.xer_decode_into(r), _ => unreachable!() } },
+                jer_encode: |v, out| match v { Dogfood::$Variant(x) => x.jer_encode(out), _ => unreachable!() },
+                jer_decode: |v, r| { *v = Dogfood::$Variant(Default::default()); match v { Dogfood::$Variant(x) => x.jer_decode_into(r), _ => unreachable!() } },
+                per_encode: |v, w| match v { Dogfood::$Variant(x) => x.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
+                per_decode: |v, r| { *v = Dogfood::$Variant(Default::default()); match v { Dogfood::$Variant(x) => x.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
             }
-        },
-        constraints: &UNCONSTRAINED,
-        per_unsupported: None,
-    };
-    const ALT_B: Alternative<Dogfood> = Alternative {
-        name: "b",
-        ber: BerTagging::Delegate,
-        active: |v| match v {
-            Dogfood::B(x) => Some(x),
-            _ => None,
-        },
-        emplace: |v| {
-            *v = Dogfood::B(Default::default());
-            match v {
-                Dogfood::B(x) => x,
-                _ => unreachable!(),
-            }
-        },
-        constraints: &UNCONSTRAINED,
-        per_unsupported: None,
-    };
-    const ALT_EXT_C: Alternative<Dogfood> = Alternative {
-        name: "extC",
-        ber: BerTagging::Delegate,
-        active: |v| match v {
-            Dogfood::ExtC(x) => Some(x),
-            _ => None,
-        },
-        emplace: |v| {
-            *v = Dogfood::ExtC(Default::default());
-            match v {
-                Dogfood::ExtC(x) => x,
-                _ => unreachable!(),
-            }
-        },
-        constraints: &UNCONSTRAINED,
-        per_unsupported: None,
-    };
+        };
+    }
+
+    const ALT_A: Alternative<Dogfood> = dogfood_alt!("a", A);
+    const ALT_B: Alternative<Dogfood> = dogfood_alt!("b", B);
+    const ALT_EXT_C: Alternative<Dogfood> = dogfood_alt!("extC", ExtC);
 
     const SPEC: ChoiceSpec<Dogfood> = ChoiceSpec {
         name: "Dogfood",
@@ -186,6 +160,7 @@ mod tests {
         own_tag: None,
         ext_at: -1,
         range_bits: 1,
+        active_index: |x| match x { Dogfood::A(_) => Some(0), Dogfood::B(_) => Some(1), Dogfood::ExtC(_) => None },
     };
 
     fn roundtrip_with(spec: &ChoiceSpec<Dogfood>, v: &Dogfood) -> Dogfood {
@@ -217,6 +192,7 @@ mod tests {
         own_tag: None,
         ext_at: 1,
         range_bits: 0,
+        active_index: |x| match x { Dogfood::A(_) => Some(0), Dogfood::ExtC(_) => Some(1), Dogfood::B(_) => None },
     };
 
     #[test]
@@ -240,6 +216,7 @@ mod tests {
             own_tag: None,
             ext_at: -1,
             range_bits: 1,
+            active_index: |x| match x { Dogfood::A(_) => Some(0), Dogfood::B(_) => Some(1), Dogfood::ExtC(_) => None },
         };
         assert_eq!(roundtrip_with(&spec, &Dogfood::A(Integer(1))), Dogfood::A(Integer(1)));
         let r = std::panic::catch_unwind(|| {

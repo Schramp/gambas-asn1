@@ -12,21 +12,12 @@
 
 use crate::ber::reader::DecodeError;
 use crate::jer::reader::Reader;
-use crate::spec::sequence::{MemberAccess, SequenceSpec};
+use crate::spec::sequence::SequenceSpec;
 
 fn encode_sequence_jer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut String) {
     let mut first = true;
     for m in spec.members {
-        // JER has no tag/explicit-wrap concept -- every access kind
-        // just needs the member's own `jer_encode`, full stop.
-        let val = match &m.access {
-            MemberAccess::Scalar { get, .. }
-            | MemberAccess::TaggedScalar { get, .. }
-            | MemberAccess::ExplicitScalar { get, .. }
-            | MemberAccess::Base64Scalar { get, .. } => get(value),
-            MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
-        };
-        if !val.is_present() {
+        if !(m.is_present)(value) {
             continue;
         }
         if !first {
@@ -36,7 +27,7 @@ fn encode_sequence_jer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut S
         out.push('"');
         out.push_str(m.name);
         out.push_str("\":");
-        val.jer_encode(out);
+        (m.jer_encode)(value, out);
     }
 }
 
@@ -83,15 +74,7 @@ pub fn decode_sequence_jer_into<T: Default>(spec: &SequenceSpec<T>, r: &mut Read
                     r.skip_json_value()?;
                     continue;
                 };
-                match &m.access {
-                    MemberAccess::Scalar { get_mut, .. }
-                    | MemberAccess::TaggedScalar { get_mut, .. }
-                    | MemberAccess::ExplicitScalar { get_mut, .. }
-                    | MemberAccess::Base64Scalar { get_mut, .. } => {
-                        get_mut(&mut result).jer_decode_into(r)?;
-                    }
-                    MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
-                }
+                (m.jer_decode)(&mut result, r)?;
                 seen[idx] = true;
             }
         }

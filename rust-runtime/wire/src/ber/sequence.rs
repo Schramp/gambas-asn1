@@ -19,7 +19,7 @@
 use crate::constraints::Constraints;
 use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::Tag;
-use crate::spec::sequence::{MemberAccess, SequenceSpec, SEQUENCE_TAG, SET_TAG};
+use crate::spec::sequence::{SequenceSpec, SEQUENCE_TAG, SET_TAG};
 use crate::value::Asn1Value;
 use crate::ber::writer::write_tagged;
 use crate::xer::reader::XerReader;
@@ -332,14 +332,11 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
                 continue;
             }
         }
-        match &m.access {
-            MemberAccess::Scalar { get, .. } | MemberAccess::Base64Scalar { get, .. } => get(value).ber_encode(content),
-            MemberAccess::TaggedScalar { get, .. } => get(value).ber_encode_tagged(m.tag, content),
-            MemberAccess::ExplicitScalar { get, .. } => get(value).ber_encode_explicit(content, m.tag),
-            MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
-        }
-        if let Some(delta) = m.validate_delta(value) {
-            crate::validate::check_delta(delta, m.name, "encode");
+        (m.ber_encode)(value, content);
+        if (m.is_present)(value) {
+            if let Some(delta) = m.validate_delta(value) {
+                crate::validate::check_delta(delta, m.name, "encode");
+            }
         }
     }
 }
@@ -398,65 +395,22 @@ pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
 pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut Reader) -> Result<T, DecodeError> {
     let mut result = T::default();
     for m in spec.members {
-        match &m.access {
-            MemberAccess::Scalar { get_mut, .. } | MemberAccess::Base64Scalar { get_mut, .. } => {
-                let mut has_value = true;
-                if m.optional {
-                    if inner.peek_tag() == Some(m.tag) {
-                        get_mut(&mut result).ber_decode_into(inner)?;
-                    } else if let Some(set_default) = m.set_default {
-                        set_default(&mut result);
-                    } else {
-                        has_value = false;
-                    }
-                } else {
-                    get_mut(&mut result).ber_decode_into(inner)?;
-                }
-                if has_value {
-                    if let Some(delta) = m.validate_delta(&result) {
-                        crate::validate::check_delta(delta, m.name, "decode");
-                    }
-                }
+        let mut has_value = true;
+        if m.optional {
+            if inner.peek_tag() == Some(m.tag) {
+                (m.ber_decode)(&mut result, inner)?;
+            } else if let Some(set_default) = m.set_default {
+                set_default(&mut result);
+            } else {
+                has_value = false;
             }
-            MemberAccess::TaggedScalar { get_mut, .. } => {
-                let mut has_value = true;
-                if m.optional {
-                    if inner.peek_tag() == Some(m.tag) {
-                        get_mut(&mut result).ber_decode_into_tagged(inner, m.tag)?;
-                    } else if let Some(set_default) = m.set_default {
-                        set_default(&mut result);
-                    } else {
-                        has_value = false;
-                    }
-                } else {
-                    get_mut(&mut result).ber_decode_into_tagged(inner, m.tag)?;
-                }
-                if has_value {
-                    if let Some(delta) = m.validate_delta(&result) {
-                        crate::validate::check_delta(delta, m.name, "decode");
-                    }
-                }
+        } else {
+            (m.ber_decode)(&mut result, inner)?;
+        }
+        if has_value {
+            if let Some(delta) = m.validate_delta(&result) {
+                crate::validate::check_delta(delta, m.name, "decode");
             }
-            MemberAccess::ExplicitScalar { get_mut, .. } => {
-                let mut has_value = true;
-                if m.optional {
-                    if inner.peek_tag() == Some(m.tag) {
-                        get_mut(&mut result).ber_decode_into_explicit(inner, m.tag)?;
-                    } else if let Some(set_default) = m.set_default {
-                        set_default(&mut result);
-                    } else {
-                        has_value = false;
-                    }
-                } else {
-                    get_mut(&mut result).ber_decode_into_explicit(inner, m.tag)?;
-                }
-                if has_value {
-                    if let Some(delta) = m.validate_delta(&result) {
-                        crate::validate::check_delta(delta, m.name, "decode");
-                    }
-                }
-            }
-            MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
         }
     }
     Ok(result)
@@ -506,21 +460,37 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         name: "x",
         tag: crate::integer::INTEGER_TAG,
         optional: false,
-        access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
+        is_present: |_| true,
         set_default: None,
         is_default_equal: None,
+        validate: None,
         per_unsupported: None,
-        constraints: None,
+        ber_encode: |v, out| v.x.ber_encode(out),
+        ber_decode: |v, r| v.x.ber_decode_into(r),
+        xer_encode: |v, out, depth| v.x.xer_encode(out, depth),
+        xer_decode: |v, r| v.x.xer_decode_into(r),
+        jer_encode: |v, out| v.x.jer_encode(out),
+        jer_decode: |v, r| v.x.jer_decode_into(r),
+        per_encode: |v, w| v.x.per_encode(w, &crate::constraints::UNCONSTRAINED),
+        per_decode: |v, r| v.x.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
     },
     MemberDescriptor {
         name: "y",
         tag: crate::integer::INTEGER_TAG,
         optional: false,
-        access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
+        is_present: |_| true,
         set_default: None,
         is_default_equal: None,
+        validate: None,
         per_unsupported: None,
-        constraints: None,
+        ber_encode: |v, out| v.y.ber_encode(out),
+        ber_decode: |v, r| v.y.ber_decode_into(r),
+        xer_encode: |v, out, depth| v.y.xer_encode(out, depth),
+        xer_decode: |v, r| v.y.xer_decode_into(r),
+        jer_encode: |v, out| v.y.jer_encode(out),
+        jer_decode: |v, r| v.y.jer_decode_into(r),
+        per_encode: |v, w| v.y.per_encode(w, &crate::constraints::UNCONSTRAINED),
+        per_decode: |v, r| v.y.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
     },
 ];
 
@@ -567,21 +537,37 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         name: "x",
         tag: crate::integer::INTEGER_TAG,
         optional: false,
-        access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
+        is_present: |_| true,
         set_default: None,
         is_default_equal: None,
+        validate: None,
         per_unsupported: None,
-        constraints: None,
+        ber_encode: |v, out| v.x.ber_encode(out),
+        ber_decode: |v, r| v.x.ber_decode_into(r),
+        xer_encode: |v, out, depth| v.x.xer_encode(out, depth),
+        xer_decode: |v, r| v.x.xer_decode_into(r),
+        jer_encode: |v, out| v.x.jer_encode(out),
+        jer_decode: |v, r| v.x.jer_decode_into(r),
+        per_encode: |v, w| v.x.per_encode(w, &crate::constraints::UNCONSTRAINED),
+        per_decode: |v, r| v.x.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
     },
     MemberDescriptor {
         name: "y",
         tag: crate::integer::INTEGER_TAG,
         optional: true,
-        access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
+        is_present: |v| v.y.is_some(),
         set_default: None,
         is_default_equal: None,
+        validate: None,
         per_unsupported: None,
-        constraints: None,
+        ber_encode: |v, out| v.y.ber_encode(out),
+        ber_decode: |v, r| v.y.ber_decode_into(r),
+        xer_encode: |v, out, depth| v.y.xer_encode(out, depth),
+        xer_decode: |v, r| v.y.xer_decode_into(r),
+        jer_encode: |v, out| v.y.jer_encode(out),
+        jer_decode: |v, r| v.y.jer_decode_into(r),
+        per_encode: |v, w| v.y.per_encode(w, &crate::constraints::UNCONSTRAINED),
+        per_decode: |v, r| v.y.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
     },
 ];
 
@@ -621,11 +607,19 @@ static COORDS_MEMBERS: [MemberDescriptor<Coords>; 1] = [MemberDescriptor {
     name: "values",
     tag: SEQUENCE_TAG,
     optional: false,
-    access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
+    is_present: |_| true,
     set_default: None,
     is_default_equal: None,
+    validate: None,
     per_unsupported: None,
-    constraints: None,
+    ber_encode: |v, out| v.values.ber_encode(out),
+    ber_decode: |v, r| v.values.ber_decode_into(r),
+    xer_encode: |v, out, depth| v.values.xer_encode(out, depth),
+    xer_decode: |v, r| v.values.xer_decode_into(r),
+    jer_encode: |v, out| v.values.jer_encode(out),
+    jer_decode: |v, r| v.values.jer_decode_into(r),
+    per_encode: |v, w| v.values.per_encode(w, &crate::constraints::UNCONSTRAINED),
+    per_decode: |v, r| v.values.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
 }];
 
 static COORDS_SPEC: SequenceSpec<Coords> =
@@ -672,11 +666,19 @@ static OPT_COORDS_MEMBERS: [MemberDescriptor<OptCoords>; 1] = [MemberDescriptor 
     name: "values",
     tag: SEQUENCE_TAG,
     optional: true,
-    access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
+    is_present: |v| v.values.is_some(),
     set_default: None,
     is_default_equal: None,
+    validate: None,
     per_unsupported: None,
-    constraints: None,
+    ber_encode: |v, out| v.values.ber_encode(out),
+    ber_decode: |v, r| v.values.ber_decode_into(r),
+    xer_encode: |v, out, depth| v.values.xer_encode(out, depth),
+    xer_decode: |v, r| v.values.xer_decode_into(r),
+    jer_encode: |v, out| v.values.jer_encode(out),
+    jer_decode: |v, r| v.values.jer_decode_into(r),
+    per_encode: |v, w| v.values.per_encode(w, &crate::constraints::UNCONSTRAINED),
+    per_decode: |v, r| v.values.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
 }];
 
 static OPT_COORDS_SPEC: SequenceSpec<OptCoords> =
@@ -716,11 +718,19 @@ static SET_COORDS_MEMBERS: [MemberDescriptor<SetCoords>; 1] = [MemberDescriptor 
     name: "values",
     tag: SET_TAG,
     optional: false,
-    access: MemberAccess::Scalar { get: |v| &v.values, get_mut: |v| &mut v.values },
+    is_present: |_| true,
     set_default: None,
     is_default_equal: None,
+    validate: None,
     per_unsupported: None,
-    constraints: None,
+    ber_encode: |v, out| v.values.ber_encode(out),
+    ber_decode: |v, r| v.values.ber_decode_into(r),
+    xer_encode: |v, out, depth| v.values.xer_encode(out, depth),
+    xer_decode: |v, r| v.values.xer_decode_into(r),
+    jer_encode: |v, out| v.values.jer_encode(out),
+    jer_decode: |v, r| v.values.jer_decode_into(r),
+    per_encode: |v, w| v.values.per_encode(w, &crate::constraints::UNCONSTRAINED),
+    per_decode: |v, r| v.values.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
 }];
 
 static SET_COORDS_SPEC: SequenceSpec<SetCoords> =
@@ -755,21 +765,37 @@ static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
         name: "x",
         tag: crate::integer::INTEGER_TAG,
         optional: false,
-        access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
+        is_present: |_| true,
         set_default: None,
         is_default_equal: None,
+        validate: None,
         per_unsupported: None,
-        constraints: None,
+        ber_encode: |v, out| v.x.ber_encode(out),
+        ber_decode: |v, r| v.x.ber_decode_into(r),
+        xer_encode: |v, out, depth| v.x.xer_encode(out, depth),
+        xer_decode: |v, r| v.x.xer_decode_into(r),
+        jer_encode: |v, out| v.x.jer_encode(out),
+        jer_decode: |v, r| v.x.jer_decode_into(r),
+        per_encode: |v, w| v.x.per_encode(w, &crate::constraints::UNCONSTRAINED),
+        per_decode: |v, r| v.x.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
     },
     MemberDescriptor {
         name: "y",
         tag: crate::integer::INTEGER_TAG,
         optional: true,
-        access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
+        is_present: |v| v.y.is_some(),
         set_default: Some(|v| v.y = Some(default_point_y_default())),
         is_default_equal: Some(|v| v.y == Some(default_point_y_default())),
+        validate: None,
         per_unsupported: None,
-        constraints: None,
+        ber_encode: |v, out| v.y.ber_encode(out),
+        ber_decode: |v, r| v.y.ber_decode_into(r),
+        xer_encode: |v, out, depth| v.y.xer_encode(out, depth),
+        xer_decode: |v, r| v.y.xer_decode_into(r),
+        jer_encode: |v, out| v.y.jer_encode(out),
+        jer_decode: |v, r| v.y.jer_decode_into(r),
+        per_encode: |v, w| v.y.per_encode(w, &crate::constraints::UNCONSTRAINED),
+        per_decode: |v, r| v.y.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
     },
 ];
 
@@ -946,21 +972,37 @@ impl DefaultPoint {
                 name: "x",
                 tag: crate::integer::INTEGER_TAG,
                 optional: false,
-                access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
+                is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
+                validate: None,
                 per_unsupported: None,
-                constraints: None,
+                ber_encode: |v, out| v.x.ber_encode(out),
+                ber_decode: |v, r| v.x.ber_decode_into(r),
+                xer_encode: |v, out, depth| v.x.xer_encode(out, depth),
+                xer_decode: |v, r| v.x.xer_decode_into(r),
+                jer_encode: |v, out| v.x.jer_encode(out),
+                jer_decode: |v, r| v.x.jer_decode_into(r),
+                per_encode: |v, w| v.x.per_encode(w, &crate::constraints::UNCONSTRAINED),
+                per_decode: |v, r| v.x.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
             },
             MemberDescriptor {
                 name: "y",
                 tag: crate::integer::INTEGER_TAG,
                 optional: false,
-                access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
+                is_present: |_| true,
                 set_default: None,
                 is_default_equal: None,
+                validate: None,
                 per_unsupported: None,
-                constraints: None,
+                ber_encode: |v, out| v.y.ber_encode(out),
+                ber_decode: |v, r| v.y.ber_decode_into(r),
+                xer_encode: |v, out, depth| v.y.xer_encode(out, depth),
+                xer_decode: |v, r| v.y.xer_decode_into(r),
+                jer_encode: |v, out| v.y.jer_encode(out),
+                jer_decode: |v, r| v.y.jer_decode_into(r),
+                per_encode: |v, w| v.y.per_encode(w, &crate::constraints::UNCONSTRAINED),
+                per_decode: |v, r| v.y.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
             },
         ];
         static A_SET_SPEC: SequenceSpec<Point> =
@@ -1341,21 +1383,37 @@ impl DefaultPoint {
             name: "x",
             tag: crate::integer::INTEGER_TAG,
             optional: false,
-            access: MemberAccess::Scalar { get: |v| &v.x, get_mut: |v| &mut v.x },
+            is_present: |_| true,
             set_default: None,
             is_default_equal: None,
+            validate: Some(|v| crate::constraints::validate_s64(*v.x, &RANGED_POINT_X_CONSTRAINTS)),
             per_unsupported: None,
-            constraints: Some(&RANGED_POINT_X_CONSTRAINTS),
+            ber_encode: |v, out| v.x.ber_encode(out),
+            ber_decode: |v, r| v.x.ber_decode_into(r),
+            xer_encode: |v, out, depth| v.x.xer_encode(out, depth),
+            xer_decode: |v, r| v.x.xer_decode_into(r),
+            jer_encode: |v, out| v.x.jer_encode(out),
+            jer_decode: |v, r| v.x.jer_decode_into(r),
+            per_encode: |v, w| v.x.per_encode(w, &RANGED_POINT_X_CONSTRAINTS),
+            per_decode: |v, r| v.x.per_decode_into(r, &RANGED_POINT_X_CONSTRAINTS),
         },
         MemberDescriptor {
             name: "y",
             tag: crate::integer::INTEGER_TAG,
             optional: false,
-            access: MemberAccess::Scalar { get: |v| &v.y, get_mut: |v| &mut v.y },
+            is_present: |_| true,
             set_default: None,
             is_default_equal: None,
+            validate: None,
             per_unsupported: None,
-            constraints: None,
+            ber_encode: |v, out| v.y.ber_encode(out),
+            ber_decode: |v, r| v.y.ber_decode_into(r),
+            xer_encode: |v, out, depth| v.y.xer_encode(out, depth),
+            xer_decode: |v, r| v.y.xer_decode_into(r),
+            jer_encode: |v, out| v.y.jer_encode(out),
+            jer_decode: |v, r| v.y.jer_decode_into(r),
+            per_encode: |v, w| v.y.per_encode(w, &crate::constraints::UNCONSTRAINED),
+            per_decode: |v, r| v.y.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
         },
     ];
 
@@ -1414,11 +1472,19 @@ impl DefaultPoint {
         name: "data",
         tag: crate::octet_string::OCTET_STRING_TAG,
         optional: false,
-        access: MemberAccess::Scalar { get: |v| &v.data, get_mut: |v| &mut v.data },
+        is_present: |_| true,
         set_default: None,
         is_default_equal: None,
+        validate: Some(|v| crate::constraints::validate_size(v.data.len(), &SIZED_BLOB_DATA_CONSTRAINTS)),
         per_unsupported: None,
-        constraints: Some(&SIZED_BLOB_DATA_CONSTRAINTS),
+        ber_encode: |v, out| v.data.ber_encode(out),
+        ber_decode: |v, r| v.data.ber_decode_into(r),
+        xer_encode: |v, out, depth| v.data.xer_encode(out, depth),
+        xer_decode: |v, r| v.data.xer_decode_into(r),
+        jer_encode: |v, out| v.data.jer_encode(out),
+        jer_decode: |v, r| v.data.jer_decode_into(r),
+        per_encode: |v, w| v.data.per_encode(w, &SIZED_BLOB_DATA_CONSTRAINTS),
+        per_decode: |v, r| v.data.per_decode_into(r, &SIZED_BLOB_DATA_CONSTRAINTS),
     }];
 
     static SIZED_BLOB_SPEC: SequenceSpec<SizedBlob> =
@@ -1538,11 +1604,19 @@ impl DefaultPoint {
         name: "inlineTags",
         tag: SEQUENCE_TAG,
         optional: false,
-        access: MemberAccess::Scalar { get: |v| &v.inline_tags, get_mut: |v| &mut v.inline_tags },
+        is_present: |_| true,
         set_default: None,
         is_default_equal: None,
+        validate: Some(|v| crate::constraints::validate_size(v.inline_tags.len(), &BASKET_INLINE_TAGS_CONSTRAINTS)),
         per_unsupported: None,
-        constraints: Some(&BASKET_INLINE_TAGS_CONSTRAINTS),
+        ber_encode: |v, out| v.inline_tags.ber_encode(out),
+        ber_decode: |v, r| v.inline_tags.ber_decode_into(r),
+        xer_encode: |v, out, depth| v.inline_tags.xer_encode(out, depth),
+        xer_decode: |v, r| v.inline_tags.xer_decode_into(r),
+        jer_encode: |v, out| v.inline_tags.jer_encode(out),
+        jer_decode: |v, r| v.inline_tags.jer_decode_into(r),
+        per_encode: |v, w| v.inline_tags.per_encode(w, &BASKET_INLINE_TAGS_CONSTRAINTS),
+        per_decode: |v, r| v.inline_tags.per_decode_into(r, &BASKET_INLINE_TAGS_CONSTRAINTS),
     }];
 
     static BASKET_SPEC: SequenceSpec<Basket> =
