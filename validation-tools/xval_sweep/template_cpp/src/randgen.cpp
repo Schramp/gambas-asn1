@@ -21,6 +21,25 @@
 //                        Names: flip-pc rotate-class tag-bump tag-jump
 //                               len-bit-flip len-indef len-overstate
 //                               len-understate (all = OR of every name)
+//   --jer-safe-real      generate REAL values that round-trip exactly
+//                        through every %.15G-family formatter (asn1cpp,
+//                        gambasn1-rust, and asn1c's JER encoder, which
+//                        don't always agree on digit count for an
+//                        arbitrary double) by construction, instead of
+//                        the full double range (default: off).
+//   --xer-safe-magic     exclude -0.0 from the magic-REAL-value set
+//                        (NaN/+Inf/-Inf/+0.0/-0.0, see FillConfig::
+//                        magic_real_prob's own doc) -- -0.0 is the one
+//                        value basic XER can't carry distinctly from
+//                        +0.0 (X.693 §17.9), so a naive byte-for-byte
+//                        BER<->XER round-trip check needs this flag to
+//                        avoid a false positive on that single, standard-
+//                        mandated gap. Run randgen twice with/without
+//                        this flag (two separate --output files, same
+//                        --seed gives two distinct but deterministic
+//                        streams since each run's RNG starts fresh) to
+//                        get one "safe" fixture and one that
+//                        deliberately exercises the gap.
 
 #include "type_registry.hpp"
 #include <asn1cpp/codec/BerCorruptor.hpp>
@@ -38,6 +57,8 @@ int main(int argc, char** argv) {
     int    max_seq = 30;
     double invalid_percent = 0.0;
     double corrupt_percent = 0.0;
+    bool   jer_safe_real   = false;
+    bool   xer_safe_magic  = false;
     asn1::CorruptMask corrupt_mask = asn1::CORRUPT_ALL;
     uint64_t seed = std::random_device{}();
     std::string output_file;
@@ -56,6 +77,10 @@ int main(int argc, char** argv) {
             invalid_percent = std::atof(argv[++i]);
         else if (std::strcmp(argv[i], "--corrupt-percent") == 0 && i+1 < argc)
             corrupt_percent = std::atof(argv[++i]);
+        else if (std::strcmp(argv[i], "--jer-safe-real") == 0)
+            jer_safe_real = true;
+        else if (std::strcmp(argv[i], "--xer-safe-magic") == 0)
+            xer_safe_magic = true;
         else if (std::strcmp(argv[i], "--corrupt-mode") == 0 && i+1 < argc) {
             const char* spec = argv[++i];
             if (!asn1::parse_corrupt_mask(spec, corrupt_mask)) {
@@ -88,6 +113,8 @@ int main(int argc, char** argv) {
     cfg.max_depth        = depth;
     cfg.max_seq_of       = max_seq;
     cfg.invalid_percent  = invalid_percent;
+    cfg.jer_safe_real    = jer_safe_real;
+    cfg.include_xer_unsafe_magic = !xer_safe_magic;
     asn1::RandomFiller filler{rng, cfg};
 
     std::ofstream fout;
@@ -107,7 +134,9 @@ int main(int argc, char** argv) {
               << " count=" << count << " depth=" << depth
               << " max_seq=" << max_seq
               << " invalid_percent=" << invalid_percent
-              << " corrupt_percent=" << corrupt_percent << "\n";
+              << " corrupt_percent=" << corrupt_percent
+              << " jer_safe_real=" << jer_safe_real
+              << " xer_safe_magic=" << xer_safe_magic << "\n";
 
     for (int i = 0; i < count; ++i) {
         auto obj = entry->make();

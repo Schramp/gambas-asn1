@@ -23,6 +23,50 @@ struct FillConfig {
     /// Affects: INTEGER range, OCTET/BIT/string SIZE, string alphabet, ENUM map, SEQUENCE OF size.
     /// Default 0 = always in-spec.
     double invalid_percent = 0.0;
+
+    /// @brief When true, REAL values are generated with at most 6 digits
+    /// after the decimal point (assembled via snprintf("%.*f") + strtod,
+    /// not bit-twiddled) instead of the full double range. A double that
+    /// is exactly a short decimal has no formatting ambiguity left: every
+    /// `%.15G`-family formatter (asn1cpp's own JerCodec, asn1c's JER
+    /// encoder, which does not always agree with asn1cpp's own choice of
+    /// digit count for an arbitrary double — see gambas-asn1 xval_sweep's
+    /// JER leg) converges on the same minimal text. Exists specifically
+    /// so JER cross-validation can be byte-exact-gated instead of
+    /// informational-only when the caller opts in. Default false — not
+    /// the general-purpose knob; other callers (BER/XER/PER fuzzing) want
+    /// the full double range.
+    bool jer_safe_real = false;
+
+    /// @brief Probability (0-1, not percent) that a generated REAL value
+    /// is one of the five "magic" special values (NaN, +Inf, -Inf, -0.0,
+    /// +0.0 -- chosen uniformly among them) instead of a value from the
+    /// ordinary uniform range. `std::uniform_real_distribution` over
+    /// [-1e6, 1e6] has essentially zero chance of ever landing on one of
+    /// these by chance (NaN/Inf aren't in its range at all; exact -0.0/
+    /// +0.0 is a single point out of 2^64), so without this knob the
+    /// special-value encode/decode paths (X.697 §23.2's Table 2 strings,
+    /// X.693's SpecialRealValue element, PER's own special-value bit
+    /// patterns) are effectively never exercised by randomized testing.
+    /// Default ~1/40 — frequent enough that a handful of records already
+    /// covers all five cases, not so frequent that it swamps ordinary
+    /// REAL coverage.
+    double magic_real_prob = 1.0 / 40.0;
+
+    /// @brief When true (default, matches magic_real_prob's own doc),
+    /// the magic-value set includes -0.0. When false, -0.0 is excluded
+    /// -- leaving NaN/+Inf/-Inf/+0.0, all four of which round-trip
+    /// bit-exactly through every codec this runtime has (BER, PER, basic
+    /// XER, JER). -0.0 is the one exception: basic XER has no
+    /// minus-zero distinction (X.693 §17.9 -- confirmed against the
+    /// standard text directly, 2026-10-07), so it legitimately loses its
+    /// sign crossing BER->XER, even though BER itself (X.690 §8.5.3/
+    /// 8.5.9) and JER/PER both carry it exactly. Set false when
+    /// generating a fixture that must survive a naive byte-for-byte
+    /// cross-codec round-trip check without a tolerant comparator (see
+    /// tests/seq/test_random_roundtrip.cpp's own idempotent-after-first-
+    /// hop handling for the alternative, more rigorous approach).
+    bool include_xer_unsafe_magic = true;
 };
 
 /// @brief Fills a default-constructed ASN.1 object with random but structurally valid data.
