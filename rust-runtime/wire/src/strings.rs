@@ -109,8 +109,56 @@ pub fn read_char_string(r: &mut Reader, tag: Tag, kind: &str) -> Result<String, 
 /// `OctetString`, measured, abandoned both times); `CompactString` was
 /// part of the same abandoned attempt here, same verdict (no measured win
 /// on this schema's real workload).
+/// Expands to the pair of `jer_encode`/`jer_decode_into` methods for one
+/// `char_string_type!` invocation -- `jer_plain` for the common case
+/// (quoted UTF-8, every kind except the four below), `jer_hex` for
+/// T61String/VideotexString/GraphicString/GeneralString (X.697's JER
+/// maps these to quoted hex, not text -- see `char_string_type!`'s own
+/// doc on the UTF-8-storage caveat this carries).
+macro_rules! char_string_jer_methods {
+    (jer_plain) => {
+        fn jer_encode(&self, out: &mut String) {
+            crate::jer::strings::encode_plain(&self.0, out);
+        }
+
+        fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+            self.0 = crate::jer::strings::decode_plain(r)?;
+            Ok(())
+        }
+    };
+    (jer_hex) => {
+        fn jer_encode(&self, out: &mut String) {
+            crate::jer::strings::encode_hex(self.0.as_bytes(), out);
+        }
+
+        fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+            let bytes = crate::jer::strings::decode_hex(r)?;
+            self.0 = String::from_utf8(bytes)
+                .map_err(|_| DecodeError::new("JER: hex string content is not valid UTF-8".to_string(), r.pos()))?;
+            Ok(())
+        }
+    };
+}
+
 macro_rules! char_string_type {
+    // Default: plain JER (quoted UTF-8) -- every restricted-character-
+    // string kind except the four X.697 §8.21/§8.22 hex-JER ones below.
     ($name:ident, $tag_const:ident, $tag_num:expr, $asn1_name:expr) => {
+        char_string_type!($name, $tag_const, $tag_num, $asn1_name, jer_plain);
+    };
+    // T61String/VideotexString/GraphicString/GeneralString: X.697's JER
+    // maps these to quoted hex (`HexStringJerHandler`, `runtime/src/
+    // JerCodec.cpp`), not UTF-8 text -- their C++ storage (`AsnStringBase`)
+    // is raw bytes, not necessarily valid UTF-8. This crate stores every
+    // char-string kind as a Rust `String` (`decode_string_content` already
+    // forces UTF-8 at BER-decode time, same lossy-by-design choice this
+    // crate's XER support already makes for these same four types -- XER
+    // treats them as plain escaped text too, matching `UTF8String`, not a
+    // separate representation). Hex-encoding `self.0.as_bytes()` here
+    // mirrors C++'s JER byte-for-byte only when the content was valid
+    // UTF-8 to begin with; genuinely non-UTF8 legacy-charset content
+    // already lost fidelity one layer up, at BER decode, not here.
+    ($name:ident, $tag_const:ident, $tag_num:expr, $asn1_name:expr, $jer_mode:ident) => {
         #[doc = concat!("`", $asn1_name, "` — X.680 §41. Newtype over `String`; see the module doc for why.")]
         pub const $tag_const: Tag = Tag::universal($tag_num, false);
 
@@ -162,6 +210,8 @@ macro_rules! char_string_type {
                 Ok(())
             }
 
+            char_string_jer_methods!($jer_mode);
+
             fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
                 let _ = crate::per::strings::encode_string(w, c, $tag_num, self.0.as_bytes());
             }
@@ -187,11 +237,11 @@ char_string_type!(Ia5String, IA5_STRING_TAG, universal::IA5_STRING, "IA5String")
 char_string_type!(Utf8String, UTF8_STRING_TAG, universal::UTF8_STRING, "UTF8String");
 char_string_type!(NumericString, NUMERIC_STRING_TAG, universal::NUMERIC_STRING, "NumericString");
 char_string_type!(PrintableString, PRINTABLE_STRING_TAG, universal::PRINTABLE_STRING, "PrintableString");
-char_string_type!(T61String, T61_STRING_TAG, universal::T61_STRING, "T61String");
-char_string_type!(VideotexString, VIDEOTEX_STRING_TAG, universal::VIDEOTEX_STRING, "VideotexString");
+char_string_type!(T61String, T61_STRING_TAG, universal::T61_STRING, "T61String", jer_hex);
+char_string_type!(VideotexString, VIDEOTEX_STRING_TAG, universal::VIDEOTEX_STRING, "VideotexString", jer_hex);
 char_string_type!(VisibleString, VISIBLE_STRING_TAG, universal::VISIBLE_STRING, "VisibleString");
-char_string_type!(GraphicString, GRAPHIC_STRING_TAG, universal::GRAPHIC_STRING, "GraphicString");
-char_string_type!(GeneralString, GENERAL_STRING_TAG, universal::GENERAL_STRING, "GeneralString");
+char_string_type!(GraphicString, GRAPHIC_STRING_TAG, universal::GRAPHIC_STRING, "GraphicString", jer_hex);
+char_string_type!(GeneralString, GENERAL_STRING_TAG, universal::GENERAL_STRING, "GeneralString", jer_hex);
 char_string_type!(ObjectDescriptor, OBJECT_DESCRIPTOR_TAG, universal::OBJECT_DESCRIPTOR, "ObjectDescriptor");
 char_string_type!(UtcTime, UTC_TIME_TAG, universal::UTC_TIME, "UTCTime");
 char_string_type!(GeneralizedTime, GENERALIZED_TIME_TAG, universal::GENERALIZED_TIME, "GeneralizedTime");
@@ -287,6 +337,15 @@ macro_rules! wide_char_string_type {
             fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
                 let text = r.read_text_content();
                 self.0 = decode_wide_string_xer(&crate::xer::unescape(text), $bpc);
+                Ok(())
+            }
+
+            fn jer_encode(&self, out: &mut String) {
+                crate::jer::strings::encode_wide(&self.0, $bpc, out);
+            }
+
+            fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+                self.0 = crate::jer::strings::decode_wide(r, $bpc)?;
                 Ok(())
             }
 

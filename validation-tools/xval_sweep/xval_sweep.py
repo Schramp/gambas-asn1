@@ -290,6 +290,16 @@ def normalise(xer: str) -> str:
     return "\n".join(line.strip() for line in xer.splitlines() if line.strip())
 
 
+def split_jer_records(text: str) -> list[str]:
+    """Split JER output into per-record strings.
+
+    Unlike XER's split_xer_records, JER needs no tag-balancing: JerCodec
+    emits one compact JSON object per line, so each non-blank line is
+    already a complete, self-delimiting record.
+    """
+    return [line for line in text.splitlines() if line.strip()]
+
+
 
 # XER content itself is always valid text, but the ENCODING-CONTROL XER
 # `::= utf8` instruction (gambas-asn1#443) writes OCTET STRING content
@@ -314,6 +324,18 @@ def b2x_file(tool: str, type_name: str, ber_path: str) -> tuple[str, str]:
 def x2b(tool: str, type_name: str, xer_text: str) -> tuple[bytes, str]:
     """XER string → BER bytes. Returns (ber_bytes, stderr)."""
     r = run(tool, "--type", type_name, input=xer_text.encode(errors=_TEXT_ERRORS))
+    return r.stdout, r.stderr.decode(errors="replace").strip()
+
+
+def b2j_file(tool: str, type_name: str, ber_path: str) -> tuple[str, str]:
+    """BER file → JER string. Returns (jer_text, stderr)."""
+    r = run(tool, "--type", type_name, ber_path)
+    return r.stdout.decode(errors=_TEXT_ERRORS), r.stderr.decode(errors="replace").strip()
+
+
+def j2b(tool: str, type_name: str, jer_text: str) -> tuple[bytes, str]:
+    """JER string → BER bytes. Returns (ber_bytes, stderr)."""
+    r = run(tool, "--type", type_name, input=jer_text.encode(errors=_TEXT_ERRORS))
     return r.stdout, r.stderr.decode(errors="replace").strip()
 
 
@@ -390,6 +412,101 @@ def asn1c_x2b(tool: str, pdu_type: str, xer_text: str) -> tuple[bytes, str]:
         os.unlink(xer_path)
 
 
+def asn1c_b2j(tool: str, pdu_type: str, ber_path: str) -> tuple[str, str]:
+    """BER file → JER string via asn1c's own converter-example.
+
+    Unlike cpp/rust's ber-to-jer, asn1c's -ojer has no compact/one-line-
+    per-record mode (an `ATS_JER_MINIFIED` enum value exists in
+    converter-example.c but is never wired to a CLI flag — dead code
+    upstream) — output is always pretty-printed, multi-line per record.
+    Record splitting for this output therefore can't reuse
+    split_jer_records (which assumes one record per line); see
+    split_asn1c_jer_records below.
+    """
+    r = run(tool, "-p", pdu_type, "-iber", "-ojer", ber_path)
+    return r.stdout.decode(errors=_TEXT_ERRORS), r.stderr.decode(errors="replace").strip()
+
+
+def asn1c_j2b(tool: str, pdu_type: str, jer_text: str) -> tuple[bytes, str]:
+    """JER string → DER bytes via asn1c's own converter-example.
+
+    converter-example takes a datafile argument, not stdin, unlike the
+    C++/Rust tools' j2b — write to a temp file. Confirmed empirically
+    (2026-10-07) that -ijer accepts multiple concatenated top-level JSON
+    values in one file, same as -ixer does for XER — JER values are
+    self-delimiting JSON, so no multi-record framing hack is needed here
+    either.
+    """
+    fd, jer_path = tempfile.mkstemp(suffix=".jer")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(jer_text.encode(errors=_TEXT_ERRORS))
+        r = run(tool, "-p", pdu_type, "-ijer", "-oder", jer_path)
+        return r.stdout, r.stderr.decode(errors="replace").strip()
+    finally:
+        os.unlink(jer_path)
+
+
+def split_asn1c_jer_records(text: str) -> list[str]:
+    """Split asn1c's pretty-printed, multi-line JER output into per-record
+    JSON strings, using a real JSON parser (json.JSONDecoder.raw_decode)
+    rather than a line-based heuristic — the text has no record-boundary
+    marker of its own beyond "one complete JSON value", and pretty-
+    printing means a record can span many lines.
+    """
+    import json
+    decoder = json.JSONDecoder()
+    records = []
+    idx = 0
+    n = len(text)
+    while idx < n:
+        while idx < n and text[idx].isspace():
+            idx += 1
+        if idx >= n:
+            break
+        obj, end = decoder.raw_decode(text, idx)
+        records.append(text[idx:end])
+        idx = end
+    return records
+
+
+def compare_jer(label: str, jer_a: str, jer_b: str, verbose: bool,
+                 split_a=split_jer_records, split_b=split_jer_records) -> tuple[int, int]:
+    """Compare two JER outputs record-by-record via parsed JSON equality,
+    not raw string equality — needed whenever either side is asn1c's
+    pretty-printed output (whitespace/indentation never matches our own
+    compact one-line-per-record convention, even for byte-identical
+    values). Still exact on the only thing that matters (JSON structure
+    and values), not a lossy/lenient comparison.
+    """
+    import json
+    recs_a = split_a(jer_a)
+    recs_b = split_b(jer_b)
+    n = min(len(recs_a), len(recs_b))
+    if n == 0:
+        print(f"  [{label}] no records to compare")
+        return 0, 0
+    matches = mismatches = 0
+    for i in range(n):
+        try:
+            a = json.loads(recs_a[i])
+            b = json.loads(recs_b[i])
+        except json.JSONDecodeError as e:
+            mismatches += 1
+            if verbose:
+                print(f"  MISMATCH record #{i + 1}: JSON parse error: {e}")
+            continue
+        if a == b:
+            matches += 1
+        else:
+            mismatches += 1
+            if verbose:
+                print(f"  MISMATCH record #{i + 1}:\n    expected {a}\n    got      {b}")
+    status = "OK" if mismatches == 0 else "FAIL"
+    print(f"  [{label}] {matches}/{n} match, {mismatches} mismatch  [{status}]")
+    return matches, mismatches
+
+
 def asn1c_b2p(tool: str, pdu_type: str, ber_record: bytes) -> tuple[bytes, str]:
     """One BER-record's bytes -> raw UPER bytes via asn1c's own converter-example.
 
@@ -457,6 +574,19 @@ def compare_records(recs_a: list[str], recs_b: list[str], verbose: bool) -> tupl
 def run_comparison(label: str, xer_a: str, xer_b: str, verbose: bool) -> tuple[int, int]:
     recs_a = split_xer_records(xer_a)
     recs_b = split_xer_records(xer_b)
+    n = min(len(recs_a), len(recs_b))
+    if n == 0:
+        print(f"  [{label}] no records to compare")
+        return 0, 0
+    matches, mismatches = compare_records(recs_a, recs_b, verbose)
+    status = "OK" if mismatches == 0 else "FAIL"
+    print(f"  [{label}] {matches}/{n} match, {mismatches} mismatch  [{status}]")
+    return matches, mismatches
+
+
+def run_comparison_jer(label: str, jer_a: str, jer_b: str, verbose: bool) -> tuple[int, int]:
+    recs_a = split_jer_records(jer_a)
+    recs_b = split_jer_records(jer_b)
     n = min(len(recs_a), len(recs_b))
     if n == 0:
         print(f"  [{label}] no records to compare")
@@ -624,6 +754,8 @@ def cpp_tool_paths(cpp_dir):
         "x2b": os.path.join(cpp_dir, "xer-to-ber"),
         "b2p": os.path.join(cpp_dir, "ber-to-per"),
         "p2b": os.path.join(cpp_dir, "per-to-ber"),
+        "b2j": os.path.join(cpp_dir, "ber-to-jer"),
+        "j2b": os.path.join(cpp_dir, "jer-to-ber"),
     }
 
 
@@ -639,6 +771,7 @@ def build_cpp(target_dir, asn1_files_abs, pdu_type, jobs=4, reuse=False):
         return tools
     for name in ["randgen.cpp", "ber-to-xer.cpp", "xer-to-ber.cpp",
                  "ber-to-per.cpp", "per-to-ber.cpp",
+                 "ber-to-jer.cpp", "jer-to-ber.cpp",
                  "type_registry.hpp", "type_registry.cpp"]:
         copy_verbatim(os.path.join(TEMPLATE_CPP, "src", name),
                       os.path.join(cpp_dir, "src", name))
@@ -703,6 +836,16 @@ def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None):
                 {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
     materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "xer_to_ber.rs.tmpl"),
                 os.path.join(rust_dir, "src", "bin", "xer_to_ber.rs"),
+                {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
+    # JER: unconditional, same as the XER pair above — every SEQUENCE/
+    # CHOICE top-level type gets encode_jer()/decode_jer() wrappers
+    # unconditionally from codegen (RustBackend.cpp, gambas-asn1#663),
+    # no per-member coverage gate the way PER's per_covered check needs.
+    materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "ber_to_jer.rs.tmpl"),
+                os.path.join(rust_dir, "src", "bin", "ber_to_jer.rs"),
+                {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
+    materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "jer_to_ber.rs.tmpl"),
+                os.path.join(rust_dir, "src", "bin", "jer_to_ber.rs"),
                 {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
 
     # Every generated type gets one merged `impl asn1cpp_wire::value::
@@ -774,6 +917,8 @@ def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None):
     result = {
         "b2x": os.path.join(bin_dir, "ber-to-xer"),
         "x2b": os.path.join(bin_dir, "xer-to-ber"),
+        "b2j": os.path.join(bin_dir, "ber-to-jer"),
+        "j2b": os.path.join(bin_dir, "jer-to-ber"),
     }
     if per_covered:
         result["b2p"] = os.path.join(bin_dir, "ber-to-per")
@@ -836,7 +981,8 @@ def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, reuse=False, jo
 
 
 def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c_reason=None,
-               slot=None, cpp_jobs=4, cargo_jobs=None, reuse=(), extra_files=()):
+               slot=None, cpp_jobs=4, cargo_jobs=None, reuse=(), extra_files=(),
+               jer_safe_real=False):
     slug = os.path.splitext(os.path.basename(schema_rel))[0] + "_" + pdu_type
     target_dir = os.path.join(TESTBUILD, slug)
     asn1_files_abs = [os.path.join(ASN1CPP_ROOT, schema_rel)]
@@ -861,6 +1007,8 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
                "--count", str(count), "--output", ber_path]
     if seed is not None:
         gen_cmd += ["--seed", str(seed)]
+    if jer_safe_real:
+        gen_cmd += ["--jer-safe-real"]
     r = run(*gen_cmd)
     if r.returncode != 0:
         print(f"  randgen failed: {r.stderr.decode(errors='replace')}")
@@ -923,6 +1071,52 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
 
     ber_cross2, _ = x2b(cpp_tools["x2b"], pdu_type, xer_rust)
     tally(compare_ber("orig vs cpp.X2B(rust.XER)", ber_orig, ber_cross2, verbose))
+
+    # JER leg — unconditional, same reason the XER legs above are: every
+    # SEQUENCE/CHOICE top-level type gets encode_jer()/decode_jer()
+    # unconditionally from codegen (no per_covered-style gate like PER's).
+    # asn1c DOES have JER support (an earlier claim here that it didn't
+    # was wrong — confirmed 2026-10-07 by reading converter-example's own
+    # -ijer/-ojer flags); its own asn1c.B2J leg is added further down,
+    # alongside the existing asn1c.B2X leg, not here.
+    jer_cpp, err_cpp_jer = b2j_file(cpp_tools["b2j"], pdu_type, ber_path)
+    if err_cpp_jer:
+        print(f"  cpp b2j stderr: {err_cpp_jer}")
+    jer_rust, err_rust_jer = b2j_file(rust_tools["b2j"], pdu_type, ber_path)
+    if err_rust_jer:
+        print(f"  rust b2j stderr: {err_rust_jer}")
+
+    tally(run_comparison_jer("cpp.B2J vs rust.B2J", jer_cpp, jer_rust, verbose))
+
+    # The orig-round-trip legs below are gated (tallied) only when
+    # --jer-safe-real asked randgen to generate REAL values that round-
+    # trip exactly through every %.15G-family formatter by construction
+    # (RandomFiller::FillConfig::jer_safe_real's own doc) — otherwise
+    # informational only. Without that flag, JER's own REAL
+    # representation (both cpp and rust use the same `%.15G`-equivalent,
+    # JerCodec.cpp's own documented choice) is lossy by design for values
+    # needing full double precision: confirmed empirically on
+    # roundtrip_test.asn1::Container (REAL-bearing, no --jer-safe-real):
+    # cpp.B2J matches rust.B2J byte-for-byte (the real cross-validation
+    # signal, always tallied above), but neither round-trips back to
+    # `orig` bit-exactly. A REAL-free target (explicit_tag_test.asn1::
+    # Mixed) round-trips through JER perfectly either way.
+    def jer_rt_check(label, a, b):
+        pair = compare_ber(label if jer_safe_real else f"{label} [informational]", a, b, verbose)
+        if jer_safe_real:
+            tally(pair)
+
+    ber_jer_cpp2, _ = j2b(cpp_tools["j2b"], pdu_type, jer_cpp)
+    jer_rt_check("orig vs cpp.J2B(cpp.JER)", ber_orig, ber_jer_cpp2)
+
+    ber_jer_rust2, _ = j2b(rust_tools["j2b"], pdu_type, jer_rust)
+    jer_rt_check("orig vs rust.J2B(rust.JER)", ber_orig, ber_jer_rust2)
+
+    ber_jer_cross1, _ = j2b(rust_tools["j2b"], pdu_type, jer_cpp)
+    jer_rt_check("orig vs rust.J2B(cpp.JER)", ber_orig, ber_jer_cross1)
+
+    ber_jer_cross2, _ = j2b(cpp_tools["j2b"], pdu_type, jer_rust)
+    jer_rt_check("orig vs cpp.J2B(rust.JER)", ber_orig, ber_jer_cross2)
 
     # PER leg — only when the Rust side actually generated the type
     # (build_rust's own per_covered detection; "b2p"/"p2b" keys are absent
@@ -1044,6 +1238,44 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
         # codecs, so it's printed but never fails the target.
         ber_asn1c2, _ = asn1c_x2b(asn1c_tools["tool"], pdu_type, xer_asn1c)
         compare_ber("orig vs asn1c.X2B(asn1c.XER) [informational]", ber_orig, ber_asn1c2, verbose)
+
+        # JER: asn1c does have JER support (ASN_DISABLE_JER_SUPPORT is off
+        # by default, A1C_GEN_JER in asn1c.c's default flags) — confirmed
+        # 2026-10-07 after an earlier, wrong claim in this epic that it
+        # didn't. Its -ojer has no compact/one-line-per-record mode
+        # (asn1c_b2j's own doc), so comparisons here use compare_jer
+        # (parsed-JSON equality) instead of run_comparison_jer's raw
+        # string compare, and the asn1c side is split with
+        # split_asn1c_jer_records instead of split_jer_records.
+        jer_asn1c, err_asn1c_jer = asn1c_b2j(asn1c_tools["tool"], pdu_type, ber_path)
+        if err_asn1c_jer:
+            print(f"  asn1c b2j stderr: {err_asn1c_jer}")
+
+        # Gated (tallied) only under --jer-safe-real, same rationale as
+        # the cpp/rust round-trip legs above. Without it: asn1c's actual
+        # REAL-to-JER algorithm is `%.15f` (fixed decimal places) plus
+        # trailing-zero stripping (traced directly in REAL_jer.c/REAL.c,
+        # 2026-10-07) — NOT `%.15g`-style as our own JerCodec.cpp's
+        # comment claims (that comment is itself wrong; separately
+        # flagged). `%.15f` gives no round-trip guarantee for values
+        # with a large integer part, so a REAL-bearing record can
+        # genuinely differ from asn1c here even though our own
+        # cpp.JER == rust.JER byte-for-byte (the real cross-validation
+        # signal, always tallied above). Asn1c's own JER round-trip is
+        # independently lossy for the same reason — see gambas-asn1/
+        # asn1c#7, filed upstream, not fixed by --jer-safe-real since
+        # that flag only controls the generated *value*'s decimal shape,
+        # not either side's text formatter.
+        def jer_asn1c_check(label, a, b, **kw):
+            pair = compare_jer(label if jer_safe_real else f"{label} [informational]", a, b, verbose, **kw)
+            if jer_safe_real:
+                tally(pair)
+
+        jer_asn1c_check("asn1c.B2J vs cpp.B2J", jer_asn1c, jer_cpp, split_a=split_asn1c_jer_records)
+        jer_asn1c_check("asn1c.B2J vs rust.B2J", jer_asn1c, jer_rust, split_a=split_asn1c_jer_records)
+
+        ber_asn1c_jer2, _ = asn1c_j2b(asn1c_tools["tool"], pdu_type, jer_asn1c)
+        jer_rt_check("orig vs asn1c.J2B(asn1c.JER)", ber_orig, ber_asn1c_jer2)
     elif not skip_asn1c_reason:
         print("  asn1c leg: skipped (not found or unsupported for this target)")
 
@@ -1113,6 +1345,14 @@ def main():
     ap.add_argument("--reuse", default="",
                      help="comma list of legs to reuse without rebuilding when their "
                           "inputs are unchanged: asn1c, cpp (keyed on schema + tool/runtime signature)")
+    ap.add_argument("--jer-safe-real", action="store_true",
+                     help="pass --jer-safe-real to randgen (RandomFiller::FillConfig's own "
+                          "doc) so generated REAL values round-trip exactly through every "
+                          "%%.15G-family formatter by construction, and gate (tally) the JER "
+                          "orig-round-trip and asn1c.B2J comparisons instead of leaving them "
+                          "informational-only (both are otherwise affected by REAL-precision "
+                          "differences between asn1cpp/gambasn1-rust's %%.15G and asn1c's own "
+                          "%%.15f+trim — see gambas-asn1/asn1c#7)")
     opts = ap.parse_args()
 
     if opts.count is None:
@@ -1209,7 +1449,7 @@ def main():
                 oks[i] = run_target(schema_rel, pdu_type, opts.count, opts.seed, opts.verbose,
                                     asn1c_bin, skip_asn1c_reason, slot=slot,
                                     cpp_jobs=cpp_jobs, cargo_jobs=cargo_jobs, reuse=reuse,
-                                    extra_files=extra_files)
+                                    extra_files=extra_files, jer_safe_real=opts.jer_safe_real)
             except Exception as e:  # keep the sweep going; report as a failed target
                 print(f"  EXCEPTION: {e!r}")
                 oks[i] = False

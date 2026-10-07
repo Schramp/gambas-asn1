@@ -169,6 +169,20 @@ pub trait Asn1Value {
         Err(DecodeError::new("XER leg not yet wired for this type".to_string(), 0))
     }
 
+    /// X.697 JER encoding of this value, appended to `out` -- the JSON
+    /// analogue of `xer_encode`, same "every builtin overrides this,
+    /// SEQUENCE/CHOICE/SEQUENCE-OF too" shape. No depth/indentation
+    /// parameter: JER output is compact, single-line per record (matches
+    /// `JerEncodeStream`'s own convention, `runtime/src/JerCodec.cpp`).
+    fn jer_encode(&self, _out: &mut String) {
+        unimplemented!("JER leg not yet wired for this type")
+    }
+
+    /// Decode counterpart of `jer_encode`.
+    fn jer_decode_into(&mut self, _r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        Err(DecodeError::new("JER leg not yet wired for this type".to_string(), 0))
+    }
+
     /// BASE64 XER representation (X.693 §21) for an `ENCODING-CONTROL XER
     /// ... BASE64` (or legacy `::= base64`)-marked OCTET STRING member —
     /// the alternative to `xer_encode`'s own default (unspaced uppercase
@@ -418,6 +432,16 @@ impl<V: Asn1Value + Default> Asn1Value for Option<V> {
         self.get_or_insert_with(V::default).xer_decode_into(r)
     }
 
+    fn jer_encode(&self, out: &mut String) {
+        if let Some(v) = self {
+            v.jer_encode(out);
+        }
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        self.get_or_insert_with(V::default).jer_decode_into(r)
+    }
+
     /// X.691 §14: an OPTIONAL member's own bitmap bit (encoded by the
     /// generic SEQUENCE walker, `per::sequence::encode_sequence_content`)
     /// already decides whether this value's bits appear on the wire at
@@ -483,6 +507,18 @@ macro_rules! fixed_width_integer {
                 Ok(())
             }
 
+            fn jer_encode(&self, out: &mut String) {
+                out.push_str(&self.to_string());
+            }
+
+            fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+                let tok = r.read_json_token()?;
+                self.0 = tok.parse::<$prim>().map_err(|_| {
+                    DecodeError::new(format!("JER: invalid INTEGER: {tok}"), r.pos())
+                })?;
+                Ok(())
+            }
+
             fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
                 crate::per::$per_mod::$per_encode_fn(w, c, self.0);
             }
@@ -533,6 +569,18 @@ impl Asn1Value for crate::integer::BigInteger {
         let text = r.read_text_content();
         self.0 = text.trim().parse::<i128>().map_err(|_| {
             DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
+        })?;
+        Ok(())
+    }
+
+    fn jer_encode(&self, out: &mut String) {
+        out.push_str(&self.to_string());
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        let tok = r.read_json_token()?;
+        self.0 = tok.parse::<i128>().map_err(|_| {
+            DecodeError::new(format!("JER: invalid INTEGER: {tok}"), r.pos())
         })?;
         Ok(())
     }
@@ -596,6 +644,19 @@ impl Asn1Value for crate::boolean::Boolean {
         }
     }
 
+    fn jer_encode(&self, out: &mut String) {
+        out.push_str(if self.0 { "true" } else { "false" });
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        let tok = r.read_json_token()?;
+        match tok.as_str() {
+            "true" => { self.0 = true; Ok(()) }
+            "false" => { self.0 = false; Ok(()) }
+            _ => Err(DecodeError::new(format!("JER: BOOLEAN expected true/false, got: {tok}"), r.pos())),
+        }
+    }
+
     /// X.691 §12: one bit, no alignment — 1 for TRUE, 0 for FALSE. Mirrors
     /// `BooleanPerHandler` (`runtime/src/PerCodec.cpp`) exactly.
     fn per_encode(&self, w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {
@@ -644,6 +705,18 @@ impl Asn1Value for crate::null::Null {
 
     fn xer_decode_into(&mut self, _r: &mut XerReader) -> Result<(), DecodeError> {
         // Empty content — nothing to consume.
+        Ok(())
+    }
+
+    fn jer_encode(&self, out: &mut String) {
+        out.push_str("null");
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        let tok = r.read_json_token()?;
+        if tok != "null" {
+            return Err(DecodeError::new(format!("JER: expected null, got: {tok}"), r.pos()));
+        }
         Ok(())
     }
 
@@ -828,6 +901,15 @@ impl Asn1Value for crate::bit_string::BitString {
     fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
         crate::constraints::validate_size(self.bit_count(), c)
     }
+
+    fn jer_encode(&self, out: &mut String) {
+        crate::jer::bit_string::encode(self, out);
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        *self = crate::jer::bit_string::decode(r)?;
+        Ok(())
+    }
 }
 
 /// Maps ASN.1 OBJECT IDENTIFIER — `native_builtin_type`'s
@@ -895,6 +977,36 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
         let text = r.read_text_content();
         let mut arcs = Vec::new();
         for part in text.trim().split('.') {
+            if part.is_empty() {
+                break;
+            }
+            match part.parse::<u64>() {
+                Ok(v) => arcs.push(v),
+                Err(_) => break,
+            }
+        }
+        *self = crate::oid::ObjectIdentifier(arcs);
+        Ok(())
+    }
+
+    /// X.697 §8.14: quoted dotted-decimal string, same arc formatting
+    /// XER's own `xer_encode` above uses -- JER has no separate OID
+    /// grammar, just JSON-quotes the identical text.
+    fn jer_encode(&self, out: &mut String) {
+        out.push('"');
+        for (i, arc) in self.0.iter().enumerate() {
+            if i > 0 {
+                out.push('.');
+            }
+            out.push_str(&arc.to_string());
+        }
+        out.push('"');
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        let text = r.read_json_string()?;
+        let mut arcs = Vec::new();
+        for part in text.split('.') {
             if part.is_empty() {
                 break;
             }
@@ -985,6 +1097,33 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
         *self = crate::relative_oid::RelativeOid(arcs);
         Ok(())
     }
+
+    fn jer_encode(&self, out: &mut String) {
+        out.push('"');
+        for (i, arc) in self.0.iter().enumerate() {
+            if i > 0 {
+                out.push('.');
+            }
+            out.push_str(&arc.to_string());
+        }
+        out.push('"');
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        let text = r.read_json_string()?;
+        let mut arcs = Vec::new();
+        for part in text.split('.') {
+            if part.is_empty() {
+                break;
+            }
+            match part.parse::<u64>() {
+                Ok(v) => arcs.push(v),
+                Err(_) => break,
+            }
+        }
+        *self = crate::relative_oid::RelativeOid(arcs);
+        Ok(())
+    }
 }
 
 /// Maps ASN.1 REAL — `native_builtin_type`'s `f64`
@@ -1063,6 +1202,15 @@ impl Asn1Value for crate::real::Real {
         Ok(())
     }
 
+    fn jer_encode(&self, out: &mut String) {
+        crate::jer::real::encode(self.0, out);
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        self.0 = crate::jer::real::decode(r)?;
+        Ok(())
+    }
+
     /// X.691 §16: not bit-packed like INTEGER/ENUMERATED — the value's own
     /// BER content bytes, length-prefixed (mirrors `RealPerHandler`,
     /// `runtime/src/PerCodec.cpp`, exactly). No `Constraints` apply to REAL.
@@ -1137,6 +1285,14 @@ impl<T: Asn1Value> Asn1Value for Box<T> {
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
         (**self).xer_decode_into(r)
+    }
+
+    fn jer_encode(&self, out: &mut String) {
+        (**self).jer_encode(out)
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        (**self).jer_decode_into(r)
     }
 
     fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
@@ -1894,6 +2050,174 @@ mod tests {
         let mut got = RelativeOid::default();
         got.per_decode_into(&mut r, &crate::constraints::UNCONSTRAINED).unwrap();
         assert_eq!(got, v);
+    }
+
+    // -----------------------------------------------------------------
+    // JER (gambas-asn1#662) — known-correct JSON strings are from the
+    // C++ reference's own `tests/jer/*.cpp` (ground truth, not just
+    // round-trip-with-itself).
+
+    #[test]
+    fn integer_jer_round_trips_and_matches_reference() {
+        use crate::integer::Integer;
+        let v = Integer(42);
+        let mut out = String::new();
+        v.jer_encode(&mut out);
+        assert_eq!(out, "42");
+        let mut r = crate::jer::reader::Reader::new(&out);
+        let mut got = Integer::default();
+        got.jer_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+
+        let neg = Integer(-1);
+        let mut out2 = String::new();
+        neg.jer_encode(&mut out2);
+        assert_eq!(out2, "-1");
+    }
+
+    #[test]
+    fn boolean_jer_round_trips_and_matches_reference() {
+        use crate::boolean::Boolean;
+        for (v, text) in [(true, "true"), (false, "false")] {
+            let b = Boolean(v);
+            let mut out = String::new();
+            b.jer_encode(&mut out);
+            assert_eq!(out, text);
+            let mut r = crate::jer::reader::Reader::new(&out);
+            let mut got = Boolean::default();
+            got.jer_decode_into(&mut r).unwrap();
+            assert_eq!(got, b);
+        }
+    }
+
+    #[test]
+    fn null_jer_round_trips_and_matches_reference() {
+        use crate::null::Null;
+        let v = Null;
+        let mut out = String::new();
+        v.jer_encode(&mut out);
+        assert_eq!(out, "null");
+        let mut r = crate::jer::reader::Reader::new(&out);
+        let mut got = Null;
+        got.jer_decode_into(&mut r).unwrap();
+    }
+
+    #[test]
+    fn real_jer_special_values_match_reference() {
+        // X.697 Table 2: "-0"/"-INF"/"INF"/"NaN" -- not "PLUS-INFINITY"/
+        // "MINUS-INFINITY" (that's X.693/XER's spelling, a different
+        // clause; confirmed against the standard text directly).
+        use crate::real::Real;
+        for (v, text) in [
+            (f64::NAN, "\"NaN\""),
+            (f64::INFINITY, "\"INF\""),
+            (f64::NEG_INFINITY, "\"-INF\""),
+            (0.0, "0"),
+            (-0.0, "\"-0\""),
+        ] {
+            let r = Real(v);
+            let mut out = String::new();
+            r.jer_encode(&mut out);
+            assert_eq!(out, text);
+        }
+    }
+
+    #[test]
+    fn real_jer_round_trips_finite_value() {
+        use crate::real::Real;
+        let v = Real(1.5);
+        let mut out = String::new();
+        v.jer_encode(&mut out);
+        let mut r = crate::jer::reader::Reader::new(&out);
+        let mut got = Real::default();
+        got.jer_decode_into(&mut r).unwrap();
+        assert_eq!(got.0, v.0);
+    }
+
+    #[test]
+    fn oid_jer_round_trips_and_matches_reference() {
+        use crate::oid::ObjectIdentifier;
+        let v = ObjectIdentifier(vec![2, 5, 4, 3]);
+        let mut out = String::new();
+        v.jer_encode(&mut out);
+        assert_eq!(out, "\"2.5.4.3\"");
+        let mut r = crate::jer::reader::Reader::new(&out);
+        let mut got = ObjectIdentifier::default();
+        got.jer_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn octet_string_jer_round_trips_and_matches_reference() {
+        use crate::octet_string::OctetString;
+        let v = OctetString(vec![0xAB, 0xCD]);
+        let mut out = String::new();
+        v.jer_encode(&mut out);
+        assert_eq!(out, "\"ABCD\"");
+        let mut r = crate::jer::reader::Reader::new(&out);
+        let mut got = OctetString::default();
+        got.jer_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn bit_string_jer_round_trips_and_matches_reference() {
+        use crate::bit_string::BitString;
+        let v = BitString { bytes: vec![0xAB], unused_bits: 0 };
+        let mut out = String::new();
+        v.jer_encode(&mut out);
+        assert_eq!(out, "{\"value\":\"AB\",\"length\":8}");
+        let mut r = crate::jer::reader::Reader::new(&out);
+        let mut got = BitString::default();
+        got.jer_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn utf8_string_jer_round_trips() {
+        use crate::strings::Utf8String;
+        let v = Utf8String("hello".to_string());
+        let mut out = String::new();
+        v.jer_encode(&mut out);
+        assert_eq!(out, "\"hello\"");
+        let mut r = crate::jer::reader::Reader::new(&out);
+        let mut got = Utf8String::default();
+        got.jer_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn t61_string_jer_uses_hex() {
+        use crate::strings::T61String;
+        let v = T61String("AB".to_string());
+        let mut out = String::new();
+        v.jer_encode(&mut out);
+        // "AB" -> UTF-8 bytes 0x41 0x42 -> hex "4142"
+        assert_eq!(out, "\"4142\"");
+        let mut r = crate::jer::reader::Reader::new(&out);
+        let mut got = T61String::default();
+        got.jer_decode_into(&mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn seq_of_jer_round_trips_and_matches_reference() {
+        use crate::ber::sequence::SeqOf;
+        use crate::integer::Integer;
+
+        let empty: SeqOf<Integer> = SeqOf(vec![]);
+        let mut out = String::new();
+        empty.jer_encode(&mut out);
+        assert_eq!(out, "[]");
+
+        let v: SeqOf<Integer> = SeqOf(vec![Integer(1), Integer(2), Integer(3)]);
+        let mut out2 = String::new();
+        v.jer_encode(&mut out2);
+        assert_eq!(out2, "[1,2,3]");
+        let mut r = crate::jer::reader::Reader::new(&out2);
+        let mut got: SeqOf<Integer> = SeqOf::default();
+        got.jer_decode_into(&mut r).unwrap();
+        assert_eq!(got.0, v.0);
     }
 }
 

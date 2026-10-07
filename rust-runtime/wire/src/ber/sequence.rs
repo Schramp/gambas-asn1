@@ -295,6 +295,15 @@ impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
         Ok(())
     }
 
+    fn jer_encode(&self, out: &mut String) {
+        crate::jer::seq_of::encode_seq_of_jer(out, &self.0);
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        self.0 = crate::jer::seq_of::decode_seq_of_jer(r)?;
+        Ok(())
+    }
+
     /// An inline SEQUENCE OF/SET OF member has no constraint of its own
     /// (this generic wrapper is shared by every such member) — its SIZE
     /// constraint arrives as the row's `Constraints` (X.680 §51).
@@ -366,6 +375,15 @@ impl<T: Asn1Value + Default> Asn1Value for SetOf<T> {
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
         self.0 = decode_seq_of_xer(r)?;
+        Ok(())
+    }
+
+    fn jer_encode(&self, out: &mut String) {
+        crate::jer::seq_of::encode_seq_of_jer(out, &self.0);
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        self.0 = crate::jer::seq_of::decode_seq_of_jer(r)?;
         Ok(())
     }
 
@@ -617,6 +635,14 @@ impl Point {
     pub fn decode_xer(xml: &str) -> Result<Point, DecodeError> {
         crate::xer::decode_sequence_xer(&POINT_SPEC, xml)
     }
+
+    pub fn encode_jer(&self) -> String {
+        crate::jer::sequence::encode_sequence_jer(&POINT_SPEC, self)
+    }
+
+    pub fn decode_jer(json: &str) -> Result<Point, DecodeError> {
+        crate::jer::sequence::decode_sequence_jer(&POINT_SPEC, json)
+    }
 }
 
 /// `OptPoint ::= SEQUENCE { x INTEGER, y INTEGER OPTIONAL }` — worked
@@ -712,6 +738,14 @@ impl Coords {
 
     pub fn decode_xer(xml: &str) -> Result<Coords, DecodeError> {
         crate::xer::decode_sequence_xer(&COORDS_SPEC, xml)
+    }
+
+    pub fn encode_jer(&self) -> String {
+        crate::jer::sequence::encode_sequence_jer(&COORDS_SPEC, self)
+    }
+
+    pub fn decode_jer(json: &str) -> Result<Coords, DecodeError> {
+        crate::jer::sequence::decode_sequence_jer(&COORDS_SPEC, json)
     }
 }
 
@@ -908,6 +942,32 @@ impl DefaultPoint {
         assert!(Point::decode_xer("<Point>\n    <x>3</x>\n</Point>\n").is_err());
     }
 
+    #[test]
+    fn jer_encodes_hand_computed_vector() {
+        // Matches SequenceJerHandler's output shape (runtime/src/JerCodec.cpp):
+        // {"x":3,"y":4}
+        let p = Point { x: Integer(3), y: Integer(4) };
+        assert_eq!(p.encode_jer(), "{\"x\":3,\"y\":4}");
+    }
+
+    #[test]
+    fn jer_round_trips() {
+        let p = Point { x: Integer(-5), y: Integer(300) };
+        let json = p.encode_jer();
+        assert_eq!(Point::decode_jer(&json).unwrap(), p);
+    }
+
+    #[test]
+    fn jer_unknown_key_is_skipped() {
+        let got = Point::decode_jer("{\"x\":1,\"bogus\":[1,2,{\"a\":1}],\"y\":2}").unwrap();
+        assert_eq!(got, Point { x: Integer(1), y: Integer(2) });
+    }
+
+    #[test]
+    fn jer_truncated_is_error() {
+        assert!(Point::decode_jer("{\"x\":3}").is_err());
+    }
+
     // ---- OPTIONAL member support -------------------------
 
     #[test]
@@ -942,6 +1002,25 @@ impl DefaultPoint {
         // No <y> element at all when absent.
         assert_eq!(xml, "<OptPoint>\n    <x>1</x>\n</OptPoint>\n");
         assert_eq!(OptPoint::decode_xer(&xml).unwrap(), p);
+    }
+
+    #[test]
+    fn opt_present_jer_round_trips() {
+        use crate::jer::sequence::{decode_sequence_jer, encode_sequence_jer};
+        let p = OptPoint { x: Integer(1), y: Some(Integer(2)) };
+        let json = encode_sequence_jer(&OPT_POINT_SPEC, &p);
+        assert_eq!(json, "{\"x\":1,\"y\":2}");
+        assert_eq!(decode_sequence_jer(&OPT_POINT_SPEC, &json).unwrap(), p);
+    }
+
+    #[test]
+    fn opt_absent_jer_round_trips() {
+        use crate::jer::sequence::{decode_sequence_jer, encode_sequence_jer};
+        let p = OptPoint { x: Integer(1), y: None };
+        let json = encode_sequence_jer(&OPT_POINT_SPEC, &p);
+        // Absent OPTIONAL member omitted entirely — not `null`.
+        assert_eq!(json, "{\"x\":1}");
+        assert_eq!(decode_sequence_jer(&OPT_POINT_SPEC, &json).unwrap(), p);
     }
 
     // ---- SET vs SEQUENCE outer tag ------------------------
@@ -1036,6 +1115,22 @@ impl DefaultPoint {
         let xml = c.encode_xer();
         assert_eq!(xml, "<Coords>\n    <values></values>\n</Coords>\n");
         assert_eq!(Coords::decode_xer(&xml).unwrap(), c);
+    }
+
+    #[test]
+    fn seq_of_jer_round_trips() {
+        let c = Coords { values: SeqOf(vec![Integer(1), Integer(2), Integer(3)]) };
+        let json = c.encode_jer();
+        assert_eq!(json, "{\"values\":[1,2,3]}");
+        assert_eq!(Coords::decode_jer(&json).unwrap(), c);
+    }
+
+    #[test]
+    fn seq_of_empty_jer_round_trips() {
+        let c = Coords { values: SeqOf(vec![]) };
+        let json = c.encode_jer();
+        assert_eq!(json, "{\"values\":[]}");
+        assert_eq!(Coords::decode_jer(&json).unwrap(), c);
     }
 
     // ---- OPTIONAL SEQUENCE OF member (gambas-asn1#400) -------

@@ -420,15 +420,25 @@ struct IntegerJerHandler final : IJerTypeHandler {
     }
 };
 
-// REAL → json: number or "NaN"/"PLUS-INFINITY"/"MINUS-INFINITY" (X.697 §8.6)
+// REAL → json: number, or one of the Table 2 special-value strings
+// (X.697 §23: "-0"/"-INF"/"INF"/"NaN" — NOT "PLUS-INFINITY"/
+// "MINUS-INFINITY", a nonconformant spelling this handler used to emit
+// and decode; asn1c's own specialRealValue_jer table already uses the
+// standard's exact spelling). §23.1.1/23.2 also require -0.0 (distinct
+// from +0.0, which a bare IEEE `==` comparison can't tell apart — see
+// std::signbit below) to encode as the special string "-0", not the
+// bare number 0.
 struct RealJerHandler final : IJerTypeHandler {
     void encode(const JerCodec&, JerEncodeStream& s,
                 const TypeDescriptor&, const Asn1Object* src) const override {
         double d = static_cast<const Real*>(src)->value();
         auto& os = s.os();
         if (std::isnan(d))      { os << "\"NaN\""; return; }
-        if (std::isinf(d))      { os << (d > 0 ? "\"PLUS-INFINITY\"" : "\"MINUS-INFINITY\""); return; }
-        if (d == 0.0)           { os << '0'; return; }
+        if (std::isinf(d))      { os << (d > 0 ? "\"INF\"" : "\"-INF\""); return; }
+        if (d == 0.0) {
+            os << (std::signbit(d) ? "\"-0\"" : "0");
+            return;
+        }
         // Use the same representation as asn1c: %.15g-style but with E notation
         char buf[64];
         // Try %g first; if it produces integer-like output, ensure we emit a decimal point
@@ -447,9 +457,10 @@ struct RealJerHandler final : IJerTypeHandler {
             std::string str;
             if (auto r = jer_detail::read_json_string(s, str); !r) return r;
             double d;
-            if      (str == "NaN")            d = std::numeric_limits<double>::quiet_NaN();
-            else if (str == "PLUS-INFINITY")  d = std::numeric_limits<double>::infinity();
-            else if (str == "MINUS-INFINITY") d = -std::numeric_limits<double>::infinity();
+            if      (str == "NaN")  d = std::numeric_limits<double>::quiet_NaN();
+            else if (str == "INF")  d = std::numeric_limits<double>::infinity();
+            else if (str == "-INF") d = -std::numeric_limits<double>::infinity();
+            else if (str == "-0")   d = -0.0;
             else {
                 // Some implementations write the number as a quoted string
                 char* endp;
