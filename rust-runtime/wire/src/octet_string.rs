@@ -40,7 +40,7 @@ use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::{universal, Tag};
 use crate::value::Asn1Value;
 use crate::ber::writer::write_primitive;
-use crate::xer::XerReader;
+use crate::xer::reader::XerReader;
 
 pub const OCTET_STRING_TAG: Tag = Tag::universal(universal::OCTET_STRING, false);
 
@@ -283,7 +283,7 @@ pub fn utf8_encode(input: &[u8], out: &mut String) {
 }
 
 /// Reads utf8-instruction mixed content: text runs (unescaped via
-/// `crate::xer::unescape`) interleaved with Table 3 empty-element tags.
+/// `crate::xer::reader::unescape`) interleaved with Table 3 empty-element tags.
 /// Mirrors `decode_utf8_text` in `runtime/src/XerCodec.cpp`, but — unlike
 /// that C++ function — does not consume the element's own open/close
 /// tags: matches this crate's existing `Asn1Value::xer_decode_into`
@@ -294,10 +294,10 @@ pub fn utf8_encode(input: &[u8], out: &mut String) {
 /// the per-type decode logic. Stops (without consuming) at the first tag
 /// that isn't a recognized control-character empty-element tag — that's
 /// the caller's own closing tag.
-pub fn utf8_decode(r: &mut crate::xer::XerReader) -> Result<Vec<u8>, crate::ber::reader::DecodeError> {
+pub fn utf8_decode(r: &mut crate::xer::reader::XerReader) -> Result<Vec<u8>, crate::ber::reader::DecodeError> {
     let mut out = Vec::new();
     loop {
-        out.extend_from_slice(crate::xer::unescape(r.read_text_content()).as_bytes());
+        out.extend_from_slice(crate::xer::reader::unescape(r.read_text_content()).as_bytes());
         let peek = r.peek_tag();
         if peek.self_closing {
             if let Some(b) = control_char_from_tag_name(&peek.name) {
@@ -405,7 +405,8 @@ mod tests {
 
     #[test]
     fn xer_decode_into_base64_round_trips() {
-        use crate::xer::{write_close_tag, write_open_tag, XerReader};
+        use crate::xer::writer::{write_close_tag, write_open_tag};
+        use crate::xer::reader::XerReader;
 
         let mut out = String::new();
         write_open_tag(&mut out, "data");
@@ -423,7 +424,8 @@ mod tests {
 
     #[test]
     fn xer_round_trips_wrapped_by_hand() {
-        use crate::xer::{write_close_tag, write_open_tag, XerReader};
+        use crate::xer::writer::{write_close_tag, write_open_tag};
+        use crate::xer::reader::XerReader;
 
         let mut out = String::new();
         write_open_tag(&mut out, "data");
