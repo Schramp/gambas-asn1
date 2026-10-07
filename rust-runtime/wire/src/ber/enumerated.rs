@@ -19,7 +19,7 @@ use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::{universal, Tag};
 use crate::ber::writer::write_primitive;
 use crate::spec::enumerated::EnumSpec;
-use crate::xer::XerReader;
+use crate::xer::reader::XerReader;
 
 pub const ENUMERATED_TAG: Tag = Tag::universal(universal::ENUMERATED, false);
 

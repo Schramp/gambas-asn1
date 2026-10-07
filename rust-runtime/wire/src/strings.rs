@@ -52,7 +52,7 @@ use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::{universal, Tag};
 use crate::value::Asn1Value;
 use crate::ber::writer::write_primitive;
-use crate::xer::XerReader;
+use crate::xer::reader::XerReader;
 
 /// Content octets only (X.690 §8.7 — the raw UTF-8 bytes) — shared by every
 /// character string kind, `IA5String` included. `kind` is only used to name
@@ -201,12 +201,12 @@ macro_rules! char_string_type {
             }
 
             fn xer_encode(&self, out: &mut String, _depth: usize) {
-                crate::xer::escape(&self.0, out);
+                crate::xer::writer::escape(&self.0, out);
             }
 
             fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
                 let text = r.read_text_content();
-                self.0 = crate::xer::unescape(text);
+                self.0 = crate::xer::reader::unescape(text);
                 Ok(())
             }
 
@@ -260,7 +260,7 @@ fn encode_wide_string_xer(bytes: &[u8], bpc: usize, out: &mut String) {
         }
         text.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
     }
-    crate::xer::escape(&text, out);
+    crate::xer::writer::escape(&text, out);
 }
 
 /// Reverse of [`encode_wide_string_xer`]: each Unicode scalar value in the
@@ -336,7 +336,7 @@ macro_rules! wide_char_string_type {
 
             fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
                 let text = r.read_text_content();
-                self.0 = decode_wide_string_xer(&crate::xer::unescape(text), $bpc);
+                self.0 = decode_wide_string_xer(&crate::xer::reader::unescape(text), $bpc);
                 Ok(())
             }
 
