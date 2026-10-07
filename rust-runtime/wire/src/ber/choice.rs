@@ -53,7 +53,13 @@ use crate::ber::reader::{read_explicit, DecodeError, Reader};
 use crate::ber::tag::Tag;
 use crate::spec::choice::{active_alt, BerTagging, ChoiceSpec};
 use crate::ber::writer::{write_explicit, write_primitive, write_tagged};
-use crate::xer::{write_close_tag, write_open_tag, XerReader};
+// Only this file's own dogfood tests call the XER leg directly by name —
+// real generated code reaches it via the full `xer::choice::`/`xer::reader::`
+// path (RustBackend.cpp), so these would warn as unused outside test builds.
+#[cfg(test)]
+use crate::xer::choice::{decode_choice_xer, decode_choice_xer_into, encode_choice_xer, encode_choice_xer_into};
+#[cfg(test)]
+use crate::xer::reader::XerReader;
 
 /// Generic CHOICE encoder — the Rust analogue of `ChoiceBerHandler::encode`.
 /// Falls back to `unknown_extension` (if present) for a value holding
@@ -177,74 +183,6 @@ fn decode_choice_dispatch<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mut Reader
         format!("unrecognized CHOICE alternative tag {tag:?} for {}", std::any::type_name::<T>()),
         0,
     ))
-}
-
-/// Generic CHOICE XER encoder, top-level entry point (a generated CHOICE's
-/// own `.encode_xer()`): the X.693 §8.3.1 document-element wrapper around
-/// `encode_choice_xer_into` at depth 0.
-pub fn encode_choice_xer<T>(spec: &ChoiceSpec<T>, value: &T) -> String {
-    let mut out = String::new();
-    write_open_tag(&mut out, spec.name);
-    encode_choice_xer_into(spec, value, &mut out, 0);
-    out.push('\n');
-    write_close_tag(&mut out, spec.name);
-    out.push('\n');
-    out
-}
-
-/// Writes the chosen alternative as `\n<indent><name>payload</name>`, no
-/// trailing newline. The wrapper is always paired, never self-closing
-/// (matches `NullXerHandler::encode`); `decode_choice_xer_into` still
-/// accepts a self-closing `<a/>` on input, as asn1c's own decoder does.
-pub fn encode_choice_xer_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut String, depth: usize) {
-    if let Some((_, alt, payload)) = active_alt(spec, value) {
-        if let BerTagging::Unsupported(reason) = alt.ber {
-            panic!("alternative '{}' not supported: {}", alt.name, reason);
-        }
-        let mut inner = String::new();
-        payload.xer_encode(&mut inner, depth + 1);
-        out.push('\n');
-        out.push_str(&crate::xer::indent(depth + 1));
-        write_open_tag(out, alt.name);
-        out.push_str(&inner);
-        write_close_tag(out, alt.name);
-        return;
-    }
-    panic!("encode_choice_xer_into: no alternative matched — codegen/table mismatch");
-}
-
-pub fn decode_choice_xer<T: Default>(spec: &ChoiceSpec<T>, xml: &str) -> Result<T, DecodeError> {
-    let mut r = XerReader::new(xml);
-    r.consume_open_tag(spec.name)?;
-    let mut v = T::default();
-    decode_choice_xer_into(spec, &mut v, &mut r)?;
-    r.consume_close_tag(spec.name)?;
-    Ok(v)
-}
-
-/// XER dispatches by element *name* (`ChoiceXerHandler` peeks the tag name),
-/// not by wire tag.
-pub fn decode_choice_xer_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mut XerReader) -> Result<(), DecodeError> {
-    let ti = r.peek_tag();
-    for alt in spec.alternatives {
-        if ti.name == alt.name {
-            if let BerTagging::Unsupported(reason) = alt.ber {
-                panic!("alternative '{}' not supported: {}", alt.name, reason);
-            }
-            // Tolerate a self-closing alternative tag (`<name/>`), as every
-            // C++ XER handler does; the payload decode is content-only.
-            let open = r.consume_tag();
-            if open.name != alt.name || open.closing {
-                return Err(DecodeError::new(format!("XER: expected <{}>", alt.name), 0));
-            }
-            (alt.emplace)(value).xer_decode_into(r)?;
-            if !open.self_closing {
-                r.consume_close_tag(alt.name)?;
-            }
-            return Ok(());
-        }
-    }
-    Err(DecodeError::new(format!("unrecognized CHOICE alternative element <{}>", ti.name), 0))
 }
 
 #[cfg(test)]
@@ -671,7 +609,7 @@ impl Choice {
         fn xer_encode(&self, out: &mut String, depth: usize) {
             encode_choice_xer_into(&INNER_SPEC, self, out, depth);
             out.push('\n');
-            out.push_str(&crate::xer::indent(depth));
+            out.push_str(&crate::xer::writer::indent(depth));
         }
         fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
             decode_choice_xer_into(&INNER_SPEC, self, r)

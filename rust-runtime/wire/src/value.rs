@@ -20,7 +20,7 @@
 //! done via a trait object instead of inheritance.
 
 use crate::ber::reader::{DecodeError, Reader};
-use crate::xer::XerReader;
+use crate::xer::reader::XerReader;
 
 /// A BER/XER-encodable/decodable value reachable through a
 /// `MemberDescriptor` accessor function. `*_decode_into` (not a
@@ -264,11 +264,11 @@ pub trait Asn1Value {
     /// the `<name>` wrapper.
     fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, name_override: Option<&str>) {
         out.push('\n');
-        out.push_str(&crate::xer::indent(depth + 1));
+        out.push_str(&crate::xer::writer::indent(depth + 1));
         let name = name_override.unwrap_or_else(|| self.xer_element_name());
-        crate::xer::write_open_tag(out, name);
+        crate::xer::writer::write_open_tag(out, name);
         self.xer_encode(out, depth + 1);
-        crate::xer::write_close_tag(out, name);
+        crate::xer::writer::write_close_tag(out, name);
     }
 
     /// Decode counterpart of `xer_encode_seqof_element`. Default consumes
@@ -727,7 +727,7 @@ impl Asn1Value for crate::null::Null {
     // is always `None` here in practice anyway).
     fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, _name_override: Option<&str>) {
         out.push('\n');
-        out.push_str(&crate::xer::indent(depth + 1));
+        out.push_str(&crate::xer::writer::indent(depth + 1));
         out.push_str("<NULL/>");
     }
 
@@ -806,12 +806,12 @@ impl Asn1Value for crate::bit_string::BitString {
         let total = self.bit_count();
         if total == 0 {
             out.push('\n');
-            out.push_str(&crate::xer::indent(depth + 1));
+            out.push_str(&crate::xer::writer::indent(depth + 1));
         } else {
             let mut i = 0;
             while i < total {
                 out.push('\n');
-                out.push_str(&crate::xer::indent(depth + 1));
+                out.push_str(&crate::xer::writer::indent(depth + 1));
                 let line_end = (i + 64).min(total);
                 while i < line_end {
                     let bit = (self.bytes[i / 8] >> (7 - (i % 8))) & 1;
@@ -821,7 +821,7 @@ impl Asn1Value for crate::bit_string::BitString {
             }
         }
         out.push('\n');
-        out.push_str(&crate::xer::indent(depth));
+        out.push_str(&crate::xer::writer::indent(depth));
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
@@ -1446,7 +1446,7 @@ mod tests {
 
     #[test]
     fn i64_xer_round_trips_wrapped_by_hand() {
-        use crate::xer::{write_close_tag, write_open_tag};
+        use crate::xer::writer::{write_close_tag, write_open_tag};
 
         let mut out = String::new();
         write_open_tag(&mut out, "x");
@@ -1507,7 +1507,7 @@ mod tests {
 
     #[test]
     fn unit_xer_round_trips_wrapped_by_hand() {
-        use crate::xer::{write_close_tag, write_open_tag};
+        use crate::xer::writer::{write_close_tag, write_open_tag};
 
         let mut out = String::new();
         write_open_tag(&mut out, "flag");
@@ -1541,7 +1541,7 @@ mod tests {
     #[test]
     fn bit_string_xer_round_trips_wrapped_by_hand() {
         use crate::bit_string::BitString;
-        use crate::xer::{write_close_tag, write_open_tag};
+        use crate::xer::writer::{write_close_tag, write_open_tag};
 
         // 1010 0000, 4 unused bits -> logical bits "1010" (bit_count=4).
         // Padding bits are zero here deliberately: XER only carries the
@@ -1641,7 +1641,7 @@ mod tests {
     #[test]
     fn oid_xer_round_trips_wrapped_by_hand() {
         use crate::oid::ObjectIdentifier;
-        use crate::xer::{write_close_tag, write_open_tag};
+        use crate::xer::writer::{write_close_tag, write_open_tag};
 
         let v = ObjectIdentifier(vec![2, 5, 4, 3]);
         let mut out = String::new();
@@ -1696,7 +1696,7 @@ mod tests {
     #[test]
     fn relative_oid_xer_round_trips_wrapped_by_hand() {
         use crate::relative_oid::RelativeOid;
-        use crate::xer::{write_close_tag, write_open_tag};
+        use crate::xer::writer::{write_close_tag, write_open_tag};
 
         let v = RelativeOid(vec![8571, 1]);
         let mut out = String::new();
@@ -1736,7 +1736,7 @@ mod tests {
 
     #[test]
     fn f64_xer_round_trips_wrapped_by_hand() {
-        use crate::xer::{write_close_tag, write_open_tag};
+        use crate::xer::writer::{write_close_tag, write_open_tag};
 
         let mut out = String::new();
         write_open_tag(&mut out, "x");
@@ -1799,7 +1799,7 @@ mod tests {
 
     #[test]
     fn bool_xer_round_trips_wrapped_by_hand() {
-        use crate::xer::{write_close_tag, write_open_tag};
+        use crate::xer::writer::{write_close_tag, write_open_tag};
 
         let mut out = String::new();
         write_open_tag(&mut out, "flag");
@@ -1869,7 +1869,7 @@ mod tests {
 
     #[test]
     fn string_xer_escapes_and_round_trips() {
-        use crate::xer::{write_close_tag, write_open_tag};
+        use crate::xer::writer::{write_close_tag, write_open_tag};
 
         let mut out = String::new();
         write_open_tag(&mut out, "label");

@@ -468,7 +468,7 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "    fn xer_encode(&self, out: &mut String, _depth: usize) {\n";
         os << std::format("        asn1cpp_wire::ber::enumerated::xer_encode_enum(out, &{}, *self as i64);\n", map_ident);
         os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
         os << std::format("        *self = asn1cpp_wire::ber::enumerated::xer_decode_enum(r, &{})?;\n", map_ident);
         os << "        Ok(())\n";
         os << "    }\n\n";
@@ -493,10 +493,10 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // whitespace for it, same as any wrapped element.
         os << "    fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, _name_override: std::option::Option<&str>) {\n";
         os << "        out.push('\\n');\n";
-        os << "        out.push_str(&asn1cpp_wire::xer::indent(depth + 1));\n";
+        os << "        out.push_str(&asn1cpp_wire::xer::writer::indent(depth + 1));\n";
         os << "        self.xer_encode(out, depth + 1);\n";
         os << "    }\n\n";
-        os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_wire::xer::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_wire::DecodeError> {\n";
         os << "        self.xer_decode_into(r)\n";
         os << "    }\n\n";
         // X.680 §20/§51 — reuses {map_ident} (already
@@ -645,7 +645,7 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
     os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n        self.0.ber_encode_content(out);\n    }\n\n";
     os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n        self.0.ber_decode_content(content)\n    }\n\n";
     os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n        self.0.xer_encode(out, depth);\n    }\n\n";
-    os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n        self.0.xer_decode_into(r)\n    }\n\n";
+    os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n        self.0.xer_decode_into(r)\n    }\n\n";
     os << "    fn jer_encode(&self, out: &mut String) {\n        self.0.jer_encode(out);\n    }\n\n";
     os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n        self.0.jer_decode_into(r)\n    }\n\n";
     os << std::format("    fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {{\n        &{}\n    }}\n\n", cname);
@@ -841,7 +841,7 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << "    fn xer_encode(&self, out: &mut String, _depth: usize) {\n";
         os << "        out.push_str(&asn1cpp_wire::octet_string::base64_encode(&self.0));\n";
         os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
         os << "        self.0.0 = asn1cpp_wire::octet_string::base64_decode(&r.read_text_content());\n";
         os << "        Ok(())\n";
         os << "    }\n";
@@ -849,7 +849,7 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << "    fn xer_encode(&self, out: &mut String, _depth: usize) {\n";
         os << "        asn1cpp_wire::octet_string::utf8_encode(&self.0, out);\n";
         os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
         os << "        self.0.0 = asn1cpp_wire::octet_string::utf8_decode(r)?;\n";
         os << "        Ok(())\n";
         os << "    }\n";
@@ -857,7 +857,7 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
         os << "        self.0.xer_encode(out, depth);\n";
         os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
         os << "        self.0.xer_decode_into(r)\n";
         os << "    }\n";
     }
@@ -1259,16 +1259,16 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << "\n";
     os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
     if (spec.elem_xer_name) {
-        os << std::format("        asn1cpp_wire::ber::sequence::encode_seq_of_xer_named(out, &self.0, depth, Some(\"{}\"));\n", *spec.elem_xer_name);
+        os << std::format("        asn1cpp_wire::xer::seq_of::encode_seq_of_xer_named(out, &self.0, depth, Some(\"{}\"));\n", *spec.elem_xer_name);
     } else {
-        os << "        asn1cpp_wire::ber::sequence::encode_seq_of_xer(out, &self.0, depth);\n";
+        os << "        asn1cpp_wire::xer::seq_of::encode_seq_of_xer(out, &self.0, depth);\n";
     }
     os << "    }\n\n";
-    os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+    os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
     if (spec.elem_xer_name) {
-        os << std::format("        self.0 = asn1cpp_wire::ber::sequence::decode_seq_of_xer_named(r, Some(\"{}\"))?;\n", *spec.elem_xer_name);
+        os << std::format("        self.0 = asn1cpp_wire::xer::seq_of::decode_seq_of_xer_named(r, Some(\"{}\"))?;\n", *spec.elem_xer_name);
     } else {
-        os << "        self.0 = asn1cpp_wire::ber::sequence::decode_seq_of_xer(r)?;\n";
+        os << "        self.0 = asn1cpp_wire::xer::seq_of::decode_seq_of_xer(r)?;\n";
     }
     os << "        Ok(())\n";
     os << "    }\n";
@@ -1887,10 +1887,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << std::format("        asn1cpp_wire::ber::sequence::decode_sequence(&{}, data)\n", spec_ident);
         os << "    }\n\n";
         os << "    pub fn encode_xer(&self) -> String {\n";
-        os << std::format("        asn1cpp_wire::xer::encode_sequence_xer(&{}, self)\n", spec_ident);
+        os << std::format("        asn1cpp_wire::xer::sequence::encode_sequence_xer(&{}, self)\n", spec_ident);
         os << "    }\n\n";
         os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << std::format("        asn1cpp_wire::xer::decode_sequence_xer(&{}, xml)\n", spec_ident);
+        os << std::format("        asn1cpp_wire::xer::sequence::decode_sequence_xer(&{}, xml)\n", spec_ident);
         os << "    }\n\n";
         os << "    pub fn encode_jer(&self) -> String {\n";
         os << std::format("        asn1cpp_wire::jer::sequence::encode_sequence_jer(&{}, self)\n", spec_ident);
@@ -1928,10 +1928,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "        Ok(())\n";
         os << "    }\n\n";
         os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
-        os << std::format("        asn1cpp_wire::xer::encode_sequence_xer_into(&{}, self, out, depth);\n", spec_ident);
+        os << std::format("        asn1cpp_wire::xer::sequence::encode_sequence_xer_into(&{}, self, out, depth);\n", spec_ident);
         os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << std::format("        *self = asn1cpp_wire::xer::decode_sequence_xer_from(&{}, r)?;\n", spec_ident);
+        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << std::format("        *self = asn1cpp_wire::xer::sequence::decode_sequence_xer_from(&{}, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n\n";
         // JER: every value (including a nested SEQUENCE-typed member) is
@@ -2284,10 +2284,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << std::format("        asn1cpp_wire::ber::choice::decode_choice(&{}, data)\n", spec_ident);
         os << "    }\n\n";
         os << "    pub fn encode_xer(&self) -> String {\n";
-        os << std::format("        asn1cpp_wire::ber::choice::encode_choice_xer(&{}, self)\n", spec_ident);
+        os << std::format("        asn1cpp_wire::xer::choice::encode_choice_xer(&{}, self)\n", spec_ident);
         os << "    }\n\n";
         os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << std::format("        asn1cpp_wire::ber::choice::decode_choice_xer(&{}, xml)\n", spec_ident);
+        os << std::format("        asn1cpp_wire::xer::choice::decode_choice_xer(&{}, xml)\n", spec_ident);
         os << "    }\n\n";
         os << "    pub fn encode_jer(&self) -> String {\n";
         os << std::format("        asn1cpp_wire::jer::choice::encode_choice_jer(&{}, self)\n", spec_ident);
@@ -2341,12 +2341,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         // `s.indent(1) << "</" << mbr.name` closing line external to
         // `ChoiceXerHandler` for the very same reason.
         os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
-        os << std::format("        asn1cpp_wire::ber::choice::encode_choice_xer_into(&{}, self, out, depth);\n", spec_ident);
+        os << std::format("        asn1cpp_wire::xer::choice::encode_choice_xer_into(&{}, self, out, depth);\n", spec_ident);
         os << "        out.push('\\n');\n";
-        os << "        out.push_str(&asn1cpp_wire::xer::indent(depth));\n";
+        os << "        out.push_str(&asn1cpp_wire::xer::writer::indent(depth));\n";
         os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << std::format("        asn1cpp_wire::ber::choice::decode_choice_xer_into(&{}, self, r)?;\n", spec_ident);
+        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << std::format("        asn1cpp_wire::xer::choice::decode_choice_xer_into(&{}, self, r)?;\n", spec_ident);
         os << "        Ok(())\n";
         os << "    }\n\n";
         // JER: single-key object `{"altName":value}`, self-delimiting like
@@ -2372,10 +2372,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         // (sequence.rs) checks for it to avoid doubling up with its own
         // trailing separator.
         os << "    fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, _name_override: std::option::Option<&str>) {\n";
-        os << std::format("        asn1cpp_wire::ber::choice::encode_choice_xer_into(&{}, self, out, depth + 1);\n", spec_ident);
+        os << std::format("        asn1cpp_wire::xer::choice::encode_choice_xer_into(&{}, self, out, depth + 1);\n", spec_ident);
         os << "        out.push('\\n');\n";
         os << "    }\n\n";
-        os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_wire::xer::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_wire::DecodeError> {\n";
+        os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_wire::DecodeError> {\n";
         os << "        self.xer_decode_into(r)\n";
         os << "    }\n";
         if (spec.tag) {

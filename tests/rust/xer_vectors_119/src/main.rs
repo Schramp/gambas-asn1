@@ -25,7 +25,7 @@ use asn1cpp_wire::value::Asn1Value;
 use asn1cpp_wire::per::reader::Reader;
 use asn1cpp_wire::per::writer::Writer;
 use asn1cpp_wire::constraints::UNCONSTRAINED;
-use asn1cpp_wire::xer::{decode_sequence_xer, encode_sequence_xer};
+use asn1cpp_wire::xer::sequence::{decode_sequence_xer, encode_sequence_xer};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
