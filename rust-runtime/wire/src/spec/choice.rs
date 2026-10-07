@@ -1,9 +1,18 @@
-//! CHOICE spec — X.680 §29. Walked by BER (`choice.rs`), XER (`choice.rs`)
-//! and PER (`per::choice`).
+//! CHOICE spec — X.680 §29. Walked by BER (`ber::choice`), XER
+//! (`xer::choice`), JER (`jer::choice`) and PER (`per::choice`).
+//!
+//! **gambas-asn1#674/#675**: same zero-trait-object design as
+//! `sequence.rs` — see that module's doc for the rationale. Each
+//! `Alternative<T>`'s codec fields perform the complete operation for
+//! that one alternative's payload inline; nothing here ever coerces a
+//! payload to `&dyn Trait`.
 
-use crate::constraints::Constraints;
+use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::Tag;
-use crate::value::Asn1Value;
+use crate::jer::reader::Reader as JerReader;
+use crate::per::reader::{DecodeError as PerDecodeError, Reader as PerReader};
+use crate::per::writer::Writer as PerWriter;
+use crate::xer::reader::XerReader;
 
 /// How BER frames an alternative's payload (X.690 §8.13/§8.14).
 #[derive(Clone, Copy)]
@@ -21,19 +30,35 @@ pub enum BerTagging {
     Unsupported(&'static str),
 }
 
-/// One CHOICE alternative — shared by BER, XER and PER (see module doc).
+/// One CHOICE alternative — shared by BER, XER, JER and PER (see module
+/// doc). `ber_encode`/`ber_decode` etc. each perform this *one*
+/// alternative's complete payload operation — `ber_decode` also emplaces
+/// the variant (`*x = MyEnum::ThisAlt(Default::default())`) before
+/// decoding into it, fusing what used to be two steps (`emplace` +
+/// `.xer_decode_into`) into one closure, same reasoning as
+/// `sequence.rs::MemberDescriptor`'s fused accessors.
 pub struct Alternative<T: 'static> {
     pub name: &'static str,
     pub ber: BerTagging,
-    pub active: fn(&T) -> Option<&dyn Asn1Value>,
-    pub emplace: fn(&mut T) -> &mut dyn Asn1Value,
-    /// The declaration's `Constraints` for the payload, handed to its
-    /// `Asn1Value::per_encode`/`per_decode_into` (UNCONSTRAINED when the
-    /// payload's own type carries its constraint).
-    pub constraints: &'static Constraints,
+    /// `true` iff `value` currently holds this alternative. Used by the
+    /// encode-side walkers to find which row to call; `ChoiceSpec::
+    /// active_index` (below) is the preferred, O(1) way to do the same
+    /// thing via one match on `T`'s own discriminant — this field stays
+    /// for call sites that need a single alternative's status without
+    /// walking the whole table (BER tag validation, mainly).
+    pub is_active: fn(&T) -> bool,
     /// `Some(reason)` when PER cannot encode this alternative yet; panics
     /// with the reason only if reached.
     pub per_unsupported: Option<&'static str>,
+
+    pub ber_encode: fn(&T, &mut Vec<u8>),
+    pub ber_decode: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
+    pub xer_encode: fn(&T, &mut String, usize),
+    pub xer_decode: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
+    pub jer_encode: fn(&T, &mut String),
+    pub jer_decode: fn(&mut T, &mut JerReader) -> Result<(), DecodeError>,
+    pub per_encode: fn(&T, &mut PerWriter),
+    pub per_decode: fn(&mut T, &mut PerReader) -> Result<(), PerDecodeError>,
 }
 
 /// One BER dispatch entry: a wire tag that selects `alternatives[alt]`.
@@ -50,20 +75,14 @@ pub struct BerDispatch {
 /// *future* schema revision may add alternatives this compiler run never
 /// saw). Captures the raw tag and value bytes of whatever TLV didn't match
 /// any known `AlternativeSpec`, so decode->re-encode round-trips
-/// byte-identically even for content this crate can't interpret — `Tag`
-/// alone already carries the primitive/constructed bit `write_primitive`
-/// needs, so one write path covers both encoding forms (see
-/// `writer::write_primitive`'s own body: primitive and constructed TLVs
-/// are written identically, the distinction is purely which helper the
-/// *caller* reaches for elsewhere).
+/// byte-identically even for content this crate can't interpret.
 ///
 /// BER/decode-side only. XER has no raw-bytes escape hatch the way BER's
 /// self-delimiting TLV framing does (X.693 needs to know an element's
-/// structure to parse it at all) — `encode_choice_xer`/`decode_choice_xer`
-/// don't consult this; a value holding captured unknown-extension content
-/// can't be XER-encoded (panics, same as the "no alternative matched"
-/// codegen-bug backstop, since from XER's perspective there genuinely is
-/// no matching alternative).
+/// structure to parse it at all) — a value holding captured unknown-
+/// extension content can't be XER-encoded (panics, same as the "no
+/// alternative matched" codegen-bug backstop, since from XER's
+/// perspective there genuinely is no matching alternative).
 pub struct UnknownExtensionOps<T: 'static> {
     pub construct: fn(Tag, Vec<u8>) -> T,
     pub extract: fn(&T) -> Option<(Tag, &[u8])>,
@@ -89,20 +108,19 @@ pub struct ChoiceSpec<T: 'static> {
     /// Index of the first extension alternative (X.680 §29.6); `< 0` when
     /// the CHOICE is not extensible. Read by PER only.
     pub ext_at: i32,
-    /// X.691 §22.6: bit width of the root-alternative index — `range_bits`
-    /// of the root alternative count (`ext_at`, or `alternatives.len()`
-    /// when not extensible). Precomputed by codegen, matching C++'s
-    /// `ChoiceSpec::constraints.range_bits` (`TypeDescriptor.hpp`), so
-    /// `per::choice` reads it instead of recomputing it per call.
-    /// PER-only; BER/XER ignore it.
+    /// X.691 §22.6: bit width of the root-alternative index. PER-only;
+    /// BER/XER ignore it.
     pub range_bits: u32,
+    /// Which `alternatives[]` entry `value` currently holds, computed via
+    /// one match on `T`'s own discriminant (codegen emits
+    /// `|x| match x { MyEnum::A(_) => Some(0), MyEnum::B(_) => Some(1), ... }`)
+    /// — O(1), and the reason `active_alt` below no longer needs to
+    /// linear-scan `alternatives` checking each `is_active` in turn.
+    pub active_index: fn(&T) -> Option<usize>,
 }
 
-/// The alternative `value` currently holds, with its payload.
-pub(crate) fn active_alt<'a, T>(spec: &'a ChoiceSpec<T>, value: &'a T) -> Option<(usize, &'a Alternative<T>, &'a dyn Asn1Value)> {
-    spec.alternatives
-        .iter()
-        .enumerate()
-        .find_map(|(i, alt)| (alt.active)(value).map(|payload| (i, alt, payload)))
+/// The alternative `value` currently holds, if any.
+pub(crate) fn active_alt<'a, T>(spec: &'a ChoiceSpec<T>, value: &'a T) -> Option<(usize, &'a Alternative<T>)> {
+    let i = (spec.active_index)(value)?;
+    Some((i, &spec.alternatives[i]))
 }
-

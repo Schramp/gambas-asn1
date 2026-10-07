@@ -145,13 +145,10 @@ pub trait Asn1Value {
     /// EXPLICIT tag override (X.690 §8.14.3) — wraps this value's own
     /// complete natural-tag encoding (`ber_encode`) in an outer constructed
     /// TLV, rather than substituting for it the way `ber_encode_tagged`
-    /// (IMPLICIT) does. Object-safe (unlike the free-function
-    /// `value::encode_explicit<T>`/`decode_explicit<T>` pair, which need a
-    /// concrete `T: Default` to construct a fresh value) — lets
-    /// `MemberAccess::ExplicitScalar` (`sequence.rs`) reach an EXPLICIT-
-    /// tagged member through the same `get`/`get_mut: fn(&mut T) -> &mut
-    /// dyn Asn1Value` accessor `Scalar`/`TaggedScalar` already use, instead
-    /// of a per-member closure duplicating that same field access.
+    /// (IMPLICIT) does. Still a plain trait method (not object-safety-
+    /// driven — gambas-asn1#675 removed every `&dyn Asn1Value` accessor
+    /// from `MemberDescriptor`/`Alternative`, which now call this
+    /// statically from a per-member closure instead).
     fn ber_encode_explicit(&self, out: &mut Vec<u8>, tag: crate::ber::tag::Tag) {
         crate::ber::writer::write_explicit(out, tag, |inner| self.ber_encode(inner));
     }

@@ -21,7 +21,7 @@
 //! used for nested/member CHOICE stay wrapper-free.
 
 use crate::ber::reader::DecodeError;
-use crate::spec::choice::{active_alt, BerTagging, ChoiceSpec};
+use crate::spec::choice::{active_alt, ChoiceSpec};
 use crate::xer::reader::XerReader;
 use crate::xer::writer::{indent, write_close_tag, write_open_tag};
 
@@ -43,12 +43,9 @@ pub fn encode_choice_xer<T>(spec: &ChoiceSpec<T>, value: &T) -> String {
 /// (matches `NullXerHandler::encode`); `decode_choice_xer_into` still
 /// accepts a self-closing `<a/>` on input, as asn1c's own decoder does.
 pub fn encode_choice_xer_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut String, depth: usize) {
-    if let Some((_, alt, payload)) = active_alt(spec, value) {
-        if let BerTagging::Unsupported(reason) = alt.ber {
-            panic!("alternative '{}' not supported: {}", alt.name, reason);
-        }
+    if let Some((_, alt)) = active_alt(spec, value) {
         let mut inner = String::new();
-        payload.xer_encode(&mut inner, depth + 1);
+        (alt.xer_encode)(value, &mut inner, depth + 1);
         out.push('\n');
         out.push_str(&indent(depth + 1));
         write_open_tag(out, alt.name);
@@ -74,16 +71,13 @@ pub fn decode_choice_xer_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mut Xe
     let ti = r.peek_tag();
     for alt in spec.alternatives {
         if ti.name == alt.name {
-            if let BerTagging::Unsupported(reason) = alt.ber {
-                panic!("alternative '{}' not supported: {}", alt.name, reason);
-            }
             // Tolerate a self-closing alternative tag (`<name/>`), as every
             // C++ XER handler does; the payload decode is content-only.
             let open = r.consume_tag();
             if open.name != alt.name || open.closing {
                 return Err(DecodeError::new(format!("XER: expected <{}>", alt.name), 0));
             }
-            (alt.emplace)(value).xer_decode_into(r)?;
+            (alt.xer_decode)(value, r)?;
             if !open.self_closing {
                 r.consume_close_tag(alt.name)?;
             }

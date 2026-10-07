@@ -9,7 +9,7 @@ use crate::jer::reader::Reader;
 use crate::spec::choice::{active_alt, ChoiceSpec};
 
 pub fn encode_choice_jer_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut String) {
-    let Some((_, alt, payload)) = active_alt(spec, value) else {
+    let Some((_, alt)) = active_alt(spec, value) else {
         // No alternative matched -- codegen/table mismatch, or a value
         // that was never decoded/set. Matches the C++ reference's own
         // `{}` fallback (ChoiceJerHandler::encode: "pr <= 0 || pr >
@@ -22,7 +22,7 @@ pub fn encode_choice_jer_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut Stri
     out.push_str("{\"");
     out.push_str(alt.name);
     out.push_str("\":");
-    payload.jer_encode(out);
+    (alt.jer_encode)(value, out);
     out.push('}');
 }
 
@@ -42,7 +42,7 @@ pub fn decode_choice_jer_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mut Re
     r.expect_char(b':')?;
     for alt in spec.alternatives {
         if key == alt.name {
-            (alt.emplace)(value).jer_decode_into(r)?;
+            (alt.jer_decode)(value, r)?;
             r.expect_char(b'}')?;
             return Ok(());
         }

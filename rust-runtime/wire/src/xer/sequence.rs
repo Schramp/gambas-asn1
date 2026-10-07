@@ -4,9 +4,15 @@
 //! already uses (one table drives both wire formats, see `lib.rs`'s crate
 //! doc) — part of the `xer/` module (gambas-asn1#666), not split across
 //! `ber/sequence.rs` the way it used to be.
+//!
+//! **gambas-asn1#675**: each member's `xer_encode`/`xer_decode` already
+//! performs its complete operation (plain text vs base64 is baked in by
+//! codegen per member, not chosen by this walker) — see
+//! `spec::sequence`'s own module doc for why no trait object is needed
+//! anywhere in this loop.
 
 use crate::ber::reader::DecodeError;
-use crate::spec::sequence::{MemberAccess, SequenceSpec};
+use crate::spec::sequence::SequenceSpec;
 use crate::xer::reader::XerReader;
 use crate::xer::writer::{indent, write_close_tag, write_open_tag};
 
@@ -20,9 +26,8 @@ use crate::xer::writer::{indent, write_close_tag, write_open_tag};
 /// contract `Asn1Value::xer_encode` already documents for every other type).
 ///
 /// OPTIONAL suppression: an absent member is skipped entirely (no
-/// `<member></member>` pair), via `Asn1Value::is_present` — unlike BER,
-/// XER's outer element tag is this walker's own responsibility, not
-/// something `Option<V>::xer_encode` can suppress by itself.
+/// `<member></member>` pair), via `MemberDescriptor::is_present` — unlike
+/// BER, XER's outer element tag is this walker's own responsibility.
 ///
 /// `depth` is *this SEQUENCE's own* depth — the level its own wrapper tag
 /// sits at (`Asn1Value::xer_encode`'s own "argument = my position"
@@ -37,40 +42,15 @@ use crate::xer::writer::{indent, write_close_tag, write_open_tag};
 fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut String, depth: usize) {
     let mut any = false;
     for m in spec.members {
-        match &m.access {
-            // TaggedScalar reuses Scalar's get here: XER
-            // element tags are always field-name-derived, never
-            // type-derived, so the BER-only tag override doesn't apply.
-            MemberAccess::Scalar { get, .. } | MemberAccess::TaggedScalar { get, .. } | MemberAccess::ExplicitScalar { get, .. } => {
-                let val = get(value);
-                if !val.is_present() {
-                    continue;
-                }
-                any = true;
-                out.push('\n');
-                out.push_str(&indent(depth + 1));
-                write_open_tag(out, m.name);
-                val.xer_encode(out, depth + 1);
-                write_close_tag(out, m.name);
-            }
-            MemberAccess::Base64Scalar { get, .. } => {
-                let val = get(value);
-                if !val.is_present() {
-                    continue;
-                }
-                any = true;
-                out.push('\n');
-                out.push_str(&indent(depth + 1));
-                write_open_tag(out, m.name);
-                val.xer_encode_base64(out);
-                write_close_tag(out, m.name);
-            }
-            // ANY has no defined XER form here — `Any`'s own `xer_encode`
-            // uses `Asn1Value`'s default (`unimplemented!`), reached
-            // through the combined `Scalar`/`TaggedScalar`/`ExplicitScalar`
-            // arm above only if this member is actually written.
-            MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
+        if !(m.is_present)(value) {
+            continue;
         }
+        any = true;
+        out.push('\n');
+        out.push_str(&indent(depth + 1));
+        write_open_tag(out, m.name);
+        (m.xer_encode)(value, out, depth + 1);
+        write_close_tag(out, m.name);
     }
     if any {
         out.push('\n');
@@ -104,9 +84,9 @@ pub fn encode_sequence_xer_into<T>(spec: &SequenceSpec<T>, value: &T, out: &mut 
 ///
 /// OPTIONAL members: peek the next open tag's name before
 /// consuming it — if it doesn't match this member's own element name, the
-/// member is absent (leave it at its `Default`, i.e. `None`) and nothing is
-/// consumed, same linear-scan/canonical-order assumption `decode_sequence`'s
-/// BER leg documents.
+/// member is absent (leave it at its `Default`) and nothing is consumed,
+/// same linear-scan/canonical-order assumption `decode_sequence`'s BER leg
+/// documents.
 fn decode_sequence_xer_content<T: Default>(spec: &SequenceSpec<T>, r: &mut XerReader) -> Result<T, DecodeError> {
     let mut result = T::default();
     for m in spec.members {
@@ -117,12 +97,7 @@ fn decode_sequence_xer_content<T: Default>(spec: &SequenceSpec<T>, r: &mut XerRe
             }
         }
         r.consume_open_tag(m.name)?;
-        match &m.access {
-            MemberAccess::Scalar { get_mut, .. } | MemberAccess::TaggedScalar { get_mut, .. } | MemberAccess::ExplicitScalar { get_mut, .. } =>
-                get_mut(&mut result).xer_decode_into(r)?,
-            MemberAccess::Base64Scalar { get_mut, .. } => get_mut(&mut result).xer_decode_into_base64(r)?,
-            MemberAccess::Unsupported { reason, .. } => panic!("member '{}' not supported: {}", m.name, reason),
-        }
+        (m.xer_decode)(&mut result, r)?;
         r.consume_close_tag(m.name)?;
     }
     Ok(result)

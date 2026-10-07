@@ -31,13 +31,10 @@
 //! (X.680 §30.6) — always wraps the whole alternative-dispatch encoding
 //! in an outer TLV.
 //!
-//! Each alternative reaches its payload through two typed accessors
-//! instead of per-codec closures: `active` (`&T -> Option<&dyn Asn1Value>`,
-//! `Some` iff `T` currently holds this alternative) and `emplace`
-//! (`&mut T -> &mut dyn Asn1Value`, replaces `T` with this alternative's
-//! default payload and hands it back for the codec to decode into). Every
-//! codec (BER, XER, PER) reads and writes the payload through the
-//! `Asn1Value` trait; only how BER frames it (`BerTagging`) is BER-specific.
+//! Each alternative's own `ber_encode`/`ber_decode`/etc. (`spec::choice`,
+//! gambas-asn1#675) performs its one variant's complete operation inline
+//! — no `&dyn Asn1Value` accessor anywhere, `is_active`/`ChoiceSpec::
+//! active_index` identify which row is live without needing one either.
 //! BER decode dispatch uses the precomputed `ChoiceSpec::ber_tags` table
 //! (wire tag -> alternative index, X.690 §8.13); PER uses the alternative's
 //! position (X.691 §23).
@@ -51,7 +48,9 @@
 
 use crate::ber::reader::{read_explicit, DecodeError, Reader};
 use crate::ber::tag::Tag;
-use crate::spec::choice::{active_alt, BerTagging, ChoiceSpec};
+use crate::spec::choice::{active_alt, ChoiceSpec};
+#[cfg(test)]
+use crate::spec::choice::BerTagging;
 use crate::ber::writer::{write_explicit, write_primitive, write_tagged};
 // Only this file's own dogfood tests call the XER leg directly by name —
 // real generated code reaches it via the full `xer::choice::`/`xer::reader::`
@@ -79,13 +78,8 @@ pub fn encode_choice<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
 /// alternative's own `ber_encode*` call) — no separate `Vec` per CHOICE
 /// value encoded.
 fn encode_choice_dispatch_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut Vec<u8>) {
-    if let Some((_, alt, payload)) = active_alt(spec, value) {
-        match alt.ber {
-            BerTagging::Implicit(tag) => payload.ber_encode_tagged(tag, out),
-            BerTagging::Explicit(tag) => payload.ber_encode_explicit(out, tag),
-            BerTagging::Delegate => payload.ber_encode(out),
-            BerTagging::Unsupported(reason) => panic!("alternative '{}' not supported: {}", alt.name, reason),
-        }
+    if let Some((_, alt)) = active_alt(spec, value) {
+        (alt.ber_encode)(value, out);
         return;
     }
     if let Some(ops) = &spec.unknown_extension {
@@ -159,13 +153,7 @@ fn decode_choice_dispatch<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mut Reader
         .map(|i| &spec.ber_tags[i]);
     if let Some(d) = found {
         let alt = &spec.alternatives[d.alt];
-        let payload = (alt.emplace)(value);
-        return match alt.ber {
-            BerTagging::Implicit(t) => payload.ber_decode_into_tagged(r, t),
-            BerTagging::Explicit(t) => payload.ber_decode_into_explicit(r, t),
-            BerTagging::Delegate => payload.ber_decode_into(r),
-            BerTagging::Unsupported(reason) => panic!("alternative '{}' not supported: {}", alt.name, reason),
-        };
+        return (alt.ber_decode)(value, r);
     }
     if let Some(ops) = &spec.unknown_extension {
         let tlv = r.read_tlv()?;
@@ -205,28 +193,98 @@ impl Default for Choice {
     }
 }
 
+// Dogfood-fixture-only helpers (gambas-asn1#675): generates the full
+// 10-field `Alternative` literal for the common "one-field enum variant,
+// same BER framing kind" shape, so the fixtures below don't repeat the
+// same match-and-call boilerplate per codec per alternative. Real codegen
+// (RustBackend.cpp) emits the equivalent text directly, no macro there —
+// this exists purely to keep this file's hand-written dogfood fixtures
+// readable.
+macro_rules! implicit_alt {
+    ($name:expr, $tag:expr, $Enum:ident :: $Variant:ident) => {
+        Alternative {
+            name: $name,
+            ber: BerTagging::Implicit($tag),
+            is_active: |x| matches!(x, $Enum::$Variant(_)),
+            per_unsupported: None,
+            ber_encode: |x, out| match x { $Enum::$Variant(v) => v.ber_encode_tagged($tag, out), _ => unreachable!() },
+            ber_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.ber_decode_into_tagged(r, $tag), _ => unreachable!() } },
+            xer_encode: |x, out, depth| match x { $Enum::$Variant(v) => v.xer_encode(out, depth), _ => unreachable!() },
+            xer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.xer_decode_into(r), _ => unreachable!() } },
+            jer_encode: |x, out| match x { $Enum::$Variant(v) => v.jer_encode(out), _ => unreachable!() },
+            jer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.jer_decode_into(r), _ => unreachable!() } },
+            per_encode: |x, w| match x { $Enum::$Variant(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
+            per_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
+        }
+    };
+}
+
+macro_rules! explicit_alt {
+    ($name:expr, $tag:expr, $Enum:ident :: $Variant:ident) => {
+        Alternative {
+            name: $name,
+            ber: BerTagging::Explicit($tag),
+            is_active: |x| matches!(x, $Enum::$Variant(_)),
+            per_unsupported: None,
+            ber_encode: |x, out| match x { $Enum::$Variant(v) => v.ber_encode_explicit(out, $tag), _ => unreachable!() },
+            ber_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.ber_decode_into_explicit(r, $tag), _ => unreachable!() } },
+            xer_encode: |x, out, depth| match x { $Enum::$Variant(v) => v.xer_encode(out, depth), _ => unreachable!() },
+            xer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.xer_decode_into(r), _ => unreachable!() } },
+            jer_encode: |x, out| match x { $Enum::$Variant(v) => v.jer_encode(out), _ => unreachable!() },
+            jer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.jer_decode_into(r), _ => unreachable!() } },
+            per_encode: |x, w| match x { $Enum::$Variant(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
+            per_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
+        }
+    };
+}
+
+macro_rules! delegate_alt {
+    ($name:expr, $Enum:ident :: $Variant:ident) => {
+        Alternative {
+            name: $name,
+            ber: BerTagging::Delegate,
+            is_active: |x| matches!(x, $Enum::$Variant(_)),
+            per_unsupported: None,
+            ber_encode: |x, out| match x { $Enum::$Variant(v) => v.ber_encode(out), _ => unreachable!() },
+            ber_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.ber_decode_into(r), _ => unreachable!() } },
+            xer_encode: |x, out, depth| match x { $Enum::$Variant(v) => v.xer_encode(out, depth), _ => unreachable!() },
+            xer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.xer_decode_into(r), _ => unreachable!() } },
+            jer_encode: |x, out| match x { $Enum::$Variant(v) => v.jer_encode(out), _ => unreachable!() },
+            jer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.jer_decode_into(r), _ => unreachable!() } },
+            per_encode: |x, w| match x { $Enum::$Variant(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
+            per_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
+        }
+    };
+}
+
 static CHOICE_ALTERNATIVES: [Alternative<Choice>; 2] = [
     Alternative {
         name: "num",
         ber: BerTagging::Implicit(crate::integer::INTEGER_TAG),
-        active: |x| match x { Choice::Num(v) => Some(v), _ => None },
-        emplace: |x| {
-            *x = Choice::Num(Default::default());
-            match x { Choice::Num(v) => v, _ => unreachable!() }
-        },
-        constraints: &crate::constraints::UNCONSTRAINED,
+        is_active: |x| matches!(x, Choice::Num(_)),
         per_unsupported: None,
+        ber_encode: |x, out| match x { Choice::Num(v) => v.ber_encode_tagged(crate::integer::INTEGER_TAG, out), _ => unreachable!() },
+        ber_decode: |x, r| { *x = Choice::Num(Default::default()); match x { Choice::Num(v) => v.ber_decode_into_tagged(r, crate::integer::INTEGER_TAG), _ => unreachable!() } },
+        xer_encode: |x, out, depth| match x { Choice::Num(v) => v.xer_encode(out, depth), _ => unreachable!() },
+        xer_decode: |x, r| { *x = Choice::Num(Default::default()); match x { Choice::Num(v) => v.xer_decode_into(r), _ => unreachable!() } },
+        jer_encode: |x, out| match x { Choice::Num(v) => v.jer_encode(out), _ => unreachable!() },
+        jer_decode: |x, r| { *x = Choice::Num(Default::default()); match x { Choice::Num(v) => v.jer_decode_into(r), _ => unreachable!() } },
+        per_encode: |x, w| match x { Choice::Num(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
+        per_decode: |x, r| { *x = Choice::Num(Default::default()); match x { Choice::Num(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
     },
     Alternative {
         name: "data",
         ber: BerTagging::Implicit(crate::octet_string::OCTET_STRING_TAG),
-        active: |x| match x { Choice::Data(v) => Some(v), _ => None },
-        emplace: |x| {
-            *x = Choice::Data(Default::default());
-            match x { Choice::Data(v) => v, _ => unreachable!() }
-        },
-        constraints: &crate::constraints::UNCONSTRAINED,
+        is_active: |x| matches!(x, Choice::Data(_)),
         per_unsupported: None,
+        ber_encode: |x, out| match x { Choice::Data(v) => v.ber_encode_tagged(crate::octet_string::OCTET_STRING_TAG, out), _ => unreachable!() },
+        ber_decode: |x, r| { *x = Choice::Data(Default::default()); match x { Choice::Data(v) => v.ber_decode_into_tagged(r, crate::octet_string::OCTET_STRING_TAG), _ => unreachable!() } },
+        xer_encode: |x, out, depth| match x { Choice::Data(v) => v.xer_encode(out, depth), _ => unreachable!() },
+        xer_decode: |x, r| { *x = Choice::Data(Default::default()); match x { Choice::Data(v) => v.xer_decode_into(r), _ => unreachable!() } },
+        jer_encode: |x, out| match x { Choice::Data(v) => v.jer_encode(out), _ => unreachable!() },
+        jer_decode: |x, r| { *x = Choice::Data(Default::default()); match x { Choice::Data(v) => v.jer_decode_into(r), _ => unreachable!() } },
+        per_encode: |x, w| match x { Choice::Data(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
+        per_decode: |x, r| { *x = Choice::Data(Default::default()); match x { Choice::Data(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
     },
 ];
 
@@ -235,7 +293,8 @@ static CHOICE_TAGS: [BerDispatch; 2] = [
     BerDispatch { tag: crate::octet_string::OCTET_STRING_TAG, alt: 1 },
 ];
 
-static CHOICE_SPEC: ChoiceSpec<Choice> = ChoiceSpec { name: "Choice", alternatives: &CHOICE_ALTERNATIVES, ber_tags: &CHOICE_TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 1 };
+static CHOICE_SPEC: ChoiceSpec<Choice> = ChoiceSpec { name: "Choice", alternatives: &CHOICE_ALTERNATIVES, ber_tags: &CHOICE_TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 1,
+    active_index: |x| match x { Choice::Num(_) => Some(0), Choice::Data(_) => Some(1) } };
 
 impl Choice {
     pub fn encode(&self) -> Vec<u8> {
@@ -300,7 +359,8 @@ impl Choice {
             number: 9,
             constructed: true,
         };
-        let spec = ChoiceSpec { name: "Choice", alternatives: &CHOICE_ALTERNATIVES, ber_tags: &CHOICE_TAGS, unknown_extension: None, own_tag: Some(tag), ext_at: -1, range_bits: 1 };
+        let spec = ChoiceSpec { name: "Choice", alternatives: &CHOICE_ALTERNATIVES, ber_tags: &CHOICE_TAGS, unknown_extension: None, own_tag: Some(tag), ext_at: -1, range_bits: 1,
+            active_index: |x| match x { Choice::Num(_) => Some(0), Choice::Data(_) => Some(1) } };
         let enc = encode_choice(&spec, &Choice::Num(Integer(42)));
         assert_eq!(enc, vec![0xa9, 0x03, 0x02, 0x01, 0x2a]);
 
@@ -405,34 +465,15 @@ impl Choice {
     const TAG_2: Tag = Tag::context(2, true);
 
     static TWO_OCTETS_EXPLICIT_ALTERNATIVES: [Alternative<TwoOctetsExplicit>; 2] = [
-    Alternative {
-        name: "first",
-        ber: BerTagging::Explicit(TAG_1),
-        active: |x| match x { TwoOctetsExplicit::First(v) => Some(v), _ => None },
-        emplace: |x| {
-            *x = TwoOctetsExplicit::First(Default::default());
-            match x { TwoOctetsExplicit::First(v) => v, _ => unreachable!() }
-        },
-        constraints: &crate::constraints::UNCONSTRAINED,
-        per_unsupported: None,
-    },
-    Alternative {
-        name: "second",
-        ber: BerTagging::Explicit(TAG_2),
-        active: |x| match x { TwoOctetsExplicit::Second(v) => Some(v), _ => None },
-        emplace: |x| {
-            *x = TwoOctetsExplicit::Second(Default::default());
-            match x { TwoOctetsExplicit::Second(v) => v, _ => unreachable!() }
-        },
-        constraints: &crate::constraints::UNCONSTRAINED,
-        per_unsupported: None,
-    },
-];
+        explicit_alt!("first", TAG_1, TwoOctetsExplicit::First),
+        explicit_alt!("second", TAG_2, TwoOctetsExplicit::Second),
+    ];
 
     static TWO_OCTETS_EXPLICIT_TAGS: [BerDispatch; 2] = [BerDispatch { tag: TAG_1, alt: 0 }, BerDispatch { tag: TAG_2, alt: 1 }];
 
     static TWO_OCTETS_EXPLICIT_SPEC: ChoiceSpec<TwoOctetsExplicit> =
-        ChoiceSpec { name: "TwoOctetsExplicit", alternatives: &TWO_OCTETS_EXPLICIT_ALTERNATIVES, ber_tags: &TWO_OCTETS_EXPLICIT_TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 1 };
+        ChoiceSpec { name: "TwoOctetsExplicit", alternatives: &TWO_OCTETS_EXPLICIT_ALTERNATIVES, ber_tags: &TWO_OCTETS_EXPLICIT_TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 1,
+            active_index: |x| match x { TwoOctetsExplicit::First(_) => Some(0), TwoOctetsExplicit::Second(_) => Some(1) } };
 
     #[test]
     fn explicit_disambiguates_two_alternatives_of_the_same_builtin_kind() {
@@ -481,18 +522,8 @@ impl Choice {
     const NUM_TAG: Tag = Tag::context(0, false);
 
     static EXT_CHOICE_ALTERNATIVES: [Alternative<ExtChoice>; 1] = [
-    Alternative {
-        name: "num",
-        ber: BerTagging::Implicit(NUM_TAG),
-        active: |x| match x { ExtChoice::Num(v) => Some(v), _ => None },
-        emplace: |x| {
-            *x = ExtChoice::Num(Default::default());
-            match x { ExtChoice::Num(v) => v, _ => unreachable!() }
-        },
-        constraints: &crate::constraints::UNCONSTRAINED,
-        per_unsupported: None,
-    },
-];
+        implicit_alt!("num", NUM_TAG, ExtChoice::Num),
+    ];
 
     static EXT_CHOICE_TAGS: [BerDispatch; 1] = [BerDispatch { tag: NUM_TAG, alt: 0 }];
 
@@ -510,6 +541,7 @@ impl Choice {
         own_tag: None,
         ext_at: 1,
         range_bits: 0,
+        active_index: |x| match x { ExtChoice::Num(_) => Some(0), ExtChoice::UnknownExtension(..) => None },
     };
 
     #[test]
@@ -569,33 +601,14 @@ impl Choice {
     const INNER_B_TAG: Tag = Tag::context(2, false);
 
     static INNER_ALTERNATIVES: [Alternative<Inner>; 2] = [
-    Alternative {
-        name: "a",
-        ber: BerTagging::Implicit(INNER_A_TAG),
-        active: |x| match x { Inner::A(v) => Some(v), _ => None },
-        emplace: |x| {
-            *x = Inner::A(Default::default());
-            match x { Inner::A(v) => v, _ => unreachable!() }
-        },
-        constraints: &crate::constraints::UNCONSTRAINED,
-        per_unsupported: None,
-    },
-    Alternative {
-        name: "b",
-        ber: BerTagging::Implicit(INNER_B_TAG),
-        active: |x| match x { Inner::B(v) => Some(v), _ => None },
-        emplace: |x| {
-            *x = Inner::B(Default::default());
-            match x { Inner::B(v) => v, _ => unreachable!() }
-        },
-        constraints: &crate::constraints::UNCONSTRAINED,
-        per_unsupported: None,
-    },
-];
+        implicit_alt!("a", INNER_A_TAG, Inner::A),
+        implicit_alt!("b", INNER_B_TAG, Inner::B),
+    ];
 
     static INNER_TAGS: [BerDispatch; 2] = [BerDispatch { tag: INNER_A_TAG, alt: 0 }, BerDispatch { tag: INNER_B_TAG, alt: 1 }];
 
-    static INNER_SPEC: ChoiceSpec<Inner> = ChoiceSpec { name: "Inner", alternatives: &INNER_ALTERNATIVES, ber_tags: &INNER_TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 1 };
+    static INNER_SPEC: ChoiceSpec<Inner> = ChoiceSpec { name: "Inner", alternatives: &INNER_ALTERNATIVES, ber_tags: &INNER_TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 1,
+        active_index: |x| match x { Inner::A(_) => Some(0), Inner::B(_) => Some(1) } };
 
     impl Asn1Value for Inner {
         fn ber_natural_tag(&self) -> Tag { unreachable!("CHOICE has no natural tag") }
@@ -642,29 +655,9 @@ impl Choice {
     const OUTER_DIRECT_TAG: Tag = Tag::context(9, false);
 
     static OUTER_ALTERNATIVES: [Alternative<Outer>; 2] = [
-    Alternative {
-        name: "inner",
-        ber: BerTagging::Delegate,
-        active: |x| match x { Outer::Wrapped(v) => Some(v), _ => None },
-        emplace: |x| {
-            *x = Outer::Wrapped(Default::default());
-            match x { Outer::Wrapped(v) => v, _ => unreachable!() }
-        },
-        constraints: &crate::constraints::UNCONSTRAINED,
-        per_unsupported: None,
-    },
-    Alternative {
-        name: "direct",
-        ber: BerTagging::Implicit(OUTER_DIRECT_TAG),
-        active: |x| match x { Outer::Direct(v) => Some(v), _ => None },
-        emplace: |x| {
-            *x = Outer::Direct(Default::default());
-            match x { Outer::Direct(v) => v, _ => unreachable!() }
-        },
-        constraints: &crate::constraints::UNCONSTRAINED,
-        per_unsupported: None,
-    },
-];
+        delegate_alt!("inner", Outer::Wrapped),
+        implicit_alt!("direct", OUTER_DIRECT_TAG, Outer::Direct),
+    ];
 
     // The untagged CHOICE alternative contributes one dispatch entry per
     // tag of the inner CHOICE (X.690 §8.13).
@@ -674,7 +667,8 @@ impl Choice {
         BerDispatch { tag: OUTER_DIRECT_TAG, alt: 1 },
     ];
 
-    static OUTER_SPEC: ChoiceSpec<Outer> = ChoiceSpec { name: "Outer", alternatives: &OUTER_ALTERNATIVES, ber_tags: &OUTER_TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 1 };
+    static OUTER_SPEC: ChoiceSpec<Outer> = ChoiceSpec { name: "Outer", alternatives: &OUTER_ALTERNATIVES, ber_tags: &OUTER_TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 1,
+        active_index: |x| match x { Outer::Wrapped(_) => Some(0), Outer::Direct(_) => Some(1) } };
 
     impl Outer {
         fn encode(&self) -> Vec<u8> { encode_choice(&OUTER_SPEC, self) }
@@ -731,14 +725,21 @@ impl Choice {
         static ROW: [Alternative<Solo>; 1] = [Alternative {
             name: "v",
             ber: BerTagging::Delegate,
-            active: |x| { let Solo::V(v) = x; Some(v) },
-            emplace: |x| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v },
-            constraints: &crate::constraints::UNCONSTRAINED,
+            is_active: |_| true,
             per_unsupported: None,
+            ber_encode: |x, out| { let Solo::V(v) = x; v.ber_encode(out); },
+            ber_decode: |x, r| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v.ber_decode_into(r) },
+            xer_encode: |x, out, depth| { let Solo::V(v) = x; v.xer_encode(out, depth); },
+            xer_decode: |x, r| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v.xer_decode_into(r) },
+            jer_encode: |x, out| { let Solo::V(v) = x; v.jer_encode(out); },
+            jer_decode: |x, r| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v.jer_decode_into(r) },
+            per_encode: |x, w| { let Solo::V(v) = x; v.per_encode(w, &crate::constraints::UNCONSTRAINED); },
+            per_decode: |x, r| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v.per_decode_into(r, &crate::constraints::UNCONSTRAINED) },
         }];
         // Deliberately the wrong constructed bit in the dispatch tag.
         static TAGS: [BerDispatch; 1] = [BerDispatch { tag: Tag::context(1, false), alt: 0 }];
-        static SPEC: ChoiceSpec<Solo> = ChoiceSpec { name: "Solo", alternatives: &ROW, ber_tags: &TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 0 };
+        static SPEC: ChoiceSpec<Solo> = ChoiceSpec { name: "Solo", alternatives: &ROW, ber_tags: &TAGS, unknown_extension: None, own_tag: None, ext_at: -1, range_bits: 0,
+            active_index: |_| Some(0) };
 
         let mut wire = Vec::new();
         write_primitive(&mut wire, Tag::context(1, true), &[0x05]); // constructed=true on the wire
