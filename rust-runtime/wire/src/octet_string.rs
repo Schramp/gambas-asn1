@@ -122,6 +122,18 @@ impl Asn1Value for OctetString {
         Ok(())
     }
 
+    /// X.697 §8.9: quoted uppercase hex, no spaces (not base64 -- JER has
+    /// no per-member encoding-control override the way XER's `::= base64`
+    /// does; see `jer::octet_string`'s own module doc).
+    fn jer_encode(&self, out: &mut String) {
+        crate::jer::octet_string::encode(&self.0, out);
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        self.0 = crate::jer::octet_string::decode(r)?;
+        Ok(())
+    }
+
     fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
         crate::per::octet_string::encode_octet_string(w, c, &self.0);
     }

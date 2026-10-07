@@ -37,7 +37,17 @@ struct BerTraits<Real> {
     static void encode(BerWriter& w, const Real& v) {
         double d = v.value();
         if (d == 0.0) {
-            w.write_primitive(tag(), {});
+            // X.690 §8.5.9: PLUS-ZERO is the empty encoding; MINUS-ZERO
+            // (distinct from PLUS-ZERO -- `==` can't tell them apart,
+            // hence std::signbit) is a single content octet 0x43, not
+            // empty. Conflating the two here used to silently drop the
+            // sign of -0.0 on every encode.
+            if (std::signbit(d)) {
+                uint8_t b = 0x43;
+                w.write_primitive(tag(), std::span<const uint8_t>(&b, 1));
+            } else {
+                w.write_primitive(tag(), {});
+            }
             return;
         }
         if (std::isinf(d)) {
@@ -110,6 +120,7 @@ struct BerTraits<Real> {
         if (info == 0x40) return Real{std::numeric_limits<double>::infinity()};
         if (info == 0x41) return Real{-std::numeric_limits<double>::infinity()};
         if (info == 0x42) return Real{std::numeric_limits<double>::quiet_NaN()};
+        if (info == 0x43) return Real{-0.0};
 
         if (!(info & 0x80))
             return make_unexpected<Real, DecodeError>(DecodeError("decimal REAL encoding not supported"));

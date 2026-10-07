@@ -53,6 +53,13 @@ pub fn read_real(r: &mut Reader) -> Result<f64, DecodeError> {
 /// special values, info+exponent+mantissa for everything else.
 pub(crate) fn encode_real_content(out: &mut Vec<u8>, value: f64) {
     if value == 0.0 {
+        // X.690 §8.5.9: PLUS-ZERO is the empty encoding; MINUS-ZERO
+        // (distinct from PLUS-ZERO -- `==` can't tell them apart, hence
+        // is_sign_negative) is a single content octet 0x43, not empty.
+        // Conflating the two used to silently drop the sign of -0.0.
+        if value.is_sign_negative() {
+            out.push(0x43);
+        }
         return;
     }
     if value.is_infinite() {
@@ -137,6 +144,9 @@ pub(crate) fn decode_real_value(value: &[u8], pos: usize) -> Result<f64, DecodeE
     if info == 0x42 {
         return Ok(f64::NAN);
     }
+    if info == 0x43 {
+        return Ok(-0.0);
+    }
     if info & 0x80 == 0 {
         return Err(DecodeError::new("decimal REAL encoding not supported", pos));
     }
@@ -190,11 +200,19 @@ mod tests {
     }
 
     #[test]
-    fn encodes_negative_zero_as_empty_value() {
-        // Matches asn1::Real: `d == 0.0` is true for -0.0 too, so sign is lost.
+    fn encodes_negative_zero_as_single_octet_0x43() {
+        // X.690 §8.5.9: MINUS-ZERO is a real, distinct encoding from
+        // PLUS-ZERO's empty one, not a sign-losing alias for it (a
+        // previous version of this test, and of encode_real_content
+        // itself, assumed the opposite).
         let mut buf = Vec::new();
         write_real(&mut buf, -0.0);
-        assert_eq!(buf, vec![0x09, 0x00]);
+        assert_eq!(buf, vec![0x09, 0x01, 0x43]);
+
+        let mut r = Reader::new(&buf);
+        let got = read_real(&mut r).unwrap();
+        assert_eq!(got, 0.0);
+        assert!(got.is_sign_negative());
     }
 
     #[test]

@@ -55,7 +55,7 @@ table-driven codec, no per-type generated codec logic. Concretely:
 | `MemberDescriptor` row (offset + `type_descriptor` ptr) | `MemberDescriptor<T>` row (`get`/`get_mut` fn ptr → `&dyn Asn1Value`) |
 | `ICodec` + handler singletons (`IBerTypeHandler`, `ber_boolean_handler`, ...) | `Asn1Value` trait, default methods (`ber_encode`/`ber_decode_into`/... composed from required `ber_natural_tag`/`ber_encode_content`/`ber_decode_content`) |
 | offset + `void*` field access | generated accessor closure, unsize-coerced to `&dyn Asn1Value` (vtable lives on the fat pointer, not the data) |
-| one `ICodec` interface for BER/PER/XER/JER | one `Asn1Value` trait carrying both `ber_*` and `xer_*` legs |
+| one `ICodec` interface for BER/PER/XER/JER | one `Asn1Value` trait carrying `ber_*`/`xer_*`/`per_*`/`jer_*` legs (JER ported gambas-asn1#661, own `jer/` module like `per/`) |
 | `Oid` (`runtime/include/asn1cpp/Oid.hpp`) | `ObjectIdentifier` (`rust-runtime/wire/src/oid.rs`) |
 
 The last row is the one builtin wrapper whose name genuinely differs between the two
