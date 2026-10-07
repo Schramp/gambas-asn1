@@ -75,6 +75,21 @@ int main() {
           enc_zero == std::vector<uint8_t>({0x30, 0x02, 0x09, 0x00}));
 
     check("HasReal{0.0} BER round-trip",   ber_roundtrip(0.0));
+
+    // X.690 §8.5.3/8.5.9: minus zero is a distinct, non-empty encoding
+    // (single content octet 0x43) from plus zero's empty one — confirmed
+    // against the current (02/2021) standard text directly, after a bug
+    // where `d == 0.0` (true for both signs) silently dropped -0.0's sign.
+    { HasReal negzero; negzero.value = Real{-0.0};
+      auto enc_negzero = ber_encode(negzero);
+      check("HasReal{-0.0} BER encodes as 30 03 09 01 43",
+            enc_negzero == std::vector<uint8_t>({0x30, 0x03, 0x09, 0x01, 0x43}));
+      HasReal got{};
+      check("HasReal{-0.0} BER decodes", ber_decode(enc_negzero, got));
+      check("HasReal{-0.0} BER round-trip keeps sign",
+            got.value.value() == 0.0 && std::signbit(got.value.value()));
+    }
+
     check("HasReal{1.0} BER round-trip",   ber_roundtrip(1.0));
     check("HasReal{-1.0} BER round-trip",  ber_roundtrip(-1.0));
     check("HasReal{3.14} BER round-trip",  ber_roundtrip(3.14));

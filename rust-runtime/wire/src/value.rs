@@ -2104,12 +2104,16 @@ mod tests {
 
     #[test]
     fn real_jer_special_values_match_reference() {
+        // X.697 Table 2: "-0"/"-INF"/"INF"/"NaN" -- not "PLUS-INFINITY"/
+        // "MINUS-INFINITY" (that's X.693/XER's spelling, a different
+        // clause; confirmed against the standard text directly).
         use crate::real::Real;
         for (v, text) in [
             (f64::NAN, "\"NaN\""),
-            (f64::INFINITY, "\"PLUS-INFINITY\""),
-            (f64::NEG_INFINITY, "\"MINUS-INFINITY\""),
+            (f64::INFINITY, "\"INF\""),
+            (f64::NEG_INFINITY, "\"-INF\""),
             (0.0, "0"),
+            (-0.0, "\"-0\""),
         ] {
             let r = Real(v);
             let mut out = String::new();

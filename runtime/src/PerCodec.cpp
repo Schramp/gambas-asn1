@@ -443,7 +443,15 @@ public:
     void encode(const PerCodec&, PerEncodeStream& stream,
                 const TypeDescriptor&, const Asn1Object* src) const override {
         const Real& real_val = *static_cast<const Real*>(src);
-        if (real_val.value() == 0.0) return;
+        // PLUS-ZERO (not MINUS-ZERO -- that has a real, non-empty BER
+        // content byte 0x43, see BerTraits<Real>::encode) used to skip
+        // the open-type wrapper entirely here. decode() always reads one
+        // via per_detail::decode_ber_content regardless of value, so
+        // this desynced the bit stream for every field after a
+        // PLUS-ZERO REAL -- confirmed via a cpp-encoded PER stream that
+        // cpp's own decoder then rejected. The zero-length case below
+        // (content_len == 0) still needs its length-prefix written, same
+        // as every other content_len.
         std::vector<uint8_t> ber;
         { BerWriter ber_writer{ber}; BerTraits<Real>::encode(ber_writer, real_val); }
         std::size_t content_len = ber[1];

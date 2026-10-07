@@ -101,10 +101,13 @@ int main() {
     // =========================================================================
     std::printf("\n── REAL ────────────────────────────────────────────────────\n");
     // =========================================================================
+    // X.697 Table 2 — "-0"/"-INF"/"INF"/"NaN", not "PLUS-INFINITY"/
+    // "MINUS-INFINITY" (that spelling is X.693/XER's, a different clause).
     check("REAL 0 encodes", encodes_as(asn_DEF_Real, Real{0.0}, "0"));
+    check("REAL -0 encodes as quoted",   encodes_as(asn_DEF_Real, Real{-0.0}, "\"-0\""));
     check("REAL NaN encodes as quoted",  encodes_as(asn_DEF_Real, Real{std::numeric_limits<double>::quiet_NaN()}, "\"NaN\""));
-    check("REAL +Inf encodes",           encodes_as(asn_DEF_Real, Real{std::numeric_limits<double>::infinity()},  "\"PLUS-INFINITY\""));
-    check("REAL -Inf encodes",           encodes_as(asn_DEF_Real, Real{-std::numeric_limits<double>::infinity()}, "\"MINUS-INFINITY\""));
+    check("REAL +Inf encodes",           encodes_as(asn_DEF_Real, Real{std::numeric_limits<double>::infinity()},  "\"INF\""));
+    check("REAL -Inf encodes",           encodes_as(asn_DEF_Real, Real{-std::numeric_limits<double>::infinity()}, "\"-INF\""));
     {
         // NaN round-trip: NaN != NaN by IEEE, so check by hand
         Real nan_val{std::numeric_limits<double>::quiet_NaN()};
@@ -117,13 +120,18 @@ int main() {
     check("REAL -7.25 round-trip",  roundtrip(asn_DEF_Real, Real{-7.25}));
     {
         Real out{};
-        auto r = jer_decode(asn_DEF_Real, "\"PLUS-INFINITY\"", out);
+        auto r = jer_decode(asn_DEF_Real, "\"INF\"", out);
         check("REAL +Inf decodes",  r.has_value() && std::isinf(out.value()) && out.value() > 0);
     }
     {
         Real out{};
-        auto r = jer_decode(asn_DEF_Real, "\"MINUS-INFINITY\"", out);
+        auto r = jer_decode(asn_DEF_Real, "\"-INF\"", out);
         check("REAL -Inf decodes",  r.has_value() && std::isinf(out.value()) && out.value() < 0);
+    }
+    {
+        Real out{};
+        auto r = jer_decode(asn_DEF_Real, "\"-0\"", out);
+        check("REAL -0 decodes",  r.has_value() && out.value() == 0.0 && std::signbit(out.value()));
     }
 
     // =========================================================================
