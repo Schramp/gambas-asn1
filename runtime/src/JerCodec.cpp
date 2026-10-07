@@ -719,39 +719,35 @@ struct TimeJerHandler final : IJerTypeHandler {
     }
 };
 
-// ANY — pass-through raw JSON value (best-effort: capture until value end)
+// ANY / OPEN TYPE — quoted uppercase hex of the raw stored content, same
+// convention OCTET STRING's own JerCodec handler and ANY's own XerCodec
+// handler (AnyXerHandler, format_hex_bytes/parse_hex_bytes) already use.
+//
+// A previous version of this handler instead passed the stored bytes
+// straight through as literal JSON text, on the assumption they were
+// already well-formed JSON (a real open-type resolution — re-serializing
+// an ANY value according to its actual governing type, identified by a
+// sibling field elsewhere in the structure, X.697's real contract for
+// open types — which this runtime doesn't implement for any codec).
+// Every actual producer of ANY content in this runtime (RandomFiller,
+// decoded-and-recaptured BER bytes) stores raw BER-encoded bytes, not
+// JSON text, so that assumption produced invalid JSON for every real
+// caller (gambas-asn1#668) — confirmed by the fact that AnyXerHandler,
+// sitting right next to it, already made the hex choice instead of the
+// analogous "assume it's pre-formed XML" mistake.
 struct AnyJerHandler final : IJerTypeHandler {
     void encode(const JerCodec&, JerEncodeStream& s,
                 const TypeDescriptor&, const Asn1Object* src) const override {
-        // Stored as opaque OCTET STRING containing the raw JSON bytes.
         const OctetString& v = *static_cast<const OctetString*>(src);
         auto bytes = v.bytes();
-        if (bytes.empty()) { s.os() << "null"; return; }
-        s.os().write(reinterpret_cast<const char*>(bytes.data()), (std::streamsize)bytes.size());
+        std::string_view sv(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        s.os() << '"' << jer_detail::to_hex_upper(sv) << '"';
     }
     DecodeResult decode(const JerCodec&, JerDecodeStream& s,
                         const TypeDescriptor&, Asn1Object* dest) const override {
-        // Capture raw JSON token(s) and store as OCTET STRING bytes.
-        jer_detail::skip_ws(s);
-        if (s.at_end()) return decode_err(DecodeError("JER: ANY: unexpected end"));
-        char first = s.data()[0];
-        std::string raw;
-        if (first == '"') {
-            std::string str;
-            if (auto r = jer_detail::read_json_string(s, str); !r) return r;
-            raw = '"' + str + '"';
-        } else if (first == '{' || first == '[') {
-            // Capture structured value by depth tracking
-            int depth = 0;
-            char open = first, close = (first == '{') ? '}' : ']';
-            while (!s.at_end()) {
-                char c = s.data()[0]; s.advance(1); raw += c;
-                if (c == open) ++depth;
-                else if (c == close) { --depth; if (depth == 0) break; }
-            }
-        } else {
-            if (auto r = jer_detail::read_json_token(s, raw); !r) return r;
-        }
+        std::string hex;
+        if (auto r = jer_detail::read_json_string(s, hex); !r) return r;
+        std::string raw = jer_detail::parse_hex_str(hex);
         *static_cast<OctetString*>(dest) = OctetString{
             reinterpret_cast<const uint8_t*>(raw.data()), raw.size()};
         return decode_ok();
