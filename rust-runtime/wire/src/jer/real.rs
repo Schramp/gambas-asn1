@@ -1,6 +1,8 @@
-//! REAL -- X.697 §8.6. Bare JSON number, or a quoted special value for
-//! the three non-finite cases. Mirrors `RealJerHandler`
-//! (`runtime/src/JerCodec.cpp`).
+//! REAL -- X.697 §23. Bare JSON number, or one of Table 2's special-value
+//! strings ("-0"/"-INF"/"INF"/"NaN" -- NOT "PLUS-INFINITY"/
+//! "MINUS-INFINITY", which is X.693/XER's spelling for a different
+//! clause, confirmed against the standard text directly). Mirrors
+//! `RealJerHandler` (`runtime/src/JerCodec.cpp`).
 
 use crate::ber::reader::DecodeError;
 use crate::jer::reader::Reader;
@@ -11,11 +13,14 @@ pub fn encode(d: f64, out: &mut String) {
         return;
     }
     if d.is_infinite() {
-        out.push_str(if d > 0.0 { "\"PLUS-INFINITY\"" } else { "\"MINUS-INFINITY\"" });
+        out.push_str(if d > 0.0 { "\"INF\"" } else { "\"-INF\"" });
         return;
     }
     if d == 0.0 {
-        out.push('0');
+        // X.697 §23.1.1/23.2: -0.0 (distinct from +0.0 -- `==` can't
+        // tell them apart, hence is_sign_negative) encodes as the
+        // special string "-0", not the bare number 0.
+        out.push_str(if d.is_sign_negative() { "\"-0\"" } else { "0" });
         return;
     }
     // %.15G-equivalent -- matches asn1c's own REAL JER formatting:
@@ -59,8 +64,9 @@ pub fn decode(r: &mut Reader) -> Result<f64, DecodeError> {
         let s = r.read_json_string()?;
         return match s.as_str() {
             "NaN" => Ok(f64::NAN),
-            "PLUS-INFINITY" => Ok(f64::INFINITY),
-            "MINUS-INFINITY" => Ok(f64::NEG_INFINITY),
+            "INF" => Ok(f64::INFINITY),
+            "-INF" => Ok(f64::NEG_INFINITY),
+            "-0" => Ok(-0.0),
             other => other
                 .parse::<f64>()
                 .map_err(|_| DecodeError::new(format!("JER: invalid REAL string: {other}"), r.pos())),

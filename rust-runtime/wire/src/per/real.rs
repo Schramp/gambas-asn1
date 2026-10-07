@@ -1,18 +1,24 @@
 //! Generic PER REAL encode/decode — X.691 §16. Mirrors `RealPerHandler`
 //! (`runtime/src/PerCodec.cpp`) exactly: not bit-packed like INTEGER/
 //! ENUMERATED — the value's own BER content bytes (X.690 §8.5), length-
-//! prefixed. X.691 §16.5: the value 0.0 encodes as a zero-length field,
-//! since BER's own encoding of 0.0 has no content octets to reuse.
+//! prefixed. X.691 §16.5: PLUS-ZERO encodes as a zero-length field,
+//! since BER's own encoding of it has no content octets to reuse;
+//! MINUS-ZERO is one content octet (0x43, X.690 §8.5.9), not
+//! zero-length — `encode_real_content` is where that split lives, not
+//! here (a previous version of this function special-cased `value ==
+//! 0.0` directly, which is true for both signs of zero and silently
+//! dropped MINUS-ZERO's sign; see its own call site below).
 
 use crate::per::length::{get_length, put_length};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 
 pub fn encode_real(w: &mut Writer, value: f64) {
-    if value == 0.0 {
-        put_length(w, 0);
-        return;
-    }
+    // Not `if value == 0.0` -- that's true for both +0.0 and -0.0, and
+    // -0.0's BER content is the single octet 0x43, not empty (see
+    // encode_real_content's own doc). Always go through the general
+    // content encoder so the length prefix matches what was actually
+    // written, even when that's zero bytes for PLUS-ZERO.
     let mut content = Vec::new();
     crate::real::encode_real_content(&mut content, value);
     put_length(w, content.len());
@@ -54,6 +60,17 @@ mod tests {
         w.flush();
         assert_eq!(w.into_bytes(), vec![0x00]);
         assert_eq!(roundtrip(0.0), 0.0);
+    }
+
+    #[test]
+    fn minus_zero_is_one_content_octet_and_keeps_its_sign() {
+        let mut w = Writer::new();
+        encode_real(&mut w, -0.0);
+        w.flush();
+        assert_eq!(w.into_bytes(), vec![0x01, 0x43]);
+        let got = roundtrip(-0.0);
+        assert_eq!(got, 0.0);
+        assert!(got.is_sign_negative());
     }
 
     #[test]
