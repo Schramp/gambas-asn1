@@ -488,6 +488,16 @@ struct TaggedMemberSpec {
     // own AST node). `mtype` (declared per-derived-struct) already carries
     // the target's Rust identifier — no separate name field needed here.
     IntStorageKind ref_storage_kind = IntStorageKind::S64;
+    // Meaningful only when ref_kind == Other (or for a direct inline
+    // SEQUENCE/CHOICE/SET member, where ref_kind is also set to Other —
+    // see Generator::collect): true when the member's class-typed target
+    // is specifically a SEQUENCE or SET (never CHOICE, never a named
+    // SEQUENCE OF/SET OF) — `RefTargetKind::Other` alone collapses all
+    // four of those into one answer, which isn't enough for
+    // RustBackend::MemberAccess::Object (gambas-asn1#681 second pass) to
+    // know whether the target type implements `Asn1Seq` (SEQUENCE/SET
+    // only) or not.
+    bool ref_is_sequence_or_set = false;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. `ops`/
@@ -632,6 +642,16 @@ struct SequenceSpec : TaggedTypeSpec {
     int         roms_count;
     bool        is_set;         // true -> natural tag is SET, else SEQUENCE
     std::vector<SequenceMemberSpec> members; // root members first, then extension members
+    // Whether every member qualifies for RustBackend's reflective
+    // `Asn1Seq` design (gambas-asn1#681 second pass): a direct builtin
+    // (excluding ENUMERATED) or a TypeRef/inline member resolving to a
+    // SEQUENCE/SET that *itself* also qualifies — computed globally by
+    // Generator (`sequence_set_supports_rust_object`, memoized +
+    // cycle-safe) rather than per-type by the backend, since a member
+    // referencing another SEQUENCE/SET's eligibility depends on that
+    // other type's own members, not just this one's. Read only by
+    // RustBackend; CppBackend ignores it.
+    bool        rust_supports_object = false;
 };
 
 /// @brief Backend-agnostic decision for one CHOICE alternative, built in one

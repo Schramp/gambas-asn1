@@ -8,6 +8,7 @@
 
 pub mod choice;
 pub mod enumerated;
+pub mod object;
 pub mod reader;
 pub mod sequence;
 pub mod tag;

@@ -6,7 +6,8 @@
 
 use crate::ber::reader::DecodeError;
 use crate::jer::reader::Reader;
-use crate::spec::choice::{active_alt, ChoiceSpec};
+use crate::spec::choice::{active_alt, AlternativeAccess, ChoiceSpec};
+use crate::spec::primitive::{jer_decode_primitive, jer_encode_primitive};
 
 pub fn encode_choice_jer_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut String) {
     let Some((_, alt)) = active_alt(spec, value) else {
@@ -22,7 +23,11 @@ pub fn encode_choice_jer_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut Stri
     out.push_str("{\"");
     out.push_str(alt.name);
     out.push_str("\":");
-    (alt.jer_encode)(value, out);
+    match &alt.access {
+        AlternativeAccess::Primitive { get, .. } => jer_encode_primitive(get(value), out),
+        AlternativeAccess::Composite { jer_encode, .. } => jer_encode(value, out),
+        AlternativeAccess::Unsupported { reason } => panic!("alternative '{}' not supported: {reason}", alt.name),
+    }
     out.push('}');
 }
 
@@ -42,7 +47,11 @@ pub fn decode_choice_jer_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mut Re
     r.expect_char(b':')?;
     for alt in spec.alternatives {
         if key == alt.name {
-            (alt.jer_decode)(value, r)?;
+            match &alt.access {
+                AlternativeAccess::Primitive { get_mut, .. } => jer_decode_primitive(get_mut(value), r)?,
+                AlternativeAccess::Composite { jer_decode, .. } => jer_decode(value, r)?,
+                AlternativeAccess::Unsupported { reason } => panic!("alternative '{}' not supported: {reason}", alt.name),
+            }
             r.expect_char(b'}')?;
             return Ok(());
         }

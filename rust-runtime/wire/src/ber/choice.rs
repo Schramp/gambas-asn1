@@ -48,9 +48,8 @@
 
 use crate::ber::reader::{read_explicit, DecodeError, Reader};
 use crate::ber::tag::Tag;
-use crate::spec::choice::{active_alt, ChoiceSpec};
-#[cfg(test)]
-use crate::spec::choice::BerTagging;
+use crate::spec::choice::{active_alt, AlternativeAccess, ChoiceSpec};
+use crate::spec::primitive::{ber_decode_primitive, ber_encode_primitive};
 use crate::ber::writer::{write_explicit, write_primitive, write_tagged};
 // Only this file's own dogfood tests call the XER leg directly by name —
 // real generated code reaches it via the full `xer::choice::`/`xer::reader::`
@@ -79,7 +78,11 @@ pub fn encode_choice<T>(spec: &ChoiceSpec<T>, value: &T) -> Vec<u8> {
 /// value encoded.
 fn encode_choice_dispatch_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut Vec<u8>) {
     if let Some((_, alt)) = active_alt(spec, value) {
-        (alt.ber_encode)(value, out);
+        match &alt.access {
+            AlternativeAccess::Primitive { ber, get, .. } => ber_encode_primitive(get(value), *ber, out),
+            AlternativeAccess::Composite { ber_encode, .. } => ber_encode(value, out),
+            AlternativeAccess::Unsupported { reason } => panic!("alternative '{}' not supported: {reason}", alt.name),
+        }
         return;
     }
     if let Some(ops) = &spec.unknown_extension {
@@ -153,7 +156,11 @@ fn decode_choice_dispatch<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mut Reader
         .map(|i| &spec.ber_tags[i]);
     if let Some(d) = found {
         let alt = &spec.alternatives[d.alt];
-        return (alt.ber_decode)(value, r);
+        return match &alt.access {
+            AlternativeAccess::Primitive { ber, get_mut, .. } => ber_decode_primitive(get_mut(value), *ber, r),
+            AlternativeAccess::Composite { ber_decode, .. } => ber_decode(value, r),
+            AlternativeAccess::Unsupported { reason } => panic!("alternative '{}' not supported: {reason}", alt.name),
+        };
     }
     if let Some(ops) = &spec.unknown_extension {
         let tlv = r.read_tlv()?;
@@ -204,17 +211,18 @@ macro_rules! implicit_alt {
     ($name:expr, $tag:expr, $Enum:ident :: $Variant:ident) => {
         Alternative {
             name: $name,
-            ber: BerTagging::Implicit($tag),
             is_active: |x| matches!(x, $Enum::$Variant(_)),
             per_unsupported: None,
-            ber_encode: |x, out| match x { $Enum::$Variant(v) => v.ber_encode_tagged($tag, out), _ => unreachable!() },
-            ber_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.ber_decode_into_tagged(r, $tag), _ => unreachable!() } },
-            xer_encode: |x, out, depth| match x { $Enum::$Variant(v) => v.xer_encode(out, depth), _ => unreachable!() },
-            xer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.xer_decode_into(r), _ => unreachable!() } },
-            jer_encode: |x, out| match x { $Enum::$Variant(v) => v.jer_encode(out), _ => unreachable!() },
-            jer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.jer_decode_into(r), _ => unreachable!() } },
-            per_encode: |x, w| match x { $Enum::$Variant(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
-            per_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
+            access: AlternativeAccess::Composite {
+                ber_encode: |x, out| match x { $Enum::$Variant(v) => v.ber_encode_tagged($tag, out), _ => unreachable!() },
+                ber_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.ber_decode_into_tagged(r, $tag), _ => unreachable!() } },
+                xer_encode: |x, out, depth| match x { $Enum::$Variant(v) => v.xer_encode(out, depth), _ => unreachable!() },
+                xer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.xer_decode_into(r), _ => unreachable!() } },
+                jer_encode: |x, out| match x { $Enum::$Variant(v) => v.jer_encode(out), _ => unreachable!() },
+                jer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.jer_decode_into(r), _ => unreachable!() } },
+                per_encode: |x, w| match x { $Enum::$Variant(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
+                per_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
+            },
         }
     };
 }
@@ -223,17 +231,18 @@ macro_rules! explicit_alt {
     ($name:expr, $tag:expr, $Enum:ident :: $Variant:ident) => {
         Alternative {
             name: $name,
-            ber: BerTagging::Explicit($tag),
             is_active: |x| matches!(x, $Enum::$Variant(_)),
             per_unsupported: None,
-            ber_encode: |x, out| match x { $Enum::$Variant(v) => v.ber_encode_explicit(out, $tag), _ => unreachable!() },
-            ber_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.ber_decode_into_explicit(r, $tag), _ => unreachable!() } },
-            xer_encode: |x, out, depth| match x { $Enum::$Variant(v) => v.xer_encode(out, depth), _ => unreachable!() },
-            xer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.xer_decode_into(r), _ => unreachable!() } },
-            jer_encode: |x, out| match x { $Enum::$Variant(v) => v.jer_encode(out), _ => unreachable!() },
-            jer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.jer_decode_into(r), _ => unreachable!() } },
-            per_encode: |x, w| match x { $Enum::$Variant(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
-            per_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
+            access: AlternativeAccess::Composite {
+                ber_encode: |x, out| match x { $Enum::$Variant(v) => v.ber_encode_explicit(out, $tag), _ => unreachable!() },
+                ber_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.ber_decode_into_explicit(r, $tag), _ => unreachable!() } },
+                xer_encode: |x, out, depth| match x { $Enum::$Variant(v) => v.xer_encode(out, depth), _ => unreachable!() },
+                xer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.xer_decode_into(r), _ => unreachable!() } },
+                jer_encode: |x, out| match x { $Enum::$Variant(v) => v.jer_encode(out), _ => unreachable!() },
+                jer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.jer_decode_into(r), _ => unreachable!() } },
+                per_encode: |x, w| match x { $Enum::$Variant(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
+                per_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
+            },
         }
     };
 }
@@ -242,50 +251,25 @@ macro_rules! delegate_alt {
     ($name:expr, $Enum:ident :: $Variant:ident) => {
         Alternative {
             name: $name,
-            ber: BerTagging::Delegate,
             is_active: |x| matches!(x, $Enum::$Variant(_)),
             per_unsupported: None,
-            ber_encode: |x, out| match x { $Enum::$Variant(v) => v.ber_encode(out), _ => unreachable!() },
-            ber_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.ber_decode_into(r), _ => unreachable!() } },
-            xer_encode: |x, out, depth| match x { $Enum::$Variant(v) => v.xer_encode(out, depth), _ => unreachable!() },
-            xer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.xer_decode_into(r), _ => unreachable!() } },
-            jer_encode: |x, out| match x { $Enum::$Variant(v) => v.jer_encode(out), _ => unreachable!() },
-            jer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.jer_decode_into(r), _ => unreachable!() } },
-            per_encode: |x, w| match x { $Enum::$Variant(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
-            per_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
+            access: AlternativeAccess::Composite {
+                ber_encode: |x, out| match x { $Enum::$Variant(v) => v.ber_encode(out), _ => unreachable!() },
+                ber_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.ber_decode_into(r), _ => unreachable!() } },
+                xer_encode: |x, out, depth| match x { $Enum::$Variant(v) => v.xer_encode(out, depth), _ => unreachable!() },
+                xer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.xer_decode_into(r), _ => unreachable!() } },
+                jer_encode: |x, out| match x { $Enum::$Variant(v) => v.jer_encode(out), _ => unreachable!() },
+                jer_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.jer_decode_into(r), _ => unreachable!() } },
+                per_encode: |x, w| match x { $Enum::$Variant(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
+                per_decode: |x, r| { *x = $Enum::$Variant(Default::default()); match x { $Enum::$Variant(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
+            },
         }
     };
 }
 
 static CHOICE_ALTERNATIVES: [Alternative<Choice>; 2] = [
-    Alternative {
-        name: "num",
-        ber: BerTagging::Implicit(crate::integer::INTEGER_TAG),
-        is_active: |x| matches!(x, Choice::Num(_)),
-        per_unsupported: None,
-        ber_encode: |x, out| match x { Choice::Num(v) => v.ber_encode_tagged(crate::integer::INTEGER_TAG, out), _ => unreachable!() },
-        ber_decode: |x, r| { *x = Choice::Num(Default::default()); match x { Choice::Num(v) => v.ber_decode_into_tagged(r, crate::integer::INTEGER_TAG), _ => unreachable!() } },
-        xer_encode: |x, out, depth| match x { Choice::Num(v) => v.xer_encode(out, depth), _ => unreachable!() },
-        xer_decode: |x, r| { *x = Choice::Num(Default::default()); match x { Choice::Num(v) => v.xer_decode_into(r), _ => unreachable!() } },
-        jer_encode: |x, out| match x { Choice::Num(v) => v.jer_encode(out), _ => unreachable!() },
-        jer_decode: |x, r| { *x = Choice::Num(Default::default()); match x { Choice::Num(v) => v.jer_decode_into(r), _ => unreachable!() } },
-        per_encode: |x, w| match x { Choice::Num(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
-        per_decode: |x, r| { *x = Choice::Num(Default::default()); match x { Choice::Num(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
-    },
-    Alternative {
-        name: "data",
-        ber: BerTagging::Implicit(crate::octet_string::OCTET_STRING_TAG),
-        is_active: |x| matches!(x, Choice::Data(_)),
-        per_unsupported: None,
-        ber_encode: |x, out| match x { Choice::Data(v) => v.ber_encode_tagged(crate::octet_string::OCTET_STRING_TAG, out), _ => unreachable!() },
-        ber_decode: |x, r| { *x = Choice::Data(Default::default()); match x { Choice::Data(v) => v.ber_decode_into_tagged(r, crate::octet_string::OCTET_STRING_TAG), _ => unreachable!() } },
-        xer_encode: |x, out, depth| match x { Choice::Data(v) => v.xer_encode(out, depth), _ => unreachable!() },
-        xer_decode: |x, r| { *x = Choice::Data(Default::default()); match x { Choice::Data(v) => v.xer_decode_into(r), _ => unreachable!() } },
-        jer_encode: |x, out| match x { Choice::Data(v) => v.jer_encode(out), _ => unreachable!() },
-        jer_decode: |x, r| { *x = Choice::Data(Default::default()); match x { Choice::Data(v) => v.jer_decode_into(r), _ => unreachable!() } },
-        per_encode: |x, w| match x { Choice::Data(v) => v.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
-        per_decode: |x, r| { *x = Choice::Data(Default::default()); match x { Choice::Data(v) => v.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
-    },
+    implicit_alt!("num", crate::integer::INTEGER_TAG, Choice::Num),
+    implicit_alt!("data", crate::octet_string::OCTET_STRING_TAG, Choice::Data),
 ];
 
 static CHOICE_TAGS: [BerDispatch; 2] = [
@@ -724,17 +708,18 @@ impl Choice {
         }
         static ROW: [Alternative<Solo>; 1] = [Alternative {
             name: "v",
-            ber: BerTagging::Delegate,
             is_active: |_| true,
             per_unsupported: None,
-            ber_encode: |x, out| { let Solo::V(v) = x; v.ber_encode(out); },
-            ber_decode: |x, r| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v.ber_decode_into(r) },
-            xer_encode: |x, out, depth| { let Solo::V(v) = x; v.xer_encode(out, depth); },
-            xer_decode: |x, r| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v.xer_decode_into(r) },
-            jer_encode: |x, out| { let Solo::V(v) = x; v.jer_encode(out); },
-            jer_decode: |x, r| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v.jer_decode_into(r) },
-            per_encode: |x, w| { let Solo::V(v) = x; v.per_encode(w, &crate::constraints::UNCONSTRAINED); },
-            per_decode: |x, r| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v.per_decode_into(r, &crate::constraints::UNCONSTRAINED) },
+            access: AlternativeAccess::Composite {
+                ber_encode: |x, out| { let Solo::V(v) = x; v.ber_encode(out); },
+                ber_decode: |x, r| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v.ber_decode_into(r) },
+                xer_encode: |x, out, depth| { let Solo::V(v) = x; v.xer_encode(out, depth); },
+                xer_decode: |x, r| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v.xer_decode_into(r) },
+                jer_encode: |x, out| { let Solo::V(v) = x; v.jer_encode(out); },
+                jer_decode: |x, r| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v.jer_decode_into(r) },
+                per_encode: |x, w| { let Solo::V(v) = x; v.per_encode(w, &crate::constraints::UNCONSTRAINED); },
+                per_decode: |x, r| { *x = Solo::V(Raw(0)); let Solo::V(v) = x; v.per_decode_into(r, &crate::constraints::UNCONSTRAINED) },
+            },
         }];
         // Deliberately the wrong constructed bit in the dispatch tag.
         static TAGS: [BerDispatch; 1] = [BerDispatch { tag: Tag::context(1, false), alt: 0 }];

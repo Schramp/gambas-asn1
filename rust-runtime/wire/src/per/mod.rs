@@ -13,6 +13,7 @@ pub mod choice;
 pub mod enumerated;
 pub mod integer;
 pub mod length;
+pub mod object;
 pub mod octet_string;
 pub mod real;
 pub mod reader;

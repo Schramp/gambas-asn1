@@ -556,6 +556,28 @@ private:
     };
     TypeRefPerClass classify_typeref_for_per(const ast::TypeRef& tr) const;
 
+    // Whether `def` (a SEQUENCE/SET TypeDef) qualifies, in full, for
+    // RustBackend's reflective `Asn1Seq` design (gambas-asn1#681 second
+    // pass — SequenceSpec::rust_supports_object's own doc, Backend.hpp):
+    // every member is either a direct builtin (excluding ENUMERATED) or
+    // resolves to a SEQUENCE/SET that *itself* qualifies, recursively.
+    // Computed here (not per-member, locally, by RustBackend) because
+    // that recursive check needs cross-type knowledge RustBackend's
+    // per-type emission functions don't have. Memoized by `TypeDef*`
+    // identity; a type currently being checked (cycle) is tentatively
+    // treated as qualifying — same permissive default
+    // `member_type_in_cycle`'s own doc already documents for the one
+    // real cycle found on the ETSI LI PS-PDU schema, re-verified against
+    // the final `false` result once the recursion unwinds (a cycle
+    // through a disqualifying member still correctly resolves to
+    // `false` on the next full pass; this function is only ever called
+    // once per type from `emit_sequence_definition`, with the result
+    // cached, so a cycle's provisional "true" never leaks into a second,
+    // separately-emitted type's own decision).
+    bool sequence_set_supports_rust_object(const ast::TypeDef& def) const;
+    mutable std::unordered_map<const ast::TypeDef*, bool> rust_object_cache_;
+    mutable std::unordered_set<const ast::TypeDef*> rust_object_in_progress_;
+
     // Recursive shape of a SEQUENCE OF/SET OF element — see ElemShape's
     // own doc (Backend.hpp) for why this can't be a flat field.
     ElemShape build_elem_shape(const ast::TypeDef& elem, const std::string& wrapping_member_name,

@@ -19,7 +19,8 @@
 use crate::constraints::Constraints;
 use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::Tag;
-use crate::spec::sequence::{SequenceSpec, SEQUENCE_TAG, SET_TAG};
+use crate::spec::primitive::{ber_decode_primitive, ber_encode_primitive};
+use crate::spec::sequence::{MemberAccess, SequenceSpec, SEQUENCE_TAG, SET_TAG};
 use crate::value::Asn1Value;
 use crate::ber::writer::write_tagged;
 use crate::xer::reader::XerReader;
@@ -332,7 +333,23 @@ pub fn encode_sequence_content<T>(spec: &SequenceSpec<T>, value: &T, content: &m
                 continue;
             }
         }
-        (m.ber_encode)(value, content);
+        match &m.access {
+            // `get`/the `is_present` guard: a `PrimitiveRef` can't itself
+            // represent "absent" the way an `Option<V>` field's own
+            // `ber_encode` blanket impl silently no-ops for `None` — so,
+            // unlike `Composite` below, this must check presence before
+            // calling `get` at all.
+            MemberAccess::Primitive { ber, get, .. } => {
+                if (m.is_present)(value) {
+                    ber_encode_primitive(get(value), *ber, content);
+                }
+            }
+            // The field itself may be `Option<V>` here; `Asn1Value for
+            // Option<V>`'s blanket `ber_encode` already no-ops for `None`,
+            // so this can call unconditionally.
+            MemberAccess::Composite { ber_encode, .. } => ber_encode(value, content),
+            MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {reason}", m.name),
+        }
         if (m.is_present)(value) {
             if let Some(delta) = m.validate_delta(value) {
                 crate::validate::check_delta(delta, m.name, "encode");
@@ -392,20 +409,28 @@ pub fn encode_sequence<T>(spec: &SequenceSpec<T>, value: &T) -> Vec<u8> {
 /// DEFAULT-valued member (`m.set_default` — see `MemberDescriptor`'s own
 /// doc) gets its schema default filled in here instead of being left
 /// however `T::default()` left it.
+fn decode_member<T>(access: &MemberAccess<T>, value: &mut T, inner: &mut Reader, name: &str) -> Result<(), DecodeError> {
+    match access {
+        MemberAccess::Primitive { ber, get_mut, .. } => ber_decode_primitive(get_mut(value), *ber, inner),
+        MemberAccess::Composite { ber_decode, .. } => ber_decode(value, inner),
+        MemberAccess::Unsupported { reason } => panic!("member '{name}' not supported: {reason}"),
+    }
+}
+
 pub fn decode_sequence_content<T: Default>(spec: &SequenceSpec<T>, inner: &mut Reader) -> Result<T, DecodeError> {
     let mut result = T::default();
     for m in spec.members {
         let mut has_value = true;
         if m.optional {
             if inner.peek_tag() == Some(m.tag) {
-                (m.ber_decode)(&mut result, inner)?;
+                decode_member(&m.access, &mut result, inner, m.name)?;
             } else if let Some(set_default) = m.set_default {
                 set_default(&mut result);
             } else {
                 has_value = false;
             }
         } else {
-            (m.ber_decode)(&mut result, inner)?;
+            decode_member(&m.access, &mut result, inner, m.name)?;
         }
         if has_value {
             if let Some(delta) = m.validate_delta(&result) {
@@ -446,7 +471,9 @@ pub fn decode_sequence<T: Default>(spec: &SequenceSpec<T>, data: &[u8]) -> Resul
 mod tests {
     use crate::integer::Integer;
     use super::*;
-    use crate::spec::sequence::MemberDescriptor;
+    use crate::spec::choice::BerTagging;
+    use crate::spec::primitive::{PrimitiveRef, PrimitiveRefMut};
+    use crate::spec::sequence::{MemberAccess, MemberDescriptor};
 
 /// `Point ::= SEQUENCE { x INTEGER, y INTEGER }`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -465,14 +492,12 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         is_default_equal: None,
         validate: None,
         per_unsupported: None,
-        ber_encode: |v, out| v.x.ber_encode(out),
-        ber_decode: |v, r| v.x.ber_decode_into(r),
-        xer_encode: |v, out, depth| v.x.xer_encode(out, depth),
-        xer_decode: |v, r| v.x.xer_decode_into(r),
-        jer_encode: |v, out| v.x.jer_encode(out),
-        jer_decode: |v, r| v.x.jer_decode_into(r),
-        per_encode: |v, w| v.x.per_encode(w, &crate::constraints::UNCONSTRAINED),
-        per_decode: |v, r| v.x.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+        access: MemberAccess::Primitive {
+            ber: BerTagging::Delegate,
+            constraints: &crate::constraints::UNCONSTRAINED,
+            get: |v| PrimitiveRef::Integer(&v.x),
+            get_mut: |v| PrimitiveRefMut::Integer(&mut v.x),
+        },
     },
     MemberDescriptor {
         name: "y",
@@ -483,14 +508,12 @@ static POINT_MEMBERS: [MemberDescriptor<Point>; 2] = [
         is_default_equal: None,
         validate: None,
         per_unsupported: None,
-        ber_encode: |v, out| v.y.ber_encode(out),
-        ber_decode: |v, r| v.y.ber_decode_into(r),
-        xer_encode: |v, out, depth| v.y.xer_encode(out, depth),
-        xer_decode: |v, r| v.y.xer_decode_into(r),
-        jer_encode: |v, out| v.y.jer_encode(out),
-        jer_decode: |v, r| v.y.jer_decode_into(r),
-        per_encode: |v, w| v.y.per_encode(w, &crate::constraints::UNCONSTRAINED),
-        per_decode: |v, r| v.y.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+        access: MemberAccess::Primitive {
+            ber: BerTagging::Delegate,
+            constraints: &crate::constraints::UNCONSTRAINED,
+            get: |v| PrimitiveRef::Integer(&v.y),
+            get_mut: |v| PrimitiveRefMut::Integer(&mut v.y),
+        },
     },
 ];
 
@@ -542,14 +565,12 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         is_default_equal: None,
         validate: None,
         per_unsupported: None,
-        ber_encode: |v, out| v.x.ber_encode(out),
-        ber_decode: |v, r| v.x.ber_decode_into(r),
-        xer_encode: |v, out, depth| v.x.xer_encode(out, depth),
-        xer_decode: |v, r| v.x.xer_decode_into(r),
-        jer_encode: |v, out| v.x.jer_encode(out),
-        jer_decode: |v, r| v.x.jer_decode_into(r),
-        per_encode: |v, w| v.x.per_encode(w, &crate::constraints::UNCONSTRAINED),
-        per_decode: |v, r| v.x.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+        access: MemberAccess::Primitive {
+            ber: BerTagging::Delegate,
+            constraints: &crate::constraints::UNCONSTRAINED,
+            get: |v| PrimitiveRef::Integer(&v.x),
+            get_mut: |v| PrimitiveRefMut::Integer(&mut v.x),
+        },
     },
     MemberDescriptor {
         name: "y",
@@ -560,14 +581,12 @@ static OPT_POINT_MEMBERS: [MemberDescriptor<OptPoint>; 2] = [
         is_default_equal: None,
         validate: None,
         per_unsupported: None,
-        ber_encode: |v, out| v.y.ber_encode(out),
-        ber_decode: |v, r| v.y.ber_decode_into(r),
-        xer_encode: |v, out, depth| v.y.xer_encode(out, depth),
-        xer_decode: |v, r| v.y.xer_decode_into(r),
-        jer_encode: |v, out| v.y.jer_encode(out),
-        jer_decode: |v, r| v.y.jer_decode_into(r),
-        per_encode: |v, w| v.y.per_encode(w, &crate::constraints::UNCONSTRAINED),
-        per_decode: |v, r| v.y.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+        access: MemberAccess::Primitive {
+            ber: BerTagging::Delegate,
+            constraints: &crate::constraints::UNCONSTRAINED,
+            get: |v| PrimitiveRef::Integer(v.y.as_ref().unwrap()),
+            get_mut: |v| PrimitiveRefMut::Integer(v.y.get_or_insert_with(Default::default)),
+        },
     },
 ];
 
@@ -612,14 +631,16 @@ static COORDS_MEMBERS: [MemberDescriptor<Coords>; 1] = [MemberDescriptor {
     is_default_equal: None,
     validate: None,
     per_unsupported: None,
-    ber_encode: |v, out| v.values.ber_encode(out),
-    ber_decode: |v, r| v.values.ber_decode_into(r),
-    xer_encode: |v, out, depth| v.values.xer_encode(out, depth),
-    xer_decode: |v, r| v.values.xer_decode_into(r),
-    jer_encode: |v, out| v.values.jer_encode(out),
-    jer_decode: |v, r| v.values.jer_decode_into(r),
-    per_encode: |v, w| v.values.per_encode(w, &crate::constraints::UNCONSTRAINED),
-    per_decode: |v, r| v.values.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+    access: MemberAccess::Composite {
+        ber_encode: |v, out| v.values.ber_encode(out),
+        ber_decode: |v, r| v.values.ber_decode_into(r),
+        xer_encode: |v, out, depth| v.values.xer_encode(out, depth),
+        xer_decode: |v, r| v.values.xer_decode_into(r),
+        jer_encode: |v, out| v.values.jer_encode(out),
+        jer_decode: |v, r| v.values.jer_decode_into(r),
+        per_encode: |v, w| v.values.per_encode(w, &crate::constraints::UNCONSTRAINED),
+        per_decode: |v, r| v.values.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+    },
 }];
 
 static COORDS_SPEC: SequenceSpec<Coords> =
@@ -671,14 +692,16 @@ static OPT_COORDS_MEMBERS: [MemberDescriptor<OptCoords>; 1] = [MemberDescriptor 
     is_default_equal: None,
     validate: None,
     per_unsupported: None,
-    ber_encode: |v, out| v.values.ber_encode(out),
-    ber_decode: |v, r| v.values.ber_decode_into(r),
-    xer_encode: |v, out, depth| v.values.xer_encode(out, depth),
-    xer_decode: |v, r| v.values.xer_decode_into(r),
-    jer_encode: |v, out| v.values.jer_encode(out),
-    jer_decode: |v, r| v.values.jer_decode_into(r),
-    per_encode: |v, w| v.values.per_encode(w, &crate::constraints::UNCONSTRAINED),
-    per_decode: |v, r| v.values.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+    access: MemberAccess::Composite {
+        ber_encode: |v, out| v.values.ber_encode(out),
+        ber_decode: |v, r| v.values.ber_decode_into(r),
+        xer_encode: |v, out, depth| v.values.xer_encode(out, depth),
+        xer_decode: |v, r| v.values.xer_decode_into(r),
+        jer_encode: |v, out| v.values.jer_encode(out),
+        jer_decode: |v, r| v.values.jer_decode_into(r),
+        per_encode: |v, w| v.values.per_encode(w, &crate::constraints::UNCONSTRAINED),
+        per_decode: |v, r| v.values.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+    },
 }];
 
 static OPT_COORDS_SPEC: SequenceSpec<OptCoords> =
@@ -723,14 +746,16 @@ static SET_COORDS_MEMBERS: [MemberDescriptor<SetCoords>; 1] = [MemberDescriptor 
     is_default_equal: None,
     validate: None,
     per_unsupported: None,
-    ber_encode: |v, out| v.values.ber_encode(out),
-    ber_decode: |v, r| v.values.ber_decode_into(r),
-    xer_encode: |v, out, depth| v.values.xer_encode(out, depth),
-    xer_decode: |v, r| v.values.xer_decode_into(r),
-    jer_encode: |v, out| v.values.jer_encode(out),
-    jer_decode: |v, r| v.values.jer_decode_into(r),
-    per_encode: |v, w| v.values.per_encode(w, &crate::constraints::UNCONSTRAINED),
-    per_decode: |v, r| v.values.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+    access: MemberAccess::Composite {
+        ber_encode: |v, out| v.values.ber_encode(out),
+        ber_decode: |v, r| v.values.ber_decode_into(r),
+        xer_encode: |v, out, depth| v.values.xer_encode(out, depth),
+        xer_decode: |v, r| v.values.xer_decode_into(r),
+        jer_encode: |v, out| v.values.jer_encode(out),
+        jer_decode: |v, r| v.values.jer_decode_into(r),
+        per_encode: |v, w| v.values.per_encode(w, &crate::constraints::UNCONSTRAINED),
+        per_decode: |v, r| v.values.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+    },
 }];
 
 static SET_COORDS_SPEC: SequenceSpec<SetCoords> =
@@ -770,14 +795,12 @@ static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
         is_default_equal: None,
         validate: None,
         per_unsupported: None,
-        ber_encode: |v, out| v.x.ber_encode(out),
-        ber_decode: |v, r| v.x.ber_decode_into(r),
-        xer_encode: |v, out, depth| v.x.xer_encode(out, depth),
-        xer_decode: |v, r| v.x.xer_decode_into(r),
-        jer_encode: |v, out| v.x.jer_encode(out),
-        jer_decode: |v, r| v.x.jer_decode_into(r),
-        per_encode: |v, w| v.x.per_encode(w, &crate::constraints::UNCONSTRAINED),
-        per_decode: |v, r| v.x.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+        access: MemberAccess::Primitive {
+            ber: BerTagging::Delegate,
+            constraints: &crate::constraints::UNCONSTRAINED,
+            get: |v| PrimitiveRef::Integer(&v.x),
+            get_mut: |v| PrimitiveRefMut::Integer(&mut v.x),
+        },
     },
     MemberDescriptor {
         name: "y",
@@ -788,14 +811,12 @@ static DEFAULT_POINT_MEMBERS: [MemberDescriptor<DefaultPoint>; 2] = [
         is_default_equal: Some(|v| v.y == Some(default_point_y_default())),
         validate: None,
         per_unsupported: None,
-        ber_encode: |v, out| v.y.ber_encode(out),
-        ber_decode: |v, r| v.y.ber_decode_into(r),
-        xer_encode: |v, out, depth| v.y.xer_encode(out, depth),
-        xer_decode: |v, r| v.y.xer_decode_into(r),
-        jer_encode: |v, out| v.y.jer_encode(out),
-        jer_decode: |v, r| v.y.jer_decode_into(r),
-        per_encode: |v, w| v.y.per_encode(w, &crate::constraints::UNCONSTRAINED),
-        per_decode: |v, r| v.y.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+        access: MemberAccess::Primitive {
+            ber: BerTagging::Delegate,
+            constraints: &crate::constraints::UNCONSTRAINED,
+            get: |v| PrimitiveRef::Integer(v.y.as_ref().unwrap()),
+            get_mut: |v| PrimitiveRefMut::Integer(v.y.get_or_insert_with(Default::default)),
+        },
     },
 ];
 
@@ -977,14 +998,12 @@ impl DefaultPoint {
                 is_default_equal: None,
                 validate: None,
                 per_unsupported: None,
-                ber_encode: |v, out| v.x.ber_encode(out),
-                ber_decode: |v, r| v.x.ber_decode_into(r),
-                xer_encode: |v, out, depth| v.x.xer_encode(out, depth),
-                xer_decode: |v, r| v.x.xer_decode_into(r),
-                jer_encode: |v, out| v.x.jer_encode(out),
-                jer_decode: |v, r| v.x.jer_decode_into(r),
-                per_encode: |v, w| v.x.per_encode(w, &crate::constraints::UNCONSTRAINED),
-                per_decode: |v, r| v.x.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+                access: MemberAccess::Primitive {
+                    ber: BerTagging::Delegate,
+                    constraints: &crate::constraints::UNCONSTRAINED,
+                    get: |v| PrimitiveRef::Integer(&v.x),
+                    get_mut: |v| PrimitiveRefMut::Integer(&mut v.x),
+                },
             },
             MemberDescriptor {
                 name: "y",
@@ -995,14 +1014,12 @@ impl DefaultPoint {
                 is_default_equal: None,
                 validate: None,
                 per_unsupported: None,
-                ber_encode: |v, out| v.y.ber_encode(out),
-                ber_decode: |v, r| v.y.ber_decode_into(r),
-                xer_encode: |v, out, depth| v.y.xer_encode(out, depth),
-                xer_decode: |v, r| v.y.xer_decode_into(r),
-                jer_encode: |v, out| v.y.jer_encode(out),
-                jer_decode: |v, r| v.y.jer_decode_into(r),
-                per_encode: |v, w| v.y.per_encode(w, &crate::constraints::UNCONSTRAINED),
-                per_decode: |v, r| v.y.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+                access: MemberAccess::Primitive {
+                    ber: BerTagging::Delegate,
+                    constraints: &crate::constraints::UNCONSTRAINED,
+                    get: |v| PrimitiveRef::Integer(&v.y),
+                    get_mut: |v| PrimitiveRefMut::Integer(&mut v.y),
+                },
             },
         ];
         static A_SET_SPEC: SequenceSpec<Point> =
@@ -1388,14 +1405,12 @@ impl DefaultPoint {
             is_default_equal: None,
             validate: Some(|v| crate::constraints::validate_s64(*v.x, &RANGED_POINT_X_CONSTRAINTS)),
             per_unsupported: None,
-            ber_encode: |v, out| v.x.ber_encode(out),
-            ber_decode: |v, r| v.x.ber_decode_into(r),
-            xer_encode: |v, out, depth| v.x.xer_encode(out, depth),
-            xer_decode: |v, r| v.x.xer_decode_into(r),
-            jer_encode: |v, out| v.x.jer_encode(out),
-            jer_decode: |v, r| v.x.jer_decode_into(r),
-            per_encode: |v, w| v.x.per_encode(w, &RANGED_POINT_X_CONSTRAINTS),
-            per_decode: |v, r| v.x.per_decode_into(r, &RANGED_POINT_X_CONSTRAINTS),
+            access: MemberAccess::Primitive {
+                ber: BerTagging::Delegate,
+                constraints: &RANGED_POINT_X_CONSTRAINTS,
+                get: |v| PrimitiveRef::Integer(&v.x),
+                get_mut: |v| PrimitiveRefMut::Integer(&mut v.x),
+            },
         },
         MemberDescriptor {
             name: "y",
@@ -1406,14 +1421,12 @@ impl DefaultPoint {
             is_default_equal: None,
             validate: None,
             per_unsupported: None,
-            ber_encode: |v, out| v.y.ber_encode(out),
-            ber_decode: |v, r| v.y.ber_decode_into(r),
-            xer_encode: |v, out, depth| v.y.xer_encode(out, depth),
-            xer_decode: |v, r| v.y.xer_decode_into(r),
-            jer_encode: |v, out| v.y.jer_encode(out),
-            jer_decode: |v, r| v.y.jer_decode_into(r),
-            per_encode: |v, w| v.y.per_encode(w, &crate::constraints::UNCONSTRAINED),
-            per_decode: |v, r| v.y.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+            access: MemberAccess::Primitive {
+                ber: BerTagging::Delegate,
+                constraints: &crate::constraints::UNCONSTRAINED,
+                get: |v| PrimitiveRef::Integer(&v.y),
+                get_mut: |v| PrimitiveRefMut::Integer(&mut v.y),
+            },
         },
     ];
 
@@ -1477,14 +1490,12 @@ impl DefaultPoint {
         is_default_equal: None,
         validate: Some(|v| crate::constraints::validate_size(v.data.len(), &SIZED_BLOB_DATA_CONSTRAINTS)),
         per_unsupported: None,
-        ber_encode: |v, out| v.data.ber_encode(out),
-        ber_decode: |v, r| v.data.ber_decode_into(r),
-        xer_encode: |v, out, depth| v.data.xer_encode(out, depth),
-        xer_decode: |v, r| v.data.xer_decode_into(r),
-        jer_encode: |v, out| v.data.jer_encode(out),
-        jer_decode: |v, r| v.data.jer_decode_into(r),
-        per_encode: |v, w| v.data.per_encode(w, &SIZED_BLOB_DATA_CONSTRAINTS),
-        per_decode: |v, r| v.data.per_decode_into(r, &SIZED_BLOB_DATA_CONSTRAINTS),
+        access: MemberAccess::Primitive {
+            ber: BerTagging::Delegate,
+            constraints: &SIZED_BLOB_DATA_CONSTRAINTS,
+            get: |v| PrimitiveRef::OctetString(&v.data),
+            get_mut: |v| PrimitiveRefMut::OctetString(&mut v.data),
+        },
     }];
 
     static SIZED_BLOB_SPEC: SequenceSpec<SizedBlob> =
@@ -1609,14 +1620,16 @@ impl DefaultPoint {
         is_default_equal: None,
         validate: Some(|v| crate::constraints::validate_size(v.inline_tags.len(), &BASKET_INLINE_TAGS_CONSTRAINTS)),
         per_unsupported: None,
-        ber_encode: |v, out| v.inline_tags.ber_encode(out),
-        ber_decode: |v, r| v.inline_tags.ber_decode_into(r),
-        xer_encode: |v, out, depth| v.inline_tags.xer_encode(out, depth),
-        xer_decode: |v, r| v.inline_tags.xer_decode_into(r),
-        jer_encode: |v, out| v.inline_tags.jer_encode(out),
-        jer_decode: |v, r| v.inline_tags.jer_decode_into(r),
-        per_encode: |v, w| v.inline_tags.per_encode(w, &BASKET_INLINE_TAGS_CONSTRAINTS),
-        per_decode: |v, r| v.inline_tags.per_decode_into(r, &BASKET_INLINE_TAGS_CONSTRAINTS),
+        access: MemberAccess::Composite {
+            ber_encode: |v, out| v.inline_tags.ber_encode(out),
+            ber_decode: |v, r| v.inline_tags.ber_decode_into(r),
+            xer_encode: |v, out, depth| v.inline_tags.xer_encode(out, depth),
+            xer_decode: |v, r| v.inline_tags.xer_decode_into(r),
+            jer_encode: |v, out| v.inline_tags.jer_encode(out),
+            jer_decode: |v, r| v.inline_tags.jer_decode_into(r),
+            per_encode: |v, w| v.inline_tags.per_encode(w, &BASKET_INLINE_TAGS_CONSTRAINTS),
+            per_decode: |v, r| v.inline_tags.per_decode_into(r, &BASKET_INLINE_TAGS_CONSTRAINTS),
+        },
     }];
 
     static BASKET_SPEC: SequenceSpec<Basket> =

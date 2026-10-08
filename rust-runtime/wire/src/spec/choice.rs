@@ -12,6 +12,7 @@ use crate::ber::tag::Tag;
 use crate::jer::reader::Reader as JerReader;
 use crate::per::reader::{DecodeError as PerDecodeError, Reader as PerReader};
 use crate::per::writer::Writer as PerWriter;
+use crate::spec::primitive::{PrimitiveRef, PrimitiveRefMut};
 use crate::xer::reader::XerReader;
 
 /// How BER frames an alternative's payload (X.690 §8.13/§8.14).
@@ -31,15 +32,15 @@ pub enum BerTagging {
 }
 
 /// One CHOICE alternative — shared by BER, XER, JER and PER (see module
-/// doc). `ber_encode`/`ber_decode` etc. each perform this *one*
-/// alternative's complete payload operation — `ber_decode` also emplaces
-/// the variant (`*x = MyEnum::ThisAlt(Default::default())`) before
-/// decoding into it, fusing what used to be two steps (`emplace` +
-/// `.xer_decode_into`) into one closure, same reasoning as
-/// `sequence.rs::MemberDescriptor`'s fused accessors.
+/// doc, and `sequence.rs::MemberAccess` for the #681 "codec uses type"
+/// rationale this mirrors exactly). `access`'s `Composite` closures each
+/// perform this *one* alternative's complete payload operation — decode
+/// also emplaces the variant (`*x = MyEnum::ThisAlt(Default::default())`)
+/// before decoding into it, fusing what used to be two steps (`emplace` +
+/// `.xer_decode_into`) into one closure. `Primitive`'s `get_mut` does the
+/// same emplace before handing back the inner reference.
 pub struct Alternative<T: 'static> {
     pub name: &'static str,
-    pub ber: BerTagging,
     /// `true` iff `value` currently holds this alternative. Used by the
     /// encode-side walkers to find which row to call; `ChoiceSpec::
     /// active_index` (below) is the preferred, O(1) way to do the same
@@ -51,14 +52,39 @@ pub struct Alternative<T: 'static> {
     /// with the reason only if reached.
     pub per_unsupported: Option<&'static str>,
 
-    pub ber_encode: fn(&T, &mut Vec<u8>),
-    pub ber_decode: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
-    pub xer_encode: fn(&T, &mut String, usize),
-    pub xer_decode: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
-    pub jer_encode: fn(&T, &mut String),
-    pub jer_decode: fn(&mut T, &mut JerReader) -> Result<(), DecodeError>,
-    pub per_encode: fn(&T, &mut PerWriter),
-    pub per_decode: fn(&mut T, &mut PerReader) -> Result<(), PerDecodeError>,
+    pub access: AlternativeAccess<T>,
+}
+
+/// How an alternative reaches its payload — see `sequence.rs::
+/// MemberAccess` for the full rationale (same split, same reason).
+pub enum AlternativeAccess<T: 'static> {
+    /// One of the closed set of builtin leaf types (`spec::primitive`).
+    /// `ber` carries this alternative's own BER tag framing (X.690
+    /// §8.13/§8.14) for `primitive::ber_encode_primitive`/
+    /// `ber_decode_primitive` to apply.
+    Primitive {
+        ber: BerTagging,
+        constraints: &'static crate::constraints::Constraints,
+        get: fn(&T) -> PrimitiveRef,
+        get_mut: fn(&mut T) -> PrimitiveRefMut,
+    },
+    /// An unbounded-set generated payload type (SEQUENCE/SET/CHOICE/
+    /// SEQUENCE OF/SET OF/ENUMERATED) — each closure names that one
+    /// payload type's own static table/trait method directly.
+    Composite {
+        ber_encode: fn(&T, &mut Vec<u8>),
+        ber_decode: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
+        xer_encode: fn(&T, &mut String, usize),
+        xer_decode: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
+        jer_encode: fn(&T, &mut String),
+        jer_decode: fn(&mut T, &mut JerReader) -> Result<(), DecodeError>,
+        per_encode: fn(&T, &mut PerWriter),
+        per_decode: fn(&mut T, &mut PerReader) -> Result<(), PerDecodeError>,
+    },
+    /// This alternative's type/tag combination has no representable
+    /// shape at all; reaching it during any codec's encode or decode
+    /// panics unconditionally.
+    Unsupported { reason: &'static str },
 }
 
 /// One BER dispatch entry: a wire tag that selects `alternatives[alt]`.

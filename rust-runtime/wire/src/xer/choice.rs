@@ -21,7 +21,8 @@
 //! used for nested/member CHOICE stay wrapper-free.
 
 use crate::ber::reader::DecodeError;
-use crate::spec::choice::{active_alt, ChoiceSpec};
+use crate::spec::choice::{active_alt, AlternativeAccess, ChoiceSpec};
+use crate::spec::primitive::{xer_decode_primitive, xer_encode_primitive};
 use crate::xer::reader::XerReader;
 use crate::xer::writer::{indent, write_close_tag, write_open_tag};
 
@@ -45,7 +46,11 @@ pub fn encode_choice_xer<T>(spec: &ChoiceSpec<T>, value: &T) -> String {
 pub fn encode_choice_xer_into<T>(spec: &ChoiceSpec<T>, value: &T, out: &mut String, depth: usize) {
     if let Some((_, alt)) = active_alt(spec, value) {
         let mut inner = String::new();
-        (alt.xer_encode)(value, &mut inner, depth + 1);
+        match &alt.access {
+            AlternativeAccess::Primitive { get, .. } => xer_encode_primitive(get(value), &mut inner, depth + 1),
+            AlternativeAccess::Composite { xer_encode, .. } => xer_encode(value, &mut inner, depth + 1),
+            AlternativeAccess::Unsupported { reason } => panic!("alternative '{}' not supported: {reason}", alt.name),
+        }
         out.push('\n');
         out.push_str(&indent(depth + 1));
         write_open_tag(out, alt.name);
@@ -77,7 +82,11 @@ pub fn decode_choice_xer_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mut Xe
             if open.name != alt.name || open.closing {
                 return Err(DecodeError::new(format!("XER: expected <{}>", alt.name), 0));
             }
-            (alt.xer_decode)(value, r)?;
+            match &alt.access {
+                AlternativeAccess::Primitive { get_mut, .. } => xer_decode_primitive(get_mut(value), r)?,
+                AlternativeAccess::Composite { xer_decode, .. } => xer_decode(value, r)?,
+                AlternativeAccess::Unsupported { reason } => panic!("alternative '{}' not supported: {reason}", alt.name),
+            }
             if !open.self_closing {
                 r.consume_close_tag(alt.name)?;
             }
