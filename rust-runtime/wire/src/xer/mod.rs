@@ -10,6 +10,7 @@
 //! `jer::reader`/`jer::writer` use.
 
 pub mod choice;
+pub mod object;
 pub mod reader;
 pub mod sequence;
 pub mod seq_of;

@@ -16,14 +16,31 @@
 //! `asn1cpp_ber`'s own CHOICE decode has for a closed (non-extensible)
 //! CHOICE with no capture mechanism.
 
-use crate::spec::choice::{active_alt, Alternative, ChoiceSpec};
+use crate::spec::choice::{active_alt, Alternative, AlternativeAccess, ChoiceSpec};
 use crate::per::length::{get_length, get_nsnn, put_length, put_nsnn};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
+use crate::spec::primitive::{per_decode_primitive, per_encode_primitive};
 
 fn per_unsupported<T>(alt: &Alternative<T>) {
     if let Some(reason) = alt.per_unsupported {
         panic!("alternative '{}' not supported: {}", alt.name, reason);
+    }
+}
+
+fn alt_per_encode<T>(alt: &Alternative<T>, value: &T, w: &mut Writer) {
+    match &alt.access {
+        AlternativeAccess::Primitive { constraints, get, .. } => per_encode_primitive(get(value), w, constraints),
+        AlternativeAccess::Composite { per_encode, .. } => per_encode(value, w),
+        AlternativeAccess::Unsupported { reason } => panic!("alternative '{}' not supported: {reason}", alt.name),
+    }
+}
+
+fn alt_per_decode<T>(alt: &Alternative<T>, value: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
+    match &alt.access {
+        AlternativeAccess::Primitive { constraints, get_mut, .. } => per_decode_primitive(get_mut(value), r, constraints),
+        AlternativeAccess::Composite { per_decode, .. } => per_decode(value, r),
+        AlternativeAccess::Unsupported { reason } => panic!("alternative '{}' not supported: {reason}", alt.name),
     }
 }
 
@@ -52,11 +69,11 @@ pub fn encode_choice_content<T>(spec: &ChoiceSpec<T>, w: &mut Writer, value: &T)
         if spec.range_bits > 0 {
             w.put_bits(def_idx as u64, spec.range_bits);
         }
-        (alt.per_encode)(value, w);
+        alt_per_encode(alt, value, w);
     } else {
         put_nsnn(w, (def_idx - root_count) as i64);
         let mut tmp = Writer::new();
-        (alt.per_encode)(value, &mut tmp);
+        alt_per_encode(alt, value, &mut tmp);
         tmp.flush();
         let bytes = tmp.into_bytes();
         put_length(w, bytes.len());
@@ -79,7 +96,7 @@ pub fn decode_choice_content_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mu
         }
         let alt = &spec.alternatives[def_idx];
         per_unsupported(alt);
-        (alt.per_decode)(value, r)
+        alt_per_decode(alt, value, r)
     } else {
         let ext_idx = get_nsnn(r)?;
         let def_idx = root_count + ext_idx as usize;
@@ -101,14 +118,14 @@ pub fn decode_choice_content_into<T>(spec: &ChoiceSpec<T>, value: &mut T, r: &mu
         let mut inner = Reader::new(&bytes);
         let alt = &spec.alternatives[def_idx];
         per_unsupported(alt);
-        (alt.per_decode)(value, &mut inner)
+        alt_per_decode(alt, value, &mut inner)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::choice::{Alternative, BerTagging};
+    use crate::spec::choice::Alternative;
     use crate::integer::Integer;
     use crate::value::Asn1Value;
 
@@ -133,17 +150,18 @@ mod tests {
         ($name:expr, $Variant:ident) => {
             Alternative {
                 name: $name,
-                ber: BerTagging::Delegate,
                 is_active: |v| matches!(v, Dogfood::$Variant(_)),
                 per_unsupported: None,
-                ber_encode: |v, out| match v { Dogfood::$Variant(x) => x.ber_encode(out), _ => unreachable!() },
-                ber_decode: |v, r| { *v = Dogfood::$Variant(Default::default()); match v { Dogfood::$Variant(x) => x.ber_decode_into(r), _ => unreachable!() } },
-                xer_encode: |v, out, depth| match v { Dogfood::$Variant(x) => x.xer_encode(out, depth), _ => unreachable!() },
-                xer_decode: |v, r| { *v = Dogfood::$Variant(Default::default()); match v { Dogfood::$Variant(x) => x.xer_decode_into(r), _ => unreachable!() } },
-                jer_encode: |v, out| match v { Dogfood::$Variant(x) => x.jer_encode(out), _ => unreachable!() },
-                jer_decode: |v, r| { *v = Dogfood::$Variant(Default::default()); match v { Dogfood::$Variant(x) => x.jer_decode_into(r), _ => unreachable!() } },
-                per_encode: |v, w| match v { Dogfood::$Variant(x) => x.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
-                per_decode: |v, r| { *v = Dogfood::$Variant(Default::default()); match v { Dogfood::$Variant(x) => x.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
+                access: crate::spec::choice::AlternativeAccess::Composite {
+                    ber_encode: |v, out| match v { Dogfood::$Variant(x) => x.ber_encode(out), _ => unreachable!() },
+                    ber_decode: |v, r| { *v = Dogfood::$Variant(Default::default()); match v { Dogfood::$Variant(x) => x.ber_decode_into(r), _ => unreachable!() } },
+                    xer_encode: |v, out, depth| match v { Dogfood::$Variant(x) => x.xer_encode(out, depth), _ => unreachable!() },
+                    xer_decode: |v, r| { *v = Dogfood::$Variant(Default::default()); match v { Dogfood::$Variant(x) => x.xer_decode_into(r), _ => unreachable!() } },
+                    jer_encode: |v, out| match v { Dogfood::$Variant(x) => x.jer_encode(out), _ => unreachable!() },
+                    jer_decode: |v, r| { *v = Dogfood::$Variant(Default::default()); match v { Dogfood::$Variant(x) => x.jer_decode_into(r), _ => unreachable!() } },
+                    per_encode: |v, w| match v { Dogfood::$Variant(x) => x.per_encode(w, &crate::constraints::UNCONSTRAINED), _ => unreachable!() },
+                    per_decode: |v, r| { *v = Dogfood::$Variant(Default::default()); match v { Dogfood::$Variant(x) => x.per_decode_into(r, &crate::constraints::UNCONSTRAINED), _ => unreachable!() } },
+                },
             }
         };
     }

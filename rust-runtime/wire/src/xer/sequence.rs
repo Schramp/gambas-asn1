@@ -12,7 +12,8 @@
 //! anywhere in this loop.
 
 use crate::ber::reader::DecodeError;
-use crate::spec::sequence::SequenceSpec;
+use crate::spec::primitive::{xer_decode_primitive, xer_encode_primitive};
+use crate::spec::sequence::{MemberAccess, SequenceSpec};
 use crate::xer::reader::XerReader;
 use crate::xer::writer::{indent, write_close_tag, write_open_tag};
 
@@ -49,7 +50,11 @@ fn encode_sequence_xer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut S
         out.push('\n');
         out.push_str(&indent(depth + 1));
         write_open_tag(out, m.name);
-        (m.xer_encode)(value, out, depth + 1);
+        match &m.access {
+            MemberAccess::Primitive { get, .. } => xer_encode_primitive(get(value), out, depth + 1),
+            MemberAccess::Composite { xer_encode, .. } => xer_encode(value, out, depth + 1),
+            MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {reason}", m.name),
+        }
         write_close_tag(out, m.name);
     }
     if any {
@@ -97,7 +102,11 @@ fn decode_sequence_xer_content<T: Default>(spec: &SequenceSpec<T>, r: &mut XerRe
             }
         }
         r.consume_open_tag(m.name)?;
-        (m.xer_decode)(&mut result, r)?;
+        match &m.access {
+            MemberAccess::Primitive { get_mut, .. } => xer_decode_primitive(get_mut(&mut result), r)?,
+            MemberAccess::Composite { xer_decode, .. } => xer_decode(&mut result, r)?,
+            MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {reason}", m.name),
+        }
         r.consume_close_tag(m.name)?;
     }
     Ok(result)

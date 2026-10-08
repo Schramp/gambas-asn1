@@ -20,6 +20,7 @@
 pub mod bit_string;
 pub mod choice;
 pub mod enumerated;
+pub mod object;
 pub mod octet_string;
 pub mod reader;
 pub mod real;

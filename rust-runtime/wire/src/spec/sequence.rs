@@ -1,31 +1,37 @@
 //! SEQUENCE/SET spec — X.680 §25/§26. Walked by BER (`ber::sequence`), XER
 //! (`xer::sequence`), JER (`jer::sequence`) and PER (`per::sequence`).
 //!
-//! **gambas-asn1#674/#675**: every member row's accessor performs its
-//! *entire* codec operation inline (`fn(&T, &mut Vec<u8>)`, not
-//! `fn(&T) -> &dyn Asn1Value`) — a plain, non-capturing function pointer,
-//! uniform across every member regardless of its concrete field type,
-//! with zero trait-object construction anywhere. Codegen emits, for a
-//! primitive member, a closure that calls that field's own `Asn1Value`
-//! method *statically* (`|v, out| v.x.ber_encode(out)`, monomorphized
-//! like a free-function call — Rust's dynamic dispatch only triggers on
-//! an actual `&dyn Trait` coercion, which this shape never performs); for
-//! a composite member, a closure that calls the inner type's own named
-//! static table directly (`|v, out| ber::sequence::encode_sequence_content(&COORDS_SPEC, &v.y, out)`),
-//! never a method call on the field. Either way, the field type's *other*
-//! three codecs' methods are never referenced by this row, so they're
-//! never monomorphized or linked for an application that only reaches
-//! this row through one codec. See `TypeDescriptor.hpp`'s `per_handler`/
-//! `ber_handler` fields and the codec-owned dispatch LUTs (`JerCodec.cpp`)
-//! for the C++ precedent this mirrors: dispatch lives in data (which
-//! function pointer this row happens to hold), never in the value's own
-//! type.
+//! **gambas-asn1#674/#675/#681**: "codec uses type", not "type has a
+//! codec" — a member row never embeds `&dyn Asn1Value`, but a *flat*
+//! per-codec-closure row (#675/#677/#678's first pass) isn't enough on
+//! its own: building a `static` table that holds a closure's address at
+//! all is enough to keep that closure (and everything it calls) linked,
+//! whether or not any codec the application actually uses ever calls it
+//! through that pointer. The fix is [`MemberAccess`]: a primitive member
+//! (the closed, ~26-strong builtin set, `spec::primitive`) stores *one*
+//! accessor returning a [`primitive::PrimitiveRef`]/`PrimitiveRefMut` —
+//! each codec's own small, hand-written, non-generated `match` over that
+//! enum (`ber::sequence::encode_sequence_content` and friends) is the
+//! only thing that ever calls a primitive type's per-codec method, so an
+//! application that never calls XER/JER/PER never pulls `xer_encode_primitive`
+//! et al. in, and nothing downstream of them either. A composite member
+//! (SEQUENCE/SET/CHOICE/SEQUENCE OF/SET OF/ENUMERATED — unbounded, no
+//! shared handler is possible) keeps the per-codec-closure shape, each
+//! closure naming that one inner type's own static table directly
+//! (`|v, out| ber::sequence::encode_sequence_content(&COORDS_SPEC, &v.y, out)`,
+//! never a method call on the field) — this was already correct under
+//! #675, and stays exactly as it was. Mirrors `TypeDescriptor.hpp`'s
+//! split between the codec-owned dispatch LUTs (`JerCodec.cpp`'s
+//! `prim_dispatch_[32]`, one shared array read by every type) and
+//! per-member recursion into a nested `TypeDescriptor` (`comp_dispatch_[6]`).
 
 use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::{universal, Tag};
 use crate::jer::reader::Reader as JerReader;
 use crate::per::reader::{DecodeError as PerDecodeError, Reader as PerReader};
 use crate::per::writer::Writer as PerWriter;
+use crate::spec::choice::BerTagging;
+use crate::spec::primitive::{PrimitiveRef, PrimitiveRefMut};
 use crate::xer::reader::XerReader;
 
 pub const SEQUENCE_TAG: Tag = Tag::universal(universal::SEQUENCE, true);
@@ -85,14 +91,49 @@ pub struct MemberDescriptor<T: 'static> {
     /// PER-covered member.
     pub per_unsupported: Option<&'static str>,
 
-    pub ber_encode: fn(&T, &mut Vec<u8>),
-    pub ber_decode: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
-    pub xer_encode: fn(&T, &mut String, usize),
-    pub xer_decode: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
-    pub jer_encode: fn(&T, &mut String),
-    pub jer_decode: fn(&mut T, &mut JerReader) -> Result<(), DecodeError>,
-    pub per_encode: fn(&T, &mut PerWriter),
-    pub per_decode: fn(&mut T, &mut PerReader) -> Result<(), PerDecodeError>,
+    pub access: MemberAccess<T>,
+}
+
+/// How a row reaches its field's value — see the module doc for why this
+/// split exists (it's the whole point of #681).
+pub enum MemberAccess<T: 'static> {
+    /// One of the closed set of builtin leaf types (`spec::primitive`).
+    /// `get`/`get_mut` return a reference tagged by kind; every codec's
+    /// own shared `match` over that enum decides what to do with it.
+    /// `ber` carries this member's own BER tag framing (X.690 §8.14) —
+    /// a codegen-time fact about *this row*, not about the builtin kind,
+    /// so it can't live in the enum itself.
+    Primitive {
+        ber: BerTagging,
+        /// This member's own PER `Constraints` table (the inline SIZE/
+        /// range table when one was declared, `&constraints::UNCONSTRAINED`
+        /// otherwise) — a plain data field here rather than baked into a
+        /// closure, since there's no longer a per-member `per_encode`
+        /// closure to bake it into (`primitive::per_encode_primitive`
+        /// takes it as a parameter instead).
+        constraints: &'static crate::constraints::Constraints,
+        get: fn(&T) -> PrimitiveRef,
+        get_mut: fn(&mut T) -> PrimitiveRefMut,
+    },
+    /// An unbounded-set generated type (SEQUENCE/SET/CHOICE/SEQUENCE OF/
+    /// SET OF/ENUMERATED) — no shared handler is possible, so each
+    /// closure names that one inner type's own static table/trait method
+    /// directly, same shape #675/#677/#678 already established.
+    Composite {
+        ber_encode: fn(&T, &mut Vec<u8>),
+        ber_decode: fn(&mut T, &mut Reader) -> Result<(), DecodeError>,
+        xer_encode: fn(&T, &mut String, usize),
+        xer_decode: fn(&mut T, &mut XerReader) -> Result<(), DecodeError>,
+        jer_encode: fn(&T, &mut String),
+        jer_decode: fn(&mut T, &mut JerReader) -> Result<(), DecodeError>,
+        per_encode: fn(&T, &mut PerWriter),
+        per_decode: fn(&mut T, &mut PerReader) -> Result<(), PerDecodeError>,
+    },
+    /// A member whose type/tag/optionality combination genuinely has no
+    /// representable shape at all (not merely a gap in one codec leg) —
+    /// reaching this row during any codec's encode or decode panics
+    /// unconditionally.
+    Unsupported { reason: &'static str },
 }
 
 impl<T: 'static> MemberDescriptor<T> {

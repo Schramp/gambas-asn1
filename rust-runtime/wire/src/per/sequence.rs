@@ -14,7 +14,8 @@
 use crate::per::length::{get_length, get_nslength, put_length, put_nslength};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
-use crate::spec::sequence::{MemberDescriptor, SequenceSpec};
+use crate::spec::primitive::{per_decode_primitive, per_encode_primitive};
+use crate::spec::sequence::{MemberAccess, MemberDescriptor, SequenceSpec};
 
 fn root_end<T>(spec: &SequenceSpec<T>) -> usize {
     if spec.ext_at >= 0 {
@@ -35,14 +36,22 @@ fn access_encode<T>(m: &MemberDescriptor<T>, value: &T, w: &mut Writer) {
     if let Some(reason) = m.per_unsupported {
         panic!("member '{}' not supported: {}", m.name, reason);
     }
-    (m.per_encode)(value, w);
+    match &m.access {
+        MemberAccess::Primitive { constraints, get, .. } => per_encode_primitive(get(value), w, constraints),
+        MemberAccess::Composite { per_encode, .. } => per_encode(value, w),
+        MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {reason}", m.name),
+    }
 }
 
 fn access_decode<T>(m: &MemberDescriptor<T>, result: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
     if let Some(reason) = m.per_unsupported {
         panic!("member '{}' not supported: {}", m.name, reason);
     }
-    (m.per_decode)(result, r)
+    match &m.access {
+        MemberAccess::Primitive { constraints, get_mut, .. } => per_decode_primitive(get_mut(result), r, constraints),
+        MemberAccess::Composite { per_decode, .. } => per_decode(result, r),
+        MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {reason}", m.name),
+    }
 }
 
 /// X.691 §10.2 "Open type fields" — encode this member's value to a
@@ -249,14 +258,12 @@ mod tests {
                 is_default_equal: None,
                 validate: Some(|v| crate::constraints::validate_s64(*v.a, &DOGFOOD_CONSTRAINED)),
                 per_unsupported: None,
-                ber_encode: |v, out| v.a.ber_encode(out),
-                ber_decode: |v, r| v.a.ber_decode_into(r),
-                xer_encode: |v, out, depth| v.a.xer_encode(out, depth),
-                xer_decode: |v, r| v.a.xer_decode_into(r),
-                jer_encode: |v, out| v.a.jer_encode(out),
-                jer_decode: |v, r| v.a.jer_decode_into(r),
-                per_encode: |v, w| v.a.per_encode(w, &DOGFOOD_CONSTRAINED),
-                per_decode: |v, r| v.a.per_decode_into(r, &DOGFOOD_CONSTRAINED),
+                access: MemberAccess::Primitive {
+                    ber: crate::spec::choice::BerTagging::Delegate,
+                    constraints: &DOGFOOD_CONSTRAINED,
+                    get: |v| crate::spec::primitive::PrimitiveRef::Integer(&v.a),
+                    get_mut: |v| crate::spec::primitive::PrimitiveRefMut::Integer(&mut v.a),
+                },
             },
             MemberDescriptor {
                 name: "b",
@@ -267,14 +274,16 @@ mod tests {
                 is_default_equal: None,
                 validate: None,
                 per_unsupported: None,
-                ber_encode: |v, out| v.b.ber_encode(out),
-                ber_decode: |v, r| v.b.ber_decode_into(r),
-                xer_encode: |v, out, depth| v.b.xer_encode(out, depth),
-                xer_decode: |v, r| v.b.xer_decode_into(r),
-                jer_encode: |v, out| v.b.jer_encode(out),
-                jer_decode: |v, r| v.b.jer_decode_into(r),
-                per_encode: |v, w| v.b.per_encode(w, &crate::constraints::UNCONSTRAINED),
-                per_decode: |v, r| v.b.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+                access: MemberAccess::Composite {
+                    ber_encode: |v, out| v.b.ber_encode(out),
+                    ber_decode: |v, r| v.b.ber_decode_into(r),
+                    xer_encode: |v, out, depth| v.b.xer_encode(out, depth),
+                    xer_decode: |v, r| v.b.xer_decode_into(r),
+                    jer_encode: |v, out| v.b.jer_encode(out),
+                    jer_decode: |v, r| v.b.jer_decode_into(r),
+                    per_encode: |v, w| v.b.per_encode(w, &crate::constraints::UNCONSTRAINED),
+                    per_decode: |v, r| v.b.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+                },
             },
         ],
         ext_at: -1,
@@ -321,14 +330,12 @@ mod tests {
                 is_default_equal: None,
                 validate: Some(|v| crate::constraints::validate_s64(*v.a, &DOGFOOD_CONSTRAINED)),
                 per_unsupported: None,
-                ber_encode: |v, out| v.a.ber_encode(out),
-                ber_decode: |v, r| v.a.ber_decode_into(r),
-                xer_encode: |v, out, depth| v.a.xer_encode(out, depth),
-                xer_decode: |v, r| v.a.xer_decode_into(r),
-                jer_encode: |v, out| v.a.jer_encode(out),
-                jer_decode: |v, r| v.a.jer_decode_into(r),
-                per_encode: |v, w| v.a.per_encode(w, &DOGFOOD_CONSTRAINED),
-                per_decode: |v, r| v.a.per_decode_into(r, &DOGFOOD_CONSTRAINED),
+                access: MemberAccess::Primitive {
+                    ber: crate::spec::choice::BerTagging::Delegate,
+                    constraints: &DOGFOOD_CONSTRAINED,
+                    get: |v| crate::spec::primitive::PrimitiveRef::Integer(&v.a),
+                    get_mut: |v| crate::spec::primitive::PrimitiveRefMut::Integer(&mut v.a),
+                },
             },
             MemberDescriptor {
                 name: "ext1",
@@ -339,14 +346,16 @@ mod tests {
                 is_default_equal: None,
                 validate: None,
                 per_unsupported: None,
-                ber_encode: |v, out| v.ext1.ber_encode(out),
-                ber_decode: |v, r| v.ext1.ber_decode_into(r),
-                xer_encode: |v, out, depth| v.ext1.xer_encode(out, depth),
-                xer_decode: |v, r| v.ext1.xer_decode_into(r),
-                jer_encode: |v, out| v.ext1.jer_encode(out),
-                jer_decode: |v, r| v.ext1.jer_decode_into(r),
-                per_encode: |v, w| v.ext1.per_encode(w, &crate::constraints::UNCONSTRAINED),
-                per_decode: |v, r| v.ext1.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+                access: MemberAccess::Composite {
+                    ber_encode: |v, out| v.ext1.ber_encode(out),
+                    ber_decode: |v, r| v.ext1.ber_decode_into(r),
+                    xer_encode: |v, out, depth| v.ext1.xer_encode(out, depth),
+                    xer_decode: |v, r| v.ext1.xer_decode_into(r),
+                    jer_encode: |v, out| v.ext1.jer_encode(out),
+                    jer_decode: |v, r| v.ext1.jer_decode_into(r),
+                    per_encode: |v, w| v.ext1.per_encode(w, &crate::constraints::UNCONSTRAINED),
+                    per_decode: |v, r| v.ext1.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+                },
             },
         ],
         ext_at: 1,
@@ -412,14 +421,12 @@ mod tests {
                 is_default_equal: None,
                 validate: Some(|v| crate::constraints::validate_s64(*v.a, &DOGFOOD_CONSTRAINED)),
                 per_unsupported: None,
-                ber_encode: |v, out| v.a.ber_encode(out),
-                ber_decode: |v, r| v.a.ber_decode_into(r),
-                xer_encode: |v, out, depth| v.a.xer_encode(out, depth),
-                xer_decode: |v, r| v.a.xer_decode_into(r),
-                jer_encode: |v, out| v.a.jer_encode(out),
-                jer_decode: |v, r| v.a.jer_decode_into(r),
-                per_encode: |v, w| v.a.per_encode(w, &DOGFOOD_CONSTRAINED),
-                per_decode: |v, r| v.a.per_decode_into(r, &DOGFOOD_CONSTRAINED),
+                access: MemberAccess::Primitive {
+                    ber: crate::spec::choice::BerTagging::Delegate,
+                    constraints: &DOGFOOD_CONSTRAINED,
+                    get: |v| crate::spec::primitive::PrimitiveRef::Integer(&v.a),
+                    get_mut: |v| crate::spec::primitive::PrimitiveRefMut::Integer(&mut v.a),
+                },
             },
             MemberDescriptor {
                 name: "skip",
@@ -430,14 +437,12 @@ mod tests {
                 is_default_equal: None,
                 validate: None,
                 per_unsupported: Some("test stub"),
-                ber_encode: |v, out| v.skip.ber_encode(out),
-                ber_decode: |v, r| v.skip.ber_decode_into(r),
-                xer_encode: |v, out, depth| v.skip.xer_encode(out, depth),
-                xer_decode: |v, r| v.skip.xer_decode_into(r),
-                jer_encode: |v, out| v.skip.jer_encode(out),
-                jer_decode: |v, r| v.skip.jer_decode_into(r),
-                per_encode: |v, w| v.skip.per_encode(w, &crate::constraints::UNCONSTRAINED),
-                per_decode: |v, r| v.skip.per_decode_into(r, &crate::constraints::UNCONSTRAINED),
+                access: MemberAccess::Primitive {
+                    ber: crate::spec::choice::BerTagging::Delegate,
+                    constraints: &crate::constraints::UNCONSTRAINED,
+                    get: |v| crate::spec::primitive::PrimitiveRef::Integer(&v.skip),
+                    get_mut: |v| crate::spec::primitive::PrimitiveRefMut::Integer(&mut v.skip),
+                },
             },
         ],
         ext_at: -1,
@@ -489,14 +494,12 @@ mod tests {
             is_default_equal: None,
             validate: Some(|v| crate::constraints::validate_s64(*v.a, &DOGFOOD_CONSTRAINED)),
             per_unsupported: None,
-            ber_encode: |v, out| v.a.ber_encode(out),
-            ber_decode: |v, r| v.a.ber_decode_into(r),
-            xer_encode: |v, out, depth| v.a.xer_encode(out, depth),
-            xer_decode: |v, r| v.a.xer_decode_into(r),
-            jer_encode: |v, out| v.a.jer_encode(out),
-            jer_decode: |v, r| v.a.jer_decode_into(r),
-            per_encode: |v, w| v.a.per_encode(w, &DOGFOOD_CONSTRAINED),
-            per_decode: |v, r| v.a.per_decode_into(r, &DOGFOOD_CONSTRAINED),
+            access: MemberAccess::Primitive {
+                ber: crate::spec::choice::BerTagging::Delegate,
+                constraints: &DOGFOOD_CONSTRAINED,
+                get: |v| crate::spec::primitive::PrimitiveRef::Integer(&v.a),
+                get_mut: |v| crate::spec::primitive::PrimitiveRefMut::Integer(&mut v.a),
+            },
         }],
         roms_count: 0,
     };

@@ -4,4 +4,6 @@
 
 pub mod choice;
 pub mod enumerated;
+pub mod object;
+pub mod primitive;
 pub mod sequence;

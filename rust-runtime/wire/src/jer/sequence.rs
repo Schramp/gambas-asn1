@@ -12,7 +12,8 @@
 
 use crate::ber::reader::DecodeError;
 use crate::jer::reader::Reader;
-use crate::spec::sequence::SequenceSpec;
+use crate::spec::primitive::{jer_decode_primitive, jer_encode_primitive};
+use crate::spec::sequence::{MemberAccess, SequenceSpec};
 
 fn encode_sequence_jer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut String) {
     let mut first = true;
@@ -27,7 +28,11 @@ fn encode_sequence_jer_content<T>(spec: &SequenceSpec<T>, value: &T, out: &mut S
         out.push('"');
         out.push_str(m.name);
         out.push_str("\":");
-        (m.jer_encode)(value, out);
+        match &m.access {
+            MemberAccess::Primitive { get, .. } => jer_encode_primitive(get(value), out),
+            MemberAccess::Composite { jer_encode, .. } => jer_encode(value, out),
+            MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {reason}", m.name),
+        }
     }
 }
 
@@ -74,7 +79,11 @@ pub fn decode_sequence_jer_into<T: Default>(spec: &SequenceSpec<T>, r: &mut Read
                     r.skip_json_value()?;
                     continue;
                 };
-                (m.jer_decode)(&mut result, r)?;
+                match &m.access {
+                    MemberAccess::Primitive { get_mut, .. } => jer_decode_primitive(get_mut(&mut result), r)?,
+                    MemberAccess::Composite { jer_decode, .. } => jer_decode(&mut result, r)?,
+                    MemberAccess::Unsupported { reason } => panic!("member '{}' not supported: {reason}", m.name),
+                }
                 seen[idx] = true;
             }
         }
