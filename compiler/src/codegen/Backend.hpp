@@ -542,6 +542,23 @@ struct TaggedMemberSpec {
     // way it already does for a member whose *own* inline type carries
     // the directive (`TaggedMemberSpec::xer_encoding`).
     ast::XerEncoding ref_xer_encoding = ast::XerEncoding::Default;
+    // Meaningful only alongside ref_builtin_alias: the Rust identifier
+    // that actually owns the `{name}_CONSTRAINTS` static RustBackend's
+    // constraints_ref needs — NOT always `mtype`. A multi-hop *pure*
+    // alias chain (`Target ::= Middle; Middle ::= Inner;`, no inline
+    // constraint/tag at any hop — e.g. ETSI LI's own
+    // `LawfulInterceptionIdentifier ::= LIID`) generates each
+    // intermediate hop as a bare `pub type X = Y;` with no struct and no
+    // `_CONSTRAINTS` of its own (`emit_type_body`'s bare-alias branch) —
+    // only the *ultimate* concrete type (`LIID`, a real newtype) has
+    // one. `mtype` (`native_member_type_for`'s one-hop TypeRef name) is
+    // right for the *field's storage type* (a bare alias is still a
+    // real, distinct Rust type via `pub type`) but names the wrong
+    // module for the constraints lookup — this field carries the
+    // resolved target's own name instead (same `resolved_name_for_ref`
+    // calculation `type_descriptor_ref_spec_for`'s TypeRef branch already
+    // does for the analogous C++-side problem).
+    std::string ref_constraints_owner;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. `ops`/

@@ -1935,8 +1935,14 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // Same rationale for a named OCTET STRING/BIT STRING/
                     // sizeable-string alias (`emit_builtin_alias_definition`'s
                     // own `{Alias}_CONSTRAINTS`, only emitted for these
-                    // SIZE-able kinds).
-                    constraints_ref = std::format("&crate::{0}::{0}_CONSTRAINTS", m.mtype);
+                    // SIZE-able kinds) — `ref_constraints_owner`, not
+                    // `mtype`: a multi-hop *pure* alias chain (e.g. ETSI
+                    // LI's own `LawfulInterceptionIdentifier ::= LIID`)
+                    // generates every intermediate hop as a bare `pub
+                    // type X = Y;` with no `_CONSTRAINTS` of its own —
+                    // only the fully-resolved target has one
+                    // (`ref_constraints_owner`'s own doc, Backend.hpp).
+                    constraints_ref = std::format("&crate::{0}::{0}_CONSTRAINTS", m.ref_constraints_owner);
                 } else if (m.seq_of_kind != SeqOfKind::None) {
                     // An inline SEQUENCE OF/SET OF member's own synthetic
                     // promoted type (`emit_seq_of_definition`'s own
@@ -2499,15 +2505,21 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         // Type`; the later `*x = ...`/call-site-argument constraints
         // then conflict instead of retroactively fixing it. An explicit
         // annotation pins it up front.
-        auto get_closure = [&](const std::string& variant_path, const std::string& op) {
+        // `bind`: the pattern variable `op` actually reads — "v" for
+        // every real kind, "_" for `AltKind::Unsupported` (`op` there is
+        // always a bare `panic!(...)`, never referencing the payload;
+        // binding `v` there would warn unused on every build that
+        // includes an Unsupported alternative, e.g. EXTERNAL's own
+        // `single-ASN1-type`/ANY alternative).
+        auto get_closure = [&](const std::string& variant_path, const std::string& op, const char* bind = "v") {
             return single_alt
-                ? std::format("|x: &{2}| {{ let {0}(v) = x; {1} }}", variant_path, op, spec.type_name)
-                : std::format("|x: &{2}| match x {{ {0}(v) => {1}, _ => unreachable!() }}", variant_path, op, spec.type_name);
+                ? std::format("|x: &{2}| {{ let {0}({3}) = x; {1} }}", variant_path, op, spec.type_name, bind)
+                : std::format("|x: &{2}| match x {{ {0}({3}) => {1}, _ => unreachable!() }}", variant_path, op, spec.type_name, bind);
         };
-        auto select_closure = [&](const std::string& variant_path, const std::string& op) {
+        auto select_closure = [&](const std::string& variant_path, const std::string& op, const char* bind = "v") {
             return single_alt
-                ? std::format("|x: &mut {2}| {{ let {0}(v) = x; {1} }}", variant_path, op, spec.type_name)
-                : std::format("|x: &mut {2}| {{ if !matches!(x, {0}(_)) {{ *x = {0}(Default::default()); }} match x {{ {0}(v) => {1}, _ => unreachable!() }} }}", variant_path, op, spec.type_name);
+                ? std::format("|x: &mut {2}| {{ let {0}({3}) = x; {1} }}", variant_path, op, spec.type_name, bind)
+                : std::format("|x: &mut {2}| {{ if !matches!(x, {0}(_)) {{ *x = {0}(Default::default()); }} match x {{ {0}({3}) => {1}, _ => unreachable!() }} }}", variant_path, op, spec.type_name, bind);
         };
 
         std::vector<std::string> meta_lines, get_active_arms, select_mut_arms;
@@ -2551,7 +2563,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                        (*a.ref_builtin_alias == ast::BuiltinType::OctetString ||
                         *a.ref_builtin_alias == ast::BuiltinType::BitString ||
                         is_sizeable_string_kind(*a.ref_builtin_alias))) {
-                alt_constraints = std::format("&crate::{0}::{0}_CONSTRAINTS", a.mtype);
+                // `ref_constraints_owner`, not `mtype` — see the
+                // SEQUENCE-member case's identical fix (Backend.hpp's
+                // own doc on the field).
+                alt_constraints = std::format("&crate::{0}::{0}_CONSTRAINTS", a.ref_constraints_owner);
             } else if (!a.mbuiltin && a.ref_is_seq_of) {
                 // Named SEQUENCE OF/SET OF alternative — same rationale
                 // as the SEQUENCE-member AccessKind::SeqOf case.
@@ -2603,8 +2618,9 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 get_mut_op = std::format("panic!(\"alternative '{}' not supported\")", a.asn1_name);
                 break;
             }
-            get_active_arms.push_back(get_closure(variant_path, get_op));
-            select_mut_arms.push_back(select_closure(variant_path, get_mut_op));
+            const char* bind = kind == AltKind::Unsupported ? "_" : "v";
+            get_active_arms.push_back(get_closure(variant_path, get_op, bind));
+            select_mut_arms.push_back(select_closure(variant_path, get_mut_op, bind));
             os << meta_lines.back() << "\n";
         }
         os << "];\n\n";
