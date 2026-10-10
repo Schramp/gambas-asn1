@@ -1821,6 +1821,38 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 } else if (m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit) {
                     tag_text = format_tag_literal(*m.resolved_tag);
                     ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Implicit({})", tag_text);
+                } else if (kind == AccessKind::Primitive && m.resolved_tag && m.is_explicit) {
+                    // `is_explicit` true but `tag_is_override` false: not a
+                    // tag on *this* member, but one inherited from a named
+                    // alias target that itself re-tags an already-tagged
+                    // type one hop further down (X.680 §31.2 — e.g. `Label2
+                    // ::= [1] Label; Label ::= [9] EXPLICIT UTF8String`).
+                    // `Delegate` framing is how Composite/Choice/SeqOf
+                    // handle this correctly — their decode/encode path asks
+                    // the referenced value's own `spec()`/`natural_tag()` at
+                    // runtime, which still reflects whatever retagging that
+                    // concrete type carries. A `Primitive` row has no such
+                    // runtime hook: `AsMemberRef::as_member_ref` (every
+                    // builtin-alias/INTEGER-alias `impl`, gambas-asn1#681
+                    // full migration) unwraps straight to the alias's own
+                    // *native* field (`&self.0`), which is why it can live
+                    // in `PrimitiveRef`'s closed, trait-object-free set at
+                    // all — but that unwrap also discards the alias's own
+                    // substituted tag, leaving only the wrapped type's bare
+                    // universal tag. `Delegate` framing's hardcoded
+                    // "primitive's own fixed natural tag" assumption (see
+                    // `ber_decode_plain`/`ber_encode_plain`, spec/
+                    // primitive.rs) is then simply wrong for this member.
+                    // `m.resolved_tag` already carries the alias's own
+                    // resolved outer tag (`natural_tag_spec_for`'s TypeRef
+                    // branch, Generator.cpp) — `Explicit` framing on the
+                    // *unwrapped* primitive reproduces exactly the wire
+                    // shape the alias's own standalone `Asn1Value` impl
+                    // would have produced (outer tag wrapping the native
+                    // type's own complete TLV), without needing a
+                    // trait-object call to get there.
+                    tag_text = format_tag_literal(*m.resolved_tag);
+                    ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", tag_text);
                 } else {
                     // Plain/natural tag. A direct builtin, a named
                     // INTEGER alias, or a SEQUENCE/SET reference all
