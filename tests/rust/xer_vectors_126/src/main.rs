@@ -23,7 +23,12 @@ use asn1cpp_wire::value::Asn1Value;
 use asn1cpp_wire::per::reader::Reader;
 use asn1cpp_wire::per::writer::Writer;
 use asn1cpp_wire::constraints::UNCONSTRAINED;
-use asn1cpp_wire::xer::sequence::{decode_sequence_xer, encode_sequence_xer};
+fn decode_sequence_xer_pdu(xml: &str) -> Result<PDU::PDU, asn1cpp_wire::DecodeError> {
+    PDU::PDU::decode_xer(xml)
+}
+fn encode_sequence_xer_pdu(val: &PDU::PDU) -> String {
+    val.encode_xer()
+}
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -85,7 +90,7 @@ fn process_inner(path: &Path, name: &str) -> i32 {
     let out_bytes = fs::read(&out_path).unwrap_or_else(|e| panic!("failed to read {}: {e}", out_path.display()));
 
     // 1. XER decode .in
-    let decoded = decode_sequence_xer(&PDU::PDU_SPEC, &input);
+    let decoded = decode_sequence_xer_pdu(&input);
     check(&format!("{name}  XER decode ok"), decoded.is_ok(), &mut failures);
     let Ok(val) = decoded else { return failures };
 
@@ -128,7 +133,7 @@ fn process_inner(path: &Path, name: &str) -> i32 {
         return failures;
     }
 
-    let reenc = encode_sequence_xer(&PDU::PDU_SPEC, &val2);
+    let reenc = encode_sequence_xer_pdu(&val2);
     if kind == Kind::X {
         check(&format!("{name}  XER re-encode differs from .in (expected)"), strip_ws(&reenc) != strip_ws(&input), &mut failures);
     } else {

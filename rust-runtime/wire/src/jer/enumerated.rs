@@ -38,3 +38,26 @@ pub fn jer_decode_enum<T: TryFrom<i64>>(r: &mut Reader, spec: &EnumSpec) -> Resu
     };
     T::try_from(raw).map_err(|_| DecodeError::new(format!("JER: invalid ENUMERATED value: {raw}"), r.pos()))
 }
+
+/// `EnumSlot`-based counterpart of `jer_decode_enum` (gambas-asn1#681
+/// full migration).
+pub fn jer_decode_enum_into(slot: &mut dyn crate::spec::object::EnumSlot, r: &mut Reader, spec: &EnumSpec) -> Result<(), DecodeError> {
+    r.skip_ws();
+    let raw: i64 = if r.peek_char() == b'"' {
+        let name = r.read_json_string()?;
+        spec.entries
+            .iter()
+            .find(|e| e.name == name)
+            .map(|e| e.value)
+            .ok_or_else(|| DecodeError::new(format!("JER: unknown enum value: {name}"), r.pos()))?
+    } else {
+        let tok = r.read_json_token()?;
+        tok.parse()
+            .map_err(|_| DecodeError::new(format!("JER: invalid ENUMERATED: {tok}"), r.pos()))?
+    };
+    if slot.enum_set(raw) {
+        Ok(())
+    } else {
+        Err(DecodeError::new(format!("JER: invalid ENUMERATED value: {raw}"), r.pos()))
+    }
+}

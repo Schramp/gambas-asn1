@@ -2004,10 +2004,27 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
             auto per_class = classify_typeref_for_per(*tr);
             row.ref_kind = per_class.kind;
             row.ref_storage_kind = per_class.storage_kind;
-            if (per_class.kind == SequenceMemberSpec::RefTargetKind::Other) {
-                if (auto resolved = resolver_.resolve_ref(*tr)) {
-                    row.ref_is_sequence_or_set = std::holds_alternative<ast::SequenceType>(resolved->body) ||
-                                                 std::holds_alternative<ast::SetType>(resolved->body);
+            // Independent of per_class.kind (which only distinguishes
+            // what PER needs — e.g. a BOOLEAN-alias TypeRef comes back
+            // NotRef, not Other, since classify_typeref_for_per has no
+            // PER coverage for BOOLEAN today): RustBackend's reflective
+            // access classification (gambas-asn1#681 full migration)
+            // needs to know this member/alternative's *structural* shape
+            // for every TypeRef, not just the ones PER already covers.
+            if (auto resolved = resolver_.resolve_ref(*tr, current_module_)) {
+                row.ref_is_sequence_or_set = std::holds_alternative<ast::SequenceType>(resolved->body) ||
+                                             std::holds_alternative<ast::SetType>(resolved->body);
+                row.ref_is_seq_of = std::holds_alternative<ast::SequenceOfType>(resolved->body) ||
+                                    std::holds_alternative<ast::SetOfType>(resolved->body);
+                if (auto* rbt = std::get_if<ast::BuiltinType>(&resolved->body)) {
+                    // Integer/Enumerated already have their own dedicated,
+                    // higher-priority fields (ref_kind == IntegerAlias/
+                    // Enumerated) — excluding them here keeps this field
+                    // and `ref_kind` from ever disagreeing about which one
+                    // RustBackend's classify() should use.
+                    if (*rbt != ast::BuiltinType::Integer && *rbt != ast::BuiltinType::Enumerated) {
+                        row.ref_builtin_alias = *rbt;
+                    }
                 }
             }
         } else if (m.is_sequence() || m.is_choice() || m.is_set()) {
@@ -2258,6 +2275,9 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::optional<MemberTagSpec> resolved_tag;
             TaggedMemberSpec::RefTargetKind ref_kind = TaggedMemberSpec::RefTargetKind::NotRef;
             IntStorageKind ref_storage_kind = IntStorageKind::S64;
+            bool ref_is_sequence_or_set = false;
+            bool ref_is_seq_of = false;
+            std::optional<ast::BuiltinType> ref_builtin_alias;
         };
         std::vector<AltRow> rows;
 
@@ -2311,6 +2331,9 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             IntStorageKind alt_storage_kind = IntStorageKind::S64;
             TaggedMemberSpec::RefTargetKind alt_ref_kind = TaggedMemberSpec::RefTargetKind::NotRef;
             IntStorageKind alt_ref_storage_kind = IntStorageKind::S64;
+            bool alt_ref_is_sequence_or_set = false;
+            bool alt_ref_is_seq_of = false;
+            std::optional<ast::BuiltinType> alt_ref_builtin_alias;
             if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
                 mbuiltin = *bt;
                 if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
@@ -2318,6 +2341,30 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                 auto per_class = classify_typeref_for_per(*atr);
                 alt_ref_kind = per_class.kind;
                 alt_ref_storage_kind = per_class.storage_kind;
+                // Same RustBackend::MemberAccess::Object distinction
+                // SequenceMemberSpec::ref_is_sequence_or_set/ref_is_seq_of
+                // make (Backend.hpp's own doc): RefTargetKind::Other alone
+                // can't tell SEQUENCE/SET, a named SEQUENCE OF/SET OF, and
+                // CHOICE apart, which the reflective `Asn1Seq`/`Asn1SeqOf`/
+                // `Asn1Choice` alternative-kind classification needs.
+                // Independent of per_class.kind — see the SEQUENCE-member
+                // collect lambda's identical fix for why (a BOOLEAN-alias
+                // alternative comes back NotRef, not Other).
+                {
+                    if (auto resolved = resolver_.resolve_ref(*atr, current_module_)) {
+                        alt_ref_is_sequence_or_set = std::holds_alternative<ast::SequenceType>(resolved->body) ||
+                                                     std::holds_alternative<ast::SetType>(resolved->body);
+                        alt_ref_is_seq_of = std::holds_alternative<ast::SequenceOfType>(resolved->body) ||
+                                            std::holds_alternative<ast::SetOfType>(resolved->body);
+                        if (auto* rbt = std::get_if<ast::BuiltinType>(&resolved->body)) {
+                            // See the SEQUENCE-member collect lambda's
+                            // identical exclusion.
+                            if (*rbt != ast::BuiltinType::Integer && *rbt != ast::BuiltinType::Enumerated) {
+                                alt_ref_builtin_alias = *rbt;
+                            }
+                        }
+                    }
+                }
             } else if (m->is_sequence() || m->is_choice() || m->is_set()) {
                 // Inline anonymous SEQUENCE/CHOICE/SET alternative — same
                 // synthetic-promotion shape as an inline SEQUENCE member
@@ -2328,10 +2375,12 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                 // does, so it's Scalar-safe here for the same reason
                 // RefTargetKind::Other already is for a real TypeRef.
                 alt_ref_kind = TaggedMemberSpec::RefTargetKind::Other;
+                alt_ref_is_sequence_or_set = m->is_sequence() || m->is_set();
             }
             rows.push_back({ m->name, tdref, alt_type, accessor_name_of.at(m), pr_name_of.at(m),
                              is_explicit, tag_ctx_num, mbuiltin, alt_storage_kind, resolved_tag,
-                             alt_ref_kind, alt_ref_storage_kind });
+                             alt_ref_kind, alt_ref_storage_kind, alt_ref_is_sequence_or_set, alt_ref_is_seq_of,
+                             alt_ref_builtin_alias });
             ++auto_tag_num;
           }
         }
@@ -2349,6 +2398,9 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.resolved_tag = r.resolved_tag;
             alt.ref_kind = r.ref_kind;
             alt.ref_storage_kind = r.ref_storage_kind;
+            alt.ref_is_sequence_or_set = r.ref_is_sequence_or_set;
+            alt.ref_is_seq_of = r.ref_is_seq_of;
+            alt.ref_builtin_alias = r.ref_builtin_alias;
             spec.alternatives.push_back(std::move(alt));
         }
 

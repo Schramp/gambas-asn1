@@ -498,6 +498,33 @@ struct TaggedMemberSpec {
     // know whether the target type implements `Asn1Seq` (SEQUENCE/SET
     // only) or not.
     bool ref_is_sequence_or_set = false;
+    // Meaningful only when ref_kind == Other: true when the member's
+    // class-typed target is a *named* SEQUENCE OF/SET OF type (its own
+    // top-level type assignment, not an inline collection member) — the
+    // other half of the distinction `ref_is_sequence_or_set` draws:
+    // `RefTargetKind::Other` alone can't tell a named SEQUENCE OF/SET OF
+    // reference apart from a named CHOICE reference, which
+    // RustBackend::classify (gambas-asn1#681 full migration) needs to
+    // route through `Asn1SeqOf` rather than `Asn1Choice`. Never true for
+    // a direct inline SEQUENCE/CHOICE/SET member (those always have
+    // `ref_is_sequence_or_set` answer the question instead, or are
+    // SeqOfKind::SeqOf/SetOf at the member level, not this flag).
+    bool ref_is_seq_of = false;
+    // Meaningful only when ref_kind == Other: set when the target is a
+    // *named builtin-alias* type (X.680 §19 — `RustBackend::
+    // emit_builtin_alias_definition`'s own newtype, e.g. `PartyNumber ::=
+    // UTF8String`) — the remaining case `RefTargetKind::Other` collapses
+    // (alongside SEQUENCE/SET, CHOICE, and named SEQUENCE OF/SET OF,
+    // already split out by `ref_is_sequence_or_set`/`ref_is_seq_of`
+    // above). `classify_typeref_for_per`'s own `Other` return for this
+    // case already confirms the target has a real `Asn1Value`/`PerValue`
+    // impl; this field additionally carries *which* builtin it wraps, so
+    // RustBackend's reflective access classification (gambas-asn1#681
+    // full migration) can route it through `Asn1Seq`/`MemberRef::
+    // Primitive` the same way a direct builtin member would (unwrapping
+    // one newtype level — the alias is never itself one of
+    // `PrimitiveRef`'s 26 fixed variants, only its wrapped field is).
+    std::optional<ast::BuiltinType> ref_builtin_alias;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. `ops`/

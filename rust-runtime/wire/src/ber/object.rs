@@ -1,69 +1,125 @@
-//! Non-generic BER walker for `spec::object::Asn1Seq` (gambas-asn1#681
-//! second pass — see that module's doc for the full rationale). One
-//! function, shared by every SEQUENCE/SET type in the program: calling
-//! it never needs a fresh monomorphization per concrete type the way
-//! `ber::sequence::encode_sequence_content::<T>` did, so a BER-only
-//! caller never has to compile (or address-take) anything XER/JER/PER-
-//! shaped to reach a nested SEQUENCE/SET member.
+//! Non-generic BER walker for every reflective construct kind
+//! (gambas-asn1#681, full migration — see `spec::object`'s own doc).
+//! One function per operation per kind, shared by every type of that
+//! kind in the program: calling any of them never needs a fresh
+//! monomorphization per concrete type, so a BER-only caller never has
+//! to compile (or address-take) anything XER/JER/PER-shaped to reach a
+//! nested member/alternative/element of any kind.
 
+use crate::ber::enumerated::{read_enumerated_tagged_into, write_enumerated_tagged, ENUMERATED_TAG};
 use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::Tag;
-use crate::ber::writer::write_tagged;
+use crate::ber::writer::{write_explicit, write_primitive, write_tagged};
 use crate::spec::choice::BerTagging;
-use crate::spec::object::{Asn1Seq, MemberRef, MemberRefMut};
-use crate::spec::primitive::{ber_decode_primitive, ber_encode_primitive};
+use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
+use crate::spec::primitive::{ber_decode_primitive, ber_encode_primitive, PrimitiveRef, PrimitiveRefMut};
 
-fn encode_composite_member(inner: &dyn Asn1Seq, ber: BerTagging, out: &mut Vec<u8>) {
-    match ber {
-        BerTagging::Explicit(tag) => write_tagged(out, tag, |out| encode_seq_into(inner, out)),
-        BerTagging::Implicit(tag) => write_tagged(out, tag, |out| encode_seq_content(inner, out)),
-        BerTagging::Delegate => encode_seq_into(inner, out),
-        BerTagging::Unsupported(reason) => panic!("member not supported: {reason}"),
-    }
-}
-
-/// The member-loop content, no outer TLV — shared by `encode_seq` (natural
-/// tag) and a containing member's own tag override (X.690 §8.14).
-pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut Vec<u8>) {
-    let spec = obj.spec();
-    for (i, m) in spec.members.iter().enumerate() {
-        if obj.is_default_equal(i) {
-            continue;
+/// Encodes one member/alternative/element value under `framing` — the
+/// one place that dispatches on `MemberRef`'s kind, shared by the
+/// SEQUENCE/SET member loop, the CHOICE alternative dispatch, and the
+/// SEQUENCE OF/SET OF element loop (each of those three callers differs
+/// only in *how* it picks a row/index and *what* framing it already
+/// resolved, never in what happens once it has a `MemberRef` + framing).
+fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec<u8>) {
+    match m {
+        MemberRef::Absent => {}
+        MemberRef::Primitive(p) => ber_encode_primitive(p, framing, out),
+        MemberRef::Composite(inner) => match framing {
+            BerTagging::Explicit(tag) => write_tagged(out, tag, |out| encode_seq_into(inner, out)),
+            BerTagging::Implicit(tag) => write_tagged(out, tag, |out| encode_seq_content(inner, out)),
+            BerTagging::Delegate => encode_seq_into(inner, out),
+            BerTagging::Unsupported(reason) => panic!("member not supported: {reason}"),
+        },
+        MemberRef::Choice(inner) => match framing {
+            BerTagging::Explicit(tag) => write_explicit(out, tag, |out| encode_choice_dispatch(inner, out)),
+            BerTagging::Implicit(tag) => encode_choice_tagged(inner, tag, out),
+            BerTagging::Delegate => encode_choice_into(inner, out),
+            BerTagging::Unsupported(reason) => panic!("member not supported: {reason}"),
+        },
+        MemberRef::SeqOf(inner) => {
+            let natural = inner.natural_tag();
+            match framing {
+                BerTagging::Explicit(tag) => write_tagged(out, tag, |out| write_tagged(out, natural, |out| encode_seqof_content(inner, out))),
+                BerTagging::Implicit(tag) => write_tagged(out, tag, |out| encode_seqof_content(inner, out)),
+                BerTagging::Delegate => write_tagged(out, natural, |out| encode_seqof_content(inner, out)),
+                BerTagging::Unsupported(reason) => panic!("member not supported: {reason}"),
+            }
         }
-        let member = obj.get_member(i);
-        match member {
-            MemberRef::Absent => {}
-            MemberRef::Primitive(p) => ber_encode_primitive(p, m.ber, out),
-            MemberRef::Composite(inner) => encode_composite_member(inner, m.ber, out),
-        }
-        if !matches!(obj.get_member(i), MemberRef::Absent) {
-            let delta = obj.validate(i);
-            if delta != 0 {
-                crate::validate::check_delta(delta, m.name, "encode");
+        MemberRef::Base64(x) => ber_encode_primitive(PrimitiveRef::OctetString(x), framing, out),
+        MemberRef::Enumerated(slot, _spec) => {
+            let v = slot.enum_get();
+            match framing {
+                BerTagging::Explicit(tag) => write_tagged(out, tag, |out| write_enumerated_tagged(out, ENUMERATED_TAG, v)),
+                BerTagging::Implicit(tag) => write_enumerated_tagged(out, tag, v),
+                BerTagging::Delegate => write_enumerated_tagged(out, ENUMERATED_TAG, v),
+                BerTagging::Unsupported(reason) => panic!("member not supported: {reason}"),
             }
         }
     }
 }
 
-/// Appends a SEQUENCE/SET's complete TLV (its own natural tag).
-pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut Vec<u8>) {
-    write_tagged(out, obj.spec().tag, |out| encode_seq_content(obj, out));
-}
-
-pub fn encode_seq(obj: &dyn Asn1Seq) -> Vec<u8> {
-    let mut out = Vec::new();
-    encode_seq_into(obj, &mut out);
-    out
-}
-
-/// IMPLICIT/EXPLICIT retag of a SEQUENCE/SET-typed member (X.690 §8.14) —
-/// same content, different outer tag or an extra wrapping TLV. Used by a
-/// *containing* type's own member override reaching this SEQUENCE/SET.
-pub fn encode_seq_tagged(obj: &dyn Asn1Seq, tag: Tag, explicit: bool, out: &mut Vec<u8>) {
-    if explicit {
-        write_tagged(out, tag, |out| encode_seq_into(obj, out));
-    } else {
-        write_tagged(out, tag, |out| encode_seq_content(obj, out));
+/// Decode counterpart of `encode_member_ref`.
+fn decode_member_ref(m: MemberRefMut, framing: BerTagging, r: &mut Reader) -> Result<(), DecodeError> {
+    match m {
+        MemberRefMut::Absent => Ok(()),
+        MemberRefMut::Primitive(p) => ber_decode_primitive(p, framing, r),
+        MemberRefMut::Composite(inner) => decode_composite_member(inner, framing, r),
+        MemberRefMut::Base64(x) => ber_decode_primitive(PrimitiveRefMut::OctetString(x), framing, r),
+        MemberRefMut::Choice(inner) => match framing {
+            BerTagging::Explicit(tag) => {
+                let tlv = r.read_tlv()?;
+                if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+                    return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
+                }
+                let mut inner_r = Reader::new(tlv.value);
+                decode_choice_dispatch(inner, &mut inner_r)
+            }
+            BerTagging::Implicit(tag) => decode_choice_tagged_into(inner, r, tag),
+            BerTagging::Delegate => decode_choice_into(inner, r),
+            BerTagging::Unsupported(reason) => panic!("member not supported: {reason}"),
+        },
+        MemberRefMut::SeqOf(inner) => {
+            let natural = inner.natural_tag();
+            match framing {
+                BerTagging::Explicit(tag) => {
+                    let tlv = r.read_tlv()?;
+                    if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+                        return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
+                    }
+                    let mut outer = Reader::new(tlv.value);
+                    let inner_tlv = outer.read_tlv()?;
+                    decode_seqof_content(inner, inner_tlv.value)
+                }
+                BerTagging::Implicit(tag) => {
+                    let tlv = r.read_tlv()?;
+                    if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+                        return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
+                    }
+                    decode_seqof_content(inner, tlv.value)
+                }
+                BerTagging::Delegate => {
+                    let tlv = r.read_tlv()?;
+                    if tlv.tag.class != natural.class || tlv.tag.number != natural.number {
+                        return Err(DecodeError::new(format!("expected tag {natural:?}, got {:?}", tlv.tag), r.pos()));
+                    }
+                    decode_seqof_content(inner, tlv.value)
+                }
+                BerTagging::Unsupported(reason) => panic!("member not supported: {reason}"),
+            }
+        }
+        MemberRefMut::Enumerated(slot, _spec) => match framing {
+            BerTagging::Explicit(tag) => {
+                let tlv = r.read_tlv()?;
+                if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+                    return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
+                }
+                let mut inner_r = Reader::new(tlv.value);
+                read_enumerated_tagged_into(slot, &mut inner_r, ENUMERATED_TAG)
+            }
+            BerTagging::Implicit(tag) => read_enumerated_tagged_into(slot, r, tag),
+            BerTagging::Delegate => read_enumerated_tagged_into(slot, r, ENUMERATED_TAG),
+            BerTagging::Unsupported(reason) => panic!("member not supported: {reason}"),
+        },
     }
 }
 
@@ -100,32 +156,67 @@ fn decode_composite_member(inner: &mut dyn Asn1Seq, ber: BerTagging, r: &mut Rea
     }
 }
 
-fn decode_member(obj: &mut dyn Asn1Seq, i: usize, r: &mut Reader) -> Result<(), DecodeError> {
-    let ber = obj.spec().members[i].ber;
-    match obj.get_member_mut(i) {
-        MemberRefMut::Absent => Ok(()),
-        MemberRefMut::Primitive(p) => ber_decode_primitive(p, ber, r),
-        MemberRefMut::Composite(inner) => decode_composite_member(inner, ber, r),
+// ---------------------------------------------------------------------
+// SEQUENCE / SET
+// ---------------------------------------------------------------------
+
+/// The member-loop content, no outer TLV — shared by `encode_seq` (natural
+/// tag) and a containing member's own tag override (X.690 §8.14).
+pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut Vec<u8>) {
+    let spec = obj.spec();
+    for (i, m) in spec.members.iter().enumerate() {
+        if obj.is_default_equal(i) {
+            continue;
+        }
+        let member = obj.get_member(i);
+        let present = !matches!(member, MemberRef::Absent);
+        encode_member_ref(member, m.ber, out);
+        if present {
+            let delta = obj.validate(i);
+            if delta != 0 {
+                crate::validate::check_delta(delta, m.name, "encode");
+            }
+        }
+    }
+}
+
+/// Appends a SEQUENCE/SET's complete TLV (its own natural tag).
+pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut Vec<u8>) {
+    write_tagged(out, obj.spec().tag, |out| encode_seq_content(obj, out));
+}
+
+pub fn encode_seq(obj: &dyn Asn1Seq) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_seq_into(obj, &mut out);
+    out
+}
+
+/// IMPLICIT/EXPLICIT retag of a SEQUENCE/SET-typed member (X.690 §8.14) —
+/// same content, different outer tag or an extra wrapping TLV. Used by a
+/// *containing* type's own member override reaching this SEQUENCE/SET.
+pub fn encode_seq_tagged(obj: &dyn Asn1Seq, tag: Tag, explicit: bool, out: &mut Vec<u8>) {
+    if explicit {
+        write_tagged(out, tag, |out| encode_seq_into(obj, out));
+    } else {
+        write_tagged(out, tag, |out| encode_seq_content(obj, out));
     }
 }
 
 /// Decodes a SEQUENCE/SET's member-loop content into an already-
-/// default-initialized `obj` (its fields start at whatever `Default`
-/// left them, same contract `ber::sequence::decode_sequence_content`
-/// documents for required-but-not-yet-filled members). OPTIONAL member
-/// detection peeks the wire tag first, same canonical-order assumption
-/// `ber::sequence`'s own decoder documents.
+/// default-initialized `obj`. OPTIONAL member detection peeks the wire
+/// tag first, same canonical-order assumption `ber::sequence`'s own
+/// decoder makes.
 pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), DecodeError> {
     let member_count = obj.spec().members.len();
     for i in 0..member_count {
-        let (name, tag, optional) = {
+        let (name, tag, optional, ber) = {
             let m = &obj.spec().members[i];
-            (m.name, m.tag, m.optional)
+            (m.name, m.tag, m.optional, m.ber)
         };
         let mut has_value = true;
         if optional {
             if r.peek_tag() == Some(tag) {
-                decode_member(obj, i, r)?;
+                decode_member_ref(obj.get_member_mut(i), ber, r)?;
             } else {
                 obj.set_default(i);
                 if matches!(obj.get_member(i), MemberRef::Absent) {
@@ -133,7 +224,7 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<
                 }
             }
         } else {
-            decode_member(obj, i, r)?;
+            decode_member_ref(obj.get_member_mut(i), ber, r)?;
         }
         if has_value {
             let delta = obj.validate(i);
@@ -158,6 +249,110 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Deco
 /// Decode counterpart of `encode_seq_tagged`.
 pub fn decode_seq_tagged_into(obj: &mut dyn Asn1Seq, r: &mut Reader, tag: Tag, explicit: bool) -> Result<(), DecodeError> {
     decode_composite_member(obj, if explicit { BerTagging::Explicit(tag) } else { BerTagging::Implicit(tag) }, r)
+}
+
+// ---------------------------------------------------------------------
+// CHOICE
+// ---------------------------------------------------------------------
+
+/// The alternative-dispatch encoding (X.680 §28 — no outer wrapper of its
+/// own), before any `own_tag` wrap.
+fn encode_choice_dispatch(obj: &dyn Asn1Choice, out: &mut Vec<u8>) {
+    if let Some(i) = obj.active_index() {
+        let ber = obj.spec().alternatives[i].ber;
+        encode_member_ref(obj.get_active(), ber, out);
+        return;
+    }
+    if let Some((tag, bytes)) = obj.extract_unknown_extension() {
+        write_primitive(out, tag, bytes);
+        return;
+    }
+    panic!("encode_choice: no alternative matched — codegen/table mismatch");
+}
+
+/// Appends a CHOICE's encoding to an existing buffer.
+pub fn encode_choice_into(obj: &dyn Asn1Choice, out: &mut Vec<u8>) {
+    match obj.spec().own_tag {
+        Some(tag) => write_explicit(out, tag, |inner| encode_choice_dispatch(obj, inner)),
+        None => encode_choice_dispatch(obj, out),
+    }
+}
+
+pub fn encode_choice(obj: &dyn Asn1Choice) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_choice_into(obj, &mut out);
+    out
+}
+
+/// IMPLICIT-retags a CHOICE-with-own_tag value under `tag` instead of its
+/// own declared `[n]` (X.680 §22.5/§28.4).
+pub fn encode_choice_tagged(obj: &dyn Asn1Choice, tag: Tag, out: &mut Vec<u8>) {
+    write_tagged(out, tag, |out| encode_choice_dispatch(obj, out));
+}
+
+/// Decode counterpart of `encode_choice_tagged`.
+pub fn decode_choice_tagged_into(obj: &mut dyn Asn1Choice, r: &mut Reader, tag: Tag) -> Result<(), DecodeError> {
+    let tlv = r.read_tlv()?;
+    if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+        return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
+    }
+    let mut inner = Reader::new(tlv.value);
+    decode_choice_dispatch(obj, &mut inner)
+}
+
+pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<(), DecodeError> {
+    match obj.spec().own_tag {
+        Some(tag) => {
+            let tlv = r.read_tlv()?;
+            if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
+                return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
+            }
+            let mut inner = Reader::new(tlv.value);
+            decode_choice_dispatch(obj, &mut inner)
+        }
+        None => decode_choice_dispatch(obj, r),
+    }
+}
+
+/// Peeks the wire tag, selects the alternative through `ber_tags` and
+/// decodes its payload in place. Falls back to the unknown-extension
+/// capture (if present) by capturing the whole TLV instead of erroring.
+fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<(), DecodeError> {
+    let tag = r.peek_tag().ok_or_else(|| DecodeError::new("empty CHOICE input".to_string(), 0))?;
+    let found = obj
+        .spec()
+        .ber_tags
+        .binary_search_by_key(&tag.identifier_key(), |d| d.tag.identifier_key())
+        .ok()
+        .map(|i| obj.spec().ber_tags[i].alt);
+    if let Some(alt_idx) = found {
+        let ber = obj.spec().alternatives[alt_idx].ber;
+        return decode_member_ref(obj.select_mut(alt_idx), ber, r);
+    }
+    let tlv = r.read_tlv()?;
+    obj.construct_unknown_extension(tlv.tag, tlv.value.to_vec());
+    if obj.extract_unknown_extension().is_some() {
+        return Ok(());
+    }
+    Err(DecodeError::new(format!("unrecognized CHOICE alternative tag {tag:?}"), 0))
+}
+
+// ---------------------------------------------------------------------
+// SEQUENCE OF / SET OF
+// ---------------------------------------------------------------------
+
+fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) {
+    for i in 0..obj.len() {
+        encode_member_ref(obj.get(i), BerTagging::Delegate, out);
+    }
+}
+
+fn decode_seqof_content(obj: &mut dyn Asn1SeqOf, content: &[u8]) -> Result<(), DecodeError> {
+    let mut inner = Reader::new(content);
+    while !inner.at_end() {
+        decode_member_ref(obj.push_default_mut(), BerTagging::Delegate, &mut inner)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -329,5 +524,121 @@ mod tests {
         let mut out = Outer::default();
         crate::per::object::decode_seq_content_into(&mut out, &mut r).unwrap();
         assert_eq!(out, v);
+    }
+
+    /// `Choice ::= CHOICE { num INTEGER, nested Inner }` — worked example
+    /// for `Asn1Choice`.
+    #[derive(Debug, Clone, PartialEq)]
+    enum Choice {
+        Num(Integer),
+        Nested(Inner),
+    }
+    impl Default for Choice {
+        fn default() -> Self {
+            Choice::Num(Integer(0))
+        }
+    }
+
+    static CHOICE_ALTS: [crate::spec::object::AltMeta; 2] = [
+        crate::spec::object::AltMeta { name: "num", ber: BerTagging::Implicit(INTEGER_TAG), constraints: &UNCONSTRAINED, per_unsupported: None },
+        crate::spec::object::AltMeta { name: "nested", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, per_unsupported: None },
+    ];
+    static CHOICE_BER_TAGS: [crate::spec::choice::BerDispatch; 2] = [
+        crate::spec::choice::BerDispatch { tag: INTEGER_TAG, alt: 0 },
+        crate::spec::choice::BerDispatch { tag: SEQUENCE_TAG, alt: 1 },
+    ];
+    static CHOICE_SPEC: crate::spec::object::ChoiceSpec = crate::spec::object::ChoiceSpec {
+        name: "Choice",
+        alternatives: &CHOICE_ALTS,
+        ber_tags: &CHOICE_BER_TAGS,
+        own_tag: None,
+        ext_at: -1,
+        range_bits: 1,
+    };
+    impl Asn1Choice for Choice {
+        fn spec(&self) -> &'static crate::spec::object::ChoiceSpec {
+            &CHOICE_SPEC
+        }
+        fn active_index(&self) -> Option<usize> {
+            match self {
+                Choice::Num(_) => Some(0),
+                Choice::Nested(_) => Some(1),
+            }
+        }
+        fn get_active(&self) -> MemberRef<'_> {
+            match self {
+                Choice::Num(v) => MemberRef::Primitive(crate::spec::primitive::PrimitiveRef::Integer(v)),
+                Choice::Nested(v) => MemberRef::Composite(v),
+            }
+        }
+        fn select_mut(&mut self, index: usize) -> MemberRefMut<'_> {
+            match index {
+                0 => {
+                    if !matches!(self, Choice::Num(_)) {
+                        *self = Choice::Num(Default::default());
+                    }
+                    match self {
+                        Choice::Num(v) => MemberRefMut::Primitive(crate::spec::primitive::PrimitiveRefMut::Integer(v)),
+                        _ => unreachable!(),
+                    }
+                }
+                1 => {
+                    if !matches!(self, Choice::Nested(_)) {
+                        *self = Choice::Nested(Default::default());
+                    }
+                    match self {
+                        Choice::Nested(v) => MemberRefMut::Composite(v),
+                        _ => unreachable!(),
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        fn construct_unknown_extension(&mut self, _tag: Tag, _bytes: Vec<u8>) {}
+        fn extract_unknown_extension(&self) -> Option<(Tag, &[u8])> {
+            None
+        }
+    }
+
+    fn roundtrip_choice(v: &Choice) -> Choice {
+        let bytes = encode_choice(v);
+        let mut r = Reader::new(&bytes);
+        let mut out = Choice::default();
+        decode_choice_into(&mut out, &mut r).unwrap();
+        out
+    }
+
+    #[test]
+    fn choice_round_trips_primitive_alternative() {
+        let v = Choice::Num(Integer(42));
+        assert_eq!(roundtrip_choice(&v), v);
+    }
+
+    #[test]
+    fn choice_round_trips_composite_alternative() {
+        let v = Choice::Nested(Inner { x: Integer(7) });
+        assert_eq!(roundtrip_choice(&v), v);
+    }
+
+    /// `Basket ::= SEQUENCE OF INTEGER` — worked example for `Asn1SeqOf`.
+    fn roundtrip_seqof(v: &crate::ber::sequence::SeqOf<Integer>) -> crate::ber::sequence::SeqOf<Integer> {
+        let mut out = Vec::new();
+        out.push(0x30u8); // placeholder, overwritten below
+        let mut content = Vec::new();
+        encode_seqof_content(v, &mut content);
+        let mut full = Vec::new();
+        write_tagged(&mut full, SEQUENCE_TAG, |out| out.extend_from_slice(&content));
+        let mut r = Reader::new(&full);
+        let tlv = r.read_tlv().unwrap();
+        let mut result = crate::ber::sequence::SeqOf::<Integer>::default();
+        decode_seqof_content(&mut result, tlv.value).unwrap();
+        let _ = out;
+        result
+    }
+
+    #[test]
+    fn seqof_round_trips_primitive_elements() {
+        let v = crate::ber::sequence::SeqOf(vec![Integer(1), Integer(2), Integer(3)]);
+        assert_eq!(roundtrip_seqof(&v), v);
     }
 }
