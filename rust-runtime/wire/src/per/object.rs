@@ -20,6 +20,7 @@ fn encode_bare(m: MemberRef, c: &Constraints, w: &mut Writer) {
         MemberRef::SeqOf(inner) => encode_seqof_content(inner, c, w),
         MemberRef::Enumerated(slot, spec) => crate::per::enumerated::encode_enum(w, spec, slot.enum_get()),
         MemberRef::Base64(x) => per_encode_primitive(PrimitiveRef::OctetString(x), w, c),
+        MemberRef::Utf8(x) => per_encode_primitive(PrimitiveRef::OctetString(x), w, c),
     }
 }
 
@@ -31,6 +32,7 @@ fn decode_bare(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result<(), D
         MemberRefMut::Choice(inner) => decode_choice_content_into(inner, r),
         MemberRefMut::SeqOf(inner) => decode_seqof_content_into(inner, c, r),
         MemberRefMut::Base64(x) => per_decode_primitive(PrimitiveRefMut::OctetString(x), r, c),
+        MemberRefMut::Utf8(x) => per_decode_primitive(PrimitiveRefMut::OctetString(x), r, c),
         MemberRefMut::Enumerated(slot, spec) => {
             let v = crate::per::enumerated::decode_enum(r, spec)?;
             if slot.enum_set(v) {

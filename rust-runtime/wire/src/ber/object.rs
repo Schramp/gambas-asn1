@@ -46,6 +46,7 @@ fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec<u8>) {
             }
         }
         MemberRef::Base64(x) => ber_encode_primitive(PrimitiveRef::OctetString(x), framing, out),
+        MemberRef::Utf8(x) => ber_encode_primitive(PrimitiveRef::OctetString(x), framing, out),
         MemberRef::Enumerated(slot, _spec) => {
             let v = slot.enum_get();
             match framing {
@@ -65,6 +66,7 @@ fn decode_member_ref(m: MemberRefMut, framing: BerTagging, r: &mut Reader) -> Re
         MemberRefMut::Primitive(p) => ber_decode_primitive(p, framing, r),
         MemberRefMut::Composite(inner) => decode_composite_member(inner, framing, r),
         MemberRefMut::Base64(x) => ber_decode_primitive(PrimitiveRefMut::OctetString(x), framing, r),
+        MemberRefMut::Utf8(x) => ber_decode_primitive(PrimitiveRefMut::OctetString(x), framing, r),
         MemberRefMut::Choice(inner) => match framing {
             BerTagging::Explicit(tag) => {
                 let tlv = r.read_tlv()?;

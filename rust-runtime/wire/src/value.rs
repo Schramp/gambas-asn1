@@ -201,6 +201,19 @@ pub trait Asn1Value {
         unreachable!("xer_decode_into_base64 called on a type with no base64 XER representation")
     }
 
+    /// UTF8 XER representation (X.693 §21) for an `ENCODING-CONTROL XER
+    /// ... UTF8` (or legacy `::= utf8`)-marked OCTET STRING member — same
+    /// rationale as `xer_encode_base64`'s own doc, mirrored for the other
+    /// XER-instruction kind `MemberRef::Utf8` carries.
+    fn xer_encode_utf8(&self, _out: &mut String) {
+        unreachable!("xer_encode_utf8 called on a type with no utf8 XER representation")
+    }
+
+    /// Decode counterpart of `xer_encode_utf8`.
+    fn xer_decode_into_utf8(&mut self, _r: &mut XerReader) -> Result<(), DecodeError> {
+        unreachable!("xer_decode_into_utf8 called on a type with no utf8 XER representation")
+    }
+
     /// Whether this value should appear on the wire at all — always `true`
     /// except for `Option<V>::None` (see the blanket impl below). Lets the
     /// generic SEQUENCE walkers (`encode_sequence_xer`'s outer-tag wrapping;

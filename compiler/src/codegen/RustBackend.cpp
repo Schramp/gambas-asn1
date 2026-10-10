@@ -1784,20 +1784,37 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // distinguish SEQUENCE/SET from CHOICE (`ref_is_sequence_or_set`'s
             // own doc on `SequenceMemberSpec`), which is exactly why that
             // flag exists.
-            enum class AccessKind { Primitive, Enumerated, SeqOf, Choice, Composite, Base64, Unsupported };
+            enum class AccessKind { Primitive, Enumerated, SeqOf, Choice, Composite, Base64, Utf8, Unsupported };
             auto classify = [](const SequenceMemberSpec& m) -> AccessKind {
                 if (m.seq_of_kind != SeqOfKind::None) return AccessKind::SeqOf;
                 if (m.mbuiltin) {
                     if (*m.mbuiltin == ast::BuiltinType::Enumerated) return AccessKind::Enumerated;
                     if (*m.mbuiltin == ast::BuiltinType::OctetString && m.xer_encoding == ast::XerEncoding::Base64)
                         return AccessKind::Base64;
+                    if (*m.mbuiltin == ast::BuiltinType::OctetString && m.xer_encoding == ast::XerEncoding::Utf8)
+                        return AccessKind::Utf8;
                     return AccessKind::Primitive;
                 }
                 if (m.ref_kind == TaggedMemberSpec::RefTargetKind::Enumerated) return AccessKind::Enumerated;
                 if (m.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias) return AccessKind::Primitive;
                 if (m.ref_is_sequence_or_set) return AccessKind::Composite;
                 if (m.ref_is_seq_of) return AccessKind::SeqOf;
-                if (m.ref_builtin_alias) return AccessKind::Primitive;
+                if (m.ref_builtin_alias) {
+                    // A named OCTET STRING alias's own X.693 §21
+                    // ENCODING-CONTROL override (e.g. `Base64Data ::=
+                    // OCTET STRING` under `::= base64`) — `AsMemberRef`
+                    // for the alias (`emit_builtin_alias_definition`)
+                    // unwraps straight to `&self.0`, discarding that
+                    // override exactly like it discards a re-tagged
+                    // alias's own BER tag (this function's `is_explicit`
+                    // branch below) — route through `Base64`/`Utf8` here
+                    // too, same as the direct-builtin-member case above.
+                    if (*m.ref_builtin_alias == ast::BuiltinType::OctetString && m.ref_xer_encoding == ast::XerEncoding::Base64)
+                        return AccessKind::Base64;
+                    if (*m.ref_builtin_alias == ast::BuiltinType::OctetString && m.ref_xer_encoding == ast::XerEncoding::Utf8)
+                        return AccessKind::Utf8;
+                    return AccessKind::Primitive;
+                }
                 return AccessKind::Choice;
             };
 
@@ -2059,22 +2076,37 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     class_ref_exprs("Composite", "Composite");
                     break;
                 case AccessKind::Base64:
+                case AccessKind::Utf8: {
                     // Identical to `Primitive(PrimitiveRef::OctetString)`
                     // for BER/JER/PER (`ber::object::encode_bare`'s own
                     // doc); only XER's walker treats this variant
-                    // differently.
+                    // differently. `m.mbuiltin` (the instruction landed on
+                    // this member's own inline type) means the field *is*
+                    // the `OctetString` directly; `m.ref_builtin_alias`
+                    // (the instruction lives on a named alias this member
+                    // merely references, e.g. `Base64Data ::= OCTET
+                    // STRING`) means the field is one newtype level
+                    // shallow — same `.0`-unwrap reasoning as
+                    // `AccessKind::Primitive` above.
+                    const char* variant = kind == AccessKind::Base64 ? "Base64" : "Utf8";
+                    std::string dot0 = m.mbuiltin ? "" : ".0";
                     if (m.optional) {
                         get_expr = std::format(
-                            "|v| match &v.{0} {{ Some(x) => asn1cpp_wire::spec::object::MemberRef::Base64(x), None => asn1cpp_wire::spec::object::MemberRef::Absent }}",
-                            m.mname);
-                        get_mut_expr = std::format(
-                            "|v| asn1cpp_wire::spec::object::MemberRefMut::Base64(v.{0}.get_or_insert_with(Default::default))",
-                            m.mname);
+                            "|v| match &v.{0} {{ Some(x) => asn1cpp_wire::spec::object::MemberRef::{1}(&x{2}), None => asn1cpp_wire::spec::object::MemberRef::Absent }}",
+                            m.mname, variant, dot0);
+                        get_mut_expr = dot0.empty()
+                            ? std::format(
+                                  "|v| asn1cpp_wire::spec::object::MemberRefMut::{1}(v.{0}.get_or_insert_with(Default::default))",
+                                  m.mname, variant)
+                            : std::format(
+                                  "|v| asn1cpp_wire::spec::object::MemberRefMut::{1}(&mut v.{0}.get_or_insert_with(Default::default){2})",
+                                  m.mname, variant, dot0);
                     } else {
-                        get_expr = std::format("|v| asn1cpp_wire::spec::object::MemberRef::Base64(&v.{0})", m.mname);
-                        get_mut_expr = std::format("|v| asn1cpp_wire::spec::object::MemberRefMut::Base64(&mut v.{0})", m.mname);
+                        get_expr = std::format("|v| asn1cpp_wire::spec::object::MemberRef::{1}(&v.{0}{2})", m.mname, variant, dot0);
+                        get_mut_expr = std::format("|v| asn1cpp_wire::spec::object::MemberRefMut::{1}(&mut v.{0}{2})", m.mname, variant, dot0);
                     }
                     break;
+                }
                 case AccessKind::Unsupported: {
                     std::string reason = stub_reason(m);
                     get_expr = std::format("|_v| panic!(\"member '{}' not supported: {}\")", m.mname, reason);

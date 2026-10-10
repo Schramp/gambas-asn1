@@ -16,6 +16,7 @@ fn encode_bare(m: MemberRef, out: &mut String) {
         MemberRef::SeqOf(inner) => encode_seqof_into(inner, out),
         MemberRef::Enumerated(slot, spec) => crate::jer::enumerated::jer_encode_enum(out, spec, slot.enum_get()),
         MemberRef::Base64(x) => jer_encode_primitive(PrimitiveRef::OctetString(x), out),
+        MemberRef::Utf8(x) => jer_encode_primitive(PrimitiveRef::OctetString(x), out),
     }
 }
 
@@ -28,6 +29,7 @@ fn decode_bare(m: MemberRefMut, r: &mut Reader) -> Result<(), DecodeError> {
         MemberRefMut::SeqOf(inner) => decode_seqof_into(inner, r),
         MemberRefMut::Enumerated(slot, spec) => crate::jer::enumerated::jer_decode_enum_into(slot, r, spec),
         MemberRefMut::Base64(x) => jer_decode_primitive(PrimitiveRefMut::OctetString(x), r),
+        MemberRefMut::Utf8(x) => jer_decode_primitive(PrimitiveRefMut::OctetString(x), r),
     }
 }
 
