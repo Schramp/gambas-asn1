@@ -122,6 +122,19 @@ impl Asn1Value for OctetString {
         Ok(())
     }
 
+    /// Counterpart to `xer_encode_base64`/`xer_decode_into_base64` for the
+    /// legacy `TypeName OCTET STRING ::= utf8` / X.693 §21 `UTF8
+    /// TypeName` ENCODING-CONTROL instruction — see `MemberRef::Utf8`'s
+    /// own doc for why this needs its own variant rather than a flag.
+    fn xer_encode_utf8(&self, out: &mut String) {
+        utf8_encode(&self.0, out);
+    }
+
+    fn xer_decode_into_utf8(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        self.0 = utf8_decode(r)?;
+        Ok(())
+    }
+
     /// X.697 §8.9: quoted uppercase hex, no spaces (not base64 -- JER has
     /// no per-member encoding-control override the way XER's `::= base64`
     /// does; see `jer::octet_string`'s own module doc).

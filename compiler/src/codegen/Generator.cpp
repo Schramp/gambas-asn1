@@ -2024,6 +2024,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
                     // RustBackend's classify() should use.
                     if (*rbt != ast::BuiltinType::Integer && *rbt != ast::BuiltinType::Enumerated) {
                         row.ref_builtin_alias = *rbt;
+                        row.ref_xer_encoding = resolved->xer_encoding;
                     }
                 }
             }

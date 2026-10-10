@@ -25,6 +25,7 @@ fn encode_bare(m: MemberRef, out: &mut String, depth: usize) {
         MemberRef::SeqOf(inner) => encode_seqof_content(inner, out, depth),
         MemberRef::Enumerated(slot, spec) => crate::ber::enumerated::xer_encode_enum(out, spec, slot.enum_get()),
         MemberRef::Base64(x) => x.xer_encode_base64(out),
+        MemberRef::Utf8(x) => x.xer_encode_utf8(out),
     }
 }
 
@@ -120,6 +121,7 @@ fn decode_bare(m: MemberRefMut, r: &mut XerReader) -> Result<(), DecodeError> {
         MemberRefMut::SeqOf(inner) => decode_seqof_content_into(inner, r),
         MemberRefMut::Enumerated(slot, spec) => crate::ber::enumerated::xer_decode_enum_into(slot, r, spec),
         MemberRefMut::Base64(x) => x.xer_decode_into_base64(r),
+        MemberRefMut::Utf8(x) => x.xer_decode_into_utf8(r),
     }
 }
 
@@ -253,7 +255,7 @@ fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize) {
                 encode_bare(el, out, depth + 1);
             }
             MemberRef::SeqOf(_) => encode_wrapped(name_override.unwrap_or("SEQUENCE-OF"), el, out, depth + 1),
-            MemberRef::Base64(x) => {
+            MemberRef::Base64(x) | MemberRef::Utf8(x) => {
                 let name = name_override.unwrap_or_else(|| x.xer_element_name());
                 encode_wrapped(name, el, out, depth + 1)
             }

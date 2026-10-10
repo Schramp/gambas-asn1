@@ -525,6 +525,23 @@ struct TaggedMemberSpec {
     // one newtype level — the alias is never itself one of
     // `PrimitiveRef`'s 26 fixed variants, only its wrapped field is).
     std::optional<ast::BuiltinType> ref_builtin_alias;
+    // Meaningful only alongside ref_builtin_alias == OctetString: the
+    // alias TARGET's own X.693 §21 ENCODING-CONTROL XER override
+    // (`ast::TypeDef::xer_encoding`, e.g. `Base64Data ::= OCTET STRING`
+    // under `ENCODING-CONTROL XER Base64Data OCTET STRING ::= base64`) —
+    // distinct from `SequenceMemberSpec::xer_encoding` below, which only
+    // ever carries a directive declared directly on the member's own
+    // inline type, never an alias's. A TypeRef member
+    // unwraps to the alias's native field via `AsMemberRef`
+    // (`emit_builtin_alias_definition`), which discards the alias's own
+    // Base64/Utf8 `Asn1Value` override just as completely as it discards
+    // a re-tagged alias's own BER tag (`AccessKind::Primitive`'s
+    // `is_explicit` branch, `RustBackend.cpp`) — so RustBackend's
+    // `classify` needs this threaded through to route such a member to
+    // `MemberRef::Base64`/`Utf8` instead of plain `Primitive`, the same
+    // way it already does for a member whose *own* inline type carries
+    // the directive (`TaggedMemberSpec::xer_encoding`).
+    ast::XerEncoding ref_xer_encoding = ast::XerEncoding::Default;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. `ops`/
