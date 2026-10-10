@@ -47,6 +47,23 @@ pub fn decode_enumerated_content<T: TryFrom<i64>>(content: &[u8]) -> Result<T, D
     T::try_from(raw).map_err(|_| DecodeError::new(format!("invalid ENUMERATED value: {raw}"), 0))
 }
 
+/// `EnumSlot`-based counterpart of `read_enumerated_tagged` (gambas-
+/// asn1#681 full migration) — writes the decoded value through the
+/// reflective `EnumSlot::enum_set` instead of `T::try_from`, so the
+/// caller never needs the concrete enum type as a generic parameter.
+pub fn read_enumerated_tagged_into(slot: &mut dyn crate::spec::object::EnumSlot, r: &mut Reader, tag: Tag) -> Result<(), DecodeError> {
+    let tlv = r.read_tlv()?;
+    if tlv.tag != tag {
+        return Err(DecodeError::new(format!("expected ENUMERATED tag, got {:?}", tlv.tag), r.pos()));
+    }
+    let raw = decode_integer_bytes(tlv.value)?;
+    if slot.enum_set(raw) {
+        Ok(())
+    } else {
+        Err(DecodeError::new(format!("invalid ENUMERATED value: {raw}"), r.pos()))
+    }
+}
+
 /// BASIC-XER form for ENUMERATED (X.693 §19 — same
 /// EmptyElementBoolean-style nested self-closing tag `boolean`'s own
 /// `Asn1Value` impl uses, `value.rs`) — mirrors `EnumeratedXerHandler`'s
@@ -75,6 +92,22 @@ pub fn xer_decode_enum<T: TryFrom<i64>>(r: &mut XerReader, spec: &EnumSpec) -> R
     let raw = spec.entries.iter().find(|e| e.name == ti.name).map(|e| e.value)
         .ok_or_else(|| DecodeError::new(format!("XER ENUMERATED: unknown enum value: {}", ti.name), 0))?;
     T::try_from(raw).map_err(|_| DecodeError::new(format!("invalid ENUMERATED value: {}", ti.name), 0))
+}
+
+/// `EnumSlot`-based counterpart of `xer_decode_enum` (gambas-asn1#681
+/// full migration).
+pub fn xer_decode_enum_into(slot: &mut dyn crate::spec::object::EnumSlot, r: &mut XerReader, spec: &EnumSpec) -> Result<(), DecodeError> {
+    let ti = r.consume_tag();
+    if !ti.self_closing {
+        return Err(DecodeError::new("XER ENUMERATED: expected self-closing enum value tag".to_string(), 0));
+    }
+    let raw = spec.entries.iter().find(|e| e.name == ti.name).map(|e| e.value)
+        .ok_or_else(|| DecodeError::new(format!("XER ENUMERATED: unknown enum value: {}", ti.name), 0))?;
+    if slot.enum_set(raw) {
+        Ok(())
+    } else {
+        Err(DecodeError::new(format!("invalid ENUMERATED value: {}", ti.name), 0))
+    }
 }
 
 

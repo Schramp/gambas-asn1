@@ -171,6 +171,12 @@ macro_rules! define_xer_dispatch {
         pub fn xer_decode_primitive(p: PrimitiveRefMut, r: &mut XerReader) -> Result<(), BerDecodeError> {
             match p { $(PrimitiveRefMut::$variant(x) => x.xer_decode_into(r),)+ }
         }
+        /// This primitive's own natural XER element name (X.693 §8.3.1)
+        /// — used when wrapping a SEQUENCE OF/SET OF element, which has
+        /// no field name of its own to wrap with.
+        pub fn xer_element_name_of(p: PrimitiveRef) -> &'static str {
+            match p { $(PrimitiveRef::$variant(x) => x.xer_element_name(),)+ }
+        }
     };
 }
 for_each_primitive!(define_xer_dispatch);
@@ -198,3 +204,19 @@ macro_rules! define_per_dispatch {
     };
 }
 for_each_primitive!(define_per_dispatch);
+
+macro_rules! define_as_member_ref {
+    ($($variant:ident => $ty:ident,)+) => {
+        $(
+            impl crate::spec::object::AsMemberRef for $ty {
+                fn as_member_ref(&self) -> crate::spec::object::MemberRef<'_> {
+                    crate::spec::object::MemberRef::Primitive(PrimitiveRef::$variant(self))
+                }
+                fn as_member_ref_mut(&mut self) -> crate::spec::object::MemberRefMut<'_> {
+                    crate::spec::object::MemberRefMut::Primitive(PrimitiveRefMut::$variant(self))
+                }
+            }
+        )+
+    };
+}
+for_each_primitive!(define_as_member_ref);

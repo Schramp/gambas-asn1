@@ -237,6 +237,25 @@ impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
     }
 }
 
+/// Reflective `Asn1SeqOf` impl (gambas-asn1#681 full migration) — shared
+/// by every SEQUENCE OF element kind via `AsMemberRef`, never generated
+/// per collection type.
+impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1SeqOf for SeqOf<T> {
+    fn natural_tag(&self) -> Tag {
+        SEQUENCE_TAG
+    }
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    fn get(&self, index: usize) -> crate::spec::object::MemberRef<'_> {
+        self.0[index].as_member_ref()
+    }
+    fn push_default_mut(&mut self) -> crate::spec::object::MemberRefMut<'_> {
+        self.0.push(T::default());
+        self.0.last_mut().unwrap().as_member_ref_mut()
+    }
+}
+
 /// SET OF analogue of `SeqOf<T>` — identical shape, only `ber_natural_tag`
 /// differs (X.680 §26: SET's own universal tag 17, not SEQUENCE's 16 —
 /// see `SeqOf<T>`'s own doc for why that distinction genuinely matters
@@ -320,6 +339,21 @@ impl<T: Asn1Value + Default> Asn1Value for SetOf<T> {
     }
 }
 
+impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1SeqOf for SetOf<T> {
+    fn natural_tag(&self) -> Tag {
+        SET_TAG
+    }
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    fn get(&self, index: usize) -> crate::spec::object::MemberRef<'_> {
+        self.0[index].as_member_ref()
+    }
+    fn push_default_mut(&mut self) -> crate::spec::object::MemberRefMut<'_> {
+        self.0.push(T::default());
+        self.0.last_mut().unwrap().as_member_ref_mut()
+    }
+}
 
 /// Member-loop content of a SEQUENCE encoding, without the outer TLV —
 /// shared by `encode_sequence_tagged` (the top-level tag) and, once a

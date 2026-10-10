@@ -1,11 +1,39 @@
-//! Non-generic JER walker for `spec::object::Asn1Seq` — the JER
-//! counterpart of `ber::object` (gambas-asn1#681 second pass). One
-//! function, shared by every SEQUENCE/SET type.
+//! Non-generic JER walker for every reflective construct kind
+//! (gambas-asn1#681 full migration) — the JER counterpart of
+//! `ber::object`.
 
 use crate::ber::reader::DecodeError;
 use crate::jer::reader::Reader;
-use crate::spec::object::{Asn1Seq, MemberRef, MemberRefMut};
-use crate::spec::primitive::{jer_decode_primitive, jer_encode_primitive};
+use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
+use crate::spec::primitive::{jer_decode_primitive, jer_encode_primitive, PrimitiveRef, PrimitiveRefMut};
+
+fn encode_bare(m: MemberRef, out: &mut String) {
+    match m {
+        MemberRef::Absent => {}
+        MemberRef::Primitive(p) => jer_encode_primitive(p, out),
+        MemberRef::Composite(inner) => encode_seq_into(inner, out),
+        MemberRef::Choice(inner) => encode_choice_into(inner, out),
+        MemberRef::SeqOf(inner) => encode_seqof_into(inner, out),
+        MemberRef::Enumerated(slot, spec) => crate::jer::enumerated::jer_encode_enum(out, spec, slot.enum_get()),
+        MemberRef::Base64(x) => jer_encode_primitive(PrimitiveRef::OctetString(x), out),
+    }
+}
+
+fn decode_bare(m: MemberRefMut, r: &mut Reader) -> Result<(), DecodeError> {
+    match m {
+        MemberRefMut::Absent => Ok(()),
+        MemberRefMut::Primitive(p) => jer_decode_primitive(p, r),
+        MemberRefMut::Composite(inner) => decode_seq_into(inner, r),
+        MemberRefMut::Choice(inner) => decode_choice_into(inner, r),
+        MemberRefMut::SeqOf(inner) => decode_seqof_into(inner, r),
+        MemberRefMut::Enumerated(slot, spec) => crate::jer::enumerated::jer_decode_enum_into(slot, r, spec),
+        MemberRefMut::Base64(x) => jer_decode_primitive(PrimitiveRefMut::OctetString(x), r),
+    }
+}
+
+// ---------------------------------------------------------------------
+// SEQUENCE / SET
+// ---------------------------------------------------------------------
 
 pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String) {
     let spec = obj.spec();
@@ -22,11 +50,7 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String) {
         out.push('"');
         out.push_str(m.name);
         out.push_str("\":");
-        match member {
-            MemberRef::Absent => unreachable!(),
-            MemberRef::Primitive(p) => jer_encode_primitive(p, out),
-            MemberRef::Composite(inner) => encode_seq_into(inner, out),
-        }
+        encode_bare(member, out);
     }
 }
 
@@ -67,11 +91,7 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Deco
                     r.skip_json_value()?;
                     continue;
                 };
-                match obj.get_member_mut(i) {
-                    MemberRefMut::Absent => {}
-                    MemberRefMut::Primitive(p) => jer_decode_primitive(p, r)?,
-                    MemberRefMut::Composite(inner) => decode_seq_into(inner, r)?,
-                }
+                decode_bare(obj.get_member_mut(i), r)?;
                 seen[i] = true;
             }
         }
@@ -79,6 +99,83 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Deco
     for i in 0..member_count {
         if !seen[i] && !obj.spec().members[i].optional {
             return Err(DecodeError::new(format!("JER: missing required member: {}", obj.spec().members[i].name), r.pos()));
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// CHOICE
+// ---------------------------------------------------------------------
+
+/// `{"altname":value}` — single-key object, self-delimiting like every
+/// other JER value (X.697 §11).
+pub fn encode_choice_into(obj: &dyn Asn1Choice, out: &mut String) {
+    let Some(i) = obj.active_index() else {
+        out.push_str("{}");
+        return;
+    };
+    let alt = &obj.spec().alternatives[i];
+    out.push_str("{\"");
+    out.push_str(alt.name);
+    out.push_str("\":");
+    encode_bare(obj.get_active(), out);
+    out.push('}');
+}
+
+pub fn encode_choice(obj: &dyn Asn1Choice) -> String {
+    let mut out = String::new();
+    encode_choice_into(obj, &mut out);
+    out
+}
+
+pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<(), DecodeError> {
+    r.expect_char(b'{')?;
+    if r.peek_char() == b'}' {
+        r.expect_char(b'}')?;
+        return Ok(());
+    }
+    let key = r.read_json_string()?;
+    r.expect_char(b':')?;
+    for (i, alt) in obj.spec().alternatives.iter().enumerate() {
+        if key == alt.name {
+            decode_bare(obj.select_mut(i), r)?;
+            r.expect_char(b'}')?;
+            return Ok(());
+        }
+    }
+    Err(DecodeError::new(format!("JER: CHOICE: unknown alternative: {key}"), r.pos()))
+}
+
+// ---------------------------------------------------------------------
+// SEQUENCE OF / SET OF
+// ---------------------------------------------------------------------
+
+pub fn encode_seqof_into(obj: &dyn Asn1SeqOf, out: &mut String) {
+    out.push('[');
+    for i in 0..obj.len() {
+        if i > 0 {
+            out.push(',');
+        }
+        encode_bare(obj.get(i), out);
+    }
+    out.push(']');
+}
+
+pub fn decode_seqof_into(obj: &mut dyn Asn1SeqOf, r: &mut Reader) -> Result<(), DecodeError> {
+    r.expect_char(b'[')?;
+    loop {
+        match r.peek_char() {
+            b']' => {
+                r.expect_char(b']')?;
+                break;
+            }
+            b',' => {
+                r.expect_char(b',')?;
+                continue;
+            }
+            0 => return Err(DecodeError::new("JER: unexpected end in array".to_string(), r.pos())),
+            _ => decode_bare(obj.push_default_mut(), r)?,
         }
     }
     Ok(())

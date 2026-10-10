@@ -1,14 +1,50 @@
-//! Non-generic PER walker for `spec::object::Asn1Seq` — the PER
-//! counterpart of `ber::object` (gambas-asn1#681 second pass). Mirrors
-//! `per::sequence`'s preamble-bitmap/extension-bitmap logic exactly
-//! (X.691 §18.1/§18.8), just driven by `Asn1Seq`'s reflective accessors
-//! instead of a generic `SequenceSpec<T>`.
+//! Non-generic PER walker for every reflective construct kind
+//! (gambas-asn1#681 full migration) — the PER counterpart of
+//! `ber::object`. Mirrors `per::sequence`/`per::choice`/`per::seq_of`'s
+//! bit-level logic exactly (X.691 §18/§22/§19-20), just driven by the
+//! reflective accessors instead of generic `*Spec<T>` tables.
 
-use crate::per::length::{get_length, get_nslength, put_length, put_nslength};
+use crate::constraints::Constraints;
+use crate::per::length::{decode_size_field, encode_size_field, get_length, get_nslength, get_nsnn, put_length, put_nslength, put_nsnn};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
-use crate::spec::object::{Asn1Seq, MemberRef, MemberRefMut};
-use crate::spec::primitive::{per_decode_primitive, per_encode_primitive};
+use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
+use crate::spec::primitive::{per_decode_primitive, per_encode_primitive, PrimitiveRef, PrimitiveRefMut};
+
+fn encode_bare(m: MemberRef, c: &Constraints, w: &mut Writer) {
+    match m {
+        MemberRef::Absent => {}
+        MemberRef::Primitive(p) => per_encode_primitive(p, w, c),
+        MemberRef::Composite(inner) => encode_seq_content(inner, w),
+        MemberRef::Choice(inner) => encode_choice_content(inner, w),
+        MemberRef::SeqOf(inner) => encode_seqof_content(inner, c, w),
+        MemberRef::Enumerated(slot, spec) => crate::per::enumerated::encode_enum(w, spec, slot.enum_get()),
+        MemberRef::Base64(x) => per_encode_primitive(PrimitiveRef::OctetString(x), w, c),
+    }
+}
+
+fn decode_bare(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
+    match m {
+        MemberRefMut::Absent => Ok(()),
+        MemberRefMut::Primitive(p) => per_decode_primitive(p, r, c),
+        MemberRefMut::Composite(inner) => decode_seq_content_into(inner, r),
+        MemberRefMut::Choice(inner) => decode_choice_content_into(inner, r),
+        MemberRefMut::SeqOf(inner) => decode_seqof_content_into(inner, c, r),
+        MemberRefMut::Base64(x) => per_decode_primitive(PrimitiveRefMut::OctetString(x), r, c),
+        MemberRefMut::Enumerated(slot, spec) => {
+            let v = crate::per::enumerated::decode_enum(r, spec)?;
+            if slot.enum_set(v) {
+                Ok(())
+            } else {
+                Err(DecodeError::new(format!("PER: invalid ENUMERATED value: {v}"), r.bit_pos()))
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// SEQUENCE / SET
+// ---------------------------------------------------------------------
 
 fn is_present(obj: &dyn Asn1Seq, i: usize) -> bool {
     !matches!(obj.get_member(i), MemberRef::Absent)
@@ -28,11 +64,7 @@ fn access_encode(obj: &dyn Asn1Seq, i: usize, w: &mut Writer) {
     if let Some(reason) = m.per_unsupported {
         panic!("member '{}' not supported: {}", m.name, reason);
     }
-    match obj.get_member(i) {
-        MemberRef::Absent => {}
-        MemberRef::Primitive(p) => per_encode_primitive(p, w, m.constraints),
-        MemberRef::Composite(inner) => encode_seq_content(inner, w),
-    }
+    encode_bare(obj.get_member(i), m.constraints, w);
 }
 
 fn access_decode(obj: &mut dyn Asn1Seq, i: usize, r: &mut Reader) -> Result<(), DecodeError> {
@@ -43,11 +75,7 @@ fn access_decode(obj: &mut dyn Asn1Seq, i: usize, r: &mut Reader) -> Result<(), 
     if let Some(reason) = per_unsupported {
         panic!("member '{}' not supported: {}", obj.spec().members[i].name, reason);
     }
-    match obj.get_member_mut(i) {
-        MemberRefMut::Absent => Ok(()),
-        MemberRefMut::Primitive(p) => per_decode_primitive(p, r, constraints),
-        MemberRefMut::Composite(inner) => decode_seq_content_into(inner, r),
-    }
+    decode_bare(obj.get_member_mut(i), constraints, r)
 }
 
 fn encode_open_type(obj: &dyn Asn1Seq, i: usize, w: &mut Writer) {
@@ -168,5 +196,123 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<
         }
     }
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// CHOICE
+// ---------------------------------------------------------------------
+
+fn choice_root_count(obj: &dyn Asn1Choice) -> usize {
+    let spec = obj.spec();
+    if spec.ext_at >= 0 {
+        spec.ext_at as usize
+    } else {
+        spec.alternatives.len()
+    }
+}
+
+pub fn encode_choice_content(obj: &dyn Asn1Choice, w: &mut Writer) {
+    let Some(def_idx) = obj.active_index() else {
+        return; // codegen-bug backstop: no alternative matched a real generated enum.
+    };
+    let alt = &obj.spec().alternatives[def_idx];
+    if let Some(reason) = alt.per_unsupported {
+        panic!("alternative '{}' not supported: {}", alt.name, reason);
+    }
+    let root_count = choice_root_count(obj);
+    let in_ext = obj.spec().ext_at >= 0 && def_idx >= root_count;
+    let spec = obj.spec();
+    if spec.ext_at >= 0 {
+        w.put_bits(in_ext as u64, 1);
+    }
+    let constraints = alt.constraints;
+    if !in_ext {
+        if spec.range_bits > 0 {
+            w.put_bits(def_idx as u64, spec.range_bits);
+        }
+        encode_bare(obj.get_active(), constraints, w);
+    } else {
+        put_nsnn(w, (def_idx - root_count) as i64);
+        let mut tmp = Writer::new();
+        encode_bare(obj.get_active(), constraints, &mut tmp);
+        tmp.flush();
+        let bytes = tmp.into_bytes();
+        put_length(w, bytes.len());
+        for b in bytes {
+            w.put_bits(b as u64, 8);
+        }
+    }
+}
+
+pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<(), DecodeError> {
+    let root_count = choice_root_count(obj);
+    let spec_ext_at = obj.spec().ext_at;
+    let mut in_ext = false;
+    if spec_ext_at >= 0 {
+        in_ext = r.get_bits(1)? != 0;
+    }
+    if !in_ext {
+        let range_bits = obj.spec().range_bits;
+        let def_idx = if range_bits > 0 { r.get_bits(range_bits)? as usize } else { 0 };
+        if def_idx >= root_count {
+            return Err(DecodeError::new("PER: CHOICE index out of range", r.bit_pos()));
+        }
+        let (per_unsupported, constraints) = {
+            let alt = &obj.spec().alternatives[def_idx];
+            (alt.per_unsupported, alt.constraints)
+        };
+        if let Some(reason) = per_unsupported {
+            panic!("alternative not supported: {reason}");
+        }
+        decode_bare(obj.select_mut(def_idx), constraints, r)
+    } else {
+        let ext_idx = get_nsnn(r)?;
+        let def_idx = root_count + ext_idx as usize;
+        if def_idx >= obj.spec().alternatives.len() {
+            let len = get_length(r)?;
+            for _ in 0..len {
+                r.get_bits(8)?;
+            }
+            return Err(DecodeError::new(
+                "PER: CHOICE extension alternative unknown to this schema (no capture mechanism yet)",
+                r.bit_pos(),
+            ));
+        }
+        let len = get_length(r)?;
+        let mut bytes = Vec::with_capacity(len);
+        for _ in 0..len {
+            bytes.push(r.get_bits(8)? as u8);
+        }
+        let mut inner = Reader::new(&bytes);
+        let (per_unsupported, constraints) = {
+            let alt = &obj.spec().alternatives[def_idx];
+            (alt.per_unsupported, alt.constraints)
+        };
+        if let Some(reason) = per_unsupported {
+            panic!("alternative not supported: {reason}");
+        }
+        decode_bare(obj.select_mut(def_idx), constraints, &mut inner)
+    }
+}
+
+// ---------------------------------------------------------------------
+// SEQUENCE OF / SET OF
+// ---------------------------------------------------------------------
+
+fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Writer) {
+    encode_size_field(w, pc, obj.len());
+    let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
+    for i in 0..obj.len() {
+        encode_bare(obj.get(i), elem, w);
+    }
+}
+
+fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, pc: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
+    let count = decode_size_field(r, pc)?;
+    let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
+    for _ in 0..count {
+        decode_bare(obj.push_default_mut(), elem, r)?;
+    }
     Ok(())
 }
