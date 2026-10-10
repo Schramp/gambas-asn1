@@ -1415,6 +1415,15 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << "        self.0.push(Default::default());\n";
     os << "        self.0.last_mut().unwrap().as_member_ref_mut()\n";
     os << "    }\n";
+    // `Asn1SeqOf::elem_natural_xer_name`'s own doc: `self.0[index]`'s
+    // *own* `Asn1Value::xer_element_name()`, not anything read back off
+    // `get(index)`'s already-unwrapped `MemberRef` — the one piece of
+    // per-element identity that unwrapping to `PrimitiveRef`/
+    // `Base64`/`Utf8` can't carry through for an aliased element type
+    // (e.g. a named INTEGER alias, X.680 §19 — same discard `AsMemberRef`
+    // for a builtin/INTEGER alias already has at the SEQUENCE-member
+    // row, gambas-asn1#681/#682/#683's own fixes).
+    os << "    fn elem_natural_xer_name(&self, index: usize) -> &'static str { asn1cpp_wire::value::Asn1Value::xer_element_name(&self.0[index]) }\n";
     if (spec.elem_xer_name) {
         os << std::format("    fn elem_xer_name(&self) -> ::std::option::Option<&'static str> {{ Some(\"{}\") }}\n", *spec.elem_xer_name);
     }

@@ -163,6 +163,18 @@ pub trait Asn1SeqOf {
     /// Appends one new default-valued element (for decode) and returns a
     /// mutable reference to it.
     fn push_default_mut(&mut self) -> MemberRefMut<'_>;
+    /// Element `index`'s own natural X.693 §12 XER element name — e.g.
+    /// `"TimeslotISCP"` for a named INTEGER-alias element, not generic
+    /// `"INTEGER"`. Deliberately *not* derivable from `get(index)`:
+    /// `MemberRef::Primitive`/`Base64`/`Utf8` have already unwrapped to
+    /// the element's native field by the time `get` returns (same
+    /// `AsMemberRef` unwrap `AccessKind::Primitive`'s `is_explicit`
+    /// branch and `MemberRef::Base64`'s own doc describe for a SEQUENCE
+    /// member), which is exactly why `xer::object::encode_seqof_content`
+    /// can't just call `value::Asn1Value::xer_element_name()` on
+    /// whatever `get(index)` handed back — it needs the *un*-unwrapped
+    /// element's own override, straight from its own `Asn1Value` impl.
+    fn elem_natural_xer_name(&self, index: usize) -> &'static str;
     /// X.693 §12 element identifier (e.g. `xxx SEQUENCE OF id INTEGER`) —
     /// `Some` only for a named top-level SEQUENCE OF/SET OF type that
     /// declared one (`SeqOfSpec::elem_xer_name`, `emit_seq_of_definition`);
