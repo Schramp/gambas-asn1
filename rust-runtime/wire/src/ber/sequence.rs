@@ -240,7 +240,7 @@ impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
 /// Reflective `Asn1SeqOf` impl (gambas-asn1#681 full migration) — shared
 /// by every SEQUENCE OF element kind via `AsMemberRef`, never generated
 /// per collection type.
-impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1SeqOf for SeqOf<T> {
+impl<T: crate::spec::object::AsMemberRef + Asn1Value + Default> crate::spec::object::Asn1SeqOf for SeqOf<T> {
     fn natural_tag(&self) -> Tag {
         SEQUENCE_TAG
     }
@@ -253,6 +253,9 @@ impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1Seq
     fn push_default_mut(&mut self) -> crate::spec::object::MemberRefMut<'_> {
         self.0.push(T::default());
         self.0.last_mut().unwrap().as_member_ref_mut()
+    }
+    fn elem_natural_xer_name(&self, index: usize) -> &'static str {
+        self.0[index].xer_element_name()
     }
 }
 
@@ -339,7 +342,7 @@ impl<T: Asn1Value + Default> Asn1Value for SetOf<T> {
     }
 }
 
-impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1SeqOf for SetOf<T> {
+impl<T: crate::spec::object::AsMemberRef + Asn1Value + Default> crate::spec::object::Asn1SeqOf for SetOf<T> {
     fn natural_tag(&self) -> Tag {
         SET_TAG
     }
@@ -352,6 +355,9 @@ impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1Seq
     fn push_default_mut(&mut self) -> crate::spec::object::MemberRefMut<'_> {
         self.0.push(T::default());
         self.0.last_mut().unwrap().as_member_ref_mut()
+    }
+    fn elem_natural_xer_name(&self, index: usize) -> &'static str {
+        self.0[index].xer_element_name()
     }
 }
 

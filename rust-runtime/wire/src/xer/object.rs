@@ -6,7 +6,7 @@
 
 use crate::ber::reader::DecodeError;
 use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
-use crate::spec::primitive::{xer_decode_primitive, xer_element_name_of, xer_encode_primitive, PrimitiveRef, PrimitiveRefMut};
+use crate::spec::primitive::{xer_decode_primitive, xer_encode_primitive, PrimitiveRef, PrimitiveRefMut};
 use crate::value::Asn1Value;
 use crate::xer::reader::XerReader;
 use crate::xer::writer::{indent, write_close_tag, write_open_tag};
@@ -244,7 +244,15 @@ fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize) {
                 out.push_str(&indent(depth + 1));
                 out.push_str("<NULL/>");
             }
-            MemberRef::Primitive(p) => encode_wrapped(name_override.unwrap_or_else(|| xer_element_name_of(*p)), el, out, depth + 1),
+            // `obj.elem_natural_xer_name(i)`, not `xer_element_name_of(*p)`:
+            // `p`/`x` here are already unwrapped to the element's native
+            // field (`AsMemberRef`'s own doc) — for an aliased element
+            // (a named INTEGER/builtin alias, X.680 §19) that's the
+            // *wrapped* type's generic name ("INTEGER"), not the alias's
+            // own override ("TimeslotISCP") — `elem_natural_xer_name`
+            // reads the un-unwrapped element's own `Asn1Value::
+            // xer_element_name()` directly (`Asn1SeqOf`'s own doc).
+            MemberRef::Primitive(_) => encode_wrapped(name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i)), el, out, depth + 1),
             MemberRef::Composite(inner) => {
                 let name = name_override.unwrap_or(inner.spec().name);
                 encode_wrapped(name, el, out, depth + 1)
@@ -255,8 +263,8 @@ fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize) {
                 encode_bare(el, out, depth + 1);
             }
             MemberRef::SeqOf(_) => encode_wrapped(name_override.unwrap_or("SEQUENCE-OF"), el, out, depth + 1),
-            MemberRef::Base64(x) | MemberRef::Utf8(x) => {
-                let name = name_override.unwrap_or_else(|| x.xer_element_name());
+            MemberRef::Base64(_) | MemberRef::Utf8(_) => {
+                let name = name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i));
                 encode_wrapped(name, el, out, depth + 1)
             }
             MemberRef::Absent => unreachable!(),
