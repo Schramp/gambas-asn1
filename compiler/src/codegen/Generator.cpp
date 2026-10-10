@@ -2025,6 +2025,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
                     if (*rbt != ast::BuiltinType::Integer && *rbt != ast::BuiltinType::Enumerated) {
                         row.ref_builtin_alias = *rbt;
                         row.ref_xer_encoding = resolved->xer_encoding;
+                        row.ref_constraints_owner = resolved_name_for_ref(resolved->name, current_module_);
                     }
                 }
             }
@@ -2279,6 +2280,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             bool ref_is_sequence_or_set = false;
             bool ref_is_seq_of = false;
             std::optional<ast::BuiltinType> ref_builtin_alias;
+            std::string ref_constraints_owner;
         };
         std::vector<AltRow> rows;
 
@@ -2335,6 +2337,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             bool alt_ref_is_sequence_or_set = false;
             bool alt_ref_is_seq_of = false;
             std::optional<ast::BuiltinType> alt_ref_builtin_alias;
+            std::string alt_ref_constraints_owner;
             if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
                 mbuiltin = *bt;
                 if (*bt == ast::BuiltinType::Integer) alt_storage_kind = classify_integer_storage(*m);
@@ -2362,6 +2365,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                             // identical exclusion.
                             if (*rbt != ast::BuiltinType::Integer && *rbt != ast::BuiltinType::Enumerated) {
                                 alt_ref_builtin_alias = *rbt;
+                                alt_ref_constraints_owner = resolved_name_for_ref(resolved->name, current_module_);
                             }
                         }
                     }
@@ -2381,7 +2385,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             rows.push_back({ m->name, tdref, alt_type, accessor_name_of.at(m), pr_name_of.at(m),
                              is_explicit, tag_ctx_num, mbuiltin, alt_storage_kind, resolved_tag,
                              alt_ref_kind, alt_ref_storage_kind, alt_ref_is_sequence_or_set, alt_ref_is_seq_of,
-                             alt_ref_builtin_alias });
+                             alt_ref_builtin_alias, alt_ref_constraints_owner });
             ++auto_tag_num;
           }
         }
@@ -2402,6 +2406,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.ref_is_sequence_or_set = r.ref_is_sequence_or_set;
             alt.ref_is_seq_of = r.ref_is_seq_of;
             alt.ref_builtin_alias = r.ref_builtin_alias;
+            alt.ref_constraints_owner = r.ref_constraints_owner;
             spec.alternatives.push_back(std::move(alt));
         }
 
