@@ -5,7 +5,7 @@
 use crate::ber::reader::DecodeError;
 use crate::jer::reader::Reader;
 use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
-use crate::spec::primitive::{jer_decode_primitive, jer_encode_primitive, PrimitiveRef, PrimitiveRefMut};
+use crate::spec::primitive::{jer_decode_primitive, jer_encode_primitive};
 
 fn encode_bare(m: MemberRef, out: &mut String) {
     match m {
@@ -15,8 +15,6 @@ fn encode_bare(m: MemberRef, out: &mut String) {
         MemberRef::Choice(inner) => encode_choice_into(inner, out),
         MemberRef::SeqOf(inner) => encode_seqof_into(inner, out),
         MemberRef::Enumerated(slot, spec) => crate::jer::enumerated::jer_encode_enum(out, spec, slot.enum_get()),
-        MemberRef::Base64(x) => jer_encode_primitive(PrimitiveRef::OctetString(x), out),
-        MemberRef::Utf8(x) => jer_encode_primitive(PrimitiveRef::OctetString(x), out),
     }
 }
 
@@ -28,8 +26,6 @@ fn decode_bare(m: MemberRefMut, r: &mut Reader) -> Result<(), DecodeError> {
         MemberRefMut::Choice(inner) => decode_choice_into(inner, r),
         MemberRefMut::SeqOf(inner) => decode_seqof_into(inner, r),
         MemberRefMut::Enumerated(slot, spec) => crate::jer::enumerated::jer_decode_enum_into(slot, r, spec),
-        MemberRefMut::Base64(x) => jer_decode_primitive(PrimitiveRefMut::OctetString(x), r),
-        MemberRefMut::Utf8(x) => jer_decode_primitive(PrimitiveRefMut::OctetString(x), r),
     }
 }
 

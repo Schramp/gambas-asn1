@@ -28,6 +28,22 @@ use crate::spec::choice::{BerDispatch, BerTagging};
 use crate::spec::enumerated::EnumSpec;
 use crate::spec::primitive::{PrimitiveRef, PrimitiveRefMut};
 
+/// X.693 §21 ENCODING-CONTROL XER override for an OCTET STRING member —
+/// table data (gambas-asn1#686), read by `xer::object`'s walker instead
+/// of a separate `MemberRef` shape. Applies equally whether the
+/// instruction landed on the member's own inline type or on a named
+/// alias it merely references (`AsMemberRef` for either unwraps to the
+/// same plain `OctetString`, so the instruction has to come from the
+/// row, not from the unwrapped value — see `MemberMeta::xer_instruction`'s
+/// own doc).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum XerInstruction {
+    #[default]
+    Default,
+    Base64,
+    Utf8,
+}
+
 /// One member's wire-framing + validation facts — plain data, no
 /// closures, so it can be a single non-generic type shared by every
 /// SEQUENCE/SET.
@@ -37,6 +53,14 @@ pub struct MemberMeta {
     pub optional: bool,
     pub ber: BerTagging,
     pub constraints: &'static crate::constraints::Constraints,
+    /// `XerInstruction::Default` for every kind but a BASE64/UTF8-marked
+    /// OCTET STRING member (`RustBackend`'s `xer_instruction` lambda) —
+    /// `xer::object::encode_seq_content`/`decode_seq_content_into` read
+    /// this directly instead of matching a `MemberRef::Base64`/`Utf8`
+    /// variant (there isn't one; `MemberRef::Primitive(PrimitiveRef::
+    /// OctetString(..))` covers this member the same as any other OCTET
+    /// STRING).
+    pub xer_instruction: XerInstruction,
     pub per_unsupported: Option<&'static str>,
 }
 
@@ -76,26 +100,6 @@ pub enum MemberRef<'a> {
     Choice(&'a dyn Asn1Choice),
     SeqOf(&'a dyn Asn1SeqOf),
     Enumerated(&'a dyn EnumSlot, &'static EnumSpec),
-    /// An OCTET STRING member with the X.693 §21 BASE64 XER instruction
-    /// (`ast::XerEncoding::Base64`) — identical to `Primitive(PrimitiveRef::
-    /// OctetString(..))` for BER/JER/PER; only XER's own walker treats
-    /// this variant differently (`xer_encode_base64`/`xer_decode_into_base64`
-    /// instead of the plain form). A separate variant rather than a flag
-    /// on `Primitive` since the shared `xer_encode_primitive` dispatcher
-    /// has no per-member hook to carry that instruction through. Applies
-    /// equally whether the BASE64 instruction landed on the member's own
-    /// inline type or on a named OCTET STRING alias the member merely
-    /// references (`RustBackend`'s `classify`/`classify_alt` resolve
-    /// either source to this same variant) — `AsMemberRef` for such an
-    /// alias (`emit_builtin_alias_definition`) still unwraps to `&self.0`
-    /// like any other builtin alias, so the instruction has to be
-    /// re-derived at the member/alternative row, not read back off the
-    /// unwrapped `OctetString` (which carries no memory of which alias
-    /// produced it).
-    Base64(&'a crate::octet_string::OctetString),
-    /// Same shape as `Base64`, for the X.693 §21 UTF8 XER instruction
-    /// (`ast::XerEncoding::Utf8`) / legacy `::= utf8`.
-    Utf8(&'a crate::octet_string::OctetString),
 }
 
 pub enum MemberRefMut<'a> {
@@ -105,8 +109,6 @@ pub enum MemberRefMut<'a> {
     Choice(&'a mut dyn Asn1Choice),
     SeqOf(&'a mut dyn Asn1SeqOf),
     Enumerated(&'a mut dyn EnumSlot, &'static EnumSpec),
-    Base64(&'a mut crate::octet_string::OctetString),
-    Utf8(&'a mut crate::octet_string::OctetString),
 }
 
 /// Purely reflective SEQUENCE/SET interface — see module doc. Every

@@ -12,7 +12,7 @@ use crate::ber::tag::Tag;
 use crate::ber::writer::{write_explicit, write_primitive, write_tagged};
 use crate::spec::choice::BerTagging;
 use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
-use crate::spec::primitive::{ber_decode_primitive, ber_encode_primitive, PrimitiveRef, PrimitiveRefMut};
+use crate::spec::primitive::{ber_decode_primitive, ber_encode_primitive};
 
 /// Encodes one member/alternative/element value under `framing` — the
 /// one place that dispatches on `MemberRef`'s kind, shared by the
@@ -45,8 +45,6 @@ fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec<u8>) {
                 BerTagging::Unsupported(reason) => panic!("member not supported: {reason}"),
             }
         }
-        MemberRef::Base64(x) => ber_encode_primitive(PrimitiveRef::OctetString(x), framing, out),
-        MemberRef::Utf8(x) => ber_encode_primitive(PrimitiveRef::OctetString(x), framing, out),
         MemberRef::Enumerated(slot, _spec) => {
             let v = slot.enum_get();
             match framing {
@@ -65,8 +63,6 @@ fn decode_member_ref(m: MemberRefMut, framing: BerTagging, r: &mut Reader) -> Re
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Primitive(p) => ber_decode_primitive(p, framing, r),
         MemberRefMut::Composite(inner) => decode_composite_member(inner, framing, r),
-        MemberRefMut::Base64(x) => ber_decode_primitive(PrimitiveRefMut::OctetString(x), framing, r),
-        MemberRefMut::Utf8(x) => ber_decode_primitive(PrimitiveRefMut::OctetString(x), framing, r),
         MemberRefMut::Choice(inner) => match framing {
             BerTagging::Explicit(tag) => {
                 let tlv = r.read_tlv()?;
@@ -379,6 +375,7 @@ mod tests {
         optional: false,
         ber: BerTagging::Delegate,
         constraints: &UNCONSTRAINED,
+        xer_instruction: crate::spec::object::XerInstruction::Default,
         per_unsupported: None,
     }];
 
@@ -426,9 +423,9 @@ mod tests {
     }
 
     static OUTER_MEMBERS: [MemberMeta; 3] = [
-        MemberMeta { name: "y", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, per_unsupported: None },
-        MemberMeta { name: "inner", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, per_unsupported: None },
-        MemberMeta { name: "maybe", tag: INTEGER_TAG, optional: true, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, per_unsupported: None },
+        MemberMeta { name: "y", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, per_unsupported: None },
+        MemberMeta { name: "inner", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, per_unsupported: None },
+        MemberMeta { name: "maybe", tag: INTEGER_TAG, optional: true, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, per_unsupported: None },
     ];
 
     static OUTER_SPEC: SequenceSpec = SequenceSpec {
