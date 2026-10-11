@@ -506,14 +506,11 @@ macro_rules! fixed_width_integer {
             }
 
             fn xer_encode(&self, out: &mut String, _depth: usize) {
-                out.push_str(&self.to_string());
+                crate::xer::integer::encode(self.0, out);
             }
 
             fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-                let text = r.read_text_content();
-                self.0 = text.trim().parse::<$prim>().map_err(|_| {
-                    DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
-                })?;
+                self.0 = crate::xer::integer::decode(r)?;
                 Ok(())
             }
 
@@ -572,14 +569,11 @@ impl Asn1Value for crate::integer::BigInteger {
     }
 
     fn xer_encode(&self, out: &mut String, _depth: usize) {
-        out.push_str(&self.to_string());
+        crate::xer::integer::encode(self.0, out);
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        let text = r.read_text_content();
-        self.0 = text.trim().parse::<i128>().map_err(|_| {
-            DecodeError::new(format!("XER: invalid INTEGER value: {text}"), 0)
-        })?;
+        self.0 = crate::xer::integer::decode(r)?;
         Ok(())
     }
 
@@ -711,23 +705,11 @@ impl Asn1Value for crate::null::Null {
     // `"NULL"` — see the trait default's own doc for why `name_override`
     // is always `None` here in practice anyway).
     fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, _name_override: Option<&str>) {
-        out.push('\n');
-        out.push_str(&crate::xer::writer::indent(depth + 1));
-        out.push_str("<NULL/>");
+        crate::xer::null::encode_seqof_element(out, depth);
     }
 
     fn xer_decode_into_seqof_element(&mut self, r: &mut XerReader, _name_override: Option<&str>) -> Result<(), DecodeError> {
-        let ti = r.consume_tag();
-        if ti.name != "NULL" || ti.closing {
-            return Err(DecodeError::new("XER: expected <NULL>".to_string(), 0));
-        }
-        if !ti.self_closing {
-            let close = r.consume_tag();
-            if !close.closing || close.name != "NULL" {
-                return Err(DecodeError::new("XER: expected </NULL>".to_string(), 0));
-            }
-        }
-        Ok(())
+        crate::xer::null::decode_seqof_element(r)
     }
 
     /// X.691 §14: contributes zero bits to the encoding either direction —
