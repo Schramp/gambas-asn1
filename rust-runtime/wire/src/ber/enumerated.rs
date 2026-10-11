@@ -94,8 +94,8 @@ pub fn xer_decode_enum<T: TryFrom<i64>>(r: &mut XerReader, spec: &EnumSpec) -> R
     T::try_from(raw).map_err(|_| DecodeError::new(format!("invalid ENUMERATED value: {}", ti.name), 0))
 }
 
-/// `EnumSlot`-based counterpart of `xer_decode_enum` (gambas-asn1#681
-/// full migration).
+/// `EnumSlot`-based counterpart of `xer_decode_enum`, for the
+/// reflective `Asn1Seq`/`Asn1Choice` member-decode path.
 pub fn xer_decode_enum_into(slot: &mut dyn crate::spec::object::EnumSlot, r: &mut XerReader, spec: &EnumSpec) -> Result<(), DecodeError> {
     let ti = r.consume_tag();
     if !ti.self_closing {

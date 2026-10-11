@@ -377,17 +377,16 @@ private:
     std::optional<MemberTypeDescriptorSpec> build_member_type_descriptor_spec(
         const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname) const;
     /// @brief True for a directly-embedded SEQUENCE OF/SET OF element worth
-    ///        promoting to a real named type (gambas-asn1#521) instead of an
-    ///        ad hoc per-usage constraint table — a constrained INTEGER
-    ///        element only for now (PR #520's original, confirmed-live
-    ///        scope). Not yet extended to SIZE-able builtins (OCTET STRING/
-    ///        BIT STRING/character strings): build_elem_shape doesn't
-    ///        populate MemberTypeDescriptorSpec::Kind::Sizeable data today
-    ///        (latent until #512/#513 land), and each of those kinds needs
-    ///        its own correct XER tag keyword threaded through promotion
-    ///        (synthetic->xer_name) the way Integer's "INTEGER" is here —
-    ///        left for that follow-up rather than promoting something this
-    ///        pass can't yet verify end-to-end.
+    ///        promoting to a real named type instead of an ad hoc
+    ///        per-usage constraint table — a constrained INTEGER element
+    ///        only. Deliberately not extended to SIZE-able builtins (OCTET
+    ///        STRING/BIT STRING/character strings): `build_elem_shape`
+    ///        doesn't populate `MemberTypeDescriptorSpec::Kind::Sizeable`
+    ///        data for a SEQUENCE OF element today, and each of those
+    ///        kinds needs its own correct XER tag keyword threaded through
+    ///        promotion (synthetic->xer_name) the way Integer's "INTEGER"
+    ///        is here — promoting one before that plumbing exists would
+    ///        produce a type this pass can't verify end-to-end.
     /// @param elem The SEQUENCE OF/SET OF element to check.
     bool is_promotable_seqof_int_elem(const ast::TypeDef& elem) const;
     /// @brief The actual, dedupe-disambiguated synthetic name for member `m`,
@@ -453,10 +452,10 @@ private:
     ///                        natural_tag_spec_for() only when `tag` itself
     ///                        isn't present — the canonical fallback X.691
     ///                        requires for an alternative with no explicit
-    ///                        `[n]` override, previously missing (gambas-
-    ///                        asn1#622): every alternative had collapsed to
-    ///                        the same sentinel key in that case, leaving
-    ///                        them in declaration order instead.
+    ///                        `[n]` override. Without this fallback every
+    ///                        untagged alternative collapses to the same
+    ///                        sentinel key and sorts by declaration order
+    ///                        instead of canonical tag order.
     /// @param apply_auto_tags True when the enclosing module uses AUTOMATIC TAGS.
     /// @param auto_n          Declaration-order position used as tag number when auto-tagging.
     /// @return (class, number) pair; an alternative with no tag at all
