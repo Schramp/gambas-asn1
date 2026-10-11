@@ -12,12 +12,13 @@
 // generated gen/*.cpp for __PDU_TYPE__'s own XER-name string literal
 // rather than assuming any particular transform.
 //
-// Assumes __PDU_TYPE__ is a class-generating kind (SEQUENCE/CHOICE/SET/
-// ENUMERATED — every real message PDU type is one of these), so
-// `__PDU_IDENT__::asn_DEF` resolves. A free-standing alias (raw
-// `asn_DEF_X`, no class) isn't a realistic PDU root and isn't supported
-// by this template — see xval_sweep/targets.txt's own doc on what
-// qualifies.
+// __PDU_DESCRIPTOR__ is `discover_cpp_descriptor_ref`'s own choice
+// (xval_sweep.py) between `__PDU_IDENT__::asn_DEF` (a class-generating
+// kind — SEQUENCE/CHOICE/SET/ENUMERATED, or a named SEQUENCE OF/SET OF
+// with its own real wrapper class) and the free global `asn_DEF_
+// __PDU_IDENT__` (a top-level named SEQUENCE OF/SET OF that compiled
+// to a bare `using` alias instead, gambas-asn1#689's own repro schema
+// being exactly this shape) — auto-detected per target, not assumed.
 #include "type_registry.hpp"
 #include "__PDU_IDENT__.hpp"
 
@@ -25,7 +26,7 @@ namespace {
 struct Registrar {
     Registrar() {
         randgen::register_types({
-            randgen::make_entry<__PDU_IDENT__>("__PDU_TYPE__", __PDU_IDENT__::asn_DEF),
+            randgen::make_entry<__PDU_IDENT__>("__PDU_TYPE__", __PDU_DESCRIPTOR__),
         });
     }
 } registrar;

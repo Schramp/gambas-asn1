@@ -265,7 +265,20 @@ private:
     void compute_reachable(const ast::ParseResult& pr);
     void collect_type_refs(const ast::TypeDef& def, std::vector<std::string>& worklist);
     void generate_type(const ast::TypeDef& def, const ast::Module& mod);
-    void generate_inline_types(const ast::TypeDef& def, const ast::Module& mod);
+    /// @brief Promotes every anonymous composite/collection element nested
+    ///        directly inside `def` (a SEQUENCE/SET/CHOICE's member, or a
+    ///        top-level named SEQUENCE OF/SET OF's own element) to a real
+    ///        named top-level type, recursing to unbounded depth.
+    /// @param def  Mutated in place for the top-level SEQUENCE OF/SET OF
+    ///             case: a promoted anonymous nested element is rewritten
+    ///             to a `TypeRef` pointing at the new type, so every later
+    ///             resolution path (`type_descriptor_ref_spec_for`,
+    ///             `native_member_type_for`) sees an ordinary named
+    ///             reference instead of having to special-case anonymity.
+    /// @param mod  Owning module (tag default, OID for emitted file headers).
+    /// @see X.680 §25/§26 — SEQUENCE OF/SET OF element typing, including
+    ///      unbounded anonymous nesting.
+    void generate_inline_types(ast::TypeDef& def, const ast::Module& mod);
     /// @brief Write the output file(s) for one type definition, driven by a
     ///        TypeOutputSession instead of hardcoding a ".hpp"/".cpp" pair.
     /// @param def  Type definition to emit.
