@@ -276,7 +276,7 @@ struct RealXerHandler final : IXerTypeHandler {
         } else if (std::isinf(d)) {
             os << (d > 0 ? "<PLUS-INFINITY/>" : "<MINUS-INFINITY/>");
         } else if (d == 0.0) {
-            os << '0';
+            os << (std::signbit(d) ? "-0" : "0");
         } else {
             int n = std::snprintf(nullptr, 0, "%.15f", d);
             std::string buf(n + 1, '\0');
