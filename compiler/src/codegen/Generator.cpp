@@ -1662,49 +1662,6 @@ Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRe
     return {};
 }
 
-bool Generator::sequence_set_supports_rust_object(const ast::TypeDef& def) const {
-    auto cached = rust_object_cache_.find(&def);
-    if (cached != rust_object_cache_.end()) return cached->second;
-    if (!rust_object_in_progress_.insert(&def).second) {
-        // Cycle — see this function's own doc for why `true` here is
-        // safe (re-verified on the next, separate call for whichever
-        // type actually completes the fixed point).
-        return true;
-    }
-    bool ok = true;
-    auto [sm_root, sm_ext] = split_members(def);
-    auto check_member = [&](const ast::TypeDef* m) {
-        bool member_ok = false;
-        if (auto* bt = std::get_if<ast::BuiltinType>(&m->body)) {
-            member_ok = (*bt != ast::BuiltinType::Enumerated) &&
-                        !(*bt == ast::BuiltinType::OctetString && m->xer_encoding == ast::XerEncoding::Base64);
-        } else if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
-            if (auto resolved = resolver_.resolve_ref(*tr)) {
-                if (std::holds_alternative<ast::SequenceType>(resolved->body) ||
-                    std::holds_alternative<ast::SetType>(resolved->body)) {
-                    member_ok = sequence_set_supports_rust_object(*resolved);
-                }
-            }
-        } else if (m->is_sequence() || m->is_set()) {
-            member_ok = sequence_set_supports_rust_object(*m);
-        }
-        // Anything else (CHOICE, SEQUENCE OF/SET OF, ENUMERATED by
-        // TypeRef) stays `false` — out of scope for this pass.
-        return member_ok;
-    };
-    for (auto* m : sm_root) {
-        if (!check_member(m)) { ok = false; break; }
-    }
-    if (ok) {
-        for (auto* m : sm_ext) {
-            if (!check_member(m)) { ok = false; break; }
-        }
-    }
-    rust_object_in_progress_.erase(&def);
-    rust_object_cache_[&def] = ok;
-    return ok;
-}
-
 // ---------------------------------------------------------------------------
 // Emit SEQUENCE / SET
 // ---------------------------------------------------------------------------
@@ -2074,8 +2031,6 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         for (auto* m : sm_root) collect(*m, m->is_optional());
         for (auto* m : sm_ext)  collect(*m, /*optional=*/true);
     }
-
-    spec.rust_supports_object = sequence_set_supports_rust_object(def);
 
     return spec;
 }

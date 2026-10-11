@@ -332,6 +332,14 @@ fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
     if obj.extract_unknown_extension().is_some() {
         return Ok(());
     }
+    // DBG_BER_CHOICE (gambas-asn1#685 — restored here after the old
+    // per-type generic `ber::choice` walker it used to live in was
+    // removed as dead scaffolding; silently dropped in that removal
+    // would have been a real feature loss, not just dead-code cleanup).
+    if crate::debug::debug_flags() & crate::debug::DBG_BER_CHOICE != 0 {
+        let alt_tags: Vec<Tag> = obj.spec().ber_tags.iter().map(|d| d.tag).collect();
+        eprintln!("[DBG_BER_CHOICE] no alternative matches peek tag {tag:?} — known tags: {alt_tags:?}");
+    }
     Err(DecodeError::new(format!("unrecognized CHOICE alternative tag {tag:?}"), 0))
 }
 

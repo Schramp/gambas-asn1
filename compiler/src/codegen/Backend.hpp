@@ -703,16 +703,6 @@ struct SequenceSpec : TaggedTypeSpec {
     int         roms_count;
     bool        is_set;         // true -> natural tag is SET, else SEQUENCE
     std::vector<SequenceMemberSpec> members; // root members first, then extension members
-    // Whether every member qualifies for RustBackend's reflective
-    // `Asn1Seq` design (gambas-asn1#681 second pass): a direct builtin
-    // (excluding ENUMERATED) or a TypeRef/inline member resolving to a
-    // SEQUENCE/SET that *itself* also qualifies — computed globally by
-    // Generator (`sequence_set_supports_rust_object`, memoized +
-    // cycle-safe) rather than per-type by the backend, since a member
-    // referencing another SEQUENCE/SET's eligibility depends on that
-    // other type's own members, not just this one's. Read only by
-    // RustBackend; CppBackend ignores it.
-    bool        rust_supports_object = false;
 };
 
 /// @brief Backend-agnostic decision for one CHOICE alternative, built in one
