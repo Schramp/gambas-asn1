@@ -1167,7 +1167,7 @@ impl Asn1Value for crate::real::Real {
         } else if self.is_infinite() {
             out.push_str(if self.0 > 0.0 { "<PLUS-INFINITY/>" } else { "<MINUS-INFINITY/>" });
         } else if self.0 == 0.0 {
-            out.push('0');
+            out.push_str(if self.0.is_sign_negative() { "-0" } else { "0" });
         } else {
             let mut buf = format!("{:.15}", self.0);
             if let Some(dot) = buf.find('.') {
@@ -1763,14 +1763,17 @@ mod tests {
     }
 
     #[test]
-    fn f64_xer_zero_encodes_as_bare_zero() {
+    fn f64_xer_zero_preserves_sign() {
         let mut out = String::new();
         Real(0.0).xer_encode(&mut out, 0);
         assert_eq!(out, "0");
 
+        // X.693 §17.9: -0.0 is distinct decimal text from +0.0, unlike
+        // the special-value keywords (PLUS-INFINITY/NOT-A-NUMBER), which
+        // have no sign-of-zero analogue to lose.
         let mut out2 = String::new();
         Real(-0.0).xer_encode(&mut out2, 0);
-        assert_eq!(out2, "0");
+        assert_eq!(out2, "-0");
     }
 
     #[test]
