@@ -1408,7 +1408,17 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // alongside every builtin/SEQUENCE/SET/CHOICE/ENUMERATED type) is all
     // this needs; no codec method here at all.
     os << std::format("impl asn1cpp_wire::spec::object::Asn1SeqOf for {} {{\n", spec.type_name);
-    os << std::format("    fn natural_tag(&self) -> asn1cpp_wire::Tag {{ {} }}\n", natural_tag);
+    // `tag_expr`, not the bare `natural_tag` — a named top-level
+    // SEQUENCE OF/SET OF type's own `[n]` override (`spec.tag`) must
+    // apply here too (gambas-asn1#688 found this returning the wrong,
+    // un-overridden tag otherwise): `ber_natural_tag` above already uses
+    // `tag_expr` for the exact same reason, and the two must agree —
+    // `ber::object`'s SeqOf-arm `Delegate` fallback (the one case this
+    // method is still genuinely needed for: a SEQUENCE OF/SET OF
+    // *element* that's itself a further-nested SEQUENCE OF/SET OF, which
+    // carries no row of its own to read a literal tag from) calls this
+    // method expecting the type's real natural tag, override included.
+    os << std::format("    fn natural_tag(&self) -> asn1cpp_wire::Tag {{ {} }}\n", tag_expr);
     os << "    fn len(&self) -> usize { self.0.len() }\n";
     os << "    fn get(&self, index: usize) -> asn1cpp_wire::spec::object::MemberRef<'_> { self.0[index].as_member_ref() }\n";
     os << "    fn push_default_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
@@ -1879,6 +1889,26 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // trait-object call to get there.
                     tag_text = format_tag_literal(*m.resolved_tag);
                     ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", tag_text);
+                } else if (kind == AccessKind::SeqOf && m.resolved_tag && !m.is_explicit) {
+                    // IMPLICIT substitution (or no override at all — same
+                    // tag either way, X.680 §25/§26): `m.resolved_tag`
+                    // already holds exactly the tag `Asn1SeqOf::
+                    // natural_tag()` would return at runtime
+                    // (`natural_tag_spec_for`'s seq-of branch, always
+                    // populated — gambas-asn1#688), so there is no reason
+                    // to ask the value for it via `BerTagging::Delegate`
+                    // (which `ber::object`'s SeqOf arm resolves by calling
+                    // `inner.natural_tag()`, a redundant vtable hop for
+                    // information already sitting in this row). `Implicit`
+                    // reproduces the identical wire shape `Delegate` would
+                    // have for this case (both end up writing one TLV
+                    // under this exact tag around the element content) —
+                    // see `natural_tag()`'s own doc for the one case this
+                    // deliberately does *not* cover (EXPLICIT framing's
+                    // inner wrap still needs the dynamic lookup, since
+                    // this row carries no second, "underlying" tag field).
+                    tag_text = format_tag_literal(*m.resolved_tag);
+                    ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Implicit({})", tag_text);
                 } else {
                     // Plain/natural tag. A direct builtin, a named
                     // INTEGER alias, or a SEQUENCE/SET reference all
