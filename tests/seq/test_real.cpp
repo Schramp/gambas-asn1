@@ -104,6 +104,13 @@ int main() {
       check("HasReal{0.0} XER contains <value>0</value>",
             xml_zero.find("<value>0</value>") != std::string::npos); }
 
+    // X.693 §17.9: -0.0's decimal text keeps its sign, unlike the
+    // special-value keywords, which have no sign-of-zero to lose.
+    { HasReal _v; _v.value = Real{-0.0};
+      auto xml_negzero = xer_encode_real(_v);
+      check("HasReal{-0.0} XER contains <value>-0</value>",
+            xml_negzero.find("<value>-0</value>") != std::string::npos); }
+
     { HasReal _v; _v.value = Real{3.14};
       auto xml_pi = xer_encode_real(_v);
       check("HasReal{3.14} XER contains <value>3.14</value>",
