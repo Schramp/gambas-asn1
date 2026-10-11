@@ -82,6 +82,24 @@ impl Asn1Value for Any {
         self.0 = bytes;
         Ok(())
     }
+
+    /// Quoted uppercase hex of the captured bytes — same convention
+    /// `OctetString`'s own JER impl uses (`jer::octet_string`), not the
+    /// trait's default `unimplemented!()`. gambas-asn1#668: the C++ side
+    /// used to assume ANY's captured bytes were already well-formed JSON
+    /// text and pass them through raw, which produced invalid JSON for
+    /// every real caller (nothing in either runtime ever populates ANY
+    /// with actual JSON — RandomFiller/decode both capture raw BER
+    /// bytes). Fixed there to match AnyXerHandler's own hex convention;
+    /// mirrored here from day one rather than inheriting the same gap.
+    fn jer_encode(&self, out: &mut String) {
+        crate::jer::octet_string::encode(&self.0, out);
+    }
+
+    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
+        self.0 = crate::jer::octet_string::decode(r)?;
+        Ok(())
+    }
 }
 
 impl crate::type_tag::TypeTag for Any {
@@ -119,6 +137,18 @@ mod tests {
         let mut r = Reader::new(&bytes);
         let mut got = Any::default();
         got.per_decode_into(&mut r, &crate::constraints::UNCONSTRAINED).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn jer_encodes_as_quoted_hex_and_round_trips() {
+        let v = Any(vec![0x30, 0x03, 0x02, 0x01, 0x2A]);
+        let mut out = String::new();
+        v.jer_encode(&mut out);
+        assert_eq!(out, "\"300302012A\"");
+        let mut r = crate::jer::reader::Reader::new(&out);
+        let mut got = Any::default();
+        got.jer_decode_into(&mut r).unwrap();
         assert_eq!(got, v);
     }
 }
