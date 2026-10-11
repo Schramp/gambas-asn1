@@ -1403,6 +1403,51 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
         cname);
     os << "}\n\n";
 
+    // PDU entry points for a top-level named SEQUENCE OF/SET OF type —
+    // mirrors emit_sequence_definition's/emit_choice_definition's own
+    // `impl {Type} { pub fn encode/decode/encode_xer/... }` block
+    // (gambas-asn1#689's own repro: before this, a top-level SeqOf type
+    // had no self-contained entry points at all, only usable as a member
+    // elsewhere). BER/JER need no extra wrapper (self-delimiting TLV;
+    // plain JSON array respectively — both already exactly match the
+    // ground-truth root form via the plain `Asn1Value` trait default
+    // methods), XER needs the X.693 §8.3.1 document-root wrapper this
+    // type's own bare `xer_encode` doesn't add (`xer::object::encode_value`'s
+    // own doc — the generic form `encode_seq`/`encode_choice` specialize).
+    os << std::format("impl {} {{\n", spec.type_name);
+    os << "    pub fn encode(&self) -> Vec<u8> {\n";
+    os << "        let mut out = Vec::new();\n";
+    os << "        asn1cpp_wire::value::Asn1Value::ber_encode(self, &mut out);\n";
+    os << "        out\n";
+    os << "    }\n\n";
+    os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
+    os << "        let mut v = Self::default();\n";
+    os << "        let mut r = asn1cpp_wire::Reader::new(data);\n";
+    os << "        asn1cpp_wire::value::Asn1Value::ber_decode_into(&mut v, &mut r)?;\n";
+    os << "        Ok(v)\n";
+    os << "    }\n\n";
+    os << "    pub fn encode_xer(&self) -> String {\n";
+    os << "        asn1cpp_wire::xer::object::encode_value(self)\n";
+    os << "    }\n\n";
+    os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
+    os << "        let mut v = Self::default();\n";
+    os << "        let mut r = asn1cpp_wire::xer::reader::XerReader::new(xml);\n";
+    os << "        asn1cpp_wire::xer::object::decode_value_into(&mut v, &mut r)?;\n";
+    os << "        Ok(v)\n";
+    os << "    }\n\n";
+    os << "    pub fn encode_jer(&self) -> String {\n";
+    os << "        let mut out = String::new();\n";
+    os << "        asn1cpp_wire::value::Asn1Value::jer_encode(self, &mut out);\n";
+    os << "        out\n";
+    os << "    }\n\n";
+    os << "    pub fn decode_jer(json: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
+    os << "        let mut v = Self::default();\n";
+    os << "        let mut r = asn1cpp_wire::jer::reader::Reader::new(json);\n";
+    os << "        asn1cpp_wire::value::Asn1Value::jer_decode_into(&mut v, &mut r)?;\n";
+    os << "        Ok(v)\n";
+    os << "    }\n";
+    os << "}\n\n";
+
     // Reflective `Asn1SeqOf` impl (gambas-asn1#681 full migration) — the
     // element type's own `AsMemberRef` impl (emitted unconditionally
     // alongside every builtin/SEQUENCE/SET/CHOICE/ENUMERATED type) is all
