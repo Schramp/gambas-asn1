@@ -1,8 +1,7 @@
-//! Non-generic XER walker for every reflective construct kind
-//! (gambas-asn1#681 full migration) — the XER counterpart of
-//! `ber::object`. No BER tag concept applies here (X.693 names elements
-//! by field, not by wire tag), so `MemberMeta::ber`/`AltMeta::ber` are
-//! simply ignored.
+//! Non-generic XER walker for every reflective construct kind — the
+//! XER counterpart of `ber::object`. No BER tag concept applies here
+//! (X.693 names elements by field, not by wire tag), so
+//! `MemberMeta::ber`/`AltMeta::ber` are simply ignored.
 
 use crate::ber::reader::DecodeError;
 use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut, XerInstruction};
@@ -36,8 +35,8 @@ fn encode_bare(m: MemberRef, out: &mut String, depth: usize) {
 /// *alternative's* own name nests one level further inside, written by
 /// `encode_choice_content`, not instead of this wrapper.
 ///
-/// `instruction`: `MemberMeta::xer_instruction`/`AltMeta::xer_instruction`
-/// (gambas-asn1#686) — table data, read by the *caller*, not a separate
+/// `instruction`: `MemberMeta::xer_instruction` — table data, read by
+/// the *caller*, not a separate
 /// `MemberRef` shape. Only a plain `Primitive(PrimitiveRef::OctetString)`
 /// payload ever has a non-`Default` instruction (`RustBackend`'s
 /// `xer_instruction` lambda only sets one for an OCTET STRING); every
@@ -296,10 +295,11 @@ fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize) {
             // own override ("TimeslotISCP") — `elem_natural_xer_name`
             // reads the un-unwrapped element's own `Asn1Value::
             // xer_element_name()` directly (`Asn1SeqOf`'s own doc).
-            // No per-element XER instruction exists yet (gambas-asn1#687
-            // — elements carry no metadata row at all, X.690 §8.9.2, so
-            // there's nowhere to read BASE64/UTF8 from here even if an
-            // aliased element declared one); always `Default`.
+            // SEQUENCE OF/SET OF elements carry no metadata row at all
+            // (X.690 §8.9.2 — always the element's own natural tag,
+            // repeated), so there's nowhere to read a BASE64/UTF8
+            // override from even if an aliased element declared one;
+            // always `Default`.
             MemberRef::Primitive(_) => encode_wrapped(name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i)), XerInstruction::Default, el, out, depth + 1),
             MemberRef::Composite(inner) => {
                 let name = name_override.unwrap_or(inner.spec().name);
