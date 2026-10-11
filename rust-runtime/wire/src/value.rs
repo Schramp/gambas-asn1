@@ -621,37 +621,12 @@ impl Asn1Value for crate::boolean::Boolean {
     }
 
     fn xer_encode(&self, out: &mut String, _depth: usize) {
-        out.push_str(if self.0 { "<true/>" } else { "<false/>" });
+        crate::xer::boolean::encode(self.0, out);
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        // EXTENDED-XER §10 TextBoolean ("true"/"false" as plain content) is
-        // a non-standard asn1c extension, only accepted in lenient mode —
-        // detect it by trying to read text content first: the standard
-        // empty-element form (`<true/>`/`<false/>`) has none (the reader
-        // sits directly on `<`), so an empty result falls through to the
-        // tag path unchanged.
-        let text = r.read_text_content().trim();
-        if !text.is_empty() {
-            if !r.lenient() {
-                return Err(DecodeError::new("XER BOOLEAN: expected <true/> or <false/>".to_string(), 0));
-            }
-            return match text {
-                "true" => { self.0 = true; Ok(()) }
-                "false" => { self.0 = false; Ok(()) }
-                _ => Err(DecodeError::new("XER BOOLEAN: expected true or false".to_string(), 0)),
-            };
-        }
-        let ti = r.consume_tag();
-        if ti.self_closing && ti.name == "true" {
-            self.0 = true;
-            Ok(())
-        } else if ti.self_closing && ti.name == "false" {
-            self.0 = false;
-            Ok(())
-        } else {
-            Err(DecodeError::new("XER BOOLEAN: expected <true/> or <false/>".to_string(), 0))
-        }
+        self.0 = crate::xer::boolean::decode(r)?;
+        Ok(())
     }
 
     fn jer_encode(&self, out: &mut String) {
@@ -800,102 +775,12 @@ impl Asn1Value for crate::bit_string::BitString {
         Ok(())
     }
 
-    /// Unlike every other primitive in this file, BIT STRING genuinely
-    /// consults `depth`: `BitStringXerHandler` (`runtime/src/XerCodec.cpp`)
-    /// always writes its own content starting on a fresh line, wrapped at
-    /// 64 bits per line, each line at `depth + 1` — the same "children one
-    /// level deeper than my own position" convention every composite in
-    /// this crate uses (`encode_sequence_xer_content`'s own doc, `xer.rs`),
-    /// even though BIT STRING is otherwise a plain primitive. An empty
-    /// value still gets exactly one (blank) line — `BitStringXerHandler`'s
-    /// own `total == 0` branch writes `s.indent(1) << "\n"` unconditionally,
-    /// never an empty `<name></name>`. Ends with a trailing `\n` +
-    /// `indent(depth)`, same reason every other composite content ends
-    /// that way (positions the cursor for the caller's own closing tag).
     fn xer_encode(&self, out: &mut String, depth: usize) {
-        let total = self.bit_count();
-        if total == 0 {
-            out.push('\n');
-            out.push_str(&crate::xer::writer::indent(depth + 1));
-        } else {
-            let mut i = 0;
-            while i < total {
-                out.push('\n');
-                out.push_str(&crate::xer::writer::indent(depth + 1));
-                let line_end = (i + 64).min(total);
-                while i < line_end {
-                    let bit = (self.bytes[i / 8] >> (7 - (i % 8))) & 1;
-                    out.push(if bit == 1 { '1' } else { '0' });
-                    i += 1;
-                }
-            }
-        }
-        out.push('\n');
-        out.push_str(&crate::xer::writer::indent(depth));
+        crate::xer::bit_string::encode(self, out, depth);
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        let text = r.read_text_content();
-        let mut content = String::with_capacity(text.len());
-        let mut has_hex = false;
-        for c in text.chars() {
-            if c.is_whitespace() {
-                continue;
-            }
-            match c {
-                '0' | '1' => {}
-                _ if c.is_ascii_hexdigit() => has_hex = true,
-                _ => return Err(DecodeError::new(format!("XER: invalid BIT STRING character '{c}'"), 0)),
-            }
-            content.push(c);
-        }
-        if has_hex && !r.lenient() {
-            return Err(DecodeError::new(
-                "XER: hex BIT STRING requires lenient mode (non-standard extension)".to_string(),
-                0,
-            ));
-        }
-        if has_hex {
-            // Non-standard asn1c extension: hex pairs, one byte each, 0
-            // unused bits (no production for this in X.680 §21's
-            // XMLBitStringValue grammar).
-            if content.len() % 2 != 0 {
-                return Err(DecodeError::new("XER: odd-length hex BIT STRING".to_string(), 0));
-            }
-            let cbytes = content.as_bytes();
-            let mut bytes = Vec::with_capacity(cbytes.len() / 2);
-            let mut i = 0;
-            while i < cbytes.len() {
-                let hi = (cbytes[i] as char).to_digit(16).unwrap() as u8;
-                let lo = (cbytes[i + 1] as char).to_digit(16).unwrap() as u8;
-                bytes.push((hi << 4) | lo);
-                i += 2;
-            }
-            *self = crate::bit_string::BitString { bytes, unused_bits: 0 };
-            return Ok(());
-        }
-        let mut bytes = Vec::new();
-        let mut cur = 0u8;
-        let mut bit_count = 0usize;
-        for c in content.chars() {
-            let bit = if c == '1' { 1u8 } else { 0u8 };
-            cur = (cur << 1) | bit;
-            bit_count += 1;
-            if bit_count % 8 == 0 {
-                bytes.push(cur);
-                cur = 0;
-            }
-        }
-        let unused_bits = if bit_count % 8 == 0 {
-            0
-        } else {
-            let pad = 8 - (bit_count % 8);
-            cur <<= pad;
-            bytes.push(cur);
-            pad as u8
-        };
-        *self = crate::bit_string::BitString { bytes, unused_bits };
-        Ok(())
+        crate::xer::bit_string::decode_into(self, r)
     }
 
     fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
@@ -975,28 +860,11 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
     }
 
     fn xer_encode(&self, out: &mut String, _depth: usize) {
-        for (i, arc) in self.0.iter().enumerate() {
-            if i > 0 {
-                out.push('.');
-            }
-            out.push_str(&arc.to_string());
-        }
+        crate::xer::oid::encode(self, out);
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        let text = r.read_text_content();
-        let mut arcs = Vec::new();
-        for part in text.trim().split('.') {
-            if part.is_empty() {
-                break;
-            }
-            match part.parse::<u64>() {
-                Ok(v) => arcs.push(v),
-                Err(_) => break,
-            }
-        }
-        *self = crate::oid::ObjectIdentifier(arcs);
-        Ok(())
+        crate::xer::oid::decode_into(self, r)
     }
 
     /// X.697 §8.14: quoted dotted-decimal string, same arc formatting
@@ -1084,28 +952,11 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
     }
 
     fn xer_encode(&self, out: &mut String, _depth: usize) {
-        for (i, arc) in self.0.iter().enumerate() {
-            if i > 0 {
-                out.push('.');
-            }
-            out.push_str(&arc.to_string());
-        }
+        crate::xer::relative_oid::encode(self, out);
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        let text = r.read_text_content();
-        let mut arcs = Vec::new();
-        for part in text.trim().split('.') {
-            if part.is_empty() {
-                break;
-            }
-            match part.parse::<u64>() {
-                Ok(v) => arcs.push(v),
-                Err(_) => break,
-            }
-        }
-        *self = crate::relative_oid::RelativeOid(arcs);
-        Ok(())
+        crate::xer::relative_oid::decode_into(self, r)
     }
 
     fn jer_encode(&self, out: &mut String) {
@@ -1162,53 +1013,11 @@ impl Asn1Value for crate::real::Real {
     }
 
     fn xer_encode(&self, out: &mut String, _depth: usize) {
-        if self.is_nan() {
-            out.push_str("<NOT-A-NUMBER/>");
-        } else if self.is_infinite() {
-            out.push_str(if self.0 > 0.0 { "<PLUS-INFINITY/>" } else { "<MINUS-INFINITY/>" });
-        } else if self.0 == 0.0 {
-            out.push_str(if self.0.is_sign_negative() { "-0" } else { "0" });
-        } else {
-            let mut buf = format!("{:.15}", self.0);
-            if let Some(dot) = buf.find('.') {
-                let mut last = buf.len() - 1;
-                while last > dot + 1 && buf.as_bytes()[last] == b'0' {
-                    last -= 1;
-                }
-                buf.truncate(last + 1);
-            }
-            out.push_str(&buf);
-        }
+        crate::xer::real::encode(self.0, out);
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        let peek = r.peek_tag();
-        if !peek.name.is_empty() {
-            let ti = r.consume_tag();
-            self.0 = match ti.name.as_str() {
-                "PLUS-INFINITY" => f64::INFINITY,
-                "MINUS-INFINITY" => f64::NEG_INFINITY,
-                "NOT-A-NUMBER" => f64::NAN,
-                _ => {
-                    return Err(DecodeError::new(
-                        format!("XER: unknown REAL special value: {}", ti.name),
-                        0,
-                    ))
-                }
-            };
-            if !ti.self_closing {
-                let close = r.consume_tag();
-                if !close.closing || close.name != ti.name {
-                    return Err(DecodeError::new("XER: malformed REAL special value".to_string(), 0));
-                }
-            }
-            return Ok(());
-        }
-        let text = r.read_text_content();
-        let trimmed = text.trim();
-        self.0 = trimmed
-            .parse::<f64>()
-            .map_err(|_| DecodeError::new(format!("XER: invalid REAL value: {trimmed}"), 0))?;
+        self.0 = crate::xer::real::decode(r)?;
         Ok(())
     }
 
