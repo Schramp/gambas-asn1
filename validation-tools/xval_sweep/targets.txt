@@ -4,9 +4,14 @@
 #
 # A target qualifies when: (a) the schema compiles cleanly under asn1cpp
 # for both --target=cpp and --target=rust, (b) the named type is a real
-# top-level PDU/message type (SEQUENCE/CHOICE/SET — not a scalar alias;
-# see template_cpp/src/types.cpp.tmpl's own doc on why), and (c) the type
-# has no unresolved cross-file import outside this line's schema file
+# top-level PDU/message type — SEQUENCE/CHOICE/SET, ENUMERATED, or a
+# named SEQUENCE OF/SET OF (the C++ leg auto-detects whether that
+# compiles to a real wrapper class or a bare `using` alias and picks
+# the right descriptor reference, discover_cpp_descriptor_ref() —
+# xval_sweep.py; a bare scalar alias to a builtin, e.g. `X ::= INTEGER`
+# with no SEQUENCE OF/SET OF involved, still doesn't qualify, no
+# descriptor at all to register), and (c) the type has no unresolved
+# cross-file import outside this line's schema file
 # (multi-file schemas aren't supported by this first pass — see gambas-
 # asn1#434's own "Not included here" note). PDU type names may contain
 # hyphens or other characters that need escaping in the generated C++/
@@ -95,4 +100,5 @@ tests/asn1/rust_size_test.asn1         Blob
 tests/asn1/rust_seqof_size_test.asn1   Basket
 tests/asn1/rust_alphabet_test.asn1     Code
 tests/asn1/rust_seqof_int_per_test.asn1   Bag
+tests/asn1/rust_seqof_of_seqof_test.asn1   Matrix
 tests/tests-asn1c-compiler/33-misc-OK.asn1   T2

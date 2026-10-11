@@ -1311,6 +1311,56 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
         "        self.0 = asn1cpp_wire::per::seq_of::decode_seq_of_content(r, &{0})?;\n        Ok(())\n    }}\n",
         cname);
     os << "}\n\n";
+
+    // PDU entry points for a top-level named SEQUENCE OF/SET OF type —
+    // mirrors this function's own `impl Asn1Value` block's sibling in
+    // emit_sequence_definition/emit_choice_definition (their own
+    // `impl {Type} { pub fn encode/decode/encode_xer/... }` block, driven
+    // by their SequenceSpec<T>/ChoiceSpec<T> table). A SeqOf type has no
+    // such table to drive this from generically, so it goes through its
+    // own already-correct `Asn1Value` impl above directly instead
+    // (gambas-asn1#689 — before this, a top-level SeqOf type had no
+    // self-contained entry points at all, only usable as a member
+    // elsewhere; every existing target that's a SeqOf is member-nested
+    // inside a SEQUENCE, so this gap was latent until a bare top-level
+    // SeqOf PDU root was first exercised). BER/JER need no extra wrapper
+    // (self-delimiting TLV; plain JSON array respectively — both already
+    // exactly match the ground-truth root form via the plain `Asn1Value`
+    // trait default methods), XER needs the X.693 §8.3.1 document-root
+    // wrapper this type's own bare `xer_encode` doesn't add
+    // (`xer::seq_of::encode_value_xer`'s own doc).
+    os << std::format("impl {} {{\n", spec.type_name);
+    os << "    pub fn encode(&self) -> Vec<u8> {\n";
+    os << "        let mut out = Vec::new();\n";
+    os << "        asn1cpp_wire::value::Asn1Value::ber_encode(self, &mut out);\n";
+    os << "        out\n";
+    os << "    }\n\n";
+    os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
+    os << "        let mut v = Self::default();\n";
+    os << "        let mut r = asn1cpp_wire::Reader::new(data);\n";
+    os << "        asn1cpp_wire::value::Asn1Value::ber_decode_into(&mut v, &mut r)?;\n";
+    os << "        Ok(v)\n";
+    os << "    }\n\n";
+    os << "    pub fn encode_xer(&self) -> String {\n";
+    os << "        asn1cpp_wire::xer::seq_of::encode_value_xer(self)\n";
+    os << "    }\n\n";
+    os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
+    os << "        let mut v = Self::default();\n";
+    os << "        asn1cpp_wire::xer::seq_of::decode_value_xer(&mut v, xml)?;\n";
+    os << "        Ok(v)\n";
+    os << "    }\n\n";
+    os << "    pub fn encode_jer(&self) -> String {\n";
+    os << "        let mut out = String::new();\n";
+    os << "        asn1cpp_wire::value::Asn1Value::jer_encode(self, &mut out);\n";
+    os << "        out\n";
+    os << "    }\n\n";
+    os << "    pub fn decode_jer(json: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
+    os << "        let mut v = Self::default();\n";
+    os << "        let mut r = asn1cpp_wire::jer::reader::Reader::new(json);\n";
+    os << "        asn1cpp_wire::value::Asn1Value::jer_decode_into(&mut v, &mut r)?;\n";
+    os << "        Ok(v)\n";
+    os << "    }\n";
+    os << "}\n\n";
 }
 
 /// @brief Is `mtype` a `Vec<T>` (T != u8) reference — a type with no
