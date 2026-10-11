@@ -2904,14 +2904,15 @@ void Generator::emit_seq_of(const ast::TypeDef& def, TypeOutputSession& session)
 /// @brief Pre-generate synthetic types that must be defined before the parent type's header.
 /// @param def  Parent type whose inline member types are to be generated.
 /// @param mod  Owning module.
-void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module& mod) {
+void Generator::generate_inline_types(ast::TypeDef& def, const ast::Module& mod) {
     std::string parent_cname = effective_type_name(def.name, mod.name);
 
     // Handle SEQUENCE OF / SET OF with inline anonymous element
     if (def.is_seq_of() || def.is_set_of()) {
-        const auto& elem = def.is_seq_of()
-            ? *std::get<ast::SequenceOfType>(def.body).element
-            : *std::get<ast::SetOfType>(def.body).element;
+        ast::TypeDefPtr& elem_ptr = def.is_seq_of()
+            ? std::get<ast::SequenceOfType>(def.body).element
+            : std::get<ast::SetOfType>(def.body).element;
+        const auto& elem = *elem_ptr;
         if (elem.is_sequence() || elem.is_choice() || elem.is_set()) {
             bool was_anon = elem.name.empty();
             std::string synth_name = backend_.synthetic_name(parent_cname, was_anon ? "Anon" : elem.name);
@@ -2929,6 +2930,43 @@ void Generator::generate_inline_types(const ast::TypeDef& def, const ast::Module
                 current_type_ = synth_name;
                 emit_type_files(synth_name, *synthetic, mod);
             }
+        } else if (elem.is_seq_of() || elem.is_set_of()) {
+            // Anonymous nested SEQUENCE OF/SET OF element directly inside a
+            // *top-level* named SEQUENCE OF/SET OF (`Matrix ::= SEQUENCE OF
+            // SEQUENCE OF INTEGER`, both levels unnamed below the root).
+            // Mirrors the member-nested treatment further down this
+            // function (same construct, one level removed from a SEQUENCE
+            // member) — gambas-asn1#689: without this, type_descriptor_ref_
+            // spec_for's own is_seq_of()/is_set_of() branch (anonymous-def
+            // case) recurses straight through this level to the innermost
+            // element's descriptor, corrupting the C++ SeqOfSpec::element
+            // pointer and leaving Rust's generated field as a bare,
+            // non-Asn1Value-implementing Vec<Vec<T>>.
+            //
+            // Promote to a real named type, then rewrite this level's own
+            // element to a TypeRef pointing at it — same as the member-
+            // nested branch's seqof_td rewrite — so every resolution path
+            // (type_descriptor_ref_spec_for, native_member_type_for) takes
+            // its already-correct named-type branch from here on, same as
+            // asn1c's own ground-truth behavior (always synthesizes a real
+            // intermediate type for this shape, confirmed by inspecting its
+            // generated code: never a raw flattened/skipped reference).
+            bool was_anon = elem.name.empty();
+            std::string elem_type_name = backend_.synthetic_name(parent_cname, was_anon ? "Anon" : elem.name);
+            seq_of_synthetic_names_.insert(elem_type_name);
+            if (!generated_names_.count(elem_type_name)) {
+                generated_names_.insert(elem_type_name);
+                auto synthetic = std::make_shared<ast::TypeDef>(elem);
+                synthetic->name = elem_type_name;
+                synthetic->origin_label = was_anon ? def.name : elem.name;
+                if (was_anon) synthetic->xer_name = elem.is_seq_of() ? "SEQUENCE" : "SET";
+                generate_inline_types(*synthetic, mod);
+                current_type_ = elem_type_name;
+                emit_type_files(elem_type_name, *synthetic, mod);
+            }
+            auto named_elem = std::make_shared<ast::TypeDef>();
+            named_elem->body = ast::TypeRef{"", elem_type_name, {}, ""};
+            elem_ptr = named_elem;
         }
         return;
     }

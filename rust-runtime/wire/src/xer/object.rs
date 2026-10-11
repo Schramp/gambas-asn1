@@ -92,6 +92,31 @@ pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut String, depth: usize) {
     encode_seq_content(obj, out, depth);
 }
 
+/// X.693 §8.3.1 document-root wrapper for any top-level `Asn1Value` —
+/// `encode_seq`/`encode_choice` below are this same shape specialized to
+/// `Asn1Seq`/`Asn1Choice`; a top-level named SEQUENCE OF/SET OF type has
+/// neither (its own `xer_encode` — `encode_seq_of_xer` — only writes the
+/// per-element content, same "no wrapper tag of its own" convention
+/// every kind's bare `xer_encode` follows, `encode_bare`'s own doc), so
+/// it's the one top-level kind that needs this generic form instead.
+pub fn encode_value(obj: &dyn Asn1Value) -> String {
+    let mut out = String::new();
+    write_open_tag(&mut out, obj.xer_element_name());
+    obj.xer_encode(&mut out, 0);
+    write_close_tag(&mut out, obj.xer_element_name());
+    out.push('\n');
+    out
+}
+
+/// Decode counterpart of `encode_value`.
+pub fn decode_value_into(obj: &mut dyn Asn1Value, r: &mut XerReader) -> Result<(), DecodeError> {
+    let name = obj.xer_element_name();
+    r.consume_open_tag(name)?;
+    obj.xer_decode_into(r)?;
+    r.consume_close_tag(name)?;
+    Ok(())
+}
+
 pub fn encode_seq(obj: &dyn Asn1Seq) -> String {
     let mut out = String::new();
     write_open_tag(&mut out, obj.spec().name);
