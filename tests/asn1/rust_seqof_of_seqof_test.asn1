@@ -1,0 +1,27 @@
+-- PER/XER cross-validation fixture for a doubly-nested SEQUENCE OF
+-- (SEQUENCE OF SEQUENCE OF), surfacing gambas-asn1#689: the anonymous
+-- *middle* collection level currently gets no descriptor/promotion of
+-- its own in either backend — confirmed by inspecting generated code
+-- directly: asn1cpp's SeqOfSpec::element for the OUTER type points
+-- straight at the INNERMOST INTEGER's descriptor, skipping the middle
+-- SEQUENCE OF level entirely. This is Generator.cpp's own
+-- type_descriptor_ref_spec_for (shared, backend-agnostic), not a
+-- RustBackend-only bug — CppBackend's generated asn_SPC_Matrix table
+-- has the identical wrong `&asn_DEF_Integer` element pointer.
+--
+-- asn1c (ground truth) does not have this gap: it always synthesizes
+-- a real named intermediate type for this shape (confirmed:
+-- `Matrix__Matrix_Member`, its own full asn_TYPE_descriptor_t with
+-- its own member table) — never a raw flattened/skipped reference.
+--
+-- SIZE/range constraints at *both* levels deliberately, so a wrong
+-- `.element` reference (the innermost INTEGER's constraint read where
+-- the middle SEQUENCE OF's own element constraint belongs, or the
+-- reverse) produces an observably wrong PER encoding — not just a
+-- cosmetic naming/XER-tag difference.
+
+NestedSeqOfTest DEFINITIONS ::= BEGIN
+
+    Matrix ::= SEQUENCE (SIZE(1..3)) OF SEQUENCE (SIZE(1..4)) OF INTEGER (0..15)
+
+END
