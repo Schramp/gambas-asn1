@@ -494,9 +494,8 @@ struct TaggedMemberSpec {
     // is specifically a SEQUENCE or SET (never CHOICE, never a named
     // SEQUENCE OF/SET OF) — `RefTargetKind::Other` alone collapses all
     // four of those into one answer, which isn't enough for
-    // RustBackend::MemberAccess::Object (gambas-asn1#681 second pass) to
-    // know whether the target type implements `Asn1Seq` (SEQUENCE/SET
-    // only) or not.
+    // `RustBackend`'s `AccessKind` classification to know whether the
+    // target type implements `Asn1Seq` (SEQUENCE/SET only) or not.
     bool ref_is_sequence_or_set = false;
     // Meaningful only when ref_kind == Other: true when the member's
     // class-typed target is a *named* SEQUENCE OF/SET OF type (its own
@@ -504,8 +503,8 @@ struct TaggedMemberSpec {
     // other half of the distinction `ref_is_sequence_or_set` draws:
     // `RefTargetKind::Other` alone can't tell a named SEQUENCE OF/SET OF
     // reference apart from a named CHOICE reference, which
-    // RustBackend::classify (gambas-asn1#681 full migration) needs to
-    // route through `Asn1SeqOf` rather than `Asn1Choice`. Never true for
+    // `RustBackend`'s access classification needs to route through
+    // `Asn1SeqOf` rather than `Asn1Choice`. Never true for
     // a direct inline SEQUENCE/CHOICE/SET member (those always have
     // `ref_is_sequence_or_set` answer the question instead, or are
     // SeqOfKind::SeqOf/SetOf at the member level, not this flag).
@@ -519,9 +518,9 @@ struct TaggedMemberSpec {
     // above). `classify_typeref_for_per`'s own `Other` return for this
     // case already confirms the target has a real `Asn1Value`/`PerValue`
     // impl; this field additionally carries *which* builtin it wraps, so
-    // RustBackend's reflective access classification (gambas-asn1#681
-    // full migration) can route it through `Asn1Seq`/`MemberRef::
-    // Primitive` the same way a direct builtin member would (unwrapping
+    // `RustBackend`'s reflective access classification can route it
+    // through `Asn1Seq`/`MemberRef::Primitive` the same way a direct
+    // builtin member would (unwrapping
     // one newtype level — the alias is never itself one of
     // `PrimitiveRef`'s 26 fixed variants, only its wrapped field is).
     std::optional<ast::BuiltinType> ref_builtin_alias;
@@ -839,12 +838,11 @@ public:
     ///        identifier (Rust: the crate-relative module name a type's
     ///        own generated file is declared under).
     /// @note Deliberately the identity function for every backend, not a
-    ///       separately-styled name (gambas-asn1#597/#523: an earlier Rust
-    ///       implementation snake_cased this — `to_snake_case` folds case,
-    ///       not just the hyphen/separator folding `type_name` already
-    ///       does, so two distinct, already-unique type identifiers could
-    ///       still collide in that more lossy namespace, e.g.
-    ///       `SIGNED_REAL` vs `SignedREAL`). Module and type identifiers
+    ///       separately-styled name: `to_snake_case` folds case, not just
+    ///       the hyphen/separator folding `type_name` already does, so
+    ///       two distinct, already-unique type identifiers could still
+    ///       collide in that more lossy namespace, e.g.
+    ///       `SIGNED_REAL` vs `SignedREAL`. Module and type identifiers
     ///       live in separate Rust namespaces, so reusing the type name
     ///       verbatim as its own module name is valid (`mod Foo { pub
     ///       struct Foo { ... } }`) and needs no non-snake-case lint

@@ -158,7 +158,7 @@ public:
     // "one file per type" layout) reached only when that TypeRef's target
     // carries no inline constraint of its own at this call site (a plain
     // reference to a named, possibly-constrained type — e.g. a SEQUENCE OF
-    // element promoted out to its own type by gambas-asn1#521, or a
+    // element promoted out to its own named top-level type, or a
     // hand-written `Elem ::= INTEGER (0..15)`): `crate::{name}::{name}`
     // (module-escaped, type name itself never is — mirrors
     // `emit_seq_of_definition`'s own `{Synth}_CONSTRAINTS` cross-module
