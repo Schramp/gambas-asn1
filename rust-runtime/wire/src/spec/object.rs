@@ -1,6 +1,6 @@
-//! Reflective, non-generic member access for every construct kind
-//! (gambas-asn1#681, full migration). "Codec uses the type," not "type
-//! has a codec": none of the traits here — `Asn1Seq`, `Asn1Choice`,
+//! Reflective, non-generic member access for every construct kind.
+//! "Codec uses the type," not "type has a codec": none of the traits
+//! here — `Asn1Seq`, `Asn1Choice`,
 //! `Asn1SeqOf`, `EnumSlot` — carry a single codec-specific method, not
 //! `ber_encode`, not `xer_encode`, nothing. Each one only answers
 //! structural questions ("how many members", "give me member `i`", "which
@@ -13,11 +13,12 @@
 //! one of these traits never requires any other codec's logic to exist
 //! for that type, since the vtable itself holds nothing codec-specific.
 //!
-//! Why this (and not per-member codec closures, #675's original shape,
-//! kept only historically): storing a closure as data — even one nobody
-//! calls at runtime — is enough to keep it, and everything it calls,
-//! linked. A purely reflective vtable has no such closures to store.
-//! Every generated type now implements exactly one of `Asn1Seq`
+//! Member access is deliberately plain-data reflection, not stored
+//! per-member codec closures: storing a closure as data — even one
+//! nobody calls at runtime — is enough to keep it, and everything it
+//! calls, linked into the binary. A purely reflective vtable has no
+//! such closures to store. Every generated type implements exactly
+//! one of `Asn1Seq`
 //! (SEQUENCE/SET), `Asn1Choice` (CHOICE), or is a leaf (a builtin
 //! primitive via `PrimitiveRef`/`PrimitiveRefMut`, or ENUMERATED via
 //! `EnumSlot`); `Asn1SeqOf` is implemented generically once, by `SeqOf<V>`/
@@ -29,8 +30,8 @@ use crate::spec::enumerated::EnumSpec;
 use crate::spec::primitive::{PrimitiveRef, PrimitiveRefMut};
 
 /// X.693 §21 ENCODING-CONTROL XER override for an OCTET STRING member —
-/// table data (gambas-asn1#686), read by `xer::object`'s walker instead
-/// of a separate `MemberRef` shape. Applies equally whether the
+/// table data, read directly by `xer::object`'s walker rather than a
+/// separate `MemberRef` shape. Applies equally whether the
 /// instruction landed on the member's own inline type or on a named
 /// alias it merely references (`AsMemberRef` for either unwraps to the
 /// same plain `OctetString`, so the instruction has to come from the

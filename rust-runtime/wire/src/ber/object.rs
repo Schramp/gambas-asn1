@@ -1,5 +1,5 @@
 //! Non-generic BER walker for every reflective construct kind
-//! (gambas-asn1#681, full migration — see `spec::object`'s own doc).
+//! (see `spec::object`'s own doc for the trait design this drives).
 //! One function per operation per kind, shared by every type of that
 //! kind in the program: calling any of them never needs a fresh
 //! monomorphization per concrete type, so a BER-only caller never has
@@ -332,10 +332,9 @@ fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
     if obj.extract_unknown_extension().is_some() {
         return Ok(());
     }
-    // DBG_BER_CHOICE (gambas-asn1#685 — restored here after the old
-    // per-type generic `ber::choice` walker it used to live in was
-    // removed as dead scaffolding; silently dropped in that removal
-    // would have been a real feature loss, not just dead-code cleanup).
+    // Trace a CHOICE tag miss (DBG_BER_CHOICE) before falling back to the
+    // unknown-extension path, so a decode failure here is diagnosable
+    // without a rebuild.
     if crate::debug::debug_flags() & crate::debug::DBG_BER_CHOICE != 0 {
         let alt_tags: Vec<Tag> = obj.spec().ber_tags.iter().map(|d| d.tag).collect();
         eprintln!("[DBG_BER_CHOICE] no alternative matches peek tag {tag:?} — known tags: {alt_tags:?}");
@@ -375,8 +374,8 @@ mod tests {
     use crate::spec::sequence::SEQUENCE_TAG;
 
     /// `Inner ::= SEQUENCE { x INTEGER }` — worked example + test subject
-    /// for the reflective `Asn1Seq` design (gambas-asn1#681 second pass),
-    /// same dogfooding role `Point` plays for `ber::sequence`.
+    /// for the reflective `Asn1Seq` design, same dogfooding role `Point`
+    /// plays for `ber::sequence`.
     #[derive(Debug, Default, Clone, PartialEq)]
     struct Inner {
         x: Integer,

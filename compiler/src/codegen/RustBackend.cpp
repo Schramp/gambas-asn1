@@ -25,12 +25,11 @@ namespace asn1::codegen {
 // to turn a wire value back into a variant).
 // Minimal transliteration (to_cpp_name: hyphen -> underscore only, case
 // preserved) — not a real word-split recase (to_upper_camel_case), and
-// deliberately NOT capitalize_first either. The ASN.1-naming-fidelity
-// decision #628 made for type_name/member_name/synthetic_name/value_name
-// applies here too: two distinct ASN.1 value names (e.g. "eight-bit-binary"
-// and "eightBitBinary") must not fold to the same Rust variant, which real
-// recasing risks (gambas-asn1#611-class collision) and minimal
-// transliteration avoids. capitalize_first would reintroduce exactly that
+// deliberately NOT capitalize_first either. Naming-fidelity rule, same
+// as for type_name/member_name/synthetic_name/value_name: two distinct
+// ASN.1 value names (e.g. "eight-bit-binary" and "eightBitBinary") must
+// not fold to the same Rust variant, which real recasing risks and
+// minimal transliteration avoids. capitalize_first would reintroduce exactly that
 // risk for free — two values differing only in first-letter case (e.g.
 // "foo"/"Foo") would fold — for no benefit: unlike make_synthetic_name's
 // parent+member concatenation (where capitalize_first at least marks a
