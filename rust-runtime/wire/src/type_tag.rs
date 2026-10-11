@@ -1,9 +1,9 @@
 //! Compile-time BER tag lookup, kept off `value::Asn1Value` itself. An
 //! associated const makes a trait non-object-safe — moot for
-//! `Asn1Value`'s *own* object-safety now (gambas-asn1#675 removed every
-//! `&dyn Asn1Value` accessor it used to need to stay object-safe for),
-//! but still a separate trait here since codegen names a member's own
-//! concrete Rust type directly to ask `<Type as TypeTag>::TAG`, replacing
+//! `Asn1Value` itself, which has no `&dyn Asn1Value` accessor to stay
+//! object-safe for, but still a separate trait here since codegen
+//! names a member's own concrete Rust type directly to ask
+//! `<Type as TypeTag>::TAG`, replacing
 //! the C++-side per-builtin-kind tag switch (`RustBackend::
 //! builtin_ber_tag`) with one generic lookup that works for every
 //! builtin wrapper and every generated SEQUENCE/CHOICE/ENUMERATED/
