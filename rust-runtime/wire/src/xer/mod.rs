@@ -8,6 +8,8 @@
 
 pub mod bit_string;
 pub mod boolean;
+pub mod integer;
+pub mod null;
 pub mod object;
 pub mod octet_string;
 pub mod oid;
