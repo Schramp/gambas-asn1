@@ -141,20 +141,40 @@ public:
     }
 
     // tdref is populated unconditionally for every
-    // Every kind but MemberOwnTable has no codec dispatch table wired up yet
-    // for Rust to read (see Backend::format_type_descriptor_ref's own doc) —
-    // same status as needs_seqof_wrapper_reference() below. Empty string is
-    // a valid, harmlessly-unused default there; revisit together with
-    // needs_seqof_wrapper_reference() once Rust grows its own per-member
+    // Every kind but MemberOwnTable/FreeStanding has no codec dispatch table
+    // wired up yet for Rust to read (see Backend::format_type_descriptor_ref's
+    // own doc) — same status as needs_seqof_wrapper_reference() below. Empty
+    // string is a valid, harmlessly-unused default there; revisit together
+    // with needs_seqof_wrapper_reference() once Rust grows its own per-member
     // descriptor table for those kinds. MemberOwnTable is real: it's how a
     // member's own inline-constraint Constraints table (already emitted by
-    // emit_member_type_descriptor) gets found by name — returned bare, with
-    // no decoration, since every consumer (SeqOf element constraint lookup,
-    // the own-table checks for SEQUENCE members/CHOICE alternatives) only
-    // ever needs the plain base name to build its own
-    // `{SCREAMING_SNAKE_CASE}_CONSTRAINTS` reference from.
+    // emit_member_type_descriptor, same module) gets found by name —
+    // returned bare, with no decoration, since every consumer (SeqOf
+    // element constraint lookup, the own-table checks for SEQUENCE members/
+    // CHOICE alternatives) only ever needs the plain base name to build its
+    // own `{SCREAMING_SNAKE_CASE}_CONSTRAINTS` reference from. FreeStanding
+    // is also real, but names a *different* top-level type (own module,
+    // same convention as every other generated type — see CLAUDE.md's
+    // "one file per type" layout) reached only when that TypeRef's target
+    // carries no inline constraint of its own at this call site (a plain
+    // reference to a named, possibly-constrained type — e.g. a SEQUENCE OF
+    // element promoted out to its own named top-level type, or a
+    // hand-written `Elem ::= INTEGER (0..15)`): `crate::{name}::{name}`
+    // (module-escaped, type name itself never is — mirrors
+    // `emit_seq_of_definition`'s own `{Synth}_CONSTRAINTS` cross-module
+    // reference). The one consumer that reads this (`SeqOfSpec::elem_ref`,
+    // for the collection's per-element PER Constraints — see
+    // `emit_seq_of_definition`'s own doc) appends `_CONSTRAINTS` to the
+    // trailing raw name with no recasing, matching
+    // `emit_integer_definition`/`emit_builtin_alias_definition`'s own
+    // `{tname}_CONSTRAINTS` (unscreamed) naming for a real top-level type's
+    // static. The other two tdref consumers (`SequenceMemberSpec`/
+    // `ChoiceAlternativeSpec` own-table checks) only ever see FreeStanding
+    // when `mbuiltin` is unset, so this new non-empty text is inert there.
     std::string format_type_descriptor_ref(const TypeDescriptorRefSpec& spec) const override {
         if (spec.kind == TypeDescriptorRefKind::MemberOwnTable) return spec.name;
+        if (spec.kind == TypeDescriptorRefKind::FreeStanding)
+            return std::format("crate::{}::{}", escape(spec.name), spec.name);
         return {};
     }
 

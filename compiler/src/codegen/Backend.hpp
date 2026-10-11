@@ -488,6 +488,76 @@ struct TaggedMemberSpec {
     // own AST node). `mtype` (declared per-derived-struct) already carries
     // the target's Rust identifier — no separate name field needed here.
     IntStorageKind ref_storage_kind = IntStorageKind::S64;
+    // Meaningful only when ref_kind == Other (or for a direct inline
+    // SEQUENCE/CHOICE/SET member, where ref_kind is also set to Other —
+    // see Generator::collect): true when the member's class-typed target
+    // is specifically a SEQUENCE or SET (never CHOICE, never a named
+    // SEQUENCE OF/SET OF) — `RefTargetKind::Other` alone collapses all
+    // four of those into one answer, which isn't enough for
+    // `RustBackend`'s `AccessKind` classification to know whether the
+    // target type implements `Asn1Seq` (SEQUENCE/SET only) or not.
+    bool ref_is_sequence_or_set = false;
+    // Meaningful only when ref_kind == Other: true when the member's
+    // class-typed target is a *named* SEQUENCE OF/SET OF type (its own
+    // top-level type assignment, not an inline collection member) — the
+    // other half of the distinction `ref_is_sequence_or_set` draws:
+    // `RefTargetKind::Other` alone can't tell a named SEQUENCE OF/SET OF
+    // reference apart from a named CHOICE reference, which
+    // `RustBackend`'s access classification needs to route through
+    // `Asn1SeqOf` rather than `Asn1Choice`. Never true for
+    // a direct inline SEQUENCE/CHOICE/SET member (those always have
+    // `ref_is_sequence_or_set` answer the question instead, or are
+    // SeqOfKind::SeqOf/SetOf at the member level, not this flag).
+    bool ref_is_seq_of = false;
+    // Meaningful only when ref_kind == Other: set when the target is a
+    // *named builtin-alias* type (X.680 §19 — `RustBackend::
+    // emit_builtin_alias_definition`'s own newtype, e.g. `PartyNumber ::=
+    // UTF8String`) — the remaining case `RefTargetKind::Other` collapses
+    // (alongside SEQUENCE/SET, CHOICE, and named SEQUENCE OF/SET OF,
+    // already split out by `ref_is_sequence_or_set`/`ref_is_seq_of`
+    // above). `classify_typeref_for_per`'s own `Other` return for this
+    // case already confirms the target has a real `Asn1Value`/`PerValue`
+    // impl; this field additionally carries *which* builtin it wraps, so
+    // `RustBackend`'s reflective access classification can route it
+    // through `Asn1Seq`/`MemberRef::Primitive` the same way a direct
+    // builtin member would (unwrapping
+    // one newtype level — the alias is never itself one of
+    // `PrimitiveRef`'s 26 fixed variants, only its wrapped field is).
+    std::optional<ast::BuiltinType> ref_builtin_alias;
+    // Meaningful only alongside ref_builtin_alias == OctetString: the
+    // alias TARGET's own X.693 §21 ENCODING-CONTROL XER override
+    // (`ast::TypeDef::xer_encoding`, e.g. `Base64Data ::= OCTET STRING`
+    // under `ENCODING-CONTROL XER Base64Data OCTET STRING ::= base64`) —
+    // distinct from `SequenceMemberSpec::xer_encoding` below, which only
+    // ever carries a directive declared directly on the member's own
+    // inline type, never an alias's. A TypeRef member
+    // unwraps to the alias's native field via `AsMemberRef`
+    // (`emit_builtin_alias_definition`), which discards the alias's own
+    // Base64/Utf8 `Asn1Value` override just as completely as it discards
+    // a re-tagged alias's own BER tag (`AccessKind::Primitive`'s
+    // `is_explicit` branch, `RustBackend.cpp`) — so RustBackend's
+    // `classify` needs this threaded through to route such a member to
+    // `MemberRef::Base64`/`Utf8` instead of plain `Primitive`, the same
+    // way it already does for a member whose *own* inline type carries
+    // the directive (`TaggedMemberSpec::xer_encoding`).
+    ast::XerEncoding ref_xer_encoding = ast::XerEncoding::Default;
+    // Meaningful only alongside ref_builtin_alias: the Rust identifier
+    // that actually owns the `{name}_CONSTRAINTS` static RustBackend's
+    // constraints_ref needs — NOT always `mtype`. A multi-hop *pure*
+    // alias chain (`Target ::= Middle; Middle ::= Inner;`, no inline
+    // constraint/tag at any hop — e.g. ETSI LI's own
+    // `LawfulInterceptionIdentifier ::= LIID`) generates each
+    // intermediate hop as a bare `pub type X = Y;` with no struct and no
+    // `_CONSTRAINTS` of its own (`emit_type_body`'s bare-alias branch) —
+    // only the *ultimate* concrete type (`LIID`, a real newtype) has
+    // one. `mtype` (`native_member_type_for`'s one-hop TypeRef name) is
+    // right for the *field's storage type* (a bare alias is still a
+    // real, distinct Rust type via `pub type`) but names the wrong
+    // module for the constraints lookup — this field carries the
+    // resolved target's own name instead (same `resolved_name_for_ref`
+    // calculation `type_descriptor_ref_spec_for`'s TypeRef branch already
+    // does for the analogous C++-side problem).
+    std::string ref_constraints_owner;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. `ops`/
@@ -768,12 +838,11 @@ public:
     ///        identifier (Rust: the crate-relative module name a type's
     ///        own generated file is declared under).
     /// @note Deliberately the identity function for every backend, not a
-    ///       separately-styled name (gambas-asn1#597/#523: an earlier Rust
-    ///       implementation snake_cased this — `to_snake_case` folds case,
-    ///       not just the hyphen/separator folding `type_name` already
-    ///       does, so two distinct, already-unique type identifiers could
-    ///       still collide in that more lossy namespace, e.g.
-    ///       `SIGNED_REAL` vs `SignedREAL`). Module and type identifiers
+    ///       separately-styled name: `to_snake_case` folds case, not just
+    ///       the hyphen/separator folding `type_name` already does, so
+    ///       two distinct, already-unique type identifiers could still
+    ///       collide in that more lossy namespace, e.g.
+    ///       `SIGNED_REAL` vs `SignedREAL`. Module and type identifiers
     ///       live in separate Rust namespaces, so reusing the type name
     ///       verbatim as its own module name is valid (`mod Foo { pub
     ///       struct Foo { ... } }`) and needs no non-snake-case lint

@@ -145,13 +145,10 @@ pub trait Asn1Value {
     /// EXPLICIT tag override (X.690 §8.14.3) — wraps this value's own
     /// complete natural-tag encoding (`ber_encode`) in an outer constructed
     /// TLV, rather than substituting for it the way `ber_encode_tagged`
-    /// (IMPLICIT) does. Object-safe (unlike the free-function
-    /// `value::encode_explicit<T>`/`decode_explicit<T>` pair, which need a
-    /// concrete `T: Default` to construct a fresh value) — lets
-    /// `MemberAccess::ExplicitScalar` (`sequence.rs`) reach an EXPLICIT-
-    /// tagged member through the same `get`/`get_mut: fn(&mut T) -> &mut
-    /// dyn Asn1Value` accessor `Scalar`/`TaggedScalar` already use, instead
-    /// of a per-member closure duplicating that same field access.
+    /// (IMPLICIT) does. Reached statically per concrete type — through
+    /// `spec::primitive`'s macro-generated dispatch for a leaf value, or
+    /// directly for `Any`/`TaggedScalar` — never through a `&dyn Asn1Value`
+    /// accessor.
     fn ber_encode_explicit(&self, out: &mut Vec<u8>, tag: crate::ber::tag::Tag) {
         crate::ber::writer::write_explicit(out, tag, |inner| self.ber_encode(inner));
     }
@@ -202,6 +199,19 @@ pub trait Asn1Value {
     /// Decode counterpart of `xer_encode_base64`.
     fn xer_decode_into_base64(&mut self, _r: &mut XerReader) -> Result<(), DecodeError> {
         unreachable!("xer_decode_into_base64 called on a type with no base64 XER representation")
+    }
+
+    /// UTF8 XER representation (X.693 §21) for an `ENCODING-CONTROL XER
+    /// ... UTF8` (or legacy `::= utf8`)-marked OCTET STRING member — same
+    /// rationale as `xer_encode_base64`'s own doc, mirrored for the other
+    /// XER-instruction kind `MemberRef::Utf8` carries.
+    fn xer_encode_utf8(&self, _out: &mut String) {
+        unreachable!("xer_encode_utf8 called on a type with no utf8 XER representation")
+    }
+
+    /// Decode counterpart of `xer_encode_utf8`.
+    fn xer_decode_into_utf8(&mut self, _r: &mut XerReader) -> Result<(), DecodeError> {
+        unreachable!("xer_decode_into_utf8 called on a type with no utf8 XER representation")
     }
 
     /// Whether this value should appear on the wire at all — always `true`
@@ -2053,9 +2063,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // JER (gambas-asn1#662) — known-correct JSON strings are from the
-    // C++ reference's own `tests/jer/*.cpp` (ground truth, not just
-    // round-trip-with-itself).
+    // JER — known-correct JSON strings are from the C++ reference's own
+    // `tests/jer/*.cpp` (ground truth, not just round-trip-with-itself).
 
     #[test]
     fn integer_jer_round_trips_and_matches_reference() {
@@ -2221,7 +2230,7 @@ mod tests {
     }
 }
 
-// TypeTag impls (gambas-asn1#549) — kept separate from the Asn1Value
+// TypeTag impls — kept separate from the Asn1Value
 // blocks above (see type_tag.rs's own module doc for why).
 impl crate::type_tag::TypeTag for crate::integer::Integer {
     const TAG: Option<crate::ber::tag::Tag> = Some(crate::integer::INTEGER_TAG);

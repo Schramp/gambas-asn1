@@ -122,6 +122,19 @@ impl Asn1Value for OctetString {
         Ok(())
     }
 
+    /// Counterpart to `xer_encode_base64`/`xer_decode_into_base64` for the
+    /// legacy `TypeName OCTET STRING ::= utf8` / X.693 §21 `UTF8
+    /// TypeName` ENCODING-CONTROL instruction — see `MemberRef::Utf8`'s
+    /// own doc for why this needs its own variant rather than a flag.
+    fn xer_encode_utf8(&self, out: &mut String) {
+        utf8_encode(&self.0, out);
+    }
+
+    fn xer_decode_into_utf8(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
+        self.0 = utf8_decode(r)?;
+        Ok(())
+    }
+
     /// X.697 §8.9: quoted uppercase hex, no spaces (not base64 -- JER has
     /// no per-member encoding-control override the way XER's `::= base64`
     /// does; see `jer::octet_string`'s own module doc).
@@ -205,8 +218,8 @@ pub fn base64_decode(input: &str) -> Vec<u8> {
 }
 
 // X.680 §11.15.5 Table 3 — escape sequences for control characters in an
-// "xmlcstring", used by the utf8 ENCODING-CONTROL XER instruction
-// (gambas-asn1#443). Codes 9 (tab), 10 (LF), 13 (CR) are excluded per the
+// "xmlcstring", used by the utf8 ENCODING-CONTROL XER instruction.
+// Codes 9 (tab), 10 (LF), 13 (CR) are excluded per the
 // table's own NOTE — those pass through literally. Mirrors
 // `control_char_tag_name`/`control_char_from_tag_name` in `runtime/src/XerCodec.cpp`.
 fn control_char_tag_name(c: u8) -> Option<&'static str> {
@@ -233,7 +246,7 @@ fn control_char_from_tag_name(name: &str) -> Option<u8> {
     })
 }
 
-/// utf8 ENCODING-CONTROL instruction (X.693 §21, gambas-asn1#443): content
+/// utf8 ENCODING-CONTROL instruction (X.693 §21): content
 /// octets are raw UTF-8 text, written directly as XML character data
 /// except for `&`/`<`/`>` (standard XML entities) and the Table 3 control
 /// characters (empty-element tags). Mirrors `write_utf8_text` in

@@ -6,9 +6,9 @@
 //! compiler already computes once (`Generator`'s backend-agnostic
 //! `IntegerSpec`/`MemberTypeDescriptorSpec`) for both codecs.
 //!
-//! Per review on #473 ("all constraints should be table based, fix it in
-//! the runtime. Never put it in code. By using code, there is no way to
-//! extract the information by any of the parsers."): codegen emits a
+//! Constraints must be table data, never bespoke per-member code — a
+//! parser/introspection tool has no way to extract a validation rule
+//! that only exists as executable logic. So codegen emits a
 //! `static Constraints` value (plain data, the same shape a C++/PER/XSD
 //! tool could introspect without executing anything) per constrained
 //! member/type, never a bespoke per-member function. The `validate_*`
@@ -165,7 +165,7 @@ pub fn validate_size(n: usize, c: &Constraints) -> i64 {
     0
 }
 
-/// X.680 §51.4 PermittedAlphabet check (gambas-asn1#466). Mirrors the
+/// X.680 §51.4 PermittedAlphabet check. Mirrors the
 /// alphabet half of `AsnString<N>::validate`
 /// (`runtime/include/asn1cpp/types/Strings.hpp`) exactly: `0` when every
 /// byte of `s` is in the permitted alphabet (or `c.encode_table` is

@@ -410,7 +410,7 @@ int main() {
         check("emit_sequence: Rust produces a real struct with Option<T> for the optional member",
               rust_hpp.find("pub struct MySeq {") != std::string::npos &&
               rust_hpp.find("pub count: int64_t,") != std::string::npos &&
-              rust_hpp.find("pub label: Option<String>,") != std::string::npos,
+              rust_hpp.find("pub label: ::std::option::Option<String>,") != std::string::npos,
               rust_hpp);
         check("emit_sequence: Rust produces a real impl block with new()",
               rust_cpp.find("impl MySeq {") != std::string::npos &&

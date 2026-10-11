@@ -1,0 +1,20 @@
+-- gambas-asn1#687: a SEQUENCE OF element typed as a named OCTET STRING
+-- alias carrying its own X.693 §21 BASE64 ENCODING-CONTROL override —
+-- one level deeper than the member-row case already covered by
+-- xer_encoding_instr_test.asn1/#682/#683. Asn1SeqOf::get(index) has no
+-- per-element metadata slot to carry the instruction on the way #686
+-- found MemberMeta/AltMeta can for a member row, so the element's
+-- BASE64 rendering may fall back to plain hex, silently wrong.
+
+RustSeqofBase64ElemTest DEFINITIONS XER INSTRUCTIONS ::= BEGIN
+
+    Base64Data ::= OCTET STRING
+
+    Entries ::= SEQUENCE (SIZE(1..5)) OF Base64Data
+
+    ENCODING-CONTROL XER
+        GLOBAL-DEFAULTS MODIFIED-ENCODINGS
+        BASE64 Base64Data
+    END
+
+END
