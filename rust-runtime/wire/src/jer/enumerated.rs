@@ -39,8 +39,8 @@ pub fn jer_decode_enum<T: TryFrom<i64>>(r: &mut Reader, spec: &EnumSpec) -> Resu
     T::try_from(raw).map_err(|_| DecodeError::new(format!("JER: invalid ENUMERATED value: {raw}"), r.pos()))
 }
 
-/// `EnumSlot`-based counterpart of `jer_decode_enum` (gambas-asn1#681
-/// full migration).
+/// `EnumSlot`-based counterpart of `jer_decode_enum`, for the
+/// reflective `Asn1Seq`/`Asn1Choice` member-decode path.
 pub fn jer_decode_enum_into(slot: &mut dyn crate::spec::object::EnumSlot, r: &mut Reader, spec: &EnumSpec) -> Result<(), DecodeError> {
     r.skip_ws();
     let raw: i64 = if r.peek_char() == b'"' {

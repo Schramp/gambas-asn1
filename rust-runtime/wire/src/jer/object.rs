@@ -1,6 +1,5 @@
-//! Non-generic JER walker for every reflective construct kind
-//! (gambas-asn1#681 full migration) — the JER counterpart of
-//! `ber::object`.
+//! Non-generic JER walker for every reflective construct kind — the
+//! JER counterpart of `ber::object`.
 
 use crate::ber::reader::DecodeError;
 use crate::jer::reader::Reader;

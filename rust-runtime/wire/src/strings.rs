@@ -31,10 +31,10 @@
 //! the newtypes) requires valid UTF-8 (`String::from_utf8`), because the
 //! underlying storage is `String`, which can't hold arbitrary bytes. A
 //! malformed/fuzzed string member (e.g. raw high bytes that aren't valid
-//! UTF-8) that C++ decodes successfully will be *rejected* here. Left as-is
-//! for this issue's scope — flagging so it isn't rediscovered as a surprise
-//! during #286 (randgen cross-validation against asn1c), where such inputs
-//! are exactly what a corruption-mode fuzz run would produce.
+//! UTF-8) that C++ decodes successfully will be *rejected* here instead
+//! of accepted and matched. Known divergence from C++, not yet closed:
+//! a corruption-mode fuzz run (randgen cross-validation against asn1c)
+//! is exactly where such inputs show up.
 //!
 //! **UtcTime/GeneralizedTime also live here**, via the
 //! same `char_string_type!` macro, even though they're semantically time

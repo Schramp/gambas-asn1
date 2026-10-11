@@ -145,10 +145,10 @@ pub trait Asn1Value {
     /// EXPLICIT tag override (X.690 §8.14.3) — wraps this value's own
     /// complete natural-tag encoding (`ber_encode`) in an outer constructed
     /// TLV, rather than substituting for it the way `ber_encode_tagged`
-    /// (IMPLICIT) does. Still a plain trait method (not object-safety-
-    /// driven — gambas-asn1#675 removed every `&dyn Asn1Value` accessor
-    /// from `MemberDescriptor`/`Alternative`, which now call this
-    /// statically from a per-member closure instead).
+    /// (IMPLICIT) does. Reached statically per concrete type — through
+    /// `spec::primitive`'s macro-generated dispatch for a leaf value, or
+    /// directly for `Any`/`TaggedScalar` — never through a `&dyn Asn1Value`
+    /// accessor.
     fn ber_encode_explicit(&self, out: &mut Vec<u8>, tag: crate::ber::tag::Tag) {
         crate::ber::writer::write_explicit(out, tag, |inner| self.ber_encode(inner));
     }
@@ -2063,9 +2063,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // JER (gambas-asn1#662) — known-correct JSON strings are from the
-    // C++ reference's own `tests/jer/*.cpp` (ground truth, not just
-    // round-trip-with-itself).
+    // JER — known-correct JSON strings are from the C++ reference's own
+    // `tests/jer/*.cpp` (ground truth, not just round-trip-with-itself).
 
     #[test]
     fn integer_jer_round_trips_and_matches_reference() {
@@ -2231,7 +2230,7 @@ mod tests {
     }
 }
 
-// TypeTag impls (gambas-asn1#549) — kept separate from the Asn1Value
+// TypeTag impls — kept separate from the Asn1Value
 // blocks above (see type_tag.rs's own module doc for why).
 impl crate::type_tag::TypeTag for crate::integer::Integer {
     const TAG: Option<crate::ber::tag::Tag> = Some(crate::integer::INTEGER_TAG);
