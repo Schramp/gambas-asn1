@@ -101,3 +101,4 @@ pub fn decode_seq_of_xer_named<V: Asn1Value + Default>(r: &mut XerReader, name_o
     result.truncate(count);
     Ok(result)
 }
+
