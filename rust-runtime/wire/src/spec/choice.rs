@@ -1,8 +1,7 @@
 //! CHOICE wire-framing facts — X.680 §29. The reflective `Asn1Choice`
 //! trait and the generic BER/XER/JER/PER walkers live in `spec::object`/
-//! `ber::object`/`xer::object`/`jer::object`/`per::object` (gambas-
-//! asn1#681 full migration); this module now holds only the two plain-
-//! data types every one of those still needs.
+//! `ber::object`/`xer::object`/`jer::object`/`per::object`; this module
+//! holds only the two plain-data types every one of those needs.
 
 use crate::ber::tag::Tag;
 

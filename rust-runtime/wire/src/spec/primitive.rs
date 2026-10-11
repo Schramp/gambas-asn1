@@ -1,35 +1,30 @@
 //! The closed set of ASN.1 builtin leaf types (X.680 §18-19/§41, no
-//! recursion) — "codec uses type", not "type has a codec" (gambas-asn1
-//! #674/#681): a `MemberDescriptor<T>`/`Alternative<T>` row for one of
-//! these types stores *one* accessor (`get`/`get_mut`, below) rather
-//! than 8 separate per-codec closures. That accessor's own address is
-//! all any static table ever takes — its body never names a specific
-//! codec's encode/decode function, so building the table does not,
-//! by itself, force every codec's machinery for that member's type to
-//! be compiled in. Each codec module provides its own small, hand-
-//! written, non-generated `match` over this enum (`ber_encode_primitive`
-//! etc., below) — reused by every generated type alike, exactly
-//! mirroring the C++ side's `prim_dispatch_[32]` (one shared array,
-//! indexed by tag, read by `BerCodec`/`JerCodec`/...) versus a
-//! per-type generated switch. A composite member (SEQUENCE/SET/CHOICE/
-//! SEQUENCE OF/SET OF/ENUMERATED — unbounded, per-schema) can't join
-//! this closed enum; it keeps `MemberAccess::Composite`'s per-codec
-//! closures, each naming that one inner type's own static table
-//! directly (unavoidable — there is no shared handler for an open-
-//! ended set of generated types the way there is for 26 fixed
-//! builtins).
+//! recursion) — "codec uses type", not "type has a codec": a
+//! `MemberRef`/`MemberRefMut` for one of these types stores *one*
+//! accessor (`get`/`get_mut`, below) rather than 8 separate per-codec
+//! closures. That accessor's own address is all any static table ever
+//! takes — its body never names a specific codec's encode/decode
+//! function, so building the table does not, by itself, force every
+//! codec's machinery for that member's type to be compiled in. Each
+//! codec module provides its own small, hand-written, non-generated
+//! `match` over this enum (`ber_encode_primitive` etc., below) —
+//! reused by every generated type alike, exactly mirroring the C++
+//! side's `prim_dispatch_[32]` (one shared array, indexed by tag, read
+//! by `BerCodec`/`JerCodec`/...) versus a per-type generated switch.
+//! A composite member (SEQUENCE/SET/CHOICE/SEQUENCE OF/SET OF/
+//! ENUMERATED — unbounded, per-schema) can't join this closed enum;
+//! it instead reaches its own static table through the fully
+//! reflective `Asn1Seq`/`Asn1Choice`/`Asn1SeqOf`/`EnumSlot` traits
+//! (`spec::object`) — never a stored per-codec closure, so no inner
+//! type's codec machinery is force-linked just by appearing in a
+//! containing type's member table.
 //!
 //! An application that only calls `.encode()`/`.decode()` (BER) never
 //! calls `xer_encode_primitive`/`jer_encode_primitive`/
 //! `per_encode_primitive` — and nothing else references them either,
 //! since no table stores their address — so rustc's own reachability-
 //! based dead code elimination removes them, and everything they
-//! called (string escaping, JSON writing, PER bit-packing...), for
-//! real this time (gambas-asn1#681, following up on #675/#677/#678,
-//! whose flat-closure design removed the vtable but not the force-
-//! linking: every closure's address still had to be taken to populate
-//! the table, which is enough to keep a function alive regardless of
-//! whether anything actually calls it through that pointer).
+//! called (string escaping, JSON writing, PER bit-packing...).
 
 use crate::any::Any;
 use crate::bit_string::BitString;

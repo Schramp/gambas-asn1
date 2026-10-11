@@ -3,8 +3,8 @@
 //! `SeqOf<T>`/`SetOf<T>` are the generic wrapper types for an *inline*
 //! (unnamed) SEQUENCE OF/SET OF member's field type — one blanket
 //! `Asn1Value`/`Asn1SeqOf` impl per wrapper covers every element type,
-//! no per-occurrence codegen needed (gambas-asn1#681 full migration).
-//! A *named* top-level SEQUENCE OF/SET OF type gets its own real struct
+//! no per-occurrence codegen needed. A *named* top-level SEQUENCE
+//! OF/SET OF type gets its own real struct
 //! (`RustBackend::emit_seq_of_definition`) with its own `Asn1Value` impl
 //! that calls straight through to the free functions below
 //! (`encode_seq_of_content`/`decode_seq_of_content`), never through
@@ -241,9 +241,8 @@ impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
     }
 }
 
-/// Reflective `Asn1SeqOf` impl (gambas-asn1#681 full migration) — shared
-/// by every SEQUENCE OF element kind via `AsMemberRef`, never generated
-/// per collection type.
+/// Reflective `Asn1SeqOf` impl — shared by every SEQUENCE OF element
+/// kind via `AsMemberRef`, never generated per collection type.
 impl<T: crate::spec::object::AsMemberRef + Asn1Value + Default> crate::spec::object::Asn1SeqOf for SeqOf<T> {
     fn natural_tag(&self) -> Tag {
         SEQUENCE_TAG
@@ -522,8 +521,8 @@ mod tests {
     }
 
     /// `NamedTags ::= SEQUENCE (SIZE(1..3)) OF INTEGER` — dogfood for a
-    /// *named* SEQUENCE OF type's own `Asn1Value` impl (gambas-asn1#467):
-    /// every named collection type is its own distinct Rust struct that
+    /// *named* SEQUENCE OF type's own `Asn1Value` impl: every named
+    /// collection type is its own distinct Rust struct that
     /// overrides `Asn1Value::validate()` directly (the funnel
     /// `ber_encode`/`ber_encode_tagged` already reach, `value.rs`) — the
     /// exact shape `RustBackend::emit_seq_of_definition` generates for a

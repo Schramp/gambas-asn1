@@ -47,9 +47,9 @@ pub fn decode_enumerated_content<T: TryFrom<i64>>(content: &[u8]) -> Result<T, D
     T::try_from(raw).map_err(|_| DecodeError::new(format!("invalid ENUMERATED value: {raw}"), 0))
 }
 
-/// `EnumSlot`-based counterpart of `read_enumerated_tagged` (gambas-
-/// asn1#681 full migration) — writes the decoded value through the
-/// reflective `EnumSlot::enum_set` instead of `T::try_from`, so the
+/// `EnumSlot`-based counterpart of `read_enumerated_tagged` — writes
+/// the decoded value through the reflective `EnumSlot::enum_set`
+/// instead of `T::try_from`, so the
 /// caller never needs the concrete enum type as a generic parameter.
 pub fn read_enumerated_tagged_into(slot: &mut dyn crate::spec::object::EnumSlot, r: &mut Reader, tag: Tag) -> Result<(), DecodeError> {
     let tlv = r.read_tlv()?;

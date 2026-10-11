@@ -1,8 +1,9 @@
-//! Non-generic PER walker for every reflective construct kind
-//! (gambas-asn1#681 full migration) — the PER counterpart of
-//! `ber::object`. Mirrors `per::sequence`/`per::choice`/`per::seq_of`'s
-//! bit-level logic exactly (X.691 §18/§22/§19-20), just driven by the
-//! reflective accessors instead of generic `*Spec<T>` tables.
+//! Non-generic PER walker for every reflective construct kind — the
+//! PER counterpart of `ber::object`. SEQUENCE/SET/CHOICE bit-level
+//! framing (X.691 §18/§22) and SEQUENCE OF/SET OF element iteration
+//! (`per::seq_of`, X.691 §19-20) live here, driven by the reflective
+//! `Asn1Seq`/`Asn1Choice`/`Asn1SeqOf` accessors rather than a
+//! generated per-type `*Spec<T>` table.
 
 use crate::constraints::Constraints;
 use crate::per::length::{decode_size_field, encode_size_field, get_length, get_nslength, get_nsnn, put_length, put_nslength, put_nsnn};

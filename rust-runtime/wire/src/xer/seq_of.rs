@@ -1,7 +1,8 @@
 //! SEQUENCE OF / SET OF XER encode/decode — X.693 §12. Mirrors
-//! `SeqOfXerHandler` (`runtime/src/XerCodec.cpp`) — part of the `xer/`
-//! module (gambas-asn1#666), not split across `ber/sequence.rs` the way
-//! it used to be.
+//! `SeqOfXerHandler` (`runtime/src/XerCodec.cpp`) — lives under `xer/`
+//! with the rest of this codec's logic, not inside `ber/sequence.rs`:
+//! each codec module owns its own per-kind encode/decode, so a
+//! BER-only caller never pulls in XER's string-escaping machinery.
 //!
 //! Each element is wrapped in a tag, all nested directly inside the
 //! member's own `<name>...</name>` (no extra container). Per-element tag
