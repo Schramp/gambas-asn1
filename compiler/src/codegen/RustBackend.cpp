@@ -158,8 +158,8 @@ static const char* rust_tag_for_builtin_or_alias(std::optional<ast::BuiltinType>
 /// @brief Extracts a Rust type path's last `::`-separated segment —
 ///        e.g. `"asn1cpp_wire::strings::Utf8String"` -> `"Utf8String"`.
 /// @note Every `spec::primitive::PrimitiveRef`/`PrimitiveRefMut` variant
-///       name (gambas-asn1#681) is exactly a builtin leaf type's own Rust
-///       type name, so this is all that's needed to pick the right one —
+///       name is exactly a builtin leaf type's own Rust type name, so
+///       this is all that's needed to pick the right one —
 ///       `m.mtype`/`a.mtype` already resolve to that fully-qualified path.
 static std::string primitive_variant(const std::string& rust_type) {
     auto pos = rust_type.rfind("::");
@@ -440,9 +440,9 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // non_upper_case_globals lint is suppressed below instead).
         std::string map_ident = std::format("{}_ENUM_SPEC", tname);
         os << "#[allow(non_upper_case_globals)]\n";
-        // `pub` — gambas-asn1#681 full migration: a SEQUENCE/CHOICE
-        // member elsewhere (a different generated module/file) that
-        // resolves to this ENUMERATED type references this static by
+        // `pub`: a SEQUENCE/CHOICE member elsewhere (a different
+        // generated module/file) that resolves to this ENUMERATED type
+        // references this static by
         // its fully-qualified `crate::{}::` path for its `MemberRef::
         // Enumerated(.., &EnumSpec)` row; a private `static` would only
         // be visible within this type's own module.
@@ -455,10 +455,8 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << std::format("    ],\n    extensible: {}, root_count: {}, root_bits: {},\n}};\n\n",
                            spec.extensible ? "true" : "false", root_count, root_bits);
 
-        // One merged Asn1Value impl (gambas-asn1#537 unified what used to be
-        // two separate traits/impl blocks, asn1cpp_wire::value::Asn1Value
-        // and asn1cpp_wire::value::Asn1Value) — BER leg (matches every other
-        // Asn1Value impl this backend emits), XER leg (BASIC-XER
+        // One merged Asn1Value impl carries the BER leg (matches every
+        // other Asn1Value impl this backend emits), XER leg (BASIC-XER
         // EmptyElementBoolean-style content, same as `bool`'s own impl
         // above in this file — mirrors EnumeratedXerHandler's
         // member-embedded form, runtime/src/XerCodec.cpp), and PER leg
@@ -544,8 +542,8 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "    const TAG: ::std::option::Option<asn1cpp_wire::Tag> = Some(asn1cpp_wire::ber::enumerated::ENUMERATED_TAG);\n";
         os << "}\n\n";
 
-        // Reflective `EnumSlot` impl (gambas-asn1#681 full migration) —
-        // purely a value<->i64 conversion, no codec method at all; every
+        // Reflective `EnumSlot` impl — purely a value<->i64 conversion,
+        // no codec method at all; every
         // codec's own `MemberRef::Enumerated` dispatch (`spec::object`'s
         // own doc) reads/writes through this instead of a per-type
         // generated closure.
@@ -696,7 +694,7 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
     os << std::format("    fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {{\n        &{}\n    }}\n\n", cname);
     os << std::format("    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {{\n        asn1cpp_wire::constraints::{}(*self.0, &{})\n    }}\n\n", validate_fn, cname);
 
-    // PER leg (merged into the same impl block, gambas-asn1#537): X.691
+    // PER leg (merged into the same impl block): X.691
     // wire shape is exactly `integer::encode_int`/`uinteger::encode_uint`
     // against this same table — no separate unconstrained function needed,
     // they already fall through to the unconstrained wire shape at runtime
@@ -716,7 +714,7 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
 
     // Lets this named INTEGER type appear as a SEQUENCE OF/SET OF element
     // — same rationale as emit_builtin_alias_definition's own AsMemberRef
-    // impl (gambas-asn1#681 full migration): `self.0` reaches the wrapped
+    // impl: `self.0` reaches the wrapped
     // `Integer`/`UInteger` value `PrimitiveRef` actually needs.
     {
         std::string variant = primitive_variant(native_int_type(spec.storage_kind));
@@ -841,9 +839,9 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     // SIZE-able kinds (X.691 §16/§17/§26.5): OCTET STRING/BIT STRING plus
     // every character-string kind, wide-char included — validate() is
     // pure byte-length checking either way, no PER-specific alphabet
-    // concern. Table-driven throughout (per review on #473: "all
-    // constraints should be table based... never put it in code"),
-    // always wired regardless of has_size_constraint (flags: 0 when
+    // concern. Table-driven throughout — constraints are always data,
+    // never generated code — and always wired regardless of
+    // has_size_constraint (flags: 0 when
     // unconstrained) so validate() and, when covered, PerValue both read
     // the exact same static — no generated per-type bounds-check function.
     bool sizeable = is_bits || is_octets || is_sizeable_string_kind(spec.builtin_type);
@@ -940,7 +938,7 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
                            method, cname);
     }
 
-    // PER leg (merged into the same impl block, gambas-asn1#537) — OCTET
+    // PER leg (merged into the same impl block) — OCTET
     // STRING/BIT STRING unconditionally (no alphabet concept), a
     // known-multiplier character string kind (wide-char BmpString/
     // UniversalString included) when it has no FROM constraint (PER
@@ -999,7 +997,7 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
 
     // Lets this named builtin-alias type appear as a SEQUENCE OF/SET OF
     // element, or as a plain SEQUENCE/CHOICE member via `MemberRef::
-    // Primitive` (gambas-asn1#681 full migration) — `self.0` reaches the
+    // Primitive` — `self.0` reaches the
     // wrapped value `PrimitiveRef`'s closed 26-variant set actually
     // needs; the alias itself is never one of them.
     {
@@ -1113,19 +1111,19 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         // MemberDescriptor.validate is `None`), matching or exceeding the
         // C++ side's own correctness rather than replicating its latent
         // I128/ARBITRARY static_cast bug (Validate.hpp) in Rust too.
-        // One combined table (BER + PER fields, gambas-asn1's shared
+        // One combined table (BER + PER fields,
         // asn1cpp_wire::constraints::Constraints) serves both legs: BER's
         // `constraints::validate_s64`/`validate_u64` (rust-runtime/wire)
         // read flags/lower_bound/upper_bound/lower_u64/upper_u64 only;
         // PER's `integer::encode_int`/`uinteger::encode_uint`
         // (rust-runtime/wire/src/per) additionally read range_bits, and are the
         // only reason a member of this shape needs its row's `constraints`
-        // reference at all (see
-        // rust-runtime/wire/src/per/sequence.rs's own MemberAccess doc for
-        // why a shared native type can't carry per-declaration PER shape
-        // via a type-level trait impl). Emitted as `asn1cpp_wire::
+        // reference at all — a shared native type like `i64` can't carry
+        // per-declaration PER shape via its own type-level trait impl,
+        // since two different members of that same native type can have
+        // different range constraints. Emitted as `asn1cpp_wire::
         // constraints::Constraints` text — the same type both the BER/XER
-        // and PER legs read, one shared module since gambas-asn1#537/#539.
+        // and PER legs read, one shared module.
         if (spec.storage_kind == IntStorageKind::S64) {
             // hi_is_large's upper bound may exceed i64::MAX (X.691 §10.5.6,
             // e.g. UINT64_MAX) and isn't exactly representable as an i64
@@ -1302,8 +1300,8 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
         // built via `member_descriptor_base_name`'s SCREAMING_SNAKE_CASE
         // convention) or a `crate::{name}::{name}` path to another
         // top-level type's own `{name}_CONSTRAINTS` static (FreeStanding —
-        // e.g. a SEQUENCE OF element promoted out to its own type,
-        // gambas-asn1#521), which already carries its real (unscreamed)
+        // e.g. a SEQUENCE OF element promoted out to its own type),
+        // which already carries its real (unscreamed)
         // name and must not be recased.
         if (spec.elem_ref.find("::") != std::string::npos) {
             element_expr = std::format("Some(&{}_CONSTRAINTS)", spec.elem_ref);
@@ -1404,10 +1402,9 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
 
     // PDU entry points for a top-level named SEQUENCE OF/SET OF type —
     // mirrors emit_sequence_definition's/emit_choice_definition's own
-    // `impl {Type} { pub fn encode/decode/encode_xer/... }` block
-    // (gambas-asn1#689's own repro: before this, a top-level SeqOf type
-    // had no self-contained entry points at all, only usable as a member
-    // elsewhere). BER/JER need no extra wrapper (self-delimiting TLV;
+    // `impl {Type} { pub fn encode/decode/encode_xer/... }` block, so a
+    // top-level SeqOf type is usable standalone, not only as a member
+    // elsewhere. BER/JER need no extra wrapper (self-delimiting TLV;
     // plain JSON array respectively — both already exactly match the
     // ground-truth root form via the plain `Asn1Value` trait default
     // methods), XER needs the X.693 §8.3.1 document-root wrapper this
@@ -1447,15 +1444,15 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << "    }\n";
     os << "}\n\n";
 
-    // Reflective `Asn1SeqOf` impl (gambas-asn1#681 full migration) — the
+    // Reflective `Asn1SeqOf` impl — the
     // element type's own `AsMemberRef` impl (emitted unconditionally
     // alongside every builtin/SEQUENCE/SET/CHOICE/ENUMERATED type) is all
     // this needs; no codec method here at all.
     os << std::format("impl asn1cpp_wire::spec::object::Asn1SeqOf for {} {{\n", spec.type_name);
     // `tag_expr`, not the bare `natural_tag` — a named top-level
     // SEQUENCE OF/SET OF type's own `[n]` override (`spec.tag`) must
-    // apply here too (gambas-asn1#688 found this returning the wrong,
-    // un-overridden tag otherwise): `ber_natural_tag` above already uses
+    // apply here too, or this returns the wrong, un-overridden tag:
+    // `ber_natural_tag` above already uses
     // `tag_expr` for the exact same reason, and the two must agree —
     // `ber::object`'s SeqOf-arm `Delegate` fallback (the one case this
     // method is still genuinely needed for: a SEQUENCE OF/SET OF
@@ -1479,7 +1476,7 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // `Base64`/`Utf8` can't carry through for an aliased element type
     // (e.g. a named INTEGER alias, X.680 §19 — same discard `AsMemberRef`
     // for a builtin/INTEGER alias already has at the SEQUENCE-member
-    // row, gambas-asn1#681/#682/#683's own fixes).
+    // row).
     os << "    fn elem_natural_xer_name(&self, index: usize) -> &'static str { asn1cpp_wire::value::Asn1Value::xer_element_name(&self.0[index]) }\n";
     if (spec.elem_xer_name) {
         os << std::format("    fn elem_xer_name(&self) -> ::std::option::Option<&'static str> {{ Some(\"{}\") }}\n", *spec.elem_xer_name);
@@ -1815,8 +1812,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         return "referenced type has no PerValue impl";
     };
 
-        // Reflective `Asn1Seq` apparatus (gambas-asn1#681 full migration —
-        // see spec::object's own doc). Emitted unconditionally for every
+        // Reflective `Asn1Seq` apparatus (see spec::object's own doc).
+        // Emitted unconditionally for every
         // SEQUENCE/SET, member by member: each member's own type/tag/
         // optionality combination drives its own row (Primitive/
         // Enumerated/SeqOf/Choice/Composite/Base64), a not-yet-
@@ -1835,7 +1832,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             std::vector<std::string> meta_lines, getter_lines, getter_mut_lines,
                 set_default_lines, is_default_equal_lines, validate_lines;
 
-            // Per-member access kind (gambas-asn1#681 full migration): a
+            // Per-member access kind: a
             // direct builtin leaf (except ENUMERATED), or a named INTEGER
             // alias (ref_kind == IntegerAlias — same closed `PrimitiveRef`
             // set, variant picked from the alias's own resolved storage
@@ -1865,7 +1862,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 return AccessKind::Choice;
             };
             // X.693 §21 ENCODING-CONTROL override (BASE64/UTF8) — table
-            // data (`MemberMeta::xer_instruction`, gambas-asn1#686), not a
+            // data (`MemberMeta::xer_instruction`), not a
             // distinct `AccessKind`/`MemberRef` shape: whether the
             // instruction landed on the member's own inline OCTET STRING
             // or on a named alias it merely references (`AsMemberRef` for
@@ -1916,8 +1913,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // runtime, which still reflects whatever retagging that
                     // concrete type carries. A `Primitive` row has no such
                     // runtime hook: `AsMemberRef::as_member_ref` (every
-                    // builtin-alias/INTEGER-alias `impl`, gambas-asn1#681
-                    // full migration) unwraps straight to the alias's own
+                    // builtin-alias/INTEGER-alias `impl`) unwraps straight to the alias's own
                     // *native* field (`&self.0`), which is why it can live
                     // in `PrimitiveRef`'s closed, trait-object-free set at
                     // all — but that unwrap also discards the alias's own
@@ -1942,7 +1938,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // already holds exactly the tag `Asn1SeqOf::
                     // natural_tag()` would return at runtime
                     // (`natural_tag_spec_for`'s seq-of branch, always
-                    // populated — gambas-asn1#688), so there is no reason
+                    // populated), so there is no reason
                     // to ask the value for it via `BerTagging::Delegate`
                     // (which `ber::object`'s SeqOf arm resolves by calling
                     // `inner.natural_tag()`, a redundant vtable hop for
@@ -2088,7 +2084,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 };
                 switch (kind) {
                 case AccessKind::Primitive: {
-                    // Closed builtin leaf (gambas-asn1#681): the same
+                    // Closed builtin leaf: the same
                     // `PrimitiveRef`/`PrimitiveRefMut` set a direct
                     // builtin uses. A named INTEGER alias (ref_kind ==
                     // IntegerAlias) or a named builtin-alias
@@ -2268,8 +2264,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    }\n";
         os << "}\n\n";
 
-        // Thin `Asn1Value` forwarder (gambas-asn1#681 full migration) —
-        // kept only so external callers (e.g. randgen-rust's tool
+        // Thin `Asn1Value` forwarder — kept only so external callers
+        // (e.g. randgen-rust's tool
         // binaries) that invoke `<T as Asn1Value>::...` directly keep
         // compiling; every method just calls through to the real,
         // reflective `ber::object`/`xer::object`/`jer::object`/
@@ -2467,8 +2463,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "}\n\n";
     }
 
-    // Reflective `Asn1Choice` apparatus (gambas-asn1#681 full migration —
-    // see `spec::object`'s own doc), emitted unconditionally, mirroring
+    // Reflective `Asn1Choice` apparatus (see `spec::object`'s own doc),
+    // emitted unconditionally, mirroring
     // `emit_sequence_definition`'s per-member kind classification one
     // level over: each alternative is Primitive/Enumerated/SeqOf/
     // Composite(SEQUENCE/SET)/Choice (a nested CHOICE alternative), or
@@ -2671,8 +2667,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         }
         os << "];\n\n";
 
-        // Table-of-fptr for `get_active` (gambas-asn1#681 full migration)
-        // — `active_index()` already identifies which row applies, so
+        // Table-of-fptr for `get_active` — `active_index()` already
+        // identifies which row applies, so
         // `get_active` just indexes this instead of re-matching on `self`
         // a second time.
         os << "#[allow(non_upper_case_globals)]\n";
@@ -2872,12 +2868,12 @@ void RustBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
 void RustBackend::emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const {
     auto& os = session.buffer(declaration_extension());
     os << "//! Module: " << module_comment << "\n\n";
-    // Every `MemberDescriptor`/`Alternative` closure below calls a
-    // field's `ber_encode`/`xer_encode`/`jer_encode`/`per_encode`/etc.
-    // via plain method-call syntax (gambas-asn1#675/#677/#678 — static
-    // dispatch, no `&dyn Asn1Value` anywhere) — that resolution needs
-    // the trait in scope in *this* file, unlike a walker inside
-    // `asn1cpp_wire` itself which already has it. `#[allow(unused_imports)]`
+    // Every generated `AsMemberRef` impl and `Asn1Value` forwarder below
+    // calls a field's `ber_encode`/`xer_encode`/`jer_encode`/`per_encode`/
+    // etc. via plain method-call syntax — static dispatch, never through
+    // a `&dyn Asn1Value` — and that resolution needs the trait in scope
+    // in *this* file, unlike a walker inside `asn1cpp_wire` itself which
+    // already has it. `#[allow(unused_imports)]`
     // covers a type with no member/alternative table at all (a bare
     // ENUMERATED or builtin alias), which never calls a trait method
     // directly.
@@ -2890,8 +2886,7 @@ void RustBackend::emit_declaration_preamble(const std::string& module_comment, T
     // introducing a named item at all, so it's always safe to repeat.
     os << "#[allow(unused_imports)]\nuse asn1cpp_wire::value::Asn1Value as _;\n";
     // Same reasoning, for `self.0[i].as_member_ref()` calls inside a
-    // named SEQUENCE OF/SET OF type's own `Asn1SeqOf` impl
-    // (gambas-asn1#681 full migration).
+    // named SEQUENCE OF/SET OF type's own `Asn1SeqOf` impl.
     os << "#[allow(unused_imports)]\nuse asn1cpp_wire::spec::object::AsMemberRef as _;\n\n";
 }
 
@@ -3003,10 +2998,10 @@ void RustBackend::emit_typeref_alias_declaration(const std::string& type_name, c
 ///        path — assumes a generated crate root (main.cpp, --target=rust)
 ///        declares one module per generated file.
 /// @note The module identifier is the type identifier itself, verbatim
-///       (Backend::module_name's own doc — gambas-asn1#597/#523: an
-///       earlier version snake_cased this, a strictly more lossy
-///       transform than type_name's own, letting two already-distinct
-///       type identifiers collide as module names). `filename` here is
+///       (Backend::module_name's own doc — never snake_cased: that
+///       would be a strictly more lossy transform than type_name's own,
+///       letting two already-distinct type identifiers collide as
+///       module names). `filename` here is
 ///       the on-disk file stem, always identical to `type_name` by
 ///       construction (see finalize_output's own `#[path = ...]`
 ///       declaration) — `escape()` still matters for the rare type
