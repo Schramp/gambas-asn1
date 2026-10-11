@@ -747,6 +747,30 @@ def discover_ident(gen_dir, ext, pdu_type):
     return sorted(set(matches))
 
 
+def discover_cpp_descriptor_ref(gen_dir, ident):
+    """How to reach `ident`'s own `asn1::TypeDescriptor` in C++.
+
+    A class-generating kind (SEQUENCE/CHOICE/SET/ENUMERATED, or a named
+    SEQUENCE OF/SET OF with its own real wrapper class) gets it as a
+    static member, `Ident::asn_DEF`. A *top-level* named SEQUENCE OF/SET
+    OF type whose element isn't itself promoted compiles to a bare
+    `using Ident = asn1::VectorSeqOf<...>;` alias instead (no class to
+    attach a static member to) — gambas-asn1#689's own repro schema is
+    exactly this shape — and the descriptor is then only reachable as
+    the free global `asn_DEF_Ident`. Detected by grepping the generated
+    `.hpp` for a `class`/`struct` declaration naming `ident`, rather
+    than assuming one form — this is exactly the "free-standing alias
+    isn't a realistic PDU root" case `types.cpp.tmpl` used to flatly
+    refuse (see git history), now auto-detected instead.
+    """
+    hpp_path = os.path.join(gen_dir, f"{ident}.hpp")
+    with open(hpp_path, errors="replace") as f:
+        text = f.read()
+    if re.search(rf"\b(class|struct)\s+{re.escape(ident)}\b", text):
+        return f"{ident}::asn_DEF"
+    return f"asn_DEF_{ident}"
+
+
 def cpp_tool_paths(cpp_dir):
     return {
         "randgen": os.path.join(cpp_dir, "randgen"),
@@ -792,9 +816,10 @@ def build_cpp(target_dir, asn1_files_abs, pdu_type, jobs=4, reuse=False):
         return None
     ident = idents[0]
 
+    descriptor_ref = discover_cpp_descriptor_ref(os.path.join(cpp_dir, "gen"), ident)
     materialize(os.path.join(TEMPLATE_CPP, "src", "types.cpp.tmpl"),
                 os.path.join(cpp_dir, "src", "types.cpp"),
-                {"__PDU_IDENT__": ident, "__PDU_TYPE__": pdu_type})
+                {"__PDU_IDENT__": ident, "__PDU_TYPE__": pdu_type, "__PDU_DESCRIPTOR__": descriptor_ref})
     if not run_make(cpp_dir, "build", f"-j{jobs}", label="C++ build"):
         return None
     write_if_changed(key_path, key)
