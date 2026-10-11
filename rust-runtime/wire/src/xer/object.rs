@@ -5,7 +5,7 @@
 //! simply ignored.
 
 use crate::ber::reader::DecodeError;
-use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
+use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut, XerInstruction};
 use crate::spec::primitive::{xer_decode_primitive, xer_encode_primitive, PrimitiveRef, PrimitiveRefMut};
 use crate::value::Asn1Value;
 use crate::xer::reader::XerReader;
@@ -15,7 +15,9 @@ use crate::xer::writer::{indent, write_close_tag, write_open_tag};
 /// every kind's own `xer_encode` has on its own (a composite recurses
 /// into its own member loop, a CHOICE into its own alternative tag,
 /// ...). `encode_wrapped` below adds the *caller's* own field/element
-/// name around this.
+/// name around this. No BASE64/UTF8 instruction applies here — those
+/// are read off the row before this is ever called (`encode_wrapped`'s
+/// own doc).
 fn encode_bare(m: MemberRef, out: &mut String, depth: usize) {
     match m {
         MemberRef::Absent => {}
@@ -24,8 +26,6 @@ fn encode_bare(m: MemberRef, out: &mut String, depth: usize) {
         MemberRef::Choice(inner) => encode_choice_content(inner, out, depth),
         MemberRef::SeqOf(inner) => encode_seqof_content(inner, out, depth),
         MemberRef::Enumerated(slot, spec) => crate::ber::enumerated::xer_encode_enum(out, spec, slot.enum_get()),
-        MemberRef::Base64(x) => x.xer_encode_base64(out),
-        MemberRef::Utf8(x) => x.xer_encode_utf8(out),
     }
 }
 
@@ -35,7 +35,15 @@ fn encode_bare(m: MemberRef, out: &mut String, depth: usize) {
 /// kind — matching `SequenceXerHandler`'s own member-wrapping (the
 /// *alternative's* own name nests one level further inside, written by
 /// `encode_choice_content`, not instead of this wrapper.
-fn encode_wrapped(name: &str, m: MemberRef, out: &mut String, depth: usize) {
+///
+/// `instruction`: `MemberMeta::xer_instruction`/`AltMeta::xer_instruction`
+/// (gambas-asn1#686) — table data, read by the *caller*, not a separate
+/// `MemberRef` shape. Only a plain `Primitive(PrimitiveRef::OctetString)`
+/// payload ever has a non-`Default` instruction (`RustBackend`'s
+/// `xer_instruction` lambda only sets one for an OCTET STRING); every
+/// other call site passes `XerInstruction::Default` and falls straight
+/// through to `encode_bare`.
+fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &mut String, depth: usize) {
     if matches!(m, MemberRef::Absent) {
         return;
     }
@@ -43,7 +51,11 @@ fn encode_wrapped(name: &str, m: MemberRef, out: &mut String, depth: usize) {
     out.push('\n');
     out.push_str(&indent(depth));
     write_open_tag(out, name);
-    encode_bare(m, out, depth);
+    match (instruction, &m) {
+        (XerInstruction::Base64, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => x.xer_encode_base64(out),
+        (XerInstruction::Utf8, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => x.xer_encode_utf8(out),
+        _ => encode_bare(m, out, depth),
+    }
     if is_choice {
         // Mirrors the old per-type `Asn1Value::xer_encode` override for
         // CHOICE, which added this same trailing bit after
@@ -68,7 +80,7 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String, depth: usize) {
             continue;
         }
         any = true;
-        encode_wrapped(m.name, member, out, depth + 1);
+        encode_wrapped(m.name, m.xer_instruction, member, out, depth + 1);
     }
     if any {
         out.push('\n');
@@ -95,9 +107,9 @@ pub fn encode_seq(obj: &dyn Asn1Seq) -> String {
 pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut XerReader) -> Result<(), DecodeError> {
     let member_count = obj.spec().members.len();
     for i in 0..member_count {
-        let (name, optional) = {
+        let (name, optional, instruction) = {
             let m = &obj.spec().members[i];
-            (m.name, m.optional)
+            (m.name, m.optional, m.xer_instruction)
         };
         if optional {
             let peeked = r.peek_tag();
@@ -106,7 +118,7 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut XerReader) -> Resu
             }
         }
         r.consume_open_tag(name)?;
-        decode_bare(obj.get_member_mut(i), r)?;
+        decode_instructed(instruction, obj.get_member_mut(i), r)?;
         r.consume_close_tag(name)?;
     }
     Ok(())
@@ -120,8 +132,15 @@ fn decode_bare(m: MemberRefMut, r: &mut XerReader) -> Result<(), DecodeError> {
         MemberRefMut::Choice(inner) => decode_choice_content_into(inner, r),
         MemberRefMut::SeqOf(inner) => decode_seqof_content_into(inner, r),
         MemberRefMut::Enumerated(slot, spec) => crate::ber::enumerated::xer_decode_enum_into(slot, r, spec),
-        MemberRefMut::Base64(x) => x.xer_decode_into_base64(r),
-        MemberRefMut::Utf8(x) => x.xer_decode_into_utf8(r),
+    }
+}
+
+/// Decode counterpart of `encode_wrapped`'s instruction check.
+fn decode_instructed(instruction: XerInstruction, m: MemberRefMut, r: &mut XerReader) -> Result<(), DecodeError> {
+    match (instruction, m) {
+        (XerInstruction::Base64, MemberRefMut::Primitive(PrimitiveRefMut::OctetString(x))) => x.xer_decode_into_base64(r),
+        (XerInstruction::Utf8, MemberRefMut::Primitive(PrimitiveRefMut::OctetString(x))) => x.xer_decode_into_utf8(r),
+        (_, m) => decode_bare(m, r),
     }
 }
 
@@ -252,21 +271,21 @@ fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize) {
             // own override ("TimeslotISCP") — `elem_natural_xer_name`
             // reads the un-unwrapped element's own `Asn1Value::
             // xer_element_name()` directly (`Asn1SeqOf`'s own doc).
-            MemberRef::Primitive(_) => encode_wrapped(name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i)), el, out, depth + 1),
+            // No per-element XER instruction exists yet (gambas-asn1#687
+            // — elements carry no metadata row at all, X.690 §8.9.2, so
+            // there's nowhere to read BASE64/UTF8 from here even if an
+            // aliased element declared one); always `Default`.
+            MemberRef::Primitive(_) => encode_wrapped(name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i)), XerInstruction::Default, el, out, depth + 1),
             MemberRef::Composite(inner) => {
                 let name = name_override.unwrap_or(inner.spec().name);
-                encode_wrapped(name, el, out, depth + 1)
+                encode_wrapped(name, XerInstruction::Default, el, out, depth + 1)
             }
             MemberRef::Choice(_) | MemberRef::Enumerated(..) => {
                 out.push('\n');
                 out.push_str(&indent(depth + 1));
                 encode_bare(el, out, depth + 1);
             }
-            MemberRef::SeqOf(_) => encode_wrapped(name_override.unwrap_or("SEQUENCE-OF"), el, out, depth + 1),
-            MemberRef::Base64(_) | MemberRef::Utf8(_) => {
-                let name = name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i));
-                encode_wrapped(name, el, out, depth + 1)
-            }
+            MemberRef::SeqOf(_) => encode_wrapped(name_override.unwrap_or("SEQUENCE-OF"), XerInstruction::Default, el, out, depth + 1),
             MemberRef::Absent => unreachable!(),
         }
     }
