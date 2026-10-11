@@ -29,7 +29,7 @@ pub struct EnumSpec {
     pub root_bits: u32,
 }
 
-/// X.680 §20/§51 ENUMERATED validation (gambas-asn1#468) — mirrors
+/// X.680 §20/§51 ENUMERATED validation — mirrors
 /// `EnumSpec::validate` (`runtime/include/asn1cpp/TypeDescriptor.hpp`)
 /// exactly: not a range check like INTEGER/SIZE — `1` when `value` isn't
 /// any known root or extension enumeration value, `0` otherwise. No

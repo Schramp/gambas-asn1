@@ -1,7 +1,8 @@
 //! SEQUENCE OF / SET OF XER encode/decode — X.693 §12. Mirrors
-//! `SeqOfXerHandler` (`runtime/src/XerCodec.cpp`) — part of the `xer/`
-//! module (gambas-asn1#666), not split across `ber/sequence.rs` the way
-//! it used to be.
+//! `SeqOfXerHandler` (`runtime/src/XerCodec.cpp`) — lives under `xer/`
+//! with the rest of this codec's logic, not inside `ber/sequence.rs`:
+//! each codec module owns its own per-kind encode/decode, so a
+//! BER-only caller never pulls in XER's string-escaping machinery.
 //!
 //! Each element is wrapped in a tag, all nested directly inside the
 //! member's own `<name>...</name>` (no extra container). Per-element tag
@@ -14,7 +15,7 @@
 use crate::ber::reader::DecodeError;
 use crate::value::Asn1Value;
 use crate::xer::reader::XerReader;
-use crate::xer::writer::{indent, write_close_tag, write_open_tag};
+use crate::xer::writer::indent;
 
 pub fn encode_seq_of_xer<V: Asn1Value>(out: &mut String, items: &[V], depth: usize) {
     encode_seq_of_xer_named(out, items, depth, None);
@@ -101,29 +102,3 @@ pub fn decode_seq_of_xer_named<V: Asn1Value + Default>(r: &mut XerReader, name_o
     Ok(result)
 }
 
-/// X.693 §8.3.1 document-root wrapper for a top-level named SEQUENCE
-/// OF/SET OF type's own `encode_xer()` entry point — `encode_sequence_xer`
-/// (xer/sequence.rs) is this same shape for a SEQUENCE; a SeqOf type has
-/// no `SequenceSpec<T>` table to drive it generically from, so this takes
-/// the type's own `Asn1Value` impl directly instead. A SeqOf's own bare
-/// `xer_encode` (`encode_seq_of_xer` above) only writes the per-element
-/// content, same "no wrapper tag of its own" convention every kind's
-/// bare `xer_encode` follows — this is the one piece callers need added.
-pub fn encode_value_xer(obj: &dyn Asn1Value) -> String {
-    let mut out = String::new();
-    write_open_tag(&mut out, obj.xer_element_name());
-    obj.xer_encode(&mut out, 0);
-    write_close_tag(&mut out, obj.xer_element_name());
-    out.push('\n');
-    out
-}
-
-/// Decode counterpart of `encode_value_xer`.
-pub fn decode_value_xer(obj: &mut dyn Asn1Value, xml: &str) -> Result<(), DecodeError> {
-    let mut r = XerReader::new(xml);
-    let name = obj.xer_element_name();
-    r.consume_open_tag(name)?;
-    obj.xer_decode_into(&mut r)?;
-    r.consume_close_tag(name)?;
-    Ok(())
-}

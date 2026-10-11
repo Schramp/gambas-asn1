@@ -237,10 +237,9 @@ mod tests {
     #[test]
     fn unescape_preserves_multi_byte_utf8() {
         // Regression test: byte-by-byte `bytes[i] as char` corrupts any
-        // byte >= 0x80 (a Latin-1 cast, not a UTF-8 reinterpretation) —
-        // caught via gambas-asn1#443's utf8 XER instruction work, but this
-        // bug predates it and affects every Rust-decoded XER string field
-        // with non-ASCII content (strings.rs calls unescape too).
+        // byte >= 0x80 (a Latin-1 cast, not a UTF-8 reinterpretation).
+        // Affects every Rust-decoded XER string field with non-ASCII
+        // content (strings.rs calls unescape too).
         assert_eq!(unescape("caf\u{00e9}"), "caf\u{00e9}"); // 2-byte (é)
         assert_eq!(unescape("\u{4e2d}\u{6587}"), "\u{4e2d}\u{6587}"); // 3-byte (中文)
         assert_eq!(unescape("\u{1f600}"), "\u{1f600}"); // 4-byte emoji (😀)

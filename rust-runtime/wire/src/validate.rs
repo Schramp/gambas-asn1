@@ -98,9 +98,9 @@ fn report(delta: i64, name: &str, phase: &str) {
     }
 }
 
-// SIZE constraint checking moved to `constraints::validate_size` (gambas-
-// asn1#473 review: a static Constraints *table* per member, not a
-// generated per-member function).
+// X.680 §51 SIZE constraint checking lives in `constraints::validate_size`
+// — a static Constraints table per member, not a generated per-member
+// function (see `constraints`'s own module doc for why).
 
 #[cfg(test)]
 pub(crate) mod tests {

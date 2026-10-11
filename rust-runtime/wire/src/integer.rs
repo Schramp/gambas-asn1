@@ -292,10 +292,10 @@ pub fn read_integer_i128_tagged(r: &mut Reader, tag: Tag) -> Result<i128, Decode
     decode_integer_bytes_i128(tlv.value)
 }
 
-// X.680 §19/§51 INTEGER value-range validation moved to
-// `constraints::validate_s64`/`validate_u64` (gambas-asn1#473 review: a
-// static Constraints *table* per member, not a generated per-member
-// function).
+// X.680 §19/§51 INTEGER value-range validation lives in
+// `constraints::validate_s64`/`validate_u64` — a static Constraints
+// table per member, not a generated per-member function (see
+// `constraints`'s own module doc for why).
 
 #[cfg(test)]
 mod tests {

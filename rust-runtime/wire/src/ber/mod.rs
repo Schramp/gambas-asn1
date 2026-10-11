@@ -6,8 +6,8 @@
 //! together (see `value` module doc), so this module holds the shared
 //! machinery, not per-type BER logic.
 
-pub mod choice;
 pub mod enumerated;
+pub mod object;
 pub mod reader;
 pub mod sequence;
 pub mod tag;

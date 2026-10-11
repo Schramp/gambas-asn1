@@ -9,15 +9,14 @@
 //! BER/XER modules read, computed once at codegen time.
 
 pub mod bit_string;
-pub mod choice;
 pub mod enumerated;
 pub mod integer;
 pub mod length;
+pub mod object;
 pub mod octet_string;
 pub mod real;
 pub mod reader;
 pub mod seq_of;
-pub mod sequence;
 pub mod strings;
 pub mod uinteger;
 pub mod writer;
