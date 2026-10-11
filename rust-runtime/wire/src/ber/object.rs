@@ -353,7 +353,12 @@ fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) {
     }
 }
 
+/// Mirrors `ber::sequence::decode_seq_of_content`'s own zero-copy
+/// top-level-TLV pre-count (`count_top_level_tlvs`): reserves the
+/// backing `Vec` once via `Asn1SeqOf::reserve` instead of letting
+/// `push_default_mut` regrow it geometrically one element at a time.
 fn decode_seqof_content(obj: &mut dyn Asn1SeqOf, content: &[u8]) -> Result<(), DecodeError> {
+    obj.reserve(crate::ber::sequence::count_top_level_tlvs(content));
     let mut inner = Reader::new(content);
     while !inner.at_end() {
         decode_member_ref(obj.push_default_mut(), BerTagging::Delegate, &mut inner)?;

@@ -120,7 +120,7 @@ pub fn decode_seq_of_content<V: Asn1Value + Default>(content: &[u8]) -> Result<V
 /// any malformed TLV — correctness still comes entirely from the real decode
 /// loop above; an undercount here only costs one extra reallocation, never a
 /// wrong result.
-fn count_top_level_tlvs(content: &[u8]) -> usize {
+pub(crate) fn count_top_level_tlvs(content: &[u8]) -> usize {
     let mut r = Reader::new(content);
     let mut n = 0;
     while !r.at_end() {
@@ -258,6 +258,9 @@ impl<T: crate::spec::object::AsMemberRef + Asn1Value + Default> crate::spec::obj
         self.0.push(T::default());
         self.0.last_mut().unwrap().as_member_ref_mut()
     }
+    fn reserve(&mut self, additional: usize) {
+        self.0.reserve(additional);
+    }
     fn elem_natural_xer_name(&self, index: usize) -> &'static str {
         self.0[index].xer_element_name()
     }
@@ -359,6 +362,9 @@ impl<T: crate::spec::object::AsMemberRef + Asn1Value + Default> crate::spec::obj
     fn push_default_mut(&mut self) -> crate::spec::object::MemberRefMut<'_> {
         self.0.push(T::default());
         self.0.last_mut().unwrap().as_member_ref_mut()
+    }
+    fn reserve(&mut self, additional: usize) {
+        self.0.reserve(additional);
     }
     fn elem_natural_xer_name(&self, index: usize) -> &'static str {
         self.0[index].xer_element_name()

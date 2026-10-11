@@ -165,6 +165,17 @@ pub trait Asn1SeqOf {
     /// Appends one new default-valued element (for decode) and returns a
     /// mutable reference to it.
     fn push_default_mut(&mut self) -> MemberRefMut<'_>;
+    /// Upfront backing-store reservation hint for a decode that already
+    /// knows the element count (`ber::object::decode_seqof_content`'s own
+    /// zero-copy top-level-TLV pre-count, mirroring
+    /// `ber::sequence::decode_seq_of_content`'s `count_top_level_tlvs`
+    /// use) — avoids `push_default_mut`'s otherwise-geometric `Vec`
+    /// regrowth. Every real implementor backs onto a `Vec`, so this has
+    /// one obvious correct override (`self.0.reserve(additional)`); the
+    /// default no-op only matters if a future implementor can't honor it.
+    fn reserve(&mut self, additional: usize) {
+        let _ = additional;
+    }
     /// Element `index`'s own natural X.693 §12 XER element name — e.g.
     /// `"TimeslotISCP"` for a named INTEGER-alias element, not generic
     /// `"INTEGER"`. Deliberately *not* derivable from `get(index)`:

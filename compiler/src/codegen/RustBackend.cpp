@@ -1470,6 +1470,9 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << "        self.0.push(Default::default());\n";
     os << "        self.0.last_mut().unwrap().as_member_ref_mut()\n";
     os << "    }\n";
+    os << "    fn reserve(&mut self, additional: usize) {\n";
+    os << "        self.0.reserve(additional);\n";
+    os << "    }\n";
     // `Asn1SeqOf::elem_natural_xer_name`'s own doc: `self.0[index]`'s
     // *own* `Asn1Value::xer_element_name()`, not anything read back off
     // `get(index)`'s already-unwrapped `MemberRef` — the one piece of
