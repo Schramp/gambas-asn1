@@ -1,8 +1,7 @@
 //! X.697 JER (JSON Encoding Rules) — text-based reader/writer and
 //! per-construct encode/decode (`object.rs`'s non-generic reflective
-//! walker, gambas-asn1#681 full migration — every construct kind lives
-//! there now, not split across per-kind files the way an earlier
-//! generic-table design once needed).
+//! walker — every construct kind lives there, not split across
+//! per-kind files).
 //!
 //! Ported from `runtime/src/JerCodec.cpp`'s handler classes (itself
 //! ported from asn1c's `jer_support.c` for the low-level scanner shape).
