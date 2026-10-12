@@ -251,7 +251,7 @@ char_string_type!(GeneralizedTime, GENERALIZED_TIME_TAG, universal::GENERALIZED_
 /// the resulting Unicode text to the same entity-escaper every other
 /// string kind uses. Mirrors `xer_detail::encode_wide_string<N>`
 /// (`runtime/src/XerCodec.cpp`).
-fn encode_wide_string_xer(bytes: &[u8], bpc: usize, out: &mut String) {
+pub(crate) fn encode_wide_string_xer(bytes: &[u8], bpc: usize, out: &mut String) {
     let mut text = String::with_capacity(bytes.len() / bpc);
     for chunk in bytes.chunks_exact(bpc) {
         let mut cp: u32 = 0;
@@ -267,7 +267,7 @@ fn encode_wide_string_xer(bytes: &[u8], bpc: usize, out: &mut String) {
 /// (already-unescaped) XER text becomes one big-endian `bpc`-byte group.
 /// Mirrors the decode side of `BmpStringXerHandler`/`UniversalStringXerHandler`
 /// (`runtime/src/XerCodec.cpp`).
-fn decode_wide_string_xer(text: &str, bpc: usize) -> Vec<u8> {
+pub(crate) fn decode_wide_string_xer(text: &str, bpc: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.chars().count() * bpc);
     for c in text.chars() {
         let cp = c as u32;
