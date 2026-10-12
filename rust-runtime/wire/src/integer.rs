@@ -98,13 +98,23 @@ impl Asn1Value for ArbitraryInteger {
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.0);
+        encode_arbitrary_integer_content(&self.0, out);
     }
 
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        self.0 = content.to_vec();
+        self.0 = decode_arbitrary_integer_content(content);
         Ok(())
     }
+}
+
+/// Already minimal two's-complement big-endian bytes, captured verbatim
+/// from the wire at schema-compile time — nothing to re-encode.
+pub(crate) fn encode_arbitrary_integer_content(bytes: &[u8], out: &mut Vec<u8>) {
+    out.extend_from_slice(bytes);
+}
+
+pub(crate) fn decode_arbitrary_integer_content(content: &[u8]) -> Vec<u8> {
+    content.to_vec()
 }
 
 /// Minimal two's-complement big-endian encoding of `n` — the fewest bytes
