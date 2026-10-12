@@ -19,6 +19,12 @@ pub struct EnumEntry {
 /// this order) and precomputes the root layout, so no walker recounts it.
 #[derive(Clone, Copy)]
 pub struct EnumSpec {
+    /// This ENUMERATED type's own ASN.1 name (X.693 §9.3) — lets
+    /// `spec::object::natural_xer_name_of` answer "what's this element's
+    /// natural XER name" reflectively via `MemberRef::Enumerated`'s own
+    /// spec, the same way `SequenceSpec`/`ChoiceSpec::name` already do for
+    /// their own kinds, without touching `Asn1Value::xer_element_name`.
+    pub name: &'static str,
     pub entries: &'static [EnumEntry],
     /// True if the ENUMERATED has an extension marker (`...`).
     pub extensible: bool,

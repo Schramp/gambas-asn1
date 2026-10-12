@@ -69,6 +69,7 @@ mod tests {
     }
 
     const ROOT_ONLY_SPEC: EnumSpec = EnumSpec {
+        name: "TestEnum",
         entries: &[entry(0), entry(1), entry(2)],
         extensible: false,
         root_count: 3,
@@ -83,6 +84,7 @@ mod tests {
     }
 
     const WITH_EXT_SPEC: EnumSpec = EnumSpec {
+        name: "TestEnum",
         entries: &[entry(0), entry(1), entry(2), entry(3)],
         extensible: true,
         root_count: 3,

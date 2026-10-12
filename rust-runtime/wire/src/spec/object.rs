@@ -112,6 +112,30 @@ pub enum MemberRefMut<'a> {
     Enumerated(&'a mut dyn EnumSlot, &'static EnumSpec),
 }
 
+/// This member/element's own natural X.693 §12 XER name, straight from
+/// the reflective shape — `Primitive` via `spec::primitive::
+/// xer_element_name_of`, `Composite`/`Choice` via their own
+/// `SequenceSpec`/`ChoiceSpec::name`, `Enumerated` via `EnumSpec::name`,
+/// `SeqOf` via its own universal SEQUENCE/SET tag. Replaces the need for
+/// `Asn1Value::xer_element_name()` anywhere a `MemberRef` is already in
+/// hand.
+pub fn natural_xer_name_of(m: MemberRef) -> &'static str {
+    match m {
+        MemberRef::Absent => unreachable!("an absent member has no natural XER name to ask for"),
+        MemberRef::Primitive(p) => crate::spec::primitive::xer_element_name_of(p),
+        MemberRef::Composite(inner) => inner.spec().name,
+        MemberRef::Choice(inner) => inner.spec().name,
+        MemberRef::Enumerated(_, spec) => spec.name,
+        MemberRef::SeqOf(inner) => {
+            if inner.natural_tag() == crate::ber::sequence::SET_TAG {
+                "SET-OF"
+            } else {
+                "SEQUENCE-OF"
+            }
+        }
+    }
+}
+
 /// Purely reflective SEQUENCE/SET interface — see module doc. Every
 /// method answers a structural question by index; none of them encode or
 /// decode anything.
@@ -179,16 +203,16 @@ pub trait Asn1SeqOf {
     }
     /// Element `index`'s own natural X.693 §12 XER element name — e.g.
     /// `"TimeslotISCP"` for a named INTEGER-alias element, not generic
-    /// `"INTEGER"`. Deliberately *not* derivable from `get(index)`:
-    /// `MemberRef::Primitive`/`Base64`/`Utf8` have already unwrapped to
-    /// the element's native field by the time `get` returns (same
-    /// `AsMemberRef` unwrap `AccessKind::Primitive`'s `is_explicit`
-    /// branch and `MemberRef::Base64`'s own doc describe for a SEQUENCE
-    /// member), which is exactly why `xer::object::encode_seqof_content`
-    /// can't just call `value::Asn1Value::xer_element_name()` on
-    /// whatever `get(index)` handed back — it needs the *un*-unwrapped
-    /// element's own override, straight from its own `Asn1Value` impl.
-    fn elem_natural_xer_name(&self, index: usize) -> &'static str;
+    /// `"INTEGER"`. A SEQUENCE OF/SET OF element carries no per-element
+    /// ENCODING-CONTROL override of its own (unlike a SEQUENCE *member*,
+    /// where `MemberRef::Base64`/`Utf8`'s own unwrap can lose that
+    /// information) — X.693 §12/§9.3 gives every element the same bare
+    /// form regardless, so `natural_xer_name_of(self.get(index))` is
+    /// always safe here, unlike blindly calling it on a member's own
+    /// `MemberRef`.
+    fn elem_natural_xer_name(&self, index: usize) -> &'static str {
+        natural_xer_name_of(self.get(index))
+    }
     /// X.693 §12 element identifier (e.g. `xxx SEQUENCE OF id INTEGER`) —
     /// `Some` only for a named top-level SEQUENCE OF/SET OF type that
     /// declared one (`SeqOfSpec::elem_xer_name`, `emit_seq_of_definition`);

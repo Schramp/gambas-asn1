@@ -149,6 +149,7 @@ mod tests {
     }
 
     const ENTRIES: EnumSpec = EnumSpec {
+        name: "TestEnum",
         entries: &[
             EnumEntry { value: 1, name: "resultUnknown" },
             EnumEntry { value: 2, name: "aaaFailed" },
