@@ -201,95 +201,6 @@ pub trait Asn1Value {
         unreachable!("xer_decode_into_utf8 called on a type with no utf8 XER representation")
     }
 
-    /// Whether this value should appear on the wire at all — always `true`
-    /// except for `Option<V>::None` (see the blanket impl below). Lets the
-    /// generic SEQUENCE walkers (`encode_sequence_xer`'s outer-tag wrapping;
-    /// `encode_sequence`'s BER leg needs no equivalent check, since
-    /// `Option<V>::ber_encode` already writes nothing for `None`) decide
-    /// whether to emit an OPTIONAL member without downcasting out of the
-    /// trait object.
-    fn is_present(&self) -> bool {
-        true
-    }
-
-    /// This value's own X.693 §12 element name — the tag a SEQUENCE OF/SET
-    /// OF wraps each element in (`sequence::encode_seq_of_xer`/
-    /// `decode_seq_of_xer`). Mirrors C++'s `SeqOfXerHandler` reaching
-    /// `spec.element->name` on the element's own `TypeDescriptor` — the
-    /// same generic "ask the value for its own name" access, done via a
-    /// trait method here since Rust has no descriptor object to point at.
-    /// A builtin type's own fixed X.680 keyword (e.g. `"INTEGER"`) for a
-    /// direct builtin element; a generated composite type overrides this
-    /// with its own real ASN.1 type name.
-    fn xer_element_name(&self) -> &'static str {
-        "Value"
-    }
-
-    /// Render this value as one SEQUENCE OF/SET OF element (X.693 §12/§9.3)
-    /// — mirrors the dispatch the C++ runtime's `SeqOfXerHandler` does by
-    /// inspecting the element's `TypeDescriptor` (`edef.enum_spec`,
-    /// `spec.element_xer_tag`) before calling `codec.encode` generically.
-    /// `depth` is the *collection's own* depth (`sequence::
-    /// encode_seq_of_xer_named`'s own `depth` parameter) — every override
-    /// writes its own leading `\n` + `indent(depth + 1)` before its content,
-    /// same "one level deeper than my container" convention `xer_encode`
-    /// itself uses, with exactly one exception (CHOICE, see below).
-    ///
-    /// The default wraps `xer_encode`'s content in `<name>...</name>`,
-    /// `name` being `name_override` when the collection declared one
-    /// (X.693 §12 identifier, e.g. `SEQUENCE OF id INTEGER`) or else this
-    /// value's own `xer_element_name()`; content itself is written at
-    /// `depth + 1` (matching `xer_encode`'s own "argument = my position"
-    /// convention). ENUMERATED and `()` (NULL) override this to forward to
-    /// `xer_encode` with no `<name>` wrapper — both already write a
-    /// complete self-delimiting tag of their own (a bare `<value-name/>`)
-    /// and X.693 always uses that in place of any wrapper/identifier
-    /// (`SeqOfXerHandler`'s `edef.enum_spec`/NULL early-out,
-    /// `runtime/src/XerCodec.cpp`) — but still write the same leading
-    /// `\n` + `indent(depth + 1)` the default does, since C++'s own
-    /// `SeqOfXerHandler` writes that unconditionally for every element
-    /// whose `TypeDescriptor` isn't itself CHOICE-shaped
-    /// (`if (!edef.choice_spec) { ...; os << s.indent(1); }`).
-    ///
-    /// CHOICE is the one genuine exception: it writes *no* leading
-    /// whitespace of its own here at all (`self.xer_encode(out, depth + 1)`
-    /// only) — `ChoiceXerHandler` provides its own leading
-    /// `'\n' << s.indent(1)` before the chosen alternative's own tag
-    /// (`encode_choice_xer_into`'s own doc), so adding another here would
-    /// double it up. This is why CHOICE can't share NULL/ENUMERATED's
-    /// "bare tag, but still indent" override shape despite also skipping
-    /// the `<name>` wrapper.
-    fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, name_override: Option<&str>) {
-        out.push('\n');
-        out.push_str(&crate::xer::writer::indent(depth + 1));
-        let name = name_override.unwrap_or_else(|| self.xer_element_name());
-        crate::xer::writer::write_open_tag(out, name);
-        self.xer_encode(out, depth + 1);
-        crate::xer::writer::write_close_tag(out, name);
-    }
-
-    /// Decode counterpart of `xer_encode_seqof_element`. Default consumes
-    /// `<name>...</name>` (`name_override` or `xer_element_name()`) around
-    /// a normal `xer_decode_into`; ENUMERATED/CHOICE/NULL override to
-    /// forward straight to `xer_decode_into`, same reasoning as the encode
-    /// leg. Callers (`sequence::decode_seq_of_xer_named`) always invoke
-    /// this on an already-`V::default()`-constructed instance, so
-    /// `self.xer_element_name()` is safe to read before `xer_decode_into`
-    /// overwrites `self` with the real decoded value.
-    fn xer_decode_into_seqof_element(&mut self, r: &mut XerReader, name_override: Option<&str>) -> Result<(), DecodeError> {
-        let owned;
-        let name = match name_override {
-            Some(n) => n,
-            None => {
-                owned = self.xer_element_name().to_string();
-                owned.as_str()
-            }
-        };
-        r.consume_open_tag(name)?;
-        self.xer_decode_into(r)?;
-        r.consume_close_tag(name)?;
-        Ok(())
-    }
 
     /// The constraint this type itself owns — a generated INTEGER newtype's
     /// range, a builtin-alias newtype's SIZE, a SEQUENCE OF newtype's SIZE.
@@ -340,10 +251,6 @@ macro_rules! fixed_width_integer {
         impl Asn1Value for $name {
             fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
                 crate::integer::INTEGER_TAG
-            }
-
-            fn xer_element_name(&self) -> &'static str {
-                "INTEGER"
             }
 
             fn ber_encode_content(&self, out: &mut Vec<u8>) {
@@ -402,10 +309,6 @@ impl Asn1Value for crate::integer::BigInteger {
         crate::integer::INTEGER_TAG
     }
 
-    fn xer_element_name(&self) -> &'static str {
-        "INTEGER"
-    }
-
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&crate::integer::encode_integer_bytes_i128(self.0));
     }
@@ -443,10 +346,6 @@ impl Asn1Value for crate::integer::BigInteger {
 impl Asn1Value for crate::boolean::Boolean {
     fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::boolean::BOOLEAN_TAG
-    }
-
-    fn xer_element_name(&self) -> &'static str {
-        "BOOLEAN"
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
@@ -510,10 +409,6 @@ impl Asn1Value for crate::null::Null {
         crate::null::NULL_TAG
     }
 
-    fn xer_element_name(&self) -> &'static str {
-        "NULL"
-    }
-
     fn ber_encode_content(&self, _out: &mut Vec<u8>) {
         // Empty content — nothing to write.
     }
@@ -537,19 +432,6 @@ impl Asn1Value for crate::null::Null {
 
     fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
         crate::jer::null::decode(r)
-    }
-
-    // X.693: a NULL SEQUENCE OF/SET OF element self-closes as `<NULL/>`,
-    // ignoring any declared X.693 §12 identifier (mirrors `NullXerHandler`
-    // self-closing exactly when asked to write under the literal name
-    // `"NULL"` — see the trait default's own doc for why `name_override`
-    // is always `None` here in practice anyway).
-    fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, _name_override: Option<&str>) {
-        crate::xer::null::encode_seqof_element(out, depth);
-    }
-
-    fn xer_decode_into_seqof_element(&mut self, r: &mut XerReader, _name_override: Option<&str>) -> Result<(), DecodeError> {
-        crate::xer::null::decode_seqof_element(r)
     }
 
     fn per_encode(&self, w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {
@@ -582,10 +464,6 @@ impl Asn1Value for crate::null::Null {
 impl Asn1Value for crate::bit_string::BitString {
     fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::bit_string::BIT_STRING_TAG
-    }
-
-    fn xer_element_name(&self) -> &'static str {
-        "BIT_STRING"
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
@@ -638,10 +516,6 @@ impl Asn1Value for crate::bit_string::BitString {
 impl Asn1Value for crate::oid::ObjectIdentifier {
     fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::oid::OBJECT_IDENTIFIER_TAG
-    }
-
-    fn xer_element_name(&self) -> &'static str {
-        "OBJECT_IDENTIFIER"
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
@@ -701,10 +575,6 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
         crate::relative_oid::RELATIVE_OID_TAG
     }
 
-    fn xer_element_name(&self) -> &'static str {
-        "RELATIVE_OID"
-    }
-
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
         crate::relative_oid::encode_relative_oid_content(out, self);
     }
@@ -757,10 +627,6 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
 impl Asn1Value for crate::real::Real {
     fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
         crate::real::REAL_TAG
-    }
-
-    fn xer_element_name(&self) -> &'static str {
-        "REAL"
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {

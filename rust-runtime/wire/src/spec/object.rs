@@ -220,6 +220,16 @@ pub trait Asn1SeqOf {
     /// (`self.0[index]: T` where `T: AsMemberRef`) to call that on;
     /// nothing generic over just `&dyn Asn1SeqOf` can derive it.
     fn elem_natural_xer_name(&self, index: usize) -> &'static str;
+    /// This collection's own X.693 §21 BASE64/UTF8 ENCODING-CONTROL
+    /// override, straight from `AsMemberRef::XER_INSTRUCTION` — a
+    /// compile-time fact about the one element type `T`, not about any
+    /// particular decoded value (every element shares it, X.690 §8.9.2:
+    /// SEQUENCE OF/SET OF has no per-element row to vary it), so it needs
+    /// no index and no live element to read, unlike
+    /// `elem_natural_xer_name` just above. No default: every implementor
+    /// has direct access to `T` (`self.0: Vec<T>` where
+    /// `T: AsMemberRef`) to read the const off.
+    fn elem_xer_instruction(&self) -> XerInstruction;
     /// X.693 §12 element identifier (e.g. `xxx SEQUENCE OF id INTEGER`) —
     /// `Some` only for a named top-level SEQUENCE OF/SET OF type that
     /// declared one (`SeqOfSpec::elem_xer_name`, `emit_seq_of_definition`);
@@ -252,6 +262,18 @@ pub trait AsMemberRef {
     /// via `self.0[index].own_element_xer_name()` on the un-unwrapped
     /// element.
     fn own_element_xer_name(&self) -> &'static str;
+    /// This type's own X.693 §21 BASE64/UTF8 ENCODING-CONTROL override —
+    /// a compile-time fact of the type, not of any instance, so it's an
+    /// associated const rather than a method: `Asn1SeqOf::
+    /// elem_xer_instruction`'s sole use (`T::XER_INSTRUCTION`) needs no
+    /// element value to read it, and codegen can read the schema's own
+    /// `xer_encoding` once at definition time to supply it. A bare
+    /// primitive, ENUMERATED, named INTEGER, SEQUENCE/CHOICE, or SeqOf/
+    /// SetOf element never carries one (`XerInstruction::Default`); only
+    /// a builtin-alias OCTET STRING declared `BASE64`/`UTF8`
+    /// (`RustBackend::emit_builtin_alias_definition`'s own
+    /// `spec.xer_encoding`) overrides it.
+    const XER_INSTRUCTION: XerInstruction = XerInstruction::Default;
 }
 
 /// Purely reflective ENUMERATED interface (X.680 §20) — `enum_get`/

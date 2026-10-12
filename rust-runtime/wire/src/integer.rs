@@ -93,10 +93,6 @@ impl Asn1Value for ArbitraryInteger {
         INTEGER_TAG
     }
 
-    fn xer_element_name(&self) -> &'static str {
-        "INTEGER"
-    }
-
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
         encode_arbitrary_integer_content(&self.0, out);
     }

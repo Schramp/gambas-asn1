@@ -187,10 +187,6 @@ macro_rules! char_string_type {
                 $tag_const
             }
 
-            fn xer_element_name(&self) -> &'static str {
-                $asn1_name
-            }
-
             fn ber_encode_content(&self, out: &mut Vec<u8>) {
                 out.extend_from_slice(self.0.as_bytes());
             }
@@ -315,10 +311,6 @@ macro_rules! wide_char_string_type {
         impl Asn1Value for $name {
             fn ber_natural_tag(&self) -> Tag {
                 $tag_const
-            }
-
-            fn xer_element_name(&self) -> &'static str {
-                $asn1_name
             }
 
             fn ber_encode_content(&self, out: &mut Vec<u8>) {

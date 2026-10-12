@@ -73,23 +73,20 @@ directly, no trait call. `Option<V>`'s and `Box<T>`'s own `Asn1Value` impls were
 deleted outright (gambas-asn1#696/#705) — `Box<T>` needs only the reflective `Asn1Seq`/
 `Asn1Choice` blanket impls it already had.
 
-`Asn1Value` survives, deliberately, for exactly one remaining case: `ber::sequence::
-SeqOf<T>`/`SetOf<T>`'s own XER leg (`xer_encode`/`xer_decode_into` only — BER/JER/PER are
-fully reflective) and the matching XER leg of a top-level named SEQUENCE OF/SET OF type's
-own `.encode_xer()`/`.decode_xer()`, both still bounded on `T: Asn1Value` and routed through
-`xer::seq_of::encode_seq_of_xer(_named)`. The reflective `MemberRef` path unwraps an
-element to its bare `PrimitiveRef`/`MemberRef::Composite` via `AsMemberRef` before the XER
-walker ever sees it, which permanently loses two things only the *un*-unwrapped element's
-own `Asn1Value` override carries: a per-element X.693 BASE64/UTF8 ENCODING-CONTROL instruction
-baked into the element's declared type (gambas-asn1#687), and an aliased element's own real
-declared name (gambas-asn1#710/#711 caught this exact regression against a real RRC schema
-mid-migration — `SEQUENCE OF Digit` rendering `<INTEGER>` instead of `<Digit>`).
-`spec::object::AsMemberRef::own_element_xer_name` recovers the *naming* half of this reflectively
-(every `AsMemberRef` implementor answers its own real name, not the unwrapped shape's generic
-one) — the *encoding* half (BASE64/UTF8) has no reflective equivalent yet, which is why these
-two XER legs still need the trait at all. If a future change gives `MemberRef` the same
-per-element-identity carrying `own_element_xer_name` already provides, `Asn1Value` could drop
-to zero remaining callers and `rust-runtime/wire` could consider removing it entirely.
+`ber::sequence::SeqOf<T>`/`SetOf<T>`'s XER leg, and the matching XER leg of a top-level named
+SEQUENCE OF/SET OF type's own `.encode_xer()`/`.decode_xer()`, are now fully reflective too
+(closing the one case noted above) — `AsMemberRef::own_element_xer_name` recovers an aliased
+element's own real declared name (gambas-asn1#710/#711 caught the regression against a real
+RRC schema mid-migration — `SEQUENCE OF Digit` rendering `<INTEGER>` instead of `<Digit>`), and
+`AsMemberRef::XER_INSTRUCTION` — a compile-time associated const, not a method, since a
+per-element X.693 §21 BASE64/UTF8 ENCODING-CONTROL override (gambas-asn1#687) is a fact of the
+element's *type*, not of any particular decoded value — recovers the encoding half the same
+way, straight off the un-unwrapped element type, no instance needed. `Asn1SeqOf::
+elem_xer_instruction` (`&self -> XerInstruction`, no index: one element type per collection,
+X.690 §8.9.2) is `SeqOf<T>`/`SetOf<T>`'s sole caller, reading `T::XER_INSTRUCTION` directly.
+`RustBackend::emit_builtin_alias_definition` is the only place that ever overrides the const
+(to `Base64`/`Utf8`, from the schema's own `xer_encoding`); every other `AsMemberRef`
+implementor keeps the trait's `Default`.
 
 `BerTraits<T>` (`runtime/include/asn1cpp/codec/BerTraits.hpp` + per-type
 specializations) is the one asymmetry: a template-based static-dispatch

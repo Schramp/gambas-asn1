@@ -270,12 +270,15 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
             // own override ("TimeslotISCP") — `elem_natural_xer_name`
             // reads the un-unwrapped element's own `Asn1Value::
             // xer_element_name()` directly (`Asn1SeqOf`'s own doc).
-            // SEQUENCE OF/SET OF elements carry no metadata row at all
-            // (X.690 §8.9.2 — always the element's own natural tag,
-            // repeated), so there's nowhere to read a BASE64/UTF8
-            // override from even if an aliased element declared one;
-            // always `Default`.
-            MemberRef::Primitive(_) => encode_wrapped(name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i)), XerInstruction::Default, el, out, depth + 1),
+            // `obj.elem_xer_instruction()`, not `XerInstruction::Default`:
+            // an aliased element (`SEQUENCE OF Base64Data`, `Base64Data
+            // ::= OCTET STRING` with an X.693 §21 BASE64/UTF8 ENCODING-
+            // CONTROL override) reads its own instruction the same way it
+            // reads its own name just above — straight off
+            // `AsMemberRef::XER_INSTRUCTION`, a compile-time fact of the
+            // element type that `get(i)`'s unwrap never had a chance to
+            // throw away (no element value needed to read it).
+            MemberRef::Primitive(_) => encode_wrapped(name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i)), obj.elem_xer_instruction(), el, out, depth + 1),
             MemberRef::Composite(inner) => {
                 let name = name_override.unwrap_or(inner.spec().name);
                 encode_wrapped(name, XerInstruction::Default, el, out, depth + 1)
@@ -298,12 +301,37 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
     }
 }
 
+/// X.693 §8.3.1 document-root wrapper for a *named* (top-level) SEQUENCE
+/// OF/SET OF type — `RustBackend::emit_seq_of_definition`'s own
+/// `.encode_xer()` entry point; an inline member's `SeqOf<T>`/`SetOf<T>`
+/// uses `encode_seqof_content` directly instead (no root wrapper of its
+/// own, see `Asn1Value::xer_encode` there).
+pub fn encode_seqof_named(obj: &dyn Asn1SeqOf) -> String {
+    let mut out = String::new();
+    write_open_tag(&mut out, obj.own_xer_name());
+    encode_seqof_content(obj, &mut out, 0);
+    out.push('\n');
+    write_close_tag(&mut out, obj.own_xer_name());
+    out.push('\n');
+    out
+}
+
+/// Decode counterpart of `encode_seqof_named`.
+pub fn decode_seqof_named_into(obj: &mut dyn Asn1SeqOf, r: &mut XerReader) -> Result<(), DecodeError> {
+    let name = obj.own_xer_name().to_string();
+    r.consume_open_tag(&name)?;
+    decode_seqof_content_into(obj, r)?;
+    r.consume_close_tag(&name)?;
+    Ok(())
+}
+
 pub(crate) fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, r: &mut XerReader) -> Result<(), DecodeError> {
     loop {
         let peeked = r.peek_tag();
         if peeked.closing {
             return Ok(());
         }
+        let instruction = obj.elem_xer_instruction();
         let el = obj.push_default_mut();
         match el {
             MemberRefMut::Choice(_) | MemberRefMut::Enumerated(..) => decode_bare(el, r)?,
@@ -322,7 +350,7 @@ pub(crate) fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, r: &mut XerRead
             _ => {
                 let name = peeked.name.to_string();
                 r.consume_open_tag(&name)?;
-                decode_bare(el, r)?;
+                decode_instructed(instruction, el, r)?;
                 r.consume_close_tag(&name)?;
             }
         }
