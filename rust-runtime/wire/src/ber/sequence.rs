@@ -180,7 +180,7 @@ impl<T> std::ops::DerefMut for SeqOf<T> {
     }
 }
 
-impl<T: crate::spec::object::AsMemberRef + Default> Asn1Value for SeqOf<T> {
+impl<T: Asn1Value + crate::spec::object::AsMemberRef + Default> Asn1Value for SeqOf<T> {
     fn ber_natural_tag(&self) -> Tag {
         SEQUENCE_TAG
     }
@@ -198,13 +198,27 @@ impl<T: crate::spec::object::AsMemberRef + Default> Asn1Value for SeqOf<T> {
         crate::ber::object::decode_seqof_content(self, content)
     }
 
+    // NOT the reflective `xer::object::encode_seqof_content` the BER/JER
+    // legs above use: that path unwraps each element to a bare
+    // `MemberRef::Primitive` via `AsMemberRef` before this method ever
+    // sees it, which silently drops a per-element X.693 §21 BASE64/UTF8
+    // ENCODING-CONTROL override baked into the element's own declared
+    // type (e.g. `SEQUENCE OF Base64Data` where `Base64Data ::= OCTET
+    // STRING` carries `BASE64 Base64Data`) — `Asn1SeqOf::get(index)` has
+    // no per-element metadata slot to carry that instruction through the
+    // way a SEQUENCE member's own row (`MemberMeta::xer_instruction`)
+    // can (gambas-asn1#687, the schema this guards:
+    // `rust_seqof_base64_elem_test.asn1`). `encode_seq_of_xer` instead
+    // calls each element's own `Asn1Value::xer_encode_seqof_element`
+    // directly on the *un*-unwrapped `T`, so an aliased element's own
+    // override (which only exists on the un-unwrapped type) still runs.
     fn xer_encode(&self, out: &mut String, depth: usize) {
-        crate::xer::object::encode_seqof_content(self, out, depth);
+        crate::xer::seq_of::encode_seq_of_xer(out, &self.0, depth);
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        self.0.clear();
-        crate::xer::object::decode_seqof_content_into(self, r)
+        self.0 = crate::xer::seq_of::decode_seq_of_xer(r)?;
+        Ok(())
     }
 
     fn jer_encode(&self, out: &mut String) {
@@ -246,6 +260,9 @@ impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1Seq
     fn natural_tag(&self) -> Tag {
         SEQUENCE_TAG
     }
+    fn own_xer_name(&self) -> &'static str {
+        "SEQUENCE-OF"
+    }
     fn len(&self) -> usize {
         self.0.len()
     }
@@ -259,6 +276,9 @@ impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1Seq
     fn reserve(&mut self, additional: usize) {
         self.0.reserve(additional);
     }
+    fn elem_natural_xer_name(&self, index: usize) -> &'static str {
+        self.0[index].own_element_xer_name()
+    }
 }
 
 /// Lets a `SeqOf<T>` itself be a SEQUENCE OF/SET OF element — closes the
@@ -271,6 +291,9 @@ impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::AsMembe
     }
     fn as_member_ref_mut(&mut self) -> crate::spec::object::MemberRefMut<'_> {
         crate::spec::object::MemberRefMut::SeqOf(self)
+    }
+    fn own_element_xer_name(&self) -> &'static str {
+        <Self as crate::spec::object::Asn1SeqOf>::own_xer_name(self)
     }
 }
 
@@ -297,7 +320,7 @@ impl<T> std::ops::DerefMut for SetOf<T> {
     }
 }
 
-impl<T: crate::spec::object::AsMemberRef + Default> Asn1Value for SetOf<T> {
+impl<T: Asn1Value + crate::spec::object::AsMemberRef + Default> Asn1Value for SetOf<T> {
     fn ber_natural_tag(&self) -> Tag {
         SET_TAG
     }
@@ -315,13 +338,16 @@ impl<T: crate::spec::object::AsMemberRef + Default> Asn1Value for SetOf<T> {
         crate::ber::object::decode_seqof_content(self, content)
     }
 
+    // See SeqOf<T>'s own `xer_encode`/`xer_decode_into` doc (just above,
+    // same file) for why this stays on the per-element-Asn1Value-
+    // dispatched path instead of the reflective one BER/JER use.
     fn xer_encode(&self, out: &mut String, depth: usize) {
-        crate::xer::object::encode_seqof_content(self, out, depth);
+        crate::xer::seq_of::encode_seq_of_xer(out, &self.0, depth);
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        self.0.clear();
-        crate::xer::object::decode_seqof_content_into(self, r)
+        self.0 = crate::xer::seq_of::decode_seq_of_xer(r)?;
+        Ok(())
     }
 
     fn jer_encode(&self, out: &mut String) {
@@ -361,6 +387,9 @@ impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1Seq
     fn natural_tag(&self) -> Tag {
         SET_TAG
     }
+    fn own_xer_name(&self) -> &'static str {
+        "SET-OF"
+    }
     fn len(&self) -> usize {
         self.0.len()
     }
@@ -374,6 +403,9 @@ impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1Seq
     fn reserve(&mut self, additional: usize) {
         self.0.reserve(additional);
     }
+    fn elem_natural_xer_name(&self, index: usize) -> &'static str {
+        self.0[index].own_element_xer_name()
+    }
 }
 
 /// `SetOf<T>` analogue of `SeqOf<T>`'s own `AsMemberRef` impl above.
@@ -383,6 +415,9 @@ impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::AsMembe
     }
     fn as_member_ref_mut(&mut self) -> crate::spec::object::MemberRefMut<'_> {
         crate::spec::object::MemberRefMut::SeqOf(self)
+    }
+    fn own_element_xer_name(&self) -> &'static str {
+        <Self as crate::spec::object::Asn1SeqOf>::own_xer_name(self)
     }
 }
 

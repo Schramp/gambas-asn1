@@ -126,13 +126,7 @@ pub fn natural_xer_name_of(m: MemberRef) -> &'static str {
         MemberRef::Composite(inner) => inner.spec().name,
         MemberRef::Choice(inner) => inner.spec().name,
         MemberRef::Enumerated(_, spec) => spec.name,
-        MemberRef::SeqOf(inner) => {
-            if inner.natural_tag() == crate::ber::sequence::SET_TAG {
-                "SET-OF"
-            } else {
-                "SEQUENCE-OF"
-            }
-        }
+        MemberRef::SeqOf(inner) => inner.own_xer_name(),
     }
 }
 
@@ -185,6 +179,19 @@ pub trait Asn1SeqOf {
     /// type, not the element, so each wrapper answers it directly rather
     /// than needing a `MemberMeta`-style per-instance field.
     fn natural_tag(&self) -> Tag;
+    /// This collection's own X.693 §9.3 wrapper name, used when *this
+    /// value itself* appears nested as another collection's element
+    /// (`natural_xer_name_of`'s `MemberRef::SeqOf` arm) — not to be
+    /// confused with `elem_natural_xer_name`/`elem_xer_name`, which name
+    /// this collection's own *elements*. An inline member's `SeqOf<T>`/
+    /// `SetOf<T>` (never independently named) answers the generic X.680
+    /// keyword-derived `"SEQUENCE-OF"`/`"SET-OF"`; a named or
+    /// synthetically-promoted top-level type (`RustBackend::
+    /// emit_seq_of_definition`) answers its own real `SeqOfSpec::
+    /// xer_name` instead — `"SEQUENCE"`/`"SET"` for an anonymous promoted
+    /// type (`Generator::synthetic->xer_name`), its declared ASN.1 name
+    /// otherwise.
+    fn own_xer_name(&self) -> &'static str;
     fn len(&self) -> usize;
     fn get(&self, index: usize) -> MemberRef<'_>;
     /// Appends one new default-valued element (for decode) and returns a
@@ -202,17 +209,17 @@ pub trait Asn1SeqOf {
         let _ = additional;
     }
     /// Element `index`'s own natural X.693 §12 XER element name — e.g.
-    /// `"TimeslotISCP"` for a named INTEGER-alias element, not generic
-    /// `"INTEGER"`. A SEQUENCE OF/SET OF element carries no per-element
-    /// ENCODING-CONTROL override of its own (unlike a SEQUENCE *member*,
-    /// where `MemberRef::Base64`/`Utf8`'s own unwrap can lose that
-    /// information) — X.693 §12/§9.3 gives every element the same bare
-    /// form regardless, so `natural_xer_name_of(self.get(index))` is
-    /// always safe here, unlike blindly calling it on a member's own
-    /// `MemberRef`.
-    fn elem_natural_xer_name(&self, index: usize) -> &'static str {
-        natural_xer_name_of(self.get(index))
-    }
+    /// `"Digit"` for a named INTEGER-alias element (X.680 §19), not the
+    /// generic `"INTEGER"` `natural_xer_name_of(self.get(index))` would
+    /// give: `get(index)` already unwraps to the element's bare
+    /// `PrimitiveRef` (`AsMemberRef`'s own unwrap, same loss
+    /// `MemberRef::Base64`/`Utf8` has for a SEQUENCE *member*) — this
+    /// needs the *un*-unwrapped element's own identity instead, straight
+    /// from `AsMemberRef::own_element_xer_name()`. No default: every
+    /// implementor has direct access to its own un-unwrapped elements
+    /// (`self.0[index]: T` where `T: AsMemberRef`) to call that on;
+    /// nothing generic over just `&dyn Asn1SeqOf` can derive it.
+    fn elem_natural_xer_name(&self, index: usize) -> &'static str;
     /// X.693 §12 element identifier (e.g. `xxx SEQUENCE OF id INTEGER`) —
     /// `Some` only for a named top-level SEQUENCE OF/SET OF type that
     /// declared one (`SeqOfSpec::elem_xer_name`, `emit_seq_of_definition`);
@@ -233,6 +240,18 @@ pub trait Asn1SeqOf {
 pub trait AsMemberRef {
     fn as_member_ref(&self) -> MemberRef<'_>;
     fn as_member_ref_mut(&mut self) -> MemberRefMut<'_>;
+    /// This value's own natural X.693 §12 XER element name, from *before*
+    /// `as_member_ref` unwraps it — a bare primitive answers the same
+    /// generic name `xer_element_name_of` would give its unwrapped
+    /// `PrimitiveRef`; a named alias (builtin alias, named INTEGER,
+    /// ENUMERATED) answers its own real declared name instead (its
+    /// `as_member_ref` unwraps to the same bare `PrimitiveRef`/
+    /// `MemberRef::Enumerated` a plain instance of that kind would, with
+    /// no memory of the alias — this is the one place that memory
+    /// survives). `Asn1SeqOf::elem_natural_xer_name` is the sole caller,
+    /// via `self.0[index].own_element_xer_name()` on the un-unwrapped
+    /// element.
+    fn own_element_xer_name(&self) -> &'static str;
 }
 
 /// Purely reflective ENUMERATED interface (X.680 §20) — `enum_get`/

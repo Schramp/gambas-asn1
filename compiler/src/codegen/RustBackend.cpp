@@ -568,7 +568,8 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "    }\n\n";
         os << "    fn as_member_ref_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
         os << std::format("        asn1cpp_wire::spec::object::MemberRefMut::Enumerated(self, &{})\n", map_ident);
-        os << "    }\n";
+        os << "    }\n\n";
+        os << std::format("    fn own_element_xer_name(&self) -> &'static str {{ {}.name }}\n", map_ident);
         os << "}\n\n";
     }
 }
@@ -724,7 +725,8 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
         os << "    }\n\n";
         os << "    fn as_member_ref_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
         os << std::format("        asn1cpp_wire::spec::object::MemberRefMut::Primitive(asn1cpp_wire::spec::primitive::PrimitiveRefMut::{}(&mut self.0))\n", variant);
-        os << "    }\n";
+        os << "    }\n\n";
+        os << std::format("    fn own_element_xer_name(&self) -> &'static str {{ \"{}\" }}\n", spec.xer_name);
         os << "}\n\n";
     }
 }
@@ -1008,7 +1010,8 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << "    }\n\n";
         os << "    fn as_member_ref_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
         os << std::format("        asn1cpp_wire::spec::object::MemberRefMut::Primitive(asn1cpp_wire::spec::primitive::PrimitiveRefMut::{}(&mut self.0))\n", variant);
-        os << "    }\n";
+        os << "    }\n\n";
+        os << std::format("    fn own_element_xer_name(&self) -> &'static str {{ \"{}\" }}\n", spec.xer_name);
         os << "}\n\n";
     }
 }
@@ -1322,80 +1325,40 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // Honor a top-level [n] IMPLICIT/EXPLICIT tag on this type assignment
     // itself (X.690 §8.14) — same fix emit_sequence_definition already has.
     std::string tag_expr = spec.tag ? format_tag_literal(*spec.tag) : natural_tag;
+
+    // PER has no inherent `.encode_per()`/`.decode_per()` convention
+    // anywhere yet (not for SEQUENCE/CHOICE either — every caller reaches
+    // PER through the `Asn1Value` trait directly, e.g. the xval harness
+    // templates' `v.per_encode(&mut w, v.constraints())`), so this type
+    // still needs a (now much slimmer) `Asn1Value` impl for that one
+    // leg. `ber_natural_tag`/`ber_encode_content`/`ber_decode_content`
+    // are the trait's only non-default methods — given real bodies
+    // instead of `unreachable!()` anyway (same ber::object free
+    // functions the type used to delegate its full BER leg through)
+    // since they cost nothing extra and keep this impl honest rather
+    // than a half-stub; nothing calls them generically for this type
+    // anymore (BER/XER/JER's own top-level entry points below go through
+    // the reflective `Asn1SeqOf`/`AsMemberRef` path instead).
     os << std::format("impl asn1cpp_wire::value::Asn1Value for {} {{\n", spec.type_name);
     os << "    fn ber_natural_tag(&self) -> asn1cpp_wire::Tag {\n";
     os << std::format("        {}\n", tag_expr);
     os << "    }\n\n";
-    os << "    fn xer_element_name(&self) -> &'static str {\n";
-    os << std::format("        \"{}\"\n", spec.xer_name);
-    os << "    }\n\n";
     os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
-    os << "        asn1cpp_wire::ber::sequence::encode_seq_of_content(out, &self.0);\n";
+    os << "        asn1cpp_wire::ber::object::encode_seqof_content(self, out);\n";
     os << "    }\n\n";
     os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-    os << "        self.0 = asn1cpp_wire::ber::sequence::decode_seq_of_content(content)?;\n";
-    os << "        Ok(())\n";
-    os << "    }\n";
-    // Always real now — encode_seq_of_xer/decode_seq_of_xer (sequence.rs)
-    // derive the per-element X.693 §12 tag from each element's own
-    // Asn1Value::xer_element_name() generically, same as the member-level
-    // SeqOf/TaggedSeqOf emission (see that lambda's own doc). When this
-    // type declared its own X.693 §12 element identifier
-    // (`SEQUENCE OF id INTEGER`), spec.elem_xer_name carries it through to
-    // the _named variant (ignored by ENUMERATED/CHOICE/NULL elements —
-    // see Asn1Value::xer_encode_seqof_element's own doc, rust-runtime/wire).
-    os << "\n";
-    os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
-    if (spec.elem_xer_name) {
-        os << std::format("        asn1cpp_wire::xer::seq_of::encode_seq_of_xer_named(out, &self.0, depth, Some(\"{}\"));\n", *spec.elem_xer_name);
-    } else {
-        os << "        asn1cpp_wire::xer::seq_of::encode_seq_of_xer(out, &self.0, depth);\n";
-    }
+    os << "        asn1cpp_wire::ber::object::decode_seqof_content(self, content)\n";
     os << "    }\n\n";
-    os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-    if (spec.elem_xer_name) {
-        os << std::format("        self.0 = asn1cpp_wire::xer::seq_of::decode_seq_of_xer_named(r, Some(\"{}\"))?;\n", *spec.elem_xer_name);
-    } else {
-        os << "        self.0 = asn1cpp_wire::xer::seq_of::decode_seq_of_xer(r)?;\n";
-    }
-    os << "        Ok(())\n";
-    os << "    }\n";
-    // JER: plain JSON array, no X.693 §12 element-rename concept to mirror
-    // (`spec.elem_xer_name` is XER-only — a JSON array has no per-element
-    // tag to override).
-    os << "\n";
-    os << "    fn jer_encode(&self, out: &mut String) {\n";
-    os << "        asn1cpp_wire::jer::seq_of::encode_seq_of_jer(out, &self.0);\n";
-    os << "    }\n\n";
-    os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-    os << "        self.0 = asn1cpp_wire::jer::seq_of::decode_seq_of_jer(r)?;\n";
-    os << "        Ok(())\n";
-    os << "    }\n";
-    // `Asn1Value::validate()`'s default (`value.rs`) is `0` — this override
-    // is only needed when there's a real SIZE constraint to check, unlike
-    // `{cname}` above (always emitted, unconditionally, so the member-row
-    // loop's name-derivation never has to guess whether it exists). Plain
-    // trait override, not a MemberDescriptor fn-pointer: every named or
-    // synthetic SEQUENCE OF/SET OF type is genuinely its own distinct Rust
-    // type (unlike INTEGER's shared `i64`), so it can carry its own
-    // constraint directly.
-    os << std::format("\n    fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {{\n        &{}\n    }}\n\n", cname);
+    os << std::format("    fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {{\n        &{}\n    }}\n\n", cname);
     if (spec.has_size_constraint) {
-        os << std::format("\n    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {{\n        asn1cpp_wire::constraints::validate_size(self.0.len(), &{})\n    }}\n", cname);
+        os << std::format("    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {{\n        asn1cpp_wire::constraints::validate_size(self.0.len(), &{})\n    }}\n\n", cname);
     }
-    // PER leg (X.691 §19/§20 — SIZE against this type's own {cname}
-    // table, each element against {cname}'s own `element` field, exactly
-    // the same runtime pair a member-embedded SeqOf<T>/SetOf<T> already
-    // calls, `ber::sequence`'s own impl) — a named SEQUENCE OF/SET OF
-    // owns its constraint, same convention SEQUENCE/CHOICE/ENUMERATED use,
-    // so `_c` (the caller's row-level constraint, meaningless for a type
-    // that carries its own) is ignored.
     os << std::format(
-        "\n    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
-        "        asn1cpp_wire::per::seq_of::encode_seq_of_content(w, &{0}, &self.0);\n    }}\n",
+        "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
+        "        asn1cpp_wire::per::seq_of::encode_seq_of_content(w, &{0}, &self.0);\n    }}\n\n",
         cname);
     os << std::format(
-        "\n    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
+        "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
         "        self.0 = asn1cpp_wire::per::seq_of::decode_seq_of_content(r, &{0})?;\n        Ok(())\n    }}\n",
         cname);
     os << "}\n\n";
@@ -1404,42 +1367,72 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // mirrors emit_sequence_definition's/emit_choice_definition's own
     // `impl {Type} { pub fn encode/decode/encode_xer/... }` block, so a
     // top-level SeqOf type is usable standalone, not only as a member
-    // elsewhere. BER/JER need no extra wrapper (self-delimiting TLV;
-    // plain JSON array respectively — both already exactly match the
-    // ground-truth root form via the plain `Asn1Value` trait default
-    // methods), XER needs the X.693 §8.3.1 document-root wrapper this
-    // type's own bare `xer_encode` doesn't add (`xer::object::encode_value`'s
-    // own doc — the generic form `encode_seq`/`encode_choice` specialize).
+    // elsewhere. BER/JER route through the reflective `Asn1SeqOf`
+    // wrappers (`ber::object`/`jer::object`) — no `Asn1Value` needed for
+    // those two legs (gambas-asn1#710/#711). XER stays on the per-
+    // element-`Asn1Value`-dispatched `xer::seq_of::encode_seq_of_xer(_
+    // named)` instead of the reflective `xer::object::encode_seqof_*`:
+    // that reflective path unwraps each element to a bare `MemberRef::
+    // Primitive` via `AsMemberRef` first, which silently drops a per-
+    // element X.693 §21 BASE64/UTF8 ENCODING-CONTROL override baked into
+    // the element's own declared type (`ber::sequence::SeqOf<T>`'s own
+    // `xer_encode`/`xer_decode_into` carry the same doc note,
+    // gambas-asn1#687) — `encode_seq_of_xer(_named)` calls each element's
+    // own `Asn1Value::xer_encode_seqof_element` directly on the
+    // *un*-unwrapped element type instead, so that override still runs.
+    // This is the one place this type's own leaf element type still
+    // needs `Asn1Value` — this type itself does not.
     os << std::format("impl {} {{\n", spec.type_name);
     os << "    pub fn encode(&self) -> Vec<u8> {\n";
-    os << "        let mut out = Vec::new();\n";
-    os << "        asn1cpp_wire::value::Asn1Value::ber_encode(self, &mut out);\n";
-    os << "        out\n";
+    if (spec.has_size_constraint) {
+        os << std::format(
+            "        asn1cpp_wire::validate::check_delta(asn1cpp_wire::constraints::validate_size(self.0.len(), &{}), \"{}\", \"encode\");\n",
+            cname, spec.type_name);
+    }
+    os << "        asn1cpp_wire::ber::object::encode_seqof(self)\n";
     os << "    }\n\n";
     os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
     os << "        let mut v = Self::default();\n";
     os << "        let mut r = asn1cpp_wire::Reader::new(data);\n";
-    os << "        asn1cpp_wire::value::Asn1Value::ber_decode_into(&mut v, &mut r)?;\n";
+    os << "        asn1cpp_wire::ber::object::decode_seqof_into(&mut v, &mut r)?;\n";
+    if (spec.has_size_constraint) {
+        os << std::format(
+            "        asn1cpp_wire::validate::check_delta(asn1cpp_wire::constraints::validate_size(v.0.len(), &{}), \"{}\", \"decode\");\n",
+            cname, spec.type_name);
+    }
     os << "        Ok(v)\n";
     os << "    }\n\n";
     os << "    pub fn encode_xer(&self) -> String {\n";
-    os << "        asn1cpp_wire::xer::object::encode_value(self)\n";
+    os << "        let mut out = String::new();\n";
+    os << std::format("        asn1cpp_wire::xer::writer::write_open_tag(&mut out, \"{}\");\n", spec.xer_name);
+    if (spec.elem_xer_name) {
+        os << std::format("        asn1cpp_wire::xer::seq_of::encode_seq_of_xer_named(&mut out, &self.0, 0, Some(\"{}\"));\n", *spec.elem_xer_name);
+    } else {
+        os << "        asn1cpp_wire::xer::seq_of::encode_seq_of_xer(&mut out, &self.0, 0);\n";
+    }
+    os << std::format("        asn1cpp_wire::xer::writer::write_close_tag(&mut out, \"{}\");\n", spec.xer_name);
+    os << "        out.push('\\n');\n";
+    os << "        out\n";
     os << "    }\n\n";
     os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
     os << "        let mut v = Self::default();\n";
     os << "        let mut r = asn1cpp_wire::xer::reader::XerReader::new(xml);\n";
-    os << "        asn1cpp_wire::xer::object::decode_value_into(&mut v, &mut r)?;\n";
+    os << std::format("        r.consume_open_tag(\"{}\")?;\n", spec.xer_name);
+    if (spec.elem_xer_name) {
+        os << std::format("        v.0 = asn1cpp_wire::xer::seq_of::decode_seq_of_xer_named(&mut r, Some(\"{}\"))?;\n", *spec.elem_xer_name);
+    } else {
+        os << "        v.0 = asn1cpp_wire::xer::seq_of::decode_seq_of_xer(&mut r)?;\n";
+    }
+    os << std::format("        r.consume_close_tag(\"{}\")?;\n", spec.xer_name);
     os << "        Ok(v)\n";
     os << "    }\n\n";
     os << "    pub fn encode_jer(&self) -> String {\n";
-    os << "        let mut out = String::new();\n";
-    os << "        asn1cpp_wire::value::Asn1Value::jer_encode(self, &mut out);\n";
-    os << "        out\n";
+    os << "        asn1cpp_wire::jer::object::encode_seqof(self)\n";
     os << "    }\n\n";
     os << "    pub fn decode_jer(json: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
     os << "        let mut v = Self::default();\n";
     os << "        let mut r = asn1cpp_wire::jer::reader::Reader::new(json);\n";
-    os << "        asn1cpp_wire::value::Asn1Value::jer_decode_into(&mut v, &mut r)?;\n";
+    os << "        asn1cpp_wire::jer::object::decode_seqof_into(&mut v, &mut r)?;\n";
     os << "        Ok(v)\n";
     os << "    }\n";
     os << "}\n\n";
@@ -1460,6 +1453,15 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // carries no row of its own to read a literal tag from) calls this
     // method expecting the type's real natural tag, override included.
     os << std::format("    fn natural_tag(&self) -> asn1cpp_wire::Tag {{ {} }}\n", tag_expr);
+    // This type's own X.693 §9.3 wrapper name, used when it appears
+    // nested as another collection's element (`natural_xer_name_of`'s
+    // own doc) -- `spec.xer_name` is this type's real ASN.1 name when it
+    // has one, or the generic `"SEQUENCE"`/`"SET"` keyword fallback an
+    // anonymous promoted collection gets (`Generator::synthetic->
+    // xer_name`) -- never the inline-member `"SEQUENCE-OF"`/`"SET-OF"`
+    // form `ber::sequence::SeqOf<T>`/`SetOf<T>` use, since this type is
+    // always independently named or promoted, never an inline member.
+    os << std::format("    fn own_xer_name(&self) -> &'static str {{ \"{}\" }}\n", spec.xer_name);
     os << "    fn len(&self) -> usize { self.0.len() }\n";
     os << "    fn get(&self, index: usize) -> asn1cpp_wire::spec::object::MemberRef<'_> { self.0[index].as_member_ref() }\n";
     os << "    fn push_default_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
@@ -1469,15 +1471,12 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << "    fn reserve(&mut self, additional: usize) {\n";
     os << "        self.0.reserve(additional);\n";
     os << "    }\n";
-    // `Asn1SeqOf::elem_natural_xer_name`'s own doc: `self.0[index]`'s
-    // *own* `Asn1Value::xer_element_name()`, not anything read back off
-    // `get(index)`'s already-unwrapped `MemberRef` — the one piece of
-    // per-element identity that unwrapping to `PrimitiveRef`/
-    // `Base64`/`Utf8` can't carry through for an aliased element type
-    // (e.g. a named INTEGER alias, X.680 §19 — same discard `AsMemberRef`
-    // for a builtin/INTEGER alias already has at the SEQUENCE-member
-    // row).
-    os << "    fn elem_natural_xer_name(&self, index: usize) -> &'static str { asn1cpp_wire::value::Asn1Value::xer_element_name(&self.0[index]) }\n";
+    // `self.0[index]`'s own un-unwrapped `AsMemberRef::
+    // own_element_xer_name()`, not anything read back off `get(index)`'s
+    // already-unwrapped `MemberRef` — an aliased element (e.g. a named
+    // INTEGER alias, X.680 §19) needs its own real declared name, which
+    // `get(index)`'s unwrap to a bare `PrimitiveRef` has already lost.
+    os << "    fn elem_natural_xer_name(&self, index: usize) -> &'static str { self.0[index].own_element_xer_name() }\n";
     if (spec.elem_xer_name) {
         os << std::format("    fn elem_xer_name(&self) -> ::std::option::Option<&'static str> {{ Some(\"{}\") }}\n", *spec.elem_xer_name);
     }
@@ -1492,6 +1491,9 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << "    }\n\n";
     os << "    fn as_member_ref_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
     os << "        asn1cpp_wire::spec::object::MemberRefMut::SeqOf(self)\n";
+    os << "    }\n\n";
+    os << "    fn own_element_xer_name(&self) -> &'static str {\n";
+    os << std::format("        <Self as asn1cpp_wire::spec::object::Asn1SeqOf>::own_xer_name(self)\n");
     os << "    }\n";
     os << "}\n\n";
 }
@@ -2324,7 +2326,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    }\n\n";
         os << "    fn as_member_ref_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
         os << "        asn1cpp_wire::spec::object::MemberRefMut::Composite(self)\n";
-        os << "    }\n";
+        os << "    }\n\n";
+        os << std::format("    fn own_element_xer_name(&self) -> &'static str {{ {}.name }}\n", obj_spec_ident);
         os << "}\n\n";
     }
 }
@@ -2843,7 +2846,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "    }\n\n";
         os << "    fn as_member_ref_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
         os << "        asn1cpp_wire::spec::object::MemberRefMut::Choice(self)\n";
-        os << "    }\n";
+        os << "    }\n\n";
+        os << std::format("    fn own_element_xer_name(&self) -> &'static str {{ {}.name }}\n", spec_ident);
         os << "}\n\n";
     }
 }
