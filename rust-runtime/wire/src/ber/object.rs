@@ -346,7 +346,7 @@ fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
 // SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------
 
-fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) {
+pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) {
     for i in 0..obj.len() {
         encode_member_ref(obj.get(i), BerTagging::Delegate, out);
     }
@@ -356,7 +356,7 @@ fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) {
 /// top-level-TLV pre-count (`count_top_level_tlvs`): reserves the
 /// backing `Vec` once via `Asn1SeqOf::reserve` instead of letting
 /// `push_default_mut` regrow it geometrically one element at a time.
-fn decode_seqof_content(obj: &mut dyn Asn1SeqOf, content: &[u8]) -> Result<(), DecodeError> {
+pub(crate) fn decode_seqof_content(obj: &mut dyn Asn1SeqOf, content: &[u8]) -> Result<(), DecodeError> {
     obj.reserve(crate::ber::sequence::count_top_level_tlvs(content));
     let mut inner = Reader::new(content);
     while !inner.at_end() {

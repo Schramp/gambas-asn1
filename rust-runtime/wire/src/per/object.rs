@@ -299,7 +299,7 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> R
 // SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------
 
-fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Writer) {
+pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Writer) {
     encode_size_field(w, pc, obj.len());
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
     for i in 0..obj.len() {
@@ -307,7 +307,7 @@ fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Writer) {
     }
 }
 
-fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, pc: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
+pub(crate) fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, pc: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
     let count = decode_size_field(r, pc)?;
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
     for _ in 0..count {

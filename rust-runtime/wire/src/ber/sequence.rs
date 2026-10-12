@@ -20,7 +20,6 @@ use crate::ber::tag::{universal, Tag};
 use crate::value::Asn1Value;
 use crate::ber::writer::write_tagged;
 use crate::xer::reader::XerReader;
-use crate::xer::seq_of::{decode_seq_of_xer, encode_seq_of_xer};
 
 pub const SEQUENCE_TAG: Tag = Tag::universal(universal::SEQUENCE, true);
 
@@ -181,7 +180,7 @@ impl<T> std::ops::DerefMut for SeqOf<T> {
     }
 }
 
-impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
+impl<T: crate::spec::object::AsMemberRef + Default> Asn1Value for SeqOf<T> {
     fn ber_natural_tag(&self) -> Tag {
         SEQUENCE_TAG
     }
@@ -191,30 +190,30 @@ impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        encode_seq_of_content(out, &self.0);
+        crate::ber::object::encode_seqof_content(self, out);
     }
 
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        self.0 = decode_seq_of_content(content)?;
-        Ok(())
+        self.0.clear();
+        crate::ber::object::decode_seqof_content(self, content)
     }
 
     fn xer_encode(&self, out: &mut String, depth: usize) {
-        encode_seq_of_xer(out, &self.0, depth);
+        crate::xer::object::encode_seqof_content(self, out, depth);
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        self.0 = decode_seq_of_xer(r)?;
-        Ok(())
+        self.0.clear();
+        crate::xer::object::decode_seqof_content_into(self, r)
     }
 
     fn jer_encode(&self, out: &mut String) {
-        crate::jer::seq_of::encode_seq_of_jer(out, &self.0);
+        crate::jer::object::encode_seqof_into(self, out);
     }
 
     fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
-        self.0 = crate::jer::seq_of::decode_seq_of_jer(r)?;
-        Ok(())
+        self.0.clear();
+        crate::jer::object::decode_seqof_into(self, r)
     }
 
     /// An inline SEQUENCE OF/SET OF member has no constraint of its own
@@ -228,7 +227,7 @@ impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
     /// each element is encoded against `c.element` (a shared native element
     /// type such as `i64` takes its range from there).
     fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
-        crate::per::seq_of::encode_seq_of_content(w, c, &self.0);
+        crate::per::object::encode_seqof_content(self, c, w);
     }
 
     fn per_decode_into(
@@ -236,8 +235,8 @@ impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
         r: &mut crate::per::reader::Reader,
         c: &crate::constraints::Constraints,
     ) -> Result<(), crate::per::reader::DecodeError> {
-        self.0 = crate::per::seq_of::decode_seq_of_content(r, c)?;
-        Ok(())
+        self.0.clear();
+        crate::per::object::decode_seqof_content_into(self, c, r)
     }
 }
 
@@ -298,7 +297,7 @@ impl<T> std::ops::DerefMut for SetOf<T> {
     }
 }
 
-impl<T: Asn1Value + Default> Asn1Value for SetOf<T> {
+impl<T: crate::spec::object::AsMemberRef + Default> Asn1Value for SetOf<T> {
     fn ber_natural_tag(&self) -> Tag {
         SET_TAG
     }
@@ -308,30 +307,30 @@ impl<T: Asn1Value + Default> Asn1Value for SetOf<T> {
     }
 
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        encode_seq_of_content(out, &self.0);
+        crate::ber::object::encode_seqof_content(self, out);
     }
 
     fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        self.0 = decode_seq_of_content(content)?;
-        Ok(())
+        self.0.clear();
+        crate::ber::object::decode_seqof_content(self, content)
     }
 
     fn xer_encode(&self, out: &mut String, depth: usize) {
-        encode_seq_of_xer(out, &self.0, depth);
+        crate::xer::object::encode_seqof_content(self, out, depth);
     }
 
     fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        self.0 = decode_seq_of_xer(r)?;
-        Ok(())
+        self.0.clear();
+        crate::xer::object::decode_seqof_content_into(self, r)
     }
 
     fn jer_encode(&self, out: &mut String) {
-        crate::jer::seq_of::encode_seq_of_jer(out, &self.0);
+        crate::jer::object::encode_seqof_into(self, out);
     }
 
     fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
-        self.0 = crate::jer::seq_of::decode_seq_of_jer(r)?;
-        Ok(())
+        self.0.clear();
+        crate::jer::object::decode_seqof_into(self, r)
     }
 
     /// An inline SEQUENCE OF/SET OF member has no constraint of its own
@@ -345,7 +344,7 @@ impl<T: Asn1Value + Default> Asn1Value for SetOf<T> {
     /// each element is encoded against `c.element` (a shared native element
     /// type such as `i64` takes its range from there).
     fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
-        crate::per::seq_of::encode_seq_of_content(w, c, &self.0);
+        crate::per::object::encode_seqof_content(self, c, w);
     }
 
     fn per_decode_into(
@@ -353,8 +352,8 @@ impl<T: Asn1Value + Default> Asn1Value for SetOf<T> {
         r: &mut crate::per::reader::Reader,
         c: &crate::constraints::Constraints,
     ) -> Result<(), crate::per::reader::DecodeError> {
-        self.0 = crate::per::seq_of::decode_seq_of_content(r, c)?;
-        Ok(())
+        self.0.clear();
+        crate::per::object::decode_seqof_content_into(self, c, r)
     }
 }
 
