@@ -22,16 +22,20 @@
 //! Every function below calls each type's own free codec function
 //! directly (`crate::boolean::encode_boolean_content`,
 //! `crate::xer::real::encode`, ...) rather than going through the
-//! `Asn1Value` trait — unlike `ber::sequence::SeqOf<T>`/`SetOf<T>`/
-//! `Box<T>`, which stay generic over `T: Asn1Value` because they recurse
-//! into an arbitrary, schema-defined `T` with no closed enum to match on.
+//! `Asn1Value` trait — unlike `ber::sequence::SeqOf<T>`/`SetOf<T>`'s own
+//! XER leg (`xer_encode`/`xer_decode_into` only), which stays generic over
+//! `T: Asn1Value` because a per-element BASE64/UTF8 ENCODING-CONTROL
+//! override or an aliased element's own real name only survives on the
+//! *un*-unwrapped `T` — `AsMemberRef`'s reflective unwrap loses both
+//! (`spec::object::AsMemberRef::own_element_xer_name`'s own doc). BER/
+//! JER/PER access a `SeqOf<T>`/`SetOf<T>` member or element purely
+//! reflectively instead, needing no `Asn1Value` bound at all. `Box<T>`
+//! needs no `Asn1Value` either — the reflective `Asn1Seq`/`Asn1Choice`
+//! blanket impls (`spec::object.rs`) are the only mechanism it ever had.
 //! `PrimitiveRef`/`PrimitiveRefMut` *is* a closed enum, so matching on it
 //! directly — instead of calling a trait method that itself exists only
 //! to be overridden once per type — needs no trait bound at all. This is
-//! what gambas-asn1#697/#698 call "the dispatch flip": `Asn1Value` keeps
-//! existing (still required by the generic composite-recursion callers
-//! above, and by `xer::object::encode_value`'s `&dyn Asn1Value` top-level
-//! entry point), but this module no longer needs it for its own dispatch.
+//! what gambas-asn1#697/#698 call "the dispatch flip".
 //!
 //! An application that only calls `.encode()`/`.decode()` (BER) never
 //! calls `xer_encode_primitive`/`jer_encode_primitive`/

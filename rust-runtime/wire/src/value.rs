@@ -326,27 +326,6 @@ pub trait Asn1Value {
     }
 }
 
-/// EXPLICIT tagging (X.690 §8.14.3), generic over any
-/// `Asn1Value` — wraps the value's own natural encoding in an outer TLV via
-/// `writer::write_explicit`/`reader::read_explicit`. The generic
-/// counterpart to each type's own `*_tagged` functions (IMPLICIT —
-/// `boolean::write_boolean_tagged`, `integer::write_integer_tagged`, etc.):
-/// those substitute the tag and need a per-kind primitive because the wire
-/// *shape* differs per kind; EXPLICIT only ever adds one outer wrapper
-/// around whatever the natural encoding already is, so one generic pair
-/// covers every `Asn1Value` impl instead of needing one per kind.
-pub fn encode_explicit<T: Asn1Value>(out: &mut Vec<u8>, tag: crate::ber::tag::Tag, value: &T) {
-    crate::ber::writer::write_explicit(out, tag, |inner| value.ber_encode(inner));
-}
-
-pub fn decode_explicit<T: Asn1Value + Default>(r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<T, DecodeError> {
-    crate::ber::reader::read_explicit(r, tag, |inner| {
-        let mut tmp = T::default();
-        tmp.ber_decode_into(inner)?;
-        Ok(tmp)
-    })
-}
-
 /// Shared `Asn1Value` shape for `Integer`/`UInteger` (`IntStorageKind::
 /// S64`/`U64`): identical structure across signed/unsigned width, only the
 /// byte-codec functions (`crate::integer`), PER module (`crate::per`) and
@@ -1403,19 +1382,6 @@ mod tests {
         got.xer_decode_into(&mut r).unwrap();
         r.consume_close_tag("label").unwrap();
         assert_eq!(got.0, "a<b>&c");
-    }
-
-    #[test]
-    fn explicit_generic_wraps_and_round_trips_any_asn1value() {
-        let mut buf = Vec::new();
-        encode_explicit(&mut buf, crate::ber::tag::Tag::context(7, true), &Integer(42));
-        // [7] EXPLICIT (0xA7), wrapping the natural INTEGER encoding
-        // (0x02 0x01 0x2A) unchanged — not a tag substitution.
-        assert_eq!(buf, vec![0xA7, 0x03, 0x02, 0x01, 0x2A]);
-
-        let mut r = Reader::new(&buf);
-        let got: Integer = decode_explicit(&mut r, crate::ber::tag::Tag::context(7, true)).unwrap();
-        assert_eq!(got, 42);
     }
 
     #[test]
