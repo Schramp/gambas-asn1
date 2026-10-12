@@ -7,9 +7,10 @@
 //! capture verbatim) rather than composed from `ber_natural_tag` +
 //! content the way every other type's default does. An ANY member is
 //! always tagged (X.680 §30.1's TaggedType construction), so it reaches
-//! the wire through `ber_encode_explicit`/`ber_decode_into_explicit`'s
-//! default bodies — `MemberAccess::ExplicitScalar`, like any other
-//! EXPLICIT-tagged member (`spec::sequence`'s own doc). PER treats the
+//! the wire through `spec::primitive`'s own EXPLICIT-framing dispatch
+//! (`ber_encode_explicit_`/`ber_decode_explicit_`, which special-case
+//! `PrimitiveRef::Any`/`PrimitiveRefMut::Any` directly rather than going
+//! through this trait at all — see that module's own doc). PER treats the
 //! captured content as an X.691 §10.2 open-type field (length-prefixed
 //! raw octets — `per_encode`/`per_decode_into` below). No defined XER
 //! form.
