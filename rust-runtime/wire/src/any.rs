@@ -48,11 +48,11 @@ impl Asn1Value for Any {
     }
 
     fn ber_encode(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.0);
+        encode_any(&self.0, out);
     }
 
     fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        self.0 = r.remaining().to_vec();
+        self.0 = decode_any(r.remaining());
         Ok(())
     }
 
@@ -105,6 +105,16 @@ impl Asn1Value for Any {
 impl crate::type_tag::TypeTag for Any {
     // ANY (X.208 legacy) has no fixed tag of its own.
     const TAG: Option<crate::ber::tag::Tag> = None;
+}
+
+/// Replays the captured TLV verbatim — see this module's own doc for why
+/// ANY has no content-only BER form to delegate to instead.
+pub(crate) fn encode_any(bytes: &[u8], out: &mut Vec<u8>) {
+    out.extend_from_slice(bytes);
+}
+
+pub(crate) fn decode_any(remaining: &[u8]) -> Vec<u8> {
+    remaining.to_vec()
 }
 
 #[cfg(test)]
