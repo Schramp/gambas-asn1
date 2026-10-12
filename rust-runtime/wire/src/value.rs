@@ -702,15 +702,15 @@ impl Asn1Value for crate::null::Null {
         crate::xer::null::decode_seqof_element(r)
     }
 
-    /// X.691 §14: contributes zero bits to the encoding either direction —
-    /// mirrors `NullPerHandler` (`runtime/src/PerCodec.cpp`) exactly.
-    fn per_encode(&self, _w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {}
+    fn per_encode(&self, w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {
+        crate::per::null::encode(w);
+    }
     fn per_decode_into(
         &mut self,
-        _r: &mut crate::per::reader::Reader,
+        r: &mut crate::per::reader::Reader,
         _c: &crate::constraints::Constraints,
     ) -> Result<(), crate::per::reader::DecodeError> {
-        Ok(())
+        crate::per::null::decode(r)
     }
 }
 
@@ -808,12 +808,7 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
     /// (`runtime/src/PerCodec.cpp`, `per_detail::encode_ber_content<Oid>`)
     /// exactly.
     fn per_encode(&self, w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {
-        let mut content = Vec::new();
-        crate::oid::encode_object_identifier_content(&mut content, self);
-        crate::per::length::put_length(w, content.len());
-        for b in content {
-            w.put_bits(b as u64, 8);
-        }
+        crate::per::oid::encode(self, w);
     }
 
     fn per_decode_into(
@@ -821,14 +816,7 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
         r: &mut crate::per::reader::Reader,
         _c: &crate::constraints::Constraints,
     ) -> Result<(), crate::per::reader::DecodeError> {
-        let len = crate::per::length::get_length(r)?;
-        let mut content = Vec::with_capacity(len);
-        for _ in 0..len {
-            content.push(r.get_bits(8)? as u8);
-        }
-        *self = crate::oid::decode_object_identifier_content(&content)
-            .map_err(|e| crate::per::reader::DecodeError::new(e.message, r.bit_pos()))?;
-        Ok(())
+        crate::per::oid::decode_into(self, r)
     }
 
     fn xer_encode(&self, out: &mut String, _depth: usize) {
@@ -881,12 +869,7 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
     /// (`runtime/src/PerCodec.cpp`, `per_detail::encode_ber_content<
     /// RelativeOid>`) exactly.
     fn per_encode(&self, w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {
-        let mut content = Vec::new();
-        crate::relative_oid::encode_relative_oid_content(&mut content, self);
-        crate::per::length::put_length(w, content.len());
-        for b in content {
-            w.put_bits(b as u64, 8);
-        }
+        crate::per::relative_oid::encode(self, w);
     }
 
     fn per_decode_into(
@@ -894,14 +877,7 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
         r: &mut crate::per::reader::Reader,
         _c: &crate::constraints::Constraints,
     ) -> Result<(), crate::per::reader::DecodeError> {
-        let len = crate::per::length::get_length(r)?;
-        let mut content = Vec::with_capacity(len);
-        for _ in 0..len {
-            content.push(r.get_bits(8)? as u8);
-        }
-        *self = crate::relative_oid::decode_relative_oid_content(&content)
-            .map_err(|e| crate::per::reader::DecodeError::new(e.message, r.bit_pos()))?;
-        Ok(())
+        crate::per::relative_oid::decode_into(self, r)
     }
 
     fn xer_encode(&self, out: &mut String, _depth: usize) {

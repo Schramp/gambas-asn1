@@ -63,10 +63,7 @@ impl Asn1Value for Any {
     /// captured content the same way it treats an unknown CHOICE
     /// extension alternative's payload.
     fn per_encode(&self, w: &mut crate::per::writer::Writer, _c: &crate::constraints::Constraints) {
-        crate::per::length::put_length(w, self.0.len());
-        for b in &self.0 {
-            w.put_bits(*b as u64, 8);
-        }
+        crate::per::any::encode(&self.0, w);
     }
 
     fn per_decode_into(
@@ -74,12 +71,7 @@ impl Asn1Value for Any {
         r: &mut crate::per::reader::Reader,
         _c: &crate::constraints::Constraints,
     ) -> Result<(), crate::per::reader::DecodeError> {
-        let len = crate::per::length::get_length(r)?;
-        let mut bytes = Vec::with_capacity(len);
-        for _ in 0..len {
-            bytes.push(r.get_bits(8)? as u8);
-        }
-        self.0 = bytes;
+        self.0 = crate::per::any::decode(r)?;
         Ok(())
     }
 
