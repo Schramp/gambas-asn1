@@ -515,14 +515,11 @@ macro_rules! fixed_width_integer {
             }
 
             fn jer_encode(&self, out: &mut String) {
-                out.push_str(&self.to_string());
+                crate::jer::integer::encode(self.0, out);
             }
 
             fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
-                let tok = r.read_json_token()?;
-                self.0 = tok.parse::<$prim>().map_err(|_| {
-                    DecodeError::new(format!("JER: invalid INTEGER: {tok}"), r.pos())
-                })?;
+                self.0 = crate::jer::integer::decode(r)?;
                 Ok(())
             }
 
@@ -578,14 +575,11 @@ impl Asn1Value for crate::integer::BigInteger {
     }
 
     fn jer_encode(&self, out: &mut String) {
-        out.push_str(&self.to_string());
+        crate::jer::integer::encode(self.0, out);
     }
 
     fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
-        let tok = r.read_json_token()?;
-        self.0 = tok.parse::<i128>().map_err(|_| {
-            DecodeError::new(format!("JER: invalid INTEGER: {tok}"), r.pos())
-        })?;
+        self.0 = crate::jer::integer::decode(r)?;
         Ok(())
     }
 }
@@ -688,15 +682,11 @@ impl Asn1Value for crate::null::Null {
     }
 
     fn jer_encode(&self, out: &mut String) {
-        out.push_str("null");
+        crate::jer::null::encode(out);
     }
 
     fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
-        let tok = r.read_json_token()?;
-        if tok != "null" {
-            return Err(DecodeError::new(format!("JER: expected null, got: {tok}"), r.pos()));
-        }
-        Ok(())
+        crate::jer::null::decode(r)
     }
 
     // X.693: a NULL SEQUENCE OF/SET OF element self-closes as `<NULL/>`,
@@ -853,30 +843,11 @@ impl Asn1Value for crate::oid::ObjectIdentifier {
     /// XER's own `xer_encode` above uses -- JER has no separate OID
     /// grammar, just JSON-quotes the identical text.
     fn jer_encode(&self, out: &mut String) {
-        out.push('"');
-        for (i, arc) in self.0.iter().enumerate() {
-            if i > 0 {
-                out.push('.');
-            }
-            out.push_str(&arc.to_string());
-        }
-        out.push('"');
+        crate::jer::oid::encode(self, out);
     }
 
     fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
-        let text = r.read_json_string()?;
-        let mut arcs = Vec::new();
-        for part in text.split('.') {
-            if part.is_empty() {
-                break;
-            }
-            match part.parse::<u64>() {
-                Ok(v) => arcs.push(v),
-                Err(_) => break,
-            }
-        }
-        *self = crate::oid::ObjectIdentifier(arcs);
-        Ok(())
+        crate::jer::oid::decode_into(self, r)
     }
 }
 
@@ -942,30 +913,11 @@ impl Asn1Value for crate::relative_oid::RelativeOid {
     }
 
     fn jer_encode(&self, out: &mut String) {
-        out.push('"');
-        for (i, arc) in self.0.iter().enumerate() {
-            if i > 0 {
-                out.push('.');
-            }
-            out.push_str(&arc.to_string());
-        }
-        out.push('"');
+        crate::jer::relative_oid::encode(self, out);
     }
 
     fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
-        let text = r.read_json_string()?;
-        let mut arcs = Vec::new();
-        for part in text.split('.') {
-            if part.is_empty() {
-                break;
-            }
-            match part.parse::<u64>() {
-                Ok(v) => arcs.push(v),
-                Err(_) => break,
-            }
-        }
-        *self = crate::relative_oid::RelativeOid(arcs);
-        Ok(())
+        crate::jer::relative_oid::decode_into(self, r)
     }
 }
 
