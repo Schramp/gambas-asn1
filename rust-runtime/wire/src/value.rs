@@ -117,13 +117,16 @@ pub trait Asn1Value {
     ///
     /// This is the one call site every non-composite `Asn1Value` impl
     /// funnels through on encode (`ber_encode`'s own default delegates
-    /// here; `TaggedScalar`/`ber_encode_explicit`'s default reach it too —
-    /// see `validate`'s own doc for why this, not `ber_encode`, is where
-    /// `validate()` is called from) — so it is also where constraint
-    /// validation (X.680 §51 SubtypeConstraint) hooks in, gated by
-    /// `debug::debug_flags()` the same way every other
-    /// `ASN1CPP_DEBUG` bit is (`debug.rs`): on by default, `DBG_NO_VALIDATE`
-    /// opts out, `DBG_VALIDATE_TRACE` additionally prints each failure.
+    /// here) — so it is also where constraint validation (X.680 §51
+    /// SubtypeConstraint) hooks in, gated by `debug::debug_flags()` the
+    /// same way every other `ASN1CPP_DEBUG` bit is (`debug.rs`): on by
+    /// default, `DBG_NO_VALIDATE` opts out, `DBG_VALIDATE_TRACE`
+    /// additionally prints each failure. Overridden directly by a
+    /// self-tagged CHOICE (`RustBackend::emit_choice_definition`, when
+    /// `spec.tag` is set) — the one remaining override outside this
+    /// default and `Box<T>`'s forwarding, since #704 removed the
+    /// `ber_encode_explicit`/`ber_decode_into_explicit` pair this used to
+    /// sit alongside (confirmed zero codegen references to those two).
     fn ber_encode_tagged(&self, tag: crate::ber::tag::Tag, out: &mut Vec<u8>) {
         crate::validate::check(self, "encode");
         crate::ber::writer::write_tagged(out, tag, |buf| self.ber_encode_content(buf));
@@ -140,22 +143,6 @@ pub trait Asn1Value {
         self.ber_decode_content(tlv.value)?;
         crate::validate::check(self, "decode");
         Ok(())
-    }
-
-    /// EXPLICIT tag override (X.690 §8.14.3) — wraps this value's own
-    /// complete natural-tag encoding (`ber_encode`) in an outer constructed
-    /// TLV, rather than substituting for it the way `ber_encode_tagged`
-    /// (IMPLICIT) does. Reached statically per concrete type — through
-    /// `spec::primitive`'s macro-generated dispatch for a leaf value, or
-    /// directly for `Any`/`TaggedScalar` — never through a `&dyn Asn1Value`
-    /// accessor.
-    fn ber_encode_explicit(&self, out: &mut Vec<u8>, tag: crate::ber::tag::Tag) {
-        crate::ber::writer::write_explicit(out, tag, |inner| self.ber_encode(inner));
-    }
-
-    /// Decode counterpart of `ber_encode_explicit`.
-    fn ber_decode_into_explicit(&mut self, r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<(), DecodeError> {
-        crate::ber::reader::read_explicit(r, tag, |inner| self.ber_decode_into(inner))
     }
 
     fn xer_encode(&self, _out: &mut String, _depth: usize) {
@@ -1512,85 +1499,6 @@ mod tests {
         let mut r = Reader::new(&buf);
         let got: Integer = decode_explicit(&mut r, crate::ber::tag::Tag::context(7, true)).unwrap();
         assert_eq!(got, 42);
-    }
-
-    #[test]
-    fn explicit_any_captures_the_wrapped_bytes_verbatim() {
-        // The wrapped "value" here is itself a full INTEGER TLV — ANY's
-        // whole point is to capture that unparsed, tag and all.
-        let inner_tlv = [0x02u8, 0x01, 0x2A]; // INTEGER 42
-        let mut buf = Vec::new();
-        crate::any::Any(inner_tlv.to_vec()).ber_encode_explicit(&mut buf, crate::ber::tag::Tag::context(1, true));
-        assert_eq!(buf, vec![0xA1, 0x03, 0x02, 0x01, 0x2A]);
-
-        let mut r = Reader::new(&buf);
-        let mut got = crate::any::Any::default();
-        got.ber_decode_into_explicit(&mut r, crate::ber::tag::Tag::context(1, true)).unwrap();
-        assert_eq!(*got, inner_tlv);
-    }
-
-    #[test]
-    fn explicit_any_rejects_wrong_wrapper_tag() {
-        let mut buf = Vec::new();
-        crate::any::Any(vec![0x02, 0x01, 0x2A]).ber_encode_explicit(&mut buf, crate::ber::tag::Tag::context(1, true));
-
-        let mut r = Reader::new(&buf);
-        let mut got = crate::any::Any::default();
-        assert!(got.ber_decode_into_explicit(&mut r, crate::ber::tag::Tag::context(2, true)).is_err());
-    }
-
-    // ---- generic IMPLICIT retagging (ber_encode_tagged/ber_decode_into_tagged) ----
-
-    #[test]
-    fn tagged_matching_natural_tag_is_identical_to_plain_encode() {
-        let mut a = Vec::new();
-        Integer(42).ber_encode(&mut a);
-        let mut b = Vec::new();
-        Integer(42).ber_encode_tagged(crate::integer::INTEGER_TAG, &mut b);
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn tagged_substitutes_the_tag_for_a_scalar() {
-        let context_0 = crate::ber::tag::Tag::context(0, false);
-        let mut out = Vec::new();
-        Integer(42).ber_encode_tagged(context_0, &mut out);
-        assert_eq!(out, vec![0x80, 0x01, 0x2A]); // context primitive 0, not universal INTEGER (0x02)
-
-        let mut r = Reader::new(&out);
-        let mut got = Integer(0);
-        got.ber_decode_into_tagged(&mut r, context_0).unwrap();
-        assert_eq!(got, 42);
-    }
-
-    #[test]
-    fn tagged_substitutes_the_tag_for_a_constructed_value() {
-        // BitString isn't constructed, but exercise a real non-trivial
-        // multi-byte value to make sure content bytes survive the
-        // splice-and-resplice untouched.
-        use crate::bit_string::BitString;
-        let v = BitString { bytes: vec![0b1010_1000, 0xFF], unused_bits: 2 };
-        let context_3 = crate::ber::tag::Tag::context(3, false);
-        let mut out = Vec::new();
-        v.ber_encode_tagged(context_3, &mut out);
-        assert_eq!(out[0], 0x83); // context primitive 3
-
-        let mut r = Reader::new(&out);
-        let mut got = BitString::default();
-        got.ber_decode_into_tagged(&mut r, context_3).unwrap();
-        assert_eq!(got, v);
-    }
-
-    #[test]
-    fn tagged_decode_rejects_wrong_tag() {
-        let context_0 = crate::ber::tag::Tag::context(0, false);
-        let context_1 = crate::ber::tag::Tag::context(1, false);
-        let mut out = Vec::new();
-        Integer(42).ber_encode_tagged(context_0, &mut out);
-
-        let mut r = Reader::new(&out);
-        let mut got = Integer(0);
-        assert!(got.ber_decode_into_tagged(&mut r, context_1).is_err());
     }
 
     #[test]

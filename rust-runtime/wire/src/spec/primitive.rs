@@ -617,3 +617,97 @@ macro_rules! define_as_member_ref {
     };
 }
 for_each_primitive!(define_as_member_ref);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::integer::Integer;
+    use crate::bit_string::BitString;
+    use crate::any::Any;
+
+    // Regression coverage for IMPLICIT/EXPLICIT BER framing — used to live
+    // in value.rs against the now-deleted Asn1Value::ber_encode_tagged/
+    // ber_encode_explicit trait methods (#704); this module's own
+    // ber_encode_primitive/ber_decode_primitive is the real production
+    // entry point for this behavior now.
+
+    #[test]
+    fn implicit_matching_natural_tag_is_identical_to_plain_encode() {
+        let mut a = Vec::new();
+        let v = Integer(42);
+        ber_encode_primitive(PrimitiveRef::Integer(&v), BerTagging::Delegate, &mut a);
+        let mut b = Vec::new();
+        ber_encode_primitive(PrimitiveRef::Integer(&v), BerTagging::Implicit(crate::integer::INTEGER_TAG), &mut b);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn implicit_substitutes_the_tag_for_a_scalar() {
+        let context_0 = Tag::context(0, false);
+        let mut out = Vec::new();
+        ber_encode_primitive(PrimitiveRef::Integer(&Integer(42)), BerTagging::Implicit(context_0), &mut out);
+        assert_eq!(out, vec![0x80, 0x01, 0x2A]); // context primitive 0, not universal INTEGER (0x02)
+
+        let mut r = BerReader::new(&out);
+        let mut got = Integer(0);
+        ber_decode_primitive(PrimitiveRefMut::Integer(&mut got), BerTagging::Implicit(context_0), &mut r).unwrap();
+        assert_eq!(got, 42);
+    }
+
+    #[test]
+    fn implicit_substitutes_the_tag_for_a_constructed_value() {
+        // BitString isn't constructed, but exercise a real non-trivial
+        // multi-byte value to make sure content bytes survive the
+        // splice-and-resplice untouched.
+        let v = BitString { bytes: vec![0b1010_1000, 0xFF], unused_bits: 2 };
+        let context_3 = Tag::context(3, false);
+        let mut out = Vec::new();
+        ber_encode_primitive(PrimitiveRef::BitString(&v), BerTagging::Implicit(context_3), &mut out);
+        assert_eq!(out[0], 0x83); // context primitive 3
+
+        let mut r = BerReader::new(&out);
+        let mut got = BitString::default();
+        ber_decode_primitive(PrimitiveRefMut::BitString(&mut got), BerTagging::Implicit(context_3), &mut r).unwrap();
+        assert_eq!(got, v);
+    }
+
+    #[test]
+    fn implicit_decode_rejects_wrong_tag() {
+        let context_0 = Tag::context(0, false);
+        let context_1 = Tag::context(1, false);
+        let mut out = Vec::new();
+        ber_encode_primitive(PrimitiveRef::Integer(&Integer(42)), BerTagging::Implicit(context_0), &mut out);
+
+        let mut r = BerReader::new(&out);
+        let mut got = Integer(0);
+        assert!(ber_decode_primitive(PrimitiveRefMut::Integer(&mut got), BerTagging::Implicit(context_1), &mut r).is_err());
+    }
+
+    #[test]
+    fn explicit_any_captures_the_wrapped_bytes_verbatim() {
+        // The wrapped "value" here is itself a full INTEGER TLV — ANY's
+        // whole point is to capture that unparsed, tag and all.
+        let inner_tlv = [0x02u8, 0x01, 0x2A]; // INTEGER 42
+        let context_1 = Tag::context(1, true);
+        let mut buf = Vec::new();
+        ber_encode_primitive(PrimitiveRef::Any(&Any(inner_tlv.to_vec())), BerTagging::Explicit(context_1), &mut buf);
+        assert_eq!(buf, vec![0xA1, 0x03, 0x02, 0x01, 0x2A]);
+
+        let mut r = BerReader::new(&buf);
+        let mut got = Any::default();
+        ber_decode_primitive(PrimitiveRefMut::Any(&mut got), BerTagging::Explicit(context_1), &mut r).unwrap();
+        assert_eq!(*got, inner_tlv);
+    }
+
+    #[test]
+    fn explicit_any_rejects_wrong_wrapper_tag() {
+        let context_1 = Tag::context(1, true);
+        let context_2 = Tag::context(2, true);
+        let mut buf = Vec::new();
+        ber_encode_primitive(PrimitiveRef::Any(&Any(vec![0x02, 0x01, 0x2A])), BerTagging::Explicit(context_1), &mut buf);
+
+        let mut r = BerReader::new(&buf);
+        let mut got = Any::default();
+        assert!(ber_decode_primitive(PrimitiveRefMut::Any(&mut got), BerTagging::Explicit(context_2), &mut r).is_err());
+    }
+}
