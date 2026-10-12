@@ -159,6 +159,12 @@ pub fn encode_seqof_into(obj: &dyn Asn1SeqOf, out: &mut String) {
     out.push(']');
 }
 
+pub fn encode_seqof(obj: &dyn Asn1SeqOf) -> String {
+    let mut out = String::new();
+    encode_seqof_into(obj, &mut out);
+    out
+}
+
 pub fn decode_seqof_into(obj: &mut dyn Asn1SeqOf, r: &mut Reader) -> Result<(), DecodeError> {
     r.expect_char(b'[')?;
     loop {

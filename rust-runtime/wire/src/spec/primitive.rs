@@ -612,6 +612,11 @@ macro_rules! define_as_member_ref {
                 fn as_member_ref_mut(&mut self) -> crate::spec::object::MemberRefMut<'_> {
                     crate::spec::object::MemberRefMut::Primitive(PrimitiveRefMut::$variant(self))
                 }
+                // A bare primitive has no alias identity above it, so
+                // this is just its own generic builtin name.
+                fn own_element_xer_name(&self) -> &'static str {
+                    xer_element_name_of(PrimitiveRef::$variant(self))
+                }
             }
         )+
     };

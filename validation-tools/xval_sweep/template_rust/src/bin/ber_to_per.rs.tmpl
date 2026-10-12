@@ -27,16 +27,26 @@ fn list_types() {
     }
 }
 
-fn encode_one(type_name: &str, data: &[u8]) -> Result<(Vec<u8>, usize), asn1cpp_wire::DecodeError> {
+// See ber_to_xer.rs.tmpl's own doc on why this peeks the record's length
+// via BER's self-delimiting TLV framing rather than going through
+// `Asn1Value::ber_decode_into` generically -- the PER leg below still
+// needs `Asn1Value` (no inherent `.encode_per()` convention exists for
+// any kind yet), but the BER *decode* half doesn't have to.
+fn record_len(data: &[u8]) -> Result<usize, asn1cpp_wire::DecodeError> {
     let mut r = asn1cpp_wire::Reader::new(data);
+    r.read_tlv()?;
+    Ok(r.pos())
+}
+
+fn encode_one(type_name: &str, data: &[u8]) -> Result<(Vec<u8>, usize), asn1cpp_wire::DecodeError> {
+    let len = record_len(data)?;
     match type_name {
         "__PDU_TYPE__" => {
-            let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
-            <randgen_rust::__PDU_MODULE__::__PDU_IDENT__ as asn1cpp_wire::value::Asn1Value>::ber_decode_into(&mut v, &mut r)?;
+            let v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::decode(&data[..len])?;
             let mut w = asn1cpp_wire::per::writer::Writer::new();
             v.per_encode(&mut w, v.constraints());
             w.flush();
-            Ok((w.into_bytes(), r.pos()))
+            Ok((w.into_bytes(), len))
         }
         _ => unreachable!("checked by caller"),
     }

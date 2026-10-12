@@ -358,7 +358,8 @@ int main() {
         check("emit_seq_of: Rust produces a real Constraints table, not a function",
               rust_os.find("static MyList_CONSTRAINTS: asn1cpp_wire::constraints::Constraints") != std::string::npos &&
               rust_os.find("flags: 8, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_range_bits: 4, size_lower: 1, size_upper: 10") != std::string::npos &&
-              rust_os.find("fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {\n        asn1cpp_wire::constraints::validate_size(self.0.len(), &MyList_CONSTRAINTS)\n    }") != std::string::npos,
+              rust_os.find("asn1cpp_wire::validate::check_delta(asn1cpp_wire::constraints::validate_size(self.0.len(), &MyList_CONSTRAINTS), \"MyList\", \"encode\");") != std::string::npos &&
+              rust_os.find("asn1cpp_wire::validate::check_delta(asn1cpp_wire::constraints::validate_size(v.0.len(), &MyList_CONSTRAINTS), \"MyList\", \"decode\");") != std::string::npos,
               rust_os);
     }
 

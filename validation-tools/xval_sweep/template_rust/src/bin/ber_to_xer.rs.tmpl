@@ -23,13 +23,27 @@ fn list_types() {
     }
 }
 
-fn decode_one(type_name: &str, data: &[u8]) -> Result<(String, usize), asn1cpp_wire::DecodeError> {
+// BER's TLV framing is self-delimiting (X.690 §8.1), so the record's own
+// length is enough to find its boundary without knowing the target
+// type at all -- peeking it this way (rather than going through
+// `Asn1Value::ber_decode_into` generically) lets this harness call each
+// generated type's own inherent `::decode()` (every top-level type has
+// one, regardless of kind -- SEQUENCE/CHOICE/SEQUENCE OF/ENUMERATED/
+// builtin-alias all emit the same-shaped `fn decode(data: &[u8]) ->
+// Result<Self, DecodeError>`) instead of requiring `Asn1Value` to still
+// be implemented for whatever type this template is instantiated for.
+fn record_len(data: &[u8]) -> Result<usize, asn1cpp_wire::DecodeError> {
     let mut r = asn1cpp_wire::Reader::new(data);
+    r.read_tlv()?;
+    Ok(r.pos())
+}
+
+fn decode_one(type_name: &str, data: &[u8]) -> Result<(String, usize), asn1cpp_wire::DecodeError> {
+    let len = record_len(data)?;
     match type_name {
         "__PDU_TYPE__" => {
-            let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
-            <randgen_rust::__PDU_MODULE__::__PDU_IDENT__ as asn1cpp_wire::value::Asn1Value>::ber_decode_into(&mut v, &mut r)?;
-            Ok((v.encode_xer(), r.pos()))
+            let v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::decode(&data[..len])?;
+            Ok((v.encode_xer(), len))
         }
         _ => unreachable!("checked by caller"),
     }

@@ -310,7 +310,10 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
                 out.push_str(&indent(depth + 1));
                 encode_bare(el, out, depth + 1);
             }
-            MemberRef::SeqOf(_) => encode_wrapped(name_override.unwrap_or("SEQUENCE-OF"), XerInstruction::Default, el, out, depth + 1),
+            MemberRef::SeqOf(inner) => {
+                let name = name_override.unwrap_or(inner.own_xer_name());
+                encode_wrapped(name, XerInstruction::Default, el, out, depth + 1)
+            }
             MemberRef::Absent => unreachable!(),
         }
     }
