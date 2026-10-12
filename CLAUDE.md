@@ -51,17 +51,45 @@ table-driven codec, no per-type generated codec logic. Concretely:
 
 | C++ | Rust |
 |---|---|
-| `TypeDescriptor` table | `SequenceSpec<T>`/`ChoiceSpec<T>` table |
-| `MemberDescriptor` row (offset + `type_descriptor` ptr) | `MemberDescriptor<T>` row (`get`/`get_mut` fn ptr → `&dyn Asn1Value`) |
-| `ICodec` + handler singletons (`IBerTypeHandler`, `ber_boolean_handler`, ...) | `Asn1Value` trait, default methods (`ber_encode`/`ber_decode_into`/... composed from required `ber_natural_tag`/`ber_encode_content`/`ber_decode_content`) |
-| offset + `void*` field access | generated accessor closure, unsize-coerced to `&dyn Asn1Value` (vtable lives on the fat pointer, not the data) |
-| one `ICodec` interface for BER/PER/XER/JER | one `Asn1Value` trait carrying `ber_*`/`xer_*`/`per_*`/`jer_*` legs (JER ported gambas-asn1#661, own `jer/` module like `per/`) |
+| `TypeDescriptor` table | `SequenceSpec`/`ChoiceSpec`/`EnumSpec` table |
+| `MemberDescriptor` row (offset + `type_descriptor` ptr) | `MemberMeta` row (`get`/`get_mut` fn ptr → `MemberRef`/`MemberRefMut`, a closed reflective enum — `Primitive`/`Composite`/`Choice`/`SeqOf`/`Enumerated`/`Absent`) |
+| `ICodec` + handler singletons (`IBerTypeHandler`, `ber_boolean_handler`, ...) | per-codec non-generic walker (`ber::object`/`xer::object`/`jer::object`/`per::object`), matching on `MemberRef`/`MemberRefMut` |
+| offset + `void*` field access | generated accessor closure, unsize-coerced to `&dyn Asn1Seq`/`&dyn Asn1Choice` or wrapped in `PrimitiveRef`/`PrimitiveRefMut` (vtable or enum discriminant, never `&dyn Asn1Value`) |
+| one `ICodec` interface for BER/PER/XER/JER | one reflective `MemberRef`/`AsMemberRef` shape, matched per codec in that codec's own `object.rs` (JER ported gambas-asn1#661, own `jer/` module like `per/`) |
 | `Oid` (`runtime/include/asn1cpp/Oid.hpp`) | `ObjectIdentifier` (`rust-runtime/wire/src/oid.rs`) |
 
 The last row is the one builtin wrapper whose name genuinely differs between the two
 runtimes (not a naming-fidelity issue — this is runtime-internal infrastructure, not a
 generated identifier) — noted here since grepping one runtime for the other's name finds
 nothing otherwise.
+
+**`Asn1Value` (`value.rs`) is not the primary dispatch mechanism it once was**
+(gambas-asn1#698 epic, 2026-10). Every primitive, builtin-alias, named INTEGER, ENUMERATED,
+SEQUENCE, and CHOICE type's member/element access, and every type's own top-level
+`.encode()`/`.decode()`/`.encode_jer()`/`.decode_jer()`, now goes through the reflective
+`MemberRef`/`Asn1Seq`/`Asn1Choice`/`Asn1SeqOf`/`AsMemberRef`/`EnumSlot` system above instead
+— `spec::primitive.rs`'s own dispatch (`ber_encode_primitive` etc.) matches `PrimitiveRef`
+directly, no trait call. `Option<V>`'s and `Box<T>`'s own `Asn1Value` impls were dead code,
+deleted outright (gambas-asn1#696/#705) — `Box<T>` needs only the reflective `Asn1Seq`/
+`Asn1Choice` blanket impls it already had.
+
+`Asn1Value` survives, deliberately, for exactly one remaining case: `ber::sequence::
+SeqOf<T>`/`SetOf<T>`'s own XER leg (`xer_encode`/`xer_decode_into` only — BER/JER/PER are
+fully reflective) and the matching XER leg of a top-level named SEQUENCE OF/SET OF type's
+own `.encode_xer()`/`.decode_xer()`, both still bounded on `T: Asn1Value` and routed through
+`xer::seq_of::encode_seq_of_xer(_named)`. The reflective `MemberRef` path unwraps an
+element to its bare `PrimitiveRef`/`MemberRef::Composite` via `AsMemberRef` before the XER
+walker ever sees it, which permanently loses two things only the *un*-unwrapped element's
+own `Asn1Value` override carries: a per-element X.693 BASE64/UTF8 ENCODING-CONTROL instruction
+baked into the element's declared type (gambas-asn1#687), and an aliased element's own real
+declared name (gambas-asn1#710/#711 caught this exact regression against a real RRC schema
+mid-migration — `SEQUENCE OF Digit` rendering `<INTEGER>` instead of `<Digit>`).
+`spec::object::AsMemberRef::own_element_xer_name` recovers the *naming* half of this reflectively
+(every `AsMemberRef` implementor answers its own real name, not the unwrapped shape's generic
+one) — the *encoding* half (BASE64/UTF8) has no reflective equivalent yet, which is why these
+two XER legs still need the trait at all. If a future change gives `MemberRef` the same
+per-element-identity carrying `own_element_xer_name` already provides, `Asn1Value` could drop
+to zero remaining callers and `rust-runtime/wire` could consider removing it entirely.
 
 `BerTraits<T>` (`runtime/include/asn1cpp/codec/BerTraits.hpp` + per-type
 specializations) is the one asymmetry: a template-based static-dispatch

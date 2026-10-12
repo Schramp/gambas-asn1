@@ -158,8 +158,9 @@ pub(crate) fn count_top_level_tlvs(content: &[u8]) -> usize {
 /// `self.ber_natural_tag()` directly via the `Asn1Value` trait's own
 /// default methods — and an EXPLICIT-tagged member's inner TLV (X.690
 /// §8.14.3: EXPLICIT wraps the value's own natural encoding unchanged)
-/// reaches it exactly the same way through `value::encode_explicit`/
-/// `decode_explicit`. `SeqOf<T>`/`SetOf<T>` being two distinct types with
+/// reaches it exactly the same way via `ber::object`'s own `write_tagged`/
+/// `write_explicit` calls (`MemberRef::SeqOf`'s own framing, `ber::
+/// object.rs`). `SeqOf<T>`/`SetOf<T>` being two distinct types with
 /// two different `ber_natural_tag()` values is what makes both paths
 /// correct automatically, with no separate SEQUENCE-vs-SET signal needed
 /// anywhere in the generic walker — `RustBackend` only has to pick which
