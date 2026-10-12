@@ -72,10 +72,6 @@ impl Asn1Value for OctetString {
         OCTET_STRING_TAG
     }
 
-    fn xer_element_name(&self) -> &'static str {
-        "OCTET_STRING"
-    }
-
     // OCTET STRING content octets *are* the value bytes — no encoding step.
     fn ber_encode_content(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.0);
