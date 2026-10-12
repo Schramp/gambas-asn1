@@ -267,7 +267,7 @@ pub fn decode_choice(xml: &str, obj: &mut dyn Asn1Choice) -> Result<(), DecodeEr
 /// element its own type name; CHOICE/ENUMERATED self-delimit (no
 /// wrapper, matching their own standalone form) — same per-kind split
 /// `xer::seq_of`'s own doc documents for the old design.
-fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize) {
+pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize) {
     let name_override = obj.elem_xer_name();
     let mut any = false;
     for i in 0..obj.len() {
@@ -320,7 +320,7 @@ fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize) {
     }
 }
 
-fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, r: &mut XerReader) -> Result<(), DecodeError> {
+pub(crate) fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, r: &mut XerReader) -> Result<(), DecodeError> {
     loop {
         let peeked = r.peek_tag();
         if peeked.closing {
