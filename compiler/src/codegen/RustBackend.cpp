@@ -446,8 +446,8 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // its fully-qualified `crate::{}::` path for its `MemberRef::
         // Enumerated(.., &EnumSpec)` row; a private `static` would only
         // be visible within this type's own module.
-        os << std::format("pub static {}: asn1cpp_wire::spec::enumerated::EnumSpec = asn1cpp_wire::spec::enumerated::EnumSpec {{\n    entries: &[\n",
-                           map_ident);
+        os << std::format("pub static {}: asn1cpp_wire::spec::enumerated::EnumSpec = asn1cpp_wire::spec::enumerated::EnumSpec {{\n    name: \"{}\",\n    entries: &[\n",
+                           map_ident, spec.xer_name);
         for (const auto& v : sorted_values) {
             os << std::format("        asn1cpp_wire::spec::enumerated::EnumEntry {{ value: {}, name: \"{}\" }},\n",
                                v.value, v.asn1_name);

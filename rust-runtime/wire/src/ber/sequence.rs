@@ -243,7 +243,7 @@ impl<T: Asn1Value + Default> Asn1Value for SeqOf<T> {
 
 /// Reflective `Asn1SeqOf` impl — shared by every SEQUENCE OF element
 /// kind via `AsMemberRef`, never generated per collection type.
-impl<T: crate::spec::object::AsMemberRef + Asn1Value + Default> crate::spec::object::Asn1SeqOf for SeqOf<T> {
+impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1SeqOf for SeqOf<T> {
     fn natural_tag(&self) -> Tag {
         SEQUENCE_TAG
     }
@@ -260,8 +260,18 @@ impl<T: crate::spec::object::AsMemberRef + Asn1Value + Default> crate::spec::obj
     fn reserve(&mut self, additional: usize) {
         self.0.reserve(additional);
     }
-    fn elem_natural_xer_name(&self, index: usize) -> &'static str {
-        self.0[index].xer_element_name()
+}
+
+/// Lets a `SeqOf<T>` itself be a SEQUENCE OF/SET OF element — closes the
+/// nested-collection case (`SeqOf<SeqOf<Inner>>`) reflectively, the same
+/// way every primitive already does via `spec::primitive`'s own
+/// `define_as_member_ref!`.
+impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::AsMemberRef for SeqOf<T> {
+    fn as_member_ref(&self) -> crate::spec::object::MemberRef<'_> {
+        crate::spec::object::MemberRef::SeqOf(self)
+    }
+    fn as_member_ref_mut(&mut self) -> crate::spec::object::MemberRefMut<'_> {
+        crate::spec::object::MemberRefMut::SeqOf(self)
     }
 }
 
@@ -348,7 +358,7 @@ impl<T: Asn1Value + Default> Asn1Value for SetOf<T> {
     }
 }
 
-impl<T: crate::spec::object::AsMemberRef + Asn1Value + Default> crate::spec::object::Asn1SeqOf for SetOf<T> {
+impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1SeqOf for SetOf<T> {
     fn natural_tag(&self) -> Tag {
         SET_TAG
     }
@@ -365,8 +375,15 @@ impl<T: crate::spec::object::AsMemberRef + Asn1Value + Default> crate::spec::obj
     fn reserve(&mut self, additional: usize) {
         self.0.reserve(additional);
     }
-    fn elem_natural_xer_name(&self, index: usize) -> &'static str {
-        self.0[index].xer_element_name()
+}
+
+/// `SetOf<T>` analogue of `SeqOf<T>`'s own `AsMemberRef` impl above.
+impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::AsMemberRef for SetOf<T> {
+    fn as_member_ref(&self) -> crate::spec::object::MemberRef<'_> {
+        crate::spec::object::MemberRef::SeqOf(self)
+    }
+    fn as_member_ref_mut(&mut self) -> crate::spec::object::MemberRefMut<'_> {
+        crate::spec::object::MemberRefMut::SeqOf(self)
     }
 }
 
