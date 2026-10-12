@@ -834,88 +834,6 @@ impl Asn1Value for crate::real::Real {
 /// `XerStringHandler`: escaped text content, via `xer::escape`/`xer::unescape`.
 
 
-/// `Box<T>` forwarding — the heap indirection `RustBackend` gives a
-/// self-referential/mutually-recursive member (`SequenceMemberSpec::
-/// member_type_in_cycle`, `RustBackend.cpp`; Rust gives a plain field no
-/// indirection at all unlike C++'s pointer-by-default `unique_ptr`, so a
-/// genuine recursive ASN.1 type chain needs one explicitly or the struct
-/// has infinite size) is purely a Rust ownership/storage concern — the
-/// wire representation is identical to `T` itself, so every method just
-/// forwards through the box.
-impl<T: Asn1Value> Asn1Value for Box<T> {
-    fn is_present(&self) -> bool {
-        (**self).is_present()
-    }
-
-    fn ber_natural_tag(&self) -> crate::ber::tag::Tag {
-        (**self).ber_natural_tag()
-    }
-
-    fn xer_element_name(&self) -> &'static str {
-        (**self).xer_element_name()
-    }
-
-    fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        (**self).ber_encode_content(out)
-    }
-
-    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        (**self).ber_decode_content(content)
-    }
-
-    fn ber_encode(&self, out: &mut Vec<u8>) {
-        (**self).ber_encode(out)
-    }
-
-    fn ber_decode_into(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
-        (**self).ber_decode_into(r)
-    }
-
-    fn ber_encode_tagged(&self, tag: crate::ber::tag::Tag, out: &mut Vec<u8>) {
-        (**self).ber_encode_tagged(tag, out)
-    }
-
-    fn ber_decode_into_tagged(&mut self, r: &mut Reader, tag: crate::ber::tag::Tag) -> Result<(), DecodeError> {
-        (**self).ber_decode_into_tagged(r, tag)
-    }
-
-    fn xer_encode(&self, out: &mut String, depth: usize) {
-        (**self).xer_encode(out, depth)
-    }
-
-    fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-        (**self).xer_decode_into(r)
-    }
-
-    fn jer_encode(&self, out: &mut String) {
-        (**self).jer_encode(out)
-    }
-
-    fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
-        (**self).jer_decode_into(r)
-    }
-
-    fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
-        (**self).per_encode(w, c)
-    }
-
-    fn per_decode_into(
-        &mut self,
-        r: &mut crate::per::reader::Reader,
-        c: &crate::constraints::Constraints,
-    ) -> Result<(), crate::per::reader::DecodeError> {
-        (**self).per_decode_into(r, c)
-    }
-
-    fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
-        (**self).validate(c)
-    }
-
-    fn constraints(&self) -> &'static crate::constraints::Constraints {
-        (**self).constraints()
-    }
-}
-
 #[cfg(test)]
 mod per_blanket_tests {
     use super::*;
@@ -952,9 +870,8 @@ mod per_blanket_tests {
     }
 
     #[test]
-    fn a_type_without_its_own_constraint_reports_unconstrained_and_box_forwards() {
+    fn a_type_without_its_own_constraint_reports_unconstrained() {
         assert_eq!(Integer(5).constraints(), &crate::constraints::UNCONSTRAINED);
-        assert_eq!(Box::new(Integer(5)).constraints(), &crate::constraints::UNCONSTRAINED);
     }
 
     #[test]
