@@ -20,7 +20,6 @@ pub mod oid;
 pub mod real;
 pub mod reader;
 pub mod relative_oid;
-pub mod seq_of;
 pub mod strings;
 pub mod uinteger;
 pub mod writer;

@@ -1305,19 +1305,12 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // itself (X.690 §8.14) — same fix emit_sequence_definition already has.
     std::string tag_expr = spec.tag ? format_tag_literal(*spec.tag) : natural_tag;
 
-    // PER has no inherent `.encode_per()`/`.decode_per()` convention
-    // anywhere yet (not for SEQUENCE/CHOICE either — every caller reaches
-    // PER through the `Asn1Value` trait directly, e.g. the xval harness
-    // templates' `v.per_encode(&mut w, v.constraints())`), so this type
-    // still needs a (now much slimmer) `Asn1Value` impl for that one
-    // leg. `ber_natural_tag`/`ber_encode_content`/`ber_decode_content`
-    // are the trait's only non-default methods — given real bodies
-    // instead of `unreachable!()` anyway (same ber::object free
-    // functions the type used to delegate its full BER leg through)
-    // since they cost nothing extra and keep this impl honest rather
-    // than a half-stub; nothing calls them generically for this type
-    // anymore (BER/XER/JER's own top-level entry points below go through
-    // the reflective `Asn1SeqOf`/`AsMemberRef` path instead).
+    // Slim `Asn1Value` impl: PER has no inherent `.encode_per()`/
+    // `.decode_per()` entry point (callers such as the xval harness
+    // templates reach PER via `v.per_encode(&mut w, v.constraints())`),
+    // so this impl carries that leg. Every body delegates to the
+    // reflective `Asn1SeqOf` walkers (`ber::object`/`per::object`,
+    // X.690 §8.10/§8.12, X.691 §19/§20) — no per-type codec logic.
     os << std::format("impl asn1cpp_wire::value::Asn1Value for {} {{\n", spec.type_name);
     os << "    fn ber_natural_tag(&self) -> asn1cpp_wire::Tag {\n";
     os << std::format("        {}\n", tag_expr);
@@ -1334,11 +1327,11 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     }
     os << std::format(
         "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
-        "        asn1cpp_wire::per::seq_of::encode_seq_of_content(w, &{0}, &self.0);\n    }}\n\n",
+        "        asn1cpp_wire::per::object::encode_seqof_content(self, &{0}, w);\n    }}\n\n",
         cname);
     os << std::format(
         "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
-        "        self.0 = asn1cpp_wire::per::seq_of::decode_seq_of_content(r, &{0})?;\n        Ok(())\n    }}\n",
+        "        self.0.clear();\n        asn1cpp_wire::per::object::decode_seqof_content_into(self, &{0}, r)\n    }}\n",
         cname);
     os << "}\n\n";
 

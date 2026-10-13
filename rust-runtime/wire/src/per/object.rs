@@ -1,7 +1,7 @@
 //! Non-generic PER walker for every reflective construct kind — the
 //! PER counterpart of `ber::object`. SEQUENCE/SET/CHOICE bit-level
 //! framing (X.691 §18/§22) and SEQUENCE OF/SET OF element iteration
-//! (`per::seq_of`, X.691 §19-20) live here, driven by the reflective
+//! (X.691 §19-20) live here, driven by the reflective
 //! `Asn1Seq`/`Asn1Choice`/`Asn1SeqOf` accessors rather than a
 //! generated per-type `*Spec<T>` table.
 
@@ -299,7 +299,7 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> R
 // SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------
 
-pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Writer) {
+pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Writer) {
     encode_size_field(w, pc, obj.len());
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
     for i in 0..obj.len() {
@@ -307,7 +307,7 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mu
     }
 }
 
-pub(crate) fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, pc: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
+pub fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, pc: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
     let count = decode_size_field(r, pc)?;
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
     for _ in 0..count {
