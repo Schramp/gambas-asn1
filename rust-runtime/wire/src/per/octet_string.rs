@@ -9,12 +9,12 @@
 //! real field type, same pattern already used for character strings.
 
 use crate::constraints::Constraints;
-use crate::per::length::{decode_size_and_items, encode_size_and_items};
+use crate::per::length::{decode_ext_size_and_items, encode_ext_size_and_items};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 
 pub fn encode_octet_string(w: &mut Writer, pc: &Constraints, bytes: &[u8]) {
-    encode_size_and_items(w, pc, bytes.len(), |w, range| {
+    encode_ext_size_and_items(w, pc, bytes.len(), |w, range| {
         for &b in &bytes[range] {
             w.put_bits(b as u64, 8);
         }
@@ -23,7 +23,7 @@ pub fn encode_octet_string(w: &mut Writer, pc: &Constraints, bytes: &[u8]) {
 
 pub fn decode_octet_string(r: &mut Reader, pc: &Constraints) -> Result<Vec<u8>, DecodeError> {
     let mut out = Vec::new();
-    decode_size_and_items(r, pc, |r, m| {
+    decode_ext_size_and_items(r, pc, |r, m| {
         out.reserve(m);
         for _ in 0..m {
             out.push(r.get_bits(8)? as u8);
