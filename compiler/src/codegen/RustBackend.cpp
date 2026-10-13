@@ -1015,25 +1015,20 @@ static bool rust_mtype_is_unusable_vec(const std::string& mtype) {
     return mtype.rfind("Vec<", 0) == 0 && mtype != "Vec<u8>";
 }
 
-/// @brief A CHOICE alternative's `mtype`, rewritten to wrap a bare
-///        `Vec<T>` — `rust_mtype_is_unusable_vec`'s own doc: the only
-///        source of that shape is `native_member_type_for`'s is_seq_of/is_set_of
-///        branches (both format identically via `wrap_collection_type`,
-///        indistinguishable from the text alone — this covers a SET OF
-///        alternative too, not just SEQUENCE OF; harmless, since a CHOICE
-///        alternative always dispatches through its own resolved tag, see
-///        `SeqOf<T>`'s own doc) — in the generic
-///        `asn1cpp_wire::ber::sequence::SeqOf<T>` (rust-runtime/wire/src/sequence.rs),
-///        whose blanket `Asn1SeqOf`/`AsMemberRef` impls give it what
-///        `Vec<T>` itself can't carry (coherence-blocked). Only applies where `choice_alternative_covered`
-///        consults it, CHOICE alternatives — a SEQUENCE/SET member's own
-///        field type is computed separately, `rust_seqof_member_field_type`
-///        below, since it needs to pick `SetOf<T>` over `SeqOf<T>` for a
-///        real SET OF member (the CHOICE-alt case never needs to, per this
-///        function's own doc). Every other mtype passes through unchanged.
-static std::string rust_seqof_alt_mtype(const std::string& mtype) {
-    if (!rust_mtype_is_unusable_vec(mtype)) return mtype;
-    return std::format("asn1cpp_wire::ber::sequence::SeqOf<{}>", mtype.substr(4, mtype.size() - 5));
+/// @brief A CHOICE alternative's payload type. An inline SEQUENCE OF /
+///        SET OF alternative (`rust_mtype_is_unusable_vec`: Generator gives
+///        it the placeholder `"Vec<...>"` text, identical for both kinds)
+///        uses its promoted synthetic type, `synth_path`. That type carries
+///        what the text can't: SEQUENCE OF vs SET OF identity
+///        (`Asn1SeqOf::natural_tag`, which the PER encoder needs to sort a
+///        SET OF per X.691 §21.1 and BER needs for an untagged alternative's
+///        tag) and the collection's own `_CONSTRAINTS`. Every other `mtype`
+///        passes through unchanged.
+/// @param mtype      The alternative's Generator-provided type text.
+/// @param synth_path Crate path of the alternative's promoted synthetic
+///                   type (`crate::{Synth}::{Synth}`).
+static std::string rust_alt_payload_type(const std::string& mtype, const std::string& synth_path) {
+    return rust_mtype_is_unusable_vec(mtype) ? synth_path : mtype;
 }
 
 /// @brief The real nested-collection element type for a SEQUENCE OF/SET OF
@@ -1042,7 +1037,7 @@ static std::string rust_seqof_alt_mtype(const std::string& mtype) {
 ///        is_seq_of/is_set_of branches always flatten to the placeholder
 ///        `"Vec<...>"` shape regardless of nesting depth or SEQUENCE-OF-
 ///        vs-SET-OF kind at each level (the same placeholder
-///        `rust_seqof_alt_mtype` above unwraps for a CHOICE alternative —
+///        `rust_alt_payload_type` above replaces for a CHOICE alternative —
 ///        text alone can't tell them apart, which is exactly why
 ///        `ElemShape` exists; see its own doc).
 /// @param shape This level's element shape — SeqOfKind::None is the base
@@ -1083,8 +1078,8 @@ static bool element_shape_covered(const ElemShape& shape) {
 ///        OF/SET OF member specifically — `SeqOf<ElemType>`/`SetOf<ElemType>`
 ///        (`rust-runtime/wire/src/sequence.rs`) instead of a raw
 ///        `Vec<ElemType>`, which has no reflective trait impls of its own
-///        (coherence-blocked, same reasoning `rust_seqof_alt_mtype`'s own
-///        doc gives). Once the field itself implements `AsMemberRef`, the
+///        (coherence-blocked: neither the traits nor `Vec` are local to the
+///        generated crate). Once the field itself implements `AsMemberRef`, the
 ///        member-table emission below needs no dedicated SeqOf-shaped
 ///        closures at all — it falls through to the same
 ///        Scalar/TaggedScalar/ExplicitScalar dispatch every other
@@ -1158,9 +1153,9 @@ bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
 ///        row's own tag is what `decode_choice`'s linear tag scan uses to
 ///        even reach it at all, real or stub.
 bool RustBackend::choice_alternative_covered(const ChoiceAlternativeSpec& a) const {
-    // A SEQUENCE OF or SET OF alternative always covers here
-    // (rust_seqof_alt_mtype's own doc — both shapes format identically):
-    // its mtype gets wrapped in SeqOf<T> at every emission site below, so
+    // A SEQUENCE OF or SET OF alternative always covers here: its
+    // payload is the promoted synthetic type at every emission site
+    // (rust_alt_payload_type), so
     // the raw "Vec<T>" text rust_mtype_is_unusable_vec would otherwise flag
     // is never actually a problem for a CHOICE alternative.
     if (rust_mtype_is_unusable_vec(a.mtype)) return true;
@@ -1719,6 +1714,10 @@ void RustBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
 ///       mapping has no equivalent problem. No `#[derive(Default)]`: unlike
 ///       a struct, a CHOICE has no natural default variant.
 void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& os) const {
+    auto alt_payload_type = [&](const ChoiceAlternativeSpec& a) {
+        std::string synth = synthetic_name(spec.type_name, a.asn1_name);
+        return rust_alt_payload_type(a.mtype, std::format("crate::{}::{}", escape(synth), synth));
+    };
     // Variant names use variant_name(), not the raw
     // a.pr_name. a.pr_name is
     // Generator's backend-agnostic "PR" name (mirrors the C++ side's
@@ -1757,7 +1756,7 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
         bool boxed = (a.mtype == spec.type_name);
         os << std::format("    /// ASN.1: `{}`\n", a.asn1_name);
         os << std::format("    {}({}{}{}),\n", vname,
-                          boxed ? "Box<" : "", rust_seqof_alt_mtype(a.mtype), boxed ? ">" : "");
+                          boxed ? "Box<" : "", alt_payload_type(a), boxed ? ">" : "");
     }
     // A `...`-marked CHOICE (X.680 §29.6) promises a future schema revision
     // may add alternatives this compiler run never saw. Every real
@@ -1788,6 +1787,10 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
 ///       `<codec>::object` walker (`encode_pdu`/`decode_pdu` at top level).
 /// @see X.680 §29 (CHOICE).
 void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const {
+    auto alt_payload_type = [&](const ChoiceAlternativeSpec& a) {
+        std::string synth = synthetic_name(spec.type_name, a.asn1_name);
+        return rust_alt_payload_type(a.mtype, std::format("crate::{}::{}", escape(synth), synth));
+    };
     std::string prefix = escape(to_snake_case(spec.type_name));
     // A CHOICE with exactly one alternative makes every
     // "does x match this variant" pattern provably always true — rustc
@@ -1805,7 +1808,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     bool single_alt = spec.alternatives.size() == 1 && spec.ext_at < 0;
     for (const auto& a : spec.alternatives) {
         std::string fname = escape(std::format("{}_get_{}", prefix, unescape_raw_ident(a.accessor_name)));
-        os << std::format("pub fn {}(x: &mut {}) -> &mut {} {{\n", fname, spec.type_name, rust_seqof_alt_mtype(a.mtype));
+        os << std::format("pub fn {}(x: &mut {}) -> &mut {} {{\n", fname, spec.type_name, alt_payload_type(a));
         if (single_alt) {
             os << std::format("    let {}::{}(v) = x;\n    v\n",
                                spec.type_name, variant_name(*this, a.asn1_name));
@@ -1841,10 +1844,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // level over: each alternative is Primitive/Enumerated/SeqOf/
     // Composite(SEQUENCE/SET)/Choice (a nested CHOICE alternative), or
     // Unsupported. `rust_mtype_is_unusable_vec` is the SeqOf signal here
-    // (a CHOICE alternative's own `mtype` text can't otherwise
-    // distinguish SEQUENCE OF from SET OF — `rust_seqof_alt_mtype`'s own
-    // doc — harmless: dispatch always goes through the alternative's own
-    // resolved tag, never through `Asn1SeqOf::natural_tag()`).
+    // (the payload is then the promoted synthetic type, which knows
+    // whether it is a SEQUENCE OF or a SET OF; `rust_alt_payload_type`).
     //
     // BER dispatch: wire tag -> alternative index, precomputed here.
     // `spec.ber_tags` (Backend.hpp) is populated by Generator whenever

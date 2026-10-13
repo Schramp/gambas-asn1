@@ -1,0 +1,33 @@
+-- SET OF component order in PER (X.691 §21.1): components appear in
+-- ascending order of their encodings, compared as bit strings zero-padded
+-- to an octet boundary, the shorter one extended with 0-octets. Covers
+-- composite, integer and string elements, a SIZE-constrained SET OF, an
+-- inline SET OF CHOICE alternative, a nested SET OF, and a SEQUENCE OF
+-- (which keeps its order) for contrast.
+PerSetOfOrderTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Item ::= SEQUENCE {
+    id    INTEGER (0..255),
+    label IA5String (SIZE (1..6)) OPTIONAL
+}
+
+Num   ::= INTEGER (0..1000)
+Small ::= INTEGER (0..15)
+Word  ::= IA5String (SIZE (1..5))
+SmallSet ::= SET OF Small
+
+Pick ::= CHOICE {
+    items   SET OF Item,
+    number  INTEGER (0..9)
+}
+
+Rec ::= SEQUENCE {
+    items     SET OF Item,
+    numbers   SET (SIZE (1..8)) OF Num,
+    words     SET OF Word,
+    nested    SET OF SmallSet,
+    pick      Pick,
+    ordered   SEQUENCE OF Num
+}
+
+END
