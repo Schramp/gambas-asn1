@@ -9,12 +9,9 @@
 //! direction (`byte -> ordinal`) and decode-direction (`ordinal -> byte`)
 //! tables, built by codegen from the schema's own `FROM (...)` clause.
 //!
-//! Not implemented: the extensible out-of-root open-type escape (X.691
-//! §18.8 applied to a SIZE/FROM-extensible string) — `encode_string`/
-//! `decode_string` panic if asked to handle one (`pc.flags &
-//! Constraints::EXTENSIBLE` alongside `alphabet_bits > 0`), rather than
-//! silently producing wrong bytes for a construct no current schema
-//! exercises.
+//! An extensible type (X.691 §26.4) adds an extension bit; a value
+//! outside the extension root is encoded as if the type had neither a
+//! size nor an alphabet constraint.
 //!
 //! Operates on raw bytes, not `&str`: for a wide-char kind (BMPString/
 //! UniversalString), each code point is 2/4 bytes with a wide-char
@@ -129,11 +126,24 @@ pub fn encode_string(w: &mut Writer, pc: &Constraints, tag_num: u32, bytes: &[u8
     let char_count = bytes.len() / bpc as usize;
     let has_alpha = has_alphabet(pc);
 
-    // The extensible out-of-root escape (X.691 §18.8) isn't implemented —
-    // fail loudly rather than silently encode wrong bytes for a construct
-    // no current schema exercises (this module's own doc).
+    // X.691 §26.4: an extensible type adds one bit, 0 when the value is in
+    // the extension root (size and, if present, alphabet), otherwise 1 and
+    // the value is encoded as if neither constraint existed: the general
+    // length and the type's own character width.
     if pc.is_extensible() && (pc.is_size_constrained() || has_alpha) {
-        panic!("PER: extensible SIZE/FROM-constrained string encoding not yet supported");
+        let size_ok = !pc.is_size_constrained()
+            || (pc.size_lower..=pc.size_upper).contains(&(char_count as i64));
+        let alpha_ok = !has_alpha || {
+            let table = pc.encode_table.expect("has_alphabet already checked encode_table.is_some()");
+            bytes.chunks(bpc as usize).all(|ch| {
+                ch[..ch.len() - 1].iter().all(|&b| b == 0) && table[ch[ch.len() - 1] as usize] != 0xFFFF
+            })
+        };
+        let in_root = size_ok && alpha_ok;
+        w.put_bits(!in_root as u64, 1);
+        if !in_root {
+            return encode_string(w, &crate::constraints::UNCONSTRAINED, tag_num, bytes);
+        }
     }
 
     if pc.is_size_constrained()
@@ -214,8 +224,10 @@ pub fn decode_string(r: &mut Reader, pc: &Constraints, tag_num: u32) -> Result<V
     let (bits, bpc, _natural) = string_params(tag_num);
     let has_alpha = has_alphabet(pc);
 
-    if pc.is_extensible() && (pc.is_size_constrained() || has_alpha) {
-        panic!("PER: extensible SIZE/FROM-constrained string decoding not yet supported");
+    // X.691 §26.4 decode counterpart: out of root, decode as the
+    // unconstrained type.
+    if pc.is_extensible() && (pc.is_size_constrained() || has_alpha) && r.get_bits(1)? == 1 {
+        return decode_string(r, &crate::constraints::UNCONSTRAINED, tag_num);
     }
 
     let mut result = Vec::new();
@@ -425,12 +437,37 @@ mod tests {
         assert!(decode_string(&mut r, &pc, TAG_IA5_STRING).is_err());
     }
 
+    fn ext_roundtrip(pc: &Constraints, value: &[u8]) -> Vec<u8> {
+        let mut w = Writer::new();
+        encode_string(&mut w, pc, TAG_IA5_STRING, value).unwrap();
+        w.flush();
+        let bytes = w.into_bytes();
+        let mut r = Reader::new(&bytes);
+        assert_eq!(decode_string(&mut r, pc, TAG_IA5_STRING).unwrap(), value);
+        bytes
+    }
+
     #[test]
-    #[should_panic(expected = "extensible")]
-    fn extensible_from_alphabet_is_not_yet_supported() {
+    fn extensible_size_in_root_and_out_of_root() {
+        // IA5String (SIZE (1..4, ...)), X.691 §26.4.
+        let mut pc = sized(1, 4);
+        pc.flags |= crate::constraints::Constraints::EXTENSIBLE;
+        // In root, "ab": ext 0, length-1 = 1 in 2 bits, two 7-bit chars.
+        // 0 01 1100001 1100010 -> 0011 1000 0111 0001 0
+        assert_eq!(ext_roundtrip(&pc, b"ab"), vec![0x38, 0x71, 0x00]);
+        // Out of root, "abcde": ext 1, general length 5, five 7-bit chars.
+        let b = ext_roundtrip(&pc, b"abcde");
+        assert_eq!(b[0] >> 7, 1);
+        assert_eq!((b[0] << 1) | (b[1] >> 7), 5);
+    }
+
+    #[test]
+    fn extensible_alphabet_out_of_root_uses_the_natural_alphabet() {
+        // A visible FROM ("abc") plus an extensible SIZE: "abz" is outside
+        // the root (z not in FROM), so it goes out with the IA5 7-bit form.
         let mut pc = abc_alphabet();
         pc.flags |= crate::constraints::Constraints::EXTENSIBLE;
-        let mut w = Writer::new();
-        let _ = encode_string(&mut w, &pc, TAG_IA5_STRING, b"a");
+        let b = ext_roundtrip(&pc, b"abz");
+        assert_eq!(b[0] >> 7, 1);
     }
 }

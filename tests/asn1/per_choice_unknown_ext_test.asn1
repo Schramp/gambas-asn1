@@ -1,0 +1,19 @@
+-- A CHOICE extension alternative unknown to the receiver (X.691 §23.8):
+-- MsgV2 is MsgV1 at a later version. A value encoded as MsgV2 with an
+-- extension alternative must still decode as MsgV1 (the open type is
+-- skipped/kept), and a root alternative must decode identically.
+PerChoiceUnknownExtTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+MsgV1 ::= CHOICE {
+    a      INTEGER (0..7),
+    ...
+}
+
+MsgV2 ::= CHOICE {
+    a      INTEGER (0..7),
+    ...,
+    b      BOOLEAN,
+    c      IA5String (SIZE (1..4))
+}
+
+END
