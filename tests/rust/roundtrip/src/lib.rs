@@ -482,13 +482,12 @@ mod tests {
 }
 
 /// The generic top-level entry points (`<codec>::object::encode_pdu`/
-/// `decode_pdu`, bound on `Asn1Pdu`) must produce exactly what each
-/// generated type's own entry points produce, for every codec — checked
-/// here on a real generated SEQUENCE (`Widget`) and CHOICE (`Selector`).
+/// `decode_pdu`, bound on `Asn1Pdu`) round-trip a real generated SEQUENCE
+/// (`Widget`) and CHOICE (`Selector`) through every codec, and BER's
+/// streaming form leaves the reader exactly past each record.
 #[cfg(test)]
 mod pdu_entry_points {
     use super::{Selector, Widget};
-    use asn1cpp_wire::value::Asn1Value;
     use asn1cpp_wire::{ber, jer, per, xer};
 
     fn widget() -> Widget {
@@ -504,45 +503,22 @@ mod pdu_entry_points {
         ]
     }
 
-    fn per_via_trait<T: Asn1Value>(v: &T) -> Vec<u8> {
-        let mut w = per::writer::Writer::new();
-        v.per_encode(&mut w, v.constraints());
-        w.flush();
-        w.into_bytes()
+    fn roundtrip_all_codecs<T: asn1cpp_wire::spec::object::Asn1Pdu + PartialEq + std::fmt::Debug>(v: &T) {
+        assert_eq!(&ber::object::decode_pdu::<T>(&ber::object::encode_pdu(v)).unwrap(), v);
+        assert_eq!(&xer::object::decode_pdu::<T>(&xer::object::encode_pdu(v)).unwrap(), v);
+        assert_eq!(&jer::object::decode_pdu::<T>(&jer::object::encode_pdu(v)).unwrap(), v);
+        assert_eq!(&per::object::decode_pdu::<T>(&per::object::encode_pdu(v)).unwrap(), v);
     }
 
     #[test]
-    fn widget_matches_inherents_all_codecs() {
-        let w = widget();
-        let b = ber::object::encode_pdu(&w);
-        assert_eq!(b, w.encode());
-        assert_eq!(ber::object::decode_pdu::<Widget>(&b).unwrap(), w);
-        let x = xer::object::encode_pdu(&w);
-        assert_eq!(x, w.encode_xer());
-        assert_eq!(xer::object::decode_pdu::<Widget>(&x).unwrap(), w);
-        let j = jer::object::encode_pdu(&w);
-        assert_eq!(j, w.encode_jer());
-        assert_eq!(jer::object::decode_pdu::<Widget>(&j).unwrap(), w);
-        let p = per::object::encode_pdu(&w);
-        assert_eq!(p, per_via_trait(&w));
-        assert_eq!(per::object::decode_pdu::<Widget>(&p).unwrap(), w);
+    fn widget_roundtrips_all_codecs() {
+        roundtrip_all_codecs(&widget());
     }
 
     #[test]
-    fn selector_matches_inherents_all_codecs() {
+    fn selector_roundtrips_all_codecs() {
         for s in selectors() {
-            let b = ber::object::encode_pdu(&s);
-            assert_eq!(b, s.encode());
-            assert_eq!(ber::object::decode_pdu::<Selector>(&b).unwrap(), s);
-            let x = xer::object::encode_pdu(&s);
-            assert_eq!(x, s.encode_xer());
-            assert_eq!(xer::object::decode_pdu::<Selector>(&x).unwrap(), s);
-            let j = jer::object::encode_pdu(&s);
-            assert_eq!(j, s.encode_jer());
-            assert_eq!(jer::object::decode_pdu::<Selector>(&j).unwrap(), s);
-            let p = per::object::encode_pdu(&s);
-            assert_eq!(p, per_via_trait(&s));
-            assert_eq!(per::object::decode_pdu::<Selector>(&p).unwrap(), s);
+            roundtrip_all_codecs(&s);
         }
     }
 

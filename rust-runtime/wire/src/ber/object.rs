@@ -365,31 +365,6 @@ pub fn decode_seqof_content(obj: &mut dyn Asn1SeqOf, content: &[u8]) -> Result<(
     Ok(())
 }
 
-/// Appends a top-level named SEQUENCE OF/SET OF type's complete TLV (its
-/// own natural tag, honoring any `[n]` override the type assignment
-/// itself carries via `Asn1SeqOf::natural_tag`) — the `Asn1SeqOf`
-/// counterpart of `encode_seq_into`, used by `emit_seq_of_definition`'s
-/// own `.encode()` instead of the generic `Asn1Value::ber_encode`.
-pub fn encode_seqof_into(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) {
-    write_tagged(out, obj.natural_tag(), |out| encode_seqof_content(obj, out));
-}
-
-pub fn encode_seqof(obj: &dyn Asn1SeqOf) -> Vec<u8> {
-    let mut out = Vec::new();
-    encode_seqof_into(obj, &mut out);
-    out
-}
-
-/// Decode counterpart of `encode_seqof_into`.
-pub fn decode_seqof_into(obj: &mut dyn Asn1SeqOf, r: &mut Reader) -> Result<(), DecodeError> {
-    let tag = obj.natural_tag();
-    let tlv = r.read_tlv()?;
-    if tlv.tag != tag {
-        return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
-    }
-    decode_seqof_content(obj, tlv.value)
-}
-
 // ---------------------------------------------------------------------
 // Top-level (document root) entry points
 // ---------------------------------------------------------------------
