@@ -16,8 +16,6 @@
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
 
-use asn1cpp_wire::value::Asn1Value;
-use asn1cpp_wire::xer::reader::XerReader;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -62,23 +60,14 @@ fn strip_ws(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-// The .in files wrap the CHOICE value in an outer <PDU>...</PDU> element
-// (same as asn1c's asn_fprint output format). The CHOICE decoder expects the
-// reader to start at the first alternative tag, so consume the outer
-// wrapper here.
+// The .in files are complete XER documents rooted at <PDU>...</PDU>
+// (X.693 §8.3.1, same as asn1c's asn_fprint output format).
 fn xer_decode(xml: &str) -> Option<PDU::PDU> {
-    let mut r = XerReader::new(xml);
-    r.consume_open_tag("PDU").ok()?;
-    let mut val = PDU::PDU::default();
-    val.xer_decode_into(&mut r).ok()?;
-    r.consume_close_tag("PDU").ok()?;
-    Some(val)
+    asn1cpp_wire::xer::object::decode_pdu(xml).ok()
 }
 
 fn xer_encode(val: &PDU::PDU) -> String {
-    let mut out = String::new();
-    val.xer_encode(&mut out, 0);
-    out
+    asn1cpp_wire::xer::object::encode_pdu(val)
 }
 
 enum Expect {
@@ -149,19 +138,15 @@ fn process_inner(path: &Path, name: &str) -> (bool, i32) {
     check(&format!("{name}  XER decode ok"), decoded.is_some(), &mut failures);
     let Some(val) = decoded else { return (false, failures) };
 
-    let mut ber = Vec::new();
-    val.ber_encode(&mut ber);
+    let ber = asn1cpp_wire::ber::object::encode_pdu(&val);
     check(&format!("{name}  BER encode non-empty"), !ber.is_empty(), &mut failures);
     if ber.is_empty() {
         return (false, failures);
     }
 
-    let mut val2 = PDU::PDU::default();
-    let ber_ok = val2.ber_decode_into(&mut asn1cpp_wire::Reader::new(&ber)).is_ok();
-    check(&format!("{name}  BER decode ok"), ber_ok, &mut failures);
-    if !ber_ok {
-        return (false, failures);
-    }
+    let val2 = asn1cpp_wire::ber::object::decode_pdu::<PDU::PDU>(&ber);
+    check(&format!("{name}  BER decode ok"), val2.is_ok(), &mut failures);
+    let Ok(val2) = val2 else { return (false, failures) };
 
     let reenc = xer_encode(&val2);
 
@@ -171,12 +156,9 @@ fn process_inner(path: &Path, name: &str) -> (bool, i32) {
     }
 
     // (none) / -E: whitespace-stripped output must match input.
-    // The .in files wrap the CHOICE in <PDU>...</PDU>; our encoder doesn't
-    // add that wrapper, so re-add it before comparing.
-    let wrapped = format!("<PDU>\n{reenc}</PDU>\n");
     check(
         &format!("{name}  XER round-trip equal (whitespace-stripped)"),
-        strip_ws(&wrapped) == strip_ws(&input),
+        strip_ws(&reenc) == strip_ws(&input),
         &mut failures,
     );
     (false, failures)

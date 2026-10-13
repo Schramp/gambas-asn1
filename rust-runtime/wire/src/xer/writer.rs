@@ -20,9 +20,9 @@ pub fn escape(s: &str, out: &mut String) {
 /// `depth * 4` spaces — the C++ runtime's own indent unit
 /// (`XerEncodeStream::indent`, `runtime/include/asn1cpp/codec/XerCodec.hpp`:
 /// `4 * (depth_ + offset)`). `depth` means "the level this value's own
-/// wrapper tag sits at" throughout the XER encode call graph (`Asn1Value::
-/// xer_encode`'s own `depth` parameter, `sequence::encode_sequence_xer_content`,
-/// `choice::encode_choice_xer_into`, `seq_of::encode_seq_of_xer_named`) — a
+/// wrapper tag sits at" throughout the XER encode call graph
+/// (`xer::object`'s `encode_bare`/`encode_seq_content`/
+/// `encode_choice_content`/`encode_seqof_content`) — a
 /// composite's content is always written one level deeper than its own
 /// `depth`, recursively, matching the C++ runtime's `s.depth() + 1`
 /// convention exactly (`XerCodec.cpp`'s `SequenceXerHandler`/

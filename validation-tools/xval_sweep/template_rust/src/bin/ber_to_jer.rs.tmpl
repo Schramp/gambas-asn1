@@ -22,13 +22,15 @@ fn list_types() {
     }
 }
 
+// BER's TLV framing is self-delimiting (X.690 §8.1): decoding one record
+// from a shared reader leaves it positioned at the next record.
 fn decode_one(type_name: &str, data: &[u8]) -> Result<(String, usize), asn1cpp_wire::DecodeError> {
     let mut r = asn1cpp_wire::Reader::new(data);
     match type_name {
         "__PDU_TYPE__" => {
             let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
-            <randgen_rust::__PDU_MODULE__::__PDU_IDENT__ as asn1cpp_wire::value::Asn1Value>::ber_decode_into(&mut v, &mut r)?;
-            Ok((v.encode_jer(), r.pos()))
+            asn1cpp_wire::ber::object::decode_pdu_into(&mut v, &mut r)?;
+            Ok((asn1cpp_wire::jer::object::encode_pdu(&v), r.pos()))
         }
         _ => unreachable!("checked by caller"),
     }

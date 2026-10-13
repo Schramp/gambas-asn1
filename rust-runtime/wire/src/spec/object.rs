@@ -112,6 +112,22 @@ pub enum MemberRefMut<'a> {
     Enumerated(&'a mut dyn EnumSlot, &'static EnumSpec),
 }
 
+/// This member/element's own natural X.693 §12 XER name, straight from
+/// the reflective shape — `Primitive` via `spec::primitive::
+/// xer_element_name_of`, `Composite`/`Choice` via their own
+/// `SequenceSpec`/`ChoiceSpec::name`, `Enumerated` via `EnumSpec::name`,
+/// `SeqOf` via its own universal SEQUENCE/SET tag.
+pub fn natural_xer_name_of(m: MemberRef) -> &'static str {
+    match m {
+        MemberRef::Absent => unreachable!("an absent member has no natural XER name to ask for"),
+        MemberRef::Primitive(p) => crate::spec::primitive::xer_element_name_of(p),
+        MemberRef::Composite(inner) => inner.spec().name,
+        MemberRef::Choice(inner) => inner.spec().name,
+        MemberRef::Enumerated(_, spec) => spec.name,
+        MemberRef::SeqOf(inner) => inner.own_xer_name(),
+    }
+}
+
 /// Purely reflective SEQUENCE/SET interface — see module doc. Every
 /// method answers a structural question by index; none of them encode or
 /// decode anything.
@@ -161,6 +177,19 @@ pub trait Asn1SeqOf {
     /// type, not the element, so each wrapper answers it directly rather
     /// than needing a `MemberMeta`-style per-instance field.
     fn natural_tag(&self) -> Tag;
+    /// This collection's own X.693 §9.3 wrapper name, used when *this
+    /// value itself* appears nested as another collection's element
+    /// (`natural_xer_name_of`'s `MemberRef::SeqOf` arm) — not to be
+    /// confused with `elem_natural_xer_name`/`elem_xer_name`, which name
+    /// this collection's own *elements*. An inline member's `SeqOf<T>`/
+    /// `SetOf<T>` (never independently named) answers the generic X.680
+    /// keyword-derived `"SEQUENCE-OF"`/`"SET-OF"`; a named or
+    /// synthetically-promoted top-level type (`RustBackend::
+    /// emit_seq_of_definition`) answers its own real `SeqOfSpec::
+    /// xer_name` instead — `"SEQUENCE"`/`"SET"` for an anonymous promoted
+    /// type (`Generator::synthetic->xer_name`), its declared ASN.1 name
+    /// otherwise.
+    fn own_xer_name(&self) -> &'static str;
     fn len(&self) -> usize;
     fn get(&self, index: usize) -> MemberRef<'_>;
     /// Appends one new default-valued element (for decode) and returns a
@@ -168,9 +197,8 @@ pub trait Asn1SeqOf {
     fn push_default_mut(&mut self) -> MemberRefMut<'_>;
     /// Upfront backing-store reservation hint for a decode that already
     /// knows the element count (`ber::object::decode_seqof_content`'s own
-    /// zero-copy top-level-TLV pre-count, mirroring
-    /// `ber::sequence::decode_seq_of_content`'s `count_top_level_tlvs`
-    /// use) — avoids `push_default_mut`'s otherwise-geometric `Vec`
+    /// zero-copy top-level-TLV pre-count, `ber::sequence::
+    /// count_top_level_tlvs`) — avoids `push_default_mut`'s otherwise-geometric `Vec`
     /// regrowth. Every real implementor backs onto a `Vec`, so this has
     /// one obvious correct override (`self.0.reserve(additional)`); the
     /// default no-op only matters if a future implementor can't honor it.
@@ -178,17 +206,27 @@ pub trait Asn1SeqOf {
         let _ = additional;
     }
     /// Element `index`'s own natural X.693 §12 XER element name — e.g.
-    /// `"TimeslotISCP"` for a named INTEGER-alias element, not generic
-    /// `"INTEGER"`. Deliberately *not* derivable from `get(index)`:
-    /// `MemberRef::Primitive`/`Base64`/`Utf8` have already unwrapped to
-    /// the element's native field by the time `get` returns (same
-    /// `AsMemberRef` unwrap `AccessKind::Primitive`'s `is_explicit`
-    /// branch and `MemberRef::Base64`'s own doc describe for a SEQUENCE
-    /// member), which is exactly why `xer::object::encode_seqof_content`
-    /// can't just call `value::Asn1Value::xer_element_name()` on
-    /// whatever `get(index)` handed back — it needs the *un*-unwrapped
-    /// element's own override, straight from its own `Asn1Value` impl.
+    /// `"Digit"` for a named INTEGER-alias element (X.680 §19), not the
+    /// generic `"INTEGER"` `natural_xer_name_of(self.get(index))` would
+    /// give: `get(index)` already unwraps to the element's bare
+    /// `PrimitiveRef` (`AsMemberRef`'s own unwrap, same loss
+    /// `MemberRef::Base64`/`Utf8` has for a SEQUENCE *member*) — this
+    /// needs the *un*-unwrapped element's own identity instead, straight
+    /// from `AsMemberRef::own_element_xer_name()`. No default: every
+    /// implementor has direct access to its own un-unwrapped elements
+    /// (`self.0[index]: T` where `T: AsMemberRef`) to call that on;
+    /// nothing generic over just `&dyn Asn1SeqOf` can derive it.
     fn elem_natural_xer_name(&self, index: usize) -> &'static str;
+    /// This collection's own X.693 §21 BASE64/UTF8 ENCODING-CONTROL
+    /// override, straight from `AsMemberRef::XER_INSTRUCTION` — a
+    /// compile-time fact about the one element type `T`, not about any
+    /// particular decoded value (every element shares it, X.690 §8.9.2:
+    /// SEQUENCE OF/SET OF has no per-element row to vary it), so it needs
+    /// no index and no live element to read, unlike
+    /// `elem_natural_xer_name` just above. No default: every implementor
+    /// has direct access to `T` (`self.0: Vec<T>` where
+    /// `T: AsMemberRef`) to read the const off.
+    fn elem_xer_instruction(&self) -> XerInstruction;
     /// X.693 §12 element identifier (e.g. `xxx SEQUENCE OF id INTEGER`) —
     /// `Some` only for a named top-level SEQUENCE OF/SET OF type that
     /// declared one (`SeqOfSpec::elem_xer_name`, `emit_seq_of_definition`);
@@ -209,7 +247,54 @@ pub trait Asn1SeqOf {
 pub trait AsMemberRef {
     fn as_member_ref(&self) -> MemberRef<'_>;
     fn as_member_ref_mut(&mut self) -> MemberRefMut<'_>;
+    /// This value's own natural X.693 §12 XER element name, from *before*
+    /// `as_member_ref` unwraps it — a bare primitive answers the same
+    /// generic name `xer_element_name_of` would give its unwrapped
+    /// `PrimitiveRef`; a named alias (builtin alias, named INTEGER,
+    /// ENUMERATED) answers its own real declared name instead (its
+    /// `as_member_ref` unwraps to the same bare `PrimitiveRef`/
+    /// `MemberRef::Enumerated` a plain instance of that kind would, with
+    /// no memory of the alias — this is the one place that memory
+    /// survives). `Asn1SeqOf::elem_natural_xer_name` is the sole caller,
+    /// via `self.0[index].own_element_xer_name()` on the un-unwrapped
+    /// element.
+    fn own_element_xer_name(&self) -> &'static str;
+    /// This type's own X.693 §21 BASE64/UTF8 ENCODING-CONTROL override —
+    /// a compile-time fact of the type, not of any instance, so it's an
+    /// associated const rather than a method: `Asn1SeqOf::
+    /// elem_xer_instruction`'s sole use (`T::XER_INSTRUCTION`) needs no
+    /// element value to read it, and codegen can read the schema's own
+    /// `xer_encoding` once at definition time to supply it. A bare
+    /// primitive, ENUMERATED, named INTEGER, SEQUENCE/CHOICE, or SeqOf/
+    /// SetOf element never carries one (`XerInstruction::Default`); only
+    /// a builtin-alias OCTET STRING declared `BASE64`/`UTF8`
+    /// (`RustBackend::emit_builtin_alias_definition`'s own
+    /// `spec.xer_encoding`) overrides it.
+    const XER_INSTRUCTION: XerInstruction = XerInstruction::Default;
 }
+
+/// A generated type usable as a whole-document root — SEQUENCE/SET,
+/// CHOICE, or a named SEQUENCE OF/SET OF type assignment (X.680 §16).
+/// Bound of every codec's top-level entry points (`ber::object::
+/// encode_pdu`, `xer::object::encode_pdu`, `jer::object::encode_pdu`,
+/// `per::object::encode_pdu`, and their decode counterparts), which
+/// dispatch on `as_member_ref()` — the trait itself carries no codec
+/// logic, so adding a codec never touches a type that implements it.
+/// `RustBackend` implements it only for those three kinds, so
+/// `as_member_ref()` on an `Asn1Pdu` always yields `Composite`,
+/// `Choice`, or `SeqOf`.
+pub trait Asn1Pdu: AsMemberRef + Default {
+    /// The type assignment's own constraint table: a named SEQUENCE
+    /// OF/SET OF's SIZE bounds drive its count encoding (X.691 §19/§20)
+    /// and top-level SIZE validation; SEQUENCE/SET/CHOICE have none of
+    /// their own (their members carry theirs in `MemberMeta`).
+    const PDU_CONSTRAINTS: &'static crate::constraints::Constraints = &crate::constraints::UNCONSTRAINED;
+}
+
+/// Panic message for an `Asn1Pdu` whose `as_member_ref()` breaks the
+/// trait's own SEQUENCE/SET/CHOICE/SEQUENCE OF contract — shared by
+/// every codec's top-level entry points.
+pub(crate) const NOT_A_PDU: &str = "Asn1Pdu::as_member_ref() must yield Composite, Choice, or SeqOf";
 
 /// Purely reflective ENUMERATED interface (X.680 §20) — `enum_get`/
 /// `enum_set` convert to/from the X.690 §8.4/X.691 ordinal `i64`

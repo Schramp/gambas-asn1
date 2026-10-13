@@ -9,7 +9,7 @@
 //! Not a `Vec<u64>` type alias — OBJECT IDENTIFIER and RELATIVE-OID have
 //! different wire encodings (OID's first-two-arc combining trick,
 //! RELATIVE-OID has none — X.680 §33), so they can't share one plain
-//! `Vec<u64>` `Asn1Value` impl (Rust allows only one trait impl per
+//! `Vec<u64>` `TypeTag`/`AsMemberRef` impl (Rust allows only one trait impl per
 //! concrete type — same reasoning `bit_string.rs`'s module doc gives for
 //! not reusing OCTET STRING's `Vec<u8>`). RELATIVE-OID gets its own
 //! newtype too (`relative_oid::RelativeOid`), same "distinct type per

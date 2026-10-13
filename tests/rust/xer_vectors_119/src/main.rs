@@ -21,15 +21,11 @@
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
 
-use asn1cpp_wire::value::Asn1Value;
-use asn1cpp_wire::per::reader::Reader;
-use asn1cpp_wire::per::writer::Writer;
-use asn1cpp_wire::constraints::UNCONSTRAINED;
 fn decode_sequence_xer_pdu(xml: &str) -> Result<PDU::PDU, asn1cpp_wire::DecodeError> {
-    PDU::PDU::decode_xer(xml)
+    asn1cpp_wire::xer::object::decode_pdu(xml)
 }
 fn encode_sequence_xer_pdu(val: &PDU::PDU) -> String {
-    val.encode_xer()
+    asn1cpp_wire::xer::object::encode_pdu(val)
 }
 use std::collections::HashSet;
 use std::fs;
@@ -84,17 +80,11 @@ fn strip_ws(s: &str) -> String {
 }
 
 fn per_encode(val: &PDU::PDU) -> Vec<u8> {
-    let mut w = Writer::new();
-    val.per_encode(&mut w, &UNCONSTRAINED);
-    w.flush();
-    w.into_bytes()
+    asn1cpp_wire::per::object::encode_pdu(val)
 }
 
 fn per_decode(bytes: &[u8]) -> Result<PDU::PDU, asn1cpp_wire::per::reader::DecodeError> {
-    let mut r = Reader::new(bytes);
-    let mut val = PDU::PDU::default();
-    val.per_decode_into(&mut r, &UNCONSTRAINED)?;
-    Ok(val)
+    asn1cpp_wire::per::object::decode_pdu(bytes)
 }
 
 /// Returns true if this file was skipped (not counted as pass/fail).

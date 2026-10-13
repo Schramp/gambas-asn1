@@ -9,7 +9,7 @@
 //!
 //! `native_builtin_type` already mapped REAL to plain `f64` before this
 //! issue — no collision to route around (unlike BIT STRING/OID/RELATIVE-OID,
-//! `f64` had no prior `Asn1Value` impl claiming it).
+//! `f64` had no other ASN.1 kind claiming it).
 
 use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::{universal, Tag};
@@ -17,7 +17,7 @@ use crate::ber::writer::write_primitive;
 
 pub const REAL_TAG: Tag = Tag::universal(universal::REAL, false);
 
-/// REAL (X.680 §21) — a real type carrying its own `Asn1Value` impl.
+/// REAL (X.680 §21) — its own newtype, with its own `PrimitiveRef` variant.
 #[derive(Debug, Clone, Copy, Default, PartialEq, PartialOrd)]
 pub struct Real(pub f64);
 
@@ -186,6 +186,60 @@ pub(crate) fn decode_real_value(value: &[u8], pos: usize) -> Result<f64, DecodeE
         d = -d;
     }
     Ok(d)
+}
+
+/// X.693 §17.9 textual form for XER. Deliberately NOT shared with
+/// `jer::real`'s own formatter despite the superficial similarity (both
+/// classify NaN/Inf/signed-zero before formatting a plain decimal):
+/// asn1c's own ground truth (`REAL.c`'s `REAL__dump`, which XER uses,
+/// vs the separate formatter `REAL_jer.c` uses) picks a different
+/// precision rule (`%.15f` fixed-decimal, never exponential, vs JER's
+/// `%.15G`-equivalent with an exponential fallback) and a different
+/// special-value spelling (`PLUS-INFINITY`/`MINUS-INFINITY`/
+/// `NOT-A-NUMBER` elements vs quoted `"INF"`/`"-INF"`/`"NaN"` strings).
+/// Kept here, next to the BER codec above and within sight of
+/// `jer::real`'s own formatter, specifically so the two classifications
+/// stay visible for comparison on review — the signed-zero handling gap
+/// this type once had came from exactly this kind of near-identical
+/// logic drifting apart while living in different files.
+pub(crate) enum XerRealText {
+    Special(&'static str),
+    Decimal(String),
+}
+
+pub(crate) fn format_xer(d: f64) -> XerRealText {
+    if d.is_nan() {
+        return XerRealText::Special("NOT-A-NUMBER");
+    }
+    if d.is_infinite() {
+        return XerRealText::Special(if d > 0.0 { "PLUS-INFINITY" } else { "MINUS-INFINITY" });
+    }
+    if d == 0.0 {
+        return XerRealText::Decimal(if d.is_sign_negative() { "-0".to_string() } else { "0".to_string() });
+    }
+    let mut buf = format!("{:.15}", d);
+    if let Some(dot) = buf.find('.') {
+        let mut last = buf.len() - 1;
+        while last > dot + 1 && buf.as_bytes()[last] == b'0' {
+            last -= 1;
+        }
+        buf.truncate(last + 1);
+    }
+    XerRealText::Decimal(buf)
+}
+
+pub(crate) fn parse_xer_special(name: &str) -> Option<f64> {
+    match name {
+        "PLUS-INFINITY" => Some(f64::INFINITY),
+        "MINUS-INFINITY" => Some(f64::NEG_INFINITY),
+        "NOT-A-NUMBER" => Some(f64::NAN),
+        _ => None,
+    }
+}
+
+pub(crate) fn parse_xer_decimal(text: &str) -> Result<f64, String> {
+    let trimmed = text.trim();
+    trimmed.parse::<f64>().map_err(|_| format!("XER: invalid REAL value: {trimmed}"))
 }
 
 #[cfg(test)]

@@ -895,7 +895,7 @@ def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None):
     gen_file = os.path.join(rust_dir, "gen", f"{ident}.rs")
     if os.path.isfile(gen_file):
         with open(gen_file, errors="replace") as f:
-            per_covered = f"impl asn1cpp_wire::value::Asn1Value for {ident} " in f.read()
+            per_covered = f"impl asn1cpp_wire::spec::object::Asn1Pdu for {ident} " in f.read()
     # Remove any stale ber_to_per.rs/per_to_ber.rs from a prior run of this
     # same target directory before deciding whether to re-materialize them
     # — cargo auto-discovers every src/bin/*.rs file as its own binary

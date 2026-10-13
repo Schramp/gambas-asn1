@@ -3,9 +3,9 @@
 
 /// One value/name pair — mirrors `EnumSpec::entries` (`TypeDescriptor.hpp`)
 /// exactly: codegen emits one static table per ENUMERATED type
-/// (`{TYPE}_MAP`), this module supplies the one generic name<->value
-/// lookup both `Asn1Value::xer_encode`/`xer_decode_into` wrappers call —
-/// same table-driven split every other construct in this crate uses (the
+/// (`{TYPE}_ENUM_SPEC`), the codec walkers supply the one generic
+/// name<->value lookup (`ber::enumerated::xer_encode_enum`/
+/// `xer_decode_enum_into`) — same table-driven split every other construct in this crate uses (the
 /// table is data, the lookup is the one shared piece of logic, not
 /// per-type generated code).
 pub struct EnumEntry {
@@ -19,6 +19,12 @@ pub struct EnumEntry {
 /// this order) and precomputes the root layout, so no walker recounts it.
 #[derive(Clone, Copy)]
 pub struct EnumSpec {
+    /// This ENUMERATED type's own ASN.1 name (X.693 §9.3) — lets
+    /// `spec::object::natural_xer_name_of` answer "what's this element's
+    /// natural XER name" reflectively via `MemberRef::Enumerated`'s own
+    /// spec, the same way `SequenceSpec`/`ChoiceSpec::name` already do for
+    /// their own kinds.
+    pub name: &'static str,
     pub entries: &'static [EnumEntry],
     /// True if the ENUMERATED has an extension marker (`...`).
     pub extensible: bool,

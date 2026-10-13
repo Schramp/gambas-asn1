@@ -6,7 +6,6 @@
 
 use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::{universal, Tag};
-use crate::value::Asn1Value;
 use crate::ber::writer::write_primitive;
 
 pub const INTEGER_TAG: Tag = Tag::universal(universal::INTEGER, false);
@@ -14,10 +13,10 @@ pub const INTEGER_TAG: Tag = Tag::universal(universal::INTEGER, false);
 /// Newtype-wrapper boilerplate shared by every fixed-width INTEGER storage
 /// kind (`Integer`/`UInteger`/`BigInteger` below) — struct, `Deref`/
 /// `DerefMut` (arithmetic/comparison ergonomics), and `PartialEq<$prim>`
-/// (compare directly against a literal without `.0`). Each still needs its
-/// own `Asn1Value` impl (`value.rs`) since the wire behavior genuinely
-/// differs (signed vs unsigned two's-complement, PER encode function) —
-/// only the type/trait boilerplate is identical across widths.
+/// (compare directly against a literal without `.0`). Each is still its
+/// own type with its own `PrimitiveRef` variant, since the wire behavior
+/// genuinely differs (signed vs unsigned two's-complement, PER encode
+/// function) — only the type/trait boilerplate is identical across widths.
 macro_rules! int_newtype {
     ($(#[$meta:meta])* $name:ident, $prim:ty) => {
         $(#[$meta])*
@@ -47,9 +46,8 @@ macro_rules! int_newtype {
 
 int_newtype!(
     /// INTEGER whose declared range fits `i64` (X.680 §19). A real type, not
-    /// the bare native, so it has its own `Asn1Value` impl (natural tag, XER
-    /// name, PER against the row's `Constraints`, validation) like every
-    /// other builtin.
+    /// the bare native, so it has its own `TypeTag`/`AsMemberRef` impls and
+    /// `PrimitiveRef` variant like every other builtin.
     Integer, i64
 );
 
@@ -67,10 +65,10 @@ int_newtype!(
 
 /// `IntStorageKind::ARBITRARY` storage (`RustBackend::native_int_type`) —
 /// an INTEGER whose constrained range exceeds `i128` (unconstrained or very
-/// wide, e.g. cryptographic keys). Its own newtype, not a direct
-/// `Asn1Value` impl on bare `Vec<u8>` — same coherence reasoning as
-/// `octet_string::OctetString`'s own module doc: a second, unrelated
-/// `Asn1Value` impl on the same concrete `Vec<u8>` type is impossible
+/// wide, e.g. cryptographic keys). Its own newtype, not bare `Vec<u8>` —
+/// same coherence reasoning as `octet_string::OctetString`'s own module
+/// doc: a second, unrelated trait impl on the same concrete `Vec<u8>` type
+/// is impossible
 /// (E0119), and this crate's `unusable_alias_names_` registry
 /// (`compiler/src/codegen/RustBackend.hpp`) exists specifically because,
 /// before this newtype, an ARBITRARY-storage alias's referencing members
@@ -79,8 +77,8 @@ int_newtype!(
 /// BER content is the value's minimal two's-complement bytes verbatim —
 /// unlike `i64`/`u64`/`i128`, there's no fixed-width parse/format step:
 /// the wire's own minimal-encoding rule (X.690 §8.3.2) already *is* what
-/// `Vec<u8>` stores. No XER leg yet (`Asn1Value`'s own default: panics with
-/// "XER leg not yet wired for this type") — X.693's decimal-text INTEGER
+/// `Vec<u8>` stores. No XER leg yet (`spec::primitive`'s XER dispatch
+/// panics with "XER leg not yet wired for this type") — X.693's decimal-text INTEGER
 /// form needs bignum long division on the byte array to convert, real work
 /// deliberately left for when a schema actually exercises this path (none
 /// does today — confirmed zero real usage, this storage kind is itself
@@ -88,23 +86,14 @@ int_newtype!(
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ArbitraryInteger(pub Vec<u8>);
 
-impl Asn1Value for ArbitraryInteger {
-    fn ber_natural_tag(&self) -> Tag {
-        INTEGER_TAG
-    }
+/// Already minimal two's-complement big-endian bytes, captured verbatim
+/// from the wire at schema-compile time — nothing to re-encode.
+pub(crate) fn encode_arbitrary_integer_content(bytes: &[u8], out: &mut Vec<u8>) {
+    out.extend_from_slice(bytes);
+}
 
-    fn xer_element_name(&self) -> &'static str {
-        "INTEGER"
-    }
-
-    fn ber_encode_content(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.0);
-    }
-
-    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-        self.0 = content.to_vec();
-        Ok(())
-    }
+pub(crate) fn decode_arbitrary_integer_content(content: &[u8]) -> Vec<u8> {
+    content.to_vec()
 }
 
 /// Minimal two's-complement big-endian encoding of `n` — the fewest bytes
