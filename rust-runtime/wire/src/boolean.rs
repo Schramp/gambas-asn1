@@ -11,7 +11,7 @@ use crate::ber::writer::write_primitive;
 
 pub const BOOLEAN_TAG: Tag = Tag::universal(universal::BOOLEAN, false);
 
-/// BOOLEAN (X.680 §22) — a real type carrying its own `Asn1Value` impl.
+/// BOOLEAN (X.680 §22) — its own newtype, with its own `PrimitiveRef` variant.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Boolean(pub bool);
 

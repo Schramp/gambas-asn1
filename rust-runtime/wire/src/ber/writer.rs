@@ -4,9 +4,9 @@
 //! (`runtime/include/asn1cpp/codec/BerWriter.hpp`): reserve a 3-byte length
 //! placeholder, let the caller write content directly into the shared
 //! buffer, then back-fill the real length and shift the content down to
-//! close the gap. This is `Asn1Value::ber_encode_tagged`'s (`value.rs`) one
-//! call site, so it applies uniformly to every TLV in a tree — leaf and
-//! constructed alike — without a separate `Vec<u8>` per node.
+//! close the gap. Every TLV the BER walkers write goes through it, so it
+//! applies uniformly to every TLV in a tree — leaf and constructed alike —
+//! without a separate `Vec<u8>` per node.
 
 use crate::ber::tag::{write_tag, Tag};
 

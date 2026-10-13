@@ -54,7 +54,7 @@ table-driven codec, no per-type generated codec logic. Concretely:
 | `TypeDescriptor` table | `SequenceSpec`/`ChoiceSpec`/`EnumSpec` table |
 | `MemberDescriptor` row (offset + `type_descriptor` ptr) | `MemberMeta` row (`get`/`get_mut` fn ptr → `MemberRef`/`MemberRefMut`, a closed reflective enum — `Primitive`/`Composite`/`Choice`/`SeqOf`/`Enumerated`/`Absent`) |
 | `ICodec` + handler singletons (`IBerTypeHandler`, `ber_boolean_handler`, ...) | per-codec non-generic walker (`ber::object`/`xer::object`/`jer::object`/`per::object`), matching on `MemberRef`/`MemberRefMut` |
-| offset + `void*` field access | generated accessor closure, unsize-coerced to `&dyn Asn1Seq`/`&dyn Asn1Choice` or wrapped in `PrimitiveRef`/`PrimitiveRefMut` (vtable or enum discriminant, never `&dyn Asn1Value`) |
+| offset + `void*` field access | generated accessor closure, unsize-coerced to `&dyn Asn1Seq`/`&dyn Asn1Choice` or wrapped in `PrimitiveRef`/`PrimitiveRefMut` (vtable or enum discriminant) |
 | one `ICodec` interface for BER/PER/XER/JER | one reflective `MemberRef`/`AsMemberRef` shape, matched per codec in that codec's own `object.rs` (JER ported gambas-asn1#661, own `jer/` module like `per/`) |
 | `Oid` (`runtime/include/asn1cpp/Oid.hpp`) | `ObjectIdentifier` (`rust-runtime/wire/src/oid.rs`) |
 
@@ -63,7 +63,7 @@ runtimes (not a naming-fidelity issue — this is runtime-internal infrastructur
 generated identifier) — noted here since grepping one runtime for the other's name finds
 nothing otherwise.
 
-**Generated types carry no codec code and no `Asn1Value` impl.** Each generated type emits
+**Generated types carry no codec code.** Each generated type emits
 tables plus reflective trait impls only: `Asn1Seq`/`Asn1Choice`/`Asn1SeqOf`/`EnumSlot`/
 `AsMemberRef`, `TypeTag`, and — for SEQUENCE/SET, CHOICE, and named SEQUENCE OF/SET OF —
 the `Asn1Pdu` root marker (`spec::object`), whose only content is `PDU_CONSTRAINTS` (a named
@@ -80,10 +80,13 @@ BASE64/UTF8 override come from `AsMemberRef::own_element_xer_name`/`XER_INSTRUCT
 element type; `RustBackend::emit_builtin_alias_definition` is the only place that overrides
 `XER_INSTRUCTION`.
 
-`Asn1Value` (`value.rs`) is now implemented only by the builtin primitive leaf types (plus
-`#[cfg(test)]` fixtures). `spec::primitive.rs`'s dispatch already calls each primitive's free
-codec functions directly via `PrimitiveRef`/`PrimitiveRefMut`, so the trait's codec methods
-are vestigial; removing them is gambas-asn1#719.
+There is no per-type codec trait at all. Builtin primitive leaf types are reached through
+`MemberRef::Primitive(PrimitiveRef)` and `spec::primitive`'s per-codec dispatch
+(`{ber,xer,jer,per}_{encode,decode}_primitive`), which calls each type's free codec functions
+directly; a primitive's own unit tests run through that same dispatch via
+`spec::primitive::test_codec`. Composites go through their codec's `object.rs` walker. Every
+codec is therefore one closed match per construct family, with no trait method implemented
+per type.
 
 `BerTraits<T>` (`runtime/include/asn1cpp/codec/BerTraits.hpp` + per-type
 specializations) is the one asymmetry: a template-based static-dispatch
@@ -94,7 +97,7 @@ code/tests and internally by `BerCodec.cpp`/`PerCodec.cpp`/
 raw-primitive forwarders — zero callers) and gambas-asn1#381 (the rest of
 the template layer — confirmed removable, no structural blocker in any of
 the three internal callers). Once gone, C++'s codec surface is exactly one
-path, matching Rust's from day one.
+path, matching Rust's.
 
 ## Runtime debug logging
 
