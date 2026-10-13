@@ -1,0 +1,18 @@
+# Known PER gaps (gambas-asn1#730): one schema per suspected unsupported
+# feature. Not part of the gating targets.txt sweep; run with
+#   xval_sweep.py --targets-file validation-tools/xval_sweep/targets_per_gaps.txt
+# A target moves to targets.txt once it passes. Several of these gaps are
+# shared by C++ and Rust, so the gated cpp-vs-rust checks pass; the signal
+# is the [informational] asn1c.PER vs cpp.PER / rust.PER lines.
+#
+# Not covered here:
+# - INTEGER BigInteger/ArbitraryInteger storage (spec::primitive PER
+#   unimplemented): no ASN.1 input selects that storage today.
+# - Decoding an unknown CHOICE extension alternative: needs a sender
+#   compiled from a newer schema version than the receiver.
+
+tests/asn1/per_gap_fragment_test.asn1     Big
+tests/asn1/per_gap_ext_size_test.asn1     Rec
+tests/asn1/per_gap_ext_string_test.asn1   Rec
+tests/asn1/per_gap_ext_from_test.asn1     Rec
+tests/asn1/per_gap_ext_group_test.asn1    Rec
