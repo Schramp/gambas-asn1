@@ -11,7 +11,7 @@ use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::Tag;
 use crate::ber::writer::{write_explicit, write_primitive, write_tagged};
 use crate::spec::choice::BerTagging;
-use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
+use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
 use crate::spec::primitive::{ber_decode_primitive, ber_encode_primitive};
 
 /// Encodes one member/alternative/element value under `framing` — the
@@ -346,7 +346,7 @@ fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
 // SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------
 
-fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) {
+pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) {
     for i in 0..obj.len() {
         encode_member_ref(obj.get(i), BerTagging::Delegate, out);
     }
@@ -356,13 +356,70 @@ fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) {
 /// top-level-TLV pre-count (`count_top_level_tlvs`): reserves the
 /// backing `Vec` once via `Asn1SeqOf::reserve` instead of letting
 /// `push_default_mut` regrow it geometrically one element at a time.
-fn decode_seqof_content(obj: &mut dyn Asn1SeqOf, content: &[u8]) -> Result<(), DecodeError> {
+pub fn decode_seqof_content(obj: &mut dyn Asn1SeqOf, content: &[u8]) -> Result<(), DecodeError> {
     obj.reserve(crate::ber::sequence::count_top_level_tlvs(content));
     let mut inner = Reader::new(content);
     while !inner.at_end() {
         decode_member_ref(obj.push_default_mut(), BerTagging::Delegate, &mut inner)?;
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Top-level (document root) entry points
+// ---------------------------------------------------------------------
+
+/// Top-level SIZE check on a named SEQUENCE OF/SET OF (X.680 §51.5);
+/// a SEQUENCE/SET/CHOICE root validates its own members inside the
+/// member loop instead.
+fn check_pdu_size<T: Asn1Pdu + ?Sized>(v: &T, phase: &str) {
+    if let MemberRef::SeqOf(s) = v.as_member_ref() {
+        let delta = crate::constraints::validate_size(s.len(), T::PDU_CONSTRAINTS);
+        if delta != 0 {
+            crate::validate::check_delta(delta, s.own_xer_name(), phase);
+        }
+    }
+}
+
+/// @brief Appends `v`'s complete BER TLV under its own natural (or
+///        type-assignment-overridden) tag to `out`.
+/// @param v    Any generated SEQUENCE/SET/CHOICE/SEQUENCE OF type.
+/// @param out  Output buffer; existing bytes are kept (multi-record
+///             streams append one record per call).
+/// @see X.690 §8.9–§8.13 — constructed-type encodings; §8.14 tagging.
+pub fn encode_pdu_into<T: Asn1Pdu + ?Sized>(v: &T, out: &mut Vec<u8>) {
+    check_pdu_size(v, "encode");
+    encode_member_ref(v.as_member_ref(), BerTagging::Delegate, out);
+}
+
+/// @brief One-record convenience form of `encode_pdu_into`.
+/// @return The encoded TLV.
+pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_pdu_into(v, &mut out);
+    out
+}
+
+/// @brief Decodes one top-level TLV from `r` into `v`, leaving `r`
+///        positioned just past it — the streaming form for files that
+///        concatenate records (callers read `r.pos()` afterwards).
+/// @param v  Destination; expected to be `Default`-fresh.
+/// @param r  Reader positioned at the record's tag octet.
+/// @return `Err` on malformed BER or a tag mismatch.
+/// @see X.690 §8.1 — TLV structure.
+pub fn decode_pdu_into<T: Asn1Pdu + ?Sized>(v: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
+    decode_member_ref(v.as_member_ref_mut(), BerTagging::Delegate, r)?;
+    check_pdu_size(v, "decode");
+    Ok(())
+}
+
+/// @brief Whole-buffer form of `decode_pdu_into`: decodes the first
+///        record in `data`.
+/// @return The decoded value.
+pub fn decode_pdu<T: Asn1Pdu>(data: &[u8]) -> Result<T, DecodeError> {
+    let mut v = T::default();
+    decode_pdu_into(&mut v, &mut Reader::new(data))?;
+    Ok(v)
 }
 
 #[cfg(test)]

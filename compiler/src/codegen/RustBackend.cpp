@@ -88,7 +88,7 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     case ast::BuiltinType::Ia5String:   return "asn1cpp_wire::strings::IA5_STRING_TAG";
     // The other 11 restricted-character-string kinds
     // (native_builtin_type maps each to its own rust-runtime/wire::strings
-    // newtype, not plain String) — each newtype's Asn1Value impl checks its
+    // newtype, not plain String) — each newtype's own TypeTag carries its
     // own tag, matching the constant named here.
     case ast::BuiltinType::Utf8String:       return "asn1cpp_wire::strings::UTF8_STRING_TAG";
     case ast::BuiltinType::NumericString:    return "asn1cpp_wire::strings::NUMERIC_STRING_TAG";
@@ -107,9 +107,9 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     // like any other builtin (a referenced top-level ENUMERATED type takes
     // the separate `!mbuiltin` TypeRef path instead, unaffected).
     case ast::BuiltinType::Enumerated:       return "asn1cpp_wire::ber::enumerated::ENUMERATED_TAG";
-    // Not yet covered — no Asn1Value impl in rust-runtime/wire for these
-    // kinds yet, so a member of any of them falls back to struct-shape-only
-    // codegen (no encode()/decode() at all if any member is uncovered).
+    // Not yet covered — no PrimitiveRef dispatch in rust-runtime/wire for
+    // these kinds yet, so a member of any of them becomes an Unsupported
+    // row.
     // Only ANY remains uncovered here.
     default:                                 return nullptr;
     }
@@ -187,24 +187,9 @@ static bool is_sizeable_string_kind(ast::BuiltinType bt) {
     }
 }
 
-/// @brief Whether `bt` is a known-multiplier character string kind PER
-///        encoding (X.691 §26.5) covers — exactly `is_sizeable_string_kind`'s
-///        own set (every character-string kind, wide-char included).
-///        (bits, bytes-per-char, natural alphabet) is no longer decided
-///        here: `asn1cpp_wire::per::strings::encode_string`/`decode_string` take
-///        the type's own universal tag number and look the rest up
-///        themselves (that crate's own `string_params` table, mirroring
-///        `runtime/src/PerCodec.cpp`'s identical one) — codegen's only job
-///        is picking the right tag constant (`builtin_ber_tag`, already
-///        used for the BER leg) and, since the Rust field representation
-///        genuinely does differ by kind, the byte-source/constructor shape
-///        (Vec<u8> pass-through for wide-char, String::from_utf8 otherwise).
-static bool per_string_covered(ast::BuiltinType bt) {
-    return is_sizeable_string_kind(bt);
-}
-
-// Whole-program truth table for "does builtin kind `bt` have a real
-// `Asn1Value::per_encode`/`per_decode_into`?" — an exhaustive switch,
+// Whole-program truth table for "does builtin kind `bt` have a real PER
+// arm in `spec::primitive::per_encode_primitive`/`per_decode_primitive`?"
+// — an exhaustive switch,
 // not an if-chain of early `return true` cases: `-Wswitch` (`-Wall`,
 // enabled project-wide) then flags any `ast::BuiltinType` enumerator
 // this function doesn't mention, so a future kind gaining a real PER
@@ -282,13 +267,11 @@ static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind
     case BT::GeneralizedTime:
         return true;
     // ANY (X.208 legacy, X.691 §10.2 open-type encoding) — length-
-    // prefixed raw captured bytes, unconditionally covered by `Any`'s own
-    // Asn1Value impl (any.rs).
+    // prefixed raw captured bytes, unconditionally covered (`per::any`).
     case BT::Any:
     // OBJECT IDENTIFIER/RELATIVE-OID (X.691 §23/§24, also a §10.2
     // open-type field — same length-prefixed BER-content shape as
-    // REAL/ANY), unconditionally covered by `ObjectIdentifier`'s/
-    // `RelativeOid`'s own Asn1Value impl.
+    // REAL/ANY), unconditionally covered (`per::oid`/`per::relative_oid`).
     case BT::ObjectIdentifier:
     case BT::RelativeOid:
         return true;
@@ -316,11 +299,10 @@ static bool per_ref_or_builtin_covered(std::optional<ast::BuiltinType> mbuiltin,
            ref_kind == TaggedMemberSpec::RefTargetKind::Other;
 }
 
-/// @brief Does a SEQUENCE OF/SET OF element's own shape have a real
-///        `Asn1Value::per_encode`/`per_decode_into`? Recurses through
-///        nested collections to unbounded depth (`ElemShape::nested`),
-///        matching `SeqOf<T>`/`SetOf<T>`'s own fully generic PER impl,
-///        which never inspects `T` beyond calling its trait methods.
+/// @brief Does a SEQUENCE OF/SET OF element's own shape have real PER
+///        coverage? Recurses through nested collections to unbounded
+///        depth (`ElemShape::nested`), matching `per::object`'s SEQUENCE
+///        OF walker, which dispatches each element via its `MemberRef`.
 /// @param shape Resolved, backend-agnostic element shape (`ElemShape`).
 /// @return Whether this element's leaf type is PER-representable.
 static bool per_elem_shape_covered(const ElemShape& shape) {
@@ -376,6 +358,13 @@ void RustBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::o
     os << "}\n\n";
 }
 
+/// @brief Emit the definition half of an ENUMERATED type: its `EnumSpec`
+///        value/name table, `TryFrom<i64>`, `TypeTag`, and the
+///        `AsMemberRef` impl (`MemberRef::Enumerated`) every codec walker
+///        dispatches through.
+/// @param spec Resolved, backend-agnostic decision (see EnumeratedSpec).
+/// @param os   Output stream to write to.
+/// @see X.680 §20 (ENUMERATED), X.690 §8.4, X.691 §14.
 void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
 
@@ -446,8 +435,8 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         // its fully-qualified `crate::{}::` path for its `MemberRef::
         // Enumerated(.., &EnumSpec)` row; a private `static` would only
         // be visible within this type's own module.
-        os << std::format("pub static {}: asn1cpp_wire::spec::enumerated::EnumSpec = asn1cpp_wire::spec::enumerated::EnumSpec {{\n    entries: &[\n",
-                           map_ident);
+        os << std::format("pub static {}: asn1cpp_wire::spec::enumerated::EnumSpec = asn1cpp_wire::spec::enumerated::EnumSpec {{\n    name: \"{}\",\n    entries: &[\n",
+                           map_ident, spec.xer_name);
         for (const auto& v : sorted_values) {
             os << std::format("        asn1cpp_wire::spec::enumerated::EnumEntry {{ value: {}, name: \"{}\" }},\n",
                                v.value, v.asn1_name);
@@ -455,87 +444,6 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << std::format("    ],\n    extensible: {}, root_count: {}, root_bits: {},\n}};\n\n",
                            spec.extensible ? "true" : "false", root_count, root_bits);
 
-        // One merged Asn1Value impl carries the BER leg (matches every
-        // other Asn1Value impl this backend emits), XER leg (BASIC-XER
-        // EmptyElementBoolean-style content, same as `bool`'s own impl
-        // above in this file — mirrors EnumeratedXerHandler's
-        // member-embedded form, runtime/src/XerCodec.cpp), and PER leg
-        // together. `as i64`/`TryFrom<i64>` convert through the shared wire
-        // representation (X.690 §8.4); the XER leg goes through
-        // {map_ident} instead — BER's wire value and XER's value *name*
-        // are different representations of the same table, not two
-        // independent lookups.
-        os << std::format("impl asn1cpp_wire::value::Asn1Value for {} {{\n", tname);
-        os << "    fn ber_natural_tag(&self) -> asn1cpp_wire::Tag {\n";
-        os << "        asn1cpp_wire::ber::enumerated::ENUMERATED_TAG\n";
-        os << "    }\n\n";
-        os << "    fn xer_element_name(&self) -> &'static str {\n";
-        os << std::format("        \"{}\"\n", spec.xer_name);
-        os << "    }\n\n";
-        os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
-        os << "        asn1cpp_wire::ber::enumerated::encode_enumerated_content(out, *self as i64);\n";
-        os << "    }\n\n";
-        os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        *self = asn1cpp_wire::ber::enumerated::decode_enumerated_content(content)?;\n";
-        os << "        Ok(())\n";
-        os << "    }\n\n";
-        os << "    fn xer_encode(&self, out: &mut String, _depth: usize) {\n";
-        os << std::format("        asn1cpp_wire::ber::enumerated::xer_encode_enum(out, &{}, *self as i64);\n", map_ident);
-        os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << std::format("        *self = asn1cpp_wire::ber::enumerated::xer_decode_enum(r, &{})?;\n", map_ident);
-        os << "        Ok(())\n";
-        os << "    }\n\n";
-        // JER: quoted identifier string, same {map_ident} table (X.697 —
-        // no distinct value/name representation split from XER's own).
-        os << "    fn jer_encode(&self, out: &mut String) {\n";
-        os << std::format("        asn1cpp_wire::jer::enumerated::jer_encode_enum(out, &{}, *self as i64);\n", map_ident);
-        os << "    }\n\n";
-        os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << std::format("        *self = asn1cpp_wire::jer::enumerated::jer_decode_enum(r, &{})?;\n", map_ident);
-        os << "        Ok(())\n";
-        os << "    }\n\n";
-        // X.693 §9.3: as a SEQUENCE OF/SET OF element, ENUMERATED is a bare
-        // `<value-name/>` with no type-name wrapper and no X.693 §12
-        // identifier override — `xer_encode`/`xer_decode_into` above
-        // already write/read exactly that shape (xer_encode_enum/
-        // xer_decode_enum). Unlike CHOICE (see the generated CHOICE type's
-        // own override further down), ENUMERATED still needs its own
-        // leading `\n` + indent here — its `TypeDescriptor` isn't
-        // CHOICE-shaped, so `SeqOfXerHandler`'s own `!edef.choice_spec`
-        // check (`runtime/src/XerCodec.cpp`) still writes that leading
-        // whitespace for it, same as any wrapped element.
-        os << "    fn xer_encode_seqof_element(&self, out: &mut String, depth: usize, _name_override: std::option::Option<&str>) {\n";
-        os << "        out.push('\\n');\n";
-        os << "        out.push_str(&asn1cpp_wire::xer::writer::indent(depth + 1));\n";
-        os << "        self.xer_encode(out, depth + 1);\n";
-        os << "    }\n\n";
-        os << "    fn xer_decode_into_seqof_element(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader, _name_override: std::option::Option<&str>) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        self.xer_decode_into(r)\n";
-        os << "    }\n\n";
-        // X.680 §20/§51 — reuses {map_ident} (already
-        // emitted above for BER/XER), same "table data, one generic
-        // function, no per-type logic" shape the Constraints redesign
-        // established. In practice unreachable through the normal decode
-        // path (TryFrom<i64> already rejects an unrecognized wire value
-        // before a Rust enum instance can exist — see
-        // enumerated::validate_enum's own doc), but a real override, not
-        // a stub, for parity with the other constraint kinds.
-        os << "    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {\n";
-        os << std::format("        asn1cpp_wire::spec::enumerated::validate_enum(*self as i64, &{})\n", map_ident);
-        os << "    }\n\n";
-
-        os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {\n";
-        os << std::format("        asn1cpp_wire::per::enumerated::encode_enum(w, &{}, *self as i64);\n", map_ident);
-        os << "    }\n\n";
-        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {\n";
-        os << std::format("        let v = asn1cpp_wire::per::enumerated::decode_enum(r, &{})?;\n", map_ident);
-        os << std::format(
-            "        *self = std::convert::TryFrom::try_from(v).map_err(|_| asn1cpp_wire::per::reader::DecodeError::new(\"PER: ENUM value not in {}\", r.bit_pos()))?;\n",
-            tname);
-        os << "        Ok(())\n";
-        os << "    }\n";
-        os << "}\n\n";
         // ENUMERATED's natural tag never varies by declaration.
         os << "\n";
         os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", tname);
@@ -568,7 +476,8 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "    }\n\n";
         os << "    fn as_member_ref_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
         os << std::format("        asn1cpp_wire::spec::object::MemberRefMut::Enumerated(self, &{})\n", map_ident);
-        os << "    }\n";
+        os << "    }\n\n";
+        os << std::format("    fn own_element_xer_name(&self) -> &'static str {{ {}.name }}\n", map_ident);
         os << "}\n\n";
     }
 }
@@ -599,10 +508,9 @@ void RustBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream
     if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     if (newtype) {
         // A real newtype, not a plain alias: every named INTEGER type needs
-        // its own type identity to carry a per-declaration `Asn1Value`/
-        // `PerValue` impl (its own XER tag name, X.680 §19 range in a
-        // single `validate()`/PER encode call, X.691 wire shape) — the same
-        // reason every other builtin except INTEGER already gets one
+        // its own type identity to carry per-declaration trait impls
+        // (`AsMemberRef` with its own XER element name, `TypeTag`) — the
+        // same reason every other builtin except INTEGER already gets one
         // (OctetString/BitString/the 11 string kinds). A TypeRef member to
         // this type dispatches through the trait (Scalar) exactly like a
         // TypeRef to ENUMERATED or another SEQUENCE/CHOICE, with no
@@ -637,6 +545,12 @@ void RustBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream
     if (!spec.named_values.empty()) os << "\n";
 }
 
+/// @brief Emit the definition half of a named INTEGER type: its value-range
+///        `Constraints` table, named-value constants, `TypeTag`, and the
+///        `AsMemberRef` impl that unwraps it to `PrimitiveRef::Integer`.
+/// @param spec Resolved, backend-agnostic decision (see IntegerSpec).
+/// @param os   Output stream to write to.
+/// @see X.680 §19 (INTEGER), X.691 §13 (PER constrained whole number).
 void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
     bool newtype = spec.storage_kind == IntStorageKind::S64 || spec.storage_kind == IntStorageKind::U64;
@@ -647,11 +561,10 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
               | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
     // No recase — see emit_enumerated_definition's matching note.
     std::string cname = std::format("{}_CONSTRAINTS", tname);
-    // One combined BER+PER table (asn1cpp_wire::constraints::Constraints, same
-    // shape emit_member_type_descriptor's Integer branch emits) — this
-    // type's own Asn1Value::validate() and PerValue::per_encode/decode
-    // both read it directly, so a member of this type needs nothing
-    // beyond the ordinary accessor. range_bits is -1 for a
+    // One combined table (asn1cpp_wire::constraints::Constraints, same
+    // shape emit_member_type_descriptor's Integer branch emits) — X.680
+    // §19 value range for validation and X.691 §13 wire width for PER.
+    // range_bits is -1 for a
     // semi-constrained/unbounded range (no fixed bit width, never read in
     // that case) but can't format as a negative u32 literal; clamp to 0.
     if (spec.storage_kind == IntStorageKind::S64) {
@@ -672,41 +585,8 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
             cname, flags, std::max(spec.range_bits, 0), spec.lower_u64, spec.upper_u64);
     }
 
-    const char* fn_ns = spec.storage_kind == IntStorageKind::S64 ? "integer" : "uinteger";
-    const char* fn_ty = spec.storage_kind == IntStorageKind::S64 ? "encode_int" : "encode_uint";
-    const char* fn_dec = spec.storage_kind == IntStorageKind::S64 ? "decode_int" : "decode_uint";
-    const char* validate_fn = spec.storage_kind == IntStorageKind::S64 ? "validate_s64" : "validate_u64";
-
-    // `Asn1Value`: encode/decode content and the natural tag delegate to
-    // the wrapped primitive's own impl (a shared native type's wire bytes
-    // never vary by declared range, X.680 §19 — only validate() differs
-    // per declaration); `xer_element_name`/`validate` are this type's own,
-    // the two things a bare i64/u64 could never carry per-alias.
-    os << std::format("impl asn1cpp_wire::value::Asn1Value for {} {{\n", tname);
-    os << "    fn ber_natural_tag(&self) -> asn1cpp_wire::Tag {\n        self.0.ber_natural_tag()\n    }\n\n";
-    os << std::format("    fn xer_element_name(&self) -> &'static str {{\n        \"{}\"\n    }}\n\n", spec.xer_name);
-    os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n        self.0.ber_encode_content(out);\n    }\n\n";
-    os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n        self.0.ber_decode_content(content)\n    }\n\n";
-    os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n        self.0.xer_encode(out, depth);\n    }\n\n";
-    os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n        self.0.xer_decode_into(r)\n    }\n\n";
-    os << "    fn jer_encode(&self, out: &mut String) {\n        self.0.jer_encode(out);\n    }\n\n";
-    os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n        self.0.jer_decode_into(r)\n    }\n\n";
-    os << std::format("    fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {{\n        &{}\n    }}\n\n", cname);
-    os << std::format("    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {{\n        asn1cpp_wire::constraints::{}(*self.0, &{})\n    }}\n\n", validate_fn, cname);
-
-    // PER leg (merged into the same impl block): X.691
-    // wire shape is exactly `integer::encode_int`/`uinteger::encode_uint`
-    // against this same table — no separate unconstrained function needed,
-    // they already fall through to the unconstrained wire shape at runtime
-    // when flags == 0.
-    os << std::format("    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n        asn1cpp_wire::per::{}::{}(w, &{}, *self.0);\n    }}\n", fn_ns, fn_ty, cname);
-    os << std::format(
-        "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
-        "        self.0 = {}(asn1cpp_wire::per::{}::{}(r, &{})?);\n        Ok(())\n    }}\n",
-        native_int_type(spec.storage_kind), fn_ns, fn_dec, cname);
-    os << "}\n\n";
-    // Mirrors ber_natural_tag() (delegates to the wrapped primitive's
-    // own TAG — INTEGER_TAG regardless of storage width).
+    // The wrapped primitive's own TAG — INTEGER_TAG regardless of storage
+    // width (X.690 §8.3).
     os << "\n";
     os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", tname);
     os << std::format("    const TAG: ::std::option::Option<asn1cpp_wire::Tag> = <{} as asn1cpp_wire::type_tag::TypeTag>::TAG;\n", native_int_type(spec.storage_kind));
@@ -724,7 +604,8 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
         os << "    }\n\n";
         os << "    fn as_member_ref_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
         os << std::format("        asn1cpp_wire::spec::object::MemberRefMut::Primitive(asn1cpp_wire::spec::primitive::PrimitiveRefMut::{}(&mut self.0))\n", variant);
-        os << "    }\n";
+        os << "    }\n\n";
+        os << std::format("    fn own_element_xer_name(&self) -> &'static str {{ \"{}\" }}\n", spec.xer_name);
         os << "}\n\n";
     }
 }
@@ -738,15 +619,12 @@ void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
 /// @param bt Built-in type tag (never SEQUENCE/CHOICE/TypeRef/INTEGER/
 ///           ENUMERATED — same precondition as CppBackend's equivalent).
 /// @return Rust type name, e.g. `"Vec<u8>"`, `"String"`, `"bool"`.
-/// @note `Ia5String` alone maps to plain `String` — it has its own
-///       `Asn1Value for String` impl (`rust-runtime/wire/src/value.rs`),
-///       kept as-is for ergonomics/backward compatibility.
-///       The other 11 restricted-character-string kinds
-///       map to their own `rust-runtime/wire::strings`
-///       newtype (`NumericString`, `PrintableString`, ...) — a plain
-///       `String` can only carry one `Asn1Value` impl, so a second string
-///       kind can't reuse `Ia5String`'s without fighting over which tag to
-///       check/write (see `strings.rs`'s module doc). `Vec<u8>` for OCTET
+/// @note Every restricted-character-string kind maps to its own
+///       `rust-runtime/wire::strings` newtype (`Ia5String`,
+///       `NumericString`, ...) — a plain `String` could carry only one
+///       `TypeTag`/`AsMemberRef` impl, so string kinds can't share it
+///       without fighting over which tag to check/write (see `strings.rs`'s
+///       module doc). `Vec<u8>` for OCTET
 ///       STRING/Any. BIT STRING/OBJECT IDENTIFIER/RELATIVE-OID each have
 ///       their own `bit_string::BitString`/`oid::ObjectIdentifier`/
 ///       `relative_oid::RelativeOid` structs — same
@@ -814,23 +692,18 @@ std::string RustBackend::format_tag_literal(const TypeTagSpec& tag_spec) const {
                         tag_spec.constructed ? "true" : "false");
 }
 
-/// @brief Emit the `Asn1Value` impl for a builtin-alias newtype (see
-///        `emit_builtin_alias_declaration`'s own doc for why it's a newtype
-///        and not a plain alias), plus a size-check function if constrained.
+/// @brief Emit the definition half of a builtin-alias newtype (see
+///        `emit_builtin_alias_declaration` for why it's a newtype): its
+///        SIZE `Constraints` table when sizeable, `TypeTag`, and the
+///        `AsMemberRef` impl that unwraps it to the wrapped primitive's
+///        `PrimitiveRef` for every codec walker.
 /// @param spec Resolved, backend-agnostic decision (see BuiltinAliasSpec).
 /// @param os   Output stream to write to.
-/// @note The impl delegates every method straight to the wrapped native
-///       type's own `Asn1Value` impl (`self.0.method(...)`) except
-///       `xer_element_name`, which returns this alias's own real ASN.1 name
-///       (`spec.xer_name`) instead of the native type's fixed builtin
-///       keyword — the one thing a bare `Vec<u8>`/`String`/etc. can't
-///       provide per-alias. `spec.tag` (natural tag) is always present in
-///       practice (see `BuiltinAliasSpec`'s own doc — never CHOICE). The
-///       size-check function, when a SIZE constraint is present, is the
-///       Rust analogue of the bounds baked into C++'s Constraints struct.
-///       FROM-alphabet constraints are not validated by the generated
-///       function (same "no runtime wiring yet" scope as the INTEGER
-///       pairing's hi_is_large note).
+/// @note No codec logic is emitted. The alias's own ASN.1 name and X.693
+///       §21 BASE64/UTF8 override — the two things the bare wrapped type
+///       can't carry per-alias — live on `AsMemberRef`
+///       (`own_element_xer_name`/`XER_INSTRUCTION`).
+/// @see X.680 §16.1 (type assignment), X.693 §21 (ENCODING-CONTROL).
 void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std::ostream& os) const {
     const std::string& tname = spec.type_name;
     using BT = ast::BuiltinType;
@@ -861,139 +734,6 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
             cname, flags, spec.size_range_bits, spec.size_lower, size_upper);
     }
 
-    os << std::format("impl asn1cpp_wire::value::Asn1Value for {} {{\n", tname);
-    os << "    fn ber_natural_tag(&self) -> asn1cpp_wire::Tag {\n";
-    os << std::format("        {}\n", spec.tag ? format_tag_literal(*spec.tag) : "self.0.ber_natural_tag()");
-    os << "    }\n\n";
-    os << "    fn xer_element_name(&self) -> &'static str {\n";
-    os << std::format("        \"{}\"\n", spec.xer_name);
-    os << "    }\n\n";
-    if (spec.is_explicit) {
-        // X.690 §8.14.3 / X.680 §31: this alias re-tags an already-tagged
-        // (and therefore constructed/wrapping) type — IMPLICIT-retagging
-        // preserves that wrapping rather than erasing it, so the content
-        // under this alias's own outer tag is the *complete* inner TLV
-        // (the wrapped type's own natural tag + length + its content), not
-        // the wrapped type's bare content. `self.0.ber_encode`/
-        // `ber_decode_into` write/read exactly that full inner TLV.
-        os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
-        os << "        self.0.ber_encode(out);\n";
-        os << "    }\n\n";
-        os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut r = asn1cpp_wire::Reader::new(content);\n";
-        os << "        self.0.ber_decode_into(&mut r)\n";
-        os << "    }\n\n";
-    } else {
-        os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
-        os << "        self.0.ber_encode_content(out);\n";
-        os << "    }\n\n";
-        os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        self.0.ber_decode_content(content)\n";
-        os << "    }\n\n";
-    }
-    // BASE64/utf8 (X.693 §21, ENCODING-CONTROL XER ... BASE64 <TypeName> /
-    // legacy `<TypeName> OCTET STRING ::= base64`/`::= utf8`) replaces this
-    // alias's own xer_encode/xer_decode_into with the matching helper
-    // directly — OctetString itself has no per-instance encoding flag to
-    // branch on (see octet_string.rs's own base64_encode/utf8_encode doc).
-    if (spec.xer_encoding == ast::XerEncoding::Base64) {
-        os << "    fn xer_encode(&self, out: &mut String, _depth: usize) {\n";
-        os << "        out.push_str(&asn1cpp_wire::octet_string::base64_encode(&self.0));\n";
-        os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        self.0.0 = asn1cpp_wire::octet_string::base64_decode(&r.read_text_content());\n";
-        os << "        Ok(())\n";
-        os << "    }\n";
-    } else if (spec.xer_encoding == ast::XerEncoding::Utf8) {
-        os << "    fn xer_encode(&self, out: &mut String, _depth: usize) {\n";
-        os << "        asn1cpp_wire::octet_string::utf8_encode(&self.0, out);\n";
-        os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        self.0.0 = asn1cpp_wire::octet_string::utf8_decode(r)?;\n";
-        os << "        Ok(())\n";
-        os << "    }\n";
-    } else {
-        os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
-        os << "        self.0.xer_encode(out, depth);\n";
-        os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        self.0.xer_decode_into(r)\n";
-        os << "    }\n";
-    }
-    // JER has no BASE64/UTF8 ENCODING-CONTROL concept (X.697 has no
-    // equivalent grammar) — OCTET STRING is always hex regardless of the
-    // XER override above (confirmed against JerCodec.cpp's own comment,
-    // "hex, not base64, per asn1c behaviour"), so this always delegates
-    // straight to the wrapped type's own jer_encode/jer_decode_into.
-    os << "\n    fn jer_encode(&self, out: &mut String) {\n";
-    os << "        self.0.jer_encode(out);\n";
-    os << "    }\n\n";
-    os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-    os << "        self.0.jer_decode_into(r)\n";
-    os << "    }\n";
-    if (sizeable) {
-        os << std::format("\n    fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {{\n        &{}\n    }}\n\n", cname);
-        const char* method = is_bits ? "bit_count" : "len";
-        os << std::format("\n    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {{\n        asn1cpp_wire::constraints::validate_size(self.0.{}(), &{})\n    }}\n",
-                           method, cname);
-    }
-
-    // PER leg (merged into the same impl block) — OCTET
-    // STRING/BIT STRING unconditionally (no alphabet concept), a
-    // known-multiplier character string kind (wide-char BmpString/
-    // UniversalString included) when it has no FROM constraint (PER
-    // encode/decode here doesn't implement alphabet remapping yet — same
-    // exclusion per_member_covered's own Sizeable branch already applies
-    // to a direct member of this kind). When not covered, `Asn1Value`'s
-    // own panicking defaults for `per_encode`/`per_decode_into` apply —
-    // same real-or-panic-stub policy an individual SEQUENCE/CHOICE member
-    // row already gets (`MemberAccess::Unsupported`). A named alias's own
-    // real `per_encode`/`per_decode_into` means any TypeRef to it
-    // dispatches through the trait (Scalar) regardless of whether it's
-    // actually covered — the panic, if ever reached, happens inside this
-    // impl, not at the TypeRef site.
-    bool str_covered = per_string_covered(spec.builtin_type);
-    bool per_covered = is_bits || is_octets || (str_covered && spec.alphabet.empty());
-    if (per_covered) {
-        os << "\n";
-        if (is_bits) {
-            os << std::format(
-                "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
-                "        asn1cpp_wire::per::bit_string::encode_bit_string(w, &{0}, &self.0.bytes, self.0.bit_count());\n    }}\n",
-                cname);
-            os << std::format(
-                "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
-                "        let (bytes, unused) = asn1cpp_wire::per::bit_string::decode_bit_string(r, &{0})?;\n"
-                "        self.0 = asn1cpp_wire::bit_string::BitString {{ bytes, unused_bits: unused }};\n        Ok(())\n    }}\n",
-                cname);
-        } else if (is_octets) {
-            os << std::format(
-                "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
-                "        asn1cpp_wire::per::octet_string::encode_octet_string(w, &{0}, &self.0.0);\n    }}\n",
-                cname);
-            os << std::format(
-                "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
-                "        self.0 = asn1cpp_wire::octet_string::OctetString(asn1cpp_wire::per::octet_string::decode_octet_string(r, &{0})?);\n"
-                "        Ok(())\n    }}\n",
-                cname);
-        } else {
-            std::string tag_num = std::format("<{} as asn1cpp_wire::type_tag::TypeTag>::TAG.unwrap().number", native_builtin_type(spec.builtin_type));
-            bool wide = spec.builtin_type == BT::BmpString || spec.builtin_type == BT::UniversalString;
-            std::string bytes_expr = wide ? "&self.0.0" : "self.0.as_bytes()";
-            std::string ctor = wide ? std::format("{}(x)", native_builtin_type(spec.builtin_type))
-                              : std::format("{}(String::from_utf8(x).unwrap_or_default())", native_builtin_type(spec.builtin_type));
-            os << std::format(
-                "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
-                "        if let Err(e) = asn1cpp_wire::per::strings::encode_string(w, &{0}, {1}, {2}) {{ w.set_encode_failed(&e.message); }}\n    }}\n",
-                cname, tag_num, bytes_expr);
-            os << std::format(
-                "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
-                "        let x = asn1cpp_wire::per::strings::decode_string(r, &{0}, {1})?;\n"
-                "        self.0 = {2};\n        Ok(())\n    }}\n",
-                cname, tag_num, ctor);
-        }
-    }
-    os << "}\n\n";
 
     // Lets this named builtin-alias type appear as a SEQUENCE OF/SET OF
     // element, or as a plain SEQUENCE/CHOICE member via `MemberRef::
@@ -1008,7 +748,13 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << "    }\n\n";
         os << "    fn as_member_ref_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
         os << std::format("        asn1cpp_wire::spec::object::MemberRefMut::Primitive(asn1cpp_wire::spec::primitive::PrimitiveRefMut::{}(&mut self.0))\n", variant);
-        os << "    }\n";
+        os << "    }\n\n";
+        os << std::format("    fn own_element_xer_name(&self) -> &'static str {{ \"{}\" }}\n", spec.xer_name);
+        if (spec.xer_encoding == ast::XerEncoding::Base64) {
+            os << "    const XER_INSTRUCTION: asn1cpp_wire::spec::object::XerInstruction = asn1cpp_wire::spec::object::XerInstruction::Base64;\n";
+        } else if (spec.xer_encoding == ast::XerEncoding::Utf8) {
+            os << "    const XER_INSTRUCTION: asn1cpp_wire::spec::object::XerInstruction = asn1cpp_wire::spec::object::XerInstruction::Utf8;\n";
+        }
         os << "}\n\n";
     }
 }
@@ -1231,31 +977,18 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         alphabet_bits, alphabet_expr, spec.alphabet.size());
 }
 
-/// @brief Emit a Rust size-check function for a SEQUENCE OF / SET OF type's
-///        collection SIZE constraint (X.680 §25/26), plus its `Asn1Value` impl.
+/// @brief Emit the definition half of a named SEQUENCE OF/SET OF type: its
+///        own SIZE `Constraints` table, the reflective `Asn1SeqOf`/
+///        `AsMemberRef` impls every codec walker dispatches through, and the
+///        `Asn1Pdu` root marker carrying that table as `PDU_CONSTRAINTS`.
 /// @param spec Resolved, backend-agnostic decision (see SeqOfSpec).
 /// @param os   Output stream to write to.
-/// @note `spec.elem_ref` is a C++ TypeDescriptor reference expression, not
-///       usable by any other backend, so unused here. The size-check
-///       function itself is generic over the element type (`Vec<T>`),
-///       matching this issue's "likely Vec<T>" scoping note, and needs no
-///       element type information to compile — even when unconstrained
-///       (degenerates to a trivial `>= 0` check) rather than introducing a
-///       has-constraint field SeqOfSpec doesn't otherwise need.
-/// @note The `Asn1Value` impl always uses the real element type
-///       (`spec.elem_type`), unlike the size-check function — every
-///       generated SEQUENCE OF/SET OF newtype is always real now (same
-///       "no gating, generic composite references are always safe"
-///       reasoning `sequence_member_covered`'s own doc gives), so
-///       `spec.elem_type: Asn1Value` is simply required to hold; a
-///       genuinely uncoverable element type is out of this pairing's
-///       scope (same as it always has been — this backend has never had a
-///       gate for SEQUENCE OF *element* coverage at the top-level-type
-///       granularity, only at the member-level SeqOf/TaggedSeqOf branches).
-///       XER is always emitted too, unconditionally — encode_seq_of_xer/
-///       decode_seq_of_xer (sequence.rs) derive the per-element X.693 §12
-///       tag from each element's own `Asn1Value::xer_element_name()` at
-///       runtime, so there's no per-type name to gate on here at all.
+/// @note No codec logic is emitted for the type itself: BER/XER/JER/PER reach
+///       it through `<codec>::object` (`encode_pdu`/`decode_pdu` at top
+///       level, `MemberRef::SeqOf` as a member). The per-element X.693 §12
+///       name / §21 BASE64-UTF8 instruction comes from the element type's
+///       own `AsMemberRef::own_element_xer_name`/`XER_INSTRUCTION`.
+/// @see X.680 §25/§26 (SEQUENCE OF/SET OF), X.691 §19/§20 (PER count).
 void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
     // Plain `static` data, not a generated per-type function
     // — always emitted, real bounds or not: every generated SEQUENCE
@@ -1322,127 +1055,15 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // Honor a top-level [n] IMPLICIT/EXPLICIT tag on this type assignment
     // itself (X.690 §8.14) — same fix emit_sequence_definition already has.
     std::string tag_expr = spec.tag ? format_tag_literal(*spec.tag) : natural_tag;
-    os << std::format("impl asn1cpp_wire::value::Asn1Value for {} {{\n", spec.type_name);
-    os << "    fn ber_natural_tag(&self) -> asn1cpp_wire::Tag {\n";
-    os << std::format("        {}\n", tag_expr);
-    os << "    }\n\n";
-    os << "    fn xer_element_name(&self) -> &'static str {\n";
-    os << std::format("        \"{}\"\n", spec.xer_name);
-    os << "    }\n\n";
-    os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
-    os << "        asn1cpp_wire::ber::sequence::encode_seq_of_content(out, &self.0);\n";
-    os << "    }\n\n";
-    os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-    os << "        self.0 = asn1cpp_wire::ber::sequence::decode_seq_of_content(content)?;\n";
-    os << "        Ok(())\n";
-    os << "    }\n";
-    // Always real now — encode_seq_of_xer/decode_seq_of_xer (sequence.rs)
-    // derive the per-element X.693 §12 tag from each element's own
-    // Asn1Value::xer_element_name() generically, same as the member-level
-    // SeqOf/TaggedSeqOf emission (see that lambda's own doc). When this
-    // type declared its own X.693 §12 element identifier
-    // (`SEQUENCE OF id INTEGER`), spec.elem_xer_name carries it through to
-    // the _named variant (ignored by ENUMERATED/CHOICE/NULL elements —
-    // see Asn1Value::xer_encode_seqof_element's own doc, rust-runtime/wire).
-    os << "\n";
-    os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
-    if (spec.elem_xer_name) {
-        os << std::format("        asn1cpp_wire::xer::seq_of::encode_seq_of_xer_named(out, &self.0, depth, Some(\"{}\"));\n", *spec.elem_xer_name);
-    } else {
-        os << "        asn1cpp_wire::xer::seq_of::encode_seq_of_xer(out, &self.0, depth);\n";
-    }
-    os << "    }\n\n";
-    os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-    if (spec.elem_xer_name) {
-        os << std::format("        self.0 = asn1cpp_wire::xer::seq_of::decode_seq_of_xer_named(r, Some(\"{}\"))?;\n", *spec.elem_xer_name);
-    } else {
-        os << "        self.0 = asn1cpp_wire::xer::seq_of::decode_seq_of_xer(r)?;\n";
-    }
-    os << "        Ok(())\n";
-    os << "    }\n";
-    // JER: plain JSON array, no X.693 §12 element-rename concept to mirror
-    // (`spec.elem_xer_name` is XER-only — a JSON array has no per-element
-    // tag to override).
-    os << "\n";
-    os << "    fn jer_encode(&self, out: &mut String) {\n";
-    os << "        asn1cpp_wire::jer::seq_of::encode_seq_of_jer(out, &self.0);\n";
-    os << "    }\n\n";
-    os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-    os << "        self.0 = asn1cpp_wire::jer::seq_of::decode_seq_of_jer(r)?;\n";
-    os << "        Ok(())\n";
-    os << "    }\n";
-    // `Asn1Value::validate()`'s default (`value.rs`) is `0` — this override
-    // is only needed when there's a real SIZE constraint to check, unlike
-    // `{cname}` above (always emitted, unconditionally, so the member-row
-    // loop's name-derivation never has to guess whether it exists). Plain
-    // trait override, not a MemberDescriptor fn-pointer: every named or
-    // synthetic SEQUENCE OF/SET OF type is genuinely its own distinct Rust
-    // type (unlike INTEGER's shared `i64`), so it can carry its own
-    // constraint directly.
-    os << std::format("\n    fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {{\n        &{}\n    }}\n\n", cname);
-    if (spec.has_size_constraint) {
-        os << std::format("\n    fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {{\n        asn1cpp_wire::constraints::validate_size(self.0.len(), &{})\n    }}\n", cname);
-    }
-    // PER leg (X.691 §19/§20 — SIZE against this type's own {cname}
-    // table, each element against {cname}'s own `element` field, exactly
-    // the same runtime pair a member-embedded SeqOf<T>/SetOf<T> already
-    // calls, `ber::sequence`'s own impl) — a named SEQUENCE OF/SET OF
-    // owns its constraint, same convention SEQUENCE/CHOICE/ENUMERATED use,
-    // so `_c` (the caller's row-level constraint, meaningless for a type
-    // that carries its own) is ignored.
-    os << std::format(
-        "\n    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {{\n"
-        "        asn1cpp_wire::per::seq_of::encode_seq_of_content(w, &{0}, &self.0);\n    }}\n",
-        cname);
-    os << std::format(
-        "\n    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {{\n"
-        "        self.0 = asn1cpp_wire::per::seq_of::decode_seq_of_content(r, &{0})?;\n        Ok(())\n    }}\n",
-        cname);
-    os << "}\n\n";
 
-    // PDU entry points for a top-level named SEQUENCE OF/SET OF type —
-    // mirrors emit_sequence_definition's/emit_choice_definition's own
-    // `impl {Type} { pub fn encode/decode/encode_xer/... }` block, so a
-    // top-level SeqOf type is usable standalone, not only as a member
-    // elsewhere. BER/JER need no extra wrapper (self-delimiting TLV;
-    // plain JSON array respectively — both already exactly match the
-    // ground-truth root form via the plain `Asn1Value` trait default
-    // methods), XER needs the X.693 §8.3.1 document-root wrapper this
-    // type's own bare `xer_encode` doesn't add (`xer::object::encode_value`'s
-    // own doc — the generic form `encode_seq`/`encode_choice` specialize).
-    os << std::format("impl {} {{\n", spec.type_name);
-    os << "    pub fn encode(&self) -> Vec<u8> {\n";
-    os << "        let mut out = Vec::new();\n";
-    os << "        asn1cpp_wire::value::Asn1Value::ber_encode(self, &mut out);\n";
-    os << "        out\n";
-    os << "    }\n\n";
-    os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-    os << "        let mut v = Self::default();\n";
-    os << "        let mut r = asn1cpp_wire::Reader::new(data);\n";
-    os << "        asn1cpp_wire::value::Asn1Value::ber_decode_into(&mut v, &mut r)?;\n";
-    os << "        Ok(v)\n";
-    os << "    }\n\n";
-    os << "    pub fn encode_xer(&self) -> String {\n";
-    os << "        asn1cpp_wire::xer::object::encode_value(self)\n";
-    os << "    }\n\n";
-    os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-    os << "        let mut v = Self::default();\n";
-    os << "        let mut r = asn1cpp_wire::xer::reader::XerReader::new(xml);\n";
-    os << "        asn1cpp_wire::xer::object::decode_value_into(&mut v, &mut r)?;\n";
-    os << "        Ok(v)\n";
-    os << "    }\n\n";
-    os << "    pub fn encode_jer(&self) -> String {\n";
-    os << "        let mut out = String::new();\n";
-    os << "        asn1cpp_wire::value::Asn1Value::jer_encode(self, &mut out);\n";
-    os << "        out\n";
-    os << "    }\n\n";
-    os << "    pub fn decode_jer(json: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-    os << "        let mut v = Self::default();\n";
-    os << "        let mut r = asn1cpp_wire::jer::reader::Reader::new(json);\n";
-    os << "        asn1cpp_wire::value::Asn1Value::jer_decode_into(&mut v, &mut r)?;\n";
-    os << "        Ok(v)\n";
-    os << "    }\n";
-    os << "}\n\n";
+
+    // Whole-document root marker (`spec::object::Asn1Pdu`), carrying
+    // this type's own SIZE table for PER count encoding (X.691 §19/§20).
+    os << std::format(
+        "impl asn1cpp_wire::spec::object::Asn1Pdu for {} {{\n"
+        "    const PDU_CONSTRAINTS: &'static asn1cpp_wire::constraints::Constraints = &{};\n"
+        "}}\n\n",
+        spec.type_name, cname);
 
     // Reflective `Asn1SeqOf` impl — the
     // element type's own `AsMemberRef` impl (emitted unconditionally
@@ -1460,6 +1081,15 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // carries no row of its own to read a literal tag from) calls this
     // method expecting the type's real natural tag, override included.
     os << std::format("    fn natural_tag(&self) -> asn1cpp_wire::Tag {{ {} }}\n", tag_expr);
+    // This type's own X.693 §9.3 wrapper name, used when it appears
+    // nested as another collection's element (`natural_xer_name_of`'s
+    // own doc) -- `spec.xer_name` is this type's real ASN.1 name when it
+    // has one, or the generic `"SEQUENCE"`/`"SET"` keyword fallback an
+    // anonymous promoted collection gets (`Generator::synthetic->
+    // xer_name`) -- never the inline-member `"SEQUENCE-OF"`/`"SET-OF"`
+    // form `ber::sequence::SeqOf<T>`/`SetOf<T>` use, since this type is
+    // always independently named or promoted, never an inline member.
+    os << std::format("    fn own_xer_name(&self) -> &'static str {{ \"{}\" }}\n", spec.xer_name);
     os << "    fn len(&self) -> usize { self.0.len() }\n";
     os << "    fn get(&self, index: usize) -> asn1cpp_wire::spec::object::MemberRef<'_> { self.0[index].as_member_ref() }\n";
     os << "    fn push_default_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
@@ -1469,15 +1099,15 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << "    fn reserve(&mut self, additional: usize) {\n";
     os << "        self.0.reserve(additional);\n";
     os << "    }\n";
-    // `Asn1SeqOf::elem_natural_xer_name`'s own doc: `self.0[index]`'s
-    // *own* `Asn1Value::xer_element_name()`, not anything read back off
-    // `get(index)`'s already-unwrapped `MemberRef` — the one piece of
-    // per-element identity that unwrapping to `PrimitiveRef`/
-    // `Base64`/`Utf8` can't carry through for an aliased element type
-    // (e.g. a named INTEGER alias, X.680 §19 — same discard `AsMemberRef`
-    // for a builtin/INTEGER alias already has at the SEQUENCE-member
-    // row).
-    os << "    fn elem_natural_xer_name(&self, index: usize) -> &'static str { asn1cpp_wire::value::Asn1Value::xer_element_name(&self.0[index]) }\n";
+    // `self.0[index]`'s own un-unwrapped `AsMemberRef::
+    // own_element_xer_name()`, not anything read back off `get(index)`'s
+    // already-unwrapped `MemberRef` — an aliased element (e.g. a named
+    // INTEGER alias, X.680 §19) needs its own real declared name, which
+    // `get(index)`'s unwrap to a bare `PrimitiveRef` has already lost.
+    os << "    fn elem_natural_xer_name(&self, index: usize) -> &'static str { self.0[index].own_element_xer_name() }\n";
+    os << std::format(
+        "    fn elem_xer_instruction(&self) -> asn1cpp_wire::spec::object::XerInstruction {{ <{} as asn1cpp_wire::spec::object::AsMemberRef>::XER_INSTRUCTION }}\n",
+        spec.elem_type);
     if (spec.elem_xer_name) {
         os << std::format("    fn elem_xer_name(&self) -> ::std::option::Option<&'static str> {{ Some(\"{}\") }}\n", *spec.elem_xer_name);
     }
@@ -1492,17 +1122,20 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << "    }\n\n";
     os << "    fn as_member_ref_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
     os << "        asn1cpp_wire::spec::object::MemberRefMut::SeqOf(self)\n";
+    os << "    }\n\n";
+    os << "    fn own_element_xer_name(&self) -> &'static str {\n";
+    os << std::format("        <Self as asn1cpp_wire::spec::object::Asn1SeqOf>::own_xer_name(self)\n");
     os << "    }\n";
     os << "}\n\n";
 }
 
 /// @brief Is `mtype` a `Vec<T>` (T != u8) reference — a type with no
-///        `Asn1Value` impl at all? Pure string check on the resolved Rust
+///        reflective trait impls at all? Pure string check on the resolved Rust
 ///        type, order-independent (no registration/lookup-by-declaration-
 ///        name needed): a named top-level SEQUENCE OF/SET OF alias
 ///        (`m.mtype == "MySeqOf"`, e.g.) never has this shape at all —
 ///        `emit_seq_of_declaration` gives it a real newtype with its own
-///        `Asn1Value` impl, referenced by name, not resolved-through
+///        `Asn1SeqOf`/`AsMemberRef` impls, referenced by name, not resolved-through
 ///        `"Vec<...>"` text — but an anonymous inline
 ///        SEQUENCE OF/SET OF member (whose type Generator resolves
 ///        directly to the raw `"Vec<i64>"` text, never through a synthetic
@@ -1522,9 +1155,8 @@ static bool rust_mtype_is_unusable_vec(const std::string& mtype) {
 ///        alternative always dispatches through its own resolved tag, see
 ///        `SeqOf<T>`'s own doc) — in the generic
 ///        `asn1cpp_wire::ber::sequence::SeqOf<T>` (rust-runtime/wire/src/sequence.rs),
-///        whose single blanket `impl<T: Asn1Value + Default> Asn1Value for
-///        SeqOf<T>` gives it a real impl `Vec<T>` itself can't
-///        (coherence-blocked). Only applies where `choice_alternative_covered`
+///        whose blanket `Asn1SeqOf`/`AsMemberRef` impls give it what
+///        `Vec<T>` itself can't carry (coherence-blocked). Only applies where `choice_alternative_covered`
 ///        consults it, CHOICE alternatives — a SEQUENCE/SET member's own
 ///        field type is computed separately, `rust_seqof_member_field_type`
 ///        below, since it needs to pick `SetOf<T>` over `SeqOf<T>` for a
@@ -1581,9 +1213,9 @@ static bool element_shape_covered(const ElemShape& shape) {
 /// @brief A SEQUENCE/SET member's own Rust field type, for a SEQUENCE
 ///        OF/SET OF member specifically — `SeqOf<ElemType>`/`SetOf<ElemType>`
 ///        (`rust-runtime/wire/src/sequence.rs`) instead of a raw
-///        `Vec<ElemType>`, which has no `Asn1Value` impl of its own
+///        `Vec<ElemType>`, which has no reflective trait impls of its own
 ///        (coherence-blocked, same reasoning `rust_seqof_alt_mtype`'s own
-///        doc gives). Once the field itself implements `Asn1Value`, the
+///        doc gives). Once the field itself implements `AsMemberRef`, the
 ///        member-table emission below needs no dedicated SeqOf-shaped
 ///        closures at all — it falls through to the same
 ///        Scalar/TaggedScalar/ExplicitScalar dispatch every other
@@ -1616,9 +1248,9 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 /// @note `mbuiltin` unset means the member's type is a TypeRef to
 ///       something else entirely — SEQUENCE/SET/CHOICE, ENUMERATED, or a
 ///       plain INTEGER subtype alias. Any such reference is always real:
-///       `Asn1Value` is object-safe, and the referenced type is guaranteed
-///       to implement it (really or as a stub) regardless of processing
-///       order, so there's nothing to look up in advance. The one
+///       the referenced type is guaranteed to implement `AsMemberRef`
+///       regardless of processing order, so there's nothing to look up in
+///       advance. The one
 ///       exception is presence detection, not trait coverage: an OPTIONAL
 ///       member whose type is a genuinely untagged CHOICE (X.680 §28, no
 ///       AUTOMATIC TAGS, no fixed tag at all) has no `Tag` to peek for at
@@ -1629,7 +1261,7 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 ///       (nothing to peek for a required field either way). Every named
 ///       type — a top-level SEQUENCE OF/SET OF alias, an INTEGER of any
 ///       storage kind including ARBITRARY — gets its own real newtype with
-///       a real `Asn1Value` impl (`emit_seq_of_declaration`,
+///       real reflective trait impls (`emit_seq_of_declaration`,
 ///       `integer::ArbitraryInteger`), referenced by name, so there's no
 ///       remaining case here where a TypeRef reference is unsafe to treat
 ///       as real.
@@ -1712,13 +1344,15 @@ void RustBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostre
     os << "}\n\n";
 }
 
-/// @brief Emit an inherent `impl` block for a SEQUENCE/SET type.
+/// @brief Emit the definition half of a SEQUENCE/SET type: `new()`, the
+///        member tables (`SequenceSpec` + getter/default/validate rows)
+///        behind its reflective `Asn1Seq` impl, `TypeTag`/`AsMemberRef`,
+///        and the `Asn1Pdu` root marker.
 /// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
 /// @param os   Output stream to write to.
-/// @note Scope is "struct + fields" per this pairing — no setter/validation
-///       machinery (Rust's `pub` fields + `Option<T>` don't need C++'s
-///       unique_ptr-based setter dance); a real `new()` that just delegates
-///       to the struct's own `#[derive(Default)]`, not a stub.
+/// @note Tables only — every codec reaches the type through its own
+///       `<codec>::object` walker (`encode_pdu`/`decode_pdu` at top level).
+/// @see X.680 §25 (SEQUENCE), §27 (SET).
 void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream& os) const {
     os << std::format("impl {} {{\n", spec.type_name);
     os << "    pub fn new() -> Self {\n";
@@ -1783,10 +1417,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // exclude nearly every member in the schema.
     auto per_member_covered = [](const SequenceMemberSpec& m) -> bool {
         if (m.seq_of_kind != SeqOfKind::None) {
-            // `SeqOf<T>`/`SetOf<T>`'s own PER impl (`ber::sequence`) is
-            // fully generic over `T: Asn1Value` — it never inspects `T`'s
-            // kind, just calls `T::per_encode`/`per_decode_into` per
-            // element against the collection's own `element` Constraints
+            // `per::object`'s SEQUENCE OF walker never inspects the element
+            // kind, just dispatches each element's `MemberRef` against the
+            // collection's own `element` Constraints
             // (`emit_seq_of_definition`'s own doc). So this only needs to
             // ask whether the element's *own* shape has a real PerValue
             // impl — recursing through any nesting depth — not whether
@@ -1925,11 +1558,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // `m.resolved_tag` already carries the alias's own
                     // resolved outer tag (`natural_tag_spec_for`'s TypeRef
                     // branch, Generator.cpp) — `Explicit` framing on the
-                    // *unwrapped* primitive reproduces exactly the wire
-                    // shape the alias's own standalone `Asn1Value` impl
-                    // would have produced (outer tag wrapping the native
-                    // type's own complete TLV), without needing a
-                    // trait-object call to get there.
+                    // *unwrapped* primitive reproduces the alias's own
+                    // wire shape (outer tag wrapping the native type's
+                    // own complete TLV, X.690 §8.14).
                     tag_text = format_tag_literal(*m.resolved_tag);
                     ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", tag_text);
                 } else if (kind == AccessKind::SeqOf && m.resolved_tag && !m.is_explicit) {
@@ -2234,83 +1865,12 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             os << std::format("    fn validate(&self, i: usize) -> i64 {{ {}[i].map_or(0, |f| f(self)) }}\n", validate_ident);
             os << "}\n\n";
 
-        os << std::format("impl {} {{\n", spec.type_name);
-        os << "    pub fn encode(&self) -> Vec<u8> {\n";
-        os << "        asn1cpp_wire::ber::object::encode_seq(self)\n";
-        os << "    }\n\n";
-        os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut v = Self::default();\n";
-        os << "        let mut r = asn1cpp_wire::Reader::new(data);\n";
-        os << "        asn1cpp_wire::ber::object::decode_seq_into(&mut v, &mut r)?;\n";
-        os << "        Ok(v)\n";
-        os << "    }\n\n";
-        os << "    pub fn encode_xer(&self) -> String {\n";
-        os << "        asn1cpp_wire::xer::object::encode_seq(self)\n";
-        os << "    }\n\n";
-        os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut v = Self::default();\n";
-        os << "        let mut r = asn1cpp_wire::xer::reader::XerReader::new(xml);\n";
-        os << "        asn1cpp_wire::xer::object::decode_seq_into(&mut v, &mut r)?;\n";
-        os << "        Ok(v)\n";
-        os << "    }\n\n";
-        os << "    pub fn encode_jer(&self) -> String {\n";
-        os << "        asn1cpp_wire::jer::object::encode_seq(self)\n";
-        os << "    }\n\n";
-        os << "    pub fn decode_jer(json: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut v = Self::default();\n";
-        os << "        let mut r = asn1cpp_wire::jer::reader::Reader::new(json);\n";
-        os << "        asn1cpp_wire::jer::object::decode_seq_into(&mut v, &mut r)?;\n";
-        os << "        Ok(v)\n";
-        os << "    }\n";
-        os << "}\n\n";
+        // Whole-document root marker: every codec's top-level
+        // `encode_pdu`/`decode_pdu` binds on it (`spec::object::Asn1Pdu`).
+        os << std::format("impl asn1cpp_wire::spec::object::Asn1Pdu for {} {{}}\n\n", spec.type_name);
 
-        // Thin `Asn1Value` forwarder — kept only so external callers
-        // (e.g. randgen-rust's tool
-        // binaries) that invoke `<T as Asn1Value>::...` directly keep
-        // compiling; every method just calls through to the real,
-        // reflective `ber::object`/`xer::object`/`jer::object`/
-        // `per::object` walkers against `self`, which already implements
-        // `Asn1Seq`.
-        os << std::format("impl asn1cpp_wire::value::Asn1Value for {} {{\n", spec.type_name);
-        os << "    fn ber_natural_tag(&self) -> asn1cpp_wire::Tag {\n";
-        os << std::format("        {}.tag\n", obj_spec_ident);
-        os << "    }\n\n";
-        os << "    fn xer_element_name(&self) -> &'static str {\n";
-        os << std::format("        \"{}\"\n", spec.xer_name);
-        os << "    }\n\n";
-        os << "    fn ber_encode_content(&self, out: &mut Vec<u8>) {\n";
-        os << "        asn1cpp_wire::ber::object::encode_seq_content(self, out);\n";
-        os << "    }\n\n";
-        os << "    fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        *self = Self::default();\n";
-        os << "        let mut r = asn1cpp_wire::Reader::new(content);\n";
-        os << "        asn1cpp_wire::ber::object::decode_seq_content_into(self, &mut r)\n";
-        os << "    }\n\n";
-        os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
-        os << "        asn1cpp_wire::xer::object::encode_seq_into(self, out, depth);\n";
-        os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        *self = Self::default();\n";
-        os << "        asn1cpp_wire::xer::object::decode_seq_content_into(self, r)\n";
-        os << "    }\n\n";
-        os << "    fn jer_encode(&self, out: &mut String) {\n";
-        os << "        asn1cpp_wire::jer::object::encode_seq_into(self, out);\n";
-        os << "    }\n\n";
-        os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        *self = Self::default();\n";
-        os << "        asn1cpp_wire::jer::object::decode_seq_into(self, r)\n";
-        os << "    }\n\n";
-        os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {\n";
-        os << "        asn1cpp_wire::per::object::encode_seq_content(self, w);\n";
-        os << "    }\n\n";
-        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {\n";
-        os << "        *self = Self::default();\n";
-        os << "        asn1cpp_wire::per::object::decode_seq_content_into(self, r)\n";
-        os << "    }\n";
-        os << "}\n\n";
-        // Mirrors this type's own ber_natural_tag() — a member/
-        // alternative referencing this type by name can ask for its
-        // tag without an Asn1Value in hand.
+        // A member/alternative referencing this type by name asks for its
+        // tag via `<T as TypeTag>::TAG`.
         os << "\n";
         os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", spec.type_name);
         os << std::format("    const TAG: ::std::option::Option<asn1cpp_wire::Tag> = Some({}.tag);\n", obj_spec_ident);
@@ -2324,7 +1884,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "    }\n\n";
         os << "    fn as_member_ref_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
         os << "        asn1cpp_wire::spec::object::MemberRefMut::Composite(self)\n";
-        os << "    }\n";
+        os << "    }\n\n";
+        os << std::format("    fn own_element_xer_name(&self) -> &'static str {{ {}.name }}\n", obj_spec_ident);
         os << "}\n\n";
     }
 }
@@ -2405,16 +1966,14 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
     os << "}\n\n";
 }
 
-/// @brief Emit per-alternative accessor functions for a CHOICE type.
+/// @brief Emit the definition half of a CHOICE type: the alternative
+///        tables behind its reflective `Asn1Choice` impl, `TypeTag`/
+///        `AsMemberRef`, and the `Asn1Pdu` root marker.
 /// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
 /// @param os   Output stream to write to.
-/// @note Free functions doing an exhaustive `match`, not methods — the
-///       Rust analogue of the C++ side's offset-based accessor methods,
-///       but compiler-checked
-///       (exhaustive match) rather than an unchecked `reinterpret_cast`:
-///       worst case on a mismatched variant is a controlled panic, not UB.
-///       `tag_index_table`/`ber_tags` (BER wire-dispatch specific) are
-///       unused here — no runtime wiring yet, same as every prior pairing.
+/// @note Tables only — every codec reaches the type through its own
+///       `<codec>::object` walker (`encode_pdu`/`decode_pdu` at top level).
+/// @see X.680 §29 (CHOICE).
 void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const {
     std::string prefix = escape(to_snake_case(spec.type_name));
     // A CHOICE with exactly one alternative makes every
@@ -2750,90 +2309,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         }
         os << "}\n\n";
 
-        os << std::format("impl {} {{\n", spec.type_name);
-        os << "    pub fn encode(&self) -> Vec<u8> {\n";
-        os << "        asn1cpp_wire::ber::object::encode_choice(self)\n";
-        os << "    }\n\n";
-        os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut v = Self::default();\n";
-        os << "        let mut r = asn1cpp_wire::Reader::new(data);\n";
-        os << "        asn1cpp_wire::ber::object::decode_choice_into(&mut v, &mut r)?;\n";
-        os << "        Ok(v)\n";
-        os << "    }\n\n";
-        os << "    pub fn encode_xer(&self) -> String {\n";
-        os << "        asn1cpp_wire::xer::object::encode_choice(self)\n";
-        os << "    }\n\n";
-        os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut v = Self::default();\n";
-        os << "        asn1cpp_wire::xer::object::decode_choice(xml, &mut v)?;\n";
-        os << "        Ok(v)\n";
-        os << "    }\n\n";
-        os << "    pub fn encode_jer(&self) -> String {\n";
-        os << "        asn1cpp_wire::jer::object::encode_choice(self)\n";
-        os << "    }\n\n";
-        os << "    pub fn decode_jer(json: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut v = Self::default();\n";
-        os << "        let mut r = asn1cpp_wire::jer::reader::Reader::new(json);\n";
-        os << "        asn1cpp_wire::jer::object::decode_choice_into(&mut v, &mut r)?;\n";
-        os << "        Ok(v)\n";
-        os << "    }\n";
-        os << "}\n\n";
+        // Whole-document root marker: every codec's top-level
+        // `encode_pdu`/`decode_pdu` binds on it (`spec::object::Asn1Pdu`).
+        os << std::format("impl asn1cpp_wire::spec::object::Asn1Pdu for {} {{}}\n\n", spec.type_name);
 
-        // Thin `Asn1Value` forwarder — see emit_sequence_definition's
-        // identical rationale.
-        os << std::format("impl asn1cpp_wire::value::Asn1Value for {} {{\n", spec.type_name);
-        os << "    fn ber_natural_tag(&self) -> asn1cpp_wire::Tag {\n";
-        os << "        unreachable!(\"CHOICE has no natural tag (X.680 §28)\")\n";
-        os << "    }\n\n";
-        os << "    fn xer_element_name(&self) -> &'static str {\n";
-        os << std::format("        \"{}\"\n", spec.xer_name);
-        os << "    }\n\n";
-        os << "    fn ber_encode_content(&self, _out: &mut Vec<u8>) {\n";
-        os << "        unreachable!(\"CHOICE has no content-only representation\")\n";
-        os << "    }\n\n";
-        os << "    fn ber_decode_content(&mut self, _content: &[u8]) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        unreachable!(\"CHOICE has no content-only representation\")\n";
-        os << "    }\n\n";
-        os << "    fn ber_encode(&self, out: &mut Vec<u8>) {\n";
-        os << "        asn1cpp_wire::ber::object::encode_choice_into(self, out);\n";
-        os << "    }\n\n";
-        os << "    fn ber_decode_into(&mut self, r: &mut asn1cpp_wire::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        *self = Self::default();\n";
-        os << "        asn1cpp_wire::ber::object::decode_choice_into(self, r)\n";
-        os << "    }\n\n";
-        os << "    fn xer_encode(&self, out: &mut String, depth: usize) {\n";
-        os << "        asn1cpp_wire::xer::object::encode_choice_content(self, out, depth);\n";
-        os << "        out.push('\\n');\n";
-        os << "        out.push_str(&asn1cpp_wire::xer::writer::indent(depth));\n";
-        os << "    }\n\n";
-        os << "    fn xer_decode_into(&mut self, r: &mut asn1cpp_wire::xer::reader::XerReader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        *self = Self::default();\n";
-        os << "        asn1cpp_wire::xer::object::decode_choice_content_into(self, r)\n";
-        os << "    }\n\n";
-        os << "    fn jer_encode(&self, out: &mut String) {\n";
-        os << "        asn1cpp_wire::jer::object::encode_choice_into(self, out);\n";
-        os << "    }\n\n";
-        os << "    fn jer_decode_into(&mut self, r: &mut asn1cpp_wire::jer::reader::Reader) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-        os << "        *self = Self::default();\n";
-        os << "        asn1cpp_wire::jer::object::decode_choice_into(self, r)\n";
-        os << "    }\n\n";
-        if (spec.tag) {
-            os << "    fn ber_encode_tagged(&self, tag: asn1cpp_wire::Tag, out: &mut Vec<u8>) {\n";
-            os << "        asn1cpp_wire::ber::object::encode_choice_tagged(self, tag, out);\n";
-            os << "    }\n\n";
-            os << "    fn ber_decode_into_tagged(&mut self, r: &mut asn1cpp_wire::Reader, tag: asn1cpp_wire::Tag) -> Result<(), asn1cpp_wire::DecodeError> {\n";
-            os << "        *self = Self::default();\n";
-            os << "        asn1cpp_wire::ber::object::decode_choice_tagged_into(self, r, tag)\n";
-            os << "    }\n\n";
-        }
-        os << "    fn per_encode(&self, w: &mut asn1cpp_wire::per::writer::Writer, _c: &asn1cpp_wire::constraints::Constraints) {\n";
-        os << "        asn1cpp_wire::per::object::encode_choice_content(self, w);\n";
-        os << "    }\n\n";
-        os << "    fn per_decode_into(&mut self, r: &mut asn1cpp_wire::per::reader::Reader, _c: &asn1cpp_wire::constraints::Constraints) -> Result<(), asn1cpp_wire::per::reader::DecodeError> {\n";
-        os << "        *self = Self::default();\n";
-        os << "        asn1cpp_wire::per::object::decode_choice_content_into(self, r)\n";
-        os << "    }\n";
-        os << "}\n\n";
         os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", spec.type_name);
         os << "    const TAG: ::std::option::Option<asn1cpp_wire::Tag> = None;\n";
         os << "}\n\n";
@@ -2843,7 +2322,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "    }\n\n";
         os << "    fn as_member_ref_mut(&mut self) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
         os << "        asn1cpp_wire::spec::object::MemberRefMut::Choice(self)\n";
-        os << "    }\n";
+        os << "    }\n\n";
+        os << std::format("    fn own_element_xer_name(&self) -> &'static str {{ {}.name }}\n", spec_ident);
         os << "}\n\n";
     }
 }
@@ -2868,25 +2348,12 @@ void RustBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
 void RustBackend::emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const {
     auto& os = session.buffer(declaration_extension());
     os << "//! Module: " << module_comment << "\n\n";
-    // Every generated `AsMemberRef` impl and `Asn1Value` forwarder below
-    // calls a field's `ber_encode`/`xer_encode`/`jer_encode`/`per_encode`/
-    // etc. via plain method-call syntax — static dispatch, never through
-    // a `&dyn Asn1Value` — and that resolution needs the trait in scope
-    // in *this* file, unlike a walker inside `asn1cpp_wire` itself which
-    // already has it. `#[allow(unused_imports)]`
-    // covers a type with no member/alternative table at all (a bare
-    // ENUMERATED or builtin alias), which never calls a trait method
-    // directly.
-    // `as _` (not a named `use`): some consumers (e.g. this repo's own
-    // `tests/rust/roundtrip` harness) `include!()` every generated file
-    // into one flat module rather than giving each its own `mod` — a
-    // plain `use ... Asn1Value;` repeated per file would then collide
-    // ("defined multiple times"). Importing to the anonymous binding
-    // brings the trait's methods into scope for this file without
-    // introducing a named item at all, so it's always safe to repeat.
-    os << "#[allow(unused_imports)]\nuse asn1cpp_wire::value::Asn1Value as _;\n";
-    // Same reasoning, for `self.0[i].as_member_ref()` calls inside a
-    // named SEQUENCE OF/SET OF type's own `Asn1SeqOf` impl.
+    // Brings `AsMemberRef` into scope for the `self.0[i].as_member_ref()`
+    // calls inside a named SEQUENCE OF/SET OF type's own `Asn1SeqOf` impl.
+    // `as _` (no named binding) because some consumers `include!()` every
+    // generated file into one flat module, where a repeated named `use`
+    // would collide; `allow(unused_imports)` covers files with no such
+    // call.
     os << "#[allow(unused_imports)]\nuse asn1cpp_wire::spec::object::AsMemberRef as _;\n\n";
 }
 
@@ -2921,8 +2388,8 @@ void RustBackend::emit_namespace_close(const std::string& name, TypeOutputSessio
 /// @note A plain alias is just another name for the same Rust type, and
 ///       trait impls are per-*type*, not per-alias — every named alias of
 ///       the same builtin (e.g. two different `::= OCTET STRING` aliases)
-///       would share `Vec<u8>`'s own single `Asn1Value` impl, whose
-///       `xer_element_name()` can only ever return one fixed string,
+///       would share `Vec<u8>`'s own single `AsMemberRef` impl, whose
+///       `own_element_xer_name()` can only ever return one fixed string,
 ///       losing each alias's own X.693 §12 per-element XER identity (found
 ///       on the real ETSI LI PS-PDU schema: `ProSeUEID ::= OCTET STRING`,
 ///       used as a `SET OF ProSeUEID` element, XER-encoded each element as
@@ -2963,8 +2430,8 @@ void RustBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSes
 ///       Rust type, and Rust trait impls are per-*type*, not per-alias —
 ///       `Vec<ElemType>` might be some *other* ASN.1 type's own native
 ///       storage too (OCTET STRING's `Vec<u8>`, another SEQUENCE OF with
-///       the same element type), so it can't carry an `Asn1Value` impl
-///       specific to *this* ASN.1 type. A newtype is a genuinely distinct
+///       the same element type), so it can't carry trait impls specific
+///       to *this* ASN.1 type. A newtype is a genuinely distinct
 ///       Rust type, so it can — see emit_seq_of_definition's own doc for
 ///       that impl. `Deref`/`DerefMut` to `Vec<ElemType>` keep `.len()`/
 ///       `.iter()`/indexing working without needing `.0` everywhere.

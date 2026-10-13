@@ -13,8 +13,8 @@ use crate::ber::writer::write_primitive;
 
 pub const NULL_TAG: Tag = Tag::universal(universal::NULL, false);
 
-/// NULL (X.680 §23) — the single value, as a real type carrying its own
-/// `Asn1Value` impl.
+/// NULL (X.680 §23) — the single value, as its own newtype with its own
+/// `PrimitiveRef` variant.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Null;
 

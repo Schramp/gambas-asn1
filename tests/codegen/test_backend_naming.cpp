@@ -136,10 +136,9 @@ int main() {
               rust_cpp.find("impl std::convert::TryFrom<i64> for MyEnum") != std::string::npos &&
               rust_cpp.find("0 => Ok(MyEnum::foo)") != std::string::npos,
               rust_cpp);
-        check("emit_enumerated: Rust produces a real validate() reusing the MAP table",
-              rust_cpp.find("fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {\n"
-                             "        asn1cpp_wire::spec::enumerated::validate_enum(*self as i64, &MyEnum_ENUM_SPEC)\n"
-                             "    }") != std::string::npos,
+        check("emit_enumerated: Rust emits the EnumSpec table and no per-type codec impl",
+              rust_cpp.find("pub static MyEnum_ENUM_SPEC: asn1cpp_wire::spec::enumerated::EnumSpec") != std::string::npos &&
+              rust_cpp.find("Asn1Value") == std::string::npos,
               rust_cpp);
     }
 
@@ -185,11 +184,10 @@ int main() {
               cpp_cpp.find("asn_DEF_MyInt") != std::string::npos &&
               cpp_cpp.find(".range_bits=7") != std::string::npos,
               cpp_cpp);
-        check("emit_integer: Rust produces a real Asn1Value::validate() using the type's own Constraints",
+        check("emit_integer: Rust emits the type's own Constraints table and no per-type codec impl",
               rust_cpp.find("static MyInt_CONSTRAINTS: asn1cpp_wire::constraints::Constraints") != std::string::npos &&
               rust_cpp.find("flags: 1, range_bits: 7, lower_bound: 0, upper_bound: 0, lower_u64: 0u64, upper_u64: 100u64") != std::string::npos &&
-              rust_cpp.find("asn1cpp_wire::constraints::validate_u64(*self.0, &MyInt_CONSTRAINTS)") != std::string::npos &&
-              rust_cpp.find("fn constraints(&self) -> &'static asn1cpp_wire::constraints::Constraints {\n        &MyInt_CONSTRAINTS\n    }") != std::string::npos,
+              rust_cpp.find("Asn1Value") == std::string::npos,
               rust_cpp);
     }
 
@@ -266,14 +264,14 @@ int main() {
         check("emit_builtin_alias: Rust produces a real newtype wrapper (not a plain alias)",
               rust_os.find("pub struct MyBytes(pub asn1cpp_wire::octet_string::OctetString);") != std::string::npos,
               rust_os);
-        check("emit_builtin_alias: Rust newtype's own Asn1Value impl reports its own XER element name",
-              rust_os.find("impl asn1cpp_wire::value::Asn1Value for MyBytes {") != std::string::npos &&
-              rust_os.find("\"MyBytes\"") != std::string::npos,
+        check("emit_builtin_alias: Rust newtype's AsMemberRef impl reports its own XER element name",
+              rust_os.find("impl asn1cpp_wire::spec::object::AsMemberRef for MyBytes {") != std::string::npos &&
+              rust_os.find("\"MyBytes\"") != std::string::npos &&
+              rust_os.find("Asn1Value") == std::string::npos,
               rust_os);
-        check("emit_builtin_alias: Rust produces a table-driven validate(), not a generated bounds-check function",
+        check("emit_builtin_alias: Rust produces a Constraints table, not a generated bounds-check function",
               rust_os.find("static MyBytes_CONSTRAINTS: asn1cpp_wire::constraints::Constraints") != std::string::npos &&
-              rust_os.find("size_range_bits: 4, size_lower: 1, size_upper: 10") != std::string::npos &&
-              rust_os.find("asn1cpp_wire::constraints::validate_size(self.0.len(), &MyBytes_CONSTRAINTS)") != std::string::npos,
+              rust_os.find("size_range_bits: 4, size_lower: 1, size_upper: 10") != std::string::npos,
               rust_os);
     }
 
@@ -358,7 +356,8 @@ int main() {
         check("emit_seq_of: Rust produces a real Constraints table, not a function",
               rust_os.find("static MyList_CONSTRAINTS: asn1cpp_wire::constraints::Constraints") != std::string::npos &&
               rust_os.find("flags: 8, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, size_range_bits: 4, size_lower: 1, size_upper: 10") != std::string::npos &&
-              rust_os.find("fn validate(&self, _c: &asn1cpp_wire::constraints::Constraints) -> i64 {\n        asn1cpp_wire::constraints::validate_size(self.0.len(), &MyList_CONSTRAINTS)\n    }") != std::string::npos,
+              rust_os.find("impl asn1cpp_wire::spec::object::Asn1Pdu for MyList {") != std::string::npos &&
+              rust_os.find("const PDU_CONSTRAINTS: &'static asn1cpp_wire::constraints::Constraints = &MyList_CONSTRAINTS;") != std::string::npos,
               rust_os);
     }
 

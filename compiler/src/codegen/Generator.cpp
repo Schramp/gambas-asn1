@@ -957,7 +957,7 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem, const std::strin
         // Directly-embedded constrained builtin element, promoted to a real
         // type by generate_inline_types — same naming
         // formula and same early-return shape as the composite case just
-        // above: the promoted type is a plain named Asn1Value in its own
+        // above: the promoted type is a plain named type in its own
         // right now, so this leaf is treated like any other named-type
         // reference (kind/builtin/storage_kind/has_own_descriptor all stay
         // at their "not a raw builtin here" defaults) rather than the raw-
@@ -1576,7 +1576,7 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
 // doesn't). Deliberately left unfactored rather than sharing a helper —
 // see this function's own doc for why.
 // DELETE ONCE PER IS COMPLETE: this function exists only to answer "has
-// RustBackend's per-type Asn1Value impl actually been written for the
+// RustBackend's PER support actually been written for the
 // referenced construct yet" (an implementation-completeness question,
 // not a standard one — X.691 defines PER for every construct; C++'s
 // PerCodec never needed this because it's one generic runtime
@@ -2941,7 +2941,7 @@ void Generator::generate_inline_types(ast::TypeDef& def, const ast::Module& mod)
             // case) recurses straight through this level to the innermost
             // element's descriptor, corrupting the C++ SeqOfSpec::element
             // pointer and leaving Rust's generated field as a bare,
-            // non-Asn1Value-implementing Vec<Vec<T>>.
+            // Vec<Vec<T>> with no reflective trait impls.
             //
             // Promote to a real named type, then rewrite this level's own
             // element to a TypeRef pointing at it — same as the member-
@@ -3043,7 +3043,7 @@ void Generator::generate_inline_types(ast::TypeDef& def, const ast::Module& mod)
                 // intermediate collection level entirely — corrupting the
                 // C++ BER encoding (the generic SeqOf handler reads each
                 // outer element as the wrong type) and, on the Rust side,
-                // producing a bare Vec<Vec<T>> field with no Asn1Value impl
+                // producing a bare Vec<Vec<T>> field with no trait impls
                 // (same coherence problem octet_string::OctetString's own
                 // module doc describes) that fails to compile. Promoting
                 // gives this level a real name, a real recursive descriptor

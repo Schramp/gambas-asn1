@@ -6,7 +6,13 @@
 //! unescape), `writer` the encode-side ones (escape, indent, tag
 //! writing) — same split `jer::reader`/`jer::writer` use.
 
+pub mod bit_string;
+pub mod boolean;
+pub mod integer;
 pub mod object;
+pub mod octet_string;
+pub mod oid;
 pub mod reader;
-pub mod seq_of;
+pub mod real;
+pub mod relative_oid;
 pub mod writer;

@@ -32,10 +32,10 @@ Run compiler:
 ```
 
 Rust runtime — a single crate, `rust-runtime/wire/` (package `asn1cpp-wire`), not part
-of the CMake build. BER, XER, and PER all live here under one `Asn1Value` trait: a
-`SequenceSpec<T>`/`ChoiceSpec<T>`/`MemberDescriptor<T>` table per type drives every wire
-encoding, so XER only needed new tag-parsing primitives (`src/xer.rs`) and PER only needed
-its own bit-level stream primitives (`src/per/`), not a separate table or crate.
+of the CMake build. BER, XER, JER, and PER all live here, each as its own module
+(`ber/`, `xer/`, `jer/`, `per/`) with one reflective walker (`<codec>/object.rs`) driven by
+the per-type `SequenceSpec`/`ChoiceSpec`/`EnumSpec` tables (see the architecture-symmetry
+section below).
 `rust-runtime/ber/`, `rust-runtime/per/`, `rust-runtime/constraints/` are empty directories
 (no `Cargo.toml`/`src/`, left over from before the crates were unified) — `asn1cpp-wire`'s
 own description still calls them out as "thin re-export crates... kept for external path
@@ -51,11 +51,11 @@ table-driven codec, no per-type generated codec logic. Concretely:
 
 | C++ | Rust |
 |---|---|
-| `TypeDescriptor` table | `SequenceSpec<T>`/`ChoiceSpec<T>` table |
-| `MemberDescriptor` row (offset + `type_descriptor` ptr) | `MemberDescriptor<T>` row (`get`/`get_mut` fn ptr → `&dyn Asn1Value`) |
-| `ICodec` + handler singletons (`IBerTypeHandler`, `ber_boolean_handler`, ...) | `Asn1Value` trait, default methods (`ber_encode`/`ber_decode_into`/... composed from required `ber_natural_tag`/`ber_encode_content`/`ber_decode_content`) |
-| offset + `void*` field access | generated accessor closure, unsize-coerced to `&dyn Asn1Value` (vtable lives on the fat pointer, not the data) |
-| one `ICodec` interface for BER/PER/XER/JER | one `Asn1Value` trait carrying `ber_*`/`xer_*`/`per_*`/`jer_*` legs (JER ported gambas-asn1#661, own `jer/` module like `per/`) |
+| `TypeDescriptor` table | `SequenceSpec`/`ChoiceSpec`/`EnumSpec` table |
+| `MemberDescriptor` row (offset + `type_descriptor` ptr) | `MemberMeta` row (`get`/`get_mut` fn ptr → `MemberRef`/`MemberRefMut`, a closed reflective enum — `Primitive`/`Composite`/`Choice`/`SeqOf`/`Enumerated`/`Absent`) |
+| `ICodec` + handler singletons (`IBerTypeHandler`, `ber_boolean_handler`, ...) | per-codec non-generic walker (`ber::object`/`xer::object`/`jer::object`/`per::object`), matching on `MemberRef`/`MemberRefMut` |
+| offset + `void*` field access | generated accessor closure, unsize-coerced to `&dyn Asn1Seq`/`&dyn Asn1Choice` or wrapped in `PrimitiveRef`/`PrimitiveRefMut` (vtable or enum discriminant) |
+| one `ICodec` interface for BER/PER/XER/JER | one reflective `MemberRef`/`AsMemberRef` shape, matched per codec in that codec's own `object.rs` (JER ported gambas-asn1#661, own `jer/` module like `per/`) |
 | `Oid` (`runtime/include/asn1cpp/Oid.hpp`) | `ObjectIdentifier` (`rust-runtime/wire/src/oid.rs`) |
 
 The last row is the one builtin wrapper whose name genuinely differs between the two
@@ -63,17 +63,41 @@ runtimes (not a naming-fidelity issue — this is runtime-internal infrastructur
 generated identifier) — noted here since grepping one runtime for the other's name finds
 nothing otherwise.
 
+**Generated types carry no codec code.** Each generated type emits
+tables plus reflective trait impls only: `Asn1Seq`/`Asn1Choice`/`Asn1SeqOf`/`EnumSlot`/
+`AsMemberRef`, `TypeTag`, and — for SEQUENCE/SET, CHOICE, and named SEQUENCE OF/SET OF —
+the `Asn1Pdu` root marker (`spec::object`), whose only content is `PDU_CONSTRAINTS` (a named
+SEQUENCE OF's own SIZE table, X.691 §19/§20). Top-level encode/decode is one generic free
+function set per codec, bound on `Asn1Pdu` and dispatching on `as_member_ref()`:
+`ber::object::{encode_pdu, encode_pdu_into, decode_pdu, decode_pdu_into}`,
+`xer::object::{encode_pdu, decode_pdu}`, `jer::object::{encode_pdu, decode_pdu}`,
+`per::object::{encode_pdu, encode_pdu_into, decode_pdu, decode_pdu_into}`. Adding a codec is
+one new `<codec>/object.rs` — zero codegen diff.
+
+`SeqOf<T>`/`SetOf<T>` (`ber/sequence.rs`, inline SEQUENCE OF/SET OF field types) implement
+only `Asn1SeqOf`/`AsMemberRef`. An aliased element's real declared name and its X.693 §21
+BASE64/UTF8 override come from `AsMemberRef::own_element_xer_name`/`XER_INSTRUCTION` on the
+element type; `RustBackend::emit_builtin_alias_definition` is the only place that overrides
+`XER_INSTRUCTION`.
+
+There is no per-type codec trait at all. Builtin primitive leaf types are reached through
+`MemberRef::Primitive(PrimitiveRef)` and `spec::primitive`'s per-codec dispatch
+(`{ber,xer,jer,per}_{encode,decode}_primitive`), which calls each type's free codec functions
+directly; a primitive's own unit tests run through that same dispatch via
+`spec::primitive::test_codec`. Composites go through their codec's `object.rs` walker. Every
+codec is therefore one closed match per construct family, with no trait method implemented
+per type.
+
 `BerTraits<T>` (`runtime/include/asn1cpp/codec/BerTraits.hpp` + per-type
 specializations) is the one asymmetry: a template-based static-dispatch
 layer that only BER has, never referenced by codegen (only by hand-written
 code/tests and internally by `BerCodec.cpp`/`PerCodec.cpp`/
-`RandomFiller.cpp` as an implementation detail). Rust has no equivalent —
-`Asn1Value` has always been the sole mechanism. Tracked for removal on
+`RandomFiller.cpp` as an implementation detail). Rust has no equivalent. Tracked for removal on
 `main`: gambas-asn1#380 (dead `BerTraits<bool>`/`<int64_t>`/`<uint64_t>`
 raw-primitive forwarders — zero callers) and gambas-asn1#381 (the rest of
 the template layer — confirmed removable, no structural blocker in any of
 the three internal callers). Once gone, C++'s codec surface is exactly one
-path, matching Rust's from day one.
+path, matching Rust's.
 
 ## Runtime debug logging
 

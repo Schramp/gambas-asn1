@@ -6,17 +6,12 @@
 //! are the raw string bytes, no escaping at the BER layer (escaping is an
 //! XER-only concern, see `xer.rs`).
 //!
-//! **`IA5String` is `String` itself** (`Asn1Value for String`, `value.rs`) —
-//! kept as the one exception, because a
-//! generated field's Rust type must stay a plain `String` for the earliest,
-//! most common case (ergonomics: no `.0` unwrapping, matches every already-
-//! generated/tested `IA5String` member). **The other 11 string kinds
-//! are newtype wrappers** (`NumericString(pub String)`
-//! etc., via the `char_string_type!` macro below) — a plain `String` can't
-//! carry more than one `Asn1Value` impl (Rust allows only one trait impl per
-//! concrete type), so `NumericString`'s member can't reuse `IA5String`'s
-//! `String` impl even though the wire shape is identical; they'd fight over
-//! which tag to check/write. This mirrors the C++ runtime's own solution to
+//! **Every string kind is its own newtype wrapper** (`Ia5String(pub
+//! String)`, `NumericString(pub String)` etc., via the `char_string_type!`
+//! macro below) — a plain `String` could carry only one `TypeTag`/
+//! `AsMemberRef` impl (Rust allows only one trait impl per concrete type),
+//! so the kinds can't share it even though the wire shape is identical;
+//! they'd fight over which tag to check/write. This mirrors the C++ runtime's own solution to
 //! the same problem — `AsnString<N>` (`asn1cpp/CLAUDE.md`'s "tag-indexed
 //! dispatch tables carry type information" decision record): a distinct
 //! type per string *kind*, sharing one non-virtual base for the common
@@ -50,9 +45,7 @@
 
 use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::{universal, Tag};
-use crate::value::Asn1Value;
 use crate::ber::writer::write_primitive;
-use crate::xer::reader::XerReader;
 
 /// Content octets only (X.690 §8.7 — the raw UTF-8 bytes) — shared by every
 /// character string kind, `IA5String` included. `kind` is only used to name
@@ -95,10 +88,8 @@ pub fn read_char_string(r: &mut Reader, tag: Tag, kind: &str) -> Result<String, 
 
 /// Define one restricted-character-string newtype: its tag constant, the
 /// struct itself (`Debug`/`Clone`/`Default`/`PartialEq`/`Eq`, same derives
-/// `Point`'s own fields get), its `Asn1Value` impl (BER via
-/// `write_char_string`/`read_char_string`; XER: escaped text content, same
-/// as `String`'s own impl — X.693 doesn't distinguish string kinds in
-/// BASIC-XER form), and `Deref`/`DerefMut` to `String` — so a member of this
+/// `Point`'s own fields get), its `TypeTag` impl, and `Deref`/`DerefMut`
+/// to `String` (codec logic lives in `spec::primitive`'s dispatch) — so a member of this
 /// type still supports every `String` method call site already generated
 /// for plain-`String` members (e.g. `.len()` in a SIZE-constraint check
 /// function, `emit_string_definition`) without each of those call sites
@@ -109,56 +100,8 @@ pub fn read_char_string(r: &mut Reader, tag: Tag, kind: &str) -> Result<String, 
 /// `OctetString`, measured, abandoned both times); `CompactString` was
 /// part of the same abandoned attempt here, same verdict (no measured win
 /// on this schema's real workload).
-/// Expands to the pair of `jer_encode`/`jer_decode_into` methods for one
-/// `char_string_type!` invocation -- `jer_plain` for the common case
-/// (quoted UTF-8, every kind except the four below), `jer_hex` for
-/// T61String/VideotexString/GraphicString/GeneralString (X.697's JER
-/// maps these to quoted hex, not text -- see `char_string_type!`'s own
-/// doc on the UTF-8-storage caveat this carries).
-macro_rules! char_string_jer_methods {
-    (jer_plain) => {
-        fn jer_encode(&self, out: &mut String) {
-            crate::jer::strings::encode_plain(&self.0, out);
-        }
-
-        fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
-            self.0 = crate::jer::strings::decode_plain(r)?;
-            Ok(())
-        }
-    };
-    (jer_hex) => {
-        fn jer_encode(&self, out: &mut String) {
-            crate::jer::strings::encode_hex(self.0.as_bytes(), out);
-        }
-
-        fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
-            let bytes = crate::jer::strings::decode_hex(r)?;
-            self.0 = String::from_utf8(bytes)
-                .map_err(|_| DecodeError::new("JER: hex string content is not valid UTF-8".to_string(), r.pos()))?;
-            Ok(())
-        }
-    };
-}
-
 macro_rules! char_string_type {
-    // Default: plain JER (quoted UTF-8) -- every restricted-character-
-    // string kind except the four X.697 §8.21/§8.22 hex-JER ones below.
     ($name:ident, $tag_const:ident, $tag_num:expr, $asn1_name:expr) => {
-        char_string_type!($name, $tag_const, $tag_num, $asn1_name, jer_plain);
-    };
-    // T61String/VideotexString/GraphicString/GeneralString: X.697's JER
-    // maps these to quoted hex (`HexStringJerHandler`, `runtime/src/
-    // JerCodec.cpp`), not UTF-8 text -- their C++ storage (`AsnStringBase`)
-    // is raw bytes, not necessarily valid UTF-8. This crate stores every
-    // char-string kind as a Rust `String` (`decode_string_content` already
-    // forces UTF-8 at BER-decode time, same lossy-by-design choice this
-    // crate's XER support already makes for these same four types -- XER
-    // treats them as plain escaped text too, matching `UTF8String`, not a
-    // separate representation). Hex-encoding `self.0.as_bytes()` here
-    // mirrors C++'s JER byte-for-byte only when the content was valid
-    // UTF-8 to begin with; genuinely non-UTF8 legacy-charset content
-    // already lost fidelity one layer up, at BER decode, not here.
-    ($name:ident, $tag_const:ident, $tag_num:expr, $asn1_name:expr, $jer_mode:ident) => {
         #[doc = concat!("`", $asn1_name, "` — X.680 §41. Newtype over `String`; see the module doc for why.")]
         pub const $tag_const: Tag = Tag::universal($tag_num, false);
 
@@ -181,55 +124,6 @@ macro_rules! char_string_type {
                 &mut self.0
             }
         }
-
-        impl Asn1Value for $name {
-            fn ber_natural_tag(&self) -> Tag {
-                $tag_const
-            }
-
-            fn xer_element_name(&self) -> &'static str {
-                $asn1_name
-            }
-
-            fn ber_encode_content(&self, out: &mut Vec<u8>) {
-                out.extend_from_slice(self.0.as_bytes());
-            }
-
-            fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-                self.0 = decode_string_content(content, $asn1_name)?;
-                Ok(())
-            }
-
-            fn xer_encode(&self, out: &mut String, _depth: usize) {
-                crate::xer::writer::escape(&self.0, out);
-            }
-
-            fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-                let text = r.read_text_content();
-                self.0 = crate::xer::reader::unescape(text);
-                Ok(())
-            }
-
-            char_string_jer_methods!($jer_mode);
-
-            fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
-                let _ = crate::per::strings::encode_string(w, c, $tag_num, self.0.as_bytes());
-            }
-
-            fn per_decode_into(
-                &mut self,
-                r: &mut crate::per::reader::Reader,
-                c: &crate::constraints::Constraints,
-            ) -> Result<(), crate::per::reader::DecodeError> {
-                let x = crate::per::strings::decode_string(r, c, $tag_num)?;
-                self.0 = String::from_utf8(x).unwrap_or_default();
-                Ok(())
-            }
-
-            fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
-                crate::constraints::validate_string(&self.0, c)
-            }
-        }
     };
 }
 
@@ -237,11 +131,11 @@ char_string_type!(Ia5String, IA5_STRING_TAG, universal::IA5_STRING, "IA5String")
 char_string_type!(Utf8String, UTF8_STRING_TAG, universal::UTF8_STRING, "UTF8String");
 char_string_type!(NumericString, NUMERIC_STRING_TAG, universal::NUMERIC_STRING, "NumericString");
 char_string_type!(PrintableString, PRINTABLE_STRING_TAG, universal::PRINTABLE_STRING, "PrintableString");
-char_string_type!(T61String, T61_STRING_TAG, universal::T61_STRING, "T61String", jer_hex);
-char_string_type!(VideotexString, VIDEOTEX_STRING_TAG, universal::VIDEOTEX_STRING, "VideotexString", jer_hex);
+char_string_type!(T61String, T61_STRING_TAG, universal::T61_STRING, "T61String");
+char_string_type!(VideotexString, VIDEOTEX_STRING_TAG, universal::VIDEOTEX_STRING, "VideotexString");
 char_string_type!(VisibleString, VISIBLE_STRING_TAG, universal::VISIBLE_STRING, "VisibleString");
-char_string_type!(GraphicString, GRAPHIC_STRING_TAG, universal::GRAPHIC_STRING, "GraphicString", jer_hex);
-char_string_type!(GeneralString, GENERAL_STRING_TAG, universal::GENERAL_STRING, "GeneralString", jer_hex);
+char_string_type!(GraphicString, GRAPHIC_STRING_TAG, universal::GRAPHIC_STRING, "GraphicString");
+char_string_type!(GeneralString, GENERAL_STRING_TAG, universal::GENERAL_STRING, "GeneralString");
 char_string_type!(ObjectDescriptor, OBJECT_DESCRIPTOR_TAG, universal::OBJECT_DESCRIPTOR, "ObjectDescriptor");
 char_string_type!(UtcTime, UTC_TIME_TAG, universal::UTC_TIME, "UTCTime");
 char_string_type!(GeneralizedTime, GENERALIZED_TIME_TAG, universal::GENERALIZED_TIME, "GeneralizedTime");
@@ -251,7 +145,7 @@ char_string_type!(GeneralizedTime, GENERALIZED_TIME_TAG, universal::GENERALIZED_
 /// the resulting Unicode text to the same entity-escaper every other
 /// string kind uses. Mirrors `xer_detail::encode_wide_string<N>`
 /// (`runtime/src/XerCodec.cpp`).
-fn encode_wide_string_xer(bytes: &[u8], bpc: usize, out: &mut String) {
+pub(crate) fn encode_wide_string_xer(bytes: &[u8], bpc: usize, out: &mut String) {
     let mut text = String::with_capacity(bytes.len() / bpc);
     for chunk in bytes.chunks_exact(bpc) {
         let mut cp: u32 = 0;
@@ -267,7 +161,7 @@ fn encode_wide_string_xer(bytes: &[u8], bpc: usize, out: &mut String) {
 /// (already-unescaped) XER text becomes one big-endian `bpc`-byte group.
 /// Mirrors the decode side of `BmpStringXerHandler`/`UniversalStringXerHandler`
 /// (`runtime/src/XerCodec.cpp`).
-fn decode_wide_string_xer(text: &str, bpc: usize) -> Vec<u8> {
+pub(crate) fn decode_wide_string_xer(text: &str, bpc: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.chars().count() * bpc);
     for c in text.chars() {
         let cp = c as u32;
@@ -312,60 +206,6 @@ macro_rules! wide_char_string_type {
             const TAG: Option<Tag> = Some($tag_const);
         }
 
-        impl Asn1Value for $name {
-            fn ber_natural_tag(&self) -> Tag {
-                $tag_const
-            }
-
-            fn xer_element_name(&self) -> &'static str {
-                $asn1_name
-            }
-
-            fn ber_encode_content(&self, out: &mut Vec<u8>) {
-                out.extend_from_slice(&self.0);
-            }
-
-            fn ber_decode_content(&mut self, content: &[u8]) -> Result<(), DecodeError> {
-                self.0 = content.to_vec();
-                Ok(())
-            }
-
-            fn xer_encode(&self, out: &mut String, _depth: usize) {
-                encode_wide_string_xer(&self.0, $bpc, out);
-            }
-
-            fn xer_decode_into(&mut self, r: &mut XerReader) -> Result<(), DecodeError> {
-                let text = r.read_text_content();
-                self.0 = decode_wide_string_xer(&crate::xer::reader::unescape(text), $bpc);
-                Ok(())
-            }
-
-            fn jer_encode(&self, out: &mut String) {
-                crate::jer::strings::encode_wide(&self.0, $bpc, out);
-            }
-
-            fn jer_decode_into(&mut self, r: &mut crate::jer::reader::Reader) -> Result<(), DecodeError> {
-                self.0 = crate::jer::strings::decode_wide(r, $bpc)?;
-                Ok(())
-            }
-
-            fn per_encode(&self, w: &mut crate::per::writer::Writer, c: &crate::constraints::Constraints) {
-                let _ = crate::per::strings::encode_string(w, c, $tag_num, &self.0);
-            }
-
-            fn per_decode_into(
-                &mut self,
-                r: &mut crate::per::reader::Reader,
-                c: &crate::constraints::Constraints,
-            ) -> Result<(), crate::per::reader::DecodeError> {
-                self.0 = crate::per::strings::decode_string(r, c, $tag_num)?;
-                Ok(())
-            }
-
-            fn validate(&self, c: &crate::constraints::Constraints) -> i64 {
-                crate::constraints::validate_size(self.0.len(), c)
-            }
-        }
     };
 }
 
@@ -375,6 +215,7 @@ wide_char_string_type!(BmpString, BMP_STRING_TAG, universal::BMP_STRING, "BMPStr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::xer::reader::XerReader;
 
     #[test]
     fn encodes_ascii() {
@@ -421,13 +262,13 @@ mod tests {
     #[test]
     fn numeric_string_ber_round_trips_and_uses_its_own_tag() {
         let mut buf = Vec::new();
-        NumericString("12345".to_string()).ber_encode(&mut buf);
+        crate::spec::primitive::test_codec::ber_encode(&NumericString("12345".to_string()), &mut buf);
         // NUMERIC_STRING tag (0x12), not IA5String's (0x16).
         assert_eq!(buf, vec![0x12, 0x05, b'1', b'2', b'3', b'4', b'5']);
 
         let mut r = Reader::new(&buf);
         let mut got = NumericString::default();
-        got.ber_decode_into(&mut r).unwrap();
+        crate::spec::primitive::test_codec::ber_decode_into(&mut got, &mut r).unwrap();
         assert_eq!(got, NumericString("12345".to_string()));
     }
 
@@ -438,18 +279,18 @@ mod tests {
         let data = [0x16, 0x02, b'h', b'i'];
         let mut r = Reader::new(&data);
         let mut got = NumericString::default();
-        assert!(got.ber_decode_into(&mut r).is_err());
+        assert!(crate::spec::primitive::test_codec::ber_decode_into(&mut got, &mut r).is_err());
     }
 
     #[test]
     fn printable_string_xer_round_trips() {
         let mut out = String::new();
-        PrintableString("a<b".to_string()).xer_encode(&mut out, 0);
+        crate::spec::primitive::test_codec::xer_encode(&PrintableString("a<b".to_string()), &mut out, 0);
         assert_eq!(out, "a&lt;b");
 
         let mut r = XerReader::new(&out);
         let mut got = PrintableString::default();
-        got.xer_decode_into(&mut r).unwrap();
+        crate::spec::primitive::test_codec::xer_decode_into(&mut got, &mut r).unwrap();
         assert_eq!(got, PrintableString("a<b".to_string()));
     }
 
@@ -458,26 +299,26 @@ mod tests {
     #[test]
     fn utc_time_ber_round_trips_and_uses_its_own_tag() {
         let mut buf = Vec::new();
-        UtcTime("240115143000Z".to_string()).ber_encode(&mut buf);
+        crate::spec::primitive::test_codec::ber_encode(&UtcTime("240115143000Z".to_string()), &mut buf);
         // UTCTime tag (0x17), not IA5String's (0x16) or GeneralizedTime's (0x18).
         assert_eq!(buf[0], 0x17);
         assert_eq!(buf.len(), 2 + "240115143000Z".len());
 
         let mut r = Reader::new(&buf);
         let mut got = UtcTime::default();
-        got.ber_decode_into(&mut r).unwrap();
+        crate::spec::primitive::test_codec::ber_decode_into(&mut got, &mut r).unwrap();
         assert_eq!(got, UtcTime("240115143000Z".to_string()));
     }
 
     #[test]
     fn generalized_time_ber_round_trips_and_uses_its_own_tag() {
         let mut buf = Vec::new();
-        GeneralizedTime("20240115143000Z".to_string()).ber_encode(&mut buf);
+        crate::spec::primitive::test_codec::ber_encode(&GeneralizedTime("20240115143000Z".to_string()), &mut buf);
         assert_eq!(buf[0], 0x18);
 
         let mut r = Reader::new(&buf);
         let mut got = GeneralizedTime::default();
-        got.ber_decode_into(&mut r).unwrap();
+        crate::spec::primitive::test_codec::ber_decode_into(&mut got, &mut r).unwrap();
         assert_eq!(got, GeneralizedTime("20240115143000Z".to_string()));
     }
 
@@ -488,30 +329,30 @@ mod tests {
         let data = [0x18, 0x02, b'h', b'i'];
         let mut r = Reader::new(&data);
         let mut got = UtcTime::default();
-        assert!(got.ber_decode_into(&mut r).is_err());
+        assert!(crate::spec::primitive::test_codec::ber_decode_into(&mut got, &mut r).is_err());
     }
 
     #[test]
     fn utc_time_xer_round_trips() {
         let mut out = String::new();
-        UtcTime("240115143000Z".to_string()).xer_encode(&mut out, 0);
+        crate::spec::primitive::test_codec::xer_encode(&UtcTime("240115143000Z".to_string()), &mut out, 0);
         assert_eq!(out, "240115143000Z");
 
         let mut r = XerReader::new(&out);
         let mut got = UtcTime::default();
-        got.xer_decode_into(&mut r).unwrap();
+        crate::spec::primitive::test_codec::xer_decode_into(&mut got, &mut r).unwrap();
         assert_eq!(got, UtcTime("240115143000Z".to_string()));
     }
 
     #[test]
     fn generalized_time_xer_round_trips() {
         let mut out = String::new();
-        GeneralizedTime("20240115143000Z".to_string()).xer_encode(&mut out, 0);
+        crate::spec::primitive::test_codec::xer_encode(&GeneralizedTime("20240115143000Z".to_string()), &mut out, 0);
         assert_eq!(out, "20240115143000Z");
 
         let mut r = XerReader::new(&out);
         let mut got = GeneralizedTime::default();
-        got.xer_decode_into(&mut r).unwrap();
+        crate::spec::primitive::test_codec::xer_decode_into(&mut got, &mut r).unwrap();
         assert_eq!(got, GeneralizedTime("20240115143000Z".to_string()));
     }
 }

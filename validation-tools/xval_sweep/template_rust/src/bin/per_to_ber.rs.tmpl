@@ -3,10 +3,9 @@
 // writing the concatenated (self-delimiting) BER TLVs to stdout.
 //
 // Materialized by asn1cpp-validation-tools/xval_sweep/xval_sweep.py --
-// only when the target type has a `PerValue` impl.
+// only when the target type has an `Asn1Pdu` impl.
 //
 // Usage: per-to-ber --type __PDU_TYPE__ [FILE]
-use asn1cpp_wire::value::Asn1Value;
 use std::io::{Read, Write};
 
 const TYPES: &[&str] = &["__PDU_TYPE__"];
@@ -28,8 +27,8 @@ fn decode_one(type_name: &str, per_bytes: &[u8]) -> Result<Vec<u8>, asn1cpp_wire
     match type_name {
         "__PDU_TYPE__" => {
             let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
-            v.per_decode_into(&mut r, v.constraints())?;
-            Ok(v.encode())
+            asn1cpp_wire::per::object::decode_pdu_into(&mut v, &mut r)?;
+            Ok(asn1cpp_wire::ber::object::encode_pdu(&v))
         }
         _ => unreachable!("checked by caller"),
     }

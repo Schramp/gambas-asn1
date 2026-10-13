@@ -253,25 +253,18 @@ private:
 
     // Per-row real-vs-stub predicates for emit_sequence_definition/
     // emit_choice_definition — every generated SEQUENCE/SET/CHOICE always
-    // gets a real table and `Asn1Value` impl (see
-    // `sequence::MemberAccess::Unsupported`'s doc, rust-runtime/wire). These
+    // gets a real table and reflective `Asn1Seq`/`Asn1Choice` impl. These
     // predicates do not gate whether a *type* gets emitted at all; they only
     // decide whether a given member/alternative's own row is a real access
     // closure or an `Unsupported` stub. A referenced composite type (a
     // TypeRef to SEQUENCE/SET/CHOICE/ENUMERATED, or a TypeRef-aliased
-    // INTEGER) is always real regardless of processing order — it will
-    // have *some* `Asn1Value` impl (real or stub) by the time the crate
-    // finishes compiling either way, so referencing it is always safe; no
-    // per-run coverage bookkeeping is needed to know that in advance. The
-    // Rust-only concern (this backend's own trait-object dispatch model),
-    // so it lives here rather than on the shared Backend interface/Generator.
-    // No per-run bookkeeping needed: every referenced composite type (a
-    // TypeRef to SEQUENCE/SET/CHOICE/ENUMERATED, a TypeRef-aliased INTEGER
-    // of any storage kind, an ARBITRARY-storage alias included since
-    // `integer::ArbitraryInteger` is its own real newtype now) is always
-    // real regardless of processing order — it will have *some* `Asn1Value`
-    // impl (real or stub) by the time the crate finishes compiling either
-    // way, so referencing it is always safe.
+    // INTEGER of any storage kind, `integer::ArbitraryInteger` included)
+    // is always real regardless of processing order — it implements
+    // `AsMemberRef` by the time the crate finishes compiling either way, so
+    // referencing it is always safe; no per-run coverage bookkeeping is
+    // needed. A Rust-only concern (this backend's own reflective dispatch
+    // model), so it lives here rather than on the shared Backend
+    // interface/Generator.
     bool sequence_member_covered(const SequenceMemberSpec& m) const;
     bool choice_alternative_covered(const ChoiceAlternativeSpec& a) const;
     // Whether a CHOICE alternative has any resolved tag at all — see
