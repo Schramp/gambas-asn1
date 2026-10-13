@@ -1345,6 +1345,10 @@ def main():
                           "corpus, not a curated/gating list; failures are reported, not a "
                           "reason to treat the whole run as red (same spirit as "
                           "validate_rust_codegen.py's own --corpus=asn1c-compiler).")
+    ap.add_argument("--targets-file", default=TARGETS_FILE,
+                     help="target list for --corpus=targets (default: targets.txt). "
+                          "targets_per_gaps.txt lists known Rust/C++ PER gaps, "
+                          "expected to fail until fixed.")
     ap.add_argument("--with-asn1c", action="store_true",
                      help="with --corpus=asn1c-compiler, also build+run the asn1c leg per "
                           "target (off by default for this corpus — ~200 extra asn1c builds "
@@ -1410,7 +1414,7 @@ def main():
         else:
             print("asn1c leg: OFF (asn1c not found — set ASN1C_BIN_DIR or --asn1c-dir to enable)")
 
-        targets = parse_targets(TARGETS_FILE)
+        targets = parse_targets(opts.targets_file)
 
     if opts.target:
         targets = [t for t in targets if opts.target in t[0] or opts.target in t[1]]
