@@ -116,9 +116,7 @@ pub enum MemberRefMut<'a> {
 /// the reflective shape — `Primitive` via `spec::primitive::
 /// xer_element_name_of`, `Composite`/`Choice` via their own
 /// `SequenceSpec`/`ChoiceSpec::name`, `Enumerated` via `EnumSpec::name`,
-/// `SeqOf` via its own universal SEQUENCE/SET tag. Replaces the need for
-/// `Asn1Value::xer_element_name()` anywhere a `MemberRef` is already in
-/// hand.
+/// `SeqOf` via its own universal SEQUENCE/SET tag.
 pub fn natural_xer_name_of(m: MemberRef) -> &'static str {
     match m {
         MemberRef::Absent => unreachable!("an absent member has no natural XER name to ask for"),
@@ -199,9 +197,8 @@ pub trait Asn1SeqOf {
     fn push_default_mut(&mut self) -> MemberRefMut<'_>;
     /// Upfront backing-store reservation hint for a decode that already
     /// knows the element count (`ber::object::decode_seqof_content`'s own
-    /// zero-copy top-level-TLV pre-count, mirroring
-    /// `ber::sequence::decode_seq_of_content`'s `count_top_level_tlvs`
-    /// use) — avoids `push_default_mut`'s otherwise-geometric `Vec`
+    /// zero-copy top-level-TLV pre-count, `ber::sequence::
+    /// count_top_level_tlvs`) — avoids `push_default_mut`'s otherwise-geometric `Vec`
     /// regrowth. Every real implementor backs onto a `Vec`, so this has
     /// one obvious correct override (`self.0.reserve(additional)`); the
     /// default no-op only matters if a future implementor can't honor it.
