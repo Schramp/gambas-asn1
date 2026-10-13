@@ -9,7 +9,10 @@ PerExtFromTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 
 Rec ::= SEQUENCE {
     word      VisibleString (FROM ("a".."z"), ...),
-    ia5       IA5String (FROM ("a".."z"), ...)
+    ia5       IA5String (FROM ("a".."z"), ...),
+    -- One extension marker over SIZE and FROM: the SIZE stays extensible
+    -- (extension bit), the FROM is not PER-visible (X.691 §9.3.9, §9.3.15).
+    sizedFrom VisibleString (SIZE (1..8) INTERSECTION FROM ("a".."z"), ...)
 }
 
 END

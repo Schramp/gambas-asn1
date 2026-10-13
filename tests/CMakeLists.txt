@@ -871,6 +871,24 @@ target_link_libraries(test_set_order PRIVATE asn1cpp_runtime)
 add_test(NAME set_order COMMAND test_set_order)
 set_tests_properties(set_order PROPERTIES TIMEOUT 30)
 
+# ---- CHOICE extension alternative unknown to the receiver (X.691 §23.8) ------
+set(CUE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_unknown_ext_test)
+add_custom_command(
+    OUTPUT  ${CUE_GEN_DIR}/MsgV1.hpp ${CUE_GEN_DIR}/MsgV1.cpp ${CUE_GEN_DIR}/MsgV2.hpp ${CUE_GEN_DIR}/MsgV2.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CUE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_choice_unknown_ext_test.asn1
+            -o ${CUE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_choice_unknown_ext_test.asn1
+    COMMENT "Generating C++ from per_choice_unknown_ext_test.asn1"
+)
+add_executable(test_choice_unknown_ext seq/test_choice_unknown_ext.cpp
+               ${CUE_GEN_DIR}/MsgV1.cpp ${CUE_GEN_DIR}/MsgV2.cpp)
+target_include_directories(test_choice_unknown_ext PRIVATE ${CUE_GEN_DIR})
+target_link_libraries(test_choice_unknown_ext PRIVATE asn1cpp_runtime)
+add_test(NAME choice_unknown_ext COMMAND test_choice_unknown_ext)
+set_tests_properties(choice_unknown_ext PROPERTIES TIMEOUT 30)
+
 # ---- -fprefix namespace test (issue #16) ------------------------------------
 # Verifies that -fprefix=<name> wraps generated types in namespace <name>.
 # Uses per_ext_test.asn1 (already available) regenerated with -fprefix=testns.
@@ -1712,6 +1730,29 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_xer_vectors_202 PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_XV202_GEN_DIR=${RUST_XV202_GEN_DIR}")
+endif()
+
+# Rust leg of the unknown CHOICE extension alternative test — see
+# tests/rust/choice_unknown_ext/src/main.rs.
+set(RUST_CUE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_choice_unknown_ext)
+add_custom_command(
+    OUTPUT  ${RUST_CUE_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_CUE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_choice_unknown_ext_test.asn1
+                                   -o ${RUST_CUE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_choice_unknown_ext_test.asn1
+    COMMENT "Generating Rust from per_choice_unknown_ext_test.asn1"
+)
+add_custom_target(gen_rust_choice_unknown_ext ALL DEPENDS ${RUST_CUE_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_choice_unknown_ext
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/choice_unknown_ext/Cargo.toml)
+    set_tests_properties(rust_choice_unknown_ext PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_CUE_GEN_DIR=${RUST_CUE_GEN_DIR}")
 endif()
 
 # Rust leg of the SET component order test — see tests/rust/set_order/src/main.rs.
