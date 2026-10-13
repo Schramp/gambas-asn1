@@ -60,20 +60,11 @@ fn root_end(obj: &dyn Asn1Seq) -> usize {
 
 fn access_encode(obj: &dyn Asn1Seq, i: usize, w: &mut Writer) {
     let m = &obj.spec().members[i];
-    if let Some(reason) = m.per_unsupported {
-        panic!("member '{}' not supported: {}", m.name, reason);
-    }
     encode_bare(obj.get_member(i), m.constraints, w);
 }
 
 fn access_decode(obj: &mut dyn Asn1Seq, i: usize, r: &mut Reader) -> Result<(), DecodeError> {
-    let (per_unsupported, constraints) = {
-        let m = &obj.spec().members[i];
-        (m.per_unsupported, m.constraints)
-    };
-    if let Some(reason) = per_unsupported {
-        panic!("member '{}' not supported: {}", obj.spec().members[i].name, reason);
-    }
+    let constraints = obj.spec().members[i].constraints;
     decode_bare(obj.get_member_mut(i), constraints, r)
 }
 
@@ -216,9 +207,6 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, w: &mut Writer) {
         return; // codegen-bug backstop: no alternative matched a real generated enum.
     };
     let alt = &obj.spec().alternatives[def_idx];
-    if let Some(reason) = alt.per_unsupported {
-        panic!("alternative '{}' not supported: {}", alt.name, reason);
-    }
     let root_count = choice_root_count(obj);
     let in_ext = obj.spec().ext_at >= 0 && def_idx >= root_count;
     let spec = obj.spec();
@@ -257,13 +245,7 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> R
         if def_idx >= root_count {
             return Err(DecodeError::new("PER: CHOICE index out of range", r.bit_pos()));
         }
-        let (per_unsupported, constraints) = {
-            let alt = &obj.spec().alternatives[def_idx];
-            (alt.per_unsupported, alt.constraints)
-        };
-        if let Some(reason) = per_unsupported {
-            panic!("alternative not supported: {reason}");
-        }
+        let constraints = obj.spec().alternatives[def_idx].constraints;
         decode_bare(obj.select_mut(def_idx), constraints, r)
     } else {
         let ext_idx = get_nsnn(r)?;
@@ -284,13 +266,7 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> R
             bytes.push(r.get_bits(8)? as u8);
         }
         let mut inner = Reader::new(&bytes);
-        let (per_unsupported, constraints) = {
-            let alt = &obj.spec().alternatives[def_idx];
-            (alt.per_unsupported, alt.constraints)
-        };
-        if let Some(reason) = per_unsupported {
-            panic!("alternative not supported: {reason}");
-        }
+        let constraints = obj.spec().alternatives[def_idx].constraints;
         decode_bare(obj.select_mut(def_idx), constraints, &mut inner)
     }
 }

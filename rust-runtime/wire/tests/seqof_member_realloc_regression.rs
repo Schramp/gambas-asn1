@@ -72,7 +72,6 @@ static CONTAINER_MEMBERS: [MemberMeta; 1] = [MemberMeta {
     ber: BerTagging::Delegate,
     constraints: &UNCONSTRAINED,
     xer_instruction: XerInstruction::Default,
-    per_unsupported: None,
 }];
 
 static CONTAINER_SPEC: SequenceSpec = SequenceSpec {
