@@ -373,7 +373,11 @@ def compare_per(label: str, per_a: bytes, per_b: bytes, verbose: bool) -> tuple[
     recs_a = split_per_records(per_a)
     recs_b = split_per_records(per_b)
     n = min(len(recs_a), len(recs_b))
-    if n == 0:
+    # A side that produced fewer records (a crash, a decode error, an
+    # unsupported construct) fails the records it is missing; "no records"
+    # is only fine when both sides are empty.
+    short = abs(len(recs_a) - len(recs_b))
+    if n == 0 and short == 0:
         print(f"  [{label}] no records to compare")
         return 0, 0
     matches = mismatches = 0
@@ -385,8 +389,11 @@ def compare_per(label: str, per_a: bytes, per_b: bytes, verbose: bool) -> tuple[
             if verbose:
                 print(f"  MISMATCH record #{i + 1}: "
                       f"expected {len(recs_a[i])} bytes, got {len(recs_b[i])}")
+    if short:
+        print(f"  [{label}] record count differs: {len(recs_a)} vs {len(recs_b)}")
+    mismatches += short
     status = "OK" if mismatches == 0 else "FAIL"
-    print(f"  [{label}] {matches}/{n} match, {mismatches} mismatch  [{status}]")
+    print(f"  [{label}] {matches}/{n + short} match, {mismatches} mismatch  [{status}]")
     return matches, mismatches
 
 
@@ -483,7 +490,11 @@ def compare_jer(label: str, jer_a: str, jer_b: str, verbose: bool,
     recs_a = split_a(jer_a)
     recs_b = split_b(jer_b)
     n = min(len(recs_a), len(recs_b))
-    if n == 0:
+    # A side that produced fewer records (a crash, a decode error, an
+    # unsupported construct) fails the records it is missing; "no records"
+    # is only fine when both sides are empty.
+    short = abs(len(recs_a) - len(recs_b))
+    if n == 0 and short == 0:
         print(f"  [{label}] no records to compare")
         return 0, 0
     matches = mismatches = 0
@@ -502,8 +513,11 @@ def compare_jer(label: str, jer_a: str, jer_b: str, verbose: bool,
             mismatches += 1
             if verbose:
                 print(f"  MISMATCH record #{i + 1}:\n    expected {a}\n    got      {b}")
+    if short:
+        print(f"  [{label}] record count differs: {len(recs_a)} vs {len(recs_b)}")
+    mismatches += short
     status = "OK" if mismatches == 0 else "FAIL"
-    print(f"  [{label}] {matches}/{n} match, {mismatches} mismatch  [{status}]")
+    print(f"  [{label}] {matches}/{n + short} match, {mismatches} mismatch  [{status}]")
     return matches, mismatches
 
 
@@ -575,12 +589,19 @@ def run_comparison(label: str, xer_a: str, xer_b: str, verbose: bool) -> tuple[i
     recs_a = split_xer_records(xer_a)
     recs_b = split_xer_records(xer_b)
     n = min(len(recs_a), len(recs_b))
-    if n == 0:
+    # A side that produced fewer records (a crash, a decode error, an
+    # unsupported construct) fails the records it is missing; "no records"
+    # is only fine when both sides are empty.
+    short = abs(len(recs_a) - len(recs_b))
+    if n == 0 and short == 0:
         print(f"  [{label}] no records to compare")
         return 0, 0
     matches, mismatches = compare_records(recs_a, recs_b, verbose)
+    if short:
+        print(f"  [{label}] record count differs: {len(recs_a)} vs {len(recs_b)}")
+    mismatches += short
     status = "OK" if mismatches == 0 else "FAIL"
-    print(f"  [{label}] {matches}/{n} match, {mismatches} mismatch  [{status}]")
+    print(f"  [{label}] {matches}/{n + short} match, {mismatches} mismatch  [{status}]")
     return matches, mismatches
 
 
@@ -588,12 +609,19 @@ def run_comparison_jer(label: str, jer_a: str, jer_b: str, verbose: bool) -> tup
     recs_a = split_jer_records(jer_a)
     recs_b = split_jer_records(jer_b)
     n = min(len(recs_a), len(recs_b))
-    if n == 0:
+    # A side that produced fewer records (a crash, a decode error, an
+    # unsupported construct) fails the records it is missing; "no records"
+    # is only fine when both sides are empty.
+    short = abs(len(recs_a) - len(recs_b))
+    if n == 0 and short == 0:
         print(f"  [{label}] no records to compare")
         return 0, 0
     matches, mismatches = compare_records(recs_a, recs_b, verbose)
+    if short:
+        print(f"  [{label}] record count differs: {len(recs_a)} vs {len(recs_b)}")
+    mismatches += short
     status = "OK" if mismatches == 0 else "FAIL"
-    print(f"  [{label}] {matches}/{n} match, {mismatches} mismatch  [{status}]")
+    print(f"  [{label}] {matches}/{n + short} match, {mismatches} mismatch  [{status}]")
     return matches, mismatches
 
 
@@ -601,7 +629,11 @@ def compare_ber(label: str, ber_a: bytes, ber_b: bytes, verbose: bool) -> tuple[
     recs_a = split_ber_records(ber_a)
     recs_b = split_ber_records(ber_b)
     n = min(len(recs_a), len(recs_b))
-    if n == 0:
+    # A side that produced fewer records (a crash, a decode error, an
+    # unsupported construct) fails the records it is missing; "no records"
+    # is only fine when both sides are empty.
+    short = abs(len(recs_a) - len(recs_b))
+    if n == 0 and short == 0:
         print(f"  [{label}] no records to compare")
         return 0, 0
     matches = mismatches = 0
@@ -613,8 +645,11 @@ def compare_ber(label: str, ber_a: bytes, ber_b: bytes, verbose: bool) -> tuple[
             if verbose:
                 print(f"  MISMATCH record #{i + 1}: "
                       f"expected {len(recs_a[i])} bytes, got {len(recs_b[i])}")
+    if short:
+        print(f"  [{label}] record count differs: {len(recs_a)} vs {len(recs_b)}")
+    mismatches += short
     status = "OK" if mismatches == 0 else "FAIL"
-    print(f"  [{label}] {matches}/{n} match, {mismatches} mismatch  [{status}]")
+    print(f"  [{label}] {matches}/{n + short} match, {mismatches} mismatch  [{status}]")
     return matches, mismatches
 
 
@@ -624,7 +659,9 @@ def compare_ber(label: str, ber_a: bytes, ber_b: bytes, verbose: bool) -> tuple[
 def parse_targets(path):
     """Returns a list of (schema, pdu_type, skip_asn1c_reason_or_None, extra_files).
 
-    A line is normally "<schema> <PduType>". A third token+ marks a known,
+    A line is normally "<schema> <PduType>"; <schema> may be a directory,
+    meaning every .asn/.asn1 file under it (a multi-module schema such as
+    ETSI LI). A third token+ marks a known,
     already-filed divergence between asn1c and asn1cpp for this specific
     target — the C++/Rust legs still run and gate pass/fail as usual, but
     the asn1c leg is skipped (not run at all) rather than failing the
@@ -643,8 +680,13 @@ def parse_targets(path):
             if len(parts) < 2:
                 print(f"{path}:{lineno}: expected '<schema> <PduType> [skip-asn1c-reason]', got: {line!r}")
                 sys.exit(1)
-            reason = " ".join(parts[2:]) if len(parts) > 2 else None
-            targets.append((parts[0], parts[1], reason, []))
+            # Tokens after the PDU type that start with '-' are extra
+            # compiler flags for this target (e.g. -fallow-newer-modules);
+            # the rest is the skip-asn1c reason.
+            flags = [t for t in parts[2:] if t.startswith("-")]
+            rest = [t for t in parts[2:] if not t.startswith("-")]
+            reason = " ".join(rest) if rest else None
+            targets.append((parts[0], parts[1], reason, [], flags))
     return targets
 
 
@@ -783,11 +825,11 @@ def cpp_tool_paths(cpp_dir):
     }
 
 
-def build_cpp(target_dir, asn1_files_abs, pdu_type, jobs=4, reuse=False):
+def build_cpp(target_dir, asn1_files_abs, pdu_type, jobs=4, reuse=False, asncpp_flags=()):
     cpp_dir = os.path.join(target_dir, "cpp")
     tools = cpp_tool_paths(cpp_dir)
     key_path = os.path.join(cpp_dir, ".reuse-key")
-    key = reuse_key(asn1_files_abs, pdu_type, file_sig(ASNCPP_BIN),
+    key = reuse_key(asn1_files_abs, pdu_type, " ".join(asncpp_flags), file_sig(ASNCPP_BIN),
                     file_sig(os.path.join(ASN1CPP_ROOT, "build/runtime/libasn1cpp_runtime.a")),
                     file_sig(os.path.join(TEMPLATE_CPP, "Makefile.tmpl")))
     if reuse and all(os.path.isfile(t) for t in tools.values()) and key_matches(key_path, key):
@@ -803,7 +845,8 @@ def build_cpp(target_dir, asn1_files_abs, pdu_type, jobs=4, reuse=False):
                 os.path.join(cpp_dir, "Makefile"),
                 {"__ASN1CPP_ROOT__": ASN1CPP_ROOT,
                  "__ASN1_FILES__": " ".join(asn1_files_abs),
-                 "__PDU_TYPE__": pdu_type})
+                 "__PDU_TYPE__": pdu_type,
+                 "__ASNCPP_FLAGS__": " ".join(asncpp_flags)})
 
     # Codegen first — src/types.cpp (materialized below) needs the real
     # generated identifier, which can only be discovered after codegen
@@ -826,7 +869,7 @@ def build_cpp(target_dir, asn1_files_abs, pdu_type, jobs=4, reuse=False):
     return tools
 
 
-def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None):
+def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None, asncpp_flags=()):
     rust_dir = os.path.join(target_dir, "rust")
     copy_verbatim(os.path.join(TEMPLATE_RUST, "build.rs"),
                   os.path.join(rust_dir, "build.rs"))
@@ -836,7 +879,8 @@ def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None):
                 os.path.join(rust_dir, "Makefile"),
                 {"__ASNCPP__": ASNCPP_BIN,
                  "__ASN1_FILES__": " ".join(asn1_files_abs),
-                 "__PDU_TYPE__": pdu_type})
+                 "__PDU_TYPE__": pdu_type,
+                 "__ASNCPP_FLAGS__": " ".join(asncpp_flags)})
     if not run_make(rust_dir, "gen", label="Rust codegen"):
         return None
     idents = discover_ident(os.path.join(rust_dir, "gen"), ".rs", pdu_type)
@@ -995,10 +1039,22 @@ def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, reuse=False, jo
 
 def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c_reason=None,
                slot=None, cpp_jobs=4, cargo_jobs=None, reuse=(), extra_files=(),
-               jer_safe_real=False):
-    slug = os.path.splitext(os.path.basename(schema_rel))[0] + "_" + pdu_type
+               jer_safe_real=False, asncpp_flags=()):
+    schema_abs = os.path.join(ASN1CPP_ROOT, schema_rel)
+    if os.path.isdir(schema_abs):
+        # A multi-module schema (e.g. ETSI LI): every .asn/.asn1 file in
+        # the directory tree, sorted, the same set the example Makefiles
+        # compile.
+        asn1_files_abs = sorted(
+            os.path.join(root, f)
+            for root, _, files in os.walk(schema_abs)
+            for f in files if f.endswith((".asn", ".asn1")))
+        slug_base = os.path.basename(os.path.dirname(schema_abs.rstrip("/")))
+    else:
+        asn1_files_abs = [schema_abs]
+        slug_base = os.path.splitext(os.path.basename(schema_rel))[0]
+    slug = slug_base + "_" + pdu_type
     target_dir = os.path.join(TESTBUILD, slug)
-    asn1_files_abs = [os.path.join(ASN1CPP_ROOT, schema_rel)]
     asn1_files_abs += [os.path.join(ASN1CPP_ROOT, f) for f in extra_files]
 
     extra_note = f" (+ {', '.join(extra_files)})" if extra_files else ""
@@ -1006,10 +1062,10 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
     if skip_asn1c_reason:
         print(f"  asn1c leg: skipped ({skip_asn1c_reason})")
 
-    cpp_tools = build_cpp(target_dir, asn1_files_abs, pdu_type, cpp_jobs, "cpp" in reuse)
+    cpp_tools = build_cpp(target_dir, asn1_files_abs, pdu_type, cpp_jobs, "cpp" in reuse, asncpp_flags)
     if cpp_tools is None:
         return False
-    rust_tools = build_rust(target_dir, asn1_files_abs, pdu_type, slot, cargo_jobs)
+    rust_tools = build_rust(target_dir, asn1_files_abs, pdu_type, slot, cargo_jobs, asncpp_flags)
     if rust_tools is None:
         return False
     asn1c_tools = (build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, "asn1c" in reuse, cpp_jobs)
@@ -1218,15 +1274,25 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
                 print(f"  asn1c b2p stderr: {asn1c_per_err}")
             per_asn1c = pack_per_records(asn1c_per_records)
 
-            compare_per("asn1c.PER vs cpp.PER [informational]", per_asn1c, per_cpp, verbose)
-            compare_per("asn1c.PER vs rust.PER [informational]", per_asn1c, per_rust, verbose)
-
             der_records = []
             for per_rec in asn1c_per_records:
                 der_rec, _ = asn1c_p2b(asn1c_tools["tool"], pdu_type, per_rec)
                 der_records.append(der_rec)
             ber_asn1c_per2 = b"".join(der_records)
-            compare_ber("orig vs asn1c.P2B(asn1c.PER) [informational]", ber_orig, ber_asn1c_per2, verbose)
+            self_m, self_mm = compare_ber("orig vs asn1c.P2B(asn1c.PER) [informational]",
+                                          ber_orig, ber_asn1c_per2, verbose)
+
+            # asn1c is the PER ground truth wherever it round-trips its own
+            # encoding of every record: then any difference from cpp/rust is
+            # gated. Where asn1c's own round trip fails, its PER bytes aren't
+            # trustworthy for this target and the comparison stays
+            # informational.
+            if self_m > 0 and self_mm == 0:
+                tally(compare_per("asn1c.PER vs cpp.PER", per_asn1c, per_cpp, verbose))
+                tally(compare_per("asn1c.PER vs rust.PER", per_asn1c, per_rust, verbose))
+            else:
+                compare_per("asn1c.PER vs cpp.PER [informational]", per_asn1c, per_cpp, verbose)
+                compare_per("asn1c.PER vs rust.PER [informational]", per_asn1c, per_rust, verbose)
         elif not skip_asn1c_reason:
             print("  asn1c PER leg: skipped (not found or unsupported for this target)")
     else:
@@ -1404,7 +1470,7 @@ def main():
             rel = os.path.relpath(path, ASN1CPP_ROOT)
             extra_rel = [os.path.relpath(os.path.join(ASN1C_COMPILER_CORPUS_DIR, f), ASN1CPP_ROOT)
                          for f in extra]
-            targets.append((rel, pdu_type, None, extra_rel))
+            targets.append((rel, pdu_type, None, extra_rel, []))
         print(f"auto-discovered {len(targets)} target(s) from {ASN1C_COMPILER_CORPUS_DIR} "
               f"({len(skipped)} skipped: no qualifying top-level SEQUENCE/SET/CHOICE, or IMPORTS present)")
     else:
@@ -1460,13 +1526,14 @@ def main():
 
     def worker(slot, indices):
         for i in indices:
-            schema_rel, pdu_type, skip_asn1c_reason, extra_files = targets[i]
+            schema_rel, pdu_type, skip_asn1c_reason, extra_files, asncpp_flags = targets[i]
             tl_out.tl.buf = []
             try:
                 oks[i] = run_target(schema_rel, pdu_type, opts.count, opts.seed, opts.verbose,
                                     asn1c_bin, skip_asn1c_reason, slot=slot,
                                     cpp_jobs=cpp_jobs, cargo_jobs=cargo_jobs, reuse=reuse,
-                                    extra_files=extra_files, jer_safe_real=opts.jer_safe_real)
+                                    extra_files=extra_files, jer_safe_real=opts.jer_safe_real,
+                                    asncpp_flags=asncpp_flags)
             except Exception as e:  # keep the sweep going; report as a failed target
                 print(f"  EXCEPTION: {e!r}")
                 oks[i] = False
