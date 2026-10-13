@@ -97,4 +97,5 @@ tests/asn1/rust_alphabet_test.asn1     Code
 tests/asn1/rust_seqof_int_per_test.asn1   Bag
 tests/asn1/rust_seqof_of_seqof_test.asn1   Matrix
 tests/asn1/rust_seqof_base64_elem_test.asn1   Entries
+tests/asn1/rust_choice_seqof_alt_per_test.asn1   Envelope
 tests/tests-asn1c-compiler/33-misc-OK.asn1   T2

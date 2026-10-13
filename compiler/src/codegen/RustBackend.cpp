@@ -2076,7 +2076,14 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         std::string get_active_ident = std::format("{}_GET_ACTIVE", spec.type_name);
         std::string select_mut_ident = std::format("{}_SELECT_MUT", spec.type_name);
 
+        // An inline SEQUENCE OF/SET OF alternative (X.691 §20) is always
+        // covered here: `per::object`'s SEQUENCE OF walker dispatches each
+        // element through its own `MemberRef`, and an element kind PER
+        // can't represent fails there, per element, with its own error
+        // (`spec::primitive`'s PER dispatch). Recognised from the
+        // alternative's own `mtype`, the same test `classify_alt` uses.
         auto per_alt_covered = [](const ChoiceAlternativeSpec& a) -> bool {
+            if (rust_mtype_is_unusable_vec(a.mtype)) return true;
             return per_ref_or_builtin_covered(a.mbuiltin, a.storage_kind, a.ref_kind);
         };
 
@@ -2172,6 +2179,14 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 // Named SEQUENCE OF/SET OF alternative — same rationale
                 // as the SEQUENCE-member AccessKind::SeqOf case.
                 alt_constraints = std::format("&crate::{0}::{0}_CONSTRAINTS", a.mtype);
+            } else if (rust_mtype_is_unusable_vec(a.mtype)) {
+                // Inline SEQUENCE OF/SET OF alternative: its SIZE (X.680
+                // §25/§26) and element constraints live on the promoted
+                // synthetic type's `{Synth}_CONSTRAINTS`, which the PER
+                // SEQUENCE OF walker reads from this row — same as the
+                // SEQUENCE-member inline case.
+                std::string synth = synthetic_name(spec.type_name, a.asn1_name);
+                alt_constraints = std::format("&crate::{}::{}_CONSTRAINTS", escape(synth), synth);
             }
             std::string per_unsupported_expr = !covered
                 ? std::string("Some(\"alternative not yet supported\")")
