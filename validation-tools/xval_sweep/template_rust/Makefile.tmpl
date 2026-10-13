@@ -29,7 +29,7 @@ gen: gen/.stamp
 
 # Output goes to a scratch dir and is checksum-synced into gen/, so an
 # identical regeneration keeps every file's mtime and cargo sees no change.
-gen/.stamp: $(ASN1_FILES) $(ASNCPP)
+gen/.stamp: $(ASN1_FILES) $(ASNCPP) Makefile
 	@rm -rf gen.new
 	@mkdir -p gen.new gen
 	$(ASNCPP) $(ASN1_FILES) -pdu=$(PDU_TYPE) __ASNCPP_FLAGS__ --target=rust -o gen.new

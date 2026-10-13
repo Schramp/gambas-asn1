@@ -680,12 +680,15 @@ def parse_targets(path):
             if len(parts) < 2:
                 print(f"{path}:{lineno}: expected '<schema> <PduType> [skip-asn1c-reason]', got: {line!r}")
                 sys.exit(1)
-            # Tokens after the PDU type that start with '-' are extra
-            # compiler flags for this target (e.g. -fallow-newer-modules);
-            # the rest is the skip-asn1c reason.
-            flags = [t for t in parts[2:] if t.startswith("-")]
-            rest = [t for t in parts[2:] if not t.startswith("-")]
-            reason = " ".join(rest) if rest else None
+            # Tokens directly after the PDU type that start with '-' are
+            # extra compiler flags for this target (e.g.
+            # -fallow-newer-modules); everything from the first other token
+            # on is the skip-asn1c reason (which may itself contain '-'
+            # words).
+            rest = parts[2:]
+            n_flags = next((i for i, t in enumerate(rest) if not t.startswith("-")), len(rest))
+            flags = rest[:n_flags]
+            reason = " ".join(rest[n_flags:]) or None
             targets.append((parts[0], parts[1], reason, [], flags))
     return targets
 
