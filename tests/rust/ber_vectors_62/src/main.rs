@@ -16,7 +16,6 @@
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
 
-use asn1cpp_wire::value::Asn1Value;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -75,13 +74,13 @@ fn process(path: &Path, lenient: &HashSet<&str>, failures: &mut i32) -> bool {
     let raw = fs::read(path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
 
     if matches!(exp, Expect::Broken) {
-        let decoded = T::T::decode(&raw).is_ok();
+        let decoded = asn1cpp_wire::ber::object::decode_pdu::<T::T>(&raw).is_ok();
         check(&name, !decoded, failures);
         return false;
     }
 
     // All non-broken files must decode successfully.
-    let val = match T::T::decode(&raw) {
+    let val = match asn1cpp_wire::ber::object::decode_pdu::<T::T>(&raw) {
         Ok(v) => {
             check(&format!("{name}  decode ok"), true, failures);
             v
@@ -93,8 +92,7 @@ fn process(path: &Path, lenient: &HashSet<&str>, failures: &mut i32) -> bool {
     };
 
     // Re-encode and compare.
-    let mut reenc = Vec::new();
-    val.ber_encode(&mut reenc);
+    let reenc = asn1cpp_wire::ber::object::encode_pdu(&val);
     match exp {
         Expect::Ok => check(&format!("{name}  re-encode byte-identical"), reenc == raw, failures),
         Expect::Recless => {

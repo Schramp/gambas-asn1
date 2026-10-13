@@ -90,11 +90,11 @@ fn main() {
     }
 
     // BER round-trip
-    let ber = cert.encode();
+    let ber = asn1cpp_wire::ber::object::encode_pdu(&cert);
     check("s1.xer  BER encode non-empty", !ber.is_empty(), &mut failures);
 
     if !ber.is_empty() {
-        let cert2 = Certificate::Certificate::decode(&ber);
+        let cert2 = asn1cpp_wire::ber::object::decode_pdu::<Certificate::Certificate>(&ber);
         check("s1.xer  BER decode ok", cert2.is_ok(), &mut failures);
         if let Ok(cert2) = cert2 {
             check("s1.xer  BER round-trip version", cert2.tbsCertificate.version == 2, &mut failures);
