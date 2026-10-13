@@ -445,7 +445,6 @@ mod tests {
         ber: BerTagging::Delegate,
         constraints: &UNCONSTRAINED,
         xer_instruction: crate::spec::object::XerInstruction::Default,
-        per_unsupported: None,
     }];
 
     static INNER_SPEC: SequenceSpec = SequenceSpec {
@@ -492,9 +491,9 @@ mod tests {
     }
 
     static OUTER_MEMBERS: [MemberMeta; 3] = [
-        MemberMeta { name: "y", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, per_unsupported: None },
-        MemberMeta { name: "inner", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, per_unsupported: None },
-        MemberMeta { name: "maybe", tag: INTEGER_TAG, optional: true, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, per_unsupported: None },
+        MemberMeta { name: "y", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default },
+        MemberMeta { name: "inner", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default },
+        MemberMeta { name: "maybe", tag: INTEGER_TAG, optional: true, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default },
     ];
 
     static OUTER_SPEC: SequenceSpec = SequenceSpec {
@@ -608,8 +607,8 @@ mod tests {
     }
 
     static CHOICE_ALTS: [crate::spec::object::AltMeta; 2] = [
-        crate::spec::object::AltMeta { name: "num", ber: BerTagging::Implicit(INTEGER_TAG), constraints: &UNCONSTRAINED, per_unsupported: None },
-        crate::spec::object::AltMeta { name: "nested", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, per_unsupported: None },
+        crate::spec::object::AltMeta { name: "num", ber: BerTagging::Implicit(INTEGER_TAG), constraints: &UNCONSTRAINED },
+        crate::spec::object::AltMeta { name: "nested", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED },
     ];
     static CHOICE_BER_TAGS: [crate::spec::choice::BerDispatch; 2] = [
         crate::spec::choice::BerDispatch { tag: INTEGER_TAG, alt: 0 },

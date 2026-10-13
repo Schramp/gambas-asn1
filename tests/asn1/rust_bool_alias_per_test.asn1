@@ -1,0 +1,22 @@
+-- Named BOOLEAN aliases (ETSI LI's `YesNo ::= BOOLEAN` shape) used as
+-- SEQUENCE members (mandatory and OPTIONAL) and as a CHOICE alternative,
+-- encoded in PER through the alias's wrapped BOOLEAN (X.691 §12).
+RustBoolAliasPerTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+YesNo ::= BOOLEAN
+
+Indication ::= YesNo
+
+Report ::= CHOICE {
+    flag      YesNo,
+    count     INTEGER (0..15)
+}
+
+Attributes ::= SEQUENCE {
+    deliveryReport   YesNo,
+    readReport       YesNo OPTIONAL,
+    indication       Indication OPTIONAL,
+    report           Report
+}
+
+END

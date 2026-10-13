@@ -62,7 +62,6 @@ pub struct MemberMeta {
     /// OctetString(..))` covers this member the same as any other OCTET
     /// STRING).
     pub xer_instruction: XerInstruction,
-    pub per_unsupported: Option<&'static str>,
 }
 
 pub struct SequenceSpec {
@@ -79,7 +78,6 @@ pub struct AltMeta {
     pub name: &'static str,
     pub ber: BerTagging,
     pub constraints: &'static crate::constraints::Constraints,
-    pub per_unsupported: Option<&'static str>,
 }
 
 pub struct ChoiceSpec {

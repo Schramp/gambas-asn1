@@ -873,24 +873,12 @@ def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None):
                 os.path.join(rust_dir, "src", "bin", "jer_to_ber.rs"),
                 {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
 
-    # Every generated type gets one merged `impl asn1cpp_wire::value::
-    # Asn1Value for {ident}` (BER/XER/PER all three methods on the same
-    # trait/impl block since gambas-asn1#537 — previously two separate
-    # impls in two separate crates, detected here by grepping for the now-
-    # nonexistent literal text of the old `asn1cpp_per::PerValue` impl;
-    # gambas-asn1#539 then removed the asn1cpp-ber/asn1cpp-per/
-    # asn1cpp-constraints shim crates entirely, so generated code now
-    # references asn1cpp_wire:: directly). Whole-type PER coverage is no
-    # longer a meaningful question for SEQUENCE/CHOICE (every member/
-    # alternative not yet representable is its own per-row
-    # `unimplemented!()` stub, RustBackend.cpp's `per_member_covered`/
-    # `per_alt_covered`) — the impl always exists, so this just confirms
-    # the type itself was actually generated, same "ask the actual output"
-    # approach `discover_ident` already uses instead of guessing an
-    # escaping rule. A `.per_encode()` call on a genuinely uncovered field
-    # panics at runtime (an informational per-record skip elsewhere in
-    # this sweep), not a compile error, so there's no longer a coverage
-    # gate to avoid tripping here.
+    # PER coverage is decided at runtime, per value: there is no
+    # codegen-time gate, and every generated top-level type implements
+    # `Asn1Pdu`. This only confirms the PDU type itself was generated
+    # (the same "ask the actual output" approach `discover_ident` uses).
+    # A value whose kind the Rust PER runtime can't represent panics on
+    # encode / errors on decode for that record.
     per_covered = False
     gen_file = os.path.join(rust_dir, "gen", f"{ident}.rs")
     if os.path.isfile(gen_file):
