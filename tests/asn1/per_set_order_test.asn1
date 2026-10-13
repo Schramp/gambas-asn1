@@ -4,7 +4,7 @@
 -- order, so declaration order and canonical order differ. The order is
 -- fixed by the schema and can be precomputed in the member tables, the
 -- way CHOICE alternatives already are (X.691 §22.6).
-PerGapSetOrderTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+PerSetOrderTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
 
 Rec ::= SET {
     third     [3] INTEGER (0..7),

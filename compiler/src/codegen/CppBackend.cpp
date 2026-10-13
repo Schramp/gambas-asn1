@@ -856,7 +856,8 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
         os << "    nullptr,\n";
     os << std::format("    {},\n", spec.mcount);
     os << std::format("    {}, /* ext_at */\n", spec.ext_at);
-    os << std::format("    {}, 0, nullptr /* PER: roms_count, aoms_count, oms */\n", spec.roms_count);
+    os << std::format("    {}, 0, nullptr, /* PER: roms_count, aoms_count, oms */\n", spec.roms_count);
+    os << std::format("    {} /* is_set */\n", spec.is_set ? "true" : "false");
     os << "};\n\n";
 
     // TypeDescriptor

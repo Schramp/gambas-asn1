@@ -219,6 +219,9 @@ struct SequenceSpec {
     int        roms_count; ///< Number of root OPTIONAL/DEFAULT members. Zero until PER codegen active.
     int        aoms_count; ///< Number of extension optional members. Zero until PER codegen active.
     const int* oms;        ///< Indices into \c members[] of optional members, root first. Nullptr until PER codegen active.
+    /// True for a SET: \c members[] is in canonical tag order (X.680 §8.6),
+    /// and BER decode accepts the components in any order (X.690 §8.11.2).
+    bool       is_set = false;
 };
 
 /// @brief One BER dispatch entry: maps one BER tag to a CHOICE alternative index.

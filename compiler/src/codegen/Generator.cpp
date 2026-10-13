@@ -2064,7 +2064,19 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         ++atag;
     };
     if (mcount > 0) {
-        for (auto* m : sm_root) collect(*m, m->is_optional());
+        // SET root components go into the member table in the canonical tag
+        // order of X.680 §8.6 (X.691 §20 PER, X.690 §10.3 DER; asn1c uses
+        // the same order for XER), fixed by the schema so every codec walks
+        // the table in index order. Extension additions keep definition
+        // order (X.691 §20). Under AUTOMATIC TAGS the tags follow
+        // definition order already, and `collect` numbers them as it goes.
+        std::vector<const ast::TypeDef*> root_order(sm_root.begin(), sm_root.end());
+        if (is_set && !apply_auto_tags)
+            std::stable_sort(root_order.begin(), root_order.end(),
+                [&](const ast::TypeDef* a, const ast::TypeDef* b) {
+                    return set_component_tag_key(*a) < set_component_tag_key(*b);
+                });
+        for (auto* m : root_order) collect(*m, m->is_optional());
         for (auto* m : sm_ext)  collect(*m, /*optional=*/true);
     }
 
@@ -2110,6 +2122,28 @@ std::pair<int,int> Generator::canonical_tag_key(const ast::Tag& tag, const ast::
     if (auto nat = natural_tag_spec_for(natural_tag_src))
         return { static_cast<int>(nat->cls), static_cast<int>(nat->number) };
     return { INT_MAX, INT_MAX }; // no natural tag either (e.g. a nested untagged CHOICE) — sort last.
+}
+
+std::pair<int,int> Generator::set_component_tag_key(const ast::TypeDef& m, int depth) const {
+    constexpr std::pair<int,int> kNone{INT_MAX, INT_MAX};
+    if (m.tag.present())
+        return { static_cast<int>(m.tag.cls), static_cast<int>(m.tag.number) };
+    if (depth > 16) return kNone;
+    // X.691 §20: an untagged CHOICE orders as its smallest root-alternative tag.
+    auto smallest_alt = [&](const ast::TypeDef& choice) {
+        auto key = kNone;
+        for (const auto* alt : split_members(choice).first)
+            key = std::min(key, set_component_tag_key(*alt, depth + 1));
+        return key;
+    };
+    if (m.is_choice()) return smallest_alt(m);
+    if (auto* tr = std::get_if<ast::TypeRef>(&m.body))
+        if (auto resolved = resolver_.resolve_ref(*tr, current_module_))
+            if (resolved->is_choice() && !resolved->tag.present())
+                return smallest_alt(*resolved);
+    if (auto nat = natural_tag_spec_for(m))
+        return { static_cast<int>(nat->cls), static_cast<int>(nat->number) };
+    return kNone;
 }
 
 bool Generator::canonical_tag_less(const ast::Tag& a, const ast::TypeDef& a_src,
