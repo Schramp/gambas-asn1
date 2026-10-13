@@ -21,21 +21,8 @@
 //!
 //! Every function below calls each type's own free codec function
 //! directly (`crate::boolean::encode_boolean_content`,
-//! `crate::xer::real::encode`, ...) rather than going through the
-//! `Asn1Value` trait — unlike `ber::sequence::SeqOf<T>`/`SetOf<T>`'s own
-//! XER leg (`xer_encode`/`xer_decode_into` only), which stays generic over
-//! `T: Asn1Value` because a per-element BASE64/UTF8 ENCODING-CONTROL
-//! override or an aliased element's own real name only survives on the
-//! *un*-unwrapped `T` — `AsMemberRef`'s reflective unwrap loses both
-//! (`spec::object::AsMemberRef::own_element_xer_name`'s own doc). BER/
-//! JER/PER access a `SeqOf<T>`/`SetOf<T>` member or element purely
-//! reflectively instead, needing no `Asn1Value` bound at all. `Box<T>`
-//! needs no `Asn1Value` either — the reflective `Asn1Seq`/`Asn1Choice`
-//! blanket impls (`spec::object.rs`) are the only mechanism it ever had.
-//! `PrimitiveRef`/`PrimitiveRefMut` *is* a closed enum, so matching on it
-//! directly — instead of calling a trait method that itself exists only
-//! to be overridden once per type — needs no trait bound at all. This is
-//! what gambas-asn1#697/#698 call "the dispatch flip".
+//! `crate::xer::real::encode`, ...). `PrimitiveRef`/`PrimitiveRefMut` is
+//! a closed enum, so matching on it needs no per-type codec trait at all.
 //!
 //! An application that only calls `ber::object::encode_pdu`/`decode_pdu` never
 //! calls `xer_encode_primitive`/`jer_encode_primitive`/
@@ -133,10 +120,7 @@ for_each_primitive!(define_ref_enum);
 /// Shared BER encode composition: validate `self` (constraint delta
 /// already computed by the caller, who alone knows which per-type
 /// `validate` function — if any — applies), then write one TLV under
-/// `tag` with `content` as the value octets. The same composition
-/// `Asn1Value::ber_encode_tagged`'s default body performs generically for
-/// `SeqOf<T>`/`Box<T>`'s sake, duplicated here as a plain function so
-/// this module's own dispatch needs no trait bound to reach it.
+/// `tag` with `content` as the value octets (X.690 §8.1).
 fn ber_checked_encode(out: &mut Vec<u8>, tag: Tag, delta: i64, name: &str, content: impl FnOnce(&mut Vec<u8>)) {
     crate::validate::check_delta(delta, name, "encode");
     crate::ber::writer::write_tagged(out, tag, content);
@@ -162,8 +146,8 @@ fn ber_checked_decode(
 
 /// This primitive's own natural BER tag (X.690 §8.1.2) — `ANY` has none
 /// of its own (its wire form is a full TLV of whatever type was actually
-/// present, replayed verbatim), so it panics here exactly as the
-/// `Asn1Value` default composition it replaces did.
+/// present, replayed verbatim), so it panics here; the BER dispatch
+/// special-cases `Any` before ever asking.
 fn natural_tag_of(p: PrimitiveRef) -> Tag {
     match p {
         PrimitiveRef::Boolean(_) => crate::boolean::BOOLEAN_TAG,
@@ -351,8 +335,7 @@ pub fn ber_decode_primitive(p: PrimitiveRefMut, framing: BerTagging, r: &mut Ber
 /// XER encode — no BER tag concept, so no framing parameter (X.693
 /// element names are fixed per type, same for every tagging the BER side
 /// might apply to this same member). `ArbitraryInteger`/`Any` have no
-/// defined XER form (nothing generates one today) — same panic the
-/// `Asn1Value` trait default this replaces gave.
+/// defined XER form (nothing generates one today), so they panic.
 pub fn xer_encode_primitive(p: PrimitiveRef, out: &mut String, depth: usize) {
     match p {
         PrimitiveRef::Boolean(x) => crate::xer::boolean::encode(x.0, out),
@@ -417,8 +400,7 @@ pub fn xer_decode_primitive(p: PrimitiveRefMut, r: &mut XerReader) -> Result<(),
 
 /// This primitive's own natural XER element name (X.693 §8.3.1) — used
 /// when wrapping a SEQUENCE OF/SET OF element, which has no field name of
-/// its own to wrap with. `ANY` falls back to `"Value"`, matching the
-/// `Asn1Value` trait's own default (never overridden for `Any`).
+/// its own to wrap with. `ANY` falls back to `"Value"`.
 pub fn xer_element_name_of(p: PrimitiveRef) -> &'static str {
     match p {
         PrimitiveRef::Boolean(_) => "BOOLEAN",
@@ -634,11 +616,9 @@ mod tests {
     use crate::bit_string::BitString;
     use crate::any::Any;
 
-    // Regression coverage for IMPLICIT/EXPLICIT BER framing — used to live
-    // in value.rs against the now-deleted Asn1Value::ber_encode_tagged/
-    // ber_encode_explicit trait methods (#704); this module's own
-    // ber_encode_primitive/ber_decode_primitive is the real production
-    // entry point for this behavior now.
+    // Regression coverage for IMPLICIT/EXPLICIT BER framing (X.690
+    // §8.14) through ber_encode_primitive/ber_decode_primitive, the
+    // production entry point for it.
 
     #[test]
     fn implicit_matching_natural_tag_is_identical_to_plain_encode() {
@@ -718,5 +698,63 @@ mod tests {
         let mut r = BerReader::new(&buf);
         let mut got = Any::default();
         assert!(ber_decode_primitive(PrimitiveRefMut::Any(&mut got), BerTagging::Explicit(context_2), &mut r).is_err());
+    }
+}
+
+/// Test-only per-codec entry points for a bare primitive value, routed
+/// through the same dispatch functions the codec walkers use
+/// (`ber_encode_primitive` with `Delegate` framing, `xer_encode_primitive`,
+/// ...). Lets each primitive's own unit tests exercise exactly the
+/// production path without a per-type codec method.
+#[cfg(test)]
+pub(crate) mod test_codec {
+    use super::*;
+    use crate::spec::object::{AsMemberRef, MemberRef, MemberRefMut};
+    use crate::xer::reader::XerReader;
+
+    fn prim<T: AsMemberRef + ?Sized>(v: &T) -> PrimitiveRef<'_> {
+        match v.as_member_ref() {
+            MemberRef::Primitive(p) => p,
+            _ => panic!("test_codec: not a primitive"),
+        }
+    }
+
+    fn prim_mut<T: AsMemberRef + ?Sized>(v: &mut T) -> PrimitiveRefMut<'_> {
+        match v.as_member_ref_mut() {
+            MemberRefMut::Primitive(p) => p,
+            _ => panic!("test_codec: not a primitive"),
+        }
+    }
+
+    pub fn ber_encode<T: AsMemberRef + ?Sized>(v: &T, out: &mut Vec<u8>) {
+        ber_encode_primitive(prim(v), BerTagging::Delegate, out)
+    }
+
+    pub fn ber_decode_into<T: AsMemberRef + ?Sized>(v: &mut T, r: &mut BerReader) -> Result<(), BerDecodeError> {
+        ber_decode_primitive(prim_mut(v), BerTagging::Delegate, r)
+    }
+
+    pub fn xer_encode<T: AsMemberRef + ?Sized>(v: &T, out: &mut String, depth: usize) {
+        xer_encode_primitive(prim(v), out, depth)
+    }
+
+    pub fn xer_decode_into<T: AsMemberRef + ?Sized>(v: &mut T, r: &mut XerReader) -> Result<(), BerDecodeError> {
+        xer_decode_primitive(prim_mut(v), r)
+    }
+
+    pub fn jer_encode<T: AsMemberRef + ?Sized>(v: &T, out: &mut String) {
+        jer_encode_primitive(prim(v), out)
+    }
+
+    pub fn jer_decode_into<T: AsMemberRef + ?Sized>(v: &mut T, r: &mut JerReader) -> Result<(), BerDecodeError> {
+        jer_decode_primitive(prim_mut(v), r)
+    }
+
+    pub fn per_encode<T: AsMemberRef + ?Sized>(v: &T, w: &mut PerWriter, c: &crate::constraints::Constraints) {
+        per_encode_primitive(prim(v), w, c)
+    }
+
+    pub fn per_decode_into<T: AsMemberRef + ?Sized>(v: &mut T, r: &mut PerReader, c: &crate::constraints::Constraints) -> Result<(), PerDecodeError> {
+        per_decode_primitive(prim_mut(v), r, c)
     }
 }

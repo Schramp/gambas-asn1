@@ -88,7 +88,7 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     case ast::BuiltinType::Ia5String:   return "asn1cpp_wire::strings::IA5_STRING_TAG";
     // The other 11 restricted-character-string kinds
     // (native_builtin_type maps each to its own rust-runtime/wire::strings
-    // newtype, not plain String) — each newtype's Asn1Value impl checks its
+    // newtype, not plain String) — each newtype's own TypeTag carries its
     // own tag, matching the constant named here.
     case ast::BuiltinType::Utf8String:       return "asn1cpp_wire::strings::UTF8_STRING_TAG";
     case ast::BuiltinType::NumericString:    return "asn1cpp_wire::strings::NUMERIC_STRING_TAG";
@@ -107,9 +107,9 @@ static const char* builtin_ber_tag(ast::BuiltinType bt, const std::string& mtype
     // like any other builtin (a referenced top-level ENUMERATED type takes
     // the separate `!mbuiltin` TypeRef path instead, unaffected).
     case ast::BuiltinType::Enumerated:       return "asn1cpp_wire::ber::enumerated::ENUMERATED_TAG";
-    // Not yet covered — no Asn1Value impl in rust-runtime/wire for these
-    // kinds yet, so a member of any of them falls back to struct-shape-only
-    // codegen (no encode()/decode() at all if any member is uncovered).
+    // Not yet covered — no PrimitiveRef dispatch in rust-runtime/wire for
+    // these kinds yet, so a member of any of them becomes an Unsupported
+    // row.
     // Only ANY remains uncovered here.
     default:                                 return nullptr;
     }
@@ -187,8 +187,9 @@ static bool is_sizeable_string_kind(ast::BuiltinType bt) {
     }
 }
 
-// Whole-program truth table for "does builtin kind `bt` have a real
-// `Asn1Value::per_encode`/`per_decode_into`?" — an exhaustive switch,
+// Whole-program truth table for "does builtin kind `bt` have a real PER
+// arm in `spec::primitive::per_encode_primitive`/`per_decode_primitive`?"
+// — an exhaustive switch,
 // not an if-chain of early `return true` cases: `-Wswitch` (`-Wall`,
 // enabled project-wide) then flags any `ast::BuiltinType` enumerator
 // this function doesn't mention, so a future kind gaining a real PER
@@ -266,13 +267,11 @@ static bool per_builtin_covered(ast::BuiltinType bt, IntStorageKind storage_kind
     case BT::GeneralizedTime:
         return true;
     // ANY (X.208 legacy, X.691 §10.2 open-type encoding) — length-
-    // prefixed raw captured bytes, unconditionally covered by `Any`'s own
-    // Asn1Value impl (any.rs).
+    // prefixed raw captured bytes, unconditionally covered (`per::any`).
     case BT::Any:
     // OBJECT IDENTIFIER/RELATIVE-OID (X.691 §23/§24, also a §10.2
     // open-type field — same length-prefixed BER-content shape as
-    // REAL/ANY), unconditionally covered by `ObjectIdentifier`'s/
-    // `RelativeOid`'s own Asn1Value impl.
+    // REAL/ANY), unconditionally covered (`per::oid`/`per::relative_oid`).
     case BT::ObjectIdentifier:
     case BT::RelativeOid:
         return true;
@@ -300,11 +299,10 @@ static bool per_ref_or_builtin_covered(std::optional<ast::BuiltinType> mbuiltin,
            ref_kind == TaggedMemberSpec::RefTargetKind::Other;
 }
 
-/// @brief Does a SEQUENCE OF/SET OF element's own shape have a real
-///        `Asn1Value::per_encode`/`per_decode_into`? Recurses through
-///        nested collections to unbounded depth (`ElemShape::nested`),
-///        matching `SeqOf<T>`/`SetOf<T>`'s own fully generic PER impl,
-///        which never inspects `T` beyond calling its trait methods.
+/// @brief Does a SEQUENCE OF/SET OF element's own shape have real PER
+///        coverage? Recurses through nested collections to unbounded
+///        depth (`ElemShape::nested`), matching `per::object`'s SEQUENCE
+///        OF walker, which dispatches each element via its `MemberRef`.
 /// @param shape Resolved, backend-agnostic element shape (`ElemShape`).
 /// @return Whether this element's leaf type is PER-representable.
 static bool per_elem_shape_covered(const ElemShape& shape) {
@@ -510,10 +508,9 @@ void RustBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream
     if (!spec.asn1_name.empty()) os << std::format("/// ASN.1: `{}`\n", spec.asn1_name);
     if (newtype) {
         // A real newtype, not a plain alias: every named INTEGER type needs
-        // its own type identity to carry a per-declaration `Asn1Value`/
-        // `PerValue` impl (its own XER tag name, X.680 §19 range in a
-        // single `validate()`/PER encode call, X.691 wire shape) — the same
-        // reason every other builtin except INTEGER already gets one
+        // its own type identity to carry per-declaration trait impls
+        // (`AsMemberRef` with its own XER element name, `TypeTag`) — the
+        // same reason every other builtin except INTEGER already gets one
         // (OctetString/BitString/the 11 string kinds). A TypeRef member to
         // this type dispatches through the trait (Scalar) exactly like a
         // TypeRef to ENUMERATED or another SEQUENCE/CHOICE, with no
@@ -622,15 +619,12 @@ void RustBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
 /// @param bt Built-in type tag (never SEQUENCE/CHOICE/TypeRef/INTEGER/
 ///           ENUMERATED — same precondition as CppBackend's equivalent).
 /// @return Rust type name, e.g. `"Vec<u8>"`, `"String"`, `"bool"`.
-/// @note `Ia5String` alone maps to plain `String` — it has its own
-///       `Asn1Value for String` impl (`rust-runtime/wire/src/value.rs`),
-///       kept as-is for ergonomics/backward compatibility.
-///       The other 11 restricted-character-string kinds
-///       map to their own `rust-runtime/wire::strings`
-///       newtype (`NumericString`, `PrintableString`, ...) — a plain
-///       `String` can only carry one `Asn1Value` impl, so a second string
-///       kind can't reuse `Ia5String`'s without fighting over which tag to
-///       check/write (see `strings.rs`'s module doc). `Vec<u8>` for OCTET
+/// @note Every restricted-character-string kind maps to its own
+///       `rust-runtime/wire::strings` newtype (`Ia5String`,
+///       `NumericString`, ...) — a plain `String` could carry only one
+///       `TypeTag`/`AsMemberRef` impl, so string kinds can't share it
+///       without fighting over which tag to check/write (see `strings.rs`'s
+///       module doc). `Vec<u8>` for OCTET
 ///       STRING/Any. BIT STRING/OBJECT IDENTIFIER/RELATIVE-OID each have
 ///       their own `bit_string::BitString`/`oid::ObjectIdentifier`/
 ///       `relative_oid::RelativeOid` structs — same
@@ -1136,12 +1130,12 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
 }
 
 /// @brief Is `mtype` a `Vec<T>` (T != u8) reference — a type with no
-///        `Asn1Value` impl at all? Pure string check on the resolved Rust
+///        reflective trait impls at all? Pure string check on the resolved Rust
 ///        type, order-independent (no registration/lookup-by-declaration-
 ///        name needed): a named top-level SEQUENCE OF/SET OF alias
 ///        (`m.mtype == "MySeqOf"`, e.g.) never has this shape at all —
 ///        `emit_seq_of_declaration` gives it a real newtype with its own
-///        `Asn1Value` impl, referenced by name, not resolved-through
+///        `Asn1SeqOf`/`AsMemberRef` impls, referenced by name, not resolved-through
 ///        `"Vec<...>"` text — but an anonymous inline
 ///        SEQUENCE OF/SET OF member (whose type Generator resolves
 ///        directly to the raw `"Vec<i64>"` text, never through a synthetic
@@ -1161,9 +1155,8 @@ static bool rust_mtype_is_unusable_vec(const std::string& mtype) {
 ///        alternative always dispatches through its own resolved tag, see
 ///        `SeqOf<T>`'s own doc) — in the generic
 ///        `asn1cpp_wire::ber::sequence::SeqOf<T>` (rust-runtime/wire/src/sequence.rs),
-///        whose single blanket `impl<T: Asn1Value + Default> Asn1Value for
-///        SeqOf<T>` gives it a real impl `Vec<T>` itself can't
-///        (coherence-blocked). Only applies where `choice_alternative_covered`
+///        whose blanket `Asn1SeqOf`/`AsMemberRef` impls give it what
+///        `Vec<T>` itself can't carry (coherence-blocked). Only applies where `choice_alternative_covered`
 ///        consults it, CHOICE alternatives — a SEQUENCE/SET member's own
 ///        field type is computed separately, `rust_seqof_member_field_type`
 ///        below, since it needs to pick `SetOf<T>` over `SeqOf<T>` for a
@@ -1220,9 +1213,9 @@ static bool element_shape_covered(const ElemShape& shape) {
 /// @brief A SEQUENCE/SET member's own Rust field type, for a SEQUENCE
 ///        OF/SET OF member specifically — `SeqOf<ElemType>`/`SetOf<ElemType>`
 ///        (`rust-runtime/wire/src/sequence.rs`) instead of a raw
-///        `Vec<ElemType>`, which has no `Asn1Value` impl of its own
+///        `Vec<ElemType>`, which has no reflective trait impls of its own
 ///        (coherence-blocked, same reasoning `rust_seqof_alt_mtype`'s own
-///        doc gives). Once the field itself implements `Asn1Value`, the
+///        doc gives). Once the field itself implements `AsMemberRef`, the
 ///        member-table emission below needs no dedicated SeqOf-shaped
 ///        closures at all — it falls through to the same
 ///        Scalar/TaggedScalar/ExplicitScalar dispatch every other
@@ -1255,9 +1248,9 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 /// @note `mbuiltin` unset means the member's type is a TypeRef to
 ///       something else entirely — SEQUENCE/SET/CHOICE, ENUMERATED, or a
 ///       plain INTEGER subtype alias. Any such reference is always real:
-///       `Asn1Value` is object-safe, and the referenced type is guaranteed
-///       to implement it (really or as a stub) regardless of processing
-///       order, so there's nothing to look up in advance. The one
+///       the referenced type is guaranteed to implement `AsMemberRef`
+///       regardless of processing order, so there's nothing to look up in
+///       advance. The one
 ///       exception is presence detection, not trait coverage: an OPTIONAL
 ///       member whose type is a genuinely untagged CHOICE (X.680 §28, no
 ///       AUTOMATIC TAGS, no fixed tag at all) has no `Tag` to peek for at
@@ -1268,7 +1261,7 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 ///       (nothing to peek for a required field either way). Every named
 ///       type — a top-level SEQUENCE OF/SET OF alias, an INTEGER of any
 ///       storage kind including ARBITRARY — gets its own real newtype with
-///       a real `Asn1Value` impl (`emit_seq_of_declaration`,
+///       real reflective trait impls (`emit_seq_of_declaration`,
 ///       `integer::ArbitraryInteger`), referenced by name, so there's no
 ///       remaining case here where a TypeRef reference is unsafe to treat
 ///       as real.
@@ -1424,10 +1417,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // exclude nearly every member in the schema.
     auto per_member_covered = [](const SequenceMemberSpec& m) -> bool {
         if (m.seq_of_kind != SeqOfKind::None) {
-            // `SeqOf<T>`/`SetOf<T>`'s own PER impl (`ber::sequence`) is
-            // fully generic over `T: Asn1Value` — it never inspects `T`'s
-            // kind, just calls `T::per_encode`/`per_decode_into` per
-            // element against the collection's own `element` Constraints
+            // `per::object`'s SEQUENCE OF walker never inspects the element
+            // kind, just dispatches each element's `MemberRef` against the
+            // collection's own `element` Constraints
             // (`emit_seq_of_definition`'s own doc). So this only needs to
             // ask whether the element's *own* shape has a real PerValue
             // impl — recursing through any nesting depth — not whether
@@ -1877,9 +1869,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         // `encode_pdu`/`decode_pdu` binds on it (`spec::object::Asn1Pdu`).
         os << std::format("impl asn1cpp_wire::spec::object::Asn1Pdu for {} {{}}\n\n", spec.type_name);
 
-        // Mirrors this type's own ber_natural_tag() — a member/
-        // alternative referencing this type by name can ask for its
-        // tag without an Asn1Value in hand.
+        // A member/alternative referencing this type by name asks for its
+        // tag via `<T as TypeTag>::TAG`.
         os << "\n";
         os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", spec.type_name);
         os << std::format("    const TAG: ::std::option::Option<asn1cpp_wire::Tag> = Some({}.tag);\n", obj_spec_ident);
@@ -2439,8 +2430,8 @@ void RustBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSes
 ///       Rust type, and Rust trait impls are per-*type*, not per-alias —
 ///       `Vec<ElemType>` might be some *other* ASN.1 type's own native
 ///       storage too (OCTET STRING's `Vec<u8>`, another SEQUENCE OF with
-///       the same element type), so it can't carry an `Asn1Value` impl
-///       specific to *this* ASN.1 type. A newtype is a genuinely distinct
+///       the same element type), so it can't carry trait impls specific
+///       to *this* ASN.1 type. A newtype is a genuinely distinct
 ///       Rust type, so it can — see emit_seq_of_definition's own doc for
 ///       that impl. `Deref`/`DerefMut` to `Vec<ElemType>` keep `.len()`/
 ///       `.iter()`/indexing working without needing `.0` everywhere.

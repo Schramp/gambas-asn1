@@ -1,25 +1,21 @@
-//! Native Rust wire-encoding runtime — BER, XER, and PER share one crate
-//! (and one `Asn1Value` trait, `value` module) so a generated type
-//! implements it exactly once, mirroring the C++ runtime's own single
-//! `Asn1Object`/`TypeDescriptor` model serving every codec (`ICodec`
-//! dispatches BER/XER/JER/PER off the same table).
+//! Native Rust wire-encoding runtime — BER, XER, JER, and PER share one
+//! crate and one set of codec-agnostic tables, mirroring the C++ runtime's
+//! single `TypeDescriptor` model serving every codec (`ICodec` dispatches
+//! BER/XER/JER/PER off the same table).
 //!
 //! ## Layout
 //!
-//! `spec` holds the codec-agnostic tables codegen emits
-//! (`SequenceSpec`/`ChoiceSpec`/`EnumSpec`), `value` the shared
-//! `Asn1Value` trait, `constraints` the shared X.680 §51 SubtypeConstraint
-//! data — all three read by every codec. `ber` is BER's TLV stream
-//! primitives (`reader`, `writer`, `tag`) plus the SEQUENCE/CHOICE/
-//! ENUMERATED walkers that drive the shared tables for BER. `xer` is XER's
-//! own stream primitives and walkers. `per` is PER (X.691 unaligned) —
-//! its own bit-level `reader`/`writer` and per-construct encode/decode,
-//! module-nested to avoid name collisions with `ber`'s TLV-shaped modules
-//! of the same name. Every per-type wrapper module at the root (`integer`,
-//! `boolean`, `octet_string`, ...) implements `Asn1Value` once against
-//! all three — one `impl` block per type covers BER, XER and PER together
-//! (`value` module doc explains why Rust's lack of specialization forces
-//! this).
+//! `spec` holds the codec-agnostic tables and reflective traits codegen
+//! emits against (`SequenceSpec`/`ChoiceSpec`/`EnumSpec`, `Asn1Seq`/
+//! `Asn1Choice`/`Asn1SeqOf`/`AsMemberRef`/`Asn1Pdu`, and `PrimitiveRef`
+//! dispatch for the builtin leaf types); `constraints` holds the shared
+//! X.680 §51 SubtypeConstraint data. Each codec is its own module — `ber`
+//! (TLV `reader`/`writer`/`tag`), `xer`, `jer`, `per` (X.691 unaligned,
+//! bit-level `reader`/`writer`) — with one reflective walker in its
+//! `object.rs` that matches on `MemberRef`. Every per-type wrapper module
+//! at the root (`integer`, `boolean`, `octet_string`, ...) defines its
+//! newtype and wire-level helper functions; no codec trait is implemented
+//! per type.
 //!
 //! Definite-length BER only; indefinite-length (X.690 §8.1.3.2) isn't
 //! implemented (see `ber::reader` module docs).

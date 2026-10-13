@@ -9,7 +9,7 @@
 //!
 //! `native_builtin_type` already mapped REAL to plain `f64` before this
 //! issue — no collision to route around (unlike BIT STRING/OID/RELATIVE-OID,
-//! `f64` had no prior `Asn1Value` impl claiming it).
+//! `f64` had no other ASN.1 kind claiming it).
 
 use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::{universal, Tag};
@@ -17,7 +17,7 @@ use crate::ber::writer::write_primitive;
 
 pub const REAL_TAG: Tag = Tag::universal(universal::REAL, false);
 
-/// REAL (X.680 §21) — a real type carrying its own `Asn1Value` impl.
+/// REAL (X.680 §21) — its own newtype, with its own `PrimitiveRef` variant.
 #[derive(Debug, Clone, Copy, Default, PartialEq, PartialOrd)]
 pub struct Real(pub f64);
 

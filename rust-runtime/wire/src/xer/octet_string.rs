@@ -3,20 +3,11 @@
 //! uppercase hex pairs (`write_hex_bytes`, `runtime/src/HexEncoder.hpp`)
 //! — distinct from BIT STRING/hex-string types' *spaced* hex
 //! (`format_hex_bytes`), not implemented here. Also carries the BASE64
-//! and utf8 ENCODING-CONTROL (X.693 §21) alternative encodings: a
-//! generated builtin-alias type's own `Asn1Value` impl
-//! (`RustBackend::emit_builtin_alias_definition`) calls `base64_encode`/
-//! `base64_decode`/`utf8_encode`/`utf8_decode` directly instead of
-//! going through `OctetString`'s own hex `xer_encode`/`xer_decode_into`
-//! when `BuiltinAliasSpec::xer_encoding` says so — there's no
-//! per-instance flag on `OctetString` itself to branch on (Rust's
-//! `Asn1Value` is a compile-time trait impl, not a runtime-descriptor-
-//! driven dispatch the way C++'s `TypeDescriptor::xer_encoding` field
-//! is), so the choice is baked into the generated type's own method
-//! bodies at codegen time. `octet_string::base64_encode`/`base64_decode`/
-//! `utf8_encode`/`utf8_decode` re-export these at their original path
-//! so that generated code (which names them by that path) keeps
-//! compiling unchanged.
+//! and UTF8 ENCODING-CONTROL (X.693 §21) alternative encodings, which
+//! `xer::object` selects per member/element from the table's
+//! `XerInstruction` (`MemberMeta::xer_instruction`, or an element type's
+//! `AsMemberRef::XER_INSTRUCTION`) — the Rust counterpart of C++'s
+//! `TypeDescriptor::xer_encoding` field.
 
 use crate::ber::reader::DecodeError;
 use crate::xer::reader::XerReader;
@@ -172,8 +163,8 @@ pub fn utf8_encode(input: &[u8], out: &mut String) {
 /// `crate::xer::reader::unescape`) interleaved with Table 3 empty-element tags.
 /// Mirrors `decode_utf8_text` in `runtime/src/XerCodec.cpp`, but — unlike
 /// that C++ function — does not consume the element's own open/close
-/// tags: matches this crate's existing `Asn1Value::xer_decode_into`
-/// convention, where the generic walker owns tag consumption, not the
+/// tags: matches this crate's XER decode convention, where the generic
+/// walker owns tag consumption, not the
 /// per-type decode logic. Stops (without consuming) at the first tag
 /// that isn't a recognized control-character empty-element tag — that's
 /// the caller's own closing tag.

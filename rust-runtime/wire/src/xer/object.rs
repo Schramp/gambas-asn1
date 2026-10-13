@@ -6,7 +6,6 @@
 use crate::ber::reader::DecodeError;
 use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut, XerInstruction, NOT_A_PDU};
 use crate::spec::primitive::{xer_decode_primitive, xer_encode_primitive, PrimitiveRef, PrimitiveRefMut};
-use crate::value::Asn1Value;
 use crate::xer::reader::XerReader;
 use crate::xer::writer::{indent, write_close_tag, write_open_tag};
 
@@ -51,16 +50,15 @@ fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &m
     out.push_str(&indent(depth));
     write_open_tag(out, name);
     match (instruction, &m) {
-        (XerInstruction::Base64, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => x.xer_encode_base64(out),
-        (XerInstruction::Utf8, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => x.xer_encode_utf8(out),
+        (XerInstruction::Base64, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => out.push_str(&crate::xer::octet_string::base64_encode(&x.0)),
+        (XerInstruction::Utf8, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => crate::xer::octet_string::utf8_encode(&x.0, out),
         _ => encode_bare(m, out, depth),
     }
     if is_choice {
-        // Mirrors the old per-type `Asn1Value::xer_encode` override for
-        // CHOICE, which added this same trailing bit after
-        // `encode_choice_xer_into` — every other kind's own content
-        // already ends at the right place for `write_close_tag` to
-        // follow directly.
+        // A CHOICE's content ends after its alternative's own closing
+        // tag, so the member's closing tag goes on its own indented line
+        // (C++ `ChoiceXerHandler`'s member-embedded form) — every other
+        // kind's content already ends where `write_close_tag` follows.
         out.push('\n');
         out.push_str(&indent(depth));
     }
@@ -137,8 +135,8 @@ fn decode_bare(m: MemberRefMut, r: &mut XerReader) -> Result<(), DecodeError> {
 /// Decode counterpart of `encode_wrapped`'s instruction check.
 fn decode_instructed(instruction: XerInstruction, m: MemberRefMut, r: &mut XerReader) -> Result<(), DecodeError> {
     match (instruction, m) {
-        (XerInstruction::Base64, MemberRefMut::Primitive(PrimitiveRefMut::OctetString(x))) => x.xer_decode_into_base64(r),
-        (XerInstruction::Utf8, MemberRefMut::Primitive(PrimitiveRefMut::OctetString(x))) => x.xer_decode_into_utf8(r),
+        (XerInstruction::Base64, MemberRefMut::Primitive(PrimitiveRefMut::OctetString(x))) => { x.0 = crate::xer::octet_string::base64_decode(r.read_text_content().trim()); Ok(()) }
+        (XerInstruction::Utf8, MemberRefMut::Primitive(PrimitiveRefMut::OctetString(x))) => { x.0 = crate::xer::octet_string::utf8_decode(r)?; Ok(()) }
         (_, m) => decode_bare(m, r),
     }
 }
@@ -156,11 +154,7 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut XerReader) -> Result<(), D
 
 /// Writes `\n<indent><altname>content</altname>`, no trailing newline —
 /// the shape a containing member's own wrapper (`encode_wrapped`) or a
-/// further-nested nested nested recursion needs. `pub` (not just crate-
-/// internal) so a generated type's thin `Asn1Value::xer_encode` forwarder
-/// (used only by an external caller invoking the trait method directly —
-/// the generated SEQUENCE/CHOICE walkers always go through `MemberRef`
-/// instead) can reach it.
+/// further-nested recursion needs.
 pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usize) {
     let Some(i) = obj.active_index() else {
         panic!("encode_choice: no alternative matched — codegen/table mismatch");
@@ -253,10 +247,8 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
         any = true;
         match &el {
             // NULL self-closes as `<NULL/>` as a SEQUENCE OF/SET OF
-            // element (X.693; `value.rs`'s `Asn1Value::
-            // xer_encode_seqof_element` override for `Null` has the
-            // exact same shape) — ignoring any X.693 §12 element
-            // identifier, same as that override's own doc.
+            // element (X.693), ignoring any X.693 §12 element
+            // identifier.
             MemberRef::Primitive(PrimitiveRef::Null(_)) => {
                 out.push('\n');
                 out.push_str(&indent(depth + 1));
@@ -268,8 +260,8 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
             // (a named INTEGER/builtin alias, X.680 §19) that's the
             // *wrapped* type's generic name ("INTEGER"), not the alias's
             // own override ("TimeslotISCP") — `elem_natural_xer_name`
-            // reads the un-unwrapped element's own `Asn1Value::
-            // xer_element_name()` directly (`Asn1SeqOf`'s own doc).
+            // reads the un-unwrapped element's own `AsMemberRef::
+            // own_element_xer_name()` directly (`Asn1SeqOf`'s own doc).
             // `obj.elem_xer_instruction()`, not `XerInstruction::Default`:
             // an aliased element (`SEQUENCE OF Base64Data`, `Base64Data
             // ::= OCTET STRING` with an X.693 §21 BASE64/UTF8 ENCODING-

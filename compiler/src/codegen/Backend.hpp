@@ -184,7 +184,7 @@ enum class SeqOfKind { None, SeqOf, SetOf };
 ///        (never inherited from the level above, so mixed nesting is
 ///        represented correctly, not forced uniform).
 /// @note Exists because the final per-level wrapper (`SeqOf<T>`/`SetOf<T>`
-///       — a real type, real `Asn1Value` impl each) is *not* derivable from
+///       — a real type, real `Asn1SeqOf` impl each) is *not* derivable from
 ///       `mtype` text alone: `Backend::wrap_collection_type` renders every
 ///       nesting level identically as the same placeholder shape
 ///       (`"Vec<...>"`) regardless of whether that level is SEQUENCE OF or
@@ -516,8 +516,7 @@ struct TaggedMemberSpec {
     // (alongside SEQUENCE/SET, CHOICE, and named SEQUENCE OF/SET OF,
     // already split out by `ref_is_sequence_or_set`/`ref_is_seq_of`
     // above). `classify_typeref_for_per`'s own `Other` return for this
-    // case already confirms the target has a real `Asn1Value`/`PerValue`
-    // impl; this field additionally carries *which* builtin it wraps, so
+    // case already confirms the target has real PER support; this field additionally carries *which* builtin it wraps, so
     // `RustBackend`'s reflective access classification can route it
     // through `Asn1Seq`/`MemberRef::Primitive` the same way a direct
     // builtin member would (unwrapping
@@ -533,7 +532,7 @@ struct TaggedMemberSpec {
     // inline type, never an alias's. A TypeRef member
     // unwraps to the alias's native field via `AsMemberRef`
     // (`emit_builtin_alias_definition`), which discards the alias's own
-    // Base64/Utf8 `Asn1Value` override just as completely as it discards
+    // Base64/Utf8 override just as completely as it discards
     // a re-tagged alias's own BER tag (`AccessKind::Primitive`'s
     // `is_explicit` branch, `RustBackend.cpp`) — so RustBackend's
     // `classify` needs this threaded through to route such a member to
@@ -650,7 +649,7 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // wrapper belongs at which nesting depth), not the text itself.
     // Likewise the element's own X.693 per-element XER tag comes
     // generically from the element *value* at runtime (e.g. RustBackend's
-    // Asn1Value::xer_element_name), the same way C++'s SeqOfXerHandler
+    // `AsMemberRef::own_element_xer_name`), the same way C++'s SeqOfXerHandler
     // reaches its element's own TypeDescriptor::name. A backend without
     // SEQUENCE OF/SET OF table support can ignore both fields; seq_of_kind
     // == None leaves elem_shape meaningless. The only place SEQUENCE OF

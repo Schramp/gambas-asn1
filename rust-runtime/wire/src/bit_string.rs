@@ -6,7 +6,7 @@
 //! `Vec<u8>` newtype like OCTET STRING/the restricted-character-string kinds
 //! — `Vec<u8>` alone can't carry the unused-bits count, and even if it
 //! could, `RustBackend::native_builtin_type` already maps OCTET STRING to
-//! plain `Vec<u8>`, so a second, different `Asn1Value`
+//! plain `Vec<u8>`, so a second, different `TypeTag`/`AsMemberRef`
 //! impl for the same concrete type would conflict (Rust allows only one
 //! trait impl per concrete type — same reasoning `strings.rs`'s module doc
 //! gives for the 11 restricted-character-string newtypes).
