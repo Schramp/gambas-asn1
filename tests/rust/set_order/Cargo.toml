@@ -1,0 +1,14 @@
+[package]
+name = "set-order-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the SET component order test (per_set_order_test.asn1): BER decode in any order, canonical BER/PER encode. Pulls generated .rs from ASN1CPP_RUST_SETORD_GEN_DIR (set by tests/CMakeLists.txt's rust_set_order), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "set_order"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }

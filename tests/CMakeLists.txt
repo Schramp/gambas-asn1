@@ -851,6 +851,26 @@ target_link_libraries(test_per_ext PRIVATE asn1cpp_runtime)
 add_test(NAME per_ext COMMAND test_per_ext)
 set_tests_properties(per_ext PROPERTIES TIMEOUT 30)
 
+# ---- SET component order (X.680 §8.6, X.690 §8.11.2/§10.3, X.691 §20) -------
+# per_set_order_test.asn1 declares SET components out of tag order: BER
+# decode must accept any order, BER and PER encode the canonical order.
+# Expected bytes are asn1c's DER / UPER output (see seq/test_set_order.cpp).
+set(SET_ORDER_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_set_order_test)
+add_custom_command(
+    OUTPUT  ${SET_ORDER_GEN_DIR}/Rec.hpp ${SET_ORDER_GEN_DIR}/Rec.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SET_ORDER_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_set_order_test.asn1
+            -o ${SET_ORDER_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_set_order_test.asn1
+    COMMENT "Generating C++ from per_set_order_test.asn1"
+)
+add_executable(test_set_order seq/test_set_order.cpp ${SET_ORDER_GEN_DIR}/Rec.cpp)
+target_include_directories(test_set_order PRIVATE ${SET_ORDER_GEN_DIR})
+target_link_libraries(test_set_order PRIVATE asn1cpp_runtime)
+add_test(NAME set_order COMMAND test_set_order)
+set_tests_properties(set_order PROPERTIES TIMEOUT 30)
+
 # ---- -fprefix namespace test (issue #16) ------------------------------------
 # Verifies that -fprefix=<name> wraps generated types in namespace <name>.
 # Uses per_ext_test.asn1 (already available) regenerated with -fprefix=testns.
@@ -1692,6 +1712,28 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_xer_vectors_202 PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_XV202_GEN_DIR=${RUST_XV202_GEN_DIR}")
+endif()
+
+# Rust leg of the SET component order test — see tests/rust/set_order/src/main.rs.
+set(RUST_SETORD_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_set_order)
+add_custom_command(
+    OUTPUT  ${RUST_SETORD_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_SETORD_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_set_order_test.asn1
+                                   -o ${RUST_SETORD_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_set_order_test.asn1
+    COMMENT "Generating Rust from per_set_order_test.asn1"
+)
+add_custom_target(gen_rust_set_order ALL DEPENDS ${RUST_SETORD_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_set_order
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/set_order/Cargo.toml)
+    set_tests_properties(rust_set_order PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_SETORD_GEN_DIR=${RUST_SETORD_GEN_DIR}")
 endif()
 
 # Rust leg of the deeply nested anonymous CHOICE-in-CHOICE regression
