@@ -594,7 +594,7 @@ public:
     /// @param def     TypeDescriptor carrying SIZE/alphabet constraints (from generated table).
     /// @param src     `AsnStringBase*` holding the string value to encode.
     /// @see X.691 §26.5 (known-multiplier character string encoding); §12 (size constraints).
-    void encode(const PerCodec&, PerEncodeStream& stream,
+    void encode(const PerCodec& codec, PerEncodeStream& stream,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const std::string& str = static_cast<const AsnStringBase*>(src)->str();
         const Constraints& pc = def.constraints;
@@ -634,8 +634,13 @@ public:
             if (in_root && has_alpha) in_root = alphabet_in_root();
             stream.put_bits(in_root ? 0 : 1, 1);
             if (!in_root) {
-                // Out-of-root: encode as open type (X.691 §18.8) — byte-length prefixed raw bytes.
-                per_detail::put_octets(stream, reinterpret_cast<const uint8_t*>(str.data()), str.size());
+                // X.691 §26.4: outside the extension root the value is encoded
+                // as if there were neither an effective size constraint nor an
+                // effective PermittedAlphabet constraint: the general length and
+                // the type's own character width.
+                TypeDescriptor plain = def;
+                plain.constraints = Constraints{};
+                encode(codec, stream, plain, src);
                 return;
             }
         }
@@ -710,17 +715,17 @@ public:
     /// @param def     TypeDescriptor carrying SIZE/alphabet constraints.
     /// @param dest    `AsnStringBase*` to receive the decoded string.
     /// @see X.691 §26.5.
-    DecodeResult decode(const PerCodec&, PerDecodeStream& stream,
+    DecodeResult decode(const PerCodec& codec, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         const Constraints& pc = def.constraints;
         if (pc.flags & Constraints::EXTENSIBLE) {
             auto ext = stream.get_bits(1);
             if (!ext) return decode_err(ext.error());
             if (*ext) {
-                auto bytes_r = per_detail::get_octets(stream);
-                if (!bytes_r) return decode_err(bytes_r.error());
-                static_cast<AsnStringBase*>(dest)->str() = std::string(bytes_r->begin(), bytes_r->end());
-                return decode_ok();
+                // X.691 §26.4: out of root, decode as the unconstrained type.
+                TypeDescriptor plain = def;
+                plain.constraints = Constraints{};
+                return decode(codec, stream, plain, dest);
             }
         }
         auto [bits, bpc] = string_params(def.tag.number);
