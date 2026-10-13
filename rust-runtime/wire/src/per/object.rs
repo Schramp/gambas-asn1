@@ -6,7 +6,7 @@
 //! generated per-type `*Spec<T>` table.
 
 use crate::constraints::Constraints;
-use crate::per::length::{decode_size_field, encode_size_field, get_length, get_nslength, get_nsnn, put_length, put_nslength, put_nsnn};
+use crate::per::length::{decode_size_and_items, encode_size_and_items, get_nslength, get_nsnn, get_octets, put_nslength, put_nsnn, put_octets};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
@@ -72,29 +72,17 @@ fn encode_open_type(obj: &dyn Asn1Seq, i: usize, w: &mut Writer) {
     let mut tmp = Writer::new();
     access_encode(obj, i, &mut tmp);
     tmp.flush();
-    let bytes = tmp.into_bytes();
-    put_length(w, bytes.len());
-    for b in bytes {
-        w.put_bits(b as u64, 8);
-    }
+    put_octets(w, &tmp.into_bytes());
 }
 
 fn decode_open_type(obj: &mut dyn Asn1Seq, i: usize, r: &mut Reader) -> Result<(), DecodeError> {
-    let len = get_length(r)?;
-    let mut bytes = Vec::with_capacity(len);
-    for _ in 0..len {
-        bytes.push(r.get_bits(8)? as u8);
-    }
+    let bytes = get_octets(r)?;
     let mut inner = Reader::new(&bytes);
     access_decode(obj, i, &mut inner)
 }
 
 fn skip_open_type(r: &mut Reader) -> Result<(), DecodeError> {
-    let len = get_length(r)?;
-    for _ in 0..len {
-        r.get_bits(8)?;
-    }
-    Ok(())
+    get_octets(r).map(|_| ())
 }
 
 pub fn encode_seq_content(obj: &dyn Asn1Seq, w: &mut Writer) {
@@ -224,11 +212,7 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, w: &mut Writer) {
         let mut tmp = Writer::new();
         encode_bare(obj.get_active(), constraints, &mut tmp);
         tmp.flush();
-        let bytes = tmp.into_bytes();
-        put_length(w, bytes.len());
-        for b in bytes {
-            w.put_bits(b as u64, 8);
-        }
+        put_octets(w, &tmp.into_bytes());
     }
 }
 
@@ -251,20 +235,13 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> R
         let ext_idx = get_nsnn(r)?;
         let def_idx = root_count + ext_idx as usize;
         if def_idx >= obj.spec().alternatives.len() {
-            let len = get_length(r)?;
-            for _ in 0..len {
-                r.get_bits(8)?;
-            }
+            get_octets(r)?;
             return Err(DecodeError::new(
                 "PER: CHOICE extension alternative unknown to this schema (no capture mechanism yet)",
                 r.bit_pos(),
             ));
         }
-        let len = get_length(r)?;
-        let mut bytes = Vec::with_capacity(len);
-        for _ in 0..len {
-            bytes.push(r.get_bits(8)? as u8);
-        }
+        let bytes = get_octets(r)?;
         let mut inner = Reader::new(&bytes);
         let constraints = obj.spec().alternatives[def_idx].constraints;
         decode_bare(obj.select_mut(def_idx), constraints, &mut inner)
@@ -276,18 +253,24 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> R
 // ---------------------------------------------------------------------
 
 pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Writer) {
-    encode_size_field(w, pc, obj.len());
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
     if obj.natural_tag() == crate::spec::sequence::SET_TAG && obj.len() > 1 {
-        encode_set_of_sorted(obj, elem, w);
+        let parts = set_of_sorted_parts(obj, elem, w);
+        encode_size_and_items(w, pc, parts.len(), |w, range| {
+            for (bytes, nbits) in &parts[range] {
+                w.put_bit_string(bytes, *nbits);
+            }
+        });
         return;
     }
-    for i in 0..obj.len() {
-        encode_bare(obj.get(i), elem, w);
-    }
+    encode_size_and_items(w, pc, obj.len(), |w, range| {
+        for i in range {
+            encode_bare(obj.get(i), elem, w);
+        }
+    });
 }
 
-/// @brief Writes a SET OF's elements in the order X.691 §21.1
+/// @brief Encodes a SET OF's elements and orders them as X.691 §21.1
 ///        (CANONICAL-PER) defines: ascending by component encoding,
 ///        compared as bit strings zero-padded to an octet boundary, the
 ///        shorter one extended with 0-octets. The only order the standard
@@ -295,9 +278,10 @@ pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Write
 ///        `SeqOfPerHandler` emit the same.
 /// @param obj  The SET OF value.
 /// @param elem Per-element constraints.
-/// @param w    Destination; each element's exact bits are appended.
+/// @param w    Destination; only receives an encode-failure flag here.
+/// @return Each element's encoding and exact bit count, in §21.1 order.
 /// @see X.691 §21.1, §21.2.
-fn encode_set_of_sorted(obj: &dyn Asn1SeqOf, elem: &Constraints, w: &mut Writer) {
+fn set_of_sorted_parts(obj: &dyn Asn1SeqOf, elem: &Constraints, w: &mut Writer) -> Vec<(Vec<u8>, usize)> {
     let mut parts: Vec<(Vec<u8>, usize)> = (0..obj.len())
         .map(|i| {
             let mut ew = Writer::new();
@@ -317,17 +301,18 @@ fn encode_set_of_sorted(obj: &dyn Asn1SeqOf, elem: &Constraints, w: &mut Writer)
             .find(|(x, y)| x != y)
             .map_or(std::cmp::Ordering::Equal, |(x, y)| x.cmp(&y))
     });
-    for (bytes, nbits) in &parts {
-        w.put_bit_string(bytes, *nbits);
-    }
+    parts
 }
 
 pub fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, pc: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
-    let count = decode_size_field(r, pc)?;
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
-    for _ in 0..count {
-        decode_bare(obj.push_default_mut(), elem, r)?;
-    }
+    decode_size_and_items(r, pc, |r, m| {
+        obj.reserve(m);
+        for _ in 0..m {
+            decode_bare(obj.push_default_mut(), elem, r)?;
+        }
+        Ok(())
+    })?;
     Ok(())
 }
 

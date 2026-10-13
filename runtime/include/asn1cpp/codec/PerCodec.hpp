@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -170,15 +171,25 @@ private:
 
 namespace per_detail {
 
+/// Fragment granularity of X.691 §10.9.3.8: 16K items.
+inline constexpr std::size_t kFragmentUnit = 16384;
+
+/// @brief X.691 §10.9.3.6–10.9.3.7 length determinant for \p n < 16K:
+///        short form (≤127, one octet) or long form (two octets, top bits
+///        0b10). A count of 16K or more is only valid together with its
+///        items, through put_length_and_items().
 inline void put_length(PerEncodeStream& stream, std::size_t n) {
+    assert(n < kFragmentUnit && "lengths >= 16K need put_length_and_items");
     if (n <= 127) {
         stream.put_bits(n, 8);
-    } else if (n <= 16383) {
+    } else {
         stream.put_bits(0x80 | (n >> 8), 8);
         stream.put_bits(n & 0xFF, 8);
     }
 }
 
+/// @brief Decode counterpart of put_length(); a fragment header (0b11) is
+///        an error here, since only get_length_and_items() consumes fragments.
 inline Expected<std::size_t, DecodeError> get_length(PerDecodeStream& stream) {
     auto first = stream.get_bits(8);
     if (!first) return make_unexpected<std::size_t, DecodeError>(first.error());
@@ -189,7 +200,88 @@ inline Expected<std::size_t, DecodeError> get_length(PerDecodeStream& stream) {
         return static_cast<std::size_t>((*first & 0x3F) << 8 | *second);
     }
     return make_unexpected<std::size_t, DecodeError>(
-        DecodeError("PER: fragmented length not implemented"));
+        DecodeError("PER: fragmented length where a single length is required"));
+}
+
+/// @brief Writes a general length determinant for \p n items followed by
+///        the items, fragmenting at 16K (X.691 §10.9.3.5–10.9.3.8).
+/// @param n     Total item count (octets, bits, characters or components).
+/// @param items Callable `(std::size_t from, std::size_t to)` writing the
+///              items with indices in [from, to).
+/// @note While 16K or more items remain, a header octet 0b11000kkk
+///       announces k (1..4) blocks of 16K items, then the remaining count is
+///       encoded the same way; a remainder of 0 yields the trailing 00 octet
+///       of the §10.9.3.8.3 note.
+template<typename WriteItems>
+inline void put_length_and_items(PerEncodeStream& stream, std::size_t n, WriteItems&& items) {
+    std::size_t start = 0;
+    for (;;) {
+        std::size_t rem = n - start;
+        if (rem < kFragmentUnit) {
+            put_length(stream, rem);
+            items(start, n);
+            return;
+        }
+        std::size_t k = std::min<std::size_t>(rem / kFragmentUnit, 4);
+        stream.put_bits(0xC0 | k, 8);
+        items(start, start + k * kFragmentUnit);
+        start += k * kFragmentUnit;
+    }
+}
+
+/// @brief Decode counterpart of put_length_and_items(): reads every
+///        fragment, handing each item count to \p items.
+/// @param items Callable `(std::size_t m) -> DecodeResult` reading m items.
+/// @return The total item count.
+template<typename ReadItems>
+inline Expected<std::size_t, DecodeError> get_length_and_items(PerDecodeStream& stream, ReadItems&& items) {
+    std::size_t total = 0;
+    for (;;) {
+        auto first = stream.get_bits(8);
+        if (!first) return make_unexpected<std::size_t, DecodeError>(first.error());
+        if ((*first & 0xC0) == 0xC0) {
+            std::size_t k = *first & 0x3F;
+            if (k < 1 || k > 4)
+                return make_unexpected<std::size_t, DecodeError>(
+                    DecodeError("PER: fragment multiplier outside 1..4"));
+            if (auto r = items(k * kFragmentUnit); !r)
+                return make_unexpected<std::size_t, DecodeError>(r.error());
+            total += k * kFragmentUnit;
+            continue;
+        }
+        std::size_t n = *first;
+        if (*first & 0x80) {
+            auto second = stream.get_bits(8);
+            if (!second) return make_unexpected<std::size_t, DecodeError>(second.error());
+            n = ((*first & 0x3F) << 8) | *second;
+        }
+        if (auto r = items(n); !r)
+            return make_unexpected<std::size_t, DecodeError>(r.error());
+        return total + n;
+    }
+}
+
+/// @brief General length plus octets (open types, OID/REAL contents).
+inline void put_octets(PerEncodeStream& stream, const uint8_t* data, std::size_t n) {
+    put_length_and_items(stream, n, [&](std::size_t from, std::size_t to) {
+        for (std::size_t i = from; i < to; ++i) stream.put_bits(data[i], 8);
+    });
+}
+
+/// @brief Decode counterpart of put_octets().
+inline Expected<std::vector<uint8_t>, DecodeError> get_octets(PerDecodeStream& stream) {
+    std::vector<uint8_t> out;
+    auto n = get_length_and_items(stream, [&](std::size_t m) -> DecodeResult {
+        out.reserve(out.size() + m);
+        for (std::size_t i = 0; i < m; ++i) {
+            auto b = stream.get_bits(8);
+            if (!b) return decode_err(b.error());
+            out.push_back(static_cast<uint8_t>(*b));
+        }
+        return decode_ok();
+    });
+    if (!n) return make_unexpected<std::vector<uint8_t>, DecodeError>(n.error());
+    return out;
 }
 
 inline Expected<std::vector<uint8_t>, DecodeError> read_bytes(PerDecodeStream& stream, std::size_t n) {
