@@ -70,6 +70,9 @@ pub struct SequenceSpec {
     pub members: &'static [MemberMeta],
     pub ext_at: i32,
     pub roms_count: usize,
+    /// True for a SET: `members` is in canonical tag order (X.680 §8.6),
+    /// and BER decode accepts the components in any order (X.690 §8.11.2).
+    pub is_set: bool,
 }
 
 /// One alternative's wire-framing + validation facts (X.690 §8.13/§8.14)

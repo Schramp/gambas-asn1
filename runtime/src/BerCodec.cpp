@@ -609,9 +609,68 @@ struct SequenceBerHandler final : IBerTypeHandler {
         return decode_body(codec, inner, def, dest);
     }
 private:
+    /// @brief True when a TLV with tag \p t belongs to SET member \p mbr:
+    ///        its own tag, or for an untagged CHOICE member (tag universal 0)
+    ///        one of the CHOICE's alternative tags.
+    static bool set_member_matches(const MemberDescriptor& mbr, Tag t) {
+        if (mbr.type_descriptor && mbr.type_descriptor->choice_spec &&
+            mbr.tag.cls == TagClass::Universal && mbr.tag.number == 0) {
+            const auto& cspec = *mbr.type_descriptor->choice_spec;
+            if (cspec.ber_tags && cspec.ber_tag_count > 0) {
+                for (int j = 0; j < cspec.ber_tag_count; ++j)
+                    if (t.cls == cspec.ber_tags[j].tag.cls && t.number == cspec.ber_tags[j].tag.number)
+                        return true;
+                return false;
+            }
+            for (int j = 0; j < cspec.count; ++j)
+                if (t.cls == cspec.alternatives[j].tag.cls && t.number == cspec.alternatives[j].tag.number)
+                    return true;
+            return false;
+        }
+        return t.cls == mbr.tag.cls && t.number == mbr.tag.number;
+    }
+
+    /// @brief Copies a SET's component TLVs into member-table order, so the
+    ///        sequential walk in decode_body() can decode them. BER allows
+    ///        SET components in any order (X.690 §8.11.2); the table holds
+    ///        them in canonical tag order (X.680 §8.6). A TLV matching no
+    ///        member (an unknown extension addition) goes last.
+    /// @return The reordered TLV bytes, or the read error.
+    static Expected<std::vector<uint8_t>, DecodeError> set_in_table_order(const SequenceSpec& spec,
+                                                                         BerReader scan) {
+        std::vector<std::span<const uint8_t>> slot(static_cast<std::size_t>(spec.count));
+        std::vector<std::span<const uint8_t>> unmatched;
+        while (!scan.at_end()) {
+            auto rest = scan.peek(scan.remaining());
+            std::size_t p0 = scan.pos();
+            Tag t = scan.peek_tag();
+            auto tlv = scan.read_tlv();
+            if (!tlv) return make_unexpected<std::vector<uint8_t>, DecodeError>(tlv.error());
+            auto raw = rest.subspan(0, scan.pos() - p0);
+            bool placed = false;
+            for (int i = 0; i < spec.count && !placed; ++i) {
+                if (!slot[i].empty() || !set_member_matches(spec.members[i], t)) continue;
+                slot[i] = raw;
+                placed = true;
+            }
+            if (!placed) unmatched.push_back(raw);
+        }
+        std::vector<uint8_t> out;
+        for (const auto& r : slot) out.insert(out.end(), r.begin(), r.end());
+        for (const auto& r : unmatched) out.insert(out.end(), r.begin(), r.end());
+        return out;
+    }
+
     static DecodeResult decode_body(const BerCodec& codec, BerReader inner,
                                     const TypeDescriptor& def, Asn1Object* dest) {
         const auto& spec = *def.sequence_spec;
+        std::vector<uint8_t> set_buf;
+        if (spec.is_set) {
+            auto ordered = set_in_table_order(spec, inner);
+            if (!ordered) return decode_err(ordered.error());
+            set_buf = std::move(*ordered);
+            inner = BerReader{std::span<const uint8_t>{set_buf.data(), set_buf.size()}};
+        }
         for (int i = 0; i < spec.count; ++i) {
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) {

@@ -80,6 +80,7 @@ static CONTAINER_SPEC: SequenceSpec = SequenceSpec {
     members: &CONTAINER_MEMBERS,
     ext_at: -1,
     roms_count: 0,
+    is_set: false,
 };
 
 impl Asn1Seq for Container {
