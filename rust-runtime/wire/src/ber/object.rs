@@ -204,7 +204,56 @@ pub fn encode_seq_tagged(obj: &dyn Asn1Seq, tag: Tag, explicit: bool, out: &mut 
 /// default-initialized `obj`. OPTIONAL member detection peeks the wire
 /// tag first, same canonical-order assumption `ber::sequence`'s own
 /// decoder makes.
+/// @brief True when a TLV tagged `t` belongs to SET member `i`: its own
+///        tag, or for an untagged CHOICE member one of the CHOICE's
+///        alternative tags.
+fn set_member_matches(obj: &dyn Asn1Seq, i: usize, t: Tag) -> bool {
+    let m = &obj.spec().members[i];
+    if matches!(m.ber, BerTagging::Delegate) {
+        if let MemberRef::Choice(c) = obj.get_member(i) {
+            return c.spec().ber_tags.iter().any(|d| d.tag == t);
+        }
+    }
+    m.tag == t
+}
+
+/// @brief Copies a SET's component TLVs into member-table order, so the
+///        sequential member walk can decode them. BER allows SET components
+///        in any order (X.690 §8.11.2); the table holds them in canonical
+///        tag order (X.680 §8.6). A TLV matching no member (an unknown
+///        extension addition) goes last.
+/// @return The reordered TLV bytes.
+fn set_in_table_order(obj: &dyn Asn1Seq, content: &[u8]) -> Result<Vec<u8>, DecodeError> {
+    let count = obj.spec().members.len();
+    let mut slot: Vec<Option<&[u8]>> = vec![None; count];
+    let mut unmatched: Vec<&[u8]> = Vec::new();
+    let mut scan = Reader::new(content);
+    while !scan.at_end() {
+        let p0 = scan.pos();
+        let t = scan.read_tlv()?.tag;
+        let raw = &content[p0..scan.pos()];
+        match (0..count).find(|&i| slot[i].is_none() && set_member_matches(obj, i, t)) {
+            Some(i) => slot[i] = Some(raw),
+            None => unmatched.push(raw),
+        }
+    }
+    let mut out = Vec::with_capacity(content.len());
+    for raw in slot.into_iter().flatten().chain(unmatched) {
+        out.extend_from_slice(raw);
+    }
+    Ok(out)
+}
+
 pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), DecodeError> {
+    if obj.spec().is_set {
+        let ordered = set_in_table_order(obj, r.remaining())?;
+        return decode_seq_members(obj, &mut Reader::new(&ordered));
+    }
+    decode_seq_members(obj, r)
+}
+
+/// Sequential member walk shared by SEQUENCE and (reordered) SET content.
+fn decode_seq_members(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), DecodeError> {
     let member_count = obj.spec().members.len();
     for i in 0..member_count {
         let (name, tag, optional, ber) = {
@@ -475,6 +524,7 @@ mod tests {
         members: &INNER_MEMBERS,
         ext_at: -1,
         roms_count: 0,
+        is_set: false,
     };
 
     impl Asn1Seq for Inner {
@@ -524,6 +574,7 @@ mod tests {
         members: &OUTER_MEMBERS,
         ext_at: -1,
         roms_count: 1,
+        is_set: false,
     };
 
     impl Asn1Seq for Outer {

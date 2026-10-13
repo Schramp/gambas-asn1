@@ -1637,6 +1637,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             os << std::format("    members: &{},\n", obj_members_ident);
             os << std::format("    ext_at: {},\n", spec.ext_at);
             os << std::format("    roms_count: {},\n", spec.roms_count);
+            os << std::format("    is_set: {},\n", spec.is_set ? "true" : "false");
             os << "};\n\n";
 
             os << "#[allow(non_upper_case_globals)]\n";
