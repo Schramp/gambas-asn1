@@ -842,9 +842,61 @@ public:
             per_detail::put_length(stream, count);
         }
         const auto& edef = *spec.element;
+        bool is_set_of = (def.tag.cls == TagClass::Universal &&
+                          def.tag.number == UniversalTag::Set);
+        if (is_set_of && count > 1) {
+            encode_set_of_sorted(codec, stream, edef, seq, count);
+            return;
+        }
         IEncodeStream& es = stream;
         for (std::size_t i = 0; i < count; ++i)
             codec.encode(es, edef, seq.get_const(i));
+    }
+
+    /// @brief Writes the first \p count elements of a SET OF in the order
+    ///        X.691 §21.1 (CANONICAL-PER) defines: ascending by component
+    ///        encoding, compared as bit strings zero-padded to an octet
+    ///        boundary, the shorter one extended with 0-octets. The only
+    ///        order the standard defines, and valid BASIC-PER too (X.691 §8);
+    ///        it is also what asn1c emits.
+    /// @param codec  Codec dispatching each element's own encoding.
+    /// @param stream Destination; each element's exact bits are appended.
+    /// @param edef   Element TypeDescriptor.
+    /// @param seq    The SET OF value.
+    /// @param count  Number of elements to write (after any SIZE clamp).
+    /// @see X.691 §21.1, §21.2.
+    static void encode_set_of_sorted(const PerCodec& codec, PerEncodeStream& stream,
+                                     const TypeDescriptor& edef, const SeqOfBase& seq,
+                                     std::size_t count) {
+        struct Encoded { std::vector<uint8_t> bytes; int bits; };
+        std::vector<Encoded> elems;
+        elems.reserve(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            Encoded e;
+            PerEncodeStream es{e.bytes};
+            IEncodeStream& ies = es;
+            codec.encode(ies, edef, seq.get_const(i));
+            e.bits = es.bit_pos();
+            es.flush();
+            if (es.encode_failed()) stream.set_encode_failed("SET OF element");
+            elems.push_back(std::move(e));
+        }
+        auto padded_less = [](const Encoded& a, const Encoded& b) {
+            std::size_t n = std::max(a.bytes.size(), b.bytes.size());
+            for (std::size_t k = 0; k < n; ++k) {
+                uint8_t x = k < a.bytes.size() ? a.bytes[k] : 0;
+                uint8_t y = k < b.bytes.size() ? b.bytes[k] : 0;
+                if (x != y) return x < y;
+            }
+            return false;
+        };
+        std::stable_sort(elems.begin(), elems.end(), padded_less);
+        for (const auto& e : elems) {
+            int full = e.bits / 8;
+            for (int k = 0; k < full; ++k) stream.put_bits(e.bytes[k], 8);
+            if (int rest = e.bits % 8)
+                stream.put_bits(e.bytes[full] >> (8 - rest), rest);
+        }
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
