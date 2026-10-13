@@ -1,0 +1,14 @@
+-- EXTENSIBILITY IMPLIED (X.680 §12) on ENUMERATED: the type behaves as
+-- if "..." ended its value list, so PER adds the extension bit before the
+-- index (X.691 §13.3). asn1c does not apply EXTENSIBILITY IMPLIED to
+-- ENUMERATED (Schramp/asn1c#10), hence skip-asn1c on this target.
+PerExtensibilityImpliedEnumTest DEFINITIONS AUTOMATIC TAGS EXTENSIBILITY IMPLIED ::= BEGIN
+
+Colour ::= ENUMERATED { red, green, blue }
+
+Rec ::= SEQUENCE {
+    colour   Colour,
+    inline   ENUMERATED { low, high }
+}
+
+END

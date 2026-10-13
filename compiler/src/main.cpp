@@ -80,6 +80,37 @@ static void usage(const char* prog) {
     std::exit(1);
 }
 
+/// @brief Applies a module's EXTENSIBILITY IMPLIED (X.680 §12): "equivalent
+///        to the textual insertion of an extension marker ('...') in the
+///        definition of each type in the module for which it is permitted",
+///        at the last position where one is allowed. Appends a marker to
+///        every SEQUENCE, SET and CHOICE member list and every ENUMERATED
+///        value list that has none, nested inline types included, so the
+///        rest of the compiler sees ordinary extensible types.
+/// @param t A type (or member) definition of such a module.
+static void imply_extensibility(asn1::ast::TypeDef& t) {
+    using namespace asn1::ast;
+    if (t.is_sequence() || t.is_set() || t.is_choice()) {
+        for (auto& m : t.members)
+            if (m && !m->is_extension_marker) imply_extensibility(*m);
+        bool has_marker = false;
+        for (const auto& m : t.members) has_marker = has_marker || (m && m->is_extension_marker);
+        if (!has_marker) {
+            auto marker = std::make_shared<TypeDef>();
+            marker->is_extension_marker = true;
+            t.members.push_back(marker);
+        }
+    }
+    if (auto* sof = std::get_if<SequenceOfType>(&t.body); sof && sof->element) imply_extensibility(*sof->element);
+    if (auto* sof = std::get_if<SetOfType>(&t.body); sof && sof->element) imply_extensibility(*sof->element);
+    if (auto* bt = std::get_if<BuiltinType>(&t.body);
+        bt && *bt == BuiltinType::Enumerated && !t.enum_values.empty()) {
+        bool has_marker = false;
+        for (const auto& ev : t.enum_values) has_marker = has_marker || ev.name == "...";
+        if (!has_marker) t.enum_values.push_back(EnumValue{"...", std::nullopt});
+    }
+}
+
 int main(int argc, char** argv) {
     std::string out_dir = "generated";
     std::string ns_prefix;
@@ -201,6 +232,11 @@ int main(int argc, char** argv) {
 
     if (parse_only)
         return 0;
+
+    for (auto& mod : pr.modules)
+        if (mod->extensibility_implied)
+            for (auto& t : mod->assignments)
+                if (t) imply_extensibility(*t);
 
     asn1::sema::Resolver resolver;
     resolver.set_allow_newer_modules(allow_newer_modules);

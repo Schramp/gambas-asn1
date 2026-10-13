@@ -112,4 +112,6 @@ tests/asn1/per_ext_from_test.asn1   Rec  skip-asn1c: asn1c writes 8-bit chars fo
 tests/asn1/per_set_order_test.asn1   Rec
 tests/asn1/per_ext_string_test.asn1   Rec
 tests/asn1/per_choice_unknown_ext_test.asn1   MsgV2
+tests/asn1/per_extensibility_implied_test.asn1   Rec
+tests/asn1/per_extensibility_implied_enum_test.asn1   Rec  skip-asn1c: asn1c does not apply EXTENSIBILITY IMPLIED to ENUMERATED (Schramp/asn1c#10)
 tests/tests-asn1c-compiler/33-misc-OK.asn1   T2
