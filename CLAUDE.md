@@ -32,10 +32,10 @@ Run compiler:
 ```
 
 Rust runtime — a single crate, `rust-runtime/wire/` (package `asn1cpp-wire`), not part
-of the CMake build. BER, XER, and PER all live here under one `Asn1Value` trait: a
-`SequenceSpec<T>`/`ChoiceSpec<T>`/`MemberDescriptor<T>` table per type drives every wire
-encoding, so XER only needed new tag-parsing primitives (`src/xer.rs`) and PER only needed
-its own bit-level stream primitives (`src/per/`), not a separate table or crate.
+of the CMake build. BER, XER, JER, and PER all live here, each as its own module
+(`ber/`, `xer/`, `jer/`, `per/`) with one reflective walker (`<codec>/object.rs`) driven by
+the per-type `SequenceSpec`/`ChoiceSpec`/`EnumSpec` tables (see the architecture-symmetry
+section below).
 `rust-runtime/ber/`, `rust-runtime/per/`, `rust-runtime/constraints/` are empty directories
 (no `Cargo.toml`/`src/`, left over from before the crates were unified) — `asn1cpp-wire`'s
 own description still calls them out as "thin re-export crates... kept for external path
@@ -63,37 +63,33 @@ runtimes (not a naming-fidelity issue — this is runtime-internal infrastructur
 generated identifier) — noted here since grepping one runtime for the other's name finds
 nothing otherwise.
 
-**`Asn1Value` (`value.rs`) is not the primary dispatch mechanism it once was**
-(gambas-asn1#698 epic, 2026-10). Every primitive, builtin-alias, named INTEGER, ENUMERATED,
-SEQUENCE, and CHOICE type's member/element access, and every type's own top-level
-`.encode()`/`.decode()`/`.encode_jer()`/`.decode_jer()`, now goes through the reflective
-`MemberRef`/`Asn1Seq`/`Asn1Choice`/`Asn1SeqOf`/`AsMemberRef`/`EnumSlot` system above instead
-— `spec::primitive.rs`'s own dispatch (`ber_encode_primitive` etc.) matches `PrimitiveRef`
-directly, no trait call. `Option<V>`'s and `Box<T>`'s own `Asn1Value` impls were dead code,
-deleted outright (gambas-asn1#696/#705) — `Box<T>` needs only the reflective `Asn1Seq`/
-`Asn1Choice` blanket impls it already had.
+**Generated types carry no codec code and no `Asn1Value` impl.** Each generated type emits
+tables plus reflective trait impls only: `Asn1Seq`/`Asn1Choice`/`Asn1SeqOf`/`EnumSlot`/
+`AsMemberRef`, `TypeTag`, and — for SEQUENCE/SET, CHOICE, and named SEQUENCE OF/SET OF —
+the `Asn1Pdu` root marker (`spec::object`), whose only content is `PDU_CONSTRAINTS` (a named
+SEQUENCE OF's own SIZE table, X.691 §19/§20). Top-level encode/decode is one generic free
+function set per codec, bound on `Asn1Pdu` and dispatching on `as_member_ref()`:
+`ber::object::{encode_pdu, encode_pdu_into, decode_pdu, decode_pdu_into}`,
+`xer::object::{encode_pdu, decode_pdu}`, `jer::object::{encode_pdu, decode_pdu}`,
+`per::object::{encode_pdu, encode_pdu_into, decode_pdu, decode_pdu_into}`. Adding a codec is
+one new `<codec>/object.rs` — zero codegen diff.
 
-`ber::sequence::SeqOf<T>`/`SetOf<T>`'s XER leg, and the matching XER leg of a top-level named
-SEQUENCE OF/SET OF type's own `.encode_xer()`/`.decode_xer()`, are now fully reflective too
-(closing the one case noted above) — `AsMemberRef::own_element_xer_name` recovers an aliased
-element's own real declared name (gambas-asn1#710/#711 caught the regression against a real
-RRC schema mid-migration — `SEQUENCE OF Digit` rendering `<INTEGER>` instead of `<Digit>`), and
-`AsMemberRef::XER_INSTRUCTION` — a compile-time associated const, not a method, since a
-per-element X.693 §21 BASE64/UTF8 ENCODING-CONTROL override (gambas-asn1#687) is a fact of the
-element's *type*, not of any particular decoded value — recovers the encoding half the same
-way, straight off the un-unwrapped element type, no instance needed. `Asn1SeqOf::
-elem_xer_instruction` (`&self -> XerInstruction`, no index: one element type per collection,
-X.690 §8.9.2) is `SeqOf<T>`/`SetOf<T>`'s sole caller, reading `T::XER_INSTRUCTION` directly.
-`RustBackend::emit_builtin_alias_definition` is the only place that ever overrides the const
-(to `Base64`/`Utf8`, from the schema's own `xer_encoding`); every other `AsMemberRef`
-implementor keeps the trait's `Default`.
+`SeqOf<T>`/`SetOf<T>` (`ber/sequence.rs`, inline SEQUENCE OF/SET OF field types) implement
+only `Asn1SeqOf`/`AsMemberRef`. An aliased element's real declared name and its X.693 §21
+BASE64/UTF8 override come from `AsMemberRef::own_element_xer_name`/`XER_INSTRUCTION` on the
+element type; `RustBackend::emit_builtin_alias_definition` is the only place that overrides
+`XER_INSTRUCTION`.
+
+`Asn1Value` (`value.rs`) is now implemented only by the builtin primitive leaf types (plus
+`#[cfg(test)]` fixtures). `spec::primitive.rs`'s dispatch already calls each primitive's free
+codec functions directly via `PrimitiveRef`/`PrimitiveRefMut`, so the trait's codec methods
+are vestigial; removing them is gambas-asn1#719.
 
 `BerTraits<T>` (`runtime/include/asn1cpp/codec/BerTraits.hpp` + per-type
 specializations) is the one asymmetry: a template-based static-dispatch
 layer that only BER has, never referenced by codegen (only by hand-written
 code/tests and internally by `BerCodec.cpp`/`PerCodec.cpp`/
-`RandomFiller.cpp` as an implementation detail). Rust has no equivalent —
-`Asn1Value` has always been the sole mechanism. Tracked for removal on
+`RandomFiller.cpp` as an implementation detail). Rust has no equivalent. Tracked for removal on
 `main`: gambas-asn1#380 (dead `BerTraits<bool>`/`<int64_t>`/`<uint64_t>`
 raw-primitive forwarders — zero callers) and gambas-asn1#381 (the rest of
 the template layer — confirmed removable, no structural blocker in any of

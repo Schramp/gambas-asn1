@@ -751,7 +751,7 @@ mod per_blanket_tests {
     }
 
     #[test]
-    fn seq_of_integer_via_trait_matches_size_field_plus_element_loop() {
+    fn seq_of_integer_reflective_per_matches_size_field_plus_element_loop() {
         static ELEM: Constraints = Constraints {
             flags: Constraints::CONSTRAINED, range_bits: 4, lower_bound: 0, upper_bound: 15,
             lower_u64: 0, upper_u64: 0, size_range_bits: 0, size_lower: 0, size_upper: 0,
@@ -762,16 +762,16 @@ mod per_blanket_tests {
             element: Some(&ELEM), ..Default::default()
         };
         let v = crate::ber::sequence::SeqOf(vec![Integer(1), Integer(9), Integer(15)]);
-        let via_trait = bytes_of(|w| v.per_encode(w, &coll));
+        let via_walker = bytes_of(|w| crate::per::object::encode_seqof_content(&v, &coll, w));
         let manual = bytes_of(|w| {
             crate::per::length::encode_size_field(w, &coll, 3);
             for x in [1i64, 9, 15] {
                 crate::per::integer::encode_int(w, &ELEM, x);
             }
         });
-        assert_eq!(via_trait, manual);
+        assert_eq!(via_walker, manual);
         let mut back = crate::ber::sequence::SeqOf::<Integer>(vec![]);
-        back.per_decode_into(&mut Reader::new(&via_trait), &coll).unwrap();
+        crate::per::object::decode_seqof_content_into(&mut back, &coll, &mut Reader::new(&via_walker)).unwrap();
         assert_eq!(back.0, vec![Integer(1), Integer(9), Integer(15)]);
     }
 
@@ -1446,16 +1446,16 @@ mod tests {
 
         let empty: SeqOf<Integer> = SeqOf(vec![]);
         let mut out = String::new();
-        empty.jer_encode(&mut out);
+        crate::jer::object::encode_seqof_into(&empty, &mut out);
         assert_eq!(out, "[]");
 
         let v: SeqOf<Integer> = SeqOf(vec![Integer(1), Integer(2), Integer(3)]);
         let mut out2 = String::new();
-        v.jer_encode(&mut out2);
+        crate::jer::object::encode_seqof_into(&v, &mut out2);
         assert_eq!(out2, "[1,2,3]");
         let mut r = crate::jer::reader::Reader::new(&out2);
         let mut got: SeqOf<Integer> = SeqOf::default();
-        got.jer_decode_into(&mut r).unwrap();
+        crate::jer::object::decode_seqof_into(&mut got, &mut r).unwrap();
         assert_eq!(got.0, v.0);
     }
 }
