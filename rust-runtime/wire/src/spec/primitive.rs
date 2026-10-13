@@ -37,7 +37,7 @@
 //! to be overridden once per type — needs no trait bound at all. This is
 //! what gambas-asn1#697/#698 call "the dispatch flip".
 //!
-//! An application that only calls `.encode()`/`.decode()` (BER) never
+//! An application that only calls `ber::object::encode_pdu`/`decode_pdu` never
 //! calls `xer_encode_primitive`/`jer_encode_primitive`/
 //! `per_encode_primitive` — and nothing else references them either,
 //! since no table stores their address — so rustc's own reachability-

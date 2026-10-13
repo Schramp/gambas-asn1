@@ -188,7 +188,7 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usiz
 }
 
 /// X.693 §8.3.1 document-root wrapper — only the top-level
-/// `encode_xer()` entry point uses this; a nested CHOICE member/element
+/// `encode_pdu` entry point uses this; a nested CHOICE member/element
 /// uses `encode_choice_content` (via `encode_bare`) directly, no type
 /// name wrapper.
 pub fn encode_choice(obj: &dyn Asn1Choice) -> String {
@@ -302,10 +302,9 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
 }
 
 /// X.693 §8.3.1 document-root wrapper for a *named* (top-level) SEQUENCE
-/// OF/SET OF type — `RustBackend::emit_seq_of_definition`'s own
-/// `.encode_xer()` entry point; an inline member's `SeqOf<T>`/`SetOf<T>`
-/// uses `encode_seqof_content` directly instead (no root wrapper of its
-/// own, see `Asn1Value::xer_encode` there).
+/// OF/SET OF type — `encode_pdu`'s SEQUENCE OF arm; an inline member's
+/// `SeqOf<T>`/`SetOf<T>` uses `encode_seqof_content` directly instead
+/// (no root wrapper of its own).
 pub fn encode_seqof_named(obj: &dyn Asn1SeqOf) -> String {
     let mut out = String::new();
     write_open_tag(&mut out, obj.own_xer_name());

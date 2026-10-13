@@ -1217,27 +1217,18 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         alphabet_bits, alphabet_expr, spec.alphabet.size());
 }
 
-/// @brief Emit a Rust size-check function for a SEQUENCE OF / SET OF type's
-///        collection SIZE constraint (X.680 §25/26), plus its `Asn1Value` impl.
+/// @brief Emit the definition half of a named SEQUENCE OF/SET OF type: its
+///        own SIZE `Constraints` table, the reflective `Asn1SeqOf`/
+///        `AsMemberRef` impls every codec walker dispatches through, and the
+///        `Asn1Pdu` root marker carrying that table as `PDU_CONSTRAINTS`.
 /// @param spec Resolved, backend-agnostic decision (see SeqOfSpec).
 /// @param os   Output stream to write to.
-/// @note `spec.elem_ref` is a C++ TypeDescriptor reference expression, not
-///       usable by any other backend, so unused here. The size-check
-///       function itself is generic over the element type (`Vec<T>`),
-///       matching this issue's "likely Vec<T>" scoping note, and needs no
-///       element type information to compile — even when unconstrained
-///       (degenerates to a trivial `>= 0` check) rather than introducing a
-///       has-constraint field SeqOfSpec doesn't otherwise need.
-/// @note All four legs (BER/XER/JER/PER) are always emitted, unconditionally
-///       — every generated SEQUENCE OF/SET OF newtype's element type always
-///       implements the reflective `AsMemberRef` (same "no gating,
-///       composite references are always safe" reasoning
-///       `sequence_member_covered`'s own doc gives), so there's no per-type
-///       coverage gate here at all. The per-element X.693 §12 name/BASE64-
-///       UTF8 instruction XER needs comes from `AsMemberRef::
-///       own_element_xer_name`/`XER_INSTRUCTION` on `spec.elem_type` at
-///       runtime (`Asn1SeqOf::elem_natural_xer_name`/`elem_xer_instruction`
-///       below), not from anything gated at codegen time.
+/// @note No codec logic is emitted for the type itself: BER/XER/JER/PER reach
+///       it through `<codec>::object` (`encode_pdu`/`decode_pdu` at top
+///       level, `MemberRef::SeqOf` as a member). The per-element X.693 §12
+///       name / §21 BASE64-UTF8 instruction comes from the element type's
+///       own `AsMemberRef::own_element_xer_name`/`XER_INSTRUCTION`.
+/// @see X.680 §25/§26 (SEQUENCE OF/SET OF), X.691 §19/§20 (PER count).
 void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
     // Plain `static` data, not a generated per-type function
     // — always emitted, real bounds or not: every generated SEQUENCE
@@ -1335,56 +1326,6 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
         cname);
     os << "}\n\n";
 
-    // PDU entry points for a top-level named SEQUENCE OF/SET OF type —
-    // mirrors emit_sequence_definition's/emit_choice_definition's own
-    // `impl {Type} { pub fn encode/decode/encode_xer/... }` block, so a
-    // top-level SeqOf type is usable standalone, not only as a member
-    // elsewhere. All four legs route through the reflective `Asn1SeqOf`
-    // wrappers (`ber::object`/`xer::object`/`jer::object`) — no
-    // `Asn1Value` needed for any of them (gambas-asn1#710/#711): XER's
-    // own per-element X.693 §21 BASE64/UTF8 ENCODING-CONTROL override is
-    // read via `AsMemberRef::XER_INSTRUCTION`, a compile-time const on
-    // the element's own type, instead (gambas-asn1#687's own closing fix
-    // — `Asn1SeqOf::elem_xer_instruction` below).
-    os << std::format("impl {} {{\n", spec.type_name);
-    os << "    pub fn encode(&self) -> Vec<u8> {\n";
-    if (spec.has_size_constraint) {
-        os << std::format(
-            "        asn1cpp_wire::validate::check_delta(asn1cpp_wire::constraints::validate_size(self.0.len(), &{}), \"{}\", \"encode\");\n",
-            cname, spec.type_name);
-    }
-    os << "        asn1cpp_wire::ber::object::encode_seqof(self)\n";
-    os << "    }\n\n";
-    os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-    os << "        let mut v = Self::default();\n";
-    os << "        let mut r = asn1cpp_wire::Reader::new(data);\n";
-    os << "        asn1cpp_wire::ber::object::decode_seqof_into(&mut v, &mut r)?;\n";
-    if (spec.has_size_constraint) {
-        os << std::format(
-            "        asn1cpp_wire::validate::check_delta(asn1cpp_wire::constraints::validate_size(v.0.len(), &{}), \"{}\", \"decode\");\n",
-            cname, spec.type_name);
-    }
-    os << "        Ok(v)\n";
-    os << "    }\n\n";
-    os << "    pub fn encode_xer(&self) -> String {\n";
-    os << "        asn1cpp_wire::xer::object::encode_seqof_named(self)\n";
-    os << "    }\n\n";
-    os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-    os << "        let mut v = Self::default();\n";
-    os << "        let mut r = asn1cpp_wire::xer::reader::XerReader::new(xml);\n";
-    os << "        asn1cpp_wire::xer::object::decode_seqof_named_into(&mut v, &mut r)?;\n";
-    os << "        Ok(v)\n";
-    os << "    }\n\n";
-    os << "    pub fn encode_jer(&self) -> String {\n";
-    os << "        asn1cpp_wire::jer::object::encode_seqof(self)\n";
-    os << "    }\n\n";
-    os << "    pub fn decode_jer(json: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-    os << "        let mut v = Self::default();\n";
-    os << "        let mut r = asn1cpp_wire::jer::reader::Reader::new(json);\n";
-    os << "        asn1cpp_wire::jer::object::decode_seqof_into(&mut v, &mut r)?;\n";
-    os << "        Ok(v)\n";
-    os << "    }\n";
-    os << "}\n\n";
     // Whole-document root marker (`spec::object::Asn1Pdu`), carrying
     // this type's own SIZE table for PER count encoding (X.691 §19/§20).
     os << std::format(
@@ -1673,13 +1614,15 @@ void RustBackend::emit_sequence_declaration(const SequenceSpec& spec, std::ostre
     os << "}\n\n";
 }
 
-/// @brief Emit an inherent `impl` block for a SEQUENCE/SET type.
+/// @brief Emit the definition half of a SEQUENCE/SET type: `new()`, the
+///        member tables (`SequenceSpec` + getter/default/validate rows)
+///        behind its reflective `Asn1Seq` impl, `TypeTag`/`AsMemberRef`,
+///        and the `Asn1Pdu` root marker.
 /// @param spec Resolved, backend-agnostic decision (see SequenceSpec).
 /// @param os   Output stream to write to.
-/// @note Scope is "struct + fields" per this pairing — no setter/validation
-///       machinery (Rust's `pub` fields + `Option<T>` don't need C++'s
-///       unique_ptr-based setter dance); a real `new()` that just delegates
-///       to the struct's own `#[derive(Default)]`, not a stub.
+/// @note Tables only — every codec reaches the type through its own
+///       `<codec>::object` walker (`encode_pdu`/`decode_pdu` at top level).
+/// @see X.680 §25 (SEQUENCE), §27 (SET).
 void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream& os) const {
     os << std::format("impl {} {{\n", spec.type_name);
     os << "    pub fn new() -> Self {\n";
@@ -2195,35 +2138,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             os << std::format("    fn validate(&self, i: usize) -> i64 {{ {}[i].map_or(0, |f| f(self)) }}\n", validate_ident);
             os << "}\n\n";
 
-        os << std::format("impl {} {{\n", spec.type_name);
-        os << "    pub fn encode(&self) -> Vec<u8> {\n";
-        os << "        asn1cpp_wire::ber::object::encode_seq(self)\n";
-        os << "    }\n\n";
-        os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut v = Self::default();\n";
-        os << "        let mut r = asn1cpp_wire::Reader::new(data);\n";
-        os << "        asn1cpp_wire::ber::object::decode_seq_into(&mut v, &mut r)?;\n";
-        os << "        Ok(v)\n";
-        os << "    }\n\n";
-        os << "    pub fn encode_xer(&self) -> String {\n";
-        os << "        asn1cpp_wire::xer::object::encode_seq(self)\n";
-        os << "    }\n\n";
-        os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut v = Self::default();\n";
-        os << "        let mut r = asn1cpp_wire::xer::reader::XerReader::new(xml);\n";
-        os << "        asn1cpp_wire::xer::object::decode_seq_into(&mut v, &mut r)?;\n";
-        os << "        Ok(v)\n";
-        os << "    }\n\n";
-        os << "    pub fn encode_jer(&self) -> String {\n";
-        os << "        asn1cpp_wire::jer::object::encode_seq(self)\n";
-        os << "    }\n\n";
-        os << "    pub fn decode_jer(json: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut v = Self::default();\n";
-        os << "        let mut r = asn1cpp_wire::jer::reader::Reader::new(json);\n";
-        os << "        asn1cpp_wire::jer::object::decode_seq_into(&mut v, &mut r)?;\n";
-        os << "        Ok(v)\n";
-        os << "    }\n";
-        os << "}\n\n";
         // Whole-document root marker: every codec's top-level
         // `encode_pdu`/`decode_pdu` binds on it (`spec::object::Asn1Pdu`).
         os << std::format("impl asn1cpp_wire::spec::object::Asn1Pdu for {} {{}}\n\n", spec.type_name);
@@ -2367,16 +2281,14 @@ void RustBackend::emit_choice_declaration(const ChoiceSpec& spec, std::ostream& 
     os << "}\n\n";
 }
 
-/// @brief Emit per-alternative accessor functions for a CHOICE type.
+/// @brief Emit the definition half of a CHOICE type: the alternative
+///        tables behind its reflective `Asn1Choice` impl, `TypeTag`/
+///        `AsMemberRef`, and the `Asn1Pdu` root marker.
 /// @param spec Resolved, backend-agnostic decision (see ChoiceSpec).
 /// @param os   Output stream to write to.
-/// @note Free functions doing an exhaustive `match`, not methods — the
-///       Rust analogue of the C++ side's offset-based accessor methods,
-///       but compiler-checked
-///       (exhaustive match) rather than an unchecked `reinterpret_cast`:
-///       worst case on a mismatched variant is a controlled panic, not UB.
-///       `tag_index_table`/`ber_tags` (BER wire-dispatch specific) are
-///       unused here — no runtime wiring yet, same as every prior pairing.
+/// @note Tables only — every codec reaches the type through its own
+///       `<codec>::object` walker (`encode_pdu`/`decode_pdu` at top level).
+/// @see X.680 §29 (CHOICE).
 void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os) const {
     std::string prefix = escape(to_snake_case(spec.type_name));
     // A CHOICE with exactly one alternative makes every
@@ -2712,34 +2624,6 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         }
         os << "}\n\n";
 
-        os << std::format("impl {} {{\n", spec.type_name);
-        os << "    pub fn encode(&self) -> Vec<u8> {\n";
-        os << "        asn1cpp_wire::ber::object::encode_choice(self)\n";
-        os << "    }\n\n";
-        os << "    pub fn decode(data: &[u8]) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut v = Self::default();\n";
-        os << "        let mut r = asn1cpp_wire::Reader::new(data);\n";
-        os << "        asn1cpp_wire::ber::object::decode_choice_into(&mut v, &mut r)?;\n";
-        os << "        Ok(v)\n";
-        os << "    }\n\n";
-        os << "    pub fn encode_xer(&self) -> String {\n";
-        os << "        asn1cpp_wire::xer::object::encode_choice(self)\n";
-        os << "    }\n\n";
-        os << "    pub fn decode_xer(xml: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut v = Self::default();\n";
-        os << "        asn1cpp_wire::xer::object::decode_choice(xml, &mut v)?;\n";
-        os << "        Ok(v)\n";
-        os << "    }\n\n";
-        os << "    pub fn encode_jer(&self) -> String {\n";
-        os << "        asn1cpp_wire::jer::object::encode_choice(self)\n";
-        os << "    }\n\n";
-        os << "    pub fn decode_jer(json: &str) -> Result<Self, asn1cpp_wire::DecodeError> {\n";
-        os << "        let mut v = Self::default();\n";
-        os << "        let mut r = asn1cpp_wire::jer::reader::Reader::new(json);\n";
-        os << "        asn1cpp_wire::jer::object::decode_choice_into(&mut v, &mut r)?;\n";
-        os << "        Ok(v)\n";
-        os << "    }\n";
-        os << "}\n\n";
         // Whole-document root marker: every codec's top-level
         // `encode_pdu`/`decode_pdu` binds on it (`spec::object::Asn1Pdu`).
         os << std::format("impl asn1cpp_wire::spec::object::Asn1Pdu for {} {{}}\n\n", spec.type_name);
