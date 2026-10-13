@@ -1,0 +1,25 @@
+-- CHOICE alternatives that are inline SEQUENCE OF / SET OF (X.680 §25/§26,
+-- X.691 §20), the shape ETSI LI's Payload uses for iRIPayloadSequence etc.
+-- Covers an unconstrained alternative, a SIZE-constrained alternative
+-- (its PER SIZE bounds must come from the alternative's promoted type),
+-- a SET OF alternative, and a plain alternative for contrast.
+RustChoiceSeqOfAltPerTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Item ::= SEQUENCE {
+    id    INTEGER (0..255),
+    label UTF8String (SIZE (1..16)) OPTIONAL
+}
+
+Payload ::= CHOICE {
+    items     SEQUENCE OF Item,
+    small     SEQUENCE SIZE (1..4) OF Item,
+    flags     SET OF Item,
+    single    INTEGER (0..1000)
+}
+
+Envelope ::= SEQUENCE {
+    seq       INTEGER (0..65535),
+    payload   Payload
+}
+
+END
