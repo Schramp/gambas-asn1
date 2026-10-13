@@ -1,4 +1,4 @@
-# Known PER gaps (gambas-asn1#730): one schema per suspected unsupported
+# Known PER gaps (epic gambas-asn1#736): one schema per suspected unsupported
 # feature. Not part of the gating targets.txt sweep; run with
 #   xval_sweep.py --targets-file validation-tools/xval_sweep/targets_per_gaps.txt
 # A target moves to targets.txt once it passes. Several of these gaps are
@@ -8,8 +8,9 @@
 # Not covered here:
 # - INTEGER BigInteger/ArbitraryInteger storage (spec::primitive PER
 #   unimplemented): no ASN.1 input selects that storage today.
-# - Decoding an unknown CHOICE extension alternative: needs a sender
-#   compiled from a newer schema version than the receiver.
+# - Decoding an unknown CHOICE extension alternative: covered by the
+#   ctests choice_unknown_ext / rust_choice_unknown_ext (two versions of
+#   one CHOICE in per_choice_unknown_ext_test.asn1).
 
-tests/asn1/per_gap_ext_string_test.asn1   Rec
+# Extension addition group [[ ]]: gambas-asn1#746.
 tests/asn1/per_gap_ext_group_test.asn1    Rec

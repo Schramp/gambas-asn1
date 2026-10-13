@@ -5,6 +5,7 @@
 //! `Asn1Seq`/`Asn1Choice`/`Asn1SeqOf` accessors rather than a
 //! generated per-type `*Spec<T>` table.
 
+use crate::ber::tag::Tag;
 use crate::constraints::Constraints;
 use crate::per::length::{decode_ext_size_and_items, encode_ext_size_and_items, get_nslength, get_nsnn, get_octets, put_nslength, put_nsnn, put_octets};
 use crate::per::reader::{DecodeError, Reader};
@@ -235,11 +236,13 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> R
         let ext_idx = get_nsnn(r)?;
         let def_idx = root_count + ext_idx as usize;
         if def_idx >= obj.spec().alternatives.len() {
-            get_octets(r)?;
-            return Err(DecodeError::new(
-                "PER: CHOICE extension alternative unknown to this schema (no capture mechanism yet)",
-                r.bit_pos(),
-            ));
+            // X.691 §23.8: an extension alternative this schema version
+            // doesn't define still arrives as a complete open type. Keep its
+            // contents (under a context tag carrying the extension index)
+            // instead of failing, as the C++ ChoicePerHandler skips it.
+            let bytes = get_octets(r)?;
+            obj.construct_unknown_extension(Tag::context(ext_idx as u32, false), bytes);
+            return Ok(());
         }
         let bytes = get_octets(r)?;
         let mut inner = Reader::new(&bytes);
