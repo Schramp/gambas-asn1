@@ -9,7 +9,7 @@
 //! closure bridges to/from the real field type.
 
 use crate::constraints::Constraints;
-use crate::per::length::{decode_size_and_items, encode_size_and_items};
+use crate::per::length::{decode_ext_size_and_items, encode_ext_size_and_items};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 
@@ -17,7 +17,7 @@ use crate::per::writer::Writer;
 /// caller's own representation) — passed explicitly rather than derived
 /// here, since this crate doesn't know the caller's unused-bits convention.
 pub fn encode_bit_string(w: &mut Writer, pc: &Constraints, bytes: &[u8], bit_count: usize) {
-    encode_size_and_items(w, pc, bit_count, |w, range| {
+    encode_ext_size_and_items(w, pc, bit_count, |w, range| {
         for i in range {
             w.put_bits(((bytes[i / 8] >> (7 - i % 8)) & 1) as u64, 1);
         }
@@ -29,7 +29,7 @@ pub fn encode_bit_string(w: &mut Writer, pc: &Constraints, bytes: &[u8], bit_cou
 pub fn decode_bit_string(r: &mut Reader, pc: &Constraints) -> Result<(Vec<u8>, u8), DecodeError> {
     let mut bytes: Vec<u8> = Vec::new();
     let mut nbits = 0usize;
-    let bit_count = decode_size_and_items(r, pc, |r, m| {
+    let bit_count = decode_ext_size_and_items(r, pc, |r, m| {
         for _ in 0..m {
             if nbits % 8 == 0 {
                 bytes.push(0);
