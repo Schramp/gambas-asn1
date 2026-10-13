@@ -5,8 +5,8 @@
 //!
 //! The per-kind X.680 §51 checks themselves (INTEGER range, SIZE, FROM
 //! alphabet, ENUMERATED unknown-value) are table-driven functions in
-//! `constraints`/`spec::enumerated`, called from per-member VALIDATE rows,
-//! primitive dispatch, and `encode_pdu`'s top-level SIZE check. This
+//! `constraints`/`spec::enumerated`, called from per-member VALIDATE rows
+//! and `encode_pdu`'s top-level SIZE check. This
 //! module is only the plumbing: a global failure counter
 //! (`bump_validate_fail`/`validate_fail_count`, mirroring
 //! the C++ side's `ValidateCounter.hpp` exactly — same relaxed-ordering
@@ -20,9 +20,10 @@
 //! has); `DBG_VALIDATE_TRACE` additionally prints each failure. Unlike the
 //! C++ side, there is no separate `ASN1CPP_VALIDATE` compile-time gate —
 //! this crate has no cargo-feature equivalent wired up yet, and the
-//! per-call `debug_flags()` check already makes the disabled case cheap
-//! (one atomic load, correctly-predicted not-taken branch — the same
-//! "hot path pays zero between report scopes" reasoning
+//! valid case is already cheap: `check_delta` inlines to one `delta != 0`
+//! test at the call site and only a nonzero delta reaches the cold,
+//! out-of-line `debug_flags()` gate and report (the same "hot path pays
+//! zero between report scopes" reasoning
 //! `runtime/include/asn1cpp/codec/Validation.hpp` uses for its own
 //! richer path-tracking layer, intentionally not ported here — this is
 //! only the counter, not `ValidationReport`/`ValidatePathScope`).
@@ -52,30 +53,33 @@ pub fn bump_validate_fail() {
 
 /// Gate + report a constraint-check delta computed by the caller —
 /// the shared funnel for every X.680 §51 check: per-member rows
-/// (`ber::object`'s `Asn1Seq::validate`), primitive dispatch
-/// (`spec::primitive`), and a named SEQUENCE OF's top-level SIZE check
-/// (`ber::object::encode_pdu_into`). `phase` is `"encode"` or `"decode"`,
-/// only used for the trace line.
+/// (`ber::object`'s `Asn1Seq::validate`) and a named SEQUENCE OF's
+/// top-level SIZE check (`ber::object::encode_pdu_into`). `phase` is
+/// `"encode"` or `"decode"`, only used for the trace line.
 ///
-/// A no-op when `debug::DBG_NO_VALIDATE` is set (checked first — one
-/// atomic load, same "hot path pays zero" reasoning
-/// `runtime/include/asn1cpp/codec/Validation.hpp` uses on the C++ side).
-/// `debug::DBG_VALIDATE_TRACE` additionally prints each failure; without
-/// it, failures are counted (`bump_validate_fail`) but silent — matching
-/// `BerCodec.cpp`'s own `record_validate_fail`/`DBG_VALIDATE_TRACE` split.
+/// Inlined so a valid value (`delta == 0`) costs one compare at the call
+/// site; everything else lives in the cold [`report`].
+#[inline]
 pub fn check_delta(delta: i64, name: &str, phase: &str) {
+    if delta != 0 {
+        report(delta, name, phase);
+    }
+}
+
+/// Out-of-line slow path of [`check_delta`]. A no-op when
+/// `debug::DBG_NO_VALIDATE` is set; `debug::DBG_VALIDATE_TRACE`
+/// additionally prints each failure; without it, failures are counted
+/// (`bump_validate_fail`) but silent — matching `BerCodec.cpp`'s own
+/// `record_validate_fail`/`DBG_VALIDATE_TRACE` split.
+#[cold]
+#[inline(never)]
+fn report(delta: i64, name: &str, phase: &str) {
     if crate::debug::debug_flags() & crate::debug::DBG_NO_VALIDATE != 0 {
         return;
     }
-    report(delta, name, phase);
-}
-
-fn report(delta: i64, name: &str, phase: &str) {
-    if delta != 0 {
-        bump_validate_fail();
-        if crate::debug::debug_flags() & crate::debug::DBG_VALIDATE_TRACE != 0 {
-            eprintln!("[VALIDATE-{}][BER] {} delta={}", phase.to_uppercase(), name, delta);
-        }
+    bump_validate_fail();
+    if crate::debug::debug_flags() & crate::debug::DBG_VALIDATE_TRACE != 0 {
+        eprintln!("[VALIDATE-{}][BER] {} delta={}", phase.to_uppercase(), name, delta);
     }
 }
 

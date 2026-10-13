@@ -117,31 +117,29 @@ for_each_primitive!(define_ref_enum);
 // BER (X.690)
 // ---------------------------------------------------------------------
 
-/// Shared BER encode composition: validate `self` (constraint delta
-/// already computed by the caller, who alone knows which per-type
-/// `validate` function — if any — applies), then write one TLV under
-/// `tag` with `content` as the value octets (X.690 §8.1).
-fn ber_checked_encode(out: &mut Vec<u8>, tag: Tag, delta: i64, name: &str, content: impl FnOnce(&mut Vec<u8>)) {
-    crate::validate::check_delta(delta, name, "encode");
+/// Shared BER encode composition: writes one TLV under `tag` (natural or
+/// an X.690 §8.14 override) with `content` as the value octets (X.690
+/// §8.1). Constraint validation is not done here: a primitive carries no
+/// constraint of its own, so the SEQUENCE/SET walker
+/// (`ber::object::encode_seq_content`) checks each member against its
+/// table-driven `Asn1Seq::validate` row instead.
+fn ber_write_tlv(out: &mut Vec<u8>, tag: Tag, content: impl FnOnce(&mut Vec<u8>)) {
     crate::ber::writer::write_tagged(out, tag, content);
 }
 
-/// Decode counterpart of [`ber_checked_encode`] — reads one TLV, checks
-/// its tag, and hands the value octets to `decode_content`, which both
-/// mutates the target and returns the post-decode validation delta.
-fn ber_checked_decode(
+/// Decode counterpart of [`ber_write_tlv`]: reads one TLV, checks its tag
+/// against `tag` (X.690 §8.1.2), and hands the value octets to
+/// `decode_content`, which writes the decoded value into the target.
+fn ber_read_tlv(
     r: &mut BerReader,
     tag: Tag,
-    name: &str,
-    decode_content: impl FnOnce(&[u8]) -> Result<i64, BerDecodeError>,
+    decode_content: impl FnOnce(&[u8]) -> Result<(), BerDecodeError>,
 ) -> Result<(), BerDecodeError> {
     let tlv = r.read_tlv()?;
     if tlv.tag != tag {
         return Err(BerDecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
     }
-    let delta = decode_content(tlv.value)?;
-    crate::validate::check_delta(delta, name, "decode");
-    Ok(())
+    decode_content(tlv.value)
 }
 
 /// This primitive's own natural BER tag (X.690 §8.1.2) — `ANY` has none
@@ -209,63 +207,63 @@ fn natural_tag_of_mut(p: &PrimitiveRefMut) -> Tag {
 
 fn ber_encode_tagged_(p: PrimitiveRef, tag: Tag, out: &mut Vec<u8>) {
     match p {
-        PrimitiveRef::Boolean(x) => ber_checked_encode(out, tag, 0, "Boolean", |buf| buf.extend_from_slice(&crate::boolean::encode_boolean_content(x.0))),
-        PrimitiveRef::Integer(x) => ber_checked_encode(out, tag, crate::constraints::validate_s64(x.0, &crate::constraints::UNCONSTRAINED), "Integer", |buf| buf.extend_from_slice(&crate::integer::encode_integer_bytes(x.0))),
-        PrimitiveRef::UInteger(x) => ber_checked_encode(out, tag, crate::constraints::validate_u64(x.0, &crate::constraints::UNCONSTRAINED), "UInteger", |buf| buf.extend_from_slice(&crate::integer::encode_integer_bytes_u64(x.0))),
-        PrimitiveRef::BigInteger(x) => ber_checked_encode(out, tag, 0, "BigInteger", |buf| buf.extend_from_slice(&crate::integer::encode_integer_bytes_i128(x.0))),
-        PrimitiveRef::ArbitraryInteger(x) => ber_checked_encode(out, tag, 0, "ArbitraryInteger", |buf| crate::integer::encode_arbitrary_integer_content(&x.0, buf)),
-        PrimitiveRef::Real(x) => ber_checked_encode(out, tag, 0, "Real", |buf| crate::real::encode_real_content(buf, x.0)),
-        PrimitiveRef::Null(_) => ber_checked_encode(out, tag, 0, "Null", |_buf| {}),
-        PrimitiveRef::OctetString(x) => ber_checked_encode(out, tag, crate::constraints::validate_size(x.0.len(), &crate::constraints::UNCONSTRAINED), "OctetString", |buf| buf.extend_from_slice(&x.0)),
-        PrimitiveRef::BitString(x) => ber_checked_encode(out, tag, crate::constraints::validate_size(x.bit_count(), &crate::constraints::UNCONSTRAINED), "BitString", |buf| crate::bit_string::encode_bit_string_content(buf, x)),
-        PrimitiveRef::ObjectIdentifier(x) => ber_checked_encode(out, tag, 0, "ObjectIdentifier", |buf| crate::oid::encode_object_identifier_content(buf, x)),
-        PrimitiveRef::RelativeOid(x) => ber_checked_encode(out, tag, 0, "RelativeOid", |buf| crate::relative_oid::encode_relative_oid_content(buf, x)),
+        PrimitiveRef::Boolean(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(&crate::boolean::encode_boolean_content(x.0))),
+        PrimitiveRef::Integer(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(&crate::integer::encode_integer_bytes(x.0))),
+        PrimitiveRef::UInteger(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(&crate::integer::encode_integer_bytes_u64(x.0))),
+        PrimitiveRef::BigInteger(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(&crate::integer::encode_integer_bytes_i128(x.0))),
+        PrimitiveRef::ArbitraryInteger(x) => ber_write_tlv(out, tag, |buf| crate::integer::encode_arbitrary_integer_content(&x.0, buf)),
+        PrimitiveRef::Real(x) => ber_write_tlv(out, tag, |buf| crate::real::encode_real_content(buf, x.0)),
+        PrimitiveRef::Null(_) => ber_write_tlv(out, tag, |_buf| {}),
+        PrimitiveRef::OctetString(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(&x.0)),
+        PrimitiveRef::BitString(x) => ber_write_tlv(out, tag, |buf| crate::bit_string::encode_bit_string_content(buf, x)),
+        PrimitiveRef::ObjectIdentifier(x) => ber_write_tlv(out, tag, |buf| crate::oid::encode_object_identifier_content(buf, x)),
+        PrimitiveRef::RelativeOid(x) => ber_write_tlv(out, tag, |buf| crate::relative_oid::encode_relative_oid_content(buf, x)),
         PrimitiveRef::Any(_) => unreachable!("ANY has no content-only BER form — ber_encode is overridden directly, never reaches ber_encode_tagged"),
-        PrimitiveRef::Utf8String(x) => ber_checked_encode(out, tag, crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED), "Utf8String", |buf| buf.extend_from_slice(x.0.as_bytes())),
-        PrimitiveRef::NumericString(x) => ber_checked_encode(out, tag, crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED), "NumericString", |buf| buf.extend_from_slice(x.0.as_bytes())),
-        PrimitiveRef::PrintableString(x) => ber_checked_encode(out, tag, crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED), "PrintableString", |buf| buf.extend_from_slice(x.0.as_bytes())),
-        PrimitiveRef::T61String(x) => ber_checked_encode(out, tag, crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED), "T61String", |buf| buf.extend_from_slice(x.0.as_bytes())),
-        PrimitiveRef::Ia5String(x) => ber_checked_encode(out, tag, crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED), "Ia5String", |buf| buf.extend_from_slice(x.0.as_bytes())),
-        PrimitiveRef::VisibleString(x) => ber_checked_encode(out, tag, crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED), "VisibleString", |buf| buf.extend_from_slice(x.0.as_bytes())),
-        PrimitiveRef::GeneralString(x) => ber_checked_encode(out, tag, crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED), "GeneralString", |buf| buf.extend_from_slice(x.0.as_bytes())),
-        PrimitiveRef::GraphicString(x) => ber_checked_encode(out, tag, crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED), "GraphicString", |buf| buf.extend_from_slice(x.0.as_bytes())),
-        PrimitiveRef::UniversalString(x) => ber_checked_encode(out, tag, crate::constraints::validate_size(x.0.len(), &crate::constraints::UNCONSTRAINED), "UniversalString", |buf| buf.extend_from_slice(&x.0)),
-        PrimitiveRef::BmpString(x) => ber_checked_encode(out, tag, crate::constraints::validate_size(x.0.len(), &crate::constraints::UNCONSTRAINED), "BmpString", |buf| buf.extend_from_slice(&x.0)),
-        PrimitiveRef::VideotexString(x) => ber_checked_encode(out, tag, crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED), "VideotexString", |buf| buf.extend_from_slice(x.0.as_bytes())),
-        PrimitiveRef::ObjectDescriptor(x) => ber_checked_encode(out, tag, crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED), "ObjectDescriptor", |buf| buf.extend_from_slice(x.0.as_bytes())),
-        PrimitiveRef::UtcTime(x) => ber_checked_encode(out, tag, crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED), "UtcTime", |buf| buf.extend_from_slice(x.0.as_bytes())),
-        PrimitiveRef::GeneralizedTime(x) => ber_checked_encode(out, tag, crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED), "GeneralizedTime", |buf| buf.extend_from_slice(x.0.as_bytes())),
+        PrimitiveRef::Utf8String(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(x.0.as_bytes())),
+        PrimitiveRef::NumericString(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(x.0.as_bytes())),
+        PrimitiveRef::PrintableString(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(x.0.as_bytes())),
+        PrimitiveRef::T61String(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(x.0.as_bytes())),
+        PrimitiveRef::Ia5String(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(x.0.as_bytes())),
+        PrimitiveRef::VisibleString(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(x.0.as_bytes())),
+        PrimitiveRef::GeneralString(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(x.0.as_bytes())),
+        PrimitiveRef::GraphicString(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(x.0.as_bytes())),
+        PrimitiveRef::UniversalString(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(&x.0)),
+        PrimitiveRef::BmpString(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(&x.0)),
+        PrimitiveRef::VideotexString(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(x.0.as_bytes())),
+        PrimitiveRef::ObjectDescriptor(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(x.0.as_bytes())),
+        PrimitiveRef::UtcTime(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(x.0.as_bytes())),
+        PrimitiveRef::GeneralizedTime(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(x.0.as_bytes())),
     }
 }
 
 fn ber_decode_tagged_(p: PrimitiveRefMut, tag: Tag, r: &mut BerReader) -> Result<(), BerDecodeError> {
     match p {
-        PrimitiveRefMut::Boolean(x) => ber_checked_decode(r, tag, "Boolean", |content| { x.0 = crate::boolean::decode_boolean_content(content)?; Ok(0) }),
-        PrimitiveRefMut::Integer(x) => ber_checked_decode(r, tag, "Integer", |content| { x.0 = crate::integer::decode_integer_bytes(content)?; Ok(crate::constraints::validate_s64(x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::UInteger(x) => ber_checked_decode(r, tag, "UInteger", |content| { x.0 = crate::integer::decode_integer_bytes_u64(content)?; Ok(crate::constraints::validate_u64(x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::BigInteger(x) => ber_checked_decode(r, tag, "BigInteger", |content| { x.0 = crate::integer::decode_integer_bytes_i128(content)?; Ok(0) }),
-        PrimitiveRefMut::ArbitraryInteger(x) => ber_checked_decode(r, tag, "ArbitraryInteger", |content| { x.0 = crate::integer::decode_arbitrary_integer_content(content); Ok(0) }),
-        PrimitiveRefMut::Real(x) => ber_checked_decode(r, tag, "Real", |content| { x.0 = crate::real::decode_real_value(content, 0)?; Ok(0) }),
-        PrimitiveRefMut::Null(_) => ber_checked_decode(r, tag, "Null", |content| { crate::null::decode_null_content(content)?; Ok(0) }),
-        PrimitiveRefMut::OctetString(x) => ber_checked_decode(r, tag, "OctetString", |content| { x.0 = content.to_vec(); Ok(crate::constraints::validate_size(x.0.len(), &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::BitString(x) => ber_checked_decode(r, tag, "BitString", |content| { *x = crate::bit_string::decode_bit_string_content(content)?; Ok(crate::constraints::validate_size(x.bit_count(), &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::ObjectIdentifier(x) => ber_checked_decode(r, tag, "ObjectIdentifier", |content| { *x = crate::oid::decode_object_identifier_content(content)?; Ok(0) }),
-        PrimitiveRefMut::RelativeOid(x) => ber_checked_decode(r, tag, "RelativeOid", |content| { *x = crate::relative_oid::decode_relative_oid_content(content)?; Ok(0) }),
+        PrimitiveRefMut::Boolean(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::boolean::decode_boolean_content(content)?; Ok(()) }),
+        PrimitiveRefMut::Integer(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::integer::decode_integer_bytes(content)?; Ok(()) }),
+        PrimitiveRefMut::UInteger(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::integer::decode_integer_bytes_u64(content)?; Ok(()) }),
+        PrimitiveRefMut::BigInteger(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::integer::decode_integer_bytes_i128(content)?; Ok(()) }),
+        PrimitiveRefMut::ArbitraryInteger(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::integer::decode_arbitrary_integer_content(content); Ok(()) }),
+        PrimitiveRefMut::Real(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::real::decode_real_value(content, 0)?; Ok(()) }),
+        PrimitiveRefMut::Null(_) => ber_read_tlv(r, tag, |content| { crate::null::decode_null_content(content)?; Ok(()) }),
+        PrimitiveRefMut::OctetString(x) => ber_read_tlv(r, tag, |content| { x.0 = content.to_vec(); Ok(()) }),
+        PrimitiveRefMut::BitString(x) => ber_read_tlv(r, tag, |content| { *x = crate::bit_string::decode_bit_string_content(content)?; Ok(()) }),
+        PrimitiveRefMut::ObjectIdentifier(x) => ber_read_tlv(r, tag, |content| { *x = crate::oid::decode_object_identifier_content(content)?; Ok(()) }),
+        PrimitiveRefMut::RelativeOid(x) => ber_read_tlv(r, tag, |content| { *x = crate::relative_oid::decode_relative_oid_content(content)?; Ok(()) }),
         PrimitiveRefMut::Any(_) => unreachable!("ANY has no content-only BER form — ber_decode_into is overridden directly, never reaches ber_decode_into_tagged"),
-        PrimitiveRefMut::Utf8String(x) => ber_checked_decode(r, tag, "Utf8String", |content| { x.0 = crate::strings::decode_string_content(content, "UTF8String")?; Ok(crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::NumericString(x) => ber_checked_decode(r, tag, "NumericString", |content| { x.0 = crate::strings::decode_string_content(content, "NumericString")?; Ok(crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::PrintableString(x) => ber_checked_decode(r, tag, "PrintableString", |content| { x.0 = crate::strings::decode_string_content(content, "PrintableString")?; Ok(crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::T61String(x) => ber_checked_decode(r, tag, "T61String", |content| { x.0 = crate::strings::decode_string_content(content, "T61String")?; Ok(crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::Ia5String(x) => ber_checked_decode(r, tag, "Ia5String", |content| { x.0 = crate::strings::decode_string_content(content, "IA5String")?; Ok(crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::VisibleString(x) => ber_checked_decode(r, tag, "VisibleString", |content| { x.0 = crate::strings::decode_string_content(content, "VisibleString")?; Ok(crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::GeneralString(x) => ber_checked_decode(r, tag, "GeneralString", |content| { x.0 = crate::strings::decode_string_content(content, "GeneralString")?; Ok(crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::GraphicString(x) => ber_checked_decode(r, tag, "GraphicString", |content| { x.0 = crate::strings::decode_string_content(content, "GraphicString")?; Ok(crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::UniversalString(x) => ber_checked_decode(r, tag, "UniversalString", |content| { x.0 = content.to_vec(); Ok(crate::constraints::validate_size(x.0.len(), &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::BmpString(x) => ber_checked_decode(r, tag, "BmpString", |content| { x.0 = content.to_vec(); Ok(crate::constraints::validate_size(x.0.len(), &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::VideotexString(x) => ber_checked_decode(r, tag, "VideotexString", |content| { x.0 = crate::strings::decode_string_content(content, "VideotexString")?; Ok(crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::ObjectDescriptor(x) => ber_checked_decode(r, tag, "ObjectDescriptor", |content| { x.0 = crate::strings::decode_string_content(content, "ObjectDescriptor")?; Ok(crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::UtcTime(x) => ber_checked_decode(r, tag, "UtcTime", |content| { x.0 = crate::strings::decode_string_content(content, "UTCTime")?; Ok(crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED)) }),
-        PrimitiveRefMut::GeneralizedTime(x) => ber_checked_decode(r, tag, "GeneralizedTime", |content| { x.0 = crate::strings::decode_string_content(content, "GeneralizedTime")?; Ok(crate::constraints::validate_string(&x.0, &crate::constraints::UNCONSTRAINED)) }),
+        PrimitiveRefMut::Utf8String(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "UTF8String")?; Ok(()) }),
+        PrimitiveRefMut::NumericString(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "NumericString")?; Ok(()) }),
+        PrimitiveRefMut::PrintableString(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "PrintableString")?; Ok(()) }),
+        PrimitiveRefMut::T61String(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "T61String")?; Ok(()) }),
+        PrimitiveRefMut::Ia5String(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "IA5String")?; Ok(()) }),
+        PrimitiveRefMut::VisibleString(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "VisibleString")?; Ok(()) }),
+        PrimitiveRefMut::GeneralString(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "GeneralString")?; Ok(()) }),
+        PrimitiveRefMut::GraphicString(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "GraphicString")?; Ok(()) }),
+        PrimitiveRefMut::UniversalString(x) => ber_read_tlv(r, tag, |content| { x.0 = content.to_vec(); Ok(()) }),
+        PrimitiveRefMut::BmpString(x) => ber_read_tlv(r, tag, |content| { x.0 = content.to_vec(); Ok(()) }),
+        PrimitiveRefMut::VideotexString(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "VideotexString")?; Ok(()) }),
+        PrimitiveRefMut::ObjectDescriptor(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "ObjectDescriptor")?; Ok(()) }),
+        PrimitiveRefMut::UtcTime(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "UTCTime")?; Ok(()) }),
+        PrimitiveRefMut::GeneralizedTime(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::strings::decode_string_content(content, "GeneralizedTime")?; Ok(()) }),
     }
 }
 
