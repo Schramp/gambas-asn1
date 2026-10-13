@@ -52,7 +52,7 @@ build: $(PROGRAMS)
 $(GEN_DIR)/.stamp: $(ASN1_FILES) $(ASNCPP)
 	@rm -rf $(GEN_DIR).new
 	@mkdir -p $(GEN_DIR).new $(GEN_DIR)
-	$(ASNCPP) $(ASN1_FILES) -pdu=$(PDU_TYPE) --target=cpp -o $(GEN_DIR).new
+	$(ASNCPP) $(ASN1_FILES) -pdu=$(PDU_TYPE) __ASNCPP_FLAGS__ --target=cpp -o $(GEN_DIR).new
 	@rsync -rc --delete --exclude=.stamp $(GEN_DIR).new/ $(GEN_DIR)/
 	@rm -rf $(GEN_DIR).new
 	@touch $@
