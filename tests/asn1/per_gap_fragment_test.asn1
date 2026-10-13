@@ -1,0 +1,16 @@
+-- PER length determinants above 16383 (X.691 §11.9.3.8 fragmentation:
+-- 16K-unit fragments, each preceded by a 0b11xxxxxx length octet). Only
+-- reached when the SIZE upper bound is >= 64K or absent (X.691 §11.9.3.3
+-- otherwise encodes the length as a constrained whole number). One member
+-- per string/collection kind, plus a below-64K control.
+PerGapFragmentTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Big ::= SEQUENCE {
+    data      OCTET STRING (SIZE (16384..70000)),
+    text      IA5String (SIZE (16384..70000)),
+    bits      BIT STRING (SIZE (16384..70000)),
+    flags     SEQUENCE (SIZE (16384..70000)) OF BOOLEAN,
+    control   OCTET STRING (SIZE (16384..20000))
+}
+
+END

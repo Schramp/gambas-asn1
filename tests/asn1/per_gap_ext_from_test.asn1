@@ -1,0 +1,10 @@
+-- Extensible PermittedAlphabet (FROM (...), ...). An extensible FROM is
+-- not PER-visible (X.691 §10.3-10.4), so the string is encoded as if the
+-- alphabet constraint were absent: full 8-bit VisibleString characters.
+PerGapExtFromTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Rec ::= SEQUENCE {
+    word      VisibleString (FROM ("a".."z"), ...)
+}
+
+END

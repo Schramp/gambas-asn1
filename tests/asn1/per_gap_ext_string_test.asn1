@@ -1,0 +1,12 @@
+-- Extensible SIZE on known-multiplier character strings (X.691 §30.6:
+-- one extension bit, then the root-constrained form when the length is
+-- inside the root).
+PerGapExtStringTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Rec ::= SEQUENCE {
+    ia5       IA5String (SIZE (1..8, ...)),
+    printable PrintableString (SIZE (2..6, ...)),
+    numeric   NumericString (SIZE (1..4, ...))
+}
+
+END
