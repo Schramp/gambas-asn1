@@ -14,12 +14,8 @@ namespace asn1 {
 
 // X.691 §10.2 — skip unknown open-type field by length-prefixed byte count.
 DecodeResult PerDecodeStream::skip_open_type() {
-    auto len_r = per_detail::get_length(*this);
-    if (!len_r) return decode_err(len_r.error());
-    for (std::size_t i = 0; i < *len_r; ++i) {
-        auto b = get_bits(8);
-        if (!b) return decode_err(b.error());
-    }
+    auto bytes_r = per_detail::get_octets(*this);
+    if (!bytes_r) return decode_err(bytes_r.error());
     increment_skipped_extensions();
     return decode_ok();
 }
@@ -94,35 +90,46 @@ static int range_bits(int64_t range) {
     return bits;
 }
 
-// X.691 §10.5 "Encoding of a constrained whole number" (SIZE-constrained case),
-//        §10.9 "General rules for encoding a length determinant" (unconstrained case).
-// Fixed SIZE (size_range_bits==0): no bits written. Constrained: encode offset from lower bound.
-static void encode_size_field(PerEncodeStream& stream, const TypeDescriptor& def, std::size_t len) {
-    const Constraints& pc = def.constraints;
-    bool size_constrained = pc.flags & Constraints::SIZE_CONSTRAINED;
-    if (size_constrained && pc.size_range_bits == 0) {
-        // Fixed SIZE(n): no length field
-    } else if (size_constrained) {
-        stream.put_bits(len - static_cast<std::size_t>(pc.size_lower), pc.size_range_bits, "SIZE");
+/// @brief True when a SIZE constraint selects the constrained-count form of
+///        the length (X.691 §10.9.4.1, UNALIGNED): constrained with ub < 64K,
+///        the rule asn1c applies. Otherwise the general, fragmentable length.
+static bool size_count_is_constrained(const Constraints& pc) {
+    return (pc.flags & Constraints::SIZE_CONSTRAINED) && pc.size_upper < 65536;
+}
+
+/// @brief Writes a SIZE length determinant for \p n items, then the items
+///        (X.691 §10.9): nothing for a fixed size, the offset from the lower
+///        bound for a constrained size with ub < 64K, otherwise the general
+///        length with 16K fragmentation (per_detail::put_length_and_items).
+/// @param items Callable `(std::size_t from, std::size_t to)` writing items.
+template<typename WriteItems>
+static void encode_size_and_items(PerEncodeStream& stream, const Constraints& pc,
+                                  std::size_t n, WriteItems&& items) {
+    if (size_count_is_constrained(pc)) {
+        if (pc.size_range_bits > 0)
+            stream.put_bits(n - static_cast<std::size_t>(pc.size_lower), pc.size_range_bits, "SIZE");
+        items(std::size_t{0}, n);
     } else {
-        per_detail::put_length(stream, len);
+        per_detail::put_length_and_items(stream, n, items);
     }
 }
 
-// X.691 §10.5 / §10.9 — see encode_size_field above.
-static Expected<std::size_t, DecodeError> decode_size_field(PerDecodeStream& stream,
-                                                             const TypeDescriptor& def) {
-    const Constraints& pc = def.constraints;
-    bool size_constrained = pc.flags & Constraints::SIZE_CONSTRAINED;
-    if (size_constrained && pc.size_range_bits == 0) {
-        return static_cast<std::size_t>(pc.size_lower);
-    } else if (size_constrained) {
+/// @brief Decode counterpart of encode_size_and_items().
+/// @param items Callable `(std::size_t m) -> DecodeResult` reading m items.
+/// @return The total item count.
+template<typename ReadItems>
+static Expected<std::size_t, DecodeError> decode_size_and_items(PerDecodeStream& stream,
+                                                                const Constraints& pc,
+                                                                ReadItems&& items) {
+    if (!size_count_is_constrained(pc)) return per_detail::get_length_and_items(stream, items);
+    std::size_t n = static_cast<std::size_t>(pc.size_lower);
+    if (pc.size_range_bits > 0) {
         auto v = stream.get_bits(pc.size_range_bits);
         if (!v) return make_unexpected<std::size_t, DecodeError>(v.error());
-        return static_cast<std::size_t>(*v) + static_cast<std::size_t>(pc.size_lower);
-    } else {
-        return per_detail::get_length(stream);
+        n += static_cast<std::size_t>(*v);
     }
+    if (auto r = items(n); !r) return make_unexpected<std::size_t, DecodeError>(r.error());
+    return n;
 }
 
 // X.691 §10.8 "Encoding of an unconstrained whole number"
@@ -210,16 +217,13 @@ static void encode_open_type(const PerCodec& codec, PerEncodeStream& stream,
     IEncodeStream& es = tmp_s;
     codec.encode(es, mdef, mptr);
     tmp_s.flush();
-    per_detail::put_length(stream, tmp.size());
-    for (auto b : tmp) stream.put_bits(b, 8);
+    per_detail::put_octets(stream, tmp.data(), tmp.size());
 }
 
 // X.691 §10.2 — see encode_open_type above.
 static DecodeResult decode_open_type(const PerCodec& codec, PerDecodeStream& stream,
                                      const TypeDescriptor& mdef, Asn1Object* mptr) {
-    auto len_r = per_detail::get_length(stream);
-    if (!len_r) return decode_err(len_r.error());
-    auto bytes_r = per_detail::read_bytes(stream, *len_r);
+    auto bytes_r = per_detail::get_octets(stream);
     if (!bytes_r) return decode_err(bytes_r.error());
     PerDecodeStream tmp_s{std::span<const uint8_t>{bytes_r->data(), bytes_r->size()}};
     IDecodeStream& ds = tmp_s;
@@ -249,14 +253,11 @@ public:
                 const TypeDescriptor&, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
         auto bytes = v.bytes();
-        per_detail::put_length(stream, bytes.size());
-        for (auto b : bytes) stream.put_bits(b, 8);
+        per_detail::put_octets(stream, bytes.data(), bytes.size());
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& stream,
                         const TypeDescriptor&, Asn1Object* dest) const override {
-        auto len_r = per_detail::get_length(stream);
-        if (!len_r) return decode_err(len_r.error());
-        auto bytes_r = per_detail::read_bytes(stream, *len_r);
+        auto bytes_r = per_detail::get_octets(stream);
         if (!bytes_r) return decode_err(bytes_r.error());
         *static_cast<OctetString*>(dest) = OctetString(*bytes_r);
         return decode_ok();
@@ -470,31 +471,28 @@ public:
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const BitString& v = *static_cast<const BitString*>(src);
         std::size_t bit_count = v.bit_count();
-        encode_size_field(stream, def, bit_count);
-        std::size_t remaining = bit_count;
-        for (uint8_t b : v.bytes()) {
-            int n = static_cast<int>(std::min(remaining, std::size_t{8}));
-            stream.put_bits(static_cast<uint64_t>(b) >> (8 - n), n);
-            remaining -= n;
-            if (remaining == 0) break;
-        }
+        auto bytes = v.bytes();
+        encode_size_and_items(stream, def.constraints, bit_count, [&](std::size_t from, std::size_t to) {
+            for (std::size_t i = from; i < to; ++i)
+                stream.put_bits((bytes[i / 8] >> (7 - i % 8)) & 1, 1);
+        });
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
-        auto len_r = decode_size_field(stream, def);
+        std::vector<uint8_t> bytes;
+        std::size_t nbits = 0;
+        auto len_r = decode_size_and_items(stream, def.constraints, [&](std::size_t m) -> DecodeResult {
+            for (std::size_t i = 0; i < m; ++i, ++nbits) {
+                auto b = stream.get_bits(1);
+                if (!b) return decode_err(b.error());
+                if (nbits % 8 == 0) bytes.push_back(0);
+                bytes.back() |= static_cast<uint8_t>(*b << (7 - nbits % 8));
+            }
+            return decode_ok();
+        });
         if (!len_r) return decode_err(len_r.error());
         std::size_t bit_count = *len_r;
         if (bit_count == 0) { *static_cast<BitString*>(dest) = BitString{}; return decode_ok(); }
-        std::vector<uint8_t> bytes;
-        bytes.reserve((bit_count + 7) / 8);
-        std::size_t remaining = bit_count;
-        while (remaining > 0) {
-            int n = static_cast<int>(std::min(remaining, std::size_t{8}));
-            auto b = stream.get_bits(n);
-            if (!b) return decode_err(b.error());
-            bytes.push_back(static_cast<uint8_t>(*b << (8 - n)));
-            remaining -= n;
-        }
         uint8_t unused = static_cast<uint8_t>((8 - bit_count % 8) % 8);
         *static_cast<BitString*>(dest) = BitString{std::move(bytes), unused};
         return decode_ok();
@@ -506,16 +504,25 @@ public:
     void encode(const PerCodec&, PerEncodeStream& stream,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
-        encode_size_field(stream, def, v.size());
-        for (uint8_t b : v.bytes()) stream.put_bits(b, 8);
+        auto bytes = v.bytes();
+        encode_size_and_items(stream, def.constraints, bytes.size(), [&](std::size_t from, std::size_t to) {
+            for (std::size_t i = from; i < to; ++i) stream.put_bits(bytes[i], 8);
+        });
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
-        auto len_r = decode_size_field(stream, def);
+        std::vector<uint8_t> bytes;
+        auto len_r = decode_size_and_items(stream, def.constraints, [&](std::size_t m) -> DecodeResult {
+            bytes.reserve(bytes.size() + m);
+            for (std::size_t i = 0; i < m; ++i) {
+                auto b = stream.get_bits(8);
+                if (!b) return decode_err(b.error());
+                bytes.push_back(static_cast<uint8_t>(*b));
+            }
+            return decode_ok();
+        });
         if (!len_r) return decode_err(len_r.error());
-        auto bytes = per_detail::read_bytes(stream, *len_r);
-        if (!bytes) return decode_err(bytes.error());
-        *static_cast<OctetString*>(dest) = OctetString{std::move(*bytes)};
+        *static_cast<OctetString*>(dest) = OctetString{std::move(bytes)};
         return decode_ok();
     }
 };
@@ -596,8 +603,7 @@ public:
             stream.put_bits(in_root ? 0 : 1, 1);
             if (!in_root) {
                 // Out-of-root: encode as open type (X.691 §18.8) — byte-length prefixed raw bytes.
-                per_detail::put_length(stream, str.size());
-                for (unsigned char c : str) stream.put_bits(c, 8);
+                per_detail::put_octets(stream, reinterpret_cast<const uint8_t*>(str.data()), str.size());
                 return;
             }
         }
@@ -630,46 +636,42 @@ public:
                 }
             }
         }
-        encode_size_field(stream, def, char_count);
-        // FROM alphabet encoding: validate + map in one O(1) encode_table lookup per character.
-        // For wide-char types (BMPString bpc=2, UniversalString bpc=4): high bytes must be
-        // 0x00 (Basic Latin plane); the low byte is the alphabet index key.
+        // FROM alphabet: every character is checked before anything is
+        // written, since the fragment-aware writer below cannot fail part-way.
+        // For wide-char types (BMPString bpc=2, UniversalString bpc=4): high
+        // bytes must be 0x00 (Basic Latin plane); the low byte is the
+        // alphabet index key.
+        const std::size_t ubpc = static_cast<std::size_t>(bpc);
         if (has_alpha) {
-            if (bpc > 1) {
-                for (std::size_t i = 0; i + static_cast<std::size_t>(bpc) <= str.size(); i += bpc) {
-                    for (int b = 0; b < bpc - 1; ++b) {
-                        if (static_cast<unsigned char>(str[i + b]) != 0) {
-                            stream.set_encode_failed("codepoint outside Basic Latin in FROM alphabet");
-                            return;
-                        }
-                    }
-                    unsigned char lo = static_cast<unsigned char>(str[i + bpc - 1]);
-                    uint16_t idx = pc.encode_table[lo];
-                    if (idx == 0xFFFFu) {
-                        stream.set_encode_failed("codepoint not in FROM alphabet");
+            for (std::size_t i = 0; i + ubpc <= str.size(); i += ubpc) {
+                for (std::size_t b = 0; b + 1 < ubpc; ++b) {
+                    if (static_cast<unsigned char>(str[i + b]) != 0) {
+                        stream.set_encode_failed("codepoint outside Basic Latin in FROM alphabet");
                         return;
                     }
-                    stream.put_bits(idx, pc.alphabet_bits);
                 }
-            } else {
-                for (unsigned char c : str) {
-                    uint16_t idx = pc.encode_table[c];
-                    if (idx == 0xFFFFu) {
-                        stream.set_encode_failed("character not in FROM alphabet");
-                        return;
-                    }
-                    stream.put_bits(idx, pc.alphabet_bits);
+                if (pc.encode_table[static_cast<unsigned char>(str[i + ubpc - 1])] == 0xFFFFu) {
+                    stream.set_encode_failed("character not in FROM alphabet");
+                    return;
                 }
             }
-        } else if (bpc > 1) {
-            for (unsigned char c : str) stream.put_bits(c, 8);
-        } else if (bits == 4) {
-            for (char c : str) stream.put_bits(encode_numeric_char(c), 4);
-        } else if (bits == 7) {
-            for (char c : str) stream.put_bits(static_cast<uint8_t>(c), 7);
-        } else {
-            for (char c : str) stream.put_bits(static_cast<uint8_t>(c), 8);
         }
+        encode_size_and_items(stream, pc, char_count, [&](std::size_t from, std::size_t to) {
+            for (std::size_t ci = from; ci < to; ++ci) {
+                const std::size_t at = ci * ubpc;
+                if (has_alpha) {
+                    stream.put_bits(pc.encode_table[static_cast<unsigned char>(str[at + ubpc - 1])],
+                                    pc.alphabet_bits);
+                } else if (bpc > 1) {
+                    for (std::size_t b = 0; b < ubpc; ++b)
+                        stream.put_bits(static_cast<unsigned char>(str[at + b]), 8);
+                } else if (bits == 4) {
+                    stream.put_bits(encode_numeric_char(str[at]), 4);
+                } else {
+                    stream.put_bits(static_cast<uint8_t>(str[at]), bits);
+                }
+            }
+        });
     }
     /// @brief Decode a known-multiplier character string from UPER bit stream.
     /// @param stream  Input bit stream.
@@ -683,66 +685,46 @@ public:
             auto ext = stream.get_bits(1);
             if (!ext) return decode_err(ext.error());
             if (*ext) {
-                auto len_r = per_detail::get_length(stream);
-                if (!len_r) return decode_err(len_r.error());
-                std::string result;
-                result.reserve(*len_r);
-                for (std::size_t i = 0; i < *len_r; ++i) {
-                    auto b = stream.get_bits(8);
-                    if (!b) return decode_err(b.error());
-                    result.push_back(static_cast<char>(*b));
-                }
-                static_cast<AsnStringBase*>(dest)->str() = std::move(result);
+                auto bytes_r = per_detail::get_octets(stream);
+                if (!bytes_r) return decode_err(bytes_r.error());
+                static_cast<AsnStringBase*>(dest)->str() = std::string(bytes_r->begin(), bytes_r->end());
                 return decode_ok();
             }
         }
-        auto len_r = decode_size_field(stream, def);
-        if (!len_r) return decode_err(len_r.error());
-        std::size_t char_count = *len_r;
         auto [bits, bpc] = string_params(def.tag.number);
+        const bool has_alpha = pc.alphabet_bits > 0 && pc.alphabet != nullptr;
         std::string result;
-        if (pc.alphabet_bits > 0 && pc.alphabet != nullptr) {
-            // Alphabet-indexed decode. For wide-char types (bpc>1), each code point is
-            // written as (bpc-1) zero high bytes + one low byte from the alphabet table.
-            result.reserve(char_count * static_cast<std::size_t>(bpc));
-            for (std::size_t i = 0; i < char_count; ++i) {
-                auto v = stream.get_bits(pc.alphabet_bits);
-                if (!v) return decode_err(v.error());
-                if (*v >= pc.alphabet_size)
-                    return decode_err(DecodeError("PER: alphabet index out of range"));
-                uint8_t lo = pc.alphabet[*v];
-                for (int b = 0; b < bpc - 1; ++b) result.push_back('\0');
-                result.push_back(static_cast<char>(lo));
-            }
-        } else {
-            std::size_t byte_count = char_count * bpc;
-            result.reserve(byte_count);
-            if (bpc > 1) {
-                for (std::size_t i = 0; i < byte_count; ++i) {
-                    auto b = stream.get_bits(8);
-                    if (!b) return decode_err(b.error());
-                    result.push_back(static_cast<char>(*b));
-                }
-            } else if (bits == 4) {
-                for (std::size_t i = 0; i < char_count; ++i) {
+        auto len_r = decode_size_and_items(stream, pc, [&](std::size_t m) -> DecodeResult {
+            result.reserve(result.size() + m * static_cast<std::size_t>(bpc));
+            for (std::size_t i = 0; i < m; ++i) {
+                if (has_alpha) {
+                    // Alphabet-indexed: (bpc-1) zero high bytes + the low byte
+                    // from the alphabet table.
+                    auto v = stream.get_bits(pc.alphabet_bits);
+                    if (!v) return decode_err(v.error());
+                    if (*v >= pc.alphabet_size)
+                        return decode_err(DecodeError("PER: alphabet index out of range"));
+                    for (int b = 0; b < bpc - 1; ++b) result.push_back('\0');
+                    result.push_back(static_cast<char>(pc.alphabet[*v]));
+                } else if (bpc > 1) {
+                    for (int b = 0; b < bpc; ++b) {
+                        auto v = stream.get_bits(8);
+                        if (!v) return decode_err(v.error());
+                        result.push_back(static_cast<char>(*v));
+                    }
+                } else if (bits == 4) {
                     auto v = stream.get_bits(4);
                     if (!v) return decode_err(v.error());
                     result.push_back(decode_numeric_char(static_cast<uint8_t>(*v)));
-                }
-            } else if (bits == 7) {
-                for (std::size_t i = 0; i < char_count; ++i) {
-                    auto v = stream.get_bits(7);
-                    if (!v) return decode_err(v.error());
-                    result.push_back(static_cast<char>(*v));
-                }
-            } else {
-                for (std::size_t i = 0; i < char_count; ++i) {
-                    auto v = stream.get_bits(8);
+                } else {
+                    auto v = stream.get_bits(bits);
                     if (!v) return decode_err(v.error());
                     result.push_back(static_cast<char>(*v));
                 }
             }
-        }
+            return decode_ok();
+        });
+        if (!len_r) return decode_err(len_r.error());
         static_cast<AsnStringBase*>(dest)->str() = std::move(result);
         return decode_ok();
     }
@@ -817,58 +799,61 @@ public:
             std::fprintf(stderr, "[PER-ENC] SOF %s count=%zu @%d\n",
                          def.name, count, PerCodec::stream_bit_pos(stream));
         const auto& sc = spec.size_constraints;
-        if (sc.flags & Constraints::SIZE_CONSTRAINED) {
-            if (sc.size_lower == sc.size_upper) {
-                // Fixed size: count implicit
-            } else {
-                std::size_t enc_count = count;
-                if (enc_count < static_cast<std::size_t>(sc.size_lower)) {
-                    // X.680 §47 SIZE lower bound violated by the actual element
-                    // count — caller's data is invalid for this type, not a
-                    // codec bug. PerCodec::encode's own validate_on_encode()
-                    // call already reports this exact delta through
-                    // ValidationReport (SeqOfSpec::validate uses the identical
-                    // size_lower - count formula) before this handler ever
-                    // runs — this clamp only needs to keep the encoded count
-                    // in bounds so the wire stays well-formed, not report a
-                    // second time.
-                    enc_count = static_cast<std::size_t>(sc.size_lower);
-                }
-                stream.put_bits(enc_count - static_cast<std::size_t>(sc.size_lower), sc.size_range_bits, "SOF.size");
-                // Encode only actual elements; missing elements produce a desync (caller's fault).
-                count = std::min(count, enc_count);
-            }
-        } else {
-            per_detail::put_length(stream, count);
+        std::size_t enc_count = count;
+        if (size_count_is_constrained(sc) && sc.size_lower != sc.size_upper &&
+            enc_count < static_cast<std::size_t>(sc.size_lower)) {
+            // X.680 §47 SIZE lower bound violated by the actual element
+            // count — caller's data is invalid for this type, not a
+            // codec bug. PerCodec::encode's own validate_on_encode()
+            // call already reports this exact delta through
+            // ValidationReport (SeqOfSpec::validate uses the identical
+            // size_lower - count formula) before this handler ever
+            // runs — this clamp only needs to keep the encoded count
+            // in bounds so the wire stays well-formed, not report a
+            // second time. Missing elements then desync (caller's fault).
+            enc_count = static_cast<std::size_t>(sc.size_lower);
         }
         const auto& edef = *spec.element;
         bool is_set_of = (def.tag.cls == TagClass::Universal &&
                           def.tag.number == UniversalTag::Set);
-        if (is_set_of && count > 1) {
-            encode_set_of_sorted(codec, stream, edef, seq, count);
-            return;
-        }
+        std::vector<EncodedElement> sorted;
+        if (is_set_of && count > 1) sorted = sorted_set_of_elements(codec, stream, edef, seq, count);
         IEncodeStream& es = stream;
-        for (std::size_t i = 0; i < count; ++i)
-            codec.encode(es, edef, seq.get_const(i));
+        encode_size_and_items(stream, sc, enc_count, [&](std::size_t from, std::size_t to) {
+            for (std::size_t i = from; i < std::min(to, count); ++i) {
+                if (sorted.empty()) {
+                    codec.encode(es, edef, seq.get_const(i));
+                    continue;
+                }
+                const auto& e = sorted[i];
+                int full = e.bits / 8;
+                for (int k = 0; k < full; ++k) stream.put_bits(e.bytes[k], 8);
+                if (int rest = e.bits % 8)
+                    stream.put_bits(e.bytes[full] >> (8 - rest), rest);
+            }
+        });
     }
 
-    /// @brief Writes the first \p count elements of a SET OF in the order
-    ///        X.691 §21.1 (CANONICAL-PER) defines: ascending by component
-    ///        encoding, compared as bit strings zero-padded to an octet
-    ///        boundary, the shorter one extended with 0-octets. The only
-    ///        order the standard defines, and valid BASIC-PER too (X.691 §8);
-    ///        it is also what asn1c emits.
+    /// One SET OF element's own PER encoding and exact bit length.
+    struct EncodedElement { std::vector<uint8_t> bytes; int bits; };
+
+    /// @brief Encodes the first \p count elements of a SET OF and orders
+    ///        them as X.691 §21.1 (CANONICAL-PER) defines: ascending by
+    ///        component encoding, compared as bit strings zero-padded to an
+    ///        octet boundary, the shorter one extended with 0-octets. The
+    ///        only order the standard defines, and valid BASIC-PER too
+    ///        (X.691 §8); it is also what asn1c emits.
     /// @param codec  Codec dispatching each element's own encoding.
-    /// @param stream Destination; each element's exact bits are appended.
+    /// @param stream Destination; only receives an encode-failure flag here.
     /// @param edef   Element TypeDescriptor.
     /// @param seq    The SET OF value.
-    /// @param count  Number of elements to write (after any SIZE clamp).
+    /// @param count  Number of elements.
+    /// @return The element encodings, in §21.1 order.
     /// @see X.691 §21.1, §21.2.
-    static void encode_set_of_sorted(const PerCodec& codec, PerEncodeStream& stream,
-                                     const TypeDescriptor& edef, const SeqOfBase& seq,
-                                     std::size_t count) {
-        struct Encoded { std::vector<uint8_t> bytes; int bits; };
+    static std::vector<EncodedElement> sorted_set_of_elements(const PerCodec& codec, PerEncodeStream& stream,
+                                                              const TypeDescriptor& edef, const SeqOfBase& seq,
+                                                              std::size_t count) {
+        using Encoded = EncodedElement;
         std::vector<Encoded> elems;
         elems.reserve(count);
         for (std::size_t i = 0; i < count; ++i) {
@@ -891,12 +876,7 @@ public:
             return false;
         };
         std::stable_sort(elems.begin(), elems.end(), padded_less);
-        for (const auto& e : elems) {
-            int full = e.bits / 8;
-            for (int k = 0; k < full; ++k) stream.put_bits(e.bytes[k], 8);
-            if (int rest = e.bits % 8)
-                stream.put_bits(e.bytes[full] >> (8 - rest), rest);
-        }
+        return elems;
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
@@ -905,28 +885,20 @@ public:
                          def.name, PerCodec::stream_bit_pos(stream), PerCodec::stream_total_bits(stream));
         const auto& spec = *def.seq_of_spec;
         const auto& sc = spec.size_constraints;
-        std::size_t count = 0;
-        if (sc.flags & Constraints::SIZE_CONSTRAINED) {
-            if (sc.size_lower == sc.size_upper) {
-                count = static_cast<std::size_t>(sc.size_lower);
-            } else {
-                auto v = stream.get_bits(sc.size_range_bits);
-                if (!v) return decode_err(v.error());
-                count = *v + static_cast<std::size_t>(sc.size_lower);
-            }
-        } else {
-            auto v = per_detail::get_length(stream);
-            if (!v) return decode_err(v.error());
-            count = *v;
-        }
         SeqOfBase& seq = *static_cast<SeqOfBase*>(dest);
-        seq.resize(count);
+        seq.resize(0);
         const auto& edef = *spec.element;
         IDecodeStream& ds = stream;
-        for (std::size_t i = 0; i < count; ++i) {
-            auto r = codec.decode(ds, edef, seq.get_mut(i));
-            if (!r) return r;
-        }
+        auto count_r = decode_size_and_items(stream, sc, [&](std::size_t m) -> DecodeResult {
+            std::size_t start = seq.count();
+            seq.resize(start + m);
+            for (std::size_t i = start; i < start + m; ++i) {
+                auto r = codec.decode(ds, edef, seq.get_mut(i));
+                if (!r) return r;
+            }
+            return decode_ok();
+        });
+        if (!count_r) return decode_err(count_r.error());
         return decode_ok();
     }
 };
