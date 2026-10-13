@@ -132,6 +132,38 @@ static Expected<std::size_t, DecodeError> decode_size_and_items(PerDecodeStream&
     return n;
 }
 
+/// @brief encode_size_and_items() for OCTET STRING (X.691 §17.3), BIT STRING
+///        (§16.6) and SEQUENCE OF / SET OF (§20.4), whose extensible SIZE
+///        adds one bit first: 0 and the root form when \p n is within the
+///        root, otherwise 1 and the general length (§10.9).
+template<typename WriteItems>
+static void encode_ext_size_and_items(PerEncodeStream& stream, const Constraints& pc,
+                                      std::size_t n, WriteItems&& items) {
+    if ((pc.flags & Constraints::EXTENSIBLE) && (pc.flags & Constraints::SIZE_CONSTRAINED)) {
+        const auto sn = static_cast<int64_t>(n);
+        const bool in_root = sn >= pc.size_lower && sn <= pc.size_upper;
+        stream.put_bits(in_root ? 0 : 1, 1, "SIZE.ext");
+        if (!in_root) {
+            per_detail::put_length_and_items(stream, n, items);
+            return;
+        }
+    }
+    encode_size_and_items(stream, pc, n, items);
+}
+
+/// @brief Decode counterpart of encode_ext_size_and_items().
+template<typename ReadItems>
+static Expected<std::size_t, DecodeError> decode_ext_size_and_items(PerDecodeStream& stream,
+                                                                    const Constraints& pc,
+                                                                    ReadItems&& items) {
+    if ((pc.flags & Constraints::EXTENSIBLE) && (pc.flags & Constraints::SIZE_CONSTRAINED)) {
+        auto ext = stream.get_bits(1);
+        if (!ext) return make_unexpected<std::size_t, DecodeError>(ext.error());
+        if (*ext) return per_detail::get_length_and_items(stream, items);
+    }
+    return decode_size_and_items(stream, pc, items);
+}
+
 // X.691 §10.8 "Encoding of an unconstrained whole number"
 // 2's-complement, minimum octets, preceded by 8-bit octet count.
 static void encode_unconstrained_int(PerEncodeStream& stream, int64_t value) {
@@ -472,7 +504,7 @@ public:
         const BitString& v = *static_cast<const BitString*>(src);
         std::size_t bit_count = v.bit_count();
         auto bytes = v.bytes();
-        encode_size_and_items(stream, def.constraints, bit_count, [&](std::size_t from, std::size_t to) {
+        encode_ext_size_and_items(stream, def.constraints, bit_count, [&](std::size_t from, std::size_t to) {
             for (std::size_t i = from; i < to; ++i)
                 stream.put_bits((bytes[i / 8] >> (7 - i % 8)) & 1, 1);
         });
@@ -481,7 +513,7 @@ public:
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         std::vector<uint8_t> bytes;
         std::size_t nbits = 0;
-        auto len_r = decode_size_and_items(stream, def.constraints, [&](std::size_t m) -> DecodeResult {
+        auto len_r = decode_ext_size_and_items(stream, def.constraints, [&](std::size_t m) -> DecodeResult {
             for (std::size_t i = 0; i < m; ++i, ++nbits) {
                 auto b = stream.get_bits(1);
                 if (!b) return decode_err(b.error());
@@ -505,14 +537,14 @@ public:
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const OctetString& v = *static_cast<const OctetString*>(src);
         auto bytes = v.bytes();
-        encode_size_and_items(stream, def.constraints, bytes.size(), [&](std::size_t from, std::size_t to) {
+        encode_ext_size_and_items(stream, def.constraints, bytes.size(), [&](std::size_t from, std::size_t to) {
             for (std::size_t i = from; i < to; ++i) stream.put_bits(bytes[i], 8);
         });
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         std::vector<uint8_t> bytes;
-        auto len_r = decode_size_and_items(stream, def.constraints, [&](std::size_t m) -> DecodeResult {
+        auto len_r = decode_ext_size_and_items(stream, def.constraints, [&](std::size_t m) -> DecodeResult {
             bytes.reserve(bytes.size() + m);
             for (std::size_t i = 0; i < m; ++i) {
                 auto b = stream.get_bits(8);
@@ -800,8 +832,8 @@ public:
                          def.name, count, PerCodec::stream_bit_pos(stream));
         const auto& sc = spec.size_constraints;
         std::size_t enc_count = count;
-        if (size_count_is_constrained(sc) && sc.size_lower != sc.size_upper &&
-            enc_count < static_cast<std::size_t>(sc.size_lower)) {
+        if (size_count_is_constrained(sc) && !(sc.flags & Constraints::EXTENSIBLE) &&
+            sc.size_lower != sc.size_upper && enc_count < static_cast<std::size_t>(sc.size_lower)) {
             // X.680 §47 SIZE lower bound violated by the actual element
             // count — caller's data is invalid for this type, not a
             // codec bug. PerCodec::encode's own validate_on_encode()
@@ -819,7 +851,7 @@ public:
         std::vector<EncodedElement> sorted;
         if (is_set_of && count > 1) sorted = sorted_set_of_elements(codec, stream, edef, seq, count);
         IEncodeStream& es = stream;
-        encode_size_and_items(stream, sc, enc_count, [&](std::size_t from, std::size_t to) {
+        encode_ext_size_and_items(stream, sc, enc_count, [&](std::size_t from, std::size_t to) {
             for (std::size_t i = from; i < std::min(to, count); ++i) {
                 if (sorted.empty()) {
                     codec.encode(es, edef, seq.get_const(i));
@@ -889,7 +921,7 @@ public:
         seq.resize(0);
         const auto& edef = *spec.element;
         IDecodeStream& ds = stream;
-        auto count_r = decode_size_and_items(stream, sc, [&](std::size_t m) -> DecodeResult {
+        auto count_r = decode_ext_size_and_items(stream, sc, [&](std::size_t m) -> DecodeResult {
             std::size_t start = seq.count();
             seq.resize(start + m);
             for (std::size_t i = start; i < start + m; ++i) {

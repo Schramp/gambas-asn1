@@ -2,7 +2,7 @@
 -- SEQUENCE OF (§20.4): one extension bit precedes the length, 0 when the
 -- size is inside the root. Values here are always inside the root, so
 -- the only difference from the non-extensible form is that bit.
-PerGapExtSizeTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+PerExtSizeTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 
 Rec ::= SEQUENCE {
     octets    OCTET STRING (SIZE (1..4, ...)),
