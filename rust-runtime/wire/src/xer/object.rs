@@ -4,7 +4,7 @@
 //! `MemberMeta::ber`/`AltMeta::ber` are simply ignored.
 
 use crate::ber::reader::DecodeError;
-use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut, XerInstruction};
+use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut, XerInstruction, NOT_A_PDU};
 use crate::spec::primitive::{xer_decode_primitive, xer_encode_primitive, PrimitiveRef, PrimitiveRefMut};
 use crate::value::Asn1Value;
 use crate::xer::reader::XerReader;
@@ -355,4 +355,38 @@ pub(crate) fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, r: &mut XerRead
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------
+// Top-level (document root) entry points
+// ---------------------------------------------------------------------
+
+/// @brief Encodes `v` as a complete XER document, wrapped in its own
+///        type name as the root element.
+/// @param v  Any generated SEQUENCE/SET/CHOICE/SEQUENCE OF type.
+/// @return The XML text.
+/// @see X.693 §8.3.1 — document root element named by the type.
+pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> String {
+    match v.as_member_ref() {
+        MemberRef::Composite(s) => encode_seq(s),
+        MemberRef::Choice(c) => encode_choice(c),
+        MemberRef::SeqOf(s) => encode_seqof_named(s),
+        _ => panic!("{NOT_A_PDU}"),
+    }
+}
+
+/// @brief Decodes a complete XER document whose root element names
+///        `T`'s own type.
+/// @return The decoded value, or `Err` on malformed XML or a root/
+///         member name mismatch.
+/// @see X.693 §8.3.1.
+pub fn decode_pdu<T: Asn1Pdu>(xml: &str) -> Result<T, DecodeError> {
+    let mut v = T::default();
+    match v.as_member_ref_mut() {
+        MemberRefMut::Composite(s) => decode_seq_into(s, &mut XerReader::new(xml))?,
+        MemberRefMut::Choice(c) => decode_choice(xml, c)?,
+        MemberRefMut::SeqOf(s) => decode_seqof_named_into(s, &mut XerReader::new(xml))?,
+        _ => panic!("{NOT_A_PDU}"),
+    }
+    Ok(v)
 }

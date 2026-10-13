@@ -3,7 +3,7 @@
 
 use crate::ber::reader::DecodeError;
 use crate::jer::reader::Reader;
-use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
+use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
 use crate::spec::primitive::{jer_decode_primitive, jer_encode_primitive};
 
 fn encode_bare(m: MemberRef, out: &mut String) {
@@ -182,4 +182,29 @@ pub fn decode_seqof_into(obj: &mut dyn Asn1SeqOf, r: &mut Reader) -> Result<(), 
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Top-level (document root) entry points
+// ---------------------------------------------------------------------
+
+/// @brief Encodes `v` as a complete JER document. JER has no root
+///        wrapper, so this is exactly the value's own JSON encoding.
+/// @param v  Any generated SEQUENCE/SET/CHOICE/SEQUENCE OF type.
+/// @return The JSON text.
+/// @see X.697 §8 — top-level JSON value.
+pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> String {
+    let mut out = String::new();
+    encode_bare(v.as_member_ref(), &mut out);
+    out
+}
+
+/// @brief Decodes a complete JER document into a fresh `T`.
+/// @return The decoded value, or `Err` on malformed JSON or a shape
+///         mismatch.
+/// @see X.697 §8.
+pub fn decode_pdu<T: Asn1Pdu>(json: &str) -> Result<T, DecodeError> {
+    let mut v = T::default();
+    decode_bare(v.as_member_ref_mut(), &mut Reader::new(json))?;
+    Ok(v)
 }

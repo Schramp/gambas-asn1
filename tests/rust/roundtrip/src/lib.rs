@@ -480,3 +480,87 @@ mod tests {
         assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 1);
     }
 }
+
+/// The generic top-level entry points (`<codec>::object::encode_pdu`/
+/// `decode_pdu`, bound on `Asn1Pdu`) must produce exactly what each
+/// generated type's own entry points produce, for every codec — checked
+/// here on a real generated SEQUENCE (`Widget`) and CHOICE (`Selector`).
+#[cfg(test)]
+mod pdu_entry_points {
+    use super::{Selector, Widget};
+    use asn1cpp_wire::value::Asn1Value;
+    use asn1cpp_wire::{ber, jer, per, xer};
+
+    fn widget() -> Widget {
+        Widget { id: asn1cpp_wire::integer::Integer(-5), flag: asn1cpp_wire::boolean::Boolean(true), data: asn1cpp_wire::octet_string::OctetString(vec![0, 1, 0xff]), label: asn1cpp_wire::strings::Ia5String("pdu".to_string()) }
+    }
+
+    fn selectors() -> Vec<Selector> {
+        vec![
+            Selector::num(asn1cpp_wire::integer::Integer(300)),
+            Selector::flag(asn1cpp_wire::boolean::Boolean(false)),
+            Selector::data(asn1cpp_wire::octet_string::OctetString(vec![0xAA])),
+            Selector::label(asn1cpp_wire::strings::Ia5String("x".to_string())),
+        ]
+    }
+
+    fn per_via_trait<T: Asn1Value>(v: &T) -> Vec<u8> {
+        let mut w = per::writer::Writer::new();
+        v.per_encode(&mut w, v.constraints());
+        w.flush();
+        w.into_bytes()
+    }
+
+    #[test]
+    fn widget_matches_inherents_all_codecs() {
+        let w = widget();
+        let b = ber::object::encode_pdu(&w);
+        assert_eq!(b, w.encode());
+        assert_eq!(ber::object::decode_pdu::<Widget>(&b).unwrap(), w);
+        let x = xer::object::encode_pdu(&w);
+        assert_eq!(x, w.encode_xer());
+        assert_eq!(xer::object::decode_pdu::<Widget>(&x).unwrap(), w);
+        let j = jer::object::encode_pdu(&w);
+        assert_eq!(j, w.encode_jer());
+        assert_eq!(jer::object::decode_pdu::<Widget>(&j).unwrap(), w);
+        let p = per::object::encode_pdu(&w);
+        assert_eq!(p, per_via_trait(&w));
+        assert_eq!(per::object::decode_pdu::<Widget>(&p).unwrap(), w);
+    }
+
+    #[test]
+    fn selector_matches_inherents_all_codecs() {
+        for s in selectors() {
+            let b = ber::object::encode_pdu(&s);
+            assert_eq!(b, s.encode());
+            assert_eq!(ber::object::decode_pdu::<Selector>(&b).unwrap(), s);
+            let x = xer::object::encode_pdu(&s);
+            assert_eq!(x, s.encode_xer());
+            assert_eq!(xer::object::decode_pdu::<Selector>(&x).unwrap(), s);
+            let j = jer::object::encode_pdu(&s);
+            assert_eq!(j, s.encode_jer());
+            assert_eq!(jer::object::decode_pdu::<Selector>(&j).unwrap(), s);
+            let p = per::object::encode_pdu(&s);
+            assert_eq!(p, per_via_trait(&s));
+            assert_eq!(per::object::decode_pdu::<Selector>(&p).unwrap(), s);
+        }
+    }
+
+    #[test]
+    fn ber_streaming_decode_leaves_reader_past_each_record() {
+        let a = widget();
+        let mut b = widget();
+        b.id = asn1cpp_wire::integer::Integer(77);
+        let mut buf = Vec::new();
+        ber::object::encode_pdu_into(&a, &mut buf);
+        let first_len = buf.len();
+        ber::object::encode_pdu_into(&b, &mut buf);
+        let mut r = asn1cpp_wire::Reader::new(&buf);
+        let mut got = Widget::default();
+        ber::object::decode_pdu_into(&mut got, &mut r).unwrap();
+        assert_eq!((got, r.pos()), (a, first_len));
+        let mut got = Widget::default();
+        ber::object::decode_pdu_into(&mut got, &mut r).unwrap();
+        assert_eq!((got, r.pos()), (b, buf.len()));
+    }
+}

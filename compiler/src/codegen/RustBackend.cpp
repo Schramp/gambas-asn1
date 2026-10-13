@@ -1385,6 +1385,13 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << "        Ok(v)\n";
     os << "    }\n";
     os << "}\n\n";
+    // Whole-document root marker (`spec::object::Asn1Pdu`), carrying
+    // this type's own SIZE table for PER count encoding (X.691 §19/§20).
+    os << std::format(
+        "impl asn1cpp_wire::spec::object::Asn1Pdu for {} {{\n"
+        "    const PDU_CONSTRAINTS: &'static asn1cpp_wire::constraints::Constraints = &{};\n"
+        "}}\n\n",
+        spec.type_name, cname);
 
     // Reflective `Asn1SeqOf` impl — the
     // element type's own `AsMemberRef` impl (emitted unconditionally
@@ -2217,6 +2224,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
         os << "        Ok(v)\n";
         os << "    }\n";
         os << "}\n\n";
+        // Whole-document root marker: every codec's top-level
+        // `encode_pdu`/`decode_pdu` binds on it (`spec::object::Asn1Pdu`).
+        os << std::format("impl asn1cpp_wire::spec::object::Asn1Pdu for {} {{}}\n\n", spec.type_name);
 
         // Thin `Asn1Value` forwarder — kept only so external callers
         // (e.g. randgen-rust's tool
@@ -2730,6 +2740,9 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         os << "        Ok(v)\n";
         os << "    }\n";
         os << "}\n\n";
+        // Whole-document root marker: every codec's top-level
+        // `encode_pdu`/`decode_pdu` binds on it (`spec::object::Asn1Pdu`).
+        os << std::format("impl asn1cpp_wire::spec::object::Asn1Pdu for {} {{}}\n\n", spec.type_name);
 
         // Thin `Asn1Value` forwarder — see emit_sequence_definition's
         // identical rationale.

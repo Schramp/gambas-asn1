@@ -9,7 +9,7 @@ use crate::constraints::Constraints;
 use crate::per::length::{decode_size_field, encode_size_field, get_length, get_nslength, get_nsnn, put_length, put_nslength, put_nsnn};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
-use crate::spec::object::{Asn1Choice, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
+use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
 use crate::spec::primitive::{per_decode_primitive, per_encode_primitive};
 
 fn encode_bare(m: MemberRef, c: &Constraints, w: &mut Writer) {
@@ -314,4 +314,45 @@ pub fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, pc: &Constraints, r: &
         decode_bare(obj.push_default_mut(), elem, r)?;
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Top-level (document root) entry points
+// ---------------------------------------------------------------------
+
+/// @brief Appends `v`'s unaligned-PER encoding to `w` (no flush — the
+///        caller owns the writer and pads it).
+/// @param v  Any generated SEQUENCE/SET/CHOICE/SEQUENCE OF type; a named
+///           SEQUENCE OF's own SIZE bounds come from
+///           `Asn1Pdu::PDU_CONSTRAINTS`.
+/// @see X.691 §10.1 — complete encoding of the outermost value.
+pub fn encode_pdu_into<T: Asn1Pdu + ?Sized>(v: &T, w: &mut Writer) {
+    encode_bare(v.as_member_ref(), T::PDU_CONSTRAINTS, w);
+}
+
+/// @brief One-record convenience form of `encode_pdu_into`, flushed to
+///        a whole number of octets.
+/// @return The encoded bytes.
+/// @see X.691 §10.1.3 — octet-aligned complete encoding.
+pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> Vec<u8> {
+    let mut w = Writer::new();
+    encode_pdu_into(v, &mut w);
+    w.flush();
+    w.into_bytes()
+}
+
+/// @brief Decodes one unaligned-PER value from `r` into `v`.
+/// @param v  Destination; expected to be `Default`-fresh.
+/// @param r  Bit reader positioned at the value's first bit.
+/// @see X.691 §10.1.
+pub fn decode_pdu_into<T: Asn1Pdu + ?Sized>(v: &mut T, r: &mut Reader) -> Result<(), DecodeError> {
+    decode_bare(v.as_member_ref_mut(), T::PDU_CONSTRAINTS, r)
+}
+
+/// @brief Whole-buffer form of `decode_pdu_into`.
+/// @return The decoded value.
+pub fn decode_pdu<T: Asn1Pdu>(data: &[u8]) -> Result<T, DecodeError> {
+    let mut v = T::default();
+    decode_pdu_into(&mut v, &mut Reader::new(data))?;
+    Ok(v)
 }
