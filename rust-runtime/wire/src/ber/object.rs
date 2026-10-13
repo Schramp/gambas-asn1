@@ -346,7 +346,29 @@ fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
 // SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------
 
+/// @brief Writes the elements of a SEQUENCE OF / SET OF, no outer TLV.
+///        A SET OF with more than one element is written in ascending
+///        order of the elements' encodings, as DER requires (X.690
+///        §11.6) and the C++ `SeqOfBerHandler` does; a SEQUENCE OF keeps
+///        its order.
+/// @param obj The collection; `natural_tag()` tells SET OF apart.
+/// @param out Destination buffer.
+/// @see X.690 §8.10, §8.12, §11.6.
 pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) {
+    if obj.natural_tag() == crate::spec::sequence::SET_TAG && obj.len() > 1 {
+        let mut parts: Vec<Vec<u8>> = (0..obj.len())
+            .map(|i| {
+                let mut buf = Vec::new();
+                encode_member_ref(obj.get(i), BerTagging::Delegate, &mut buf);
+                buf
+            })
+            .collect();
+        parts.sort();
+        for p in &parts {
+            out.extend_from_slice(p);
+        }
+        return;
+    }
     for i in 0..obj.len() {
         encode_member_ref(obj.get(i), BerTagging::Delegate, out);
     }
@@ -707,5 +729,19 @@ mod tests {
     fn seqof_round_trips_primitive_elements() {
         let v = crate::ber::sequence::SeqOf(vec![Integer(1), Integer(2), Integer(3)]);
         assert_eq!(roundtrip_seqof(&v), v);
+    }
+
+    #[test]
+    fn set_of_is_written_in_der_order_sequence_of_is_not() {
+        use crate::ber::sequence::{SeqOf, SetOf};
+        let vals = vec![Integer(300), Integer(5), Integer(-1)];
+        let mut set = Vec::new();
+        encode_seqof_content(&SetOf(vals.clone()), &mut set);
+        // DER (X.690 §11.6): ascending by encoding:
+        // 02 01 05 < 02 01 FF < 02 02 01 2C
+        assert_eq!(set, vec![0x02, 0x01, 0x05, 0x02, 0x01, 0xFF, 0x02, 0x02, 0x01, 0x2C]);
+        let mut seq = Vec::new();
+        encode_seqof_content(&SeqOf(vals), &mut seq);
+        assert_eq!(seq, vec![0x02, 0x02, 0x01, 0x2C, 0x02, 0x01, 0x05, 0x02, 0x01, 0xFF]);
     }
 }
