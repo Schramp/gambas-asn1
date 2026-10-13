@@ -1,0 +1,32 @@
+-- EXTENSIBILITY IMPLIED (X.680 §12): every SEQUENCE, SET, CHOICE and
+-- ENUMERATED in the module behaves as if "..." ended its definition, so
+-- PER adds the extension bits (X.691 §18.1, §22.5) even though no marker
+-- is written. Covers a top-level SEQUENCE, a CHOICE, a nested inline
+-- SEQUENCE, a SEQUENCE OF element type, and a type that already has an
+-- explicit marker (no second one is added). ENUMERATED is in
+-- per_extensibility_implied_enum_test.asn1 (asn1c differs there).
+PerExtensibilityImpliedTest DEFINITIONS AUTOMATIC TAGS EXTENSIBILITY IMPLIED ::= BEGIN
+
+Point ::= SEQUENCE {
+    x     INTEGER (0..255),
+    y     INTEGER (0..255)
+}
+
+Shape ::= CHOICE {
+    dot     Point,
+    radius  INTEGER (0..1000)
+}
+
+Explicit ::= SEQUENCE {
+    a     BOOLEAN,
+    ...
+}
+
+Rec ::= SEQUENCE {
+    shape    Shape,
+    inner    SEQUENCE { flag BOOLEAN, n INTEGER (0..7) },
+    points   SEQUENCE (SIZE (1..3)) OF Point,
+    explicit Explicit
+}
+
+END
