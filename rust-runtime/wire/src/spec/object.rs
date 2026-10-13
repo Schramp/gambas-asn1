@@ -276,6 +276,29 @@ pub trait AsMemberRef {
     const XER_INSTRUCTION: XerInstruction = XerInstruction::Default;
 }
 
+/// A generated type usable as a whole-document root — SEQUENCE/SET,
+/// CHOICE, or a named SEQUENCE OF/SET OF type assignment (X.680 §16).
+/// Bound of every codec's top-level entry points (`ber::object::
+/// encode_pdu`, `xer::object::encode_pdu`, `jer::object::encode_pdu`,
+/// `per::object::encode_pdu`, and their decode counterparts), which
+/// dispatch on `as_member_ref()` — the trait itself carries no codec
+/// logic, so adding a codec never touches a type that implements it.
+/// `RustBackend` implements it only for those three kinds, so
+/// `as_member_ref()` on an `Asn1Pdu` always yields `Composite`,
+/// `Choice`, or `SeqOf`.
+pub trait Asn1Pdu: AsMemberRef + Default {
+    /// The type assignment's own constraint table: a named SEQUENCE
+    /// OF/SET OF's SIZE bounds drive its count encoding (X.691 §19/§20)
+    /// and top-level SIZE validation; SEQUENCE/SET/CHOICE have none of
+    /// their own (their members carry theirs in `MemberMeta`).
+    const PDU_CONSTRAINTS: &'static crate::constraints::Constraints = &crate::constraints::UNCONSTRAINED;
+}
+
+/// Panic message for an `Asn1Pdu` whose `as_member_ref()` breaks the
+/// trait's own SEQUENCE/SET/CHOICE/SEQUENCE OF contract — shared by
+/// every codec's top-level entry points.
+pub(crate) const NOT_A_PDU: &str = "Asn1Pdu::as_member_ref() must yield Composite, Choice, or SeqOf";
+
 /// Purely reflective ENUMERATED interface (X.680 §20) — `enum_get`/
 /// `enum_set` convert to/from the X.690 §8.4/X.691 ordinal `i64`
 /// representation; `enum_set` returns `false` for a value with no
