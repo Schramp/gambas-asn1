@@ -1217,6 +1217,47 @@ static bool is_constraint_extensible(const ast::TypeDef& def) {
     return false;
 }
 
+/// @brief PER-visibility of a string or sizeable type's constraints (X.691
+///        §9.3.7–9.3.9, §9.3.15).
+struct PerStringVisibility {
+    bool from_visible = true;     ///< FROM is PER-visible: no extension marker in it or around it (§9.3.9).
+    bool size_extensible = false; ///< A PER-visible SIZE carries an extension marker (§9.3.15).
+};
+
+/// @brief Walks one constraint, with \p ext_ctx telling whether an enclosing
+///        constraint carries an extension marker, recording where the markers
+///        fall (part of string_per_visibility()).
+static void scan_per_visibility(const ast::Constraint& c, bool ext_ctx, PerStringVisibility& v) {
+    const bool ext = ext_ctx || c.extensible;
+    if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c.body))
+        for (const auto& op : ic->operands)
+            if (op) scan_per_visibility(*op, ext, v);
+    if (auto* sc = std::get_if<ast::SizeConstraint>(&c.body))
+        if (ext || (sc->inner && constraint_tree_extensible(*sc->inner))) v.size_extensible = true;
+    if (auto* fc = std::get_if<ast::FromConstraint>(&c.body))
+        if (ext || (fc->inner && constraint_tree_extensible(*fc->inner))) v.from_visible = false;
+}
+
+/// @brief Decides which of \p def's string constraints PER sees. A
+///        PermittedAlphabet with an extension marker in or around it is not
+///        PER-visible (X.691 §9.3.9), so the type's own alphabet applies; an
+///        extension marker only makes the type extensible for PER when a
+///        PER-visible constraint (here: SIZE) carries it (§9.3.15 note 1).
+/// @return Visibility of the FROM and extensibility of the SIZE.
+static PerStringVisibility string_per_visibility(const ast::TypeDef& def) {
+    PerStringVisibility v;
+    for (const auto& cptr : def.constraints)
+        if (cptr) scan_per_visibility(*cptr, false, v);
+    return v;
+}
+
+/// @brief extract_from_alphabet() restricted to a PER-visible FROM
+///        (X.691 §9.3.9): empty when the FROM carries an extension marker.
+static std::vector<uint8_t> per_visible_alphabet(const ast::TypeDef& def) {
+    if (!string_per_visibility(def).from_visible) return {};
+    return extract_from_alphabet(def);
+}
+
 // Walk a constraint, including IntersectionConstraint operands, and call f on each body.
 template<typename F>
 static void walk_constraints(const ast::Constraint& c, F&& f) {
@@ -1448,7 +1489,7 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
     auto utag = sizeable_universal_tag(*bt);
     if (utag) {
         auto sr       = extract_size_range(m);
-        auto alphabet = extract_from_alphabet(m);
+        auto alphabet = per_visible_alphabet(m);
         // UTF8String is not a known-multiplier character string (X.691 §26.6):
         // FROM constraints on it are not enforced in PER encoding — drop alphabet.
         if (*bt == BT::Utf8String) alphabet.clear();
@@ -1476,15 +1517,10 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
                 spec.size_range_bits = sc.range_bits;
                 spec.size_lower = sc.lower; spec.size_upper = sc.upper;
             }
-            spec.extensible = is_constraint_extensible(m);
-            // FROM("A".."Z",...) has the extension marker inside the FromConstraint;
-            // is_constraint_extensible only checks the outer Constraint::extensible.
-            if (!spec.extensible && !alphabet.empty()) {
-                walk_type_constraints(m, [&](const ast::ConstraintBody& body) {
-                    auto* fc = std::get_if<ast::FromConstraint>(&body);
-                    if (fc && fc->inner && fc->inner->extensible) spec.extensible = true;
-                });
-            }
+            // Only a PER-visible constraint's extension marker makes the
+            // type extensible for PER (X.691 §9.3.15 note 1); an extensible
+            // FROM is not PER-visible at all (§9.3.9, per_visible_alphabet).
+            spec.extensible = string_per_visibility(m).size_extensible;
             if (!alphabet.empty()) {
                 spec.alpha_prefix = std::format("asn_FROM_{}_{}", parent_cname, mname);
                 spec.alphabet = alphabet;
@@ -1635,7 +1671,7 @@ Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRe
             BT::VideotexString, BT::ObjectDescriptor, BT::BmpString, BT::UniversalString,
             BT::UtcTime, BT::GeneralizedTime,
         };
-        if (kPerStringKinds.count(*rbt) && extract_from_alphabet(*resolved).empty())
+        if (kPerStringKinds.count(*rbt) && per_visible_alphabet(*resolved).empty())
             return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
         return {};
     }
@@ -2736,7 +2772,7 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     spec.is_explicit = type_is_explicit(def);
     if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
 
-    spec.alphabet = extract_from_alphabet(def);
+    spec.alphabet = per_visible_alphabet(def);
     auto size_range = extract_size_range(def);
     spec.has_size_constraint = size_range.has_value();
     spec.size_bounded = size_range.has_value()
@@ -2755,7 +2791,9 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
         spec.size_lower = sc.lower;
         spec.size_upper = sc.upper;  // meaningless when !size_bounded (semi-constrained)
     }
-    spec.extensible = is_constraint_extensible(def);
+    // X.691 §9.3.15 note 1: only a PER-visible constraint's extension
+    // marker counts (string_per_visibility).
+    spec.extensible = string_per_visibility(def).size_extensible;
     spec.xer_encoding = def.xer_encoding;
     return spec;
 }

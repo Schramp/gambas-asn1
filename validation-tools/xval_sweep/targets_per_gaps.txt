@@ -12,6 +12,5 @@
 #   compiled from a newer schema version than the receiver.
 
 tests/asn1/per_gap_ext_string_test.asn1   Rec
-tests/asn1/per_gap_ext_from_test.asn1     Rec
 tests/asn1/per_gap_ext_group_test.asn1    Rec
 tests/asn1/per_gap_set_order_test.asn1     Rec
