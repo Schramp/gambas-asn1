@@ -5,12 +5,10 @@
 // does (X.691 has nothing corresponding to it).
 //
 // Materialized by asn1cpp-validation-tools/xval_sweep/xval_sweep.py --
-// only when the target type has a `PerValue` impl (grepped from the
-// generated .rs source before this template is materialized at all; see
-// xval_sweep.py's own build_rust doc).
+// only when the target type has an `Asn1Pdu` impl (grepped from the
+// generated .rs source; see xval_sweep.py's own build_rust doc).
 //
 // Usage: ber-to-per --type __PDU_TYPE__ [FILE]
-use asn1cpp_wire::value::Asn1Value;
 use std::io::{Read, Write};
 
 const TYPES: &[&str] = &["__PDU_TYPE__"];
@@ -27,26 +25,15 @@ fn list_types() {
     }
 }
 
-// See ber_to_xer.rs.tmpl's own doc on why this peeks the record's length
-// via BER's self-delimiting TLV framing rather than going through
-// `Asn1Value::ber_decode_into` generically -- the PER leg below still
-// needs `Asn1Value` (no inherent `.encode_per()` convention exists for
-// any kind yet), but the BER *decode* half doesn't have to.
-fn record_len(data: &[u8]) -> Result<usize, asn1cpp_wire::DecodeError> {
-    let mut r = asn1cpp_wire::Reader::new(data);
-    r.read_tlv()?;
-    Ok(r.pos())
-}
-
+// BER's TLV framing is self-delimiting (X.690 §8.1): decoding one record
+// from a shared reader leaves it positioned at the next record.
 fn encode_one(type_name: &str, data: &[u8]) -> Result<(Vec<u8>, usize), asn1cpp_wire::DecodeError> {
-    let len = record_len(data)?;
+    let mut r = asn1cpp_wire::Reader::new(data);
     match type_name {
         "__PDU_TYPE__" => {
-            let v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::decode(&data[..len])?;
-            let mut w = asn1cpp_wire::per::writer::Writer::new();
-            v.per_encode(&mut w, v.constraints());
-            w.flush();
-            Ok((w.into_bytes(), len))
+            let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
+            asn1cpp_wire::ber::object::decode_pdu_into(&mut v, &mut r)?;
+            Ok((asn1cpp_wire::per::object::encode_pdu(&v), r.pos()))
         }
         _ => unreachable!("checked by caller"),
     }
