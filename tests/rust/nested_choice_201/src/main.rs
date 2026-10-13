@@ -46,17 +46,17 @@ fn main() {
 
     let leaf = Leaf {};
 
-    let bytes = leaf.encode();
+    let bytes = asn1cpp_wire::ber::object::encode_pdu(&leaf);
     check("leaf BER encode non-empty length ok", bytes.len() == 2, &mut failures);
 
-    let back = Leaf::decode(&bytes);
+    let back = asn1cpp_wire::ber::object::decode_pdu::<Leaf>(&bytes);
     check("leaf BER decode ok", back.is_ok(), &mut failures);
     check("leaf BER round-trip", back == Ok(leaf.clone()), &mut failures);
 
-    let xml = leaf.encode_xer();
+    let xml = asn1cpp_wire::xer::object::encode_pdu(&leaf);
     check("leaf XER encode non-empty", !xml.is_empty(), &mut failures);
 
-    let back_xml = Leaf::decode_xer(&xml);
+    let back_xml = asn1cpp_wire::xer::object::decode_pdu::<Leaf>(&xml);
     check("leaf XER decode ok", back_xml.is_ok(), &mut failures);
     check("leaf XER round-trip", back_xml == Ok(leaf), &mut failures);
 
@@ -69,16 +69,16 @@ fn main() {
         ),
     };
 
-    let bytes = hc.encode();
+    let bytes = asn1cpp_wire::ber::object::encode_pdu(&hc);
     let expected: &[u8] = &[0x30, 0x09, 0x80, 0x01, 0x07, 0xa1, 0x04, 0xa1, 0x02, 0xa1, 0x00];
     check("nested BER matches asn1c ground truth", bytes == expected, &mut failures);
 
-    let back = HandoverCommandT::decode(&bytes);
+    let back = asn1cpp_wire::ber::object::decode_pdu::<HandoverCommandT>(&bytes);
     check("nested BER decode ok", back.is_ok(), &mut failures);
     check("nested BER round-trip", back == Ok(hc.clone()), &mut failures);
 
-    let xml = hc.encode_xer();
-    let back_xml = HandoverCommandT::decode_xer(&xml);
+    let xml = asn1cpp_wire::xer::object::encode_pdu(&hc);
+    let back_xml = asn1cpp_wire::xer::object::decode_pdu::<HandoverCommandT>(&xml);
     check("nested XER decode ok", back_xml.is_ok(), &mut failures);
     check("nested XER round-trip", back_xml == Ok(hc), &mut failures);
 

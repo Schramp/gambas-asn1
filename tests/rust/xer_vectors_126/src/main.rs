@@ -19,15 +19,11 @@
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
 
-use asn1cpp_wire::value::Asn1Value;
-use asn1cpp_wire::per::reader::Reader;
-use asn1cpp_wire::per::writer::Writer;
-use asn1cpp_wire::constraints::UNCONSTRAINED;
 fn decode_sequence_xer_pdu(xml: &str) -> Result<PDU::PDU, asn1cpp_wire::DecodeError> {
-    PDU::PDU::decode_xer(xml)
+    asn1cpp_wire::xer::object::decode_pdu(xml)
 }
 fn encode_sequence_xer_pdu(val: &PDU::PDU) -> String {
-    val.encode_xer()
+    asn1cpp_wire::xer::object::encode_pdu(val)
 }
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -67,16 +63,11 @@ fn strip_ws(s: &str) -> String {
 }
 
 fn per_encode(val: &PDU::PDU) -> Vec<u8> {
-    let mut w = Writer::new();
-    val.per_encode(&mut w, &UNCONSTRAINED);
-    w.flush();
-    w.into_bytes()
+    asn1cpp_wire::per::object::encode_pdu(val)
 }
 
 fn per_decode(bytes: &[u8]) -> bool {
-    let mut r = Reader::new(bytes);
-    let mut val = PDU::PDU::default();
-    val.per_decode_into(&mut r, &UNCONSTRAINED).is_ok()
+    asn1cpp_wire::per::object::decode_pdu::<PDU::PDU>(bytes).is_ok()
 }
 
 /// Returns local failure count. Wrapped in catch_unwind by the caller so one
@@ -123,15 +114,12 @@ fn process_inner(path: &Path, name: &str) -> i32 {
     }
 
     // 5. Round-trip: UPER decode our own bytes -> XER re-encode -> compare to .in
-    let mut val2 = PDU::PDU::default();
-    let rt_ok = {
-        let mut r = Reader::new(&our_bytes);
-        val2.per_decode_into(&mut r, &UNCONSTRAINED).is_ok()
-    };
+    let val2 = asn1cpp_wire::per::object::decode_pdu::<PDU::PDU>(&our_bytes);
+    let rt_ok = val2.is_ok();
     check(&format!("{name}  UPER round-trip decode ok"), rt_ok, &mut failures);
-    if !rt_ok {
+    let Ok(val2) = val2 else {
         return failures;
-    }
+    };
 
     let reenc = encode_sequence_xer_pdu(&val2);
     if kind == Kind::X {
