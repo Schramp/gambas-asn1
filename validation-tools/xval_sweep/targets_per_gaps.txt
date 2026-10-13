@@ -11,7 +11,6 @@
 # - Decoding an unknown CHOICE extension alternative: needs a sender
 #   compiled from a newer schema version than the receiver.
 
-tests/asn1/per_gap_fragment_test.asn1     Big
 tests/asn1/per_gap_ext_size_test.asn1     Rec
 tests/asn1/per_gap_ext_string_test.asn1   Rec
 tests/asn1/per_gap_ext_from_test.asn1     Rec
