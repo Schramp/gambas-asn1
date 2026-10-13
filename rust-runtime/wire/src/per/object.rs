@@ -6,7 +6,7 @@
 //! generated per-type `*Spec<T>` table.
 
 use crate::constraints::Constraints;
-use crate::per::length::{decode_size_and_items, encode_size_and_items, get_nslength, get_nsnn, get_octets, put_nslength, put_nsnn, put_octets};
+use crate::per::length::{decode_ext_size_and_items, encode_ext_size_and_items, get_nslength, get_nsnn, get_octets, put_nslength, put_nsnn, put_octets};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
@@ -256,14 +256,14 @@ pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Write
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
     if obj.natural_tag() == crate::spec::sequence::SET_TAG && obj.len() > 1 {
         let parts = set_of_sorted_parts(obj, elem, w);
-        encode_size_and_items(w, pc, parts.len(), |w, range| {
+        encode_ext_size_and_items(w, pc, parts.len(), |w, range| {
             for (bytes, nbits) in &parts[range] {
                 w.put_bit_string(bytes, *nbits);
             }
         });
         return;
     }
-    encode_size_and_items(w, pc, obj.len(), |w, range| {
+    encode_ext_size_and_items(w, pc, obj.len(), |w, range| {
         for i in range {
             encode_bare(obj.get(i), elem, w);
         }
@@ -306,7 +306,7 @@ fn set_of_sorted_parts(obj: &dyn Asn1SeqOf, elem: &Constraints, w: &mut Writer) 
 
 pub fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, pc: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
-    decode_size_and_items(r, pc, |r, m| {
+    decode_ext_size_and_items(r, pc, |r, m| {
         obj.reserve(m);
         for _ in 0..m {
             decode_bare(obj.push_default_mut(), elem, r)?;
