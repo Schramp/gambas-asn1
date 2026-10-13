@@ -103,4 +103,5 @@ tests/asn1/per_ext_controls_test.asn1   Rec
 tests/asn1/per_setof_order_test.asn1   Rec
 tests/asn1/per_fragment_test.asn1   Big
 tests/asn1/per_ext_size_test.asn1   Rec
+tests/asn1/per_ext_from_test.asn1   Rec  skip-asn1c: asn1c writes 8-bit chars for an extensible FROM (Schramp/asn1c#8); C++/Rust follow X.691 9.3.9/9.3.10
 tests/tests-asn1c-compiler/33-misc-OK.asn1   T2
