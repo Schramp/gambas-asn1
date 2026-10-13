@@ -278,8 +278,47 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> R
 pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Writer) {
     encode_size_field(w, pc, obj.len());
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
+    if obj.natural_tag() == crate::spec::sequence::SET_TAG && obj.len() > 1 {
+        encode_set_of_sorted(obj, elem, w);
+        return;
+    }
     for i in 0..obj.len() {
         encode_bare(obj.get(i), elem, w);
+    }
+}
+
+/// @brief Writes a SET OF's elements in the order X.691 §21.1
+///        (CANONICAL-PER) defines: ascending by component encoding,
+///        compared as bit strings zero-padded to an octet boundary, the
+///        shorter one extended with 0-octets. The only order the standard
+///        defines, and valid BASIC-PER too (X.691 §8); asn1c and the C++
+///        `SeqOfPerHandler` emit the same.
+/// @param obj  The SET OF value.
+/// @param elem Per-element constraints.
+/// @param w    Destination; each element's exact bits are appended.
+/// @see X.691 §21.1, §21.2.
+fn encode_set_of_sorted(obj: &dyn Asn1SeqOf, elem: &Constraints, w: &mut Writer) {
+    let mut parts: Vec<(Vec<u8>, usize)> = (0..obj.len())
+        .map(|i| {
+            let mut ew = Writer::new();
+            encode_bare(obj.get(i), elem, &mut ew);
+            if ew.encode_failed() {
+                w.set_encode_failed("SET OF element");
+            }
+            let nbits = ew.bit_pos();
+            ew.flush();
+            (ew.into_bytes(), nbits)
+        })
+        .collect();
+    parts.sort_by(|(a, _), (b, _)| {
+        let n = a.len().max(b.len());
+        (0..n)
+            .map(|k| (a.get(k).copied().unwrap_or(0), b.get(k).copied().unwrap_or(0)))
+            .find(|(x, y)| x != y)
+            .map_or(std::cmp::Ordering::Equal, |(x, y)| x.cmp(&y))
+    });
+    for (bytes, nbits) in &parts {
+        w.put_bit_string(bytes, *nbits);
     }
 }
 
@@ -331,4 +370,31 @@ pub fn decode_pdu<T: Asn1Pdu>(data: &[u8]) -> Result<T, DecodeError> {
     let mut v = T::default();
     decode_pdu_into(&mut v, &mut Reader::new(data))?;
     Ok(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ber::sequence::{SeqOf, SetOf};
+    use crate::constraints::UNCONSTRAINED;
+    use crate::integer::Integer;
+
+    fn bytes(f: impl FnOnce(&mut Writer)) -> Vec<u8> {
+        let mut w = Writer::new();
+        f(&mut w);
+        w.flush();
+        w.into_bytes()
+    }
+
+    #[test]
+    fn set_of_is_written_in_canonical_per_order_sequence_of_is_not() {
+        // Unconstrained INTEGER elements: length octet + minimal
+        // two's-complement octets each. X.691 §21.1 compares the padded
+        // element encodings: 01 05 < 01 FF < 02 01 2C.
+        let vals = vec![Integer(300), Integer(-1), Integer(5)];
+        let set = bytes(|w| encode_seqof_content(&SetOf(vals.clone()), &UNCONSTRAINED, w));
+        assert_eq!(set, vec![0x03, 0x01, 0x05, 0x01, 0xFF, 0x02, 0x01, 0x2C]);
+        let seq = bytes(|w| encode_seqof_content(&SeqOf(vals), &UNCONSTRAINED, w));
+        assert_eq!(seq, vec![0x03, 0x02, 0x01, 0x2C, 0x01, 0xFF, 0x01, 0x05]);
+    }
 }

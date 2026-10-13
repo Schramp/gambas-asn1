@@ -100,4 +100,5 @@ tests/asn1/rust_seqof_base64_elem_test.asn1   Entries
 tests/asn1/rust_choice_seqof_alt_per_test.asn1   Envelope
 tests/asn1/rust_bool_alias_per_test.asn1   Attributes
 tests/asn1/per_ext_controls_test.asn1   Rec
+tests/asn1/per_setof_order_test.asn1   Rec
 tests/tests-asn1c-compiler/33-misc-OK.asn1   T2
