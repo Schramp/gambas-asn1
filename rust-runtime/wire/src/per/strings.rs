@@ -29,7 +29,7 @@
 //! needs updating in one Rust-side place, not per call site.
 
 use crate::constraints::Constraints;
-use crate::per::length::{decode_size_field, encode_size_field};
+use crate::per::length::{decode_size_and_items, encode_size_and_items};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 
@@ -168,45 +168,45 @@ pub fn encode_string(w: &mut Writer, pc: &Constraints, tag_num: u32, bytes: &[u8
         }
     }
 
-    encode_size_field(w, pc, char_count);
     if has_alpha {
-        // X.691 §26.5.4/§26.5.7: one `encode_table` lookup per character —
-        // validates membership and maps to the ordinal in one step. For a
+        // X.691 §26.5.4/§26.5.7: membership in the FROM alphabet is checked
+        // for every character before anything is written, since the
+        // fragment-aware writer below cannot fail part-way. For a
         // wide-char kind (bpc>1), every high byte must be 0x00 (Basic
         // Latin plane); the low byte is the alphabet index key.
         let table = pc.encode_table.expect("has_alphabet already checked encode_table.is_some()");
         for chunk in bytes.chunks(bpc as usize) {
-            if bpc > 1 {
-                for &b in &chunk[..chunk.len() - 1] {
-                    if b != 0 {
-                        return Err(EncodeError::new("codepoint outside Basic Latin in FROM alphabet"));
-                    }
-                }
+            if chunk[..chunk.len() - 1].iter().any(|&b| b != 0) {
+                return Err(EncodeError::new("codepoint outside Basic Latin in FROM alphabet"));
             }
-            let lo = chunk[chunk.len() - 1];
-            let idx = table[lo as usize];
-            if idx == 0xFFFF {
+            if table[chunk[chunk.len() - 1] as usize] == 0xFFFF {
                 return Err(EncodeError::new("character not in FROM alphabet"));
             }
-            w.put_bits(idx as u64, pc.alphabet_bits);
-        }
-    } else if bpc > 1 {
-        for &b in bytes {
-            w.put_bits(b as u64, 8);
-        }
-    } else if bits == 4 {
-        for &c in bytes {
-            w.put_bits(encode_numeric_char(c) as u64, 4);
-        }
-    } else if bits == 7 {
-        for &c in bytes {
-            w.put_bits(c as u64, 7);
-        }
-    } else {
-        for &c in bytes {
-            w.put_bits(c as u64, 8);
         }
     }
+
+    let bpc_us = bpc as usize;
+    encode_size_and_items(w, pc, char_count, |w, range| {
+        let chars = &bytes[range.start * bpc_us..range.end * bpc_us];
+        if has_alpha {
+            let table = pc.encode_table.expect("checked above");
+            for chunk in chars.chunks(bpc_us) {
+                w.put_bits(table[chunk[chunk.len() - 1] as usize] as u64, pc.alphabet_bits);
+            }
+        } else if bpc > 1 {
+            for &b in chars {
+                w.put_bits(b as u64, 8);
+            }
+        } else if bits == 4 {
+            for &c in chars {
+                w.put_bits(encode_numeric_char(c) as u64, 4);
+            }
+        } else {
+            for &c in chars {
+                w.put_bits(c as u64, bits);
+            }
+        }
+    });
     Ok(())
 }
 
@@ -218,40 +218,36 @@ pub fn decode_string(r: &mut Reader, pc: &Constraints, tag_num: u32) -> Result<V
         panic!("PER: extensible SIZE/FROM-constrained string decoding not yet supported");
     }
 
-    let char_count = decode_size_field(r, pc)?;
-    let mut result = Vec::with_capacity(char_count * bpc as usize);
-    if has_alpha {
-        // X.691 §26.5.4/§26.5.7 decode counterpart: read `alphabet_bits`,
-        // look up the character via the decode-direction `alphabet` table.
-        let alphabet = pc.alphabet.expect("has_alphabet implies a decode-direction table exists too");
-        for _ in 0..char_count {
-            let idx = r.get_bits(pc.alphabet_bits)? as usize;
-            if idx >= pc.alphabet_size as usize {
-                return Err(DecodeError::new("PER: alphabet index out of range", r.bit_pos()));
+    let mut result = Vec::new();
+    decode_size_and_items(r, pc, |r, m| {
+        result.reserve(m * bpc as usize);
+        if has_alpha {
+            // X.691 §26.5.4/§26.5.7 decode counterpart: read `alphabet_bits`,
+            // look up the character via the decode-direction `alphabet` table.
+            let alphabet = pc.alphabet.expect("has_alphabet implies a decode-direction table exists too");
+            for _ in 0..m {
+                let idx = r.get_bits(pc.alphabet_bits)? as usize;
+                if idx >= pc.alphabet_size as usize {
+                    return Err(DecodeError::new("PER: alphabet index out of range", r.bit_pos()));
+                }
+                result.extend(std::iter::repeat(0).take(bpc as usize - 1));
+                result.push(alphabet[idx]);
             }
-            let lo = alphabet[idx];
-            for _ in 0..bpc - 1 {
-                result.push(0);
+        } else if bpc > 1 {
+            for _ in 0..m * bpc as usize {
+                result.push(r.get_bits(8)? as u8);
             }
-            result.push(lo);
+        } else if bits == 4 {
+            for _ in 0..m {
+                result.push(decode_numeric_char(r.get_bits(4)?));
+            }
+        } else {
+            for _ in 0..m {
+                result.push(r.get_bits(bits)? as u8);
+            }
         }
-    } else if bpc > 1 {
-        for _ in 0..char_count * bpc as usize {
-            result.push(r.get_bits(8)? as u8);
-        }
-    } else if bits == 4 {
-        for _ in 0..char_count {
-            result.push(decode_numeric_char(r.get_bits(4)?));
-        }
-    } else if bits == 7 {
-        for _ in 0..char_count {
-            result.push(r.get_bits(7)? as u8);
-        }
-    } else {
-        for _ in 0..char_count {
-            result.push(r.get_bits(8)? as u8);
-        }
-    }
+        Ok(())
+    })?;
     Ok(result)
 }
 
@@ -421,7 +417,7 @@ mod tests {
     fn from_alphabet_decode_rejects_out_of_range_index() {
         let pc = abc_alphabet();
         let mut w = Writer::new();
-        crate::per::length::encode_size_field(&mut w, &pc, 1); // 1 character
+        crate::per::length::encode_size_and_items(&mut w, &pc, 1, |_, _| {}); // 1 character
         w.put_bits(3, 2); // index 3 — one past the 3-entry alphabet
         w.flush();
         let bytes = w.into_bytes();
