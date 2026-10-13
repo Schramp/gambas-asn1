@@ -1,10 +1,15 @@
--- Extensible PermittedAlphabet (FROM (...), ...). An extensible FROM is
--- not PER-visible (X.691 §10.3-10.4), so the string is encoded as if the
--- alphabet constraint were absent: full 8-bit VisibleString characters.
-PerGapExtFromTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+-- Extensible PermittedAlphabet (FROM (...), ...). X.691 §9.3.9: a FROM
+-- with an extension marker is not PER-visible, so the effective alphabet
+-- is the type's own (§9.3.10), and the marker adds no extension bit
+-- (§9.3.15 note 1). Each member must encode exactly like the plain type:
+-- 7-bit characters for VisibleString and IA5String in UNALIGNED.
+-- asn1c instead writes 8-bit characters here (Schramp/asn1c#8), hence
+-- skip-asn1c on this target.
+PerExtFromTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 
 Rec ::= SEQUENCE {
-    word      VisibleString (FROM ("a".."z"), ...)
+    word      VisibleString (FROM ("a".."z"), ...),
+    ia5       IA5String (FROM ("a".."z"), ...)
 }
 
 END
