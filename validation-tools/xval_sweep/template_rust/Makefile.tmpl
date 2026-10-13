@@ -32,7 +32,7 @@ gen: gen/.stamp
 gen/.stamp: $(ASN1_FILES) $(ASNCPP)
 	@rm -rf gen.new
 	@mkdir -p gen.new gen
-	$(ASNCPP) $(ASN1_FILES) -pdu=$(PDU_TYPE) --target=rust -o gen.new
+	$(ASNCPP) $(ASN1_FILES) -pdu=$(PDU_TYPE) __ASNCPP_FLAGS__ --target=rust -o gen.new
 	@rsync -rc --delete --exclude=.stamp gen.new/ gen/
 	@rm -rf gen.new
 	@touch $@

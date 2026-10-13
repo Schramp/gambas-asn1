@@ -66,6 +66,11 @@
 # build too.
 examples/sample.source.RRC/asn1-files/rrc-7.1.0.asn1    UL-CCCH-Message
 
+# ETSI LI (multi-module directory schema; -fallow-newer-modules picks the
+# newest of the duplicated module versions, as the example's Makefile does).
+examples/sample.source.ETSI-LI-PS-PDU/asn1-files   PS-PDU             -fallow-newer-modules
+examples/sample.source.ETSI-LI-PS-PDU/asn1-files   EncryptedPayload   -fallow-newer-modules
+
 tests/asn1/roundtrip_test.asn1        Container
 tests/asn1/explicit_tag_test.asn1     Mixed
 tests/asn1/choice_test.asn1           Alt4
