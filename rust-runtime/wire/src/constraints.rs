@@ -23,6 +23,9 @@ pub const CONSTRAINED: u32 = 1;
 pub const SEMI_CONSTRAINED: u32 = 2;
 pub const EXTENSIBLE: u32 = 4;
 pub const SIZE_CONSTRAINED: u32 = 8;
+/// BIT STRING defined with a NamedBitList (X.680 §22.7): trailing 0 bits
+/// carry no meaning and PER drops them (X.691 §15.2, §15.3).
+pub const NAMED_BITS: u32 = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Constraints {
@@ -73,6 +76,7 @@ impl Constraints {
     pub const SEMI_CONSTRAINED: u32 = SEMI_CONSTRAINED;
     pub const EXTENSIBLE: u32 = EXTENSIBLE;
     pub const SIZE_CONSTRAINED: u32 = SIZE_CONSTRAINED;
+    pub const NAMED_BITS: u32 = NAMED_BITS;
 
     pub fn is_constrained(&self) -> bool {
         self.flags & CONSTRAINED != 0
@@ -163,6 +167,22 @@ pub fn validate_size(n: usize, c: &Constraints) -> i64 {
         return c.size_upper - n;
     }
     0
+}
+
+/// SIZE check of a BIT STRING value. A NamedBitList value satisfies the
+/// constraint when adding or removing trailing 0 bits makes it fit (X.680
+/// §22.7, X.691 §15.3), so only its significant bits are checked against the
+/// upper bound; otherwise `validate_size` on the bit count. Mirrors
+/// `BitString::validate` (`runtime/include/asn1cpp/types/BitString.hpp`).
+pub fn validate_bit_string(v: &crate::bit_string::BitString, c: &Constraints) -> i64 {
+    if c.flags & NAMED_BITS == 0 {
+        return validate_size(v.bit_count(), c);
+    }
+    if c.flags & SIZE_CONSTRAINED == 0 || c.flags & EXTENSIBLE != 0 {
+        return 0;
+    }
+    let sig = v.significant_bit_count() as i64;
+    if sig > c.size_upper { c.size_upper - sig } else { 0 }
 }
 
 /// X.680 §51.4 PermittedAlphabet check. Mirrors the
@@ -347,6 +367,22 @@ mod tests {
     #[test]
     fn alphabet_no_encode_table_is_always_zero() {
         assert_eq!(validate_alphabet("anything at all!", &Constraints::default()), 0);
+    }
+
+    /// X.680 §22.7: a NamedBitList value fits SIZE(8) whenever its
+    /// significant bits do — '01'B and '0100000000'B both satisfy it.
+    #[test]
+    fn validate_bit_string_named_bits_checks_significant_bits_only() {
+        use crate::bit_string::BitString;
+        let plain = cs(Constraints::SIZE_CONSTRAINED, 8, 8);
+        let named = Constraints { flags: Constraints::SIZE_CONSTRAINED | Constraints::NAMED_BITS, ..plain };
+        let short = BitString { bytes: vec![0x40], unused_bits: 6 };
+        let long = BitString { bytes: vec![0x40, 0x00], unused_bits: 6 };
+        let too_long = BitString { bytes: vec![0x00, 0x40], unused_bits: 6 };
+        assert_eq!(validate_bit_string(&short, &plain), 6);
+        assert_eq!(validate_bit_string(&short, &named), 0);
+        assert_eq!(validate_bit_string(&long, &named), 0);
+        assert_eq!(validate_bit_string(&too_long, &named), -2);
     }
 
     #[test]

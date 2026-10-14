@@ -10,6 +10,7 @@ struct Constraints {
     static constexpr int SEMI_CONSTRAINED = 2;
     static constexpr int EXTENSIBLE       = 4;
     static constexpr int SIZE_CONSTRAINED = 8;   // size_lower..size_upper is a finite range
+    static constexpr int NAMED_BITS       = 16;  // BIT STRING with a NamedBitList (X.680 §22.7)
 
     // INTEGER storage kind — chosen at codegen time from constraint analysis.
     // BerCodec / RandomFiller / validate() read this to cast void* correctly.

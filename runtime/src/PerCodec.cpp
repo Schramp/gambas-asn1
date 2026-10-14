@@ -503,14 +503,21 @@ public:
 
 class BitStringPerHandler final : public IPerTypeHandler {
 public:
+    /// @brief Encode a BIT STRING: length determinant in bits, then the bits.
+    ///        A NamedBitList type is sent with trailing 0 bits removed and
+    ///        padded with 0 bits up to the SIZE lower bound.
+    /// @param stream  Bit-level output.
+    /// @param def     Type descriptor; \c constraints carries SIZE and \c NAMED_BITS.
+    /// @param src     The \c BitString value.
+    /// @see X.691 §15.2, §15.3 (NamedBitList), §15.5–15.10 (length and bits).
     void encode(const PerCodec&, PerEncodeStream& stream,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const BitString& v = *static_cast<const BitString*>(src);
-        std::size_t bit_count = v.bit_count();
-        auto bytes = v.bytes();
+        std::size_t bit_count = (def.constraints.flags & Constraints::NAMED_BITS)
+            ? v.named_bits_length(def.constraints) : v.bit_count();
         encode_ext_size_and_items(stream, def.constraints, bit_count, [&](std::size_t from, std::size_t to) {
             for (std::size_t i = from; i < to; ++i)
-                stream.put_bits((bytes[i / 8] >> (7 - i % 8)) & 1, 1);
+                stream.put_bits(v.bit(i), 1);
         });
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream& stream,
