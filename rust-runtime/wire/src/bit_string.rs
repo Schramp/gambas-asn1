@@ -35,6 +35,30 @@ impl BitString {
             self.bytes.len() * 8 - self.unused_bits as usize
         }
     }
+
+    /// Length with trailing 0 bits removed: the position after the last 1
+    /// bit, 0 when no bit is set (X.680 §22.7). Mirrors
+    /// `asn1::BitString::significant_bit_count()`.
+    pub fn significant_bit_count(&self) -> usize {
+        significant_bits(&self.bytes, self.bit_count())
+    }
+}
+
+/// Position after the last 1 bit among the first `bit_count` bits of
+/// `bytes` (MSB-first), 0 when none is set — the length of a NamedBitList
+/// value with its trailing 0 bits removed (X.680 §22.7).
+pub fn significant_bits(bytes: &[u8], bit_count: usize) -> usize {
+    let full = bit_count.div_ceil(8);
+    for i in (0..full).rev() {
+        let mut b = bytes[i];
+        if i + 1 == full && bit_count % 8 != 0 {
+            b &= 0xFFu8 << (8 - bit_count % 8);
+        }
+        if b != 0 {
+            return i * 8 + 8 - b.trailing_zeros() as usize;
+        }
+    }
+    0
 }
 
 pub fn write_bit_string(out: &mut Vec<u8>, value: &BitString) {

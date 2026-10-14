@@ -514,6 +514,13 @@ private:
     ///        ultimates (would need real member-forwarding) — narrower
     ///        cases keep the pre-existing bare-alias behavior.
     bool has_own_retagged_descriptor(const ast::TypeDef& def) const;
+    /// @brief Is `def` a BIT STRING defined with a NamedBitList, directly or
+    ///        through its alias chain? Such a value is PER-encoded without
+    ///        trailing 0 bits (NAMED_BITS in the generated Constraints table).
+    /// @param def  Member or type assignment.
+    /// @return true when the ultimate builtin is BIT STRING with named bits.
+    /// @see X.680 §22.7; X.691 §15.2, §15.3.
+    bool has_named_bits(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
     // alt_idx: 0-based index of the alternative in its parent CHOICE.
     // Appends BerTagEntry rows (raw class/number + formatted literal +

@@ -8,6 +8,7 @@
 //! (see `strings.rs`'s own doc for why); the generated `Constrained`
 //! closure bridges to/from the real field type.
 
+use crate::bit_string::significant_bits;
 use crate::constraints::Constraints;
 use crate::per::length::{decode_ext_size_and_items, encode_ext_size_and_items};
 use crate::per::reader::{DecodeError, Reader};
@@ -16,10 +17,19 @@ use crate::per::writer::Writer;
 /// `bit_count` is the logical length (`bytes.len() * 8 - unused_bits` in the
 /// caller's own representation) — passed explicitly rather than derived
 /// here, since this crate doesn't know the caller's unused-bits convention.
+/// A NamedBitList type (`NAMED_BITS`) is sent with its trailing 0 bits
+/// removed, then padded with 0 bits up to the SIZE lower bound (X.691
+/// §15.2, §15.3).
 pub fn encode_bit_string(w: &mut Writer, pc: &Constraints, bytes: &[u8], bit_count: usize) {
-    encode_ext_size_and_items(w, pc, bit_count, |w, range| {
+    let n = if pc.flags & crate::constraints::NAMED_BITS != 0 {
+        significant_bits(bytes, bit_count).max(pc.size_lower.max(0) as usize)
+    } else {
+        bit_count
+    };
+    encode_ext_size_and_items(w, pc, n, |w, range| {
         for i in range {
-            w.put_bits(((bytes[i / 8] >> (7 - i % 8)) & 1) as u64, 1);
+            let bit = if i < bit_count { (bytes[i / 8] >> (7 - i % 8)) & 1 } else { 0 };
+            w.put_bits(bit as u64, 1);
         }
     });
 }
@@ -111,5 +121,56 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(roundtrip(&pc, &[0b1010_1000], 4), (vec![0b1010_0000], 4));
+    }
+
+    fn encode(pc: &Constraints, bytes: &[u8], bit_count: usize) -> Vec<u8> {
+        let mut w = Writer::new();
+        encode_bit_string(&mut w, pc, bytes, bit_count);
+        w.flush();
+        w.into_bytes()
+    }
+
+    fn named(size_lower: i64, size_upper: i64, size_range_bits: u32) -> Constraints {
+        Constraints {
+            flags: crate::constraints::NAMED_BITS | crate::constraints::SIZE_CONSTRAINED,
+            size_range_bits,
+            size_lower,
+            size_upper,
+            ..Default::default()
+        }
+    }
+
+    /// X.691 §15.2: no PER-visible constraint, trailing 0 bits removed —
+    /// '01000000'B is sent as length 2, bits 01.
+    #[test]
+    fn named_bits_unconstrained_drops_trailing_zeros() {
+        let pc = Constraints { flags: crate::constraints::NAMED_BITS, ..Default::default() };
+        assert_eq!(encode(&pc, &[0x40], 8), vec![0x02, 0x40]);
+        assert_eq!(encode(&pc, &[0x00], 8), vec![0x00]);
+    }
+
+    /// X.691 §15.3: SIZE(2..8) — '01000000'B trims to 2 bits = lb (length
+    /// field 000); '1'B pads up to lb 2.
+    #[test]
+    fn named_bits_pad_to_size_lower_bound() {
+        let pc = named(2, 8, 3);
+        assert_eq!(encode(&pc, &[0x40], 8), vec![0b0000_1000]);
+        assert_eq!(encode(&pc, &[0x80], 1), vec![0b0001_0000]);
+        assert_eq!(roundtrip(&pc, &[0x40], 8), (vec![0x40], 6));
+    }
+
+    /// X.691 §15.8: fixed SIZE(8) — '01'B is padded to the full 8 bits.
+    #[test]
+    fn named_bits_fixed_size_pads_to_full_width() {
+        let pc = named(8, 8, 0);
+        assert_eq!(encode(&pc, &[0x40], 2), vec![0x40]);
+        assert_eq!(encode(&pc, &[0x40, 0x00], 16), vec![0x40]);
+    }
+
+    /// Without NAMED_BITS the value is sent at its own length.
+    #[test]
+    fn plain_bit_string_keeps_trailing_zeros() {
+        let pc = Constraints::default();
+        assert_eq!(encode(&pc, &[0x40], 8), vec![0x08, 0x40]);
     }
 }

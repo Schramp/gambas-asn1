@@ -302,6 +302,7 @@ struct BuiltinAliasSpec : TaggedTypeSpec {
     int      size_range_bits = 0;
     int64_t  size_lower = 0, size_upper = 0;    // size_upper meaningful only when size_bounded
     bool     extensible = false;
+    bool     named_bits = false;        // BIT STRING with a NamedBitList (X.680 §22.7, X.691 §15.3)
     ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // X.693 §21 OCTET STRING representation
 };
 
@@ -391,6 +392,7 @@ struct MemberTypeDescriptorSpec {
     bool     size_bounded = false;        // true iff the SIZE constraint has a finite upper bound
     int      size_range_bits = 0;
     int64_t  size_lower = 0, size_upper = 0; // size_upper meaningful only when size_bounded
+    bool     named_bits = false;          // BIT STRING with a NamedBitList (X.680 §22.7, X.691 §15.3)
     ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // Kind::Integer never sets this
 
     // Both kinds — target-agnostic BER/XER facts (X.690/X.693), not code.
