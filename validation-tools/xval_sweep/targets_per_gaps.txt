@@ -12,5 +12,4 @@
 #   ctests choice_unknown_ext / rust_choice_unknown_ext (two versions of
 #   one CHOICE in per_choice_unknown_ext_test.asn1).
 
-# Extension addition group [[ ]]: gambas-asn1#746.
-tests/asn1/per_gap_ext_group_test.asn1    Rec
+# (No open gaps: every target has moved to targets.txt.)

@@ -1,0 +1,19 @@
+-- SEQUENCE extension addition group [[ ]] (X.691 §18.9): a group is one
+-- extension addition, present when any of its components is, encoded as
+-- a sequence of its components (with its own bitmap for the components
+-- declared OPTIONAL inside it) in one open type. Plain additions before
+-- and after the group are units of their own.
+PerExtGroupTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Rec ::= SEQUENCE {
+    id        INTEGER (0..255),
+    ...,
+    before    BOOLEAN,
+    [[
+        g1    INTEGER (0..15),
+        g2    BOOLEAN OPTIONAL
+    ]],
+    after     INTEGER (0..3)
+}
+
+END

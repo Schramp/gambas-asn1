@@ -1638,6 +1638,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             os << std::format("    ext_at: {},\n", spec.ext_at);
             os << std::format("    roms_count: {},\n", spec.roms_count);
             os << std::format("    is_set: {},\n", spec.is_set ? "true" : "false");
+            // PER extension-addition units (X.691 §18.9); empty unless the
+            // type has an extension addition group.
+            std::string units, group_opt;
+            for (std::size_t u = 0; u < spec.ext_unit_ends.size(); ++u)
+                units += std::format("{}asn1cpp_wire::spec::object::ExtUnit {{ end: {}, group: {} }}",
+                                     u ? ", " : "", spec.ext_unit_ends[u], spec.ext_unit_is_group[u] ? "true" : "false");
+            for (std::size_t i = 0; i < spec.member_group_optional.size(); ++i)
+                group_opt += std::format("{}{}", i ? ", " : "", spec.member_group_optional[i] ? "true" : "false");
+            os << std::format("    ext_units: &[{}],\n", units);
+            os << std::format("    group_member_optional: &[{}],\n", group_opt);
             os << "};\n\n";
 
             os << "#[allow(non_upper_case_globals)]\n";
