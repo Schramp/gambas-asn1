@@ -1,0 +1,33 @@
+-- Wide INTEGER ranges in PER (X.691 §11.5.6, §11.8, §13.2.6).
+--
+-- U64Rec and S64Rec ranges hold 2^64 values, so the UNALIGNED variant
+-- encodes value − lb as a 64-bit constrained whole number. U64Rec is the
+-- shape of ETSI TS 102 232-1 MicroSecondTimeStamp, whose upper bound
+-- 2^64 − 1 exceeds the signed 64-bit range; S64Rec's lower bound is the
+-- literal −2^63, a real bound, not MIN.
+--
+-- S33Rec holds 2^33 values (33-bit field); UncRec is the unconstrained
+-- counterpart, encoded as a length-prefixed two's-complement integer.
+PerInt64BoundsTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+U64Rec ::= SEQUENCE {
+    seconds  INTEGER (0..18446744073709551615),
+    micro    INTEGER (0..999999)
+}
+
+S64Rec ::= SEQUENCE {
+    value    INTEGER (-9223372036854775808..9223372036854775807),
+    micro    INTEGER (0..999999)
+}
+
+S33Rec ::= SEQUENCE {
+    value    INTEGER (-4294967296..4294967295),
+    micro    INTEGER (0..999999)
+}
+
+UncRec ::= SEQUENCE {
+    value    INTEGER,
+    micro    INTEGER (0..999999)
+}
+
+END
