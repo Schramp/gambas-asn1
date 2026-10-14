@@ -315,6 +315,20 @@ const ast::TypeDef* Generator::resolve_alias_chain(const ast::TypeDef& def, bool
     return cur;
 }
 
+bool Generator::has_named_bits(const ast::TypeDef& def) const {
+    const ast::TypeDef* cur = &def;
+    for (int depth = 0; depth < 64; ++depth) {
+        if (auto* bt = std::get_if<ast::BuiltinType>(&cur->body))
+            return *bt == ast::BuiltinType::BitString && !cur->enum_values.empty();
+        auto* tr = std::get_if<ast::TypeRef>(&cur->body);
+        if (!tr) return false;
+        auto next = resolver_.resolve_ref(*tr);
+        if (!next) return false;
+        cur = next.get();
+    }
+    return false;
+}
+
 bool Generator::has_own_retagged_descriptor(const ast::TypeDef& def) const {
     if (!def.tag.present() || !std::holds_alternative<ast::TypeRef>(def.body)) return false;
     bool ignored = false;
@@ -1400,20 +1414,23 @@ std::string Generator::emit_member_type_descriptor(
 /// @brief Decide the resolved MemberTypeDescriptorSpec for an inline-
 ///        constrained SEQUENCE/CHOICE member — INTEGER value range or
 ///        SIZE-able-primitive (string family, OctetString, BitString)
-///        constraints.
+///        constraints, or a BIT STRING with a NamedBitList (its own table
+///        carries NAMED_BITS even without any constraint).
 /// @param m             Member type definition (may carry value-range, SIZE, or FROM constraints).
 /// @param parent_cname  C++ name of the enclosing SEQUENCE/CHOICE type.
 /// @param mname         Sanitised C++ member name used as the descriptor variable suffix.
 /// @return nullopt when the member has no inline constraint worth a dedicated
 ///         descriptor — caller falls back to type_descriptor_ref_for().
-/// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
+/// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap),
+///      §15.2/§15.3 (NamedBitList BIT STRING).
 std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_spec(
     const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname) const
 {
     using BT = ast::BuiltinType;
     auto* bt = std::get_if<BT>(&m.body);
     bool needs_xer = m.xer_encoding != ast::XerEncoding::Default;
-    if (!bt || (m.constraints.empty() && !needs_xer)) return std::nullopt;
+    bool named_bits = bt && has_named_bits(m);
+    if (!bt || (m.constraints.empty() && !needs_xer && !named_bits)) return std::nullopt;
 
     // INTEGER value range
     if (*bt == BT::Integer) {
@@ -1482,10 +1499,11 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
         // UTF8String is not a known-multiplier character string (X.691 §26.6):
         // FROM constraints on it are not enforced in PER encoding — drop alphabet.
         if (*bt == BT::Utf8String) alphabet.clear();
-        if (sr || !alphabet.empty() || needs_xer) {
+        if (sr || !alphabet.empty() || needs_xer || named_bits) {
             MemberTypeDescriptorSpec spec;
             spec.kind = MemberTypeDescriptorSpec::Kind::Sizeable;
             spec.builtin_type = *bt;
+            spec.named_bits = named_bits;
             // Compute SIZE constraint fields. size_range_bits/size_lower/
             // size_upper default to 0 (not left indeterminate) even when
             // `!sr` (FROM-alphabet-only or custom-XER-only member, no
@@ -2786,7 +2804,8 @@ static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
 /// @param def       ASN.1 type assignment that resolves to a sizeable primitive.
 /// @param type_name Final backend-resolved type identifier.
 /// @return The decision as plain data — see BuiltinAliasSpec.
-/// @see X.691 §26.5 (character string PER constraints); X.690 §8.7 (OCTET STRING BER encoding).
+/// @see X.691 §26.5 (character string PER constraints), §15.2/§15.3 (NamedBitList BIT STRING);
+///      X.690 §8.7 (OCTET STRING BER encoding).
 BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
                                                        const std::string& type_name) const {
     BuiltinAliasSpec spec;
@@ -2837,6 +2856,7 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     // X.691 §9.3.15 note 1: only a PER-visible constraint's extension
     // marker counts (string_per_visibility).
     spec.extensible = string_per_visibility(def).size_extensible;
+    spec.named_bits = has_named_bits(def);
     spec.xer_encoding = def.xer_encoding;
     return spec;
 }

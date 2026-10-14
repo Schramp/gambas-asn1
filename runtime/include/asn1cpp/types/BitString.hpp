@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <vector>
 #include <span>
 #include <asn1cpp/compat/format.hpp>
@@ -44,16 +45,60 @@ public:
         return bytes_.empty() ? 0 : bytes_.size() * 8 - unused_bits_;
     }
 
+    /// @brief Bit value at position \p i (0 = first bit); 0 beyond \c bit_count().
+    bool bit(std::size_t i) const {
+        return i < bit_count() && ((bytes_[i / 8] >> (7 - i % 8)) & 1);
+    }
+
+    /// @brief Length of the value with its trailing 0 bits removed: the
+    ///        position after the last 1 bit, 0 when no bit is set.
+    /// @see X.680 §22.7 — trailing 0 bits of a NamedBitList value carry no meaning.
+    std::size_t significant_bit_count() const {
+        for (std::size_t i = bytes_.size(); i-- > 0;) {
+            uint8_t b = bytes_[i];
+            if (i + 1 == bytes_.size()) b &= static_cast<uint8_t>(0xFF << unused_bits_);
+            if (b) return i * 8 + 8 - static_cast<std::size_t>(__builtin_ctz(b));
+        }
+        return 0;
+    }
+
+    /// @brief Length a NamedBitList value is encoded with in PER: trailing 0
+    ///        bits removed, then 0 bits added up to the SIZE lower bound.
+    /// @param c  Constraints of the BIT STRING type (\c size_lower is 0 without SIZE).
+    /// @see X.691 §15.2, §15.3.
+    std::size_t named_bits_length(const Constraints& c) const {
+        auto lb = static_cast<std::size_t>(c.size_lower > 0 ? c.size_lower : 0);
+        return std::max(significant_bit_count(), lb);
+    }
+
+    /// @brief Rewrite this NamedBitList value into the form PER transmits
+    ///        (\c named_bits_length bits), so it survives a PER round trip unchanged.
+    /// @param c  Constraints of the BIT STRING type.
+    /// @see X.691 §15.2, §15.3; X.680 §22.7.
+    void normalize_named_bits(const Constraints& c) {
+        std::size_t n = named_bits_length(c);
+        bytes_.resize((n + 7) / 8, 0);
+        unused_bits_ = static_cast<uint8_t>((8 - n % 8) % 8);
+        if (!bytes_.empty()) bytes_.back() &= static_cast<uint8_t>(0xFF << unused_bits_);
+    }
+
     bool operator==(const BitString&) const = default;
 
     static const TypeDescriptor& asn_DEF;
 
     /// @brief Return 0 when \c bit_count() satisfies the SIZE constraint (in bits),
     /// otherwise signed delta such that \c (bit_count+delta) lands at the nearest bound.
-    /// Positive = too short; negative = too long.
+    /// Positive = too short; negative = too long. A NamedBitList value satisfies
+    /// the constraint when adding or removing trailing 0 bits can make it fit,
+    /// so only its significant bits are checked against the upper bound.
+    /// @see X.680 §22.7; X.691 §15.3.
     int64_t validate(const Constraints& c) const {
         if (!(c.flags & Constraints::SIZE_CONSTRAINED)) return 0;
         if (c.flags & Constraints::EXTENSIBLE) return 0;
+        if (c.flags & Constraints::NAMED_BITS) {
+            auto sig = static_cast<int64_t>(significant_bit_count());
+            return sig > c.size_upper ? c.size_upper - sig : 0;
+        }
         auto n = static_cast<int64_t>(bit_count());
         if (n < c.size_lower) return c.size_lower - n;
         if (n > c.size_upper) return c.size_upper - n;
