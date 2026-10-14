@@ -701,6 +701,14 @@ struct SequenceSpec : TaggedTypeSpec {
     int         roms_count;
     bool        is_set;         // true -> natural tag is SET, else SEQUENCE
     std::vector<SequenceMemberSpec> members; // root members first, then extension members
+    // Extension additions as PER units (X.691 §18.9), filled only when the
+    // type has an extension addition group: a plain extension component is
+    // one unit, a "[[ ... ]]" group is one unit encoded as a sequence of
+    // its components inside one open type. Empty means every extension
+    // member is its own unit.
+    std::vector<int>  ext_unit_ends;          // per unit: one past its last member index
+    std::vector<bool> ext_unit_is_group;      // per unit: an ExtensionAdditionGroup
+    std::vector<bool> member_group_optional;  // per member: declared OPTIONAL/DEFAULT inside its group
 };
 
 /// @brief Backend-agnostic decision for one CHOICE alternative, built in one

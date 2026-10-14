@@ -112,19 +112,90 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, w: &mut Writer) {
         access_encode(obj, i, w);
     }
     if has_ext {
-        let total = spec.members.len();
-        let n_ext = total - end;
-        put_nslength(w, n_ext);
-        for i in end..total {
-            w.put_bits(is_present(obj, i) as u64, 1);
+        let units = ext_units(spec, end);
+        put_nslength(w, units.len());
+        for &(b, e, _) in &units {
+            w.put_bits((b..e).any(|i| is_present(obj, i)) as u64, 1);
         }
-        for i in end..total {
-            if !is_present(obj, i) {
+        for &(b, e, group) in &units {
+            if !(b..e).any(|i| is_present(obj, i)) {
                 continue;
             }
-            encode_open_type(obj, i, w);
+            if group {
+                encode_group_open_type(obj, b, e, w);
+            } else {
+                encode_open_type(obj, b, w);
+            }
         }
     }
+}
+
+/// @brief The extension additions as PER units (X.691 §18.9), from the
+///        spec's precomputed `ext_units`: `(first member, end, is group)`.
+///        Without a unit table every extension member is its own unit.
+fn ext_units(spec: &crate::spec::object::SequenceSpec, end: usize) -> Vec<(usize, usize, bool)> {
+    if spec.ext_units.is_empty() {
+        return (end..spec.members.len()).map(|i| (i, i + 1, false)).collect();
+    }
+    let mut begin = end;
+    spec.ext_units
+        .iter()
+        .map(|u| {
+            let unit = (begin, u.end, u.group);
+            begin = u.end;
+            unit
+        })
+        .collect()
+}
+
+/// @brief Encodes one present extension addition group as a sequence of
+///        its members (presence bitmap for the members declared
+///        OPTIONAL/DEFAULT inside the group, then the present members)
+///        inside one open type (X.691 §18.9).
+fn encode_group_open_type(obj: &dyn Asn1Seq, begin: usize, end: usize, w: &mut Writer) {
+    let opt = obj.spec().group_member_optional;
+    let mut g = Writer::new();
+    for i in begin..end {
+        if opt[i] {
+            g.put_bits(is_present(obj, i) as u64, 1);
+        }
+    }
+    for i in begin..end {
+        if !is_present(obj, i) {
+            // X.680 §24.12: a present group carries all its mandatory members.
+            if !opt[i] {
+                w.set_encode_failed("extension group member absent");
+            }
+            continue;
+        }
+        access_encode(obj, i, &mut g);
+    }
+    if g.encode_failed() {
+        w.set_encode_failed("extension group member");
+    }
+    g.flush();
+    put_octets(w, &g.into_bytes());
+}
+
+/// @brief Decode counterpart of [`encode_group_open_type`].
+fn decode_group_open_type(obj: &mut dyn Asn1Seq, begin: usize, end: usize, r: &mut Reader) -> Result<(), DecodeError> {
+    let bytes = get_octets(r)?;
+    let mut g = Reader::new(&bytes);
+    let opt = obj.spec().group_member_optional;
+    let mut present = vec![true; end - begin];
+    for i in begin..end {
+        if opt[i] {
+            present[i - begin] = g.get_bits(1)? != 0;
+        }
+    }
+    for i in begin..end {
+        if present[i - begin] {
+            access_decode(obj, i, &mut g)?;
+        } else {
+            obj.set_default(i);
+        }
+    }
+    Ok(())
 }
 
 pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), DecodeError> {
@@ -153,24 +224,21 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<
         access_decode(obj, i, r)?;
     }
 
-    if obj.spec().ext_at >= 0 {
-        let total = obj.spec().members.len();
-        let known_ext = total - end;
-        if ext_flag {
-            let n_ext = get_nslength(r)?;
-            let mut ext_bitmap = [false; 64];
-            for slot in ext_bitmap.iter_mut().take(n_ext.min(64)) {
-                *slot = r.get_bits(1)? != 0;
+    if obj.spec().ext_at >= 0 && ext_flag {
+        let units = ext_units(obj.spec(), end);
+        let n_ext = get_nslength(r)?;
+        let mut ext_bitmap = [false; 64];
+        for slot in ext_bitmap.iter_mut().take(n_ext.min(64)) {
+            *slot = r.get_bits(1)? != 0;
+        }
+        for i in 0..n_ext {
+            if !ext_bitmap[i.min(63)] {
+                continue;
             }
-            for i in 0..n_ext {
-                if !ext_bitmap[i.min(63)] {
-                    continue;
-                }
-                if i < known_ext {
-                    decode_open_type(obj, end + i, r)?;
-                } else {
-                    skip_open_type(r)?;
-                }
+            match units.get(i) {
+                Some(&(b, e, true)) => decode_group_open_type(obj, b, e, r)?,
+                Some(&(b, _, false)) => decode_open_type(obj, b, r)?,
+                None => skip_open_type(r)?,
             }
         }
     }

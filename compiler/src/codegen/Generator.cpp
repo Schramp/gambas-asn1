@@ -2078,6 +2078,26 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
                 });
         for (auto* m : root_order) collect(*m, m->is_optional());
         for (auto* m : sm_ext)  collect(*m, /*optional=*/true);
+        // X.691 §18.9: an extension addition group is one PER addition.
+        // Consecutive extension members sharing a group id form one unit.
+        bool any_group = std::any_of(sm_ext.begin(), sm_ext.end(),
+                                     [](const ast::TypeDef* m) { return m->ext_group != 0; });
+        if (any_group) {
+            const int first_ext = static_cast<int>(root_order.size());
+            spec.member_group_optional.assign(spec.members.size(), false);
+            for (std::size_t k = 0; k < sm_ext.size(); ++k) {
+                const int idx = first_ext + static_cast<int>(k);
+                spec.member_group_optional[idx] = sm_ext[k]->group_optional;
+                const bool continues = k > 0 && sm_ext[k]->ext_group != 0 &&
+                                       sm_ext[k]->ext_group == sm_ext[k - 1]->ext_group;
+                if (continues) {
+                    spec.ext_unit_ends.back() = idx + 1;
+                } else {
+                    spec.ext_unit_ends.push_back(idx + 1);
+                    spec.ext_unit_is_group.push_back(sm_ext[k]->ext_group != 0);
+                }
+            }
+        }
     }
 
     return spec;
