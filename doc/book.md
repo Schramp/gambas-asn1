@@ -392,6 +392,16 @@ are unchanged. After decoding, `PerDecodeStream::skipped_extensions()` returns t
 of open-type fields that were skipped; a nonzero value indicates the stream contained a
 newer schema version than the decoder's descriptor tables.
 
+A `BIT STRING` defined with named bits (`BIT STRING { a(0), b(1), c(2) }`) gives its
+trailing 0 bits no meaning (X.680 §22.7), so PER sends such a value with its trailing 0
+bits removed, then padded with 0 bits up to the `SIZE` lower bound when there is one
+(X.691 §15.2, §15.3). `'01000000'B` goes out as the 2 bits `01` in an unconstrained or
+`SIZE (2..8)` type, and as all 8 bits in `SIZE (8)`; decoding returns that transmitted
+form. This applies to inline members, named types and aliases of them, in both runtimes.
+For the same reason the `SIZE` check on such a type only looks at the bits up to the last
+1 bit. A `BIT STRING` without named bits is sent at its own length. BER keeps the value
+as given (X.690 §8.6.2.4 allows either).
+
 Unaligned PER (UPER) packs values at bit boundaries with no byte alignment. Aligned PER
 (APER) byte-aligns certain constructs. 3GPP uses UPER for radio interface protocols.
 
@@ -1263,7 +1273,7 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 
 | Area | Limitation |
 |------|-----------|
-| **NamedBits / WITH COMPONENTS / PATTERN** | BIT STRING named-bit constraints, WITH COMPONENTS, and PATTERN constraints are not enforced by the validator and not used during PER encoding. Not present in ETSI LI or 3GPP RRC schemas. |
+| **WITH COMPONENTS / PATTERN** | WITH COMPONENTS and PATTERN constraints are not enforced by the validator. Neither is PER-visible, so PER encoding is unaffected. Not present in ETSI LI or 3GPP RRC schemas. |
 | **BigInteger / ArbitraryInteger** | Unconstrained INTEGER values that exceed int64_t / uint64_t range have stub types with deleted constructors. Codec cannot encode or decode these. Not used by supported schemas. A constrained INTEGER must fit int64 (−2^63..2^63−1) or, when its lower bound is non-negative, uint64 (0..2^64−1). Anything else — a bound below −2^63 (e.g. `INTEGER (-2^64..2^64-1)`) or a range mixing negative values with values above 2^63−1 (e.g. `INTEGER (-1..2^64-1)`) — is deliberately not implemented; supporting it would mean promoting such a member to a big-integer type with its own PER path ([Issue #754](https://github.com/Schramp/gambas-asn1/issues/754)). Full 64-bit ranges such as `(0..2^64-1)` and `(-2^63..2^63-1)` are encoded as 64-bit constrained whole numbers in PER. |
 | **JER (JSON Encoding Rules)** | Stub only — returns `not_implemented`. |
 | **32-bit platforms not supported** | asn1cpp requires a 64-bit host. Both the compiler and the generated runtime use 64-bit `long`/`uint64_t` types. Building or running on a 32-bit CPU is untested and unsupported. |

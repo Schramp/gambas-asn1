@@ -893,6 +893,28 @@ target_link_libraries(test_per_int64_bounds PRIVATE asn1cpp_runtime)
 add_test(NAME per_int64_bounds COMMAND test_per_int64_bounds)
 set_tests_properties(per_int64_bounds PROPERTIES TIMEOUT 30)
 
+# ---- BIT STRING with a NamedBitList in PER (X.691 §15.2, §15.3) -------------
+# per_named_bits_test.asn1: trailing 0 bits removed, padded to the SIZE lower
+# bound, for inline members, named types and an alias (see per/test_per_named_bits.cpp).
+set(NAMEDBITS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_per_named_bits_test)
+add_custom_command(
+    OUTPUT  ${NAMEDBITS_GEN_DIR}/NamedBitsRec.cpp ${NAMEDBITS_GEN_DIR}/Flags.cpp
+            ${NAMEDBITS_GEN_DIR}/SizedFlags.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${NAMEDBITS_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_named_bits_test.asn1
+            -o ${NAMEDBITS_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_named_bits_test.asn1
+    COMMENT "Generating C++ from per_named_bits_test.asn1"
+)
+add_executable(test_per_named_bits per/test_per_named_bits.cpp
+               ${NAMEDBITS_GEN_DIR}/NamedBitsRec.cpp ${NAMEDBITS_GEN_DIR}/Flags.cpp
+               ${NAMEDBITS_GEN_DIR}/SizedFlags.cpp)
+target_include_directories(test_per_named_bits PRIVATE ${NAMEDBITS_GEN_DIR})
+target_link_libraries(test_per_named_bits PRIVATE asn1cpp_runtime)
+add_test(NAME per_named_bits COMMAND test_per_named_bits)
+set_tests_properties(per_named_bits PROPERTIES TIMEOUT 30)
+
 # ---- CHOICE extension alternative unknown to the receiver (X.691 §23.8) ------
 set(CUE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_unknown_ext_test)
 add_custom_command(
@@ -1858,6 +1880,28 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_per_int64_bounds PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_INT64B_GEN_DIR}")
+endif()
+
+# Rust leg of per_named_bits_test.asn1 (tests/rust/per_named_bits).
+set(RUST_NAMEDBITS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_per_named_bits)
+add_custom_command(
+    OUTPUT  ${RUST_NAMEDBITS_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_NAMEDBITS_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_named_bits_test.asn1
+                                   -o ${RUST_NAMEDBITS_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_named_bits_test.asn1
+    COMMENT "Generating Rust from per_named_bits_test.asn1"
+)
+add_custom_target(gen_rust_per_named_bits ALL DEPENDS ${RUST_NAMEDBITS_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_per_named_bits
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/per_named_bits/Cargo.toml)
+    set_tests_properties(rust_per_named_bits PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_NAMEDBITS_GEN_DIR}")
 endif()
 
 # Rust leg of the deeply nested anonymous CHOICE-in-CHOICE regression

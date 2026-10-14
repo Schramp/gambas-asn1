@@ -590,9 +590,9 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     // No recase — see emit_enumerated_definition's matching note.
     std::string cname = tname + "_CONSTRAINTS";
     if (sizeable) {
-        int flags = spec.has_size_constraint
+        int flags = (spec.has_size_constraint
             ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
-            : 0;
+            : 0) | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
         int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
         os << "#[allow(non_upper_case_globals)]\n";
         os << std::format(
@@ -788,9 +788,9 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // (via `INT64_MAX`) as a sentinel so `validate_size`'s upper check
     // never fires for a realistic element/byte/character count. A
     // deliberate improvement over C++, not a parity gap.
-    int flags = spec.has_size_constraint
+    int flags = (spec.has_size_constraint
         ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
-        : 0;
+        : 0) | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
     int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
     // X.680 §51.4 PermittedAlphabet — `spec.alphabet` is
     // the resolved, sorted, deduplicated permitted-character set
@@ -1486,7 +1486,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 } else if (m.mbuiltin && own_table && *m.mbuiltin == ast::BuiltinType::OctetString) {
                     validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_size({}.len(), {}))", field_place(), constraints_ref);
                 } else if (m.mbuiltin && own_table && *m.mbuiltin == ast::BuiltinType::BitString) {
-                    validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_size({}.bit_count(), {}))", field_place(), constraints_ref);
+                    validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_bit_string(&{}, {}))", field_place(), constraints_ref);
                 } else if (m.mbuiltin && own_table && is_sizeable_string_kind(*m.mbuiltin)) {
                     bool wide = *m.mbuiltin == ast::BuiltinType::BmpString || *m.mbuiltin == ast::BuiltinType::UniversalString;
                     if (wide) {

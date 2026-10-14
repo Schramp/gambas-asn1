@@ -120,3 +120,4 @@ tests/asn1/per_int64_bounds_test.asn1   S64Rec
 tests/asn1/per_int64_bounds_test.asn1   S33Rec
 tests/asn1/per_int64_bounds_test.asn1   UncRec
 tests/tests-asn1c-compiler/33-misc-OK.asn1   T2
+tests/asn1/per_named_bits_test.asn1   NamedBitsRec

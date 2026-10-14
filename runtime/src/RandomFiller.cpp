@@ -116,7 +116,12 @@ bool RandomFiller::fill(Asn1Object* obj, const TypeDescriptor& def, int depth, b
     if (def.sequence_spec) return fill_sequence(obj, *def.sequence_spec, depth);
     if (def.choice_spec)   return fill_choice  (obj, *def.choice_spec,   depth);
     if (def.seq_of_spec)   return fill_seq_of  (obj, *def.seq_of_spec,   depth);
-    return try_fill_primitive(obj, def);
+    bool ok = try_fill_primitive(obj, def);
+    // A NamedBitList value is generated in the form PER transmits (X.691
+    // §15.3), so every codec round trip reproduces it bit for bit.
+    if (def.constraints.flags & Constraints::NAMED_BITS)
+        static_cast<BitString*>(obj)->normalize_named_bits(def.constraints);
+    return ok;
 }
 
 // Rewrite obj as a fresh random value of exactly `len` units (bytes for
