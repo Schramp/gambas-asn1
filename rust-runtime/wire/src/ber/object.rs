@@ -525,6 +525,8 @@ mod tests {
         ext_at: -1,
         roms_count: 0,
         is_set: false,
+        ext_units: &[],
+        group_member_optional: &[],
     };
 
     impl Asn1Seq for Inner {
@@ -575,6 +577,8 @@ mod tests {
         ext_at: -1,
         roms_count: 1,
         is_set: false,
+        ext_units: &[],
+        group_member_optional: &[],
     };
 
     impl Asn1Seq for Outer {

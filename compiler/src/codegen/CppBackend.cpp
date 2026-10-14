@@ -848,6 +848,24 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
         os << std::format("const int {}::s_member_count = {};\n\n", cname, spec.mcount);
     }
 
+    // PER extension-addition units (X.691 §18.9), only for a type with an
+    // extension addition group.
+    const bool has_units = !spec.ext_unit_ends.empty();
+    if (has_units) {
+        auto join = [](const auto& v, auto fmt) {
+            std::string out;
+            for (std::size_t i = 0; i < v.size(); ++i) out += (i ? ", " : "") + fmt(v[i]);
+            return out;
+        };
+        auto b = [](bool x) { return std::string(x ? "true" : "false"); };
+        os << std::format("static const int {}_ext_unit_end[] = {{ {} }};\n", cname,
+                          join(spec.ext_unit_ends, [](int x) { return std::to_string(x); }));
+        os << std::format("static const bool {}_ext_unit_group[] = {{ {} }};\n", cname,
+                          join(spec.ext_unit_is_group, b));
+        os << std::format("static const bool {}_group_member_optional[] = {{ {} }};\n\n", cname,
+                          join(spec.member_group_optional, b));
+    }
+
     // SequenceSpec
     os << std::format("const asn1::SequenceSpec {}::asn_SPC = {{\n", cname);
     if (spec.mcount > 0)
@@ -857,7 +875,12 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
     os << std::format("    {},\n", spec.mcount);
     os << std::format("    {}, /* ext_at */\n", spec.ext_at);
     os << std::format("    {}, 0, nullptr, /* PER: roms_count, aoms_count, oms */\n", spec.roms_count);
-    os << std::format("    {} /* is_set */\n", spec.is_set ? "true" : "false");
+    os << std::format("    {}, /* is_set */\n", spec.is_set ? "true" : "false");
+    if (has_units)
+        os << std::format("    {0}, {1}_ext_unit_end, {1}_ext_unit_group, {1}_group_member_optional /* PER extension units */\n",
+                          spec.ext_unit_ends.size(), cname);
+    else
+        os << "    0, nullptr, nullptr, nullptr /* PER extension units */\n";
     os << "};\n\n";
 
     // TypeDescriptor

@@ -122,6 +122,16 @@ struct TypeDef : Node {
     // Whether this is an extension marker (...)
     bool is_extension_marker{false};
 
+    // Extension addition group membership (X.680 §24.1 "[[ ... ]]"): a
+    // nonzero id shared by the components of one group (0 = not in a
+    // group), and whether the component was declared OPTIONAL or DEFAULT
+    // inside the group. The parser marks every group component OPTIONAL
+    // (an extension addition may always be absent); PER encodes a group as
+    // one addition whose own presence bitmap covers only group_optional
+    // components (X.691 §18.9).
+    int  ext_group{0};
+    bool group_optional{false};
+
     // Whether UNIQUE keyword is present (for CLASS fields)
     bool unique{false};
 

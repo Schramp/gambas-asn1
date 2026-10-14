@@ -1080,8 +1080,13 @@ ComponentTypeLists:
 	| ComponentTypeLists ',' TOK_VBracketLeft ComponentTypeLists TOK_VBracketRight
 	{
 	    $$ = $1;
-	    /* extension group — mark members optional */
+	    /* extension addition group: tag members with a shared group id,
+	       keep their declared optionality, mark them optional as additions */
+	    static int next_ext_group = 0;
+	    int g = ++next_ext_group;
 	    for (auto& m : $4) {
+	        m->ext_group = g;
+	        m->group_optional = m->is_optional();
 	        m->marker = Marker::Optional;
 	        $$.push_back(m);
 	    }
@@ -1089,7 +1094,11 @@ ComponentTypeLists:
 	| ComponentTypeLists TOK_VBracketLeft ComponentTypeLists TOK_VBracketRight
 	{
 	    $$ = $1;
+	    static int next_ext_group_b = 1000000;
+	    int g = ++next_ext_group_b;
 	    for (auto& m : $3) {
+	        m->ext_group = g;
+	        m->group_optional = m->is_optional();
 	        m->marker = Marker::Optional;
 	        $$.push_back(m);
 	    }
