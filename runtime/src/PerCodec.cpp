@@ -940,6 +940,10 @@ public:
     }
 };
 
+static DecodeResult decode_group_open_type(const PerCodec& codec, PerDecodeStream& stream,
+                                           const SequenceSpec& spec, int begin, int end,
+                                           Asn1Object* dest);
+
 class SequencePerHandler final : public IPerTypeHandler {
 public:
     void encode(const PerCodec& codec, PerEncodeStream& stream,
@@ -975,17 +979,71 @@ public:
             codec.encode(es, *mbr.type_descriptor, mptr);
         }
         if (has_ext) {
-            int n_ext = spec.count - root_end;
-            put_nslength(stream, static_cast<std::size_t>(n_ext));
-            for (int i = root_end; i < spec.count; ++i)
-                stream.put_bits(spec.members[i].optional_ops.is_present(src) ? 1 : 0, 1, "SEQ.ext_bitmap");
-            for (int i = root_end; i < spec.count; ++i) {
-                const auto& mbr = spec.members[i];
-                if (!mbr.type_descriptor || !mbr.optional_ops.is_present(src)) continue;
+            const ExtUnits units{spec, root_end};
+            put_nslength(stream, static_cast<std::size_t>(units.count()));
+            for (int u = 0; u < units.count(); ++u)
+                stream.put_bits(units.present(u, src) ? 1 : 0, 1, "SEQ.ext_bitmap");
+            for (int u = 0; u < units.count(); ++u) {
+                if (!units.present(u, src)) continue;
+                if (units.is_group(u)) {
+                    encode_group_open_type(codec, stream, spec, units.begin(u), units.end(u), src);
+                    continue;
+                }
+                const auto& mbr = spec.members[units.begin(u)];
+                if (!mbr.type_descriptor) continue;
                 const Asn1Object* mptr = mbr.optional_ops.member_ptr(src, mbr.offset);
                 encode_open_type(codec, stream, *mbr.type_descriptor, mptr);
             }
         }
+    }
+
+    /// @brief The extension additions of a SEQUENCE/SET as PER units (X.691
+    ///        §18.9), read from the SequenceSpec's precomputed unit table: a
+    ///        plain extension member is one unit, an extension addition
+    ///        group one unit. Without a table every member is its own unit.
+    struct ExtUnits {
+        const SequenceSpec& spec;
+        int root_end;
+        int count() const { return spec.ext_unit_count > 0 ? spec.ext_unit_count : spec.count - root_end; }
+        int begin(int u) const {
+            if (spec.ext_unit_count == 0) return root_end + u;
+            return u == 0 ? root_end : spec.ext_unit_end[u - 1];
+        }
+        int end(int u) const { return spec.ext_unit_count == 0 ? root_end + u + 1 : spec.ext_unit_end[u]; }
+        bool is_group(int u) const { return spec.ext_unit_count > 0 && spec.ext_unit_group[u]; }
+        bool present(int u, const Asn1Object* src) const {
+            for (int i = begin(u); i < end(u); ++i)
+                if (spec.members[i].optional_ops.is_present(src)) return true;
+            return false;
+        }
+    };
+
+    /// @brief Encodes one present extension addition group as a sequence
+    ///        type of its members (presence bitmap for the members declared
+    ///        OPTIONAL/DEFAULT inside the group, then the present members)
+    ///        inside one open type (X.691 §18.9).
+    static void encode_group_open_type(const PerCodec& codec, PerEncodeStream& stream,
+                                       const SequenceSpec& spec, int begin, int end,
+                                       const Asn1Object* src) {
+        std::vector<uint8_t> tmp;
+        PerEncodeStream gs{tmp};
+        for (int i = begin; i < end; ++i)
+            if (spec.group_member_optional[i])
+                gs.put_bits(spec.members[i].optional_ops.is_present(src) ? 1 : 0, 1, "GROUP.bitmap");
+        IEncodeStream& es = gs;
+        for (int i = begin; i < end; ++i) {
+            const auto& mbr = spec.members[i];
+            if (!mbr.optional_ops.is_present(src)) {
+                // X.680 §24.12: a present group carries all its mandatory members.
+                if (!spec.group_member_optional[i]) stream.set_encode_failed("extension group member absent");
+                continue;
+            }
+            if (!mbr.type_descriptor) continue;
+            codec.encode(es, *mbr.type_descriptor, mbr.optional_ops.member_ptr(src, mbr.offset));
+        }
+        if (gs.encode_failed()) stream.set_encode_failed("extension group member");
+        gs.flush();
+        per_detail::put_octets(stream, tmp.data(), tmp.size());
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
@@ -1042,30 +1100,70 @@ public:
                     if (!b) return decode_err(b.error());
                     ext_bitmap[i] = (*b != 0);
                 }
+                const ExtUnits units{spec, root_end};
                 for (int i = 0; i < n_ext; ++i) {
+                    if (i >= units.count()) {
+                        if (ext_bitmap[i])
+                            if (auto r = PerCodec::skip_ext(stream); !r) return r;
+                        continue;
+                    }
                     if (!ext_bitmap[i]) {
-                        if (i < known_ext) {
-                            const auto& absent = spec.members[root_end + i];
+                        for (int m = units.begin(i); m < units.end(i); ++m) {
+                            const auto& absent = spec.members[m];
                             absent.optional_ops.set_present(dest, false);
                             if (absent.set_default) absent.set_default(dest);
                         }
                         continue;
                     }
-                    if (i < known_ext) {
-                        const auto& mbr = spec.members[root_end + i];
-                        mbr.optional_ops.set_present(dest, true);
-                        Asn1Object* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
-                        auto r = decode_open_type(codec, stream, *mbr.type_descriptor, mptr);
+                    if (units.is_group(i)) {
+                        auto r = decode_group_open_type(codec, stream, spec, units.begin(i), units.end(i), dest);
                         if (!r) return r;
-                    } else {
-                        if (auto r = PerCodec::skip_ext(stream); !r) return r;
+                        continue;
                     }
+                    const auto& mbr = spec.members[units.begin(i)];
+                    mbr.optional_ops.set_present(dest, true);
+                    Asn1Object* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
+                    auto r = decode_open_type(codec, stream, *mbr.type_descriptor, mptr);
+                    if (!r) return r;
                 }
+                for (int i = n_ext; i < units.count(); ++i)
+                    for (int m = units.begin(i); m < units.end(i); ++m)
+                        spec.members[m].optional_ops.set_present(dest, false);
             }
         }
         return decode_ok();
     }
 };
+
+/// @brief Decode counterpart of SequencePerHandler::encode_group_open_type:
+///        one extension addition group from its open type (X.691 §18.9).
+static DecodeResult decode_group_open_type(const PerCodec& codec, PerDecodeStream& stream,
+                                           const SequenceSpec& spec, int begin, int end,
+                                           Asn1Object* dest) {
+    auto bytes_r = per_detail::get_octets(stream);
+    if (!bytes_r) return decode_err(bytes_r.error());
+    PerDecodeStream gs{std::span<const uint8_t>{bytes_r->data(), bytes_r->size()}};
+    std::vector<bool> present(static_cast<std::size_t>(end - begin), true);
+    for (int i = begin; i < end; ++i) {
+        if (!spec.group_member_optional[i]) continue;
+        auto b = gs.get_bits(1);
+        if (!b) return decode_err(b.error());
+        present[i - begin] = (*b != 0);
+    }
+    IDecodeStream& ds = gs;
+    for (int i = begin; i < end; ++i) {
+        const auto& mbr = spec.members[i];
+        mbr.optional_ops.set_present(dest, present[i - begin]);
+        if (!present[i - begin]) {
+            if (mbr.set_default) mbr.set_default(dest);
+            continue;
+        }
+        if (!mbr.type_descriptor) continue;
+        auto r = codec.decode(ds, *mbr.type_descriptor, mbr.optional_ops.member_ptr(dest, mbr.offset));
+        if (!r) return r;
+    }
+    return decode_ok();
+}
 
 class ChoicePerHandler final : public IPerTypeHandler {
 public:

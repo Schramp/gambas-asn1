@@ -889,6 +889,23 @@ target_link_libraries(test_choice_unknown_ext PRIVATE asn1cpp_runtime)
 add_test(NAME choice_unknown_ext COMMAND test_choice_unknown_ext)
 set_tests_properties(choice_unknown_ext PROPERTIES TIMEOUT 30)
 
+# ---- SEQUENCE extension addition group (X.691 §18.9) ------------------------
+set(EXTGRP_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_ext_group_test)
+add_custom_command(
+    OUTPUT  ${EXTGRP_GEN_DIR}/Rec.hpp ${EXTGRP_GEN_DIR}/Rec.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${EXTGRP_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_ext_group_test.asn1
+            -o ${EXTGRP_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_ext_group_test.asn1
+    COMMENT "Generating C++ from per_ext_group_test.asn1"
+)
+add_executable(test_ext_group seq/test_ext_group.cpp ${EXTGRP_GEN_DIR}/Rec.cpp)
+target_include_directories(test_ext_group PRIVATE ${EXTGRP_GEN_DIR})
+target_link_libraries(test_ext_group PRIVATE asn1cpp_runtime)
+add_test(NAME ext_group COMMAND test_ext_group)
+set_tests_properties(ext_group PROPERTIES TIMEOUT 30)
+
 # ---- -fprefix namespace test (issue #16) ------------------------------------
 # Verifies that -fprefix=<name> wraps generated types in namespace <name>.
 # Uses per_ext_test.asn1 (already available) regenerated with -fprefix=testns.
@@ -1753,6 +1770,28 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_choice_unknown_ext PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_CUE_GEN_DIR=${RUST_CUE_GEN_DIR}")
+endif()
+
+# Rust leg of the extension addition group test — see tests/rust/ext_group/src/main.rs.
+set(RUST_EXTGRP_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_ext_group)
+add_custom_command(
+    OUTPUT  ${RUST_EXTGRP_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_EXTGRP_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_ext_group_test.asn1
+                                   -o ${RUST_EXTGRP_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_ext_group_test.asn1
+    COMMENT "Generating Rust from per_ext_group_test.asn1"
+)
+add_custom_target(gen_rust_ext_group ALL DEPENDS ${RUST_EXTGRP_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_ext_group
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/ext_group/Cargo.toml)
+    set_tests_properties(rust_ext_group PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_EXTGRP_GEN_DIR=${RUST_EXTGRP_GEN_DIR}")
 endif()
 
 # Rust leg of the SET component order test — see tests/rust/set_order/src/main.rs.
