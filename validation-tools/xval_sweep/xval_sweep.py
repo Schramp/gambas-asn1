@@ -68,6 +68,12 @@ Usage:
                    --with-asn1c to opt in — ~200 extra asn1c builds is the
                    single biggest cost multiplier for a broad probe).
 
+A target also fails when any run of the C++ or Rust codec tools (b2x,
+x2b, b2j, j2b, b2p, p2b) exits nonzero or panics, even if the record
+comparisons look clean; each such run is printed as "TOOL FAILURE".
+asn1c's own converter-example runs only feed informational or record-
+count-checked comparisons and are not treated this way.
+
 Exit code: for --corpus=targets (default), 0 if every target's every
 comparison passed, 1 otherwise. For --corpus=asn1c-compiler, always 0.
 """
@@ -223,6 +229,27 @@ def run(*args, **kwargs):
     return subprocess.run(args, capture_output=True, **kwargs)
 
 
+# Failures of our own codec tools (C++/Rust b2x/x2b/b2j/j2b/b2p/p2b) seen
+# while running the current target, per worker thread. A tool that exits
+# nonzero or panics may still print some records, or none on both sides of
+# a comparison (which compares as "no records", not a failure), so
+# run_target fails the target on any entry here regardless of the record
+# comparisons.
+_tool_failures = threading.local()
+
+
+def _codec_result(r, tool: str, leg: str) -> str:
+    """stderr text of a codec tool run; records a failure in _tool_failures
+    when the tool exited nonzero or a Rust binary panicked."""
+    err = r.stderr.decode(errors="replace").strip()
+    if r.returncode != 0 or "panicked" in err:
+        failures = getattr(_tool_failures, "items", None)
+        if failures is not None:
+            failures.append(f"{leg} {tool}: exit {r.returncode}"
+                            + (f": {err.splitlines()[-1]}" if err else ""))
+    return err
+
+
 def split_ber_records(data: bytes) -> list[bytes]:
     """Split raw concatenated BER stream into per-record byte strings."""
     records = []
@@ -318,37 +345,37 @@ _TEXT_ERRORS = "surrogateescape"
 def b2x_file(tool: str, type_name: str, ber_path: str) -> tuple[str, str]:
     """BER file → XER string. Returns (xer_text, stderr)."""
     r = run(tool, "--type", type_name, ber_path)
-    return r.stdout.decode(errors=_TEXT_ERRORS), r.stderr.decode(errors="replace").strip()
+    return r.stdout.decode(errors=_TEXT_ERRORS), _codec_result(r, tool, "b2x")
 
 
 def x2b(tool: str, type_name: str, xer_text: str) -> tuple[bytes, str]:
     """XER string → BER bytes. Returns (ber_bytes, stderr)."""
     r = run(tool, "--type", type_name, input=xer_text.encode(errors=_TEXT_ERRORS))
-    return r.stdout, r.stderr.decode(errors="replace").strip()
+    return r.stdout, _codec_result(r, tool, "x2b")
 
 
 def b2j_file(tool: str, type_name: str, ber_path: str) -> tuple[str, str]:
     """BER file → JER string. Returns (jer_text, stderr)."""
     r = run(tool, "--type", type_name, ber_path)
-    return r.stdout.decode(errors=_TEXT_ERRORS), r.stderr.decode(errors="replace").strip()
+    return r.stdout.decode(errors=_TEXT_ERRORS), _codec_result(r, tool, "b2j")
 
 
 def j2b(tool: str, type_name: str, jer_text: str) -> tuple[bytes, str]:
     """JER string → BER bytes. Returns (ber_bytes, stderr)."""
     r = run(tool, "--type", type_name, input=jer_text.encode(errors=_TEXT_ERRORS))
-    return r.stdout, r.stderr.decode(errors="replace").strip()
+    return r.stdout, _codec_result(r, tool, "j2b")
 
 
 def b2p_file(tool: str, type_name: str, ber_path: str) -> tuple[bytes, str]:
     """BER file -> length-prefixed PER byte stream. Returns (per_bytes, stderr)."""
     r = run(tool, "--type", type_name, ber_path)
-    return r.stdout, r.stderr.decode(errors="replace").strip()
+    return r.stdout, _codec_result(r, tool, "b2p")
 
 
 def p2b(tool: str, type_name: str, per_bytes: bytes) -> tuple[bytes, str]:
     """Length-prefixed PER byte stream -> BER bytes. Returns (ber_bytes, stderr)."""
     r = run(tool, "--type", type_name, input=per_bytes)
-    return r.stdout, r.stderr.decode(errors="replace").strip()
+    return r.stdout, _codec_result(r, tool, "p2b")
 
 
 def split_per_records(data: bytes) -> list[bytes]:
@@ -1062,6 +1089,7 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
 
     extra_note = f" (+ {', '.join(extra_files)})" if extra_files else ""
     print(f"\n=== {schema_rel} :: {pdu_type}{extra_note} ===")
+    _tool_failures.items = []
     if skip_asn1c_reason:
         print(f"  asn1c leg: skipped ({skip_asn1c_reason})")
 
@@ -1361,6 +1389,13 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
     elif not skip_asn1c_reason:
         print("  asn1c leg: skipped (not found or unsupported for this target)")
 
+    tool_failures = _tool_failures.items
+    _tool_failures.items = None
+    for f in tool_failures:
+        print(f"  TOOL FAILURE: {f}")
+    if tool_failures:
+        print(f"  --- {schema_rel}::{pdu_type}: FAIL — {len(tool_failures)} codec tool run(s) failed ---")
+        return False
     if total_records == 0:
         print(f"  --- {schema_rel}::{pdu_type}: FAIL — no records compared (harness/parsing gap, not verified) ---")
         return False
