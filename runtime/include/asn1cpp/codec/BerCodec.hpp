@@ -120,7 +120,10 @@ public:
     /// @param value  Raw value bytes (no tag, no length prefix).
     /// @param def    TypeDescriptor of the expected type.
     /// @param dest   Pre-allocated, default-constructed target object.
-    /// @return \c DecodeResult — check with \c .has_value().
+    /// @return \c DecodeResult — check with \c .has_value(). On success the
+    ///         value is checked against \p def's constraints, as decode() does.
+    /// @see X.690 §8.14.3 — an IMPLICIT tag replaces the identifier only, so
+    ///      the contents decode (and constraints) are the underlying type's.
     DecodeResult decode_value(std::span<const uint8_t> value,
                               const TypeDescriptor& def,
                               Asn1Object* dest) const;
