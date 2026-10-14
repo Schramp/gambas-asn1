@@ -71,8 +71,9 @@ pub fn encode_int(w: &mut Writer, pc: &Constraints, value: i64) {
                 return;
             }
         }
-        // X.691 §10.5.7.1 UPER: value in [lb..ub] encoded in minimum bits, no length prefix.
-        let encoded = (value - pc.lower_bound) as u64;
+        // X.691 §11.5.6 UPER: value − lb in minimum bits, no length prefix.
+        // Wrapping arithmetic: a range of up to 2^64 values exceeds i64.
+        let encoded = (value as u64).wrapping_sub(pc.lower_bound as u64);
         w.put_bits(encoded, pc.range_bits);
     } else if pc.is_semi_constrained() {
         if pc.is_extensible() {
@@ -99,7 +100,7 @@ pub fn decode_int(r: &mut Reader, pc: &Constraints) -> Result<i64, DecodeError> 
             }
         }
         let bits = r.get_bits(pc.range_bits)?;
-        Ok(pc.lower_bound + bits as i64)
+        Ok((pc.lower_bound as u64).wrapping_add(bits) as i64)
     } else if pc.is_semi_constrained() {
         if pc.is_extensible() {
             let ext = r.get_bits(1)?;

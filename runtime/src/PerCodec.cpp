@@ -312,6 +312,9 @@ public:
     }
 };
 
+/// @brief PER handler for INTEGER with signed 64-bit storage.
+/// @see X.691 §13 — constrained (§11.5.6), semi-constrained (§11.7) and
+///      unconstrained (§11.8) whole numbers, with the extensible escape (§13.2.2).
 class IntegerPerHandler final : public IPerTypeHandler {
 public:
     void encode(const PerCodec&, PerEncodeStream& stream,
@@ -325,9 +328,10 @@ public:
                 stream.put_bits(in_root ? 0 : 1, 1, "INT.ext");
                 if (!in_root) { encode_unconstrained_int(stream, svalue); return; }
             }
-            // X.691 §10.5.7.1 UPER: value in [lb..ub] encoded in minimum bits, no length prefix.
-            int64_t encoded = svalue - pc.lower_bound;
-            stream.put_bits(static_cast<uint64_t>(encoded), pc.range_bits, "INT.value");
+            // X.691 §11.5.6 UPER: value − lb in minimum bits, no length prefix.
+            // Unsigned arithmetic: a range of up to 2^64 values exceeds int64_t.
+            uint64_t encoded = static_cast<uint64_t>(svalue) - static_cast<uint64_t>(pc.lower_bound);
+            stream.put_bits(encoded, pc.range_bits, "INT.value");
         } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {
                 bool in_root = (svalue >= pc.lower_bound);
@@ -359,7 +363,7 @@ public:
             }
             auto bits = stream.get_bits(pc.range_bits);
             if (!bits) return decode_err(bits.error());
-            idest->set(pc.lower_bound + static_cast<int64_t>(*bits));
+            idest->set(static_cast<int64_t>(static_cast<uint64_t>(pc.lower_bound) + *bits));
             return decode_ok();
         } else if (pc.flags & Constraints::SEMI_CONSTRAINED) {
             if (pc.flags & Constraints::EXTENSIBLE) {

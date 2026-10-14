@@ -1106,7 +1106,9 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
 DecodeResult BerCodec::decode_value(std::span<const uint8_t> value,
                                      const TypeDescriptor& def,
                                      Asn1Object* dest) const {
-    return def.ber_handler->decode_value(*this, value, def, dest);
+    auto res = def.ber_handler->decode_value(*this, value, def, dest);
+    if (res.has_value()) validate_on_decode("BER", def, dest);
+    return res;
 }
 
 } // namespace asn1

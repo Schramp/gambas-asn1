@@ -990,6 +990,18 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem, const std::strin
     return shape;
 }
 
+/// @brief Bit width of a constrained whole number field in the UNALIGNED variant.
+/// @param range_m1 ub − lb, computed in unsigned 64-bit arithmetic so a
+///                 range of up to 2^64 values (ub − lb = UINT64_MAX) is exact.
+/// @return Minimum number of bits that holds every value 0..range_m1; 0 for a
+///         single-value range.
+/// @see X.691 §11.5.6 — constrained whole number, UNALIGNED variant.
+static int constrained_whole_number_bits(uint64_t range_m1) {
+    int rb = 0;
+    for (uint64_t v = range_m1; v > 0; v >>= 1) ++rb;
+    return rb;
+}
+
 /// @brief True if any top-level constraint on `def` carries a trailing '...'.
 /// @param def Type definition to inspect.
 /// @return Whether `def` is constraint-extensible (X.680 §49.3).
@@ -1029,24 +1041,14 @@ IntegerSpec Generator::build_integer_spec(const ast::TypeDef& def, const std::st
         // TOK_number_large upper bound (e.g. UINT64_MAX).
         // X.691 §10.5.6 UPER: range = hi_u64 - lo + 1; compute range_bits.
         // For the full uint64 range (lo=0, hi=UINT64_MAX), range_bits=64.
-        int rb = 0;
         uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
-        uint64_t range_count_m1 = r.hi_u64 - u_lo; // range - 1 (exact even if range=2^64)
-        if (range_count_m1 == std::numeric_limits<uint64_t>::max()) {
-            rb = 64; // 2^64 range
-        } else {
-            for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
-        }
-        spec.range_bits = rb;
+        spec.range_bits = constrained_whole_number_bits(r.hi_u64 - u_lo);
         spec.upper_s64 = hi; // int64_t view
         spec.lower_u64 = u_lo;
         spec.upper_u64 = r.hi_u64;
     } else {
-        int64_t range_count = hi - lo + 1;
-        int rb = 0;
-        if (range_count > 1)
-            for (int64_t v = range_count - 1; v > 0; v >>= 1) ++rb;
-        spec.range_bits = rb;
+        spec.range_bits = constrained_whole_number_bits(
+            static_cast<uint64_t>(hi) - static_cast<uint64_t>(lo));
         spec.upper_s64 = hi;
         spec.lower_u64 = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
         spec.upper_u64 = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
@@ -1317,15 +1319,16 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
     // IntersectionConstraint): take max(lowers) and min(uppers).
     std::optional<int64_t> lo;
     std::optional<int64_t> hi;
+    bool lo_is_real = false;  // lo comes from a finite bound, not MIN
     bool truly_max = false;
     uint64_t hi_u64 = 0;
     bool hi_is_large = false;
     walk_type_constraints(def, [&](const ast::ConstraintBody& body) {
         auto* vr = std::get_if<ast::ValueRange>(&body);
         if (!vr) return;
-        int64_t vlo = (vr->lower.kind == ast::RangeEndpoint::Kind::Min)
-            ? std::numeric_limits<int64_t>::min()
-            : resolve_int_value(vr->lower.value).value_or(std::numeric_limits<int64_t>::min());
+        std::optional<int64_t> vlo_real = (vr->lower.kind == ast::RangeEndpoint::Kind::Min)
+            ? std::nullopt : resolve_int_value(vr->lower.value);
+        int64_t vlo = vlo_real.value_or(std::numeric_limits<int64_t>::min());
         bool vhi_is_max = (vr->upper.kind == ast::RangeEndpoint::Kind::Max);
         int64_t vhi;
         uint64_t vhi_u64 = 0;
@@ -1342,7 +1345,12 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
             /* TOK_number / TOK_number_negative / named ref: signed literal */
             vhi = resolve_int_value(vr->upper.value).value_or(std::numeric_limits<int64_t>::max());
         }
-        lo = lo ? std::max(*lo, vlo) : vlo;
+        // Intersection keeps the larger lower bound; a finite bound equal
+        // to INT64_MIN still beats MIN.
+        if (!lo || vlo > *lo || (vlo == *lo && vlo_real)) {
+            lo = vlo;
+            lo_is_real = lo_is_real || vlo_real.has_value();
+        }
         if (!hi || vhi < *hi) {
             hi = vhi;
             truly_max = vhi_is_max;
@@ -1351,26 +1359,13 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
         }
     });
     if (lo && hi) {
-        // X.691 defines PER bit-width minimization only for a constraint
-        // with a real finite lower bound: "constrained" (both bounds
-        // finite) or "semi-constrained" (lower bound only, X.691 §10.5.6
-        // — `truly_max` above). An upper-bound-only range (`MIN..N`, no
-        // real lower bound) has no such minimization defined — ground-
-        // truthed against asn1c's own generated table for exactly this
-        // shape (`(MIN..10)`): `asn_PER_memb_second_constr_4` is
-        // APC_UNCONSTRAINED, not semi-constrained. Treating `INT64_MIN`
-        // as if it were a genuine finite lower bound here (rather than
-        // "no lower bound at all") previously fed `hi - lo + 1` into the
-        // constrained-range bit-width computation, overflowing int64
-        // arithmetic and corrupting the encoded value — this returns
-        // "no constraint" instead, the same "general integer" shape
-        // asn1c's own APC_UNCONSTRAINED produces. asn1c additionally
-        // still enforces `value <= N` via a separate constraint-check
-        // callback, independent of its PER table; this codebase has no
-        // equivalent upper-bound-only validation path yet for either
-        // codec — a real, separate, narrower gap, not fixed here.
-        bool no_real_lower_bound = (*lo == std::numeric_limits<int64_t>::min());
-        if (no_real_lower_bound && !truly_max)
+        // PER bit-width minimization needs a finite lower bound: constrained
+        // (both bounds finite) or semi-constrained (X.691 §11.5.6, §11.7).
+        // MIN..N has none and is encoded as an unconstrained whole number
+        // (X.691 §11.8), as asn1c's APC_UNCONSTRAINED table for (MIN..10)
+        // does. The literal −2^63 is a finite bound: (−2^63..2^63−1) is a
+        // 2^64-value constrained range.
+        if (!lo_is_real && !truly_max)
             return IntRange{false, 0, 0, false, 0, false};
         return IntRange{true, *lo, *hi, truly_max, hi_u64, hi_is_large};
     }
@@ -1443,19 +1438,13 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
             } else if (ir.hi_is_large) {
                 // TOK_number_large upper bound (e.g. UINT64_MAX).
                 uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
-                uint64_t range_count_m1 = ir.hi_u64 - u_lo;
-                int rb = (range_count_m1 == std::numeric_limits<uint64_t>::max())
-                    ? 64 : 0;
-                if (rb == 0) for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
-                spec.range_bits = rb;
+                spec.range_bits = constrained_whole_number_bits(ir.hi_u64 - u_lo);
                 spec.upper_s64 = hi;
                 spec.lower_u64 = u_lo;
                 spec.upper_u64 = ir.hi_u64;
             } else {
-                int64_t rc = hi - lo + 1;
-                int rb = 0;
-                if (rc > 1) for (int64_t v = rc - 1; v > 0; v >>= 1) ++rb;
-                spec.range_bits = rb;
+                spec.range_bits = constrained_whole_number_bits(
+                    static_cast<uint64_t>(hi) - static_cast<uint64_t>(lo));
                 spec.upper_s64 = hi;
                 spec.lower_u64 = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
                 spec.upper_u64 = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;

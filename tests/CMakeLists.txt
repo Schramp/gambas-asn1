@@ -871,6 +871,28 @@ target_link_libraries(test_set_order PRIVATE asn1cpp_runtime)
 add_test(NAME set_order COMMAND test_set_order)
 set_tests_properties(set_order PROPERTIES TIMEOUT 30)
 
+# ---- Wide INTEGER ranges in PER (X.691 §11.5.6, §11.8) ----------------------
+# per_int64_bounds_test.asn1: 2^64-value ranges (0..2^64-1, -2^63..2^63-1),
+# a 2^33-value range and an unconstrained INTEGER (see per/test_per_int64_bounds.cpp).
+set(INT64B_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_per_int64_bounds_test)
+add_custom_command(
+    OUTPUT  ${INT64B_GEN_DIR}/U64Rec.cpp ${INT64B_GEN_DIR}/S64Rec.cpp
+            ${INT64B_GEN_DIR}/S33Rec.cpp ${INT64B_GEN_DIR}/UncRec.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${INT64B_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_int64_bounds_test.asn1
+            -o ${INT64B_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_int64_bounds_test.asn1
+    COMMENT "Generating C++ from per_int64_bounds_test.asn1"
+)
+add_executable(test_per_int64_bounds per/test_per_int64_bounds.cpp
+               ${INT64B_GEN_DIR}/U64Rec.cpp ${INT64B_GEN_DIR}/S64Rec.cpp
+               ${INT64B_GEN_DIR}/S33Rec.cpp ${INT64B_GEN_DIR}/UncRec.cpp)
+target_include_directories(test_per_int64_bounds PRIVATE ${INT64B_GEN_DIR})
+target_link_libraries(test_per_int64_bounds PRIVATE asn1cpp_runtime)
+add_test(NAME per_int64_bounds COMMAND test_per_int64_bounds)
+set_tests_properties(per_int64_bounds PROPERTIES TIMEOUT 30)
+
 # ---- CHOICE extension alternative unknown to the receiver (X.691 §23.8) ------
 set(CUE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_unknown_ext_test)
 add_custom_command(
@@ -1814,6 +1836,28 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_set_order PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_SETORD_GEN_DIR=${RUST_SETORD_GEN_DIR}")
+endif()
+
+# Rust leg of per_int64_bounds_test.asn1 (tests/rust/per_int64_bounds).
+set(RUST_INT64B_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_per_int64_bounds)
+add_custom_command(
+    OUTPUT  ${RUST_INT64B_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_INT64B_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_int64_bounds_test.asn1
+                                   -o ${RUST_INT64B_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_int64_bounds_test.asn1
+    COMMENT "Generating Rust from per_int64_bounds_test.asn1"
+)
+add_custom_target(gen_rust_per_int64_bounds ALL DEPENDS ${RUST_INT64B_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_per_int64_bounds
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/per_int64_bounds/Cargo.toml)
+    set_tests_properties(rust_per_int64_bounds PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_INT64B_GEN_DIR}")
 endif()
 
 # Rust leg of the deeply nested anonymous CHOICE-in-CHOICE regression
