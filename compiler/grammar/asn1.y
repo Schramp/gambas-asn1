@@ -1082,8 +1082,7 @@ ComponentTypeLists:
 	    $$ = $1;
 	    /* extension addition group: tag members with a shared group id,
 	       keep their declared optionality, mark them optional as additions */
-	    static int next_ext_group = 0;
-	    int g = ++next_ext_group;
+	    int g = ++result.last_ext_group;
 	    for (auto& m : $4) {
 	        m->ext_group = g;
 	        m->group_optional = m->is_optional();
@@ -1094,8 +1093,7 @@ ComponentTypeLists:
 	| ComponentTypeLists TOK_VBracketLeft ComponentTypeLists TOK_VBracketRight
 	{
 	    $$ = $1;
-	    static int next_ext_group_b = 1000000;
-	    int g = ++next_ext_group_b;
+	    int g = ++result.last_ext_group;
 	    for (auto& m : $3) {
 	        m->ext_group = g;
 	        m->group_optional = m->is_optional();
