@@ -43,6 +43,21 @@ impl Writer {
         }
     }
 
+    /// Append the first `nbits` bits of `bytes` (MSB-first, as another
+    /// `Writer` produced them before its `flush()`). Used to splice
+    /// separately encoded components back into one stream, e.g. sorted
+    /// SET OF elements (X.691 §21.1).
+    pub fn put_bit_string(&mut self, bytes: &[u8], nbits: usize) {
+        let full = nbits / 8;
+        for &b in &bytes[..full] {
+            self.put_bits(b as u64, 8);
+        }
+        let rest = (nbits % 8) as u32;
+        if rest > 0 {
+            self.put_bits((bytes[full] >> (8 - rest)) as u64, rest);
+        }
+    }
+
     /// Pad and flush the current partial byte to the buffer. Must be
     /// called after the last `put_bits()` to ensure the final byte is
     /// committed — matches `PerEncodeStream::flush()`, including its
@@ -88,6 +103,22 @@ impl Writer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn put_bit_string_splices_exact_bits() {
+        let mut part = Writer::new();
+        part.put_bits(0b101, 3);
+        part.put_bits(0xAB, 8);
+        let nbits = part.bit_pos();
+        part.flush();
+        let bytes = part.into_bytes();
+        let mut w = Writer::new();
+        w.put_bits(1, 1);
+        w.put_bit_string(&bytes, nbits);
+        w.flush();
+        // 1 | 101 | 1010 1011 -> 1101 1010 1011 0000
+        assert_eq!(w.into_bytes(), vec![0xDA, 0xB0]);
+    }
 
     #[test]
     fn single_byte_roundtrip_shape() {

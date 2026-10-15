@@ -302,6 +302,7 @@ struct BuiltinAliasSpec : TaggedTypeSpec {
     int      size_range_bits = 0;
     int64_t  size_lower = 0, size_upper = 0;    // size_upper meaningful only when size_bounded
     bool     extensible = false;
+    bool     named_bits = false;        // BIT STRING with a NamedBitList (X.680 §22.7, X.691 §15.3)
     ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // X.693 §21 OCTET STRING representation
 };
 
@@ -391,6 +392,7 @@ struct MemberTypeDescriptorSpec {
     bool     size_bounded = false;        // true iff the SIZE constraint has a finite upper bound
     int      size_range_bits = 0;
     int64_t  size_lower = 0, size_upper = 0; // size_upper meaningful only when size_bounded
+    bool     named_bits = false;          // BIT STRING with a NamedBitList (X.680 §22.7, X.691 §15.3)
     ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // Kind::Integer never sets this
 
     // Both kinds — target-agnostic BER/XER facts (X.690/X.693), not code.
@@ -701,6 +703,14 @@ struct SequenceSpec : TaggedTypeSpec {
     int         roms_count;
     bool        is_set;         // true -> natural tag is SET, else SEQUENCE
     std::vector<SequenceMemberSpec> members; // root members first, then extension members
+    // Extension additions as PER units (X.691 §18.9), filled only when the
+    // type has an extension addition group: a plain extension component is
+    // one unit, a "[[ ... ]]" group is one unit encoded as a sequence of
+    // its components inside one open type. Empty means every extension
+    // member is its own unit.
+    std::vector<int>  ext_unit_ends;          // per unit: one past its last member index
+    std::vector<bool> ext_unit_is_group;      // per unit: an ExtensionAdditionGroup
+    std::vector<bool> member_group_optional;  // per member: declared OPTIONAL/DEFAULT inside its group
 };
 
 /// @brief Backend-agnostic decision for one CHOICE alternative, built in one

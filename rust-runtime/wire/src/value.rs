@@ -85,7 +85,7 @@ mod per_blanket_tests {
         let v = crate::ber::sequence::SeqOf(vec![Integer(1), Integer(9), Integer(15)]);
         let via_walker = bytes_of(|w| crate::per::object::encode_seqof_content(&v, &coll, w));
         let manual = bytes_of(|w| {
-            crate::per::length::encode_size_field(w, &coll, 3);
+            w.put_bits(3, 3); // SIZE (0..7): count 3 in 3 bits
             for x in [1i64, 9, 15] {
                 crate::per::integer::encode_int(w, &ELEM, x);
             }

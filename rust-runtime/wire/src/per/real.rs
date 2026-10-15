@@ -9,7 +9,7 @@
 //! 0.0` directly, which is true for both signs of zero and silently
 //! dropped MINUS-ZERO's sign; see its own call site below).
 
-use crate::per::length::{get_length, put_length};
+use crate::per::length::{get_octets, put_octets};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 
@@ -21,20 +21,13 @@ pub fn encode_real(w: &mut Writer, value: f64) {
     // written, even when that's zero bytes for PLUS-ZERO.
     let mut content = Vec::new();
     crate::real::encode_real_content(&mut content, value);
-    put_length(w, content.len());
-    for b in content {
-        w.put_bits(b as u64, 8);
-    }
+    put_octets(w, &content);
 }
 
 pub fn decode_real(r: &mut Reader) -> Result<f64, DecodeError> {
-    let len = get_length(r)?;
-    if len == 0 {
+    let content = get_octets(r)?;
+    if content.is_empty() {
         return Ok(0.0);
-    }
-    let mut content = Vec::with_capacity(len);
-    for _ in 0..len {
-        content.push(r.get_bits(8)? as u8);
     }
     crate::real::decode_real_value(&content, r.bit_pos())
         .map_err(|e| DecodeError::new(e.message, r.bit_pos()))

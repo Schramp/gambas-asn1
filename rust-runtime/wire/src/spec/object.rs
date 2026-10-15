@@ -62,7 +62,16 @@ pub struct MemberMeta {
     /// OctetString(..))` covers this member the same as any other OCTET
     /// STRING).
     pub xer_instruction: XerInstruction,
-    pub per_unsupported: Option<&'static str>,
+}
+
+/// One PER extension addition (X.691 §18.9): the extension members from
+/// the previous unit's `end` (or the first extension member) up to `end`.
+/// `group` marks an extension addition group, encoded as a sequence of its
+/// members inside one open type.
+#[derive(Debug, Clone, Copy)]
+pub struct ExtUnit {
+    pub end: usize,
+    pub group: bool,
 }
 
 pub struct SequenceSpec {
@@ -71,6 +80,16 @@ pub struct SequenceSpec {
     pub members: &'static [MemberMeta],
     pub ext_at: i32,
     pub roms_count: usize,
+    /// True for a SET: `members` is in canonical tag order (X.680 §8.6),
+    /// and BER decode accepts the components in any order (X.690 §8.11.2).
+    pub is_set: bool,
+    /// PER extension additions as units (X.691 §18.9), only for a type
+    /// with an extension addition group; empty means every extension
+    /// member is its own unit.
+    pub ext_units: &'static [ExtUnit],
+    /// Per member (table order): declared OPTIONAL/DEFAULT inside its
+    /// extension addition group. Empty when there are no groups.
+    pub group_member_optional: &'static [bool],
 }
 
 /// One alternative's wire-framing + validation facts (X.690 §8.13/§8.14)
@@ -79,7 +98,6 @@ pub struct AltMeta {
     pub name: &'static str,
     pub ber: BerTagging,
     pub constraints: &'static crate::constraints::Constraints,
-    pub per_unsupported: Option<&'static str>,
 }
 
 pub struct ChoiceSpec {

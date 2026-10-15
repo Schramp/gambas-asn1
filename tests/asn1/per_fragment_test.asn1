@@ -1,0 +1,21 @@
+-- PER length determinants of 16K items or more (X.691 §10.9.3.8
+-- fragmentation: blocks of up to 4 x 16K items, each preceded by a
+-- 0b11000kkk octet, then the remaining length). Reached when the SIZE
+-- upper bound is 64K or more, or absent: below that the length is a
+-- constrained whole number (X.691 §10.9.4.1, ub < 64K as asn1c applies
+-- it). One member per unit kind (octets, characters, bits, components),
+-- a semi-constrained one, and a below-64K control.
+PerFragmentTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Bit ::= INTEGER (0..1)
+
+Big ::= SEQUENCE {
+    data      OCTET STRING (SIZE (16384..70000)),
+    text      IA5String (SIZE (16384..70000)),
+    bits      BIT STRING (SIZE (16384..70000)),
+    flags     SEQUENCE (SIZE (16384..70000)) OF Bit,
+    semi      OCTET STRING (SIZE (16384..MAX)),
+    control   OCTET STRING (SIZE (16384..20000))
+}
+
+END

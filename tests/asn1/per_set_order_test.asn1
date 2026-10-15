@@ -1,0 +1,16 @@
+-- SET component order in PER (X.691 §20): the root components are sorted
+-- into the canonical tag order of X.680 §8.6 before being encoded as if
+-- the type were a SEQUENCE. The components below are declared out of tag
+-- order, so declaration order and canonical order differ. The order is
+-- fixed by the schema and can be precomputed in the member tables, the
+-- way CHOICE alternatives already are (X.691 §22.6).
+PerSetOrderTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+Rec ::= SET {
+    third     [3] INTEGER (0..7),
+    first     [1] BOOLEAN,
+    second    [2] IA5String (SIZE (1..4)) OPTIONAL,
+    zeroth    [0] INTEGER (0..255)
+}
+
+END

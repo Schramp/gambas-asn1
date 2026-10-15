@@ -1,0 +1,21 @@
+-- BIT STRING types defined with a NamedBitList (X.680 §22.7): PER removes
+-- trailing 0 bits and pads with 0 bits up to the SIZE lower bound
+-- (X.691 §15.2, §15.3). `plain` has no NamedBitList and is sent as is.
+PerNamedBitsTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    Flags ::= BIT STRING { a(0), b(1), c(2) }
+    FlagsAlias ::= Flags
+    SizedFlags ::= BIT STRING { a(0), b(1), c(2) } (SIZE (2..8))
+
+    NamedBitsRec ::= SEQUENCE {
+        flags   BIT STRING { a(0), b(1), c(2) },
+        sized   BIT STRING { a(0), b(1), c(2) } (SIZE (2..8)),
+        fixed   BIT STRING { a(0), b(1), c(2) } (SIZE (8)),
+        ext     BIT STRING { a(0), b(1), c(2) } (SIZE (2..8, ...)),
+        named   Flags,
+        alias   FlagsAlias,
+        typed   SizedFlags,
+        plain   BIT STRING
+    }
+
+END

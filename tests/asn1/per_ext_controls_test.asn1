@@ -1,0 +1,29 @@
+-- PER extensibility that C++, Rust and asn1c agree on byte-for-byte:
+-- extensible INTEGER (X.691 §12.1) and ENUMERATED (§14.3), SEQUENCE
+-- extension additions (§19.7-19.8) and CHOICE extension alternatives
+-- (§23.8), primitive and constructed. Regression control for the
+-- per_gap_* tests.
+PerExtControlsTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Colour ::= ENUMERATED { red, green, ..., blue }
+
+Msg ::= CHOICE {
+    a      INTEGER (0..7),
+    b      BOOLEAN,
+    ...,
+    c      IA5String (SIZE (1..4)),
+    d      SEQUENCE { x INTEGER (0..3), y BOOLEAN OPTIONAL },
+    e      OCTET STRING
+}
+
+Rec ::= SEQUENCE {
+    num       INTEGER (0..7, ...),
+    colour    Colour,
+    msg       Msg,
+    name      IA5String (SIZE (1..8)) OPTIONAL,
+    ...,
+    added     BOOLEAN OPTIONAL,
+    later     SEQUENCE (SIZE (0..3)) OF INTEGER (0..7) OPTIONAL
+}
+
+END
