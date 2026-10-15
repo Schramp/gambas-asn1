@@ -851,6 +851,105 @@ target_link_libraries(test_per_ext PRIVATE asn1cpp_runtime)
 add_test(NAME per_ext COMMAND test_per_ext)
 set_tests_properties(per_ext PROPERTIES TIMEOUT 30)
 
+# ---- SET component order (X.680 §8.6, X.690 §8.11.2/§10.3, X.691 §20) -------
+# per_set_order_test.asn1 declares SET components out of tag order: BER
+# decode must accept any order, BER and PER encode the canonical order.
+# Expected bytes are asn1c's DER / UPER output (see seq/test_set_order.cpp).
+set(SET_ORDER_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_set_order_test)
+add_custom_command(
+    OUTPUT  ${SET_ORDER_GEN_DIR}/Rec.hpp ${SET_ORDER_GEN_DIR}/Rec.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SET_ORDER_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_set_order_test.asn1
+            -o ${SET_ORDER_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_set_order_test.asn1
+    COMMENT "Generating C++ from per_set_order_test.asn1"
+)
+add_executable(test_set_order seq/test_set_order.cpp ${SET_ORDER_GEN_DIR}/Rec.cpp)
+target_include_directories(test_set_order PRIVATE ${SET_ORDER_GEN_DIR})
+target_link_libraries(test_set_order PRIVATE asn1cpp_runtime)
+add_test(NAME set_order COMMAND test_set_order)
+set_tests_properties(set_order PROPERTIES TIMEOUT 30)
+
+# ---- Wide INTEGER ranges in PER (X.691 §11.5.6, §11.8) ----------------------
+# per_int64_bounds_test.asn1: 2^64-value ranges (0..2^64-1, -2^63..2^63-1),
+# a 2^33-value range and an unconstrained INTEGER (see per/test_per_int64_bounds.cpp).
+set(INT64B_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_per_int64_bounds_test)
+add_custom_command(
+    OUTPUT  ${INT64B_GEN_DIR}/U64Rec.cpp ${INT64B_GEN_DIR}/S64Rec.cpp
+            ${INT64B_GEN_DIR}/S33Rec.cpp ${INT64B_GEN_DIR}/UncRec.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${INT64B_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_int64_bounds_test.asn1
+            -o ${INT64B_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_int64_bounds_test.asn1
+    COMMENT "Generating C++ from per_int64_bounds_test.asn1"
+)
+add_executable(test_per_int64_bounds per/test_per_int64_bounds.cpp
+               ${INT64B_GEN_DIR}/U64Rec.cpp ${INT64B_GEN_DIR}/S64Rec.cpp
+               ${INT64B_GEN_DIR}/S33Rec.cpp ${INT64B_GEN_DIR}/UncRec.cpp)
+target_include_directories(test_per_int64_bounds PRIVATE ${INT64B_GEN_DIR})
+target_link_libraries(test_per_int64_bounds PRIVATE asn1cpp_runtime)
+add_test(NAME per_int64_bounds COMMAND test_per_int64_bounds)
+set_tests_properties(per_int64_bounds PROPERTIES TIMEOUT 30)
+
+# ---- BIT STRING with a NamedBitList in PER (X.691 §15.2, §15.3) -------------
+# per_named_bits_test.asn1: trailing 0 bits removed, padded to the SIZE lower
+# bound, for inline members, named types and an alias (see per/test_per_named_bits.cpp).
+set(NAMEDBITS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_per_named_bits_test)
+add_custom_command(
+    OUTPUT  ${NAMEDBITS_GEN_DIR}/NamedBitsRec.cpp ${NAMEDBITS_GEN_DIR}/Flags.cpp
+            ${NAMEDBITS_GEN_DIR}/SizedFlags.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${NAMEDBITS_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_named_bits_test.asn1
+            -o ${NAMEDBITS_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_named_bits_test.asn1
+    COMMENT "Generating C++ from per_named_bits_test.asn1"
+)
+add_executable(test_per_named_bits per/test_per_named_bits.cpp
+               ${NAMEDBITS_GEN_DIR}/NamedBitsRec.cpp ${NAMEDBITS_GEN_DIR}/Flags.cpp
+               ${NAMEDBITS_GEN_DIR}/SizedFlags.cpp)
+target_include_directories(test_per_named_bits PRIVATE ${NAMEDBITS_GEN_DIR})
+target_link_libraries(test_per_named_bits PRIVATE asn1cpp_runtime)
+add_test(NAME per_named_bits COMMAND test_per_named_bits)
+set_tests_properties(per_named_bits PROPERTIES TIMEOUT 30)
+
+# ---- CHOICE extension alternative unknown to the receiver (X.691 §23.8) ------
+set(CUE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_unknown_ext_test)
+add_custom_command(
+    OUTPUT  ${CUE_GEN_DIR}/MsgV1.hpp ${CUE_GEN_DIR}/MsgV1.cpp ${CUE_GEN_DIR}/MsgV2.hpp ${CUE_GEN_DIR}/MsgV2.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CUE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_choice_unknown_ext_test.asn1
+            -o ${CUE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_choice_unknown_ext_test.asn1
+    COMMENT "Generating C++ from per_choice_unknown_ext_test.asn1"
+)
+add_executable(test_choice_unknown_ext seq/test_choice_unknown_ext.cpp
+               ${CUE_GEN_DIR}/MsgV1.cpp ${CUE_GEN_DIR}/MsgV2.cpp)
+target_include_directories(test_choice_unknown_ext PRIVATE ${CUE_GEN_DIR})
+target_link_libraries(test_choice_unknown_ext PRIVATE asn1cpp_runtime)
+add_test(NAME choice_unknown_ext COMMAND test_choice_unknown_ext)
+set_tests_properties(choice_unknown_ext PROPERTIES TIMEOUT 30)
+
+# ---- SEQUENCE extension addition group (X.691 §18.9) ------------------------
+set(EXTGRP_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_ext_group_test)
+add_custom_command(
+    OUTPUT  ${EXTGRP_GEN_DIR}/Rec.hpp ${EXTGRP_GEN_DIR}/Rec.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${EXTGRP_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_ext_group_test.asn1
+            -o ${EXTGRP_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_ext_group_test.asn1
+    COMMENT "Generating C++ from per_ext_group_test.asn1"
+)
+add_executable(test_ext_group seq/test_ext_group.cpp ${EXTGRP_GEN_DIR}/Rec.cpp)
+target_include_directories(test_ext_group PRIVATE ${EXTGRP_GEN_DIR})
+target_link_libraries(test_ext_group PRIVATE asn1cpp_runtime)
+add_test(NAME ext_group COMMAND test_ext_group)
+set_tests_properties(ext_group PROPERTIES TIMEOUT 30)
+
 # ---- -fprefix namespace test (issue #16) ------------------------------------
 # Verifies that -fprefix=<name> wraps generated types in namespace <name>.
 # Uses per_ext_test.asn1 (already available) regenerated with -fprefix=testns.
@@ -1692,6 +1791,117 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_xer_vectors_202 PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_XV202_GEN_DIR=${RUST_XV202_GEN_DIR}")
+endif()
+
+# Rust leg of the unknown CHOICE extension alternative test — see
+# tests/rust/choice_unknown_ext/src/main.rs.
+set(RUST_CUE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_choice_unknown_ext)
+add_custom_command(
+    OUTPUT  ${RUST_CUE_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_CUE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_choice_unknown_ext_test.asn1
+                                   -o ${RUST_CUE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_choice_unknown_ext_test.asn1
+    COMMENT "Generating Rust from per_choice_unknown_ext_test.asn1"
+)
+add_custom_target(gen_rust_choice_unknown_ext ALL DEPENDS ${RUST_CUE_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_choice_unknown_ext
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/choice_unknown_ext/Cargo.toml)
+    set_tests_properties(rust_choice_unknown_ext PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_CUE_GEN_DIR=${RUST_CUE_GEN_DIR}")
+endif()
+
+# Rust leg of the extension addition group test — see tests/rust/ext_group/src/main.rs.
+set(RUST_EXTGRP_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_ext_group)
+add_custom_command(
+    OUTPUT  ${RUST_EXTGRP_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_EXTGRP_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_ext_group_test.asn1
+                                   -o ${RUST_EXTGRP_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_ext_group_test.asn1
+    COMMENT "Generating Rust from per_ext_group_test.asn1"
+)
+add_custom_target(gen_rust_ext_group ALL DEPENDS ${RUST_EXTGRP_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_ext_group
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/ext_group/Cargo.toml)
+    set_tests_properties(rust_ext_group PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_EXTGRP_GEN_DIR=${RUST_EXTGRP_GEN_DIR}")
+endif()
+
+# Rust leg of the SET component order test — see tests/rust/set_order/src/main.rs.
+set(RUST_SETORD_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_set_order)
+add_custom_command(
+    OUTPUT  ${RUST_SETORD_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_SETORD_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_set_order_test.asn1
+                                   -o ${RUST_SETORD_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_set_order_test.asn1
+    COMMENT "Generating Rust from per_set_order_test.asn1"
+)
+add_custom_target(gen_rust_set_order ALL DEPENDS ${RUST_SETORD_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_set_order
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/set_order/Cargo.toml)
+    set_tests_properties(rust_set_order PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_SETORD_GEN_DIR=${RUST_SETORD_GEN_DIR}")
+endif()
+
+# Rust leg of per_int64_bounds_test.asn1 (tests/rust/per_int64_bounds).
+set(RUST_INT64B_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_per_int64_bounds)
+add_custom_command(
+    OUTPUT  ${RUST_INT64B_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_INT64B_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_int64_bounds_test.asn1
+                                   -o ${RUST_INT64B_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_int64_bounds_test.asn1
+    COMMENT "Generating Rust from per_int64_bounds_test.asn1"
+)
+add_custom_target(gen_rust_per_int64_bounds ALL DEPENDS ${RUST_INT64B_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_per_int64_bounds
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/per_int64_bounds/Cargo.toml)
+    set_tests_properties(rust_per_int64_bounds PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_INT64B_GEN_DIR}")
+endif()
+
+# Rust leg of per_named_bits_test.asn1 (tests/rust/per_named_bits).
+set(RUST_NAMEDBITS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_per_named_bits)
+add_custom_command(
+    OUTPUT  ${RUST_NAMEDBITS_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_NAMEDBITS_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_named_bits_test.asn1
+                                   -o ${RUST_NAMEDBITS_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_named_bits_test.asn1
+    COMMENT "Generating Rust from per_named_bits_test.asn1"
+)
+add_custom_target(gen_rust_per_named_bits ALL DEPENDS ${RUST_NAMEDBITS_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_per_named_bits
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/per_named_bits/Cargo.toml)
+    set_tests_properties(rust_per_named_bits PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_NAMEDBITS_GEN_DIR}")
 endif()
 
 # Rust leg of the deeply nested anonymous CHOICE-in-CHOICE regression

@@ -50,6 +50,11 @@ using ModulePtr = std::shared_ptr<Module>;
 // Top-level parse result: a collection of modules
 struct ParseResult {
     std::vector<ModulePtr> modules;
+    // Last extension addition group id handed out by the parser (`[[ … ]]`,
+    // X.680 §3.6.26). Members of one group share an id so codegen can
+    // encode the group as a single addition (X.691 §18.9); ids are unique
+    // within one parse, 0 means "not in a group".
+    int last_ext_group = 0;
 };
 
 } // namespace asn1::ast

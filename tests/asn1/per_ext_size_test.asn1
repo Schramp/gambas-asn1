@@ -1,0 +1,13 @@
+-- Extensible SIZE on OCTET STRING (X.691 §17.3), BIT STRING (§16.6) and
+-- SEQUENCE OF (§20.4): one extension bit precedes the length, 0 when the
+-- size is inside the root. Values here are always inside the root, so
+-- the only difference from the non-extensible form is that bit.
+PerExtSizeTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Rec ::= SEQUENCE {
+    octets    OCTET STRING (SIZE (1..4, ...)),
+    bits      BIT STRING (SIZE (8, ...)),
+    list      SEQUENCE (SIZE (1..3, ...)) OF INTEGER (0..7)
+}
+
+END

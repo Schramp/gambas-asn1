@@ -66,6 +66,11 @@
 # build too.
 examples/sample.source.RRC/asn1-files/rrc-7.1.0.asn1    UL-CCCH-Message
 
+# ETSI LI (multi-module directory schema; -fallow-newer-modules picks the
+# newest of the duplicated module versions, as the example's Makefile does).
+examples/sample.source.ETSI-LI-PS-PDU/asn1-files   PS-PDU             -fallow-newer-modules
+examples/sample.source.ETSI-LI-PS-PDU/asn1-files   EncryptedPayload   -fallow-newer-modules
+
 tests/asn1/roundtrip_test.asn1        Container
 tests/asn1/explicit_tag_test.asn1     Mixed
 tests/asn1/choice_test.asn1           Alt4
@@ -97,4 +102,22 @@ tests/asn1/rust_alphabet_test.asn1     Code
 tests/asn1/rust_seqof_int_per_test.asn1   Bag
 tests/asn1/rust_seqof_of_seqof_test.asn1   Matrix
 tests/asn1/rust_seqof_base64_elem_test.asn1   Entries
+tests/asn1/rust_choice_seqof_alt_per_test.asn1   Envelope
+tests/asn1/rust_bool_alias_per_test.asn1   Attributes
+tests/asn1/per_ext_controls_test.asn1   Rec
+tests/asn1/per_setof_order_test.asn1   Rec
+tests/asn1/per_fragment_test.asn1   Big
+tests/asn1/per_ext_size_test.asn1   Rec
+tests/asn1/per_ext_from_test.asn1   Rec  skip-asn1c: asn1c writes 8-bit chars for an extensible FROM (Schramp/asn1c#8); C++/Rust follow X.691 9.3.9/9.3.10
+tests/asn1/per_set_order_test.asn1   Rec
+tests/asn1/per_ext_string_test.asn1   Rec
+tests/asn1/per_choice_unknown_ext_test.asn1   MsgV2
+tests/asn1/per_extensibility_implied_test.asn1   Rec
+tests/asn1/per_extensibility_implied_enum_test.asn1   Rec  skip-asn1c: asn1c does not apply EXTENSIBILITY IMPLIED to ENUMERATED (Schramp/asn1c#10)
+tests/asn1/per_ext_group_test.asn1   Rec  skip-asn1c: asn1c nests extension groups in BER/XER and can't decode standard BER (Schramp/asn1c#9); PER checked against asn1c vectors in ctest ext_group
+tests/asn1/per_int64_bounds_test.asn1   U64Rec  skip-asn1c: asn1c's PER bound overflows for an upper bound above INT64_MAX and rejects every value (Schramp/asn1c#12); bytes checked in ctest per_int64_bounds
+tests/asn1/per_int64_bounds_test.asn1   S64Rec
+tests/asn1/per_int64_bounds_test.asn1   S33Rec
+tests/asn1/per_int64_bounds_test.asn1   UncRec
 tests/tests-asn1c-compiler/33-misc-OK.asn1   T2
+tests/asn1/per_named_bits_test.asn1   NamedBitsRec

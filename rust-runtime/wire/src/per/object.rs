@@ -5,8 +5,9 @@
 //! `Asn1Seq`/`Asn1Choice`/`Asn1SeqOf` accessors rather than a
 //! generated per-type `*Spec<T>` table.
 
+use crate::ber::tag::Tag;
 use crate::constraints::Constraints;
-use crate::per::length::{decode_size_field, encode_size_field, get_length, get_nslength, get_nsnn, put_length, put_nslength, put_nsnn};
+use crate::per::length::{decode_ext_size_and_items, encode_ext_size_and_items, get_nslength, get_nsnn, get_octets, put_nslength, put_nsnn, put_octets};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
@@ -60,20 +61,11 @@ fn root_end(obj: &dyn Asn1Seq) -> usize {
 
 fn access_encode(obj: &dyn Asn1Seq, i: usize, w: &mut Writer) {
     let m = &obj.spec().members[i];
-    if let Some(reason) = m.per_unsupported {
-        panic!("member '{}' not supported: {}", m.name, reason);
-    }
     encode_bare(obj.get_member(i), m.constraints, w);
 }
 
 fn access_decode(obj: &mut dyn Asn1Seq, i: usize, r: &mut Reader) -> Result<(), DecodeError> {
-    let (per_unsupported, constraints) = {
-        let m = &obj.spec().members[i];
-        (m.per_unsupported, m.constraints)
-    };
-    if let Some(reason) = per_unsupported {
-        panic!("member '{}' not supported: {}", obj.spec().members[i].name, reason);
-    }
+    let constraints = obj.spec().members[i].constraints;
     decode_bare(obj.get_member_mut(i), constraints, r)
 }
 
@@ -81,29 +73,17 @@ fn encode_open_type(obj: &dyn Asn1Seq, i: usize, w: &mut Writer) {
     let mut tmp = Writer::new();
     access_encode(obj, i, &mut tmp);
     tmp.flush();
-    let bytes = tmp.into_bytes();
-    put_length(w, bytes.len());
-    for b in bytes {
-        w.put_bits(b as u64, 8);
-    }
+    put_octets(w, &tmp.into_bytes());
 }
 
 fn decode_open_type(obj: &mut dyn Asn1Seq, i: usize, r: &mut Reader) -> Result<(), DecodeError> {
-    let len = get_length(r)?;
-    let mut bytes = Vec::with_capacity(len);
-    for _ in 0..len {
-        bytes.push(r.get_bits(8)? as u8);
-    }
+    let bytes = get_octets(r)?;
     let mut inner = Reader::new(&bytes);
     access_decode(obj, i, &mut inner)
 }
 
 fn skip_open_type(r: &mut Reader) -> Result<(), DecodeError> {
-    let len = get_length(r)?;
-    for _ in 0..len {
-        r.get_bits(8)?;
-    }
-    Ok(())
+    get_octets(r).map(|_| ())
 }
 
 pub fn encode_seq_content(obj: &dyn Asn1Seq, w: &mut Writer) {
@@ -132,19 +112,90 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, w: &mut Writer) {
         access_encode(obj, i, w);
     }
     if has_ext {
-        let total = spec.members.len();
-        let n_ext = total - end;
-        put_nslength(w, n_ext);
-        for i in end..total {
-            w.put_bits(is_present(obj, i) as u64, 1);
+        let units = ext_units(spec, end);
+        put_nslength(w, units.len());
+        for &(b, e, _) in &units {
+            w.put_bits((b..e).any(|i| is_present(obj, i)) as u64, 1);
         }
-        for i in end..total {
-            if !is_present(obj, i) {
+        for &(b, e, group) in &units {
+            if !(b..e).any(|i| is_present(obj, i)) {
                 continue;
             }
-            encode_open_type(obj, i, w);
+            if group {
+                encode_group_open_type(obj, b, e, w);
+            } else {
+                encode_open_type(obj, b, w);
+            }
         }
     }
+}
+
+/// @brief The extension additions as PER units (X.691 §18.9), from the
+///        spec's precomputed `ext_units`: `(first member, end, is group)`.
+///        Without a unit table every extension member is its own unit.
+fn ext_units(spec: &crate::spec::object::SequenceSpec, end: usize) -> Vec<(usize, usize, bool)> {
+    if spec.ext_units.is_empty() {
+        return (end..spec.members.len()).map(|i| (i, i + 1, false)).collect();
+    }
+    let mut begin = end;
+    spec.ext_units
+        .iter()
+        .map(|u| {
+            let unit = (begin, u.end, u.group);
+            begin = u.end;
+            unit
+        })
+        .collect()
+}
+
+/// @brief Encodes one present extension addition group as a sequence of
+///        its members (presence bitmap for the members declared
+///        OPTIONAL/DEFAULT inside the group, then the present members)
+///        inside one open type (X.691 §18.9).
+fn encode_group_open_type(obj: &dyn Asn1Seq, begin: usize, end: usize, w: &mut Writer) {
+    let opt = obj.spec().group_member_optional;
+    let mut g = Writer::new();
+    for i in begin..end {
+        if opt[i] {
+            g.put_bits(is_present(obj, i) as u64, 1);
+        }
+    }
+    for i in begin..end {
+        if !is_present(obj, i) {
+            // X.680 §24.12: a present group carries all its mandatory members.
+            if !opt[i] {
+                w.set_encode_failed("extension group member absent");
+            }
+            continue;
+        }
+        access_encode(obj, i, &mut g);
+    }
+    if g.encode_failed() {
+        w.set_encode_failed("extension group member");
+    }
+    g.flush();
+    put_octets(w, &g.into_bytes());
+}
+
+/// @brief Decode counterpart of [`encode_group_open_type`].
+fn decode_group_open_type(obj: &mut dyn Asn1Seq, begin: usize, end: usize, r: &mut Reader) -> Result<(), DecodeError> {
+    let bytes = get_octets(r)?;
+    let mut g = Reader::new(&bytes);
+    let opt = obj.spec().group_member_optional;
+    let mut present = vec![true; end - begin];
+    for i in begin..end {
+        if opt[i] {
+            present[i - begin] = g.get_bits(1)? != 0;
+        }
+    }
+    for i in begin..end {
+        if present[i - begin] {
+            access_decode(obj, i, &mut g)?;
+        } else {
+            obj.set_default(i);
+        }
+    }
+    Ok(())
 }
 
 pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), DecodeError> {
@@ -173,24 +224,21 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<
         access_decode(obj, i, r)?;
     }
 
-    if obj.spec().ext_at >= 0 {
-        let total = obj.spec().members.len();
-        let known_ext = total - end;
-        if ext_flag {
-            let n_ext = get_nslength(r)?;
-            let mut ext_bitmap = [false; 64];
-            for slot in ext_bitmap.iter_mut().take(n_ext.min(64)) {
-                *slot = r.get_bits(1)? != 0;
+    if obj.spec().ext_at >= 0 && ext_flag {
+        let units = ext_units(obj.spec(), end);
+        let n_ext = get_nslength(r)?;
+        let mut ext_bitmap = [false; 64];
+        for slot in ext_bitmap.iter_mut().take(n_ext.min(64)) {
+            *slot = r.get_bits(1)? != 0;
+        }
+        for i in 0..n_ext {
+            if !ext_bitmap[i.min(63)] {
+                continue;
             }
-            for i in 0..n_ext {
-                if !ext_bitmap[i.min(63)] {
-                    continue;
-                }
-                if i < known_ext {
-                    decode_open_type(obj, end + i, r)?;
-                } else {
-                    skip_open_type(r)?;
-                }
+            match units.get(i) {
+                Some(&(b, e, true)) => decode_group_open_type(obj, b, e, r)?,
+                Some(&(b, _, false)) => decode_open_type(obj, b, r)?,
+                None => skip_open_type(r)?,
             }
         }
     }
@@ -216,9 +264,6 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, w: &mut Writer) {
         return; // codegen-bug backstop: no alternative matched a real generated enum.
     };
     let alt = &obj.spec().alternatives[def_idx];
-    if let Some(reason) = alt.per_unsupported {
-        panic!("alternative '{}' not supported: {}", alt.name, reason);
-    }
     let root_count = choice_root_count(obj);
     let in_ext = obj.spec().ext_at >= 0 && def_idx >= root_count;
     let spec = obj.spec();
@@ -236,11 +281,7 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, w: &mut Writer) {
         let mut tmp = Writer::new();
         encode_bare(obj.get_active(), constraints, &mut tmp);
         tmp.flush();
-        let bytes = tmp.into_bytes();
-        put_length(w, bytes.len());
-        for b in bytes {
-            w.put_bits(b as u64, 8);
-        }
+        put_octets(w, &tmp.into_bytes());
     }
 }
 
@@ -257,40 +298,23 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> R
         if def_idx >= root_count {
             return Err(DecodeError::new("PER: CHOICE index out of range", r.bit_pos()));
         }
-        let (per_unsupported, constraints) = {
-            let alt = &obj.spec().alternatives[def_idx];
-            (alt.per_unsupported, alt.constraints)
-        };
-        if let Some(reason) = per_unsupported {
-            panic!("alternative not supported: {reason}");
-        }
+        let constraints = obj.spec().alternatives[def_idx].constraints;
         decode_bare(obj.select_mut(def_idx), constraints, r)
     } else {
         let ext_idx = get_nsnn(r)?;
         let def_idx = root_count + ext_idx as usize;
         if def_idx >= obj.spec().alternatives.len() {
-            let len = get_length(r)?;
-            for _ in 0..len {
-                r.get_bits(8)?;
-            }
-            return Err(DecodeError::new(
-                "PER: CHOICE extension alternative unknown to this schema (no capture mechanism yet)",
-                r.bit_pos(),
-            ));
+            // X.691 §23.8: an extension alternative this schema version
+            // doesn't define still arrives as a complete open type. Keep its
+            // contents (under a context tag carrying the extension index)
+            // instead of failing, as the C++ ChoicePerHandler skips it.
+            let bytes = get_octets(r)?;
+            obj.construct_unknown_extension(Tag::context(ext_idx as u32, false), bytes);
+            return Ok(());
         }
-        let len = get_length(r)?;
-        let mut bytes = Vec::with_capacity(len);
-        for _ in 0..len {
-            bytes.push(r.get_bits(8)? as u8);
-        }
+        let bytes = get_octets(r)?;
         let mut inner = Reader::new(&bytes);
-        let (per_unsupported, constraints) = {
-            let alt = &obj.spec().alternatives[def_idx];
-            (alt.per_unsupported, alt.constraints)
-        };
-        if let Some(reason) = per_unsupported {
-            panic!("alternative not supported: {reason}");
-        }
+        let constraints = obj.spec().alternatives[def_idx].constraints;
         decode_bare(obj.select_mut(def_idx), constraints, &mut inner)
     }
 }
@@ -300,19 +324,66 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> R
 // ---------------------------------------------------------------------
 
 pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Writer) {
-    encode_size_field(w, pc, obj.len());
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
-    for i in 0..obj.len() {
-        encode_bare(obj.get(i), elem, w);
+    if obj.natural_tag() == crate::spec::sequence::SET_TAG && obj.len() > 1 {
+        let parts = set_of_sorted_parts(obj, elem, w);
+        encode_ext_size_and_items(w, pc, parts.len(), |w, range| {
+            for (bytes, nbits) in &parts[range] {
+                w.put_bit_string(bytes, *nbits);
+            }
+        });
+        return;
     }
+    encode_ext_size_and_items(w, pc, obj.len(), |w, range| {
+        for i in range {
+            encode_bare(obj.get(i), elem, w);
+        }
+    });
+}
+
+/// @brief Encodes a SET OF's elements and orders them as X.691 §21.1
+///        (CANONICAL-PER) defines: ascending by component encoding,
+///        compared as bit strings zero-padded to an octet boundary, the
+///        shorter one extended with 0-octets. The only order the standard
+///        defines, and valid BASIC-PER too (X.691 §8); asn1c and the C++
+///        `SeqOfPerHandler` emit the same.
+/// @param obj  The SET OF value.
+/// @param elem Per-element constraints.
+/// @param w    Destination; only receives an encode-failure flag here.
+/// @return Each element's encoding and exact bit count, in §21.1 order.
+/// @see X.691 §21.1, §21.2.
+fn set_of_sorted_parts(obj: &dyn Asn1SeqOf, elem: &Constraints, w: &mut Writer) -> Vec<(Vec<u8>, usize)> {
+    let mut parts: Vec<(Vec<u8>, usize)> = (0..obj.len())
+        .map(|i| {
+            let mut ew = Writer::new();
+            encode_bare(obj.get(i), elem, &mut ew);
+            if ew.encode_failed() {
+                w.set_encode_failed("SET OF element");
+            }
+            let nbits = ew.bit_pos();
+            ew.flush();
+            (ew.into_bytes(), nbits)
+        })
+        .collect();
+    parts.sort_by(|(a, _), (b, _)| {
+        let n = a.len().max(b.len());
+        (0..n)
+            .map(|k| (a.get(k).copied().unwrap_or(0), b.get(k).copied().unwrap_or(0)))
+            .find(|(x, y)| x != y)
+            .map_or(std::cmp::Ordering::Equal, |(x, y)| x.cmp(&y))
+    });
+    parts
 }
 
 pub fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, pc: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
-    let count = decode_size_field(r, pc)?;
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
-    for _ in 0..count {
-        decode_bare(obj.push_default_mut(), elem, r)?;
-    }
+    decode_ext_size_and_items(r, pc, |r, m| {
+        obj.reserve(m);
+        for _ in 0..m {
+            decode_bare(obj.push_default_mut(), elem, r)?;
+        }
+        Ok(())
+    })?;
     Ok(())
 }
 
@@ -355,4 +426,31 @@ pub fn decode_pdu<T: Asn1Pdu>(data: &[u8]) -> Result<T, DecodeError> {
     let mut v = T::default();
     decode_pdu_into(&mut v, &mut Reader::new(data))?;
     Ok(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ber::sequence::{SeqOf, SetOf};
+    use crate::constraints::UNCONSTRAINED;
+    use crate::integer::Integer;
+
+    fn bytes(f: impl FnOnce(&mut Writer)) -> Vec<u8> {
+        let mut w = Writer::new();
+        f(&mut w);
+        w.flush();
+        w.into_bytes()
+    }
+
+    #[test]
+    fn set_of_is_written_in_canonical_per_order_sequence_of_is_not() {
+        // Unconstrained INTEGER elements: length octet + minimal
+        // two's-complement octets each. X.691 §21.1 compares the padded
+        // element encodings: 01 05 < 01 FF < 02 01 2C.
+        let vals = vec![Integer(300), Integer(-1), Integer(5)];
+        let set = bytes(|w| encode_seqof_content(&SetOf(vals.clone()), &UNCONSTRAINED, w));
+        assert_eq!(set, vec![0x03, 0x01, 0x05, 0x01, 0xFF, 0x02, 0x01, 0x2C]);
+        let seq = bytes(|w| encode_seqof_content(&SeqOf(vals), &UNCONSTRAINED, w));
+        assert_eq!(seq, vec![0x03, 0x02, 0x01, 0x2C, 0x01, 0xFF, 0x01, 0x05]);
+    }
 }

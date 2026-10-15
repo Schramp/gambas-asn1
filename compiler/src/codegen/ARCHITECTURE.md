@@ -163,12 +163,11 @@ one runtime for the other's name finds nothing.
   already-deduped name. Two distinct top-level type names (`My_Type` vs
   `MY_TYPE`) aren't currently checked for collision at this third namespace
   layer.
-- Two duplications that are real but belong **inside** `RustBackend.cpp`,
-  not hoisted to `Generator` (Generator has no business knowing Rust's
-  `PerValue`/`Unsupported`-stub concept): PER-coverage classification
-  (`per_member_covered`/`per_alt_covered` vs `sequence_member_covered`/
-  `choice_alternative_covered`), and the Rust-variant collision guard
-  (`seen_variants` map + throw, copy-pasted three times).
+- A duplication that is real but belongs **inside** `RustBackend.cpp`,
+  not hoisted to `Generator`: the Rust-variant collision guard
+  (`seen_variants` map + throw, copy-pasted three times). There is no
+  codegen-time PER coverage classification: a kind the Rust PER runtime
+  can't represent fails per value in `spec::primitive`'s PER dispatch.
 - **#518** (`classify_typeref_for_per` duplicating part of
   `type_descriptor_ref_spec_for`'s resolve step) was re-checked against all
   18 `resolver_.resolve_ref(...)` call sites in `Generator.cpp` — still no

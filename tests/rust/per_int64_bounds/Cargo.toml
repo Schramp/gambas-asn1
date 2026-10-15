@@ -1,0 +1,14 @@
+[package]
+name = "per-int64-bounds-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the wide INTEGER range PER test (per_int64_bounds_test.asn1). Pulls generated .rs from ASN1CPP_RUST_GEN_DIR (set by tests/CMakeLists.txt's rust_per_int64_bounds), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "per_int64_bounds"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }

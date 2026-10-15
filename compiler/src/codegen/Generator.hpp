@@ -462,6 +462,14 @@ private:
     ///         (e.g. a nested untagged CHOICE) sorts last via (INT_MAX, INT_MAX).
     std::pair<int,int> canonical_tag_key(const ast::Tag& tag, const ast::TypeDef& natural_tag_src,
                                           bool apply_auto_tags, int auto_n) const;
+    /// @brief Sort key of one SET component for the canonical order of
+    ///        X.680 §8.6, as X.691 §20 and X.690 §10.3 apply it: the
+    ///        component's own tag, or for an untagged CHOICE the smallest tag
+    ///        among its root alternatives (nested untagged CHOICEs included).
+    /// @param m     The SET component (or, recursively, a CHOICE alternative).
+    /// @param depth Recursion guard for self-referential CHOICE types.
+    /// @return (class, number); (INT_MAX, INT_MAX) when no tag can be found.
+    std::pair<int,int> set_component_tag_key(const ast::TypeDef& m, int depth = 0) const;
     /// @brief Less-than comparator for canonical_tag_key.
     bool canonical_tag_less(const ast::Tag& a, const ast::TypeDef& a_src,
                              const ast::Tag& b, const ast::TypeDef& b_src,
@@ -506,6 +514,13 @@ private:
     ///        ultimates (would need real member-forwarding) — narrower
     ///        cases keep the pre-existing bare-alias behavior.
     bool has_own_retagged_descriptor(const ast::TypeDef& def) const;
+    /// @brief Is `def` a BIT STRING defined with a NamedBitList, directly or
+    ///        through its alias chain? Such a value is PER-encoded without
+    ///        trailing 0 bits (NAMED_BITS in the generated Constraints table).
+    /// @param def  Member or type assignment.
+    /// @return true when the ultimate builtin is BIT STRING with named bits.
+    /// @see X.680 §22.7; X.691 §15.2, §15.3.
+    bool has_named_bits(const ast::TypeDef& def) const;
     // Collect flattened BER dispatch tags for one CHOICE alternative.
     // alt_idx: 0-based index of the alternative in its parent CHOICE.
     // Appends BerTagEntry rows (raw class/number + formatted literal +

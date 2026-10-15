@@ -315,6 +315,20 @@ const ast::TypeDef* Generator::resolve_alias_chain(const ast::TypeDef& def, bool
     return cur;
 }
 
+bool Generator::has_named_bits(const ast::TypeDef& def) const {
+    const ast::TypeDef* cur = &def;
+    for (int depth = 0; depth < 64; ++depth) {
+        if (auto* bt = std::get_if<ast::BuiltinType>(&cur->body))
+            return *bt == ast::BuiltinType::BitString && !cur->enum_values.empty();
+        auto* tr = std::get_if<ast::TypeRef>(&cur->body);
+        if (!tr) return false;
+        auto next = resolver_.resolve_ref(*tr);
+        if (!next) return false;
+        cur = next.get();
+    }
+    return false;
+}
+
 bool Generator::has_own_retagged_descriptor(const ast::TypeDef& def) const {
     if (!def.tag.present() || !std::holds_alternative<ast::TypeRef>(def.body)) return false;
     bool ignored = false;
@@ -990,6 +1004,18 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem, const std::strin
     return shape;
 }
 
+/// @brief Bit width of a constrained whole number field in the UNALIGNED variant.
+/// @param range_m1 ub − lb, computed in unsigned 64-bit arithmetic so a
+///                 range of up to 2^64 values (ub − lb = UINT64_MAX) is exact.
+/// @return Minimum number of bits that holds every value 0..range_m1; 0 for a
+///         single-value range.
+/// @see X.691 §11.5.6 — constrained whole number, UNALIGNED variant.
+static int constrained_whole_number_bits(uint64_t range_m1) {
+    int rb = 0;
+    for (uint64_t v = range_m1; v > 0; v >>= 1) ++rb;
+    return rb;
+}
+
 /// @brief True if any top-level constraint on `def` carries a trailing '...'.
 /// @param def Type definition to inspect.
 /// @return Whether `def` is constraint-extensible (X.680 §49.3).
@@ -1029,24 +1055,14 @@ IntegerSpec Generator::build_integer_spec(const ast::TypeDef& def, const std::st
         // TOK_number_large upper bound (e.g. UINT64_MAX).
         // X.691 §10.5.6 UPER: range = hi_u64 - lo + 1; compute range_bits.
         // For the full uint64 range (lo=0, hi=UINT64_MAX), range_bits=64.
-        int rb = 0;
         uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
-        uint64_t range_count_m1 = r.hi_u64 - u_lo; // range - 1 (exact even if range=2^64)
-        if (range_count_m1 == std::numeric_limits<uint64_t>::max()) {
-            rb = 64; // 2^64 range
-        } else {
-            for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
-        }
-        spec.range_bits = rb;
+        spec.range_bits = constrained_whole_number_bits(r.hi_u64 - u_lo);
         spec.upper_s64 = hi; // int64_t view
         spec.lower_u64 = u_lo;
         spec.upper_u64 = r.hi_u64;
     } else {
-        int64_t range_count = hi - lo + 1;
-        int rb = 0;
-        if (range_count > 1)
-            for (int64_t v = range_count - 1; v > 0; v >>= 1) ++rb;
-        spec.range_bits = rb;
+        spec.range_bits = constrained_whole_number_bits(
+            static_cast<uint64_t>(hi) - static_cast<uint64_t>(lo));
         spec.upper_s64 = hi;
         spec.lower_u64 = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
         spec.upper_u64 = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
@@ -1217,6 +1233,47 @@ static bool is_constraint_extensible(const ast::TypeDef& def) {
     return false;
 }
 
+/// @brief PER-visibility of a string or sizeable type's constraints (X.691
+///        §9.3.7–9.3.9, §9.3.15).
+struct PerStringVisibility {
+    bool from_visible = true;     ///< FROM is PER-visible: no extension marker in it or around it (§9.3.9).
+    bool size_extensible = false; ///< A PER-visible SIZE carries an extension marker (§9.3.15).
+};
+
+/// @brief Walks one constraint, with \p ext_ctx telling whether an enclosing
+///        constraint carries an extension marker, recording where the markers
+///        fall (part of string_per_visibility()).
+static void scan_per_visibility(const ast::Constraint& c, bool ext_ctx, PerStringVisibility& v) {
+    const bool ext = ext_ctx || c.extensible;
+    if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c.body))
+        for (const auto& op : ic->operands)
+            if (op) scan_per_visibility(*op, ext, v);
+    if (auto* sc = std::get_if<ast::SizeConstraint>(&c.body))
+        if (ext || (sc->inner && constraint_tree_extensible(*sc->inner))) v.size_extensible = true;
+    if (auto* fc = std::get_if<ast::FromConstraint>(&c.body))
+        if (ext || (fc->inner && constraint_tree_extensible(*fc->inner))) v.from_visible = false;
+}
+
+/// @brief Decides which of \p def's string constraints PER sees. A
+///        PermittedAlphabet with an extension marker in or around it is not
+///        PER-visible (X.691 §9.3.9), so the type's own alphabet applies; an
+///        extension marker only makes the type extensible for PER when a
+///        PER-visible constraint (here: SIZE) carries it (§9.3.15 note 1).
+/// @return Visibility of the FROM and extensibility of the SIZE.
+static PerStringVisibility string_per_visibility(const ast::TypeDef& def) {
+    PerStringVisibility v;
+    for (const auto& cptr : def.constraints)
+        if (cptr) scan_per_visibility(*cptr, false, v);
+    return v;
+}
+
+/// @brief extract_from_alphabet() restricted to a PER-visible FROM
+///        (X.691 §9.3.9): empty when the FROM carries an extension marker.
+static std::vector<uint8_t> per_visible_alphabet(const ast::TypeDef& def) {
+    if (!string_per_visibility(def).from_visible) return {};
+    return extract_from_alphabet(def);
+}
+
 // Walk a constraint, including IntersectionConstraint operands, and call f on each body.
 template<typename F>
 static void walk_constraints(const ast::Constraint& c, F&& f) {
@@ -1276,15 +1333,16 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
     // IntersectionConstraint): take max(lowers) and min(uppers).
     std::optional<int64_t> lo;
     std::optional<int64_t> hi;
+    bool lo_is_real = false;  // lo comes from a finite bound, not MIN
     bool truly_max = false;
     uint64_t hi_u64 = 0;
     bool hi_is_large = false;
     walk_type_constraints(def, [&](const ast::ConstraintBody& body) {
         auto* vr = std::get_if<ast::ValueRange>(&body);
         if (!vr) return;
-        int64_t vlo = (vr->lower.kind == ast::RangeEndpoint::Kind::Min)
-            ? std::numeric_limits<int64_t>::min()
-            : resolve_int_value(vr->lower.value).value_or(std::numeric_limits<int64_t>::min());
+        std::optional<int64_t> vlo_real = (vr->lower.kind == ast::RangeEndpoint::Kind::Min)
+            ? std::nullopt : resolve_int_value(vr->lower.value);
+        int64_t vlo = vlo_real.value_or(std::numeric_limits<int64_t>::min());
         bool vhi_is_max = (vr->upper.kind == ast::RangeEndpoint::Kind::Max);
         int64_t vhi;
         uint64_t vhi_u64 = 0;
@@ -1301,7 +1359,12 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
             /* TOK_number / TOK_number_negative / named ref: signed literal */
             vhi = resolve_int_value(vr->upper.value).value_or(std::numeric_limits<int64_t>::max());
         }
-        lo = lo ? std::max(*lo, vlo) : vlo;
+        // Intersection keeps the larger lower bound; a finite bound equal
+        // to INT64_MIN still beats MIN.
+        if (!lo || vlo > *lo || (vlo == *lo && vlo_real)) {
+            lo = vlo;
+            lo_is_real = lo_is_real || vlo_real.has_value();
+        }
         if (!hi || vhi < *hi) {
             hi = vhi;
             truly_max = vhi_is_max;
@@ -1310,26 +1373,13 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
         }
     });
     if (lo && hi) {
-        // X.691 defines PER bit-width minimization only for a constraint
-        // with a real finite lower bound: "constrained" (both bounds
-        // finite) or "semi-constrained" (lower bound only, X.691 §10.5.6
-        // — `truly_max` above). An upper-bound-only range (`MIN..N`, no
-        // real lower bound) has no such minimization defined — ground-
-        // truthed against asn1c's own generated table for exactly this
-        // shape (`(MIN..10)`): `asn_PER_memb_second_constr_4` is
-        // APC_UNCONSTRAINED, not semi-constrained. Treating `INT64_MIN`
-        // as if it were a genuine finite lower bound here (rather than
-        // "no lower bound at all") previously fed `hi - lo + 1` into the
-        // constrained-range bit-width computation, overflowing int64
-        // arithmetic and corrupting the encoded value — this returns
-        // "no constraint" instead, the same "general integer" shape
-        // asn1c's own APC_UNCONSTRAINED produces. asn1c additionally
-        // still enforces `value <= N` via a separate constraint-check
-        // callback, independent of its PER table; this codebase has no
-        // equivalent upper-bound-only validation path yet for either
-        // codec — a real, separate, narrower gap, not fixed here.
-        bool no_real_lower_bound = (*lo == std::numeric_limits<int64_t>::min());
-        if (no_real_lower_bound && !truly_max)
+        // PER bit-width minimization needs a finite lower bound: constrained
+        // (both bounds finite) or semi-constrained (X.691 §11.5.6, §11.7).
+        // MIN..N has none and is encoded as an unconstrained whole number
+        // (X.691 §11.8), as asn1c's APC_UNCONSTRAINED table for (MIN..10)
+        // does. The literal −2^63 is a finite bound: (−2^63..2^63−1) is a
+        // 2^64-value constrained range.
+        if (!lo_is_real && !truly_max)
             return IntRange{false, 0, 0, false, 0, false};
         return IntRange{true, *lo, *hi, truly_max, hi_u64, hi_is_large};
     }
@@ -1364,20 +1414,23 @@ std::string Generator::emit_member_type_descriptor(
 /// @brief Decide the resolved MemberTypeDescriptorSpec for an inline-
 ///        constrained SEQUENCE/CHOICE member — INTEGER value range or
 ///        SIZE-able-primitive (string family, OctetString, BitString)
-///        constraints.
+///        constraints, or a BIT STRING with a NamedBitList (its own table
+///        carries NAMED_BITS even without any constraint).
 /// @param m             Member type definition (may carry value-range, SIZE, or FROM constraints).
 /// @param parent_cname  C++ name of the enclosing SEQUENCE/CHOICE type.
 /// @param mname         Sanitised C++ member name used as the descriptor variable suffix.
 /// @return nullopt when the member has no inline constraint worth a dedicated
 ///         descriptor — caller falls back to type_descriptor_ref_for().
-/// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
+/// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap),
+///      §15.2/§15.3 (NamedBitList BIT STRING).
 std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_spec(
     const ast::TypeDef& m, const std::string& parent_cname, const std::string& mname) const
 {
     using BT = ast::BuiltinType;
     auto* bt = std::get_if<BT>(&m.body);
     bool needs_xer = m.xer_encoding != ast::XerEncoding::Default;
-    if (!bt || (m.constraints.empty() && !needs_xer)) return std::nullopt;
+    bool named_bits = bt && has_named_bits(m);
+    if (!bt || (m.constraints.empty() && !needs_xer && !named_bits)) return std::nullopt;
 
     // INTEGER value range
     if (*bt == BT::Integer) {
@@ -1402,19 +1455,13 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
             } else if (ir.hi_is_large) {
                 // TOK_number_large upper bound (e.g. UINT64_MAX).
                 uint64_t u_lo = static_cast<uint64_t>(lo >= 0 ? lo : 0);
-                uint64_t range_count_m1 = ir.hi_u64 - u_lo;
-                int rb = (range_count_m1 == std::numeric_limits<uint64_t>::max())
-                    ? 64 : 0;
-                if (rb == 0) for (uint64_t v = range_count_m1; v > 0; v >>= 1) ++rb;
-                spec.range_bits = rb;
+                spec.range_bits = constrained_whole_number_bits(ir.hi_u64 - u_lo);
                 spec.upper_s64 = hi;
                 spec.lower_u64 = u_lo;
                 spec.upper_u64 = ir.hi_u64;
             } else {
-                int64_t rc = hi - lo + 1;
-                int rb = 0;
-                if (rc > 1) for (int64_t v = rc - 1; v > 0; v >>= 1) ++rb;
-                spec.range_bits = rb;
+                spec.range_bits = constrained_whole_number_bits(
+                    static_cast<uint64_t>(hi) - static_cast<uint64_t>(lo));
                 spec.upper_s64 = hi;
                 spec.lower_u64 = (lo >= 0) ? static_cast<uint64_t>(lo) : 0;
                 spec.upper_u64 = (hi >= 0) ? static_cast<uint64_t>(hi) : 0;
@@ -1448,14 +1495,15 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
     auto utag = sizeable_universal_tag(*bt);
     if (utag) {
         auto sr       = extract_size_range(m);
-        auto alphabet = extract_from_alphabet(m);
+        auto alphabet = per_visible_alphabet(m);
         // UTF8String is not a known-multiplier character string (X.691 §26.6):
         // FROM constraints on it are not enforced in PER encoding — drop alphabet.
         if (*bt == BT::Utf8String) alphabet.clear();
-        if (sr || !alphabet.empty() || needs_xer) {
+        if (sr || !alphabet.empty() || needs_xer || named_bits) {
             MemberTypeDescriptorSpec spec;
             spec.kind = MemberTypeDescriptorSpec::Kind::Sizeable;
             spec.builtin_type = *bt;
+            spec.named_bits = named_bits;
             // Compute SIZE constraint fields. size_range_bits/size_lower/
             // size_upper default to 0 (not left indeterminate) even when
             // `!sr` (FROM-alphabet-only or custom-XER-only member, no
@@ -1476,15 +1524,10 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
                 spec.size_range_bits = sc.range_bits;
                 spec.size_lower = sc.lower; spec.size_upper = sc.upper;
             }
-            spec.extensible = is_constraint_extensible(m);
-            // FROM("A".."Z",...) has the extension marker inside the FromConstraint;
-            // is_constraint_extensible only checks the outer Constraint::extensible.
-            if (!spec.extensible && !alphabet.empty()) {
-                walk_type_constraints(m, [&](const ast::ConstraintBody& body) {
-                    auto* fc = std::get_if<ast::FromConstraint>(&body);
-                    if (fc && fc->inner && fc->inner->extensible) spec.extensible = true;
-                });
-            }
+            // Only a PER-visible constraint's extension marker makes the
+            // type extensible for PER (X.691 §9.3.15 note 1); an extensible
+            // FROM is not PER-visible at all (§9.3.9, per_visible_alphabet).
+            spec.extensible = string_per_visibility(m).size_extensible;
             if (!alphabet.empty()) {
                 spec.alpha_prefix = std::format("asn_FROM_{}_{}", parent_cname, mname);
                 spec.alphabet = alphabet;
@@ -1635,7 +1678,7 @@ Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRe
             BT::VideotexString, BT::ObjectDescriptor, BT::BmpString, BT::UniversalString,
             BT::UtcTime, BT::GeneralizedTime,
         };
-        if (kPerStringKinds.count(*rbt) && extract_from_alphabet(*resolved).empty())
+        if (kPerStringKinds.count(*rbt) && per_visible_alphabet(*resolved).empty())
             return {TaggedMemberSpec::RefTargetKind::Other, IntStorageKind::S64};
         return {};
     }
@@ -2028,8 +2071,40 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         ++atag;
     };
     if (mcount > 0) {
-        for (auto* m : sm_root) collect(*m, m->is_optional());
+        // SET root components go into the member table in the canonical tag
+        // order of X.680 §8.6 (X.691 §20 PER, X.690 §10.3 DER; asn1c uses
+        // the same order for XER), fixed by the schema so every codec walks
+        // the table in index order. Extension additions keep definition
+        // order (X.691 §20). Under AUTOMATIC TAGS the tags follow
+        // definition order already, and `collect` numbers them as it goes.
+        std::vector<const ast::TypeDef*> root_order(sm_root.begin(), sm_root.end());
+        if (is_set && !apply_auto_tags)
+            std::stable_sort(root_order.begin(), root_order.end(),
+                [&](const ast::TypeDef* a, const ast::TypeDef* b) {
+                    return set_component_tag_key(*a) < set_component_tag_key(*b);
+                });
+        for (auto* m : root_order) collect(*m, m->is_optional());
         for (auto* m : sm_ext)  collect(*m, /*optional=*/true);
+        // X.691 §18.9: an extension addition group is one PER addition.
+        // Consecutive extension members sharing a group id form one unit.
+        bool any_group = std::any_of(sm_ext.begin(), sm_ext.end(),
+                                     [](const ast::TypeDef* m) { return m->ext_group != 0; });
+        if (any_group) {
+            const int first_ext = static_cast<int>(root_order.size());
+            spec.member_group_optional.assign(spec.members.size(), false);
+            for (std::size_t k = 0; k < sm_ext.size(); ++k) {
+                const int idx = first_ext + static_cast<int>(k);
+                spec.member_group_optional[idx] = sm_ext[k]->group_optional;
+                const bool continues = k > 0 && sm_ext[k]->ext_group != 0 &&
+                                       sm_ext[k]->ext_group == sm_ext[k - 1]->ext_group;
+                if (continues) {
+                    spec.ext_unit_ends.back() = idx + 1;
+                } else {
+                    spec.ext_unit_ends.push_back(idx + 1);
+                    spec.ext_unit_is_group.push_back(sm_ext[k]->ext_group != 0);
+                }
+            }
+        }
     }
 
     return spec;
@@ -2074,6 +2149,28 @@ std::pair<int,int> Generator::canonical_tag_key(const ast::Tag& tag, const ast::
     if (auto nat = natural_tag_spec_for(natural_tag_src))
         return { static_cast<int>(nat->cls), static_cast<int>(nat->number) };
     return { INT_MAX, INT_MAX }; // no natural tag either (e.g. a nested untagged CHOICE) — sort last.
+}
+
+std::pair<int,int> Generator::set_component_tag_key(const ast::TypeDef& m, int depth) const {
+    constexpr std::pair<int,int> kNone{INT_MAX, INT_MAX};
+    if (m.tag.present())
+        return { static_cast<int>(m.tag.cls), static_cast<int>(m.tag.number) };
+    if (depth > 16) return kNone;
+    // X.691 §20: an untagged CHOICE orders as its smallest root-alternative tag.
+    auto smallest_alt = [&](const ast::TypeDef& choice) {
+        auto key = kNone;
+        for (const auto* alt : split_members(choice).first)
+            key = std::min(key, set_component_tag_key(*alt, depth + 1));
+        return key;
+    };
+    if (m.is_choice()) return smallest_alt(m);
+    if (auto* tr = std::get_if<ast::TypeRef>(&m.body))
+        if (auto resolved = resolver_.resolve_ref(*tr, current_module_))
+            if (resolved->is_choice() && !resolved->tag.present())
+                return smallest_alt(*resolved);
+    if (auto nat = natural_tag_spec_for(m))
+        return { static_cast<int>(nat->cls), static_cast<int>(nat->number) };
+    return kNone;
 }
 
 bool Generator::canonical_tag_less(const ast::Tag& a, const ast::TypeDef& a_src,
@@ -2707,7 +2804,8 @@ static std::vector<uint8_t> extract_from_alphabet(const ast::TypeDef& def) {
 /// @param def       ASN.1 type assignment that resolves to a sizeable primitive.
 /// @param type_name Final backend-resolved type identifier.
 /// @return The decision as plain data — see BuiltinAliasSpec.
-/// @see X.691 §26.5 (character string PER constraints); X.690 §8.7 (OCTET STRING BER encoding).
+/// @see X.691 §26.5 (character string PER constraints), §15.2/§15.3 (NamedBitList BIT STRING);
+///      X.690 §8.7 (OCTET STRING BER encoding).
 BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
                                                        const std::string& type_name) const {
     BuiltinAliasSpec spec;
@@ -2736,7 +2834,7 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     spec.is_explicit = type_is_explicit(def);
     if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
 
-    spec.alphabet = extract_from_alphabet(def);
+    spec.alphabet = per_visible_alphabet(def);
     auto size_range = extract_size_range(def);
     spec.has_size_constraint = size_range.has_value();
     spec.size_bounded = size_range.has_value()
@@ -2755,7 +2853,10 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
         spec.size_lower = sc.lower;
         spec.size_upper = sc.upper;  // meaningless when !size_bounded (semi-constrained)
     }
-    spec.extensible = is_constraint_extensible(def);
+    // X.691 §9.3.15 note 1: only a PER-visible constraint's extension
+    // marker counts (string_per_visibility).
+    spec.extensible = string_per_visibility(def).size_extensible;
+    spec.named_bits = has_named_bits(def);
     spec.xer_encoding = def.xer_encoding;
     return spec;
 }

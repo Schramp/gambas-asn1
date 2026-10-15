@@ -93,7 +93,8 @@ public:
     explicit RandomFiller(std::mt19937& rng, FillConfig cfg = {});
 
     /// @brief Fill \p obj (described by \p def) with random data.
-    /// \p obj must be default-constructed before the call.
+    /// \p obj must be default-constructed before the call. A NamedBitList
+    /// BIT STRING is produced in the form PER transmits (X.691 §15.3).
     /// @param obj       Target object; must not be null.
     /// @param def       TypeDescriptor of \p obj's type.
     /// @param depth     Current recursion depth (callers pass 0).

@@ -204,7 +204,56 @@ pub fn encode_seq_tagged(obj: &dyn Asn1Seq, tag: Tag, explicit: bool, out: &mut 
 /// default-initialized `obj`. OPTIONAL member detection peeks the wire
 /// tag first, same canonical-order assumption `ber::sequence`'s own
 /// decoder makes.
+/// @brief True when a TLV tagged `t` belongs to SET member `i`: its own
+///        tag, or for an untagged CHOICE member one of the CHOICE's
+///        alternative tags.
+fn set_member_matches(obj: &dyn Asn1Seq, i: usize, t: Tag) -> bool {
+    let m = &obj.spec().members[i];
+    if matches!(m.ber, BerTagging::Delegate) {
+        if let MemberRef::Choice(c) = obj.get_member(i) {
+            return c.spec().ber_tags.iter().any(|d| d.tag == t);
+        }
+    }
+    m.tag == t
+}
+
+/// @brief Copies a SET's component TLVs into member-table order, so the
+///        sequential member walk can decode them. BER allows SET components
+///        in any order (X.690 §8.11.2); the table holds them in canonical
+///        tag order (X.680 §8.6). A TLV matching no member (an unknown
+///        extension addition) goes last.
+/// @return The reordered TLV bytes.
+fn set_in_table_order(obj: &dyn Asn1Seq, content: &[u8]) -> Result<Vec<u8>, DecodeError> {
+    let count = obj.spec().members.len();
+    let mut slot: Vec<Option<&[u8]>> = vec![None; count];
+    let mut unmatched: Vec<&[u8]> = Vec::new();
+    let mut scan = Reader::new(content);
+    while !scan.at_end() {
+        let p0 = scan.pos();
+        let t = scan.read_tlv()?.tag;
+        let raw = &content[p0..scan.pos()];
+        match (0..count).find(|&i| slot[i].is_none() && set_member_matches(obj, i, t)) {
+            Some(i) => slot[i] = Some(raw),
+            None => unmatched.push(raw),
+        }
+    }
+    let mut out = Vec::with_capacity(content.len());
+    for raw in slot.into_iter().flatten().chain(unmatched) {
+        out.extend_from_slice(raw);
+    }
+    Ok(out)
+}
+
 pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), DecodeError> {
+    if obj.spec().is_set {
+        let ordered = set_in_table_order(obj, r.remaining())?;
+        return decode_seq_members(obj, &mut Reader::new(&ordered));
+    }
+    decode_seq_members(obj, r)
+}
+
+/// Sequential member walk shared by SEQUENCE and (reordered) SET content.
+fn decode_seq_members(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), DecodeError> {
     let member_count = obj.spec().members.len();
     for i in 0..member_count {
         let (name, tag, optional, ber) = {
@@ -346,7 +395,29 @@ fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
 // SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------
 
+/// @brief Writes the elements of a SEQUENCE OF / SET OF, no outer TLV.
+///        A SET OF with more than one element is written in ascending
+///        order of the elements' encodings, as DER requires (X.690
+///        §11.6) and the C++ `SeqOfBerHandler` does; a SEQUENCE OF keeps
+///        its order.
+/// @param obj The collection; `natural_tag()` tells SET OF apart.
+/// @param out Destination buffer.
+/// @see X.690 §8.10, §8.12, §11.6.
 pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) {
+    if obj.natural_tag() == crate::spec::sequence::SET_TAG && obj.len() > 1 {
+        let mut parts: Vec<Vec<u8>> = (0..obj.len())
+            .map(|i| {
+                let mut buf = Vec::new();
+                encode_member_ref(obj.get(i), BerTagging::Delegate, &mut buf);
+                buf
+            })
+            .collect();
+        parts.sort();
+        for p in &parts {
+            out.extend_from_slice(p);
+        }
+        return;
+    }
     for i in 0..obj.len() {
         encode_member_ref(obj.get(i), BerTagging::Delegate, out);
     }
@@ -445,7 +516,6 @@ mod tests {
         ber: BerTagging::Delegate,
         constraints: &UNCONSTRAINED,
         xer_instruction: crate::spec::object::XerInstruction::Default,
-        per_unsupported: None,
     }];
 
     static INNER_SPEC: SequenceSpec = SequenceSpec {
@@ -454,6 +524,9 @@ mod tests {
         members: &INNER_MEMBERS,
         ext_at: -1,
         roms_count: 0,
+        is_set: false,
+        ext_units: &[],
+        group_member_optional: &[],
     };
 
     impl Asn1Seq for Inner {
@@ -492,9 +565,9 @@ mod tests {
     }
 
     static OUTER_MEMBERS: [MemberMeta; 3] = [
-        MemberMeta { name: "y", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, per_unsupported: None },
-        MemberMeta { name: "inner", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, per_unsupported: None },
-        MemberMeta { name: "maybe", tag: INTEGER_TAG, optional: true, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, per_unsupported: None },
+        MemberMeta { name: "y", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default },
+        MemberMeta { name: "inner", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default },
+        MemberMeta { name: "maybe", tag: INTEGER_TAG, optional: true, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default },
     ];
 
     static OUTER_SPEC: SequenceSpec = SequenceSpec {
@@ -503,6 +576,9 @@ mod tests {
         members: &OUTER_MEMBERS,
         ext_at: -1,
         roms_count: 1,
+        is_set: false,
+        ext_units: &[],
+        group_member_optional: &[],
     };
 
     impl Asn1Seq for Outer {
@@ -608,8 +684,8 @@ mod tests {
     }
 
     static CHOICE_ALTS: [crate::spec::object::AltMeta; 2] = [
-        crate::spec::object::AltMeta { name: "num", ber: BerTagging::Implicit(INTEGER_TAG), constraints: &UNCONSTRAINED, per_unsupported: None },
-        crate::spec::object::AltMeta { name: "nested", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, per_unsupported: None },
+        crate::spec::object::AltMeta { name: "num", ber: BerTagging::Implicit(INTEGER_TAG), constraints: &UNCONSTRAINED },
+        crate::spec::object::AltMeta { name: "nested", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED },
     ];
     static CHOICE_BER_TAGS: [crate::spec::choice::BerDispatch; 2] = [
         crate::spec::choice::BerDispatch { tag: INTEGER_TAG, alt: 0 },
@@ -708,5 +784,19 @@ mod tests {
     fn seqof_round_trips_primitive_elements() {
         let v = crate::ber::sequence::SeqOf(vec![Integer(1), Integer(2), Integer(3)]);
         assert_eq!(roundtrip_seqof(&v), v);
+    }
+
+    #[test]
+    fn set_of_is_written_in_der_order_sequence_of_is_not() {
+        use crate::ber::sequence::{SeqOf, SetOf};
+        let vals = vec![Integer(300), Integer(5), Integer(-1)];
+        let mut set = Vec::new();
+        encode_seqof_content(&SetOf(vals.clone()), &mut set);
+        // DER (X.690 §11.6): ascending by encoding:
+        // 02 01 05 < 02 01 FF < 02 02 01 2C
+        assert_eq!(set, vec![0x02, 0x01, 0x05, 0x02, 0x01, 0xFF, 0x02, 0x02, 0x01, 0x2C]);
+        let mut seq = Vec::new();
+        encode_seqof_content(&SeqOf(vals), &mut seq);
+        assert_eq!(seq, vec![0x02, 0x02, 0x01, 0x2C, 0x02, 0x01, 0x05, 0x02, 0x01, 0xFF]);
     }
 }

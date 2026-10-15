@@ -116,7 +116,12 @@ bool RandomFiller::fill(Asn1Object* obj, const TypeDescriptor& def, int depth, b
     if (def.sequence_spec) return fill_sequence(obj, *def.sequence_spec, depth);
     if (def.choice_spec)   return fill_choice  (obj, *def.choice_spec,   depth);
     if (def.seq_of_spec)   return fill_seq_of  (obj, *def.seq_of_spec,   depth);
-    return try_fill_primitive(obj, def);
+    bool ok = try_fill_primitive(obj, def);
+    // A NamedBitList value is generated in the form PER transmits (X.691
+    // §15.3), so every codec round trip reproduces it bit for bit.
+    if (def.constraints.flags & Constraints::NAMED_BITS)
+        static_cast<BitString*>(obj)->normalize_named_bits(def.constraints);
+    return ok;
 }
 
 // Rewrite obj as a fresh random value of exactly `len` units (bytes for
@@ -399,11 +404,29 @@ void RandomFiller::fill_enum(Asn1Object* obj, const EnumSpec& spec) {
 // ---------------------------------------------------------------------------
 
 bool RandomFiller::fill_sequence(Asn1Object* obj, const SequenceSpec& spec, int depth) {
+    // Extension addition groups (X.680 §24.12) are present or absent as a
+    // whole, and a present group carries all its mandatory members: decide
+    // once per group (from the precomputed unit table), not per member.
+    int unit = 0;
+    bool group_present = false;
     for (int i = 0; i < spec.count; ++i) {
         const MemberDescriptor& mbr = spec.members[i];
         bool is_ext = (spec.ext_at >= 0 && i >= spec.ext_at);
+        bool in_group = false;
+        if (is_ext && spec.ext_unit_count > 0) {
+            while (unit < spec.ext_unit_count && i >= spec.ext_unit_end[unit]) ++unit;
+            const int unit_begin = unit == 0 ? spec.ext_at : spec.ext_unit_end[unit - 1];
+            in_group = unit < spec.ext_unit_count && spec.ext_unit_group[unit];
+            if (in_group && i == unit_begin)
+                group_present = (depth < cfg_.max_depth) && coin(cfg_.optional_prob * 0.3);
+        }
 
-        if (mbr.optional) {
+        if (in_group) {
+            bool present = group_present &&
+                           (!spec.group_member_optional[i] || coin(cfg_.optional_prob));
+            mbr.optional_ops.set_present(obj, present);
+            if (!present) continue;
+        } else if (mbr.optional) {
             double p = is_ext ? cfg_.optional_prob * 0.3 : cfg_.optional_prob;
             bool present = (depth < cfg_.max_depth) && coin(p);
             mbr.optional_ops.set_present(obj, present);
