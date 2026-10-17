@@ -1,4 +1,5 @@
 #include <cassert>
+#include <asn1cpp/codec/DecodeDepth.hpp>
 #include <asn1cpp/codec/XerCodec.hpp>
 #include <asn1cpp/types/Integer.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
@@ -1016,6 +1017,8 @@ DecodeResult XerCodec::decode(IDecodeStream& src,
                                Asn1Object* dest) const
 {
     auto& s = static_cast<XerDecodeStream&>(src);
+    DecodeDepthGuard depth_guard{def};
+    if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
     XerRecursionScope scope;
     bool wrap = scope.is_root() && def.kind == TypeKind::Choice;
     if (wrap) {

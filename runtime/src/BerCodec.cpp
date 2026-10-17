@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdio>
 #include <vector>
+#include <asn1cpp/codec/DecodeDepth.hpp>
 #include <asn1cpp/codec/BerCodec.hpp>
 #include <asn1cpp/codec/BerHandlers.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
@@ -1091,6 +1092,8 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
 {
     auto& s = static_cast<BerDecodeStream&>(src);
     BerReader& r = s.reader();
+    DecodeDepthGuard depth_guard{def};
+    if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
     DecodeResult res = decode_ok();
     if (def.is_explicit) {
         // Read the outer wrapper TLV (def.tag), then decode its content as

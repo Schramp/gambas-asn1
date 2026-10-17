@@ -11,10 +11,15 @@ use std::io::{Read, Write};
 
 const TYPES: &[&str] = &["__PDU_TYPE__"];
 
+// Bytes that are not UTF-8 become U+FFFD, which the decoder then rejects
+// for the record it lands in.
 fn slurp_text(mut r: impl Read) -> String {
-    let mut buf = String::new();
-    r.read_to_string(&mut buf).expect("read failed");
-    buf
+    let mut buf = Vec::new();
+    if let Err(e) = r.read_to_end(&mut buf) {
+        eprintln!("read failed: {e}");
+        std::process::exit(1);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 fn list_types() {

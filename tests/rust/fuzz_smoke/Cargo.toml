@@ -1,0 +1,14 @@
+[package]
+name = "fuzz-smoke-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the fixed-seed decoder fuzz smoke test (roundtrip_test.asn1). Pulls generated .rs from ASN1CPP_RUST_FUZZ_GEN_DIR (set by tests/CMakeLists.txt's rust_fuzz_smoke), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "fuzz_smoke"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }

@@ -79,6 +79,12 @@ fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec<u8>) -> Re
 /// @return `Err` on malformed BER, a tag mismatch, or a member or
 ///         alternative codegen marked unsupported.
 fn decode_member_ref(m: MemberRefMut, framing: BerTagging, r: &mut Reader) -> Result<(), DecodeError> {
+    let _g = match m {
+        MemberRefMut::Composite(_) | MemberRefMut::Choice(_) | MemberRefMut::SeqOf(_) => {
+            Some(crate::nesting::DepthGuard::enter().ok_or_else(|| DecodeError::new(crate::nesting::too_deep(), r.pos()))?)
+        }
+        _ => None,
+    };
     match m {
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, r.pos())),
@@ -937,6 +943,102 @@ mod tests {
         assert_eq!(crate::jer::object::encode_choice_into(&v, &mut json).unwrap_err().message, msg);
         let mut w = crate::per::writer::Writer::new();
         assert_eq!(crate::per::object::encode_choice_content(&v, &mut w).unwrap_err().message, msg);
+    }
+
+    /// `Rec ::= CHOICE { a [0] INTEGER, c [2] Rec }` — self-referential
+    /// (X.680 §29), so an input can nest it arbitrarily deep.
+    #[derive(Debug)]
+    enum Rec {
+        A(Integer),
+        C(Box<Rec>),
+    }
+    impl Default for Rec {
+        fn default() -> Self {
+            Rec::A(Integer(0))
+        }
+    }
+    static REC_ALTS: [crate::spec::object::AltMeta; 2] = [
+        crate::spec::object::AltMeta { name: "a", ber: BerTagging::Implicit(Tag::context(0, false)), constraints: &UNCONSTRAINED },
+        crate::spec::object::AltMeta { name: "c", ber: BerTagging::Explicit(Tag::context(2, true)), constraints: &UNCONSTRAINED },
+    ];
+    static REC_BER_TAGS: [crate::spec::choice::BerDispatch; 2] = [
+        crate::spec::choice::BerDispatch { tag: Tag::context(0, false), alt: 0 },
+        crate::spec::choice::BerDispatch { tag: Tag::context(2, true), alt: 1 },
+    ];
+    static REC_SPEC: crate::spec::object::ChoiceSpec = crate::spec::object::ChoiceSpec {
+        name: "Rec",
+        alternatives: &REC_ALTS,
+        ber_tags: &REC_BER_TAGS,
+        own_tag: None,
+        ext_at: -1,
+        range_bits: 1,
+    };
+    impl Asn1Choice for Rec {
+        fn spec(&self) -> &'static crate::spec::object::ChoiceSpec {
+            &REC_SPEC
+        }
+        fn active_index(&self) -> Option<usize> {
+            Some(match self {
+                Rec::A(_) => 0,
+                Rec::C(_) => 1,
+            })
+        }
+        fn get_active(&self) -> MemberRef<'_> {
+            match self {
+                Rec::A(v) => MemberRef::Primitive(crate::spec::primitive::PrimitiveRef::Integer(v)),
+                Rec::C(v) => MemberRef::Choice(&**v),
+            }
+        }
+        fn select_mut(&mut self, index: usize) -> MemberRefMut<'_> {
+            *self = if index == 0 { Rec::A(Integer(0)) } else { Rec::C(Box::default()) };
+            match self {
+                Rec::A(v) => MemberRefMut::Primitive(crate::spec::primitive::PrimitiveRefMut::Integer(v)),
+                Rec::C(v) => MemberRefMut::Choice(&mut **v),
+            }
+        }
+        fn construct_unknown_extension(&mut self, _tag: Tag, _bytes: Vec<u8>) {}
+        fn extract_unknown_extension(&self) -> Option<(Tag, &[u8])> {
+            None
+        }
+    }
+
+    fn nested(levels: usize) -> Rec {
+        (0..levels).fold(Rec::A(Integer(5)), |inner, _| Rec::C(Box::new(inner)))
+    }
+
+    /// Decodes `levels`-deep `Rec` in every codec; `true` per codec when
+    /// the decode succeeded.
+    fn decode_nested(levels: usize) -> [bool; 4] {
+        let v = nested(levels);
+        let ber = encode_choice(&v).unwrap();
+        let xml = crate::xer::object::encode_choice(&v).unwrap();
+        let mut json = String::new();
+        crate::jer::object::encode_choice_into(&v, &mut json).unwrap();
+        let mut w = crate::per::writer::Writer::new();
+        crate::per::object::encode_choice_content(&v, &mut w).unwrap();
+        w.flush();
+        let per = w.into_bytes();
+        let ok = [
+            decode_choice_into(&mut Rec::default(), &mut Reader::new(&ber)).is_ok(),
+            crate::xer::object::decode_choice(&xml, &mut Rec::default()).is_ok(),
+            crate::jer::object::decode_choice_into(&mut Rec::default(), &mut crate::jer::reader::Reader::new(&json)).is_ok(),
+            crate::per::object::decode_choice_content_into(&mut Rec::default(), &mut crate::per::reader::Reader::new(&per)).is_ok(),
+        ];
+        // Drop iteratively: a deep Box chain would recurse in Drop.
+        let mut cur = v;
+        while let Rec::C(inner) = cur {
+            cur = *inner;
+        }
+        ok
+    }
+
+    #[test]
+    fn decode_nesting_is_limited_in_every_codec() {
+        let max = crate::nesting::MAX_DECODE_DEPTH as usize;
+        assert_eq!(decode_nested(max - 1), [true; 4]);
+        assert_eq!(decode_nested(max + 1), [false; 4]);
+        let e = decode_choice_into(&mut Rec::default(), &mut Reader::new(&encode_choice(&nested(max + 1)).unwrap())).unwrap_err();
+        assert!(e.message.contains("nesting deeper than"), "{}", e.message);
     }
 
     /// `Basket ::= SEQUENCE OF INTEGER` — worked example for `Asn1SeqOf`.
