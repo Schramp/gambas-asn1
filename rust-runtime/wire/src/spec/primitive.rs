@@ -335,24 +335,31 @@ pub fn ber_decode_primitive(p: PrimitiveRefMut, framing: BerTagging, r: &mut Ber
 // XER (X.693 BASIC-XER)
 // ---------------------------------------------------------------------
 
+/// @brief Error for a primitive kind a codec leg has no form for.
+/// @param codec  "XER", "JER" or "PER".
+/// @param kind   The storage kind, as named in `PrimitiveRef`.
+fn not_supported(codec: &str, kind: &str) -> EncodeError {
+    EncodeError::new(format!("{codec} encoding not supported for {kind}"))
+}
+
 /// XER encode — no BER tag concept, so no framing parameter (X.693
 /// element names are fixed per type, same for every tagging the BER side
 /// might apply to this same member). `ArbitraryInteger`/`Any` have no
-/// defined XER form (nothing generates one today), so they panic.
+/// XER leg here, so encoding one fails the record.
 pub fn xer_encode_primitive(p: PrimitiveRef, out: &mut String, depth: usize) -> Result<(), EncodeError> {
     match p {
         PrimitiveRef::Boolean(x) => crate::xer::boolean::encode(x.0, out),
         PrimitiveRef::Integer(x) => crate::xer::integer::encode(x.0, out),
         PrimitiveRef::UInteger(x) => crate::xer::integer::encode(x.0, out),
         PrimitiveRef::BigInteger(x) => crate::xer::integer::encode(x.0, out),
-        PrimitiveRef::ArbitraryInteger(_) => unimplemented!("XER leg not yet wired for this type"),
+        PrimitiveRef::ArbitraryInteger(_) => return Err(not_supported("XER", "ArbitraryInteger")),
         PrimitiveRef::Real(x) => crate::xer::real::encode(x.0, out),
         PrimitiveRef::Null(_) => {}
         PrimitiveRef::OctetString(x) => crate::xer::octet_string::encode(&x.0, out),
         PrimitiveRef::BitString(x) => crate::xer::bit_string::encode(x, out, depth),
         PrimitiveRef::ObjectIdentifier(x) => crate::xer::oid::encode(x, out),
         PrimitiveRef::RelativeOid(x) => crate::xer::relative_oid::encode(x, out),
-        PrimitiveRef::Any(_) => unimplemented!("XER leg not yet wired for this type"),
+        PrimitiveRef::Any(_) => return Err(not_supported("XER", "ANY")),
         PrimitiveRef::Utf8String(x) => crate::xer::writer::escape(&x.0, out),
         PrimitiveRef::NumericString(x) => crate::xer::writer::escape(&x.0, out),
         PrimitiveRef::PrintableString(x) => crate::xer::writer::escape(&x.0, out),
@@ -377,14 +384,14 @@ pub fn xer_decode_primitive(p: PrimitiveRefMut, r: &mut XerReader) -> Result<(),
         PrimitiveRefMut::Integer(x) => { x.0 = crate::xer::integer::decode(r)?; Ok(()) }
         PrimitiveRefMut::UInteger(x) => { x.0 = crate::xer::integer::decode(r)?; Ok(()) }
         PrimitiveRefMut::BigInteger(x) => { x.0 = crate::xer::integer::decode(r)?; Ok(()) }
-        PrimitiveRefMut::ArbitraryInteger(_) => Err(BerDecodeError::new("XER leg not yet wired for this type".to_string(), 0)),
+        PrimitiveRefMut::ArbitraryInteger(_) => Err(BerDecodeError::new(not_supported("XER", "ArbitraryInteger").message, 0)),
         PrimitiveRefMut::Real(x) => { x.0 = crate::xer::real::decode(r)?; Ok(()) }
         PrimitiveRefMut::Null(_) => Ok(()),
         PrimitiveRefMut::OctetString(x) => { x.0 = crate::xer::octet_string::decode(r)?; Ok(()) }
         PrimitiveRefMut::BitString(x) => crate::xer::bit_string::decode_into(x, r),
         PrimitiveRefMut::ObjectIdentifier(x) => crate::xer::oid::decode_into(x, r),
         PrimitiveRefMut::RelativeOid(x) => crate::xer::relative_oid::decode_into(x, r),
-        PrimitiveRefMut::Any(_) => Err(BerDecodeError::new("XER leg not yet wired for this type".to_string(), 0)),
+        PrimitiveRefMut::Any(_) => Err(BerDecodeError::new(not_supported("XER", "ANY").message, 0)),
         PrimitiveRefMut::Utf8String(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
         PrimitiveRefMut::NumericString(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
         PrimitiveRefMut::PrintableString(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
@@ -443,7 +450,7 @@ pub fn jer_encode_primitive(p: PrimitiveRef, out: &mut String) -> Result<(), Enc
         PrimitiveRef::Integer(x) => crate::jer::integer::encode(x.0, out),
         PrimitiveRef::UInteger(x) => crate::jer::integer::encode(x.0, out),
         PrimitiveRef::BigInteger(x) => crate::jer::integer::encode(x.0, out),
-        PrimitiveRef::ArbitraryInteger(_) => unimplemented!("JER leg not yet wired for this type"),
+        PrimitiveRef::ArbitraryInteger(_) => return Err(not_supported("JER", "ArbitraryInteger")),
         PrimitiveRef::Real(x) => crate::jer::real::encode(x.0, out),
         PrimitiveRef::Null(_) => crate::jer::null::encode(out),
         PrimitiveRef::OctetString(x) => crate::jer::octet_string::encode(&x.0, out),
@@ -482,7 +489,7 @@ pub fn jer_decode_primitive(p: PrimitiveRefMut, r: &mut JerReader) -> Result<(),
         PrimitiveRefMut::Integer(x) => { x.0 = crate::jer::integer::decode(r)?; Ok(()) }
         PrimitiveRefMut::UInteger(x) => { x.0 = crate::jer::integer::decode(r)?; Ok(()) }
         PrimitiveRefMut::BigInteger(x) => { x.0 = crate::jer::integer::decode(r)?; Ok(()) }
-        PrimitiveRefMut::ArbitraryInteger(_) => Err(BerDecodeError::new("JER leg not yet wired for this type".to_string(), 0)),
+        PrimitiveRefMut::ArbitraryInteger(_) => Err(BerDecodeError::new(not_supported("JER", "ArbitraryInteger").message, r.pos())),
         PrimitiveRefMut::Real(x) => { x.0 = crate::jer::real::decode(r)?; Ok(()) }
         PrimitiveRefMut::Null(_) => crate::jer::null::decode(r),
         PrimitiveRefMut::OctetString(x) => { x.0 = crate::jer::octet_string::decode(r)?; Ok(()) }
@@ -537,8 +544,8 @@ pub fn per_encode_primitive(p: PrimitiveRef, w: &mut PerWriter, c: &crate::const
         PrimitiveRef::Boolean(x) => w.put_bits(x.0 as u64, 1),
         PrimitiveRef::Integer(x) => crate::per::integer::encode_int(w, c, x.0),
         PrimitiveRef::UInteger(x) => crate::per::uinteger::encode_uint(w, c, x.0),
-        PrimitiveRef::BigInteger(_) => unimplemented!("PER encode not implemented for this type"),
-        PrimitiveRef::ArbitraryInteger(_) => unimplemented!("PER encode not implemented for this type"),
+        PrimitiveRef::BigInteger(_) => return Err(not_supported("PER", "BigInteger")),
+        PrimitiveRef::ArbitraryInteger(_) => return Err(not_supported("PER", "ArbitraryInteger")),
         PrimitiveRef::Real(x) => crate::per::real::encode_real(w, x.0),
         PrimitiveRef::Null(_) => crate::per::null::encode(w),
         PrimitiveRef::OctetString(x) => crate::per::octet_string::encode_octet_string(w, c, &x.0),
@@ -569,8 +576,8 @@ pub fn per_decode_primitive(p: PrimitiveRefMut, r: &mut PerReader, c: &crate::co
         PrimitiveRefMut::Boolean(x) => { x.0 = r.get_bits(1)? != 0; Ok(()) }
         PrimitiveRefMut::Integer(x) => { x.0 = crate::per::integer::decode_int(r, c)?; Ok(()) }
         PrimitiveRefMut::UInteger(x) => { x.0 = crate::per::uinteger::decode_uint(r, c)?; Ok(()) }
-        PrimitiveRefMut::BigInteger(_) => Err(PerDecodeError::new("PER decode not implemented for this type", 0)),
-        PrimitiveRefMut::ArbitraryInteger(_) => Err(PerDecodeError::new("PER decode not implemented for this type", 0)),
+        PrimitiveRefMut::BigInteger(_) => Err(PerDecodeError::new(not_supported("PER", "BigInteger").message, r.bit_pos())),
+        PrimitiveRefMut::ArbitraryInteger(_) => Err(PerDecodeError::new(not_supported("PER", "ArbitraryInteger").message, r.bit_pos())),
         PrimitiveRefMut::Real(x) => { x.0 = crate::per::real::decode_real(r)?; Ok(()) }
         PrimitiveRefMut::Null(_) => crate::per::null::decode(r),
         PrimitiveRefMut::OctetString(x) => { x.0 = crate::per::octet_string::decode_octet_string(r, c)?; Ok(()) }
@@ -708,6 +715,45 @@ mod tests {
         let mut got = Integer(0);
         let e = ber_decode_primitive(PrimitiveRefMut::Integer(&mut got), framing, &mut BerReader::new(&[0x02, 0x01, 0x01])).unwrap_err();
         assert_eq!(e.message, "primitive not supported: no tag to detect presence");
+    }
+
+    use crate::integer::{ArbitraryInteger, BigInteger};
+
+    const ARB: fn() -> ArbitraryInteger = || ArbitraryInteger(vec![0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+    #[test]
+    fn xer_arbitrary_integer_is_an_error_not_a_panic() {
+        let e = xer_encode_primitive(PrimitiveRef::ArbitraryInteger(&ARB()), &mut String::new(), 0).unwrap_err();
+        assert_eq!(e.message, "XER encoding not supported for ArbitraryInteger");
+        let mut v = ARB();
+        assert!(xer_decode_primitive(PrimitiveRefMut::ArbitraryInteger(&mut v), &mut XerReader::new("1")).is_err());
+    }
+
+    #[test]
+    fn xer_any_is_an_error_not_a_panic() {
+        let e = xer_encode_primitive(PrimitiveRef::Any(&Any(vec![0x05, 0x00])), &mut String::new(), 0).unwrap_err();
+        assert_eq!(e.message, "XER encoding not supported for ANY");
+        let mut v = Any::default();
+        assert!(xer_decode_primitive(PrimitiveRefMut::Any(&mut v), &mut XerReader::new("0500")).is_err());
+    }
+
+    #[test]
+    fn jer_arbitrary_integer_is_an_error_not_a_panic() {
+        let e = jer_encode_primitive(PrimitiveRef::ArbitraryInteger(&ARB()), &mut String::new()).unwrap_err();
+        assert_eq!(e.message, "JER encoding not supported for ArbitraryInteger");
+        let mut v = ARB();
+        assert!(jer_decode_primitive(PrimitiveRefMut::ArbitraryInteger(&mut v), &mut JerReader::new("1")).is_err());
+    }
+
+    #[test]
+    fn per_big_integers_are_an_error_not_a_panic() {
+        let c = &crate::constraints::UNCONSTRAINED;
+        let e = per_encode_primitive(PrimitiveRef::BigInteger(&BigInteger(1)), &mut PerWriter::new(), c).unwrap_err();
+        assert_eq!(e.message, "PER encoding not supported for BigInteger");
+        let e = per_encode_primitive(PrimitiveRef::ArbitraryInteger(&ARB()), &mut PerWriter::new(), c).unwrap_err();
+        assert_eq!(e.message, "PER encoding not supported for ArbitraryInteger");
+        let mut b = BigInteger(0);
+        assert!(per_decode_primitive(PrimitiveRefMut::BigInteger(&mut b), &mut PerReader::new(&[0x01, 0x01]), c).is_err());
     }
 
     #[test]

@@ -682,6 +682,11 @@ Causes of a per-record error:
   Code generation still emits the type; any encode or decode that reaches
   the member fails with `member '<name>' not supported: <reason>`
   (`alternative '<name>' not supported` for a CHOICE alternative).
+- **A primitive kind a Rust codec leg has no form for** — XER for
+  `ArbitraryInteger` and `ANY`, JER for `ArbitraryInteger`, PER for
+  `BigInteger`/`ArbitraryInteger` (`XER encoding not supported for ANY`, ...).
+  Code generation does not select these storage kinds today; the errors
+  guard direct use of the runtime types.
 - **A PER constraint violation** — a character string outside its SIZE or
   permitted alphabet cannot be represented in PER, so PER encode fails
   (`string length violates SIZE constraint`, `character not in FROM alphabet`, ...).
