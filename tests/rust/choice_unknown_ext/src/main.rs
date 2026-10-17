@@ -29,6 +29,15 @@ fn main() {
         check("the unknown alternative is kept as UnknownExtension",
               matches!(v, V1::UnknownExtension(..)) && v.extract_unknown_extension().is_some(),
               &mut failures);
+        // XER/JER/PER have no form for an alternative the schema does not
+        // define: encoding it fails the record instead of panicking or
+        // writing nothing.
+        check("XER encode of the unknown alternative is an error",
+              asn1cpp_wire::xer::object::encode_pdu(v).is_err(), &mut failures);
+        check("JER encode of the unknown alternative is an error",
+              asn1cpp_wire::jer::object::encode_pdu(v).is_err(), &mut failures);
+        check("PER encode of the unknown alternative is an error",
+              asn1cpp_wire::per::object::encode_pdu(v).is_err(), &mut failures);
     }
 
     let root2 = asn1cpp_wire::per::object::encode_pdu(&V2::a(asn1cpp_wire::integer::Integer(5))).unwrap();
