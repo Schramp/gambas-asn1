@@ -133,6 +133,12 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut XerReader) -> Resu
 }
 
 fn decode_bare(m: MemberRefMut, r: &mut XerReader) -> Result<(), DecodeError> {
+    let _g = match m {
+        MemberRefMut::Composite(_) | MemberRefMut::Choice(_) | MemberRefMut::SeqOf(_) => {
+            Some(crate::nesting::DepthGuard::enter().ok_or_else(|| DecodeError::new(crate::nesting::too_deep(), 0))?)
+        }
+        _ => None,
+    };
     match m {
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, 0)),

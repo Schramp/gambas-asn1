@@ -166,13 +166,9 @@ impl<'a> Reader<'a> {
                 }
             }
         }
-        // number, true, false, null
-        while let Some(b) = self.peek_byte() {
-            if b == b',' || b == b'}' || b == b']' || b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
-                break;
-            }
-            self.advance(1);
-        }
-        Ok(())
+        // number, true, false, null — must consume something, so a caller
+        // looping over skipped values always advances (a stray `}`/`]`/`,`
+        // here is malformed input, not an empty value).
+        self.read_json_token().map(|_| ())
     }
 }

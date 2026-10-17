@@ -13,6 +13,7 @@
 #include <charconv>
 #include <limits>
 #include <span>
+#include <asn1cpp/codec/DecodeDepth.hpp>
 #include <asn1cpp/codec/JerCodec.hpp>
 #include "HexEncoder.hpp"
 #include <asn1cpp/codec/XerCodec.hpp>    // for xer_detail::format_arcs / parse_arcs
@@ -1066,6 +1067,8 @@ DecodeResult JerCodec::decode(IDecodeStream& src,
                                Asn1Object* dest) const
 {
     auto& s = static_cast<JerDecodeStream&>(src);
+    DecodeDepthGuard depth_guard{def};
+    if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
     DecodeResult res = def.kind == TypeKind::Primitive
         // See the matching comment in encode() above.
         ? prim_dispatch_[def.is_explicit ? def.natural_tag.number : def.tag.number]->decode(*this, s, def, dest)

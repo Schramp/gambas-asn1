@@ -27,6 +27,12 @@ fn encode_bare(m: MemberRef, out: &mut String) -> Result<(), EncodeError> {
 }
 
 fn decode_bare(m: MemberRefMut, r: &mut Reader) -> Result<(), DecodeError> {
+    let _g = match m {
+        MemberRefMut::Composite(_) | MemberRefMut::Choice(_) | MemberRefMut::SeqOf(_) => {
+            Some(crate::nesting::DepthGuard::enter().ok_or_else(|| DecodeError::new(crate::nesting::too_deep(), r.pos()))?)
+        }
+        _ => None,
+    };
     match m {
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, r.pos())),

@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <asn1cpp/codec/DecodeDepth.hpp>
 #include <asn1cpp/codec/PerCodec.hpp>
 #include <asn1cpp/codec/Alphabets.hpp>
 #include <asn1cpp/codec/Validation.hpp>
@@ -1341,6 +1342,8 @@ DecodeResult PerCodec::decode(IDecodeStream& src,
                               Asn1Object* dest) const
 {
     auto& stream = static_cast<PerDecodeStream&>(src);
+    DecodeDepthGuard depth_guard{def};
+    if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
     DecodeResult res = (def.per_handler ? *def.per_handler : s_error).decode(*this, stream, def, dest);
     if (res.has_value()) validate_on_decode("PER", def, dest);
     return res;
