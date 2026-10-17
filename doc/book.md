@@ -671,7 +671,7 @@ process keeps running and the next record is unaffected.
 
 | Runtime | How encode failure is reported |
 |---------|-------------------------------|
-| C++ | `PerEncodeStream::encode_failed()` after `PerCodec::encode` |
+| C++ | `encode_failed()` on the stream after `encode`: `BerEncodeStream` (via `BerWriter`), `XerEncodeStream`, `JerEncodeStream`, `PerEncodeStream`; nested values share the flag of the stream the caller passed |
 | Rust | `ber`/`xer`/`jer`/`per::object::encode_pdu` return `Result<_, EncodeError>`; `encode_pdu_into` returns `Result<(), EncodeError>` and leaves a partial record in the buffer, to be discarded |
 
 Causes of a per-record error:
@@ -687,7 +687,13 @@ Causes of a per-record error:
   `BigInteger`/`ArbitraryInteger` (`XER encoding not supported for ANY`, ...).
   Code generation does not select these storage kinds today; the errors
   guard direct use of the runtime types.
-- **A CHOICE with no alternative to encode** — a Rust extensible CHOICE
+- **A type with no codec** — a descriptor whose kind lands on a codec's
+  fallback dispatch slot (or has no direct handler): C++ encode sets
+  `encode_failed()`, decode returns `<Codec>: unsupported: <type>`.
+- **A CHOICE with no alternative to encode** — in C++ a CHOICE whose
+  `_present` is 0 (default-constructed, or an unknown extension skipped on
+  decode) fails BER/XER/JER/PER encode with `CHOICE <name>: no alternative
+  selected`. A Rust extensible CHOICE
   holding an alternative the schema does not define (`UnknownExtension`,
   kept on decode, X.680 §29.6) re-encodes in BER (the captured TLV is
   replayed) but fails XER/JER/PER encode with `CHOICE <name>: no
@@ -697,6 +703,9 @@ Causes of a per-record error:
   (`string length violates SIZE constraint`, `character not in FROM alphabet`, ...).
   BER/XER/JER still encode such a value and only count the violation (see
   Constraint Validation above).
+
+Each C++ encode failure is traced (with the reason) under `ASN1CPP_DEBUG`
+bit `0x10` (BER), `0x04` (XER and JER) or `0x08` (PER).
 
 The cross-validation tools (`ber-to-xer`, `xer-to-ber`, ...) print one line
 per failed record (`BER decode failed record #N ...`, `XER encode failed

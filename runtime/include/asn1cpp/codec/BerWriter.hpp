@@ -4,7 +4,9 @@
 #include <cstdint>
 #include <cstring>
 #include <concepts>
+#include <cstdio>
 #include "../Tag.hpp"
+#include "Debug.hpp"
 
 namespace asn1 {
 
@@ -27,6 +29,7 @@ namespace asn1 {
 ///      §8.1.3 — Length octets.
 class BerWriter {
     std::vector<uint8_t>& buf_;
+    bool encode_failed_{false};
 
 public:
     /// @brief Wrap \p buf for BER output.  \p buf must outlive this writer.
@@ -168,6 +171,19 @@ public:
             buf_[len_pos + 3] = static_cast<uint8_t>(content_size);
         }
     }
+
+    /// @brief Signal that a value could not be encoded (a CHOICE with no
+    ///        alternative selected, a type with no BER handler). Bytes already
+    ///        written are not retracted; the caller discards the record.
+    ///        Traced under \c DBG_BER_WRITE.
+    /// @param reason  Diagnostic naming the type.
+    void set_encode_failed(const char* reason) {
+        encode_failed_ = true;
+        if (debug_flags() & DBG_BER_WRITE)
+            std::fprintf(stderr, "[BER-WRITE] encode failed: %s\n", reason);
+    }
+    /// @return True if any value failed to encode through this writer.
+    bool encode_failed() const { return encode_failed_; }
 };
 
 } // namespace asn1

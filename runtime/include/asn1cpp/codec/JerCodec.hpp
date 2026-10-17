@@ -1,10 +1,12 @@
 #pragma once
 #include <string>
+#include <cstdio>
 #include <string_view>
 #include <ostream>
 #include <cstddef>
 #include <functional>
 #include "ICodec.hpp"
+#include "Debug.hpp"
 #include "../Tag.hpp"
 
 namespace asn1 {
@@ -20,12 +22,38 @@ namespace asn1 {
 class JerEncodeStream : public IEncodeStream {
     std::ostream& os_;
     int depth_{0};
+    bool own_failed_{false};
+    bool* failed_{&own_failed_};
+    JerEncodeStream(std::ostream& os, int depth, bool* failed) : os_(os), depth_(depth), failed_(failed) {}
 public:
+    /// @brief Wrap \p os for output at nesting depth 0.
+    /// @param os  Output stream; must outlive this object.
     explicit JerEncodeStream(std::ostream& os) : os_(os) {}
+    /// @brief Wrap \p os at a specific nesting \p depth, with its own failure flag.
     explicit JerEncodeStream(std::ostream& os, int depth) : os_(os), depth_(depth) {}
+    JerEncodeStream(const JerEncodeStream&) = delete;
+    JerEncodeStream& operator=(const JerEncodeStream&) = delete;
+    /// @brief Stream for a nested value one level deeper, sharing this
+    ///        stream's output and failure flag (used by recursive encode).
+    JerEncodeStream child() { return JerEncodeStream(os_, depth_ + 1, failed_); }
+    /// @brief Access the underlying output stream.
     std::ostream& os() { return os_; }
+    /// @brief Current nesting depth (0 = top-level).
     int depth() const { return depth_; }
+    /// @brief Return an indentation string for the current depth plus \p offset levels.
     std::string indent(int offset = 0) const { return std::string(2 * (depth_ + offset), ' '); }
+    /// @brief Signal that a value could not be encoded (no handler for its
+    ///        type, a CHOICE with no alternative selected). Output already
+    ///        written is not retracted; the caller discards the record.
+    ///        Traced under \c DBG_XER.
+    /// @param reason  Diagnostic naming the type.
+    void set_encode_failed(const char* reason) {
+        *failed_ = true;
+        if (debug_flags() & DBG_XER)
+            std::fprintf(stderr, "[JER-ENC] encode failed: %s\n", reason);
+    }
+    /// @return True if any value failed to encode through this stream or a child.
+    bool encode_failed() const { return *failed_; }
 };
 
 /// @brief IDecodeStream adapter that holds full JSON text for JerCodec::decode().

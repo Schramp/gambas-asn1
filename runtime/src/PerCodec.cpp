@@ -248,6 +248,7 @@ static void encode_open_type(const PerCodec& codec, PerEncodeStream& stream,
     PerEncodeStream tmp_s{tmp};
     IEncodeStream& es = tmp_s;
     codec.encode(es, mdef, mptr);
+    if (tmp_s.encode_failed()) stream.set_encode_failed("open type contents");
     tmp_s.flush();
     per_detail::put_octets(stream, tmp.data(), tmp.size());
 }
@@ -265,16 +266,21 @@ static DecodeResult decode_open_type(const PerCodec& codec, PerDecodeStream& str
 // ---------------------------------------------------------------------------
 // Handler classes
 
+/// @brief Fallback for a dispatch-table slot with no PER codec. Encode
+///        flags the stream as failed, decode returns an error, so a schema
+///        construct the runtime cannot handle fails one record instead of
+///        aborting the process.
 class ErrorPerHandler final : public IPerTypeHandler {
 public:
-    void encode(const PerCodec&, PerEncodeStream&,
+    void encode(const PerCodec&, PerEncodeStream& stream,
                 const TypeDescriptor& def, const Asn1Object*) const override {
-        assert(false && "PerCodec: unreachable dispatch table entry");
-        (void)def;
+        std::string reason = std::string("PerCodec: unsupported: ") + def.name;
+        stream.set_encode_failed(reason.c_str());
     }
     DecodeResult decode(const PerCodec&, PerDecodeStream&,
                         const TypeDescriptor& def, Asn1Object*) const override {
-        assert(false && "PerCodec: unreachable dispatch table entry");
+        if (debug_flags() & DBG_PER)
+            std::fprintf(stderr, "[PER-DEC] unsupported: %s\n", def.name);
         return decode_err(DecodeError(std::string("PerCodec: unsupported: ") + def.name));
     }
 };
@@ -1183,7 +1189,11 @@ public:
         const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int pr = ch->_present;
-        if (pr <= 0 || pr > spec.count) return;
+        if (pr <= 0 || pr > spec.count) {
+            std::string reason = std::string("CHOICE ") + def.name + ": no alternative selected";
+            stream.set_encode_failed(reason.c_str());
+            return;
+        }
         int def_idx = pr - 1;
         int root_count = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
         bool in_ext = (spec.ext_at >= 0) && (def_idx >= root_count);
@@ -1198,7 +1208,7 @@ public:
             int bits = spec.constraints.range_bits;
             if (bits > 0) stream.put_bits(static_cast<uint64_t>(def_idx), bits, "CHO.index");
             const auto& alt = spec.alternatives[def_idx];
-            if (!alt.type_descriptor) return;
+            if (!alt.type_descriptor) { stream.set_encode_failed((std::string("CHOICE ") + def.name + ": alternative " + alt.name + " has no codec").c_str()); return; }
             IEncodeStream& es = stream;
             const Asn1Object* mptr = alt.get_const_fn(ch);
             codec.encode(es, *alt.type_descriptor, mptr);
@@ -1207,7 +1217,7 @@ public:
             // Generator emits extension alternatives in canonical tag order — ext_idx IS canonical.
             put_nsnn(stream, ext_idx);
             const auto& alt = spec.alternatives[def_idx];
-            if (!alt.type_descriptor) return;
+            if (!alt.type_descriptor) { stream.set_encode_failed((std::string("CHOICE ") + def.name + ": alternative " + alt.name + " has no codec").c_str()); return; }
             const Asn1Object* mptr = alt.get_const_fn(ch);
             encode_open_type(codec, stream, *alt.type_descriptor, mptr);
         }
@@ -1323,7 +1333,7 @@ void PerCodec::encode(IEncodeStream& dst,
 {
     validate_on_encode("PER", def, src);
     auto& stream = static_cast<PerEncodeStream&>(dst);
-    def.per_handler->encode(*this, stream, def, src);
+    (def.per_handler ? *def.per_handler : s_error).encode(*this, stream, def, src);
 }
 
 DecodeResult PerCodec::decode(IDecodeStream& src,
@@ -1331,7 +1341,7 @@ DecodeResult PerCodec::decode(IDecodeStream& src,
                               Asn1Object* dest) const
 {
     auto& stream = static_cast<PerDecodeStream&>(src);
-    DecodeResult res = def.per_handler->decode(*this, stream, def, dest);
+    DecodeResult res = (def.per_handler ? *def.per_handler : s_error).decode(*this, stream, def, dest);
     if (res.has_value()) validate_on_decode("PER", def, dest);
     return res;
 }

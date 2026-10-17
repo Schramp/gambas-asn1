@@ -373,8 +373,8 @@ struct TypeDescriptor {
     Constraints          constraints    = {};           ///< Value/size constraints (flags==0 = unconstrained).
     bool     is_any  = false;                          ///< True for ANY — raw BER bytes; open-type wrapper in PER.
     TypeKind kind    = TypeKind::Primitive;            ///< Codec dispatch discriminant.
-    const IPerTypeHandler* per_handler  = nullptr;     ///< Direct PER handler; null = fall back to PerCodec's LUT.
-    const IBerTypeHandler* ber_handler  = nullptr;     ///< Direct BER handler; null = fall back to BerCodec's LUT.
+    const IPerTypeHandler* per_handler  = nullptr;     ///< Direct PER handler; null = no PER codec (encode fails, decode errors).
+    const IBerTypeHandler* ber_handler  = nullptr;     ///< Direct BER handler; null = no BER codec (encode fails, decode errors).
     TypeLifecycleOps lifecycle;                        ///< Lifecycle ops for CHOICE emplace; default (all nullptrs) for non-CHOICE types.
     XerEncoding xer_encoding = XerEncoding::Default;  ///< XER serialisation mode (meaningful for OCTET STRING only).
     /// X.690 §8.14.3 — true when \c tag is an EXPLICIT override on this

@@ -26,6 +26,8 @@ public:
     explicit BerEncodeStream(BerWriter& w) : w_(w) {}
     /// @brief Access the underlying writer (used internally by \c BerCodec).
     BerWriter& writer() { return w_; }
+    /// @return True if any value failed to encode (see \c BerWriter::set_encode_failed).
+    bool encode_failed() const { return w_.encode_failed(); }
 };
 
 /// @brief \c IDecodeStream adapter over a \c BerReader.
