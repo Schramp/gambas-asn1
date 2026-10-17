@@ -13,7 +13,10 @@ const TYPES: &[&str] = &["__PDU_TYPE__"];
 
 fn slurp(mut r: impl Read) -> Vec<u8> {
     let mut buf = Vec::new();
-    r.read_to_end(&mut buf).expect("read failed");
+    if let Err(e) = r.read_to_end(&mut buf) {
+        eprintln!("read failed: {e}");
+        std::process::exit(1);
+    }
     buf
 }
 

@@ -12,6 +12,9 @@
 #include <sstream>
 #include <span>
 #include <asn1cpp/asn1cpp.hpp>
+#include <asn1cpp/codec/DecodeDepth.hpp>
+#include <asn1cpp/codec/JerCodec.hpp>
+#include <asn1cpp/codec/PerCodec.hpp>
 #include "RecChoice.hpp"
 
 using namespace asn1;
@@ -44,6 +47,69 @@ static std::string xer_enc(const TypeDescriptor& def, const Asn1Object* p) {
 static bool xer_dec(const std::string& xml, const TypeDescriptor& def, Asn1Object* p) {
     XerDecodeStream s{xml};
     return XerCodec::instance().decode(s, def, p).has_value();
+}
+
+
+// A RecChoice nested `levels` deep: c(c(...c(a(5))...)). Built directly
+// rather than encoded, so a depth no encoder would survive can be tested.
+static std::vector<uint8_t> deep_ber(int levels) {
+    std::vector<uint8_t> v{0x80, 0x01, 0x05};
+    for (int i = 0; i < levels; ++i) {
+        std::vector<uint8_t> len;
+        std::size_t n = v.size();
+        if (n < 128) len.push_back(static_cast<uint8_t>(n));
+        else {
+            std::vector<uint8_t> b;
+            for (; n; n >>= 8) b.insert(b.begin(), static_cast<uint8_t>(n));
+            len.push_back(static_cast<uint8_t>(0x80 | b.size()));
+            len.insert(len.end(), b.begin(), b.end());
+        }
+        std::vector<uint8_t> w{0xA2};
+        w.insert(w.end(), len.begin(), len.end());
+        w.insert(w.end(), v.begin(), v.end());
+        v.swap(w);
+    }
+    return v;
+}
+
+static std::string deep_xer(int levels) {
+    std::string s = "<RecChoice>";
+    for (int i = 0; i < levels; ++i) s += "<c>";
+    s += "<a>5</a>";
+    for (int i = 0; i < levels; ++i) s += "</c>";
+    return s + "</RecChoice>";
+}
+
+static std::string deep_jer(int levels) {
+    std::string s;
+    for (int i = 0; i < levels; ++i) s += "{\"c\":";
+    s += "{\"a\":5}";
+    return s + std::string(levels, '}');
+}
+
+// UPER: CHOICE index '10' (c) per level, then '00' (a), then INTEGER 5
+// as an unconstrained whole number (length 1, one octet).
+static std::vector<uint8_t> deep_per(int levels) {
+    std::vector<bool> bits;
+    for (int i = 0; i < levels; ++i) { bits.push_back(1); bits.push_back(0); }
+    bits.push_back(0); bits.push_back(0);
+    for (uint8_t b : {uint8_t{1}, uint8_t{5}})
+        for (int k = 7; k >= 0; --k) bits.push_back((b >> k) & 1);
+    std::vector<uint8_t> out((bits.size() + 7) / 8, 0);
+    for (std::size_t i = 0; i < bits.size(); ++i)
+        if (bits[i]) out[i / 8] |= static_cast<uint8_t>(0x80 >> (i % 8));
+    return out;
+}
+
+static bool jer_dec(const std::string& json, const TypeDescriptor& def, Asn1Object* p) {
+    JerDecodeStream s{json};
+    return JerCodec::instance().decode(s, def, p).has_value();
+}
+
+static bool per_dec(std::span<const uint8_t> bytes, const TypeDescriptor& def, Asn1Object* p) {
+    PerDecodeStream s{bytes};
+    IDecodeStream& ds = s;
+    return PerCodec::instance().decode(ds, def, p).has_value();
 }
 
 static RecChoice make_leaf(int64_t v) {
@@ -170,6 +236,23 @@ int main() {
         copy_ctor.c().a() = Integer{999};
         check("copy independent of original",
               (int64_t)enc.c().a() == 123 && (int64_t)copy_ctor.c().a() == 999);
+    }
+
+    // --- Decode nesting limit: a forged deeply nested input is rejected
+    // with an error in every codec instead of overflowing the stack. ---
+    printf("\nRecChoice — decode nesting limit (kMaxDecodeDepth = %d)\n", kMaxDecodeDepth);
+    for (int levels : {kMaxDecodeDepth - 2, 100000}) {
+        bool within = levels < kMaxDecodeDepth;
+        char label[128];
+        auto expect = [&](const char* codec, bool ok) {
+            std::snprintf(label, sizeof(label), "%s decode of %d levels %s", codec, levels,
+                          within ? "succeeds" : "is an error");
+            check(label, ok == within);
+        };
+        { RecChoice d; auto b = deep_ber(levels); expect("BER", ber_dec(b, RecChoice::asn_DEF, &d)); }
+        { RecChoice d; expect("XER", xer_dec(deep_xer(levels), RecChoice::asn_DEF, &d)); }
+        { RecChoice d; expect("JER", jer_dec(deep_jer(levels), RecChoice::asn_DEF, &d)); }
+        { RecChoice d; auto b = deep_per(levels); expect("PER", per_dec(b, RecChoice::asn_DEF, &d)); }
     }
 
     printf("\n%s  %d failure(s)\n", failures ? "\033[31mFAIL\033[0m" : "\033[32mPASS\033[0m", failures);
