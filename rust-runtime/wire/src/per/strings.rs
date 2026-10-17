@@ -30,21 +30,7 @@ use crate::per::length::{decode_size_and_items, encode_size_and_items};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 
-/// Encode failure — a constraint violation detected during encode (SIZE
-/// range, natural-alphabet membership). Mirrors the *meaning* of
-/// `PerEncodeStream::set_encode_failed`, as a `Result` rather than an
-/// out-of-band flag on the stream — more idiomatic for a fresh Rust API
-/// with no existing flag-based convention to match yet.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EncodeError {
-    pub message: String,
-}
-
-impl EncodeError {
-    pub fn new(message: impl Into<String>) -> EncodeError {
-        EncodeError { message: message.into() }
-    }
-}
+pub use crate::encode_error::EncodeError;
 
 /// NumericString: space=0, '0'-'9'=1-10 (4 bits per character).
 fn encode_numeric_char(c: u8) -> u8 {

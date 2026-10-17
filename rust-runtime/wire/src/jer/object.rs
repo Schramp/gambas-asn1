@@ -2,24 +2,34 @@
 //! JER counterpart of `ber::object`.
 
 use crate::ber::reader::DecodeError;
+use crate::encode_error::EncodeError;
 use crate::jer::reader::Reader;
 use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
 use crate::spec::primitive::{jer_decode_primitive, jer_encode_primitive};
 
-fn encode_bare(m: MemberRef, out: &mut String) {
+/// @brief Writes one value's JER form, dispatching on its reflective shape.
+/// @return `Err` for a member or alternative codegen marked unsupported,
+///         or a primitive kind with no JER form.
+/// @see X.697 — JSON encoding rules.
+fn encode_bare(m: MemberRef, out: &mut String) -> Result<(), EncodeError> {
     match m {
-        MemberRef::Absent => {}
+        MemberRef::Absent => Ok(()),
+        MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => jer_encode_primitive(p, out),
         MemberRef::Composite(inner) => encode_seq_into(inner, out),
         MemberRef::Choice(inner) => encode_choice_into(inner, out),
         MemberRef::SeqOf(inner) => encode_seqof_into(inner, out),
-        MemberRef::Enumerated(slot, spec) => crate::jer::enumerated::jer_encode_enum(out, spec, slot.enum_get()),
+        MemberRef::Enumerated(slot, spec) => {
+            crate::jer::enumerated::jer_encode_enum(out, spec, slot.enum_get());
+            Ok(())
+        }
     }
 }
 
 fn decode_bare(m: MemberRefMut, r: &mut Reader) -> Result<(), DecodeError> {
     match m {
         MemberRefMut::Absent => Ok(()),
+        MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, r.pos())),
         MemberRefMut::Primitive(p) => jer_decode_primitive(p, r),
         MemberRefMut::Composite(inner) => decode_seq_into(inner, r),
         MemberRefMut::Choice(inner) => decode_choice_into(inner, r),
@@ -32,7 +42,7 @@ fn decode_bare(m: MemberRefMut, r: &mut Reader) -> Result<(), DecodeError> {
 // SEQUENCE / SET
 // ---------------------------------------------------------------------
 
-pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String) {
+pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String) -> Result<(), EncodeError> {
     let spec = obj.spec();
     let mut first = true;
     for (i, m) in spec.members.iter().enumerate() {
@@ -47,20 +57,22 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String) {
         out.push('"');
         out.push_str(m.name);
         out.push_str("\":");
-        encode_bare(member, out);
+        encode_bare(member, out)?;
     }
+    Ok(())
 }
 
-pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut String) {
+pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut String) -> Result<(), EncodeError> {
     out.push('{');
-    encode_seq_content(obj, out);
+    encode_seq_content(obj, out)?;
     out.push('}');
+    Ok(())
 }
 
-pub fn encode_seq(obj: &dyn Asn1Seq) -> String {
+pub fn encode_seq(obj: &dyn Asn1Seq) -> Result<String, EncodeError> {
     let mut out = String::new();
-    encode_seq_into(obj, &mut out);
-    out
+    encode_seq_into(obj, &mut out)?;
+    Ok(out)
 }
 
 /// Decodes a complete JER object (including its own `{`/`}`) into an
@@ -107,17 +119,18 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Deco
 
 /// `{"altname":value}` — single-key object, self-delimiting like every
 /// other JER value (X.697 §11).
-pub fn encode_choice_into(obj: &dyn Asn1Choice, out: &mut String) {
+pub fn encode_choice_into(obj: &dyn Asn1Choice, out: &mut String) -> Result<(), EncodeError> {
     let Some(i) = obj.active_index() else {
         out.push_str("{}");
-        return;
+        return Ok(());
     };
     let alt = &obj.spec().alternatives[i];
     out.push_str("{\"");
     out.push_str(alt.name);
     out.push_str("\":");
-    encode_bare(obj.get_active(), out);
+    encode_bare(obj.get_active(), out)?;
     out.push('}');
+    Ok(())
 }
 
 pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<(), DecodeError> {
@@ -142,15 +155,16 @@ pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
 // SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------
 
-pub fn encode_seqof_into(obj: &dyn Asn1SeqOf, out: &mut String) {
+pub fn encode_seqof_into(obj: &dyn Asn1SeqOf, out: &mut String) -> Result<(), EncodeError> {
     out.push('[');
     for i in 0..obj.len() {
         if i > 0 {
             out.push(',');
         }
-        encode_bare(obj.get(i), out);
+        encode_bare(obj.get(i), out)?;
     }
     out.push(']');
+    Ok(())
 }
 
 pub fn decode_seqof_into(obj: &mut dyn Asn1SeqOf, r: &mut Reader) -> Result<(), DecodeError> {
@@ -179,12 +193,13 @@ pub fn decode_seqof_into(obj: &mut dyn Asn1SeqOf, r: &mut Reader) -> Result<(), 
 /// @brief Encodes `v` as a complete JER document. JER has no root
 ///        wrapper, so this is exactly the value's own JSON encoding.
 /// @param v  Any generated SEQUENCE/SET/CHOICE/SEQUENCE OF type.
-/// @return The JSON text.
+/// @return The JSON text, or `Err` when `v` holds a value this runtime
+///         cannot encode in JER.
 /// @see X.697 §8 — top-level JSON value.
-pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> String {
+pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> Result<String, EncodeError> {
     let mut out = String::new();
-    encode_bare(v.as_member_ref(), &mut out);
-    out
+    encode_bare(v.as_member_ref(), &mut out)?;
+    Ok(out)
 }
 
 /// @brief Decodes a complete JER document into a fresh `T`.

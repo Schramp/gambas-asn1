@@ -34,7 +34,7 @@ fn check_rec<T>(label: &str, v: T, expected: &[u8], failures: &mut i32)
 where
     T: asn1cpp_wire::spec::object::Asn1Pdu + Default + PartialEq + std::fmt::Debug,
 {
-    check(&format!("{label} encodes"), asn1cpp_wire::per::object::encode_pdu(&v) == expected, failures);
+    check(&format!("{label} encodes"), asn1cpp_wire::per::object::encode_pdu(&v).unwrap() == expected, failures);
     let back = asn1cpp_wire::per::object::decode_pdu::<T>(expected);
     check(&format!("{label} decodes"), back.as_ref().is_ok_and(|b| *b == v), failures);
 }
