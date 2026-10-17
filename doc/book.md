@@ -657,6 +657,41 @@ for (auto& fail : report.failures())
     std::cerr << fail.path << ": " << fail.type_name << "\n";
 ```
 
+### Error Handling
+
+Neither runtime aborts the process on anything a caller can trigger. A
+record the codec cannot handle fails that one encode or decode; the
+process keeps running and the next record is unaffected.
+
+**Decode** returns an error in both runtimes: C++ `ICodec::decode` returns
+`Expected<void, DecodeError>`, Rust `<codec>::object::decode_pdu` returns
+`Result<T, DecodeError>` (PER: `per::reader::DecodeError`).
+
+**Encode** reports a failure the caller must check:
+
+| Runtime | How encode failure is reported |
+|---------|-------------------------------|
+| C++ | `PerEncodeStream::encode_failed()` after `PerCodec::encode` |
+| Rust | `ber`/`xer`/`jer`/`per::object::encode_pdu` return `Result<_, EncodeError>`; `encode_pdu_into` returns `Result<(), EncodeError>` and leaves a partial record in the buffer, to be discarded |
+
+Causes of a per-record error:
+
+- **Malformed input** — truncated or inconsistent TLVs, wrong tags, bad XML/JSON (decode).
+- **A schema construct the Rust runtime does not support** — e.g. an
+  untagged `ANY` between other members, which has no tag to detect it by.
+  Code generation still emits the type; any encode or decode that reaches
+  the member fails with `member '<name>' not supported: <reason>`
+  (`alternative '<name>' not supported` for a CHOICE alternative).
+- **A PER constraint violation** — a character string outside its SIZE or
+  permitted alphabet cannot be represented in PER, so PER encode fails
+  (`string length violates SIZE constraint`, `character not in FROM alphabet`, ...).
+  BER/XER/JER still encode such a value and only count the violation (see
+  Constraint Validation above).
+
+The cross-validation tools (`ber-to-xer`, `xer-to-ber`, ...) print one line
+per failed record (`BER decode failed record #N ...`, `XER encode failed
+record #N ...`) and exit 1; a panic, abort or signal is always a bug.
+
 ### Traversing a Decoded Object by Type
 
 `TypedVisitor` walks a fully-decoded object tree once and fires a callback for

@@ -67,7 +67,7 @@ fn xer_decode(xml: &str) -> Option<PDU::PDU> {
 }
 
 fn xer_encode(val: &PDU::PDU) -> String {
-    asn1cpp_wire::xer::object::encode_pdu(val)
+    asn1cpp_wire::xer::object::encode_pdu(val).unwrap()
 }
 
 enum Expect {
@@ -138,7 +138,7 @@ fn process_inner(path: &Path, name: &str) -> (bool, i32) {
     check(&format!("{name}  XER decode ok"), decoded.is_some(), &mut failures);
     let Some(val) = decoded else { return (false, failures) };
 
-    let ber = asn1cpp_wire::ber::object::encode_pdu(&val);
+    let ber = asn1cpp_wire::ber::object::encode_pdu(&val).unwrap();
     check(&format!("{name}  BER encode non-empty"), !ber.is_empty(), &mut failures);
     if ber.is_empty() {
         return (false, failures);

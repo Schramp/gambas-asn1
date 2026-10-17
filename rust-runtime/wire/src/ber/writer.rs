@@ -60,13 +60,16 @@ pub fn write_constructed(out: &mut Vec<u8>, t: Tag, content: &[u8]) {
 /// memmove-based collapse — same technique, used for every tag here since
 /// Rust's single `ber_encode_tagged` funnel handles leaf and constructed
 /// TLVs alike, unlike C++'s separate `write_primitive`/`write_constructed`).
-pub fn write_tagged(out: &mut Vec<u8>, t: Tag, fill: impl FnOnce(&mut Vec<u8>)) {
+/// Returns whatever `fill` returns, so a fallible walker
+/// (`ber::object`, `Result<(), EncodeError>`) propagates its error through
+/// the TLV it was writing; the length is back-filled either way.
+pub fn write_tagged<R>(out: &mut Vec<u8>, t: Tag, fill: impl FnOnce(&mut Vec<u8>) -> R) -> R {
     write_tag(out, t);
     let len_pos = out.len();
     out.resize(len_pos + 3, 0);
     let content_start = out.len();
 
-    fill(out);
+    let result = fill(out);
 
     let content_size = out.len() - content_start;
     if content_size < 128 {
@@ -92,6 +95,7 @@ pub fn write_tagged(out: &mut Vec<u8>, t: Tag, fill: impl FnOnce(&mut Vec<u8>)) 
         out[len_pos + 2] = ((content_size >> 8) & 0xFF) as u8;
         out[len_pos + 3] = (content_size & 0xFF) as u8;
     }
+    result
 }
 
 /// EXPLICIT tagging (X.690 §8.14.3) — a constructed outer
@@ -103,8 +107,8 @@ pub fn write_tagged(out: &mut Vec<u8>, t: Tag, fill: impl FnOnce(&mut Vec<u8>)) 
 /// it — generic over the inner type since EXPLICIT wrapping only cares
 /// about the already-encoded bytes, not what produced them (mirrors the
 /// C++ runtime's `ber_encode_explicit_tagged`, `BerCodec.cpp`).
-pub fn write_explicit(out: &mut Vec<u8>, tag: Tag, inner_encode: impl FnOnce(&mut Vec<u8>)) {
-    write_tagged(out, tag, inner_encode);
+pub fn write_explicit<R>(out: &mut Vec<u8>, tag: Tag, inner_encode: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+    write_tagged(out, tag, inner_encode)
 }
 
 #[cfg(test)]

@@ -50,7 +50,7 @@ fn check_rec(label: &str, v: [&str; 8], expected: &[u8], f: &mut i32) {
         typed: SizedFlags::SizedFlags(bits(v[6])),
         plain: bits(v[7]),
     };
-    check(&format!("{label} encodes"), asn1cpp_wire::per::object::encode_pdu(&rec) == expected, f);
+    check(&format!("{label} encodes"), asn1cpp_wire::per::object::encode_pdu(&rec).unwrap() == expected, f);
     // The BER encoder runs each member's constraint check.
     asn1cpp_wire::validate::reset_validate_fail_count();
     let _ = asn1cpp_wire::ber::object::encode_pdu(&rec);
