@@ -282,7 +282,7 @@ fn choice_root_count(obj: &dyn Asn1Choice) -> usize {
 /// @see X.691 §23.
 pub fn encode_choice_content(obj: &dyn Asn1Choice, w: &mut Writer) -> Result<(), EncodeError> {
     let Some(def_idx) = obj.active_index() else {
-        return Ok(()); // codegen-bug backstop: no alternative matched a real generated enum.
+        return Err(crate::spec::object::no_alternative_selected(obj.spec()));
     };
     let alt = &obj.spec().alternatives[def_idx];
     let root_count = choice_root_count(obj);

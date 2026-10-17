@@ -121,8 +121,7 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Deco
 /// other JER value (X.697 §11).
 pub fn encode_choice_into(obj: &dyn Asn1Choice, out: &mut String) -> Result<(), EncodeError> {
     let Some(i) = obj.active_index() else {
-        out.push_str("{}");
-        return Ok(());
+        return Err(crate::spec::object::no_alternative_selected(obj.spec()));
     };
     let alt = &obj.spec().alternatives[i];
     out.push_str("{\"");

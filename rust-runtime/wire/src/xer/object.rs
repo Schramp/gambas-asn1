@@ -169,7 +169,7 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut XerReader) -> Result<(), D
 /// further-nested recursion needs.
 pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usize) -> Result<(), EncodeError> {
     let Some(i) = obj.active_index() else {
-        panic!("encode_choice: no alternative matched — codegen/table mismatch");
+        return Err(crate::spec::object::no_alternative_selected(obj.spec()));
     };
     let alt = &obj.spec().alternatives[i];
     let active = obj.get_active();

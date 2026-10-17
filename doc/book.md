@@ -687,6 +687,11 @@ Causes of a per-record error:
   `BigInteger`/`ArbitraryInteger` (`XER encoding not supported for ANY`, ...).
   Code generation does not select these storage kinds today; the errors
   guard direct use of the runtime types.
+- **A CHOICE with no alternative to encode** — a Rust extensible CHOICE
+  holding an alternative the schema does not define (`UnknownExtension`,
+  kept on decode, X.680 §29.6) re-encodes in BER (the captured TLV is
+  replayed) but fails XER/JER/PER encode with `CHOICE <name>: no
+  alternative selected`.
 - **A PER constraint violation** — a character string outside its SIZE or
   permitted alphabet cannot be represented in PER, so PER encode fails
   (`string length violates SIZE constraint`, `character not in FROM alphabet`, ...).
