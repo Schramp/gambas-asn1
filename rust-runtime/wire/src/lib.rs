@@ -26,6 +26,7 @@ pub mod bit_string;
 pub mod boolean;
 pub mod constraints;
 pub mod debug;
+pub mod encode_error;
 pub mod integer;
 pub mod jer;
 pub mod null;
@@ -42,4 +43,5 @@ pub mod value;
 pub mod xer;
 
 pub use ber::reader::{DecodeError, Reader, Tlv};
+pub use encode_error::EncodeError;
 pub use ber::tag::{Tag, TagClass};

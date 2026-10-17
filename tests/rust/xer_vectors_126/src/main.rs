@@ -23,7 +23,7 @@ fn decode_sequence_xer_pdu(xml: &str) -> Result<PDU::PDU, asn1cpp_wire::DecodeEr
     asn1cpp_wire::xer::object::decode_pdu(xml)
 }
 fn encode_sequence_xer_pdu(val: &PDU::PDU) -> String {
-    asn1cpp_wire::xer::object::encode_pdu(val)
+    asn1cpp_wire::xer::object::encode_pdu(val).unwrap()
 }
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -63,7 +63,7 @@ fn strip_ws(s: &str) -> String {
 }
 
 fn per_encode(val: &PDU::PDU) -> Vec<u8> {
-    asn1cpp_wire::per::object::encode_pdu(val)
+    asn1cpp_wire::per::object::encode_pdu(val).unwrap()
 }
 
 fn per_decode(bytes: &[u8]) -> bool {

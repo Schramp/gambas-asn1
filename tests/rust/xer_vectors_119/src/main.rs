@@ -10,13 +10,8 @@
 //   - (none) files: round-trip must succeed; output must equal input
 //     (whitespace-stripped).
 //   - -P files: PER-incompatible input (alphabet/size constraint
-//     violation); the C++ leg's PerCodec rejects these (encode_failed()).
-//     Rust's per_encode has no equivalent failure signal yet — every
-//     char_string_type! impl's per_encode discards the Result its own
-//     encode_string/validate_size returns instead of propagating it
-//     (see per/strings.rs's own per_encode call site) — so these can't be
-//     asserted the same way here. Counted as Rust-only skips, not
-//     failures, until that gap (gambas-asn1#514) closes.
+//     violation); UPER encode must be rejected — `per::object::encode_pdu`
+//     returns `Err`, as the C++ leg's PerCodec sets `encode_failed()`.
 #![allow(non_snake_case)]
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
@@ -25,7 +20,7 @@ fn decode_sequence_xer_pdu(xml: &str) -> Result<PDU::PDU, asn1cpp_wire::DecodeEr
     asn1cpp_wire::xer::object::decode_pdu(xml)
 }
 fn encode_sequence_xer_pdu(val: &PDU::PDU) -> String {
-    asn1cpp_wire::xer::object::encode_pdu(val)
+    asn1cpp_wire::xer::object::encode_pdu(val).unwrap()
 }
 use std::collections::HashSet;
 use std::fs;
@@ -41,9 +36,7 @@ fn check(label: &str, cond: bool, failures: &mut i32) {
 }
 
 // -P files: PER-incompatible by design (alphabet or SIZE constraint
-// violation) — same set as the C++ leg's KNOWN_P, but here it's a skip
-// set: Rust's per_encode has no failure signal to assert against (see
-// module doc).
+// violation) — same set as the C++ leg's KNOWN_P; UPER encode must fail.
 fn known_p() -> HashSet<&'static str> {
     [
         "data-119-04-P.in",
@@ -79,7 +72,7 @@ fn strip_ws(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-fn per_encode(val: &PDU::PDU) -> Vec<u8> {
+fn per_encode(val: &PDU::PDU) -> Result<Vec<u8>, asn1cpp_wire::EncodeError> {
     asn1cpp_wire::per::object::encode_pdu(val)
 }
 
@@ -91,7 +84,7 @@ fn per_decode(bytes: &[u8]) -> Result<PDU::PDU, asn1cpp_wire::per::reader::Decod
 fn process(path: &Path, p_skip: &HashSet<&str>, rust_skip: &HashSet<&str>, failures: &mut i32) -> bool {
     let name = path.file_name().unwrap().to_string_lossy().to_string();
 
-    if p_skip.contains(name.as_str()) || rust_skip.contains(name.as_str()) {
+    if rust_skip.contains(name.as_str()) {
         println!("  \x1b[33mSKIP\x1b[0m  {name}");
         return true;
     }
@@ -100,7 +93,8 @@ fn process(path: &Path, p_skip: &HashSet<&str>, rust_skip: &HashSet<&str>, failu
     // stubbed/unimplemented at runtime — catch here so one genuine gap
     // doesn't take down the whole sweep; reported as a FAIL like any
     // other unmet expectation, not silently absorbed.
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| process_inner(path, &name)));
+    let is_p = p_skip.contains(name.as_str());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| process_inner(path, &name, is_p)));
     match result {
         Ok(local_failures) => {
             *failures += local_failures;
@@ -119,15 +113,23 @@ fn process(path: &Path, p_skip: &HashSet<&str>, rust_skip: &HashSet<&str>, failu
     }
 }
 
-fn process_inner(path: &Path, name: &str) -> i32 {
+fn process_inner(path: &Path, name: &str, is_p: bool) -> i32 {
     let mut failures = 0;
-    let input = fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    // Lossy: a -P fixture may carry bytes outside UTF-8 (the C++ leg reads
+    // raw bytes); they become U+FFFD, still outside every PER alphabet.
+    let raw = fs::read(path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    let input = String::from_utf8_lossy(&raw).into_owned();
 
     let decoded = decode_sequence_xer_pdu(&input);
     check(&format!("{name}  XER decode ok"), decoded.is_ok(), &mut failures);
     let Ok(val) = decoded else { return failures };
 
     let per = per_encode(&val);
+    if is_p {
+        check(&format!("{name}  UPER encode rejected (constraint violation)"), per.is_err(), &mut failures);
+        return failures;
+    }
+    let per = per.unwrap_or_default();
     check(&format!("{name}  UPER encode non-empty"), !per.is_empty(), &mut failures);
     if per.is_empty() {
         return failures;

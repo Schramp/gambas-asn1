@@ -38,7 +38,7 @@ fn main() {
 
     // Depth 1: RecChoice = c(a(7)).
     let r = RecChoiceT::c(Box::new(RecChoiceT::a(asn1cpp_wire::integer::Integer(7))));
-    let bytes = asn1cpp_wire::ber::object::encode_pdu(&r);
+    let bytes = asn1cpp_wire::ber::object::encode_pdu(&r).unwrap();
     let expected: &[u8] = &[0xa0, 0x05, 0xa2, 0x03, 0x80, 0x01, 0x07];
     check("depth-1 BER matches asn1c ground truth", bytes == expected, &mut failures);
 
@@ -46,19 +46,19 @@ fn main() {
     check("depth-1 BER decode ok", back.is_ok(), &mut failures);
     check("depth-1 BER round-trip", back == Ok(r.clone()), &mut failures);
 
-    let bytes2 = asn1cpp_wire::ber::object::encode_pdu(&back.unwrap());
+    let bytes2 = asn1cpp_wire::ber::object::encode_pdu(&back.unwrap()).unwrap();
     check("depth-1 BER idempotent", bytes == bytes2, &mut failures);
 
     // Depth 3: RecChoice = c(c(c(b(99)))).
     let r3 = RecChoiceT::c(Box::new(RecChoiceT::c(Box::new(RecChoiceT::c(Box::new(RecChoiceT::b(asn1cpp_wire::integer::Integer(99))))))));
-    let bytes3 = asn1cpp_wire::ber::object::encode_pdu(&r3);
+    let bytes3 = asn1cpp_wire::ber::object::encode_pdu(&r3).unwrap();
     let back3 = asn1cpp_wire::ber::object::decode_pdu::<RecChoiceT>(&bytes3);
     check("depth-3 BER decode ok", back3.is_ok(), &mut failures);
     check("depth-3 BER round-trip", back3 == Ok(r3), &mut failures);
 
     // XER round-trip.
     let rx = RecChoiceT::c(Box::new(RecChoiceT::a(asn1cpp_wire::integer::Integer(-13))));
-    let xml = asn1cpp_wire::xer::object::encode_pdu(&rx);
+    let xml = asn1cpp_wire::xer::object::encode_pdu(&rx).unwrap();
     check("XER encode non-empty", !xml.is_empty(), &mut failures);
     let back_xml = asn1cpp_wire::xer::object::decode_pdu::<RecChoiceT>(&xml);
     check("XER decode ok", back_xml.is_ok(), &mut failures);

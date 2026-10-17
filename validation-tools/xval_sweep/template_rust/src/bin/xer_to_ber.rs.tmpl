@@ -52,9 +52,13 @@ fn split_xer_records(text: &str) -> Vec<String> {
     records
 }
 
-fn decode_and_encode(type_name: &str, xml: &str) -> Result<Vec<u8>, asn1cpp_wire::DecodeError> {
+fn decode_and_encode(type_name: &str, xml: &str) -> Result<Vec<u8>, String> {
     match type_name {
-        "__PDU_TYPE__" => Ok(asn1cpp_wire::ber::object::encode_pdu(&asn1cpp_wire::xer::object::decode_pdu::<randgen_rust::__PDU_MODULE__::__PDU_IDENT__>(xml)?)),
+        "__PDU_TYPE__" => {
+            let v = asn1cpp_wire::xer::object::decode_pdu::<randgen_rust::__PDU_MODULE__::__PDU_IDENT__>(xml)
+                .map_err(|e| format!("XER decode failed: {}", e.message))?;
+            asn1cpp_wire::ber::object::encode_pdu(&v).map_err(|e| format!("BER encode failed: {}", e.message))
+        }
         _ => unreachable!("checked by caller"),
     }
 }
@@ -109,7 +113,7 @@ fn main() {
                 n += 1;
             }
             Err(e) => {
-                eprintln!("XER decode failed record #{n}: {}", e.message);
+                eprintln!("record #{n}: {e}");
                 errors += 1;
             }
         }

@@ -38,9 +38,9 @@ fn main() {
     check("BER decode, canonical order", b.as_ref().is_ok_and(is_expected), &mut failures);
     if let Ok(v) = &a {
         check("BER encode writes canonical order (asn1c DER)",
-              asn1cpp_wire::ber::object::encode_pdu(v) == canonical_order, &mut failures);
+              asn1cpp_wire::ber::object::encode_pdu(v).unwrap() == canonical_order, &mut failures);
         check("PER encodes root components in canonical order (asn1c UPER 63 90)",
-              asn1cpp_wire::per::object::encode_pdu(v) == vec![0x63, 0x90], &mut failures);
+              asn1cpp_wire::per::object::encode_pdu(v).unwrap() == vec![0x63, 0x90], &mut failures);
     }
 
     println!("\n{} ({failures} failure{})", if failures > 0 { "FAILED" } else { "PASSED" }, if failures == 1 { "" } else { "s" });

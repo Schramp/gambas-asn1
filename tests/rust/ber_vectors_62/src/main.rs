@@ -92,7 +92,7 @@ fn process(path: &Path, lenient: &HashSet<&str>, failures: &mut i32) -> bool {
     };
 
     // Re-encode and compare.
-    let reenc = asn1cpp_wire::ber::object::encode_pdu(&val);
+    let reenc = asn1cpp_wire::ber::object::encode_pdu(&val).unwrap();
     match exp {
         Expect::Ok => check(&format!("{name}  re-encode byte-identical"), reenc == raw, failures),
         Expect::Recless => {

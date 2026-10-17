@@ -111,9 +111,12 @@ pub struct ChoiceSpec {
 
 /// A borrowed member/alternative/element value, tagged by shape.
 /// `Absent` covers a genuinely-missing OPTIONAL member (a `PrimitiveRef`
-/// can't represent that itself).
+/// can't represent that itself). `Unsupported` is a member or alternative
+/// codegen has no runtime representation for; it carries the full
+/// diagnostic, and every codec walker turns it into an encode/decode error.
 pub enum MemberRef<'a> {
     Absent,
+    Unsupported(&'static str),
     Primitive(PrimitiveRef<'a>),
     Composite(&'a dyn Asn1Seq),
     Choice(&'a dyn Asn1Choice),
@@ -123,6 +126,7 @@ pub enum MemberRef<'a> {
 
 pub enum MemberRefMut<'a> {
     Absent,
+    Unsupported(&'static str),
     Primitive(PrimitiveRefMut<'a>),
     Composite(&'a mut dyn Asn1Seq),
     Choice(&'a mut dyn Asn1Choice),
@@ -138,6 +142,7 @@ pub enum MemberRefMut<'a> {
 pub fn natural_xer_name_of(m: MemberRef) -> &'static str {
     match m {
         MemberRef::Absent => unreachable!("an absent member has no natural XER name to ask for"),
+        MemberRef::Unsupported(_) => "Unsupported",
         MemberRef::Primitive(p) => crate::spec::primitive::xer_element_name_of(p),
         MemberRef::Composite(inner) => inner.spec().name,
         MemberRef::Choice(inner) => inner.spec().name,

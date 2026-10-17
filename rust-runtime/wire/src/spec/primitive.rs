@@ -53,6 +53,7 @@ use crate::per::reader::{DecodeError as PerDecodeError, Reader as PerReader};
 use crate::per::writer::Writer as PerWriter;
 use crate::xer::reader::XerReader;
 use crate::spec::choice::BerTagging;
+use crate::encode_error::EncodeError;
 
 /// Invokes `$m!` once per builtin leaf kind with `(Variant, Type)` pairs —
 /// the single source of truth for `PrimitiveRef`/`PrimitiveRefMut` and
@@ -307,22 +308,26 @@ fn ber_decode_explicit_(p: PrimitiveRefMut, tag: Tag, r: &mut BerReader) -> Resu
 /// primitive still needs, since `BerTagging::{Implicit,Explicit}` is a
 /// codegen-time fact (the `[n]` on *this* member), not a property of
 /// the enum variant.
-pub fn ber_encode_primitive(p: PrimitiveRef, framing: BerTagging, out: &mut Vec<u8>) {
+/// @return `Err` for a row codegen marked `BerTagging::Unsupported`.
+pub fn ber_encode_primitive(p: PrimitiveRef, framing: BerTagging, out: &mut Vec<u8>) -> Result<(), EncodeError> {
     match framing {
         BerTagging::Implicit(tag) => ber_encode_tagged_(p, tag, out),
         BerTagging::Explicit(tag) => ber_encode_explicit_(p, tag, out),
         BerTagging::Delegate => ber_encode_plain(p, out),
-        BerTagging::Unsupported(reason) => panic!("primitive not supported: {reason}"),
+        BerTagging::Unsupported(reason) => return Err(EncodeError::new(format!("primitive not supported: {reason}"))),
     }
+    Ok(())
 }
 
 /// Decode counterpart of [`ber_encode_primitive`].
+/// @return `Err` on malformed BER, a tag mismatch, or a row codegen
+///         marked `BerTagging::Unsupported`.
 pub fn ber_decode_primitive(p: PrimitiveRefMut, framing: BerTagging, r: &mut BerReader) -> Result<(), BerDecodeError> {
     match framing {
         BerTagging::Implicit(tag) => ber_decode_tagged_(p, tag, r),
         BerTagging::Explicit(tag) => ber_decode_explicit_(p, tag, r),
         BerTagging::Delegate => ber_decode_plain(p, r),
-        BerTagging::Unsupported(reason) => panic!("primitive not supported: {reason}"),
+        BerTagging::Unsupported(reason) => Err(BerDecodeError::new(format!("primitive not supported: {reason}"), r.pos())),
     }
 }
 
@@ -334,7 +339,7 @@ pub fn ber_decode_primitive(p: PrimitiveRefMut, framing: BerTagging, r: &mut Ber
 /// element names are fixed per type, same for every tagging the BER side
 /// might apply to this same member). `ArbitraryInteger`/`Any` have no
 /// defined XER form (nothing generates one today), so they panic.
-pub fn xer_encode_primitive(p: PrimitiveRef, out: &mut String, depth: usize) {
+pub fn xer_encode_primitive(p: PrimitiveRef, out: &mut String, depth: usize) -> Result<(), EncodeError> {
     match p {
         PrimitiveRef::Boolean(x) => crate::xer::boolean::encode(x.0, out),
         PrimitiveRef::Integer(x) => crate::xer::integer::encode(x.0, out),
@@ -363,6 +368,7 @@ pub fn xer_encode_primitive(p: PrimitiveRef, out: &mut String, depth: usize) {
         PrimitiveRef::UtcTime(x) => crate::xer::writer::escape(&x.0, out),
         PrimitiveRef::GeneralizedTime(x) => crate::xer::writer::escape(&x.0, out),
     }
+    Ok(())
 }
 
 pub fn xer_decode_primitive(p: PrimitiveRefMut, r: &mut XerReader) -> Result<(), BerDecodeError> {
@@ -431,7 +437,7 @@ pub fn xer_element_name_of(p: PrimitiveRef) -> &'static str {
 // JER (X.697)
 // ---------------------------------------------------------------------
 
-pub fn jer_encode_primitive(p: PrimitiveRef, out: &mut String) {
+pub fn jer_encode_primitive(p: PrimitiveRef, out: &mut String) -> Result<(), EncodeError> {
     match p {
         PrimitiveRef::Boolean(x) => out.push_str(if x.0 { "true" } else { "false" }),
         PrimitiveRef::Integer(x) => crate::jer::integer::encode(x.0, out),
@@ -460,6 +466,7 @@ pub fn jer_encode_primitive(p: PrimitiveRef, out: &mut String) {
         PrimitiveRef::UtcTime(x) => crate::jer::strings::encode_plain(&x.0, out),
         PrimitiveRef::GeneralizedTime(x) => crate::jer::strings::encode_plain(&x.0, out),
     }
+    Ok(())
 }
 
 pub fn jer_decode_primitive(p: PrimitiveRefMut, r: &mut JerReader) -> Result<(), BerDecodeError> {
@@ -520,7 +527,12 @@ pub fn jer_decode_primitive(p: PrimitiveRefMut, r: &mut JerReader) -> Result<(),
 // PER (X.691, unaligned)
 // ---------------------------------------------------------------------
 
-pub fn per_encode_primitive(p: PrimitiveRef, w: &mut PerWriter, c: &crate::constraints::Constraints) {
+/// @brief PER encode for a primitive member/alternative/element.
+/// @return `Err` on a SIZE or alphabet violation of a character string
+///         (X.691 §30), which PER cannot represent.
+pub fn per_encode_primitive(p: PrimitiveRef, w: &mut PerWriter, c: &crate::constraints::Constraints) -> Result<(), EncodeError> {
+    use crate::ber::tag::universal as u;
+    let s = |w: &mut PerWriter, tag, b: &[u8]| crate::per::strings::encode_string(w, c, tag, b);
     match p {
         PrimitiveRef::Boolean(x) => w.put_bits(x.0 as u64, 1),
         PrimitiveRef::Integer(x) => crate::per::integer::encode_int(w, c, x.0),
@@ -534,21 +546,22 @@ pub fn per_encode_primitive(p: PrimitiveRef, w: &mut PerWriter, c: &crate::const
         PrimitiveRef::ObjectIdentifier(x) => crate::per::oid::encode(x, w),
         PrimitiveRef::RelativeOid(x) => crate::per::relative_oid::encode(x, w),
         PrimitiveRef::Any(x) => crate::per::any::encode(&x.0, w),
-        PrimitiveRef::Utf8String(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::UTF8_STRING, x.0.as_bytes()); }
-        PrimitiveRef::NumericString(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::NUMERIC_STRING, x.0.as_bytes()); }
-        PrimitiveRef::PrintableString(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::PRINTABLE_STRING, x.0.as_bytes()); }
-        PrimitiveRef::T61String(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::T61_STRING, x.0.as_bytes()); }
-        PrimitiveRef::Ia5String(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::IA5_STRING, x.0.as_bytes()); }
-        PrimitiveRef::VisibleString(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::VISIBLE_STRING, x.0.as_bytes()); }
-        PrimitiveRef::GeneralString(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::GENERAL_STRING, x.0.as_bytes()); }
-        PrimitiveRef::GraphicString(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::GRAPHIC_STRING, x.0.as_bytes()); }
-        PrimitiveRef::UniversalString(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::UNIVERSAL_STRING, &x.0); }
-        PrimitiveRef::BmpString(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::BMP_STRING, &x.0); }
-        PrimitiveRef::VideotexString(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::VIDEOTEX_STRING, x.0.as_bytes()); }
-        PrimitiveRef::ObjectDescriptor(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::OBJECT_DESCRIPTOR, x.0.as_bytes()); }
-        PrimitiveRef::UtcTime(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::UTC_TIME, x.0.as_bytes()); }
-        PrimitiveRef::GeneralizedTime(x) => { let _ = crate::per::strings::encode_string(w, c, crate::ber::tag::universal::GENERALIZED_TIME, x.0.as_bytes()); }
+        PrimitiveRef::Utf8String(x) => return s(w, u::UTF8_STRING, x.0.as_bytes()),
+        PrimitiveRef::NumericString(x) => return s(w, u::NUMERIC_STRING, x.0.as_bytes()),
+        PrimitiveRef::PrintableString(x) => return s(w, u::PRINTABLE_STRING, x.0.as_bytes()),
+        PrimitiveRef::T61String(x) => return s(w, u::T61_STRING, x.0.as_bytes()),
+        PrimitiveRef::Ia5String(x) => return s(w, u::IA5_STRING, x.0.as_bytes()),
+        PrimitiveRef::VisibleString(x) => return s(w, u::VISIBLE_STRING, x.0.as_bytes()),
+        PrimitiveRef::GeneralString(x) => return s(w, u::GENERAL_STRING, x.0.as_bytes()),
+        PrimitiveRef::GraphicString(x) => return s(w, u::GRAPHIC_STRING, x.0.as_bytes()),
+        PrimitiveRef::UniversalString(x) => return s(w, u::UNIVERSAL_STRING, &x.0),
+        PrimitiveRef::BmpString(x) => return s(w, u::BMP_STRING, &x.0),
+        PrimitiveRef::VideotexString(x) => return s(w, u::VIDEOTEX_STRING, x.0.as_bytes()),
+        PrimitiveRef::ObjectDescriptor(x) => return s(w, u::OBJECT_DESCRIPTOR, x.0.as_bytes()),
+        PrimitiveRef::UtcTime(x) => return s(w, u::UTC_TIME, x.0.as_bytes()),
+        PrimitiveRef::GeneralizedTime(x) => return s(w, u::GENERALIZED_TIME, x.0.as_bytes()),
     }
+    Ok(())
 }
 
 pub fn per_decode_primitive(p: PrimitiveRefMut, r: &mut PerReader, c: &crate::constraints::Constraints) -> Result<(), PerDecodeError> {
@@ -622,9 +635,9 @@ mod tests {
     fn implicit_matching_natural_tag_is_identical_to_plain_encode() {
         let mut a = Vec::new();
         let v = Integer(42);
-        ber_encode_primitive(PrimitiveRef::Integer(&v), BerTagging::Delegate, &mut a);
+        ber_encode_primitive(PrimitiveRef::Integer(&v), BerTagging::Delegate, &mut a).unwrap();
         let mut b = Vec::new();
-        ber_encode_primitive(PrimitiveRef::Integer(&v), BerTagging::Implicit(crate::integer::INTEGER_TAG), &mut b);
+        ber_encode_primitive(PrimitiveRef::Integer(&v), BerTagging::Implicit(crate::integer::INTEGER_TAG), &mut b).unwrap();
         assert_eq!(a, b);
     }
 
@@ -632,7 +645,7 @@ mod tests {
     fn implicit_substitutes_the_tag_for_a_scalar() {
         let context_0 = Tag::context(0, false);
         let mut out = Vec::new();
-        ber_encode_primitive(PrimitiveRef::Integer(&Integer(42)), BerTagging::Implicit(context_0), &mut out);
+        ber_encode_primitive(PrimitiveRef::Integer(&Integer(42)), BerTagging::Implicit(context_0), &mut out).unwrap();
         assert_eq!(out, vec![0x80, 0x01, 0x2A]); // context primitive 0, not universal INTEGER (0x02)
 
         let mut r = BerReader::new(&out);
@@ -649,7 +662,7 @@ mod tests {
         let v = BitString { bytes: vec![0b1010_1000, 0xFF], unused_bits: 2 };
         let context_3 = Tag::context(3, false);
         let mut out = Vec::new();
-        ber_encode_primitive(PrimitiveRef::BitString(&v), BerTagging::Implicit(context_3), &mut out);
+        ber_encode_primitive(PrimitiveRef::BitString(&v), BerTagging::Implicit(context_3), &mut out).unwrap();
         assert_eq!(out[0], 0x83); // context primitive 3
 
         let mut r = BerReader::new(&out);
@@ -663,7 +676,7 @@ mod tests {
         let context_0 = Tag::context(0, false);
         let context_1 = Tag::context(1, false);
         let mut out = Vec::new();
-        ber_encode_primitive(PrimitiveRef::Integer(&Integer(42)), BerTagging::Implicit(context_0), &mut out);
+        ber_encode_primitive(PrimitiveRef::Integer(&Integer(42)), BerTagging::Implicit(context_0), &mut out).unwrap();
 
         let mut r = BerReader::new(&out);
         let mut got = Integer(0);
@@ -677,7 +690,7 @@ mod tests {
         let inner_tlv = [0x02u8, 0x01, 0x2A]; // INTEGER 42
         let context_1 = Tag::context(1, true);
         let mut buf = Vec::new();
-        ber_encode_primitive(PrimitiveRef::Any(&Any(inner_tlv.to_vec())), BerTagging::Explicit(context_1), &mut buf);
+        ber_encode_primitive(PrimitiveRef::Any(&Any(inner_tlv.to_vec())), BerTagging::Explicit(context_1), &mut buf).unwrap();
         assert_eq!(buf, vec![0xA1, 0x03, 0x02, 0x01, 0x2A]);
 
         let mut r = BerReader::new(&buf);
@@ -687,11 +700,22 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_framing_is_an_error_not_a_panic() {
+        let framing = BerTagging::Unsupported("no tag to detect presence");
+        let mut out = Vec::new();
+        let e = ber_encode_primitive(PrimitiveRef::Integer(&Integer(1)), framing, &mut out).unwrap_err();
+        assert_eq!(e.message, "primitive not supported: no tag to detect presence");
+        let mut got = Integer(0);
+        let e = ber_decode_primitive(PrimitiveRefMut::Integer(&mut got), framing, &mut BerReader::new(&[0x02, 0x01, 0x01])).unwrap_err();
+        assert_eq!(e.message, "primitive not supported: no tag to detect presence");
+    }
+
+    #[test]
     fn explicit_any_rejects_wrong_wrapper_tag() {
         let context_1 = Tag::context(1, true);
         let context_2 = Tag::context(2, true);
         let mut buf = Vec::new();
-        ber_encode_primitive(PrimitiveRef::Any(&Any(vec![0x02, 0x01, 0x2A])), BerTagging::Explicit(context_1), &mut buf);
+        ber_encode_primitive(PrimitiveRef::Any(&Any(vec![0x02, 0x01, 0x2A])), BerTagging::Explicit(context_1), &mut buf).unwrap();
 
         let mut r = BerReader::new(&buf);
         let mut got = Any::default();
@@ -725,7 +749,7 @@ pub(crate) mod test_codec {
     }
 
     pub fn ber_encode<T: AsMemberRef + ?Sized>(v: &T, out: &mut Vec<u8>) {
-        ber_encode_primitive(prim(v), BerTagging::Delegate, out)
+        ber_encode_primitive(prim(v), BerTagging::Delegate, out).unwrap()
     }
 
     pub fn ber_decode_into<T: AsMemberRef + ?Sized>(v: &mut T, r: &mut BerReader) -> Result<(), BerDecodeError> {
@@ -733,7 +757,7 @@ pub(crate) mod test_codec {
     }
 
     pub fn xer_encode<T: AsMemberRef + ?Sized>(v: &T, out: &mut String, depth: usize) {
-        xer_encode_primitive(prim(v), out, depth)
+        xer_encode_primitive(prim(v), out, depth).unwrap()
     }
 
     pub fn xer_decode_into<T: AsMemberRef + ?Sized>(v: &mut T, r: &mut XerReader) -> Result<(), BerDecodeError> {
@@ -741,7 +765,7 @@ pub(crate) mod test_codec {
     }
 
     pub fn jer_encode<T: AsMemberRef + ?Sized>(v: &T, out: &mut String) {
-        jer_encode_primitive(prim(v), out)
+        jer_encode_primitive(prim(v), out).unwrap()
     }
 
     pub fn jer_decode_into<T: AsMemberRef + ?Sized>(v: &mut T, r: &mut JerReader) -> Result<(), BerDecodeError> {
@@ -749,7 +773,7 @@ pub(crate) mod test_codec {
     }
 
     pub fn per_encode<T: AsMemberRef + ?Sized>(v: &T, w: &mut PerWriter, c: &crate::constraints::Constraints) {
-        per_encode_primitive(prim(v), w, c)
+        per_encode_primitive(prim(v), w, c).unwrap()
     }
 
     pub fn per_decode_into<T: AsMemberRef + ?Sized>(v: &mut T, r: &mut PerReader, c: &crate::constraints::Constraints) -> Result<(), PerDecodeError> {
