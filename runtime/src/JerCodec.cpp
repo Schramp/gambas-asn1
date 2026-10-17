@@ -345,11 +345,15 @@ static char peek_char(JerDecodeStream& s) {
 
 namespace {
 
+/// @brief Fallback for a dispatch-table slot with no JER codec. Encode
+///        flags the stream as failed, decode returns an error, so a schema
+///        construct the runtime cannot handle fails one record instead of
+///        aborting the process.
 struct ErrorJerHandler final : IJerTypeHandler {
-    void encode(const JerCodec&, JerEncodeStream&,
+    void encode(const JerCodec&, JerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object*) const override {
-        assert(false && "JerCodec: unreachable dispatch table entry");
-        (void)def;
+        std::string reason = std::string("JerCodec: unsupported: ") + def.name;
+        s.set_encode_failed(reason.c_str());
     }
     DecodeResult decode(const JerCodec&, JerDecodeStream&,
                         const TypeDescriptor& def, Asn1Object*) const override {
@@ -812,7 +816,7 @@ struct SeqOfJerHandler final : IJerTypeHandler {
         os << '[';
         for (std::size_t i = 0; i < n; ++i) {
             if (i > 0) os << ',';
-            JerEncodeStream es{os, s.depth() + 1};
+            JerEncodeStream es = s.child();
             codec.encode(es, edef, seq.get_const(i));
         }
         os << ']';
@@ -855,7 +859,7 @@ struct SequenceJerHandler final : IJerTypeHandler {
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
             os << '"' << mbr.name << "\":";
-            JerEncodeStream ms{os, s.depth() + 1};
+            JerEncodeStream ms = s.child();
             codec.encode(ms, mdef, mptr);
         }
         os << '}';
@@ -919,14 +923,18 @@ struct ChoiceJerHandler final : IJerTypeHandler {
         const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int pr = ch->_present;
-        if (pr <= 0 || pr > spec.count) { os << "{}"; return; }
+        if (pr <= 0 || pr > spec.count) {
+            std::string reason = std::string("CHOICE ") + def.name + ": no alternative selected";
+            s.set_encode_failed(reason.c_str());
+            return;
+        }
         const auto& alt = spec.alternatives[pr - 1];
-        if (!alt.type_descriptor) { os << "{}"; return; }
+        if (!alt.type_descriptor) { s.set_encode_failed((std::string("CHOICE ") + def.name + ": alternative " + alt.name + " has no codec").c_str()); return; }
         TypeDescriptor adef = *alt.type_descriptor;
         adef.name = alt.name;
         const Asn1Object* mptr = alt.get_const_fn(ch);
         os << "{\"" << alt.name << "\":";
-        JerEncodeStream as{os, s.depth() + 1};
+        JerEncodeStream as = s.child();
         codec.encode(as, adef, mptr);
         os << '}';
     }
