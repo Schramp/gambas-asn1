@@ -314,6 +314,15 @@ pub trait Asn1Pdu: AsMemberRef + Default {
     const PDU_CONSTRAINTS: &'static crate::constraints::Constraints = &crate::constraints::UNCONSTRAINED;
 }
 
+/// @brief Encode error for a CHOICE with no known alternative to encode —
+///        an extensible CHOICE holding an unrecognized extension
+///        (`Asn1Choice::extract_unknown_extension`) that the codec has no
+///        form for. Shared by every codec's CHOICE walker.
+/// @param spec  The CHOICE's table, for its name.
+pub(crate) fn no_alternative_selected(spec: &ChoiceSpec) -> crate::encode_error::EncodeError {
+    crate::encode_error::EncodeError::new(format!("CHOICE {}: no alternative selected", spec.name))
+}
+
 /// Panic message for an `Asn1Pdu` whose `as_member_ref()` breaks the
 /// trait's own SEQUENCE/SET/CHOICE/SEQUENCE OF contract — shared by
 /// every codec's top-level entry points.

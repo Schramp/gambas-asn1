@@ -337,7 +337,7 @@ fn encode_choice_dispatch(obj: &dyn Asn1Choice, out: &mut Vec<u8>) -> Result<(),
         write_primitive(out, tag, bytes);
         return Ok(());
     }
-    panic!("encode_choice: no alternative matched — codegen/table mismatch");
+    Err(crate::spec::object::no_alternative_selected(obj.spec()))
 }
 
 /// Appends a CHOICE's encoding to an existing buffer.
@@ -871,6 +871,72 @@ mod tests {
         let per = [0x01, 0x01, 0x01, 0x02];
         let e = crate::per::object::decode_seq_content_into(&mut Frame::default(), &mut crate::per::reader::Reader::new(&per)).unwrap_err();
         assert_eq!(e.message, FRAME_UNSUPPORTED);
+    }
+
+    /// `Ext ::= CHOICE { num INTEGER, ... }` holding an alternative this
+    /// schema version does not know (X.680 §29.6).
+    #[derive(Debug)]
+    enum Ext {
+        Num(Integer),
+        UnknownExtension(Tag, Vec<u8>),
+    }
+
+    static EXT_ALTS: [crate::spec::object::AltMeta; 1] =
+        [crate::spec::object::AltMeta { name: "num", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED }];
+    static EXT_BER_TAGS: [crate::spec::choice::BerDispatch; 1] = [crate::spec::choice::BerDispatch { tag: INTEGER_TAG, alt: 0 }];
+    static EXT_SPEC: crate::spec::object::ChoiceSpec = crate::spec::object::ChoiceSpec {
+        name: "Ext",
+        alternatives: &EXT_ALTS,
+        ber_tags: &EXT_BER_TAGS,
+        own_tag: None,
+        ext_at: 1,
+        range_bits: 0,
+    };
+    impl Asn1Choice for Ext {
+        fn spec(&self) -> &'static crate::spec::object::ChoiceSpec {
+            &EXT_SPEC
+        }
+        fn active_index(&self) -> Option<usize> {
+            match self {
+                Ext::Num(_) => Some(0),
+                Ext::UnknownExtension(..) => None,
+            }
+        }
+        fn get_active(&self) -> MemberRef<'_> {
+            match self {
+                Ext::Num(v) => MemberRef::Primitive(crate::spec::primitive::PrimitiveRef::Integer(v)),
+                Ext::UnknownExtension(..) => MemberRef::Unsupported("CHOICE Ext: no alternative selected"),
+            }
+        }
+        fn select_mut(&mut self, _index: usize) -> MemberRefMut<'_> {
+            *self = Ext::Num(Integer(0));
+            match self {
+                Ext::Num(v) => MemberRefMut::Primitive(crate::spec::primitive::PrimitiveRefMut::Integer(v)),
+                Ext::UnknownExtension(..) => unreachable!(),
+            }
+        }
+        fn construct_unknown_extension(&mut self, tag: Tag, bytes: Vec<u8>) {
+            *self = Ext::UnknownExtension(tag, bytes);
+        }
+        fn extract_unknown_extension(&self) -> Option<(Tag, &[u8])> {
+            match self {
+                Ext::UnknownExtension(t, b) => Some((*t, b.as_slice())),
+                Ext::Num(_) => None,
+            }
+        }
+    }
+
+    #[test]
+    fn choice_without_known_alternative_fails_encode_without_panicking() {
+        let v = Ext::UnknownExtension(Tag::context(5, false), vec![0x01]);
+        // BER replays the captured TLV (X.690 §8.1).
+        assert_eq!(encode_choice(&v).unwrap(), vec![0x85, 0x01, 0x01]);
+        let msg = "CHOICE Ext: no alternative selected";
+        assert_eq!(crate::xer::object::encode_choice(&v).unwrap_err().message, msg);
+        let mut json = String::new();
+        assert_eq!(crate::jer::object::encode_choice_into(&v, &mut json).unwrap_err().message, msg);
+        let mut w = crate::per::writer::Writer::new();
+        assert_eq!(crate::per::object::encode_choice_content(&v, &mut w).unwrap_err().message, msg);
     }
 
     /// `Basket ::= SEQUENCE OF INTEGER` — worked example for `Asn1SeqOf`.
