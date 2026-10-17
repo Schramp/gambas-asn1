@@ -161,15 +161,20 @@ static DecodeResult decode_utf8_text(XerDecodeStream& s, const char* name, std::
 // ---------------------------------------------------------------------------
 // Handler classes
 
+/// @brief Fallback for a dispatch-table slot with no XER codec. Encode
+///        flags the stream as failed, decode returns an error, so a schema
+///        construct the runtime cannot handle fails one record instead of
+///        aborting the process.
 struct ErrorXerHandler final : IXerTypeHandler {
-    void encode(const XerCodec&, XerEncodeStream&,
+    void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object*) const override {
-        assert(false && "XerCodec: unreachable dispatch table entry");
-        (void)def;
+        std::string reason = std::string("XerCodec: unsupported: ") + def.name;
+        s.set_encode_failed(reason.c_str());
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream&,
                         const TypeDescriptor& def, Asn1Object*) const override {
-        assert(false && "XerCodec: unreachable dispatch table entry");
+        if (debug_flags() & DBG_XER)
+            std::fprintf(stderr, "[XER-DEC] unsupported: %s\n", def.name);
         return decode_err(DecodeError(std::string("XerCodec: unsupported: ") + def.name));
     }
 };
@@ -644,7 +649,7 @@ struct SeqOfXerHandler final : IXerTypeHandler {
             os << '<' << def.name << '>';
             for (std::size_t i = 0; i < count; ++i) {
                 const Asn1Object* eptr = seq.get_const(i);
-                XerEncodeStream es{os, s.depth() + 1};
+                XerEncodeStream es = s.child();
                 if (!edef.choice_spec) {
                     if (i == 0) os << '\n';
                     os << s.indent(1);
@@ -757,12 +762,12 @@ struct SequenceXerHandler final : IXerTypeHandler {
             mdef.name = mbr.name;
             if (mdef.choice_spec) {
                 os << s.indent(1) << '<' << mbr.name << '>';
-                XerEncodeStream ms{os, s.depth() + 1};
+                XerEncodeStream ms = s.child();
                 codec.encode(ms, mdef, mptr);
                 os << s.indent(1) << "</" << mbr.name << ">\n";
             } else {
                 os << s.indent(1);
-                XerEncodeStream ms{os, s.depth() + 1};
+                XerEncodeStream ms = s.child();
                 codec.encode(ms, mdef, mptr);
             }
         }
@@ -816,20 +821,24 @@ struct ChoiceXerHandler final : IXerTypeHandler {
         const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int pr = ch->_present;
-        if (pr <= 0 || pr > spec.count) return;
+        if (pr <= 0 || pr > spec.count) {
+            std::string reason = std::string("CHOICE ") + def.name + ": no alternative selected";
+            s.set_encode_failed(reason.c_str());
+            return;
+        }
         const auto& alt = spec.alternatives[pr - 1];
-        if (!alt.type_descriptor) return;
+        if (!alt.type_descriptor) { s.set_encode_failed((std::string("CHOICE ") + def.name + ": alternative " + alt.name + " has no codec").c_str()); return; }
         TypeDescriptor adef = *alt.type_descriptor;
         adef.name = alt.name;
         const Asn1Object* mptr = alt.get_const_fn(ch);
         if (adef.choice_spec) {
             os << '\n' << s.indent(1) << '<' << alt.name << '>';
-            XerEncodeStream as{os, s.depth() + 1};
+            XerEncodeStream as = s.child();
             codec.encode(as, adef, mptr);
             os << s.indent(1) << "</" << alt.name << ">\n";
         } else {
             os << '\n' << s.indent(1);
-            XerEncodeStream as{os, s.depth() + 1};
+            XerEncodeStream as = s.child();
             codec.encode(as, adef, mptr);
         }
     }

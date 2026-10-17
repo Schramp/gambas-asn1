@@ -77,6 +77,11 @@ int main(int argc, char** argv) {
         asn1::BerWriter w{buf};
         asn1::BerEncodeStream es{w};
         asn1::BerCodec::instance().encode(es, *entry->def, p);
+        if (es.encode_failed()) {
+            std::cerr << "BER encode failed record #" << n << "\n";
+            ++errors;
+            continue;
+        }
 
         std::cout.write(reinterpret_cast<const char*>(buf.data()),
                         static_cast<std::streamsize>(buf.size()));

@@ -13,6 +13,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <vector>
 
 static std::vector<uint8_t> slurp(std::istream& in) {
@@ -90,6 +91,11 @@ int main(int argc, char** argv) {
         asn1::BerWriter bw{ber_buf};
         asn1::BerEncodeStream es{bw};
         asn1::BerCodec::instance().encode(es, *entry->def, p);
+        if (es.encode_failed()) {
+            std::cerr << "BER encode failed record #" << n << "\n";
+            ++errors;
+            continue;
+        }
         std::cout.write(reinterpret_cast<const char*>(ber_buf.data()), ber_buf.size());
         ++n;
     }
