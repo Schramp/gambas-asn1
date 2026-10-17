@@ -134,15 +134,20 @@ static void ber_encode_explicit_tagged(const BerCodec& codec, BerWriter& w,
 // ---------------------------------------------------------------------------
 // Handler classes
 
+/// @brief Fallback for a dispatch-table slot with no BER codec. Encode
+///        flags the stream as failed, decode returns an error, so a schema
+///        construct the runtime cannot handle fails one record instead of
+///        aborting the process.
 struct ErrorBerHandler final : IBerTypeHandler {
-    void encode(const BerCodec&, BerWriter&,
+    void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object*) const override {
-        std::fprintf(stderr, "BerCodec: unreachable dispatch for type '%s'\n", def.name);
-        assert(false && "BerCodec: unreachable dispatch table entry");
+        std::string reason = std::string("BerCodec: unsupported: ") + def.name;
+        w.set_encode_failed(reason.c_str());
     }
     DecodeResult decode(const BerCodec&, BerReader&,
                         const TypeDescriptor& def, Asn1Object*) const override {
-        assert(false && "BerCodec: unreachable dispatch table entry");
+        if (debug_flags() & DBG_BER_CHOICE)
+            std::fprintf(stderr, "[BER] decode unsupported: %s\n", def.name);
         return decode_err(DecodeError(std::string("BerCodec: unsupported: ") + def.name));
     }
 };
@@ -772,10 +777,12 @@ struct ChoiceBerHandler final : IBerTypeHandler {
             if (debug_flags() & DBG_BER_WRITE)
                 std::fprintf(stderr, "[BER-WRITE] %s CHOICE idx=%d out of range (count=%d)\n",
                              def.name, idx, spec.count);
+            std::string reason = std::string("CHOICE ") + def.name + ": no alternative selected";
+            w.set_encode_failed(reason.c_str());
             return;
         }
         const auto& alt = spec.alternatives[idx - 1];
-        if (!alt.type_descriptor) return;
+        if (!alt.type_descriptor) { w.set_encode_failed((std::string("CHOICE ") + def.name + ": alternative " + alt.name + " has no codec").c_str()); return; }
         const Asn1Object* mptr = alt.get_const_fn(const_cast<Asn1Object*>(src));
         const auto& mdef = *alt.type_descriptor;
         ValidatePathScope _vps{alt.name};
@@ -994,6 +1001,13 @@ DecodeResult IBerTypeHandler::decode_value(const BerCodec& codec,
     return codec.decode(s, def, dest);
 }
 
+/// @brief The handler BerCodec runs for \p def: its own direct handler, or
+///        the error handler when it has none, so encode reports failure and
+///        decode returns an error instead of dereferencing null.
+static const IBerTypeHandler& ber_handler_of(const TypeDescriptor& def) {
+    return def.ber_handler ? *def.ber_handler : s_error;
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch tables
 
@@ -1064,11 +1078,11 @@ void BerCodec::encode(IEncodeStream& dst,
             inner.tag = def.natural_tag;
             inner.is_explicit = false;
             BerEncodeStream ms{w2};
-            inner.ber_handler->encode(*this, w2, inner, src);
+            ber_handler_of(inner).encode(*this, w2, inner, src);
         });
         return;
     }
-    def.ber_handler->encode(*this, w, def, src);
+    ber_handler_of(def).encode(*this, w, def, src);
 }
 
 DecodeResult BerCodec::decode(IDecodeStream& src,
@@ -1093,10 +1107,10 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
             TypeDescriptor inner = def;
             inner.tag = def.natural_tag;
             inner.is_explicit = false;
-            res = inner.ber_handler->decode(*this, inner_r, inner, dest);
+            res = ber_handler_of(inner).decode(*this, inner_r, inner, dest);
         }
     } else {
-        res = def.ber_handler->decode(*this, r, def, dest);
+        res = ber_handler_of(def).decode(*this, r, def, dest);
     }
 
     if (res.has_value()) validate_on_decode("BER", def, dest);
@@ -1106,7 +1120,7 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
 DecodeResult BerCodec::decode_value(std::span<const uint8_t> value,
                                      const TypeDescriptor& def,
                                      Asn1Object* dest) const {
-    auto res = def.ber_handler->decode_value(*this, value, def, dest);
+    auto res = ber_handler_of(def).decode_value(*this, value, def, dest);
     if (res.has_value()) validate_on_decode("BER", def, dest);
     return res;
 }

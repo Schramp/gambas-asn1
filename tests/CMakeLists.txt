@@ -933,6 +933,13 @@ target_link_libraries(test_choice_unknown_ext PRIVATE asn1cpp_runtime)
 add_test(NAME choice_unknown_ext COMMAND test_choice_unknown_ext)
 set_tests_properties(choice_unknown_ext PROPERTIES TIMEOUT 30)
 
+# ---- Encode/decode failure reporting (no abort, every codec) ------------------
+add_executable(test_encode_failure seq/test_encode_failure.cpp ${CUE_GEN_DIR}/MsgV1.cpp)
+target_include_directories(test_encode_failure PRIVATE ${CUE_GEN_DIR})
+target_link_libraries(test_encode_failure PRIVATE asn1cpp_runtime)
+add_test(NAME encode_failure COMMAND test_encode_failure)
+set_tests_properties(encode_failure PROPERTIES TIMEOUT 30)
+
 # ---- SEQUENCE extension addition group (X.691 §18.9) ------------------------
 set(EXTGRP_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_ext_group_test)
 add_custom_command(
