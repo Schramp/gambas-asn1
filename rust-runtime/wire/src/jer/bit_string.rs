@@ -79,3 +79,14 @@ pub fn decode(r: &mut Reader) -> Result<BitString, DecodeError> {
     let unused_bits = if length % 8 == 0 { 0 } else { (8 - (length % 8)) as u8 };
     Ok(BitString { bytes, unused_bits })
 }
+
+#[cfg(test)]
+mod malformed_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_named_bit_array_is_an_error_not_a_hang() {
+        let mut r = Reader::new(r#"["value":"5599","length":16}"#);
+        assert!(decode(&mut r).is_err());
+    }
+}

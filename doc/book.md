@@ -677,6 +677,12 @@ process keeps running and the next record is unaffected.
 Causes of a per-record error:
 
 - **Malformed input** — truncated or inconsistent TLVs, wrong tags, bad XML/JSON (decode).
+- **Input nested deeper than 256 constructed levels** — a self-referential
+  type (X.680 §29) lets an input nest without bound; every decoder in both
+  runtimes stops at 256 SEQUENCE/SET/CHOICE/SEQUENCE OF levels with
+  `nesting deeper than 256 levels` instead of exhausting the stack
+  (C++ `kMaxDecodeDepth`, `codec/DecodeDepth.hpp`; Rust
+  `nesting::MAX_DECODE_DEPTH`).
 - **A schema construct the Rust runtime does not support** — e.g. an
   untagged `ANY` between other members, which has no tag to detect it by.
   Code generation still emits the type; any encode or decode that reaches
@@ -706,6 +712,13 @@ Causes of a per-record error:
 
 Each C++ encode failure is traced (with the reason) under `ASN1CPP_DEBUG`
 bit `0x10` (BER), `0x04` (XER and JER) or `0x08` (PER).
+
+Both runtimes' decoders are fuzzed by `validation-tools/xval_sweep/xval_sweep.py
+--fuzz`: for every curated target it feeds BER corrupted by randgen's
+BerCorruptor and mutated PER/XER/JER records to every C++ and Rust decoder,
+and fails only on a crash (signal, abort, Rust panic, hang); the xval Rust
+tools keep overflow checks on for this. ctest runs `fuzz_ber` (C++) and
+`rust_fuzz_smoke` (Rust) as fixed-seed smoke tests.
 
 The cross-validation tools (`ber-to-xer`, `xer-to-ber`, ...) print one line
 per failed record (`BER decode failed record #N ...`, `XER encode failed

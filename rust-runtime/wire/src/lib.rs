@@ -29,6 +29,7 @@ pub mod debug;
 pub mod encode_error;
 pub mod integer;
 pub mod jer;
+pub mod nesting;
 pub mod null;
 pub mod octet_string;
 pub mod oid;
