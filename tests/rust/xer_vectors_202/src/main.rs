@@ -90,7 +90,7 @@ fn main() {
     }
 
     // BER round-trip
-    let ber = asn1cpp_wire::ber::object::encode_pdu(&cert);
+    let ber = asn1cpp_wire::ber::object::encode_pdu(&cert).unwrap();
     check("s1.xer  BER encode non-empty", !ber.is_empty(), &mut failures);
 
     if !ber.is_empty() {

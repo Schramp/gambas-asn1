@@ -18,8 +18,9 @@ pub enum BerTagging {
     /// The payload frames itself: an untagged CHOICE payload (X.680 §28) or
     /// a reference to an already-tagged type.
     Delegate,
-    /// No BER/XER support for this alternative yet; panics with the reason
-    /// if actually reached. Other alternatives are unaffected.
+    /// No BER/XER support for this alternative yet; the codec reports an
+    /// encode/decode error with the reason if actually reached. Other
+    /// alternatives are unaffected.
     Unsupported(&'static str),
 }
 

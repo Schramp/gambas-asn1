@@ -39,7 +39,7 @@ fn main() {
         ("after only", vec![0x93, 0x82, 0x20, 0x28, 0x00], make(None, None, None, Some(1))),
     ];
     for (label, bytes, value) in &cases {
-        check(&format!("encode: {label}"), asn1cpp_wire::per::object::encode_pdu(value) == *bytes, &mut failures);
+        check(&format!("encode: {label}"), asn1cpp_wire::per::object::encode_pdu(value).unwrap() == *bytes, &mut failures);
         let back = asn1cpp_wire::per::object::decode_pdu::<RecT>(bytes);
         check(&format!("decode: {label}"), back.as_ref().is_ok_and(|b| b == value), &mut failures);
     }

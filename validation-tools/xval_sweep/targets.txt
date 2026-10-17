@@ -18,6 +18,11 @@
 # Rust identifier — xval_sweep.py's discover_ident() finds the real
 # generated identifier by content, not by guessing the escaping rule.
 #
+# Optional '@'-prefixed tokens right after the PDU type are target options:
+# '@expect-errors' — a schema neither runtime can encode or decode; passes
+# when every C++ and Rust codec tool reports a per-record error and exits
+# cleanly (no panic, abort or signal). The asn1c leg is not run.
+#
 # Optional 3rd+ column: a known, already-filed asn1c divergence for this
 # specific target (#440's asn1c leg) — C++/Rust legs still run and gate
 # pass/fail as always, asn1c leg is skipped rather than failing on a gap
@@ -121,3 +126,4 @@ tests/asn1/per_int64_bounds_test.asn1   S33Rec
 tests/asn1/per_int64_bounds_test.asn1   UncRec
 tests/tests-asn1c-compiler/33-misc-OK.asn1   T2
 tests/asn1/per_named_bits_test.asn1   NamedBitsRec
+tests/asn1/unsupported_any_member_test.asn1   Frame  @expect-errors

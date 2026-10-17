@@ -250,6 +250,27 @@ def _codec_result(r, tool: str, leg: str) -> str:
     return err
 
 
+def check_expected_errors(cpp_tools, rust_tools, pdu_type, ber_path) -> bool:
+    """@expect-errors verdict: every BER-reading codec tool of both legs
+    (b2x, b2j, b2p) must report a per-record error and exit 1 — no clean
+    success, no panic, no signal."""
+    ok = True
+    for leg, tools in (("cpp", cpp_tools), ("rust", rust_tools)):
+        for key in ("b2x", "b2j", "b2p"):
+            if key not in tools:
+                continue
+            r = run(tools[key], "--type", pdu_type, ber_path)
+            err = r.stderr.decode(errors="replace").strip()
+            last = err.splitlines()[-1] if err else ""
+            failed_line = next((l for l in err.splitlines() if "failed" in l), "")
+            if r.returncode == 1 and "panicked" not in err and failed_line:
+                print(f"  [OK]   {leg} {key}: per-record error: {failed_line}")
+            else:
+                print(f"  [FAIL] {leg} {key}: expected a per-record error, got exit {r.returncode}: {last}")
+                ok = False
+    return ok
+
+
 def split_ber_records(data: bytes) -> list[bytes]:
     """Split raw concatenated BER stream into per-record byte strings."""
     records = []
@@ -696,7 +717,12 @@ def parse_targets(path):
     tokens are the skip reason, printed verbatim (e.g. an issue number).
     extra_files is always [] here — the curated list is single-file only;
     only --corpus=asn1c-compiler's auto-discovery populates it (see
-    resolve_imports)."""
+    resolve_imports).
+
+    Tokens directly after the PDU type starting with '@' are target
+    options: '@expect-errors' marks a schema neither runtime can encode or
+    decode; the target passes when every C++ and Rust codec tool reports
+    a per-record error and exits cleanly (exit 1, no panic or signal)."""
     targets = []
     with open(path) as f:
         for lineno, line in enumerate(f, 1):
@@ -713,10 +739,17 @@ def parse_targets(path):
             # on is the skip-asn1c reason (which may itself contain '-'
             # words).
             rest = parts[2:]
+            n_opts = next((i for i, t in enumerate(rest) if not t.startswith("@")), len(rest))
+            options = set(rest[:n_opts])
+            unknown = options - {"@expect-errors"}
+            if unknown:
+                print(f"{path}:{lineno}: unknown target option(s) {sorted(unknown)}")
+                sys.exit(1)
+            rest = rest[n_opts:]
             n_flags = next((i for i, t in enumerate(rest) if not t.startswith("-")), len(rest))
             flags = rest[:n_flags]
             reason = " ".join(rest[n_flags:]) or None
-            targets.append((parts[0], parts[1], reason, [], flags))
+            targets.append((parts[0], parts[1], reason, [], flags, options))
     return targets
 
 
@@ -951,8 +984,8 @@ def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None, asncp
     # codegen-time gate, and every generated top-level type implements
     # `Asn1Pdu`. This only confirms the PDU type itself was generated
     # (the same "ask the actual output" approach `discover_ident` uses).
-    # A value whose kind the Rust PER runtime can't represent panics on
-    # encode / errors on decode for that record.
+    # A value whose kind the Rust PER runtime can't represent fails
+    # encode / decode for that record.
     per_covered = False
     gen_file = os.path.join(rust_dir, "gen", f"{ident}.rs")
     if os.path.isfile(gen_file):
@@ -1069,7 +1102,7 @@ def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, reuse=False, jo
 
 def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c_reason=None,
                slot=None, cpp_jobs=4, cargo_jobs=None, reuse=(), extra_files=(),
-               jer_safe_real=False, asncpp_flags=()):
+               jer_safe_real=False, asncpp_flags=(), expect_errors=False):
     schema_abs = os.path.join(ASN1CPP_ROOT, schema_rel)
     if os.path.isdir(schema_abs):
         # A multi-module schema (e.g. ETSI LI): every .asn/.asn1 file in
@@ -1100,7 +1133,7 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
     if rust_tools is None:
         return False
     asn1c_tools = (build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, "asn1c" in reuse, cpp_jobs)
-                   if asn1c_bin and not skip_asn1c_reason else None)
+                   if asn1c_bin and not skip_asn1c_reason and not expect_errors else None)
 
     ber_path = os.path.join(target_dir, "records.ber")
     gen_cmd = [cpp_tools["randgen"], "--type", pdu_type,
@@ -1115,6 +1148,9 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
         return False
     with open(ber_path, "rb") as f:
         ber_orig = f.read()
+
+    if expect_errors:
+        return check_expected_errors(cpp_tools, rust_tools, pdu_type, ber_path)
 
     xer_cpp, err_cpp = b2x_file(cpp_tools["b2x"], pdu_type, ber_path)
     if err_cpp:
@@ -1508,7 +1544,7 @@ def main():
             rel = os.path.relpath(path, ASN1CPP_ROOT)
             extra_rel = [os.path.relpath(os.path.join(ASN1C_COMPILER_CORPUS_DIR, f), ASN1CPP_ROOT)
                          for f in extra]
-            targets.append((rel, pdu_type, None, extra_rel, []))
+            targets.append((rel, pdu_type, None, extra_rel, [], set()))
         print(f"auto-discovered {len(targets)} target(s) from {ASN1C_COMPILER_CORPUS_DIR} "
               f"({len(skipped)} skipped: no qualifying top-level SEQUENCE/SET/CHOICE, or IMPORTS present)")
     else:
@@ -1564,14 +1600,15 @@ def main():
 
     def worker(slot, indices):
         for i in indices:
-            schema_rel, pdu_type, skip_asn1c_reason, extra_files, asncpp_flags = targets[i]
+            schema_rel, pdu_type, skip_asn1c_reason, extra_files, asncpp_flags, options = targets[i]
             tl_out.tl.buf = []
             try:
                 oks[i] = run_target(schema_rel, pdu_type, opts.count, opts.seed, opts.verbose,
                                     asn1c_bin, skip_asn1c_reason, slot=slot,
                                     cpp_jobs=cpp_jobs, cargo_jobs=cargo_jobs, reuse=reuse,
                                     extra_files=extra_files, jer_safe_real=opts.jer_safe_real,
-                                    asncpp_flags=asncpp_flags)
+                                    asncpp_flags=asncpp_flags,
+                                    expect_errors="@expect-errors" in options)
             except Exception as e:  # keep the sweep going; report as a failed target
                 print(f"  EXCEPTION: {e!r}")
                 oks[i] = False

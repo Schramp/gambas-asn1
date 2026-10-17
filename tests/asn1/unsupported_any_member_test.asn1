@@ -1,0 +1,6 @@
+-- An untagged ANY between two members: no tag to detect it by, so neither
+-- runtime can decode it from BER. Both must report a per-record error
+-- (xval_sweep target option @expect-errors), never crash.
+M DEFINITIONS EXPLICIT TAGS ::= BEGIN
+    Frame ::= SEQUENCE { ident INTEGER, value ANY, trailer INTEGER }
+END

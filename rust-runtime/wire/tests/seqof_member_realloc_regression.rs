@@ -124,7 +124,7 @@ fn seqof_member_decode_does_not_regrow_geometrically() {
     src.items.0 = (0..N as i64).map(integer).collect();
 
     let mut wire = Vec::new();
-    encode_seq_into(&src, &mut wire);
+    encode_seq_into(&src, &mut wire).unwrap();
 
     GROW_COUNT.store(0, Ordering::Relaxed);
     let mut decoded = Container::default();

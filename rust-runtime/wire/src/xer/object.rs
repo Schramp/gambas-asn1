@@ -4,6 +4,7 @@
 //! `MemberMeta::ber`/`AltMeta::ber` are simply ignored.
 
 use crate::ber::reader::DecodeError;
+use crate::encode_error::EncodeError;
 use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut, XerInstruction, NOT_A_PDU};
 use crate::spec::primitive::{xer_decode_primitive, xer_encode_primitive, PrimitiveRef, PrimitiveRefMut};
 use crate::xer::reader::XerReader;
@@ -16,14 +17,20 @@ use crate::xer::writer::{indent, write_close_tag, write_open_tag};
 /// name around this. No BASE64/UTF8 instruction applies here — those
 /// are read off the row before this is ever called (`encode_wrapped`'s
 /// own doc).
-fn encode_bare(m: MemberRef, out: &mut String, depth: usize) {
+/// @return `Err` for a member or alternative codegen marked unsupported,
+///         or a primitive kind with no XER form.
+fn encode_bare(m: MemberRef, out: &mut String, depth: usize) -> Result<(), EncodeError> {
     match m {
-        MemberRef::Absent => {}
+        MemberRef::Absent => Ok(()),
+        MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => xer_encode_primitive(p, out, depth),
         MemberRef::Composite(inner) => encode_seq_content(inner, out, depth),
         MemberRef::Choice(inner) => encode_choice_content(inner, out, depth),
         MemberRef::SeqOf(inner) => encode_seqof_content(inner, out, depth),
-        MemberRef::Enumerated(slot, spec) => crate::ber::enumerated::xer_encode_enum(out, spec, slot.enum_get()),
+        MemberRef::Enumerated(slot, spec) => {
+            crate::ber::enumerated::xer_encode_enum(out, spec, slot.enum_get());
+            Ok(())
+        }
     }
 }
 
@@ -41,9 +48,11 @@ fn encode_bare(m: MemberRef, out: &mut String, depth: usize) {
 /// `xer_instruction` lambda only sets one for an OCTET STRING); every
 /// other call site passes `XerInstruction::Default` and falls straight
 /// through to `encode_bare`.
-fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &mut String, depth: usize) {
-    if matches!(m, MemberRef::Absent) {
-        return;
+fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &mut String, depth: usize) -> Result<(), EncodeError> {
+    match m {
+        MemberRef::Absent => return Ok(()),
+        MemberRef::Unsupported(msg) => return Err(EncodeError::new(msg)),
+        _ => {}
     }
     let is_choice = matches!(m, MemberRef::Choice(_));
     out.push('\n');
@@ -52,7 +61,7 @@ fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &m
     match (instruction, &m) {
         (XerInstruction::Base64, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => out.push_str(&crate::xer::octet_string::base64_encode(&x.0)),
         (XerInstruction::Utf8, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => crate::xer::octet_string::utf8_encode(&x.0, out),
-        _ => encode_bare(m, out, depth),
+        _ => encode_bare(m, out, depth)?,
     }
     if is_choice {
         // A CHOICE's content ends after its alternative's own closing
@@ -63,12 +72,13 @@ fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &m
         out.push_str(&indent(depth));
     }
     write_close_tag(out, name);
+    Ok(())
 }
 
 /// Member-loop content, no outer `<name>`/`</name>` wrapper — see
 /// `xer::sequence::encode_sequence_xer_content`'s own doc for the exact
 /// contract this mirrors (depth convention, empty-SEQUENCE case).
-pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String, depth: usize) {
+pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String, depth: usize) -> Result<(), EncodeError> {
     let spec = obj.spec();
     let mut any = false;
     for (i, m) in spec.members.iter().enumerate() {
@@ -77,25 +87,26 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String, depth: usize) {
             continue;
         }
         any = true;
-        encode_wrapped(m.name, m.xer_instruction, member, out, depth + 1);
+        encode_wrapped(m.name, m.xer_instruction, member, out, depth + 1)?;
     }
     if any {
         out.push('\n');
         out.push_str(&indent(depth));
     }
+    Ok(())
 }
 
-pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut String, depth: usize) {
-    encode_seq_content(obj, out, depth);
+pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut String, depth: usize) -> Result<(), EncodeError> {
+    encode_seq_content(obj, out, depth)
 }
 
-pub fn encode_seq(obj: &dyn Asn1Seq) -> String {
+pub fn encode_seq(obj: &dyn Asn1Seq) -> Result<String, EncodeError> {
     let mut out = String::new();
     write_open_tag(&mut out, obj.spec().name);
-    encode_seq_content(obj, &mut out, 0);
+    encode_seq_content(obj, &mut out, 0)?;
     write_close_tag(&mut out, obj.spec().name);
     out.push('\n');
-    out
+    Ok(out)
 }
 
 /// Decodes a SEQUENCE/SET's XER member-loop content into an already-
@@ -124,6 +135,7 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut XerReader) -> Resu
 fn decode_bare(m: MemberRefMut, r: &mut XerReader) -> Result<(), DecodeError> {
     match m {
         MemberRefMut::Absent => Ok(()),
+        MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, 0)),
         MemberRefMut::Primitive(p) => xer_decode_primitive(p, r),
         MemberRefMut::Composite(inner) => decode_seq_content_into(inner, r),
         MemberRefMut::Choice(inner) => decode_choice_content_into(inner, r),
@@ -155,7 +167,7 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut XerReader) -> Result<(), D
 /// Writes `\n<indent><altname>content</altname>`, no trailing newline —
 /// the shape a containing member's own wrapper (`encode_wrapped`) or a
 /// further-nested recursion needs.
-pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usize) {
+pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usize) -> Result<(), EncodeError> {
     let Some(i) = obj.active_index() else {
         panic!("encode_choice: no alternative matched — codegen/table mismatch");
     };
@@ -169,7 +181,7 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usiz
     // place for the close tag to follow directly.
     let is_nested_choice = matches!(active, MemberRef::Choice(_));
     let mut inner = String::new();
-    encode_bare(active, &mut inner, depth + 1);
+    encode_bare(active, &mut inner, depth + 1)?;
     if is_nested_choice {
         inner.push('\n');
         inner.push_str(&indent(depth + 1));
@@ -179,16 +191,17 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usiz
     write_open_tag(out, alt.name);
     out.push_str(&inner);
     write_close_tag(out, alt.name);
+    Ok(())
 }
 
 /// X.693 §8.3.1 document-root wrapper — only the top-level
 /// `encode_pdu` entry point uses this; a nested CHOICE member/element
 /// uses `encode_choice_content` (via `encode_bare`) directly, no type
 /// name wrapper.
-pub fn encode_choice(obj: &dyn Asn1Choice) -> String {
+pub fn encode_choice(obj: &dyn Asn1Choice) -> Result<String, EncodeError> {
     let mut out = String::new();
     write_open_tag(&mut out, obj.spec().name);
-    encode_choice_content(obj, &mut out, 0);
+    encode_choice_content(obj, &mut out, 0)?;
     // Matches `encode_seq`'s own closing convention (and the
     // ground-truth C++ runtime's `SequenceXerHandler`/`ChoiceXerHandler`
     // document-root form): the closing tag sits on its own, un-indented
@@ -196,7 +209,7 @@ pub fn encode_choice(obj: &dyn Asn1Choice) -> String {
     out.push('\n');
     write_close_tag(&mut out, obj.spec().name);
     out.push('\n');
-    out
+    Ok(out)
 }
 
 /// `pub` for the same reason as `encode_choice_content` above.
@@ -236,7 +249,7 @@ pub fn decode_choice(xml: &str, obj: &mut dyn Asn1Choice) -> Result<(), DecodeEr
 /// element its own type name; CHOICE/ENUMERATED self-delimit (no
 /// wrapper, matching their own standalone form) — same per-kind split
 /// `xer::seq_of`'s own doc documents for the old design.
-pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize) {
+pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize) -> Result<(), EncodeError> {
     let name_override = obj.elem_xer_name();
     let mut any = false;
     for i in 0..obj.len() {
@@ -270,20 +283,21 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
             // `AsMemberRef::XER_INSTRUCTION`, a compile-time fact of the
             // element type that `get(i)`'s unwrap never had a chance to
             // throw away (no element value needed to read it).
-            MemberRef::Primitive(_) => encode_wrapped(name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i)), obj.elem_xer_instruction(), el, out, depth + 1),
+            MemberRef::Primitive(_) => encode_wrapped(name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i)), obj.elem_xer_instruction(), el, out, depth + 1)?,
             MemberRef::Composite(inner) => {
                 let name = name_override.unwrap_or(inner.spec().name);
-                encode_wrapped(name, XerInstruction::Default, el, out, depth + 1)
+                encode_wrapped(name, XerInstruction::Default, el, out, depth + 1)?
             }
             MemberRef::Choice(_) | MemberRef::Enumerated(..) => {
                 out.push('\n');
                 out.push_str(&indent(depth + 1));
-                encode_bare(el, out, depth + 1);
+                encode_bare(el, out, depth + 1)?;
             }
             MemberRef::SeqOf(inner) => {
                 let name = name_override.unwrap_or(inner.own_xer_name());
-                encode_wrapped(name, XerInstruction::Default, el, out, depth + 1)
+                encode_wrapped(name, XerInstruction::Default, el, out, depth + 1)?
             }
+            MemberRef::Unsupported(msg) => return Err(EncodeError::new(*msg)),
             MemberRef::Absent => unreachable!(),
         }
     }
@@ -291,20 +305,21 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
         out.push('\n');
         out.push_str(&indent(depth));
     }
+    Ok(())
 }
 
 /// X.693 §8.3.1 document-root wrapper for a *named* (top-level) SEQUENCE
 /// OF/SET OF type — `encode_pdu`'s SEQUENCE OF arm; an inline member's
 /// `SeqOf<T>`/`SetOf<T>` uses `encode_seqof_content` directly instead
 /// (no root wrapper of its own).
-pub fn encode_seqof_named(obj: &dyn Asn1SeqOf) -> String {
+pub fn encode_seqof_named(obj: &dyn Asn1SeqOf) -> Result<String, EncodeError> {
     let mut out = String::new();
     write_open_tag(&mut out, obj.own_xer_name());
-    encode_seqof_content(obj, &mut out, 0);
+    encode_seqof_content(obj, &mut out, 0)?;
     out.push('\n');
     write_close_tag(&mut out, obj.own_xer_name());
     out.push('\n');
-    out
+    Ok(out)
 }
 
 /// Decode counterpart of `encode_seqof_named`.
@@ -355,9 +370,10 @@ pub(crate) fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, r: &mut XerRead
 /// @brief Encodes `v` as a complete XER document, wrapped in its own
 ///        type name as the root element.
 /// @param v  Any generated SEQUENCE/SET/CHOICE/SEQUENCE OF type.
-/// @return The XML text.
+/// @return The XML text, or `Err` when `v` holds a value this runtime
+///         cannot encode in XER.
 /// @see X.693 §8.3.1 — document root element named by the type.
-pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> String {
+pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> Result<String, EncodeError> {
     match v.as_member_ref() {
         MemberRef::Composite(s) => encode_seq(s),
         MemberRef::Choice(c) => encode_choice(c),
