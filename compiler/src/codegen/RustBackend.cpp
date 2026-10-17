@@ -1170,9 +1170,7 @@ bool RustBackend::choice_alternative_covered(const ChoiceAlternativeSpec& a) con
 ///        so an alternative failing this check gets no row whatsoever
 ///        (emit_choice_definition simply omits it from the generated
 ///        array — its Rust enum variant still exists, just unreachable via
-///        the generated encode()/decode(), same as `encode_choice`'s
-///        existing "no alternative matched" panic already covers for any
-///        other codegen/table mismatch). The one case this actually
+///        the generated decode(), which never selects it). The one case this actually
 ///        excludes: an alternative whose own type is itself a genuinely
 ///        untagged CHOICE (X.680 §28, no AUTOMATIC TAGS, no fixed tag at
 ///        all) — CHOICE alternatives have no OPTIONAL concept to fall back
@@ -1879,8 +1877,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // `decode_choice_dispatch`'s tag scan needs a real `Tag` to know when
     // to try a row, so that alternative is simply omitted from the table
     // entirely (its enum variant still exists, just unreachable via the
-    // generated encode()/decode() — `encode_choice_dispatch`'s own "no
-    // alternative matched" panic already covers that).
+    // generated encode()/decode()).
     struct DispatchRow { int cls_rank; int64_t number; std::string tag_lit; size_t idx; };
     std::vector<DispatchRow> dispatch;
     if (!spec.ber_tags.empty()) {
@@ -2119,7 +2116,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             os << std::format("    fn active_index(&self) -> ::std::option::Option<usize> {{ match self {{ {} }} }}\n", arms);
         }
         os << "    fn get_active(&self) -> asn1cpp_wire::spec::object::MemberRef<'_> {\n";
-        os << std::format("        match self.active_index() {{ Some(i) => {}[i](self), None => panic!(\"get_active: no alternative active\") }}\n", get_active_ident);
+        // `None` only for an unrecognized extension (`UnknownExtension`);
+        // the walkers check `active_index()` first, so this arm is a
+        // fallback that still surfaces as a codec error, never a panic.
+        os << std::format("        match self.active_index() {{ Some(i) => {}[i](self), None => asn1cpp_wire::spec::object::MemberRef::Unsupported(\"CHOICE {}: no alternative selected\") }}\n", get_active_ident, spec.xer_name);
         os << "    }\n";
         os << "    fn select_mut(&mut self, index: usize) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
         os << std::format("        {}[index](self)\n", select_mut_ident);
