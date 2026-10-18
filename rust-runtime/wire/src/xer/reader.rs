@@ -10,6 +10,7 @@
 //! streaming parser) — matches the C++ side's own scope note.
 
 use crate::ber::reader::DecodeError;
+use crate::nesting::Depth;
 
 /// Reverse of [`crate::xer::writer::escape`], plus the additional named/
 /// numeric entities XER input may contain (`&quot;`, `&apos;`, `&#NN;`,
@@ -102,11 +103,12 @@ pub struct XerReader<'a> {
     buf: &'a str,
     pos: usize,
     lenient: bool,
+    pub(crate) depth: Depth,
 }
 
 impl<'a> XerReader<'a> {
     pub fn new(buf: &'a str) -> XerReader<'a> {
-        XerReader { buf, pos: 0, lenient: false }
+        XerReader { buf, pos: 0, lenient: false, depth: Depth::default() }
     }
 
     /// Accepts the non-standard asn1c XER extensions `XerDecodeStream`'s
@@ -115,7 +117,7 @@ impl<'a> XerReader<'a> {
     /// addition to the standard empty-element form, and BIT STRING as hex
     /// pairs in addition to the standard '0'/'1' xmlbstring form.
     pub fn new_lenient(buf: &'a str) -> XerReader<'a> {
-        XerReader { buf, pos: 0, lenient: true }
+        XerReader { buf, pos: 0, lenient: true, depth: Depth::default() }
     }
 
     pub fn lenient(&self) -> bool {
