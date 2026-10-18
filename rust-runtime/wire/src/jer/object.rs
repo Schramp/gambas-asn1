@@ -27,12 +27,20 @@ fn encode_bare(m: MemberRef, out: &mut String) -> Result<(), EncodeError> {
 }
 
 fn decode_bare(m: MemberRefMut, r: &mut Reader) -> Result<(), DecodeError> {
-    let _g = match m {
-        MemberRefMut::Composite(_) | MemberRefMut::Choice(_) | MemberRefMut::SeqOf(_) => {
-            Some(crate::nesting::DepthGuard::enter().ok_or_else(|| DecodeError::new(crate::nesting::too_deep(), r.pos()))?)
-        }
-        _ => None,
-    };
+    if !matches!(m, MemberRefMut::Composite(_) | MemberRefMut::Choice(_) | MemberRefMut::SeqOf(_)) {
+        return decode_bare_level(m, r);
+    }
+    if !r.depth.enter() {
+        return Err(DecodeError::new(crate::nesting::too_deep(), r.pos()));
+    }
+    let res = decode_bare_level(m, r);
+    r.depth.leave();
+    res
+}
+
+/// @brief The per-kind decode `decode_bare` dispatches to once it has counted
+///        the nesting level a constructed value enters.
+fn decode_bare_level(m: MemberRefMut, r: &mut Reader) -> Result<(), DecodeError> {
     match m {
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, r.pos())),

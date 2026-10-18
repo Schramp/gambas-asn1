@@ -675,7 +675,7 @@ private:
             auto ordered = set_in_table_order(spec, inner);
             if (!ordered) return decode_err(ordered.error());
             set_buf = std::move(*ordered);
-            inner = BerReader{std::span<const uint8_t>{set_buf.data(), set_buf.size()}};
+            inner = inner.sub(std::span<const uint8_t>{set_buf.data(), set_buf.size()});
         }
         for (int i = 0; i < spec.count; ++i) {
             const auto& mbr = spec.members[i];
@@ -1092,7 +1092,7 @@ DecodeResult BerCodec::decode(IDecodeStream& src,
 {
     auto& s = static_cast<BerDecodeStream&>(src);
     BerReader& r = s.reader();
-    DecodeDepthGuard depth_guard{def};
+    DecodeDepthGuard depth_guard{r.depth(), def};
     if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
     DecodeResult res = decode_ok();
     if (def.is_explicit) {

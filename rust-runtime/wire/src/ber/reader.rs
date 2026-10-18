@@ -6,6 +6,7 @@
 //! own doc for how the two forms end up producing identical `.value` bytes).
 
 use crate::ber::tag::{read_tag, Tag};
+use crate::nesting::Depth;
 use std::fmt;
 
 /// Decode failure with a human-readable reason and the byte offset it
@@ -56,11 +57,19 @@ struct LengthResult {
 pub struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
+    pub(crate) depth: Depth,
 }
 
 impl<'a> Reader<'a> {
     pub fn new(data: &'a [u8]) -> Reader<'a> {
-        Reader { data, pos: 0 }
+        Reader { data, pos: 0, depth: Depth::default() }
+    }
+
+    /// @brief Opens a reader over a nested value's bytes (a TLV's
+    ///        contents) at this reader's decode nesting depth.
+    /// @see `crate::nesting`.
+    pub(crate) fn sub<'b>(&self, data: &'b [u8]) -> Reader<'b> {
+        Reader { data, pos: 0, depth: self.depth }
     }
 
     pub fn at_end(&self) -> bool {

@@ -682,7 +682,9 @@ Causes of a per-record error:
   runtimes stops at 256 SEQUENCE/SET/CHOICE/SEQUENCE OF levels with
   `nesting deeper than 256 levels` instead of exhausting the stack
   (C++ `kMaxDecodeDepth`, `codec/DecodeDepth.hpp`; Rust
-  `nesting::MAX_DECODE_DEPTH`).
+  `nesting::MAX_DECODE_DEPTH`). Levels are counted, not recursion
+  cycles. The count lives in the decoder's own reader, so concurrent
+  decodes never share it.
 - **A schema construct the Rust runtime does not support** — e.g. an
   untagged `ANY` between other members, which has no tag to detect it by.
   Code generation still emits the type; any encode or decode that reaches
