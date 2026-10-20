@@ -199,7 +199,7 @@ mod tests {
         let mut v = T::default();
         let tlv = Reader::new(data).read_tlv().unwrap();
         assert_eq!(tlv.tag, v.natural_tag());
-        crate::ber::object::decode_seqof_content(&mut v, tlv.value).unwrap();
+        crate::ber::object::decode_seqof_content(&mut v, Reader::new(tlv.value)).unwrap();
         v
     }
 

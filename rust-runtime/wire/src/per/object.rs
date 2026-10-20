@@ -35,12 +35,20 @@ fn encode_bare(m: MemberRef, c: &Constraints, w: &mut Writer) -> Result<(), Enco
 }
 
 fn decode_bare(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
-    let _g = match m {
-        MemberRefMut::Composite(_) | MemberRefMut::Choice(_) | MemberRefMut::SeqOf(_) => {
-            Some(crate::nesting::DepthGuard::enter().ok_or_else(|| DecodeError::new(crate::nesting::too_deep(), r.bit_pos()))?)
-        }
-        _ => None,
-    };
+    if !matches!(m, MemberRefMut::Composite(_) | MemberRefMut::Choice(_) | MemberRefMut::SeqOf(_)) {
+        return decode_bare_level(m, c, r);
+    }
+    if !r.depth.enter() {
+        return Err(DecodeError::new(crate::nesting::too_deep(), r.bit_pos()));
+    }
+    let res = decode_bare_level(m, c, r);
+    r.depth.leave();
+    res
+}
+
+/// @brief The per-kind decode `decode_bare` dispatches to once it has counted
+///        the nesting level a constructed value enters.
+fn decode_bare_level(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
     match m {
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, r.bit_pos())),
@@ -96,7 +104,7 @@ fn encode_open_type(obj: &dyn Asn1Seq, i: usize, w: &mut Writer) -> Result<(), E
 
 fn decode_open_type(obj: &mut dyn Asn1Seq, i: usize, r: &mut Reader) -> Result<(), DecodeError> {
     let bytes = get_octets(r)?;
-    let mut inner = Reader::new(&bytes);
+    let mut inner = r.sub(&bytes);
     access_decode(obj, i, &mut inner)
 }
 
@@ -203,7 +211,7 @@ fn encode_group_open_type(obj: &dyn Asn1Seq, begin: usize, end: usize, w: &mut W
 /// @brief Decode counterpart of [`encode_group_open_type`].
 fn decode_group_open_type(obj: &mut dyn Asn1Seq, begin: usize, end: usize, r: &mut Reader) -> Result<(), DecodeError> {
     let bytes = get_octets(r)?;
-    let mut g = Reader::new(&bytes);
+    let mut g = r.sub(&bytes);
     let opt = obj.spec().group_member_optional;
     let mut present = vec![true; end - begin];
     for i in begin..end {
@@ -341,7 +349,7 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> R
             return Ok(());
         }
         let bytes = get_octets(r)?;
-        let mut inner = Reader::new(&bytes);
+        let mut inner = r.sub(&bytes);
         let constraints = obj.spec().alternatives[def_idx].constraints;
         decode_bare(obj.select_mut(def_idx), constraints, &mut inner)
     }

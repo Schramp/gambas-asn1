@@ -7,6 +7,7 @@
 #include <functional>
 #include "ICodec.hpp"
 #include "Debug.hpp"
+#include "DecodeDepth.hpp"
 #include "../Tag.hpp"
 
 namespace asn1 {
@@ -67,8 +68,11 @@ class JerDecodeStream : public IDecodeStream {
     std::string buf_;
     std::size_t pos_{0};
     int parse_state_{0};
+    DecodeDepth depth_;
 public:
     explicit JerDecodeStream(std::string text) : buf_(std::move(text)) {}
+    /// @brief The decode nesting depth; see \c DecodeDepth.
+    DecodeDepth& depth() { return depth_; }
     bool at_end() const override { return pos_ >= buf_.size(); }
     std::string_view remaining() const { return std::string_view(buf_).substr(pos_); }
     const char* data() const { return buf_.data() + pos_; }
