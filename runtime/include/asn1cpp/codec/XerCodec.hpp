@@ -42,7 +42,10 @@ class XerEncodeStream : public IEncodeStream {
     int depth_{0};
     bool own_failed_{false};
     bool* failed_{&own_failed_};
-    XerEncodeStream(std::ostream& os, int depth, bool* failed) : os_(os), depth_(depth), failed_(failed) {}
+    int own_codec_calls_{0};
+    int* codec_calls_{&own_codec_calls_};
+    XerEncodeStream(std::ostream& os, int depth, bool* failed, int* codec_calls)
+        : os_(os), depth_(depth), failed_(failed), codec_calls_(codec_calls) {}
 public:
     /// @brief Wrap \p os for output at nesting depth 0.
     /// @param os  Output stream; must outlive this object.
@@ -52,8 +55,14 @@ public:
     XerEncodeStream(const XerEncodeStream&) = delete;
     XerEncodeStream& operator=(const XerEncodeStream&) = delete;
     /// @brief Stream for a nested value one level deeper, sharing this
-    ///        stream's output and failure flag (used by recursive encode).
-    XerEncodeStream child() { return XerEncodeStream(os_, depth_ + 1, failed_); }
+    ///        stream's output, failure flag and \c codec_calls() count
+    ///        (used by recursive encode).
+    XerEncodeStream child() { return XerEncodeStream(os_, depth_ + 1, failed_, codec_calls_); }
+    /// @brief \c XerCodec::encode calls in progress on this stream and its
+    ///        children; 1 inside the outermost one, which is how XER finds
+    ///        the document root. Unlike \c depth(), a caller cannot preset
+    ///        it.
+    int& codec_calls() { return *codec_calls_; }
     /// @brief Access the underlying output stream.
     std::ostream& os() { return os_; }
     /// @brief Current nesting depth (0 = top-level).

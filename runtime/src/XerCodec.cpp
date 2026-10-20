@@ -968,22 +968,24 @@ namespace {
 // against real asn1c output, which does wrap: `<Alt4>\n<str>j</str>
 // </Alt4>`, not `<str>j</str>`).
 //
-// `XerCodec::encode`/`decode` are the single funnel every recursive XER
-// call passes through (composite handlers call back into `codec.encode`/
-// `codec.decode`, never straight into a nested handler) — a thread-local
-// recursion counter here distinguishes the outermost call from every
-// nested one without threading a new parameter through the shared
-// `ICodec` interface (which XER, BER, JER, and PER all implement with
-// the same signature) or touching any composite handler's own logic.
-// Mirrors `ValidatePathScope`'s RAII-around-thread-local pattern
-// (`codec/Validation.hpp`).
-struct XerRecursionScope {
-    XerRecursionScope() { ++depth(); }
-    ~XerRecursionScope() { --depth(); }
-    XerRecursionScope(const XerRecursionScope&) = delete;
-    XerRecursionScope& operator=(const XerRecursionScope&) = delete;
-    bool is_root() const { return depth() == 1; }
-    static int& depth() { thread_local int d = 0; return d; }
+// `XerCodec::encode` is the single funnel every recursive XER encode
+// passes through (composite handlers call back into `codec.encode`,
+// never straight into a nested handler), so counting its calls on the
+// stream tells the outermost call from every nested one. Decode needs no
+// counter of its own: a CHOICE is at the root exactly when it is the
+// first constructed level the stream's `DecodeDepth` holds.
+
+/// @brief One \c XerCodec::encode call in progress on a stream's
+///        \c codec_calls() count, released on scope exit.
+class XerEncodeCallScope {
+    int& calls_;
+public:
+    explicit XerEncodeCallScope(int& calls) : calls_(calls) { ++calls_; }
+    ~XerEncodeCallScope() { --calls_; }
+    XerEncodeCallScope(const XerEncodeCallScope&) = delete;
+    XerEncodeCallScope& operator=(const XerEncodeCallScope&) = delete;
+    /// @return True inside the outermost encode call on the stream.
+    bool is_root() const { return calls_ == 1; }
 };
 
 } // namespace
@@ -994,7 +996,7 @@ void XerCodec::encode(IEncodeStream& dst,
 {
     validate_on_encode("XER", def, src);
     auto& s = static_cast<XerEncodeStream&>(dst);
-    XerRecursionScope scope;
+    XerEncodeCallScope scope{s.codec_calls()};
     bool wrap = scope.is_root() && def.kind == TypeKind::Choice;
     if (wrap) s.os() << '<' << def.name << '>';
     if (def.kind == TypeKind::Primitive)
@@ -1019,8 +1021,7 @@ DecodeResult XerCodec::decode(IDecodeStream& src,
     auto& s = static_cast<XerDecodeStream&>(src);
     DecodeDepthGuard depth_guard{s.depth(), def};
     if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
-    XerRecursionScope scope;
-    bool wrap = scope.is_root() && def.kind == TypeKind::Choice;
+    bool wrap = def.kind == TypeKind::Choice && s.depth().levels() == 1;
     if (wrap) {
         if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
     }
