@@ -18,6 +18,10 @@ inline constexpr int kMaxDecodeDepth = 256;
 class DecodeDepth {
     int levels_{0};
     friend class DecodeDepthGuard;
+public:
+    /// @return Constructed levels entered so far, including the one whose
+    ///         guard is open (1 inside the outermost constructed value).
+    int levels() const { return levels_; }
 };
 
 /// @brief One level of decode nesting, held by every codec's \c decode()
