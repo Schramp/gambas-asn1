@@ -1276,6 +1276,7 @@ set_tests_properties(recursive_choice PROPERTIES TIMEOUT 30)
 set(SELF_REF_CHOICE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_self_ref_choice_test)
 add_custom_command(
     OUTPUT  ${SELF_REF_CHOICE_GEN_DIR}/RecChoice.hpp ${SELF_REF_CHOICE_GEN_DIR}/RecChoice.cpp
+            ${SELF_REF_CHOICE_GEN_DIR}/RecSeq.hpp ${SELF_REF_CHOICE_GEN_DIR}/RecSeq.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SELF_REF_CHOICE_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/self_ref_choice_test.asn1
                                    -o ${SELF_REF_CHOICE_GEN_DIR}
@@ -1285,6 +1286,7 @@ add_custom_command(
 add_executable(test_self_ref_choice
     seq/test_self_ref_choice.cpp
     ${SELF_REF_CHOICE_GEN_DIR}/RecChoice.cpp
+    ${SELF_REF_CHOICE_GEN_DIR}/RecSeq.cpp
 )
 target_include_directories(test_self_ref_choice PRIVATE ${SELF_REF_CHOICE_GEN_DIR})
 target_link_libraries(test_self_ref_choice PRIVATE asn1cpp_runtime)
