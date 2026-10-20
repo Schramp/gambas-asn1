@@ -16,6 +16,7 @@
 #include <span>
 #include "ICodec.hpp"
 #include "Debug.hpp"
+#include "DecodeDepth.hpp"
 #include "../Tag.hpp"
 #include "../types/Boolean.hpp"
 #include "../types/OctetString.hpp"
@@ -111,6 +112,7 @@ class XerDecodeStream : public IDecodeStream {
     std::string buf_;
     std::size_t pos_{0};
     bool lenient_;
+    DecodeDepth depth_;
 public:
     /// @brief Construct from \p text with optional \p mode (default: \c Strict).
     /// @param text  Complete XML document or element string to decode.
@@ -121,6 +123,8 @@ public:
     bool at_end() const override { return pos_ >= buf_.size(); }
     /// @brief Return true if lenient mode is active.
     bool lenient() const { return lenient_; }
+    /// @brief The decode nesting depth; see \c DecodeDepth.
+    DecodeDepth& depth() { return depth_; }
     /// @brief View of unconsumed input from the current position.
     std::string_view remaining() const { return std::string_view(buf_).substr(pos_); }
     /// @brief Advance the read position by \p n bytes.

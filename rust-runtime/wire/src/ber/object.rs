@@ -79,12 +79,20 @@ fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec<u8>) -> Re
 /// @return `Err` on malformed BER, a tag mismatch, or a member or
 ///         alternative codegen marked unsupported.
 fn decode_member_ref(m: MemberRefMut, framing: BerTagging, r: &mut Reader) -> Result<(), DecodeError> {
-    let _g = match m {
-        MemberRefMut::Composite(_) | MemberRefMut::Choice(_) | MemberRefMut::SeqOf(_) => {
-            Some(crate::nesting::DepthGuard::enter().ok_or_else(|| DecodeError::new(crate::nesting::too_deep(), r.pos()))?)
-        }
-        _ => None,
-    };
+    if !matches!(m, MemberRefMut::Composite(_) | MemberRefMut::Choice(_) | MemberRefMut::SeqOf(_)) {
+        return decode_member_ref_level(m, framing, r);
+    }
+    if !r.depth.enter() {
+        return Err(DecodeError::new(crate::nesting::too_deep(), r.pos()));
+    }
+    let res = decode_member_ref_level(m, framing, r);
+    r.depth.leave();
+    res
+}
+
+/// @brief The per-kind decode `decode_member_ref` dispatches to once it has counted
+///        the nesting level a constructed value enters.
+fn decode_member_ref_level(m: MemberRefMut, framing: BerTagging, r: &mut Reader) -> Result<(), DecodeError> {
     match m {
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, r.pos())),
@@ -96,7 +104,7 @@ fn decode_member_ref(m: MemberRefMut, framing: BerTagging, r: &mut Reader) -> Re
                 if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                     return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
                 }
-                let mut inner_r = Reader::new(tlv.value);
+                let mut inner_r = r.sub(tlv.value);
                 decode_choice_dispatch(inner, &mut inner_r)
             }
             BerTagging::Implicit(tag) => decode_choice_tagged_into(inner, r, tag),
@@ -111,23 +119,23 @@ fn decode_member_ref(m: MemberRefMut, framing: BerTagging, r: &mut Reader) -> Re
                     if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                         return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
                     }
-                    let mut outer = Reader::new(tlv.value);
+                    let mut outer = r.sub(tlv.value);
                     let inner_tlv = outer.read_tlv()?;
-                    decode_seqof_content(inner, inner_tlv.value)
+                    decode_seqof_content(inner, outer.sub(inner_tlv.value))
                 }
                 BerTagging::Implicit(tag) => {
                     let tlv = r.read_tlv()?;
                     if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                         return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
                     }
-                    decode_seqof_content(inner, tlv.value)
+                    decode_seqof_content(inner, r.sub(tlv.value))
                 }
                 BerTagging::Delegate => {
                     let tlv = r.read_tlv()?;
                     if tlv.tag.class != natural.class || tlv.tag.number != natural.number {
                         return Err(DecodeError::new(format!("expected tag {natural:?}, got {:?}", tlv.tag), r.pos()));
                     }
-                    decode_seqof_content(inner, tlv.value)
+                    decode_seqof_content(inner, r.sub(tlv.value))
                 }
                 BerTagging::Unsupported(reason) => Err(unsupported_framing_decode(reason, r)),
             }
@@ -138,7 +146,7 @@ fn decode_member_ref(m: MemberRefMut, framing: BerTagging, r: &mut Reader) -> Re
                 if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                     return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
                 }
-                let mut inner_r = Reader::new(tlv.value);
+                let mut inner_r = r.sub(tlv.value);
                 read_enumerated_tagged_into(slot, &mut inner_r, ENUMERATED_TAG)
             }
             BerTagging::Implicit(tag) => read_enumerated_tagged_into(slot, r, tag),
@@ -155,9 +163,9 @@ fn decode_composite_member(inner: &mut dyn Asn1Seq, ber: BerTagging, r: &mut Rea
             if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                 return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
             }
-            let mut outer = Reader::new(tlv.value);
+            let mut outer = r.sub(tlv.value);
             let inner_tlv = outer.read_tlv()?;
-            let mut content = Reader::new(inner_tlv.value);
+            let mut content = outer.sub(inner_tlv.value);
             decode_seq_content_into(inner, &mut content)
         }
         BerTagging::Implicit(tag) => {
@@ -165,7 +173,7 @@ fn decode_composite_member(inner: &mut dyn Asn1Seq, ber: BerTagging, r: &mut Rea
             if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                 return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
             }
-            let mut content = Reader::new(tlv.value);
+            let mut content = r.sub(tlv.value);
             decode_seq_content_into(inner, &mut content)
         }
         BerTagging::Delegate => {
@@ -174,7 +182,7 @@ fn decode_composite_member(inner: &mut dyn Asn1Seq, ber: BerTagging, r: &mut Rea
             if tlv.tag.class != natural.class || tlv.tag.number != natural.number {
                 return Err(DecodeError::new(format!("expected tag {natural:?}, got {:?}", tlv.tag), r.pos()));
             }
-            let mut content = Reader::new(tlv.value);
+            let mut content = r.sub(tlv.value);
             decode_seq_content_into(inner, &mut content)
         }
         BerTagging::Unsupported(reason) => Err(unsupported_framing_decode(reason, r)),
@@ -277,7 +285,7 @@ fn set_in_table_order(obj: &dyn Asn1Seq, content: &[u8]) -> Result<Vec<u8>, Deco
 pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), DecodeError> {
     if obj.spec().is_set {
         let ordered = set_in_table_order(obj, r.remaining())?;
-        return decode_seq_members(obj, &mut Reader::new(&ordered));
+        return decode_seq_members(obj, &mut r.sub(&ordered));
     }
     decode_seq_members(obj, r)
 }
@@ -319,7 +327,7 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Deco
     if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
         return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
     }
-    let mut content = Reader::new(tlv.value);
+    let mut content = r.sub(tlv.value);
     decode_seq_content_into(obj, &mut content)
 }
 
@@ -372,7 +380,7 @@ pub fn decode_choice_tagged_into(obj: &mut dyn Asn1Choice, r: &mut Reader, tag: 
     if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
         return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
     }
-    let mut inner = Reader::new(tlv.value);
+    let mut inner = r.sub(tlv.value);
     decode_choice_dispatch(obj, &mut inner)
 }
 
@@ -383,7 +391,7 @@ pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
             if tlv.tag.class != tag.class || tlv.tag.number != tag.number {
                 return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
             }
-            let mut inner = Reader::new(tlv.value);
+            let mut inner = r.sub(tlv.value);
             decode_choice_dispatch(obj, &mut inner)
         }
         None => decode_choice_dispatch(obj, r),
@@ -454,15 +462,20 @@ pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) -> Result<()
     Ok(())
 }
 
-/// Mirrors `ber::sequence::decode_seq_of_content`'s own zero-copy
-/// top-level-TLV pre-count (`count_top_level_tlvs`): reserves the
-/// backing `Vec` once via `Asn1SeqOf::reserve` instead of letting
-/// `push_default_mut` regrow it geometrically one element at a time.
-pub fn decode_seqof_content(obj: &mut dyn Asn1SeqOf, content: &[u8]) -> Result<(), DecodeError> {
-    obj.reserve(crate::ber::sequence::count_top_level_tlvs(content));
-    let mut inner = Reader::new(content);
-    while !inner.at_end() {
-        decode_member_ref(obj.push_default_mut(), BerTagging::Delegate, &mut inner)?;
+/// @brief Decodes the elements of a SEQUENCE OF / SET OF, no outer TLV.
+///        Reserves the backing `Vec` once via `Asn1SeqOf::reserve` from a
+///        zero-copy top-level-TLV pre-count (`count_top_level_tlvs`)
+///        instead of letting `push_default_mut` regrow it geometrically
+///        one element at a time.
+/// @param obj     The collection, `Default`-fresh.
+/// @param content Reader over the element TLVs, at the decode's nesting
+///                depth (`Reader::sub`).
+/// @return `Err` when an element fails to decode.
+/// @see X.690 §8.10, §8.12.
+pub fn decode_seqof_content(obj: &mut dyn Asn1SeqOf, mut content: Reader) -> Result<(), DecodeError> {
+    obj.reserve(crate::ber::sequence::count_top_level_tlvs(content.remaining()));
+    while !content.at_end() {
+        decode_member_ref(obj.push_default_mut(), BerTagging::Delegate, &mut content)?;
     }
     Ok(())
 }
@@ -1052,7 +1065,7 @@ mod tests {
         let mut r = Reader::new(&full);
         let tlv = r.read_tlv().unwrap();
         let mut result = crate::ber::sequence::SeqOf::<Integer>::default();
-        decode_seqof_content(&mut result, tlv.value).unwrap();
+        decode_seqof_content(&mut result, Reader::new(tlv.value)).unwrap();
         let _ = out;
         result
     }

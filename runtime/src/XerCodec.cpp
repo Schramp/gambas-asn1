@@ -1017,7 +1017,7 @@ DecodeResult XerCodec::decode(IDecodeStream& src,
                                Asn1Object* dest) const
 {
     auto& s = static_cast<XerDecodeStream&>(src);
-    DecodeDepthGuard depth_guard{def};
+    DecodeDepthGuard depth_guard{s.depth(), def};
     if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
     XerRecursionScope scope;
     bool wrap = scope.is_root() && def.kind == TypeKind::Choice;

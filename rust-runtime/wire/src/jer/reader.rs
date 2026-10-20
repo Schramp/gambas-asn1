@@ -7,6 +7,7 @@
 //! so this module doesn't port that tokenizer at all).
 
 use crate::ber::reader::DecodeError;
+use crate::nesting::Depth;
 
 /// Cursor over a JSON text buffer. Byte-indexed, like `XerReader` —
 /// JER text is always ASCII-safe JSON syntax at the structural level
@@ -15,11 +16,12 @@ use crate::ber::reader::DecodeError;
 pub struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
+    pub(crate) depth: Depth,
 }
 
 impl<'a> Reader<'a> {
     pub fn new(text: &'a str) -> Self {
-        Reader { data: text.as_bytes(), pos: 0 }
+        Reader { data: text.as_bytes(), pos: 0, depth: Depth::default() }
     }
 
     pub fn at_end(&self) -> bool {

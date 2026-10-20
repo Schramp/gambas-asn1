@@ -259,7 +259,7 @@ static DecodeResult decode_open_type(const PerCodec& codec, PerDecodeStream& str
                                      const TypeDescriptor& mdef, Asn1Object* mptr) {
     auto bytes_r = per_detail::get_octets(stream);
     if (!bytes_r) return decode_err(bytes_r.error());
-    PerDecodeStream tmp_s{std::span<const uint8_t>{bytes_r->data(), bytes_r->size()}};
+    PerDecodeStream tmp_s = stream.sub(std::span<const uint8_t>{bytes_r->data(), bytes_r->size()});
     IDecodeStream& ds = tmp_s;
     return codec.decode(ds, mdef, mptr);
 }
@@ -1160,7 +1160,7 @@ static DecodeResult decode_group_open_type(const PerCodec& codec, PerDecodeStrea
                                            Asn1Object* dest) {
     auto bytes_r = per_detail::get_octets(stream);
     if (!bytes_r) return decode_err(bytes_r.error());
-    PerDecodeStream gs{std::span<const uint8_t>{bytes_r->data(), bytes_r->size()}};
+    PerDecodeStream gs = stream.sub(std::span<const uint8_t>{bytes_r->data(), bytes_r->size()});
     std::vector<bool> present(static_cast<std::size_t>(end - begin), true);
     for (int i = begin; i < end; ++i) {
         if (!spec.group_member_optional[i]) continue;
@@ -1342,7 +1342,7 @@ DecodeResult PerCodec::decode(IDecodeStream& src,
                               Asn1Object* dest) const
 {
     auto& stream = static_cast<PerDecodeStream&>(src);
-    DecodeDepthGuard depth_guard{def};
+    DecodeDepthGuard depth_guard{stream.depth(), def};
     if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
     DecodeResult res = (def.per_handler ? *def.per_handler : s_error).decode(*this, stream, def, dest);
     if (res.has_value()) validate_on_decode("PER", def, dest);

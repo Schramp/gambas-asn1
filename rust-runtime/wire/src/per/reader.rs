@@ -3,6 +3,7 @@
 //! Mirrors `PerDecodeStream` (`runtime/include/asn1cpp/codec/PerCodec.hpp`):
 //! same `get_bits`/`at_end` entry points, same MSB-first unpacking order.
 
+use crate::nesting::Depth;
 use std::fmt;
 
 /// Decode failure with a human-readable reason and the bit offset it
@@ -35,11 +36,19 @@ pub struct Reader<'a> {
     byte_pos: usize,
     bit_pos: usize,
     skipped_ext_count: usize,
+    pub(crate) depth: Depth,
 }
 
 impl<'a> Reader<'a> {
     pub fn new(buf: &'a [u8]) -> Reader<'a> {
-        Reader { buf, byte_pos: 0, bit_pos: 0, skipped_ext_count: 0 }
+        Reader { buf, byte_pos: 0, bit_pos: 0, skipped_ext_count: 0, depth: Depth::default() }
+    }
+
+    /// @brief Opens a reader over an open type's octets (X.691 §11.2) at
+    ///        this reader's decode nesting depth.
+    /// @see `crate::nesting`.
+    pub(crate) fn sub<'b>(&self, buf: &'b [u8]) -> Reader<'b> {
+        Reader { depth: self.depth, ..Reader::new(buf) }
     }
 
     /// True once all input bits have been consumed.
