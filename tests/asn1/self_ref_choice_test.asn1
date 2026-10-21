@@ -9,4 +9,12 @@ SelfRefChoiceTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
         c RecChoice
     }
 
+    -- Recursive SEQUENCE through an OPTIONAL member. AUTOMATIC TAGS makes
+    -- `next` [1] IMPLICIT, so the cycle runs only through IMPLICIT-tagged
+    -- members (no EXPLICIT wrapper, no CHOICE) in the BER decode.
+    RecSeq ::= SEQUENCE {
+        v    INTEGER,
+        next RecSeq OPTIONAL
+    }
+
 END

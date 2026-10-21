@@ -43,6 +43,9 @@ public:
     /// @brief Current read position (byte offset from start of \p data).
     std::size_t pos()   const { return pos_; }
 
+    /// @brief The unread bytes, without advancing.
+    std::span<const uint8_t> rest() const { return peek(remaining()); }
+
     /// @brief Peek at up to \p n bytes starting at the current position without advancing.
     std::span<const uint8_t> peek(std::size_t n) const {
         std::size_t avail = std::min(n, remaining());

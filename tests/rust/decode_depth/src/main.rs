@@ -3,7 +3,8 @@
 // nesting-limit section of tests/seq/test_self_ref_choice.cpp. A forged
 // input nesting `c` far deeper than `nesting::MAX_DECODE_DEPTH` is rejected
 // with an error by every decoder instead of overflowing the stack; one just
-// within the limit decodes.
+// within the limit decodes. RecSeq (`next RecSeq OPTIONAL`) does the same
+// through IMPLICIT-tagged members only.
 #![allow(non_snake_case)]
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
@@ -67,6 +68,29 @@ fn deep_per(levels: usize) -> Vec<u8> {
     out
 }
 
+// A RecSeq whose `next` chain is `levels` deep: each level's contents are
+// v [0] = 0 followed by next [1] IMPLICIT RecSeq.
+fn deep_rec_seq_ber(levels: usize) -> Vec<u8> {
+    fn wrap(mut prefix: Vec<u8>, tag: u8, v: &[u8]) -> Vec<u8> {
+        prefix.push(tag);
+        let n = v.len();
+        if n < 128 {
+            prefix.push(n as u8);
+        } else {
+            let b: Vec<u8> = n.to_be_bytes().iter().copied().skip_while(|&x| x == 0).collect();
+            prefix.push(0x80 | b.len() as u8);
+            prefix.extend_from_slice(&b);
+        }
+        prefix.extend_from_slice(v);
+        prefix
+    }
+    let mut v = vec![0x80, 0x01, 0x00];
+    for _ in 0..levels {
+        v = wrap(vec![0x80, 0x01, 0x00], 0xA1, &v);
+    }
+    wrap(vec![], 0x30, &v)
+}
+
 // A decoded value nested this deep would recurse in Drop; unwind it first.
 fn drop_flat(v: Rec) {
     let mut cur = v;
@@ -91,6 +115,8 @@ fn main() {
         expect("XER", asn1cpp_wire::xer::object::decode_pdu::<Rec>(&deep_xer(levels)).ok());
         expect("JER", asn1cpp_wire::jer::object::decode_pdu::<Rec>(&deep_jer(levels)).ok());
         expect("PER", asn1cpp_wire::per::object::decode_pdu::<Rec>(&deep_per(levels)).ok());
+        let r = asn1cpp_wire::ber::object::decode_pdu::<RecSeq::RecSeq>(&deep_rec_seq_ber(levels));
+        check(&format!("BER RecSeq (IMPLICIT) decode of {levels} levels {verdict}"), r.is_ok() == within, &mut failures);
     }
     println!("\n{} ({failures} failure{})", if failures > 0 { "FAILED" } else { "PASSED" }, if failures == 1 { "" } else { "s" });
     std::process::exit(if failures > 0 { 1 } else { 0 });

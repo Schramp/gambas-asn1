@@ -65,10 +65,14 @@ struct IBerTypeHandler {
                         const TypeDescriptor& def, const Asn1Object* src) const = 0;
     virtual DecodeResult decode(const BerCodec& codec, BerReader& r,
                                 const TypeDescriptor& def, Asn1Object* dest) const = 0;
-    // Decode from raw value bytes (tag+length already consumed by caller).
-    // Default: re-tags and calls decode(). Override for zero-alloc fast paths.
+    /// @brief Decodes a value whose tag and length the caller already
+    ///        consumed (an IMPLICIT tag, X.690 §8.14.3). Default: re-tags
+    ///        the contents and calls \c decode(). Override for zero-alloc
+    ///        fast paths.
+    /// @param content  Reader over exactly the value's contents, opened with
+    ///                 \c BerReader::sub so it carries the decode nesting depth.
     virtual DecodeResult decode_value(const BerCodec& codec,
-                                      std::span<const uint8_t> value,
+                                      BerReader& content,
                                       const TypeDescriptor& def,
                                       Asn1Object* dest) const;
 };
@@ -127,6 +131,17 @@ public:
     /// @see X.690 §8.14.3 — an IMPLICIT tag replaces the identifier only, so
     ///      the contents decode (and constraints) are the underlying type's.
     DecodeResult decode_value(std::span<const uint8_t> value,
+                              const TypeDescriptor& def,
+                              Asn1Object* dest) const;
+
+    /// @brief \c decode_value() over a reader holding exactly the value's
+    ///        contents, so a nested IMPLICIT-tagged member keeps the decode
+    ///        nesting depth (\c DecodeDepth) of the reader it came from.
+    ///        Counts one nesting level for a constructed \p def, as
+    ///        \c decode() does.
+    /// @param content  Typically \c r.sub(tlv.value) after reading the
+    ///                 member's IMPLICIT tag from \c r.
+    DecodeResult decode_value(BerReader& content,
                               const TypeDescriptor& def,
                               Asn1Object* dest) const;
 
