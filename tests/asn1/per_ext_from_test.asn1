@@ -3,7 +3,7 @@
 -- is the type's own (§9.3.10), and the marker adds no extension bit
 -- (§9.3.15 note 1). Each member must encode exactly like the plain type:
 -- 7-bit characters for VisibleString and IA5String in UNALIGNED.
--- asn1c instead writes 8-bit characters here (Schramp/asn1c#8), hence
+-- asn1c instead writes 8-bit characters here (Schramp/asn1c#1), hence
 -- skip-asn1c on this target.
 PerExtFromTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 

@@ -11,7 +11,7 @@
 //     constraint violation.
 //
 // S64Rec, S33Rec and UncRec bytes are asn1c's UPER output. asn1c cannot
-// encode U64Rec (upper bound above INT64_MAX, Schramp/asn1c#12); its bytes
+// encode U64Rec (upper bound above INT64_MAX, Schramp/asn1c#4); its bytes
 // equal asn1c's S64Rec bytes for value − 2^63, the same 64-bit field.
 #include <cstdio>
 #include <cstdint>
