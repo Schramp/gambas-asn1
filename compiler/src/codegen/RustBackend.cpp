@@ -953,9 +953,9 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // This type's own X.693 §9.3 wrapper name, used when it appears
     // nested as another collection's element (`natural_xer_name_of`'s
     // own doc) -- `spec.xer_name` is this type's real ASN.1 name when it
-    // has one, or the generic `"SEQUENCE"`/`"SET"` keyword fallback an
+    // has one, or the `xmlasn1typename` `"SEQUENCE_OF"`/`"SET_OF"` an
     // anonymous promoted collection gets (`Generator::synthetic->
-    // xer_name`) -- never the inline-member `"SEQUENCE-OF"`/`"SET-OF"`
+    // xer_name`, X.680 Table 4) -- never the inline-member
     // form `ber::sequence::SeqOf<T>`/`SetOf<T>` use, since this type is
     // always independently named or promoted, never an inline member.
     os << std::format("    fn own_xer_name(&self) -> &'static str {{ \"{}\" }}\n", spec.xer_name);
