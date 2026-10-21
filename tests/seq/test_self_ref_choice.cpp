@@ -51,37 +51,48 @@ static bool xer_dec(const std::string& xml, const TypeDescriptor& def, Asn1Objec
 }
 
 
-// Wraps `v` in a TLV with identifier `prefix` (the bytes before the tag
-// octet are copied as-is, so a member may precede the TLV).
-static std::vector<uint8_t> wrap_tlv(std::vector<uint8_t> prefix, uint8_t tag,
-                                     const std::vector<uint8_t>& v) {
-    prefix.push_back(tag);
-    std::size_t n = v.size();
-    if (n < 128) prefix.push_back(static_cast<uint8_t>(n));
-    else {
-        std::vector<uint8_t> b;
-        for (; n; n >>= 8) b.insert(b.begin(), static_cast<uint8_t>(n));
-        prefix.push_back(static_cast<uint8_t>(0x80 | b.size()));
-        prefix.insert(prefix.end(), b.begin(), b.end());
+// Appends the BER length octets for `n` (X.690 §8.1.3).
+static void put_ber_length(std::vector<uint8_t>& out, std::size_t n) {
+    if (n < 128) { out.push_back(static_cast<uint8_t>(n)); return; }
+    std::vector<uint8_t> b;
+    for (; n; n >>= 8) b.insert(b.begin(), static_cast<uint8_t>(n));
+    out.push_back(static_cast<uint8_t>(0x80 | b.size()));
+    out.insert(out.end(), b.begin(), b.end());
+}
+
+// `levels` nested TLVs: each level is `prefix`, then a TLV tagged `tag`
+// whose contents are the next level; the innermost contents are `inner`.
+// Built in one pass (each level's length is known from the inside out),
+// so a 100000-level input costs linear time, not a copy per level.
+static std::vector<uint8_t> nest_tlvs(const std::vector<uint8_t>& prefix, uint8_t tag,
+                                      int levels, const std::vector<uint8_t>& inner) {
+    std::vector<std::vector<uint8_t>> heads(levels);
+    std::size_t len = inner.size();
+    for (int i = 0; i < levels; ++i) {
+        std::vector<uint8_t> h = prefix;
+        h.push_back(tag);
+        put_ber_length(h, len);
+        len += h.size();
+        heads[i] = std::move(h);
     }
-    prefix.insert(prefix.end(), v.begin(), v.end());
-    return prefix;
+    std::vector<uint8_t> out;
+    out.reserve(len);
+    for (int i = levels - 1; i >= 0; --i) out.insert(out.end(), heads[i].begin(), heads[i].end());
+    out.insert(out.end(), inner.begin(), inner.end());
+    return out;
 }
 
 // A RecChoice nested `levels` deep: c(c(...c(a(5))...)). Built directly
 // rather than encoded, so a depth no encoder would survive can be tested.
 static std::vector<uint8_t> deep_ber(int levels) {
-    std::vector<uint8_t> v{0x80, 0x01, 0x05};
-    for (int i = 0; i < levels; ++i) v = wrap_tlv({}, 0xA2, v);
-    return v;
+    return nest_tlvs({}, 0xA2, levels, {0x80, 0x01, 0x05});
 }
 
 // A RecSeq whose `next` chain is `levels` deep: each level's contents are
 // v [0] = 0 followed by next [1] IMPLICIT RecSeq.
 static std::vector<uint8_t> deep_rec_seq_ber(int levels) {
-    std::vector<uint8_t> v{0x80, 0x01, 0x00};
-    for (int i = 0; i < levels; ++i) v = wrap_tlv({0x80, 0x01, 0x00}, 0xA1, v);
-    return wrap_tlv({}, 0x30, v);
+    auto content = nest_tlvs({0x80, 0x01, 0x00}, 0xA1, levels, {0x80, 0x01, 0x00});
+    return nest_tlvs({}, 0x30, 1, content);
 }
 
 static std::string deep_xer(int levels) {
