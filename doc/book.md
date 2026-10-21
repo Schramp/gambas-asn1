@@ -475,7 +475,15 @@ its BER encoding — but it is human-readable and toolchain-compatible.
 
 ### JSON Encoding Rules (JER)
 
-JER maps ASN.1 to JSON. It is not yet implemented in gambas-asn1 (stub only).
+JER (X.697) maps ASN.1 to JSON. Both runtimes implement it (C++ `JerCodec`,
+Rust `asn1cpp_wire::jer::object`), and C++ and Rust write identical text.
+
+A REAL is a JSON number that converts back to exactly the same double. It is
+the shortest such digit string, in plain decimal notation when the decimal
+exponent is in [-4, 15) (`-338203.95104146993`, `0.0001`, `100`) and as
+`d.dddE<exp>` otherwise (`1E-5`, `1.7976931348623157E308`). The special
+values are the strings `"NaN"`, `"INF"`, `"-INF"` and `"-0"` (X.697 §23).
+The decoder accepts any JSON number notation.
 
 ### Encoding Rule Comparison
 
@@ -1344,7 +1352,6 @@ Constraint validation runs at encode and decode time in Debug builds. Supported:
 |------|-----------|
 | **WITH COMPONENTS / PATTERN** | WITH COMPONENTS and PATTERN constraints are not enforced by the validator. Neither is PER-visible, so PER encoding is unaffected. Not present in ETSI LI or 3GPP RRC schemas. |
 | **BigInteger / ArbitraryInteger** | Unconstrained INTEGER values that exceed int64_t / uint64_t range have stub types with deleted constructors. Codec cannot encode or decode these. Not used by supported schemas. A constrained INTEGER must fit int64 (−2^63..2^63−1) or, when its lower bound is non-negative, uint64 (0..2^64−1). Anything else — a bound below −2^63 (e.g. `INTEGER (-2^64..2^64-1)`) or a range mixing negative values with values above 2^63−1 (e.g. `INTEGER (-1..2^64-1)`) — is deliberately not implemented; supporting it would mean promoting such a member to a big-integer type with its own PER path ([Issue #754](https://github.com/Schramp/gambas-asn1/issues/754)). Full 64-bit ranges such as `(0..2^64-1)` and `(-2^63..2^63-1)` are encoded as 64-bit constrained whole numbers in PER. |
-| **JER (JSON Encoding Rules)** | Stub only — returns `not_implemented`. |
 | **32-bit platforms not supported** | asn1cpp requires a 64-bit host. Both the compiler and the generated runtime use 64-bit `long`/`uint64_t` types. Building or running on a 32-bit CPU is untested and unsupported. |
 | **-flong-size cross-compilation** | asn1cpp compiled for a 64-bit host generates code assuming 64-bit `long`. Cross-compilation to 32-bit targets may produce wrong native INTEGER storage types ([Issue #15](https://github.com/Schramp/gambas-asn1/issues/15)). |
 | **SET member ordering** | SET members are decoded in tag order (same as SEQUENCE). The standard permits any order; out-of-order SETs from other encoders are not handled. |
