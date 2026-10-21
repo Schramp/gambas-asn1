@@ -933,6 +933,13 @@ target_link_libraries(test_choice_unknown_ext PRIVATE asn1cpp_runtime)
 add_test(NAME choice_unknown_ext COMMAND test_choice_unknown_ext)
 set_tests_properties(choice_unknown_ext PROPERTIES TIMEOUT 30)
 
+# ---- Encode/decode failure reporting (no abort, every codec) ------------------
+add_executable(test_encode_failure seq/test_encode_failure.cpp ${CUE_GEN_DIR}/MsgV1.cpp)
+target_include_directories(test_encode_failure PRIVATE ${CUE_GEN_DIR})
+target_link_libraries(test_encode_failure PRIVATE asn1cpp_runtime)
+add_test(NAME encode_failure COMMAND test_encode_failure)
+set_tests_properties(encode_failure PROPERTIES TIMEOUT 30)
+
 # ---- SEQUENCE extension addition group (X.691 §18.9) ------------------------
 set(EXTGRP_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_ext_group_test)
 add_custom_command(
@@ -1269,6 +1276,7 @@ set_tests_properties(recursive_choice PROPERTIES TIMEOUT 30)
 set(SELF_REF_CHOICE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_self_ref_choice_test)
 add_custom_command(
     OUTPUT  ${SELF_REF_CHOICE_GEN_DIR}/RecChoice.hpp ${SELF_REF_CHOICE_GEN_DIR}/RecChoice.cpp
+            ${SELF_REF_CHOICE_GEN_DIR}/RecSeq.hpp ${SELF_REF_CHOICE_GEN_DIR}/RecSeq.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SELF_REF_CHOICE_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/self_ref_choice_test.asn1
                                    -o ${SELF_REF_CHOICE_GEN_DIR}
@@ -1278,6 +1286,7 @@ add_custom_command(
 add_executable(test_self_ref_choice
     seq/test_self_ref_choice.cpp
     ${SELF_REF_CHOICE_GEN_DIR}/RecChoice.cpp
+    ${SELF_REF_CHOICE_GEN_DIR}/RecSeq.cpp
 )
 target_include_directories(test_self_ref_choice PRIVATE ${SELF_REF_CHOICE_GEN_DIR})
 target_link_libraries(test_self_ref_choice PRIVATE asn1cpp_runtime)
@@ -1814,6 +1823,52 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_choice_unknown_ext PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_CUE_GEN_DIR=${RUST_CUE_GEN_DIR}")
+endif()
+
+# Rust leg of the decode nesting limit test — see
+# tests/rust/decode_depth/src/main.rs (C++ leg: test_self_ref_choice).
+set(RUST_DEPTH_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_decode_depth)
+add_custom_command(
+    OUTPUT  ${RUST_DEPTH_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_DEPTH_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/self_ref_choice_test.asn1
+                                   -o ${RUST_DEPTH_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/self_ref_choice_test.asn1
+    COMMENT "Generating Rust from self_ref_choice_test.asn1"
+)
+add_custom_target(gen_rust_decode_depth ALL DEPENDS ${RUST_DEPTH_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_decode_depth
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/decode_depth/Cargo.toml)
+    set_tests_properties(rust_decode_depth PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_DEPTH_GEN_DIR=${RUST_DEPTH_GEN_DIR}")
+endif()
+
+# Fixed-seed fuzz smoke run for the Rust decoders — see
+# tests/rust/fuzz_smoke/src/main.rs (C++ counterpart: fuzz_ber).
+set(RUST_FUZZ_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_fuzz_smoke)
+add_custom_command(
+    OUTPUT  ${RUST_FUZZ_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_FUZZ_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/roundtrip_test.asn1
+                                   -o ${RUST_FUZZ_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/roundtrip_test.asn1
+    COMMENT "Generating Rust from roundtrip_test.asn1"
+)
+add_custom_target(gen_rust_fuzz_smoke ALL DEPENDS ${RUST_FUZZ_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_fuzz_smoke
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/fuzz_smoke/Cargo.toml)
+    set_tests_properties(rust_fuzz_smoke PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_FUZZ_GEN_DIR=${RUST_FUZZ_GEN_DIR}")
 endif()
 
 # Rust leg of the extension addition group test — see tests/rust/ext_group/src/main.rs.

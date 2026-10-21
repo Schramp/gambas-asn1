@@ -17,6 +17,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <vector>
 
 static std::vector<uint8_t> slurp(std::istream& in) {
@@ -92,6 +93,11 @@ int main(int argc, char** argv) {
         asn1::PerEncodeStream ps{per_buf};
         asn1::IEncodeStream& es = ps;
         asn1::PerCodec::instance().encode(es, *entry->def, p);
+        if (ps.encode_failed()) {
+            std::cerr << "PER encode failed record #" << n << " at offset " << (offset - consumed) << "\n";
+            ++errors;
+            continue;
+        }
         ps.flush();
 
         write_u32be(std::cout, static_cast<uint32_t>(per_buf.size()));

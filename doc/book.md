@@ -657,6 +657,75 @@ for (auto& fail : report.failures())
     std::cerr << fail.path << ": " << fail.type_name << "\n";
 ```
 
+### Error Handling
+
+Neither runtime aborts the process on anything a caller can trigger. A
+record the codec cannot handle fails that one encode or decode; the
+process keeps running and the next record is unaffected.
+
+**Decode** returns an error in both runtimes: C++ `ICodec::decode` returns
+`Expected<void, DecodeError>`, Rust `<codec>::object::decode_pdu` returns
+`Result<T, DecodeError>` (PER: `per::reader::DecodeError`).
+
+**Encode** reports a failure the caller must check:
+
+| Runtime | How encode failure is reported |
+|---------|-------------------------------|
+| C++ | `encode_failed()` on the stream after `encode`: `BerEncodeStream` (via `BerWriter`), `XerEncodeStream`, `JerEncodeStream`, `PerEncodeStream`; nested values share the flag of the stream the caller passed |
+| Rust | `ber`/`xer`/`jer`/`per::object::encode_pdu` return `Result<_, EncodeError>`; `encode_pdu_into` returns `Result<(), EncodeError>` and leaves a partial record in the buffer, to be discarded |
+
+Causes of a per-record error:
+
+- **Malformed input** — truncated or inconsistent TLVs, wrong tags, bad XML/JSON (decode).
+- **Input nested deeper than 256 constructed levels** — a self-referential
+  type (X.680 §29) lets an input nest without bound; every decoder in both
+  runtimes stops at 256 SEQUENCE/SET/CHOICE/SEQUENCE OF levels with
+  `nesting deeper than 256 levels` instead of exhausting the stack
+  (C++ `kMaxDecodeDepth`, `codec/DecodeDepth.hpp`; Rust
+  `nesting::MAX_DECODE_DEPTH`). Levels are counted, not recursion
+  cycles. The count lives in the decoder's own reader, so concurrent
+  decodes never share it.
+- **A schema construct the Rust runtime does not support** — e.g. an
+  untagged `ANY` between other members, which has no tag to detect it by.
+  Code generation still emits the type; any encode or decode that reaches
+  the member fails with `member '<name>' not supported: <reason>`
+  (`alternative '<name>' not supported` for a CHOICE alternative).
+- **A primitive kind a Rust codec leg has no form for** — XER for
+  `ArbitraryInteger` and `ANY`, JER for `ArbitraryInteger`, PER for
+  `BigInteger`/`ArbitraryInteger` (`XER encoding not supported for ANY`, ...).
+  Code generation does not select these storage kinds today; the errors
+  guard direct use of the runtime types.
+- **A type with no codec** — a descriptor whose kind lands on a codec's
+  fallback dispatch slot (or has no direct handler): C++ encode sets
+  `encode_failed()`, decode returns `<Codec>: unsupported: <type>`.
+- **A CHOICE with no alternative to encode** — in C++ a CHOICE whose
+  `_present` is 0 (default-constructed, or an unknown extension skipped on
+  decode) fails BER/XER/JER/PER encode with `CHOICE <name>: no alternative
+  selected`. A Rust extensible CHOICE
+  holding an alternative the schema does not define (`UnknownExtension`,
+  kept on decode, X.680 §29.6) re-encodes in BER (the captured TLV is
+  replayed) but fails XER/JER/PER encode with `CHOICE <name>: no
+  alternative selected`.
+- **A PER constraint violation** — a character string outside its SIZE or
+  permitted alphabet cannot be represented in PER, so PER encode fails
+  (`string length violates SIZE constraint`, `character not in FROM alphabet`, ...).
+  BER/XER/JER still encode such a value and only count the violation (see
+  Constraint Validation above).
+
+Each C++ encode failure is traced (with the reason) under `ASN1CPP_DEBUG`
+bit `0x10` (BER), `0x04` (XER and JER) or `0x08` (PER).
+
+Both runtimes' decoders are fuzzed by `validation-tools/xval_sweep/xval_sweep.py
+--fuzz`: for every curated target it feeds BER corrupted by randgen's
+BerCorruptor and mutated PER/XER/JER records to every C++ and Rust decoder,
+and fails only on a crash (signal, abort, Rust panic, hang); the xval Rust
+tools keep overflow checks on for this. ctest runs `fuzz_ber` (C++) and
+`rust_fuzz_smoke` (Rust) as fixed-seed smoke tests.
+
+The cross-validation tools (`ber-to-xer`, `xer-to-ber`, ...) print one line
+per failed record (`BER decode failed record #N ...`, `XER encode failed
+record #N ...`) and exit 1; a panic, abort or signal is always a bug.
+
 ### Traversing a Decoded Object by Type
 
 `TypedVisitor` walks a fully-decoded object tree once and fires a callback for

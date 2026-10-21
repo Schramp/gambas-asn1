@@ -11,10 +11,15 @@ use std::io::{Read, Write};
 
 const TYPES: &[&str] = &["__PDU_TYPE__"];
 
+// Bytes that are not UTF-8 become U+FFFD, which the decoder then rejects
+// for the record it lands in.
 fn slurp_text(mut r: impl Read) -> String {
-    let mut buf = String::new();
-    r.read_to_string(&mut buf).expect("read failed");
-    buf
+    let mut buf = Vec::new();
+    if let Err(e) = r.read_to_end(&mut buf) {
+        eprintln!("read failed: {e}");
+        std::process::exit(1);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 fn list_types() {
@@ -27,9 +32,13 @@ fn split_jer_records(text: &str) -> Vec<&str> {
     text.lines().filter(|l| !l.trim().is_empty()).collect()
 }
 
-fn decode_and_encode(type_name: &str, json: &str) -> Result<Vec<u8>, asn1cpp_wire::DecodeError> {
+fn decode_and_encode(type_name: &str, json: &str) -> Result<Vec<u8>, String> {
     match type_name {
-        "__PDU_TYPE__" => Ok(asn1cpp_wire::ber::object::encode_pdu(&asn1cpp_wire::jer::object::decode_pdu::<randgen_rust::__PDU_MODULE__::__PDU_IDENT__>(json)?)),
+        "__PDU_TYPE__" => {
+            let v = asn1cpp_wire::jer::object::decode_pdu::<randgen_rust::__PDU_MODULE__::__PDU_IDENT__>(json)
+                .map_err(|e| format!("JER decode failed: {}", e.message))?;
+            asn1cpp_wire::ber::object::encode_pdu(&v).map_err(|e| format!("BER encode failed: {}", e.message))
+        }
         _ => unreachable!("checked by caller"),
     }
 }
@@ -84,7 +93,7 @@ fn main() {
                 n += 1;
             }
             Err(e) => {
-                eprintln!("JER decode failed record #{n}: {}", e.message);
+                eprintln!("record #{n}: {e}");
                 errors += 1;
             }
         }

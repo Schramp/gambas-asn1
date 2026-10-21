@@ -7,6 +7,7 @@
 #include "../Error.hpp"
 #include "../Expected.hpp"
 #include "../Hints.hpp"
+#include "DecodeDepth.hpp"
 
 namespace asn1 {
 
@@ -28,6 +29,7 @@ namespace asn1 {
 class BerReader {
     std::span<const uint8_t> data_;
     std::size_t pos_{0};
+    DecodeDepth depth_;
 
 public:
     /// @brief Construct a reader over \p data.
@@ -40,6 +42,9 @@ public:
     std::size_t remaining() const { return pos_ < data_.size() ? data_.size() - pos_ : 0; }
     /// @brief Current read position (byte offset from start of \p data).
     std::size_t pos()   const { return pos_; }
+
+    /// @brief The unread bytes, without advancing.
+    std::span<const uint8_t> rest() const { return peek(remaining()); }
 
     /// @brief Peek at up to \p n bytes starting at the current position without advancing.
     std::span<const uint8_t> peek(std::size_t n) const {
@@ -222,11 +227,17 @@ public:
         return data_.subspan(start, pos_ - start);
     }
 
-    /// @brief Create a reader over \p slice (used to recurse into a TLV's value bytes).
+    /// @brief Create a reader over \p slice (used to recurse into a TLV's
+    ///        value bytes), at this reader's decode nesting depth.
     /// @param slice  Typically \c TLV::value from a prior \c read_tlv() call.
     BerReader sub(std::span<const uint8_t> slice) const {
-        return BerReader{slice};
+        BerReader r{slice};
+        r.depth_ = depth_;
+        return r;
     }
+
+    /// @brief The decode nesting depth this reader is at; see \c DecodeDepth.
+    DecodeDepth& depth() { return depth_; }
 
 private:
     // Decode one tag from data[pos], advancing pos.

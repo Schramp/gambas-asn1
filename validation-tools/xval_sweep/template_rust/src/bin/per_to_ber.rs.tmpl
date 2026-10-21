@@ -12,7 +12,10 @@ const TYPES: &[&str] = &["__PDU_TYPE__"];
 
 fn slurp(mut r: impl Read) -> Vec<u8> {
     let mut buf = Vec::new();
-    r.read_to_end(&mut buf).expect("read failed");
+    if let Err(e) = r.read_to_end(&mut buf) {
+        eprintln!("read failed: {e}");
+        std::process::exit(1);
+    }
     buf
 }
 
@@ -22,13 +25,13 @@ fn list_types() {
     }
 }
 
-fn decode_one(type_name: &str, per_bytes: &[u8]) -> Result<Vec<u8>, asn1cpp_wire::per::reader::DecodeError> {
+fn decode_one(type_name: &str, per_bytes: &[u8]) -> Result<Vec<u8>, String> {
     let mut r = asn1cpp_wire::per::reader::Reader::new(per_bytes);
     match type_name {
         "__PDU_TYPE__" => {
             let mut v = randgen_rust::__PDU_MODULE__::__PDU_IDENT__::default();
-            asn1cpp_wire::per::object::decode_pdu_into(&mut v, &mut r)?;
-            Ok(asn1cpp_wire::ber::object::encode_pdu(&v))
+            asn1cpp_wire::per::object::decode_pdu_into(&mut v, &mut r).map_err(|e| format!("PER decode failed: {}", e.message))?;
+            asn1cpp_wire::ber::object::encode_pdu(&v).map_err(|e| format!("BER encode failed: {}", e.message))
         }
         _ => unreachable!("checked by caller"),
     }
@@ -97,7 +100,7 @@ fn main() {
                 n += 1;
             }
             Err(e) => {
-                eprintln!("PER decode failed record #{n}: {}", e.message);
+                eprintln!("record #{n}: {e}");
                 errors += 1;
                 break;
             }

@@ -15,7 +15,10 @@ const TYPES: &[&str] = &["__PDU_TYPE__"];
 
 fn slurp(mut r: impl Read) -> Vec<u8> {
     let mut buf = Vec::new();
-    r.read_to_end(&mut buf).expect("read failed");
+    if let Err(e) = r.read_to_end(&mut buf) {
+        eprintln!("read failed: {e}");
+        std::process::exit(1);
+    }
     buf
 }
 
@@ -27,7 +30,9 @@ fn list_types() {
 
 // BER's TLV framing is self-delimiting (X.690 §8.1): decoding one record
 // from a shared reader leaves it positioned at the next record.
-fn encode_one(type_name: &str, data: &[u8]) -> Result<(Vec<u8>, usize), asn1cpp_wire::DecodeError> {
+// The outer Err is a decode failure (no resync possible); the inner one an
+// encode failure of a record that decoded fine, which the caller skips.
+fn encode_one(type_name: &str, data: &[u8]) -> Result<(Result<Vec<u8>, asn1cpp_wire::EncodeError>, usize), asn1cpp_wire::DecodeError> {
     let mut r = asn1cpp_wire::Reader::new(data);
     match type_name {
         "__PDU_TYPE__" => {
@@ -84,11 +89,20 @@ fn main() {
 
     while offset < data.len() {
         match encode_one(&type_name, &data[offset..]) {
-            Ok((per_bytes, consumed)) => {
+            Ok((encoded, consumed)) => {
                 if consumed == 0 {
                     eprintln!("Zero bytes consumed at offset {offset}");
                     break;
                 }
+                let per_bytes = match encoded {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("PER encode failed record #{n} at offset {offset}: {}", e.message);
+                        offset += consumed;
+                        errors += 1;
+                        continue;
+                    }
+                };
                 offset += consumed;
                 out.write_all(&(per_bytes.len() as u32).to_be_bytes()).unwrap();
                 out.write_all(&per_bytes).unwrap();

@@ -28,3 +28,10 @@ path = "src/bin/jer_to_ber.rs"
 
 [dependencies]
 asn1cpp-wire = { path = "__ASN1CPP_WIRE_CRATE__" }
+
+# Arithmetic overflow and debug_assert! stay checked so a malformed input
+# (xval_sweep --fuzz) that overflows a length or count panics instead of
+# silently wrapping.
+[profile.release]
+overflow-checks = true
+debug-assertions = true

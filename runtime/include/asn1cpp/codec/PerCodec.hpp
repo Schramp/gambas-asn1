@@ -10,6 +10,7 @@
 #include "ICodec.hpp"
 #include "Constraints.hpp"
 #include "Debug.hpp"
+#include "DecodeDepth.hpp"
 #include "../Tag.hpp"
 #include "../Asn1Object.hpp"
 #include "../SeqOfBase.hpp"
@@ -119,9 +120,22 @@ class PerDecodeStream : public IDecodeStream {
     int byte_pos_{0};
     int bit_pos_{0};
     int skipped_ext_count_{0};
+    DecodeDepth depth_;
 public:
     /// @brief Construct over \p buf.  \p buf must outlive this stream.
     explicit PerDecodeStream(std::span<const uint8_t> buf) : buf_(buf) {}
+
+    /// @brief Create a stream over an open type's octets (X.691 §11.2), at
+    ///        this stream's decode nesting depth.
+    /// @param buf  The open type's contents; must outlive the new stream.
+    PerDecodeStream sub(std::span<const uint8_t> buf) const {
+        PerDecodeStream s{buf};
+        s.depth_ = depth_;
+        return s;
+    }
+
+    /// @brief The decode nesting depth; see \c DecodeDepth.
+    DecodeDepth& depth() { return depth_; }
 
     /// @brief Number of extension alternatives skipped since the last \c reset_skipped_extensions().
     /// Non-zero indicates a version skew between encoder and decoder schemas.

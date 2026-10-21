@@ -22,17 +22,26 @@ fn check(label: &str, cond: bool, failures: &mut i32) {
 
 fn main() {
     let mut failures = 0;
-    let ext_bytes = asn1cpp_wire::per::object::encode_pdu(&V2::b(asn1cpp_wire::boolean::Boolean(true)));
+    let ext_bytes = asn1cpp_wire::per::object::encode_pdu(&V2::b(asn1cpp_wire::boolean::Boolean(true))).unwrap();
     let v1 = asn1cpp_wire::per::object::decode_pdu::<V1>(&ext_bytes);
     check("MsgV2 extension alternative decodes as MsgV1", v1.is_ok(), &mut failures);
     if let Ok(v) = &v1 {
         check("the unknown alternative is kept as UnknownExtension",
               matches!(v, V1::UnknownExtension(..)) && v.extract_unknown_extension().is_some(),
               &mut failures);
+        // XER/JER/PER have no form for an alternative the schema does not
+        // define: encoding it fails the record instead of panicking or
+        // writing nothing.
+        check("XER encode of the unknown alternative is an error",
+              asn1cpp_wire::xer::object::encode_pdu(v).is_err(), &mut failures);
+        check("JER encode of the unknown alternative is an error",
+              asn1cpp_wire::jer::object::encode_pdu(v).is_err(), &mut failures);
+        check("PER encode of the unknown alternative is an error",
+              asn1cpp_wire::per::object::encode_pdu(v).is_err(), &mut failures);
     }
 
-    let root2 = asn1cpp_wire::per::object::encode_pdu(&V2::a(asn1cpp_wire::integer::Integer(5)));
-    let root1 = asn1cpp_wire::per::object::encode_pdu(&V1::a(asn1cpp_wire::integer::Integer(5)));
+    let root2 = asn1cpp_wire::per::object::encode_pdu(&V2::a(asn1cpp_wire::integer::Integer(5))).unwrap();
+    let root1 = asn1cpp_wire::per::object::encode_pdu(&V1::a(asn1cpp_wire::integer::Integer(5))).unwrap();
     check("a root alternative encodes identically in both versions", root1 == root2, &mut failures);
     check("MsgV2 root alternative decodes as MsgV1",
           matches!(asn1cpp_wire::per::object::decode_pdu::<V1>(&root2), Ok(V1::a(asn1cpp_wire::integer::Integer(5)))),

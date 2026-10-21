@@ -68,6 +68,11 @@ Usage:
                    --with-asn1c to opt in — ~200 extra asn1c builds is the
                    single biggest cost multiplier for a broad probe).
 
+--fuzz feeds malformed input to every decoder instead (see fuzz_target);
+a target then fails only on a crash: signal, abort, Rust panic or hang.
+  python3 xval_sweep.py --fuzz [--fuzz-seeds N] [--mutations M]
+                        [--corrupt-percent P] [--corrupt-mode SPEC]
+
 A target also fails when any run of the C++ or Rust codec tools (b2x,
 x2b, b2j, j2b, b2p, p2b) exits nonzero or panics, even if the record
 comparisons look clean; each such run is printed as "TOOL FAILURE".
@@ -78,6 +83,7 @@ Exit code: for --corpus=targets (default), 0 if every target's every
 comparison passed, 1 otherwise. For --corpus=asn1c-compiler, always 0.
 """
 import argparse
+import random
 import difflib
 import hashlib
 import os
@@ -248,6 +254,139 @@ def _codec_result(r, tool: str, leg: str) -> str:
             failures.append(f"{leg} {tool}: exit {r.returncode}"
                             + (f": {err.splitlines()[-1]}" if err else ""))
     return err
+
+
+def check_expected_errors(cpp_tools, rust_tools, pdu_type, ber_path) -> bool:
+    """@expect-errors verdict: every BER-reading codec tool of both legs
+    (b2x, b2j, b2p) must report a per-record error and exit 1 — no clean
+    success, no panic, no signal."""
+    ok = True
+    for leg, tools in (("cpp", cpp_tools), ("rust", rust_tools)):
+        for key in ("b2x", "b2j", "b2p"):
+            if key not in tools:
+                continue
+            r = run(tools[key], "--type", pdu_type, ber_path)
+            err = r.stderr.decode(errors="replace").strip()
+            last = err.splitlines()[-1] if err else ""
+            failed_line = next((l for l in err.splitlines() if "failed" in l), "")
+            if r.returncode == 1 and "panicked" not in err and failed_line:
+                print(f"  [OK]   {leg} {key}: per-record error: {failed_line}")
+            else:
+                print(f"  [FAIL] {leg} {key}: expected a per-record error, got exit {r.returncode}: {last}")
+                ok = False
+    return ok
+
+
+# --fuzz verdict: a tool may reject malformed input (exit 1, "decode
+# failed"), but must never crash. Seconds per tool run before it counts as
+# a hang.
+FUZZ_TIMEOUT = 30
+
+
+def crash_of(tool: str, data: bytes, pdu_type: str):
+    """Runs one codec tool on `data` (stdin). Returns None when it exited
+    0 or 1 without panicking, else a one-line crash description: a signal
+    (negative return code, incl. SIGABRT from an assert), a Rust panic
+    (exit 101 or "panicked"), any other exit code, or a hang."""
+    try:
+        r = subprocess.run([tool, "--type", pdu_type], input=data,
+                           capture_output=True, timeout=FUZZ_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return f"hang (> {FUZZ_TIMEOUT}s)"
+    err = r.stderr.decode(errors="replace")
+    if r.returncode < 0:
+        return f"signal {-r.returncode}"
+    if r.returncode not in (0, 1) or "panicked" in err:
+        lines = err.strip().splitlines()
+        line = next((l for l in lines if "panicked" in l), lines[-1] if lines else "")
+        return f"exit {r.returncode}: {line}"
+    return None
+
+
+def mutate(data: bytes, rng: random.Random) -> bytes:
+    """One random byte-level mutation of a valid encoding: flip a bit,
+    overwrite a byte, truncate, insert or delete bytes."""
+    b = bytearray(data)
+    if not b:
+        return bytes([rng.randrange(256)])
+    kind = rng.randrange(5)
+    i = rng.randrange(len(b))
+    if kind == 0:
+        b[i] ^= 1 << rng.randrange(8)
+    elif kind == 1:
+        b[i] = rng.choice((0x00, 0xFF, 0x7F, 0x80, rng.randrange(256)))
+    elif kind == 2:
+        del b[i:]
+    elif kind == 3:
+        b[i:i] = bytes(rng.randrange(256) for _ in range(rng.randrange(1, 9)))
+    else:
+        del b[i:i + rng.randrange(1, 9)]
+    return bytes(b)
+
+
+def fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_clean, opts) -> bool:
+    """--fuzz: feed malformed input to every decoder of both runtimes and
+    fail the target only on a crash (see crash_of).
+    BER: `--fuzz-seeds` randgen runs with BerCorruptor applied
+    (--corrupt-percent/--corrupt-mode), a few records each — a decode error
+    stops a tool at the first broken record. PER/XER/JER: `--mutations`
+    seeded mutations of one valid record each (C++ encoder output), one
+    tool run per mutation (PER keeps its 4-byte record frame)."""
+    crashes = []
+    runs = 0
+
+    def probe(key, data, what):
+        nonlocal runs
+        for leg, tools in (("cpp", cpp_tools), ("rust", rust_tools)):
+            if key not in tools:
+                continue
+            runs += 1
+            c = crash_of(tools[key], data, pdu_type)
+            if c:
+                path = os.path.join(target_dir, f"crash_{leg}_{key}_{len(crashes)}.bin")
+                with open(path, "wb") as f:
+                    f.write(data)
+                crashes.append(f"{leg} {key} ({what}): {c} — input {path}")
+
+    for k in range(opts.fuzz_seeds):
+        seed = opts.seed + k
+        path = os.path.join(target_dir, "fuzz.ber")
+        cmd = [cpp_tools["randgen"], "--type", pdu_type, "--count", str(opts.count),
+               "--seed", str(seed), "--output", path,
+               "--corrupt-percent", str(opts.corrupt_percent)]
+        if opts.corrupt_mode:
+            cmd += ["--corrupt-mode", opts.corrupt_mode]
+        r = run(*cmd)
+        if r.returncode != 0:
+            print(f"  randgen --corrupt-percent failed: {r.stderr.decode(errors='replace').strip()}")
+            return False
+        with open(path, "rb") as f:
+            data = f.read()
+        for key in ("b2x", "b2j", "b2p"):
+            probe(key, data, f"corrupted BER, seed {seed}")
+
+    rng = random.Random(opts.seed)
+    clean_records = split_ber_records(ber_clean)[:max(1, opts.mutations // 4)]
+    for fmt, enc_key, dec_key in (("XER", "b2x", "x2b"), ("JER", "b2j", "j2b"), ("PER", "b2p", "p2b")):
+        if enc_key not in cpp_tools or dec_key not in cpp_tools:
+            continue
+        valid = []
+        for rec in clean_records:
+            r = run(cpp_tools[enc_key], "--type", pdu_type, input=rec)
+            if r.returncode == 0 and r.stdout:
+                valid.append(r.stdout[4:] if fmt == "PER" else r.stdout)
+        if not valid:
+            continue
+        for m in range(opts.mutations):
+            data = mutate(rng.choice(valid), rng)
+            if fmt == "PER":
+                data = len(data).to_bytes(4, "big") + data
+            probe(dec_key, data, f"mutated {fmt} #{m}")
+
+    for c in crashes:
+        print(f"  CRASH: {c}")
+    print(f"  fuzz: {runs} decoder runs, {len(crashes)} crash(es)")
+    return not crashes
 
 
 def split_ber_records(data: bytes) -> list[bytes]:
@@ -696,7 +835,12 @@ def parse_targets(path):
     tokens are the skip reason, printed verbatim (e.g. an issue number).
     extra_files is always [] here — the curated list is single-file only;
     only --corpus=asn1c-compiler's auto-discovery populates it (see
-    resolve_imports)."""
+    resolve_imports).
+
+    Tokens directly after the PDU type starting with '@' are target
+    options: '@expect-errors' marks a schema neither runtime can encode or
+    decode; the target passes when every C++ and Rust codec tool reports
+    a per-record error and exits cleanly (exit 1, no panic or signal)."""
     targets = []
     with open(path) as f:
         for lineno, line in enumerate(f, 1):
@@ -713,10 +857,17 @@ def parse_targets(path):
             # on is the skip-asn1c reason (which may itself contain '-'
             # words).
             rest = parts[2:]
+            n_opts = next((i for i, t in enumerate(rest) if not t.startswith("@")), len(rest))
+            options = set(rest[:n_opts])
+            unknown = options - {"@expect-errors"}
+            if unknown:
+                print(f"{path}:{lineno}: unknown target option(s) {sorted(unknown)}")
+                sys.exit(1)
+            rest = rest[n_opts:]
             n_flags = next((i for i, t in enumerate(rest) if not t.startswith("-")), len(rest))
             flags = rest[:n_flags]
             reason = " ".join(rest[n_flags:]) or None
-            targets.append((parts[0], parts[1], reason, [], flags))
+            targets.append((parts[0], parts[1], reason, [], flags, options))
     return targets
 
 
@@ -951,8 +1102,8 @@ def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None, asncp
     # codegen-time gate, and every generated top-level type implements
     # `Asn1Pdu`. This only confirms the PDU type itself was generated
     # (the same "ask the actual output" approach `discover_ident` uses).
-    # A value whose kind the Rust PER runtime can't represent panics on
-    # encode / errors on decode for that record.
+    # A value whose kind the Rust PER runtime can't represent fails
+    # encode / decode for that record.
     per_covered = False
     gen_file = os.path.join(rust_dir, "gen", f"{ident}.rs")
     if os.path.isfile(gen_file):
@@ -1069,7 +1220,7 @@ def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, reuse=False, jo
 
 def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c_reason=None,
                slot=None, cpp_jobs=4, cargo_jobs=None, reuse=(), extra_files=(),
-               jer_safe_real=False, asncpp_flags=()):
+               jer_safe_real=False, asncpp_flags=(), expect_errors=False, fuzz=None):
     schema_abs = os.path.join(ASN1CPP_ROOT, schema_rel)
     if os.path.isdir(schema_abs):
         # A multi-module schema (e.g. ETSI LI): every .asn/.asn1 file in
@@ -1100,7 +1251,7 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
     if rust_tools is None:
         return False
     asn1c_tools = (build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, "asn1c" in reuse, cpp_jobs)
-                   if asn1c_bin and not skip_asn1c_reason else None)
+                   if asn1c_bin and not skip_asn1c_reason and not expect_errors and fuzz is None else None)
 
     ber_path = os.path.join(target_dir, "records.ber")
     gen_cmd = [cpp_tools["randgen"], "--type", pdu_type,
@@ -1115,6 +1266,11 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
         return False
     with open(ber_path, "rb") as f:
         ber_orig = f.read()
+
+    if expect_errors:
+        return check_expected_errors(cpp_tools, rust_tools, pdu_type, ber_path)
+    if fuzz is not None:
+        return fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_orig, fuzz)
 
     xer_cpp, err_cpp = b2x_file(cpp_tools["b2x"], pdu_type, ber_path)
     if err_cpp:
@@ -1474,7 +1630,25 @@ def main():
                           "informational-only (both are otherwise affected by REAL-precision "
                           "differences between asn1cpp/gambasn1-rust's %%.15G and asn1c's own "
                           "%%.15f+trim — see gambas-asn1/asn1c#7)")
+    ap.add_argument("--fuzz", action="store_true",
+                     help="fuzz mode: feed malformed BER (randgen's BerCorruptor) and "
+                          "mutated PER/XER/JER to every C++ and Rust decoder; a target "
+                          "fails only on a crash (signal, abort, Rust panic, hang), a "
+                          "per-record decode error is the expected outcome. Crashing "
+                          "inputs are kept as testbuild/<target>/crash_*.bin. Skips the "
+                          "asn1c leg and the normal comparisons. --count is records per "
+                          "corrupted BER file (default 3 here).")
+    ap.add_argument("--corrupt-percent", type=float, default=5.0,
+                     help="--fuzz: randgen per-TLV-header corruption chance (default 5)")
+    ap.add_argument("--corrupt-mode", default="",
+                     help="--fuzz: randgen --corrupt-mode SPEC (default: all modes)")
+    ap.add_argument("--fuzz-seeds", type=int, default=20,
+                     help="--fuzz: corrupted BER files per target, seeds S..S+N-1 (default 20)")
+    ap.add_argument("--mutations", type=int, default=40,
+                     help="--fuzz: mutated records per PER/XER/JER decoder (default 40)")
     opts = ap.parse_args()
+    if opts.fuzz and opts.count is None:
+        opts.count = 3
 
     if opts.count is None:
         opts.count = 3 if opts.corpus == "asn1c-compiler" else 20
@@ -1508,7 +1682,7 @@ def main():
             rel = os.path.relpath(path, ASN1CPP_ROOT)
             extra_rel = [os.path.relpath(os.path.join(ASN1C_COMPILER_CORPUS_DIR, f), ASN1CPP_ROOT)
                          for f in extra]
-            targets.append((rel, pdu_type, None, extra_rel, []))
+            targets.append((rel, pdu_type, None, extra_rel, [], set()))
         print(f"auto-discovered {len(targets)} target(s) from {ASN1C_COMPILER_CORPUS_DIR} "
               f"({len(skipped)} skipped: no qualifying top-level SEQUENCE/SET/CHOICE, or IMPORTS present)")
     else:
@@ -1564,14 +1738,16 @@ def main():
 
     def worker(slot, indices):
         for i in indices:
-            schema_rel, pdu_type, skip_asn1c_reason, extra_files, asncpp_flags = targets[i]
+            schema_rel, pdu_type, skip_asn1c_reason, extra_files, asncpp_flags, options = targets[i]
             tl_out.tl.buf = []
             try:
                 oks[i] = run_target(schema_rel, pdu_type, opts.count, opts.seed, opts.verbose,
                                     asn1c_bin, skip_asn1c_reason, slot=slot,
                                     cpp_jobs=cpp_jobs, cargo_jobs=cargo_jobs, reuse=reuse,
                                     extra_files=extra_files, jer_safe_real=opts.jer_safe_real,
-                                    asncpp_flags=asncpp_flags)
+                                    asncpp_flags=asncpp_flags,
+                                    expect_errors="@expect-errors" in options,
+                                    fuzz=opts if opts.fuzz else None)
             except Exception as e:  # keep the sweep going; report as a failed target
                 print(f"  EXCEPTION: {e!r}")
                 oks[i] = False

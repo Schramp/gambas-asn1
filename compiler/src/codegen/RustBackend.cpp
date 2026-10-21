@@ -1120,8 +1120,8 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 ///       AUTOMATIC TAGS, no fixed tag at all) has no `Tag` to peek for at
 ///       all — that's a missing dispatch key, not a missing impl, and no
 ///       stub closure can safely guess presence, so it becomes
-///       `Unsupported` too (unconditional panic, no attempted peek — see
-///       the stub's own doc). A required member has no such problem
+///       `Unsupported` too (a per-record codec error, no attempted peek —
+///       see the stub's own doc). A required member has no such problem
 ///       (nothing to peek for a required field either way). Every named
 ///       type — a top-level SEQUENCE OF/SET OF alias, an INTEGER of any
 ///       storage kind including ARBITRARY — gets its own real newtype with
@@ -1170,9 +1170,7 @@ bool RustBackend::choice_alternative_covered(const ChoiceAlternativeSpec& a) con
 ///        so an alternative failing this check gets no row whatsoever
 ///        (emit_choice_definition simply omits it from the generated
 ///        array — its Rust enum variant still exists, just unreachable via
-///        the generated encode()/decode(), same as `encode_choice`'s
-///        existing "no alternative matched" panic already covers for any
-///        other codegen/table mismatch). The one case this actually
+///        the generated decode(), which never selects it). The one case this actually
 ///        excludes: an alternative whose own type is itself a genuinely
 ///        untagged CHOICE (X.680 §28, no AUTOMATIC TAGS, no fixed tag at
 ///        all) — CHOICE alternatives have no OPTIONAL concept to fall back
@@ -1246,7 +1244,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
     // Rust storage type classify_integer_storage/native_int_type actually
     // picked for it (i64 default; u64/i128/ArbitraryInteger for wider
     // ranges — same IntStorageKind the C++ side also branches on).
-    // Human-readable reason baked into an Unsupported row's stub panic
+    // Human-readable reason baked into an Unsupported row's codec error
     // message — best-effort diagnosability, not meant to be exhaustive.
     auto stub_reason = [](const SequenceMemberSpec& m) -> const char* {
         if (m.seq_of_kind != SeqOfKind::None) return "SEQUENCE OF/SET OF element type/tag/optionality combination not yet supported";
@@ -1605,9 +1603,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     class_ref_exprs("Composite", "Composite");
                     break;
                 case AccessKind::Unsupported: {
+                    // The walkers turn `Unsupported` into a per-record
+                    // encode/decode error carrying this message.
                     std::string reason = stub_reason(m);
-                    get_expr = std::format("|_v| panic!(\"member '{}' not supported: {}\")", m.mname, reason);
-                    get_mut_expr = std::format("|_v| panic!(\"member '{}' not supported: {}\")", m.mname, reason);
+                    get_expr = std::format("|_v| asn1cpp_wire::spec::object::MemberRef::Unsupported(\"member '{}' not supported: {}\")", m.asn1_name, reason);
+                    get_mut_expr = std::format("|_v| asn1cpp_wire::spec::object::MemberRefMut::Unsupported(\"member '{}' not supported: {}\")", m.asn1_name, reason);
                     break;
                 }
                 }
@@ -1877,8 +1877,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
     // `decode_choice_dispatch`'s tag scan needs a real `Tag` to know when
     // to try a row, so that alternative is simply omitted from the table
     // entirely (its enum variant still exists, just unreachable via the
-    // generated encode()/decode() — `encode_choice_dispatch`'s own "no
-    // alternative matched" panic already covers that).
+    // generated encode()/decode()).
     struct DispatchRow { int cls_rank; int64_t number; std::string tag_lit; size_t idx; };
     std::vector<DispatchRow> dispatch;
     if (!spec.ber_tags.empty()) {
@@ -1929,7 +1928,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         // annotation pins it up front.
         // `bind`: the pattern variable `op` actually reads — "v" for
         // every real kind, "_" for `AltKind::Unsupported` (`op` there is
-        // always a bare `panic!(...)`, never referencing the payload;
+        // always a `MemberRef::Unsupported(...)`, never referencing the payload;
         // binding `v` there would warn unused on every build that
         // includes an Unsupported alternative, e.g. EXTERNAL's own
         // `single-ASN1-type`/ANY alternative).
@@ -2041,8 +2040,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 get_mut_op = "asn1cpp_wire::spec::object::MemberRefMut::Composite(v)";
                 break;
             case AltKind::Unsupported:
-                get_op = std::format("panic!(\"alternative '{}' not supported\")", a.asn1_name);
-                get_mut_op = std::format("panic!(\"alternative '{}' not supported\")", a.asn1_name);
+                get_op = std::format("asn1cpp_wire::spec::object::MemberRef::Unsupported(\"alternative '{}' not supported\")", a.asn1_name);
+                get_mut_op = std::format("asn1cpp_wire::spec::object::MemberRefMut::Unsupported(\"alternative '{}' not supported\")", a.asn1_name);
                 break;
             }
             const char* bind = kind == AltKind::Unsupported ? "_" : "v";
@@ -2117,7 +2116,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             os << std::format("    fn active_index(&self) -> ::std::option::Option<usize> {{ match self {{ {} }} }}\n", arms);
         }
         os << "    fn get_active(&self) -> asn1cpp_wire::spec::object::MemberRef<'_> {\n";
-        os << std::format("        match self.active_index() {{ Some(i) => {}[i](self), None => panic!(\"get_active: no alternative active\") }}\n", get_active_ident);
+        // `None` only for an unrecognized extension (`UnknownExtension`);
+        // the walkers check `active_index()` first, so this arm is a
+        // fallback that still surfaces as a codec error, never a panic.
+        os << std::format("        match self.active_index() {{ Some(i) => {}[i](self), None => asn1cpp_wire::spec::object::MemberRef::Unsupported(\"CHOICE {}: no alternative selected\") }}\n", get_active_ident, spec.xer_name);
         os << "    }\n";
         os << "    fn select_mut(&mut self, index: usize) -> asn1cpp_wire::spec::object::MemberRefMut<'_> {\n";
         os << std::format("        {}[index](self)\n", select_mut_ident);

@@ -1,4 +1,5 @@
 #include <cassert>
+#include <asn1cpp/codec/DecodeDepth.hpp>
 #include <asn1cpp/codec/XerCodec.hpp>
 #include <asn1cpp/types/Integer.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
@@ -161,15 +162,20 @@ static DecodeResult decode_utf8_text(XerDecodeStream& s, const char* name, std::
 // ---------------------------------------------------------------------------
 // Handler classes
 
+/// @brief Fallback for a dispatch-table slot with no XER codec. Encode
+///        flags the stream as failed, decode returns an error, so a schema
+///        construct the runtime cannot handle fails one record instead of
+///        aborting the process.
 struct ErrorXerHandler final : IXerTypeHandler {
-    void encode(const XerCodec&, XerEncodeStream&,
+    void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object*) const override {
-        assert(false && "XerCodec: unreachable dispatch table entry");
-        (void)def;
+        std::string reason = std::string("XerCodec: unsupported: ") + def.name;
+        s.set_encode_failed(reason.c_str());
     }
     DecodeResult decode(const XerCodec&, XerDecodeStream&,
                         const TypeDescriptor& def, Asn1Object*) const override {
-        assert(false && "XerCodec: unreachable dispatch table entry");
+        if (debug_flags() & DBG_XER)
+            std::fprintf(stderr, "[XER-DEC] unsupported: %s\n", def.name);
         return decode_err(DecodeError(std::string("XerCodec: unsupported: ") + def.name));
     }
 };
@@ -644,7 +650,7 @@ struct SeqOfXerHandler final : IXerTypeHandler {
             os << '<' << def.name << '>';
             for (std::size_t i = 0; i < count; ++i) {
                 const Asn1Object* eptr = seq.get_const(i);
-                XerEncodeStream es{os, s.depth() + 1};
+                XerEncodeStream es = s.child();
                 if (!edef.choice_spec) {
                     if (i == 0) os << '\n';
                     os << s.indent(1);
@@ -757,12 +763,12 @@ struct SequenceXerHandler final : IXerTypeHandler {
             mdef.name = mbr.name;
             if (mdef.choice_spec) {
                 os << s.indent(1) << '<' << mbr.name << '>';
-                XerEncodeStream ms{os, s.depth() + 1};
+                XerEncodeStream ms = s.child();
                 codec.encode(ms, mdef, mptr);
                 os << s.indent(1) << "</" << mbr.name << ">\n";
             } else {
                 os << s.indent(1);
-                XerEncodeStream ms{os, s.depth() + 1};
+                XerEncodeStream ms = s.child();
                 codec.encode(ms, mdef, mptr);
             }
         }
@@ -816,20 +822,24 @@ struct ChoiceXerHandler final : IXerTypeHandler {
         const auto& spec = *def.choice_spec;
         const ChoiceInterface* ch = static_cast<const ChoiceInterface*>(src);
         int pr = ch->_present;
-        if (pr <= 0 || pr > spec.count) return;
+        if (pr <= 0 || pr > spec.count) {
+            std::string reason = std::string("CHOICE ") + def.name + ": no alternative selected";
+            s.set_encode_failed(reason.c_str());
+            return;
+        }
         const auto& alt = spec.alternatives[pr - 1];
-        if (!alt.type_descriptor) return;
+        if (!alt.type_descriptor) { s.set_encode_failed((std::string("CHOICE ") + def.name + ": alternative " + alt.name + " has no codec").c_str()); return; }
         TypeDescriptor adef = *alt.type_descriptor;
         adef.name = alt.name;
         const Asn1Object* mptr = alt.get_const_fn(ch);
         if (adef.choice_spec) {
             os << '\n' << s.indent(1) << '<' << alt.name << '>';
-            XerEncodeStream as{os, s.depth() + 1};
+            XerEncodeStream as = s.child();
             codec.encode(as, adef, mptr);
             os << s.indent(1) << "</" << alt.name << ">\n";
         } else {
             os << '\n' << s.indent(1);
-            XerEncodeStream as{os, s.depth() + 1};
+            XerEncodeStream as = s.child();
             codec.encode(as, adef, mptr);
         }
     }
@@ -958,22 +968,24 @@ namespace {
 // against real asn1c output, which does wrap: `<Alt4>\n<str>j</str>
 // </Alt4>`, not `<str>j</str>`).
 //
-// `XerCodec::encode`/`decode` are the single funnel every recursive XER
-// call passes through (composite handlers call back into `codec.encode`/
-// `codec.decode`, never straight into a nested handler) — a thread-local
-// recursion counter here distinguishes the outermost call from every
-// nested one without threading a new parameter through the shared
-// `ICodec` interface (which XER, BER, JER, and PER all implement with
-// the same signature) or touching any composite handler's own logic.
-// Mirrors `ValidatePathScope`'s RAII-around-thread-local pattern
-// (`codec/Validation.hpp`).
-struct XerRecursionScope {
-    XerRecursionScope() { ++depth(); }
-    ~XerRecursionScope() { --depth(); }
-    XerRecursionScope(const XerRecursionScope&) = delete;
-    XerRecursionScope& operator=(const XerRecursionScope&) = delete;
-    bool is_root() const { return depth() == 1; }
-    static int& depth() { thread_local int d = 0; return d; }
+// `XerCodec::encode` is the single funnel every recursive XER encode
+// passes through (composite handlers call back into `codec.encode`,
+// never straight into a nested handler), so counting its calls on the
+// stream tells the outermost call from every nested one. Decode needs no
+// counter of its own: a CHOICE is at the root exactly when it is the
+// first constructed level the stream's `DecodeDepth` holds.
+
+/// @brief One \c XerCodec::encode call in progress on a stream's
+///        \c codec_calls() count, released on scope exit.
+class XerEncodeCallScope {
+    int& calls_;
+public:
+    explicit XerEncodeCallScope(int& calls) : calls_(calls) { ++calls_; }
+    ~XerEncodeCallScope() { --calls_; }
+    XerEncodeCallScope(const XerEncodeCallScope&) = delete;
+    XerEncodeCallScope& operator=(const XerEncodeCallScope&) = delete;
+    /// @return True inside the outermost encode call on the stream.
+    bool is_root() const { return calls_ == 1; }
 };
 
 } // namespace
@@ -984,7 +996,7 @@ void XerCodec::encode(IEncodeStream& dst,
 {
     validate_on_encode("XER", def, src);
     auto& s = static_cast<XerEncodeStream&>(dst);
-    XerRecursionScope scope;
+    XerEncodeCallScope scope{s.codec_calls()};
     bool wrap = scope.is_root() && def.kind == TypeKind::Choice;
     if (wrap) s.os() << '<' << def.name << '>';
     if (def.kind == TypeKind::Primitive)
@@ -1007,8 +1019,9 @@ DecodeResult XerCodec::decode(IDecodeStream& src,
                                Asn1Object* dest) const
 {
     auto& s = static_cast<XerDecodeStream&>(src);
-    XerRecursionScope scope;
-    bool wrap = scope.is_root() && def.kind == TypeKind::Choice;
+    DecodeDepthGuard depth_guard{s.depth(), def};
+    if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
+    bool wrap = def.kind == TypeKind::Choice && s.depth().levels() == 1;
     if (wrap) {
         if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
     }

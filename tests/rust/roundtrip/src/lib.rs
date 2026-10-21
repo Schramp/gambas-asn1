@@ -56,14 +56,14 @@ mod tests {
 
     fn ber_roundtrip(x: i64, y: i64) -> bool {
         let p = Point { x: asn1cpp_wire::integer::Integer(x), y: asn1cpp_wire::integer::Integer(y) };
-        match asn1cpp_wire::ber::object::decode_pdu::<Point>(&asn1cpp_wire::ber::object::encode_pdu(&p)) {
+        match asn1cpp_wire::ber::object::decode_pdu::<Point>(&asn1cpp_wire::ber::object::encode_pdu(&p).unwrap()) {
             Ok(got) => got == p,
             Err(_) => false,
         }
     }
 
     fn ber_encodes_as(x: i64, y: i64, expected: &[u8]) -> bool {
-        asn1cpp_wire::ber::object::encode_pdu(&Point { x: asn1cpp_wire::integer::Integer(x), y: asn1cpp_wire::integer::Integer(y) }) == expected
+        asn1cpp_wire::ber::object::encode_pdu(&Point { x: asn1cpp_wire::integer::Integer(x), y: asn1cpp_wire::integer::Integer(y) }).unwrap() == expected
     }
 
     #[test]
@@ -116,25 +116,25 @@ mod tests {
             0x30, 0x0e, 0x02, 0x01, 0x07, 0x01, 0x01, 0xff, 0x04, 0x02, 0x68, 0x69, 0x16, 0x02,
             0x68, 0x69,
         ];
-        assert_eq!(asn1cpp_wire::ber::object::encode_pdu(&widget(7, true, b"hi", "hi")), expected);
+        assert_eq!(asn1cpp_wire::ber::object::encode_pdu(&widget(7, true, b"hi", "hi")).unwrap(), expected);
     }
 
     #[test]
     fn widget_round_trip() {
         let w = widget(7, true, b"hi", "hi");
-        assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Widget>(&asn1cpp_wire::ber::object::encode_pdu(&w)).unwrap(), w);
+        assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Widget>(&asn1cpp_wire::ber::object::encode_pdu(&w).unwrap()).unwrap(), w);
     }
 
     #[test]
     fn widget_false_and_empty_round_trip() {
         let w = widget(0, false, b"", "");
-        assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Widget>(&asn1cpp_wire::ber::object::encode_pdu(&w)).unwrap(), w);
+        assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Widget>(&asn1cpp_wire::ber::object::encode_pdu(&w).unwrap()).unwrap(), w);
     }
 
     #[test]
     fn widget_negative_id_round_trip() {
         let w = widget(-42, true, b"\x00\xff", "abc");
-        assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Widget>(&asn1cpp_wire::ber::object::encode_pdu(&w)).unwrap(), w);
+        assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Widget>(&asn1cpp_wire::ber::object::encode_pdu(&w).unwrap()).unwrap(), w);
     }
 
     #[test]
@@ -149,25 +149,25 @@ mod tests {
         // XerCodec::instance().encode() directly (see module doc).
         let expected =
             "<Widget>\n    <id>7</id>\n    <flag><true/></flag>\n    <data>6869</data>\n    <label>hi</label>\n</Widget>\n";
-        assert_eq!(asn1cpp_wire::xer::object::encode_pdu(&widget(7, true, b"hi", "hi")), expected);
+        assert_eq!(asn1cpp_wire::xer::object::encode_pdu(&widget(7, true, b"hi", "hi")).unwrap(), expected);
     }
 
     #[test]
     fn widget_xer_round_trip() {
         let w = widget(7, true, b"hi", "hi");
-        assert_eq!(asn1cpp_wire::xer::object::decode_pdu::<Widget>(&asn1cpp_wire::xer::object::encode_pdu(&w)).unwrap(), w);
+        assert_eq!(asn1cpp_wire::xer::object::decode_pdu::<Widget>(&asn1cpp_wire::xer::object::encode_pdu(&w).unwrap()).unwrap(), w);
     }
 
     #[test]
     fn widget_xer_false_and_empty_round_trip() {
         let w = widget(0, false, b"", "");
-        assert_eq!(asn1cpp_wire::xer::object::decode_pdu::<Widget>(&asn1cpp_wire::xer::object::encode_pdu(&w)).unwrap(), w);
+        assert_eq!(asn1cpp_wire::xer::object::decode_pdu::<Widget>(&asn1cpp_wire::xer::object::encode_pdu(&w).unwrap()).unwrap(), w);
     }
 
     #[test]
     fn widget_xer_escapes_label() {
         let w = widget(1, true, b"\x00", "a<b>&c");
-        let xml = asn1cpp_wire::xer::object::encode_pdu(&w);
+        let xml = asn1cpp_wire::xer::object::encode_pdu(&w).unwrap();
         assert!(xml.contains("<label>a&lt;b&gt;&amp;c</label>"));
         assert_eq!(asn1cpp_wire::xer::object::decode_pdu::<Widget>(&xml).unwrap(), w);
     }
@@ -181,22 +181,22 @@ mod tests {
 
     #[test]
     fn selector_num_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(asn1cpp_wire::ber::object::encode_pdu(&Selector::num(asn1cpp_wire::integer::Integer(7))), vec![0x02, 0x01, 0x07]);
+        assert_eq!(asn1cpp_wire::ber::object::encode_pdu(&Selector::num(asn1cpp_wire::integer::Integer(7))).unwrap(), vec![0x02, 0x01, 0x07]);
     }
 
     #[test]
     fn selector_flag_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(asn1cpp_wire::ber::object::encode_pdu(&Selector::flag(asn1cpp_wire::boolean::Boolean(true))), vec![0x01, 0x01, 0xff]);
+        assert_eq!(asn1cpp_wire::ber::object::encode_pdu(&Selector::flag(asn1cpp_wire::boolean::Boolean(true))).unwrap(), vec![0x01, 0x01, 0xff]);
     }
 
     #[test]
     fn selector_data_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(asn1cpp_wire::ber::object::encode_pdu(&Selector::data(asn1cpp_wire::octet_string::OctetString(vec![0x68, 0x69]))), vec![0x04, 0x02, 0x68, 0x69]);
+        assert_eq!(asn1cpp_wire::ber::object::encode_pdu(&Selector::data(asn1cpp_wire::octet_string::OctetString(vec![0x68, 0x69]))).unwrap(), vec![0x04, 0x02, 0x68, 0x69]);
     }
 
     #[test]
     fn selector_label_encodes_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(asn1cpp_wire::ber::object::encode_pdu(&Selector::label(asn1cpp_wire::strings::Ia5String("hi".to_string()))), vec![0x16, 0x02, 0x68, 0x69]);
+        assert_eq!(asn1cpp_wire::ber::object::encode_pdu(&Selector::label(asn1cpp_wire::strings::Ia5String("hi".to_string()))).unwrap(), vec![0x16, 0x02, 0x68, 0x69]);
     }
 
     #[test]
@@ -207,7 +207,7 @@ mod tests {
             Selector::data(asn1cpp_wire::octet_string::OctetString(vec![0xAA, 0xBB])),
             Selector::label(asn1cpp_wire::strings::Ia5String("round-trip".to_string())),
         ] {
-            let bytes = asn1cpp_wire::ber::object::encode_pdu(&s);
+            let bytes = asn1cpp_wire::ber::object::encode_pdu(&s).unwrap();
             assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Selector>(&bytes).unwrap(), s);
         }
     }
@@ -225,22 +225,22 @@ mod tests {
 
     #[test]
     fn selector_num_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(asn1cpp_wire::xer::object::encode_pdu(&Selector::num(asn1cpp_wire::integer::Integer(7))), "<Selector>\n    <num>7</num>\n</Selector>\n");
+        assert_eq!(asn1cpp_wire::xer::object::encode_pdu(&Selector::num(asn1cpp_wire::integer::Integer(7))).unwrap(), "<Selector>\n    <num>7</num>\n</Selector>\n");
     }
 
     #[test]
     fn selector_flag_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(asn1cpp_wire::xer::object::encode_pdu(&Selector::flag(asn1cpp_wire::boolean::Boolean(true))), "<Selector>\n    <flag><true/></flag>\n</Selector>\n");
+        assert_eq!(asn1cpp_wire::xer::object::encode_pdu(&Selector::flag(asn1cpp_wire::boolean::Boolean(true))).unwrap(), "<Selector>\n    <flag><true/></flag>\n</Selector>\n");
     }
 
     #[test]
     fn selector_data_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(asn1cpp_wire::xer::object::encode_pdu(&Selector::data(asn1cpp_wire::octet_string::OctetString(vec![0x68, 0x69]))), "<Selector>\n    <data>6869</data>\n</Selector>\n");
+        assert_eq!(asn1cpp_wire::xer::object::encode_pdu(&Selector::data(asn1cpp_wire::octet_string::OctetString(vec![0x68, 0x69]))).unwrap(), "<Selector>\n    <data>6869</data>\n</Selector>\n");
     }
 
     #[test]
     fn selector_label_encodes_xer_as_ground_truth_from_the_cpp_runtime() {
-        assert_eq!(asn1cpp_wire::xer::object::encode_pdu(&Selector::label(asn1cpp_wire::strings::Ia5String("hi".to_string()))), "<Selector>\n    <label>hi</label>\n</Selector>\n");
+        assert_eq!(asn1cpp_wire::xer::object::encode_pdu(&Selector::label(asn1cpp_wire::strings::Ia5String("hi".to_string()))).unwrap(), "<Selector>\n    <label>hi</label>\n</Selector>\n");
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod tests {
             Selector::data(asn1cpp_wire::octet_string::OctetString(vec![0xAA, 0xBB])),
             Selector::label(asn1cpp_wire::strings::Ia5String("round-trip".to_string())),
         ] {
-            let xml = asn1cpp_wire::xer::object::encode_pdu(&s);
+            let xml = asn1cpp_wire::xer::object::encode_pdu(&s).unwrap();
             assert_eq!(asn1cpp_wire::xer::object::decode_pdu::<Selector>(&xml).unwrap(), s);
         }
     }
@@ -277,7 +277,7 @@ mod tests {
         let _guard = COUNTER_LOCK.lock().unwrap();
         asn1cpp_wire::validate::reset_validate_fail_count();
         let g = Gauge { level: asn1cpp_wire::integer::Integer(50), note: asn1cpp_wire::integer::Integer(-7), hint: Some(asn1cpp_wire::integer::Integer(3)) };
-        assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Gauge>(&asn1cpp_wire::ber::object::encode_pdu(&g)).unwrap(), g);
+        assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Gauge>(&asn1cpp_wire::ber::object::encode_pdu(&g).unwrap()).unwrap(), g);
         assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 0);
     }
 
@@ -357,7 +357,7 @@ mod tests {
         let _guard = COUNTER_LOCK.lock().unwrap();
         asn1cpp_wire::validate::reset_validate_fail_count();
         let b = blob(vec![1, 2], vec![0xFF], 4);
-        assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Blob>(&asn1cpp_wire::ber::object::encode_pdu(&b)).unwrap(), b);
+        assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Blob>(&asn1cpp_wire::ber::object::encode_pdu(&b).unwrap()).unwrap(), b);
         assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 0);
     }
 
@@ -446,7 +446,7 @@ mod tests {
         let _guard = COUNTER_LOCK.lock().unwrap();
         asn1cpp_wire::validate::reset_validate_fail_count();
         let c = Code { digits: asn1cpp_wire::strings::NumericString("12345".to_string()), tag: asn1cpp_wire::strings::Ia5String("a".to_string()) };
-        assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Code>(&asn1cpp_wire::ber::object::encode_pdu(&c)).unwrap(), c);
+        assert_eq!(asn1cpp_wire::ber::object::decode_pdu::<Code>(&asn1cpp_wire::ber::object::encode_pdu(&c).unwrap()).unwrap(), c);
         assert_eq!(asn1cpp_wire::validate::validate_fail_count(), 0);
     }
 
@@ -504,10 +504,10 @@ mod pdu_entry_points {
     }
 
     fn roundtrip_all_codecs<T: asn1cpp_wire::spec::object::Asn1Pdu + PartialEq + std::fmt::Debug>(v: &T) {
-        assert_eq!(&ber::object::decode_pdu::<T>(&ber::object::encode_pdu(v)).unwrap(), v);
-        assert_eq!(&xer::object::decode_pdu::<T>(&xer::object::encode_pdu(v)).unwrap(), v);
-        assert_eq!(&jer::object::decode_pdu::<T>(&jer::object::encode_pdu(v)).unwrap(), v);
-        assert_eq!(&per::object::decode_pdu::<T>(&per::object::encode_pdu(v)).unwrap(), v);
+        assert_eq!(&ber::object::decode_pdu::<T>(&ber::object::encode_pdu(v).unwrap()).unwrap(), v);
+        assert_eq!(&xer::object::decode_pdu::<T>(&xer::object::encode_pdu(v).unwrap()).unwrap(), v);
+        assert_eq!(&jer::object::decode_pdu::<T>(&jer::object::encode_pdu(v).unwrap()).unwrap(), v);
+        assert_eq!(&per::object::decode_pdu::<T>(&per::object::encode_pdu(v).unwrap()).unwrap(), v);
     }
 
     #[test]
@@ -528,9 +528,9 @@ mod pdu_entry_points {
         let mut b = widget();
         b.id = asn1cpp_wire::integer::Integer(77);
         let mut buf = Vec::new();
-        ber::object::encode_pdu_into(&a, &mut buf);
+        ber::object::encode_pdu_into(&a, &mut buf).unwrap();
         let first_len = buf.len();
-        ber::object::encode_pdu_into(&b, &mut buf);
+        ber::object::encode_pdu_into(&b, &mut buf).unwrap();
         let mut r = asn1cpp_wire::Reader::new(&buf);
         let mut got = Widget::default();
         ber::object::decode_pdu_into(&mut got, &mut r).unwrap();

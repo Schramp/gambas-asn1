@@ -111,9 +111,12 @@ pub struct ChoiceSpec {
 
 /// A borrowed member/alternative/element value, tagged by shape.
 /// `Absent` covers a genuinely-missing OPTIONAL member (a `PrimitiveRef`
-/// can't represent that itself).
+/// can't represent that itself). `Unsupported` is a member or alternative
+/// codegen has no runtime representation for; it carries the full
+/// diagnostic, and every codec walker turns it into an encode/decode error.
 pub enum MemberRef<'a> {
     Absent,
+    Unsupported(&'static str),
     Primitive(PrimitiveRef<'a>),
     Composite(&'a dyn Asn1Seq),
     Choice(&'a dyn Asn1Choice),
@@ -123,6 +126,7 @@ pub enum MemberRef<'a> {
 
 pub enum MemberRefMut<'a> {
     Absent,
+    Unsupported(&'static str),
     Primitive(PrimitiveRefMut<'a>),
     Composite(&'a mut dyn Asn1Seq),
     Choice(&'a mut dyn Asn1Choice),
@@ -138,6 +142,7 @@ pub enum MemberRefMut<'a> {
 pub fn natural_xer_name_of(m: MemberRef) -> &'static str {
     match m {
         MemberRef::Absent => unreachable!("an absent member has no natural XER name to ask for"),
+        MemberRef::Unsupported(_) => "Unsupported",
         MemberRef::Primitive(p) => crate::spec::primitive::xer_element_name_of(p),
         MemberRef::Composite(inner) => inner.spec().name,
         MemberRef::Choice(inner) => inner.spec().name,
@@ -307,6 +312,15 @@ pub trait Asn1Pdu: AsMemberRef + Default {
     /// and top-level SIZE validation; SEQUENCE/SET/CHOICE have none of
     /// their own (their members carry theirs in `MemberMeta`).
     const PDU_CONSTRAINTS: &'static crate::constraints::Constraints = &crate::constraints::UNCONSTRAINED;
+}
+
+/// @brief Encode error for a CHOICE with no known alternative to encode —
+///        an extensible CHOICE holding an unrecognized extension
+///        (`Asn1Choice::extract_unknown_extension`) that the codec has no
+///        form for. Shared by every codec's CHOICE walker.
+/// @param spec  The CHOICE's table, for its name.
+pub(crate) fn no_alternative_selected(spec: &ChoiceSpec) -> crate::encode_error::EncodeError {
+    crate::encode_error::EncodeError::new(format!("CHOICE {}: no alternative selected", spec.name))
 }
 
 /// Panic message for an `Asn1Pdu` whose `as_member_ref()` breaks the

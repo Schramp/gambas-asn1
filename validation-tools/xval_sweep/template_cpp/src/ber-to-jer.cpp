@@ -14,6 +14,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <vector>
 
 static std::vector<uint8_t> slurp(std::istream& in) {
@@ -79,9 +80,16 @@ int main(int argc, char** argv) {
         }
         offset += consumed;
 
-        asn1::JerEncodeStream js{std::cout};
+        // Buffered, so a record that fails to encode leaves no partial output.
+        std::ostringstream text;
+        asn1::JerEncodeStream js{text};
         asn1::JerCodec::instance().encode(js, *entry->def, p);
-        std::cout << "\n";
+        if (js.encode_failed()) {
+            std::cerr << "JER encode failed record #" << n << " at offset " << (offset - consumed) << "\n";
+            ++errors;
+            continue;
+        }
+        std::cout << text.str() << "\n";
         ++n;
     }   // obj destructs here — ~T() via shared_ptr control block
 

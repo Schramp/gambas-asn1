@@ -1,0 +1,14 @@
+[package]
+name = "decode-depth-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the decode nesting limit test (self_ref_choice_test.asn1). Pulls generated .rs from ASN1CPP_RUST_DEPTH_GEN_DIR (set by tests/CMakeLists.txt's rust_decode_depth), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "decode_depth"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }

@@ -190,7 +190,7 @@ mod tests {
     /// tag, through the reflective `ber::object` SEQUENCE OF walker.
     fn ber_encode_seqof(v: &dyn crate::spec::object::Asn1SeqOf) -> Vec<u8> {
         let mut out = Vec::new();
-        crate::ber::writer::write_tagged(&mut out, v.natural_tag(), |out| crate::ber::object::encode_seqof_content(v, out));
+        crate::ber::writer::write_tagged(&mut out, v.natural_tag(), |out| crate::ber::object::encode_seqof_content(v, out)).unwrap();
         out
     }
 
@@ -199,7 +199,7 @@ mod tests {
         let mut v = T::default();
         let tlv = Reader::new(data).read_tlv().unwrap();
         assert_eq!(tlv.tag, v.natural_tag());
-        crate::ber::object::decode_seqof_content(&mut v, tlv.value).unwrap();
+        crate::ber::object::decode_seqof_content(&mut v, Reader::new(tlv.value)).unwrap();
         v
     }
 
@@ -257,7 +257,7 @@ mod tests {
         let v = SeqOf(vec![Integer(1), Integer(2)]);
         let mut out = String::new();
         crate::xer::writer::write_open_tag(&mut out, "items");
-        crate::xer::object::encode_seqof_content(&v, &mut out, 0);
+        crate::xer::object::encode_seqof_content(&v, &mut out, 0).unwrap();
         crate::xer::writer::write_close_tag(&mut out, "items");
         assert_eq!(out, "<items>\n    <INTEGER>1</INTEGER>\n    <INTEGER>2</INTEGER>\n</items>");
 
@@ -292,7 +292,7 @@ mod tests {
         let v = SetOf(vec![Integer(1), Integer(2)]);
         let mut out = String::new();
         crate::xer::writer::write_open_tag(&mut out, "items");
-        crate::xer::object::encode_seqof_content(&v, &mut out, 0);
+        crate::xer::object::encode_seqof_content(&v, &mut out, 0).unwrap();
         crate::xer::writer::write_close_tag(&mut out, "items");
         assert_eq!(out, "<items>\n    <INTEGER>1</INTEGER>\n    <INTEGER>2</INTEGER>\n</items>");
 
@@ -359,7 +359,7 @@ mod tests {
     fn named_seqof_in_range_does_not_bump_the_validate_counter() {
         let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
         crate::validate::reset_validate_fail_count();
-        crate::ber::object::encode_pdu(&NamedTags(vec![Integer(1), Integer(2)]));
+        crate::ber::object::encode_pdu(&NamedTags(vec![Integer(1), Integer(2)])).unwrap();
         assert_eq!(crate::validate::validate_fail_count(), 0);
     }
 
@@ -367,7 +367,7 @@ mod tests {
     fn named_seqof_too_many_elements_bumps_the_validate_counter() {
         let _guard = crate::validate::tests::COUNTER_LOCK.lock().unwrap();
         crate::validate::reset_validate_fail_count();
-        crate::ber::object::encode_pdu(&NamedTags(vec![Integer(1), Integer(2), Integer(3), Integer(4)]));
+        crate::ber::object::encode_pdu(&NamedTags(vec![Integer(1), Integer(2), Integer(3), Integer(4)])).unwrap();
         assert_eq!(crate::validate::validate_fail_count(), 1);
     }
 }
