@@ -3060,7 +3060,7 @@ void Generator::generate_inline_types(ast::TypeDef& def, const ast::Module& mod)
                 auto synthetic = std::make_shared<ast::TypeDef>(elem);
                 synthetic->name = elem_type_name;
                 synthetic->origin_label = was_anon ? def.name : elem.name;
-                if (was_anon) synthetic->xer_name = elem.is_seq_of() ? "SEQUENCE" : "SET";
+                if (was_anon) synthetic->xer_name = elem.is_seq_of() ? "SEQUENCE_OF" : "SET_OF";
                 generate_inline_types(*synthetic, mod);
                 current_type_ = elem_type_name;
                 emit_type_files(elem_type_name, *synthetic, mod);
@@ -3162,7 +3162,7 @@ void Generator::generate_inline_types(ast::TypeDef& def, const ast::Module& mod)
                     auto synthetic = std::make_shared<ast::TypeDef>(elem);
                     synthetic->name = elem_type_name;
                     synthetic->origin_label = was_anon ? m->name : elem.name;
-                    if (was_anon) synthetic->xer_name = elem.is_seq_of() ? "SEQUENCE" : "SET";
+                    if (was_anon) synthetic->xer_name = elem.is_seq_of() ? "SEQUENCE_OF" : "SET_OF";
                     generate_inline_types(*synthetic, mod);
                     current_type_ = elem_type_name;
                     emit_type_files(elem_type_name, *synthetic, mod);

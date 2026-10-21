@@ -469,7 +469,7 @@ struct SeqOfBerHandler final : IBerTypeHandler {
                           def.tag.number == UniversalTag::Set);
         if (debug_flags() & DBG_BER_WRITE)
             std::fprintf(stderr, "[BER-WRITE] %s %s %zu elements of %s\n",
-                         def.name, is_set_of ? "SET-OF" : "SEQUENCE-OF",
+                         def.name, is_set_of ? "SET_OF" : "SEQUENCE_OF",
                          count, edef.name);
         w.write_constructed(def.tag, [&](BerWriter& inner) {
             if (is_set_of && count > 1) {

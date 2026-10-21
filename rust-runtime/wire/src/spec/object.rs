@@ -201,10 +201,10 @@ pub trait Asn1SeqOf {
     /// confused with `elem_natural_xer_name`/`elem_xer_name`, which name
     /// this collection's own *elements*. An inline member's `SeqOf<T>`/
     /// `SetOf<T>` (never independently named) answers the generic X.680
-    /// keyword-derived `"SEQUENCE-OF"`/`"SET-OF"`; a named or
+    /// `xmlasn1typename` `"SEQUENCE_OF"`/`"SET_OF"` (X.680 Table 4); a named or
     /// synthetically-promoted top-level type (`RustBackend::
     /// emit_seq_of_definition`) answers its own real `SeqOfSpec::
-    /// xer_name` instead — `"SEQUENCE"`/`"SET"` for an anonymous promoted
+    /// xer_name` instead — `"SEQUENCE_OF"`/`"SET_OF"` for an anonymous promoted
     /// type (`Generator::synthetic->xer_name`), its declared ASN.1 name
     /// otherwise.
     fn own_xer_name(&self) -> &'static str;

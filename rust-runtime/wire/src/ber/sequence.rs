@@ -54,8 +54,8 @@ pub(crate) fn count_top_level_tlvs(content: &[u8]) -> usize {
 /// `Asn1SeqOf::natural_tag`, which `ber::object` uses both for an
 /// untagged member and as the inner TLV of an EXPLICIT one (X.690
 /// §8.14.3). An inline collection is named by its containing field, so
-/// `own_xer_name` answers the generic X.680 keyword `"SEQUENCE-OF"`/
-/// `"SET-OF"`.
+/// `own_xer_name` answers the X.680 Table 4 `xmlasn1typename`
+/// `"SEQUENCE_OF"`/`"SET_OF"`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SeqOf<T>(pub Vec<T>);
 
@@ -79,7 +79,7 @@ impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1Seq
         SEQUENCE_TAG
     }
     fn own_xer_name(&self) -> &'static str {
-        "SEQUENCE-OF"
+        "SEQUENCE_OF"
     }
     fn len(&self) -> usize {
         self.0.len()
@@ -144,7 +144,7 @@ impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1Seq
         SET_TAG
     }
     fn own_xer_name(&self) -> &'static str {
-        "SET-OF"
+        "SET_OF"
     }
     fn len(&self) -> usize {
         self.0.len()

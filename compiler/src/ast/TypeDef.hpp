@@ -77,7 +77,7 @@ enum class XerEncoding { Default, Base64, Utf8 };
 // --- The main TypeDef node ---------------------------------------------------
 struct TypeDef : Node {
     std::string name;            // identifier or type reference name (may be empty for anonymous)
-    std::string xer_name;        // override for XER element tag (anonymous types use ASN.1 keyword: SEQUENCE/SET/CHOICE)
+    std::string xer_name;        // override for XER element tag (anonymous types use their X.680 Table 4 xmlasn1typename: SEQUENCE/SET/CHOICE/SEQUENCE_OF/SET_OF)
     // Set only when this TypeDef is a synthetic promotion of an anonymous
     // inline construct (generate_inline_types) — `name` at that point holds
     // the compiler-generated backend identifier, not a real ASN.1 name, so
