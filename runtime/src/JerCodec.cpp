@@ -334,6 +334,52 @@ static DecodeResult skip_json_value(JerDecodeStream& s) {
 }
 
 // Peek next non-whitespace character without consuming it. Returns 0 at end.
+/// @brief Formats a finite, nonzero REAL as a JSON number that converts back
+///        to exactly the same double: the shortest such digit string
+///        (\c std::to_chars), in plain decimal notation when the decimal
+///        exponent is in [-4, 15) and as \c d.dddE<exp> otherwise. The Rust
+///        runtime's \c jer::real::encode applies the same rule, so both
+///        produce identical text.
+/// @param d  The value; NaN, infinities and zeros are the caller's
+///           special-value strings.
+/// @return The JSON number text.
+/// @see X.697 §23 (REAL as a JSON number).
+static std::string format_real(double d) {
+    char buf[40];
+    auto res = std::to_chars(buf, buf + sizeof(buf), d, std::chars_format::scientific);
+    std::string_view sci(buf, static_cast<std::size_t>(res.ptr - buf));   // e.g. -1.9370032316011307e+05
+    bool neg = sci.front() == '-';
+    if (neg) sci.remove_prefix(1);
+    auto epos = sci.find('e');
+    std::string digits;
+    for (char c : sci.substr(0, epos)) if (c != '.') digits += c;
+    int exp = std::atoi(std::string(sci.substr(epos + 1)).c_str());
+    std::string out = neg ? "-" : "";
+    if (exp >= -4 && exp < 15) {
+        if (exp < 0) {
+            out += "0.";
+            out.append(static_cast<std::size_t>(-exp - 1), '0');
+            out += digits;
+        } else {
+            std::size_t int_len = static_cast<std::size_t>(exp) + 1;
+            if (digits.size() <= int_len) {
+                out += digits;
+                out.append(int_len - digits.size(), '0');
+            } else {
+                out += digits.substr(0, int_len);
+                out += '.';
+                out += digits.substr(int_len);
+            }
+        }
+    } else {
+        out += digits[0];
+        if (digits.size() > 1) { out += '.'; out += digits.substr(1); }
+        out += 'E';
+        out += std::to_string(exp);
+    }
+    return out;
+}
+
 static char peek_char(JerDecodeStream& s) {
     skip_ws(s);
     return s.at_end() ? '\0' : s.data()[0];
@@ -444,15 +490,7 @@ struct RealJerHandler final : IJerTypeHandler {
             os << (std::signbit(d) ? "\"-0\"" : "0");
             return;
         }
-        // Use the same representation as asn1c: %.15g-style but with E notation
-        char buf[64];
-        // Try %g first; if it produces integer-like output, ensure we emit a decimal point
-        int n = std::snprintf(buf, sizeof(buf), "%.15G", d);
-        // asn1c emits e.g. -2.251799813685248E15 — match format
-        // snprintf with %G already does that; just lowercase the E separator to match asn1c
-        // Actually asn1c uses uppercase E, which %G gives us.
-        (void)n;
-        os << buf;
+        os << jer_detail::format_real(d);
     }
     DecodeResult decode(const JerCodec&, JerDecodeStream& s,
                         const TypeDescriptor&, Asn1Object* dest) const override {
