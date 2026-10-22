@@ -865,7 +865,10 @@ def parse_targets(path):
                 sys.exit(1)
             rest = rest[n_opts:]
             n_flags = next((i for i, t in enumerate(rest) if not t.startswith("-")), len(rest))
-            flags = rest[:n_flags]
+            # A --container-config path is relative to asn1cpp/ like the
+            # schema path; make runs codegen from the target's own dir.
+            flags = [f"--container-config={os.path.join(ASN1CPP_ROOT, t.split('=', 1)[1])}"
+                     if t.startswith("--container-config=") else t for t in rest[:n_flags]]
             reason = " ".join(rest[n_flags:]) or None
             targets.append((parts[0], parts[1], reason, [], flags, options))
     return targets

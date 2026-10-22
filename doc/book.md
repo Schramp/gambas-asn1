@@ -1117,7 +1117,9 @@ a specific type within seconds.
 
 `RandomFiller` is deterministic (seed-controlled) and schema-aware: it fills required
 members, randomly includes optional members, and respects SIZE and value constraints.
-Corrupted-record variants (`BerCorruptor`) test that the decoder never crashes or
+A [contained field](#contained-values) gets a random inner value, encoded through the
+field's decoder (`pkcs7` pads; `zero_padding` adds 0–15 zero octets), so the nested
+decode is exercised too. Corrupted-record variants (`BerCorruptor`) test that the decoder never crashes or
 asserts on malformed input.
 
 ### Fully Table-Based: Minimal Generated Code
