@@ -2,7 +2,9 @@
 // encoding of another type, from a contents constraint (X.682 §11) or the
 // containing_test.container.json sidecar. Generated from
 // tests/asn1/containing_test.asn1.
+#include <algorithm>
 #include <cstdio>
+#include <sstream>
 #include <vector>
 #include <asn1cpp/asn1cpp.hpp>
 #include "Envelope.hpp"
@@ -212,6 +214,117 @@ static void test_per() {
     check("re-encodes byte-exact", per(Holder::asn_DEF, d) == wire);
 }
 
+template<class T>
+static std::string xer(const T& v, const ContainedOptions* opts = nullptr) {
+    std::ostringstream os;
+    XerEncodeStream s{os};
+    s.set_contained(opts);
+    XerCodec::instance().encode(s, T::asn_DEF, &v);
+    return os.str();
+}
+
+template<class T>
+static bool unxer(const std::string& text, T& v) {
+    XerDecodeStream s{text};
+    return XerCodec::instance().decode(s, T::asn_DEF, &v).has_value();
+}
+
+template<class T>
+static std::string jer(const T& v, const ContainedOptions* opts = nullptr) {
+    std::ostringstream os;
+    JerEncodeStream s{os};
+    s.set_contained(opts);
+    JerCodec::instance().encode(s, T::asn_DEF, &v);
+    return os.str();
+}
+
+template<class T>
+static bool unjer(const std::string& text, T& v) {
+    JerDecodeStream s{text};
+    return JerCodec::instance().decode(s, T::asn_DEF, &v).has_value();
+}
+
+static void test_xer_jer() {
+    printf("XER/JER\n");
+    Holder h;
+    check("BER decode for text tests", unber(ber(Holder::asn_DEF, make_holder(Kind::plain)), h));
+
+    // Default (hex): the field is its raw bytes in hex; decoding the hex
+    // decodes the inner value, as for BER.
+    auto x = xer(h);
+    check("XER default is hex", x.find("<viaConstraint>") != std::string::npos &&
+                                x.find("<Inner>") == std::string::npos);
+    Holder hx;
+    check("XER hex decodes", unxer(x, hx) && hx.viaConstraint.value() &&
+                             hx.viaConstraint.value()->id.value() == 1 && hx.viaConfig.value() &&
+                             hx.viaConfig.value()->id.value() == 3);
+    check("XER hex keeps the raw bytes", hx.viaConfig.size() == h.viaConfig.size());
+
+    // Stream override: inline, hex suppressed (X.680 §22.4).
+    ContainedOptions inl;
+    inl.xer = ContainedText::Inline;
+    inl.jer = ContainedText::Inline;
+    auto xi = xer(h, &inl);
+    check("XER inline writes the typed value", xi.find("<viaConstraint>\n") != std::string::npos &&
+                                              xi.find("<Inner>") != std::string::npos &&
+                                              xi.find("<!--") == std::string::npos);
+    Holder hi;
+    check("XER inline decodes", unxer(xi, hi) && hi.viaConstraint.value() &&
+                                hi.viaConstraint.value()->id.value() == 1);
+    check("XER inline: raw bytes are the inner value's BER",
+          hi.viaConstraint.size() == h.viaConstraint.size() &&
+          std::equal(hi.viaConstraint.bytes().begin(), hi.viaConstraint.bytes().end(), h.viaConstraint.bytes().begin()));
+    check("XER inline: padding is not carried (raw differs)", hi.viaConfig.size() < h.viaConfig.size());
+
+    auto ji = jer(h, &inl);
+    check("JER inline writes {\"containing\": ...}", ji.find("\"viaConstraint\":{\"containing\":") != std::string::npos);
+    Holder hj;
+    check("JER inline decodes", unjer(ji, hj) && hj.viaConfig.value() && hj.viaConfig.value()->id.value() == 3);
+
+    // Pick.inner is configured xer: inline, jer: inline_raw.
+    Pick p;
+    p.set_present(Pick::PR::inner);
+    p.inner().set_value(make_inner(9));
+    Pick pb;
+    check("BER decode for Pick", unber(ber(Pick::asn_DEF, p), pb));
+    auto px = xer(pb);
+    check("configured XER inline", px.find("<Inner>") != std::string::npos);
+    auto pj = jer(pb);
+    check("configured JER inline_raw", pj.find("\"containing\":") != std::string::npos &&
+                                       pj.find("\"raw\":\"") != std::string::npos);
+    // Same text as the Rust runtime (tests/rust/containing); the C++ root
+    // CHOICE wrapper adds an empty line before its closing tag.
+    Pick pg;
+    Inner gi = make_inner(9);
+    gi.name = std::make_unique<Utf8String>("x");
+    pg.set_present(Pick::PR::inner);
+    pg.inner().set_value(std::move(gi));
+    Pick pgd;
+    check("BER decode for the golden Pick", unber(ber(Pick::asn_DEF, pg), pgd));
+    check("golden XER inline", xer(pgd) == "<Pick>\n    <inner>\n        <Inner>\n            <id>9</id>\n"
+                                            "            <name>x</name>\n        </Inner>\n    </inner>\n\n</Pick>\n");
+    check("golden JER inline_raw", jer(pgd) == R"({"inner":{"containing":{"id":9,"name":"x"},"raw":"3006800109810178"}})");
+    Pick pjd;
+    check("JER inline_raw decodes, raw authoritative",
+          unjer(pj, pjd) && pjd.inner().value() && pjd.inner().value()->id.value() == 9 &&
+          pjd.inner().size() == pb.inner().size());
+    // inline_raw keeps bytes that differ from the value's own encoding.
+    std::string tampered = pj;
+    auto pos = tampered.find("\"raw\":\"") + 7;
+    tampered.insert(pos, "00");
+    tampered.insert(tampered.find('"', pos + 2), "00");
+    Pick pt;
+    check("JER inline_raw: raw bytes kept as given",
+          unjer(tampered, pt) && pt.inner().size() == pb.inner().size() + 2);
+    ContainedOptions raw;
+    raw.xer = ContainedText::InlineRaw;
+    auto pxr = xer(pb, &raw);
+    Pick pxd;
+    check("XER inline_raw comment round-trips",
+          pxr.find("<!-- raw: ") != std::string::npos && unxer(pxr, pxd) && pxd.inner().value() &&
+          pxd.inner().size() == pb.inner().size());
+}
+
 int main() {
     test_ber_sequence();
     test_bad_inner();
@@ -219,6 +332,7 @@ int main() {
     test_choice();
     test_recursion();
     test_per();
+    test_xer_jer();
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

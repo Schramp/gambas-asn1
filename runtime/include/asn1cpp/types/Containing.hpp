@@ -154,6 +154,16 @@ public:
         dirty_ = false;
     }
 
+    /// @brief Runtime access for codecs: raw bytes derived for an inner value
+    ///        that was just decoded from its inline XER/JER form; keeps the
+    ///        value and marks it Decoded.
+    void set_raw_for_value(std::span<const uint8_t> b) {
+        OctetString::set(b);
+        status_ = ContainedStatus::Decoded;
+        error_.clear();
+        dirty_ = false;
+    }
+
 protected:
     void reset_value() {
         if (inner_) ops_->destroy(inner_);

@@ -171,6 +171,22 @@ impl<'a> XerReader<'a> {
         (TagInfo { name, closing, self_closing }, p)
     }
 
+    /// @brief Consume an XML comment (`<!-- ... -->`) at the cursor.
+    /// @return Its trimmed text, or `None` (nothing consumed) when the next
+    ///         markup is not a comment.
+    pub fn take_comment(&mut self) -> Option<&'a str> {
+        let p = self.skip_ws(0);
+        let rem = self.remaining();
+        if !rem[p..].starts_with(b"<!--") {
+            return None;
+        }
+        let body_start = p + 4;
+        let end = rem[body_start..].windows(3).position(|w| w == b"-->")? + body_start;
+        let text = std::str::from_utf8(&rem[body_start..end]).unwrap_or("").trim();
+        self.pos += end + 3;
+        Some(text)
+    }
+
     /// Consume and return the next tag. Mirrors `xer_detail::consume_tag`.
     pub fn consume_tag(&mut self) -> TagInfo {
         let (ti, consumed) = self.parse_tag_at(0);

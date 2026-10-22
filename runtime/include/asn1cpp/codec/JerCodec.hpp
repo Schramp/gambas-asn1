@@ -12,6 +12,8 @@
 
 namespace asn1 {
 
+struct ContainedOptions;
+
 // ---------------------------------------------------------------------------
 // JER stream wrappers
 
@@ -25,8 +27,16 @@ class JerEncodeStream : public IEncodeStream {
     int depth_{0};
     bool own_failed_{false};
     bool* failed_{&own_failed_};
-    JerEncodeStream(std::ostream& os, int depth, bool* failed) : os_(os), depth_(depth), failed_(failed) {}
+    const ContainedOptions* contained_ = nullptr;
+    JerEncodeStream(std::ostream& os, int depth, bool* failed, const ContainedOptions* c)
+        : os_(os), depth_(depth), failed_(failed), contained_(c) {}
 public:
+    /// @brief Contained-value settings (nullptr: defaults); nested streams inherit them.
+    const ContainedOptions* contained() const { return contained_; }
+    /// @brief Set the contained-value settings: decoder registry, `off`, and
+    ///        the XER/JER form override for every contained field.
+    void set_contained(const ContainedOptions* c) { contained_ = c; }
+
     /// @brief Wrap \p os for output at nesting depth 0.
     /// @param os  Output stream; must outlive this object.
     explicit JerEncodeStream(std::ostream& os) : os_(os) {}
@@ -36,7 +46,7 @@ public:
     JerEncodeStream& operator=(const JerEncodeStream&) = delete;
     /// @brief Stream for a nested value one level deeper, sharing this
     ///        stream's output and failure flag (used by recursive encode).
-    JerEncodeStream child() { return JerEncodeStream(os_, depth_ + 1, failed_); }
+    JerEncodeStream child() { return JerEncodeStream(os_, depth_ + 1, failed_, contained_); }
     /// @brief Access the underlying output stream.
     std::ostream& os() { return os_; }
     /// @brief Current nesting depth (0 = top-level).
@@ -69,7 +79,14 @@ class JerDecodeStream : public IDecodeStream {
     std::size_t pos_{0};
     int parse_state_{0};
     DecodeDepth depth_;
+    const ContainedOptions* contained_ = nullptr;
 public:
+    /// @brief Contained-value settings (nullptr: defaults); nested streams inherit them.
+    const ContainedOptions* contained() const { return contained_; }
+    /// @brief Set the contained-value settings: decoder registry, `off`, and
+    ///        the XER/JER form override for every contained field.
+    void set_contained(const ContainedOptions* c) { contained_ = c; }
+
     explicit JerDecodeStream(std::string text) : buf_(std::move(text)) {}
     /// @brief The decode nesting depth; see \c DecodeDepth.
     DecodeDepth& depth() { return depth_; }
