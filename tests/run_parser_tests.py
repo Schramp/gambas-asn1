@@ -47,6 +47,14 @@ SE_NOT_YET_ENFORCED = {
     "209-prefer-import-source-SE.asn1",
 }
 
+# OK files using a standard production the asn1c reference grammar does not
+# implement. asn1cpp must accept them; asn1c's rejection is expected.
+ASN1C_LACKS_PRODUCTION = {
+    # X.682 §11.1: asn1c's asn1p_y.y has only `CONTAINING Type`, not the
+    # `ENCODED BY Value` and `CONTAINING Type ENCODED BY Value` forms.
+    "1009-contents-encoded-by-OK.asn1",
+}
+
 
 def run(cmd, asn1_file, extra_flags=None):
     args = list(cmd)
@@ -130,7 +138,7 @@ def main():
                 failures.append((f.name, "asn1cpp rejected -OK file"))
             else:
                 ok_pass += 1
-                if asn1c_cmd and not ac_ok:
+                if asn1c_cmd and not ac_ok and f.name not in ASN1C_LACKS_PRODUCTION:
                     failures.append((f.name, "asn1c rejected -OK file (asn1c bug?)"))
         elif kind == "NP":
             passed = not cpp_ok

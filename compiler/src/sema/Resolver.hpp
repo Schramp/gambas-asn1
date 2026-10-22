@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include "../ast/Module.hpp"
 #include "../ast/TypeDef.hpp"
+#include "Contents.hpp"
 #include "asn1cpp/codec/Alphabets.hpp"
 
 namespace asn1::sema {
@@ -1133,6 +1134,47 @@ private:
         std::string ctx = def->name.empty() ? "anonymous type" : "'" + def->name + "'";
         for (const auto& c : def->constraints)
             if (c) check_one_constraint(*c, is_string, is_sized, ctx, mod_name, bt);
+        if (auto* cc = find_contents_constraint(def->constraints))
+            check_contents_constraint(*cc, base, ctx, mod_name);
+    }
+
+    /// @brief Validate a contents constraint and resolve its contained type.
+    ///
+    /// Checks X.682 §11.3 (only OCTET STRING, or BIT STRING without a
+    /// NamedBitList), that the contained type resolves (qualified references
+    /// included), and warns when an `ENCODED BY` names encoding rules this
+    /// compiler cannot apply, so the contents stay raw bytes.
+    /// @param cc        The contents constraint.
+    /// @param base      The constrained type after following aliases.
+    /// @param ctx       Type label for diagnostics.
+    /// @param mod_name  Module the constraint appears in.
+    /// @see X.682 §11.1–§11.6
+    void check_contents_constraint(const ast::ContentsConstraint& cc,
+                                   const ast::TypeDefPtr& base,
+                                   const std::string& ctx,
+                                   const std::string& mod_name) {
+        const auto* bt = std::get_if<ast::BuiltinType>(&base->body);
+        bool ok_type = bt && (*bt == ast::BuiltinType::OctetString
+                          || (*bt == ast::BuiltinType::BitString && base->enum_values.empty()));
+        if (!ok_type)
+            errors_.push_back("contents constraint (CONTAINING/ENCODED BY) on " + ctx
+                + " in module '" + mod_name
+                + "': only OCTET STRING or BIT STRING without named bits (X.682 §11.3)");
+        if (cc.type) {
+            // check_and_resolve reports unqualified names that are not
+            // visible; a qualified name is only checked against its module.
+            auto* tr = std::get_if<ast::TypeRef>(&cc.type->body);
+            if (tr && !tr->module_name.empty() && module_symbols_.count(tr->module_name)
+                    && !resolve_ref(*tr, mod_name))
+                errors_.push_back("CONTAINING type '" + tr->module_name + "." + tr->type_name
+                    + "' on " + ctx + " in module '" + mod_name + "' is not defined in '"
+                    + tr->module_name + "'");
+            check_and_resolve(cc.type, mod_name);
+        }
+        if (classify_encoded_by(cc.encoded_by) == ContentsEncoding::Unknown)
+            warnings_.push_back("ENCODED BY " + cc.encoded_by + " on " + ctx
+                + " in module '" + mod_name
+                + "': encoding rules not supported, contents kept as raw bytes");
     }
     // ----------------------------------------------------------------------------
 

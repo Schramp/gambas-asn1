@@ -315,6 +315,31 @@ used by the constraint validator and, for PER, determine the minimum number of b
 needed to encode a value. A `FROM` alphabet constraint restricts the character set of a
 string type; the validator checks every character against the allowed set.
 
+#### Contents constraints (`CONTAINING` / `ENCODED BY`)
+
+*(X.682 §11)*
+
+```asn1
+Wrapper ::= SEQUENCE {
+    cc   OCTET STRING (CONTAINING TS33128Payloads.CCPayload),
+    blob OCTET STRING (CONTAINING Inner ENCODED BY { joint-iso-itu-t asn1(1) basic-encoding(1) })
+}
+```
+
+All three X.682 §11.1 productions are parsed: `CONTAINING Type`, `ENCODED BY Value` and
+`CONTAINING Type ENCODED BY Value`. The compiler checks that the contained type is
+defined (module-qualified references included). It also checks that the constraint sits
+on an OCTET STRING, or a BIT STRING without named bits (§11.3); anything else is an
+error. Without `ENCODED BY`, the contents use the encoding rules of the enclosing octet
+string (§11.4).
+
+An `ENCODED BY` OID other than BER, CER, DER or unaligned/aligned PER gives a warning:
+those contents stay raw bytes. An OID given as a value reference is not resolved for
+this and also counts as unsupported.
+
+Decoding the contained value is not generated yet: the field is still a plain
+`OctetString` (tracked in [#786](https://github.com/Schramp/gambas-asn1/issues/786)).
+
 ---
 
 ## 6. BER, PER, XER and Other Encoding Flavours
