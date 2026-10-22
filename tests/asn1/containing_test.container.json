@@ -1,0 +1,19 @@
+{
+  "container_fields": [
+    {
+      "module": "ContainingTest",
+      "type": "Holder",
+      "field": "viaConfig",
+      "inner_type": "Inner",
+      "decoder": "ber_zero_padding",
+      "when": { "member": "kind", "equals": "plain" }
+    },
+    {
+      "module": "ContainingTest",
+      "type": "Pick",
+      "field": "inner",
+      "xer": "inline",
+      "jer": "inline_raw"
+    }
+  ]
+}

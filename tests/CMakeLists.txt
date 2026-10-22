@@ -1529,6 +1529,15 @@ add_executable(test_contents_encoding codegen/test_contents_encoding.cpp)
 target_include_directories(test_contents_encoding PRIVATE ${CMAKE_SOURCE_DIR}/compiler/src)
 add_test(NAME contents_encoding COMMAND test_contents_encoding)
 
+# ---- --container-config sidecar: JSON reader + merge/validation -----------
+add_executable(test_json codegen/test_json.cpp ${CMAKE_SOURCE_DIR}/compiler/src/config/Json.cpp)
+target_include_directories(test_json PRIVATE ${CMAKE_SOURCE_DIR}/compiler/src)
+add_test(NAME json_reader COMMAND test_json)
+add_test(NAME contained_config
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/codegen/run_contained_config_tests.py
+            --asn1cpp $<TARGET_FILE:asn1cpp>
+            --tests-dir ${CMAKE_CURRENT_SOURCE_DIR})
+
 # ---- RustBackend output compile-check (gambas-asn1#258) --------------------
 if(WITH_RUST_COMPILE_CHECK)
     add_test(NAME rust_compile_check

@@ -13,6 +13,7 @@
 #include "../ast/Module.hpp"
 #include "../ast/TypeDef.hpp"
 #include "Contents.hpp"
+#include "EnumValues.hpp"
 #include "asn1cpp/codec/Alphabets.hpp"
 
 namespace asn1::sema {
@@ -1351,23 +1352,7 @@ private:
                     errors_.push_back("more than one extension marker in ENUMERATED"
                                       + type_ctx + " in module '" + mod_name + "'");
 
-                // Auto-assign numeric values: root phase (0,1,...), then extension phase
-                // (max_root+1, ...). Explicit numbers override; next tracks the sequence.
-                std::vector<int64_t> vals(n, 0);
-                int64_t next = 0;
-                for (int i = 0; i < ext_start; ++i) {
-                    vals[i] = evs[i].number.value_or(next);
-                    next = vals[i] + 1;
-                }
-                int64_t max_root = ext_start > 0
-                    ? *std::max_element(vals.begin(), vals.begin() + ext_start)
-                    : -1;
-                next = max_root + 1;
-                for (int i = ext_start + 1; i < n; ++i) {
-                    if (evs[i].name == "...") continue;
-                    vals[i] = evs[i].number.value_or(next);
-                    next = vals[i] + 1;
-                }
+                auto vals = enumerated_values(evs);
 
                 // Duplicate identifier / duplicate numeric value
                 std::unordered_set<std::string> seen_names;

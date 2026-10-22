@@ -1,0 +1,5 @@
+contained: ContainingTest.Holder.viaConstraint -> ContainingTest.Inner source=CONTAINING encoding=outer decode=eager decoder=ber on_error=keep_raw xer=hex jer=hex
+contained: ContainingTest.Holder.viaAlias -> ContainingTest.Inner source=CONTAINING encoding=outer decode=eager decoder=ber on_error=keep_raw xer=hex jer=hex
+contained: ContainingTest.Pick.inner -> ContainingTest.Inner source=CONTAINING+config encoding=outer decode=eager decoder=ber on_error=keep_raw xer=inline jer=inline_raw
+contained: ContainingTest.Envelope.nested -> ContainingTest.Envelope source=CONTAINING encoding=outer decode=eager decoder=ber on_error=keep_raw xer=hex jer=hex
+contained: ContainingTest.Holder.viaConfig -> ContainingTest.Inner source=config encoding=ber decode=eager decoder=ber_zero_padding when=kind==plain(1) on_error=keep_raw xer=hex jer=hex

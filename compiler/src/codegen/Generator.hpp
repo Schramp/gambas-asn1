@@ -88,6 +88,7 @@ inline std::string to_value_name(std::string_view s) {
 class Generator {
     fs::path                out_dir_;
     sema::Resolver&         resolver_;
+    const sema::ContainedFields* contained_ = nullptr;
     std::set<std::string>   generated_names_;
     // Synthetic type names promoted for an anonymous nested SEQUENCE OF/SET
     // OF element (generate_inline_types) — needed because
@@ -151,6 +152,9 @@ public:
     void set_default_int_kind(IntStorageKind k) { default_int_kind_ = k; }
     void set_namespace(std::string ns)           { namespace_ = std::move(ns); }
     void add_pdu_type(std::string asn_name)      { pdu_roots_.insert(std::move(asn_name)); }
+    /// @brief Contained-field facts (X.682 §11 / --container-config) that
+    ///        member and alternative specs carry to the backends.
+    void set_contained_fields(const sema::ContainedFields* c) { contained_ = c; }
 
     /// @brief Run codegen over all modules in `pr`, writing `.hpp`/`.cpp` files to `out_dir_`.
     /// @param pr  Resolved parse result containing all input modules.
