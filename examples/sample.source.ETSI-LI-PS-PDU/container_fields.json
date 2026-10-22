@@ -1,0 +1,12 @@
+{
+  "container_fields": [
+    {
+      "module": "LI-PS-PDU",
+      "type": "EncryptionContainer",
+      "field": "encryptedPayload",
+      "inner_type": "EncryptedPayload",
+      "decoder": "zero_padding",
+      "when": { "member": "encryptionType", "equals": "none" }
+    }
+  ]
+}

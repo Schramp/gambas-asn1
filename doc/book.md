@@ -379,6 +379,12 @@ unknown module or field is a warning, and the entry is skipped. Malformed JSON, 
 keys, bad values, a non-OCTET STRING field, a conflicting inner type and duplicate
 entries are errors.
 
+The ETSI LI example (`examples/sample.source.ETSI-LI-PS-PDU/container_fields.json`,
+passed by its Makefile) declares the entry above. With it, one `PS_PDU` decode yields the
+encryption container's raw bytes, which IntegrityCheck hashes are computed over, and the
+decoded `EncryptedPayload`. The two TS 33.128 fields that carry a contents constraint
+(`threeGPP33128DefinedCC`/`IRI`) need no entry.
+
 `--list-contained` prints the merged result:
 
 ```
