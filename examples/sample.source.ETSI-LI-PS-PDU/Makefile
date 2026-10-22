@@ -27,7 +27,11 @@ LIB_DIR   := lib
 INC_DIR   := include
 LIBRARY   := $(LIB_DIR)/libasn1cpp_etsi.a
 
-ASNCPP_FLAGS := -fallow-newer-modules -pdu=PS-PDU -pdu=EncryptedPayload
+# container_fields.json: EncryptionContainer.encryptedPayload holds a
+# BER-encoded EncryptedPayload plus cipher padding (TS 102 232-1 Annex G) — the
+# schema says so only in a comment, so the sidecar declares it.
+CONTAINER_CONFIG := container_fields.json
+ASNCPP_FLAGS := -fallow-newer-modules -pdu=PS-PDU -pdu=EncryptedPayload --container-config=$(CONTAINER_CONFIG)
 
 # ---------------------------------------------------------------------------
 # Source discovery (all .asn and .asn1 files under asn1-files/)
@@ -81,7 +85,7 @@ all: $(LIBRARY)
 $(OBJ_DIR):
 	mkdir -p $@
 
-$(GEN_DIR)/sources.mk: $(ASN_FILES) $(ASNCPP)
+$(GEN_DIR)/sources.mk: $(ASN_FILES) $(ASNCPP) $(CONTAINER_CONFIG)
 	@echo "[GEN]  running asn1cpp on $(words $(ASN_FILES)) ASN.1 files ..."
 	@mkdir -p $(GEN_DIR) $(OBJ_DIR) $(LIB_DIR)
 	$(ASNCPP) $(ASN_FILES) $(ASNCPP_FLAGS) -o $(GEN_DIR) 2>&1 | grep -v '^warning:'
@@ -132,7 +136,7 @@ regen:
 RUST_PROBE_DIR := rust-probe
 RUST_PROBE_SRC := $(RUST_PROBE_DIR)/src
 
-rust-probe: $(ASN_FILES) $(ASNCPP)
+rust-probe: $(ASN_FILES) $(ASNCPP) $(CONTAINER_CONFIG)
 	@echo "[GEN]  running asn1cpp --target=rust on $(words $(ASN_FILES)) ASN.1 files ..."
 	@rm -rf $(RUST_PROBE_SRC)
 	@mkdir -p $(RUST_PROBE_SRC)
