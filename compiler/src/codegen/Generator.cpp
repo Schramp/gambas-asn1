@@ -2057,6 +2057,7 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
         row.is_explicit = tag_result.is_explicit;
         row.resolved_tag = tag_result.resolved_tag;
+        row.contained = contained_ ? contained_->find(&m) : nullptr;
         row.tdref = emit_member_type_descriptor(m, cname, row.mname, session);
         row.has_default_setter = emit_default_setter(m, cname, row.mname, session);
         row.has_default = (m.marker == ast::Marker::Default);
@@ -2085,6 +2086,13 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
                 });
         for (auto* m : root_order) collect(*m, m->is_optional());
         for (auto* m : sm_ext)  collect(*m, /*optional=*/true);
+        // A contained field's `when` sibling, by its index in the member table.
+        for (auto& row : spec.members) {
+            if (!row.contained || !row.contained->when) continue;
+            for (std::size_t i = 0; i < spec.members.size(); ++i)
+                if (spec.members[i].asn1_name == row.contained->when->member)
+                    row.contained_when_index = static_cast<int>(i);
+        }
         // X.691 §18.9: an extension addition group is one PER addition.
         // Consecutive extension members sharing a group id form one unit.
         bool any_group = std::any_of(sm_ext.begin(), sm_ext.end(),
@@ -2333,6 +2341,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             bool ref_is_seq_of = false;
             std::optional<ast::BuiltinType> ref_builtin_alias;
             std::string ref_constraints_owner;
+            const sema::ContainedField* contained = nullptr;
         };
         std::vector<AltRow> rows;
 
@@ -2437,7 +2446,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             rows.push_back({ m->name, tdref, alt_type, accessor_name_of.at(m), pr_name_of.at(m),
                              is_explicit, tag_ctx_num, mbuiltin, alt_storage_kind, resolved_tag,
                              alt_ref_kind, alt_ref_storage_kind, alt_ref_is_sequence_or_set, alt_ref_is_seq_of,
-                             alt_ref_builtin_alias, alt_ref_constraints_owner });
+                             alt_ref_builtin_alias, alt_ref_constraints_owner,
+                             contained_ ? contained_->find(m) : nullptr });
             ++auto_tag_num;
           }
         }
@@ -2459,6 +2469,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.ref_is_seq_of = r.ref_is_seq_of;
             alt.ref_builtin_alias = r.ref_builtin_alias;
             alt.ref_constraints_owner = r.ref_constraints_owner;
+            alt.contained = r.contained;
             spec.alternatives.push_back(std::move(alt));
         }
 

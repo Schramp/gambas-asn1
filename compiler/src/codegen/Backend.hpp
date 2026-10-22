@@ -13,6 +13,7 @@
 #include <asn1cpp/compat/format.hpp>
 #include "../ast/TypeDef.hpp"
 #include "../ast/Tag.hpp"
+#include "../sema/ContainedFields.hpp"
 
 namespace asn1::codegen {
 
@@ -465,6 +466,13 @@ struct TaggedMemberSpec {
     // rather than string-matching `mtype`, since `mtype` only coincidentally
     // matches what `native_int_type(IntStorageKind::S64)` returns.
     IntStorageKind storage_kind = IntStorageKind::S64;
+    // Set when this member/alternative is an OCTET STRING holding the
+    // encoding of another type: a contents constraint (X.682 §11) and/or a
+    // --container-config entry, merged by sema::ContainedFields.
+    // `contained_when_index` is the index in SequenceSpec::members of the
+    // `when` sibling, -1 without a condition (always -1 for alternatives).
+    const sema::ContainedField* contained = nullptr;
+    int contained_when_index = -1;
 
     // Set only for a TypeRef member/alternative (mbuiltin unset above) whose
     // resolved target is itself ENUMERATED or a named INTEGER type —

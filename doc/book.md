@@ -337,8 +337,56 @@ An `ENCODED BY` OID other than BER, CER, DER or unaligned/aligned PER gives a wa
 those contents stay raw bytes. An OID given as a value reference is not resolved for
 this and also counts as unsupported.
 
-Decoding the contained value is not generated yet: the field is still a plain
-`OctetString` (tracked in [#786](https://github.com/Schramp/gambas-asn1/issues/786)).
+#### Contained values
+
+A *contained field* is an OCTET STRING whose bytes are the encoding of another type. It
+comes from a contents constraint in the schema, or from a `--container-config` sidecar
+for fields the schema leaves unconstrained. ETSI LI's
+`EncryptionContainer.encryptedPayload`, for example, carries a BER `EncryptedPayload` but
+says so only in a comment.
+
+```json
+{
+  "container_fields": [
+    {
+      "module": "LI-PS-PDU",
+      "type": "EncryptionContainer",
+      "field": "encryptedPayload",
+      "inner_type": "EncryptedPayload",
+      "decoder": "ber_zero_padding",
+      "when": { "member": "encryptionType", "equals": "none" }
+    }
+  ]
+}
+```
+
+Each entry names a direct member of a type assignment (`type` + `field`), in a module
+given by `module` (name) or `module_oid` (dotted numbers; it wins over the name). Fields
+inside anonymous nested types are reachable only through a contents constraint.
+
+| Key | Values | Default |
+|-----|--------|---------|
+| `inner_type`, `inner_module` | the contained type | required without a contents constraint; must match it when there is one |
+| `encoding` | `ber`, `der`, `cer`, `per`, `aper` | `ber` for sidecar fields; for a contents constraint, its `ENCODED BY` or else the outer encoding (X.682 §11.4) |
+| `decode` | `eager`, `off` | `eager` |
+| `decoder` | `ber`, `ber_zero_padding`, `ber_pkcs7`, `none`, or a name the application registers | `ber` |
+| `when` | `{ "member": <sibling>, "equals": <value> }`; the sibling is ENUMERATED (identifier), INTEGER or BOOLEAN | always |
+| `on_error` | `keep_raw`, `fail` | `keep_raw` |
+| `xer`, `jer` | `hex`, `inline`, `inline_raw` | `hex` |
+
+An entry for a field with a contents constraint changes only the options it sets. An
+unknown module or field is a warning, and the entry is skipped. Malformed JSON, unknown
+keys, bad values, a non-OCTET STRING field, a conflicting inner type and duplicate
+entries are errors.
+
+`--list-contained` prints the merged result:
+
+```
+contained: LI-PS-PDU.EncryptionContainer.encryptedPayload -> LI-PS-PDU.EncryptedPayload source=config encoding=ber decode=eager decoder=ber_zero_padding when=encryptionType==none(1) on_error=keep_raw xer=hex jer=hex
+```
+
+Code generation does not act on contained fields yet: they are still plain `OctetString`
+members (tracked in [#786](https://github.com/Schramp/gambas-asn1/issues/786)).
 
 ---
 
@@ -846,6 +894,8 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |
 | `-pdu=<TypeName>` | Limit generation to `<TypeName>` and all types reachable from it (transitive BFS through TypeRef edges). May be specified multiple times. `-pdu=all` generates all types (same as omitting the flag). Note: types embedded as `OCTET STRING` bytes (two-level nested BER, e.g. `EncryptedPayload` inside `PS-PDU`) are not TypeRef dependencies and must be listed as separate `-pdu=` roots if needed. |
 | `--target=<lang>` | Output language: `cpp` (default) or `rust` (**WIP**, gambas-asn1#214). |
+| `--container-config=<file>` | JSON sidecar naming OCTET STRING fields that hold the encoding of another type, and how to decode them. See [Contained values](#contained-values). |
+| `--list-contained` | Print every contained field (contents constraints and sidecar entries, merged) with its settings, then exit without generating code. |
 
 ### Comparison with asn1c CLI
 
