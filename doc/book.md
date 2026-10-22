@@ -485,6 +485,12 @@ exponent is in [-4, 15) (`-338203.95104146993`, `0.0001`, `100`) and as
 values are the strings `"NaN"`, `"INF"`, `"-INF"` and `"-0"` (X.697 §23).
 The decoder accepts any JSON number notation.
 
+A BIT STRING whose SIZE is fixed (a single value, not extensible) is a bare
+hex string, `"2EFE20"` for `BIT STRING (SIZE (20))`; the length comes from
+the type. Every other BIT STRING is an object, `{"value":"2EFE20","length":20}`.
+A value whose length breaks its fixed SIZE keeps the object form, so the
+length is not lost.
+
 ### Encoding Rule Comparison
 
 | Property | BER/DER | UPER | XER |

@@ -206,6 +206,25 @@ int main() {
             return enc.find("\"length\":0") != std::string::npos;
         }());
     }
+    {
+        // A fixed, non-extensible SIZE is a bare hex string (X.697); the
+        // Rust runtime's jer::bit_string tests check the same cases.
+        TypeDescriptor fixed20 = asn_DEF_BitString;
+        fixed20.constraints.flags = Constraints::SIZE_CONSTRAINED;
+        fixed20.constraints.size_lower = fixed20.constraints.size_upper = 20;
+        TypeDescriptor fixed20_ext = fixed20;
+        fixed20_ext.constraints.flags |= Constraints::EXTENSIBLE;
+        BitString bits20{std::vector<uint8_t>{0x2E, 0xFE, 0x20}, 4};
+        check("BIT STRING SIZE(20) encodes as bare hex", encodes_as(fixed20, bits20, "\"2EFE20\""));
+        check("BIT STRING SIZE(20) bare hex decodes",    decodes_to(fixed20, "\"2EFE20\"", bits20));
+        check("BIT STRING SIZE(20,...) keeps object",    encodes_as(fixed20_ext, bits20, "{\"value\":\"2EFE20\",\"length\":20}"));
+        BitString bits4{std::vector<uint8_t>{0xF0}, 4};
+        check("BIT STRING SIZE(20) wrong length keeps object", encodes_as(fixed20, bits4, "{\"value\":\"F0\",\"length\":4}"));
+        check("BIT STRING SIZE(20) still decodes object", decodes_to(fixed20, "{\"value\":\"2EFE20\",\"length\":20}", bits20));
+        BitString out{};
+        check("BIT STRING bare hex needs a fixed size", !jer_decode(asn_DEF_BitString, "\"2EFE20\"", out));
+        check("BIT STRING bare hex needs the right length", !jer_decode(fixed20, "\"2EFE\"", out));
+    }
 
     // =========================================================================
     std::printf("\n── OBJECT IDENTIFIER ───────────────────────────────────────\n");

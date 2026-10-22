@@ -2,23 +2,26 @@
 //! JER counterpart of `ber::object`.
 
 use crate::ber::reader::DecodeError;
+use crate::constraints::{Constraints, UNCONSTRAINED};
 use crate::encode_error::EncodeError;
 use crate::jer::reader::Reader;
 use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
 use crate::spec::primitive::{jer_decode_primitive, jer_encode_primitive};
 
 /// @brief Writes one value's JER form, dispatching on its reflective shape.
+/// @param c  The value's own constraints (a fixed-size BIT STRING has its
+///           own JER form; a collection carries its element constraints).
 /// @return `Err` for a member or alternative codegen marked unsupported,
 ///         or a primitive kind with no JER form.
 /// @see X.697 — JSON encoding rules.
-fn encode_bare(m: MemberRef, out: &mut String) -> Result<(), EncodeError> {
+fn encode_bare(m: MemberRef, c: &Constraints, out: &mut String) -> Result<(), EncodeError> {
     match m {
         MemberRef::Absent => Ok(()),
         MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
-        MemberRef::Primitive(p) => jer_encode_primitive(p, out),
+        MemberRef::Primitive(p) => jer_encode_primitive(p, c, out),
         MemberRef::Composite(inner) => encode_seq_into(inner, out),
         MemberRef::Choice(inner) => encode_choice_into(inner, out),
-        MemberRef::SeqOf(inner) => encode_seqof_into(inner, out),
+        MemberRef::SeqOf(inner) => encode_seqof_into(inner, c, out),
         MemberRef::Enumerated(slot, spec) => {
             crate::jer::enumerated::jer_encode_enum(out, spec, slot.enum_get());
             Ok(())
@@ -26,28 +29,28 @@ fn encode_bare(m: MemberRef, out: &mut String) -> Result<(), EncodeError> {
     }
 }
 
-fn decode_bare(m: MemberRefMut, r: &mut Reader) -> Result<(), DecodeError> {
+fn decode_bare(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
     if !matches!(m, MemberRefMut::Composite(_) | MemberRefMut::Choice(_) | MemberRefMut::SeqOf(_)) {
-        return decode_bare_level(m, r);
+        return decode_bare_level(m, c, r);
     }
     if !r.depth.enter() {
         return Err(DecodeError::new(crate::nesting::too_deep(), r.pos()));
     }
-    let res = decode_bare_level(m, r);
+    let res = decode_bare_level(m, c, r);
     r.depth.leave();
     res
 }
 
 /// @brief The per-kind decode `decode_bare` dispatches to once it has counted
 ///        the nesting level a constructed value enters.
-fn decode_bare_level(m: MemberRefMut, r: &mut Reader) -> Result<(), DecodeError> {
+fn decode_bare_level(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
     match m {
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, r.pos())),
-        MemberRefMut::Primitive(p) => jer_decode_primitive(p, r),
+        MemberRefMut::Primitive(p) => jer_decode_primitive(p, c, r),
         MemberRefMut::Composite(inner) => decode_seq_into(inner, r),
         MemberRefMut::Choice(inner) => decode_choice_into(inner, r),
-        MemberRefMut::SeqOf(inner) => decode_seqof_into(inner, r),
+        MemberRefMut::SeqOf(inner) => decode_seqof_into(inner, c, r),
         MemberRefMut::Enumerated(slot, spec) => crate::jer::enumerated::jer_decode_enum_into(slot, r, spec),
     }
 }
@@ -71,7 +74,7 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String) -> Result<(), Enc
         out.push('"');
         out.push_str(m.name);
         out.push_str("\":");
-        encode_bare(member, out)?;
+        encode_bare(member, m.constraints, out)?;
     }
     Ok(())
 }
@@ -114,7 +117,8 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Deco
                     r.skip_json_value()?;
                     continue;
                 };
-                decode_bare(obj.get_member_mut(i), r)?;
+                let constraints = obj.spec().members[i].constraints;
+                decode_bare(obj.get_member_mut(i), constraints, r)?;
                 seen[i] = true;
             }
         }
@@ -141,7 +145,7 @@ pub fn encode_choice_into(obj: &dyn Asn1Choice, out: &mut String) -> Result<(), 
     out.push_str("{\"");
     out.push_str(alt.name);
     out.push_str("\":");
-    encode_bare(obj.get_active(), out)?;
+    encode_bare(obj.get_active(), alt.constraints, out)?;
     out.push('}');
     Ok(())
 }
@@ -156,7 +160,8 @@ pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
     r.expect_char(b':')?;
     for (i, alt) in obj.spec().alternatives.iter().enumerate() {
         if key == alt.name {
-            decode_bare(obj.select_mut(i), r)?;
+            let constraints = alt.constraints;
+            decode_bare(obj.select_mut(i), constraints, r)?;
             r.expect_char(b'}')?;
             return Ok(());
         }
@@ -168,19 +173,24 @@ pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
 // SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------
 
-pub fn encode_seqof_into(obj: &dyn Asn1SeqOf, out: &mut String) -> Result<(), EncodeError> {
+/// @param c  The collection's own constraints; its `element` entry
+///           applies to every element.
+pub fn encode_seqof_into(obj: &dyn Asn1SeqOf, c: &Constraints, out: &mut String) -> Result<(), EncodeError> {
+    let elem = c.element.unwrap_or(&UNCONSTRAINED);
     out.push('[');
     for i in 0..obj.len() {
         if i > 0 {
             out.push(',');
         }
-        encode_bare(obj.get(i), out)?;
+        encode_bare(obj.get(i), elem, out)?;
     }
     out.push(']');
     Ok(())
 }
 
-pub fn decode_seqof_into(obj: &mut dyn Asn1SeqOf, r: &mut Reader) -> Result<(), DecodeError> {
+/// @param c  The collection's own constraints, as `encode_seqof_into`.
+pub fn decode_seqof_into(obj: &mut dyn Asn1SeqOf, c: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
+    let elem = c.element.unwrap_or(&UNCONSTRAINED);
     r.expect_char(b'[')?;
     loop {
         match r.peek_char() {
@@ -193,7 +203,7 @@ pub fn decode_seqof_into(obj: &mut dyn Asn1SeqOf, r: &mut Reader) -> Result<(), 
                 continue;
             }
             0 => return Err(DecodeError::new("JER: unexpected end in array".to_string(), r.pos())),
-            _ => decode_bare(obj.push_default_mut(), r)?,
+            _ => decode_bare(obj.push_default_mut(), elem, r)?,
         }
     }
     Ok(())
@@ -211,7 +221,7 @@ pub fn decode_seqof_into(obj: &mut dyn Asn1SeqOf, r: &mut Reader) -> Result<(), 
 /// @see X.697 §8 — top-level JSON value.
 pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> Result<String, EncodeError> {
     let mut out = String::new();
-    encode_bare(v.as_member_ref(), &mut out)?;
+    encode_bare(v.as_member_ref(), T::PDU_CONSTRAINTS, &mut out)?;
     Ok(out)
 }
 
@@ -221,6 +231,6 @@ pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> Result<String, EncodeError> {
 /// @see X.697 §8.
 pub fn decode_pdu<T: Asn1Pdu>(json: &str) -> Result<T, DecodeError> {
     let mut v = T::default();
-    decode_bare(v.as_member_ref_mut(), &mut Reader::new(json))?;
+    decode_bare(v.as_member_ref_mut(), T::PDU_CONSTRAINTS, &mut Reader::new(json))?;
     Ok(v)
 }
