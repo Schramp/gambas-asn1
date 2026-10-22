@@ -4,6 +4,7 @@
 #include <cstring>
 #include <asn1cpp/codec/DecodeDepth.hpp>
 #include <asn1cpp/codec/PerCodec.hpp>
+#include <asn1cpp/codec/ContainedDecoders.hpp>
 #include <asn1cpp/codec/Alphabets.hpp>
 #include <asn1cpp/codec/Validation.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
@@ -577,6 +578,39 @@ public:
     }
 };
 
+/// @brief OCTET STRING whose bytes are the encoding of another type
+///        (\c Containing<T>, X.682 §11): the OCTET STRING encoding of the
+///        raw bytes (X.691 §17). The enclosing SEQUENCE/SET or CHOICE decodes
+///        the inner value; a modified inner value is re-encoded on write.
+class ContainedPerHandler final : public IPerTypeHandler {
+public:
+    void encode(const PerCodec&, PerEncodeStream& stream,
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        std::vector<uint8_t> scratch;
+        auto bytes = contained_wire_bytes(def, *static_cast<const ContainedBase*>(src),
+                                          ContainedEncoding::PerUnaligned, stream.contained(), scratch);
+        encode_ext_size_and_items(stream, def.constraints, bytes.size(), [&](std::size_t from, std::size_t to) {
+            for (std::size_t i = from; i < to; ++i) stream.put_bits(bytes[i], 8);
+        });
+    }
+    DecodeResult decode(const PerCodec&, PerDecodeStream& stream,
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
+        std::vector<uint8_t> bytes;
+        auto len_r = decode_ext_size_and_items(stream, def.constraints, [&](std::size_t m) -> DecodeResult {
+            bytes.reserve(bytes.size() + m);
+            for (std::size_t i = 0; i < m; ++i) {
+                auto b = stream.get_bits(8);
+                if (!b) return decode_err(b.error());
+                bytes.push_back(static_cast<uint8_t>(*b));
+            }
+            return decode_ok();
+        });
+        if (!len_r) return decode_err(len_r.error());
+        static_cast<ContainedBase*>(dest)->set_raw_from_wire(bytes);
+        return decode_ok();
+    }
+};
+
 class OidPerHandler final : public IPerTypeHandler {
 public:
     void encode(const PerCodec&, PerEncodeStream& stream,
@@ -1065,6 +1099,17 @@ public:
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
+        auto ok = decode_members(codec, stream, def, dest);
+        if (!ok) return ok;
+        std::string err;
+        if (!decode_contained_members(def, dest, ContainedEncoding::PerUnaligned, stream.depth(),
+                                          stream.contained(), err))
+            return decode_err(DecodeError(std::string(def.name) + "." + err));
+        return ok;
+    }
+    /// @brief Decode the members of a SEQUENCE/SET (X.691 §19).
+    DecodeResult decode_members(const PerCodec& codec, PerDecodeStream& stream,
+                                const TypeDescriptor& def, Asn1Object* dest) const {
         const auto& spec = *def.sequence_spec;
         int root_end = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
         if (debug_flags() & DBG_PER)
@@ -1225,6 +1270,17 @@ public:
     }
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
+        auto ok = decode_alternative(codec, stream, def, dest);
+        if (!ok) return ok;
+        std::string err;
+        if (!decode_contained_alternative(def, dest, ContainedEncoding::PerUnaligned, stream.depth(),
+                                          stream.contained(), err))
+            return decode_err(DecodeError(std::string(def.name) + "." + err));
+        return ok;
+    }
+    /// @brief Decode the CHOICE index and the selected alternative (X.691 §23).
+    DecodeResult decode_alternative(const PerCodec& codec, PerDecodeStream& stream,
+                                    const TypeDescriptor& def, Asn1Object* dest) const {
         const auto& spec = *def.choice_spec;
         ChoiceInterface* ch = static_cast<ChoiceInterface*>(dest);
         int root_count = (spec.ext_at >= 0) ? spec.ext_at : spec.count;
@@ -1298,6 +1354,7 @@ static const NullPerHandler       s_null;
 static const RealPerHandler       s_real;
 static const BitStringPerHandler  s_bitstring;
 static const OctetStringPerHandler s_octetstring;
+static const ContainedPerHandler   s_contained;
 static const OidPerHandler        s_oid;
 static const RelOidPerHandler     s_reloid;
 static const StringPerHandler     s_string;
@@ -1317,6 +1374,7 @@ const IPerTypeHandler& per_null_handler        = s_null;
 const IPerTypeHandler& per_real_handler        = s_real;
 const IPerTypeHandler& per_bitstring_handler   = s_bitstring;
 const IPerTypeHandler& per_octetstring_handler = s_octetstring;
+const IPerTypeHandler& per_contained_handler   = s_contained;
 const IPerTypeHandler& per_oid_handler         = s_oid;
 const IPerTypeHandler& per_reloid_handler      = s_reloid;
 const IPerTypeHandler& per_string_handler      = s_string;

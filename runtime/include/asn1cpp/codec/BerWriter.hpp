@@ -8,6 +8,8 @@
 #include "../Tag.hpp"
 #include "Debug.hpp"
 
+namespace asn1 { struct ContainedOptions; }
+
 namespace asn1 {
 
 /// @brief Output sink for BER/DER encoding — appends to a \c std::vector<uint8_t>.
@@ -30,10 +32,17 @@ namespace asn1 {
 class BerWriter {
     std::vector<uint8_t>& buf_;
     bool encode_failed_{false};
+    const ContainedOptions* contained_ = nullptr;
 
 public:
     /// @brief Wrap \p buf for BER output.  \p buf must outlive this writer.
     explicit BerWriter(std::vector<uint8_t>& buf) : buf_(buf) {}
+
+    /// @brief Contained-value settings of this encode (nullptr: defaults).
+    const ContainedOptions* contained() const { return contained_; }
+    /// @brief Set the contained-value settings (registry for re-encoding
+    ///        modified contained values).
+    void set_contained(const ContainedOptions* c) { contained_ = c; }
 
     /// @brief Encode and append the tag octets for \p t.
     /// Handles short-form (tag.number < 31) and long-form (base-128) tags.

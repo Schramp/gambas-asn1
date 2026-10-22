@@ -5,7 +5,7 @@
       "type": "Holder",
       "field": "viaConfig",
       "inner_type": "Inner",
-      "decoder": "ber_zero_padding",
+      "decoder": "zero_padding",
       "when": { "member": "kind", "equals": "plain" }
     },
     {

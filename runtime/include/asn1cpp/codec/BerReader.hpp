@@ -9,6 +9,8 @@
 #include "../Hints.hpp"
 #include "DecodeDepth.hpp"
 
+namespace asn1 { struct ContainedOptions; }
+
 namespace asn1 {
 
 /// @brief Cursor over a read-only byte span for BER/DER parsing.
@@ -30,11 +32,18 @@ class BerReader {
     std::span<const uint8_t> data_;
     std::size_t pos_{0};
     DecodeDepth depth_;
+    const ContainedOptions* contained_ = nullptr;
 
 public:
     /// @brief Construct a reader over \p data.
     /// @param data  Byte span to read from; must outlive this object.
     explicit BerReader(std::span<const uint8_t> data) : data_(data) {}
+    /// @brief Construct a reader over \p data at nesting depth \p depth, with
+    ///        contained-value settings \p contained (e.g. for the bytes of a
+    ///        contained value, decoded at the depth of its field).
+    BerReader(std::span<const uint8_t> data, const DecodeDepth& depth,
+              const ContainedOptions* contained)
+        : data_(data), depth_(depth), contained_(contained) {}
 
     /// @brief Return true when all input has been consumed.
     bool at_end()  const { return pos_ >= data_.size(); }
@@ -233,11 +242,16 @@ public:
     BerReader sub(std::span<const uint8_t> slice) const {
         BerReader r{slice};
         r.depth_ = depth_;
+        r.contained_ = contained_;
         return r;
     }
 
     /// @brief The decode nesting depth this reader is at; see \c DecodeDepth.
     DecodeDepth& depth() { return depth_; }
+    /// @brief Contained-value settings of this decode (nullptr: defaults).
+    const ContainedOptions* contained() const { return contained_; }
+    /// @brief Set the contained-value settings; nested readers inherit them.
+    void set_contained(const ContainedOptions* c) { contained_ = c; }
 
 private:
     // Decode one tag from data[pos], advancing pos.

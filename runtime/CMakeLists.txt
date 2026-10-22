@@ -39,6 +39,7 @@ add_library(asn1cpp_runtime_objs OBJECT
     src/RandomFiller.cpp
     src/BuiltinTypes.cpp
     src/DeepCopy.cpp
+    src/Contained.cpp
 )
 target_link_libraries(asn1cpp_runtime_objs PUBLIC asn1cpp_runtime_iface)
 
