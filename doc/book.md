@@ -385,8 +385,10 @@ entries are errors.
 contained: LI-PS-PDU.EncryptionContainer.encryptedPayload -> LI-PS-PDU.EncryptedPayload source=config encoding=ber decode=eager decoder=zero_padding when=encryptionType==none(1) on_error=keep_raw xer=hex jer=hex
 ```
 
-Code generation does not act on contained fields yet: they are still plain `OctetString`
-members (tracked in [#786](https://github.com/Schramp/gambas-asn1/issues/786)).
+The C++ backend generates contained fields as `asn1::Containing<T>` members and
+alternatives. The inner type joins the `-pdu` reachable set, and setters are not
+generated for these fields. The Rust backend still generates plain OCTET STRING fields
+(tracked in [#786](https://github.com/Schramp/gambas-asn1/issues/786)).
 
 **Runtime (C++).** A contained field is stored as `asn1::Containing<T>`
 (`<asn1cpp/types/Containing.hpp>`). It is an `OctetString` holding the raw bytes, plus the
@@ -939,7 +941,7 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `-fallow-newer-modules` | Accept module version mismatches silently |
 | `-fbless-SIZE` | **(Non-standard)** Accept `SIZE()` constraints on `INTEGER` and `ENUMERATED`. X.680 §47.5.2 forbids this; the constraint is silently ignored during code generation. Matches asn1c's `-fbless-SIZE` extension for byte-width hints in legacy schemas. |
 | `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |
-| `-pdu=<TypeName>` | Limit generation to `<TypeName>` and all types reachable from it (transitive BFS through TypeRef edges). May be specified multiple times. `-pdu=all` generates all types (same as omitting the flag). Note: types embedded as `OCTET STRING` bytes (two-level nested BER, e.g. `EncryptedPayload` inside `PS-PDU`) are not TypeRef dependencies and must be listed as separate `-pdu=` roots if needed. |
+| `-pdu=<TypeName>` | Limit generation to `<TypeName>` and all types reachable from it (transitive BFS through TypeRef edges). May be specified multiple times. `-pdu=all` generates all types (same as omitting the flag). Note: types embedded as `OCTET STRING` bytes (two-level nested BER, e.g. `EncryptedPayload` inside `PS-PDU`) are not TypeRef dependencies and must be listed as separate `-pdu=` roots, unless the field is a [contained field](#contained-values): its inner type is reachable (C++ backend). |
 | `--target=<lang>` | Output language: `cpp` (default) or `rust` (**WIP**, gambas-asn1#214). |
 | `--container-config=<file>` | JSON sidecar naming OCTET STRING fields that hold the encoding of another type, and how to decode them. See [Contained values](#contained-values). |
 | `--list-contained` | Print every contained field (contents constraints and sidecar entries, merged) with its settings, then exit without generating code. |

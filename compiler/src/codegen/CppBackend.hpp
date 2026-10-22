@@ -164,6 +164,11 @@ public:
     void emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
                               const std::string& parent_name, const std::string& member_name,
                               TypeOutputSession& session) const override;
+    bool supports_contained_values() const override { return true; }
+    std::string contained_storage_type(const std::string& inner) const override {
+        return "asn1::Containing<" + inner + ">";
+    }
+
     void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const override;
     void emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const override;
     void emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const override;

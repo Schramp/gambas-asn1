@@ -198,6 +198,30 @@ target_include_directories(test_real PRIVATE ${REAL_TEST_GEN_DIR})
 target_link_libraries(test_real PRIVATE asn1cpp_runtime)
 add_test(NAME real_member COMMAND test_real)
 
+# ---- Contained values in generated code (X.682 §11 + --container-config) ---
+set(CONTAINING_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_containing_test)
+set(CONTAINING_TYPES Inner Kind Wrapped Holder Pick Envelope)
+set(CONTAINING_SRCS "")
+set(CONTAINING_OUT "")
+foreach(t ${CONTAINING_TYPES})
+    list(APPEND CONTAINING_SRCS ${CONTAINING_GEN_DIR}/${t}.cpp)
+    list(APPEND CONTAINING_OUT ${CONTAINING_GEN_DIR}/${t}.cpp ${CONTAINING_GEN_DIR}/${t}.hpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${CONTAINING_OUT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CONTAINING_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.asn1
+            --container-config=${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json
+            -o ${CONTAINING_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.asn1
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json
+    COMMENT "Generating C++ from containing_test.asn1"
+)
+add_executable(test_containing seq/test_containing.cpp ${CONTAINING_SRCS})
+target_include_directories(test_containing PRIVATE ${CONTAINING_GEN_DIR})
+target_link_libraries(test_containing PRIVATE asn1cpp_runtime)
+add_test(NAME containing COMMAND test_containing)
+
 # ---- BIT STRING member BER tests -------------------------------------------
 set(BITSTRING_TEST_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_bitstring_test)
 add_custom_command(
