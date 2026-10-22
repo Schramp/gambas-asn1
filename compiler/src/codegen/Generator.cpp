@@ -2130,7 +2130,8 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
         row.is_explicit = tag_result.is_explicit;
         row.resolved_tag = tag_result.resolved_tag;
-        row.contained = contained_ ? contained_->find(&m) : nullptr;
+        row.contained = contained_for(m);
+        if (row.contained) row.contained_base = backend_.member_descriptor_base_name(cname, row.mname);
         row.tdref = emit_member_type_descriptor(m, cname, row.mname, session);
         row.has_default_setter = emit_default_setter(m, cname, row.mname, session);
         row.has_default = (m.marker == ast::Marker::Default);
@@ -2436,6 +2437,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::optional<ast::BuiltinType> ref_builtin_alias;
             std::string ref_constraints_owner;
             const sema::ContainedField* contained = nullptr;
+            std::string contained_base;
         };
         std::vector<AltRow> rows;
 
@@ -2541,7 +2543,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                              is_explicit, tag_ctx_num, mbuiltin, alt_storage_kind, resolved_tag,
                              alt_ref_kind, alt_ref_storage_kind, alt_ref_is_sequence_or_set, alt_ref_is_seq_of,
                              alt_ref_builtin_alias, alt_ref_constraints_owner,
-                             contained_ ? contained_->find(m) : nullptr });
+                             contained_for(*m),
+                             contained_for(*m) ? backend_.member_descriptor_base_name(cname, mname) : std::string{} });
             ++auto_tag_num;
           }
         }
@@ -2564,6 +2567,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.ref_builtin_alias = r.ref_builtin_alias;
             alt.ref_constraints_owner = r.ref_constraints_owner;
             alt.contained = r.contained;
+            alt.contained_base = r.contained_base;
             spec.alternatives.push_back(std::move(alt));
         }
 

@@ -385,10 +385,9 @@ entries are errors.
 contained: LI-PS-PDU.EncryptionContainer.encryptedPayload -> LI-PS-PDU.EncryptedPayload source=config encoding=ber decode=eager decoder=zero_padding when=encryptionType==none(1) on_error=keep_raw xer=hex jer=hex
 ```
 
-The C++ backend generates contained fields as `asn1::Containing<T>` members and
-alternatives. The inner type joins the `-pdu` reachable set, and setters are not
-generated for these fields. The Rust backend still generates plain OCTET STRING fields
-(tracked in [#786](https://github.com/Schramp/gambas-asn1/issues/786)).
+Both backends generate contained fields as a contained-value type:
+`asn1::Containing<T>` in C++, `asn1cpp_wire::containing::Containing<T>` in Rust. The
+inner type joins the `-pdu` reachable set. C++ generates no setters for these fields.
 
 **Runtime (C++).** A contained field is stored as `asn1::Containing<T>`
 (`<asn1cpp/types/Containing.hpp>`). It is an `OctetString` holding the raw bytes, plus the
@@ -436,6 +435,16 @@ asn1::BerCodec::instance().decode(s, PS_PDU::asn_DEF, &pdu);
 ```
 
 `ContainedOptions::off = true` decodes no contained value at all.
+
+**Runtime (Rust).** `asn1cpp_wire::containing::Containing<T>` has the same model.
+It derefs to the raw `OctetString` and offers `bytes()`, `set_raw()`, `status()`,
+`error()`, `value()`, `value_mut()` and `set_value()`. The built-in decoders are the
+same. An application registry goes in `ContainedOptions { decoders: Some(reg), .. }`,
+passed to `ber::object::decode_pdu_with` / `per::object::decode_pdu_with` (or
+`Reader::set_contained`). A decoder gets the enclosing value as `ContainedDecodeArgs::outer`
+and calls `containing::decode_value` / `decode_value_from` after its own transform.
+Re-encoding a modified inner value uses the built-in registry; to encode with an
+application encoder (e.g. one that encrypts), set the raw bytes with `set_raw()`.
 
 ---
 

@@ -62,6 +62,9 @@ pub struct MemberMeta {
     /// OctetString(..))` covers this member the same as any other OCTET
     /// STRING).
     pub xer_instruction: XerInstruction,
+    /// Set for an OCTET STRING holding the encoding of another type
+    /// (X.682 §11 / --container-config), stored as `Containing<T>`.
+    pub contained: Option<&'static crate::containing::ContainedSpec>,
 }
 
 /// One PER extension addition (X.691 §18.9): the extension members from
@@ -90,6 +93,9 @@ pub struct SequenceSpec {
     /// Per member (table order): declared OPTIONAL/DEFAULT inside its
     /// extension addition group. Empty when there are no groups.
     pub group_member_optional: &'static [bool],
+    /// Indices into `members` of the contained fields, decoded after all
+    /// members (`containing::decode_contained_members`).
+    pub contained_members: &'static [usize],
 }
 
 /// One alternative's wire-framing + validation facts (X.690 §8.13/§8.14)
@@ -98,6 +104,8 @@ pub struct AltMeta {
     pub name: &'static str,
     pub ber: BerTagging,
     pub constraints: &'static crate::constraints::Constraints,
+    /// Set for a contained alternative (see `MemberMeta::contained`).
+    pub contained: Option<&'static crate::containing::ContainedSpec>,
 }
 
 pub struct ChoiceSpec {
@@ -122,6 +130,10 @@ pub enum MemberRef<'a> {
     Choice(&'a dyn Asn1Choice),
     SeqOf(&'a dyn Asn1SeqOf),
     Enumerated(&'a dyn EnumSlot, &'static EnumSpec),
+    /// An OCTET STRING holding the encoding of another type
+    /// (`containing::Containing<T>`); codecs treat it as an OCTET STRING
+    /// over `Contained::wire_octets`.
+    Contained(&'a dyn crate::containing::Contained, &'static crate::containing::ContainedSpec),
 }
 
 pub enum MemberRefMut<'a> {
@@ -132,6 +144,7 @@ pub enum MemberRefMut<'a> {
     Choice(&'a mut dyn Asn1Choice),
     SeqOf(&'a mut dyn Asn1SeqOf),
     Enumerated(&'a mut dyn EnumSlot, &'static EnumSpec),
+    Contained(&'a mut dyn crate::containing::Contained, &'static crate::containing::ContainedSpec),
 }
 
 /// This member/element's own natural X.693 §12 XER name, straight from
@@ -148,6 +161,7 @@ pub fn natural_xer_name_of(m: MemberRef) -> &'static str {
         MemberRef::Choice(inner) => inner.spec().name,
         MemberRef::Enumerated(_, spec) => spec.name,
         MemberRef::SeqOf(inner) => inner.own_xer_name(),
+        MemberRef::Contained(..) => "OCTET_STRING",
     }
 }
 

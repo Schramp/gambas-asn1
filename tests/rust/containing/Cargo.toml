@@ -1,0 +1,14 @@
+[package]
+name = "containing-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the contained-values test (containing_test.asn1 + sidecar). Pulls generated .rs from ASN1CPP_RUST_CONTAINING_GEN_DIR (set by tests/CMakeLists.txt's rust_containing), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "containing"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }

@@ -485,6 +485,9 @@ struct TaggedMemberSpec {
     // `when` sibling, -1 without a condition (always -1 for alternatives).
     const sema::ContainedField* contained = nullptr;
     int contained_when_index = -1;
+    // member_descriptor_base_name() of the field's own descriptor, which
+    // also names its contained spec (set only with `contained`).
+    std::string contained_base;
 
     // Set only for a TypeRef member/alternative (mbuiltin unset above) whose
     // resolved target is itself ENUMERATED or a named INTEGER type —

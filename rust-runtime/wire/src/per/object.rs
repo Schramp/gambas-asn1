@@ -19,11 +19,27 @@ use crate::spec::primitive::{per_decode_primitive, per_encode_primitive};
 /// @param c  The value's own PER-visible constraints.
 /// @return `Err` for a member or alternative codegen marked unsupported,
 ///         or a value PER cannot represent (constraint violation).
+/// @brief Encode one value with its PER-visible constraints (crate entry
+///        point for contained values).
+pub(crate) fn encode_member_ref(m: MemberRef, c: &Constraints, w: &mut Writer) -> Result<(), EncodeError> {
+    encode_bare(m, c, w)
+}
+
+/// @brief Decode one value with its PER-visible constraints (crate entry
+///        point for contained values).
+pub(crate) fn decode_member_ref(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
+    decode_bare(m, c, r)
+}
+
 fn encode_bare(m: MemberRef, c: &Constraints, w: &mut Writer) -> Result<(), EncodeError> {
     match m {
         MemberRef::Absent => Ok(()),
         MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => per_encode_primitive(p, w, c),
+        MemberRef::Contained(v, spec) => {
+            let os = v.wire_octets(spec, crate::containing::ContainedEncoding::PerUnaligned);
+            per_encode_primitive(crate::spec::primitive::PrimitiveRef::OctetString(&os), w, c)
+        }
         MemberRef::Composite(inner) => encode_seq_content(inner, w),
         MemberRef::Choice(inner) => encode_choice_content(inner, w),
         MemberRef::SeqOf(inner) => encode_seqof_content(inner, c, w),
@@ -53,6 +69,12 @@ fn decode_bare_level(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, r.bit_pos())),
         MemberRefMut::Primitive(p) => per_decode_primitive(p, r, c),
+        MemberRefMut::Contained(v, _) => {
+            let mut os = crate::octet_string::OctetString::default();
+            per_decode_primitive(crate::spec::primitive::PrimitiveRefMut::OctetString(&mut os), r, c)?;
+            v.set_raw_from_wire(os.0);
+            Ok(())
+        }
         MemberRefMut::Composite(inner) => decode_seq_content_into(inner, r),
         MemberRefMut::Choice(inner) => decode_choice_content_into(inner, r),
         MemberRefMut::SeqOf(inner) => decode_seqof_content_into(inner, c, r),
@@ -274,6 +296,10 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<
         }
     }
 
+    if !obj.spec().contained_members.is_empty() {
+        crate::containing::decode_contained_members(obj, crate::containing::ContainedEncoding::PerUnaligned, r.depth, r.contained)
+            .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.bit_pos()))?;
+    }
     Ok(())
 }
 
@@ -322,6 +348,13 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, w: &mut Writer) -> Result<(),
 }
 
 pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<(), DecodeError> {
+    decode_choice_alternative(obj, r)?;
+    crate::containing::decode_contained_alternative(obj, crate::containing::ContainedEncoding::PerUnaligned, r.depth, r.contained)
+        .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.bit_pos()))
+}
+
+/// @brief Decode the CHOICE index and the selected alternative (X.691 §23).
+fn decode_choice_alternative(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<(), DecodeError> {
     let root_count = choice_root_count(obj);
     let spec_ext_at = obj.spec().ext_at;
     let mut in_ext = false;
@@ -480,6 +513,18 @@ pub fn decode_pdu_into<T: Asn1Pdu + ?Sized>(v: &mut T, r: &mut Reader) -> Result
 pub fn decode_pdu<T: Asn1Pdu>(data: &[u8]) -> Result<T, DecodeError> {
     let mut v = T::default();
     decode_pdu_into(&mut v, &mut Reader::new(data))?;
+    Ok(v)
+}
+
+/// @brief Whole-buffer decode with contained-value settings: the decoder
+///        registry, `off`, and the XER/JER overrides apply to every
+///        contained field (X.682 §11) in the value.
+/// @return The decoded value.
+pub fn decode_pdu_with<T: Asn1Pdu>(data: &[u8], opts: &crate::containing::ContainedOptions) -> Result<T, DecodeError> {
+    let mut v = T::default();
+    let mut r = Reader::new(data);
+    r.set_contained(opts);
+    decode_pdu_into(&mut v, &mut r)?;
     Ok(v)
 }
 

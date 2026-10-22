@@ -1891,6 +1891,31 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_DEPTH_GEN_DIR=${RUST_DEPTH_GEN_DIR}")
 endif()
 
+# Rust leg of the contained-values test — see tests/rust/containing/src/main.rs
+# (C++ leg: test_containing).
+set(RUST_CONTAINING_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_containing)
+add_custom_command(
+    OUTPUT  ${RUST_CONTAINING_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_CONTAINING_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.asn1
+            --container-config=${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json
+            -o ${RUST_CONTAINING_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.asn1
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json
+    COMMENT "Generating Rust from containing_test.asn1"
+)
+add_custom_target(gen_rust_containing ALL DEPENDS ${RUST_CONTAINING_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_containing
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/containing/Cargo.toml)
+    set_tests_properties(rust_containing PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_CONTAINING_GEN_DIR=${RUST_CONTAINING_GEN_DIR}")
+endif()
+
 # Fixed-seed fuzz smoke run for the Rust decoders — see
 # tests/rust/fuzz_smoke/src/main.rs (C++ counterpart: fuzz_ber).
 set(RUST_FUZZ_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_fuzz_smoke)
