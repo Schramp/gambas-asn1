@@ -58,18 +58,28 @@ pub struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
     pub(crate) depth: Depth,
+    pub(crate) contained: Option<&'a crate::containing::ContainedOptions>,
 }
 
 impl<'a> Reader<'a> {
+    /// @brief Set the contained-value settings of this decode; nested
+    ///        readers inherit them.
+    pub fn set_contained(&mut self, opts: &'a crate::containing::ContainedOptions) {
+        self.contained = Some(opts);
+    }
+
     pub fn new(data: &'a [u8]) -> Reader<'a> {
-        Reader { data, pos: 0, depth: Depth::default() }
+        Reader { data, pos: 0, depth: Depth::default(), contained: None }
     }
 
     /// @brief Opens a reader over a nested value's bytes (a TLV's
     ///        contents) at this reader's decode nesting depth.
     /// @see `crate::nesting`.
-    pub(crate) fn sub<'b>(&self, data: &'b [u8]) -> Reader<'b> {
-        Reader { data, pos: 0, depth: self.depth }
+    pub(crate) fn sub<'b>(&self, data: &'b [u8]) -> Reader<'b>
+    where
+        'a: 'b,
+    {
+        Reader { data, pos: 0, depth: self.depth, contained: self.contained }
     }
 
     pub fn at_end(&self) -> bool {

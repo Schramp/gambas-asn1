@@ -24,6 +24,7 @@ fn encode_bare(m: MemberRef, out: &mut String, depth: usize) -> Result<(), Encod
         MemberRef::Absent => Ok(()),
         MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => xer_encode_primitive(p, out, depth),
+        MemberRef::Contained(c, _) => xer_encode_primitive(PrimitiveRef::OctetString(c.raw_octets()), out, depth),
         MemberRef::Composite(inner) => encode_seq_content(inner, out, depth),
         MemberRef::Choice(inner) => encode_choice_content(inner, out, depth),
         MemberRef::SeqOf(inner) => encode_seqof_content(inner, out, depth),
@@ -151,6 +152,12 @@ fn decode_bare_level(m: MemberRefMut, r: &mut XerReader) -> Result<(), DecodeErr
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, 0)),
         MemberRefMut::Primitive(p) => xer_decode_primitive(p, r),
+        MemberRefMut::Contained(c, _) => {
+            let mut os = crate::octet_string::OctetString::default();
+            xer_decode_primitive(crate::spec::primitive::PrimitiveRefMut::OctetString(&mut os), r)?;
+            c.set_raw_from_wire(os.0);
+            Ok(())
+        }
         MemberRefMut::Composite(inner) => decode_seq_content_into(inner, r),
         MemberRefMut::Choice(inner) => decode_choice_content_into(inner, r),
         MemberRefMut::SeqOf(inner) => decode_seqof_content_into(inner, r),
@@ -297,7 +304,7 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
             // `AsMemberRef::XER_INSTRUCTION`, a compile-time fact of the
             // element type that `get(i)`'s unwrap never had a chance to
             // throw away (no element value needed to read it).
-            MemberRef::Primitive(_) => encode_wrapped(name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i)), obj.elem_xer_instruction(), el, out, depth + 1)?,
+            MemberRef::Primitive(_) | MemberRef::Contained(..) => encode_wrapped(name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i)), obj.elem_xer_instruction(), el, out, depth + 1)?,
             MemberRef::Composite(inner) => {
                 let name = name_override.unwrap_or(inner.spec().name);
                 encode_wrapped(name, XerInstruction::Default, el, out, depth + 1)?

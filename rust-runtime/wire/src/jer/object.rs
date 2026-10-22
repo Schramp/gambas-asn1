@@ -19,6 +19,9 @@ fn encode_bare(m: MemberRef, c: &Constraints, out: &mut String) -> Result<(), En
         MemberRef::Absent => Ok(()),
         MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => jer_encode_primitive(p, c, out),
+        MemberRef::Contained(v, _) => {
+            jer_encode_primitive(crate::spec::primitive::PrimitiveRef::OctetString(v.raw_octets()), c, out)
+        }
         MemberRef::Composite(inner) => encode_seq_into(inner, out),
         MemberRef::Choice(inner) => encode_choice_into(inner, out),
         MemberRef::SeqOf(inner) => encode_seqof_into(inner, c, out),
@@ -48,6 +51,12 @@ fn decode_bare_level(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, r.pos())),
         MemberRefMut::Primitive(p) => jer_decode_primitive(p, c, r),
+        MemberRefMut::Contained(v, _) => {
+            let mut os = crate::octet_string::OctetString::default();
+            jer_decode_primitive(crate::spec::primitive::PrimitiveRefMut::OctetString(&mut os), c, r)?;
+            v.set_raw_from_wire(os.0);
+            Ok(())
+        }
         MemberRefMut::Composite(inner) => decode_seq_into(inner, r),
         MemberRefMut::Choice(inner) => decode_choice_into(inner, r),
         MemberRefMut::SeqOf(inner) => decode_seqof_into(inner, c, r),

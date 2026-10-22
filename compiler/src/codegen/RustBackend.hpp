@@ -220,6 +220,11 @@ public:
     // that import for a cyclic bare-alias reference.
     bool needs_forward_declare_for_cyclic_alias() const override { return false; }
 
+    bool supports_contained_values() const override { return true; }
+    std::string contained_storage_type(const std::string& inner) const override {
+        return "asn1cpp_wire::containing::Containing<" + inner + ">";
+    }
+
     void emit_forward_declaration(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_special_members(const std::string& type_name, TypeOutputSession& session) const override;
     void emit_optional_member_ops(const std::string& type_name, const std::string& member_name,

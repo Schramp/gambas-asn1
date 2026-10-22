@@ -709,10 +709,47 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
 ///       member_descriptor_base_name() — its own naming convention,
 ///       independent of whatever text CppBackend's own implementation
 ///       of that method produces.
+/// @brief Name of a contained field's `ContainedSpec` static, from the
+///        field's descriptor base name (TaggedMemberSpec::contained_base).
+static std::string contained_spec_ident(const std::string& base) {
+    return to_screaming_snake_case(base) + "_CONTAINED";
+}
+
 void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
     std::ostream& os = session.buffer(definition_extension());
     using Kind = MemberTypeDescriptorSpec::Kind;
     std::string cname = std::format("{}_CONSTRAINTS", to_screaming_snake_case(member_descriptor_base_name(spec.parent_cname, spec.mname)));
+    if (spec.contained) {
+        // Contained field (X.682 §11): its `ContainedSpec` row; the inner
+        // type is the field's own `Containing<T>` parameter.
+        const auto& f = *spec.contained;
+        auto enc = [](sema::ContentsEncoding e) {
+            switch (e) {
+            case sema::ContentsEncoding::Ber:          return "Ber";
+            case sema::ContentsEncoding::Cer:          return "Cer";
+            case sema::ContentsEncoding::Der:          return "Der";
+            case sema::ContentsEncoding::PerAligned:   return "PerAligned";
+            case sema::ContentsEncoding::PerUnaligned: return "PerUnaligned";
+            default:                                   return "Outer";
+            }
+        };
+        auto text = [](sema::ContainedText t) {
+            switch (t) {
+            case sema::ContainedText::Inline:    return "Inline";
+            case sema::ContainedText::InlineRaw: return "InlineRaw";
+            default:                             return "Hex";
+            }
+        };
+        os << std::format(
+            "pub static {}: asn1cpp_wire::containing::ContainedSpec = asn1cpp_wire::containing::ContainedSpec {{ "
+            "encoding: asn1cpp_wire::containing::ContainedEncoding::{}, eager: {}, decoder: \"{}\", when_member: {}, "
+            "when_value: {}, fail_on_error: {}, xer: asn1cpp_wire::containing::ContainedText::{}, "
+            "jer: asn1cpp_wire::containing::ContainedText::{} }};\n\n",
+            contained_spec_ident(member_descriptor_base_name(spec.parent_cname, spec.mname)), enc(f.encoding),
+            f.decode == sema::ContainedDecode::Eager ? "true" : "false", f.decoder, spec.contained_when_index,
+            f.when ? f.when->value : 0, f.on_error == sema::ContainedOnError::Fail ? "true" : "false",
+            text(f.xer), text(f.jer));
+    }
     if (spec.kind == Kind::Integer) {
         // Plain `static` data, not a generated per-member function — all
         // constraints are table based, never in code, so a parser/tool can
@@ -1288,8 +1325,9 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
             // distinguish SEQUENCE/SET from CHOICE (`ref_is_sequence_or_set`'s
             // own doc on `SequenceMemberSpec`), which is exactly why that
             // flag exists.
-            enum class AccessKind { Primitive, Enumerated, SeqOf, Choice, Composite, Unsupported };
+            enum class AccessKind { Primitive, Enumerated, SeqOf, Choice, Composite, Contained, Unsupported };
             auto classify = [](const SequenceMemberSpec& m) -> AccessKind {
+                if (m.contained) return AccessKind::Contained;
                 if (m.seq_of_kind != SeqOfKind::None) return AccessKind::SeqOf;
                 if (m.mbuiltin) {
                     if (*m.mbuiltin == ast::BuiltinType::Enumerated) return AccessKind::Enumerated;
@@ -1602,6 +1640,24 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 case AccessKind::Composite:
                     class_ref_exprs("Composite", "Composite");
                     break;
+                case AccessKind::Contained: {
+                    // `Containing<T>` behind the type-erased `Contained`
+                    // view, with its field's `ContainedSpec` row.
+                    std::string cs = contained_spec_ident(m.contained_base);
+                    if (m.optional) {
+                        get_expr = std::format(
+                            "|v| match &v.{0} {{ Some(x) => asn1cpp_wire::spec::object::MemberRef::Contained(x, &{1}), None => asn1cpp_wire::spec::object::MemberRef::Absent }}",
+                            m.mname, cs);
+                        get_mut_expr = std::format(
+                            "|v| asn1cpp_wire::spec::object::MemberRefMut::Contained(v.{0}.get_or_insert_with(Default::default), &{1})",
+                            m.mname, cs);
+                    } else {
+                        get_expr = std::format("|v| asn1cpp_wire::spec::object::MemberRef::Contained(&v.{0}, &{1})", m.mname, cs);
+                        get_mut_expr = std::format("|v| asn1cpp_wire::spec::object::MemberRefMut::Contained(&mut v.{0}, &{1})", m.mname, cs);
+                    }
+                    validate_expr = "None";
+                    break;
+                }
                 case AccessKind::Unsupported: {
                     // The walkers turn `Unsupported` into a per-record
                     // encode/decode error carrying this message.
@@ -1613,9 +1669,10 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 }
 
                 meta_lines.push_back(std::format(
-                    "    asn1cpp_wire::spec::object::MemberMeta {{ name: \"{}\", tag: {}, optional: {}, ber: {}, constraints: {}, xer_instruction: {} }},",
+                    "    asn1cpp_wire::spec::object::MemberMeta {{ name: \"{}\", tag: {}, optional: {}, ber: {}, constraints: {}, xer_instruction: {}, contained: {} }},",
                     m.asn1_name, tag_text, m.optional ? "true" : "false", ber_framing_expr, constraints_ref,
-                    covered ? xer_instruction(m) : "asn1cpp_wire::spec::object::XerInstruction::Default"));
+                    covered ? xer_instruction(m) : "asn1cpp_wire::spec::object::XerInstruction::Default",
+                    m.contained ? std::format("Some(&{})", contained_spec_ident(m.contained_base)) : "None"));
                 getter_lines.push_back(std::format("    {},", get_expr));
                 getter_mut_lines.push_back(std::format("    {},", get_mut_expr));
                 set_default_lines.push_back(std::format("    {},", set_default_expr));
@@ -1648,6 +1705,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 group_opt += std::format("{}{}", i ? ", " : "", spec.member_group_optional[i] ? "true" : "false");
             os << std::format("    ext_units: &[{}],\n", units);
             os << std::format("    group_member_optional: &[{}],\n", group_opt);
+            std::string contained_idx;
+            for (std::size_t i = 0; i < spec.members.size(); ++i)
+                if (spec.members[i].contained)
+                    contained_idx += std::format("{}{}", contained_idx.empty() ? "" : ", ", i);
+            os << std::format("    contained_members: &[{}],\n", contained_idx);
             os << "};\n\n";
 
             os << "#[allow(non_upper_case_globals)]\n";
@@ -1900,8 +1962,9 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         std::string get_active_ident = std::format("{}_GET_ACTIVE", spec.type_name);
         std::string select_mut_ident = std::format("{}_SELECT_MUT", spec.type_name);
 
-        enum class AltKind { Primitive, Enumerated, SeqOf, Choice, Composite, Unsupported };
+        enum class AltKind { Primitive, Enumerated, SeqOf, Choice, Composite, Contained, Unsupported };
         auto classify_alt = [](const ChoiceAlternativeSpec& a) -> AltKind {
+            if (a.contained) return AltKind::Contained;
             if (rust_mtype_is_unusable_vec(a.mtype)) return AltKind::SeqOf;
             if (a.mbuiltin) {
                 if (*a.mbuiltin == ast::BuiltinType::Enumerated) return AltKind::Enumerated;
@@ -2003,8 +2066,9 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 alt_constraints = std::format("&crate::{}::{}_CONSTRAINTS", escape(synth), synth);
             }
             meta_lines.push_back(std::format(
-                "    asn1cpp_wire::spec::object::AltMeta {{ name: \"{}\", ber: {}, constraints: {} }},",
-                a.asn1_name, ber, alt_constraints));
+                "    asn1cpp_wire::spec::object::AltMeta {{ name: \"{}\", ber: {}, constraints: {}, contained: {} }},",
+                a.asn1_name, ber, alt_constraints,
+                a.contained ? std::format("Some(&{})", contained_spec_ident(a.contained_base)) : "None"));
 
             std::string get_op, get_mut_op;
             switch (kind) {
@@ -2038,6 +2102,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             case AltKind::Composite:
                 get_op = "asn1cpp_wire::spec::object::MemberRef::Composite(v)";
                 get_mut_op = "asn1cpp_wire::spec::object::MemberRefMut::Composite(v)";
+                break;
+            case AltKind::Contained:
+                get_op = std::format("asn1cpp_wire::spec::object::MemberRef::Contained(v, &{})", contained_spec_ident(a.contained_base));
+                get_mut_op = std::format("asn1cpp_wire::spec::object::MemberRefMut::Contained(v, &{})", contained_spec_ident(a.contained_base));
                 break;
             case AltKind::Unsupported:
                 get_op = std::format("asn1cpp_wire::spec::object::MemberRef::Unsupported(\"alternative '{}' not supported\")", a.asn1_name);
