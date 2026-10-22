@@ -346,6 +346,14 @@ pub trait Contained {
     fn decode_detached(&self, mk: &mut dyn for<'r, 'v> FnMut(&'r [u8], MemberRefMut<'v>) -> ContainedResult) -> (ContainedResult, Option<Box<dyn Any>>);
     /// Store a [`Contained::decode_detached`] outcome.
     fn install(&mut self, result: ContainedResult, value: Option<Box<dyn Any>>);
+    /// The inner value's own XER element name (its type's name).
+    fn inner_xer_name(&self) -> &'static str;
+    /// Decode the inline XER/JER form: `f` fills a fresh inner value, which
+    /// is kept.
+    fn inline_decode(&mut self, f: &mut dyn FnMut(MemberRefMut) -> Result<(), crate::ber::reader::DecodeError>) -> Result<(), crate::ber::reader::DecodeError>;
+    /// Finish an inline decode: the raw bytes are `raw` (the `inline_raw`
+    /// form) or the inner value's encoding; status Decoded.
+    fn finish_inline(&mut self, raw: Option<Vec<u8>>, spec: &'static ContainedSpec) -> Result<(), String>;
 }
 
 /// An OCTET STRING whose bytes are the encoding of a `T` value. Keeps the
@@ -489,6 +497,35 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
         self.error = result.message;
         self.dirty = false;
     }
+    fn inner_xer_name(&self) -> &'static str {
+        crate::spec::object::natural_xer_name_of(T::default().as_member_ref())
+    }
+    fn inline_decode(&mut self, f: &mut dyn FnMut(MemberRefMut) -> Result<(), crate::ber::reader::DecodeError>) -> Result<(), crate::ber::reader::DecodeError> {
+        let mut v = T::default();
+        f(v.as_member_ref_mut())?;
+        self.inner = Some(Box::new(v));
+        Ok(())
+    }
+    fn finish_inline(&mut self, raw: Option<Vec<u8>>, spec: &'static ContainedSpec) -> Result<(), String> {
+        let raw = match raw {
+            Some(r) => r,
+            None => {
+                let inner = self.inner.as_deref().ok_or("no inline value")?;
+                let encoding = resolve(spec.encoding, ContainedEncoding::Ber);
+                encode_value(&ContainedEncodeArgs {
+                    inner: inner.as_member_ref(),
+                    spec,
+                    encoding,
+                    decoders: ContainedDecoders::defaults(),
+                })?
+            }
+        };
+        self.raw = OctetString(raw);
+        self.status = ContainedStatus::Decoded;
+        self.error.clear();
+        self.dirty = false;
+        Ok(())
+    }
 }
 
 fn resolve(field: ContainedEncoding, outer: ContainedEncoding) -> ContainedEncoding {
@@ -571,6 +608,9 @@ pub(crate) fn decode_contained_members(
         }).flatten();
         let (r, v) = {
             let MemberRef::Contained(field, _) = obj.get_member(i) else { continue };
+            if field.status() == ContainedStatus::Decoded {
+                continue; // decoded from its inline XER/JER form already
+            }
             run_one(field, cspec, Outer::Seq(&*obj), outer_encoding, depth, opts, when_fail)
         };
         finish(meta.name, cspec, &r)?;
@@ -595,6 +635,9 @@ pub(crate) fn decode_contained_alternative(
     let Some(cspec) = meta.contained else { return Ok(()) };
     let (r, v) = {
         let MemberRef::Contained(field, _) = obj.get_active() else { return Ok(()) };
+        if field.status() == ContainedStatus::Decoded {
+            return Ok(());
+        }
         run_one(field, cspec, Outer::Choice(&*obj), outer_encoding, depth, opts, None)
     };
     finish(meta.name, cspec, &r)?;

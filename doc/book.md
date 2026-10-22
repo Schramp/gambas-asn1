@@ -436,6 +436,26 @@ asn1::BerCodec::instance().decode(s, PS_PDU::asn_DEF, &pdu);
 
 `ContainedOptions::off = true` decodes no contained value at all.
 
+**XER and JER.** A contained field has three output forms. The standards make hex and
+inline *alternatives*, so in a conformant encoding the inline form replaces the hex:
+
+| Form | XER | JER | Conformant |
+|------|-----|-----|-----------|
+| `hex` (default) | `<f>HEX</f>` | `"HEX"` | yes |
+| `inline` | `<f><Inner>…</Inner></f>` (X.680 §22.4 XMLTypedValue) | `{"containing": …}` (X.697 §25.4) | yes for a contents constraint; an extension for a sidecar field |
+| `inline_raw` | inline plus `<!-- raw: HEX -->` | `{"containing": …, "raw": "HEX"}` | no (extension) |
+
+The form comes from the field's `xer`/`jer` setting. The C++ runtime can also override
+it per stream with `ContainedOptions::xer`/`jer` on the XER/JER encode stream. If the
+inner value is not decoded, the output falls back to hex.
+
+Decoding accepts all three forms for every contained field. A hex value is decoded like
+BER, after the enclosing SEQUENCE/CHOICE. An inline value becomes the inner value
+directly, and its raw bytes are the inner value's encoding (the field's `encoding`; BER
+by default). With `inline` the original bytes are therefore not available: padding, a
+non-canonical encoding, or a hash over the bytes cannot be reproduced. `inline_raw` keeps
+them, and its `raw` part is taken as the raw bytes.
+
 **Runtime (Rust).** `asn1cpp_wire::containing::Containing<T>` has the same model.
 It derefs to the raw `OctetString` and offers `bytes()`, `set_raw()`, `status()`,
 `error()`, `value()`, `value_mut()` and `set_value()`. The built-in decoders are the

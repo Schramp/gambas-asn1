@@ -43,6 +43,13 @@ fn holder(kind: K) -> Hold {
     h
 }
 
+fn pb_bytes(p: &P) -> Vec<u8> {
+    match p {
+        P::inner(c) => c.bytes().to_vec(),
+        _ => Vec::new(),
+    }
+}
+
 fn id_of(c: &Containing<In>) -> Option<i64> {
     c.value().map(|v| v.id.0)
 }
@@ -114,6 +121,23 @@ fn main() {
     let wire = ber::object::encode_pdu(&P::inner(c)).unwrap();
     let d: P = ber::object::decode_pdu(&wire).unwrap();
     check("contained alternative decoded", matches!(&d, P::inner(c) if id_of(c) == Some(9)), &mut f);
+
+    println!("XER/JER (same text as the C++ runtime)");
+    let pb: P = ber::object::decode_pdu(&[0x80, 0x08, 0x30, 0x06, 0x80, 0x01, 0x09, 0x81, 0x01, 0x78]).unwrap();
+    let x = asn1cpp_wire::xer::object::encode_pdu(&pb).unwrap();
+    check("configured XER inline", x == "<Pick>\n    <inner>\n        <Inner>\n            <id>9</id>\n            <name>x</name>\n        </Inner>\n    </inner>\n</Pick>\n", &mut f);
+    let j = asn1cpp_wire::jer::object::encode_pdu(&pb).unwrap();
+    check("configured JER inline_raw", j == r#"{"inner":{"containing":{"id":9,"name":"x"},"raw":"3006800109810178"}}"#, &mut f);
+    let xd: P = asn1cpp_wire::xer::object::decode_pdu(&x).unwrap();
+    check("XER inline decodes", matches!(&xd, P::inner(c) if id_of(c) == Some(9) && c.bytes() == pb_bytes(&pb)), &mut f);
+    let jd: P = asn1cpp_wire::jer::object::decode_pdu(&j.replace("3006800109810178", "300680010981017800")).unwrap();
+    check("JER inline_raw: raw bytes kept as given", matches!(&jd, P::inner(c) if id_of(c) == Some(9) && c.bytes().len() == 9), &mut f);
+    let hb: Hold = ber::object::decode_pdu(&ber::object::encode_pdu(&holder(K::plain)).unwrap()).unwrap();
+    let hx = asn1cpp_wire::xer::object::encode_pdu(&hb).unwrap();
+    let hxd: Hold = asn1cpp_wire::xer::object::decode_pdu(&hx).unwrap();
+    check("XER hex decodes the inner values", id_of(&hxd.viaConstraint) == Some(1) && id_of(&hxd.viaConfig) == Some(3), &mut f);
+    let hjd: Hold = asn1cpp_wire::jer::object::decode_pdu(&asn1cpp_wire::jer::object::encode_pdu(&hb).unwrap()).unwrap();
+    check("JER hex decodes the inner values", id_of(&hjd.viaAlias) == Some(2), &mut f);
 
     println!("Recursive contained type");
     let mut e2 = Env { depth: Integer(2), nested: None };

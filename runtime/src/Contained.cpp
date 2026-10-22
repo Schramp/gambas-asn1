@@ -86,6 +86,8 @@ bool decode_one(const char* field, const ContainedSpec& cs, ContainedBase& cb,
                 const Asn1Object* outer, const TypeDescriptor* outer_def,
                 ContainedEncoding outer_encoding, const DecodeDepth& depth,
                 const ContainedOptions* opts, const char* when_fail, std::string& error) {
+    if (cb.status() == ContainedStatus::Decoded && cb.has_value())
+        return true;   // decoded from its inline XER/JER form already
     if (!cs.eager || (opts && opts->off)) {
         cb.set_status(ContainedStatus::Skipped, "contained decoding off");
         return true;

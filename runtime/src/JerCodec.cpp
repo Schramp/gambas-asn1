@@ -16,6 +16,7 @@
 #include <asn1cpp/codec/DecodeDepth.hpp>
 #include <asn1cpp/codec/JerCodec.hpp>
 #include "HexEncoder.hpp"
+#include <asn1cpp/codec/ContainedDecoders.hpp>
 #include <asn1cpp/codec/XerCodec.hpp>    // for xer_detail::format_arcs / parse_arcs
 #include <asn1cpp/codec/Debug.hpp>
 #include <asn1cpp/codec/Validation.hpp>
@@ -981,6 +982,13 @@ struct SequenceJerHandler final : IJerTypeHandler {
                 return decode_err(DecodeError(
                     std::string("JER: missing required member: ") + spec.members[i].name));
         }
+        // Contained fields that arrived as hex: decode their inner value
+        // (those given in the `containing` form are already decoded).
+        if (spec.contained_count > 0) {
+            std::string err;
+            if (!decode_contained_members(def, dest, ContainedEncoding::Ber, s.depth(), s.contained(), err))
+                return decode_err(DecodeError(std::string(def.name) + "." + err));
+        }
         return decode_ok();
     }
 };
@@ -1032,6 +1040,9 @@ struct ChoiceJerHandler final : IJerTypeHandler {
             if (auto r = codec.decode(s, adef, mptr); !r) return r;
             ch->_present = i + 1;
             if (auto r = jer_detail::expect_char(s, '}'); !r) return r;
+            std::string err;
+            if (!decode_contained_alternative(def, dest, ContainedEncoding::Ber, s.depth(), s.contained(), err))
+                return decode_err(DecodeError(std::string(def.name) + "." + err));
             return decode_ok();
         }
         return decode_err(DecodeError("JER: CHOICE: unknown alternative: " + key));
@@ -1113,13 +1124,100 @@ const IJerTypeHandler* const JerCodec::prim_dispatch_[32] = {
 // ---------------------------------------------------------------------------
 // JerCodec public entry points
 
+namespace {
+
+/// @brief JER form of a contained field (\c Containing<T>, X.682 §11): a hex
+///        string, or `{"containing": <JER of the inner value>}` (X.697
+///        §25.4), or that object plus `"raw": "<hex>"` (`inline_raw`, an
+///        extension). Decode accepts every form.
+struct ContainedJer {
+    static void encode(const JerCodec& codec, JerEncodeStream& s,
+                       const TypeDescriptor& def, const Asn1Object* src) {
+        const auto& cb = *static_cast<const ContainedBase*>(src);
+        const ContainedSpec& cs = *def.contained;
+        std::vector<uint8_t> scratch;
+        auto wire = contained_wire_bytes(def, cb, ContainedEncoding::Ber, s.contained(), scratch);
+        auto& os = s.os();
+        ContainedText m = s.contained() && s.contained()->jer ? *s.contained()->jer : cs.jer;
+        if (m == ContainedText::Hex || !cb.has_value()) {
+            os << '"';
+            write_hex_bytes(os, wire);
+            os << '"';
+            return;
+        }
+        os << "{\"containing\":";
+        JerEncodeStream is = s.child();
+        codec.encode(is, *cs.inner_def, cb.value_object());
+        if (m == ContainedText::InlineRaw) {
+            os << ",\"raw\":\"";
+            write_hex_bytes(os, wire);
+            os << '"';
+        }
+        os << '}';
+    }
+
+    static DecodeResult decode(const JerCodec& codec, JerDecodeStream& s,
+                               const TypeDescriptor& def, Asn1Object* dest) {
+        auto& cb = *static_cast<ContainedBase*>(dest);
+        const ContainedSpec& cs = *def.contained;
+        if (jer_detail::peek_char(s) != '{') {
+            std::string hex;
+            if (auto r = jer_detail::read_json_string(s, hex); !r) return r;
+            std::string raw = jer_detail::parse_hex_str(hex);
+            cb.set_raw_from_wire({reinterpret_cast<const uint8_t*>(raw.data()), raw.size()});
+            return decode_ok();
+        }
+        if (auto r = jer_detail::expect_char(s, '{'); !r) return r;
+        Asn1Object* inner = nullptr;
+        std::string raw;
+        bool have_raw = false;
+        for (;;) {
+            char pk = jer_detail::peek_char(s);
+            if (pk == '}') { s.advance(1); break; }
+            if (pk == ',') { s.advance(1); continue; }
+            if (pk == '\0') return decode_err(DecodeError("JER: unexpected end in contained value"));
+            std::string key;
+            if (auto r = jer_detail::read_json_string(s, key); !r) return r;
+            if (auto r = jer_detail::expect_char(s, ':'); !r) return r;
+            if (key == "containing") {
+                inner = cb.emplace_value_object(*cs.ops);
+                if (auto r = codec.decode(s, *cs.inner_def, inner); !r) return r;
+            } else if (key == "raw") {
+                std::string hex;
+                if (auto r = jer_detail::read_json_string(s, hex); !r) return r;
+                raw = jer_detail::parse_hex_str(hex);
+                have_raw = true;
+            } else if (auto r = jer_detail::skip_json_value(s); !r) {
+                return r;
+            }
+        }
+        if (!inner) return decode_err(DecodeError(std::string("JER: ") + def.name + ": object without \"containing\""));
+        if (!have_raw) {
+            ContainedEncoding enc = cs.encoding == ContainedEncoding::Outer ? ContainedEncoding::Ber : cs.encoding;
+            const ContainedDecoders& reg = s.contained() ? s.contained()->registry() : ContainedDecoders::defaults();
+            std::vector<uint8_t> out;
+            std::string err;
+            ContainedEncodeArgs ea{*inner, cs, enc, reg, s.contained()};
+            if (!ContainedDecoders::encode_value(ea, out, err))
+                return decode_err(DecodeError(std::string(def.name) + ": " + err));
+            raw.assign(reinterpret_cast<const char*>(out.data()), out.size());
+        }
+        cb.set_raw_for_value({reinterpret_cast<const uint8_t*>(raw.data()), raw.size()});
+        return decode_ok();
+    }
+};
+
+} // namespace
+
 void JerCodec::encode(IEncodeStream& dst,
                       const TypeDescriptor& def,
                       const Asn1Object* src) const
 {
     validate_on_encode("JER", def, src);
     auto& s = static_cast<JerEncodeStream&>(dst);
-    if (def.kind == TypeKind::Primitive)
+    if (def.contained)
+        ContainedJer::encode(*this, s, def, src);
+    else if (def.kind == TypeKind::Primitive)
         // prim_dispatch_ is indexed by the type's NATURAL (universal) tag
         // number — never def.tag itself, which is the wire tag and can be
         // a different (context/application/private) class after an [n]
@@ -1138,7 +1236,8 @@ DecodeResult JerCodec::decode(IDecodeStream& src,
     auto& s = static_cast<JerDecodeStream&>(src);
     DecodeDepthGuard depth_guard{s.depth(), def};
     if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
-    DecodeResult res = def.kind == TypeKind::Primitive
+    DecodeResult res = def.contained ? ContainedJer::decode(*this, s, def, dest)
+        : def.kind == TypeKind::Primitive
         // See the matching comment in encode() above.
         ? prim_dispatch_[def.is_explicit ? def.natural_tag.number : def.tag.number]->decode(*this, s, def, dest)
         : comp_dispatch_[(int)def.kind]->decode(*this, s, def, dest);
