@@ -353,7 +353,7 @@ says so only in a comment.
       "type": "EncryptionContainer",
       "field": "encryptedPayload",
       "inner_type": "EncryptedPayload",
-      "decoder": "ber_zero_padding",
+      "decoder": "zero_padding",
       "when": { "member": "encryptionType", "equals": "none" }
     }
   ]
@@ -369,7 +369,7 @@ inside anonymous nested types are reachable only through a contents constraint.
 | `inner_type`, `inner_module` | the contained type | required without a contents constraint; must match it when there is one |
 | `encoding` | `ber`, `der`, `cer`, `per`, `aper` | `ber` for sidecar fields; for a contents constraint, its `ENCODED BY` or else the outer encoding (X.682 §11.4) |
 | `decode` | `eager`, `off` | `eager` |
-| `decoder` | `ber`, `ber_zero_padding`, `ber_pkcs7`, `none`, or a name the application registers | `ber` |
+| `decoder` | `plain`, `zero_padding`, `pkcs7`, `none`, or a name the application registers | `plain` |
 | `when` | `{ "member": <sibling>, "equals": <value> }`; the sibling is ENUMERATED (identifier), INTEGER or BOOLEAN | always |
 | `on_error` | `keep_raw`, `fail` | `keep_raw` |
 | `xer`, `jer` | `hex`, `inline`, `inline_raw` | `hex` |
@@ -382,11 +382,58 @@ entries are errors.
 `--list-contained` prints the merged result:
 
 ```
-contained: LI-PS-PDU.EncryptionContainer.encryptedPayload -> LI-PS-PDU.EncryptedPayload source=config encoding=ber decode=eager decoder=ber_zero_padding when=encryptionType==none(1) on_error=keep_raw xer=hex jer=hex
+contained: LI-PS-PDU.EncryptionContainer.encryptedPayload -> LI-PS-PDU.EncryptedPayload source=config encoding=ber decode=eager decoder=zero_padding when=encryptionType==none(1) on_error=keep_raw xer=hex jer=hex
 ```
 
 Code generation does not act on contained fields yet: they are still plain `OctetString`
 members (tracked in [#786](https://github.com/Schramp/gambas-asn1/issues/786)).
+
+**Runtime (C++).** A contained field is stored as `asn1::Containing<T>`
+(`<asn1cpp/types/Containing.hpp>`). It is an `OctetString` holding the raw bytes, plus the
+decoded inner value:
+
+| Member | Meaning |
+|--------|---------|
+| `bytes()`, `set(...)` | The raw bytes. `set` drops the inner value. |
+| `status()` | `NotDecoded`, `Decoded`, `Skipped` (`decode: off`, a `when` mismatch, decoder `none`) or `Failed` |
+| `error()` | Reason for `Skipped`/`Failed`; for `Decoded`, a warning (e.g. non-zero padding) |
+| `value()`, `has_value()` | The inner value, or nullptr |
+| `value_mut()`, `set_value(T)` | Change the inner value; it is then *dirty* |
+
+The inner value is decoded during the outer BER or PER decode, after the enclosing
+SEQUENCE/SET (or CHOICE) has decoded all its members, so a decoder can look at siblings.
+A failed inner decode keeps the raw bytes and does not fail the outer decode, unless the
+field is `on_error: fail`. On encode, the raw bytes are written unchanged, so a hash or
+signature over them stays valid. Once the inner value is dirty, encode writes its
+encoding instead, through the decoder's encode side (`pkcs7` pads).
+
+Decoders are looked up by name in an `asn1::ContainedDecoders` registry
+(`<asn1cpp/codec/ContainedDecoders.hpp>`). Built-ins:
+
+| Name | Decode | Encode |
+|------|--------|--------|
+| `plain` | the bytes are exactly one value | the value's encoding |
+| `zero_padding` | one value, then only 0x00 octets; a non-zero tail keeps the value with a warning | no padding |
+| `pkcs7` | strip RFC 5652 §6.3 padding, then `plain` | pad to `pkcs7_block_size` (16) |
+| `none` | never decodes | — |
+
+An application adds its own decoder (for example one that decrypts first) or replaces a
+built-in, and passes the registry with `asn1::ContainedOptions` on the reader or stream:
+
+```cpp
+asn1::ContainedDecoders reg;
+reg.add("li_decrypt", [&](const asn1::ContainedDecodeArgs& a) {
+    auto plain = decrypt(a.raw, a.outer);                 // a.outer: the enclosing value
+    return asn1::ContainedDecoders::decode_value(a, plain);
+});
+asn1::ContainedOptions opts{&reg};
+asn1::BerReader r{bytes};
+r.set_contained(&opts);                                    // PerDecodeStream: same call
+asn1::BerDecodeStream s{r};
+asn1::BerCodec::instance().decode(s, PS_PDU::asn_DEF, &pdu);
+```
+
+`ContainedOptions::off = true` decodes no contained value at all.
 
 ---
 

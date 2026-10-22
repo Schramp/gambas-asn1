@@ -49,6 +49,11 @@ add_executable(test_ber_primitives ber/test_primitives.cpp)
 target_link_libraries(test_ber_primitives PRIVATE asn1cpp_runtime)
 add_test(NAME ber_primitives COMMAND test_ber_primitives)
 
+# ---- Contained values: Containing<T> + built-in decoders (X.682 §11) -------
+add_executable(test_contained_runtime ber/test_contained_runtime.cpp)
+target_link_libraries(test_contained_runtime PRIVATE asn1cpp_runtime)
+add_test(NAME contained_runtime COMMAND test_contained_runtime)
+
 # ---- BER SEQUENCE / CHOICE tests ------------------------------------------
 add_executable(test_ber_sequence ber/test_sequence.cpp)
 target_link_libraries(test_ber_sequence PRIVATE asn1cpp_runtime)

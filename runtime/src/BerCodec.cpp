@@ -4,6 +4,7 @@
 #include <vector>
 #include <asn1cpp/codec/DecodeDepth.hpp>
 #include <asn1cpp/codec/BerCodec.hpp>
+#include <asn1cpp/codec/ContainedDecoders.hpp>
 #include <asn1cpp/codec/BerHandlers.hpp>
 #include <asn1cpp/ChoiceInterface.hpp>
 #include <asn1cpp/EnumValue.hpp>
@@ -309,6 +310,33 @@ struct OctetStringBerHandler final : IBerTypeHandler {
                               const TypeDescriptor&, Asn1Object* dest) const override {
         auto value = content.rest();
         static_cast<OctetString*>(dest)->set(value);
+        return decode_ok();
+    }
+};
+
+/// @brief OCTET STRING whose bytes are the encoding of another type
+///        (\c Containing<T>, X.682 §11). Reads and writes only the raw
+///        bytes; the enclosing SEQUENCE/SET or CHOICE decodes the inner
+///        value once all its members are known (\c decode_contained_members).
+///        A modified inner value is re-encoded on write.
+struct ContainedBerHandler final : IBerTypeHandler {
+    void encode(const BerCodec&, BerWriter& w,
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        std::vector<uint8_t> scratch;
+        auto bytes = contained_wire_bytes(def, *static_cast<const ContainedBase*>(src),
+                                          ContainedEncoding::Ber, w.contained(), scratch);
+        w.write_primitive(BerTraits<OctetString>::tag(), bytes);
+    }
+    DecodeResult decode(const BerCodec&, BerReader& r,
+                        const TypeDescriptor&, Asn1Object* dest) const override {
+        auto tlv = r.read_tlv();
+        if (!tlv) return decode_err(tlv.error());
+        static_cast<ContainedBase*>(dest)->set_raw_from_wire(tlv->value);
+        return decode_ok();
+    }
+    DecodeResult decode_value(const BerCodec&, BerReader& content,
+                              const TypeDescriptor&, Asn1Object* dest) const override {
+        static_cast<ContainedBase*>(dest)->set_raw_from_wire(content.rest());
         return decode_ok();
     }
 };
@@ -775,6 +803,12 @@ private:
                 if (!ok) return ok;
             }
         }
+        if (spec.contained_count > 0) {
+            std::string err;
+            if (!decode_contained_members(def, dest, ContainedEncoding::Ber, inner.depth(),
+                                          inner.contained(), err))
+                return decode_err(DecodeError(std::string(def.name) + "." + err));
+        }
         return decode_ok();
     }
 };
@@ -820,6 +854,18 @@ struct ChoiceBerHandler final : IBerTypeHandler {
     }
     DecodeResult decode(const BerCodec& codec, BerReader& r,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
+        auto ok = decode_alternative(codec, r, def, dest);
+        if (!ok) return ok;
+        std::string err;
+        if (!decode_contained_alternative(def, dest, ContainedEncoding::Ber, r.depth(),
+                                          r.contained(), err))
+            return decode_err(DecodeError(std::string(def.name) + "." + err));
+        return ok;
+    }
+    /// @brief Select and decode the CHOICE alternative named by the next tag.
+    /// @see X.690 §8.13
+    DecodeResult decode_alternative(const BerCodec& codec, BerReader& r,
+                                    const TypeDescriptor& def, Asn1Object* dest) const {
         const auto& spec = *def.choice_spec;
         ChoiceInterface* ch = static_cast<ChoiceInterface*>(dest);
         Tag peek = r.peek_tag();
@@ -967,6 +1013,7 @@ static const NullBerHandler        s_null;
 static const RealBerHandler        s_real;
 static const BitStringBerHandler   s_bitstring;
 static const OctetStringBerHandler s_octetstring;
+static const ContainedBerHandler    s_contained;
 static const OidBerHandler         s_oid;
 static const RelOidBerHandler      s_reloid;
 static const UtcTimeBerHandler     s_utctime;
@@ -989,6 +1036,7 @@ const IBerTypeHandler& ber_null_handler       = s_null;
 const IBerTypeHandler& ber_real_handler       = s_real;
 const IBerTypeHandler& ber_bitstring_handler  = s_bitstring;
 const IBerTypeHandler& ber_octetstring_handler= s_octetstring;
+const IBerTypeHandler& ber_contained_handler   = s_contained;
 const IBerTypeHandler& ber_oid_handler        = s_oid;
 const IBerTypeHandler& ber_reloid_handler     = s_reloid;
 const IBerTypeHandler& ber_utctime_handler    = s_utctime;

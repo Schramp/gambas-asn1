@@ -9,6 +9,7 @@ extern const IBerTypeHandler& ber_null_handler;
 extern const IBerTypeHandler& ber_real_handler;
 extern const IBerTypeHandler& ber_bitstring_handler;
 extern const IBerTypeHandler& ber_octetstring_handler;
+extern const IBerTypeHandler& ber_contained_handler;
 extern const IBerTypeHandler& ber_oid_handler;
 extern const IBerTypeHandler& ber_reloid_handler;
 extern const IBerTypeHandler& ber_utctime_handler;

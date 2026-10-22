@@ -45,7 +45,7 @@ struct ContainedField {
     std::string inner_type;      ///< inner type assignment name
     ContentsEncoding encoding = ContentsEncoding::Outer;
     ContainedDecode  decode = ContainedDecode::Eager;
-    std::string      decoder = "ber";
+    std::string      decoder = "plain";
     std::optional<ContainedWhen> when;
     ContainedOnError on_error = ContainedOnError::KeepRaw;
     ContainedText    xer = ContainedText::Hex;
