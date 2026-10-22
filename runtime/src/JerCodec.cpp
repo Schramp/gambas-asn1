@@ -525,21 +525,52 @@ struct RealJerHandler final : IJerTypeHandler {
     }
 };
 
-// BIT STRING → json: {"value":"HEX","length":N} for unnamed (X.697 §8.8.1)
+// BIT STRING → json: a bare "HEX" string when the SIZE is fixed, else
+// {"value":"HEX","length":N} (X.697 §8.8.1)
 struct BitStringJerHandler final : IJerTypeHandler {
+    /// @brief The fixed bit count of a BIT STRING whose effective SIZE
+    ///        constraint is a single value and not extensible, which X.697
+    ///        writes as a bare hex string; -1 for every other BIT STRING.
+    /// @param def  The BIT STRING's descriptor (its own constraints).
+    static int64_t fixed_size(const TypeDescriptor& def) {
+        const Constraints& c = def.constraints;
+        if (!(c.flags & Constraints::SIZE_CONSTRAINED) || (c.flags & Constraints::EXTENSIBLE)) return -1;
+        return c.size_lower == c.size_upper ? c.size_lower : -1;
+    }
     void encode(const JerCodec&, JerEncodeStream& s,
-                const TypeDescriptor&, const Asn1Object* src) const override {
+                const TypeDescriptor& def, const Asn1Object* src) const override {
         const BitString& bs = *static_cast<const BitString*>(src);
         auto& os = s.os();
         auto bytes = bs.bytes();
         std::size_t bits = bs.bit_count();
         std::string hex = jer_detail::to_hex_upper(
             std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
-        os << "{\"value\":\"" << hex << "\",\"length\":" << bits << '}';
+        // A value whose length breaks the fixed size keeps the object form,
+        // so the length is not lost.
+        if (fixed_size(def) >= 0 && static_cast<int64_t>(bits) == fixed_size(def))
+            os << '"' << hex << '"';
+        else
+            os << "{\"value\":\"" << hex << "\",\"length\":" << bits << '}';
     }
     DecodeResult decode(const JerCodec&, JerDecodeStream& s,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         jer_detail::skip_ws(s);
+        if (!s.at_end() && s.data()[0] == '"') {
+            // Fixed-size form: a bare hex string, length given by the type.
+            int64_t n = fixed_size(def);
+            if (n < 0) return decode_err(DecodeError(std::string("JER: BIT STRING ") + def.name + " is not fixed-size; expected {\"value\",\"length\"}"));
+            std::string hex_str;
+            if (auto r = jer_detail::read_json_string(s, hex_str); !r) return r;
+            std::string raw = jer_detail::parse_hex_str(hex_str);
+            std::size_t byte_count = static_cast<std::size_t>((n + 7) / 8);
+            if (raw.size() != byte_count)
+                return decode_err(DecodeError(std::string("JER: BIT STRING ") + def.name + ": expected " + std::to_string(byte_count) + " hex octets"));
+            uint8_t unused = static_cast<uint8_t>(byte_count * 8 - static_cast<std::size_t>(n));
+            std::vector<uint8_t> bytes(raw.begin(), raw.end());
+            if (!bytes.empty() && unused > 0) bytes.back() &= static_cast<uint8_t>(0xFFu << unused);
+            *static_cast<BitString*>(dest) = BitString{std::move(bytes), unused};
+            return decode_ok();
+        }
         if (!s.at_end() && s.data()[0] == '[') {
             // Named-bit array form ["bit0","bit1"] — decode as present bits only
             // We don't have the named-bit table, so just return an empty BitString
