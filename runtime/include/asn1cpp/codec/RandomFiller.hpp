@@ -24,20 +24,6 @@ struct FillConfig {
     /// Default 0 = always in-spec.
     double invalid_percent = 0.0;
 
-    /// @brief When true, REAL values are generated with at most 6 digits
-    /// after the decimal point (assembled via snprintf("%.*f") + strtod,
-    /// not bit-twiddled) instead of the full double range. A double that
-    /// is exactly a short decimal has no formatting ambiguity left: every
-    /// `%.15G`-family formatter (asn1cpp's own JerCodec, asn1c's JER
-    /// encoder, which does not always agree with asn1cpp's own choice of
-    /// digit count for an arbitrary double — see gambas-asn1 xval_sweep's
-    /// JER leg) converges on the same minimal text. Exists specifically
-    /// so JER cross-validation can be byte-exact-gated instead of
-    /// informational-only when the caller opts in. Default false — not
-    /// the general-purpose knob; other callers (BER/XER/PER fuzzing) want
-    /// the full double range.
-    bool jer_safe_real = false;
-
     /// @brief Probability (0-1, not percent) that a generated REAL value
     /// is one of the five "magic" special values (NaN, +Inf, -Inf, -0.0,
     /// +0.0 -- chosen uniformly among them) instead of a value from the
