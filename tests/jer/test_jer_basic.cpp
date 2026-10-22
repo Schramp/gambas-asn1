@@ -3,6 +3,7 @@
 //         OID, RELATIVE-OID, UTCTime, GeneralizedTime, UTF8String,
 //         VisibleString, BMPString, UniversalString, ENUMERATED.
 #include <cstdio>
+#include <cstring>
 #include <cmath>
 #include <sstream>
 #include <string>
@@ -119,6 +120,36 @@ int main() {
     check("REAL 1.5 round-trip",    roundtrip(asn_DEF_Real, Real{1.5}));
     check("REAL -7.25 round-trip",  roundtrip(asn_DEF_Real, Real{-7.25}));
     {
+        // Shortest text that converts back to the same double. The Rust
+        // runtime's jer::real tests use the same table, so both runtimes
+        // write identical text.
+        struct { double d; const char* text; } cases[] = {
+            {-338203.95104146993, "-338203.95104146993"},
+            {0.1, "0.1"},
+            {1e-5, "1E-5"},
+            {0.0001, "0.0001"},
+            {123456789012345.6, "123456789012345.6"},
+            {1e15, "1E15"},
+            {1.7976931348623157e308, "1.7976931348623157E308"},
+            {5e-324, "5E-324"},
+            {2.0, "2"},
+            {100.0, "100"},
+            {-2.251799813685248e15, "-2.251799813685248E15"},
+            {3.141592653589793, "3.141592653589793"},
+            {1234567.0, "1234567"},
+            {0.000123456, "0.000123456"},
+        };
+        for (const auto& c : cases) {
+            std::string label = std::string("REAL encodes as ") + c.text;
+            check(label.c_str(), encodes_as(asn_DEF_Real, Real{c.d}, c.text));
+            Real out{};
+            auto r = jer_decode(asn_DEF_Real, c.text, out);
+            double back = out.value();
+            label = std::string("REAL ") + c.text + " round-trips bit-exact";
+            check(label.c_str(), r.has_value() && std::memcmp(&back, &c.d, sizeof back) == 0);
+        }
+    }
+    {
         Real out{};
         auto r = jer_decode(asn_DEF_Real, "\"INF\"", out);
         check("REAL +Inf decodes",  r.has_value() && std::isinf(out.value()) && out.value() > 0);
@@ -174,6 +205,25 @@ int main() {
             std::string enc = jer_encode(asn_DEF_BitString, &empty);
             return enc.find("\"length\":0") != std::string::npos;
         }());
+    }
+    {
+        // A fixed, non-extensible SIZE is a bare hex string (X.697); the
+        // Rust runtime's jer::bit_string tests check the same cases.
+        TypeDescriptor fixed20 = asn_DEF_BitString;
+        fixed20.constraints.flags = Constraints::SIZE_CONSTRAINED;
+        fixed20.constraints.size_lower = fixed20.constraints.size_upper = 20;
+        TypeDescriptor fixed20_ext = fixed20;
+        fixed20_ext.constraints.flags |= Constraints::EXTENSIBLE;
+        BitString bits20{std::vector<uint8_t>{0x2E, 0xFE, 0x20}, 4};
+        check("BIT STRING SIZE(20) encodes as bare hex", encodes_as(fixed20, bits20, "\"2EFE20\""));
+        check("BIT STRING SIZE(20) bare hex decodes",    decodes_to(fixed20, "\"2EFE20\"", bits20));
+        check("BIT STRING SIZE(20,...) keeps object",    encodes_as(fixed20_ext, bits20, "{\"value\":\"2EFE20\",\"length\":20}"));
+        BitString bits4{std::vector<uint8_t>{0xF0}, 4};
+        check("BIT STRING SIZE(20) wrong length keeps object", encodes_as(fixed20, bits4, "{\"value\":\"F0\",\"length\":4}"));
+        check("BIT STRING SIZE(20) still decodes object", decodes_to(fixed20, "{\"value\":\"2EFE20\",\"length\":20}", bits20));
+        BitString out{};
+        check("BIT STRING bare hex needs a fixed size", !jer_decode(asn_DEF_BitString, "\"2EFE20\"", out));
+        check("BIT STRING bare hex needs the right length", !jer_decode(fixed20, "\"2EFE\"", out));
     }
 
     // =========================================================================

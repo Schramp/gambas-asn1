@@ -585,16 +585,6 @@ void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
                 v = magic_with_unsafe[rand_int(0, 4)];
             else
                 v = magic_xer_safe[rand_int(0, 3)];
-        } else if (cfg_.jer_safe_real) {
-            // Assemble through decimal text, not the raw double: a value
-            // that IS a short decimal (<=6 fractional digits here) has no
-            // formatting ambiguity for any %.15G-family formatter to
-            // diverge on (FillConfig::jer_safe_real's own doc).
-            double raw = std::uniform_real_distribution<double>{-1e6, 1e6}(rng_);
-            int decimals = rand_int(0, 6);
-            char buf[64];
-            std::snprintf(buf, sizeof(buf), "%.*f", decimals, raw);
-            v = std::strtod(buf, nullptr);
         } else {
             v = std::uniform_real_distribution<double>{-1e6, 1e6}(rng_);
         }

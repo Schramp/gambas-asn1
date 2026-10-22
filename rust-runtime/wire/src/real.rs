@@ -191,10 +191,10 @@ pub(crate) fn decode_real_value(value: &[u8], pos: usize) -> Result<f64, DecodeE
 /// X.693 §17.9 textual form for XER. Deliberately NOT shared with
 /// `jer::real`'s own formatter despite the superficial similarity (both
 /// classify NaN/Inf/signed-zero before formatting a plain decimal):
-/// asn1c's own ground truth (`REAL.c`'s `REAL__dump`, which XER uses,
-/// vs the separate formatter `REAL_jer.c` uses) picks a different
-/// precision rule (`%.15f` fixed-decimal, never exponential, vs JER's
-/// `%.15G`-equivalent with an exponential fallback) and a different
+/// XER follows asn1c's `REAL__dump` (`%.15f` fixed-decimal, never
+/// exponential), while JER writes the shortest text that converts back
+/// to the same double, with an exponential form outside [1e-4, 1e15)
+/// (`jer::real::format_real`). The two also differ in their
 /// special-value spelling (`PLUS-INFINITY`/`MINUS-INFINITY`/
 /// `NOT-A-NUMBER` elements vs quoted `"INF"`/`"-INF"`/`"NaN"` strings).
 /// Kept here, next to the BER codec above and within sight of

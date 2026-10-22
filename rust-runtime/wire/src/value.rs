@@ -768,16 +768,16 @@ mod tests {
 
         let empty: SeqOf<Integer> = SeqOf(vec![]);
         let mut out = String::new();
-        crate::jer::object::encode_seqof_into(&empty, &mut out).unwrap();
+        crate::jer::object::encode_seqof_into(&empty, &crate::constraints::UNCONSTRAINED, &mut out).unwrap();
         assert_eq!(out, "[]");
 
         let v: SeqOf<Integer> = SeqOf(vec![Integer(1), Integer(2), Integer(3)]);
         let mut out2 = String::new();
-        crate::jer::object::encode_seqof_into(&v, &mut out2).unwrap();
+        crate::jer::object::encode_seqof_into(&v, &crate::constraints::UNCONSTRAINED, &mut out2).unwrap();
         assert_eq!(out2, "[1,2,3]");
         let mut r = crate::jer::reader::Reader::new(&out2);
         let mut got: SeqOf<Integer> = SeqOf::default();
-        crate::jer::object::decode_seqof_into(&mut got, &mut r).unwrap();
+        crate::jer::object::decode_seqof_into(&mut got, &crate::constraints::UNCONSTRAINED, &mut r).unwrap();
         assert_eq!(got.0, v.0);
     }
 }

@@ -444,7 +444,7 @@ pub fn xer_element_name_of(p: PrimitiveRef) -> &'static str {
 // JER (X.697)
 // ---------------------------------------------------------------------
 
-pub fn jer_encode_primitive(p: PrimitiveRef, out: &mut String) -> Result<(), EncodeError> {
+pub fn jer_encode_primitive(p: PrimitiveRef, c: &crate::constraints::Constraints, out: &mut String) -> Result<(), EncodeError> {
     match p {
         PrimitiveRef::Boolean(x) => out.push_str(if x.0 { "true" } else { "false" }),
         PrimitiveRef::Integer(x) => crate::jer::integer::encode(x.0, out),
@@ -454,7 +454,7 @@ pub fn jer_encode_primitive(p: PrimitiveRef, out: &mut String) -> Result<(), Enc
         PrimitiveRef::Real(x) => crate::jer::real::encode(x.0, out),
         PrimitiveRef::Null(_) => crate::jer::null::encode(out),
         PrimitiveRef::OctetString(x) => crate::jer::octet_string::encode(&x.0, out),
-        PrimitiveRef::BitString(x) => crate::jer::bit_string::encode(x, out),
+        PrimitiveRef::BitString(x) => crate::jer::bit_string::encode(x, c, out),
         PrimitiveRef::ObjectIdentifier(x) => crate::jer::oid::encode(x, out),
         PrimitiveRef::RelativeOid(x) => crate::jer::relative_oid::encode(x, out),
         PrimitiveRef::Any(x) => crate::jer::octet_string::encode(&x.0, out),
@@ -476,7 +476,7 @@ pub fn jer_encode_primitive(p: PrimitiveRef, out: &mut String) -> Result<(), Enc
     Ok(())
 }
 
-pub fn jer_decode_primitive(p: PrimitiveRefMut, r: &mut JerReader) -> Result<(), BerDecodeError> {
+pub fn jer_decode_primitive(p: PrimitiveRefMut, c: &crate::constraints::Constraints, r: &mut JerReader) -> Result<(), BerDecodeError> {
     match p {
         PrimitiveRefMut::Boolean(x) => {
             let tok = r.read_json_token()?;
@@ -493,7 +493,7 @@ pub fn jer_decode_primitive(p: PrimitiveRefMut, r: &mut JerReader) -> Result<(),
         PrimitiveRefMut::Real(x) => { x.0 = crate::jer::real::decode(r)?; Ok(()) }
         PrimitiveRefMut::Null(_) => crate::jer::null::decode(r),
         PrimitiveRefMut::OctetString(x) => { x.0 = crate::jer::octet_string::decode(r)?; Ok(()) }
-        PrimitiveRefMut::BitString(x) => { *x = crate::jer::bit_string::decode(r)?; Ok(()) }
+        PrimitiveRefMut::BitString(x) => { *x = crate::jer::bit_string::decode(c, r)?; Ok(()) }
         PrimitiveRefMut::ObjectIdentifier(x) => crate::jer::oid::decode_into(x, r),
         PrimitiveRefMut::RelativeOid(x) => crate::jer::relative_oid::decode_into(x, r),
         PrimitiveRefMut::Any(x) => { x.0 = crate::jer::octet_string::decode(r)?; Ok(()) }
@@ -739,10 +739,10 @@ mod tests {
 
     #[test]
     fn jer_arbitrary_integer_is_an_error_not_a_panic() {
-        let e = jer_encode_primitive(PrimitiveRef::ArbitraryInteger(&ARB()), &mut String::new()).unwrap_err();
+        let e = jer_encode_primitive(PrimitiveRef::ArbitraryInteger(&ARB()), &crate::constraints::UNCONSTRAINED, &mut String::new()).unwrap_err();
         assert_eq!(e.message, "JER encoding not supported for ArbitraryInteger");
         let mut v = ARB();
-        assert!(jer_decode_primitive(PrimitiveRefMut::ArbitraryInteger(&mut v), &mut JerReader::new("1")).is_err());
+        assert!(jer_decode_primitive(PrimitiveRefMut::ArbitraryInteger(&mut v), &crate::constraints::UNCONSTRAINED, &mut JerReader::new("1")).is_err());
     }
 
     #[test]
@@ -811,11 +811,11 @@ pub(crate) mod test_codec {
     }
 
     pub fn jer_encode<T: AsMemberRef + ?Sized>(v: &T, out: &mut String) {
-        jer_encode_primitive(prim(v), out).unwrap()
+        jer_encode_primitive(prim(v), &crate::constraints::UNCONSTRAINED, out).unwrap()
     }
 
     pub fn jer_decode_into<T: AsMemberRef + ?Sized>(v: &mut T, r: &mut JerReader) -> Result<(), BerDecodeError> {
-        jer_decode_primitive(prim_mut(v), r)
+        jer_decode_primitive(prim_mut(v), &crate::constraints::UNCONSTRAINED, r)
     }
 
     pub fn per_encode<T: AsMemberRef + ?Sized>(v: &T, w: &mut PerWriter, c: &crate::constraints::Constraints) {

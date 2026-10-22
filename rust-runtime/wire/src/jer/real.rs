@@ -23,39 +23,51 @@ pub fn encode(d: f64, out: &mut String) {
         out.push_str(if d.is_sign_negative() { "\"-0\"" } else { "0" });
         return;
     }
-    // %.15G-equivalent -- matches asn1c's own REAL JER formatting:
-    // 15 significant digits, decimal notation when the decimal exponent
-    // is in [-4, 15), exponential (uppercase E) otherwise, trailing
-    // mantissa zeros trimmed either way (printf's %G behavior).
-    out.push_str(&format_g15(d));
+    out.push_str(&format_real(d));
 }
 
-fn format_g15(d: f64) -> String {
-    const PRECISION: i32 = 15;
-    let exp10 = d.abs().log10().floor() as i32;
-    if exp10 < -4 || exp10 >= PRECISION {
-        // Exponential form: PRECISION-1 digits after the mantissa point,
-        // then trim trailing zeros (and a bare trailing '.') like %G.
-        let s = format!("{:.*E}", (PRECISION - 1) as usize, d);
-        let epos = s.find('E').unwrap();
-        let (mantissa, exp) = s.split_at(epos);
-        let mantissa = if mantissa.contains('.') {
-            mantissa.trim_end_matches('0').trim_end_matches('.')
-        } else {
-            mantissa
-        };
-        format!("{mantissa}{exp}")
-    } else {
-        // Decimal form: PRECISION significant digits total, i.e.
-        // (PRECISION - 1 - exp10) digits after the decimal point.
-        let decimals = (PRECISION - 1 - exp10).max(0) as usize;
-        let s = format!("{d:.decimals$}");
-        if s.contains('.') {
-            s.trim_end_matches('0').trim_end_matches('.').to_string()
-        } else {
-            s
-        }
+/// @brief Formats a finite, nonzero REAL as a JSON number that converts
+///        back to exactly the same `f64`: the shortest such digit string
+///        (`{:e}`), in plain decimal notation when the decimal exponent is
+///        in [-4, 15) and as `d.dddE<exp>` otherwise. Mirrors the C++
+///        `jer_detail::format_real` (`runtime/src/JerCodec.cpp`) exactly, so
+///        both runtimes produce identical text.
+/// @see X.697 §23 (REAL as a JSON number).
+fn format_real(d: f64) -> String {
+    let sci = format!("{:e}", d.abs()); // e.g. 1.9370032316011307e5
+    let (mantissa, exp) = sci.split_once('e').expect("{:e} always has an exponent");
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let exp: i32 = exp.parse().expect("{:e} exponent is an integer");
+    let mut out = String::new();
+    if d < 0.0 {
+        out.push('-');
     }
+    if (-4..15).contains(&exp) {
+        if exp < 0 {
+            out.push_str("0.");
+            out.extend(std::iter::repeat('0').take((-exp - 1) as usize));
+            out.push_str(&digits);
+        } else {
+            let int_len = exp as usize + 1;
+            if digits.len() <= int_len {
+                out.push_str(&digits);
+                out.extend(std::iter::repeat('0').take(int_len - digits.len()));
+            } else {
+                out.push_str(&digits[..int_len]);
+                out.push('.');
+                out.push_str(&digits[int_len..]);
+            }
+        }
+    } else {
+        out.push_str(&digits[..1]);
+        if digits.len() > 1 {
+            out.push('.');
+            out.push_str(&digits[1..]);
+        }
+        out.push('E');
+        out.push_str(&exp.to_string());
+    }
+    out
 }
 
 pub fn decode(r: &mut Reader) -> Result<f64, DecodeError> {
@@ -75,4 +87,48 @@ pub fn decode(r: &mut Reader) -> Result<f64, DecodeError> {
     let tok = r.read_json_token()?;
     tok.parse::<f64>()
         .map_err(|_| DecodeError::new(format!("JER: invalid REAL: {tok}"), r.pos()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Shared with the C++ `test_jer_real_format` table: both runtimes
+    /// must write exactly these strings.
+    const CASES: &[(f64, &str)] = &[
+        (-338203.95104146993, "-338203.95104146993"),
+        (0.1, "0.1"),
+        (1e-5, "1E-5"),
+        (0.0001, "0.0001"),
+        (123456789012345.6, "123456789012345.6"),
+        (1e15, "1E15"),
+        (1.7976931348623157e308, "1.7976931348623157E308"),
+        (5e-324, "5E-324"),
+        (2.0, "2"),
+        (100.0, "100"),
+        (-2.251799813685248e15, "-2.251799813685248E15"),
+        (3.141592653589793, "3.141592653589793"),
+        (1234567.0, "1234567"),
+        (0.000123456, "0.000123456"),
+    ];
+
+    #[test]
+    fn reals_encode_to_the_shortest_round_trip_text() {
+        for &(d, want) in CASES {
+            let mut out = String::new();
+            encode(d, &mut out);
+            assert_eq!(out, want, "encoding {d:?}");
+            let mut r = Reader::new(&out);
+            assert_eq!(decode(&mut r).unwrap().to_bits(), d.to_bits(), "round trip of {want}");
+        }
+    }
+
+    #[test]
+    fn special_values_keep_their_strings() {
+        for (d, want) in [(f64::NAN, "\"NaN\""), (f64::INFINITY, "\"INF\""), (f64::NEG_INFINITY, "\"-INF\""), (-0.0, "\"-0\""), (0.0, "0")] {
+            let mut out = String::new();
+            encode(d, &mut out);
+            assert_eq!(out, want);
+        }
+    }
 }
