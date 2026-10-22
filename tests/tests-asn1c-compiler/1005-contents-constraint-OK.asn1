@@ -1,0 +1,23 @@
+-- X.682 §11.1 `CONTAINING Type`: plain, imported, module-qualified and
+-- inline contained types, on OCTET STRING and BIT STRING (§11.3).
+-- The ENCODED BY productions are in 1009.
+
+ModuleContentsInner { iso org(3) dod(6) internet(1) private(4) enterprise(1) spelio(9363) software(1) asn1c(5) test(1) 1005 1 }
+DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    Inner ::= SEQUENCE { a INTEGER, b BOOLEAN OPTIONAL }
+END
+
+ModuleContents { iso org(3) dod(6) internet(1) private(4) enterprise(1) spelio(9363) software(1) asn1c(5) test(1) 1005 2 }
+DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    IMPORTS Inner FROM ModuleContentsInner;
+
+    Local ::= SEQUENCE { x INTEGER }
+
+    Outer ::= SEQUENCE {
+        plain       OCTET STRING (CONTAINING Local),
+        imported    OCTET STRING (CONTAINING Inner),
+        qualified   OCTET STRING (CONTAINING ModuleContentsInner.Inner),
+        inlineType  OCTET STRING (CONTAINING SEQUENCE { y INTEGER }),
+        bits        BIT STRING (CONTAINING Local)
+    }
+END

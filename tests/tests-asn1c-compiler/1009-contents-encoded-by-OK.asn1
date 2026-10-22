@@ -1,0 +1,13 @@
+-- X.682 §11.1 `ENCODED BY Value` and `CONTAINING Type ENCODED BY Value`,
+-- with the OID written with named and numeric arcs (§11.2).
+
+ModuleContentsEncodedBy { iso org(3) dod(6) internet(1) private(4) enterprise(1) spelio(9363) software(1) asn1c(5) test(1) 1009 }
+DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    Local ::= SEQUENCE { x INTEGER }
+
+    Outer ::= SEQUENCE {
+        withBer     OCTET STRING (CONTAINING Local ENCODED BY { joint-iso-itu-t asn1(1) basic-encoding(1) }),
+        withDerNum  OCTET STRING (CONTAINING Local ENCODED BY { 2 1 2 1 }),
+        encodedOnly OCTET STRING (ENCODED BY { joint-iso-itu-t asn1(1) packed-encoding(3) basic(0) unaligned(1) })
+    }
+END

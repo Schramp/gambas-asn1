@@ -288,6 +288,7 @@
 %type <Value>                       BitStringValue RealValue
 %type <Value>                       SignedNumber RestrictedCharacterStringValue
 %type <std::string>                 Opaque OpaqueFirstToken
+%type <std::string>                 EncodedByValue
 
 /* Constraints */
 %type <ConstraintPtr>               optConstraint optManyConstraints ManyConstraints
@@ -1676,9 +1677,34 @@ UserDefinedConstraint:
 	{ $$ = std::make_shared<ast::Constraint>(); }
 	;
 
+/* X.682 §11.1 — all three productions. asn1c's asn1p_y.y has only the
+ * first; the ENCODED BY forms are added per the standard. */
 ContentsConstraint:
-	TOK_CONTAINING Type
-	{ $$ = std::make_shared<ast::Constraint>(); }
+	  TOK_CONTAINING Type
+	{
+	    auto c = std::make_shared<ast::Constraint>();
+	    c->body = ast::ContentsConstraint{$2, {}};
+	    $$ = c;
+	}
+	| TOK_ENCODED TOK_BY EncodedByValue
+	{
+	    auto c = std::make_shared<ast::Constraint>();
+	    c->body = ast::ContentsConstraint{nullptr, $3};
+	    $$ = c;
+	}
+	| TOK_CONTAINING Type TOK_ENCODED TOK_BY EncodedByValue
+	{
+	    auto c = std::make_shared<ast::Constraint>();
+	    c->body = ast::ContentsConstraint{$2, $5};
+	    $$ = c;
+	}
+	;
+
+/* X.682 §11.2: an OBJECT IDENTIFIER value, kept as its source text. */
+EncodedByValue:
+	  '{' { lexer.push_opaque_state(); } Opaque { $$ = "{" + $3; }
+	| Identifier                                { $$ = $1; }
+	| TypeRefName '.' Identifier                { $$ = $1 + "." + $3; }
 	;
 
 TableConstraint:

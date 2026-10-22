@@ -25,7 +25,14 @@ struct SizeConstraint  { ConstraintPtr inner; };
 struct FromConstraint  { ConstraintPtr inner; };
 struct WithComponent   { ConstraintPtr inner; };
 struct PatternConstraint { std::string pattern; };
-struct ContentsConstraint { std::string type_ref; };
+struct TypeDef;
+/// X.682 §11 contents constraint. `type` is null for the bare
+/// `ENCODED BY` form; `encoded_by` is the OID value's source text
+/// (empty when absent, i.e. the outer encoding rules apply, §11.4).
+struct ContentsConstraint {
+    std::shared_ptr<TypeDef> type;
+    std::string encoded_by;
+};
 struct ExtensionMarker {};
 
 struct IntersectionConstraint {

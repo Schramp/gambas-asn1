@@ -1524,6 +1524,11 @@ target_include_directories(test_backend_naming PRIVATE
     ${CMAKE_SOURCE_DIR}/runtime/include)
 add_test(NAME backend_naming COMMAND test_backend_naming)
 
+# ---- Contents constraint ENCODED BY classification (X.682 §11) -------------
+add_executable(test_contents_encoding codegen/test_contents_encoding.cpp)
+target_include_directories(test_contents_encoding PRIVATE ${CMAKE_SOURCE_DIR}/compiler/src)
+add_test(NAME contents_encoding COMMAND test_contents_encoding)
+
 # ---- RustBackend output compile-check (gambas-asn1#258) --------------------
 if(WITH_RUST_COMPILE_CHECK)
     add_test(NAME rust_compile_check
