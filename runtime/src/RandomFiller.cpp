@@ -421,7 +421,7 @@ bool RandomFiller::fill_contained(Asn1Object* obj, const TypeDescriptor& def, in
     ContainedEncodeArgs args{*inner, cs, enc, reg, nullptr};
     std::vector<uint8_t> bytes;
     std::string err;
-    const auto* entry = reg.find(cs.decoder);
+    const auto* entry = reg.resolve(cs);
     bool ok = entry && entry->encode ? entry->encode(args, bytes, err)
                                      : ContainedDecoders::encode_value(args, bytes, err);
     if (!ok) return false;

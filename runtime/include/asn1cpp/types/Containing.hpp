@@ -63,7 +63,15 @@ struct ContainedSpec {
     bool                  fail_on_error = false; ///< `on_error: fail`: a failed inner decode fails the outer decode.
     ContainedText         xer = ContainedText::Hex;
     ContainedText         jer = ContainedText::Hex;
+    /// Index of \c decoder among the built-in names (\c ContainedDecoders::
+    /// kBuiltinNames), set at code generation, or \c kCustomDecoder for any
+    /// other name; lets the codecs reach the decoder without a name lookup.
+    uint8_t               builtin = 0;
 };
+
+/// @brief \c ContainedSpec::builtin value for a decoder name that is not a
+///        built-in (looked up by name in the registry).
+inline constexpr uint8_t kCustomDecoder = 255;
 
 /// @brief Non-template part of a contained value: the raw OCTET STRING bytes
 /// (the base class, which every OCTET STRING codec path reads and writes),

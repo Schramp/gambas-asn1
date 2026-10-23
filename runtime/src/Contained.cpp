@@ -97,7 +97,7 @@ bool decode_one(const char* field, const ContainedSpec& cs, ContainedBase& cb,
         return true;
     }
     const ContainedDecoders& reg = opts ? opts->registry() : ContainedDecoders::defaults();
-    const auto* entry = reg.find(cs.decoder);
+    const auto* entry = reg.resolve(cs);
     ContainedResult r;
     if (!entry || !entry->decode) {
         r = ContainedResult::failed(std::string("unknown contained decoder '") + cs.decoder + "'");
@@ -132,7 +132,14 @@ const ContainedDecoders& ContainedDecoders::defaults() {
 }
 
 void ContainedDecoders::add(std::string name, ContainedDecodeFn decode, ContainedEncodeFn encode) {
-    entries_[std::move(name)] = Entry{std::move(decode), std::move(encode)};
+    auto [it, _] = entries_.insert_or_assign(std::move(name), Entry{std::move(decode), std::move(encode)});
+    for (int i = 0; i < kBuiltinCount; ++i)
+        if (it->first == kBuiltinNames[i]) builtin_[i] = &it->second;
+}
+
+const ContainedDecoders::Entry* ContainedDecoders::resolve(const ContainedSpec& spec) const {
+    if (spec.builtin < kBuiltinCount) return builtin_[spec.builtin];
+    return find(spec.decoder);
 }
 
 const ContainedDecoders::Entry* ContainedDecoders::find(std::string_view name) const {
@@ -258,7 +265,7 @@ std::span<const uint8_t> contained_wire_bytes(const TypeDescriptor& field_def, c
     if (!v.dirty() || !v.has_value() || !field_def.contained) return v.bytes();
     const ContainedSpec& cs = *field_def.contained;
     const ContainedDecoders& reg = opts ? opts->registry() : ContainedDecoders::defaults();
-    const auto* entry = reg.find(cs.decoder);
+    const auto* entry = reg.resolve(cs);
     std::string err;
     if (entry && entry->encode) {
         ContainedEncodeArgs args{*v.value_object(), cs, resolve(cs.encoding, outer_encoding), reg, opts};

@@ -78,7 +78,16 @@ pub struct ContainedSpec {
     pub fail_on_error: bool,
     pub xer: ContainedText,
     pub jer: ContainedText,
+    /// Index of `decoder` among [`BUILTIN_DECODERS`], set at code
+    /// generation, or [`CUSTOM_DECODER`]; lets the walkers reach the
+    /// decoder without a name lookup.
+    pub builtin: u8,
 }
+
+/// Built-in decoder names, in `ContainedSpec::builtin` order.
+pub const BUILTIN_DECODERS: [&str; 4] = ["plain", "zero_padding", "pkcs7", "none"];
+/// `ContainedSpec::builtin` for a decoder name that is not a built-in.
+pub const CUSTOM_DECODER: u8 = 255;
 
 /// Outcome of a contained-value decoder.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +153,8 @@ struct Entry {
 /// setting. Pre-loaded with the built-ins `plain`, `zero_padding`, `pkcs7`
 /// and `none` (same rules as the C++ `asn1::ContainedDecoders`).
 pub struct ContainedDecoders {
+    /// Current entry per built-in name, in [`BUILTIN_DECODERS`] order.
+    builtin: [Option<Entry>; 4],
     entries: HashMap<String, Entry>,
     /// Block size the `pkcs7` encoder pads to (default 16, AES).
     pub pkcs7_block_size: usize,
@@ -151,7 +162,7 @@ pub struct ContainedDecoders {
 
 impl Default for ContainedDecoders {
     fn default() -> Self {
-        let mut d = ContainedDecoders { entries: HashMap::new(), pkcs7_block_size: 16 };
+        let mut d = ContainedDecoders { builtin: [None, None, None, None], entries: HashMap::new(), pkcs7_block_size: 16 };
         d.add("plain", Box::new(|a| decode_value(a, None)), Some(Box::new(encode_value)));
         d.add("zero_padding", Box::new(decode_zero_padding), Some(Box::new(encode_value)));
         d.add("pkcs7", Box::new(decode_pkcs7), Some(Box::new(encode_pkcs7)));
@@ -169,11 +180,29 @@ impl ContainedDecoders {
 
     /// Register or replace the decoder `name`.
     pub fn add(&mut self, name: &str, decode: ContainedDecodeFn, encode: Option<ContainedEncodeFn>) {
-        self.entries.insert(name.to_string(), Entry { decode, encode });
+        let entry = Entry { decode, encode };
+        match BUILTIN_DECODERS.iter().position(|b| *b == name) {
+            Some(i) => self.builtin[i] = Some(entry),
+            None => {
+                self.entries.insert(name.to_string(), entry);
+            }
+        }
     }
 
     fn find(&self, name: &str) -> Option<&Entry> {
-        self.entries.get(name)
+        match BUILTIN_DECODERS.iter().position(|b| *b == name) {
+            Some(i) => self.builtin[i].as_ref(),
+            None => self.entries.get(name),
+        }
+    }
+
+    /// The entry a field's decoder resolves to: an index for a built-in
+    /// name (overrides included), a name lookup otherwise.
+    fn resolve(&self, spec: &ContainedSpec) -> Option<&Entry> {
+        match self.builtin.get(spec.builtin as usize) {
+            Some(e) => e.as_ref(),
+            None => self.entries.get(spec.decoder),
+        }
     }
 }
 
@@ -462,7 +491,7 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
         let reg = ContainedDecoders::defaults();
         let encoding = resolve(spec.encoding, outer);
         let args = ContainedEncodeArgs { inner: inner.as_member_ref(), spec, encoding, decoders: reg };
-        let res = match reg.find(spec.decoder).and_then(|e| e.encode.as_ref()) {
+        let res = match reg.resolve(spec).and_then(|e| e.encode.as_ref()) {
             Some(enc) => enc(&args),
             None => Err(format!("decoder '{}' cannot encode", spec.decoder)),
         };
@@ -565,7 +594,7 @@ fn run_one(
         return (ContainedResult::skipped(why), None);
     }
     let reg = registry(opts);
-    let Some(entry) = reg.find(spec.decoder) else {
+    let Some(entry) = reg.resolve(spec) else {
         return (ContainedResult::failed(format!("unknown contained decoder '{}'", spec.decoder)), None);
     };
     let encoding = resolve(spec.encoding, outer_encoding);
@@ -661,6 +690,7 @@ mod tests {
         fail_on_error: false,
         xer: ContainedText::Hex,
         jer: ContainedText::Hex,
+        builtin: 0,
     };
 
     struct NoSeq;

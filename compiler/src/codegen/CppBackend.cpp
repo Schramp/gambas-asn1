@@ -703,11 +703,12 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
         os << std::format(
             "static const asn1::ContainedSpec {}_contained = {{ &{}::asn_DEF, "
             "&asn1::ContainedOpsFor<{}>::ops, asn1::ContainedEncoding::{}, {}, \"{}\", {}, "
-            "asn1::ContainedSpec::WhenKind::{}, {}, {}, asn1::ContainedText::{}, asn1::ContainedText::{} }};\n",
+            "asn1::ContainedSpec::WhenKind::{}, {}, {}, asn1::ContainedText::{}, asn1::ContainedText::{}, {} }};\n",
             base, spec.contained_inner, spec.contained_inner, enc(f.encoding),
             f.decode == sema::ContainedDecode::Eager ? "true" : "false", f.decoder,
             spec.contained_when_index, when(), f.when ? f.when->value : 0,
-            f.on_error == sema::ContainedOnError::Fail ? "true" : "false", text(f.xer), text(f.jer));
+            f.on_error == sema::ContainedOnError::Fail ? "true" : "false", text(f.xer), text(f.jer),
+            sema::builtin_decoder_index(f.decoder));
         os << std::format(
             "static const asn1::TypeDescriptor {} = "
             "{{ \"{}\", asn1::Tag::universal({}, false), "
