@@ -231,6 +231,9 @@ pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
             let constraints = alt.constraints;
             decode_bare(obj.select_mut(i), constraints, r)?;
             r.expect_char(b'}')?;
+            if !obj.spec().has_contained {
+                return Ok(());
+            }
             return crate::containing::decode_contained_alternative(obj, crate::containing::ContainedEncoding::Ber, r.depth, None)
                 .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.pos()));
         }

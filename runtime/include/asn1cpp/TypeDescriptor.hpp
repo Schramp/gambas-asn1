@@ -393,6 +393,11 @@ struct TypeDescriptor {
     /// Non-null for an OCTET STRING holding the encoding of another type
     /// (stored as \c Containing<T>): the inner type and how it is decoded.
     const ContainedSpec* contained = nullptr;
+    /// True for a SEQUENCE/SET/CHOICE with at least one contained member or
+    /// alternative (\c SequenceSpec::contained_members). Gates every
+    /// contained-value step in the codecs: the last step of decode, the
+    /// first of encode; false costs nothing more than this one test.
+    bool has_contained = false;
 };
 
 /// @name Built-in type descriptors

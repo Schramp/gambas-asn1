@@ -59,7 +59,10 @@ void emit_type_descriptor(std::ostream& os,
                            // `natural_tag_expr` then carries the type's own natural tag,
                            // wrapped rather than substituted (see CppBackend.cpp).
                            bool is_explicit = false,
-                           const std::string& natural_tag_expr = "");
+                           const std::string& natural_tag_expr = "",
+                           // SEQUENCE/SET/CHOICE with a contained member or
+                           // alternative (TypeDescriptor::has_contained).
+                           bool has_contained = false);
 
 /// @brief Build a Constraints designated-initializer literal for an INTEGER
 ///        constraint. Pure C++ text formatting from already-resolved

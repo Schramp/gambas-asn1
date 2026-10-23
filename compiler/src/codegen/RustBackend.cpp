@@ -2168,6 +2168,10 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
         }
         os << std::format("    ext_at: {},\n", spec.ext_at);
         os << std::format("    range_bits: {},\n", spec.range_bits);
+        os << std::format("    has_contained: {},\n",
+                          std::any_of(spec.alternatives.begin(), spec.alternatives.end(),
+                                      [](const ChoiceAlternativeSpec& a) { return a.contained != nullptr; })
+                              ? "true" : "false");
         os << "};\n\n";
 
         os << std::format("impl asn1cpp_wire::spec::object::Asn1Choice for {} {{\n", spec.type_name);

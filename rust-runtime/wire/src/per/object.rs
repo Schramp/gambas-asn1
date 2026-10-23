@@ -349,6 +349,9 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, w: &mut Writer) -> Result<(),
 
 pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<(), DecodeError> {
     decode_choice_alternative(obj, r)?;
+    if !obj.spec().has_contained {
+        return Ok(());
+    }
     crate::containing::decode_contained_alternative(obj, crate::containing::ContainedEncoding::PerUnaligned, r.depth, r.contained)
         .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.bit_pos()))
 }
