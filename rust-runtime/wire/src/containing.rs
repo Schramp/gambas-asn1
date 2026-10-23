@@ -20,6 +20,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use crate::encode_error::EncodeError;
 use crate::nesting::Depth;
 use crate::octet_string::OctetString;
 use crate::spec::object::{Asn1Choice, Asn1Seq, AsMemberRef, MemberRef, MemberRefMut};
@@ -365,7 +366,10 @@ pub trait Contained {
     fn raw_octets(&self) -> &OctetString;
     /// The bytes the field encodes as: the raw bytes, or after the inner
     /// value was modified, the inner value's encoding.
-    fn wire_octets(&self, spec: &'static ContainedSpec, outer: ContainedEncoding) -> Cow<'_, OctetString>;
+    /// The bytes to write under `outer`: the raw bytes, or the inner
+    /// value's encoding when it was modified or the raw bytes are in other
+    /// rules (X.682 §11.4). `Err` when a modified value cannot be encoded.
+    fn wire_octets(&self, spec: &'static ContainedSpec, outer: ContainedEncoding) -> Result<Cow<'_, OctetString>, EncodeError>;
     /// Raw bytes from the wire, before any inner decode, decoded with the
     /// encoding rules `encoding`.
     fn set_raw_from_wire(&mut self, raw: Vec<u8>, encoding: ContainedEncoding);
@@ -502,9 +506,9 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
     fn raw_octets(&self) -> &OctetString {
         &self.raw
     }
-    fn wire_octets(&self, spec: &'static ContainedSpec, outer: ContainedEncoding) -> Cow<'_, OctetString> {
+    fn wire_octets(&self, spec: &'static ContainedSpec, outer: ContainedEncoding) -> Result<Cow<'_, OctetString>, EncodeError> {
         let Some(inner) = self.inner.as_deref() else {
-            return Cow::Borrowed(&self.raw);
+            return Ok(Cow::Borrowed(&self.raw));
         };
         // X.682 §11.4: an outer-encoding field's contents follow the
         // encoding being written; bytes known to be in other rules are
@@ -513,7 +517,7 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
             && self.raw_encoding != ContainedEncoding::Outer
             && self.raw_encoding != outer;
         if !self.dirty && !other_rules {
-            return Cow::Borrowed(&self.raw);
+            return Ok(Cow::Borrowed(&self.raw));
         }
         let reg = ContainedDecoders::defaults();
         let encoding = resolve(spec.encoding, outer);
@@ -523,12 +527,17 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
             None => Err(format!("decoder '{}' cannot encode", spec.decoder)),
         };
         match res {
-            Ok(b) => Cow::Owned(OctetString(b)),
+            Ok(b) => Ok(Cow::Owned(OctetString(b))),
+            // A modified value whose bytes cannot be derived must not be
+            // written as its stale raw bytes. Unmodified bytes in other rules
+            // are kept as they are (a decoder without an encode side, e.g.
+            // decryption).
+            Err(e) if self.dirty => Err(EncodeError::new(format!("modified contained value cannot be encoded: {e}"))),
             Err(e) => {
                 if crate::debug::debug_flags() & crate::debug::DBG_BER_WRITE != 0 {
                     eprintln!("[CONTAINED] {e}; writing the raw bytes");
                 }
-                Cow::Borrowed(&self.raw)
+                Ok(Cow::Borrowed(&self.raw))
             }
         }
     }
@@ -830,11 +839,24 @@ mod tests {
         assert!(c.status() == ContainedStatus::NotDecoded && !c.has_value());
         c.set_value(Integer(42));
         assert!(c.dirty() && c.value() == Some(&Integer(42)));
-        assert_eq!(c.wire_octets(&SPEC, ContainedEncoding::Ber).0, vec![0x02, 0x01, 42]);
+        assert_eq!(c.wire_octets(&SPEC, ContainedEncoding::Ber).unwrap().0, vec![0x02, 0x01, 42]);
         let copy = c.clone();
         assert_eq!(copy.value(), Some(&Integer(42)));
         c.set_raw(vec![0x02, 0x01, 0x09]);
         assert!(!c.has_value() && !c.dirty() && c.status() == ContainedStatus::NotDecoded);
-        assert_eq!(c.wire_octets(&SPEC, ContainedEncoding::Ber).0, vec![0x02, 0x01, 0x09]);
+        assert_eq!(c.wire_octets(&SPEC, ContainedEncoding::Ber).unwrap().0, vec![0x02, 0x01, 0x09]);
+    }
+
+    /// A modified value whose bytes cannot be derived fails the encode
+    /// instead of writing the stale raw bytes.
+    #[test]
+    fn unencodable_modified_value_fails() {
+        static APER: ContainedSpec = ContainedSpec { encoding: ContainedEncoding::PerAligned, ..SPEC };
+        let mut c: Containing<Integer> = Containing::default();
+        c.set_raw_from_wire(vec![0x02, 0x01, 0x09], ContainedEncoding::Ber);
+        c.install(ContainedResult::ok(), Some(Box::new(Integer(9))));
+        assert_eq!(c.wire_octets(&APER, ContainedEncoding::Ber).unwrap().0, vec![0x02, 0x01, 0x09]);
+        c.value_mut().unwrap().0 = 10;
+        assert!(c.wire_octets(&APER, ContainedEncoding::Ber).is_err());
     }
 }

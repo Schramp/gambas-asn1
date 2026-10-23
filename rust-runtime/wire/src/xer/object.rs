@@ -82,7 +82,7 @@ fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &m
 ///        (`inline_raw`, an extension). Same text as the C++ `ContainedXer`.
 fn encode_contained(c: &dyn crate::containing::Contained, spec: &'static crate::containing::ContainedSpec, out: &mut String, depth: usize) -> Result<(), EncodeError> {
     use crate::containing::{ContainedEncoding, ContainedText};
-    let wire = c.wire_octets(spec, ContainedEncoding::Ber);
+    let wire = c.wire_octets(spec, ContainedEncoding::Ber)?;
     let inner = c.inner_ref();
     let (Some(inner), false) = (inner, spec.xer == ContainedText::Hex) else {
         return xer_encode_primitive(PrimitiveRef::OctetString(&wire), out, depth);

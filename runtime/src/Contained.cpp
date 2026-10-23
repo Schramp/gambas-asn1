@@ -261,7 +261,8 @@ bool decode_contained_alternative(const TypeDescriptor& def, Asn1Object* value,
 std::span<const uint8_t> contained_wire_bytes(const TypeDescriptor& field_def, const ContainedBase& v,
                                               ContainedEncoding outer_encoding,
                                               const ContainedOptions* opts,
-                                              std::vector<uint8_t>& scratch) {
+                                              std::vector<uint8_t>& scratch, std::string& error) {
+    error.clear();
     if (!v.has_value() || !field_def.contained) return v.bytes();
     const ContainedSpec& cs = *field_def.contained;
     // X.682 §11.4: an outer-encoding field's contents follow the encoding
@@ -278,6 +279,13 @@ std::span<const uint8_t> contained_wire_bytes(const TypeDescriptor& field_def, c
         if (entry->encode(args, scratch, err)) return {scratch.data(), scratch.size()};
     } else {
         err = std::string("decoder '") + cs.decoder + "' cannot encode";
+    }
+    // A modified value whose bytes cannot be derived must not be written
+    // as its stale raw bytes. Unmodified bytes in other rules are kept
+    // as they are (a decoder without an encode side, e.g. decryption).
+    if (v.dirty()) {
+        error = std::string(field_def.name) + ": modified contained value cannot be encoded: " + err;
+        return v.bytes();
     }
     if (debug_flags() & DBG_BER_WRITE)
         std::fprintf(stderr, "[CONTAINED] %s: %s; writing the raw bytes\n", field_def.name, err.c_str());

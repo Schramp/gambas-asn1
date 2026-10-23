@@ -751,7 +751,9 @@ struct ContainedXer {
         const auto& cb = *static_cast<const ContainedBase*>(src);
         const ContainedSpec& cs = *def.contained;
         std::vector<uint8_t> scratch;
-        auto wire = contained_wire_bytes(def, cb, ContainedEncoding::Ber, s.contained(), scratch);
+        std::string err;
+        auto wire = contained_wire_bytes(def, cb, ContainedEncoding::Ber, s.contained(), scratch, err);
+        if (!err.empty()) s.set_encode_failed(err.c_str());
         auto& os = s.os();
         ContainedText m = mode(def, s.contained());
         if (m == ContainedText::Hex || !cb.has_value()) {

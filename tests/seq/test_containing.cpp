@@ -148,6 +148,36 @@ static void test_options() {
     check("hook called once with the enclosing value", calls == 1 && seen_kind == Kind::plain);
     check("hook result stored", h.viaConfig.value() && h.viaConfig.value()->id.value() == 3);
     check("built-ins still used for the other fields", h.viaConstraint.status() == ContainedStatus::Decoded);
+
+    // The replacing decoder has no encode side: unmodified bytes are written
+    // as they are, a modified value fails the encode in every codec.
+    auto encode_ber = [&](const Holder& v, std::vector<uint8_t>& out) {
+        BerWriter w(out);
+        w.set_contained(&opts);
+        BerEncodeStream s{w};
+        BerCodec::instance().encode(s, Holder::asn_DEF, &v);
+        return !w.encode_failed();
+    };
+    std::vector<uint8_t> same;
+    check("decode-only decoder: unmodified value encodes byte-exact", encode_ber(h, same) && same == wire);
+    h.viaConfig.value_mut()->id = Integer{4};
+    std::vector<uint8_t> out;
+    check("decode-only decoder: modified value fails BER encode", !encode_ber(h, out));
+    std::vector<uint8_t> pout;
+    PerEncodeStream ps(pout);
+    ps.set_contained(&opts);
+    PerCodec::instance().encode(ps, Holder::asn_DEF, &h);
+    check("decode-only decoder: modified value fails PER encode", ps.encode_failed());
+    std::ostringstream xos;
+    XerEncodeStream xs{xos};
+    xs.set_contained(&opts);
+    XerCodec::instance().encode(xs, Holder::asn_DEF, &h);
+    check("decode-only decoder: modified value fails XER encode", xs.encode_failed());
+    std::ostringstream jos;
+    JerEncodeStream js{jos};
+    js.set_contained(&opts);
+    JerCodec::instance().encode(js, Holder::asn_DEF, &h);
+    check("decode-only decoder: modified value fails JER encode", js.encode_failed());
 }
 
 static void test_choice() {

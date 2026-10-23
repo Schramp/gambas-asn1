@@ -412,7 +412,11 @@ SEQUENCE/SET (or CHOICE) has decoded all its members, so a decoder can look at s
 A failed inner decode keeps the raw bytes and does not fail the outer decode, unless the
 field is `on_error: fail`. On encode, the raw bytes are written unchanged, so a hash or
 signature over them stays valid. Once the inner value is dirty, encode writes its
-encoding instead, through the decoder's encode side (`pkcs7` pads).
+encoding instead, through the decoder's encode side (`pkcs7` pads). If that is not
+possible, the encode fails: C++ reports `encode_failed()` on the writer or stream, Rust
+returns an `EncodeError`. This happens when the decoder has no encode side (a decode-only
+application decoder), the field uses `aper`, or the inner value itself does not encode. A
+modified value is never written as its old bytes.
 
 A field without `ENCODED BY` (`encoding` defaults to the outer encoding) holds
 contents encoded under the same rules as the message around it (X.682 §11.4). The value
