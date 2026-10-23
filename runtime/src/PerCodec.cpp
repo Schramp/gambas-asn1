@@ -587,8 +587,10 @@ public:
     void encode(const PerCodec&, PerEncodeStream& stream,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         std::vector<uint8_t> scratch;
+        std::string err;
         auto bytes = contained_wire_bytes(def, *static_cast<const ContainedBase*>(src),
-                                          ContainedEncoding::PerUnaligned, stream.contained(), scratch);
+                                          ContainedEncoding::PerUnaligned, stream.contained(), scratch, err);
+        if (!err.empty()) stream.set_encode_failed(err.c_str());
         encode_ext_size_and_items(stream, def.constraints, bytes.size(), [&](std::size_t from, std::size_t to) {
             for (std::size_t i = from; i < to; ++i) stream.put_bits(bytes[i], 8);
         });
@@ -606,7 +608,7 @@ public:
             return decode_ok();
         });
         if (!len_r) return decode_err(len_r.error());
-        static_cast<ContainedBase*>(dest)->set_raw_from_wire(bytes);
+        static_cast<ContainedBase*>(dest)->set_raw_from_wire(bytes, ContainedEncoding::PerUnaligned);
         return decode_ok();
     }
 };

@@ -323,20 +323,22 @@ struct ContainedBerHandler final : IBerTypeHandler {
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         std::vector<uint8_t> scratch;
+        std::string err;
         auto bytes = contained_wire_bytes(def, *static_cast<const ContainedBase*>(src),
-                                          ContainedEncoding::Ber, w.contained(), scratch);
+                                          ContainedEncoding::Ber, w.contained(), scratch, err);
+        if (!err.empty()) w.set_encode_failed(err.c_str());
         w.write_primitive(BerTraits<OctetString>::tag(), bytes);
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor&, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
-        static_cast<ContainedBase*>(dest)->set_raw_from_wire(tlv->value);
+        static_cast<ContainedBase*>(dest)->set_raw_from_wire(tlv->value, ContainedEncoding::Ber);
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
                               const TypeDescriptor&, Asn1Object* dest) const override {
-        static_cast<ContainedBase*>(dest)->set_raw_from_wire(content.rest());
+        static_cast<ContainedBase*>(dest)->set_raw_from_wire(content.rest(), ContainedEncoding::Ber);
         return decode_ok();
     }
 };

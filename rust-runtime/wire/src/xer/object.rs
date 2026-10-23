@@ -19,15 +19,15 @@ use crate::xer::writer::{indent, write_close_tag, write_open_tag};
 /// own doc).
 /// @return `Err` for a member or alternative codegen marked unsupported,
 ///         or a primitive kind with no XER form.
-fn encode_bare(m: MemberRef, out: &mut String, depth: usize) -> Result<(), EncodeError> {
+fn encode_bare(m: MemberRef, out: &mut String, depth: usize, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     match m {
         MemberRef::Absent => Ok(()),
         MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => xer_encode_primitive(p, out, depth),
-        MemberRef::Contained(c, spec) => encode_contained(c, spec, out, depth),
-        MemberRef::Composite(inner) => encode_seq_content(inner, out, depth),
-        MemberRef::Choice(inner) => encode_choice_content(inner, out, depth),
-        MemberRef::SeqOf(inner) => encode_seqof_content(inner, out, depth),
+        MemberRef::Contained(c, spec) => encode_contained(c, spec, out, depth, opts),
+        MemberRef::Composite(inner) => encode_seq_content(inner, out, depth, opts),
+        MemberRef::Choice(inner) => encode_choice_content(inner, out, depth, opts),
+        MemberRef::SeqOf(inner) => encode_seqof_content(inner, out, depth, opts),
         MemberRef::Enumerated(slot, spec) => {
             crate::ber::enumerated::xer_encode_enum(out, spec, slot.enum_get());
             Ok(())
@@ -49,7 +49,7 @@ fn encode_bare(m: MemberRef, out: &mut String, depth: usize) -> Result<(), Encod
 /// `xer_instruction` lambda only sets one for an OCTET STRING); every
 /// other call site passes `XerInstruction::Default` and falls straight
 /// through to `encode_bare`.
-fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &mut String, depth: usize) -> Result<(), EncodeError> {
+fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &mut String, depth: usize, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     match m {
         MemberRef::Absent => return Ok(()),
         MemberRef::Unsupported(msg) => return Err(EncodeError::new(msg)),
@@ -62,7 +62,7 @@ fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &m
     match (instruction, &m) {
         (XerInstruction::Base64, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => out.push_str(&crate::xer::octet_string::base64_encode(&x.0)),
         (XerInstruction::Utf8, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => crate::xer::octet_string::utf8_encode(&x.0, out),
-        _ => encode_bare(m, out, depth)?,
+        _ => encode_bare(m, out, depth, opts)?,
     }
     if is_choice {
         // A CHOICE's content ends after its alternative's own closing
@@ -80,11 +80,12 @@ fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &m
 ///        hex, or the inner value as an XMLTypedValue in place of the hex
 ///        (X.680 §22.4), or that plus the raw bytes in an XML comment
 ///        (`inline_raw`, an extension). Same text as the C++ `ContainedXer`.
-fn encode_contained(c: &dyn crate::containing::Contained, spec: &'static crate::containing::ContainedSpec, out: &mut String, depth: usize) -> Result<(), EncodeError> {
+fn encode_contained(c: &dyn crate::containing::Contained, spec: &'static crate::containing::ContainedSpec, out: &mut String, depth: usize, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     use crate::containing::{ContainedEncoding, ContainedText};
-    let wire = c.wire_octets(spec, ContainedEncoding::Ber);
+    let wire = c.wire_octets(spec, ContainedEncoding::Ber, opts)?;
     let inner = c.inner_ref();
-    let (Some(inner), false) = (inner, spec.xer == ContainedText::Hex) else {
+    let form = opts.and_then(|o| o.xer).unwrap_or(spec.xer);
+    let (Some(inner), false) = (inner, form == ContainedText::Hex) else {
         return xer_encode_primitive(PrimitiveRef::OctetString(&wire), out, depth);
     };
     let name = match &inner {
@@ -92,8 +93,8 @@ fn encode_contained(c: &dyn crate::containing::Contained, spec: &'static crate::
         MemberRef::Choice(v) => v.spec().name,
         _ => c.inner_xer_name(),
     };
-    encode_wrapped(name, XerInstruction::Default, inner, out, depth + 1)?;
-    if spec.xer == ContainedText::InlineRaw {
+    encode_wrapped(name, XerInstruction::Default, inner, out, depth + 1, opts)?;
+    if form == ContainedText::InlineRaw {
         out.push('\n');
         out.push_str(&indent(depth + 1));
         out.push_str("<!-- raw: ");
@@ -111,7 +112,7 @@ fn decode_contained(c: &mut dyn crate::containing::Contained, spec: &'static cra
     if ti.name.is_empty() || ti.closing || ti.name.starts_with('!') {
         let mut os = crate::octet_string::OctetString::default();
         xer_decode_primitive(crate::spec::primitive::PrimitiveRefMut::OctetString(&mut os), r)?;
-        c.set_raw_from_wire(os.0);
+        c.set_raw_from_wire(os.0, crate::containing::ContainedEncoding::Ber);
         return Ok(());
     }
     let name = c.inner_xer_name();
@@ -124,13 +125,13 @@ fn decode_contained(c: &mut dyn crate::containing::Contained, spec: &'static cra
         Some(text) => text.strip_prefix("raw:").map(|h| crate::jer::writer::parse_hex_str(h.trim())),
         None => None,
     };
-    c.finish_inline(raw, spec).map_err(|e| DecodeError::new(e, 0))
+    c.finish_inline(raw, spec, r.contained).map_err(|e| DecodeError::new(e, 0))
 }
 
 /// Member-loop content, no outer `<name>`/`</name>` wrapper — see
 /// `xer::sequence::encode_sequence_xer_content`'s own doc for the exact
 /// contract this mirrors (depth convention, empty-SEQUENCE case).
-pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String, depth: usize) -> Result<(), EncodeError> {
+pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String, depth: usize, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let spec = obj.spec();
     let mut any = false;
     for (i, m) in spec.members.iter().enumerate() {
@@ -139,7 +140,7 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String, depth: usize) -> 
             continue;
         }
         any = true;
-        encode_wrapped(m.name, m.xer_instruction, member, out, depth + 1)?;
+        encode_wrapped(m.name, m.xer_instruction, member, out, depth + 1, opts)?;
     }
     if any {
         out.push('\n');
@@ -148,14 +149,18 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String, depth: usize) -> 
     Ok(())
 }
 
-pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut String, depth: usize) -> Result<(), EncodeError> {
-    encode_seq_content(obj, out, depth)
+pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut String, depth: usize, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
+    encode_seq_content(obj, out, depth, opts)
 }
 
 pub fn encode_seq(obj: &dyn Asn1Seq) -> Result<String, EncodeError> {
+    encode_seq_doc(obj, None)
+}
+
+fn encode_seq_doc(obj: &dyn Asn1Seq, opts: Option<&crate::containing::ContainedOptions>) -> Result<String, EncodeError> {
     let mut out = String::new();
     write_open_tag(&mut out, obj.spec().name);
-    encode_seq_content(obj, &mut out, 0)?;
+    encode_seq_content(obj, &mut out, 0, opts)?;
     write_close_tag(&mut out, obj.spec().name);
     out.push('\n');
     Ok(out)
@@ -183,7 +188,7 @@ pub fn decode_seq_content_into(obj: &mut dyn Asn1Seq, r: &mut XerReader) -> Resu
     }
     // Contained fields that arrived as hex: decode their inner value.
     if !obj.spec().contained_members.is_empty() {
-        crate::containing::decode_contained_members(obj, crate::containing::ContainedEncoding::Ber, r.depth, None)
+        crate::containing::decode_contained_members(obj, crate::containing::ContainedEncoding::Ber, r.depth, r.contained)
             .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), 0))?;
     }
     Ok(())
@@ -239,7 +244,7 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut XerReader) -> Result<(), D
 /// Writes `\n<indent><altname>content</altname>`, no trailing newline —
 /// the shape a containing member's own wrapper (`encode_wrapped`) or a
 /// further-nested recursion needs.
-pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usize) -> Result<(), EncodeError> {
+pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usize, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let Some(i) = obj.active_index() else {
         return Err(crate::spec::object::no_alternative_selected(obj.spec()));
     };
@@ -253,7 +258,7 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usiz
     // place for the close tag to follow directly.
     let is_nested_choice = matches!(active, MemberRef::Choice(_));
     let mut inner = String::new();
-    encode_bare(active, &mut inner, depth + 1)?;
+    encode_bare(active, &mut inner, depth + 1, opts)?;
     if is_nested_choice {
         inner.push('\n');
         inner.push_str(&indent(depth + 1));
@@ -271,9 +276,13 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usiz
 /// uses `encode_choice_content` (via `encode_bare`) directly, no type
 /// name wrapper.
 pub fn encode_choice(obj: &dyn Asn1Choice) -> Result<String, EncodeError> {
+    encode_choice_doc(obj, None)
+}
+
+fn encode_choice_doc(obj: &dyn Asn1Choice, opts: Option<&crate::containing::ContainedOptions>) -> Result<String, EncodeError> {
     let mut out = String::new();
     write_open_tag(&mut out, obj.spec().name);
-    encode_choice_content(obj, &mut out, 0)?;
+    encode_choice_content(obj, &mut out, 0, opts)?;
     // Matches `encode_seq`'s own closing convention (and the
     // ground-truth C++ runtime's `SequenceXerHandler`/`ChoiceXerHandler`
     // document-root form): the closing tag sits on its own, un-indented
@@ -300,7 +309,7 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut XerReader) -
             if !obj.spec().has_contained {
                 return Ok(());
             }
-            return crate::containing::decode_contained_alternative(obj, crate::containing::ContainedEncoding::Ber, r.depth, None)
+            return crate::containing::decode_contained_alternative(obj, crate::containing::ContainedEncoding::Ber, r.depth, r.contained)
                 .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), 0));
         }
     }
@@ -308,9 +317,14 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut XerReader) -
 }
 
 pub fn decode_choice(xml: &str, obj: &mut dyn Asn1Choice) -> Result<(), DecodeError> {
-    let mut r = XerReader::new(xml);
+    decode_choice_into(obj, &mut XerReader::new(xml))
+}
+
+/// @brief `decode_choice` over a caller's reader (e.g. one carrying
+///        contained-value settings).
+fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut XerReader) -> Result<(), DecodeError> {
     r.consume_open_tag(obj.spec().name)?;
-    decode_choice_content_into(obj, &mut r)?;
+    decode_choice_content_into(obj, r)?;
     r.consume_close_tag(obj.spec().name)?;
     Ok(())
 }
@@ -325,7 +339,7 @@ pub fn decode_choice(xml: &str, obj: &mut dyn Asn1Choice) -> Result<(), DecodeEr
 /// element its own type name; CHOICE/ENUMERATED self-delimit (no
 /// wrapper, matching their own standalone form) — same per-kind split
 /// `xer::seq_of`'s own doc documents for the old design.
-pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize) -> Result<(), EncodeError> {
+pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let name_override = obj.elem_xer_name();
     let mut any = false;
     for i in 0..obj.len() {
@@ -359,19 +373,19 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
             // `AsMemberRef::XER_INSTRUCTION`, a compile-time fact of the
             // element type that `get(i)`'s unwrap never had a chance to
             // throw away (no element value needed to read it).
-            MemberRef::Primitive(_) | MemberRef::Contained(..) => encode_wrapped(name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i)), obj.elem_xer_instruction(), el, out, depth + 1)?,
+            MemberRef::Primitive(_) | MemberRef::Contained(..) => encode_wrapped(name_override.unwrap_or_else(|| obj.elem_natural_xer_name(i)), obj.elem_xer_instruction(), el, out, depth + 1, opts)?,
             MemberRef::Composite(inner) => {
                 let name = name_override.unwrap_or(inner.spec().name);
-                encode_wrapped(name, XerInstruction::Default, el, out, depth + 1)?
+                encode_wrapped(name, XerInstruction::Default, el, out, depth + 1, opts)?
             }
             MemberRef::Choice(_) | MemberRef::Enumerated(..) => {
                 out.push('\n');
                 out.push_str(&indent(depth + 1));
-                encode_bare(el, out, depth + 1)?;
+                encode_bare(el, out, depth + 1, opts)?;
             }
             MemberRef::SeqOf(inner) => {
                 let name = name_override.unwrap_or(inner.own_xer_name());
-                encode_wrapped(name, XerInstruction::Default, el, out, depth + 1)?
+                encode_wrapped(name, XerInstruction::Default, el, out, depth + 1, opts)?
             }
             MemberRef::Unsupported(msg) => return Err(EncodeError::new(*msg)),
             MemberRef::Absent => unreachable!(),
@@ -389,9 +403,13 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
 /// `SeqOf<T>`/`SetOf<T>` uses `encode_seqof_content` directly instead
 /// (no root wrapper of its own).
 pub fn encode_seqof_named(obj: &dyn Asn1SeqOf) -> Result<String, EncodeError> {
+    encode_seqof_doc(obj, None)
+}
+
+fn encode_seqof_doc(obj: &dyn Asn1SeqOf, opts: Option<&crate::containing::ContainedOptions>) -> Result<String, EncodeError> {
     let mut out = String::new();
     write_open_tag(&mut out, obj.own_xer_name());
-    encode_seqof_content(obj, &mut out, 0)?;
+    encode_seqof_content(obj, &mut out, 0, opts)?;
     out.push('\n');
     write_close_tag(&mut out, obj.own_xer_name());
     out.push('\n');
@@ -450,10 +468,21 @@ pub(crate) fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, r: &mut XerRead
 ///         cannot encode in XER.
 /// @see X.693 §8.3.1 — document root element named by the type.
 pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> Result<String, EncodeError> {
+    encode_pdu_doc(v, None)
+}
+
+/// @brief `encode_pdu` with contained-value settings: the XER form
+///        override and the decoder registry's encode side apply to every
+///        contained field (X.682 §11).
+pub fn encode_pdu_with<T: Asn1Pdu + ?Sized>(v: &T, opts: &crate::containing::ContainedOptions) -> Result<String, EncodeError> {
+    encode_pdu_doc(v, Some(opts))
+}
+
+fn encode_pdu_doc<T: Asn1Pdu + ?Sized>(v: &T, opts: Option<&crate::containing::ContainedOptions>) -> Result<String, EncodeError> {
     match v.as_member_ref() {
-        MemberRef::Composite(s) => encode_seq(s),
-        MemberRef::Choice(c) => encode_choice(c),
-        MemberRef::SeqOf(s) => encode_seqof_named(s),
+        MemberRef::Composite(s) => encode_seq_doc(s, opts),
+        MemberRef::Choice(c) => encode_choice_doc(c, opts),
+        MemberRef::SeqOf(s) => encode_seqof_doc(s, opts),
         _ => panic!("{NOT_A_PDU}"),
     }
 }
@@ -464,11 +493,24 @@ pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> Result<String, EncodeError> {
 ///         member name mismatch.
 /// @see X.693 §8.3.1.
 pub fn decode_pdu<T: Asn1Pdu>(xml: &str) -> Result<T, DecodeError> {
+    decode_pdu_from(&mut XerReader::new(xml))
+}
+
+/// @brief `decode_pdu` with contained-value settings: the decoder registry
+///        and `off` apply to every contained field (X.682 §11).
+/// @return The decoded value.
+pub fn decode_pdu_with<T: Asn1Pdu>(xml: &str, opts: &crate::containing::ContainedOptions) -> Result<T, DecodeError> {
+    let mut r = XerReader::new(xml);
+    r.set_contained(opts);
+    decode_pdu_from(&mut r)
+}
+
+fn decode_pdu_from<T: Asn1Pdu>(r: &mut XerReader) -> Result<T, DecodeError> {
     let mut v = T::default();
     match v.as_member_ref_mut() {
-        MemberRefMut::Composite(s) => decode_seq_into(s, &mut XerReader::new(xml))?,
-        MemberRefMut::Choice(c) => decode_choice(xml, c)?,
-        MemberRefMut::SeqOf(s) => decode_seqof_named_into(s, &mut XerReader::new(xml))?,
+        MemberRefMut::Composite(s) => decode_seq_into(s, r)?,
+        MemberRefMut::Choice(c) => decode_choice_into(c, r)?,
+        MemberRefMut::SeqOf(s) => decode_seqof_named_into(s, r)?,
         _ => panic!("{NOT_A_PDU}"),
     }
     Ok(v)

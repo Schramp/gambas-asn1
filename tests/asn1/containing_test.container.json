@@ -10,6 +10,12 @@
     },
     {
       "module": "ContainingTest",
+      "type": "Holder",
+      "field": "viaSized",
+      "inner_type": "Inner"
+    },
+    {
+      "module": "ContainingTest",
       "type": "Pick",
       "field": "inner",
       "xer": "inline",

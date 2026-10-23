@@ -412,7 +412,20 @@ SEQUENCE/SET (or CHOICE) has decoded all its members, so a decoder can look at s
 A failed inner decode keeps the raw bytes and does not fail the outer decode, unless the
 field is `on_error: fail`. On encode, the raw bytes are written unchanged, so a hash or
 signature over them stays valid. Once the inner value is dirty, encode writes its
-encoding instead, through the decoder's encode side (`pkcs7` pads).
+encoding instead, through the decoder's encode side (`pkcs7` pads). If that is not
+possible, the encode fails: C++ reports `encode_failed()` on the writer or stream, Rust
+returns an `EncodeError`. This happens when the decoder has no encode side (a decode-only
+application decoder), the field uses `aper`, or the inner value itself does not encode. A
+modified value is never written as its old bytes.
+
+A field without `ENCODED BY` (`encoding` defaults to the outer encoding) holds
+contents encoded under the same rules as the message around it (X.682 §11.4). The value
+remembers which rules its raw bytes are in. If it is written under other rules, encode
+re-derives the bytes from the inner value: for example, a BER-decoded record written as
+PER, or a value read from inline XER/JER or made by the random filler (bytes derived as
+BER) and then written as PER. Bytes stay as they are when the rules match, when the value
+was not decoded, or when the bytes were set directly with `set(...)`. XER and JER carry such
+a field's contents as BER.
 
 Decoders are looked up by name in an `asn1::ContainedDecoders` registry
 (`<asn1cpp/codec/ContainedDecoders.hpp>`). Built-ins:
@@ -471,12 +484,14 @@ them, and its `raw` part is taken as the raw bytes.
 **Runtime (Rust).** `asn1cpp_wire::containing::Containing<T>` has the same model.
 It derefs to the raw `OctetString` and offers `bytes()`, `set_raw()`, `status()`,
 `error()`, `value()`, `value_mut()` and `set_value()`. The built-in decoders are the
-same. An application registry goes in `ContainedOptions { decoders: Some(reg), .. }`,
-passed to `ber::object::decode_pdu_with` / `per::object::decode_pdu_with` (or
-`Reader::set_contained`). A decoder gets the enclosing value as `ContainedDecodeArgs::outer`
-and calls `containing::decode_value` / `decode_value_from` after its own transform.
-Re-encoding a modified inner value uses the built-in registry; to encode with an
-application encoder (e.g. one that encrypts), set the raw bytes with `set_raw()`.
+same. An application registry goes in `ContainedOptions { decoders: Some(reg), .. }`.
+Every codec takes it on decode as `decode_pdu_with` (BER, PER, XER, JER) or through the
+reader's `set_contained`, and on encode as `encode_pdu_with`, plus `encode_pdu_into_with`
+for BER and PER. On encode, the registry's encode side re-derives a modified inner value,
+for example with an application encoder that encrypts. `ContainedOptions::xer`/`jer`
+override every field's XER/JER form. A decoder gets the enclosing value as
+`ContainedDecodeArgs::outer` and calls `containing::decode_value` / `decode_value_from`
+after its own transform.
 
 ---
 

@@ -1,0 +1,458 @@
+=== PS-PDU #1 ===
+<PS-PDU>
+    <pSHeader>
+        <li-psDomainId>1.3.6.1.26</li-psDomainId>
+        <lawfulInterceptionIdentifier>DE1BA30E9F60D65C7EACDAA18CF8FC</lawfulInterceptionIdentifier>
+        <authorizationCountryCode>FP</authorizationCountryCode>
+        <communicationIdentifier>
+            <networkIdentifier>
+                <operatorIdentifier>AC821DCEFFD5849DE8DFF76794</operatorIdentifier>
+                <networkElementIdentifier>92C39812CAC50CA3771DEC</networkElementIdentifier>
+            </networkIdentifier>
+            <communicationIdentityNumber>1381341985</communicationIdentityNumber>
+            <cINExtension>
+                <both-IRI-CC>
+                    <iri-CC>
+                        <cc>
+                            <OCTET_STRING>9BF5F0</OCTET_STRING>
+                        </cc>
+                    </iri-CC>
+                    <iri-IRI>BC662347F83C</iri-IRI>
+                </both-IRI-CC>
+            </cINExtension>
+        </communicationIdentifier>
+        <sequenceNumber>2052812436</sequenceNumber>
+        <timeStamp>20240101120000Z</timeStamp>
+        <interceptionPointID>vnVjzy3</interceptionPointID>
+        <timeStampQualifier><timeOfMediation/></timeStampQualifier>
+    </pSHeader>
+    <payload>
+        <encryptionContainer>
+            <encryptionType><none/></encryptionType>
+            <encryptedPayload>301E800201B7A118A1163014A212A2108005010306011FA1078005D54D65A119000000000000000000000000000000</encryptedPayload>
+            <encryptedPayloadType><part4/></encryptedPayloadType>
+        </encryptionContainer>
+    </payload>
+</PS-PDU>
+--- EncryptedPayload (32 bytes, 15 zero-padded) ---
+<EncryptedPayload>
+    <byteCounter>439</byteCounter>
+    <payload>
+        <cCPayloadSequence>
+            <CCPayload>
+                <cCContents>
+                    <iPCC>
+                        <iPCCObjId>1.3.6.1.31</iPCCObjId>
+                        <iPCCContents>
+                            <iPPackets>D54D65A119</iPPackets>
+                        </iPCCContents>
+                    </iPCC>
+                </cCContents>
+            </CCPayload>
+        </cCPayloadSequence>
+    </payload>
+</EncryptedPayload>
+=== PS-PDU #2 ===
+<PS-PDU>
+    <pSHeader>
+        <li-psDomainId>1.3.6.1.84</li-psDomainId>
+        <lawfulInterceptionIdentifier>2FAAF049930B30C2D8416347BB73A4BFB6EC5737F0E18F</lawfulInterceptionIdentifier>
+        <authorizationCountryCode>+o</authorizationCountryCode>
+        <communicationIdentifier>
+            <networkIdentifier>
+                <operatorIdentifier>64D9ADB1F247AC3975905F32</operatorIdentifier>
+                <networkElementIdentifier>A0A8484660135CC175DAAC6DC8F4AA54</networkElementIdentifier>
+            </networkIdentifier>
+            <communicationIdentityNumber>2496186831</communicationIdentityNumber>
+        </communicationIdentifier>
+        <sequenceNumber>157480073</sequenceNumber>
+        <timeStamp>20240101120000Z</timeStamp>
+        <interceptionPointID>C:j</interceptionPointID>
+        <timeStampQualifier><timeOfMediation/></timeStampQualifier>
+    </pSHeader>
+    <payload>
+        <iLHIPayload>
+            <ILHIPayload>
+                <iLHIObjId>1.3.6.1.20</iLHIObjId>
+                <resPayload>
+                    <identifier>1.3.6.1.89</identifier>
+                    <contents>8B082A65D95B92</contents>
+                </resPayload>
+                <originalPayload>
+                    <identifier>1.3.6.1.39</identifier>
+                    <contents>67</contents>
+                </originalPayload>
+            </ILHIPayload>
+        </iLHIPayload>
+    </payload>
+</PS-PDU>
+=== PS-PDU #3 ===
+<PS-PDU>
+    <pSHeader>
+        <li-psDomainId>1.3.6.1.17</li-psDomainId>
+        <lawfulInterceptionIdentifier>496A48BDD6</lawfulInterceptionIdentifier>
+        <authorizationCountryCode>-3</authorizationCountryCode>
+        <communicationIdentifier>
+            <networkIdentifier>
+                <operatorIdentifier>D88E9D406C0A09</operatorIdentifier>
+                <networkElementIdentifier>6AE7E0E8F480ED78</networkElementIdentifier>
+            </networkIdentifier>
+            <communicationIdentityNumber>3176187245</communicationIdentityNumber>
+            <cINExtension>
+                <iri-to-CC>
+                    <cc>
+                        <OCTET_STRING>D6A3</OCTET_STRING>
+                    </cc>
+                </iri-to-CC>
+            </cINExtension>
+        </communicationIdentifier>
+        <sequenceNumber>2113067042</sequenceNumber>
+        <interceptionPointID>jaG+d</interceptionPointID>
+    </pSHeader>
+    <payload>
+        <iRIPayloadSequence>
+            <IRIPayload>
+                <iRIType><iRI-Begin/></iRIType>
+                <timeStamp>20240101120000Z</timeStamp>
+                <iRIContents>
+                    <eTSI671IRI>
+                        <iRI-Parameters>
+                            <lawfulInterceptionIdentifier>AB9066E5FC1BA78BEAFB3DFD51AD5C2AD61C36ECF2E1</lawfulInterceptionIdentifier>
+                            <communicationIdentifier>
+                                <network-Identifier>
+                                    <operator-Identifier>50</operator-Identifier>
+                                </network-Identifier>
+                            </communicationIdentifier>
+                            <timeStamp>
+                                <utcTime>240101120000Z</utcTime>
+                            </timeStamp>
+                        </iRI-Parameters>
+                    </eTSI671IRI>
+                </iRIContents>
+            </IRIPayload>
+        </iRIPayloadSequence>
+    </payload>
+</PS-PDU>
+=== PS-PDU #4 ===
+<PS-PDU>
+    <pSHeader>
+        <li-psDomainId>1.3.6.1.70</li-psDomainId>
+        <lawfulInterceptionIdentifier>920994A5752415580D</lawfulInterceptionIdentifier>
+        <authorizationCountryCode>+:</authorizationCountryCode>
+        <communicationIdentifier>
+            <networkIdentifier>
+                <operatorIdentifier>50AD8A9E49BAB9F391F7</operatorIdentifier>
+                <networkElementIdentifier>4A37BEDBFDBA69332F2FBA936214147B</networkElementIdentifier>
+            </networkIdentifier>
+            <deliveryCountryCode>Zm</deliveryCountryCode>
+        </communicationIdentifier>
+        <sequenceNumber>929943912</sequenceNumber>
+        <timeStamp>20240101120000Z</timeStamp>
+        <timeStampQualifier><unknown/></timeStampQualifier>
+    </pSHeader>
+    <payload>
+        <encryptionContainer>
+            <encryptionType><none/></encryptionType>
+            <encryptedPayload>300A8002022DA104A2028600000000000000000000</encryptedPayload>
+        </encryptionContainer>
+    </payload>
+</PS-PDU>
+--- EncryptedPayload (11 bytes, 10 zero-padded) ---
+<EncryptedPayload>
+    <byteCounter>557</byteCounter>
+    <payload>
+        <tRIPayload>
+            <lastSegmentFlag></lastSegmentFlag>
+        </tRIPayload>
+    </payload>
+</EncryptedPayload>
+=== PS-PDU #5 ===
+<PS-PDU>
+    <pSHeader>
+        <li-psDomainId>1.3.6.1.42</li-psDomainId>
+        <lawfulInterceptionIdentifier>AF1F2EB702FCD625</lawfulInterceptionIdentifier>
+        <authorizationCountryCode>JB</authorizationCountryCode>
+        <communicationIdentifier>
+            <networkIdentifier>
+                <operatorIdentifier>EC98E4F0A6CF1792B75CE3D5</operatorIdentifier>
+                <networkElementIdentifier>E02B99F5B5CF0B</networkElementIdentifier>
+            </networkIdentifier>
+            <deliveryCountryCode>RC</deliveryCountryCode>
+            <cINExtension>
+                <iri-to-CC>
+                    <cc>
+                        <OCTET_STRING>3D164A</OCTET_STRING>
+                    </cc>
+                </iri-to-CC>
+            </cINExtension>
+        </communicationIdentifier>
+        <sequenceNumber>753400414</sequenceNumber>
+        <timeStamp>20240101120000Z</timeStamp>
+    </pSHeader>
+    <payload>
+        <hI1-Operation>
+            <liDeactivated>
+                <domainID>1.3.6.1.22</domainID>
+                <lawfulInterceptionIdentifier>85C67010737EB3A49803789745F0950C232B6A1A22</lawfulInterceptionIdentifier>
+                <communicationIdentifier>
+                    <network-Identifier>
+                        <operator-Identifier>A3F4</operator-Identifier>
+                    </network-Identifier>
+                </communicationIdentifier>
+                <timeStamp>
+                    <utcTime>240101120000Z</utcTime>
+                </timeStamp>
+            </liDeactivated>
+        </hI1-Operation>
+    </payload>
+</PS-PDU>
+=== PS-PDU #6 ===
+<PS-PDU>
+    <pSHeader>
+        <li-psDomainId>1.3.6.1.64</li-psDomainId>
+        <lawfulInterceptionIdentifier>AA6A2BEA5A19A5</lawfulInterceptionIdentifier>
+        <authorizationCountryCode>OX</authorizationCountryCode>
+        <communicationIdentifier>
+            <networkIdentifier>
+                <operatorIdentifier>368B31DDECBF29892B60B3A7B47F</operatorIdentifier>
+            </networkIdentifier>
+            <communicationIdentityNumber>3613676825</communicationIdentityNumber>
+            <deliveryCountryCode>Ar</deliveryCountryCode>
+        </communicationIdentifier>
+        <sequenceNumber>281785078</sequenceNumber>
+        <microSecondTimeStamp>
+            <seconds>201</seconds>
+            <microSeconds>285273</microSeconds>
+        </microSecondTimeStamp>
+        <timeStampQualifier><unknown/></timeStampQualifier>
+    </pSHeader>
+    <payload>
+        <tRIPayload>
+            <testPDU></testPDU>
+        </tRIPayload>
+    </payload>
+</PS-PDU>
+=== PS-PDU #7 ===
+<PS-PDU>
+    <pSHeader>
+        <li-psDomainId>1.3.6.1.13</li-psDomainId>
+        <lawfulInterceptionIdentifier>186A122C2BD7AD6C06A151E17B9F2ED720A60FD0FF7425</lawfulInterceptionIdentifier>
+        <authorizationCountryCode>bc</authorizationCountryCode>
+        <communicationIdentifier>
+            <networkIdentifier>
+                <operatorIdentifier>31C4695C7795D32AC660</operatorIdentifier>
+            </networkIdentifier>
+            <communicationIdentityNumber>2833477386</communicationIdentityNumber>
+        </communicationIdentifier>
+        <sequenceNumber>1546051030</sequenceNumber>
+        <timeStamp>20240101120000Z</timeStamp>
+        <timeStampQualifier><timeOfInterception/></timeStampQualifier>
+    </pSHeader>
+    <payload>
+        <encryptionContainer>
+            <encryptionType><none/></encryptionType>
+            <encryptedPayload>3009800119A104A2028600</encryptedPayload>
+            <encryptedPayloadType><part6/></encryptedPayloadType>
+        </encryptionContainer>
+    </payload>
+</PS-PDU>
+--- EncryptedPayload (10 bytes, 1 zero-padded) ---
+<EncryptedPayload>
+    <byteCounter>25</byteCounter>
+    <payload>
+        <tRIPayload>
+            <lastSegmentFlag></lastSegmentFlag>
+        </tRIPayload>
+    </payload>
+</EncryptedPayload>
+=== PS-PDU #8 ===
+<PS-PDU>
+    <pSHeader>
+        <li-psDomainId>1.3.6.1.13</li-psDomainId>
+        <lawfulInterceptionIdentifier>671CE0197A0F145237365952E1A83344B47CD9AE83</lawfulInterceptionIdentifier>
+        <authorizationCountryCode>Rq</authorizationCountryCode>
+        <communicationIdentifier>
+            <networkIdentifier>
+                <operatorIdentifier>BC85FDF115DD0DBF4155569AAA</operatorIdentifier>
+            </networkIdentifier>
+            <communicationIdentityNumber>1488630258</communicationIdentityNumber>
+            <deliveryCountryCode>Bh</deliveryCountryCode>
+        </communicationIdentifier>
+        <sequenceNumber>2617486036</sequenceNumber>
+        <timeStamp>20240101120000Z</timeStamp>
+    </pSHeader>
+    <payload>
+        <tRIPayload>
+            <testPDU></testPDU>
+        </tRIPayload>
+    </payload>
+</PS-PDU>
+=== PS-PDU #9 ===
+<PS-PDU>
+    <pSHeader>
+        <li-psDomainId>1.3.6.1.16</li-psDomainId>
+        <lawfulInterceptionIdentifier>4F37</lawfulInterceptionIdentifier>
+        <authorizationCountryCode>)6</authorizationCountryCode>
+        <communicationIdentifier>
+            <networkIdentifier>
+                <operatorIdentifier>BAB12657676D2BFDED5ACE27046F5B32</operatorIdentifier>
+                <networkElementIdentifier>613743884A51F669</networkElementIdentifier>
+            </networkIdentifier>
+            <deliveryCountryCode>C-</deliveryCountryCode>
+        </communicationIdentifier>
+        <sequenceNumber>1142868805</sequenceNumber>
+        <timeStamp>20240101120000Z</timeStamp>
+        <interceptionPointID>cO=dI/</interceptionPointID>
+        <microSecondTimeStamp>
+            <seconds>462</seconds>
+            <microSeconds>355243</microSeconds>
+        </microSecondTimeStamp>
+        <timeStampQualifier><timeOfMediation/></timeStampQualifier>
+    </pSHeader>
+    <payload>
+        <threeGPP-HI1-Operation>
+            <liActivated>
+                <domainID>1.3.6.1.7</domainID>
+                <lawfulInterceptionIdentifier>B58E02EFDB90</lawfulInterceptionIdentifier>
+                <communicationIdentifier>
+                    <network-Identifier>
+                        <operator-Identifier>6529</operator-Identifier>
+                    </network-Identifier>
+                </communicationIdentifier>
+                <timeStamp>
+                    <utcTime>240101120000Z</utcTime>
+                </timeStamp>
+                <threeGPP-National-HI1-ASN1parameters>
+                    <countryCode>6A</countryCode>
+                </threeGPP-National-HI1-ASN1parameters>
+                <target-Information></target-Information>
+                <network-Identifier>
+                    <operator-Identifier>B7DA8AD939</operator-Identifier>
+                </network-Identifier>
+            </liActivated>
+        </threeGPP-HI1-Operation>
+    </payload>
+</PS-PDU>
+=== PS-PDU #10 ===
+<PS-PDU>
+    <pSHeader>
+        <li-psDomainId>1.3.6.1.62</li-psDomainId>
+        <lawfulInterceptionIdentifier>7AF20C7A65237F5DF18B8B319867</lawfulInterceptionIdentifier>
+        <authorizationCountryCode>sH</authorizationCountryCode>
+        <communicationIdentifier>
+            <networkIdentifier>
+                <operatorIdentifier>EA7494E50E2D67111653353D5C3CF6C7</operatorIdentifier>
+            </networkIdentifier>
+            <deliveryCountryCode>dG</deliveryCountryCode>
+        </communicationIdentifier>
+        <sequenceNumber>4053267410</sequenceNumber>
+        <timeStamp>20240101120000Z</timeStamp>
+        <microSecondTimeStamp>
+            <seconds>743</seconds>
+            <microSeconds>428710</microSeconds>
+        </microSecondTimeStamp>
+        <timeStampQualifier><unknown/></timeStampQualifier>
+    </pSHeader>
+    <payload>
+        <encryptionContainer>
+            <encryptionType><none/></encryptionType>
+            <encryptedPayload>301F8002022AA119A217A015A007020500A79673CF8101028307624AF94CB6548500000000000000000000</encryptedPayload>
+        </encryptionContainer>
+    </payload>
+</PS-PDU>
+--- EncryptedPayload (33 bytes, 10 zero-padded) ---
+<EncryptedPayload>
+    <byteCounter>554</byteCounter>
+    <payload>
+        <tRIPayload>
+            <integrityCheck>
+                <includedSequenceNumbers>
+                    <INTEGER>2811655119</INTEGER>
+                </includedSequenceNumbers>
+                <checkType><signature/></checkType>
+                <checkValue>624AF94CB65485</checkValue>
+            </integrityCheck>
+        </tRIPayload>
+    </payload>
+</EncryptedPayload>
+=== PS-PDU #11 ===
+<PS-PDU>
+    <pSHeader>
+        <li-psDomainId>1.3.6.1.8</li-psDomainId>
+        <lawfulInterceptionIdentifier>611D2383BCC1E0AAEE9FFABB371F8387BCD2</lawfulInterceptionIdentifier>
+        <authorizationCountryCode>79</authorizationCountryCode>
+        <communicationIdentifier>
+            <networkIdentifier>
+                <operatorIdentifier>96D8</operatorIdentifier>
+            </networkIdentifier>
+            <communicationIdentityNumber>3111574627</communicationIdentityNumber>
+            <deliveryCountryCode>3 </deliveryCountryCode>
+        </communicationIdentifier>
+        <sequenceNumber>2068203526</sequenceNumber>
+        <interceptionPointID>?20V</interceptionPointID>
+        <microSecondTimeStamp>
+            <seconds>430</seconds>
+            <microSeconds>250394</microSeconds>
+        </microSecondTimeStamp>
+        <timeStampQualifier><unknown/></timeStampQualifier>
+    </pSHeader>
+    <payload>
+        <iLHIPayload>
+            <ILHIPayload>
+                <iLHIObjId>1.3.6.1.13</iLHIObjId>
+                <resPayload>
+                    <identifier>1.3.6.1.34</identifier>
+                    <contents>5B7CE0BE737C57</contents>
+                </resPayload>
+                <mappingInfo></mappingInfo>
+            </ILHIPayload>
+        </iLHIPayload>
+    </payload>
+</PS-PDU>
+=== PS-PDU #12 ===
+<PS-PDU>
+    <pSHeader>
+        <li-psDomainId>1.3.6.1.22</li-psDomainId>
+        <lawfulInterceptionIdentifier>76F97EE27DC59A7E1EB9DB99DDC09EB4D27432797FA7</lawfulInterceptionIdentifier>
+        <communicationIdentifier>
+            <networkIdentifier>
+                <operatorIdentifier>74FB6031DA314AD0EA67</operatorIdentifier>
+                <networkElementIdentifier>3466928B8652</networkElementIdentifier>
+            </networkIdentifier>
+            <cINExtension>
+                <both-IRI-CC>
+                    <iri-CC>
+                        <cc>
+                            <OCTET_STRING>83</OCTET_STRING>
+                        </cc>
+                    </iri-CC>
+                    <iri-IRI>E2DE7609</iri-IRI>
+                </both-IRI-CC>
+            </cINExtension>
+        </communicationIdentifier>
+        <sequenceNumber>1379822915</sequenceNumber>
+        <microSecondTimeStamp>
+            <seconds>592</seconds>
+            <microSeconds>164149</microSeconds>
+        </microSecondTimeStamp>
+    </pSHeader>
+    <payload>
+        <hI1-Operation>
+            <liModified>
+                <domainID>1.3.6.1.18</domainID>
+                <lawfulInterceptionIdentifier>82</lawfulInterceptionIdentifier>
+                <communicationIdentifier>
+                    <network-Identifier>
+                        <operator-Identifier>25DD6F49</operator-Identifier>
+                    </network-Identifier>
+                </communicationIdentifier>
+                <timeStamp>
+                    <localTime>
+                        <generalizedTime>20240101120000Z</generalizedTime>
+                        <winterSummerIndication><winterTime/></winterSummerIndication>
+                    </localTime>
+                </timeStamp>
+            </liModified>
+        </hI1-Operation>
+    </payload>
+</PS-PDU>

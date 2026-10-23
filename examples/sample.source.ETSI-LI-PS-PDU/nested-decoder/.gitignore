@@ -1,2 +1,5 @@
 nested-decoder
 *.d
+gen-testdata
+gen-testdata.d
+actual.xer

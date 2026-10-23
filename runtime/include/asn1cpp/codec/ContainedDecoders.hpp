@@ -153,14 +153,24 @@ bool decode_contained_alternative(const TypeDescriptor& def, Asn1Object* value,
                                   ContainedEncoding outer_encoding, const DecodeDepth& depth,
                                   const ContainedOptions* opts, std::string& error);
 
-/// @brief The bytes a contained field encodes as: its raw bytes, or, after
-///        the inner value was modified, the inner value's encoding.
+/// @brief The bytes a contained field encodes as: its raw bytes, or the
+///        inner value's encoding after the value was modified, or when the
+///        field follows the outer encoding (X.682 §11.4) and its raw bytes
+///        are in other rules than \p outer_encoding.
+/// @param field_def       The field's own descriptor.
+/// @param v               The field's value.
+/// @param outer_encoding  Encoding rules being written (Ber or PerUnaligned;
+///                        XER/JER write an outer-encoding field as Ber).
+/// @param opts            Contained-value settings (nullptr: defaults).
 /// @param scratch  Storage for derived bytes.
-/// @return The bytes to write.
+/// @param error    Set when the value was modified and its bytes cannot be
+///                 derived (no encode side, or the inner encode failed);
+///                 the caller then fails the encode. Empty otherwise.
+/// @return The bytes to write (the raw bytes when \p error is set).
 std::span<const uint8_t> contained_wire_bytes(const TypeDescriptor& field_def,
                                               const ContainedBase& v,
                                               ContainedEncoding outer_encoding,
                                               const ContainedOptions* opts,
-                                              std::vector<uint8_t>& scratch);
+                                              std::vector<uint8_t>& scratch, std::string& error);
 
 } // namespace asn1

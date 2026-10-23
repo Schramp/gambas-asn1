@@ -408,7 +408,9 @@ void RandomFiller::fill_enum(Asn1Object* obj, const EnumSpec& spec) {
 /// @brief Fill a contained field (\c Containing<T>, X.682 §11): a random
 ///        inner value, encoded through the field's decoder (BER unless the
 ///        field names other encoding rules; `pkcs7` pads), stored as the raw
-///        bytes with the value kept and not dirty. A `zero_padding` field
+///        bytes with the value kept and not dirty (an outer-encoding field
+///        written as PER re-derives them, see \c ContainedBase). A
+///        `zero_padding` field
 ///        gets 0–15 trailing zero octets so its decoder's tail check runs.
 /// @return False when the inner value cannot be filled or encoded.
 bool RandomFiller::fill_contained(Asn1Object* obj, const TypeDescriptor& def, int depth, bool mandatory) {
@@ -427,7 +429,7 @@ bool RandomFiller::fill_contained(Asn1Object* obj, const TypeDescriptor& def, in
     if (!ok) return false;
     if (std::string_view(cs.decoder) == "zero_padding")
         bytes.insert(bytes.end(), static_cast<std::size_t>(rand_int(0, 15)), uint8_t{0});
-    cb.set_raw_for_value(bytes);
+    cb.set_raw_for_value(bytes, enc);
     return true;
 }
 

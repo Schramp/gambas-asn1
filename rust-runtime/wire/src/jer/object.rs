@@ -14,15 +14,15 @@ use crate::spec::primitive::{jer_decode_primitive, jer_encode_primitive};
 /// @return `Err` for a member or alternative codegen marked unsupported,
 ///         or a primitive kind with no JER form.
 /// @see X.697 — JSON encoding rules.
-fn encode_bare(m: MemberRef, c: &Constraints, out: &mut String) -> Result<(), EncodeError> {
+fn encode_bare(m: MemberRef, c: &Constraints, out: &mut String, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     match m {
         MemberRef::Absent => Ok(()),
         MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => jer_encode_primitive(p, c, out),
-        MemberRef::Contained(v, spec) => encode_contained(v, spec, c, out),
-        MemberRef::Composite(inner) => encode_seq_into(inner, out),
-        MemberRef::Choice(inner) => encode_choice_into(inner, out),
-        MemberRef::SeqOf(inner) => encode_seqof_into(inner, c, out),
+        MemberRef::Contained(v, spec) => encode_contained(v, spec, c, out, opts),
+        MemberRef::Composite(inner) => encode_seq_into(inner, out, opts),
+        MemberRef::Choice(inner) => encode_choice_into(inner, out, opts),
+        MemberRef::SeqOf(inner) => encode_seqof_into(inner, c, out, opts),
         MemberRef::Enumerated(slot, spec) => {
             crate::jer::enumerated::jer_encode_enum(out, spec, slot.enum_get());
             Ok(())
@@ -60,15 +60,16 @@ fn decode_bare_level(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result
 /// @brief JER form of a contained field (`Containing<T>`, X.682 §11): a
 ///        hex string, or `{"containing": <JER of the inner value>}` (X.697
 ///        §25.4), or that plus `"raw": "<hex>"` (`inline_raw`, an extension).
-fn encode_contained(v: &dyn crate::containing::Contained, spec: &'static crate::containing::ContainedSpec, c: &Constraints, out: &mut String) -> Result<(), EncodeError> {
+fn encode_contained(v: &dyn crate::containing::Contained, spec: &'static crate::containing::ContainedSpec, c: &Constraints, out: &mut String, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     use crate::containing::{ContainedEncoding, ContainedText};
-    let wire = v.wire_octets(spec, ContainedEncoding::Ber);
-    let (Some(inner), false) = (v.inner_ref(), spec.jer == ContainedText::Hex) else {
+    let wire = v.wire_octets(spec, ContainedEncoding::Ber, opts)?;
+    let form = opts.and_then(|o| o.jer).unwrap_or(spec.jer);
+    let (Some(inner), false) = (v.inner_ref(), form == ContainedText::Hex) else {
         return jer_encode_primitive(crate::spec::primitive::PrimitiveRef::OctetString(&wire), c, out);
     };
     out.push_str("{\"containing\":");
-    encode_bare(inner, &crate::constraints::UNCONSTRAINED, out)?;
-    if spec.jer == ContainedText::InlineRaw {
+    encode_bare(inner, &crate::constraints::UNCONSTRAINED, out, opts)?;
+    if form == ContainedText::InlineRaw {
         out.push_str(",\"raw\":\"");
         crate::jer::writer::to_hex_upper(&wire.0, out);
         out.push('"');
@@ -82,7 +83,7 @@ fn decode_contained(v: &mut dyn crate::containing::Contained, spec: &'static cra
     if r.peek_char() != b'{' {
         let mut os = crate::octet_string::OctetString::default();
         jer_decode_primitive(crate::spec::primitive::PrimitiveRefMut::OctetString(&mut os), c, r)?;
-        v.set_raw_from_wire(os.0);
+        v.set_raw_from_wire(os.0, crate::containing::ContainedEncoding::Ber);
         return Ok(());
     }
     r.expect_char(b'{')?;
@@ -115,14 +116,14 @@ fn decode_contained(v: &mut dyn crate::containing::Contained, spec: &'static cra
     if !have_inner {
         return Err(DecodeError::new("JER: contained value object without \"containing\"".to_string(), r.pos()));
     }
-    v.finish_inline(raw, spec).map_err(|e| DecodeError::new(e, r.pos()))
+    v.finish_inline(raw, spec, r.contained).map_err(|e| DecodeError::new(e, r.pos()))
 }
 
 // ---------------------------------------------------------------------
 // SEQUENCE / SET
 // ---------------------------------------------------------------------
 
-pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String) -> Result<(), EncodeError> {
+pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let spec = obj.spec();
     let mut first = true;
     for (i, m) in spec.members.iter().enumerate() {
@@ -137,21 +138,21 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut String) -> Result<(), Enc
         out.push('"');
         out.push_str(m.name);
         out.push_str("\":");
-        encode_bare(member, m.constraints, out)?;
+        encode_bare(member, m.constraints, out, opts)?;
     }
     Ok(())
 }
 
-pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut String) -> Result<(), EncodeError> {
+pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut String, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     out.push('{');
-    encode_seq_content(obj, out)?;
+    encode_seq_content(obj, out, opts)?;
     out.push('}');
     Ok(())
 }
 
 pub fn encode_seq(obj: &dyn Asn1Seq) -> Result<String, EncodeError> {
     let mut out = String::new();
-    encode_seq_into(obj, &mut out)?;
+    encode_seq_into(obj, &mut out, None)?;
     Ok(out)
 }
 
@@ -193,7 +194,7 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Deco
     }
     // Contained fields that arrived as hex: decode their inner value.
     if !obj.spec().contained_members.is_empty() {
-        crate::containing::decode_contained_members(obj, crate::containing::ContainedEncoding::Ber, r.depth, None)
+        crate::containing::decode_contained_members(obj, crate::containing::ContainedEncoding::Ber, r.depth, r.contained)
             .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.pos()))?;
     }
     Ok(())
@@ -205,7 +206,7 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Deco
 
 /// `{"altname":value}` — single-key object, self-delimiting like every
 /// other JER value (X.697 §11).
-pub fn encode_choice_into(obj: &dyn Asn1Choice, out: &mut String) -> Result<(), EncodeError> {
+pub fn encode_choice_into(obj: &dyn Asn1Choice, out: &mut String, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let Some(i) = obj.active_index() else {
         return Err(crate::spec::object::no_alternative_selected(obj.spec()));
     };
@@ -213,7 +214,7 @@ pub fn encode_choice_into(obj: &dyn Asn1Choice, out: &mut String) -> Result<(), 
     out.push_str("{\"");
     out.push_str(alt.name);
     out.push_str("\":");
-    encode_bare(obj.get_active(), alt.constraints, out)?;
+    encode_bare(obj.get_active(), alt.constraints, out, opts)?;
     out.push('}');
     Ok(())
 }
@@ -234,7 +235,7 @@ pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
             if !obj.spec().has_contained {
                 return Ok(());
             }
-            return crate::containing::decode_contained_alternative(obj, crate::containing::ContainedEncoding::Ber, r.depth, None)
+            return crate::containing::decode_contained_alternative(obj, crate::containing::ContainedEncoding::Ber, r.depth, r.contained)
                 .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.pos()));
         }
     }
@@ -247,14 +248,14 @@ pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
 
 /// @param c  The collection's own constraints; its `element` entry
 ///           applies to every element.
-pub fn encode_seqof_into(obj: &dyn Asn1SeqOf, c: &Constraints, out: &mut String) -> Result<(), EncodeError> {
+pub fn encode_seqof_into(obj: &dyn Asn1SeqOf, c: &Constraints, out: &mut String, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let elem = c.element.unwrap_or(&UNCONSTRAINED);
     out.push('[');
     for i in 0..obj.len() {
         if i > 0 {
             out.push(',');
         }
-        encode_bare(obj.get(i), elem, out)?;
+        encode_bare(obj.get(i), elem, out, opts)?;
     }
     out.push(']');
     Ok(())
@@ -293,7 +294,16 @@ pub fn decode_seqof_into(obj: &mut dyn Asn1SeqOf, c: &Constraints, r: &mut Reade
 /// @see X.697 §8 — top-level JSON value.
 pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> Result<String, EncodeError> {
     let mut out = String::new();
-    encode_bare(v.as_member_ref(), T::PDU_CONSTRAINTS, &mut out)?;
+    encode_bare(v.as_member_ref(), T::PDU_CONSTRAINTS, &mut out, None)?;
+    Ok(out)
+}
+
+/// @brief `encode_pdu` with contained-value settings: the JER form
+///        override and the decoder registry's encode side apply to every
+///        contained field (X.682 §11).
+pub fn encode_pdu_with<T: Asn1Pdu + ?Sized>(v: &T, opts: &crate::containing::ContainedOptions) -> Result<String, EncodeError> {
+    let mut out = String::new();
+    encode_bare(v.as_member_ref(), T::PDU_CONSTRAINTS, &mut out, Some(opts))?;
     Ok(out)
 }
 
@@ -304,5 +314,16 @@ pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> Result<String, EncodeError> {
 pub fn decode_pdu<T: Asn1Pdu>(json: &str) -> Result<T, DecodeError> {
     let mut v = T::default();
     decode_bare(v.as_member_ref_mut(), T::PDU_CONSTRAINTS, &mut Reader::new(json))?;
+    Ok(v)
+}
+
+/// @brief `decode_pdu` with contained-value settings: the decoder registry
+///        and `off` apply to every contained field (X.682 §11).
+/// @return The decoded value.
+pub fn decode_pdu_with<T: Asn1Pdu>(json: &str, opts: &crate::containing::ContainedOptions) -> Result<T, DecodeError> {
+    let mut v = T::default();
+    let mut r = Reader::new(json);
+    r.set_contained(opts);
+    decode_bare(v.as_member_ref_mut(), T::PDU_CONSTRAINTS, &mut r)?;
     Ok(v)
 }

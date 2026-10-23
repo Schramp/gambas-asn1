@@ -4,9 +4,11 @@
 // tests/asn1/containing_test.asn1.
 #include <algorithm>
 #include <cstdio>
+#include <random>
 #include <sstream>
 #include <vector>
 #include <asn1cpp/asn1cpp.hpp>
+#include <asn1cpp/codec/RandomFiller.hpp>
 #include "Envelope.hpp"
 #include "Holder.hpp"
 #include "Inner.hpp"
@@ -67,6 +69,7 @@ static Holder make_holder(Kind::Enm kind) {
     bytes.insert(bytes.end(), 5, 0x00);
     h.viaConfig.set(bytes);
     h.raw.set(std::vector<uint8_t>{0xDE, 0xAD});
+    h.viaSized.set_value(make_inner(5));
     return h;
 }
 
@@ -146,6 +149,36 @@ static void test_options() {
     check("hook called once with the enclosing value", calls == 1 && seen_kind == Kind::plain);
     check("hook result stored", h.viaConfig.value() && h.viaConfig.value()->id.value() == 3);
     check("built-ins still used for the other fields", h.viaConstraint.status() == ContainedStatus::Decoded);
+
+    // The replacing decoder has no encode side: unmodified bytes are written
+    // as they are, a modified value fails the encode in every codec.
+    auto encode_ber = [&](const Holder& v, std::vector<uint8_t>& out) {
+        BerWriter w(out);
+        w.set_contained(&opts);
+        BerEncodeStream s{w};
+        BerCodec::instance().encode(s, Holder::asn_DEF, &v);
+        return !w.encode_failed();
+    };
+    std::vector<uint8_t> same;
+    check("decode-only decoder: unmodified value encodes byte-exact", encode_ber(h, same) && same == wire);
+    h.viaConfig.value_mut()->id = Integer{4};
+    std::vector<uint8_t> out;
+    check("decode-only decoder: modified value fails BER encode", !encode_ber(h, out));
+    std::vector<uint8_t> pout;
+    PerEncodeStream ps(pout);
+    ps.set_contained(&opts);
+    PerCodec::instance().encode(ps, Holder::asn_DEF, &h);
+    check("decode-only decoder: modified value fails PER encode", ps.encode_failed());
+    std::ostringstream xos;
+    XerEncodeStream xs{xos};
+    xs.set_contained(&opts);
+    XerCodec::instance().encode(xs, Holder::asn_DEF, &h);
+    check("decode-only decoder: modified value fails XER encode", xs.encode_failed());
+    std::ostringstream jos;
+    JerEncodeStream js{jos};
+    js.set_contained(&opts);
+    JerCodec::instance().encode(js, Holder::asn_DEF, &h);
+    check("decode-only decoder: modified value fails JER encode", js.encode_failed());
 }
 
 static void test_choice() {
@@ -212,6 +245,18 @@ static void test_per() {
     check("CONTAINING member decoded as PER", d.viaConstraint.value() && d.viaConstraint.value()->id.value() == 1);
     check("sidecar member decoded as BER", d.viaConfig.value() && d.viaConfig.value()->id.value() == 3);
     check("re-encodes byte-exact", per(Holder::asn_DEF, d) == wire);
+
+    // A sidecar member typed by a SIZE-constrained alias keeps the alias's
+    // SIZE constraint: PER encodes its length as a constrained whole
+    // number (X.691 §17.6), not as an unconstrained length.
+    const auto& spec = *Holder::asn_DEF.sequence_spec;
+    const TypeDescriptor* sized_def = nullptr;
+    for (int i = 0; i < spec.count; ++i)
+        if (std::string_view(spec.members[i].name) == "viaSized") sized_def = spec.members[i].type_descriptor;
+    check("sized alias member keeps SIZE(1..200)",
+          sized_def && sized_def->contained && (sized_def->constraints.flags & Constraints::SIZE_CONSTRAINED) &&
+          sized_def->constraints.size_lower == 1 && sized_def->constraints.size_upper == 200);
+    check("sized alias member decoded", d.viaSized.value() && d.viaSized.value()->id.value() == 5);
 }
 
 template<class T>
@@ -325,6 +370,41 @@ static void test_xer_jer() {
           pxd.inner().size() == pb.inner().size());
 }
 
+/// Contents without ENCODED BY follow the outer encoding (X.682 §11.4):
+/// bytes known to be in other rules are re-derived when written as PER.
+static void test_outer_transcode() {
+    printf("Outer-encoding contents across transfer syntaxes\n");
+    Holder b;
+    check("BER decodes", unber(ber(Holder::asn_DEF, make_holder(Kind::plain)), b));
+    Holder bp;
+    check("BER-decoded value written as PER decodes",
+          unper(per(Holder::asn_DEF, b), bp) && bp.viaConstraint.status() == ContainedStatus::Decoded &&
+          bp.viaAlias.status() == ContainedStatus::Decoded && bp.viaConstraint.value()->id.value() == 1);
+    check("BER-decoded value re-encodes as BER byte-exact",
+          ber(Holder::asn_DEF, b) == ber(Holder::asn_DEF, make_holder(Kind::plain)));
+
+    std::mt19937 rng(7);
+    RandomFiller filler(rng);
+    Holder r;
+    check("random fill", filler.fill(&r, Holder::asn_DEF, 0, true));
+    Holder rp;
+    check("random value written as PER decodes",
+          unper(per(Holder::asn_DEF, r), rp) && rp.viaConstraint.status() == ContainedStatus::Decoded &&
+          rp.viaAlias.status() == ContainedStatus::Decoded);
+
+    Pick p;
+    p.set_present(Pick::PR::inner);
+    p.inner().set_value(make_inner(4));
+    Pick px;
+    std::ostringstream os;
+    XerEncodeStream xs{os};
+    XerCodec::instance().encode(xs, Pick::asn_DEF, &p);
+    Pick pp;
+    check("inline XER value written as PER decodes",
+          unxer(os.str(), px) && unper(per(Pick::asn_DEF, px), pp) &&
+          pp.inner().status() == ContainedStatus::Decoded && pp.inner().value()->id.value() == 4);
+}
+
 int main() {
     test_ber_sequence();
     test_bad_inner();
@@ -333,6 +413,7 @@ int main() {
     test_recursion();
     test_per();
     test_xer_jer();
+    test_outer_transcode();
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

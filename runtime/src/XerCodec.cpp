@@ -751,7 +751,9 @@ struct ContainedXer {
         const auto& cb = *static_cast<const ContainedBase*>(src);
         const ContainedSpec& cs = *def.contained;
         std::vector<uint8_t> scratch;
-        auto wire = contained_wire_bytes(def, cb, ContainedEncoding::Ber, s.contained(), scratch);
+        std::string err;
+        auto wire = contained_wire_bytes(def, cb, ContainedEncoding::Ber, s.contained(), scratch, err);
+        if (!err.empty()) s.set_encode_failed(err.c_str());
         auto& os = s.os();
         ContainedText m = mode(def, s.contained());
         if (m == ContainedText::Hex || !cb.has_value()) {
@@ -789,7 +791,7 @@ struct ContainedXer {
         if (!typed) {
             auto text = xer_detail::read_text_content(s);
             std::string raw = parse_hex_bytes(xer_detail::trim(text));
-            cb.set_raw_from_wire({reinterpret_cast<const uint8_t*>(raw.data()), raw.size()});
+            cb.set_raw_from_wire({reinterpret_cast<const uint8_t*>(raw.data()), raw.size()}, ContainedEncoding::Ber);
             return xer_detail::consume_close_tag(s, def.name);
         }
         const TypeDescriptor& idef = *cs.inner_def;
@@ -816,8 +818,10 @@ struct ContainedXer {
             }
             s.advance(end + 3);
         }
+        // XER/JER carry an outer-encoding field's contents as BER (the
+        // same rules their hex form uses, see ContainedXer/ContainedJer).
+        ContainedEncoding enc = cs.encoding == ContainedEncoding::Outer ? ContainedEncoding::Ber : cs.encoding;
         if (!have_raw) {
-            ContainedEncoding enc = cs.encoding == ContainedEncoding::Outer ? ContainedEncoding::Ber : cs.encoding;
             const ContainedDecoders& reg = s.contained() ? s.contained()->registry() : ContainedDecoders::defaults();
             std::vector<uint8_t> out;
             std::string err;
@@ -826,7 +830,7 @@ struct ContainedXer {
                 return decode_err(DecodeError(std::string(def.name) + ": " + err));
             raw.assign(reinterpret_cast<const char*>(out.data()), out.size());
         }
-        cb.set_raw_for_value({reinterpret_cast<const uint8_t*>(raw.data()), raw.size()});
+        cb.set_raw_for_value({reinterpret_cast<const uint8_t*>(raw.data()), raw.size()}, enc);
         return xer_detail::consume_close_tag(s, def.name);
     }
 };

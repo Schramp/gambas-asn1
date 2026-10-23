@@ -923,7 +923,9 @@ struct ContainedJer {
         const auto& cb = *static_cast<const ContainedBase*>(src);
         const ContainedSpec& cs = *def.contained;
         std::vector<uint8_t> scratch;
-        auto wire = contained_wire_bytes(def, cb, ContainedEncoding::Ber, s.contained(), scratch);
+        std::string err;
+        auto wire = contained_wire_bytes(def, cb, ContainedEncoding::Ber, s.contained(), scratch, err);
+        if (!err.empty()) s.set_encode_failed(err.c_str());
         auto& os = s.os();
         ContainedText m = s.contained() && s.contained()->jer ? *s.contained()->jer : cs.jer;
         if (m == ContainedText::Hex || !cb.has_value()) {
@@ -951,7 +953,7 @@ struct ContainedJer {
             std::string hex;
             if (auto r = jer_detail::read_json_string(s, hex); !r) return r;
             std::string raw = jer_detail::parse_hex_str(hex);
-            cb.set_raw_from_wire({reinterpret_cast<const uint8_t*>(raw.data()), raw.size()});
+            cb.set_raw_from_wire({reinterpret_cast<const uint8_t*>(raw.data()), raw.size()}, ContainedEncoding::Ber);
             return decode_ok();
         }
         if (auto r = jer_detail::expect_char(s, '{'); !r) return r;
@@ -979,8 +981,10 @@ struct ContainedJer {
             }
         }
         if (!inner) return decode_err(DecodeError(std::string("JER: ") + def.name + ": object without \"containing\""));
+        // XER/JER carry an outer-encoding field's contents as BER (the
+        // same rules their hex form uses, see ContainedXer/ContainedJer).
+        ContainedEncoding enc = cs.encoding == ContainedEncoding::Outer ? ContainedEncoding::Ber : cs.encoding;
         if (!have_raw) {
-            ContainedEncoding enc = cs.encoding == ContainedEncoding::Outer ? ContainedEncoding::Ber : cs.encoding;
             const ContainedDecoders& reg = s.contained() ? s.contained()->registry() : ContainedDecoders::defaults();
             std::vector<uint8_t> out;
             std::string err;
@@ -989,7 +993,7 @@ struct ContainedJer {
                 return decode_err(DecodeError(std::string(def.name) + ": " + err));
             raw.assign(reinterpret_cast<const char*>(out.data()), out.size());
         }
-        cb.set_raw_for_value({reinterpret_cast<const uint8_t*>(raw.data()), raw.size()});
+        cb.set_raw_for_value({reinterpret_cast<const uint8_t*>(raw.data()), raw.size()}, enc);
         return decode_ok();
     }
 };

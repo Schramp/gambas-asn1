@@ -40,6 +40,7 @@ fn holder(kind: K) -> Hold {
     bytes.extend_from_slice(&[0; 5]);
     h.viaConfig.set_raw(bytes);
     h.raw = asn1cpp_wire::octet_string::OctetString(vec![0xDE, 0xAD]);
+    h.viaSized.set_value(inner(5));
     h
 }
 
@@ -115,6 +116,44 @@ fn main() {
     check("hook result stored", id_of(&h.viaConfig) == Some(3), &mut f);
     check("built-ins still used for the other fields", h.viaConstraint.status() == ContainedStatus::Decoded, &mut f);
 
+    // XER/JER decode take the same settings as BER.
+    let hx = asn1cpp_wire::xer::object::encode_pdu(&h).unwrap();
+    let xo: Hold = asn1cpp_wire::xer::object::decode_pdu_with(&hx, &off).unwrap();
+    check("XER off: nothing decoded", xo.viaConstraint.status() == ContainedStatus::Skipped, &mut f);
+    let hj = asn1cpp_wire::jer::object::encode_pdu(&h).unwrap();
+    let jo: Hold = asn1cpp_wire::jer::object::decode_pdu_with(&hj, &off).unwrap();
+    check("JER off: nothing decoded", jo.viaConstraint.status() == ContainedStatus::Skipped, &mut f);
+    seen.lock().unwrap().clear();
+    let _: Hold = asn1cpp_wire::xer::object::decode_pdu_with(&hx, &opts).unwrap();
+    let _: Hold = asn1cpp_wire::jer::object::decode_pdu_with(&hj, &opts).unwrap();
+    check("XER/JER decode use the registry", seen.lock().unwrap().len() == 2, &mut f);
+
+    // Encode uses the registry's encode side for a modified value, and the
+    // XER/JER form override.
+    let mut preg = ContainedDecoders::default();
+    preg.add(
+        "zero_padding",
+        Box::new(|a| decode_value(a, Some(&mut 0))),
+        Some(Box::new(|a| {
+            let mut b = asn1cpp_wire::containing::encode_value(a)?;
+            b.extend_from_slice(&[0; 3]);
+            Ok(b)
+        })),
+    );
+    let popts = ContainedOptions { decoders: Some(preg), xer: Some(asn1cpp_wire::containing::ContainedText::Inline),
+                                   jer: Some(asn1cpp_wire::containing::ContainedText::Inline), ..Default::default() };
+    let mut m: Hold = ber::object::decode_pdu_with(&wire, &popts).unwrap();
+    m.viaConfig.value_mut().unwrap().id = Integer(8);
+    let plain_len = ber::object::encode_pdu(&inner(8)).unwrap().len();
+    let mr: Hold = ber::object::decode_pdu(&ber::object::encode_pdu_with(&m, &popts).unwrap()).unwrap();
+    check("BER encode uses the registry's encoder", mr.viaConfig.bytes().len() == plain_len + 3 && id_of(&mr.viaConfig) == Some(8), &mut f);
+    let mp: Hold = per::object::decode_pdu(&per::object::encode_pdu_with(&m, &popts).unwrap()).unwrap();
+    check("PER encode uses the registry's encoder", mp.viaConfig.bytes().len() == plain_len + 3, &mut f);
+    let mx = asn1cpp_wire::xer::object::encode_pdu_with(&h, &popts).unwrap();
+    check("XER form override", mx.contains("<viaConstraint>\n        <Inner>"), &mut f);
+    let mj = asn1cpp_wire::jer::object::encode_pdu_with(&h, &popts).unwrap();
+    check("JER form override", mj.contains("\"viaConstraint\":{\"containing\":"), &mut f);
+
     println!("BER CHOICE");
     let mut c: Containing<In> = Containing::default();
     c.set_value(inner(9));
@@ -173,7 +212,25 @@ fn main() {
     let d: Hold = per::object::decode_pdu(&wire).unwrap();
     check("CONTAINING member decoded as PER", id_of(&d.viaConstraint) == Some(1), &mut f);
     check("sidecar member decoded as BER", id_of(&d.viaConfig) == Some(3), &mut f);
+    check("sized alias member decoded", id_of(&d.viaSized) == Some(5), &mut f);
     check("re-encodes byte-exact", per::object::encode_pdu(&d).unwrap() == wire, &mut f);
+
+    // Contents without ENCODED BY follow the outer encoding (X.682 §11.4):
+    // bytes known to be in other rules are re-derived when written as PER.
+    println!("Outer-encoding contents across transfer syntaxes");
+    let ber_wire = ber::object::encode_pdu(&holder(K::plain)).unwrap();
+    let b: Hold = ber::object::decode_pdu(&ber_wire).unwrap();
+    let bp: Hold = per::object::decode_pdu(&per::object::encode_pdu(&b).unwrap()).unwrap();
+    check("BER-decoded value written as PER decodes",
+          bp.viaConstraint.status() == ContainedStatus::Decoded && id_of(&bp.viaConstraint) == Some(1)
+              && bp.viaAlias.status() == ContainedStatus::Decoded, &mut f);
+    check("BER-decoded value re-encodes as BER byte-exact", ber::object::encode_pdu(&b).unwrap() == ber_wire, &mut f);
+    let mut pc = Containing::default();
+    pc.set_value(inner(4));
+    let px: P = asn1cpp_wire::xer::object::decode_pdu(&asn1cpp_wire::xer::object::encode_pdu(&P::inner(pc)).unwrap()).unwrap();
+    let pp: P = per::object::decode_pdu(&per::object::encode_pdu(&px).unwrap()).unwrap();
+    check("inline XER value written as PER decodes",
+          matches!(&pp, P::inner(c) if c.status() == ContainedStatus::Decoded && id_of(c) == Some(4)), &mut f);
 
     if f > 0 {
         println!("FAILED");
