@@ -16,9 +16,18 @@ PROGRAM  := nested-decoder
 $(PROGRAM): nested-decoder.cpp $(ETSI_LIB) $(RUNTIME_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LIBS)
 
-clean:
-	rm -f $(PROGRAM) $(PROGRAM).d
+# Random-filled regression input and its expected output (both committed;
+# regenerate only on purpose, then review the .expected diff).
+gen-testdata: gen-testdata.cpp $(ETSI_LIB) $(RUNTIME_LIB)
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LIBS)
 
-.PHONY: clean
+testdata: gen-testdata $(PROGRAM)
+	./gen-testdata pdu-00000001.etsi
+	./$(PROGRAM) pdu-00000001.etsi > pdu-00000001.expected
+
+clean:
+	rm -f $(PROGRAM) $(PROGRAM).d gen-testdata gen-testdata.d
+
+.PHONY: clean testdata
 
 -include $(PROGRAM).d
