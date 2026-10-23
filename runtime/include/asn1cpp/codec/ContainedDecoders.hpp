@@ -163,11 +163,14 @@ bool decode_contained_alternative(const TypeDescriptor& def, Asn1Object* value,
 ///                        XER/JER write an outer-encoding field as Ber).
 /// @param opts            Contained-value settings (nullptr: defaults).
 /// @param scratch  Storage for derived bytes.
-/// @return The bytes to write.
+/// @param error    Set when the value was modified and its bytes cannot be
+///                 derived (no encode side, or the inner encode failed);
+///                 the caller then fails the encode. Empty otherwise.
+/// @return The bytes to write (the raw bytes when \p error is set).
 std::span<const uint8_t> contained_wire_bytes(const TypeDescriptor& field_def,
                                               const ContainedBase& v,
                                               ContainedEncoding outer_encoding,
                                               const ContainedOptions* opts,
-                                              std::vector<uint8_t>& scratch);
+                                              std::vector<uint8_t>& scratch, std::string& error);
 
 } // namespace asn1

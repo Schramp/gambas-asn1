@@ -62,7 +62,7 @@ fn decode_bare_level(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result
 ///        §25.4), or that plus `"raw": "<hex>"` (`inline_raw`, an extension).
 fn encode_contained(v: &dyn crate::containing::Contained, spec: &'static crate::containing::ContainedSpec, c: &Constraints, out: &mut String) -> Result<(), EncodeError> {
     use crate::containing::{ContainedEncoding, ContainedText};
-    let wire = v.wire_octets(spec, ContainedEncoding::Ber);
+    let wire = v.wire_octets(spec, ContainedEncoding::Ber)?;
     let (Some(inner), false) = (v.inner_ref(), spec.jer == ContainedText::Hex) else {
         return jer_encode_primitive(crate::spec::primitive::PrimitiveRef::OctetString(&wire), c, out);
     };

@@ -42,7 +42,7 @@ pub(crate) fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec
         MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => ber_encode_primitive(p, framing, out),
         MemberRef::Contained(c, spec) => {
-            let os = c.wire_octets(spec, crate::containing::ContainedEncoding::Ber);
+            let os = c.wire_octets(spec, crate::containing::ContainedEncoding::Ber)?;
             ber_encode_primitive(crate::spec::primitive::PrimitiveRef::OctetString(&os), framing, out)
         }
         MemberRef::Composite(inner) => match framing {

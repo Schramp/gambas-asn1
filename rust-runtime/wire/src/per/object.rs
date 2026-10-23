@@ -37,7 +37,7 @@ fn encode_bare(m: MemberRef, c: &Constraints, w: &mut Writer) -> Result<(), Enco
         MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => per_encode_primitive(p, w, c),
         MemberRef::Contained(v, spec) => {
-            let os = v.wire_octets(spec, crate::containing::ContainedEncoding::PerUnaligned);
+            let os = v.wire_octets(spec, crate::containing::ContainedEncoding::PerUnaligned)?;
             per_encode_primitive(crate::spec::primitive::PrimitiveRef::OctetString(&os), w, c)
         }
         MemberRef::Composite(inner) => encode_seq_content(inner, w),
