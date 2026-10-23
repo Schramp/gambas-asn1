@@ -13,12 +13,17 @@ ContainingTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 
     Wrapped ::= OCTET STRING (CONTAINING Inner)
 
+    -- A SIZE-constrained OCTET STRING may not also carry CONTAINING
+    -- (X.682 §11.3); a sidecar entry makes it a contained field instead.
+    Sized ::= OCTET STRING (SIZE(1..200))
+
     Holder ::= SEQUENCE {
         kind           Kind,
         viaConstraint  OCTET STRING (CONTAINING Inner),
         viaAlias       Wrapped,
         viaConfig      OCTET STRING,
-        raw            OCTET STRING
+        raw            OCTET STRING,
+        viaSized       Sized
     }
 
     Pick ::= CHOICE {
