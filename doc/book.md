@@ -442,6 +442,12 @@ asn1::BerCodec::instance().decode(s, PS_PDU::asn_DEF, &pdu);
 
 `ContainedOptions::off = true` decodes no contained value at all.
 
+Cost: contained fields are rare, so the codecs gate all of this on one flag of the
+enclosing SEQUENCE/SET/CHOICE descriptor (`TypeDescriptor::has_contained`; Rust:
+`SequenceSpec::contained_members`, `ChoiceSpec::has_contained`). A type without
+contained fields pays one test at the end of decode and nothing per member. A type with
+them walks its sorted `contained_members` list with a cursor, one compare per member.
+
 **XER and JER.** A contained field has three output forms. The standards make hex and
 inline *alternatives*, so in a conformant encoding the inline form replaces the hex:
 

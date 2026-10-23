@@ -426,6 +426,9 @@ fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
     if let Some(alt_idx) = found {
         let ber = obj.spec().alternatives[alt_idx].ber;
         decode_member_ref(obj.select_mut(alt_idx), ber, r)?;
+        if !obj.spec().has_contained {
+            return Ok(());
+        }
         return crate::containing::decode_contained_alternative(obj, crate::containing::ContainedEncoding::Ber, r.depth, r.contained)
             .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.pos()));
     }
@@ -774,7 +777,7 @@ mod tests {
         ber_tags: &CHOICE_BER_TAGS,
         own_tag: None,
         ext_at: -1,
-        range_bits: 1,
+        range_bits: 1, has_contained: false,
     };
     impl Asn1Choice for Choice {
         fn spec(&self) -> &'static crate::spec::object::ChoiceSpec {
@@ -941,7 +944,7 @@ mod tests {
         ber_tags: &EXT_BER_TAGS,
         own_tag: None,
         ext_at: 1,
-        range_bits: 0,
+        range_bits: 0, has_contained: false,
     };
     impl Asn1Choice for Ext {
         fn spec(&self) -> &'static crate::spec::object::ChoiceSpec {
@@ -1016,7 +1019,7 @@ mod tests {
         ber_tags: &REC_BER_TAGS,
         own_tag: None,
         ext_at: -1,
-        range_bits: 1,
+        range_bits: 1, has_contained: false,
     };
     impl Asn1Choice for Rec {
         fn spec(&self) -> &'static crate::spec::object::ChoiceSpec {

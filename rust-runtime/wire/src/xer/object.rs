@@ -297,6 +297,9 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut XerReader) -
             if !open.self_closing {
                 r.consume_close_tag(alt.name)?;
             }
+            if !obj.spec().has_contained {
+                return Ok(());
+            }
             return crate::containing::decode_contained_alternative(obj, crate::containing::ContainedEncoding::Ber, r.depth, None)
                 .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), 0));
         }

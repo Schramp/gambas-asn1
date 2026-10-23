@@ -115,6 +115,9 @@ pub struct ChoiceSpec {
     pub own_tag: Option<Tag>,
     pub ext_at: i32,
     pub range_bits: u32,
+    /// True when an alternative is a contained field (`AltMeta::contained`):
+    /// gates the contained step that ends every CHOICE decode.
+    pub has_contained: bool,
 }
 
 /// A borrowed member/alternative/element value, tagged by shape.

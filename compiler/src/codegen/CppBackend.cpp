@@ -212,7 +212,8 @@ void emit_type_descriptor(std::ostream& os,
                            // member initializers, same as xer_encoding
                            // already does for every call site here.
                            bool is_explicit,
-                           const std::string& natural_tag_expr) {
+                           const std::string& natural_tag_expr,
+                           bool has_contained) {
     auto sp = [&](bool h) -> std::string {
         if (!h) return "nullptr";
         return use_class_scope ? std::format("&{}::asn_SPC", cname)
@@ -230,7 +231,10 @@ void emit_type_descriptor(std::ostream& os,
     os << std::format("    {} /* per_handler */,\n", per_handler);
     os << std::format("    {} /* ber_handler */,\n", ber_handler);
     os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */,\n", cname);
-    if (is_explicit) {
+    if (has_contained) {
+        os << std::format("    asn1::XerEncoding::Default, {}, {}, nullptr, true /* is_explicit, natural_tag, contained, has_contained */\n",
+                          is_explicit ? "true" : "false", natural_tag_expr.empty() ? "{}" : natural_tag_expr);
+    } else if (is_explicit) {
         os << std::format("    asn1::XerEncoding::Default, true, {} /* is_explicit, natural_tag */\n",
                           natural_tag_expr);
     }
@@ -960,7 +964,8 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
         false, true, false, false, "asn1::TypeKind::Sequence",
         "&asn1::per_sequence_handler", "&asn1::ber_sequence_handler",
         /*use_class_scope=*/true, spec.is_explicit,
-        spec.is_explicit ? format_tag_literal(*spec.natural_tag) : "");
+        spec.is_explicit ? format_tag_literal(*spec.natural_tag) : "",
+        /*has_contained=*/!contained_idx.empty());
 
     // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
     for (const auto& r : spec.members) {
@@ -1229,7 +1234,9 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
         false, false, true, false, "asn1::TypeKind::Choice",
         "&asn1::per_choice_handler", "&asn1::ber_choice_handler",
         /*use_class_scope=*/true,
-        spec.is_explicit, "");
+        spec.is_explicit, "",
+        /*has_contained=*/std::any_of(spec.alternatives.begin(), spec.alternatives.end(),
+                                      [](const ChoiceAlternativeSpec& a) { return a.contained != nullptr; }));
 }
 
 void CppBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const {

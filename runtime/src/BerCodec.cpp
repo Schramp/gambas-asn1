@@ -803,7 +803,7 @@ private:
                 if (!ok) return ok;
             }
         }
-        if (spec.contained_count > 0) {
+        if (def.has_contained) {
             std::string err;
             if (!decode_contained_members(def, dest, ContainedEncoding::Ber, inner.depth(),
                                           inner.contained(), err))
@@ -855,7 +855,7 @@ struct ChoiceBerHandler final : IBerTypeHandler {
     DecodeResult decode(const BerCodec& codec, BerReader& r,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         auto ok = decode_alternative(codec, r, def, dest);
-        if (!ok) return ok;
+        if (!ok || !def.has_contained) return ok;
         std::string err;
         if (!decode_contained_alternative(def, dest, ContainedEncoding::Ber, r.depth(),
                                           r.contained(), err))

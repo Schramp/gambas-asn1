@@ -1100,7 +1100,7 @@ public:
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         auto ok = decode_members(codec, stream, def, dest);
-        if (!ok) return ok;
+        if (!ok || !def.has_contained) return ok;
         std::string err;
         if (!decode_contained_members(def, dest, ContainedEncoding::PerUnaligned, stream.depth(),
                                           stream.contained(), err))
@@ -1271,7 +1271,7 @@ public:
     DecodeResult decode(const PerCodec& codec, PerDecodeStream& stream,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         auto ok = decode_alternative(codec, stream, def, dest);
-        if (!ok) return ok;
+        if (!ok || !def.has_contained) return ok;
         std::string err;
         if (!decode_contained_alternative(def, dest, ContainedEncoding::PerUnaligned, stream.depth(),
                                           stream.contained(), err))
