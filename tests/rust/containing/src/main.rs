@@ -116,6 +116,44 @@ fn main() {
     check("hook result stored", id_of(&h.viaConfig) == Some(3), &mut f);
     check("built-ins still used for the other fields", h.viaConstraint.status() == ContainedStatus::Decoded, &mut f);
 
+    // XER/JER decode take the same settings as BER.
+    let hx = asn1cpp_wire::xer::object::encode_pdu(&h).unwrap();
+    let xo: Hold = asn1cpp_wire::xer::object::decode_pdu_with(&hx, &off).unwrap();
+    check("XER off: nothing decoded", xo.viaConstraint.status() == ContainedStatus::Skipped, &mut f);
+    let hj = asn1cpp_wire::jer::object::encode_pdu(&h).unwrap();
+    let jo: Hold = asn1cpp_wire::jer::object::decode_pdu_with(&hj, &off).unwrap();
+    check("JER off: nothing decoded", jo.viaConstraint.status() == ContainedStatus::Skipped, &mut f);
+    seen.lock().unwrap().clear();
+    let _: Hold = asn1cpp_wire::xer::object::decode_pdu_with(&hx, &opts).unwrap();
+    let _: Hold = asn1cpp_wire::jer::object::decode_pdu_with(&hj, &opts).unwrap();
+    check("XER/JER decode use the registry", seen.lock().unwrap().len() == 2, &mut f);
+
+    // Encode uses the registry's encode side for a modified value, and the
+    // XER/JER form override.
+    let mut preg = ContainedDecoders::default();
+    preg.add(
+        "zero_padding",
+        Box::new(|a| decode_value(a, Some(&mut 0))),
+        Some(Box::new(|a| {
+            let mut b = asn1cpp_wire::containing::encode_value(a)?;
+            b.extend_from_slice(&[0; 3]);
+            Ok(b)
+        })),
+    );
+    let popts = ContainedOptions { decoders: Some(preg), xer: Some(asn1cpp_wire::containing::ContainedText::Inline),
+                                   jer: Some(asn1cpp_wire::containing::ContainedText::Inline), ..Default::default() };
+    let mut m: Hold = ber::object::decode_pdu_with(&wire, &popts).unwrap();
+    m.viaConfig.value_mut().unwrap().id = Integer(8);
+    let plain_len = ber::object::encode_pdu(&inner(8)).unwrap().len();
+    let mr: Hold = ber::object::decode_pdu(&ber::object::encode_pdu_with(&m, &popts).unwrap()).unwrap();
+    check("BER encode uses the registry's encoder", mr.viaConfig.bytes().len() == plain_len + 3 && id_of(&mr.viaConfig) == Some(8), &mut f);
+    let mp: Hold = per::object::decode_pdu(&per::object::encode_pdu_with(&m, &popts).unwrap()).unwrap();
+    check("PER encode uses the registry's encoder", mp.viaConfig.bytes().len() == plain_len + 3, &mut f);
+    let mx = asn1cpp_wire::xer::object::encode_pdu_with(&h, &popts).unwrap();
+    check("XER form override", mx.contains("<viaConstraint>\n        <Inner>"), &mut f);
+    let mj = asn1cpp_wire::jer::object::encode_pdu_with(&h, &popts).unwrap();
+    check("JER form override", mj.contains("\"viaConstraint\":{\"containing\":"), &mut f);
+
     println!("BER CHOICE");
     let mut c: Containing<In> = Containing::default();
     c.set_value(inner(9));

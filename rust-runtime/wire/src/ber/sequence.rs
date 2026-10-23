@@ -190,7 +190,7 @@ mod tests {
     /// tag, through the reflective `ber::object` SEQUENCE OF walker.
     fn ber_encode_seqof(v: &dyn crate::spec::object::Asn1SeqOf) -> Vec<u8> {
         let mut out = Vec::new();
-        crate::ber::writer::write_tagged(&mut out, v.natural_tag(), |out| crate::ber::object::encode_seqof_content(v, out)).unwrap();
+        crate::ber::writer::write_tagged(&mut out, v.natural_tag(), |out| crate::ber::object::encode_seqof_content(v, out, None)).unwrap();
         out
     }
 
@@ -257,7 +257,7 @@ mod tests {
         let v = SeqOf(vec![Integer(1), Integer(2)]);
         let mut out = String::new();
         crate::xer::writer::write_open_tag(&mut out, "items");
-        crate::xer::object::encode_seqof_content(&v, &mut out, 0).unwrap();
+        crate::xer::object::encode_seqof_content(&v, &mut out, 0, None).unwrap();
         crate::xer::writer::write_close_tag(&mut out, "items");
         assert_eq!(out, "<items>\n    <INTEGER>1</INTEGER>\n    <INTEGER>2</INTEGER>\n</items>");
 
@@ -292,7 +292,7 @@ mod tests {
         let v = SetOf(vec![Integer(1), Integer(2)]);
         let mut out = String::new();
         crate::xer::writer::write_open_tag(&mut out, "items");
-        crate::xer::object::encode_seqof_content(&v, &mut out, 0).unwrap();
+        crate::xer::object::encode_seqof_content(&v, &mut out, 0, None).unwrap();
         crate::xer::writer::write_close_tag(&mut out, "items");
         assert_eq!(out, "<items>\n    <INTEGER>1</INTEGER>\n    <INTEGER>2</INTEGER>\n</items>");
 

@@ -21,8 +21,8 @@ use crate::spec::primitive::{per_decode_primitive, per_encode_primitive};
 ///         or a value PER cannot represent (constraint violation).
 /// @brief Encode one value with its PER-visible constraints (crate entry
 ///        point for contained values).
-pub(crate) fn encode_member_ref(m: MemberRef, c: &Constraints, w: &mut Writer) -> Result<(), EncodeError> {
-    encode_bare(m, c, w)
+pub(crate) fn encode_member_ref(m: MemberRef, c: &Constraints, w: &mut Writer, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
+    encode_bare(m, c, w, opts)
 }
 
 /// @brief Decode one value with its PER-visible constraints (crate entry
@@ -31,18 +31,18 @@ pub(crate) fn decode_member_ref(m: MemberRefMut, c: &Constraints, r: &mut Reader
     decode_bare(m, c, r)
 }
 
-fn encode_bare(m: MemberRef, c: &Constraints, w: &mut Writer) -> Result<(), EncodeError> {
+fn encode_bare(m: MemberRef, c: &Constraints, w: &mut Writer, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     match m {
         MemberRef::Absent => Ok(()),
         MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => per_encode_primitive(p, w, c),
         MemberRef::Contained(v, spec) => {
-            let os = v.wire_octets(spec, crate::containing::ContainedEncoding::PerUnaligned)?;
+            let os = v.wire_octets(spec, crate::containing::ContainedEncoding::PerUnaligned, opts)?;
             per_encode_primitive(crate::spec::primitive::PrimitiveRef::OctetString(&os), w, c)
         }
-        MemberRef::Composite(inner) => encode_seq_content(inner, w),
-        MemberRef::Choice(inner) => encode_choice_content(inner, w),
-        MemberRef::SeqOf(inner) => encode_seqof_content(inner, c, w),
+        MemberRef::Composite(inner) => encode_seq_content(inner, w, opts),
+        MemberRef::Choice(inner) => encode_choice_content(inner, w, opts),
+        MemberRef::SeqOf(inner) => encode_seqof_content(inner, c, w, opts),
         MemberRef::Enumerated(slot, spec) => {
             crate::per::enumerated::encode_enum(w, spec, slot.enum_get());
             Ok(())
@@ -106,9 +106,9 @@ fn root_end(obj: &dyn Asn1Seq) -> usize {
     }
 }
 
-fn access_encode(obj: &dyn Asn1Seq, i: usize, w: &mut Writer) -> Result<(), EncodeError> {
+fn access_encode(obj: &dyn Asn1Seq, i: usize, w: &mut Writer, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let m = &obj.spec().members[i];
-    encode_bare(obj.get_member(i), m.constraints, w)
+    encode_bare(obj.get_member(i), m.constraints, w, opts)
 }
 
 fn access_decode(obj: &mut dyn Asn1Seq, i: usize, r: &mut Reader) -> Result<(), DecodeError> {
@@ -116,9 +116,9 @@ fn access_decode(obj: &mut dyn Asn1Seq, i: usize, r: &mut Reader) -> Result<(), 
     decode_bare(obj.get_member_mut(i), constraints, r)
 }
 
-fn encode_open_type(obj: &dyn Asn1Seq, i: usize, w: &mut Writer) -> Result<(), EncodeError> {
+fn encode_open_type(obj: &dyn Asn1Seq, i: usize, w: &mut Writer, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let mut tmp = Writer::new();
-    access_encode(obj, i, &mut tmp)?;
+    access_encode(obj, i, &mut tmp, opts)?;
     tmp.flush();
     put_octets(w, &tmp.into_bytes());
     Ok(())
@@ -138,7 +138,7 @@ fn skip_open_type(r: &mut Reader) -> Result<(), DecodeError> {
 ///        members, then extension additions as open types.
 /// @return `Err` when a member cannot be encoded.
 /// @see X.691 §18.
-pub fn encode_seq_content(obj: &dyn Asn1Seq, w: &mut Writer) -> Result<(), EncodeError> {
+pub fn encode_seq_content(obj: &dyn Asn1Seq, w: &mut Writer, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let end = root_end(obj);
     let spec = obj.spec();
     let mut has_ext = false;
@@ -161,7 +161,7 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, w: &mut Writer) -> Result<(), Encod
         if obj.is_default_equal(i) {
             continue;
         }
-        access_encode(obj, i, w)?;
+        access_encode(obj, i, w, opts)?;
     }
     if has_ext {
         let units = ext_units(spec, end);
@@ -174,9 +174,9 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, w: &mut Writer) -> Result<(), Encod
                 continue;
             }
             if group {
-                encode_group_open_type(obj, b, e, w)?;
+                encode_group_open_type(obj, b, e, w, opts)?;
             } else {
-                encode_open_type(obj, b, w)?;
+                encode_open_type(obj, b, w, opts)?;
             }
         }
     }
@@ -207,7 +207,7 @@ fn ext_units(spec: &crate::spec::object::SequenceSpec, end: usize) -> Vec<(usize
 ///        inside one open type (X.691 §18.9).
 /// @return `Err` when a mandatory group member is absent (X.680 §24.12)
 ///         or a member cannot be encoded.
-fn encode_group_open_type(obj: &dyn Asn1Seq, begin: usize, end: usize, w: &mut Writer) -> Result<(), EncodeError> {
+fn encode_group_open_type(obj: &dyn Asn1Seq, begin: usize, end: usize, w: &mut Writer, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let opt = obj.spec().group_member_optional;
     let mut g = Writer::new();
     for i in begin..end {
@@ -223,7 +223,7 @@ fn encode_group_open_type(obj: &dyn Asn1Seq, begin: usize, end: usize, w: &mut W
             }
             continue;
         }
-        access_encode(obj, i, &mut g)?;
+        access_encode(obj, i, &mut g, opts)?;
     }
     g.flush();
     put_octets(w, &g.into_bytes());
@@ -320,7 +320,7 @@ fn choice_root_count(obj: &dyn Asn1Choice) -> usize {
 ///        alternative (an open type when it is an extension addition).
 /// @return `Err` when the alternative cannot be encoded.
 /// @see X.691 §23.
-pub fn encode_choice_content(obj: &dyn Asn1Choice, w: &mut Writer) -> Result<(), EncodeError> {
+pub fn encode_choice_content(obj: &dyn Asn1Choice, w: &mut Writer, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let Some(def_idx) = obj.active_index() else {
         return Err(crate::spec::object::no_alternative_selected(obj.spec()));
     };
@@ -336,11 +336,11 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, w: &mut Writer) -> Result<(),
         if spec.range_bits > 0 {
             w.put_bits(def_idx as u64, spec.range_bits);
         }
-        encode_bare(obj.get_active(), constraints, w)
+        encode_bare(obj.get_active(), constraints, w, opts)
     } else {
         put_nsnn(w, (def_idx - root_count) as i64);
         let mut tmp = Writer::new();
-        encode_bare(obj.get_active(), constraints, &mut tmp)?;
+        encode_bare(obj.get_active(), constraints, &mut tmp, opts)?;
         tmp.flush();
         put_octets(w, &tmp.into_bytes());
         Ok(())
@@ -399,10 +399,10 @@ fn decode_choice_alternative(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result
 ///        constraint, then the elements (a SET OF in X.691 §21.1 order).
 /// @return `Err` when an element cannot be encoded.
 /// @see X.691 §20, §21.
-pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Writer) -> Result<(), EncodeError> {
+pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Writer, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
     let elem = pc.element.unwrap_or(&crate::constraints::UNCONSTRAINED);
     if obj.natural_tag() == crate::spec::sequence::SET_TAG && obj.len() > 1 {
-        let parts = set_of_sorted_parts(obj, elem)?;
+        let parts = set_of_sorted_parts(obj, elem, opts)?;
         encode_ext_size_and_items(w, pc, parts.len(), |w, range| {
             for (bytes, nbits) in &parts[range] {
                 w.put_bit_string(bytes, *nbits);
@@ -418,7 +418,7 @@ pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Write
             if err.is_some() {
                 return;
             }
-            if let Err(e) = encode_bare(obj.get(i), elem, w) {
+            if let Err(e) = encode_bare(obj.get(i), elem, w, opts) {
                 err = Some(e);
             }
         }
@@ -437,11 +437,11 @@ pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Write
 /// @return Each element's encoding and exact bit count, in §21.1 order;
 ///         `Err` when an element cannot be encoded.
 /// @see X.691 §21.1, §21.2.
-fn set_of_sorted_parts(obj: &dyn Asn1SeqOf, elem: &Constraints) -> Result<Vec<(Vec<u8>, usize)>, EncodeError> {
+fn set_of_sorted_parts(obj: &dyn Asn1SeqOf, elem: &Constraints, opts: Option<&crate::containing::ContainedOptions>) -> Result<Vec<(Vec<u8>, usize)>, EncodeError> {
     let mut parts: Vec<(Vec<u8>, usize)> = (0..obj.len())
         .map(|i| {
             let mut ew = Writer::new();
-            encode_bare(obj.get(i), elem, &mut ew)?;
+            encode_bare(obj.get(i), elem, &mut ew, opts)?;
             let nbits = ew.bit_pos();
             ew.flush();
             Ok((ew.into_bytes(), nbits))
@@ -483,7 +483,14 @@ pub fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, pc: &Constraints, r: &
 ///         discard.
 /// @see X.691 §10.1 — complete encoding of the outermost value.
 pub fn encode_pdu_into<T: Asn1Pdu + ?Sized>(v: &T, w: &mut Writer) -> Result<(), EncodeError> {
-    let r = encode_bare(v.as_member_ref(), T::PDU_CONSTRAINTS, w);
+    encode_pdu_into_with(v, w, None)
+}
+
+/// @brief `encode_pdu_into` with contained-value settings: the decoder
+///        registry's encode side applies to every modified contained field
+///        (X.682 §11).
+pub fn encode_pdu_into_with<T: Asn1Pdu + ?Sized>(v: &T, w: &mut Writer, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
+    let r = encode_bare(v.as_member_ref(), T::PDU_CONSTRAINTS, w, opts);
     if let Err(e) = &r {
         if crate::debug::debug_flags() & crate::debug::DBG_PER != 0 {
             eprintln!("[PER-ENC] encode failed: {}", e.message);
@@ -499,6 +506,14 @@ pub fn encode_pdu_into<T: Asn1Pdu + ?Sized>(v: &T, w: &mut Writer) -> Result<(),
 pub fn encode_pdu<T: Asn1Pdu + ?Sized>(v: &T) -> Result<Vec<u8>, EncodeError> {
     let mut w = Writer::new();
     encode_pdu_into(v, &mut w)?;
+    w.flush();
+    Ok(w.into_bytes())
+}
+
+/// @brief One-record form of `encode_pdu_into_with`.
+pub fn encode_pdu_with<T: Asn1Pdu + ?Sized>(v: &T, opts: &crate::containing::ContainedOptions) -> Result<Vec<u8>, EncodeError> {
+    let mut w = Writer::new();
+    encode_pdu_into_with(v, &mut w, Some(opts))?;
     w.flush();
     Ok(w.into_bytes())
 }
@@ -551,9 +566,9 @@ mod tests {
         // two's-complement octets each. X.691 §21.1 compares the padded
         // element encodings: 01 05 < 01 FF < 02 01 2C.
         let vals = vec![Integer(300), Integer(-1), Integer(5)];
-        let set = bytes(|w| encode_seqof_content(&SetOf(vals.clone()), &UNCONSTRAINED, w).unwrap());
+        let set = bytes(|w| encode_seqof_content(&SetOf(vals.clone()), &UNCONSTRAINED, w, None).unwrap());
         assert_eq!(set, vec![0x03, 0x01, 0x05, 0x01, 0xFF, 0x02, 0x01, 0x2C]);
-        let seq = bytes(|w| encode_seqof_content(&SeqOf(vals), &UNCONSTRAINED, w).unwrap());
+        let seq = bytes(|w| encode_seqof_content(&SeqOf(vals), &UNCONSTRAINED, w, None).unwrap());
         assert_eq!(seq, vec![0x03, 0x02, 0x01, 0x2C, 0x01, 0xFF, 0x01, 0x05]);
     }
 }

@@ -17,11 +17,18 @@ pub struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
     pub(crate) depth: Depth,
+    pub(crate) contained: Option<&'a crate::containing::ContainedOptions>,
 }
 
 impl<'a> Reader<'a> {
     pub fn new(text: &'a str) -> Self {
-        Reader { data: text.as_bytes(), pos: 0, depth: Depth::default() }
+        Reader { data: text.as_bytes(), pos: 0, depth: Depth::default(), contained: None }
+    }
+
+    /// @brief Set the contained-value settings of this decode (decoder
+    ///        registry, `off`).
+    pub fn set_contained(&mut self, opts: &'a crate::containing::ContainedOptions) {
+        self.contained = Some(opts);
     }
 
     pub fn at_end(&self) -> bool {

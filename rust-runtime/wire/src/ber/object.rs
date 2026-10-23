@@ -10,6 +10,7 @@ use crate::ber::enumerated::{read_enumerated_tagged_into, write_enumerated_tagge
 use crate::ber::reader::{DecodeError, Reader};
 use crate::ber::tag::Tag;
 use crate::ber::writer::{write_explicit, write_primitive, write_tagged};
+use crate::containing::ContainedOptions;
 use crate::encode_error::EncodeError;
 use crate::spec::choice::BerTagging;
 use crate::spec::object::{Asn1Choice, Asn1Pdu, Asn1Seq, Asn1SeqOf, MemberRef, MemberRefMut};
@@ -36,33 +37,33 @@ fn unsupported_framing_decode(reason: &'static str, r: &Reader) -> DecodeError {
 /// @param out      Destination buffer.
 /// @return `Err` for a member or alternative codegen marked unsupported.
 /// @see X.690 §8.14 — EXPLICIT/IMPLICIT tagging.
-pub(crate) fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec<u8>) -> Result<(), EncodeError> {
+pub(crate) fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec<u8>, opts: Option<&ContainedOptions>) -> Result<(), EncodeError> {
     match m {
         MemberRef::Absent => Ok(()),
         MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => ber_encode_primitive(p, framing, out),
         MemberRef::Contained(c, spec) => {
-            let os = c.wire_octets(spec, crate::containing::ContainedEncoding::Ber)?;
+            let os = c.wire_octets(spec, crate::containing::ContainedEncoding::Ber, opts)?;
             ber_encode_primitive(crate::spec::primitive::PrimitiveRef::OctetString(&os), framing, out)
         }
         MemberRef::Composite(inner) => match framing {
-            BerTagging::Explicit(tag) => write_tagged(out, tag, |out| encode_seq_into(inner, out)),
-            BerTagging::Implicit(tag) => write_tagged(out, tag, |out| encode_seq_content(inner, out)),
-            BerTagging::Delegate => encode_seq_into(inner, out),
+            BerTagging::Explicit(tag) => write_tagged(out, tag, |out| encode_seq_into(inner, out, opts)),
+            BerTagging::Implicit(tag) => write_tagged(out, tag, |out| encode_seq_content(inner, out, opts)),
+            BerTagging::Delegate => encode_seq_into(inner, out, opts),
             BerTagging::Unsupported(reason) => Err(unsupported_framing(reason)),
         },
         MemberRef::Choice(inner) => match framing {
-            BerTagging::Explicit(tag) => write_explicit(out, tag, |out| encode_choice_dispatch(inner, out)),
-            BerTagging::Implicit(tag) => encode_choice_tagged(inner, tag, out),
-            BerTagging::Delegate => encode_choice_into(inner, out),
+            BerTagging::Explicit(tag) => write_explicit(out, tag, |out| encode_choice_dispatch(inner, out, opts)),
+            BerTagging::Implicit(tag) => encode_choice_tagged(inner, tag, out, opts),
+            BerTagging::Delegate => encode_choice_into(inner, out, opts),
             BerTagging::Unsupported(reason) => Err(unsupported_framing(reason)),
         },
         MemberRef::SeqOf(inner) => {
             let natural = inner.natural_tag();
             match framing {
-                BerTagging::Explicit(tag) => write_tagged(out, tag, |out| write_tagged(out, natural, |out| encode_seqof_content(inner, out))),
-                BerTagging::Implicit(tag) => write_tagged(out, tag, |out| encode_seqof_content(inner, out)),
-                BerTagging::Delegate => write_tagged(out, natural, |out| encode_seqof_content(inner, out)),
+                BerTagging::Explicit(tag) => write_tagged(out, tag, |out| write_tagged(out, natural, |out| encode_seqof_content(inner, out, opts))),
+                BerTagging::Implicit(tag) => write_tagged(out, tag, |out| encode_seqof_content(inner, out, opts)),
+                BerTagging::Delegate => write_tagged(out, natural, |out| encode_seqof_content(inner, out, opts)),
                 BerTagging::Unsupported(reason) => Err(unsupported_framing(reason)),
             }
         }
@@ -207,7 +208,7 @@ fn decode_composite_member(inner: &mut dyn Asn1Seq, ber: BerTagging, r: &mut Rea
 ///        (natural tag) and a containing member's own tag override.
 /// @return `Err` when a member cannot be encoded.
 /// @see X.690 §8.9 (SEQUENCE), §8.11 (SET), §8.14 (tagging).
-pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut Vec<u8>) -> Result<(), EncodeError> {
+pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut Vec<u8>, opts: Option<&ContainedOptions>) -> Result<(), EncodeError> {
     let spec = obj.spec();
     for (i, m) in spec.members.iter().enumerate() {
         if obj.is_default_equal(i) {
@@ -215,7 +216,7 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut Vec<u8>) -> Result<(), En
         }
         let member = obj.get_member(i);
         let present = !matches!(member, MemberRef::Absent);
-        encode_member_ref(member, m.ber, out)?;
+        encode_member_ref(member, m.ber, out, opts)?;
         if present {
             let delta = obj.validate(i);
             if delta != 0 {
@@ -227,24 +228,24 @@ pub fn encode_seq_content(obj: &dyn Asn1Seq, out: &mut Vec<u8>) -> Result<(), En
 }
 
 /// Appends a SEQUENCE/SET's complete TLV (its own natural tag).
-pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut Vec<u8>) -> Result<(), EncodeError> {
-    write_tagged(out, obj.spec().tag, |out| encode_seq_content(obj, out))
+pub fn encode_seq_into(obj: &dyn Asn1Seq, out: &mut Vec<u8>, opts: Option<&ContainedOptions>) -> Result<(), EncodeError> {
+    write_tagged(out, obj.spec().tag, |out| encode_seq_content(obj, out, opts))
 }
 
 pub fn encode_seq(obj: &dyn Asn1Seq) -> Result<Vec<u8>, EncodeError> {
     let mut out = Vec::new();
-    encode_seq_into(obj, &mut out)?;
+    encode_seq_into(obj, &mut out, None)?;
     Ok(out)
 }
 
 /// IMPLICIT/EXPLICIT retag of a SEQUENCE/SET-typed member (X.690 §8.14) —
 /// same content, different outer tag or an extra wrapping TLV. Used by a
 /// *containing* type's own member override reaching this SEQUENCE/SET.
-pub fn encode_seq_tagged(obj: &dyn Asn1Seq, tag: Tag, explicit: bool, out: &mut Vec<u8>) -> Result<(), EncodeError> {
+pub fn encode_seq_tagged(obj: &dyn Asn1Seq, tag: Tag, explicit: bool, out: &mut Vec<u8>, opts: Option<&ContainedOptions>) -> Result<(), EncodeError> {
     if explicit {
-        write_tagged(out, tag, |out| encode_seq_into(obj, out))
+        write_tagged(out, tag, |out| encode_seq_into(obj, out, opts))
     } else {
-        write_tagged(out, tag, |out| encode_seq_content(obj, out))
+        write_tagged(out, tag, |out| encode_seq_content(obj, out, opts))
     }
 }
 
@@ -356,10 +357,10 @@ pub fn decode_seq_tagged_into(obj: &mut dyn Asn1Seq, r: &mut Reader, tag: Tag, e
 
 /// The alternative-dispatch encoding (X.680 §28 — no outer wrapper of its
 /// own), before any `own_tag` wrap.
-fn encode_choice_dispatch(obj: &dyn Asn1Choice, out: &mut Vec<u8>) -> Result<(), EncodeError> {
+fn encode_choice_dispatch(obj: &dyn Asn1Choice, out: &mut Vec<u8>, opts: Option<&ContainedOptions>) -> Result<(), EncodeError> {
     if let Some(i) = obj.active_index() {
         let ber = obj.spec().alternatives[i].ber;
-        return encode_member_ref(obj.get_active(), ber, out);
+        return encode_member_ref(obj.get_active(), ber, out, opts);
     }
     if let Some((tag, bytes)) = obj.extract_unknown_extension() {
         write_primitive(out, tag, bytes);
@@ -369,23 +370,23 @@ fn encode_choice_dispatch(obj: &dyn Asn1Choice, out: &mut Vec<u8>) -> Result<(),
 }
 
 /// Appends a CHOICE's encoding to an existing buffer.
-pub fn encode_choice_into(obj: &dyn Asn1Choice, out: &mut Vec<u8>) -> Result<(), EncodeError> {
+pub fn encode_choice_into(obj: &dyn Asn1Choice, out: &mut Vec<u8>, opts: Option<&ContainedOptions>) -> Result<(), EncodeError> {
     match obj.spec().own_tag {
-        Some(tag) => write_explicit(out, tag, |inner| encode_choice_dispatch(obj, inner)),
-        None => encode_choice_dispatch(obj, out),
+        Some(tag) => write_explicit(out, tag, |inner| encode_choice_dispatch(obj, inner, opts)),
+        None => encode_choice_dispatch(obj, out, opts),
     }
 }
 
 pub fn encode_choice(obj: &dyn Asn1Choice) -> Result<Vec<u8>, EncodeError> {
     let mut out = Vec::new();
-    encode_choice_into(obj, &mut out)?;
+    encode_choice_into(obj, &mut out, None)?;
     Ok(out)
 }
 
 /// IMPLICIT-retags a CHOICE-with-own_tag value under `tag` instead of its
 /// own declared `[n]` (X.680 §22.5/§28.4).
-pub fn encode_choice_tagged(obj: &dyn Asn1Choice, tag: Tag, out: &mut Vec<u8>) -> Result<(), EncodeError> {
-    write_tagged(out, tag, |out| encode_choice_dispatch(obj, out))
+pub fn encode_choice_tagged(obj: &dyn Asn1Choice, tag: Tag, out: &mut Vec<u8>, opts: Option<&ContainedOptions>) -> Result<(), EncodeError> {
+    write_tagged(out, tag, |out| encode_choice_dispatch(obj, out, opts))
 }
 
 /// Decode counterpart of `encode_choice_tagged`.
@@ -460,12 +461,12 @@ fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
 /// @param out Destination buffer.
 /// @return `Err` when an element cannot be encoded.
 /// @see X.690 §8.10, §8.12, §11.6.
-pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) -> Result<(), EncodeError> {
+pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>, opts: Option<&ContainedOptions>) -> Result<(), EncodeError> {
     if obj.natural_tag() == crate::spec::sequence::SET_TAG && obj.len() > 1 {
         let mut parts: Vec<Vec<u8>> = (0..obj.len())
             .map(|i| {
                 let mut buf = Vec::new();
-                encode_member_ref(obj.get(i), BerTagging::Delegate, &mut buf)?;
+                encode_member_ref(obj.get(i), BerTagging::Delegate, &mut buf, opts)?;
                 Ok(buf)
             })
             .collect::<Result<_, EncodeError>>()?;
@@ -476,7 +477,7 @@ pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>) -> Result<()
         return Ok(());
     }
     for i in 0..obj.len() {
-        encode_member_ref(obj.get(i), BerTagging::Delegate, out)?;
+        encode_member_ref(obj.get(i), BerTagging::Delegate, out, opts)?;
     }
     Ok(())
 }
@@ -524,8 +525,22 @@ fn check_pdu_size<T: Asn1Pdu + ?Sized>(v: &T, phase: &str) {
 ///         then holds a partial record the caller should discard.
 /// @see X.690 §8.9–§8.13 — constructed-type encodings; §8.14 tagging.
 pub fn encode_pdu_into<T: Asn1Pdu + ?Sized>(v: &T, out: &mut Vec<u8>) -> Result<(), EncodeError> {
+    encode_pdu_into_with(v, out, None)
+}
+
+/// @brief `encode_pdu_into` with contained-value settings: the decoder
+///        registry's encode side applies to every modified contained field
+///        (X.682 §11).
+pub fn encode_pdu_into_with<T: Asn1Pdu + ?Sized>(v: &T, out: &mut Vec<u8>, opts: Option<&ContainedOptions>) -> Result<(), EncodeError> {
     check_pdu_size(v, "encode");
-    encode_member_ref(v.as_member_ref(), BerTagging::Delegate, out)
+    encode_member_ref(v.as_member_ref(), BerTagging::Delegate, out, opts)
+}
+
+/// @brief One-record form of `encode_pdu_into_with`.
+pub fn encode_pdu_with<T: Asn1Pdu + ?Sized>(v: &T, opts: &ContainedOptions) -> Result<Vec<u8>, EncodeError> {
+    let mut out = Vec::new();
+    encode_pdu_into_with(v, &mut out, Some(opts))?;
+    Ok(out)
 }
 
 /// @brief One-record convenience form of `encode_pdu_into`.
@@ -741,7 +756,7 @@ mod tests {
     fn per_round_trips_nested_sequence() {
         let v = Outer { y: Integer(7), inner: Inner { x: Integer(5) }, maybe: Some(Integer(3)) };
         let mut w = crate::per::writer::Writer::new();
-        crate::per::object::encode_seq_content(&v, &mut w).unwrap();
+        crate::per::object::encode_seq_content(&v, &mut w, None).unwrap();
         w.flush();
         let bytes = w.into_bytes();
         let mut r = crate::per::reader::Reader::new(&bytes);
@@ -903,7 +918,7 @@ mod tests {
         assert_eq!(crate::xer::object::encode_seq(&v).unwrap_err().message, FRAME_UNSUPPORTED);
         assert_eq!(crate::jer::object::encode_seq(&v).unwrap_err().message, FRAME_UNSUPPORTED);
         let mut w = crate::per::writer::Writer::new();
-        assert_eq!(crate::per::object::encode_seq_content(&v, &mut w).unwrap_err().message, FRAME_UNSUPPORTED);
+        assert_eq!(crate::per::object::encode_seq_content(&v, &mut w, None).unwrap_err().message, FRAME_UNSUPPORTED);
     }
 
     #[test]
@@ -988,9 +1003,9 @@ mod tests {
         let msg = "CHOICE Ext: no alternative selected";
         assert_eq!(crate::xer::object::encode_choice(&v).unwrap_err().message, msg);
         let mut json = String::new();
-        assert_eq!(crate::jer::object::encode_choice_into(&v, &mut json).unwrap_err().message, msg);
+        assert_eq!(crate::jer::object::encode_choice_into(&v, &mut json, None).unwrap_err().message, msg);
         let mut w = crate::per::writer::Writer::new();
-        assert_eq!(crate::per::object::encode_choice_content(&v, &mut w).unwrap_err().message, msg);
+        assert_eq!(crate::per::object::encode_choice_content(&v, &mut w, None).unwrap_err().message, msg);
     }
 
     /// `Rec ::= CHOICE { a [0] INTEGER, c [2] Rec }` — self-referential
@@ -1061,9 +1076,9 @@ mod tests {
         let ber = encode_choice(&v).unwrap();
         let xml = crate::xer::object::encode_choice(&v).unwrap();
         let mut json = String::new();
-        crate::jer::object::encode_choice_into(&v, &mut json).unwrap();
+        crate::jer::object::encode_choice_into(&v, &mut json, None).unwrap();
         let mut w = crate::per::writer::Writer::new();
-        crate::per::object::encode_choice_content(&v, &mut w).unwrap();
+        crate::per::object::encode_choice_content(&v, &mut w, None).unwrap();
         w.flush();
         let per = w.into_bytes();
         let ok = [
@@ -1094,7 +1109,7 @@ mod tests {
         let mut out = Vec::new();
         out.push(0x30u8); // placeholder, overwritten below
         let mut content = Vec::new();
-        encode_seqof_content(v, &mut content).unwrap();
+        encode_seqof_content(v, &mut content, None).unwrap();
         let mut full = Vec::new();
         write_tagged(&mut full, SEQUENCE_TAG, |out| out.extend_from_slice(&content));
         let mut r = Reader::new(&full);
@@ -1116,12 +1131,12 @@ mod tests {
         use crate::ber::sequence::{SeqOf, SetOf};
         let vals = vec![Integer(300), Integer(5), Integer(-1)];
         let mut set = Vec::new();
-        encode_seqof_content(&SetOf(vals.clone()), &mut set).unwrap();
+        encode_seqof_content(&SetOf(vals.clone()), &mut set, None).unwrap();
         // DER (X.690 §11.6): ascending by encoding:
         // 02 01 05 < 02 01 FF < 02 02 01 2C
         assert_eq!(set, vec![0x02, 0x01, 0x05, 0x02, 0x01, 0xFF, 0x02, 0x02, 0x01, 0x2C]);
         let mut seq = Vec::new();
-        encode_seqof_content(&SeqOf(vals), &mut seq).unwrap();
+        encode_seqof_content(&SeqOf(vals), &mut seq, None).unwrap();
         assert_eq!(seq, vec![0x02, 0x02, 0x01, 0x2C, 0x02, 0x01, 0x05, 0x02, 0x01, 0xFF]);
     }
 }

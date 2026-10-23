@@ -83,7 +83,7 @@ mod per_blanket_tests {
             element: Some(&ELEM), ..Default::default()
         };
         let v = crate::ber::sequence::SeqOf(vec![Integer(1), Integer(9), Integer(15)]);
-        let via_walker = bytes_of(|w| crate::per::object::encode_seqof_content(&v, &coll, w).unwrap());
+        let via_walker = bytes_of(|w| crate::per::object::encode_seqof_content(&v, &coll, w, None).unwrap());
         let manual = bytes_of(|w| {
             w.put_bits(3, 3); // SIZE (0..7): count 3 in 3 bits
             for x in [1i64, 9, 15] {
@@ -768,12 +768,12 @@ mod tests {
 
         let empty: SeqOf<Integer> = SeqOf(vec![]);
         let mut out = String::new();
-        crate::jer::object::encode_seqof_into(&empty, &crate::constraints::UNCONSTRAINED, &mut out).unwrap();
+        crate::jer::object::encode_seqof_into(&empty, &crate::constraints::UNCONSTRAINED, &mut out, None).unwrap();
         assert_eq!(out, "[]");
 
         let v: SeqOf<Integer> = SeqOf(vec![Integer(1), Integer(2), Integer(3)]);
         let mut out2 = String::new();
-        crate::jer::object::encode_seqof_into(&v, &crate::constraints::UNCONSTRAINED, &mut out2).unwrap();
+        crate::jer::object::encode_seqof_into(&v, &crate::constraints::UNCONSTRAINED, &mut out2, None).unwrap();
         assert_eq!(out2, "[1,2,3]");
         let mut r = crate::jer::reader::Reader::new(&out2);
         let mut got: SeqOf<Integer> = SeqOf::default();
