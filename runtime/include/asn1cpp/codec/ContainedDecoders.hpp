@@ -79,11 +79,24 @@ public:
     };
 
     ContainedDecoders();
+    /// Copies re-point the built-in table at their own entries.
+    ContainedDecoders(const ContainedDecoders& o) : pkcs7_block_size(o.pkcs7_block_size), entries_(o.entries_) { refresh(); }
+    ContainedDecoders& operator=(const ContainedDecoders& o) {
+        if (this != &o) { entries_ = o.entries_; pkcs7_block_size = o.pkcs7_block_size; refresh(); }
+        return *this;
+    }
     /// @brief The built-in registry, used when no options are given.
     static const ContainedDecoders& defaults();
 
     /// @brief Register or replace the decoder \p name.
     void add(std::string name, ContainedDecodeFn decode, ContainedEncodeFn encode = {});
+    /// Built-in decoder names, in \c ContainedSpec::builtin order.
+    static constexpr const char* kBuiltinNames[] = {"plain", "zero_padding", "pkcs7", "none"};
+    static constexpr int kBuiltinCount = 4;
+    /// @brief The entry a field's decoder resolves to: the current entry for
+    ///        its built-in name (an index, overrides included), or a name
+    ///        lookup for any other name.
+    const Entry* resolve(const ContainedSpec& spec) const;
     /// @return The entry for \p name, or nullptr.
     const Entry* find(std::string_view name) const;
 
@@ -103,6 +116,12 @@ public:
 
 private:
     std::map<std::string, Entry, std::less<>> entries_;
+    /// Current entry per built-in name (points into \c entries_; std::map
+    /// nodes are stable), kept in step by \c add().
+    const Entry* builtin_[kBuiltinCount] = {};
+    void refresh() {
+        for (int i = 0; i < kBuiltinCount; ++i) builtin_[i] = find(kBuiltinNames[i]);
+    }
 };
 
 /// @brief Contained-value settings for one decode or encode, carried on the

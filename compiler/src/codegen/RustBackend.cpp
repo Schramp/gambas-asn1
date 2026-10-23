@@ -744,11 +744,11 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
             "pub static {}: asn1cpp_wire::containing::ContainedSpec = asn1cpp_wire::containing::ContainedSpec {{ "
             "encoding: asn1cpp_wire::containing::ContainedEncoding::{}, eager: {}, decoder: \"{}\", when_member: {}, "
             "when_value: {}, fail_on_error: {}, xer: asn1cpp_wire::containing::ContainedText::{}, "
-            "jer: asn1cpp_wire::containing::ContainedText::{} }};\n\n",
+            "jer: asn1cpp_wire::containing::ContainedText::{}, builtin: {} }};\n\n",
             contained_spec_ident(member_descriptor_base_name(spec.parent_cname, spec.mname)), enc(f.encoding),
             f.decode == sema::ContainedDecode::Eager ? "true" : "false", f.decoder, spec.contained_when_index,
             f.when ? f.when->value : 0, f.on_error == sema::ContainedOnError::Fail ? "true" : "false",
-            text(f.xer), text(f.jer));
+            text(f.xer), text(f.jer), sema::builtin_decoder_index(f.decoder));
     }
     if (spec.kind == Kind::Integer) {
         // Plain `static` data, not a generated per-member function — all

@@ -94,6 +94,16 @@ private:
     std::map<const ast::TypeDef*, std::size_t> by_member_;
 };
 
+/// @brief Index of a built-in decoder name (plain, zero_padding, pkcs7,
+///        none — the runtime registry's order), or 255 for any other name,
+///        which the runtime then looks up by name.
+inline int builtin_decoder_index(const std::string& name) {
+    static const char* const names[] = {"plain", "zero_padding", "pkcs7", "none"};
+    for (int i = 0; i < 4; ++i)
+        if (name == names[i]) return i;
+    return 255;
+}
+
 /// @brief Configuration text of a ContainedText value ("hex", ...).
 const char* to_string(ContainedText t);
 /// @brief Configuration text of a ContentsEncoding value ("ber", ...).

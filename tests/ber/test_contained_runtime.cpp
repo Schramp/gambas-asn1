@@ -83,6 +83,28 @@ int main() {
               run("plain", enc, &v, reg).status == ContainedStatus::Decoded && v == 7);
     }
 
+    // Built-in names resolve through the registry's index table, also after
+    // an override and in a copy (which must point at its own entries).
+    {
+        ContainedSpec zp = k_spec;
+        zp.decoder = "zero_padding";
+        zp.builtin = 1;
+        ContainedDecoders reg;
+        check("resolve built-in by index", reg.resolve(zp) == reg.find("zero_padding"));
+        ContainedDecoders copy = reg;
+        check("copy resolves to its own entry", copy.resolve(zp) == copy.find("zero_padding") &&
+                                                copy.resolve(zp) != reg.resolve(zp));
+        reg.add("zero_padding", [](const ContainedDecodeArgs&) { return ContainedResult::skipped("x"); });
+        check("override replaces the indexed entry", reg.resolve(zp) == reg.find("zero_padding"));
+        check("copy keeps the original", copy.resolve(zp) != reg.resolve(zp));
+        ContainedSpec custom = k_spec;
+        custom.decoder = "li_decrypt";
+        custom.builtin = kCustomDecoder;
+        check("custom name is looked up", reg.resolve(custom) == nullptr);
+        reg.add("li_decrypt", [](const ContainedDecodeArgs&) { return ContainedResult::ok(); });
+        check("custom name resolves after add", reg.resolve(custom) == reg.find("li_decrypt"));
+    }
+
     // Containing<T> value semantics.
     {
         Containing<Integer> c;
