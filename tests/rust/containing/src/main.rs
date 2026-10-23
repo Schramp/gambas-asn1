@@ -40,6 +40,7 @@ fn holder(kind: K) -> Hold {
     bytes.extend_from_slice(&[0; 5]);
     h.viaConfig.set_raw(bytes);
     h.raw = asn1cpp_wire::octet_string::OctetString(vec![0xDE, 0xAD]);
+    h.viaSized.set_value(inner(5));
     h
 }
 
@@ -173,6 +174,7 @@ fn main() {
     let d: Hold = per::object::decode_pdu(&wire).unwrap();
     check("CONTAINING member decoded as PER", id_of(&d.viaConstraint) == Some(1), &mut f);
     check("sidecar member decoded as BER", id_of(&d.viaConfig) == Some(3), &mut f);
+    check("sized alias member decoded", id_of(&d.viaSized) == Some(5), &mut f);
     check("re-encodes byte-exact", per::object::encode_pdu(&d).unwrap() == wire, &mut f);
 
     if f > 0 {
