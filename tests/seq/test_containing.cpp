@@ -4,9 +4,11 @@
 // tests/asn1/containing_test.asn1.
 #include <algorithm>
 #include <cstdio>
+#include <random>
 #include <sstream>
 #include <vector>
 #include <asn1cpp/asn1cpp.hpp>
+#include <asn1cpp/codec/RandomFiller.hpp>
 #include "Envelope.hpp"
 #include "Holder.hpp"
 #include "Inner.hpp"
@@ -338,6 +340,41 @@ static void test_xer_jer() {
           pxd.inner().size() == pb.inner().size());
 }
 
+/// Contents without ENCODED BY follow the outer encoding (X.682 §11.4):
+/// bytes known to be in other rules are re-derived when written as PER.
+static void test_outer_transcode() {
+    printf("Outer-encoding contents across transfer syntaxes\n");
+    Holder b;
+    check("BER decodes", unber(ber(Holder::asn_DEF, make_holder(Kind::plain)), b));
+    Holder bp;
+    check("BER-decoded value written as PER decodes",
+          unper(per(Holder::asn_DEF, b), bp) && bp.viaConstraint.status() == ContainedStatus::Decoded &&
+          bp.viaAlias.status() == ContainedStatus::Decoded && bp.viaConstraint.value()->id.value() == 1);
+    check("BER-decoded value re-encodes as BER byte-exact",
+          ber(Holder::asn_DEF, b) == ber(Holder::asn_DEF, make_holder(Kind::plain)));
+
+    std::mt19937 rng(7);
+    RandomFiller filler(rng);
+    Holder r;
+    check("random fill", filler.fill(&r, Holder::asn_DEF, 0, true));
+    Holder rp;
+    check("random value written as PER decodes",
+          unper(per(Holder::asn_DEF, r), rp) && rp.viaConstraint.status() == ContainedStatus::Decoded &&
+          rp.viaAlias.status() == ContainedStatus::Decoded);
+
+    Pick p;
+    p.set_present(Pick::PR::inner);
+    p.inner().set_value(make_inner(4));
+    Pick px;
+    std::ostringstream os;
+    XerEncodeStream xs{os};
+    XerCodec::instance().encode(xs, Pick::asn_DEF, &p);
+    Pick pp;
+    check("inline XER value written as PER decodes",
+          unxer(os.str(), px) && unper(per(Pick::asn_DEF, px), pp) &&
+          pp.inner().status() == ContainedStatus::Decoded && pp.inner().value()->id.value() == 4);
+}
+
 int main() {
     test_ber_sequence();
     test_bad_inner();
@@ -346,6 +383,7 @@ int main() {
     test_recursion();
     test_per();
     test_xer_jer();
+    test_outer_transcode();
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

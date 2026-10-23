@@ -80,17 +80,21 @@ inline constexpr uint8_t kCustomDecoder = 255;
 /// The raw bytes stay authoritative for encoding, so a value that was
 /// decoded and not modified re-encodes byte-exact (an HMAC over it stays
 /// valid). Modifying the inner value marks it dirty; encode then re-encodes
-/// the inner value instead.
+/// the inner value instead. So does an encode under other encoding rules
+/// than the raw bytes are in, for a field whose contents follow the outer
+/// encoding (X.682 §11.4), e.g. a BER-decoded value written as PER.
 class ContainedBase : public OctetString {
 public:
     ContainedBase() = default;
     ContainedBase(const ContainedBase& o)
-        : OctetString(o), ops_(o.ops_), status_(o.status_), error_(o.error_), dirty_(o.dirty_) {
+        : OctetString(o), ops_(o.ops_), status_(o.status_), error_(o.error_), dirty_(o.dirty_),
+          raw_encoding_(o.raw_encoding_) {
         if (o.inner_) inner_ = ops_->clone(o.inner_);
     }
     ContainedBase(ContainedBase&& o) noexcept
         : OctetString(std::move(o)), inner_(std::exchange(o.inner_, nullptr)), ops_(o.ops_),
-          status_(o.status_), error_(std::move(o.error_)), dirty_(o.dirty_) {}
+          status_(o.status_), error_(std::move(o.error_)), dirty_(o.dirty_),
+          raw_encoding_(o.raw_encoding_) {}
     ContainedBase& operator=(const ContainedBase& o) {
         if (this != &o) { ContainedBase tmp(o); swap(tmp); }
         return *this;
@@ -114,6 +118,7 @@ public:
         status_ = ContainedStatus::NotDecoded;
         error_.clear();
         dirty_ = false;
+        raw_encoding_ = ContainedEncoding::Outer;
     }
     /// @brief Replace the raw bytes with \p n bytes from \p p.
     void set(const uint8_t* p, std::size_t n) {
@@ -122,6 +127,7 @@ public:
         status_ = ContainedStatus::NotDecoded;
         error_.clear();
         dirty_ = false;
+        raw_encoding_ = ContainedEncoding::Outer;
     }
 
     ContainedStatus status() const { return status_; }
@@ -131,6 +137,12 @@ public:
     /// @brief True after the inner value was modified; encode then derives
     ///        the bytes from it.
     bool dirty() const { return dirty_; }
+    /// @brief Encoding rules the raw bytes are known to be in, for a field
+    ///        whose contents follow the outer encoding (X.682 §11.4):
+    ///        the outer decode's rules, or the rules the bytes were derived
+    ///        with. \c Outer: unknown (set directly), the bytes are used as
+    ///        they are.
+    ContainedEncoding raw_encoding() const { return raw_encoding_; }
 
     /// @brief Type-erased inner value, or nullptr.
     const Asn1Object* value_object() const { return inner_; }
@@ -154,22 +166,26 @@ public:
     }
     /// @brief Runtime access for codecs: raw bytes from the wire, before any
     ///        inner decode.
-    void set_raw_from_wire(std::span<const uint8_t> b) {
+    /// @param enc  Encoding rules of the decode the bytes came from.
+    void set_raw_from_wire(std::span<const uint8_t> b, ContainedEncoding enc) {
         OctetString::set(b);
         reset_value();
         status_ = ContainedStatus::NotDecoded;
         error_.clear();
         dirty_ = false;
+        raw_encoding_ = enc;
     }
 
     /// @brief Runtime access for codecs: raw bytes derived for an inner value
     ///        that was just decoded from its inline XER/JER form; keeps the
     ///        value and marks it Decoded.
-    void set_raw_for_value(std::span<const uint8_t> b) {
+    /// @param enc  Encoding rules the bytes were derived with.
+    void set_raw_for_value(std::span<const uint8_t> b, ContainedEncoding enc) {
         OctetString::set(b);
         status_ = ContainedStatus::Decoded;
         error_.clear();
         dirty_ = false;
+        raw_encoding_ = enc;
     }
 
 protected:
@@ -185,6 +201,7 @@ protected:
         std::swap(status_, o.status_);
         std::swap(error_, o.error_);
         std::swap(dirty_, o.dirty_);
+        std::swap(raw_encoding_, o.raw_encoding_);
     }
 
     Asn1Object*          inner_ = nullptr;
@@ -192,6 +209,7 @@ protected:
     ContainedStatus      status_ = ContainedStatus::NotDecoded;
     std::string          error_;
     bool                 dirty_ = false;
+    ContainedEncoding    raw_encoding_ = ContainedEncoding::Outer;
 };
 
 /// @brief An OCTET STRING whose bytes are the encoding of a \p T value

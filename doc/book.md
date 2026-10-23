@@ -414,6 +414,15 @@ field is `on_error: fail`. On encode, the raw bytes are written unchanged, so a 
 signature over them stays valid. Once the inner value is dirty, encode writes its
 encoding instead, through the decoder's encode side (`pkcs7` pads).
 
+A field without `ENCODED BY` (`encoding` defaults to the outer encoding) holds
+contents encoded under the same rules as the message around it (X.682 §11.4). The value
+remembers which rules its raw bytes are in. If it is written under other rules, encode
+re-derives the bytes from the inner value: for example, a BER-decoded record written as
+PER, or a value read from inline XER/JER or made by the random filler (bytes derived as
+BER) and then written as PER. Bytes stay as they are when the rules match, when the value
+was not decoded, or when the bytes were set directly with `set(...)`. XER and JER carry such
+a field's contents as BER.
+
 Decoders are looked up by name in an `asn1::ContainedDecoders` registry
 (`<asn1cpp/codec/ContainedDecoders.hpp>`). Built-ins:
 

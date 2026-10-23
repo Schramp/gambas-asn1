@@ -262,8 +262,13 @@ std::span<const uint8_t> contained_wire_bytes(const TypeDescriptor& field_def, c
                                               ContainedEncoding outer_encoding,
                                               const ContainedOptions* opts,
                                               std::vector<uint8_t>& scratch) {
-    if (!v.dirty() || !v.has_value() || !field_def.contained) return v.bytes();
+    if (!v.has_value() || !field_def.contained) return v.bytes();
     const ContainedSpec& cs = *field_def.contained;
+    // X.682 §11.4: an outer-encoding field's contents follow the encoding
+    // being written; bytes known to be in other rules are re-derived.
+    bool other_rules = cs.encoding == ContainedEncoding::Outer &&
+                       v.raw_encoding() != ContainedEncoding::Outer && v.raw_encoding() != outer_encoding;
+    if (!v.dirty() && !other_rules) return v.bytes();
     const ContainedDecoders& reg = opts ? opts->registry() : ContainedDecoders::defaults();
     const auto* entry = reg.resolve(cs);
     std::string err;

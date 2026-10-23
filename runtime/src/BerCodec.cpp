@@ -331,12 +331,12 @@ struct ContainedBerHandler final : IBerTypeHandler {
                         const TypeDescriptor&, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
-        static_cast<ContainedBase*>(dest)->set_raw_from_wire(tlv->value);
+        static_cast<ContainedBase*>(dest)->set_raw_from_wire(tlv->value, ContainedEncoding::Ber);
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
                               const TypeDescriptor&, Asn1Object* dest) const override {
-        static_cast<ContainedBase*>(dest)->set_raw_from_wire(content.rest());
+        static_cast<ContainedBase*>(dest)->set_raw_from_wire(content.rest(), ContainedEncoding::Ber);
         return decode_ok();
     }
 };
