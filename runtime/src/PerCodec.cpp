@@ -606,7 +606,7 @@ public:
             return decode_ok();
         });
         if (!len_r) return decode_err(len_r.error());
-        static_cast<ContainedBase*>(dest)->set_raw_from_wire(bytes);
+        static_cast<ContainedBase*>(dest)->set_raw_from_wire(bytes, ContainedEncoding::PerUnaligned);
         return decode_ok();
     }
 };

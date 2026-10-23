@@ -41,8 +41,9 @@ pub enum ContainedStatus {
 
 /// Encoding rules of the contained bytes (X.682 §11.4/§11.6). `Outer` means
 /// the encoding rules of the enclosing OCTET STRING.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ContainedEncoding {
+    #[default]
     Outer,
     Ber,
     Cer,
@@ -365,8 +366,9 @@ pub trait Contained {
     /// The bytes the field encodes as: the raw bytes, or after the inner
     /// value was modified, the inner value's encoding.
     fn wire_octets(&self, spec: &'static ContainedSpec, outer: ContainedEncoding) -> Cow<'_, OctetString>;
-    /// Raw bytes from the wire, before any inner decode.
-    fn set_raw_from_wire(&mut self, raw: Vec<u8>);
+    /// Raw bytes from the wire, before any inner decode, decoded with the
+    /// encoding rules `encoding`.
+    fn set_raw_from_wire(&mut self, raw: Vec<u8>, encoding: ContainedEncoding);
     fn status(&self) -> ContainedStatus;
     /// The inner value, if decoded.
     fn inner_ref(&self) -> Option<MemberRef<'_>>;
@@ -389,6 +391,12 @@ pub trait Contained {
 /// raw bytes (`Deref` to [`OctetString`]) plus the inner value decoded
 /// during the outer decode. The inner value is boxed, so `T` may be the
 /// enclosing type itself.
+///
+/// The raw bytes stay authoritative for encoding, so a value that was
+/// decoded and not modified re-encodes byte-exact. A modified value is
+/// re-encoded, and so is one written under other encoding rules than its
+/// raw bytes are in, for a field whose contents follow the outer encoding
+/// (X.682 §11.4), e.g. a BER-decoded value written as PER.
 #[derive(Debug, Default)]
 pub struct Containing<T> {
     raw: OctetString,
@@ -396,6 +404,9 @@ pub struct Containing<T> {
     status: ContainedStatus,
     error: String,
     dirty: bool,
+    /// Encoding rules the raw bytes are known to be in; `Outer`: unknown
+    /// (set directly), used as they are.
+    raw_encoding: ContainedEncoding,
 }
 
 impl<T: Clone> Clone for Containing<T> {
@@ -406,6 +417,7 @@ impl<T: Clone> Clone for Containing<T> {
             status: self.status,
             error: self.error.clone(),
             dirty: self.dirty,
+            raw_encoding: self.raw_encoding,
         }
     }
 }
@@ -442,6 +454,7 @@ impl<T> Containing<T> {
         self.status = ContainedStatus::NotDecoded;
         self.error.clear();
         self.dirty = false;
+        self.raw_encoding = ContainedEncoding::Outer;
     }
     pub fn status(&self) -> ContainedStatus {
         self.status
@@ -457,6 +470,11 @@ impl<T> Containing<T> {
     /// bytes from it.
     pub fn dirty(&self) -> bool {
         self.dirty
+    }
+    /// Encoding rules the raw bytes are known to be in (the outer decode's,
+    /// or those they were derived with); `Outer` when unknown.
+    pub fn raw_encoding(&self) -> ContainedEncoding {
+        self.raw_encoding
     }
     /// The decoded inner value.
     pub fn value(&self) -> Option<&T> {
@@ -485,9 +503,18 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
         &self.raw
     }
     fn wire_octets(&self, spec: &'static ContainedSpec, outer: ContainedEncoding) -> Cow<'_, OctetString> {
-        let (Some(inner), true) = (self.inner.as_deref(), self.dirty) else {
+        let Some(inner) = self.inner.as_deref() else {
             return Cow::Borrowed(&self.raw);
         };
+        // X.682 §11.4: an outer-encoding field's contents follow the
+        // encoding being written; bytes known to be in other rules are
+        // re-derived.
+        let other_rules = spec.encoding == ContainedEncoding::Outer
+            && self.raw_encoding != ContainedEncoding::Outer
+            && self.raw_encoding != outer;
+        if !self.dirty && !other_rules {
+            return Cow::Borrowed(&self.raw);
+        }
         let reg = ContainedDecoders::defaults();
         let encoding = resolve(spec.encoding, outer);
         let args = ContainedEncodeArgs { inner: inner.as_member_ref(), spec, encoding, decoders: reg };
@@ -505,8 +532,9 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
             }
         }
     }
-    fn set_raw_from_wire(&mut self, raw: Vec<u8>) {
+    fn set_raw_from_wire(&mut self, raw: Vec<u8>, encoding: ContainedEncoding) {
         self.set_raw(raw);
+        self.raw_encoding = encoding;
     }
     fn status(&self) -> ContainedStatus {
         self.status
@@ -536,11 +564,13 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
         Ok(())
     }
     fn finish_inline(&mut self, raw: Option<Vec<u8>>, spec: &'static ContainedSpec) -> Result<(), String> {
+        // XER/JER carry an outer-encoding field's contents as BER (the same
+        // rules their hex form uses).
+        let encoding = resolve(spec.encoding, ContainedEncoding::Ber);
         let raw = match raw {
             Some(r) => r,
             None => {
                 let inner = self.inner.as_deref().ok_or("no inline value")?;
-                let encoding = resolve(spec.encoding, ContainedEncoding::Ber);
                 encode_value(&ContainedEncodeArgs {
                     inner: inner.as_member_ref(),
                     spec,
@@ -553,6 +583,7 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
         self.status = ContainedStatus::Decoded;
         self.error.clear();
         self.dirty = false;
+        self.raw_encoding = encoding;
         Ok(())
     }
 }

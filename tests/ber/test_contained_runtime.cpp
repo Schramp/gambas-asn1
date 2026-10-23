@@ -110,7 +110,7 @@ int main() {
         Containing<Integer> c;
         check("fresh value: not decoded, no value", c.status() == ContainedStatus::NotDecoded && !c.has_value());
         std::vector<uint8_t> raw{0x02, 0x01, 0x05};
-        c.set_raw_from_wire(raw);
+        c.set_raw_from_wire(raw, ContainedEncoding::Ber);
         c.emplace_value_object(ContainedOpsFor<Integer>::ops);
         static_cast<Integer*>(c.value_object())->set(5);
         c.set_status(ContainedStatus::Decoded);

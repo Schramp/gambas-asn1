@@ -82,7 +82,7 @@ fn decode_contained(v: &mut dyn crate::containing::Contained, spec: &'static cra
     if r.peek_char() != b'{' {
         let mut os = crate::octet_string::OctetString::default();
         jer_decode_primitive(crate::spec::primitive::PrimitiveRefMut::OctetString(&mut os), c, r)?;
-        v.set_raw_from_wire(os.0);
+        v.set_raw_from_wire(os.0, crate::containing::ContainedEncoding::Ber);
         return Ok(());
     }
     r.expect_char(b'{')?;

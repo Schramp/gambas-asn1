@@ -840,7 +840,11 @@ def parse_targets(path):
     Tokens directly after the PDU type starting with '@' are target
     options: '@expect-errors' marks a schema neither runtime can encode or
     decode; the target passes when every C++ and Rust codec tool reports
-    a per-record error and exits cleanly (exit 1, no panic or signal)."""
+    a per-record error and exits cleanly (exit 1, no panic or signal).
+    '@asn1c-opaque-contents' marks a schema with contents-constrained
+    OCTET STRINGs (X.682 §11) that follow the outer encoding: asn1c keeps
+    their bytes as they are, while X.682 §11.4 has them re-encoded under
+    PER, so the asn1c PER comparison is informational for it."""
     targets = []
     with open(path) as f:
         for lineno, line in enumerate(f, 1):
@@ -859,7 +863,7 @@ def parse_targets(path):
             rest = parts[2:]
             n_opts = next((i for i, t in enumerate(rest) if not t.startswith("@")), len(rest))
             options = set(rest[:n_opts])
-            unknown = options - {"@expect-errors"}
+            unknown = options - {"@expect-errors", "@asn1c-opaque-contents"}
             if unknown:
                 print(f"{path}:{lineno}: unknown target option(s) {sorted(unknown)}")
                 sys.exit(1)
@@ -1223,7 +1227,7 @@ def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, reuse=False, jo
 
 def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c_reason=None,
                slot=None, cpp_jobs=4, cargo_jobs=None, reuse=(), extra_files=(),
-               asncpp_flags=(), expect_errors=False, fuzz=None):
+               asncpp_flags=(), expect_errors=False, fuzz=None, asn1c_opaque_contents=False):
     schema_abs = os.path.join(ASN1CPP_ROOT, schema_rel)
     if os.path.isdir(schema_abs):
         # A multi-module schema (e.g. ETSI LI): every .asn/.asn1 file in
@@ -1462,8 +1466,9 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
             # encoding of every record: then any difference from cpp/rust is
             # gated. Where asn1c's own round trip fails, its PER bytes aren't
             # trustworthy for this target and the comparison stays
-            # informational.
-            if self_m > 0 and self_mm == 0:
+            # informational. So it is for a target whose contained values
+            # asn1c carries as opaque bytes (@asn1c-opaque-contents).
+            if self_m > 0 and self_mm == 0 and not asn1c_opaque_contents:
                 tally(compare_per("asn1c.PER vs cpp.PER", per_asn1c, per_cpp, verbose))
                 tally(compare_per("asn1c.PER vs rust.PER", per_asn1c, per_rust, verbose))
             else:
@@ -1718,6 +1723,7 @@ def main():
                                     extra_files=extra_files,
                                     asncpp_flags=asncpp_flags,
                                     expect_errors="@expect-errors" in options,
+                                    asn1c_opaque_contents="@asn1c-opaque-contents" in options,
                                     fuzz=opts if opts.fuzz else None)
             except Exception as e:  # keep the sweep going; report as a failed target
                 print(f"  EXCEPTION: {e!r}")

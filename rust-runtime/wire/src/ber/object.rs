@@ -104,7 +104,7 @@ fn decode_member_ref_level(m: MemberRefMut, framing: BerTagging, r: &mut Reader)
         MemberRefMut::Contained(c, _) => {
             let mut os = crate::octet_string::OctetString::default();
             ber_decode_primitive(crate::spec::primitive::PrimitiveRefMut::OctetString(&mut os), framing, r)?;
-            c.set_raw_from_wire(os.0);
+            c.set_raw_from_wire(os.0, crate::containing::ContainedEncoding::Ber);
             Ok(())
         }
         MemberRefMut::Composite(inner) => decode_composite_member(inner, framing, r),

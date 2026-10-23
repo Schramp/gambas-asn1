@@ -72,7 +72,7 @@ fn decode_bare_level(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result
         MemberRefMut::Contained(v, _) => {
             let mut os = crate::octet_string::OctetString::default();
             per_decode_primitive(crate::spec::primitive::PrimitiveRefMut::OctetString(&mut os), r, c)?;
-            v.set_raw_from_wire(os.0);
+            v.set_raw_from_wire(os.0, crate::containing::ContainedEncoding::PerUnaligned);
             Ok(())
         }
         MemberRefMut::Composite(inner) => decode_seq_content_into(inner, r),

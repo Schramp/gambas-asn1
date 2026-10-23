@@ -111,7 +111,7 @@ fn decode_contained(c: &mut dyn crate::containing::Contained, spec: &'static cra
     if ti.name.is_empty() || ti.closing || ti.name.starts_with('!') {
         let mut os = crate::octet_string::OctetString::default();
         xer_decode_primitive(crate::spec::primitive::PrimitiveRefMut::OctetString(&mut os), r)?;
-        c.set_raw_from_wire(os.0);
+        c.set_raw_from_wire(os.0, crate::containing::ContainedEncoding::Ber);
         return Ok(());
     }
     let name = c.inner_xer_name();

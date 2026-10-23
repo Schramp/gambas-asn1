@@ -175,6 +175,23 @@ fn main() {
     check("sidecar member decoded as BER", id_of(&d.viaConfig) == Some(3), &mut f);
     check("re-encodes byte-exact", per::object::encode_pdu(&d).unwrap() == wire, &mut f);
 
+    // Contents without ENCODED BY follow the outer encoding (X.682 §11.4):
+    // bytes known to be in other rules are re-derived when written as PER.
+    println!("Outer-encoding contents across transfer syntaxes");
+    let ber_wire = ber::object::encode_pdu(&holder(K::plain)).unwrap();
+    let b: Hold = ber::object::decode_pdu(&ber_wire).unwrap();
+    let bp: Hold = per::object::decode_pdu(&per::object::encode_pdu(&b).unwrap()).unwrap();
+    check("BER-decoded value written as PER decodes",
+          bp.viaConstraint.status() == ContainedStatus::Decoded && id_of(&bp.viaConstraint) == Some(1)
+              && bp.viaAlias.status() == ContainedStatus::Decoded, &mut f);
+    check("BER-decoded value re-encodes as BER byte-exact", ber::object::encode_pdu(&b).unwrap() == ber_wire, &mut f);
+    let mut pc = Containing::default();
+    pc.set_value(inner(4));
+    let px: P = asn1cpp_wire::xer::object::decode_pdu(&asn1cpp_wire::xer::object::encode_pdu(&P::inner(pc)).unwrap()).unwrap();
+    let pp: P = per::object::decode_pdu(&per::object::encode_pdu(&px).unwrap()).unwrap();
+    check("inline XER value written as PER decodes",
+          matches!(&pp, P::inner(c) if c.status() == ContainedStatus::Decoded && id_of(c) == Some(4)), &mut f);
+
     if f > 0 {
         println!("FAILED");
         std::process::exit(1);
