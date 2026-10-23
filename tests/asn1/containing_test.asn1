@@ -11,7 +11,7 @@ ContainingTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 
     Kind ::= ENUMERATED { plain(1), scrambled(2) }
 
-    Wrapped ::= OCTET STRING (CONTAINING Inner)
+    Wrapped ::= OCTET STRING (SIZE(1..200)) (CONTAINING Inner)
 
     Holder ::= SEQUENCE {
         kind           Kind,

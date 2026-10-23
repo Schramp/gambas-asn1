@@ -1392,15 +1392,10 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
 // Inline-constrained member TypeDescriptor helpers
 // ---------------------------------------------------------------------------
 
-/// @brief Emit the static per-member TypeDescriptor when the member carries
-///        inline constraints, delegating the decision to
-///        build_member_type_descriptor_spec() and text emission to the backend.
-/// @param m             Member type definition (may carry value-range, SIZE, or FROM constraints).
-/// @param parent_cname  C++ name of the enclosing SEQUENCE/CHOICE type.
-/// @param mname         Sanitised C++ member name used as the descriptor variable suffix.
-/// @param os            Output stream to write the generated descriptor to.
-/// @return A reference expression to the descriptor (e.g. `"&asn_TYP_Foo_bar"`).
-/// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
+/// @brief Contained-field fact (X.682 §11 / --container-config) for a
+///        member or alternative, when the backend stores contained values.
+/// @param m  Member or alternative type definition.
+/// @return The fact, or nullptr.
 const sema::ContainedField* Generator::contained_for(const ast::TypeDef& m) const {
     if (!contained_ || !backend_.supports_contained_values()) return nullptr;
     return contained_->find(&m);
@@ -1440,12 +1435,30 @@ void Generator::fill_contained_descriptor(MemberTypeDescriptorSpec& spec, const 
     }
 }
 
+/// @brief Emit a member's own TypeDescriptor when it needs one: inline
+///        value-range/SIZE/FROM constraints (decided by
+///        build_member_type_descriptor_spec()), or a contained field
+///        (X.682 §11), whose descriptor carries the contained handlers in
+///        place of the OCTET STRING ones; text emission is the backend's.
+/// @param m             Member or alternative type definition.
+/// @param parent_cname  Name of the enclosing SEQUENCE/SET/CHOICE type.
+/// @param mname         Sanitised member name (descriptor name suffix).
+/// @param session       Output session the descriptor is written to.
+/// @return Reference expression to the member's descriptor.
+/// @see X.691 §17 — a contained field keeps the SIZE constraint of the
+///      OCTET STRING type it is declared with, including through an alias;
+///      X.691 §26.5 (character string constraints).
 std::string Generator::emit_member_type_descriptor(
     const ast::TypeDef& m, const std::string& parent_cname,
     const std::string& mname, TypeOutputSession& session)
 {
     auto spec = build_member_type_descriptor_spec(m, parent_cname, mname);
     if (const auto* f = contained_for(m)) {
+        // A TypeRef member's constraints live on the OCTET STRING type the
+        // alias chain ends at; its own descriptor is replaced here.
+        if (!spec && std::holds_alternative<ast::TypeRef>(m.body))
+            if (auto base = resolver_.follow_aliases(std::make_shared<ast::TypeDef>(m), current_module_))
+                spec = build_member_type_descriptor_spec(*base, parent_cname, mname);
         if (!spec) {
             spec = MemberTypeDescriptorSpec{};
             spec->kind = MemberTypeDescriptorSpec::Kind::Sizeable;

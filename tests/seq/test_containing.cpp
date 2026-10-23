@@ -212,6 +212,18 @@ static void test_per() {
     check("CONTAINING member decoded as PER", d.viaConstraint.value() && d.viaConstraint.value()->id.value() == 1);
     check("sidecar member decoded as BER", d.viaConfig.value() && d.viaConfig.value()->id.value() == 3);
     check("re-encodes byte-exact", per(Holder::asn_DEF, d) == wire);
+
+    // A contained member typed by a SIZE-constrained alias keeps the
+    // alias's SIZE constraint: PER encodes its length as a constrained
+    // whole number (X.691 §17.6), not as an unconstrained length.
+    const auto& spec = *Holder::asn_DEF.sequence_spec;
+    const TypeDescriptor* alias_def = nullptr;
+    for (int i = 0; i < spec.count; ++i)
+        if (std::string_view(spec.members[i].name) == "viaAlias") alias_def = spec.members[i].type_descriptor;
+    check("alias member keeps SIZE(1..200)",
+          alias_def && alias_def->contained && (alias_def->constraints.flags & Constraints::SIZE_CONSTRAINED) &&
+          alias_def->constraints.size_lower == 1 && alias_def->constraints.size_upper == 200);
+    check("alias member decoded as PER", d.viaAlias.value() && d.viaAlias.value()->id.value() == 2);
 }
 
 template<class T>
