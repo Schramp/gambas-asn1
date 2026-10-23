@@ -13,6 +13,7 @@
 #include <asn1cpp/compat/format.hpp>
 #include "../ast/TypeDef.hpp"
 #include "../ast/Tag.hpp"
+#include "../sema/ContainedFields.hpp"
 
 namespace asn1::codegen {
 
@@ -398,6 +399,18 @@ struct MemberTypeDescriptorSpec {
     // Both kinds — target-agnostic BER/XER facts (X.690/X.693), not code.
     std::string xer_type_name;    // e.g. "INTEGER", "OCTET_STRING"
     int         universal_tag = 0;    // asn1::UniversalTag::* value
+
+    // Kind::Sizeable OCTET STRING holding the encoding of another type
+    // (X.682 §11 / --container-config); null otherwise. `contained_inner`
+    // is the inner type's native type, `contained_storage` the field's.
+    // The `when` sibling is given by its index in the enclosing member
+    // table and how its value is stored.
+    enum class WhenStorage { None, Enumerated, Integer, UInteger, Boolean };
+    const sema::ContainedField* contained = nullptr;
+    std::string contained_inner;
+    std::string contained_storage;
+    int         contained_when_index = -1;
+    WhenStorage contained_when_storage = WhenStorage::None;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE OF / SET OF type
@@ -465,6 +478,16 @@ struct TaggedMemberSpec {
     // rather than string-matching `mtype`, since `mtype` only coincidentally
     // matches what `native_int_type(IntStorageKind::S64)` returns.
     IntStorageKind storage_kind = IntStorageKind::S64;
+    // Set when this member/alternative is an OCTET STRING holding the
+    // encoding of another type: a contents constraint (X.682 §11) and/or a
+    // --container-config entry, merged by sema::ContainedFields.
+    // `contained_when_index` is the index in SequenceSpec::members of the
+    // `when` sibling, -1 without a condition (always -1 for alternatives).
+    const sema::ContainedField* contained = nullptr;
+    int contained_when_index = -1;
+    // member_descriptor_base_name() of the field's own descriptor, which
+    // also names its contained spec (set only with `contained`).
+    std::string contained_base;
 
     // Set only for a TypeRef member/alternative (mbuiltin unset above) whose
     // resolved target is itself ENUMERATED or a named INTEGER type —
@@ -1240,6 +1263,16 @@ public:
     ///       this override whenever that table wiring lands, don't assume
     ///       it's settled.
     virtual bool needs_seqof_wrapper_reference() const { return true; }
+
+    /// @brief Does this backend store contained fields (X.682 §11 /
+    ///        --container-config) as a value holding the raw bytes and the
+    ///        decoded inner value? False: such a field stays a plain OCTET
+    ///        STRING and the contained-field facts are ignored.
+    virtual bool supports_contained_values() const { return false; }
+
+    /// @brief Storage type of a contained field whose inner type's native
+    ///        type is \p inner (only called when supports_contained_values()).
+    virtual std::string contained_storage_type(const std::string& inner) const { return inner; }
 
     /// @brief Does a bare top-level TypeRef alias (`Alias ::= Target`) whose
     ///        target cycles back to `Alias` (Generator::bare_alias_would_cycle)

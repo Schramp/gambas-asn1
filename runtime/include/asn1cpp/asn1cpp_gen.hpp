@@ -17,6 +17,7 @@
 #include "types/Boolean.hpp"
 #include "types/Null.hpp"
 #include "types/OctetString.hpp"
+#include "types/Containing.hpp"
 #include "types/BitString.hpp"
 #include "types/Real.hpp"
 #include "types/Oid.hpp"

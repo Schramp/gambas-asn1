@@ -12,6 +12,7 @@ extern const IPerTypeHandler& per_null_handler;
 extern const IPerTypeHandler& per_real_handler;
 extern const IPerTypeHandler& per_bitstring_handler;
 extern const IPerTypeHandler& per_octetstring_handler;
+extern const IPerTypeHandler& per_contained_handler;
 extern const IPerTypeHandler& per_oid_handler;
 extern const IPerTypeHandler& per_reloid_handler;
 extern const IPerTypeHandler& per_string_handler;

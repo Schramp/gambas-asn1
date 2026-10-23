@@ -212,7 +212,8 @@ void emit_type_descriptor(std::ostream& os,
                            // member initializers, same as xer_encoding
                            // already does for every call site here.
                            bool is_explicit,
-                           const std::string& natural_tag_expr) {
+                           const std::string& natural_tag_expr,
+                           bool has_contained) {
     auto sp = [&](bool h) -> std::string {
         if (!h) return "nullptr";
         return use_class_scope ? std::format("&{}::asn_SPC", cname)
@@ -230,7 +231,10 @@ void emit_type_descriptor(std::ostream& os,
     os << std::format("    {} /* per_handler */,\n", per_handler);
     os << std::format("    {} /* ber_handler */,\n", ber_handler);
     os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */,\n", cname);
-    if (is_explicit) {
+    if (has_contained) {
+        os << std::format("    asn1::XerEncoding::Default, {}, {}, nullptr, true /* is_explicit, natural_tag, contained, has_contained */\n",
+                          is_explicit ? "true" : "false", natural_tag_expr.empty() ? "{}" : natural_tag_expr);
+    } else if (is_explicit) {
         os << std::format("    asn1::XerEncoding::Default, true, {} /* is_explicit, natural_tag */\n",
                           natural_tag_expr);
     }
@@ -663,6 +667,59 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
                  ? std::format(", {}", xer_encoding_literal(spec.xer_encoding)) : "";
     }
 
+    if (spec.contained) {
+        // Contained field (X.682 §11): its own ContainedSpec, the contained
+        // handlers (raw bytes; the enclosing type decodes the inner value),
+        // and the Containing<T> lifecycle so deep_copy clones the inner value.
+        using WS = MemberTypeDescriptorSpec::WhenStorage;
+        const auto& f = *spec.contained;
+        auto enc = [](sema::ContentsEncoding e) {
+            switch (e) {
+            case sema::ContentsEncoding::Ber:          return "Ber";
+            case sema::ContentsEncoding::Cer:          return "Cer";
+            case sema::ContentsEncoding::Der:          return "Der";
+            case sema::ContentsEncoding::PerAligned:   return "PerAligned";
+            case sema::ContentsEncoding::PerUnaligned: return "PerUnaligned";
+            default:                                   return "Outer";
+            }
+        };
+        auto text = [](sema::ContainedText t) {
+            switch (t) {
+            case sema::ContainedText::Inline:    return "Inline";
+            case sema::ContainedText::InlineRaw: return "InlineRaw";
+            default:                             return "Hex";
+            }
+        };
+        auto when = [&] {
+            switch (spec.contained_when_storage) {
+            case WS::Enumerated: return "Enumerated";
+            case WS::Integer:    return "Integer";
+            case WS::UInteger:   return "UInteger";
+            case WS::Boolean:    return "Boolean";
+            default:             return "None";
+            }
+        };
+        std::string base = member_descriptor_base_name(spec.parent_cname, spec.mname);
+        os << std::format(
+            "static const asn1::ContainedSpec {}_contained = {{ &{}::asn_DEF, "
+            "&asn1::ContainedOpsFor<{}>::ops, asn1::ContainedEncoding::{}, {}, \"{}\", {}, "
+            "asn1::ContainedSpec::WhenKind::{}, {}, {}, asn1::ContainedText::{}, asn1::ContainedText::{}, {} }};\n",
+            base, spec.contained_inner, spec.contained_inner, enc(f.encoding),
+            f.decode == sema::ContainedDecode::Eager ? "true" : "false", f.decoder,
+            spec.contained_when_index, when(), f.when ? f.when->value : 0,
+            f.on_error == sema::ContainedOnError::Fail ? "true" : "false", text(f.xer), text(f.jer),
+            sema::builtin_decoder_index(f.decoder));
+        os << std::format(
+            "static const asn1::TypeDescriptor {} = "
+            "{{ \"{}\", asn1::Tag::universal({}, false), "
+            "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, "
+            "&asn1::per_contained_handler, &asn1::ber_contained_handler, "
+            "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}), {}, false, {{}}, &{}_contained }};\n",
+            base, spec.xer_type_name, spec.universal_tag, pc, spec.contained_storage,
+            xer_encoding_literal(spec.xer_encoding), base);
+        return;
+    }
+
     os << std::format(
         "static const asn1::TypeDescriptor {} = "
         "{{ \"{}\", asn1::Tag::universal({}, false), "
@@ -759,7 +816,7 @@ static SetterInfo classify_builtin_setter(ast::BuiltinType bt, IntStorageKind st
 // populated `setter_param_type` for a non-optional member in the first
 // place).
 static SetterInfo resolve_setter_info(const SequenceMemberSpec& r) {
-    if (r.optional) return {};
+    if (r.optional || r.contained) return {};
     if (r.mbuiltin) return classify_builtin_setter(*r.mbuiltin, r.storage_kind);
     if (!r.setter_param_type.empty())
         return {r.setter_param_type, r.setter_is_int_alias, r.setter_is_uint_alias, r.setter_is_move};
@@ -868,6 +925,17 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
                           join(spec.member_group_optional, b));
     }
 
+    // Contained fields (X.682 §11), decoded after all members.
+    std::vector<int> contained_idx;
+    for (std::size_t i = 0; i < spec.members.size(); ++i)
+        if (spec.members[i].contained) contained_idx.push_back(static_cast<int>(i));
+    if (!contained_idx.empty()) {
+        std::string list;
+        for (std::size_t i = 0; i < contained_idx.size(); ++i)
+            list += (i ? ", " : "") + std::to_string(contained_idx[i]);
+        os << std::format("static const int {}_contained_members[] = {{ {} }};\n\n", cname, list);
+    }
+
     // SequenceSpec
     os << std::format("const asn1::SequenceSpec {}::asn_SPC = {{\n", cname);
     if (spec.mcount > 0)
@@ -883,6 +951,8 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
                           spec.ext_unit_ends.size(), cname);
     else
         os << "    0, nullptr, nullptr, nullptr /* PER extension units */\n";
+    if (!contained_idx.empty())
+        os << std::format("    , {}, {}_contained_members /* contained fields */\n", contained_idx.size(), cname);
     os << "};\n\n";
 
     // TypeDescriptor
@@ -895,7 +965,8 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
         false, true, false, false, "asn1::TypeKind::Sequence",
         "&asn1::per_sequence_handler", "&asn1::ber_sequence_handler",
         /*use_class_scope=*/true, spec.is_explicit,
-        spec.is_explicit ? format_tag_literal(*spec.natural_tag) : "");
+        spec.is_explicit ? format_tag_literal(*spec.natural_tag) : "",
+        /*has_contained=*/!contained_idx.empty());
 
     // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)
     for (const auto& r : spec.members) {
@@ -1164,7 +1235,9 @@ void CppBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& os
         false, false, true, false, "asn1::TypeKind::Choice",
         "&asn1::per_choice_handler", "&asn1::ber_choice_handler",
         /*use_class_scope=*/true,
-        spec.is_explicit, "");
+        spec.is_explicit, "",
+        /*has_contained=*/std::any_of(spec.alternatives.begin(), spec.alternatives.end(),
+                                      [](const ChoiceAlternativeSpec& a) { return a.contained != nullptr; }));
 }
 
 void CppBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const {

@@ -17,6 +17,7 @@
 #include <asn1cpp/types/Time.hpp>
 #include <asn1cpp/types/Strings.hpp>
 #include <asn1cpp/codec/BerWriter.hpp>
+#include <asn1cpp/codec/ContainedDecoders.hpp>
 
 namespace asn1 {
 
@@ -101,6 +102,7 @@ bool RandomFiller::fill(Asn1Object* obj, const TypeDescriptor& def, int depth, b
     if (depth > 1000) return false;                       // absolute safety — catches recursive mandatory cycles
     if (!mandatory && depth > cfg_.max_depth) return false; // soft limit — only skips optional paths
 
+    if (def.contained) return fill_contained(obj, def, depth, mandatory);
     if (def.is_any) {
         // Encode a small random INTEGER as the raw ANY bytes.
         // ANY is stored as OctetString in the runtime.
@@ -402,6 +404,32 @@ void RandomFiller::fill_enum(Asn1Object* obj, const EnumSpec& spec) {
 // ---------------------------------------------------------------------------
 // SEQUENCE / SET
 // ---------------------------------------------------------------------------
+
+/// @brief Fill a contained field (\c Containing<T>, X.682 §11): a random
+///        inner value, encoded through the field's decoder (BER unless the
+///        field names other encoding rules; `pkcs7` pads), stored as the raw
+///        bytes with the value kept and not dirty. A `zero_padding` field
+///        gets 0–15 trailing zero octets so its decoder's tail check runs.
+/// @return False when the inner value cannot be filled or encoded.
+bool RandomFiller::fill_contained(Asn1Object* obj, const TypeDescriptor& def, int depth, bool mandatory) {
+    auto& cb = *static_cast<ContainedBase*>(obj);
+    const ContainedSpec& cs = *def.contained;
+    Asn1Object* inner = cb.emplace_value_object(*cs.ops);
+    if (!fill(inner, *cs.inner_def, depth + 1, mandatory)) return false;
+    ContainedEncoding enc = cs.encoding == ContainedEncoding::Outer ? ContainedEncoding::Ber : cs.encoding;
+    const ContainedDecoders& reg = ContainedDecoders::defaults();
+    ContainedEncodeArgs args{*inner, cs, enc, reg, nullptr};
+    std::vector<uint8_t> bytes;
+    std::string err;
+    const auto* entry = reg.resolve(cs);
+    bool ok = entry && entry->encode ? entry->encode(args, bytes, err)
+                                     : ContainedDecoders::encode_value(args, bytes, err);
+    if (!ok) return false;
+    if (std::string_view(cs.decoder) == "zero_padding")
+        bytes.insert(bytes.end(), static_cast<std::size_t>(rand_int(0, 15)), uint8_t{0});
+    cb.set_raw_for_value(bytes);
+    return true;
+}
 
 bool RandomFiller::fill_sequence(Asn1Object* obj, const SequenceSpec& spec, int depth) {
     // Extension addition groups (X.680 §24.12) are present or absent as a

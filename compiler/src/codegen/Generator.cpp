@@ -81,6 +81,8 @@ std::string Generator::member_synth_name(const ast::TypeDef& m, const std::strin
 
 std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
     using BT = ast::BuiltinType;
+    if (const auto* f = contained_for(def))
+        return backend_.contained_storage_type(contained_inner_native(*f));
     if (auto* bt = std::get_if<BT>(&def.body)) {
         switch (*bt) {
         case BT::Integer:
@@ -1399,11 +1401,62 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
 /// @param os            Output stream to write the generated descriptor to.
 /// @return A reference expression to the descriptor (e.g. `"&asn_TYP_Foo_bar"`).
 /// @see X.691 §26.5 (character string constraints), §18.5 (SEQUENCE preamble bitmap).
+const sema::ContainedField* Generator::contained_for(const ast::TypeDef& m) const {
+    if (!contained_ || !backend_.supports_contained_values()) return nullptr;
+    return contained_->find(&m);
+}
+
+std::string Generator::contained_inner_native(const sema::ContainedField& f) const {
+    ast::TypeDef ref;
+    ref.body = ast::TypeRef{f.inner_module, f.inner_type, {}, ""};
+    return native_member_type_for(ref);
+}
+
+std::string Generator::contained_inner_ref_name(const sema::ContainedField& f) const {
+    return resolved_name_for_typeref(ast::TypeRef{f.inner_module, f.inner_type, {}, ""});
+}
+
+void Generator::fill_contained_descriptor(MemberTypeDescriptorSpec& spec, const ast::TypeDef& m,
+                                          const sema::ContainedField& f) const {
+    using WS = MemberTypeDescriptorSpec::WhenStorage;
+    spec.contained = &f;
+    spec.contained_inner = contained_inner_native(f);
+    spec.contained_storage = native_member_type_for(m);
+    if (!f.when || !current_member_order_) return;
+    const auto& order = *current_member_order_;
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        if (order[i]->name != f.when->member) continue;
+        spec.contained_when_index = static_cast<int>(i);
+        auto base = resolver_.follow_aliases(std::make_shared<ast::TypeDef>(*order[i]), current_module_);
+        const ast::TypeDef& b = base ? *base : *order[i];
+        switch (f.when->kind) {
+        case sema::ContainedWhen::Kind::Enumerated: spec.contained_when_storage = WS::Enumerated; break;
+        case sema::ContainedWhen::Kind::Boolean:    spec.contained_when_storage = WS::Boolean; break;
+        case sema::ContainedWhen::Kind::Integer:
+            spec.contained_when_storage = classify_integer_storage(b) == IntStorageKind::U64
+                ? WS::UInteger : WS::Integer;
+            break;
+        }
+    }
+}
+
 std::string Generator::emit_member_type_descriptor(
     const ast::TypeDef& m, const std::string& parent_cname,
     const std::string& mname, TypeOutputSession& session)
 {
     auto spec = build_member_type_descriptor_spec(m, parent_cname, mname);
+    if (const auto* f = contained_for(m)) {
+        if (!spec) {
+            spec = MemberTypeDescriptorSpec{};
+            spec->kind = MemberTypeDescriptorSpec::Kind::Sizeable;
+            spec->builtin_type = ast::BuiltinType::OctetString;
+            spec->parent_cname = parent_cname;
+            spec->mname = mname;
+            spec->xer_type_name = "OCTET_STRING";
+            spec->universal_tag = asn1::UniversalTag::OctetString;
+        }
+        fill_contained_descriptor(*spec, m, *f);
+    }
     if (!spec) return type_descriptor_ref_for(m);
     backend_.emit_member_type_descriptor(*spec, session);
     return backend_.format_type_descriptor_ref(
@@ -1750,7 +1803,19 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
     auto emit_wrapper_inc = [&](const std::string& cn) {
         if (backend_.needs_seqof_wrapper_reference()) emit_inc(cn);
     };
+    std::set<std::string> contained_declared;
     auto emit_member_include = [&](const ast::TypeDef& m, bool optional) {
+        // Contained field: the storage holds the inner value by pointer, so
+        // a class-typed inner type only needs a declaration here (it may be
+        // this type itself); the definition file includes it.
+        if (const auto* f = contained_for(m)) {
+            auto cn = contained_inner_ref_name(*f);
+            if (cn == cname || !contained_declared.insert(cn).second) return;
+            ast::TypeDef ref;
+            ref.body = ast::TypeRef{f->inner_module, f->inner_type, {}, ""};
+            is_class_type(ref) ? emit_fwd(cn) : emit_inc(cn);
+            return;
+        }
         if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
             auto cn = resolved_name_for_typeref(*tr);
             optional && is_class_type(m) ? emit_fwd(cn) : emit_inc(cn);
@@ -1855,6 +1920,14 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
     bool has_optional_members = !sm_ext.empty() ||
         std::any_of(sm_root.begin(), sm_root.end(),
                     [](const ast::TypeDef* m){ return m->is_optional(); });
+
+    // Contained fields' inner types: declared only in the .hpp.
+    for (const auto* list : {&sm_root, &sm_ext})
+        for (const auto* m : *list)
+            if (const auto* f = contained_for(*m)) {
+                auto cn = contained_inner_ref_name(*f);
+                if (cn != cname) write_type_reference(cn, pre_ns_os_ ? *pre_ns_os_ : os);
+            }
 
     if (has_optional_members) {
         // Forward-declared types in the .hpp need full includes in the .cpp.
@@ -2057,6 +2130,8 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         auto tag_result = compute_member_tag(m, apply_auto_tags, atag);
         row.is_explicit = tag_result.is_explicit;
         row.resolved_tag = tag_result.resolved_tag;
+        row.contained = contained_for(m);
+        if (row.contained) row.contained_base = backend_.member_descriptor_base_name(cname, row.mname);
         row.tdref = emit_member_type_descriptor(m, cname, row.mname, session);
         row.has_default_setter = emit_default_setter(m, cname, row.mname, session);
         row.has_default = (m.marker == ast::Marker::Default);
@@ -2083,8 +2158,19 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
                 [&](const ast::TypeDef* a, const ast::TypeDef* b) {
                     return set_component_tag_key(*a) < set_component_tag_key(*b);
                 });
+        std::vector<const ast::TypeDef*> table_order(root_order.begin(), root_order.end());
+        table_order.insert(table_order.end(), sm_ext.begin(), sm_ext.end());
+        current_member_order_ = &table_order;
         for (auto* m : root_order) collect(*m, m->is_optional());
         for (auto* m : sm_ext)  collect(*m, /*optional=*/true);
+        current_member_order_ = nullptr;
+        // A contained field's `when` sibling, by its index in the member table.
+        for (auto& row : spec.members) {
+            if (!row.contained || !row.contained->when) continue;
+            for (std::size_t i = 0; i < spec.members.size(); ++i)
+                if (spec.members[i].asn1_name == row.contained->when->member)
+                    row.contained_when_index = static_cast<int>(i);
+        }
         // X.691 §18.9: an extension addition group is one PER addition.
         // Consecutive extension members sharing a group id form one unit.
         bool any_group = std::any_of(sm_ext.begin(), sm_ext.end(),
@@ -2258,6 +2344,15 @@ void Generator::emit_choice_declaration(const ast::TypeDef& def, std::ostream& o
         auto emit_wrapper_inc = [&](const std::string& cn) {
             if (backend_.needs_seqof_wrapper_reference()) emit_inc(cn);
         };
+        if (const auto* f = contained_for(*m)) {
+            // Contained alternative: inner type declared here, included by
+            // the definition file (see emit_sequence_declaration).
+            auto cn = contained_inner_ref_name(*f);
+            ast::TypeDef ref;
+            ref.body = ast::TypeRef{f->inner_module, f->inner_type, {}, ""};
+            if (cn != cname) is_class_type(ref) ? write_forward_declaration(cn, os) : emit_inc(cn);
+            continue;
+        }
         if (auto* tr = std::get_if<ast::TypeRef>(&m->body)) {
             emit_inc(resolved_name_for_typeref(*tr));
         } else if ((m->is_seq_of() || m->is_set_of()) && !m->name.empty()) {
@@ -2295,6 +2390,14 @@ void Generator::emit_choice_declaration(const ast::TypeDef& def, std::ostream& o
 
 ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session) {
     std::string cname = effective_type_name(def.name, current_module_);
+    {
+        std::ostream& dos = session.buffer(backend_.definition_extension());
+        for (const auto& m : def.members)
+            if (const auto* f = m->is_extension_marker ? nullptr : contained_for(*m)) {
+                auto cn = contained_inner_ref_name(*f);
+                if (cn != cname) write_type_reference(cn, pre_ns_os_ ? *pre_ns_os_ : dos);
+            }
+    }
 
     auto [count, ext_at] = count_members(def);
     bool apply_auto_tags = should_apply_auto_tags(def);
@@ -2333,6 +2436,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             bool ref_is_seq_of = false;
             std::optional<ast::BuiltinType> ref_builtin_alias;
             std::string ref_constraints_owner;
+            const sema::ContainedField* contained = nullptr;
+            std::string contained_base;
         };
         std::vector<AltRow> rows;
 
@@ -2437,7 +2542,9 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             rows.push_back({ m->name, tdref, alt_type, accessor_name_of.at(m), pr_name_of.at(m),
                              is_explicit, tag_ctx_num, mbuiltin, alt_storage_kind, resolved_tag,
                              alt_ref_kind, alt_ref_storage_kind, alt_ref_is_sequence_or_set, alt_ref_is_seq_of,
-                             alt_ref_builtin_alias, alt_ref_constraints_owner });
+                             alt_ref_builtin_alias, alt_ref_constraints_owner,
+                             contained_for(*m),
+                             contained_for(*m) ? backend_.member_descriptor_base_name(cname, mname) : std::string{} });
             ++auto_tag_num;
           }
         }
@@ -2459,6 +2566,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.ref_is_seq_of = r.ref_is_seq_of;
             alt.ref_builtin_alias = r.ref_builtin_alias;
             alt.ref_constraints_owner = r.ref_constraints_owner;
+            alt.contained = r.contained;
+            alt.contained_base = r.contained_base;
             spec.alternatives.push_back(std::move(alt));
         }
 
@@ -3326,6 +3435,7 @@ void Generator::collect_type_refs(const ast::TypeDef& def, std::vector<std::stri
         for (const auto& m : def.members) {
             if (m->is_extension_marker) continue;
             collect_type_refs(*m, worklist);
+            if (const auto* f = contained_for(*m)) worklist.push_back(f->inner_type);
         }
     } else if (def.is_seq_of() || def.is_set_of()) {
         const auto& elem = def.is_seq_of()

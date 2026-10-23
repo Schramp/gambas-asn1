@@ -1,0 +1,15 @@
+-- X.682 §11: a module-qualified contained type must exist in that module.
+
+ModuleContainingQualInner { iso org(3) dod(6) internet(1) private(4) enterprise(1) spelio(9363) software(1) asn1c(5) test(1) 1008 1 }
+DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    Inner ::= SEQUENCE { a INTEGER }
+END
+
+ModuleContainingQual { iso org(3) dod(6) internet(1) private(4) enterprise(1) spelio(9363) software(1) asn1c(5) test(1) 1008 2 }
+DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    IMPORTS Inner FROM ModuleContainingQualInner;
+    Outer ::= SEQUENCE {
+        payload OCTET STRING (CONTAINING ModuleContainingQualInner.Missing),
+        ok      OCTET STRING (CONTAINING Inner)
+    }
+END

@@ -1,0 +1,34 @@
+-- Contained values: OCTET STRING fields holding the encoding of another
+-- type, from a contents constraint (X.682 §11) or from the
+-- containing_test.container.json sidecar.
+
+ContainingTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    Inner ::= SEQUENCE {
+        id    INTEGER,
+        name  UTF8String OPTIONAL
+    }
+
+    Kind ::= ENUMERATED { plain(1), scrambled(2) }
+
+    Wrapped ::= OCTET STRING (CONTAINING Inner)
+
+    Holder ::= SEQUENCE {
+        kind           Kind,
+        viaConstraint  OCTET STRING (CONTAINING Inner),
+        viaAlias       Wrapped,
+        viaConfig      OCTET STRING,
+        raw            OCTET STRING
+    }
+
+    Pick ::= CHOICE {
+        inner  OCTET STRING (CONTAINING Inner),
+        other  INTEGER
+    }
+
+    Envelope ::= SEQUENCE {
+        depth   INTEGER,
+        nested  OCTET STRING (CONTAINING Envelope) OPTIONAL
+    }
+
+END

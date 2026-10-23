@@ -28,6 +28,8 @@
 
 namespace asn1 {
 
+struct ContainedOptions;
+
 // ---------------------------------------------------------------------------
 // XER stream wrappers
 
@@ -44,8 +46,9 @@ class XerEncodeStream : public IEncodeStream {
     bool* failed_{&own_failed_};
     int own_codec_calls_{0};
     int* codec_calls_{&own_codec_calls_};
-    XerEncodeStream(std::ostream& os, int depth, bool* failed, int* codec_calls)
-        : os_(os), depth_(depth), failed_(failed), codec_calls_(codec_calls) {}
+    const ContainedOptions* contained_ = nullptr;
+    XerEncodeStream(std::ostream& os, int depth, bool* failed, int* codec_calls, const ContainedOptions* c)
+        : os_(os), depth_(depth), failed_(failed), codec_calls_(codec_calls), contained_(c) {}
 public:
     /// @brief Wrap \p os for output at nesting depth 0.
     /// @param os  Output stream; must outlive this object.
@@ -57,7 +60,13 @@ public:
     /// @brief Stream for a nested value one level deeper, sharing this
     ///        stream's output, failure flag and \c codec_calls() count
     ///        (used by recursive encode).
-    XerEncodeStream child() { return XerEncodeStream(os_, depth_ + 1, failed_, codec_calls_); }
+    XerEncodeStream child() { return XerEncodeStream(os_, depth_ + 1, failed_, codec_calls_, contained_); }
+    /// @brief Contained-value settings (nullptr: defaults); nested streams inherit them.
+    const ContainedOptions* contained() const { return contained_; }
+    /// @brief Set the contained-value settings: decoder registry, `off`, and
+    ///        the XER/JER form override for every contained field.
+    void set_contained(const ContainedOptions* c) { contained_ = c; }
+
     /// @brief \c XerCodec::encode calls in progress on this stream and its
     ///        children; 1 inside the outermost one, which is how XER finds
     ///        the document root. Unlike \c depth(), a caller cannot preset
@@ -122,7 +131,14 @@ class XerDecodeStream : public IDecodeStream {
     std::size_t pos_{0};
     bool lenient_;
     DecodeDepth depth_;
+    const ContainedOptions* contained_ = nullptr;
 public:
+    /// @brief Contained-value settings (nullptr: defaults); nested streams inherit them.
+    const ContainedOptions* contained() const { return contained_; }
+    /// @brief Set the contained-value settings: decoder registry, `off`, and
+    ///        the XER/JER form override for every contained field.
+    void set_contained(const ContainedOptions* c) { contained_ = c; }
+
     /// @brief Construct from \p text with optional \p mode (default: \c Strict).
     /// @param text  Complete XML document or element string to decode.
     /// @param mode  \c Strict (BASIC-XER only) or \c Lenient (accepts asn1c extensions).

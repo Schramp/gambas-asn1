@@ -19,6 +19,7 @@ fn encode_bare(m: MemberRef, c: &Constraints, out: &mut String) -> Result<(), En
         MemberRef::Absent => Ok(()),
         MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => jer_encode_primitive(p, c, out),
+        MemberRef::Contained(v, spec) => encode_contained(v, spec, c, out),
         MemberRef::Composite(inner) => encode_seq_into(inner, out),
         MemberRef::Choice(inner) => encode_choice_into(inner, out),
         MemberRef::SeqOf(inner) => encode_seqof_into(inner, c, out),
@@ -48,11 +49,73 @@ fn decode_bare_level(m: MemberRefMut, c: &Constraints, r: &mut Reader) -> Result
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, r.pos())),
         MemberRefMut::Primitive(p) => jer_decode_primitive(p, c, r),
+        MemberRefMut::Contained(v, spec) => decode_contained(v, spec, c, r),
         MemberRefMut::Composite(inner) => decode_seq_into(inner, r),
         MemberRefMut::Choice(inner) => decode_choice_into(inner, r),
         MemberRefMut::SeqOf(inner) => decode_seqof_into(inner, c, r),
         MemberRefMut::Enumerated(slot, spec) => crate::jer::enumerated::jer_decode_enum_into(slot, r, spec),
     }
+}
+
+/// @brief JER form of a contained field (`Containing<T>`, X.682 §11): a
+///        hex string, or `{"containing": <JER of the inner value>}` (X.697
+///        §25.4), or that plus `"raw": "<hex>"` (`inline_raw`, an extension).
+fn encode_contained(v: &dyn crate::containing::Contained, spec: &'static crate::containing::ContainedSpec, c: &Constraints, out: &mut String) -> Result<(), EncodeError> {
+    use crate::containing::{ContainedEncoding, ContainedText};
+    let wire = v.wire_octets(spec, ContainedEncoding::Ber);
+    let (Some(inner), false) = (v.inner_ref(), spec.jer == ContainedText::Hex) else {
+        return jer_encode_primitive(crate::spec::primitive::PrimitiveRef::OctetString(&wire), c, out);
+    };
+    out.push_str("{\"containing\":");
+    encode_bare(inner, &crate::constraints::UNCONSTRAINED, out)?;
+    if spec.jer == ContainedText::InlineRaw {
+        out.push_str(",\"raw\":\"");
+        crate::jer::writer::to_hex_upper(&wire.0, out);
+        out.push('"');
+    }
+    out.push('}');
+    Ok(())
+}
+
+/// @brief Decode counterpart of [`encode_contained`]; accepts every form.
+fn decode_contained(v: &mut dyn crate::containing::Contained, spec: &'static crate::containing::ContainedSpec, c: &Constraints, r: &mut Reader) -> Result<(), DecodeError> {
+    if r.peek_char() != b'{' {
+        let mut os = crate::octet_string::OctetString::default();
+        jer_decode_primitive(crate::spec::primitive::PrimitiveRefMut::OctetString(&mut os), c, r)?;
+        v.set_raw_from_wire(os.0);
+        return Ok(());
+    }
+    r.expect_char(b'{')?;
+    let mut have_inner = false;
+    let mut raw = None;
+    loop {
+        match r.peek_char() {
+            b'}' => {
+                r.expect_char(b'}')?;
+                break;
+            }
+            b',' => {
+                r.expect_char(b',')?;
+            }
+            0 => return Err(DecodeError::new("JER: unexpected end in contained value".to_string(), r.pos())),
+            _ => {
+                let key = r.read_json_string()?;
+                r.expect_char(b':')?;
+                match key.as_str() {
+                    "containing" => {
+                        v.inline_decode(&mut |m| decode_bare(m, &crate::constraints::UNCONSTRAINED, r))?;
+                        have_inner = true;
+                    }
+                    "raw" => raw = Some(crate::jer::writer::parse_hex_str(&r.read_json_string()?)),
+                    _ => r.skip_json_value()?,
+                }
+            }
+        }
+    }
+    if !have_inner {
+        return Err(DecodeError::new("JER: contained value object without \"containing\"".to_string(), r.pos()));
+    }
+    v.finish_inline(raw, spec).map_err(|e| DecodeError::new(e, r.pos()))
 }
 
 // ---------------------------------------------------------------------
@@ -128,6 +191,11 @@ pub fn decode_seq_into(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Deco
             return Err(DecodeError::new(format!("JER: missing required member: {}", obj.spec().members[i].name), r.pos()));
         }
     }
+    // Contained fields that arrived as hex: decode their inner value.
+    if !obj.spec().contained_members.is_empty() {
+        crate::containing::decode_contained_members(obj, crate::containing::ContainedEncoding::Ber, r.depth, None)
+            .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.pos()))?;
+    }
     Ok(())
 }
 
@@ -163,7 +231,11 @@ pub fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
             let constraints = alt.constraints;
             decode_bare(obj.select_mut(i), constraints, r)?;
             r.expect_char(b'}')?;
-            return Ok(());
+            if !obj.spec().has_contained {
+                return Ok(());
+            }
+            return crate::containing::decode_contained_alternative(obj, crate::containing::ContainedEncoding::Ber, r.depth, None)
+                .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.pos()));
         }
     }
     Err(DecodeError::new(format!("JER: CHOICE: unknown alternative: {key}"), r.pos()))

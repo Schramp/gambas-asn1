@@ -72,6 +72,7 @@ static CONTAINER_MEMBERS: [MemberMeta; 1] = [MemberMeta {
     ber: BerTagging::Delegate,
     constraints: &UNCONSTRAINED,
     xer_instruction: XerInstruction::Default,
+    contained: None,
 }];
 
 static CONTAINER_SPEC: SequenceSpec = SequenceSpec {
@@ -83,6 +84,7 @@ static CONTAINER_SPEC: SequenceSpec = SequenceSpec {
     is_set: false,
     ext_units: &[],
     group_member_optional: &[],
+    contained_members: &[],
 };
 
 impl Asn1Seq for Container {

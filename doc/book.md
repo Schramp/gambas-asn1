@@ -315,6 +315,169 @@ used by the constraint validator and, for PER, determine the minimum number of b
 needed to encode a value. A `FROM` alphabet constraint restricts the character set of a
 string type; the validator checks every character against the allowed set.
 
+#### Contents constraints (`CONTAINING` / `ENCODED BY`)
+
+*(X.682 §11)*
+
+```asn1
+Wrapper ::= SEQUENCE {
+    cc   OCTET STRING (CONTAINING TS33128Payloads.CCPayload),
+    blob OCTET STRING (CONTAINING Inner ENCODED BY { joint-iso-itu-t asn1(1) basic-encoding(1) })
+}
+```
+
+All three X.682 §11.1 productions are parsed: `CONTAINING Type`, `ENCODED BY Value` and
+`CONTAINING Type ENCODED BY Value`. The compiler checks that the contained type is
+defined (module-qualified references included). It also checks that the constraint sits
+on an OCTET STRING, or a BIT STRING without named bits (§11.3); anything else is an
+error. Without `ENCODED BY`, the contents use the encoding rules of the enclosing octet
+string (§11.4).
+
+An `ENCODED BY` OID other than BER, CER, DER or unaligned/aligned PER gives a warning:
+those contents stay raw bytes. An OID given as a value reference is not resolved for
+this and also counts as unsupported.
+
+#### Contained values
+
+A *contained field* is an OCTET STRING whose bytes are the encoding of another type. It
+comes from a contents constraint in the schema, or from a `--container-config` sidecar
+for fields the schema leaves unconstrained. ETSI LI's
+`EncryptionContainer.encryptedPayload`, for example, carries a BER `EncryptedPayload` but
+says so only in a comment.
+
+```json
+{
+  "container_fields": [
+    {
+      "module": "LI-PS-PDU",
+      "type": "EncryptionContainer",
+      "field": "encryptedPayload",
+      "inner_type": "EncryptedPayload",
+      "decoder": "zero_padding",
+      "when": { "member": "encryptionType", "equals": "none" }
+    }
+  ]
+}
+```
+
+Each entry names a direct member of a type assignment (`type` + `field`), in a module
+given by `module` (name) or `module_oid` (dotted numbers; it wins over the name). Fields
+inside anonymous nested types are reachable only through a contents constraint.
+
+| Key | Values | Default |
+|-----|--------|---------|
+| `inner_type`, `inner_module` | the contained type | required without a contents constraint; must match it when there is one |
+| `encoding` | `ber`, `der`, `cer`, `per`, `aper` | `ber` for sidecar fields; for a contents constraint, its `ENCODED BY` or else the outer encoding (X.682 §11.4) |
+| `decode` | `eager`, `off` | `eager` |
+| `decoder` | `plain`, `zero_padding`, `pkcs7`, `none`, or a name the application registers | `plain` |
+| `when` | `{ "member": <sibling>, "equals": <value> }`; the sibling is ENUMERATED (identifier), INTEGER or BOOLEAN | always |
+| `on_error` | `keep_raw`, `fail` | `keep_raw` |
+| `xer`, `jer` | `hex`, `inline`, `inline_raw` | `hex` |
+
+An entry for a field with a contents constraint changes only the options it sets. An
+unknown module or field is a warning, and the entry is skipped. Malformed JSON, unknown
+keys, bad values, a non-OCTET STRING field, a conflicting inner type and duplicate
+entries are errors.
+
+The ETSI LI example (`examples/sample.source.ETSI-LI-PS-PDU/container_fields.json`,
+passed by its Makefile) declares the entry above. With it, one `PS_PDU` decode yields the
+encryption container's raw bytes, which IntegrityCheck hashes are computed over, and the
+decoded `EncryptedPayload`. The two TS 33.128 fields that carry a contents constraint
+(`threeGPP33128DefinedCC`/`IRI`) need no entry.
+
+`--list-contained` prints the merged result:
+
+```
+contained: LI-PS-PDU.EncryptionContainer.encryptedPayload -> LI-PS-PDU.EncryptedPayload source=config encoding=ber decode=eager decoder=zero_padding when=encryptionType==none(1) on_error=keep_raw xer=hex jer=hex
+```
+
+Both backends generate contained fields as a contained-value type:
+`asn1::Containing<T>` in C++, `asn1cpp_wire::containing::Containing<T>` in Rust. The
+inner type joins the `-pdu` reachable set. C++ generates no setters for these fields.
+
+**Runtime (C++).** A contained field is stored as `asn1::Containing<T>`
+(`<asn1cpp/types/Containing.hpp>`). It is an `OctetString` holding the raw bytes, plus the
+decoded inner value:
+
+| Member | Meaning |
+|--------|---------|
+| `bytes()`, `set(...)` | The raw bytes. `set` drops the inner value. |
+| `status()` | `NotDecoded`, `Decoded`, `Skipped` (`decode: off`, a `when` mismatch, decoder `none`) or `Failed` |
+| `error()` | Reason for `Skipped`/`Failed`; for `Decoded`, a warning (e.g. non-zero padding) |
+| `value()`, `has_value()` | The inner value, or nullptr |
+| `value_mut()`, `set_value(T)` | Change the inner value; it is then *dirty* |
+
+The inner value is decoded during the outer BER or PER decode, after the enclosing
+SEQUENCE/SET (or CHOICE) has decoded all its members, so a decoder can look at siblings.
+A failed inner decode keeps the raw bytes and does not fail the outer decode, unless the
+field is `on_error: fail`. On encode, the raw bytes are written unchanged, so a hash or
+signature over them stays valid. Once the inner value is dirty, encode writes its
+encoding instead, through the decoder's encode side (`pkcs7` pads).
+
+Decoders are looked up by name in an `asn1::ContainedDecoders` registry
+(`<asn1cpp/codec/ContainedDecoders.hpp>`). Built-ins:
+
+| Name | Decode | Encode |
+|------|--------|--------|
+| `plain` | the bytes are exactly one value | the value's encoding |
+| `zero_padding` | one value, then only 0x00 octets; a non-zero tail keeps the value with a warning | no padding |
+| `pkcs7` | strip RFC 5652 §6.3 padding, then `plain` | pad to `pkcs7_block_size` (16) |
+| `none` | never decodes | — |
+
+An application adds its own decoder (for example one that decrypts first) or replaces a
+built-in, and passes the registry with `asn1::ContainedOptions` on the reader or stream:
+
+```cpp
+asn1::ContainedDecoders reg;
+reg.add("li_decrypt", [&](const asn1::ContainedDecodeArgs& a) {
+    auto plain = decrypt(a.raw, a.outer);                 // a.outer: the enclosing value
+    return asn1::ContainedDecoders::decode_value(a, plain);
+});
+asn1::ContainedOptions opts{&reg};
+asn1::BerReader r{bytes};
+r.set_contained(&opts);                                    // PerDecodeStream: same call
+asn1::BerDecodeStream s{r};
+asn1::BerCodec::instance().decode(s, PS_PDU::asn_DEF, &pdu);
+```
+
+`ContainedOptions::off = true` decodes no contained value at all.
+
+Cost: contained fields are rare, so the codecs gate all of this on one flag of the
+enclosing SEQUENCE/SET/CHOICE descriptor (`TypeDescriptor::has_contained`; Rust:
+`SequenceSpec::contained_members`, `ChoiceSpec::has_contained`). A type without
+contained fields pays one test at the end of decode and nothing per member. A type with
+them walks its sorted `contained_members` list with a cursor, one compare per member.
+
+**XER and JER.** A contained field has three output forms. The standards make hex and
+inline *alternatives*, so in a conformant encoding the inline form replaces the hex:
+
+| Form | XER | JER | Conformant |
+|------|-----|-----|-----------|
+| `hex` (default) | `<f>HEX</f>` | `"HEX"` | yes |
+| `inline` | `<f><Inner>…</Inner></f>` (X.680 §22.4 XMLTypedValue) | `{"containing": …}` (X.697 §25.4) | yes for a contents constraint; an extension for a sidecar field |
+| `inline_raw` | inline plus `<!-- raw: HEX -->` | `{"containing": …, "raw": "HEX"}` | no (extension) |
+
+The form comes from the field's `xer`/`jer` setting. The C++ runtime can also override
+it per stream with `ContainedOptions::xer`/`jer` on the XER/JER encode stream. If the
+inner value is not decoded, the output falls back to hex.
+
+Decoding accepts all three forms for every contained field. A hex value is decoded like
+BER, after the enclosing SEQUENCE/CHOICE. An inline value becomes the inner value
+directly, and its raw bytes are the inner value's encoding (the field's `encoding`; BER
+by default). With `inline` the original bytes are therefore not available: padding, a
+non-canonical encoding, or a hash over the bytes cannot be reproduced. `inline_raw` keeps
+them, and its `raw` part is taken as the raw bytes.
+
+**Runtime (Rust).** `asn1cpp_wire::containing::Containing<T>` has the same model.
+It derefs to the raw `OctetString` and offers `bytes()`, `set_raw()`, `status()`,
+`error()`, `value()`, `value_mut()` and `set_value()`. The built-in decoders are the
+same. An application registry goes in `ContainedOptions { decoders: Some(reg), .. }`,
+passed to `ber::object::decode_pdu_with` / `per::object::decode_pdu_with` (or
+`Reader::set_contained`). A decoder gets the enclosing value as `ContainedDecodeArgs::outer`
+and calls `containing::decode_value` / `decode_value_from` after its own transform.
+Re-encoding a modified inner value uses the built-in registry; to encode with an
+application encoder (e.g. one that encrypts), set the raw bytes with `set_raw()`.
+
 ---
 
 ## 6. BER, PER, XER and Other Encoding Flavours
@@ -819,8 +982,10 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `-fallow-newer-modules` | Accept module version mismatches silently |
 | `-fbless-SIZE` | **(Non-standard)** Accept `SIZE()` constraints on `INTEGER` and `ENUMERATED`. X.680 §47.5.2 forbids this; the constraint is silently ignored during code generation. Matches asn1c's `-fbless-SIZE` extension for byte-width hints in legacy schemas. |
 | `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |
-| `-pdu=<TypeName>` | Limit generation to `<TypeName>` and all types reachable from it (transitive BFS through TypeRef edges). May be specified multiple times. `-pdu=all` generates all types (same as omitting the flag). Note: types embedded as `OCTET STRING` bytes (two-level nested BER, e.g. `EncryptedPayload` inside `PS-PDU`) are not TypeRef dependencies and must be listed as separate `-pdu=` roots if needed. |
+| `-pdu=<TypeName>` | Limit generation to `<TypeName>` and all types reachable from it (transitive BFS through TypeRef edges). May be specified multiple times. `-pdu=all` generates all types (same as omitting the flag). Note: types embedded as `OCTET STRING` bytes (two-level nested BER, e.g. `EncryptedPayload` inside `PS-PDU`) are not TypeRef dependencies and must be listed as separate `-pdu=` roots, unless the field is a [contained field](#contained-values): its inner type is reachable (C++ backend). |
 | `--target=<lang>` | Output language: `cpp` (default) or `rust` (**WIP**, gambas-asn1#214). |
+| `--container-config=<file>` | JSON sidecar naming OCTET STRING fields that hold the encoding of another type, and how to decode them. See [Contained values](#contained-values). |
+| `--list-contained` | Print every contained field (contents constraints and sidecar entries, merged) with its settings, then exit without generating code. |
 
 ### Comparison with asn1c CLI
 
@@ -964,7 +1129,9 @@ a specific type within seconds.
 
 `RandomFiller` is deterministic (seed-controlled) and schema-aware: it fills required
 members, randomly includes optional members, and respects SIZE and value constraints.
-Corrupted-record variants (`BerCorruptor`) test that the decoder never crashes or
+A [contained field](#contained-values) gets a random inner value, encoded through the
+field's decoder (`pkcs7` pads; `zero_padding` adds 0–15 zero octets), so the nested
+decode is exercised too. Corrupted-record variants (`BerCorruptor`) test that the decoder never crashes or
 asserts on malformed input.
 
 ### Fully Table-Based: Minimal Generated Code

@@ -1,0 +1,8 @@
+-- X.682 §11: the contained type must be defined or imported.
+
+ModuleContainingUndefined { iso org(3) dod(6) internet(1) private(4) enterprise(1) spelio(9363) software(1) asn1c(5) test(1) 1006 }
+DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    Outer ::= SEQUENCE {
+        payload OCTET STRING (CONTAINING NoSuchType)
+    }
+END

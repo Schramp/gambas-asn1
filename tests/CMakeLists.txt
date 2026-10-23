@@ -49,6 +49,11 @@ add_executable(test_ber_primitives ber/test_primitives.cpp)
 target_link_libraries(test_ber_primitives PRIVATE asn1cpp_runtime)
 add_test(NAME ber_primitives COMMAND test_ber_primitives)
 
+# ---- Contained values: Containing<T> + built-in decoders (X.682 §11) -------
+add_executable(test_contained_runtime ber/test_contained_runtime.cpp)
+target_link_libraries(test_contained_runtime PRIVATE asn1cpp_runtime)
+add_test(NAME contained_runtime COMMAND test_contained_runtime)
+
 # ---- BER SEQUENCE / CHOICE tests ------------------------------------------
 add_executable(test_ber_sequence ber/test_sequence.cpp)
 target_link_libraries(test_ber_sequence PRIVATE asn1cpp_runtime)
@@ -192,6 +197,30 @@ add_executable(test_real
 target_include_directories(test_real PRIVATE ${REAL_TEST_GEN_DIR})
 target_link_libraries(test_real PRIVATE asn1cpp_runtime)
 add_test(NAME real_member COMMAND test_real)
+
+# ---- Contained values in generated code (X.682 §11 + --container-config) ---
+set(CONTAINING_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_containing_test)
+set(CONTAINING_TYPES Inner Kind Wrapped Holder Pick Envelope)
+set(CONTAINING_SRCS "")
+set(CONTAINING_OUT "")
+foreach(t ${CONTAINING_TYPES})
+    list(APPEND CONTAINING_SRCS ${CONTAINING_GEN_DIR}/${t}.cpp)
+    list(APPEND CONTAINING_OUT ${CONTAINING_GEN_DIR}/${t}.cpp ${CONTAINING_GEN_DIR}/${t}.hpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${CONTAINING_OUT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CONTAINING_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.asn1
+            --container-config=${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json
+            -o ${CONTAINING_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.asn1
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json
+    COMMENT "Generating C++ from containing_test.asn1"
+)
+add_executable(test_containing seq/test_containing.cpp ${CONTAINING_SRCS})
+target_include_directories(test_containing PRIVATE ${CONTAINING_GEN_DIR})
+target_link_libraries(test_containing PRIVATE asn1cpp_runtime)
+add_test(NAME containing COMMAND test_containing)
 
 # ---- BIT STRING member BER tests -------------------------------------------
 set(BITSTRING_TEST_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_bitstring_test)
@@ -1524,6 +1553,20 @@ target_include_directories(test_backend_naming PRIVATE
     ${CMAKE_SOURCE_DIR}/runtime/include)
 add_test(NAME backend_naming COMMAND test_backend_naming)
 
+# ---- Contents constraint ENCODED BY classification (X.682 §11) -------------
+add_executable(test_contents_encoding codegen/test_contents_encoding.cpp)
+target_include_directories(test_contents_encoding PRIVATE ${CMAKE_SOURCE_DIR}/compiler/src)
+add_test(NAME contents_encoding COMMAND test_contents_encoding)
+
+# ---- --container-config sidecar: JSON reader + merge/validation -----------
+add_executable(test_json codegen/test_json.cpp ${CMAKE_SOURCE_DIR}/compiler/src/config/Json.cpp)
+target_include_directories(test_json PRIVATE ${CMAKE_SOURCE_DIR}/compiler/src)
+add_test(NAME json_reader COMMAND test_json)
+add_test(NAME contained_config
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/codegen/run_contained_config_tests.py
+            --asn1cpp $<TARGET_FILE:asn1cpp>
+            --tests-dir ${CMAKE_CURRENT_SOURCE_DIR})
+
 # ---- RustBackend output compile-check (gambas-asn1#258) --------------------
 if(WITH_RUST_COMPILE_CHECK)
     add_test(NAME rust_compile_check
@@ -1846,6 +1889,31 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_decode_depth PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_DEPTH_GEN_DIR=${RUST_DEPTH_GEN_DIR}")
+endif()
+
+# Rust leg of the contained-values test — see tests/rust/containing/src/main.rs
+# (C++ leg: test_containing).
+set(RUST_CONTAINING_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_containing)
+add_custom_command(
+    OUTPUT  ${RUST_CONTAINING_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_CONTAINING_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.asn1
+            --container-config=${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json
+            -o ${RUST_CONTAINING_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.asn1
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json
+    COMMENT "Generating Rust from containing_test.asn1"
+)
+add_custom_target(gen_rust_containing ALL DEPENDS ${RUST_CONTAINING_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_containing
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/containing/Cargo.toml)
+    set_tests_properties(rust_containing PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_CONTAINING_GEN_DIR=${RUST_CONTAINING_GEN_DIR}")
 endif()
 
 # Fixed-seed fuzz smoke run for the Rust decoders — see

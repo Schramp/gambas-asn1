@@ -22,6 +22,8 @@
 #include "../codec/BerWriter.hpp"
 #include "../codec/BerReader.hpp"
 
+namespace asn1 { struct ContainedOptions; }
+
 namespace asn1 {
 
 // ---------------------------------------------------------------------------
@@ -39,6 +41,7 @@ namespace asn1 {
 /// @see X.691 — Packed Encoding Rules (PER).
 class PerEncodeStream : public IEncodeStream {
     std::vector<uint8_t>& buf_;
+    const ContainedOptions* contained_ = nullptr;
     uint8_t current_{0};
     int     bits_{0};
     bool    encode_failed_{false};
@@ -53,6 +56,12 @@ class PerEncodeStream : public IEncodeStream {
 public:
     /// @brief Construct wrapping \p buf.  \p buf must outlive this stream.
     explicit PerEncodeStream(std::vector<uint8_t>& buf) : buf_(buf) {}
+
+    /// @brief Contained-value settings of this encode (nullptr: defaults).
+    const ContainedOptions* contained() const { return contained_; }
+    /// @brief Set the contained-value settings (registry for re-encoding
+    ///        modified contained values).
+    void set_contained(const ContainedOptions* c) { contained_ = c; }
 
     /// @brief Current write position in bits (committed bytes × 8 + pending bits).
     int bit_pos() const { return static_cast<int>(buf_.size()) * 8 + bits_; }
@@ -121,9 +130,16 @@ class PerDecodeStream : public IDecodeStream {
     int bit_pos_{0};
     int skipped_ext_count_{0};
     DecodeDepth depth_;
+    const ContainedOptions* contained_ = nullptr;
 public:
     /// @brief Construct over \p buf.  \p buf must outlive this stream.
     explicit PerDecodeStream(std::span<const uint8_t> buf) : buf_(buf) {}
+    /// @brief Construct over \p buf at nesting depth \p depth with
+    ///        contained-value settings \p contained (the bytes of a contained
+    ///        value, decoded at the depth of its field).
+    PerDecodeStream(std::span<const uint8_t> buf, const DecodeDepth& depth,
+                    const ContainedOptions* contained)
+        : buf_(buf), depth_(depth), contained_(contained) {}
 
     /// @brief Create a stream over an open type's octets (X.691 §11.2), at
     ///        this stream's decode nesting depth.
@@ -131,11 +147,21 @@ public:
     PerDecodeStream sub(std::span<const uint8_t> buf) const {
         PerDecodeStream s{buf};
         s.depth_ = depth_;
+        s.contained_ = contained_;
         return s;
     }
 
     /// @brief The decode nesting depth; see \c DecodeDepth.
     DecodeDepth& depth() { return depth_; }
+    /// @brief Contained-value settings of this decode (nullptr: defaults).
+    const ContainedOptions* contained() const { return contained_; }
+    /// @brief Set the contained-value settings; sub-streams inherit them.
+    void set_contained(const ContainedOptions* c) { contained_ = c; }
+    /// @brief Byte offset just past the last bit read (for a contained
+    ///        value's trailing-octet check).
+    std::size_t bytes_used() const {
+        return static_cast<std::size_t>(byte_pos_) + (bit_pos_ ? 1u : 0u);
+    }
 
     /// @brief Number of extension alternatives skipped since the last \c reset_skipped_extensions().
     /// Non-zero indicates a version skew between encoder and decoder schemas.

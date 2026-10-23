@@ -37,18 +37,28 @@ pub struct Reader<'a> {
     bit_pos: usize,
     skipped_ext_count: usize,
     pub(crate) depth: Depth,
+    pub(crate) contained: Option<&'a crate::containing::ContainedOptions>,
 }
 
 impl<'a> Reader<'a> {
+    /// @brief Set the contained-value settings of this decode; nested
+    ///        readers inherit them.
+    pub fn set_contained(&mut self, opts: &'a crate::containing::ContainedOptions) {
+        self.contained = Some(opts);
+    }
+
     pub fn new(buf: &'a [u8]) -> Reader<'a> {
-        Reader { buf, byte_pos: 0, bit_pos: 0, skipped_ext_count: 0, depth: Depth::default() }
+        Reader { buf, byte_pos: 0, bit_pos: 0, skipped_ext_count: 0, depth: Depth::default(), contained: None }
     }
 
     /// @brief Opens a reader over an open type's octets (X.691 §11.2) at
     ///        this reader's decode nesting depth.
     /// @see `crate::nesting`.
-    pub(crate) fn sub<'b>(&self, buf: &'b [u8]) -> Reader<'b> {
-        Reader { depth: self.depth, ..Reader::new(buf) }
+    pub(crate) fn sub<'b>(&self, buf: &'b [u8]) -> Reader<'b>
+    where
+        'a: 'b,
+    {
+        Reader { depth: self.depth, contained: self.contained, ..Reader::new(buf) }
     }
 
     /// True once all input bits have been consumed.

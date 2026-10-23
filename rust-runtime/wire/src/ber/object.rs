@@ -36,11 +36,15 @@ fn unsupported_framing_decode(reason: &'static str, r: &Reader) -> DecodeError {
 /// @param out      Destination buffer.
 /// @return `Err` for a member or alternative codegen marked unsupported.
 /// @see X.690 §8.14 — EXPLICIT/IMPLICIT tagging.
-fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec<u8>) -> Result<(), EncodeError> {
+pub(crate) fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec<u8>) -> Result<(), EncodeError> {
     match m {
         MemberRef::Absent => Ok(()),
         MemberRef::Unsupported(msg) => Err(EncodeError::new(msg)),
         MemberRef::Primitive(p) => ber_encode_primitive(p, framing, out),
+        MemberRef::Contained(c, spec) => {
+            let os = c.wire_octets(spec, crate::containing::ContainedEncoding::Ber);
+            ber_encode_primitive(crate::spec::primitive::PrimitiveRef::OctetString(&os), framing, out)
+        }
         MemberRef::Composite(inner) => match framing {
             BerTagging::Explicit(tag) => write_tagged(out, tag, |out| encode_seq_into(inner, out)),
             BerTagging::Implicit(tag) => write_tagged(out, tag, |out| encode_seq_content(inner, out)),
@@ -78,7 +82,7 @@ fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec<u8>) -> Re
 /// @brief Decode counterpart of `encode_member_ref`.
 /// @return `Err` on malformed BER, a tag mismatch, or a member or
 ///         alternative codegen marked unsupported.
-fn decode_member_ref(m: MemberRefMut, framing: BerTagging, r: &mut Reader) -> Result<(), DecodeError> {
+pub(crate) fn decode_member_ref(m: MemberRefMut, framing: BerTagging, r: &mut Reader) -> Result<(), DecodeError> {
     if !matches!(m, MemberRefMut::Composite(_) | MemberRefMut::Choice(_) | MemberRefMut::SeqOf(_)) {
         return decode_member_ref_level(m, framing, r);
     }
@@ -97,6 +101,12 @@ fn decode_member_ref_level(m: MemberRefMut, framing: BerTagging, r: &mut Reader)
         MemberRefMut::Absent => Ok(()),
         MemberRefMut::Unsupported(msg) => Err(DecodeError::new(msg, r.pos())),
         MemberRefMut::Primitive(p) => ber_decode_primitive(p, framing, r),
+        MemberRefMut::Contained(c, _) => {
+            let mut os = crate::octet_string::OctetString::default();
+            ber_decode_primitive(crate::spec::primitive::PrimitiveRefMut::OctetString(&mut os), framing, r)?;
+            c.set_raw_from_wire(os.0);
+            Ok(())
+        }
         MemberRefMut::Composite(inner) => decode_composite_member(inner, framing, r),
         MemberRefMut::Choice(inner) => match framing {
             BerTagging::Explicit(tag) => {
@@ -318,6 +328,10 @@ fn decode_seq_members(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Decod
             }
         }
     }
+    if !obj.spec().contained_members.is_empty() {
+        crate::containing::decode_contained_members(obj, crate::containing::ContainedEncoding::Ber, r.depth, r.contained)
+            .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.pos()))?;
+    }
     Ok(())
 }
 
@@ -411,7 +425,12 @@ fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
         .map(|i| obj.spec().ber_tags[i].alt);
     if let Some(alt_idx) = found {
         let ber = obj.spec().alternatives[alt_idx].ber;
-        return decode_member_ref(obj.select_mut(alt_idx), ber, r);
+        decode_member_ref(obj.select_mut(alt_idx), ber, r)?;
+        if !obj.spec().has_contained {
+            return Ok(());
+        }
+        return crate::containing::decode_contained_alternative(obj, crate::containing::ContainedEncoding::Ber, r.depth, r.contained)
+            .map_err(|e| DecodeError::new(format!("{}.{e}", obj.spec().name), r.pos()));
     }
     let tlv = r.read_tlv()?;
     obj.construct_unknown_extension(tlv.tag, tlv.value.to_vec());
@@ -539,6 +558,18 @@ pub fn decode_pdu<T: Asn1Pdu>(data: &[u8]) -> Result<T, DecodeError> {
     Ok(v)
 }
 
+/// @brief Whole-buffer decode with contained-value settings: the decoder
+///        registry, `off`, and the XER/JER overrides apply to every
+///        contained field (X.682 §11) in the value.
+/// @return The decoded value.
+pub fn decode_pdu_with<T: Asn1Pdu>(data: &[u8], opts: &crate::containing::ContainedOptions) -> Result<T, DecodeError> {
+    let mut v = T::default();
+    let mut r = Reader::new(data);
+    r.set_contained(opts);
+    decode_pdu_into(&mut v, &mut r)?;
+    Ok(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,6 +593,7 @@ mod tests {
         ber: BerTagging::Delegate,
         constraints: &UNCONSTRAINED,
         xer_instruction: crate::spec::object::XerInstruction::Default,
+        contained: None,
     }];
 
     static INNER_SPEC: SequenceSpec = SequenceSpec {
@@ -573,6 +605,7 @@ mod tests {
         is_set: false,
         ext_units: &[],
         group_member_optional: &[],
+        contained_members: &[],
     };
 
     impl Asn1Seq for Inner {
@@ -611,9 +644,9 @@ mod tests {
     }
 
     static OUTER_MEMBERS: [MemberMeta; 3] = [
-        MemberMeta { name: "y", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default },
-        MemberMeta { name: "inner", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default },
-        MemberMeta { name: "maybe", tag: INTEGER_TAG, optional: true, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default },
+        MemberMeta { name: "y", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
+        MemberMeta { name: "inner", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
+        MemberMeta { name: "maybe", tag: INTEGER_TAG, optional: true, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
     ];
 
     static OUTER_SPEC: SequenceSpec = SequenceSpec {
@@ -625,6 +658,7 @@ mod tests {
         is_set: false,
         ext_units: &[],
         group_member_optional: &[],
+        contained_members: &[],
     };
 
     impl Asn1Seq for Outer {
@@ -730,8 +764,8 @@ mod tests {
     }
 
     static CHOICE_ALTS: [crate::spec::object::AltMeta; 2] = [
-        crate::spec::object::AltMeta { name: "num", ber: BerTagging::Implicit(INTEGER_TAG), constraints: &UNCONSTRAINED },
-        crate::spec::object::AltMeta { name: "nested", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED },
+        crate::spec::object::AltMeta { name: "num", ber: BerTagging::Implicit(INTEGER_TAG), constraints: &UNCONSTRAINED, contained: None },
+        crate::spec::object::AltMeta { name: "nested", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, contained: None },
     ];
     static CHOICE_BER_TAGS: [crate::spec::choice::BerDispatch; 2] = [
         crate::spec::choice::BerDispatch { tag: INTEGER_TAG, alt: 0 },
@@ -743,7 +777,7 @@ mod tests {
         ber_tags: &CHOICE_BER_TAGS,
         own_tag: None,
         ext_at: -1,
-        range_bits: 1,
+        range_bits: 1, has_contained: false,
     };
     impl Asn1Choice for Choice {
         fn spec(&self) -> &'static crate::spec::object::ChoiceSpec {
@@ -821,8 +855,8 @@ mod tests {
     const FRAME_UNSUPPORTED: &str = "member 'value' not supported: untagged ANY has no tag to detect presence";
 
     static FRAME_MEMBERS: [MemberMeta; 2] = [
-        MemberMeta { name: "ident", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default },
-        MemberMeta { name: "value", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Unsupported("untagged ANY has no tag to detect presence"), constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default },
+        MemberMeta { name: "ident", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
+        MemberMeta { name: "value", tag: SEQUENCE_TAG, optional: false, ber: BerTagging::Unsupported("untagged ANY has no tag to detect presence"), constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
     ];
 
     static FRAME_SPEC: SequenceSpec = SequenceSpec {
@@ -834,6 +868,7 @@ mod tests {
         is_set: false,
         ext_units: &[],
         group_member_optional: &[],
+        contained_members: &[],
     };
 
     impl Asn1Seq for Frame {
@@ -901,7 +936,7 @@ mod tests {
     }
 
     static EXT_ALTS: [crate::spec::object::AltMeta; 1] =
-        [crate::spec::object::AltMeta { name: "num", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED }];
+        [crate::spec::object::AltMeta { name: "num", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, contained: None }];
     static EXT_BER_TAGS: [crate::spec::choice::BerDispatch; 1] = [crate::spec::choice::BerDispatch { tag: INTEGER_TAG, alt: 0 }];
     static EXT_SPEC: crate::spec::object::ChoiceSpec = crate::spec::object::ChoiceSpec {
         name: "Ext",
@@ -909,7 +944,7 @@ mod tests {
         ber_tags: &EXT_BER_TAGS,
         own_tag: None,
         ext_at: 1,
-        range_bits: 0,
+        range_bits: 0, has_contained: false,
     };
     impl Asn1Choice for Ext {
         fn spec(&self) -> &'static crate::spec::object::ChoiceSpec {
@@ -971,8 +1006,8 @@ mod tests {
         }
     }
     static REC_ALTS: [crate::spec::object::AltMeta; 2] = [
-        crate::spec::object::AltMeta { name: "a", ber: BerTagging::Implicit(Tag::context(0, false)), constraints: &UNCONSTRAINED },
-        crate::spec::object::AltMeta { name: "c", ber: BerTagging::Explicit(Tag::context(2, true)), constraints: &UNCONSTRAINED },
+        crate::spec::object::AltMeta { name: "a", ber: BerTagging::Implicit(Tag::context(0, false)), constraints: &UNCONSTRAINED, contained: None },
+        crate::spec::object::AltMeta { name: "c", ber: BerTagging::Explicit(Tag::context(2, true)), constraints: &UNCONSTRAINED, contained: None },
     ];
     static REC_BER_TAGS: [crate::spec::choice::BerDispatch; 2] = [
         crate::spec::choice::BerDispatch { tag: Tag::context(0, false), alt: 0 },
@@ -984,7 +1019,7 @@ mod tests {
         ber_tags: &REC_BER_TAGS,
         own_tag: None,
         ext_at: -1,
-        range_bits: 1,
+        range_bits: 1, has_contained: false,
     };
     impl Asn1Choice for Rec {
         fn spec(&self) -> &'static crate::spec::object::ChoiceSpec {

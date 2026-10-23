@@ -88,6 +88,10 @@ inline std::string to_value_name(std::string_view s) {
 class Generator {
     fs::path                out_dir_;
     sema::Resolver&         resolver_;
+    const sema::ContainedFields* contained_ = nullptr;
+    // Member table order of the SEQUENCE/SET being emitted, for resolving
+    // a contained field's `when` sibling to its table index.
+    const std::vector<const ast::TypeDef*>* current_member_order_ = nullptr;
     std::set<std::string>   generated_names_;
     // Synthetic type names promoted for an anonymous nested SEQUENCE OF/SET
     // OF element (generate_inline_types) — needed because
@@ -151,6 +155,9 @@ public:
     void set_default_int_kind(IntStorageKind k) { default_int_kind_ = k; }
     void set_namespace(std::string ns)           { namespace_ = std::move(ns); }
     void add_pdu_type(std::string asn_name)      { pdu_roots_.insert(std::move(asn_name)); }
+    /// @brief Contained-field facts (X.682 §11 / --container-config) that
+    ///        member and alternative specs carry to the backends.
+    void set_contained_fields(const sema::ContainedFields* c) { contained_ = c; }
 
     /// @brief Run codegen over all modules in `pr`, writing `.hpp`/`.cpp` files to `out_dir_`.
     /// @param pr  Resolved parse result containing all input modules.
@@ -367,6 +374,18 @@ private:
     bool        member_is_explicit(const ast::Tag& tag, const ast::TypeDef& member_type) const;
     std::string emit_member_type_descriptor(const ast::TypeDef& m, const std::string& parent_cname,
                                             const std::string& mname, TypeOutputSession& session);
+    /// @brief Contained-field fact for a member/alternative, when the
+    ///        backend stores contained values (else nullptr).
+    const sema::ContainedField* contained_for(const ast::TypeDef& m) const;
+    /// @brief Native type of a contained field's inner type.
+    std::string contained_inner_native(const sema::ContainedField& f) const;
+    /// @brief Resolve a contained field's inner type to the name used for
+    ///        its generated file/class (for includes).
+    std::string contained_inner_ref_name(const sema::ContainedField& f) const;
+    /// @brief Add the contained-field facts of member \p m to \p spec: inner
+    ///        and storage types, and the `when` sibling's index and storage.
+    void fill_contained_descriptor(MemberTypeDescriptorSpec& spec, const ast::TypeDef& m,
+                                   const sema::ContainedField& f) const;
     /// @brief Decide the resolved MemberTypeDescriptorSpec for an inline-
     ///        constrained SEQUENCE/CHOICE member — INTEGER value range or
     ///        SIZE-able-primitive constraints. Needs Generator state

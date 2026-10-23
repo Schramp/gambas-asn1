@@ -59,7 +59,10 @@ void emit_type_descriptor(std::ostream& os,
                            // `natural_tag_expr` then carries the type's own natural tag,
                            // wrapped rather than substituted (see CppBackend.cpp).
                            bool is_explicit = false,
-                           const std::string& natural_tag_expr = "");
+                           const std::string& natural_tag_expr = "",
+                           // SEQUENCE/SET/CHOICE with a contained member or
+                           // alternative (TypeDescriptor::has_contained).
+                           bool has_contained = false);
 
 /// @brief Build a Constraints designated-initializer literal for an INTEGER
 ///        constraint. Pure C++ text formatting from already-resolved
@@ -164,6 +167,11 @@ public:
     void emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
                               const std::string& parent_name, const std::string& member_name,
                               TypeOutputSession& session) const override;
+    bool supports_contained_values() const override { return true; }
+    std::string contained_storage_type(const std::string& inner) const override {
+        return "asn1::Containing<" + inner + ">";
+    }
+
     void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const override;
     void emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const override;
     void emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const override;

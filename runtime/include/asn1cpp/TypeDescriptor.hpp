@@ -230,6 +230,11 @@ struct SequenceSpec {
     const int*  ext_unit_end = nullptr;          ///< Per unit: one past its last member index.
     const bool* ext_unit_group = nullptr;        ///< Per unit: an extension addition group.
     const bool* group_member_optional = nullptr; ///< Per member: declared OPTIONAL/DEFAULT inside its group.
+    /// Indices into \c members[] of the contained fields (X.682 §11 /
+    /// --container-config), decoded after all members (see
+    /// \c decode_contained_members). 0 = none.
+    int         contained_count = 0;
+    const int*  contained_members = nullptr;
 };
 
 /// @brief One BER dispatch entry: maps one BER tag to a CHOICE alternative index.
@@ -278,6 +283,7 @@ enum class TypeKind : uint8_t {
 /// Forward declarations — avoid circular dependency (codec headers include TypeDescriptor.hpp).
 struct IPerTypeHandler;
 struct IBerTypeHandler;
+struct ContainedSpec;
 
 /// @brief Type-tag knob for selecting \c T in \c TypeLifecycleOps template constructor.
 template<typename T> struct TypeTag {};
@@ -384,6 +390,14 @@ struct TypeDescriptor {
     /// tag of its own, or one using IMPLICIT.
     bool is_explicit = false;
     Tag  natural_tag = {};  ///< This type's own natural tag, ignoring `[n]`; meaningful only when is_explicit.
+    /// Non-null for an OCTET STRING holding the encoding of another type
+    /// (stored as \c Containing<T>): the inner type and how it is decoded.
+    const ContainedSpec* contained = nullptr;
+    /// True for a SEQUENCE/SET/CHOICE with at least one contained member or
+    /// alternative (\c SequenceSpec::contained_members). Gates every
+    /// contained-value step in the codecs: the last step of decode, the
+    /// first of encode; false costs nothing more than this one test.
+    bool has_contained = false;
 };
 
 /// @name Built-in type descriptors

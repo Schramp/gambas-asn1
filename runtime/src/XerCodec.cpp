@@ -6,6 +6,7 @@
 #include <asn1cpp/EnumValue.hpp>
 #include <asn1cpp/codec/Validation.hpp>
 #include "HexEncoder.hpp"
+#include <asn1cpp/codec/ContainedDecoders.hpp>
 
 namespace asn1 {
 
@@ -736,6 +737,100 @@ struct SeqOfXerHandler final : IXerTypeHandler {
     }
 };
 
+/// @brief XER form of a contained field (\c Containing<T>, X.682 §11):
+///        hex, or the inner value as an XMLTypedValue in place of the hex
+///        (X.680 §22.4, X.693 §3.2.12), or inline plus the raw bytes in an
+///        XML comment (`inline_raw`, an extension). Decode accepts every form.
+struct ContainedXer {
+    static ContainedText mode(const TypeDescriptor& def, const ContainedOptions* opts) {
+        return opts && opts->xer ? *opts->xer : def.contained->xer;
+    }
+
+    static void encode(const XerCodec& codec, XerEncodeStream& s,
+                       const TypeDescriptor& def, const Asn1Object* src) {
+        const auto& cb = *static_cast<const ContainedBase*>(src);
+        const ContainedSpec& cs = *def.contained;
+        std::vector<uint8_t> scratch;
+        auto wire = contained_wire_bytes(def, cb, ContainedEncoding::Ber, s.contained(), scratch);
+        auto& os = s.os();
+        ContainedText m = mode(def, s.contained());
+        if (m == ContainedText::Hex || !cb.has_value()) {
+            os << '<' << def.name << '>';
+            write_hex_bytes(os, wire);
+            os << "</" << def.name << ">\n";
+            return;
+        }
+        const TypeDescriptor& idef = *cs.inner_def;
+        os << '<' << def.name << ">\n" << s.indent(1);
+        XerEncodeStream is = s.child();
+        if (idef.kind == TypeKind::Choice) {
+            os << '<' << idef.name << '>';
+            codec.encode(is, idef, cb.value_object());
+            os << s.indent(1) << "</" << idef.name << ">\n";
+        } else {
+            codec.encode(is, idef, cb.value_object());
+        }
+        if (m == ContainedText::InlineRaw) {
+            os << s.indent(1) << "<!-- raw: ";
+            write_hex_bytes(os, wire);
+            os << " -->\n";
+        }
+        os << s.indent() << "</" << def.name << ">\n";
+    }
+
+    static DecodeResult decode(const XerCodec& codec, XerDecodeStream& s,
+                               const TypeDescriptor& def, Asn1Object* dest) {
+        auto& cb = *static_cast<ContainedBase*>(dest);
+        const ContainedSpec& cs = *def.contained;
+        if (auto r = xer_detail::consume_open_tag(s, def.name); !r) return r;
+        auto rem = s.remaining();
+        auto p = xer_detail::skip_ws(rem, 0);
+        bool typed = p + 1 < rem.size() && rem[p] == '<' && rem[p + 1] != '/' && rem[p + 1] != '!';
+        if (!typed) {
+            auto text = xer_detail::read_text_content(s);
+            std::string raw = parse_hex_bytes(xer_detail::trim(text));
+            cb.set_raw_from_wire({reinterpret_cast<const uint8_t*>(raw.data()), raw.size()});
+            return xer_detail::consume_close_tag(s, def.name);
+        }
+        const TypeDescriptor& idef = *cs.inner_def;
+        Asn1Object* inner = cb.emplace_value_object(*cs.ops);
+        if (idef.kind == TypeKind::Choice) {
+            if (auto r = xer_detail::consume_open_tag(s, idef.name); !r) return r;
+            if (auto r = codec.decode(s, idef, inner); !r) return r;
+            if (auto r = xer_detail::consume_close_tag(s, idef.name); !r) return r;
+        } else if (auto r = codec.decode(s, idef, inner); !r) {
+            return r;
+        }
+        // Optional `<!-- raw: HEX -->` (inline_raw): the authoritative bytes.
+        std::string raw;
+        bool have_raw = false;
+        rem = s.remaining();
+        p = xer_detail::skip_ws(rem, 0);
+        if (rem.substr(p, 4) == "<!--") {
+            auto end = rem.find("-->", p + 4);
+            if (end == std::string_view::npos) return decode_err(DecodeError("XER: unterminated comment"));
+            auto body = xer_detail::trim(rem.substr(p + 4, end - p - 4));
+            if (body.substr(0, 4) == "raw:") {
+                raw = parse_hex_bytes(xer_detail::trim(body.substr(4)));
+                have_raw = true;
+            }
+            s.advance(end + 3);
+        }
+        if (!have_raw) {
+            ContainedEncoding enc = cs.encoding == ContainedEncoding::Outer ? ContainedEncoding::Ber : cs.encoding;
+            const ContainedDecoders& reg = s.contained() ? s.contained()->registry() : ContainedDecoders::defaults();
+            std::vector<uint8_t> out;
+            std::string err;
+            ContainedEncodeArgs ea{*inner, cs, enc, reg, s.contained()};
+            if (!ContainedDecoders::encode_value(ea, out, err))
+                return decode_err(DecodeError(std::string(def.name) + ": " + err));
+            raw.assign(reinterpret_cast<const char*>(out.data()), out.size());
+        }
+        cb.set_raw_for_value({reinterpret_cast<const uint8_t*>(raw.data()), raw.size()});
+        return xer_detail::consume_close_tag(s, def.name);
+    }
+};
+
 struct SequenceXerHandler final : IXerTypeHandler {
     void encode(const XerCodec& codec, XerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
@@ -754,14 +849,24 @@ struct SequenceXerHandler final : IXerTypeHandler {
             return;
         }
         os << '<' << def.name << ">\n";
+        // Contained members (sorted indices), walked by a cursor so a
+        // member costs one compare; only for a type that has any.
+        const int* cnext = def.has_contained ? spec.contained_members : nullptr;
+        const int* cend  = def.has_contained ? spec.contained_members + spec.contained_count : nullptr;
         for (int i = 0; i < spec.count; ++i) {
+            bool contained = cnext != cend && *cnext == i;
+            if (contained) ++cnext;
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
             if (mbr.optional && !mbr.optional_ops.is_present(src)) continue;
             const Asn1Object* mptr = mbr.optional_ops.member_ptr(src, mbr.offset);
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
-            if (mdef.choice_spec) {
+            if (contained) {
+                os << s.indent(1);
+                XerEncodeStream ms = s.child();
+                ContainedXer::encode(codec, ms, mdef, mptr);
+            } else if (mdef.choice_spec) {
                 os << s.indent(1) << '<' << mbr.name << '>';
                 XerEncodeStream ms = s.child();
                 codec.encode(ms, mdef, mptr);
@@ -783,7 +888,13 @@ struct SequenceXerHandler final : IXerTypeHandler {
                     std::string("XER SEQUENCE: expected <") + def.name + ">"));
         }
         const auto& spec = *def.sequence_spec;
+        // Contained members (sorted indices), walked by a cursor so a
+        // member costs one compare; only for a type that has any.
+        const int* cnext = def.has_contained ? spec.contained_members : nullptr;
+        const int* cend  = def.has_contained ? spec.contained_members + spec.contained_count : nullptr;
         for (int i = 0; i < spec.count; ++i) {
+            bool contained = cnext != cend && *cnext == i;
+            if (contained) ++cnext;
             const auto& mbr = spec.members[i];
             if (!mbr.type_descriptor) continue;
             if (mbr.optional) {
@@ -795,7 +906,9 @@ struct SequenceXerHandler final : IXerTypeHandler {
             Asn1Object* mptr = mbr.optional_ops.member_ptr(dest, mbr.offset);
             TypeDescriptor mdef = *mbr.type_descriptor;
             mdef.name = mbr.name;
-            if (mdef.choice_spec) {
+            if (contained) {
+                if (auto r = ContainedXer::decode(codec, s, mdef, mptr); !r) return r;
+            } else if (mdef.choice_spec) {
                 if (auto r = xer_detail::consume_open_tag(s, mbr.name); !r) return r;
                 auto r = codec.decode(s, mdef, mptr);
                 if (!r) return r;
@@ -810,6 +923,13 @@ struct SequenceXerHandler final : IXerTypeHandler {
             if (ti.name != def.name || !ti.closing)
                 return decode_err(DecodeError(
                     std::string("XER SEQUENCE: expected </") + def.name + ">"));
+        }
+        // Contained fields that arrived as hex: decode their inner value
+        // (those given inline are already decoded).
+        if (def.has_contained) {
+            std::string err;
+            if (!decode_contained_members(def, dest, ContainedEncoding::Ber, s.depth(), s.contained(), err))
+                return decode_err(DecodeError(std::string(def.name) + "." + err));
         }
         return decode_ok();
     }
@@ -832,7 +952,11 @@ struct ChoiceXerHandler final : IXerTypeHandler {
         TypeDescriptor adef = *alt.type_descriptor;
         adef.name = alt.name;
         const Asn1Object* mptr = alt.get_const_fn(ch);
-        if (adef.choice_spec) {
+        if (def.has_contained && adef.contained) {
+            os << '\n' << s.indent(1);
+            XerEncodeStream as = s.child();
+            ContainedXer::encode(codec, as, adef, mptr);
+        } else if (adef.choice_spec) {
             os << '\n' << s.indent(1) << '<' << alt.name << '>';
             XerEncodeStream as = s.child();
             codec.encode(as, adef, mptr);
@@ -860,7 +984,9 @@ struct ChoiceXerHandler final : IXerTypeHandler {
                 ch->emplace_alt(alt);
             }
             Asn1Object* mptr = alt.get_mut_fn(ch);
-            if (adef.choice_spec) {
+            if (def.has_contained && adef.contained) {
+                if (auto r = ContainedXer::decode(codec, s, adef, mptr); !r) return r;
+            } else if (adef.choice_spec) {
                 if (auto r = xer_detail::consume_open_tag(s, alt.name); !r) return r;
                 auto r = codec.decode(s, adef, mptr);
                 if (!r) return r;
@@ -870,6 +996,10 @@ struct ChoiceXerHandler final : IXerTypeHandler {
                 if (!r) return r;
             }
             ch->_present = i + 1;
+            if (!def.has_contained) return decode_ok();
+            std::string err;
+            if (!decode_contained_alternative(def, dest, ContainedEncoding::Ber, s.depth(), s.contained(), err))
+                return decode_err(DecodeError(std::string(def.name) + "." + err));
             return decode_ok();
         }
         return decode_err(DecodeError(

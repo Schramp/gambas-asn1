@@ -92,6 +92,7 @@ private:
     bool fill_sequence (Asn1Object* obj, const SequenceSpec&   spec, int depth);
     bool fill_choice   (Asn1Object* obj, const ChoiceSpec&     spec, int depth);
     bool fill_seq_of   (Asn1Object* obj, const SeqOfSpec&      spec, int depth);
+    bool fill_contained(Asn1Object* obj, const TypeDescriptor& def, int depth, bool mandatory);
     void fill_enum     (Asn1Object* obj, const EnumSpec&       spec);
     void fill_primitive(Asn1Object* obj, const TypeDescriptor& def);
     // Retry-with-validate wrapper around fill_primitive; falls back to a

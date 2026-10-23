@@ -25,6 +25,7 @@ pub mod ber;
 pub mod bit_string;
 pub mod boolean;
 pub mod constraints;
+pub mod containing;
 pub mod debug;
 pub mod encode_error;
 pub mod integer;
