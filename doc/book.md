@@ -484,12 +484,14 @@ them, and its `raw` part is taken as the raw bytes.
 **Runtime (Rust).** `asn1cpp_wire::containing::Containing<T>` has the same model.
 It derefs to the raw `OctetString` and offers `bytes()`, `set_raw()`, `status()`,
 `error()`, `value()`, `value_mut()` and `set_value()`. The built-in decoders are the
-same. An application registry goes in `ContainedOptions { decoders: Some(reg), .. }`,
-passed to `ber::object::decode_pdu_with` / `per::object::decode_pdu_with` (or
-`Reader::set_contained`). A decoder gets the enclosing value as `ContainedDecodeArgs::outer`
-and calls `containing::decode_value` / `decode_value_from` after its own transform.
-Re-encoding a modified inner value uses the built-in registry; to encode with an
-application encoder (e.g. one that encrypts), set the raw bytes with `set_raw()`.
+same. An application registry goes in `ContainedOptions { decoders: Some(reg), .. }`.
+Every codec takes it on decode as `decode_pdu_with` (BER, PER, XER, JER) or through the
+reader's `set_contained`, and on encode as `encode_pdu_with`, plus `encode_pdu_into_with`
+for BER and PER. On encode, the registry's encode side re-derives a modified inner value,
+for example with an application encoder that encrypts. `ContainedOptions::xer`/`jer`
+override every field's XER/JER form. A decoder gets the enclosing value as
+`ContainedDecodeArgs::outer` and calls `containing::decode_value` / `decode_value_from`
+after its own transform.
 
 ---
 

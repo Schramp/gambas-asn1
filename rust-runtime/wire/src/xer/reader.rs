@@ -104,11 +104,18 @@ pub struct XerReader<'a> {
     pos: usize,
     lenient: bool,
     pub(crate) depth: Depth,
+    pub(crate) contained: Option<&'a crate::containing::ContainedOptions>,
 }
 
 impl<'a> XerReader<'a> {
     pub fn new(buf: &'a str) -> XerReader<'a> {
-        XerReader { buf, pos: 0, lenient: false, depth: Depth::default() }
+        XerReader { buf, pos: 0, lenient: false, depth: Depth::default(), contained: None }
+    }
+
+    /// @brief Set the contained-value settings of this decode (decoder
+    ///        registry, `off`).
+    pub fn set_contained(&mut self, opts: &'a crate::containing::ContainedOptions) {
+        self.contained = Some(opts);
     }
 
     /// Accepts the non-standard asn1c XER extensions `XerDecodeStream`'s
@@ -117,7 +124,7 @@ impl<'a> XerReader<'a> {
     /// addition to the standard empty-element form, and BIT STRING as hex
     /// pairs in addition to the standard '0'/'1' xmlbstring form.
     pub fn new_lenient(buf: &'a str) -> XerReader<'a> {
-        XerReader { buf, pos: 0, lenient: true, depth: Depth::default() }
+        XerReader { buf, pos: 0, lenient: true, depth: Depth::default(), contained: None }
     }
 
     pub fn lenient(&self) -> bool {

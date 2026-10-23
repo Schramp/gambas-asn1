@@ -139,6 +139,8 @@ pub struct ContainedEncodeArgs<'a> {
     /// Resolved encoding (never `Outer`).
     pub encoding: ContainedEncoding,
     pub decoders: &'a ContainedDecoders,
+    /// Settings in use; passed on to the inner encode (nested contained values).
+    pub options: Option<&'a ContainedOptions>,
 }
 
 /// Decoder: fills `args.inner` from `args.raw`.
@@ -297,13 +299,13 @@ pub fn encode_value(args: &ContainedEncodeArgs) -> Result<Vec<u8>, String> {
     match args.encoding {
         ContainedEncoding::Ber | ContainedEncoding::Cer | ContainedEncoding::Der => {
             let mut out = Vec::new();
-            crate::ber::object::encode_member_ref(inner, crate::spec::choice::BerTagging::Delegate, &mut out)
+            crate::ber::object::encode_member_ref(inner, crate::spec::choice::BerTagging::Delegate, &mut out, args.options)
                 .map_err(|e| e.to_string())?;
             Ok(out)
         }
         ContainedEncoding::PerUnaligned => {
             let mut w = crate::per::writer::Writer::new();
-            crate::per::object::encode_member_ref(inner, &crate::constraints::UNCONSTRAINED, &mut w)
+            crate::per::object::encode_member_ref(inner, &crate::constraints::UNCONSTRAINED, &mut w, args.options)
                 .map_err(|e| e.to_string())?;
             w.flush();
             Ok(w.into_bytes())
@@ -369,7 +371,7 @@ pub trait Contained {
     /// The bytes to write under `outer`: the raw bytes, or the inner
     /// value's encoding when it was modified or the raw bytes are in other
     /// rules (X.682 §11.4). `Err` when a modified value cannot be encoded.
-    fn wire_octets(&self, spec: &'static ContainedSpec, outer: ContainedEncoding) -> Result<Cow<'_, OctetString>, EncodeError>;
+    fn wire_octets(&self, spec: &'static ContainedSpec, outer: ContainedEncoding, opts: Option<&ContainedOptions>) -> Result<Cow<'_, OctetString>, EncodeError>;
     /// Raw bytes from the wire, before any inner decode, decoded with the
     /// encoding rules `encoding`.
     fn set_raw_from_wire(&mut self, raw: Vec<u8>, encoding: ContainedEncoding);
@@ -388,7 +390,7 @@ pub trait Contained {
     fn inline_decode(&mut self, f: &mut dyn FnMut(MemberRefMut) -> Result<(), crate::ber::reader::DecodeError>) -> Result<(), crate::ber::reader::DecodeError>;
     /// Finish an inline decode: the raw bytes are `raw` (the `inline_raw`
     /// form) or the inner value's encoding; status Decoded.
-    fn finish_inline(&mut self, raw: Option<Vec<u8>>, spec: &'static ContainedSpec) -> Result<(), String>;
+    fn finish_inline(&mut self, raw: Option<Vec<u8>>, spec: &'static ContainedSpec, opts: Option<&ContainedOptions>) -> Result<(), String>;
 }
 
 /// An OCTET STRING whose bytes are the encoding of a `T` value. Keeps the
@@ -506,7 +508,7 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
     fn raw_octets(&self) -> &OctetString {
         &self.raw
     }
-    fn wire_octets(&self, spec: &'static ContainedSpec, outer: ContainedEncoding) -> Result<Cow<'_, OctetString>, EncodeError> {
+    fn wire_octets(&self, spec: &'static ContainedSpec, outer: ContainedEncoding, opts: Option<&ContainedOptions>) -> Result<Cow<'_, OctetString>, EncodeError> {
         let Some(inner) = self.inner.as_deref() else {
             return Ok(Cow::Borrowed(&self.raw));
         };
@@ -519,9 +521,9 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
         if !self.dirty && !other_rules {
             return Ok(Cow::Borrowed(&self.raw));
         }
-        let reg = ContainedDecoders::defaults();
+        let reg = registry(opts);
         let encoding = resolve(spec.encoding, outer);
-        let args = ContainedEncodeArgs { inner: inner.as_member_ref(), spec, encoding, decoders: reg };
+        let args = ContainedEncodeArgs { inner: inner.as_member_ref(), spec, encoding, decoders: reg, options: opts };
         let res = match reg.resolve(spec).and_then(|e| e.encode.as_ref()) {
             Some(enc) => enc(&args),
             None => Err(format!("decoder '{}' cannot encode", spec.decoder)),
@@ -572,7 +574,7 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
         self.inner = Some(Box::new(v));
         Ok(())
     }
-    fn finish_inline(&mut self, raw: Option<Vec<u8>>, spec: &'static ContainedSpec) -> Result<(), String> {
+    fn finish_inline(&mut self, raw: Option<Vec<u8>>, spec: &'static ContainedSpec, opts: Option<&ContainedOptions>) -> Result<(), String> {
         // XER/JER carry an outer-encoding field's contents as BER (the same
         // rules their hex form uses).
         let encoding = resolve(spec.encoding, ContainedEncoding::Ber);
@@ -584,7 +586,8 @@ impl<T: AsMemberRef + Default + 'static> Contained for Containing<T> {
                     inner: inner.as_member_ref(),
                     spec,
                     encoding,
-                    decoders: ContainedDecoders::defaults(),
+                    decoders: registry(opts),
+                    options: opts,
                 })?
             }
         };
@@ -809,6 +812,7 @@ mod tests {
                 spec: &SPEC,
                 encoding: ContainedEncoding::Ber,
                 decoders: reg,
+                options: None,
             };
             (reg.find("pkcs7").unwrap().encode.as_ref().unwrap())(&args).unwrap()
         };
@@ -839,12 +843,12 @@ mod tests {
         assert!(c.status() == ContainedStatus::NotDecoded && !c.has_value());
         c.set_value(Integer(42));
         assert!(c.dirty() && c.value() == Some(&Integer(42)));
-        assert_eq!(c.wire_octets(&SPEC, ContainedEncoding::Ber).unwrap().0, vec![0x02, 0x01, 42]);
+        assert_eq!(c.wire_octets(&SPEC, ContainedEncoding::Ber, None).unwrap().0, vec![0x02, 0x01, 42]);
         let copy = c.clone();
         assert_eq!(copy.value(), Some(&Integer(42)));
         c.set_raw(vec![0x02, 0x01, 0x09]);
         assert!(!c.has_value() && !c.dirty() && c.status() == ContainedStatus::NotDecoded);
-        assert_eq!(c.wire_octets(&SPEC, ContainedEncoding::Ber).unwrap().0, vec![0x02, 0x01, 0x09]);
+        assert_eq!(c.wire_octets(&SPEC, ContainedEncoding::Ber, None).unwrap().0, vec![0x02, 0x01, 0x09]);
     }
 
     /// A modified value whose bytes cannot be derived fails the encode
@@ -855,8 +859,8 @@ mod tests {
         let mut c: Containing<Integer> = Containing::default();
         c.set_raw_from_wire(vec![0x02, 0x01, 0x09], ContainedEncoding::Ber);
         c.install(ContainedResult::ok(), Some(Box::new(Integer(9))));
-        assert_eq!(c.wire_octets(&APER, ContainedEncoding::Ber).unwrap().0, vec![0x02, 0x01, 0x09]);
+        assert_eq!(c.wire_octets(&APER, ContainedEncoding::Ber, None).unwrap().0, vec![0x02, 0x01, 0x09]);
         c.value_mut().unwrap().0 = 10;
-        assert!(c.wire_octets(&APER, ContainedEncoding::Ber).is_err());
+        assert!(c.wire_octets(&APER, ContainedEncoding::Ber, None).is_err());
     }
 }
