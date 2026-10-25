@@ -135,8 +135,18 @@ add_subdirectory(tests)
 # ---------------------------------------------------------------------------
 option(BUILD_DOCS "Build Doxygen HTML documentation" OFF)
 if(BUILD_DOCS)
-    find_package(Doxygen REQUIRED)
+    find_package(Doxygen REQUIRED OPTIONAL_COMPONENTS dot)
     set(DOXYGEN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/docs")
+    # Class and include graphs need Graphviz; without it the docs build
+    # without graphs instead of failing on every graph.
+    if(TARGET Doxygen::dot)
+        set(DOXYGEN_HAVE_DOT YES)
+        get_filename_component(DOXYGEN_DOT_PATH "${DOXYGEN_DOT_EXECUTABLE}" DIRECTORY)
+    else()
+        set(DOXYGEN_HAVE_DOT NO)
+        set(DOXYGEN_DOT_PATH "")
+        message(STATUS "BUILD_DOCS: Graphviz dot not found — documentation without graphs")
+    endif()
     configure_file(Doxyfile.in "${CMAKE_BINARY_DIR}/Doxyfile" @ONLY)
     add_custom_target(doxygen
         COMMAND "${DOXYGEN_EXECUTABLE}" "${CMAKE_BINARY_DIR}/Doxyfile"

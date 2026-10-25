@@ -22,6 +22,10 @@ GENERATE_HTML          = YES
 HTML_OUTPUT            = html
 GENERATE_LATEX         = NO
 
+# Graphs (Graphviz dot, detected by CMake)
+HAVE_DOT               = @DOXYGEN_HAVE_DOT@
+DOT_PATH               = "@DOXYGEN_DOT_PATH@"
+
 # Source browsing
 SOURCE_BROWSER         = YES
 INLINE_SOURCES         = NO

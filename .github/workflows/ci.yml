@@ -83,9 +83,9 @@ jobs:
           ./nested-decoder pdu-00000001.etsi > actual.xer
           diff pdu-00000001.expected actual.xer
 
-      - name: Install Doxygen
+      - name: Install Doxygen and Graphviz
         if: github.ref == 'refs/heads/main'
-        run: sudo apt-get install -y doxygen
+        run: sudo apt-get install -y doxygen graphviz
 
       - name: Build documentation
         if: github.ref == 'refs/heads/main'
