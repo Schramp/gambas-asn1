@@ -14,6 +14,7 @@ using ConstraintPtr = std::shared_ptr<Constraint>;
 struct RangeEndpoint {
     enum class Kind { Min, Max, Value } kind{Kind::Value};
     Value value;
+    bool open{false};  // X.680 §47.4.3: "<" excludes the endpoint value itself
 };
 
 struct ValueRange {

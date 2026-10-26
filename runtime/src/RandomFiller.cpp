@@ -596,6 +596,7 @@ void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
     }
 
     case UT::Real: {
+        const auto& c = def.constraints;
         double v;
         if (coin(cfg_.magic_real_prob)) {
             static const double magic_with_unsafe[] = {
@@ -617,6 +618,18 @@ void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
                 v = magic_xer_safe[rand_int(0, 3)];
         } else {
             v = std::uniform_real_distribution<double>{-1e6, 1e6}(rng_);
+        }
+        // A value range (X.680 §47.4) replaces any draw that falls outside it
+        // with a uniform draw inside it, a bounded window when an end is infinite.
+        if ((c.flags & Constraints::REAL_RANGE) && Real{v}.validate(c) != 0) {
+            double lo = c.real_lower, hi = c.real_upper;
+            if (!std::isfinite(lo)) lo = std::isfinite(hi) ? hi - 1e6 : -1e6;
+            if (!std::isfinite(hi)) hi = std::isfinite(c.real_lower) ? lo + 1e6 : 1e6;
+            v = lo < hi ? std::uniform_real_distribution<double>{lo, hi}(rng_) : lo;
+            if ((c.flags & Constraints::REAL_LOWER_OPEN) && v <= c.real_lower)
+                v = std::nextafter(c.real_lower, std::numeric_limits<double>::infinity());
+            if ((c.flags & Constraints::REAL_UPPER_OPEN) && v >= c.real_upper)
+                v = std::nextafter(c.real_upper, -std::numeric_limits<double>::infinity());
         }
         static_cast<Real*>(obj)->set(v);
         break;

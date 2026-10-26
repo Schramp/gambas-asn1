@@ -284,7 +284,8 @@ DESCENDANTS         { return yy::parser::make_TOK_DESCENDANTS(location()); }
 "[["    { return yy::parser::make_TOK_VBracketLeft(location()); }
 "]]"    { return yy::parser::make_TOK_VBracketRight(location()); }
 
-[(){},;:|!.&@\[\]^]     {
+    /* "<" marks an open ValueRange endpoint (X.680 §47.4.3). */
+[(){},;:|!.&@\[\]^<]    {
     return yy::parser::symbol_type(text()[0], location());
 }
 

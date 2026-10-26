@@ -303,7 +303,8 @@
 %type <ConstraintPtr>               FullSpecification PartialSpecification
 %type <ConstraintPtr>               TypeConstraints NamedConstraint
 %type <Value>                       SingleValue LowerEndValue UpperEndValue
-%type <std::monostate>              ContainedSubtype ConstraintRangeSpec AtNotationElement
+%type <std::monostate>              ContainedSubtype AtNotationElement
+%type <int>                         ConstraintRangeSpec
 %type <std::monostate>              optPresenceConstraint PresenceConstraint
 %type <std::string>                 ComponentIdList
 
@@ -1591,6 +1592,8 @@ ValueRange:
 	    if (auto* v = std::get_if<int64_t>(&$3))      { hi.kind = RangeEndpoint::Kind::Value; hi.value = *v; }
 	    else if (std::get_if<std::monostate>(&$3))     { hi.kind = RangeEndpoint::Kind::Max; }
 	    else                                           { hi.kind = RangeEndpoint::Kind::Value; hi.value = $3; }
+	    lo.open = ($2 & 1) != 0;
+	    hi.open = ($2 & 2) != 0;
 	    auto c = std::make_shared<ast::Constraint>();
 	    c->body = ast::ValueRange{lo, hi};
 	    $$ = c;
@@ -1610,10 +1613,10 @@ UpperEndValue:
 SingleValue: Value { $$ = $1; } ;
 
 ConstraintRangeSpec:
-	  TOK_TwoDots        { }
-	| TOK_TwoDots '<'    { }
-	| '<' TOK_TwoDots    { }
-	| '<' TOK_TwoDots '<' { }
+	  TOK_TwoDots        { $$ = 0; }
+	| TOK_TwoDots '<'    { $$ = 2; }
+	| '<' TOK_TwoDots    { $$ = 1; }
+	| '<' TOK_TwoDots '<' { $$ = 3; }
 	;
 
 ContainedSubtype:

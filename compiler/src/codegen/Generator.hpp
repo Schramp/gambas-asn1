@@ -579,6 +579,11 @@ private:
     ///       scope for this decision/emission split.
     DefaultValueSpec default_value_spec_for(const ast::TypeDef& m) const;
     IntRange extract_integer_range(const ast::TypeDef& def) const;
+    /// @brief Intersect every ValueRange on a REAL type into one range (X.680 §47.4).
+    /// @param def REAL type or member definition.
+    /// @return The range; `present` is false when no ValueRange applies or an
+    ///         endpoint is a value reference that does not resolve to a number.
+    RealRangeSpec extract_real_range(const ast::TypeDef& def) const;
 
     // Info for generating typed set_<member>() helpers on SEQUENCE/SET classes.
     struct MemberSetterInfo {

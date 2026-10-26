@@ -1405,6 +1405,36 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
     return IntRange{false, 0, 0, false, 0, false};
 }
 
+RealRangeSpec Generator::extract_real_range(const ast::TypeDef& def) const {
+    constexpr double inf = std::numeric_limits<double>::infinity();
+    auto endpoint = [&](const ast::RangeEndpoint& e, double unbounded) -> std::optional<double> {
+        if (e.kind != ast::RangeEndpoint::Kind::Value) return unbounded;
+        if (auto* d = std::get_if<double>(&e.value))   return *d;
+        if (auto* u = std::get_if<uint64_t>(&e.value)) return static_cast<double>(*u);
+        if (auto i = resolve_int_value(e.value))       return static_cast<double>(*i);
+        return std::nullopt;
+    };
+    RealRangeSpec r;
+    bool unresolved = false;
+    walk_type_constraints(def, [&](const ast::ConstraintBody& body) {
+        auto* vr = std::get_if<ast::ValueRange>(&body);
+        if (!vr) return;
+        auto lo = endpoint(vr->lower, -inf);
+        auto hi = endpoint(vr->upper, inf);
+        if (!lo || !hi) { unresolved = true; return; }
+        // Intersection: the larger lower and the smaller upper bound win; on a
+        // tie an open endpoint is the narrower one.
+        if (!r.present || *lo > r.lower)  { r.lower = *lo; r.lower_open = vr->lower.open; }
+        else if (*lo == r.lower)          r.lower_open = r.lower_open || vr->lower.open;
+        if (!r.present || *hi < r.upper)  { r.upper = *hi; r.upper_open = vr->upper.open; }
+        else if (*hi == r.upper)          r.upper_open = r.upper_open || vr->upper.open;
+        r.present = true;
+    });
+    if (unresolved) return RealRangeSpec{};
+    r.extensible = r.present && is_constraint_extensible(def);
+    return r;
+}
+
 // ---------------------------------------------------------------------------
 // Inline-constrained member TypeDescriptor helpers
 // ---------------------------------------------------------------------------
@@ -1551,6 +1581,21 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
             }
             spec.xer_type_name = "INTEGER";
             spec.universal_tag = asn1::UniversalTag::Integer;
+            return spec;
+        }
+    }
+
+    // REAL value range
+    if (*bt == BT::Real) {
+        auto rr = extract_real_range(m);
+        if (rr.present) {
+            MemberTypeDescriptorSpec spec;
+            spec.kind = MemberTypeDescriptorSpec::Kind::Real;
+            spec.parent_cname = parent_cname;
+            spec.mname = mname;
+            spec.real_range = rr;
+            spec.xer_type_name = "REAL";
+            spec.universal_tag = asn1::UniversalTag::Real;
             return spec;
         }
     }
@@ -2997,6 +3042,7 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     spec.extensible = string_per_visibility(def).size_extensible;
     spec.named_bits = has_named_bits(def);
     spec.xer_encoding = def.xer_encoding;
+    if (builtin == ast::BuiltinType::Real) spec.real_range = extract_real_range(def);
     return spec;
 }
 
