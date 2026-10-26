@@ -273,12 +273,19 @@ struct IntegerXerHandler final : IXerTypeHandler {
 };
 
 struct RealXerHandler final : IXerTypeHandler {
+    /// @brief Encode a REAL element: a \c Decimal as its exact digits, any
+    ///        other value as fixed-point text from value() or a special-value
+    ///        element. Decode always gives a \c Double.
+    /// @see X.693 §17.9 (XMLRealValue); X.680 §20.6.
     void encode(const XerCodec&, XerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
-        double d = static_cast<const Real*>(src)->value();
+        const Real& r = *static_cast<const Real*>(src);
+        double d = r.value();
         auto& os = s.os();
         os << '<' << def.name << '>';
-        if (std::isnan(d)) {
+        if (r.storage() == Real::Storage::Decimal) {
+            os << r.decimal_text();  // the exact base-10 value as a realnumber (X.680 §20.6)
+        } else if (std::isnan(d)) {
             os << "<NOT-A-NUMBER/>";
         } else if (std::isinf(d)) {
             os << (d > 0 ? "<PLUS-INFINITY/>" : "<MINUS-INFINITY/>");

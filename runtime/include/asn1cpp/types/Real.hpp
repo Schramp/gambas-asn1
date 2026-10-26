@@ -3,6 +3,10 @@
 #include <cstdint>
 #include <cmath>
 #include <cstring>
+#include <memory>
+#include <span>
+#include <string>
+#include <string_view>
 #include <asn1cpp/compat/format.hpp>
 #include <limits>
 #include "../Tag.hpp"
@@ -12,33 +16,94 @@
 
 namespace asn1 {
 
-namespace detail {
-/// @brief Decode the contents octets of a BER REAL into a double (Real.cpp).
-/// @see X.690 §8.5.
-Expected<double, DecodeError> decode_real_contents(std::span<const uint8_t> value);
-} // namespace detail
-
-/// @brief ASN.1 REAL — IEEE 754 double-precision floating point.
-/// BER encoding uses the X.690 §8.5.7 binary form (base-2, minimal mantissa bytes).
-/// Special values +∞, -∞, and NaN are encoded per X.690 §8.5.9.
-/// @see X.680 §21 — REAL type; X.690 §8.5 — BER encoding.
+/// @brief ASN.1 REAL: an abstract value mantissa × base^exponent with base 2
+///        or 10 (X.680 §20.3–20.5), held in one of three storage classes:
+///        - \c Double: an IEEE 754 double, base 2 (the default and the
+///          common case; no allocation);
+///        - \c Binary: base 2 with an arbitrary mantissa, for a BER binary
+///          value a double cannot hold exactly;
+///        - \c Decimal: base 10 with an arbitrary digit string, from the BER
+///          decimal form or JER \c {"base10Value": n}.
+///        value() is exact for \c Double and the nearest double (or ±∞ / ±0
+///        beyond the double range) otherwise. Base-2 and base-10 values are
+///        distinct abstract values (X.680 §20.5 NOTE 1), so a \c Decimal never
+///        equals a \c Double.
+/// @see X.680 §20 — REAL type; X.690 §8.5 / §11.3 — BER and CER/DER encoding.
 class Real : public Asn1Object {
+public:
+    enum class Storage : uint8_t { Double, Binary, Decimal };
+
+    /// @brief Exact components of a \c Binary or \c Decimal value:
+    ///        (negative ? −1 : 1) × mantissa × base^exponent.
+    /// \c Binary: mantissa is big-endian octets, odd (X.690 §11.3.1).
+    /// \c Decimal: mantissa is ASCII digits, neither first nor last digit 0
+    /// (X.690 §11.3.2.4). Both forms are therefore unique per abstract value.
+    struct Exact {
+        bool        negative = false;
+        std::string mantissa;
+        int64_t     exponent = 0;
+        bool operator==(const Exact&) const = default;
+    };
+
+private:
     double value_{0.0};
+    std::shared_ptr<const Exact> exact_;
+    Storage storage_{Storage::Double};
+
 public:
     Real() = default;
     explicit Real(double v) : value_(v) {}
-    /// @brief Return the stored double value.
+
+    /// @brief A base-2 value S × N × 2^e2. A value a double holds exactly
+    ///        becomes \c Double; any other becomes \c Binary.
+    /// @param negative  S = −1.
+    /// @param mantissa  N, big-endian, any number of leading zero octets.
+    /// @param exponent  Binary exponent of N's least significant bit.
+    /// @return The value; zero mantissa gives ±0.
+    /// @see X.690 §8.5.7.
+    static Real binary(bool negative, std::span<const uint8_t> mantissa, int64_t exponent);
+
+    /// @brief A base-10 value S × digits × 10^exponent, stored as \c Decimal.
+    /// @param negative  S = −1.
+    /// @param digits    ASCII decimal digits; leading and trailing zeros allowed.
+    /// @param exponent  Decimal exponent of the last digit.
+    /// @return The value; all-zero digits give ±0 (\c Double).
+    /// @see X.680 §20.5; X.690 §8.5.8.
+    static Real decimal(bool negative, std::string_view digits, int64_t exponent);
+
+    /// @brief Return the value as a double: exact for \c Double, the nearest
+    ///        double otherwise.
     double value() const { return value_; }
-    /// @brief Set the stored double value.
-    void   set(double v)   { value_ = v; }
+    /// @brief Set a base-2 \c Double value.
+    void   set(double v)   { value_ = v; exact_.reset(); storage_ = Storage::Double; }
     operator double() const { return value_; }
-    /// @brief Equality of REAL abstract values: minus zero and plus zero
-    ///        differ, and NOT-A-NUMBER equals itself: X.690 §8.5.9 gives each
-    ///        its own encoding, so a DEFAULT comparison never conflates -0 with 0.
+
+    /// @brief The storage class.
+    Storage storage() const { return storage_; }
+    /// @brief 10 for \c Decimal, 2 otherwise.
+    int base() const { return storage_ == Storage::Decimal ? 10 : 2; }
+    /// @brief Exact components; null for \c Double.
+    const Exact* exact() const { return exact_.get(); }
+
+    /// @brief Equality of REAL abstract values: storage class (base) and exact
+    ///        components must match. For \c Double, minus zero and plus zero
+    ///        differ and NOT-A-NUMBER equals itself, since X.690 §8.5.9 gives
+    ///        each its own encoding.
+    /// @see X.680 §20.5 NOTE 1 — base-2 and base-10 values are distinct.
     bool operator==(const Real& o) const {
+        if (storage_ != o.storage_) return false;
+        if (exact_) return *exact_ == *o.exact_;
         if (std::isnan(value_) || std::isnan(o.value_)) return std::isnan(value_) && std::isnan(o.value_);
         return value_ == o.value_ && std::signbit(value_) == std::signbit(o.value_);
     }
+    /// @brief Numeric equality at double precision, ignoring the base:
+    ///        compares value(), with -0 equal to +0 and NaN unequal to itself.
+    bool numerically_equal(const Real& o) const { return value_ == o.value_; }
+
+    /// @brief Exact text of a \c Decimal value, `[-]digitsE<exp>` or
+    ///        `[-]digits` when the exponent is 0: a JSON number (X.697 §23.4)
+    ///        and an X.680 realnumber. Empty for other storage classes.
+    std::string decimal_text() const;
 
     /// @brief Check the value against a REAL value-range constraint.
     /// @param c  Constraints; only REAL_RANGE / REAL_*_OPEN / EXTENSIBLE and
@@ -69,11 +134,32 @@ public:
     static const TypeDescriptor& asn_DEF;
 };
 
+namespace detail {
+/// @brief Decode the contents octets of a BER REAL (Real.cpp).
+/// @see X.690 §8.5.
+Expected<Real, DecodeError> decode_real_contents(std::span<const uint8_t> value);
+/// @brief Contents octets of a \c Binary or \c Decimal REAL in their CER/DER
+///        form (Real.cpp).
+/// @see X.690 §11.3.
+std::vector<uint8_t> encode_real_exact(const Real& v);
+/// @brief Parse `[-]digits[.digits][(e|E)[+-]digits]` (a JSON number, X.697
+///        §23.4) exactly into a \c Decimal (Real.cpp).
+Expected<Real, DecodeError> parse_decimal_number(std::string_view text);
+} // namespace detail
+
 template<>
 struct BerTraits<Real> {
     static constexpr Tag tag() { return Tag::universal(UniversalTag::Real, false); }
 
+    /// @brief Encode a REAL as a BER TLV: \c Binary / \c Decimal in their
+    ///        CER/DER form (detail::encode_real_exact), \c Double as the
+    ///        base-2 binary form with an odd mantissa.
+    /// @see X.690 §8.5, §11.3.
     static void encode(BerWriter& w, const Real& v) {
+        if (v.storage() != Real::Storage::Double) {
+            w.write_primitive(tag(), detail::encode_real_exact(v));
+            return;
+        }
         double d = v.value();
         if (d == 0.0) {
             // X.690 §8.5.9: PLUS-ZERO is the empty encoding; MINUS-ZERO
@@ -154,9 +240,7 @@ struct BerTraits<Real> {
 
     /// @brief Decode REAL contents octets; see detail::decode_real_contents.
     static Expected<Real, DecodeError> decode_value(std::span<const uint8_t> value) {
-        auto d = detail::decode_real_contents(value);
-        if (!d) return make_unexpected<Real, DecodeError>(d.error());
-        return Real{*d};
+        return detail::decode_real_contents(value);
     }
 };
 

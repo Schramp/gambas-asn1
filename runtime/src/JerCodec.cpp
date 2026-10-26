@@ -481,10 +481,18 @@ struct IntegerJerHandler final : IJerTypeHandler {
 // std::signbit below) to encode as the special string "-0", not the
 // bare number 0.
 struct RealJerHandler final : IJerTypeHandler {
+    /// @brief Encode a JER REAL: a \c Decimal as `{"base10Value": n}` with its
+    ///        exact digits, any other value as a JSON number or special string.
+    /// @see X.697 §23.
     void encode(const JerCodec&, JerEncodeStream& s,
                 const TypeDescriptor&, const Asn1Object* src) const override {
-        double d = static_cast<const Real*>(src)->value();
+        const Real& r = *static_cast<const Real*>(src);
+        double d = r.value();
         auto& os = s.os();
+        if (r.storage() == Real::Storage::Decimal) {  // X.697 §23.4
+            os << "{\"base10Value\":" << r.decimal_text() << '}';
+            return;
+        }
         if (std::isnan(d))      { os << "\"NaN\""; return; }
         if (std::isinf(d))      { os << (d > 0 ? "\"INF\"" : "\"-INF\""); return; }
         if (d == 0.0) {
@@ -494,7 +502,8 @@ struct RealJerHandler final : IJerTypeHandler {
         os << jer_detail::format_real(d);
     }
     /// @brief Decode a JER REAL: a JSON number (X.697 §23.3), a special-value
-    ///        string (§23.2), or the object `{"base10Value": number}` (§23.4).
+    ///        string (§23.2), or the object `{"base10Value": number}` (§23.4),
+    ///        which gives an exact \c Decimal value; a number gives a \c Double.
     /// @return decode_ok, or an error for any other JSON value or member.
     /// @see X.697 §23.
     DecodeResult decode(const JerCodec&, JerDecodeStream& s,
@@ -509,12 +518,10 @@ struct RealJerHandler final : IJerTypeHandler {
             if (auto r = jer_detail::expect_char(s, ':'); !r) return r;
             std::string tok;
             if (auto r = jer_detail::read_json_token(s, tok); !r) return r;
-            char* endp;
-            double d = std::strtod(tok.c_str(), &endp);
-            if (endp != tok.c_str() + tok.size())
-                return decode_err(DecodeError("JER: invalid REAL base10Value: " + tok));
+            auto v = detail::parse_decimal_number(tok);
+            if (!v) return decode_err(DecodeError("JER: invalid REAL base10Value: " + tok));
             if (auto r = jer_detail::expect_char(s, '}'); !r) return r;
-            *static_cast<Real*>(dest) = Real{d};
+            *static_cast<Real*>(dest) = std::move(*v);
             return decode_ok();
         }
         if (!s.at_end() && s.data()[0] == '"') {

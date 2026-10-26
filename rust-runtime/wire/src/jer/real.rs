@@ -6,8 +6,19 @@
 
 use crate::ber::reader::DecodeError;
 use crate::jer::reader::Reader;
+use crate::real::{parse_decimal_number, Real};
 
-pub fn encode(d: f64, out: &mut String) {
+/// Encodes a JER REAL: a `Decimal` as `{"base10Value": n}` with its exact
+/// digits (X.697 §23.4), any other value as a JSON number or special-value
+/// string (§23.2, §23.3). Mirrors `RealJerHandler::encode`.
+pub fn encode(v: &Real, out: &mut String) {
+    if let Some(text) = v.decimal_text() {
+        out.push_str("{\"base10Value\":");
+        out.push_str(&text);
+        out.push('}');
+        return;
+    }
+    let d = v.value();
     if d.is_nan() {
         out.push_str("\"NaN\"");
         return;
@@ -71,9 +82,10 @@ fn format_real(d: f64) -> String {
 }
 
 /// Decodes a JER REAL: a JSON number (X.697 §23.3), a special-value string
-/// (§23.2), or the object `{"base10Value": number}` (§23.4). Mirrors
+/// (§23.2), or the object `{"base10Value": number}` (§23.4), which gives an
+/// exact `Decimal`; a number gives a `Double`. Mirrors
 /// `RealJerHandler::decode` (`runtime/src/JerCodec.cpp`).
-pub fn decode(r: &mut Reader) -> Result<f64, DecodeError> {
+pub fn decode(r: &mut Reader) -> Result<Real, DecodeError> {
     r.skip_ws();
     if r.peek_char() == b'{' {
         r.expect_char(b'{')?;
@@ -83,11 +95,10 @@ pub fn decode(r: &mut Reader) -> Result<f64, DecodeError> {
         }
         r.expect_char(b':')?;
         let tok = r.read_json_token()?;
-        let d = tok
-            .parse::<f64>()
-            .map_err(|_| DecodeError::new(format!("JER: invalid REAL base10Value: {tok}"), r.pos()))?;
+        let v = parse_decimal_number(&tok)
+            .ok_or_else(|| DecodeError::new(format!("JER: invalid REAL base10Value: {tok}"), r.pos()))?;
         r.expect_char(b'}')?;
-        return Ok(d);
+        return Ok(v);
     }
     if r.peek_char() == b'"' {
         let s = r.read_json_string()?;
@@ -99,10 +110,12 @@ pub fn decode(r: &mut Reader) -> Result<f64, DecodeError> {
             other => other
                 .parse::<f64>()
                 .map_err(|_| DecodeError::new(format!("JER: invalid REAL string: {other}"), r.pos())),
-        };
+        }
+        .map(Real::new);
     }
     let tok = r.read_json_token()?;
     tok.parse::<f64>()
+        .map(Real::new)
         .map_err(|_| DecodeError::new(format!("JER: invalid REAL: {tok}"), r.pos()))
 }
 
@@ -133,7 +146,7 @@ mod tests {
     fn reals_encode_to_the_shortest_round_trip_text() {
         for &(d, want) in CASES {
             let mut out = String::new();
-            encode(d, &mut out);
+            encode(&Real::new(d), &mut out);
             assert_eq!(out, want, "encoding {d:?}");
             let mut r = Reader::new(&out);
             assert_eq!(decode(&mut r).unwrap().to_bits(), d.to_bits(), "round trip of {want}");
@@ -154,15 +167,41 @@ mod tests {
         ];
         for &(json, want) in cases {
             let mut r = Reader::new(json);
-            assert_eq!(decode(&mut r).ok(), want, "{json}");
+            let got = decode(&mut r).ok();
+            assert_eq!(got.as_ref().map(Real::value), want, "{json}");
+            if let Some(v) = got {
+                assert_eq!(v.storage(), crate::real::Storage::Decimal, "{json}");
+            }
         }
+    }
+
+    /// Shared with the C++ `test_jer_basic` Decimal checks.
+    #[test]
+    fn decimal_is_exact_through_ber_and_jer() {
+        let pi = Real::decimal(false, "3141592653589793238462643383279", -30);
+        let mut out = String::new();
+        encode(&pi, &mut out);
+        assert_eq!(out, "{\"base10Value\":3141592653589793238462643383279E-30}");
+        assert_eq!(decode(&mut Reader::new(&out)).unwrap(), pi);
+
+        let ber_in = crate::real::decode_real_value(b"\x0214.56", 0).unwrap();
+        let mut json = String::new();
+        encode(&ber_in, &mut json);
+        let via_jer = decode(&mut Reader::new(&json)).unwrap();
+        let mut content = Vec::new();
+        crate::real::encode_real_content(&mut content, &via_jer);
+        assert_eq!(content, b"\x031456.E-2");
+
+        let mut xer = String::new();
+        crate::xer::real::encode(&via_jer, &mut xer);
+        assert_eq!(xer, "1456E-2");
     }
 
     #[test]
     fn special_values_keep_their_strings() {
         for (d, want) in [(f64::NAN, "\"NaN\""), (f64::INFINITY, "\"INF\""), (f64::NEG_INFINITY, "\"-INF\""), (-0.0, "\"-0\""), (0.0, "0")] {
             let mut out = String::new();
-            encode(d, &mut out);
+            encode(&Real::new(d), &mut out);
             assert_eq!(out, want);
         }
     }

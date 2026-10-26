@@ -39,18 +39,18 @@ fn main() {
     check("Finite: NaN excluded", validate_real(f64::NAN, fin) != 0, &mut failures);
 
     let with = |f: &dyn Fn(&mut Rec)| {
-        let mut r = Rec { unit: Real(0.5), both: Real(1.0), ..Default::default() };
+        let mut r = Rec { unit: Real::new(0.5), both: Real::new(1.0), ..Default::default() };
         f(&mut r);
         r
     };
     check("in-range record: every present member valid", [0, 2, 3].iter().all(|&i| with(&|_| {}).validate(i) == 0), &mut failures);
-    check("unit (0<..<1): open endpoint 0 excluded", with(&|r| r.unit = Real(0.0)).validate(0) > 0, &mut failures);
-    check("unit: open endpoint 1 excluded", with(&|r| r.unit = Real(1.0)).validate(0) < 0, &mut failures);
-    check("big (1.5E3..MAX): PLUS-INFINITY valid", with(&|r| r.big = Some(Real(inf))).validate(1) == 0, &mut failures);
-    check("big: 1499 below", with(&|r| r.big = Some(Real(1499.0))).validate(1) == 1, &mut failures);
-    check("both (-10..10)(0..5): 6 above intersection", with(&|r| r.both = Real(6.0)).validate(2) < 0, &mut failures);
-    check("both: -1 below intersection", with(&|r| r.both = Real(-1.0)).validate(2) > 0, &mut failures);
-    check("ext (-1..1, ...): extensible accepts 5", with(&|r| r.ext = Real(5.0)).validate(3) == 0, &mut failures);
+    check("unit (0<..<1): open endpoint 0 excluded", with(&|r| r.unit = Real::new(0.0)).validate(0) > 0, &mut failures);
+    check("unit: open endpoint 1 excluded", with(&|r| r.unit = Real::new(1.0)).validate(0) < 0, &mut failures);
+    check("big (1.5E3..MAX): PLUS-INFINITY valid", with(&|r| r.big = Some(Real::new(inf))).validate(1) == 0, &mut failures);
+    check("big: 1499 below", with(&|r| r.big = Some(Real::new(1499.0))).validate(1) == 1, &mut failures);
+    check("both (-10..10)(0..5): 6 above intersection", with(&|r| r.both = Real::new(6.0)).validate(2) < 0, &mut failures);
+    check("both: -1 below intersection", with(&|r| r.both = Real::new(-1.0)).validate(2) > 0, &mut failures);
+    check("ext (-1..1, ...): extensible accepts 5", with(&|r| r.ext = Real::new(5.0)).validate(3) == 0, &mut failures);
 
     println!("\n{} ({failures} failure{})", if failures > 0 { "FAILED" } else { "OK" }, if failures == 1 { "" } else { "s" });
     std::process::exit(if failures > 0 { 1 } else { 0 });

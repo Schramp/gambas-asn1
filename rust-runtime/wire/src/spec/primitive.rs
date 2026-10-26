@@ -213,7 +213,7 @@ fn ber_encode_tagged_(p: PrimitiveRef, tag: Tag, out: &mut Vec<u8>) {
         PrimitiveRef::UInteger(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(&crate::integer::encode_integer_bytes_u64(x.0))),
         PrimitiveRef::BigInteger(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(&crate::integer::encode_integer_bytes_i128(x.0))),
         PrimitiveRef::ArbitraryInteger(x) => ber_write_tlv(out, tag, |buf| crate::integer::encode_arbitrary_integer_content(&x.0, buf)),
-        PrimitiveRef::Real(x) => ber_write_tlv(out, tag, |buf| crate::real::encode_real_content(buf, x.0)),
+        PrimitiveRef::Real(x) => ber_write_tlv(out, tag, |buf| crate::real::encode_real_content(buf, x)),
         PrimitiveRef::Null(_) => ber_write_tlv(out, tag, |_buf| {}),
         PrimitiveRef::OctetString(x) => ber_write_tlv(out, tag, |buf| buf.extend_from_slice(&x.0)),
         PrimitiveRef::BitString(x) => ber_write_tlv(out, tag, |buf| crate::bit_string::encode_bit_string_content(buf, x)),
@@ -244,7 +244,7 @@ fn ber_decode_tagged_(p: PrimitiveRefMut, tag: Tag, r: &mut BerReader) -> Result
         PrimitiveRefMut::UInteger(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::integer::decode_integer_bytes_u64(content)?; Ok(()) }),
         PrimitiveRefMut::BigInteger(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::integer::decode_integer_bytes_i128(content)?; Ok(()) }),
         PrimitiveRefMut::ArbitraryInteger(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::integer::decode_arbitrary_integer_content(content); Ok(()) }),
-        PrimitiveRefMut::Real(x) => ber_read_tlv(r, tag, |content| { x.0 = crate::real::decode_real_value(content, 0)?; Ok(()) }),
+        PrimitiveRefMut::Real(x) => ber_read_tlv(r, tag, |content| { *x = crate::real::decode_real_value(content, 0)?; Ok(()) }),
         PrimitiveRefMut::Null(_) => ber_read_tlv(r, tag, |content| { crate::null::decode_null_content(content)?; Ok(()) }),
         PrimitiveRefMut::OctetString(x) => ber_read_tlv(r, tag, |content| { x.0 = content.to_vec(); Ok(()) }),
         PrimitiveRefMut::BitString(x) => ber_read_tlv(r, tag, |content| { *x = crate::bit_string::decode_bit_string_content(content)?; Ok(()) }),
@@ -353,7 +353,7 @@ pub fn xer_encode_primitive(p: PrimitiveRef, out: &mut String, depth: usize) -> 
         PrimitiveRef::UInteger(x) => crate::xer::integer::encode(x.0, out),
         PrimitiveRef::BigInteger(x) => crate::xer::integer::encode(x.0, out),
         PrimitiveRef::ArbitraryInteger(_) => return Err(not_supported("XER", "ArbitraryInteger")),
-        PrimitiveRef::Real(x) => crate::xer::real::encode(x.0, out),
+        PrimitiveRef::Real(x) => crate::xer::real::encode(x, out),
         PrimitiveRef::Null(_) => {}
         PrimitiveRef::OctetString(x) => crate::xer::octet_string::encode(&x.0, out),
         PrimitiveRef::BitString(x) => crate::xer::bit_string::encode(x, out, depth),
@@ -385,7 +385,7 @@ pub fn xer_decode_primitive(p: PrimitiveRefMut, r: &mut XerReader) -> Result<(),
         PrimitiveRefMut::UInteger(x) => { x.0 = crate::xer::integer::decode(r)?; Ok(()) }
         PrimitiveRefMut::BigInteger(x) => { x.0 = crate::xer::integer::decode(r)?; Ok(()) }
         PrimitiveRefMut::ArbitraryInteger(_) => Err(BerDecodeError::new(not_supported("XER", "ArbitraryInteger").message, 0)),
-        PrimitiveRefMut::Real(x) => { x.0 = crate::xer::real::decode(r)?; Ok(()) }
+        PrimitiveRefMut::Real(x) => { x.set(crate::xer::real::decode(r)?); Ok(()) }
         PrimitiveRefMut::Null(_) => Ok(()),
         PrimitiveRefMut::OctetString(x) => { x.0 = crate::xer::octet_string::decode(r)?; Ok(()) }
         PrimitiveRefMut::BitString(x) => crate::xer::bit_string::decode_into(x, r),
@@ -451,7 +451,7 @@ pub fn jer_encode_primitive(p: PrimitiveRef, c: &crate::constraints::Constraints
         PrimitiveRef::UInteger(x) => crate::jer::integer::encode(x.0, out),
         PrimitiveRef::BigInteger(x) => crate::jer::integer::encode(x.0, out),
         PrimitiveRef::ArbitraryInteger(_) => return Err(not_supported("JER", "ArbitraryInteger")),
-        PrimitiveRef::Real(x) => crate::jer::real::encode(x.0, out),
+        PrimitiveRef::Real(x) => crate::jer::real::encode(x, out),
         PrimitiveRef::Null(_) => crate::jer::null::encode(out),
         PrimitiveRef::OctetString(x) => crate::jer::octet_string::encode(&x.0, out),
         PrimitiveRef::BitString(x) => crate::jer::bit_string::encode(x, c, out),
@@ -490,7 +490,7 @@ pub fn jer_decode_primitive(p: PrimitiveRefMut, c: &crate::constraints::Constrai
         PrimitiveRefMut::UInteger(x) => { x.0 = crate::jer::integer::decode(r)?; Ok(()) }
         PrimitiveRefMut::BigInteger(x) => { x.0 = crate::jer::integer::decode(r)?; Ok(()) }
         PrimitiveRefMut::ArbitraryInteger(_) => Err(BerDecodeError::new(not_supported("JER", "ArbitraryInteger").message, r.pos())),
-        PrimitiveRefMut::Real(x) => { x.0 = crate::jer::real::decode(r)?; Ok(()) }
+        PrimitiveRefMut::Real(x) => { *x = crate::jer::real::decode(r)?; Ok(()) }
         PrimitiveRefMut::Null(_) => crate::jer::null::decode(r),
         PrimitiveRefMut::OctetString(x) => { x.0 = crate::jer::octet_string::decode(r)?; Ok(()) }
         PrimitiveRefMut::BitString(x) => { *x = crate::jer::bit_string::decode(c, r)?; Ok(()) }
@@ -546,7 +546,7 @@ pub fn per_encode_primitive(p: PrimitiveRef, w: &mut PerWriter, c: &crate::const
         PrimitiveRef::UInteger(x) => crate::per::uinteger::encode_uint(w, c, x.0),
         PrimitiveRef::BigInteger(_) => return Err(not_supported("PER", "BigInteger")),
         PrimitiveRef::ArbitraryInteger(_) => return Err(not_supported("PER", "ArbitraryInteger")),
-        PrimitiveRef::Real(x) => crate::per::real::encode_real(w, x.0),
+        PrimitiveRef::Real(x) => crate::per::real::encode_real(w, x),
         PrimitiveRef::Null(_) => crate::per::null::encode(w),
         PrimitiveRef::OctetString(x) => crate::per::octet_string::encode_octet_string(w, c, &x.0),
         PrimitiveRef::BitString(x) => crate::per::bit_string::encode_bit_string(w, c, &x.bytes, x.bit_count()),
@@ -578,7 +578,7 @@ pub fn per_decode_primitive(p: PrimitiveRefMut, r: &mut PerReader, c: &crate::co
         PrimitiveRefMut::UInteger(x) => { x.0 = crate::per::uinteger::decode_uint(r, c)?; Ok(()) }
         PrimitiveRefMut::BigInteger(_) => Err(PerDecodeError::new(not_supported("PER", "BigInteger").message, r.bit_pos())),
         PrimitiveRefMut::ArbitraryInteger(_) => Err(PerDecodeError::new(not_supported("PER", "ArbitraryInteger").message, r.bit_pos())),
-        PrimitiveRefMut::Real(x) => { x.0 = crate::per::real::decode_real(r)?; Ok(()) }
+        PrimitiveRefMut::Real(x) => { *x = crate::per::real::decode_real(r)?; Ok(()) }
         PrimitiveRefMut::Null(_) => crate::per::null::decode(r),
         PrimitiveRefMut::OctetString(x) => { x.0 = crate::per::octet_string::decode_octet_string(r, c)?; Ok(()) }
         PrimitiveRefMut::BitString(x) => {
