@@ -13,7 +13,7 @@ use crate::per::length::{get_octets, put_octets};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 
-pub fn encode_real(w: &mut Writer, value: f64) {
+pub fn encode_real(w: &mut Writer, value: &crate::real::Real) {
     // Not `if value == 0.0` -- that's true for both +0.0 and -0.0, and
     // -0.0's BER content is the single octet 0x43, not empty (see
     // encode_real_content's own doc). Always go through the general
@@ -24,10 +24,10 @@ pub fn encode_real(w: &mut Writer, value: f64) {
     put_octets(w, &content);
 }
 
-pub fn decode_real(r: &mut Reader) -> Result<f64, DecodeError> {
+pub fn decode_real(r: &mut Reader) -> Result<crate::real::Real, DecodeError> {
     let content = get_octets(r)?;
     if content.is_empty() {
-        return Ok(0.0);
+        return Ok(crate::real::Real::new(0.0));
     }
     crate::real::decode_real_value(&content, r.bit_pos())
         .map_err(|e| DecodeError::new(e.message, r.bit_pos()))
@@ -39,17 +39,17 @@ mod tests {
 
     fn roundtrip(v: f64) -> f64 {
         let mut w = Writer::new();
-        encode_real(&mut w, v);
+        encode_real(&mut w, &crate::real::Real::new(v));
         w.flush();
         let bytes = w.into_bytes();
         let mut r = Reader::new(&bytes);
-        decode_real(&mut r).unwrap()
+        decode_real(&mut r).unwrap().value()
     }
 
     #[test]
     fn zero_is_a_zero_length_field() {
         let mut w = Writer::new();
-        encode_real(&mut w, 0.0);
+        encode_real(&mut w, &crate::real::Real::new(0.0));
         w.flush();
         assert_eq!(w.into_bytes(), vec![0x00]);
         assert_eq!(roundtrip(0.0), 0.0);
@@ -58,7 +58,7 @@ mod tests {
     #[test]
     fn minus_zero_is_one_content_octet_and_keeps_its_sign() {
         let mut w = Writer::new();
-        encode_real(&mut w, -0.0);
+        encode_real(&mut w, &crate::real::Real::new(-0.0));
         w.flush();
         assert_eq!(w.into_bytes(), vec![0x01, 0x43]);
         let got = roundtrip(-0.0);
@@ -79,7 +79,7 @@ mod tests {
         // 0x80 (base-2, positive), 0xFF (exponent -1, signed byte), 0x03
         // (mantissa 3) — 3 content bytes, so PER's length prefix is 3.
         let mut w = Writer::new();
-        encode_real(&mut w, 1.5);
+        encode_real(&mut w, &crate::real::Real::new(1.5));
         w.flush();
         assert_eq!(w.into_bytes(), vec![0x03, 0x80, 0xFF, 0x03]);
     }

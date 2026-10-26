@@ -727,8 +727,8 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
         std::string f = rust_f64_literal(spec.real_val);
         rust_type = type_name;
         literal = type_name == "asn1cpp_wire::real::Real"
-            ? std::format("asn1cpp_wire::real::Real({})", f)
-            : std::format("{}(asn1cpp_wire::real::Real({}))", type_name, f);
+            ? std::format("asn1cpp_wire::real::Real::new({})", f)
+            : std::format("{}(asn1cpp_wire::real::Real::new({}))", type_name, f);
         break;
     }
     case Kind::None:
@@ -1567,7 +1567,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     std::string int_deref = m.optional ? std::format("*{}", field_place()) : field_place();
                     validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::{}(*{}, {}))", fn, int_deref, constraints_ref);
                 } else if (m.mbuiltin && own_table && is_real) {
-                    validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_real({}.0, {}))", field_place(), constraints_ref);
+                    validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_real({}.value(), {}))", field_place(), constraints_ref);
                 } else if (m.mbuiltin && own_table && *m.mbuiltin == ast::BuiltinType::OctetString) {
                     validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_size({}.len(), {}))", field_place(), constraints_ref);
                 } else if (m.mbuiltin && own_table && *m.mbuiltin == ast::BuiltinType::BitString) {

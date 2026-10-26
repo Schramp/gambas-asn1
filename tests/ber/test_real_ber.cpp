@@ -1,6 +1,8 @@
-// BER REAL contents-octet decoding (X.690 §8.5). The vector table is shared
-// with rust-runtime/wire/src/real.rs (`DECODE_VECTORS`): both runtimes must
-// give the same double, bit for bit, or both an error.
+// BER REAL contents-octet decoding (X.690 §8.5) and storage classes. Both
+// vector tables are shared with rust-runtime/wire/src/real.rs
+// (`decode_vectors`, `storage_vectors`): both runtimes must give the same
+// double bit for bit (or both an error), the same storage class, and the
+// same CER/DER re-encoding (X.690 §11.3).
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
@@ -56,9 +58,9 @@ int main() {
         {"3 * 2^-1076 rounds to 2^-1074",              {0x81, 0xFB, 0xCC, 0x03},             true,  0x0000000000000001},
         {"subnormal 3 * 2^-1074",                      {0x81, 0xFB, 0xCE, 0x03},             true,  0x0000000000000003},
         {"smallest normal 2^-1022",                    {0x81, 0xFC, 0x02, 0x01},             true,  0x0010000000000000},
-        {"2^1024 is out of range",                     {0x81, 0x04, 0x00, 0x01},             false, 0},
-        {"exponent ~2^31 is out of range",             {0x83, 0x04, 0x7F, 0x00, 0x00, 0x00, 0x01}, false, 0},
-        {"2^-1076 rounds to zero: out of range",       {0x81, 0xFB, 0xCC, 0x01},             false, 0},
+        {"2^1024: Binary, value +inf",                 {0x81, 0x04, 0x00, 0x01},             true,  0x7FF0000000000000},
+        {"exponent ~2^31: Binary, value +inf",         {0x83, 0x04, 0x7F, 0x00, 0x00, 0x00, 0x01}, true, 0x7FF0000000000000},
+        {"2^-1076: Binary, value +0",                  {0x81, 0xFB, 0xCC, 0x01},             true,  0x0000000000000000},
         {"format d without length octet",              {0x83},                               false, 0},
         {"format d, X=0",                              {0x83, 0x00, 0x01},                   false, 0},
         {"format d, truncated exponent",               {0x83, 0x02, 0x00},                   false, 0},
@@ -81,8 +83,8 @@ int main() {
         {"decimal NR3 without exponent digits", {0x03, 0x31, 0x45}, false, 0},
         {"decimal trailing space is malformed", {0x01, 0x31, 0x34, 0x20}, false, 0},
         {"decimal empty field", {0x01}, false, 0},
-        {"decimal NR3 1E400 is out of range", {0x03, 0x31, 0x45, 0x34, 0x30, 0x30}, false, 0},
-        {"decimal NR3 1E-400 is out of range", {0x03, 0x31, 0x45, 0x2D, 0x34, 0x30, 0x30}, false, 0},
+        {"decimal NR3 1E400: value +inf", {0x03, 0x31, 0x45, 0x34, 0x30, 0x30}, true, 0x7FF0000000000000},
+        {"decimal NR3 1E-400: value +0", {0x03, 0x31, 0x45, 0x2D, 0x34, 0x30, 0x30}, true, 0x0000000000000000},
         {"base 8, exponent 0 (§8.5.7.2)", {0x90, 0x00, 0x01}, true, 0x3FF0000000000000},
         {"base 8, exponent 1 is 8", {0x90, 0x01, 0x01}, true, 0x4020000000000000},
         {"base 8, exponent 1, F=2 is 32", {0x98, 0x01, 0x01}, true, 0x4040000000000000},
@@ -105,6 +107,68 @@ int main() {
     }
     auto nan = BerTraits<Real>::decode_value(std::vector<uint8_t>{0x42});
     check("NOT-A-NUMBER", nan.has_value() && std::isnan(nan->value()));
+
+    printf("\n=== storage class and CER/DER re-encoding (X.690 §11.3) ===\n");
+    using S = Real::Storage;
+    struct StorageVector {
+        const char*          label;
+        std::vector<uint8_t> contents;
+        S                    storage;
+        std::vector<uint8_t> reencoded;
+    };
+    auto ascii = [](uint8_t head, const char* t) {
+        std::vector<uint8_t> v{head};
+        v.insert(v.end(), t, t + std::strlen(t));
+        return v;
+    };
+    const std::vector<StorageVector> storage_vectors = {
+        {"1.0 is Double", {0x80, 0x00, 0x01}, S::Double, {0x80, 0x00, 0x01}},
+        {"2^72, 10-octet mantissa, is exact: Double", with_zeros({0x80, 0x00, 0x01}, 9), S::Double, {0x80, 0x48, 0x01}},
+        {"2^60+1 needs 61 bits: Binary, kept exactly",
+         {0x80, 0x00, 0x10, 0, 0, 0, 0, 0, 0, 0x01}, S::Binary, {0x80, 0x00, 0x10, 0, 0, 0, 0, 0, 0, 0x01}},
+        {"Binary mantissa normalized odd, base 16 to base 2",
+         {0xA0, 0x01, 0x20, 0, 0, 0, 0, 0, 0, 0x02}, S::Binary, {0x80, 0x05, 0x10, 0, 0, 0, 0, 0, 0, 0x01}},
+        {"2^1024: Binary", {0x81, 0x04, 0x00, 0x01}, S::Binary, {0x81, 0x04, 0x00, 0x01}},
+        {"-2^-1076: Binary", {0xC1, 0xFB, 0xCC, 0x01}, S::Binary, {0xC1, 0xFB, 0xCC, 0x01}},
+        {"exponent 2^31 in format d: Binary, 4 exponent octets",
+         {0x83, 0x04, 0x7F, 0x00, 0x00, 0x00, 0x01}, S::Binary, {0x83, 0x04, 0x7F, 0x00, 0x00, 0x00, 0x01}},
+        {"NR2 14.56: Decimal, NR3 1456.E-2", ascii(0x02, "14.56"), S::Decimal, ascii(0x03, "1456.E-2")},
+        {"NR1 100: Decimal, NR3 1.E2", ascii(0x01, "100"), S::Decimal, ascii(0x03, "1.E2")},
+        {"NR1 -7: Decimal, NR3 -7.E+0", ascii(0x01, "-7"), S::Decimal, ascii(0x03, "-7.E+0")},
+        {"NR3 0.0012E3 normalizes to 12.E-1", ascii(0x03, "0.0012E3"), S::Decimal, ascii(0x03, "12.E-1")},
+        {"NR3 1E400: Decimal beyond the double range", ascii(0x03, "1E400"), S::Decimal, ascii(0x03, "1.E400")},
+        {"X.680 pi {3141592653589793238462643383279, 10, -30}",
+         ascii(0x03, "3141592653589793238462643383279E-30"), S::Decimal,
+         ascii(0x03, "3141592653589793238462643383279.E-30")},
+        {"NR1 000 is plus zero (Double)", ascii(0x01, "000"), S::Double, {}},
+    };
+    for (const auto& v : storage_vectors) {
+        auto got = BerTraits<Real>::decode_value(v.contents);
+        std::vector<uint8_t> out;
+        if (got) {
+            BerWriter w(out);
+            BerTraits<Real>::encode(w, *got);
+        }
+        BerReader rd{std::span<const uint8_t>(out)};
+        auto tlv = rd.read_tlv();
+        bool pass = got && got->storage() == v.storage && tlv &&
+                    std::vector<uint8_t>(tlv->value.begin(), tlv->value.end()) == v.reencoded;
+        check(v.label, pass);
+    }
+
+    auto pi = BerTraits<Real>::decode_value(ascii(0x03, "3141592653589793238462643383279E-30"));
+    check("pi: base 10, exact digits, nearest double",
+          pi && pi->base() == 10 && pi->exact()->mantissa == "3141592653589793238462643383279" &&
+          pi->exact()->exponent == -30 && pi->value() == 3.141592653589793);
+    auto dec = Real::decimal(false, "1456", -2);
+    check("Decimal 14.56 differs from the Double 14.56 (X.680 §20.5 NOTE 1)",
+          !(dec == Real{14.56}) && dec.numerically_equal(Real{14.56}));
+    check("Decimal equality compares normalized components",
+          Real::decimal(false, "14560", -3) == dec && !(Real::decimal(true, "1456", -2) == dec));
+    check("Binary of an exact double is Double", Real::binary(false, std::vector<uint8_t>{0x03}, -1) == Real{1.5});
+    Real r = dec;
+    r.set(2.0);
+    check("set() makes a Double", r.storage() == S::Double && r == Real{2.0});
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "OK", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

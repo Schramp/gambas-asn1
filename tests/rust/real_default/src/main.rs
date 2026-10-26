@@ -27,11 +27,11 @@ fn main() {
     let d = asn1cpp_wire::ber::object::decode_pdu::<Rec>(&only_tag);
     check("decode with every DEFAULT absent", d.is_ok(), &mut failures);
     let d = d.unwrap_or_default();
-    check("kilo reads as 1.5E3", d.kilo == Some(Real(1500.0)), &mut failures);
-    check("two reads as 2", d.two.as_ref().is_some_and(|t| t.0 == Real(2.0)), &mut failures);
-    check("inf reads as PLUS-INFINITY", d.inf == Some(Real(f64::INFINITY)), &mut failures);
-    check("negInf reads as MINUS-INFINITY", d.negInf == Some(Real(f64::NEG_INFINITY)), &mut failures);
-    check("zero reads as +0", d.zero == Some(Real(0.0)), &mut failures);
+    check("kilo reads as 1.5E3", d.kilo == Some(Real::new(1500.0)), &mut failures);
+    check("two reads as 2", d.two.as_ref().is_some_and(|t| t.0 == Real::new(2.0)), &mut failures);
+    check("inf reads as PLUS-INFINITY", d.inf == Some(Real::new(f64::INFINITY)), &mut failures);
+    check("negInf reads as MINUS-INFINITY", d.negInf == Some(Real::new(f64::NEG_INFINITY)), &mut failures);
+    check("zero reads as +0", d.zero == Some(Real::new(0.0)), &mut failures);
 
     check(
         "members equal to their defaults are not encoded",
@@ -39,7 +39,7 @@ fn main() {
         &mut failures,
     );
 
-    let m = Rec { tag: Integer(7), zero: Some(Real(-0.0)), ..Default::default() };
+    let m = Rec { tag: Integer(7), zero: Some(Real::new(-0.0)), ..Default::default() };
     let bytes = asn1cpp_wire::ber::object::encode_pdu(&m).unwrap_or_default();
     check(
         "minus zero differs from the zero default and is encoded",
@@ -49,7 +49,7 @@ fn main() {
     let back = asn1cpp_wire::ber::object::decode_pdu::<Rec>(&bytes);
     check(
         "minus zero round-trips",
-        back.is_ok_and(|b| b.zero.is_some_and(|z| z.0 == 0.0 && z.0.is_sign_negative())),
+        back.is_ok_and(|b| b.zero.is_some_and(|z| z.value() == 0.0 && z.value().is_sign_negative())),
         &mut failures,
     );
 

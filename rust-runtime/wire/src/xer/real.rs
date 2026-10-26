@@ -5,11 +5,17 @@
 //! here).
 
 use crate::ber::reader::DecodeError;
-use crate::real::{format_xer, parse_xer_decimal, parse_xer_special, XerRealText};
+use crate::real::{format_xer, parse_xer_decimal, parse_xer_special, Real, XerRealText};
 use crate::xer::reader::XerReader;
 
-pub fn encode(d: f64, out: &mut String) {
-    match format_xer(d) {
+/// Encodes a XER REAL: a `Decimal` as its exact digits (an X.680
+/// realnumber), any other value via `format_xer`. Mirrors `RealXerHandler::encode`.
+pub fn encode(v: &Real, out: &mut String) {
+    if let Some(text) = v.decimal_text() {
+        out.push_str(&text);
+        return;
+    }
+    match format_xer(v.value()) {
         XerRealText::Special(name) => {
             out.push('<');
             out.push_str(name);
