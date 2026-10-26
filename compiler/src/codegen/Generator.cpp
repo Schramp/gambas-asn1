@@ -1166,6 +1166,23 @@ DefaultValueSpec Generator::default_value_spec_for(const ast::TypeDef& m) const 
 
     if (auto* b = std::get_if<bool>(&m.default_value))
         return { DefaultValueSpec::Kind::Bool, *b, 0, "", "" };
+    {
+        // REAL member (X.680 §20.6): a realnumber, PLUS-/MINUS-INFINITY, or
+        // an integer literal such as `DEFAULT 0` all name a REAL value.
+        const ast::TypeDef* base = resolve_underlying(m, resolver_);
+        bool is_real = base && std::holds_alternative<ast::BuiltinType>(base->body)
+            && std::get<ast::BuiltinType>(base->body) == ast::BuiltinType::Real;
+        std::optional<double> real;
+        if (auto* d = std::get_if<double>(&m.default_value)) real = *d;
+        else if (auto* i = std::get_if<int64_t>(&m.default_value); i && is_real) real = static_cast<double>(*i);
+        else if (auto* u = std::get_if<uint64_t>(&m.default_value); u && is_real) real = static_cast<double>(*u);
+        if (real && is_real) {
+            DefaultValueSpec spec;
+            spec.kind = DefaultValueSpec::Kind::Real;
+            spec.real_val = *real;
+            return spec;
+        }
+    }
     if (auto* i = std::get_if<int64_t>(&m.default_value)) {
         // A parameterized type's DEFAULT literal is written against the
         // formal parameter, not its eventual actual type (X.683) — e.g.

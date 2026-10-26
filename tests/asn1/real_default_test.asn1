@@ -1,0 +1,19 @@
+-- REAL DEFAULT values (X.680 §25.1): a realnumber with an exponent, an
+-- integer literal, PLUS-/MINUS-INFINITY, zero, and a named REAL alias. An
+-- absent member decodes as its default; a member equal to its default is
+-- not encoded (X.690 §11.5). Minus zero is a different value from the
+-- zero default (X.690 §8.5.9), so it is encoded.
+RealDefaultTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Temp ::= REAL
+
+Defaults ::= SEQUENCE {
+    kilo    REAL DEFAULT 1.5E3,
+    two     Temp DEFAULT 2,
+    inf     REAL DEFAULT PLUS-INFINITY,
+    negInf  REAL DEFAULT MINUS-INFINITY,
+    zero    REAL DEFAULT 0,
+    tag     INTEGER
+}
+
+END

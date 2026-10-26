@@ -18,8 +18,20 @@ use crate::ber::writer::write_primitive;
 pub const REAL_TAG: Tag = Tag::universal(universal::REAL, false);
 
 /// REAL (X.680 §21) — its own newtype, with its own `PrimitiveRef` variant.
-#[derive(Debug, Clone, Copy, Default, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, Default, PartialOrd)]
 pub struct Real(pub f64);
+
+/// Equality of REAL abstract values: minus zero and plus zero differ, and
+/// NOT-A-NUMBER equals itself: X.690 §8.5.9 gives each its own encoding, so a
+/// DEFAULT comparison never conflates -0 with 0. Mirrors `asn1::Real::operator==`.
+impl PartialEq for Real {
+    fn eq(&self, other: &Self) -> bool {
+        if self.0.is_nan() || other.0.is_nan() {
+            return self.0.is_nan() && other.0.is_nan();
+        }
+        self.0 == other.0 && self.0.is_sign_negative() == other.0.is_sign_negative()
+    }
+}
 
 impl std::ops::Deref for Real {
     type Target = f64;

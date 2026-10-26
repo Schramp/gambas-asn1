@@ -2,6 +2,7 @@
 #include "asn1cpp/codec/Constraints.hpp"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -689,6 +690,22 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
         rust_type = type_name;
         literal = std::format("{}::{}", type_name, variant_name(*this, spec.enum_name));
         break;
+    case Kind::Real: {
+        // Inline member: type_name is the runtime's Real itself. Named alias
+        // (`Temp ::= REAL`): a newtype around it, `Temp(Real(..))`.
+        std::string f;
+        if (std::isinf(spec.real_val)) {
+            f = spec.real_val > 0 ? "f64::INFINITY" : "f64::NEG_INFINITY";
+        } else {
+            f = std::format("{}", spec.real_val);
+            if (f.find_first_of(".e") == std::string::npos) f += ".0";
+        }
+        rust_type = type_name;
+        literal = type_name == "asn1cpp_wire::real::Real"
+            ? std::format("asn1cpp_wire::real::Real({})", f)
+            : std::format("{}(asn1cpp_wire::real::Real({}))", type_name, f);
+        break;
+    }
     case Kind::None:
     default:
         return;
