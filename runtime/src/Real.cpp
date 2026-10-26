@@ -1,6 +1,8 @@
 #include <asn1cpp/types/Real.hpp>
 
 #include <bit>
+#include <cstdlib>
+#include <string>
 
 namespace asn1::detail {
 
@@ -69,13 +71,62 @@ static Expected<double, DecodeError> real_from_binary(bool negative, std::span<c
     return d;
 }
 
+/// @brief Parse an ISO 6093 number (X.690 §8.5.8) into a double.
+/// @param form  NR form from bits 6–1 of the first contents octet: 1, 2 or 3.
+/// @param text  The field following the first contents octet.
+/// @return The nearest double, or an error for text that is not an NR\p form
+///         number and for a value beyond the double range.
+///
+/// Accepted: leading spaces, an optional sign, digits; NR2 and NR3 add a
+/// decimal mark (`.` or `,`) with at least one digit on either side of it;
+/// NR3 adds `E`/`e`, an optional sign and exponent digits. The decimal mark
+/// is optional in NR3. The text is rewritten with `.` and parsed by
+/// strtod, which rounds correctly.
+static Expected<double, DecodeError> real_from_decimal(int form, std::span<const uint8_t> text) {
+    auto bad = [] { return make_unexpected<double, DecodeError>(real_error("malformed ISO 6093 number")); };
+    std::size_t i = 0;
+    while (i < text.size() && text[i] == ' ') ++i;
+    std::string norm;
+    if (i < text.size() && (text[i] == '+' || text[i] == '-')) norm += static_cast<char>(text[i++]);
+    bool digits = false, nonzero = false, mark = false;
+    for (; i < text.size(); ++i) {
+        const uint8_t c = text[i];
+        if (c >= '0' && c <= '9') {
+            digits = true;
+            nonzero |= c != '0';
+            norm += static_cast<char>(c);
+        } else if ((c == '.' || c == ',') && !mark && form >= 2) {
+            mark = true;
+            norm += '.';
+        } else {
+            break;
+        }
+    }
+    if (!digits || (form == 2 && !mark)) return bad();
+    if (form == 3) {
+        if (i >= text.size() || (text[i] != 'E' && text[i] != 'e')) return bad();
+        norm += 'e';
+        ++i;
+        if (i < text.size() && (text[i] == '+' || text[i] == '-')) norm += static_cast<char>(text[i++]);
+        const std::size_t exp_start = i;
+        for (; i < text.size() && text[i] >= '0' && text[i] <= '9'; ++i) norm += static_cast<char>(text[i]);
+        if (i == exp_start) return bad();
+    }
+    if (i != text.size()) return bad();
+
+    const double d = std::strtod(norm.c_str(), nullptr);
+    if (std::isinf(d) || (d == 0.0 && nonzero))
+        return make_unexpected<double, DecodeError>(real_error("value outside the double range"));
+    return d;
+}
+
 /// @brief Decode the contents octets of a BER REAL into a double.
 /// @param value  Contents octets (no tag or length).
 /// @return The value, or an error for a reserved or malformed encoding and
 ///         for a value beyond the double range.
 /// @see X.690 §8.5 — §8.5.2 plus zero, §8.5.7 binary form (exponent formats
-///      a–d of §8.5.7.4, unnormalized mantissa of §8.5.7.5 NOTE 1),
-///      §8.5.9 special values.
+///      a–d of §8.5.7.4, bases 2/8/16 of §8.5.7.2, unnormalized mantissa of
+///      §8.5.7.5 NOTE 1), §8.5.8 decimal form, §8.5.9 special values.
 Expected<double, DecodeError> decode_real_contents(std::span<const uint8_t> value) {
     if (value.empty()) return 0.0;
 
@@ -92,12 +143,19 @@ Expected<double, DecodeError> decode_real_contents(std::span<const uint8_t> valu
             return make_unexpected<double, DecodeError>(real_error("reserved special value"));
         }
     }
-    if (!(info & 0x80))
-        return make_unexpected<double, DecodeError>(DecodeError("decimal REAL encoding not supported"));
+    if (!(info & 0x80)) {
+        const int form = info & 0x3F;
+        if (form < 1 || form > 3)
+            return make_unexpected<double, DecodeError>(real_error("reserved decimal number representation"));
+        return real_from_decimal(form, value.subspan(1));
+    }
 
     const bool negative = (info & 0x40) != 0;
-    if (((info >> 4) & 0x03) != 0)
-        return make_unexpected<double, DecodeError>(DecodeError("only base-2 REAL supported"));
+    // B' = 2, 8 or 16: one, three or four binary digits per exponent step.
+    static constexpr int kLog2Base[] = {1, 3, 4, 0};
+    const int log2_base = kLog2Base[(info >> 4) & 0x03];
+    if (log2_base == 0)
+        return make_unexpected<double, DecodeError>(real_error("reserved base"));
     const int scaling = (info >> 2) & 0x03;
 
     auto rest = value.subspan(1);
@@ -130,7 +188,7 @@ Expected<double, DecodeError> decode_real_contents(std::span<const uint8_t> valu
     for (std::size_t i = k; i < exp.size(); ++i)
         e = static_cast<int64_t>((static_cast<uint64_t>(e) << 8) | exp[i]);
 
-    return real_from_binary(negative, n, e + scaling);
+    return real_from_binary(negative, n, e * log2_base + scaling);
 }
 
 } // namespace asn1::detail

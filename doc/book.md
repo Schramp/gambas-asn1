@@ -230,12 +230,25 @@ String types — `UTF8String`, `PrintableString`, `IA5String`, `VisibleString`,
 ### REAL values
 
 `asn1::Real` (Rust: `Real(f64)`) holds an IEEE 754 double. BER decode (X.690 §8.5)
-accepts every binary-form encoding:
+accepts every encoding the standard defines:
 
-- all four exponent formats of §8.5.7.4, including format d (a length octet, then that
-  many exponent octets);
-- unnormalized mantissas of any length (§8.5.7.5 NOTE 1). The value is rounded to the
-  nearest double, ties to even, and subnormals are rounded the same way.
+- **Binary form (§8.5.7):**
+  - bases 2, 8 and 16 (§8.5.7.2) and the scaling factor F;
+  - all four exponent formats of §8.5.7.4, including format d (a length octet, then
+    that many exponent octets);
+  - unnormalized mantissas of any length (§8.5.7.5 NOTE 1).
+
+  The value is rounded to the nearest double, ties to even, and subnormals are rounded
+  the same way.
+- **Decimal form (§8.5.8):** ISO 6093 NR1, NR2 and NR3. Accepted: leading spaces, an
+  optional sign, `.` or `,` as the decimal mark, and `E`/`e` before an optional signed
+  exponent. NR2 requires a decimal mark, NR3 requires an exponent, and the mark is
+  optional in NR3. The text is converted to the nearest double (`strtod`, which assumes
+  the C locale; Rust `str::parse`). Reserved NR codes and malformed text are decode
+  errors.
+
+Encode always writes the binary form, base 2. A decimal value is therefore re-encoded as
+binary.
 
 A value whose magnitude rounds to infinity, or to zero although the mantissa is non-zero,
 does not fit a double and fails to decode with `REAL: value outside the double range`.

@@ -4,8 +4,8 @@
 //! (`runtime/include/asn1cpp/types/Real.hpp`): IEEE 754 double-precision,
 //! encoded per X.690 §8.5.7's binary form (base-2, minimal mantissa
 //! bytes) — special values `+INF`/`-INF`/`NaN` per X.690 §8.5.9, zero as
-//! an empty value (X.690 §8.5.3). Decimal form (X.690 §8.5.8) is not
-//! implemented, matching `asn1::Real`'s own limitation.
+//! an empty value (X.690 §8.5.3). Decode also accepts the decimal form
+//! (X.690 §8.5.8) and bases 8/16 (§8.5.7.2), rounded to the nearest double.
 //!
 //! `native_builtin_type` already mapped REAL to plain `f64` before this
 //! issue — no collision to route around (unlike BIT STRING/OID/RELATIVE-OID,
@@ -193,12 +193,76 @@ fn real_from_binary(negative: bool, n: &[u8], e2: i64, pos: usize) -> Result<f64
     Ok(f64::from_bits(bits))
 }
 
+/// Parses an ISO 6093 number (X.690 §8.5.8) in NR `form` 1, 2 or 3 into the
+/// nearest `f64`. Accepted: leading spaces, an optional sign, digits; NR2
+/// and NR3 add a decimal mark (`.` or `,`); NR3 adds `E`/`e`, an optional
+/// sign and exponent digits (the decimal mark is optional in NR3). Text that
+/// is not an NR`form` number, or a value beyond the double range, is an
+/// error. Mirrors `real_from_decimal` in `runtime/src/Real.cpp`.
+fn real_from_decimal(form: u8, text: &[u8], pos: usize) -> Result<f64, DecodeError> {
+    let bad = || DecodeError::new("REAL: malformed ISO 6093 number", pos);
+    let mut i = 0;
+    while i < text.len() && text[i] == b' ' {
+        i += 1;
+    }
+    let mut norm = String::new();
+    if i < text.len() && (text[i] == b'+' || text[i] == b'-') {
+        norm.push(text[i] as char);
+        i += 1;
+    }
+    let (mut digits, mut nonzero, mut mark) = (false, false, false);
+    while i < text.len() {
+        let c = text[i];
+        if c.is_ascii_digit() {
+            digits = true;
+            nonzero |= c != b'0';
+            norm.push(c as char);
+        } else if (c == b'.' || c == b',') && !mark && form >= 2 {
+            mark = true;
+            norm.push('.');
+        } else {
+            break;
+        }
+        i += 1;
+    }
+    if !digits || (form == 2 && !mark) {
+        return Err(bad());
+    }
+    if form == 3 {
+        if i >= text.len() || (text[i] != b'E' && text[i] != b'e') {
+            return Err(bad());
+        }
+        norm.push('e');
+        i += 1;
+        if i < text.len() && (text[i] == b'+' || text[i] == b'-') {
+            norm.push(text[i] as char);
+            i += 1;
+        }
+        let exp_start = i;
+        while i < text.len() && text[i].is_ascii_digit() {
+            norm.push(text[i] as char);
+            i += 1;
+        }
+        if i == exp_start {
+            return Err(bad());
+        }
+    }
+    if i != text.len() {
+        return Err(bad());
+    }
+    let d: f64 = norm.parse().map_err(|_| bad())?;
+    if d.is_infinite() || (d == 0.0 && nonzero) {
+        return Err(DecodeError::new("REAL: value outside the double range", pos));
+    }
+    Ok(d)
+}
+
 /// Decodes the contents octets of a BER REAL into an `f64`. A reserved or
 /// malformed encoding, or a value beyond the double range, is an error.
 /// Mirrors `decode_real_contents` in `runtime/src/Real.cpp`.
 /// X.690 §8.5 — §8.5.2 plus zero, §8.5.7 binary form (exponent formats a–d
-/// of §8.5.7.4, unnormalized mantissa of §8.5.7.5 NOTE 1), §8.5.9 special
-/// values.
+/// of §8.5.7.4, bases 2/8/16 of §8.5.7.2, unnormalized mantissa of §8.5.7.5
+/// NOTE 1), §8.5.8 decimal form, §8.5.9 special values.
 pub(crate) fn decode_real_value(value: &[u8], pos: usize) -> Result<f64, DecodeError> {
     let err = |what: &str| DecodeError::new(format!("REAL: {what}"), pos);
     if value.is_empty() {
@@ -218,12 +282,20 @@ pub(crate) fn decode_real_value(value: &[u8], pos: usize) -> Result<f64, DecodeE
         };
     }
     if info & 0x80 == 0 {
-        return Err(DecodeError::new("decimal REAL encoding not supported", pos));
+        let form = info & 0x3F;
+        if !(1..=3).contains(&form) {
+            return Err(err("reserved decimal number representation"));
+        }
+        return real_from_decimal(form, &value[1..], pos);
     }
     let negative = info & 0x40 != 0;
-    if (info >> 4) & 0x03 != 0 {
-        return Err(DecodeError::new("only base-2 REAL supported", pos));
-    }
+    // B' = 2, 8 or 16: one, three or four binary digits per exponent step.
+    let log2_base: i64 = match (info >> 4) & 0x03 {
+        0 => 1,
+        1 => 3,
+        2 => 4,
+        _ => return Err(err("reserved base")),
+    };
     let scaling = ((info >> 2) & 0x03) as i64;
 
     let mut rest = &value[1..];
@@ -263,7 +335,7 @@ pub(crate) fn decode_real_value(value: &[u8], pos: usize) -> Result<f64, DecodeE
         e = ((e as u64) << 8 | b as u64) as i64;
     }
 
-    real_from_binary(negative, n, e + scaling, pos)
+    real_from_binary(negative, n, e * log2_base + scaling, pos)
 }
 
 /// X.693 §17.9 textual form for XER. Deliberately NOT shared with
@@ -403,22 +475,6 @@ mod tests {
     }
 
     #[test]
-    fn decimal_form_is_rejected() {
-        // info byte with bit 0x80 clear -> decimal form (ISO 6093), unsupported.
-        let data = [0x09, 0x02, 0x03, b'1'];
-        let mut r = Reader::new(&data);
-        assert!(read_real(&mut r).is_err());
-    }
-
-    #[test]
-    fn base_8_or_16_is_rejected() {
-        // base_bits != 0 in the info byte -> base-8/16, unsupported (only base-2).
-        let data = [0x09, 0x03, 0x90, 0x00, 0x01]; // 0x90 = 0x80 | (base_bits=01<<4)
-        let mut r = Reader::new(&data);
-        assert!(read_real(&mut r).is_err());
-    }
-
-    #[test]
     fn tagged_uses_the_given_tag_not_the_natural_one() {
         let context_5 = Tag::context(5, false);
         let mut buf = Vec::new();
@@ -469,6 +525,32 @@ mod tests {
             ("format b, truncated exponent", vec![0x81, 0x00], None),
             ("special value with extra octet", vec![0x40, 0x00], None),
             ("reserved special value 0x44 (§8.5.9)", vec![0x44], None),
+            ("decimal NR1 14 (§8.5.8)", vec![0x01, 0x31, 0x34], Some(0x402C000000000000)),
+            ("decimal NR1 with spaces and sign", vec![0x01, 0x20, 0x20, 0x2D, 0x31, 0x34], Some(0xC02C000000000000)),
+            ("decimal NR1 -0", vec![0x01, 0x2D, 0x30], Some(0x8000000000000000)),
+            ("decimal NR2 14.56", vec![0x02, 0x31, 0x34, 0x2E, 0x35, 0x36], Some(0x402D1EB851EB851F)),
+            ("decimal NR2 ISO 6093 comma 14,56", vec![0x02, 0x31, 0x34, 0x2C, 0x35, 0x36], Some(0x402D1EB851EB851F)),
+            ("decimal NR2 .5", vec![0x02, 0x2E, 0x35], Some(0x3FE0000000000000)),
+            ("decimal NR2 5.", vec![0x02, 0x35, 0x2E], Some(0x4014000000000000)),
+            ("decimal NR3 14.56E0", vec![0x03, 0x31, 0x34, 0x2E, 0x35, 0x36, 0x45, 0x30], Some(0x402D1EB851EB851F)),
+            ("decimal NR3 1456e-2, no decimal mark", vec![0x03, 0x31, 0x34, 0x35, 0x36, 0x65, 0x2D, 0x32], Some(0x402D1EB851EB851F)),
+            ("decimal NR3 +1.456E+1", vec![0x03, 0x2B, 0x31, 0x2E, 0x34, 0x35, 0x36, 0x45, 0x2B, 0x31], Some(0x402D1EB851EB851F)),
+            ("decimal NR1 with a mark is malformed", vec![0x01, 0x31, 0x2E, 0x35], None),
+            ("decimal NR2 without a mark is malformed", vec![0x02, 0x31, 0x34], None),
+            ("decimal NR3 without exponent is malformed", vec![0x03, 0x31, 0x34, 0x2E, 0x35, 0x36], None),
+            ("decimal NR3 without exponent digits", vec![0x03, 0x31, 0x45], None),
+            ("decimal trailing space is malformed", vec![0x01, 0x31, 0x34, 0x20], None),
+            ("decimal empty field", vec![0x01], None),
+            ("decimal NR3 1E400 is out of range", vec![0x03, 0x31, 0x45, 0x34, 0x30, 0x30], None),
+            ("decimal NR3 1E-400 is out of range", vec![0x03, 0x31, 0x45, 0x2D, 0x34, 0x30, 0x30], None),
+            ("base 8, exponent 0 (§8.5.7.2)", vec![0x90, 0x00, 0x01], Some(0x3FF0000000000000)),
+            ("base 8, exponent 1 is 8", vec![0x90, 0x01, 0x01], Some(0x4020000000000000)),
+            ("base 8, exponent 1, F=2 is 32", vec![0x98, 0x01, 0x01], Some(0x4040000000000000)),
+            ("base 16, exponent 1 is 16", vec![0xA0, 0x01, 0x01], Some(0x4030000000000000)),
+            ("base 16, exponent -1 is 1/16", vec![0xA0, 0xFF, 0x01], Some(0x3FB0000000000000)),
+            ("reserved base 11", vec![0xB0, 0x00, 0x01], None),
+            ("reserved decimal form 0", vec![0x00, 0x31], None),
+            ("reserved decimal form 4", vec![0x04, 0x31], None),
             ("PLUS-INFINITY (§8.5.9)", vec![0x40], Some(0x7FF0000000000000)),
             ("MINUS-INFINITY", vec![0x41], Some(0xFFF0000000000000)),
             ("minus zero", vec![0x43], Some(0x8000000000000000)),
