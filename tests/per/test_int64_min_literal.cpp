@@ -19,6 +19,11 @@
 using namespace asn1;
 
 static constexpr int64_t kMin = std::numeric_limits<int64_t>::min();
+// int64_t is exact-width two's complement (C++20 [basic.fundamental],
+// [cstdint.syn]), so its minimum is -2^63, bit pattern 0x8000000000000000,
+// on every conforming compiler.
+static_assert(kMin == -9223372036854775807 - 1);
+static_assert(static_cast<uint64_t>(kMin) == 0x8000000000000000u);
 static int failures = 0;
 
 static void check(const char* label, bool cond) {
@@ -35,7 +40,7 @@ static MinRec make_rec() {
 }
 
 static bool same(const MinRec& a, const MinRec& b) {
-    return a.range.value() == b.range.value() && a.kind == b.kind
+    return a.range.value() == b.range.value() && a.kind.present() == b.kind.present()
         && a.named.value() == b.named.value();
 }
 
