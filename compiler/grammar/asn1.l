@@ -147,7 +147,9 @@ WSP     [\t\r\v\f\n ]
 
 "0"             { return yy::parser::make_TOK_number(0LL, location()); }
 
-[-+]?[0-9]+[.]?([eE][-+]?)?[0-9]+  {
+    /* X.680 §11.9 realnumber: digits, then a fraction, an exponent, or both.
+       A bare "1." is not lexed as a realnumber, so "1..2" stays a range. */
+[-+]?[0-9]+([.][0-9]+([eE][-+]?[0-9]+)?|[eE][-+]?[0-9]+)  {
     errno = 0;
     double v = std::strtod(text(), nullptr);
     if (errno == ERANGE) v = (v > 0) ? HUGE_VAL : -HUGE_VAL;

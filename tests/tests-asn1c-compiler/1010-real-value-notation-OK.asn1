@@ -1,0 +1,19 @@
+-- X.680 §20.6 RealValue ::= NumericRealValue | SpecialRealValue, and
+-- §11.9 realnumber with a fraction, an exponent, or both, as values and as
+-- REAL value-range endpoints (X.680 §47.4). "1..2" stays an INTEGER range.
+
+ModuleRealValueNotation { iso org(3) dod(6) internet(1) private(4) enterprise(1) spelio(9363) software(1) asn1c(5) test(1) 1010 }
+DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    Finite   ::= REAL (MINUS-INFINITY <..< PLUS-INFINITY)
+    NonNeg   ::= REAL (0..PLUS-INFINITY)
+    NonPos   ::= REAL (MINUS-INFINITY..0)
+    Kilo     ::= REAL (1.5E3..2E3)
+    Small    ::= REAL (1e-5..1.5e+5)
+    Unit     ::= REAL (0<..<1)
+    Count    ::= INTEGER (1..2)
+
+    inf      REAL ::= PLUS-INFINITY
+    negInf   REAL ::= MINUS-INFINITY
+    kilo     REAL ::= 1.5E3
+    milli    REAL ::= 1e-3
+END

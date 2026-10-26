@@ -229,6 +229,12 @@ String types — `UTF8String`, `PrintableString`, `IA5String`, `VisibleString`,
 
 ### REAL values
 
+REAL values in a schema may use `PLUS-INFINITY` and `MINUS-INFINITY` (X.680 §20.6) and
+`realnumber` notation with a fraction, an exponent, or both: `2.5`, `1e-5`, `1.5E3`
+(§11.9). Both may appear as value-range endpoints, as in
+`REAL (MINUS-INFINITY <..< PLUS-INFINITY)`. A bare `1.` is not accepted, so that `1..2`
+stays a range.
+
 `asn1::Real` (Rust: `Real(f64)`) holds an IEEE 754 double. BER decode (X.690 §8.5)
 accepts every encoding the standard defines:
 
