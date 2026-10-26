@@ -493,9 +493,30 @@ struct RealJerHandler final : IJerTypeHandler {
         }
         os << jer_detail::format_real(d);
     }
+    /// @brief Decode a JER REAL: a JSON number (X.697 §23.3), a special-value
+    ///        string (§23.2), or the object `{"base10Value": number}` (§23.4).
+    /// @return decode_ok, or an error for any other JSON value or member.
+    /// @see X.697 §23.
     DecodeResult decode(const JerCodec&, JerDecodeStream& s,
                         const TypeDescriptor&, Asn1Object* dest) const override {
         jer_detail::skip_ws(s);
+        if (!s.at_end() && s.data()[0] == '{') {
+            s.advance(1);
+            std::string key;
+            if (auto r = jer_detail::read_json_string(s, key); !r) return r;
+            if (key != "base10Value")
+                return decode_err(DecodeError("JER: unexpected REAL object member: " + key));
+            if (auto r = jer_detail::expect_char(s, ':'); !r) return r;
+            std::string tok;
+            if (auto r = jer_detail::read_json_token(s, tok); !r) return r;
+            char* endp;
+            double d = std::strtod(tok.c_str(), &endp);
+            if (endp != tok.c_str() + tok.size())
+                return decode_err(DecodeError("JER: invalid REAL base10Value: " + tok));
+            if (auto r = jer_detail::expect_char(s, '}'); !r) return r;
+            *static_cast<Real*>(dest) = Real{d};
+            return decode_ok();
+        }
         if (!s.at_end() && s.data()[0] == '"') {
             // Quoted special value
             std::string str;

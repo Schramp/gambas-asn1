@@ -70,8 +70,25 @@ fn format_real(d: f64) -> String {
     out
 }
 
+/// Decodes a JER REAL: a JSON number (X.697 §23.3), a special-value string
+/// (§23.2), or the object `{"base10Value": number}` (§23.4). Mirrors
+/// `RealJerHandler::decode` (`runtime/src/JerCodec.cpp`).
 pub fn decode(r: &mut Reader) -> Result<f64, DecodeError> {
     r.skip_ws();
+    if r.peek_char() == b'{' {
+        r.expect_char(b'{')?;
+        let key = r.read_json_string()?;
+        if key != "base10Value" {
+            return Err(DecodeError::new(format!("JER: unexpected REAL object member: {key}"), r.pos()));
+        }
+        r.expect_char(b':')?;
+        let tok = r.read_json_token()?;
+        let d = tok
+            .parse::<f64>()
+            .map_err(|_| DecodeError::new(format!("JER: invalid REAL base10Value: {tok}"), r.pos()))?;
+        r.expect_char(b'}')?;
+        return Ok(d);
+    }
     if r.peek_char() == b'"' {
         let s = r.read_json_string()?;
         return match s.as_str() {
@@ -120,6 +137,24 @@ mod tests {
             assert_eq!(out, want, "encoding {d:?}");
             let mut r = Reader::new(&out);
             assert_eq!(decode(&mut r).unwrap().to_bits(), d.to_bits(), "round trip of {want}");
+        }
+    }
+
+    /// Shared with the C++ `test_jer_basic` base10Value cases.
+    #[test]
+    fn base10_value_object_decodes() {
+        let cases: &[(&str, Option<f64>)] = &[
+            ("{ \"base10Value\" : 14 }", Some(14.0)), // X.697 §23.4 example
+            ("{\"base10Value\":14.56}", Some(14.56)),
+            ("{\"base10Value\":-1.5E3}", Some(-1500.0)),
+            ("{\"base10Value\":\"14\"}", None),
+            ("{\"base2Value\":14}", None),
+            ("{\"base10Value\":14,\"x\":1}", None),
+            ("{}", None),
+        ];
+        for &(json, want) in cases {
+            let mut r = Reader::new(json);
+            assert_eq!(decode(&mut r).ok(), want, "{json}");
         }
     }
 
