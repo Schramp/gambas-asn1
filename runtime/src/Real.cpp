@@ -38,7 +38,7 @@ static NearestDouble real_from_binary(bool negative, std::span<const uint8_t> n,
     const int64_t bits_n = static_cast<int64_t>(n.size() - 1) * 8 + std::bit_width(n[0]);
     const int64_t e_msb = e2 + bits_n - 1;
     if (e_msb > 1023)  return {negative ? -inf : inf, false};
-    if (e_msb < -1076) return {negative ? -0.0 : 0.0, false};
+    if (e_msb < -1075) return {negative ? -0.0 : 0.0, false};  // below half of 2^-1074
 
     // Unit of the result's last significand bit: 53 significant bits for a
     // normal double, fewer below 2^-1022 (subnormal, unit 2^-1074).
@@ -182,8 +182,7 @@ Real Real::binary(bool negative, std::span<const uint8_t> mantissa, int64_t expo
     const NearestDouble nd = real_from_binary(negative, bytes, exponent);
     Real out{nd.d};
     if (nd.exact) return out;
-    out.storage_ = Storage::Binary;
-    out.exact_ = std::make_shared<const Exact>(Exact{negative, std::move(m), exponent});
+    out.exact_ = std::make_unique<const Exact>(Exact{Storage::Binary, negative, std::move(m), exponent});
     return out;
 }
 
@@ -197,13 +196,12 @@ Real Real::decimal(bool negative, std::string_view digits, int64_t exponent) {
     }
     std::string text = std::string(negative ? "-" : "") + std::string(digits) + "e" + std::to_string(exponent);
     Real out{std::strtod(text.c_str(), nullptr)};
-    out.storage_ = Storage::Decimal;
-    out.exact_ = std::make_shared<const Exact>(Exact{negative, std::string(digits), exponent});
+    out.exact_ = std::make_unique<const Exact>(Exact{Storage::Decimal, negative, std::string(digits), exponent});
     return out;
 }
 
 std::string Real::decimal_text() const {
-    if (storage_ != Storage::Decimal) return {};
+    if (storage() != Storage::Decimal) return {};
     std::string t = exact_->negative ? "-" : "";
     t += exact_->mantissa;
     if (exact_->exponent != 0) t += "E" + std::to_string(exact_->exponent);
@@ -336,7 +334,28 @@ Expected<Real, DecodeError> decode_real_contents(std::span<const uint8_t> value)
     for (std::size_t i = k; i < exp.size(); ++i)
         e = static_cast<int64_t>((static_cast<uint64_t>(e) << 8) | exp[i]);
 
-    return Real::binary(negative, n, e * log2_base + scaling);
+    const int64_t e2 = e * log2_base + scaling;
+    if (n.size() <= 8) {
+        // Common case, a value a double holds exactly: at most 53 significant
+        // bits and a scale inside the double range (normal or subnormal).
+        uint64_t m = 0;
+        for (uint8_t b : n) m = (m << 8) | b;
+        const int tz = std::countr_zero(m);
+        m >>= tz;
+        const int64_t lsb = e2 + tz;
+        const int64_t msb = lsb + std::bit_width(m) - 1;
+        const int width = std::bit_width(m);
+        if (width <= 53 && lsb >= -1074 && msb <= 1023) {
+            uint64_t bits = msb >= -1022
+                ? (static_cast<uint64_t>(msb + 1023) << 52) | ((m << (53 - width)) & ((uint64_t{1} << 52) - 1))
+                : m << (lsb + 1074);  // subnormal: unit 2^-1074
+            if (negative) bits |= uint64_t{1} << 63;
+            double d;
+            std::memcpy(&d, &bits, sizeof d);
+            return Real{d};
+        }
+    }
+    return Real::binary(negative, n, e2);
 }
 
 } // namespace detail

@@ -170,6 +170,41 @@ int main() {
     r.set(2.0);
     check("set() makes a Double", r.storage() == S::Double && r == Real{2.0});
 
+    // Short mantissas take a direct IEEE path; it must agree with the general
+    // normalizing Real::binary at every scale, including subnormal and
+    // out-of-range ones. Same inputs as the Rust
+    // short_mantissa_path_matches_general_binary test.
+    {
+        uint64_t x = 0x9E3779B97F4A7C15ull;
+        std::vector<uint64_t> mantissas = {1, 3, 0xFF, (1ull << 53) - 1, (1ull << 53) + 1, (1ull << 54) - 2, ~0ull};
+        for (int i = 0; i < 64; ++i) {
+            x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+            mantissas.push_back(x >> (x % 60));
+        }
+        std::vector<int64_t> exps;
+        for (int64_t e = -1200; e < 1100; e += 7) exps.push_back(e);
+        for (int64_t e = -1140; e < -1060; ++e) exps.push_back(e);
+        for (int64_t e = 960; e < 1030; ++e) exps.push_back(e);
+        bool all = true;
+        for (uint64_t m : mantissas)
+            for (int64_t e : exps)
+                for (bool negative : {false, true}) {
+                    uint8_t mb[8];
+                    for (int k = 0; k < 8; ++k) mb[k] = static_cast<uint8_t>(m >> (56 - 8 * k));
+                    std::vector<uint8_t> v = {static_cast<uint8_t>(0x81 | (negative ? 0x40 : 0)),
+                                              static_cast<uint8_t>(static_cast<uint16_t>(e) >> 8),
+                                              static_cast<uint8_t>(e)};
+                    v.insert(v.end(), mb, mb + 8);
+                    auto got = detail::decode_real_contents(v);
+                    if (!got || !(*got == Real::binary(negative, mb, e))) {
+                        if (all) printf("        first mismatch m=%#llx e=%lld neg=%d\n",
+                                        static_cast<unsigned long long>(m), static_cast<long long>(e), negative);
+                        all = false;
+                    }
+                }
+        check("short-mantissa path matches Real::binary at every scale", all);
+    }
+
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "OK", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
 }

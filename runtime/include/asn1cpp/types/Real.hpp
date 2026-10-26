@@ -34,11 +34,13 @@ public:
     enum class Storage : uint8_t { Double, Binary, Decimal };
 
     /// @brief Exact components of a \c Binary or \c Decimal value:
-    ///        (negative ? −1 : 1) × mantissa × base^exponent.
+    ///        (negative ? −1 : 1) × mantissa × base^exponent, base 2 for
+    ///        \c Binary and 10 for \c Decimal.
     /// \c Binary: mantissa is big-endian octets, odd (X.690 §11.3.1).
     /// \c Decimal: mantissa is ASCII digits, neither first nor last digit 0
     /// (X.690 §11.3.2.4). Both forms are therefore unique per abstract value.
     struct Exact {
+        Storage     storage = Storage::Binary;
         bool        negative = false;
         std::string mantissa;
         int64_t     exponent = 0;
@@ -46,13 +48,24 @@ public:
     };
 
 private:
+    // A \c Double carries no Exact, so the common case stays two words and
+    // allocation-free; copying a \c Binary / \c Decimal deep-copies it.
     double value_{0.0};
-    std::shared_ptr<const Exact> exact_;
-    Storage storage_{Storage::Double};
+    std::unique_ptr<const Exact> exact_;
 
 public:
     Real() = default;
     explicit Real(double v) : value_(v) {}
+    Real(const Real& o) : value_(o.value_), exact_(o.exact_ ? std::make_unique<const Exact>(*o.exact_) : nullptr) {}
+    Real(Real&&) noexcept = default;
+    Real& operator=(const Real& o) {
+        if (this != &o) {
+            value_ = o.value_;
+            exact_ = o.exact_ ? std::make_unique<const Exact>(*o.exact_) : nullptr;
+        }
+        return *this;
+    }
+    Real& operator=(Real&&) noexcept = default;
 
     /// @brief A base-2 value S × N × 2^e2. A value a double holds exactly
     ///        becomes \c Double; any other becomes \c Binary.
@@ -75,13 +88,13 @@ public:
     ///        double otherwise.
     double value() const { return value_; }
     /// @brief Set a base-2 \c Double value.
-    void   set(double v)   { value_ = v; exact_.reset(); storage_ = Storage::Double; }
+    void   set(double v)   { value_ = v; exact_.reset(); }
     operator double() const { return value_; }
 
     /// @brief The storage class.
-    Storage storage() const { return storage_; }
+    Storage storage() const { return exact_ ? exact_->storage : Storage::Double; }
     /// @brief 10 for \c Decimal, 2 otherwise.
-    int base() const { return storage_ == Storage::Decimal ? 10 : 2; }
+    int base() const { return storage() == Storage::Decimal ? 10 : 2; }
     /// @brief Exact components; null for \c Double.
     const Exact* exact() const { return exact_.get(); }
 
@@ -91,8 +104,7 @@ public:
     ///        each its own encoding.
     /// @see X.680 §20.5 NOTE 1 — base-2 and base-10 values are distinct.
     bool operator==(const Real& o) const {
-        if (storage_ != o.storage_) return false;
-        if (exact_) return *exact_ == *o.exact_;
+        if (exact_ || o.exact_) return exact_ && o.exact_ && *exact_ == *o.exact_;
         if (std::isnan(value_) || std::isnan(o.value_)) return std::isnan(value_) && std::isnan(o.value_);
         return value_ == o.value_ && std::signbit(value_) == std::signbit(o.value_);
     }
