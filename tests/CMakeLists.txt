@@ -49,6 +49,11 @@ add_executable(test_ber_primitives ber/test_primitives.cpp)
 target_link_libraries(test_ber_primitives PRIVATE asn1cpp_runtime)
 add_test(NAME ber_primitives COMMAND test_ber_primitives)
 
+# ---- BER REAL contents decoding (X.690 §8.5); vectors shared with Rust ----
+add_executable(test_real_ber ber/test_real_ber.cpp)
+target_link_libraries(test_real_ber PRIVATE asn1cpp_runtime)
+add_test(NAME real_ber COMMAND test_real_ber)
+
 # ---- Contained values: Containing<T> + built-in decoders (X.682 §11) -------
 add_executable(test_contained_runtime ber/test_contained_runtime.cpp)
 target_link_libraries(test_contained_runtime PRIVATE asn1cpp_runtime)

@@ -227,6 +227,27 @@ String types — `UTF8String`, `PrintableString`, `IA5String`, `VisibleString`,
 `NumericString`, `BMPString`, `UniversalString`, and others — all map to
 `asn1::AsnString<tag>` and share a single string-handling runtime path.
 
+### REAL values
+
+`asn1::Real` (Rust: `Real(f64)`) holds an IEEE 754 double. BER decode (X.690 §8.5)
+accepts every binary-form encoding:
+
+- all four exponent formats of §8.5.7.4, including format d (a length octet, then that
+  many exponent octets);
+- unnormalized mantissas of any length (§8.5.7.5 NOTE 1). The value is rounded to the
+  nearest double, ties to even, and subnormals are rounded the same way.
+
+A value whose magnitude rounds to infinity, or to zero although the mantissa is non-zero,
+does not fit a double and fails to decode with `REAL: value outside the double range`.
+asn1c also rejects such values (ERANGE). Both runtimes give the same double, bit for bit,
+for every encoding: `tests/ber/test_real_ber.cpp` and the Rust `real.rs` tests share one
+vector table.
+
+Malformed encodings are also decode errors:
+- format d with a length of 0, or a truncated exponent;
+- a special value (§8.5.9) with extra contents octets;
+- a reserved special-value octet.
+
 ### Structured Types
 
 **SEQUENCE** is a fixed-order list of named members, each with its own type. Members

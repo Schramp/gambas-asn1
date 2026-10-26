@@ -11,6 +11,12 @@
 
 namespace asn1 {
 
+namespace detail {
+/// @brief Decode the contents octets of a BER REAL into a double (Real.cpp).
+/// @see X.690 §8.5.
+Expected<double, DecodeError> decode_real_contents(std::span<const uint8_t> value);
+} // namespace detail
+
 /// @brief ASN.1 REAL — IEEE 754 double-precision floating point.
 /// BER encoding uses the X.690 §8.5.7 binary form (base-2, minimal mantissa bytes).
 /// Special values +∞, -∞, and NaN are encoded per X.690 §8.5.9.
@@ -113,43 +119,11 @@ struct BerTraits<Real> {
         return decode_value(tlv->value);
     }
 
+    /// @brief Decode REAL contents octets; see detail::decode_real_contents.
     static Expected<Real, DecodeError> decode_value(std::span<const uint8_t> value) {
-        if (value.empty()) return Real{0.0};
-
-        uint8_t info = value[0];
-        if (info == 0x40) return Real{std::numeric_limits<double>::infinity()};
-        if (info == 0x41) return Real{-std::numeric_limits<double>::infinity()};
-        if (info == 0x42) return Real{std::numeric_limits<double>::quiet_NaN()};
-        if (info == 0x43) return Real{-0.0};
-
-        if (!(info & 0x80))
-            return make_unexpected<Real, DecodeError>(DecodeError("decimal REAL encoding not supported"));
-
-        bool negative = (info & 0x40) != 0;
-        int base_bits = (info >> 4) & 0x03;
-        if (base_bits != 0)
-            return make_unexpected<Real, DecodeError>(DecodeError("only base-2 REAL supported"));
-
-        int scaling   = (info >> 2) & 0x03;
-        int exp_len   = (info & 0x03) + 1;
-
-        auto bytes = value.subspan(1);
-        if (static_cast<int>(bytes.size()) < exp_len)
-            return make_unexpected<Real, DecodeError>(DecodeError("truncated REAL exponent"));
-
-        int32_t e = (bytes[0] & 0x80) ? -1 : 0;
-        for (int i = 0; i < exp_len; ++i)
-            e = (e << 8) | bytes[i];
-        e += scaling;
-        bytes = bytes.subspan(exp_len);
-
-        uint64_t M = 0;
-        for (uint8_t b : bytes)
-            M = (M << 8) | b;
-
-        double d = std::ldexp(static_cast<double>(M), e);
-        if (negative) d = -d;
-        return Real{d};
+        auto d = detail::decode_real_contents(value);
+        if (!d) return make_unexpected<Real, DecodeError>(d.error());
+        return Real{*d};
     }
 };
 

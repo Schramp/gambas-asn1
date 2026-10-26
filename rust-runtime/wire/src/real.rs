@@ -130,62 +130,140 @@ pub fn read_real_tagged(r: &mut Reader, tag: Tag) -> Result<f64, DecodeError> {
     decode_real_value(tlv.value, r.pos())
 }
 
+/// Bit `i` (0 = least significant) of the unsigned big-endian integer `n`.
+fn bit_at(n: &[u8], i: i64) -> bool {
+    (n[n.len() - 1 - (i / 8) as usize] >> (i % 8)) & 1 != 0
+}
+
+/// Converts S × N × 2^`e2` to the nearest `f64`, rounding half to even.
+/// `n` is N as an unsigned big-endian integer with leading zero octets
+/// stripped (not empty, first octet non-zero); `e2` is the binary exponent
+/// of N's least significant bit. A value whose magnitude rounds to infinity,
+/// or to zero although N is non-zero, is outside the double range and an
+/// error. Mirrors `real_from_binary` in `runtime/src/Real.cpp`.
+/// X.690 §8.5.7; IEEE 754 round-to-nearest-even.
+fn real_from_binary(negative: bool, n: &[u8], e2: i64, pos: usize) -> Result<f64, DecodeError> {
+    let range = || DecodeError::new("REAL: value outside the double range", pos);
+    let bits_n = (n.len() as i64 - 1) * 8 + (8 - n[0].leading_zeros() as i64);
+    let e_msb = e2 + bits_n - 1;
+    if e_msb > 1023 || e_msb < -1076 {
+        return Err(range());
+    }
+
+    // Unit of the result's last significand bit: 53 significant bits for a
+    // normal double, fewer below 2^-1022 (subnormal, unit 2^-1074).
+    let mut unit = (e_msb - 52).max(-1074);
+    let shift = unit - e2;
+    let mut kept: u64 = 0;
+    if shift <= 0 {
+        for i in (0..bits_n).rev() {
+            kept = (kept << 1) | bit_at(n, i) as u64;
+        }
+        kept <<= -shift;
+    } else {
+        for i in (shift..bits_n).rev() {
+            kept = (kept << 1) | bit_at(n, i) as u64;
+        }
+        let round = bit_at(n, shift - 1);
+        let sticky = (0..shift - 1).any(|i| bit_at(n, i));
+        if round && (sticky || kept & 1 != 0) {
+            kept += 1;
+        }
+    }
+    if kept == 1u64 << 53 {
+        kept >>= 1;
+        unit += 1;
+    }
+    if kept == 0 {
+        return Err(range());
+    }
+
+    let mut bits = if kept < 1u64 << 52 {
+        kept // subnormal: unit is 2^-1074
+    } else {
+        let biased = unit + 52 + 1023;
+        if biased >= 2047 {
+            return Err(range());
+        }
+        ((biased as u64) << 52) | (kept & ((1u64 << 52) - 1))
+    };
+    if negative {
+        bits |= 1u64 << 63;
+    }
+    Ok(f64::from_bits(bits))
+}
+
+/// Decodes the contents octets of a BER REAL into an `f64`. A reserved or
+/// malformed encoding, or a value beyond the double range, is an error.
+/// Mirrors `decode_real_contents` in `runtime/src/Real.cpp`.
+/// X.690 §8.5 — §8.5.2 plus zero, §8.5.7 binary form (exponent formats a–d
+/// of §8.5.7.4, unnormalized mantissa of §8.5.7.5 NOTE 1), §8.5.9 special
+/// values.
 pub(crate) fn decode_real_value(value: &[u8], pos: usize) -> Result<f64, DecodeError> {
+    let err = |what: &str| DecodeError::new(format!("REAL: {what}"), pos);
     if value.is_empty() {
         return Ok(0.0);
     }
     let info = value[0];
-    if info == 0x40 {
-        return Ok(f64::INFINITY);
-    }
-    if info == 0x41 {
-        return Ok(f64::NEG_INFINITY);
-    }
-    if info == 0x42 {
-        return Ok(f64::NAN);
-    }
-    if info == 0x43 {
-        return Ok(-0.0);
+    if info & 0xC0 == 0x40 {
+        if value.len() != 1 {
+            return Err(err("special value with extra contents octets"));
+        }
+        return match info {
+            0x40 => Ok(f64::INFINITY),
+            0x41 => Ok(f64::NEG_INFINITY),
+            0x42 => Ok(f64::NAN),
+            0x43 => Ok(-0.0),
+            _ => Err(err("reserved special value")),
+        };
     }
     if info & 0x80 == 0 {
         return Err(DecodeError::new("decimal REAL encoding not supported", pos));
     }
     let negative = info & 0x40 != 0;
-    let base_bits = (info >> 4) & 0x03;
-    if base_bits != 0 {
+    if (info >> 4) & 0x03 != 0 {
         return Err(DecodeError::new("only base-2 REAL supported", pos));
     }
-    let scaling = ((info >> 2) & 0x03) as i32;
-    let exp_len = ((info & 0x03) + 1) as usize;
+    let scaling = ((info >> 2) & 0x03) as i64;
 
-    let bytes = &value[1..];
-    if bytes.len() < exp_len {
+    let mut rest = &value[1..];
+    let exp_len = if info & 0x03 == 0x03 {
+        let (&x, tail) = rest.split_first().ok_or_else(|| err("truncated exponent length"))?;
+        rest = tail;
+        if x == 0 {
+            return Err(err("exponent length 0"));
+        }
+        x as usize
+    } else {
+        (info & 0x03) as usize + 1
+    };
+    if rest.len() < exp_len {
         return Err(DecodeError::new("truncated REAL exponent", pos));
     }
-    let mut e: i32 = if bytes[0] & 0x80 != 0 { -1 } else { 0 };
-    for &b in &bytes[..exp_len] {
-        e = (e << 8) | b as i32;
-    }
-    e += scaling;
-    let mbytes = &bytes[exp_len..];
+    let (exp, mut n) = rest.split_at(exp_len);
 
-    let mut m: u64 = 0;
-    for &b in mbytes {
-        m = (m << 8) | b as u64;
+    while let [0, tail @ ..] = n {
+        n = tail;
+    }
+    if n.is_empty() {
+        return Ok(if negative { -0.0 } else { 0.0 });
     }
 
-    // m has at most 53 significant bits by construction (encode's own
-    // mantissa never exceeds that), so `m as f64` is exact (f64 represents
-    // all integers up to 2^53 exactly) — the subsequent power-of-two
-    // multiply is then also exact for any e in f64's normal exponent
-    // range, since the true mathematical product is itself a valid,
-    // exactly-representable f64 (same value encode started from) and IEEE
-    // 754 multiplication is correctly rounded.
-    let mut d = (m as f64) * 2f64.powi(e);
-    if negative {
-        d = -d;
+    // Two's-complement exponent; redundant sign octets carry no value.
+    let sign: u8 = if exp[0] & 0x80 != 0 { 0xFF } else { 0x00 };
+    let mut k = 0;
+    while k + 1 < exp.len() && exp[k] == sign && (exp[k + 1] & 0x80) == (sign & 0x80) {
+        k += 1;
     }
-    Ok(d)
+    if exp.len() - k > 7 {
+        return Err(err("value outside the double range"));
+    }
+    let mut e: i64 = if sign != 0 { -1 } else { 0 };
+    for &b in &exp[k..] {
+        e = ((e as u64) << 8 | b as u64) as i64;
+    }
+
+    real_from_binary(negative, n, e + scaling, pos)
 }
 
 /// X.693 §17.9 textual form for XER. Deliberately NOT shared with
@@ -348,6 +426,62 @@ mod tests {
         assert_eq!(buf, vec![0x85, 0x03, 0x80, 0x00, 0x01]); // context primitive 5, not 0x09
         let mut r = Reader::new(&buf);
         assert_eq!(read_real_tagged(&mut r, context_5).unwrap(), 1.0);
+    }
+
+    fn zeros(head: &[u8], zeros: usize, tail: &[u8]) -> Vec<u8> {
+        let mut v = head.to_vec();
+        v.extend(std::iter::repeat(0u8).take(zeros));
+        v.extend_from_slice(tail);
+        v
+    }
+
+    /// Shared with `tests/ber/test_real_ber.cpp`: both runtimes must give
+    /// the same bit pattern, or both an error (`None`).
+    fn decode_vectors() -> Vec<(&'static str, Vec<u8>, Option<u64>)> {
+        vec![
+            ("plus zero, no contents (§8.5.2)", vec![], Some(0x0000000000000000)),
+            ("1.0, exponent format a", vec![0x80, 0x00, 0x01], Some(0x3FF0000000000000)),
+            ("-1.0 (§8.5.7.1)", vec![0xC0, 0x00, 0x01], Some(0xBFF0000000000000)),
+            ("2.0 via scaling factor F=1 (§8.5.7.3)", vec![0x84, 0x00, 0x01], Some(0x4000000000000000)),
+            ("1.0, format d, X=1 (§8.5.7.4 d)", vec![0x83, 0x01, 0x00, 0x01], Some(0x3FF0000000000000)),
+            ("1.0, format d, X=2", vec![0x83, 0x02, 0x00, 0x00, 0x01], Some(0x3FF0000000000000)),
+            ("1.0, format d, X=5", vec![0x83, 0x05, 0, 0, 0, 0, 0, 0x01], Some(0x3FF0000000000000)),
+            ("1.0, format d, exponent -1 in 9 octets",
+             vec![0x83, 0x09, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02], Some(0x3FF0000000000000)),
+            ("2^72, 10-octet mantissa (§8.5.7.5 NOTE 1)", zeros(&[0x80, 0x00, 0x01], 9, &[]), Some(0x4470000000000000)),
+            ("2^-64, 11-octet mantissa, exponent -80", zeros(&[0x80, 0xB0], 8, &[0x01, 0x00, 0x00]), Some(0x3BF0000000000000)),
+            ("2^53+1 rounds to even 2^53", vec![0x80, 0x00, 0x20, 0, 0, 0, 0, 0, 0x01], Some(0x4340000000000000)),
+            ("2^53+3 rounds up to 2^53+4", vec![0x80, 0x00, 0x20, 0, 0, 0, 0, 0, 0x03], Some(0x4340000000000002)),
+            ("leading zero mantissa octets", vec![0x80, 0x00, 0x00, 0x00, 0x01], Some(0x3FF0000000000000)),
+            ("zero mantissa is zero", vec![0xC0, 0x00, 0x00], Some(0x8000000000000000)),
+            ("largest double (2^53-1) * 2^971",
+             vec![0x81, 0x03, 0xCB, 0x1F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF], Some(0x7FEFFFFFFFFFFFFF)),
+            ("smallest subnormal 2^-1074", vec![0x81, 0xFB, 0xCE, 0x01], Some(0x0000000000000001)),
+            ("3 * 2^-1076 rounds to 2^-1074", vec![0x81, 0xFB, 0xCC, 0x03], Some(0x0000000000000001)),
+            ("subnormal 3 * 2^-1074", vec![0x81, 0xFB, 0xCE, 0x03], Some(0x0000000000000003)),
+            ("smallest normal 2^-1022", vec![0x81, 0xFC, 0x02, 0x01], Some(0x0010000000000000)),
+            ("2^1024 is out of range", vec![0x81, 0x04, 0x00, 0x01], None),
+            ("exponent ~2^31 is out of range", vec![0x83, 0x04, 0x7F, 0x00, 0x00, 0x00, 0x01], None),
+            ("2^-1076 rounds to zero: out of range", vec![0x81, 0xFB, 0xCC, 0x01], None),
+            ("format d without length octet", vec![0x83], None),
+            ("format d, X=0", vec![0x83, 0x00, 0x01], None),
+            ("format d, truncated exponent", vec![0x83, 0x02, 0x00], None),
+            ("format b, truncated exponent", vec![0x81, 0x00], None),
+            ("special value with extra octet", vec![0x40, 0x00], None),
+            ("reserved special value 0x44 (§8.5.9)", vec![0x44], None),
+            ("PLUS-INFINITY (§8.5.9)", vec![0x40], Some(0x7FF0000000000000)),
+            ("MINUS-INFINITY", vec![0x41], Some(0xFFF0000000000000)),
+            ("minus zero", vec![0x43], Some(0x8000000000000000)),
+        ]
+    }
+
+    #[test]
+    fn decode_vectors_match_the_cpp_runtime() {
+        for (label, contents, want) in decode_vectors() {
+            let got = decode_real_value(&contents, 0).ok().map(f64::to_bits);
+            assert_eq!(got, want, "{label}");
+        }
+        assert!(decode_real_value(&[0x42], 0).unwrap().is_nan());
     }
 
     #[test]
