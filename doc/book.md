@@ -707,7 +707,9 @@ the shortest such digit string, in plain decimal notation when the decimal
 exponent is in [-4, 15) (`-338203.95104146993`, `0.0001`, `100`) and as
 `d.dddE<exp>` otherwise (`1E-5`, `1.7976931348623157E308`). The special
 values are the strings `"NaN"`, `"INF"`, `"-INF"` and `"-0"` (X.697 §23).
-The decoder accepts any JSON number notation.
+The decoder accepts any JSON number notation. It also accepts the base-10 object form
+`{"base10Value": 14}` (X.697 §23.4), which it rounds to the nearest double. Any other
+member, or a value that is not a JSON number, is a decode error.
 
 A BIT STRING whose SIZE is fixed (a single value, not extensible) is a bare
 hex string, `"2EFE20"` for `BIT STRING (SIZE (20))`; the length comes from
