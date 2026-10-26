@@ -316,7 +316,7 @@ struct BuiltinAliasSpec : TaggedTypeSpec {
 ///       can't include Generator.hpp without a cycle.
 /// @see Generator::default_value_spec_for.
 struct DefaultValueSpec {
-    enum class Kind { None, Bool, Int, String, EnumRef } kind = Kind::None;
+    enum class Kind { None, Bool, Int, String, EnumRef, Real } kind = Kind::None;
     bool          bool_val = false;
     int64_t       int_val  = 0;
     std::string   string_val;  // Kind::String — raw (unescaped) value
@@ -328,6 +328,7 @@ struct DefaultValueSpec {
     // plain `type_name` string carries no such signal for a named alias
     // the way it does for an inline member's own native_int_type() text.
     IntStorageKind int_storage_kind = IntStorageKind::S64;
+    double        real_val = 0.0;  // Kind::Real — may be ±infinity or -0
 };
 
 /// @brief Escape a raw byte string for embedding in a quoted string literal.

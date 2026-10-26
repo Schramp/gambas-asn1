@@ -253,6 +253,13 @@ accepts every encoding the standard defines:
   the C locale; Rust `str::parse`). Reserved NR codes and malformed text are decode
   errors.
 
+A REAL member may have a DEFAULT: a realnumber, an integer literal, `PLUS-INFINITY` or
+`MINUS-INFINITY`. An absent member decodes as its default, and a member equal to its
+default is not encoded. REAL equality is value identity: minus zero and plus zero
+differ, and NOT-A-NUMBER equals itself, since X.690 §8.5.9 encodes each separately.
+So `-0` in a member that defaults to `0` is still encoded. This applies to
+`asn1::Real::operator==` and to Rust's `PartialEq` for `Real`.
+
 Encode always writes the binary form, base 2. A decimal value is therefore re-encoded as
 binary.
 

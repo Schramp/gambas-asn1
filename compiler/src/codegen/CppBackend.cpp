@@ -3,6 +3,7 @@
 #include "asn1cpp/codec/Constraints.hpp"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 
 namespace asn1::codegen {
@@ -335,6 +336,21 @@ std::string cpp_int64_literal(int64_t v) {
     return std::to_string(v);
 }
 
+/// @brief Format a double as a C++ expression of type double that yields
+///        exactly that value: the shortest round-trip decimal, with `.0`
+///        added when it has no point or exponent (so -0 keeps its sign), or
+///        `std::numeric_limits<double>::infinity()` for ±infinity.
+/// @param d  Value to format; not NaN.
+/// @return The expression text.
+std::string cpp_double_literal(double d) {
+    if (std::isinf(d))
+        return d > 0 ? "std::numeric_limits<double>::infinity()"
+                     : "-std::numeric_limits<double>::infinity()";
+    std::string s = std::format("{}", d);
+    if (s.find_first_of(".e") == std::string::npos) s += ".0";
+    return s;
+}
+
 /// @brief Build the `asn1::Constraints` designated initializer for an
 ///        INTEGER's PER value range.
 /// @param flags       CONSTRAINED / SEMI_CONSTRAINED / EXTENSIBLE bits.
@@ -605,6 +621,8 @@ static std::string format_default_value_literal(const std::string& mtype,
         return std::format("{}{{\"{}\"}}", mtype, escape_string_literal(spec.string_val));
     case Kind::EnumRef:
         return std::format("{}::{}", mtype, backend.escape(backend.type_name(spec.enum_name)));
+    case Kind::Real:
+        return std::format("{}{{{}}}", mtype, cpp_double_literal(spec.real_val));
     case Kind::None:
     default:
         return "";

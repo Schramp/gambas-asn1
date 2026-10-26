@@ -31,7 +31,13 @@ public:
     /// @brief Set the stored double value.
     void   set(double v)   { value_ = v; }
     operator double() const { return value_; }
-    bool operator==(const Real&) const = default;
+    /// @brief Equality of REAL abstract values: minus zero and plus zero
+    ///        differ, and NOT-A-NUMBER equals itself: X.690 §8.5.9 gives each
+    ///        its own encoding, so a DEFAULT comparison never conflates -0 with 0.
+    bool operator==(const Real& o) const {
+        if (std::isnan(value_) || std::isnan(o.value_)) return std::isnan(value_) && std::isnan(o.value_);
+        return value_ == o.value_ && std::signbit(value_) == std::signbit(o.value_);
+    }
 
     static const TypeDescriptor& asn_DEF;
 };

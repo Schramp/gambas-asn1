@@ -203,6 +203,22 @@ target_include_directories(test_real PRIVATE ${REAL_TEST_GEN_DIR})
 target_link_libraries(test_real PRIVATE asn1cpp_runtime)
 add_test(NAME real_member COMMAND test_real)
 
+# ---- REAL DEFAULT values (X.680 §25.1); Rust leg: rust/real_default -------
+set(REAL_DEFAULT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_real_default_test)
+add_custom_command(
+    OUTPUT  ${REAL_DEFAULT_GEN_DIR}/Defaults.cpp ${REAL_DEFAULT_GEN_DIR}/Temp.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${REAL_DEFAULT_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/real_default_test.asn1
+            -o ${REAL_DEFAULT_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/real_default_test.asn1
+    COMMENT "Generating C++ from real_default_test.asn1"
+)
+add_executable(test_real_default seq/test_real_default.cpp
+               ${REAL_DEFAULT_GEN_DIR}/Defaults.cpp ${REAL_DEFAULT_GEN_DIR}/Temp.cpp)
+target_include_directories(test_real_default PRIVATE ${REAL_DEFAULT_GEN_DIR})
+target_link_libraries(test_real_default PRIVATE asn1cpp_runtime)
+add_test(NAME real_default COMMAND test_real_default)
+
 # ---- Contained values in generated code (X.682 §11 + --container-config) ---
 set(CONTAINING_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_containing_test)
 set(CONTAINING_TYPES Inner Kind Wrapped Holder Pick Envelope)
@@ -1926,6 +1942,29 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_decode_depth PROPERTIES
         TIMEOUT 60 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_DEPTH_GEN_DIR=${RUST_DEPTH_GEN_DIR}")
+endif()
+
+# Rust leg of the REAL DEFAULT test — see tests/rust/real_default/src/main.rs
+# (C++ leg: test_real_default).
+set(RUST_REAL_DEFAULT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_real_default)
+add_custom_command(
+    OUTPUT  ${RUST_REAL_DEFAULT_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_REAL_DEFAULT_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/real_default_test.asn1
+            -o ${RUST_REAL_DEFAULT_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/real_default_test.asn1
+    COMMENT "Generating Rust from real_default_test.asn1"
+)
+add_custom_target(gen_rust_real_default ALL DEPENDS ${RUST_REAL_DEFAULT_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_real_default
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/real_default/Cargo.toml)
+    set_tests_properties(rust_real_default PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_REAL_DEFAULT_GEN_DIR}")
 endif()
 
 # Rust leg of the contained-values test — see tests/rust/containing/src/main.rs
