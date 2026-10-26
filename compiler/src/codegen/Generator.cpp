@@ -1405,6 +1405,69 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
     return IntRange{false, 0, 0, false, 0, false};
 }
 
+/// @brief Which of the bases 2 and 10 one constraint admits for a REAL's
+///        `base` component: bit 0 for 2, bit 1 for 10.
+/// @param c  A constraint on the REAL type.
+/// @return The set, or nullopt when the constraint is not JER-visible or says
+///         nothing about the base. Inner type constraints give their `base`
+///         component's values, intersections intersect, unions unite, and an
+///         extensible constraint is not JER-visible.
+/// @see X.697 §7.2.1 c) d), §23.1.3.
+static std::optional<unsigned> real_base_set(const ast::Constraint& c) {
+    if (c.extensible) return std::nullopt;
+    auto admits = [](const ast::Constraint& bc, int64_t v, auto& self) -> bool {
+        if (auto* val = std::get_if<ast::Value>(&bc.body)) {
+            auto* i = std::get_if<int64_t>(val);
+            return i && *i == v;
+        }
+        if (auto* vr = std::get_if<ast::ValueRange>(&bc.body)) {
+            auto bound = [](const ast::RangeEndpoint& e) { return std::get_if<int64_t>(&e.value); };
+            if (vr->lower.kind == ast::RangeEndpoint::Kind::Value) {
+                auto* lo = bound(vr->lower);
+                if (!lo || v < *lo || (vr->lower.open && v == *lo)) return false;
+            }
+            if (vr->upper.kind == ast::RangeEndpoint::Kind::Value) {
+                auto* hi = bound(vr->upper);
+                if (!hi || v > *hi || (vr->upper.open && v == *hi)) return false;
+            }
+            return true;
+        }
+        if (auto* ic = std::get_if<ast::IntersectionConstraint>(&bc.body)) {
+            for (const auto& op : ic->operands)
+                if (op && !self(*op, v, self)) return false;
+            return true;
+        }
+        if (auto* uc = std::get_if<ast::UnionConstraint>(&bc.body)) {
+            for (const auto& op : uc->operands)
+                if (op && self(*op, v, self)) return true;
+            return false;
+        }
+        return true;
+    };
+    if (auto* cc = std::get_if<ast::ComponentsConstraint>(&c.body)) {
+        for (const auto& comp : cc->components) {
+            if (comp.name != "base") continue;
+            if (!comp.constraint || comp.constraint->extensible) return std::nullopt;
+            return (admits(*comp.constraint, 2, admits) ? 1u : 0u) |
+                   (admits(*comp.constraint, 10, admits) ? 2u : 0u);
+        }
+        return std::nullopt;
+    }
+    auto combine = [&](const std::vector<ast::ConstraintPtr>& ops, bool intersect) -> std::optional<unsigned> {
+        std::optional<unsigned> acc;
+        for (const auto& op : ops) {
+            if (!op) continue;
+            auto s = real_base_set(*op);
+            if (!s) continue;
+            acc = acc ? (intersect ? (*acc & *s) : (*acc | *s)) : *s;
+        }
+        return acc;
+    };
+    if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c.body)) return combine(ic->operands, true);
+    if (auto* uc = std::get_if<ast::UnionConstraint>(&c.body))         return combine(uc->operands, false);
+    return std::nullopt;
+}
+
 RealRangeSpec Generator::extract_real_range(const ast::TypeDef& def) const {
     constexpr double inf = std::numeric_limits<double>::infinity();
     auto endpoint = [&](const ast::RangeEndpoint& e, double unbounded) -> std::optional<double> {
@@ -1430,8 +1493,14 @@ RealRangeSpec Generator::extract_real_range(const ast::TypeDef& def) const {
         else if (*hi == r.upper)          r.upper_open = r.upper_open || vr->upper.open;
         r.present = true;
     });
-    if (unresolved) return RealRangeSpec{};
+    if (unresolved) r = RealRangeSpec{};
     r.extensible = r.present && is_constraint_extensible(def);
+    // X.697 §23.1.3: serial constraints intersect; none at all admits both bases.
+    std::optional<unsigned> bases;
+    for (const auto& cptr : def.constraints)
+        if (cptr)
+            if (auto b = real_base_set(*cptr)) bases = bases ? (*bases & *b) : *b;
+    r.base10_only = bases == 2u;
     return r;
 }
 
@@ -1588,7 +1657,7 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
     // REAL value range
     if (*bt == BT::Real) {
         auto rr = extract_real_range(m);
-        if (rr.present) {
+        if (rr.has_table()) {
             MemberTypeDescriptorSpec spec;
             spec.kind = MemberTypeDescriptorSpec::Kind::Real;
             spec.parent_cname = parent_cname;

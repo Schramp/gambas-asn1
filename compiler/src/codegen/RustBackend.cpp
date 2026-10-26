@@ -178,13 +178,15 @@ static std::string rust_f64_literal(double d) {
     return f;
 }
 
-/// @brief Emit a REAL value-range table (X.680 §47.4) as a `Constraints` static,
-///        read by `constraints::validate_real`.
+/// @brief Emit a REAL's value range (X.680 §47.4) and JER base constraint
+///        (X.697 §23.1.4) as a `Constraints` static, read by
+///        `constraints::validate_real` and `jer::real`.
 /// @param os    Output stream.
 /// @param cname Static's identifier.
-/// @param r     Range; must be present.
+/// @param r     Range and base constraint; flags 0 when neither applies.
 static void emit_real_constraints(std::ostream& os, const std::string& cname, const RealRangeSpec& r) {
-    int flags = asn1::Constraints::REAL_RANGE
+    int flags = (r.present ? asn1::Constraints::REAL_RANGE : 0)
+              | (r.base10_only ? asn1::Constraints::REAL_BASE_10 : 0)
               | (r.lower_open ? asn1::Constraints::REAL_LOWER_OPEN : 0)
               | (r.upper_open ? asn1::Constraints::REAL_UPPER_OPEN : 0)
               | (r.extensible ? asn1::Constraints::EXTENSIBLE : 0);
@@ -631,7 +633,8 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
             "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None, real_lower: 0.0, real_upper: 0.0,\n"
             "}};\n\n",
             cname, flags, spec.size_range_bits, spec.size_lower, size_upper);
-    } else if (spec.real_range.present) {
+    } else if (spec.builtin_type == BT::Real) {
+        // Always emitted so a member of this alias can reference it.
         emit_real_constraints(os, cname, spec.real_range);
     }
 
@@ -1528,11 +1531,12 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 } else if (!m.mbuiltin && m.ref_builtin_alias &&
                            (*m.ref_builtin_alias == ast::BuiltinType::OctetString ||
                             *m.ref_builtin_alias == ast::BuiltinType::BitString ||
+                            *m.ref_builtin_alias == ast::BuiltinType::Real ||
                             is_sizeable_string_kind(*m.ref_builtin_alias))) {
                     // Same rationale for a named OCTET STRING/BIT STRING/
-                    // sizeable-string alias (`emit_builtin_alias_definition`'s
+                    // sizeable-string/REAL alias (`emit_builtin_alias_definition`'s
                     // own `{Alias}_CONSTRAINTS`, only emitted for these
-                    // SIZE-able kinds) — `ref_constraints_owner`, not
+                    // kinds) — `ref_constraints_owner`, not
                     // `mtype`: a multi-hop *pure* alias chain (e.g. ETSI
                     // LI's own `LawfulInterceptionIdentifier ::= LIID`)
                     // generates every intermediate hop as a bare `pub
@@ -2095,6 +2099,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             } else if (!a.mbuiltin && a.ref_builtin_alias &&
                        (*a.ref_builtin_alias == ast::BuiltinType::OctetString ||
                         *a.ref_builtin_alias == ast::BuiltinType::BitString ||
+                        *a.ref_builtin_alias == ast::BuiltinType::Real ||
                         is_sizeable_string_kind(*a.ref_builtin_alias))) {
                 // `ref_constraints_owner`, not `mtype` — see the
                 // SEQUENCE-member case's identical fix (Backend.hpp's

@@ -374,12 +374,13 @@ std::string make_integer_pc(int flags, int range_bits, int int_kind,
 }
 
 /// @brief Format the Constraints initializer of a REAL value range.
-/// @param r  Backend-agnostic range; must be present.
+/// @param r  Backend-agnostic range and base constraint; `has_table()` true.
 /// @return Initializer text, e.g. `"{ .flags=32, .real_lower=0.0, .real_upper=100.0 }"`,
-///         read by asn1::Real::validate() and RandomFiller.
-/// @see X.680 §47.4 (ValueRange, open endpoints).
+///         read by asn1::Real::validate(), RandomFiller and the JER REAL handler.
+/// @see X.680 §47.4 (ValueRange, open endpoints); X.697 §23.1.4 (base 10 only).
 std::string make_real_constraints_init(const RealRangeSpec& r) {
-    int flags = asn1::Constraints::REAL_RANGE
+    int flags = (r.present ? asn1::Constraints::REAL_RANGE : 0)
+              | (r.base10_only ? asn1::Constraints::REAL_BASE_10 : 0)
               | (r.lower_open ? asn1::Constraints::REAL_LOWER_OPEN : 0)
               | (r.upper_open ? asn1::Constraints::REAL_UPPER_OPEN : 0)
               | (r.extensible ? asn1::Constraints::EXTENSIBLE : 0);
@@ -588,7 +589,7 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
                                                       spec.size_lower, spec.size_upper,
                                                       spec.alphabet, alpha_prefix, bbt)
            << " /* constraints */,\n";
-    } else if (spec.real_range.present) {
+    } else if (spec.real_range.has_table()) {
         os << "    " << make_real_constraints_init(spec.real_range) << " /* constraints */,\n";
     } else {
         os << "    {} /* constraints — unconstrained */,\n";

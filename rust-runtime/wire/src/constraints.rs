@@ -32,6 +32,8 @@ pub const REAL_RANGE: u32 = 32;
 pub const REAL_LOWER_OPEN: u32 = 64;
 /// `real_upper` itself is excluded (`..<hi`).
 pub const REAL_UPPER_OPEN: u32 = 128;
+/// The JER-visible base constraint admits only base 10 (X.697 §23.1.4).
+pub const REAL_BASE_10: u32 = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Constraints {
@@ -92,6 +94,7 @@ impl Constraints {
     pub const REAL_RANGE: u32 = REAL_RANGE;
     pub const REAL_LOWER_OPEN: u32 = REAL_LOWER_OPEN;
     pub const REAL_UPPER_OPEN: u32 = REAL_UPPER_OPEN;
+    pub const REAL_BASE_10: u32 = REAL_BASE_10;
 
     pub fn is_constrained(&self) -> bool {
         self.flags & CONSTRAINED != 0

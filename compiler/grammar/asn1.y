@@ -1647,17 +1647,35 @@ FullSpecification:
 	;
 
 PartialSpecification:
-	'{' TOK_ThreeDots ',' TypeConstraints '}' { $$ = $4; }
+	'{' TOK_ThreeDots ',' TypeConstraints '}'
+	{
+	    std::get<ast::ComponentsConstraint>($4->body).partial = true;
+	    $$ = $4;
+	}
 	;
 
 TypeConstraints:
 	  NamedConstraint                     { $$ = $1; }
-	| TypeConstraints ',' NamedConstraint { $$ = $1; }
+	| TypeConstraints ',' NamedConstraint
+	{
+	    auto& into = std::get<ast::ComponentsConstraint>($1->body).components;
+	    auto& from = std::get<ast::ComponentsConstraint>($3->body).components;
+	    into.insert(into.end(), from.begin(), from.end());
+	    $$ = $1;
+	}
 	;
 
 NamedConstraint:
 	IdentifierAsValue optConstraint optPresenceConstraint
-	{ $$ = std::make_shared<ast::Constraint>(); }
+	{
+	    ast::ComponentsConstraint cc;
+	    const auto* ref = std::get_if<NamedValueRef>(&$1);
+	    bool has_value = $2 && !std::holds_alternative<std::monostate>($2->body);
+	    cc.components.push_back({ref ? ref->name : std::string{}, has_value ? $2 : nullptr});
+	    auto c = std::make_shared<ast::Constraint>();
+	    c->body = std::move(cc);
+	    $$ = c;
+	}
 	;
 
 optPresenceConstraint:

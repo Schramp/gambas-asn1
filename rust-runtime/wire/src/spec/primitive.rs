@@ -451,7 +451,7 @@ pub fn jer_encode_primitive(p: PrimitiveRef, c: &crate::constraints::Constraints
         PrimitiveRef::UInteger(x) => crate::jer::integer::encode(x.0, out),
         PrimitiveRef::BigInteger(x) => crate::jer::integer::encode(x.0, out),
         PrimitiveRef::ArbitraryInteger(_) => return Err(not_supported("JER", "ArbitraryInteger")),
-        PrimitiveRef::Real(x) => crate::jer::real::encode(x, out),
+        PrimitiveRef::Real(x) => crate::jer::real::encode(x, c, out),
         PrimitiveRef::Null(_) => crate::jer::null::encode(out),
         PrimitiveRef::OctetString(x) => crate::jer::octet_string::encode(&x.0, out),
         PrimitiveRef::BitString(x) => crate::jer::bit_string::encode(x, c, out),
@@ -490,7 +490,7 @@ pub fn jer_decode_primitive(p: PrimitiveRefMut, c: &crate::constraints::Constrai
         PrimitiveRefMut::UInteger(x) => { x.0 = crate::jer::integer::decode(r)?; Ok(()) }
         PrimitiveRefMut::BigInteger(x) => { x.0 = crate::jer::integer::decode(r)?; Ok(()) }
         PrimitiveRefMut::ArbitraryInteger(_) => Err(BerDecodeError::new(not_supported("JER", "ArbitraryInteger").message, r.pos())),
-        PrimitiveRefMut::Real(x) => { *x = crate::jer::real::decode(r)?; Ok(()) }
+        PrimitiveRefMut::Real(x) => { *x = crate::jer::real::decode(r, c)?; Ok(()) }
         PrimitiveRefMut::Null(_) => crate::jer::null::decode(r),
         PrimitiveRefMut::OctetString(x) => { x.0 = crate::jer::octet_string::decode(r)?; Ok(()) }
         PrimitiveRefMut::BitString(x) => { *x = crate::jer::bit_string::decode(c, r)?; Ok(()) }
