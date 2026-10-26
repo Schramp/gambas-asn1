@@ -241,8 +241,11 @@ void emit_type_descriptor(std::ostream& os,
     os << "};\n\n";
 }
 
-// Moved from Generator::emit_enumerated_declaration — same output, now driven by
-// the backend-agnostic EnumeratedSpec instead of ast::TypeDef.
+/// @brief Emit the header part of an ENUMERATED type: an `asn1::EnumValue`
+///        subclass with the values as a plain inner enum.
+/// @param spec  Backend-agnostic ENUMERATED decision.
+/// @param os    Declaration (.hpp) buffer.
+/// @see X.680 §20 (enumerated type).
 void CppBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
@@ -254,7 +257,7 @@ void CppBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::os
     for (const auto& v : spec.values) {
         os << std::format("        {} = {},\n",
             escape(type_name(v.asn1_name), {"present", "value_", "value", "set", "Enm"}),
-            v.value);
+            cpp_int64_literal(v.value));
     }
     if (spec.extensible)
         os << "        /* extensible */\n";
@@ -274,8 +277,11 @@ void CppBackend::emit_enumerated_declaration(const EnumeratedSpec& spec, std::os
     os << "};\n\n";
 }
 
-// Moved from Generator::emit_enumerated_definition — same output, now driven by
-// the backend-agnostic EnumeratedSpec instead of ast::TypeDef.
+/// @brief Emit the tables of an ENUMERATED type: the value-sorted
+///        `asn_MAP_value2enum`, the PER root-value order, `asn_SPC` and `asn_DEF`.
+/// @param spec  Backend-agnostic ENUMERATED decision.
+/// @param os    Definition (.cpp) buffer.
+/// @see X.691 §14 (PER enumerated index in root-value order).
 void CppBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
@@ -284,13 +290,13 @@ void CppBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::ost
 
     os << std::format("const asn1::EnumEntry {}::asn_MAP_value2enum[] = {{\n", cname);
     for (const auto& v : sorted)
-        os << std::format("    {{ {}, \"{}\" }},\n", v.value, v.asn1_name);
+        os << std::format("    {{ {}, \"{}\" }},\n", cpp_int64_literal(v.value), v.asn1_name);
     os << "};\n\n";
 
     // PER: root values in definition order (ordinal -> value mapping). File-local — not in header.
     os << std::format("static const long asn_PER_{}_value_order[] = {{\n", cname);
     for (int i = 0; i < spec.root_count; ++i)
-        os << std::format("    {},\n", spec.values[i].value);
+        os << std::format("    {},\n", cpp_int64_literal(spec.values[i].value));
     os << "};\n\n";
 
     // EnumSpec
@@ -320,12 +326,24 @@ void CppBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& 
     emit_enumerated_definition(spec, session.buffer(definition_extension()));
 }
 
-// Build a Constraints designated-initializer literal for an INTEGER
-// constraint. Moved from Generator.cpp (was `static`, file-local).
-// Declared (not `static`) in CppBackend.hpp since Generator.cpp's
-// emit_member_type_descriptor still needs it for inline-constrained-member
-// INTEGER handling, not yet migrated. Uses designated initializers (C++20)
-// so struct field additions don't require updating every call site.
+/// @brief Format an int64_t as a C++ expression of type int64_t; INT64_MIN
+///        becomes `(-9223372036854775807 - 1)` (see CppBackend.hpp).
+/// @param v  Value to format.
+/// @return The expression text.
+std::string cpp_int64_literal(int64_t v) {
+    if (v == std::numeric_limits<int64_t>::min()) return "(-9223372036854775807 - 1)";
+    return std::to_string(v);
+}
+
+/// @brief Build the `asn1::Constraints` designated initializer for an
+///        INTEGER's PER value range.
+/// @param flags       CONSTRAINED / SEMI_CONSTRAINED / EXTENSIBLE bits.
+/// @param range_bits  Bits for the constrained whole number; -1 when semi-constrained.
+/// @param int_kind    Storage kind (INT_S64, INT_U64, ...).
+/// @param lower_s64, upper_s64  Bounds as int64_t.
+/// @param lower_u64, upper_u64  Bounds as uint64_t (INT_U64 storage).
+/// @return Initializer text, e.g. `"{ .flags=1, .range_bits=8, ... }"`.
+/// @see X.691 §13 (constrained whole number), §12.2 (INTEGER).
 std::string make_integer_pc(int flags, int range_bits, int int_kind,
                              int64_t lower_s64, int64_t upper_s64,
                              uint64_t lower_u64, uint64_t upper_u64) {
@@ -335,19 +353,19 @@ std::string make_integer_pc(int flags, int range_bits, int int_kind,
         ".lower_u64={:#x}u, .upper_u64={:#x}u, "
         ".lower_hi=0, .lower_lo=0, .upper_hi=0, .upper_lo=0 }}",
         flags, range_bits, int_kind,
-        lower_s64, upper_s64,
+        cpp_int64_literal(lower_s64), cpp_int64_literal(upper_s64),
         lower_u64, upper_u64);
 }
 
-// Moved from Generator::emit_integer_declaration — same output, now driven by the
-// backend-agnostic IntegerSpec instead of ast::TypeDef.
-// Note: the alias storage type here (__int128/std::vector<uint8_t> for
-// I128/ARBITRARY) deliberately differs from native_int_type()'s
-// asn1::BigInteger/asn1::ArbitraryInteger — those wrapper classes have
-// deleted constructors (stub, "not yet implemented"), so aliasing a named
-// top-level type to one of them would make the alias unusable. This
-// distinction is pre-existing behavior, preserved as-is, not introduced by
-// this move.
+/// @brief Emit the header part of a named INTEGER type: the storage alias,
+///        one `int64_t` constant per named number, and the `asn_DEF` extern.
+/// @param spec  Backend-agnostic INTEGER decision.
+/// @param os    Declaration (.hpp) buffer.
+/// @see X.680 §19 (integer type, named numbers).
+///
+/// The alias storage for I128/ARBITRARY is `__int128`/`std::vector<uint8_t>`,
+/// not native_int_type()'s asn1::BigInteger/asn1::ArbitraryInteger: those
+/// wrappers have deleted constructors, so an alias to them is unusable.
 void CppBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
@@ -362,7 +380,7 @@ void CppBackend::emit_integer_declaration(const IntegerSpec& spec, std::ostream&
 
     for (const auto& v : spec.named_values)
         os << std::format("inline constexpr int64_t {}_{} = {};\n",
-                           cname, value_name(v.asn1_name), v.value);
+                           cname, value_name(v.asn1_name), cpp_int64_literal(v.value));
     if (!spec.named_values.empty()) os << "\n";
 
     os << std::format("extern const asn1::TypeDescriptor asn_DEF_{};\n", cname);
@@ -582,7 +600,7 @@ static std::string format_default_value_literal(const std::string& mtype,
     case Kind::Bool:
         return std::format("{}{{{}}}", mtype, spec.bool_val ? "true" : "false");
     case Kind::Int:
-        return std::format("{}{{{}}}", mtype, spec.int_val);
+        return std::format("{}{{{}}}", mtype, cpp_int64_literal(spec.int_val));
     case Kind::String:
         return std::format("{}{{\"{}\"}}", mtype, escape_string_literal(spec.string_val));
     case Kind::EnumRef:

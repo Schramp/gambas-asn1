@@ -1,0 +1,21 @@
+-- INT64_MIN (-2^63) in every place the C++ backend writes an integer
+-- value: a PER value-range bound (top-level and inline member), a DEFAULT
+-- value, an ENUMERATED value and a named number. The C++ token
+-- -9223372036854775808 is not an int64_t constant expression, so each of
+-- these must compile with clang as well as gcc.
+Int64MinLiteralTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+LowRange ::= INTEGER (-9223372036854775808..-1)
+
+Named ::= INTEGER { lowest(-9223372036854775808), zero(0) }
+
+MinEnum ::= ENUMERATED { lowest(-9223372036854775808), zero(0) }
+
+MinRec ::= SEQUENCE {
+    lo      INTEGER (-9223372036854775808..0) DEFAULT -9223372036854775808,
+    range   LowRange,
+    kind    MinEnum,
+    named   Named
+}
+
+END
