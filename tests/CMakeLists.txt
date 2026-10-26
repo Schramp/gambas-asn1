@@ -922,6 +922,38 @@ target_link_libraries(test_per_int64_bounds PRIVATE asn1cpp_runtime)
 add_test(NAME per_int64_bounds COMMAND test_per_int64_bounds)
 set_tests_properties(per_int64_bounds PROPERTIES TIMEOUT 30)
 
+# ---- INT64_MIN in generated C++ ---------------------------------------------
+# int64_min_literal_test.asn1: -2^63 as a value-range bound, DEFAULT, ENUMERATED
+# value and named number (see per/test_int64_min_literal.cpp). The generated
+# files are also compiled with clang when it is installed: gcc accepts the bare
+# token -9223372036854775808 with a warning, clang rejects it as narrowing.
+set(INT64MIN_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_int64_min_literal_test)
+set(INT64MIN_GEN_SRCS ${INT64MIN_GEN_DIR}/LowRange.cpp ${INT64MIN_GEN_DIR}/Named.cpp
+                      ${INT64MIN_GEN_DIR}/MinEnum.cpp ${INT64MIN_GEN_DIR}/MinRec.cpp)
+add_custom_command(
+    OUTPUT  ${INT64MIN_GEN_SRCS}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${INT64MIN_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp>
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/int64_min_literal_test.asn1
+            -o ${INT64MIN_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/int64_min_literal_test.asn1
+    COMMENT "Generating C++ from int64_min_literal_test.asn1"
+)
+add_executable(test_int64_min_literal per/test_int64_min_literal.cpp ${INT64MIN_GEN_SRCS})
+target_include_directories(test_int64_min_literal PRIVATE ${INT64MIN_GEN_DIR})
+target_link_libraries(test_int64_min_literal PRIVATE asn1cpp_runtime)
+add_test(NAME int64_min_literal COMMAND test_int64_min_literal)
+set_tests_properties(int64_min_literal PROPERTIES TIMEOUT 30)
+
+find_program(CLANGXX_EXECUTABLE NAMES clang++)
+if(CLANGXX_EXECUTABLE)
+    add_test(NAME int64_min_literal_clang
+             COMMAND ${CLANGXX_EXECUTABLE} -std=c++20 -fsyntax-only
+                     -I${CMAKE_SOURCE_DIR}/runtime/include -I${INT64MIN_GEN_DIR}
+                     ${INT64MIN_GEN_SRCS})
+    set_tests_properties(int64_min_literal_clang PROPERTIES TIMEOUT 120)
+endif()
+
 # ---- BIT STRING with a NamedBitList in PER (X.691 §15.2, §15.3) -------------
 # per_named_bits_test.asn1: trailing 0 bits removed, padded to the SIZE lower
 # bound, for inline members, named types and an alias (see per/test_per_named_bits.cpp).

@@ -64,6 +64,13 @@ void emit_type_descriptor(std::ostream& os,
                            // alternative (TypeDescriptor::has_contained).
                            bool has_contained = false);
 
+/// @brief Format an int64_t as a C++ integer expression of type int64_t.
+/// @param v  Value to format.
+/// @return Decimal text; INT64_MIN as `(-9223372036854775807 - 1)`, since
+///         `-9223372036854775808` is unary minus on a literal no signed type
+///         holds (C++ [lex.icon]) and narrows in a braced initializer.
+std::string cpp_int64_literal(int64_t v);
+
 /// @brief Build a Constraints designated-initializer literal for an INTEGER
 ///        constraint. Pure C++ text formatting from already-resolved
 ///        parameters — shared between CppBackend::emit_integer_definition and
