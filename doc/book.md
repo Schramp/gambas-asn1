@@ -385,6 +385,18 @@ encryption container's raw bytes, which IntegrityCheck hashes are computed over,
 decoded `EncryptedPayload`. The two TS 33.128 fields that carry a contents constraint
 (`threeGPP33128DefinedCC`/`IRI`) need no entry.
 
+The example's `nested-decoder` prints each PS-PDU as XER from that one decode.
+`--xer-form hex|inline|inline_raw` sets `ContainedOptions::xer` for the output:
+
+| `--xer-form` | Output |
+|--------------|--------|
+| `hex` (default) | `encryptedPayload` as hex, then the decoded `EncryptedPayload` as a separate document after `--- EncryptedPayload (N bytes, M zero-padded) ---`. Matches the asn1c nested decoder line for line. |
+| `inline` | The `EncryptedPayload` inside `<encryptedPayload>`, no separate document. |
+| `inline_raw` | As `inline`, plus `<!-- raw: HEX -->` with the original bytes, padding included. |
+
+A payload that is not decoded (`encryptionType` other than `none`, or a decode failure)
+stays hex in every form; its status and reason go to stderr.
+
 `--list-contained` prints the merged result:
 
 ```

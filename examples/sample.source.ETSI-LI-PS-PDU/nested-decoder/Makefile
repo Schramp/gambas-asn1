@@ -24,6 +24,7 @@ gen-testdata: gen-testdata.cpp $(ETSI_LIB) $(RUNTIME_LIB)
 testdata: gen-testdata $(PROGRAM)
 	./gen-testdata pdu-00000001.etsi
 	./$(PROGRAM) pdu-00000001.etsi > pdu-00000001.expected
+	./$(PROGRAM) --xer-form inline pdu-00000001.etsi > pdu-00000001.inline.expected
 
 clean:
 	rm -f $(PROGRAM) $(PROGRAM).d gen-testdata gen-testdata.d

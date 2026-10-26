@@ -82,6 +82,8 @@ jobs:
           cd examples/sample.source.ETSI-LI-PS-PDU/nested-decoder
           ./nested-decoder pdu-00000001.etsi > actual.xer
           diff pdu-00000001.expected actual.xer
+          ./nested-decoder --xer-form inline pdu-00000001.etsi > actual.inline.xer
+          diff pdu-00000001.inline.expected actual.inline.xer
 
       - name: Install Doxygen and Graphviz
         if: github.ref == 'refs/heads/main'

@@ -3,3 +3,4 @@ nested-decoder
 gen-testdata
 gen-testdata.d
 actual.xer
+actual.inline.xer
