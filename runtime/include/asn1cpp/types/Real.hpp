@@ -8,6 +8,7 @@
 #include "../Tag.hpp"
 #include "../Asn1Object.hpp"
 #include "../codec/BerTraits.hpp"
+#include "../codec/Constraints.hpp"
 
 namespace asn1 {
 
@@ -37,6 +38,32 @@ public:
     bool operator==(const Real& o) const {
         if (std::isnan(value_) || std::isnan(o.value_)) return std::isnan(value_) && std::isnan(o.value_);
         return value_ == o.value_ && std::signbit(value_) == std::signbit(o.value_);
+    }
+
+    /// @brief Check the value against a REAL value-range constraint.
+    /// @param c  Constraints; only REAL_RANGE / REAL_*_OPEN / EXTENSIBLE and
+    ///           real_lower / real_upper are read.
+    /// @return 0 when inside the range (or no range, or extensible). Otherwise a
+    ///         signed distance to the nearest bound, rounded away from zero to at
+    ///         least 1 and saturated at INT64_MAX: positive below the lower bound,
+    ///         negative above the upper bound. NOT-A-NUMBER lies in no range and
+    ///         returns 1.
+    /// @see X.680 §47.4 — ValueRange; PLUS-INFINITY exceeds and MINUS-INFINITY
+    ///      precedes every other REAL value (§47.4.2 NOTE).
+    int64_t validate(const Constraints& c) const {
+        if (!(c.flags & Constraints::REAL_RANGE) || (c.flags & Constraints::EXTENSIBLE)) return 0;
+        if (std::isnan(value_)) return 1;
+        auto distance = [](double d) -> int64_t {
+            if (!(d < 9.2e18)) return std::numeric_limits<int64_t>::max();
+            return std::max<int64_t>(1, static_cast<int64_t>(std::ceil(d)));
+        };
+        bool lower_open = c.flags & Constraints::REAL_LOWER_OPEN;
+        bool upper_open = c.flags & Constraints::REAL_UPPER_OPEN;
+        if (value_ < c.real_lower || (lower_open && value_ == c.real_lower))
+            return distance(c.real_lower - value_);
+        if (value_ > c.real_upper || (upper_open && value_ == c.real_upper))
+            return -distance(value_ - c.real_upper);
+        return 0;
     }
 
     static const TypeDescriptor& asn_DEF;

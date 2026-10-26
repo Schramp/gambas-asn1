@@ -219,6 +219,23 @@ target_include_directories(test_real_default PRIVATE ${REAL_DEFAULT_GEN_DIR})
 target_link_libraries(test_real_default PRIVATE asn1cpp_runtime)
 add_test(NAME real_default COMMAND test_real_default)
 
+# ---- REAL value-range constraints (X.680 §47.4); Rust leg: rust/real_constraint
+set(REAL_CONSTRAINT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_real_constraint_test)
+add_custom_command(
+    OUTPUT  ${REAL_CONSTRAINT_GEN_DIR}/Ranges.cpp ${REAL_CONSTRAINT_GEN_DIR}/Pct.cpp ${REAL_CONSTRAINT_GEN_DIR}/Finite.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${REAL_CONSTRAINT_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/real_constraint_test.asn1
+            -o ${REAL_CONSTRAINT_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/real_constraint_test.asn1
+    COMMENT "Generating C++ from real_constraint_test.asn1"
+)
+add_executable(test_real_constraint seq/test_real_constraint.cpp
+               ${REAL_CONSTRAINT_GEN_DIR}/Ranges.cpp ${REAL_CONSTRAINT_GEN_DIR}/Pct.cpp
+               ${REAL_CONSTRAINT_GEN_DIR}/Finite.cpp)
+target_include_directories(test_real_constraint PRIVATE ${REAL_CONSTRAINT_GEN_DIR})
+target_link_libraries(test_real_constraint PRIVATE asn1cpp_runtime)
+add_test(NAME real_constraint COMMAND test_real_constraint)
+
 # ---- Contained values in generated code (X.682 §11 + --container-config) ---
 set(CONTAINING_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_containing_test)
 set(CONTAINING_TYPES Inner Kind Wrapped Holder Pick Envelope)
@@ -1965,6 +1982,29 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_real_default PROPERTIES
         TIMEOUT 120 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_REAL_DEFAULT_GEN_DIR}")
+endif()
+
+# Rust leg of the REAL constraint test — see tests/rust/real_constraint/src/main.rs
+# (C++ leg: test_real_constraint).
+set(RUST_REAL_CONSTRAINT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_real_constraint)
+add_custom_command(
+    OUTPUT  ${RUST_REAL_CONSTRAINT_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_REAL_CONSTRAINT_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/real_constraint_test.asn1
+            -o ${RUST_REAL_CONSTRAINT_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/real_constraint_test.asn1
+    COMMENT "Generating Rust from real_constraint_test.asn1"
+)
+add_custom_target(gen_rust_real_constraint ALL DEPENDS ${RUST_REAL_CONSTRAINT_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_real_constraint
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/real_constraint/Cargo.toml)
+    set_tests_properties(rust_real_constraint PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_REAL_CONSTRAINT_GEN_DIR}")
 endif()
 
 # Rust leg of the contained-values test — see tests/rust/containing/src/main.rs

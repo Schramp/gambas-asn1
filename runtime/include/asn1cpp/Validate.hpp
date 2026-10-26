@@ -14,6 +14,7 @@
 //   -delta — value/size above upper bound; lower sampling max by |delta|.
 // Units:
 //   - INTEGER:        units = value.
+//   - REAL:           units = value, rounded away from zero; NaN in a range → 1.
 //   - OCTET / BIT / strings / SEQ-OF: units = bytes / bits / chars / elements.
 //   - ENUMERATED:     1 when value is unknown, 0 otherwise (no metric).
 //
@@ -25,6 +26,7 @@
 #include "Asn1Object.hpp"
 #include "EnumValue.hpp"
 #include "types/Integer.hpp"
+#include "types/Real.hpp"
 #include "types/OctetString.hpp"
 #include "types/BitString.hpp"
 #include "types/Strings.hpp"
@@ -52,6 +54,8 @@ inline int64_t validate(const TypeDescriptor& def, const Asn1Object* obj) {
         if (c.int_kind == Constraints::INT_U64)
             return static_cast<const UInteger*>(obj)->validate(c);
         return static_cast<const Integer*>(obj)->validate(c);
+    case UniversalTag::Real:
+        return static_cast<const Real*>(obj)->validate(c);
     case UniversalTag::OctetString:
         return static_cast<const OctetString*>(obj)->validate(c);
     case UniversalTag::BitString:

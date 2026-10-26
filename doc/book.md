@@ -253,6 +253,16 @@ accepts every encoding the standard defines:
   the C locale; Rust `str::parse`). Reserved NR codes and malformed text are decode
   errors.
 
+A value-range constraint on a REAL type or member (X.680 §47.4) is checked by
+`asn1::validate()` (C++) and `asn1cpp_wire::constraints::validate_real` (Rust), the same
+fail-soft way as INTEGER ranges. Endpoints may be closed or open (`<`). `MIN`, `MAX` and
+the infinities count as unbounded ends, and serial constraints such as `(-10..10)(0..5)`
+intersect. NOT-A-NUMBER lies outside every range, so `(MINUS-INFINITY <..< PLUS-INFINITY)`
+admits finite values only. An extensible range (`(0..1, ...)`) is never a violation.
+`RandomFiller` draws only values inside the range. The range does not change any
+encoding. A range written with a value reference that is not an integer leaves the
+type unconstrained.
+
 A REAL member may have a DEFAULT: a realnumber, an integer literal, `PLUS-INFINITY` or
 `MINUS-INFINITY`. An absent member decodes as its default, and a member equal to its
 default is not encoded. REAL equality is value identity: minus zero and plus zero

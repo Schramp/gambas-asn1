@@ -11,6 +11,9 @@ struct Constraints {
     static constexpr int EXTENSIBLE       = 4;
     static constexpr int SIZE_CONSTRAINED = 8;   // size_lower..size_upper is a finite range
     static constexpr int NAMED_BITS       = 16;  // BIT STRING with a NamedBitList (X.680 §22.7)
+    static constexpr int REAL_RANGE       = 32;  // REAL value range real_lower..real_upper (X.680 §47.4)
+    static constexpr int REAL_LOWER_OPEN  = 64;  // real_lower itself excluded ("lo<..")
+    static constexpr int REAL_UPPER_OPEN  = 128; // real_upper itself excluded ("..<hi")
 
     // INTEGER storage kind — chosen at codegen time from constraint analysis.
     // BerCodec / RandomFiller / validate() read this to cast void* correctly.
@@ -51,6 +54,11 @@ struct Constraints {
     const uint8_t*   alphabet{nullptr};       // decode: alphabet[idx] → char
     uint8_t          alphabet_size{0};        // number of entries in alphabet[]
     const uint16_t*  encode_table{nullptr};   // encode: encode_table[char] → idx | 0xFFFF
+
+    // REAL value range, read by asn1::Real::validate() when REAL_RANGE is set.
+    // MIN / MAX / MINUS-INFINITY / PLUS-INFINITY endpoints are ±infinity.
+    double real_lower{0.0};
+    double real_upper{0.0};
 };
 
 } // namespace asn1

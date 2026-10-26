@@ -373,6 +373,20 @@ std::string make_integer_pc(int flags, int range_bits, int int_kind,
         lower_u64, upper_u64);
 }
 
+/// @brief Format the Constraints initializer of a REAL value range.
+/// @param r  Backend-agnostic range; must be present.
+/// @return Initializer text, e.g. `"{ .flags=32, .real_lower=0.0, .real_upper=100.0 }"`,
+///         read by asn1::Real::validate() and RandomFiller.
+/// @see X.680 §47.4 (ValueRange, open endpoints).
+std::string make_real_constraints_init(const RealRangeSpec& r) {
+    int flags = asn1::Constraints::REAL_RANGE
+              | (r.lower_open ? asn1::Constraints::REAL_LOWER_OPEN : 0)
+              | (r.upper_open ? asn1::Constraints::REAL_UPPER_OPEN : 0)
+              | (r.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+    return std::format("{{ .flags={}, .real_lower={}, .real_upper={} }}",
+                       flags, cpp_double_literal(r.lower), cpp_double_literal(r.upper));
+}
+
 /// @brief Emit the header part of a named INTEGER type: the storage alias,
 ///        one `int64_t` constant per named number, and the `asn_DEF` extern.
 /// @param spec  Backend-agnostic INTEGER decision.
@@ -574,6 +588,8 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
                                                       spec.size_lower, spec.size_upper,
                                                       spec.alphabet, alpha_prefix, bbt)
            << " /* constraints */,\n";
+    } else if (spec.real_range.present) {
+        os << "    " << make_real_constraints_init(spec.real_range) << " /* constraints */,\n";
     } else {
         os << "    {} /* constraints — unconstrained */,\n";
     }
@@ -679,6 +695,11 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
         per_h = is_u64 ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
         ber_h = is_u64 ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
         cpp_t = is_u64 ? "asn1::UInteger" : "asn1::Integer";
+    } else if (spec.kind == Kind::Real) {
+        pc = make_real_constraints_init(spec.real_range);
+        per_h = per_handler_for_builtin(ast::BuiltinType::Real);
+        ber_h = ber_handler_for_builtin(ast::BuiltinType::Real);
+        cpp_t = native_builtin_type(ast::BuiltinType::Real);
     } else {
         if (!spec.alpha_prefix.empty())
             emit_from_alphabet_arrays(os, spec.alpha_prefix, spec.alphabet);

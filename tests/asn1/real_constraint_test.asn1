@@ -1,0 +1,16 @@
+RealConstraintTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+Pct    ::= REAL (0..100)
+Finite ::= REAL (MINUS-INFINITY <..< PLUS-INFINITY)
+
+Ranges ::= SEQUENCE {
+    unit  REAL (0 <..< 1),
+    big   REAL (1.5E3..MAX) OPTIONAL,
+    both  REAL (-10..10) (0..5),
+    ext   REAL (-1..1, ...),
+    pct   Pct,
+    fin   Finite,
+    tag   INTEGER
+}
+
+END
