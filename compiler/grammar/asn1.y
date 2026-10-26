@@ -1428,8 +1428,11 @@ BitStringValue:
 	| TOK_hstring { $$ = $1; }
 	;
 
+/* X.680 §20.6: RealValue ::= NumericRealValue | SpecialRealValue. */
 RealValue:
-	TOK_realnumber { $$ = $1; }
+	  TOK_realnumber     { $$ = $1; }
+	| TOK_PLUS_INFINITY  { $$ = std::numeric_limits<double>::infinity(); }
+	| TOK_MINUS_INFINITY { $$ = -std::numeric_limits<double>::infinity(); }
 	;
 
 SignedNumber:
