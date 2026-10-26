@@ -14,6 +14,7 @@ struct Constraints {
     static constexpr int REAL_RANGE       = 32;  // REAL value range real_lower..real_upper (X.680 §47.4)
     static constexpr int REAL_LOWER_OPEN  = 64;  // real_lower itself excluded ("lo<..")
     static constexpr int REAL_UPPER_OPEN  = 128; // real_upper itself excluded ("..<hi")
+    static constexpr int REAL_BASE_10     = 256; // JER-visible base constraint admits only 10 (X.697 §23.1.4)
 
     // INTEGER storage kind — chosen at codegen time from constraint analysis.
     // BerCodec / RandomFiller / validate() read this to cast void* correctly.

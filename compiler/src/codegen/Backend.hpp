@@ -291,6 +291,9 @@ struct RealRangeSpec {
     double upper = std::numeric_limits<double>::infinity();
     bool   lower_open = false;  // "lo<.." excludes lower itself
     bool   upper_open = false;  // "..<hi" excludes upper itself
+    bool   base10_only = false; // JER-visible base constraint admits only base 10 (X.697 §23.1.4)
+    /// @brief Whether a backend needs a Constraints table for this REAL.
+    bool has_table() const { return present || base10_only; }
 };
 
 /// @brief Backend-agnostic decision for a builtin-alias type (X.680 §19) —

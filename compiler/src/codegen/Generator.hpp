@@ -579,7 +579,9 @@ private:
     ///       scope for this decision/emission split.
     DefaultValueSpec default_value_spec_for(const ast::TypeDef& m) const;
     IntRange extract_integer_range(const ast::TypeDef& def) const;
-    /// @brief Intersect every ValueRange on a REAL type into one range (X.680 §47.4).
+    /// @brief Intersect every ValueRange on a REAL type into one range (X.680 §47.4),
+    ///        and decide whether its JER-visible base constraint admits only base 10
+    ///        (X.697 §23.1.3).
     /// @param def REAL type or member definition.
     /// @return The range; `present` is false when no ValueRange applies or an
     ///         endpoint is a value reference that does not resolve to a number.

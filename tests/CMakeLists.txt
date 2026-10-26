@@ -236,6 +236,23 @@ target_include_directories(test_real_constraint PRIVATE ${REAL_CONSTRAINT_GEN_DI
 target_link_libraries(test_real_constraint PRIVATE asn1cpp_runtime)
 add_test(NAME real_constraint COMMAND test_real_constraint)
 
+# ---- REAL JER base constraints (X.697 §23.1.4); Rust leg: rust/real_jer_base
+set(REAL_JER_BASE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_real_jer_base_test)
+add_custom_command(
+    OUTPUT  ${REAL_JER_BASE_GEN_DIR}/Bases.cpp ${REAL_JER_BASE_GEN_DIR}/Base10.cpp ${REAL_JER_BASE_GEN_DIR}/Base2.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${REAL_JER_BASE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/real_jer_base_test.asn1
+            -o ${REAL_JER_BASE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/real_jer_base_test.asn1
+    COMMENT "Generating C++ from real_jer_base_test.asn1"
+)
+add_executable(test_real_jer_base jer/test_real_jer_base.cpp
+               ${REAL_JER_BASE_GEN_DIR}/Bases.cpp ${REAL_JER_BASE_GEN_DIR}/Base10.cpp
+               ${REAL_JER_BASE_GEN_DIR}/Base2.cpp)
+target_include_directories(test_real_jer_base PRIVATE ${REAL_JER_BASE_GEN_DIR})
+target_link_libraries(test_real_jer_base PRIVATE asn1cpp_runtime)
+add_test(NAME real_jer_base COMMAND test_real_jer_base)
+
 # ---- Contained values in generated code (X.682 §11 + --container-config) ---
 set(CONTAINING_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_containing_test)
 set(CONTAINING_TYPES Inner Kind Wrapped Holder Pick Envelope)
@@ -2005,6 +2022,29 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_real_constraint PROPERTIES
         TIMEOUT 120 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_REAL_CONSTRAINT_GEN_DIR}")
+endif()
+
+# Rust leg of the REAL JER base-constraint test — see tests/rust/real_jer_base/src/main.rs
+# (C++ leg: test_real_jer_base).
+set(RUST_REAL_JER_BASE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_real_jer_base)
+add_custom_command(
+    OUTPUT  ${RUST_REAL_JER_BASE_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_REAL_JER_BASE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/real_jer_base_test.asn1
+            -o ${RUST_REAL_JER_BASE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/real_jer_base_test.asn1
+    COMMENT "Generating Rust from real_jer_base_test.asn1"
+)
+add_custom_target(gen_rust_real_jer_base ALL DEPENDS ${RUST_REAL_JER_BASE_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_real_jer_base
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/real_jer_base/Cargo.toml)
+    set_tests_properties(rust_real_jer_base PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_REAL_JER_BASE_GEN_DIR}")
 endif()
 
 # Rust leg of the contained-values test — see tests/rust/containing/src/main.rs

@@ -255,7 +255,12 @@ expose the rest. `==` compares abstract values, so a `Decimal` never equals a `D
   NR3 per §11.3.2 (`1456.E-2`, with exponent `+0` when zero). Both are valid CER/DER.
   `Double` keeps its usual binary form.
 - **JER:** `Decimal` is written as `{"base10Value": 1456E-2}` (X.697 §23.4). Other values
-  are a JSON number.
+  are a JSON number. When the type's JER-visible base constraint admits only 10, as in
+  `REAL (WITH COMPONENTS { ..., base (10) })`, a `Decimal` is a bare JSON number and a
+  JSON number decodes as `Decimal` (X.697 §23.1.4). The effective constraint follows
+  X.697 §23.1.3: intersections intersect, unions unite, `EXCEPT` and extensible
+  constraints are ignored. So `REAL (0 | WITH COMPONENTS { ..., base (10) })` counts as
+  base 10 only.
 - **XER:** `Decimal` is written as its exact digits (`1456E-2`). Other values are written as
   fixed-point text. An XER value always decodes as `Double`, as in asn1c, so a `Decimal` is
   exact through BER and JER but not back through XER.
@@ -756,7 +761,7 @@ exponent is in [-4, 15) (`-338203.95104146993`, `0.0001`, `100`) and as
 `d.dddE<exp>` otherwise (`1E-5`, `1.7976931348623157E308`). The special
 values are the strings `"NaN"`, `"INF"`, `"-INF"` and `"-0"` (X.697 §23).
 The decoder accepts any JSON number notation. It also accepts the base-10 object form
-`{"base10Value": 14}` (X.697 §23.4), which it rounds to the nearest double. Any other
+`{"base10Value": 14}` (X.697 §23.4), which it decodes exactly as a `Decimal`. Any other
 member, or a value that is not a JSON number, is a decode error.
 
 A BIT STRING whose SIZE is fixed (a single value, not extensible) is a bare
