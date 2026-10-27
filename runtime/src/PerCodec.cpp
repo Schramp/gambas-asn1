@@ -103,11 +103,18 @@ static bool size_count_is_constrained(const Constraints& pc) {
 ///        (X.691 §10.9): nothing for a fixed size, the offset from the lower
 ///        bound for a constrained size with ub < 64K, otherwise the general
 ///        length with 16K fragmentation (per_detail::put_length_and_items).
+///        The constrained form cannot represent a count outside the SIZE
+///        range (§10.9.4.1), so such a count fails the encode and writes
+///        nothing.
 /// @param items Callable `(std::size_t from, std::size_t to)` writing items.
 template<typename WriteItems>
 static void encode_size_and_items(PerEncodeStream& stream, const Constraints& pc,
                                   std::size_t n, WriteItems&& items) {
     if (size_count_is_constrained(pc)) {
+        if (static_cast<int64_t>(n) < pc.size_lower || static_cast<int64_t>(n) > pc.size_upper) {
+            stream.set_encode_failed("length outside a non-extensible SIZE constraint");
+            return;
+        }
         if (pc.size_range_bits > 0)
             stream.put_bits(n - static_cast<std::size_t>(pc.size_lower), pc.size_range_bits, "SIZE");
         items(std::size_t{0}, n);
@@ -890,27 +897,13 @@ public:
             std::fprintf(stderr, "[PER-ENC] SOF %s count=%zu @%d\n",
                          def.name, count, PerCodec::stream_bit_pos(stream));
         const auto& sc = spec.size_constraints;
-        std::size_t enc_count = count;
-        if (size_count_is_constrained(sc) && !(sc.flags & Constraints::EXTENSIBLE) &&
-            sc.size_lower != sc.size_upper && enc_count < static_cast<std::size_t>(sc.size_lower)) {
-            // X.680 §47 SIZE lower bound violated by the actual element
-            // count — caller's data is invalid for this type, not a
-            // codec bug. PerCodec::encode's own validate_on_encode()
-            // call already reports this exact delta through
-            // ValidationReport (SeqOfSpec::validate uses the identical
-            // size_lower - count formula) before this handler ever
-            // runs — this clamp only needs to keep the encoded count
-            // in bounds so the wire stays well-formed, not report a
-            // second time. Missing elements then desync (caller's fault).
-            enc_count = static_cast<std::size_t>(sc.size_lower);
-        }
         const auto& edef = *spec.element;
         bool is_set_of = (def.tag.cls == TagClass::Universal &&
                           def.tag.number == UniversalTag::Set);
         std::vector<EncodedElement> sorted;
         if (is_set_of && count > 1) sorted = sorted_set_of_elements(codec, stream, edef, seq, count);
         IEncodeStream& es = stream;
-        encode_ext_size_and_items(stream, sc, enc_count, [&](std::size_t from, std::size_t to) {
+        encode_ext_size_and_items(stream, sc, count, [&](std::size_t from, std::size_t to) {
             for (std::size_t i = from; i < std::min(to, count); ++i) {
                 if (sorted.empty()) {
                     codec.encode(es, edef, seq.get_const(i));
