@@ -14,6 +14,13 @@ use crate::ber::tag::Tag;
 /// unchanged — the tag depends only on the payload's type.
 pub trait TypeTag {
     const TAG: Option<Tag>;
+
+    /// A CHOICE's BER dispatch tags, one per alternative tag (X.690 §8.13:
+    /// a CHOICE value is encoded as its chosen alternative, so these are
+    /// the tags its encoding can start with). Empty for every other type.
+    fn choice_ber_tags() -> &'static [crate::spec::choice::BerDispatch] {
+        &[]
+    }
 }
 
 impl<V: TypeTag> TypeTag for Option<V> {

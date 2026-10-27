@@ -2065,6 +2065,28 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_PER_SIZE_VIOL_GEN_DIR}")
 endif()
 
+# Rust OPTIONAL untagged-CHOICE member test — see tests/rust/optional_untagged_choice/src/main.rs.
+set(RUST_OPT_UNTAGGED_CHOICE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_optional_untagged_choice)
+add_custom_command(
+    OUTPUT  ${RUST_OPT_UNTAGGED_CHOICE_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_OPT_UNTAGGED_CHOICE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/fuzz_test.asn1
+            -o ${RUST_OPT_UNTAGGED_CHOICE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/fuzz_test.asn1
+    COMMENT "Generating Rust from fuzz_test.asn1"
+)
+add_custom_target(gen_rust_optional_untagged_choice ALL DEPENDS ${RUST_OPT_UNTAGGED_CHOICE_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_optional_untagged_choice
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/optional_untagged_choice/Cargo.toml)
+    set_tests_properties(rust_optional_untagged_choice PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_OPT_UNTAGGED_CHOICE_GEN_DIR}")
+endif()
+
 # Rust leg of the REAL JER base-constraint test — see tests/rust/real_jer_base/src/main.rs
 # (C++ leg: test_real_jer_base).
 set(RUST_REAL_JER_BASE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_real_jer_base)

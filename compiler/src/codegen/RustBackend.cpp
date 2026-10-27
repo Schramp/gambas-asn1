@@ -1190,6 +1190,17 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 ///       become `Option<T>` rather than C++'s `unique_ptr<T>`, Rust's
 ///       natural equivalent. `tdref`/`has_default_setter` are genuinely
 ///       backend-agnostic raw data, and are used.
+/// @brief Is `m` a reference to a CHOICE type with no tag of its own?
+///        Its BER encoding starts with the chosen alternative's tag
+///        (X.690 §8.13), so presence of an OPTIONAL one is read from the
+///        CHOICE's dispatch tags (`BerTagging::DelegateChoice`).
+/// @param m  The member.
+/// @return True for an untagged reference to a CHOICE type.
+static bool is_untagged_choice_ref(const SequenceMemberSpec& m) {
+    return !m.mbuiltin && !m.resolved_tag && m.ref_kind == TaggedMemberSpec::RefTargetKind::Other &&
+           !m.ref_is_sequence_or_set && !m.ref_is_seq_of && !m.ref_builtin_alias;
+}
+
 /// @brief Does `m` get a real access closure (Scalar/TaggedScalar/
 ///        ExplicitScalar/SeqOf), or an `Unsupported` stub?
 ///        Every SEQUENCE/SET always gets a full table now regardless of the
@@ -1200,15 +1211,12 @@ static std::string rust_seqof_member_field_type(const SequenceMemberSpec& m) {
 ///       plain INTEGER subtype alias. Any such reference is always real:
 ///       the referenced type is guaranteed to implement `AsMemberRef`
 ///       regardless of processing order, so there's nothing to look up in
-///       advance. The one
-///       exception is presence detection, not trait coverage: an OPTIONAL
-///       member whose type is a genuinely untagged CHOICE (X.680 §28, no
-///       AUTOMATIC TAGS, no fixed tag at all) has no `Tag` to peek for at
-///       all — that's a missing dispatch key, not a missing impl, and no
-///       stub closure can safely guess presence, so it becomes
-///       `Unsupported` too (a per-record codec error, no attempted peek —
-///       see the stub's own doc). A required member has no such problem
-///       (nothing to peek for a required field either way). Every named
+///       advance. Presence of an OPTIONAL member needs a tag to peek for:
+///       an untagged CHOICE (X.680 §28) has none of its own, so its row
+///       carries the CHOICE's alternative tags instead
+///       (`is_untagged_choice_ref`, `BerTagging::DelegateChoice`). Any
+///       other OPTIONAL reference without a tag stays `Unsupported` (a
+///       per-record codec error). Every named
 ///       type — a top-level SEQUENCE OF/SET OF alias, an INTEGER of any
 ///       storage kind including ARBITRARY — gets its own real newtype with
 ///       real reflective trait impls (`emit_seq_of_declaration`,
@@ -1228,7 +1236,7 @@ bool RustBackend::sequence_member_covered(const SequenceMemberSpec& m) const {
     if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Any)
         return m.resolved_tag.has_value() && m.is_explicit;
     if (!m.mbuiltin)
-        return !m.optional || m.resolved_tag.has_value();
+        return !m.optional || m.resolved_tag.has_value() || is_untagged_choice_ref(m);
     return rust_tag_for_builtin_or_alias(m.mbuiltin, m.storage_kind, m.mtype) != nullptr;
 }
 
@@ -1496,9 +1504,14 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // instead of calling `TypeTag::TAG.unwrap()` on it.
                     tag_text = !m.mbuiltin
                         ? (m.resolved_tag ? format_tag_literal(*m.resolved_tag)
-                                          : "asn1cpp_wire::spec::sequence::SEQUENCE_TAG /* untagged CHOICE member: no fixed tag, inert for required members */")
+                                          : "asn1cpp_wire::spec::sequence::SEQUENCE_TAG /* untagged CHOICE member: no fixed tag */")
                         : std::format("<{} as asn1cpp_wire::type_tag::TypeTag>::TAG.unwrap()", m.mtype);
-                    ber_framing_expr = "asn1cpp_wire::spec::choice::BerTagging::Delegate";
+                    // An OPTIONAL untagged CHOICE is present when the peeked
+                    // tag is one of its alternatives' tags (X.690 §8.13).
+                    ber_framing_expr = is_untagged_choice_ref(m) && m.optional
+                        ? std::format("asn1cpp_wire::spec::choice::BerTagging::DelegateChoice("
+                                      "<{} as asn1cpp_wire::type_tag::TypeTag>::choice_ber_tags)", m.mtype)
+                        : "asn1cpp_wire::spec::choice::BerTagging::Delegate";
                 }
 
                 // This member's own Constraints reference — same rule
@@ -2269,6 +2282,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
 
         os << std::format("impl asn1cpp_wire::type_tag::TypeTag for {} {{\n", spec.type_name);
         os << "    const TAG: ::std::option::Option<asn1cpp_wire::Tag> = None;\n";
+        os << std::format("    fn choice_ber_tags() -> &'static [asn1cpp_wire::spec::choice::BerDispatch] {{ &{} }}\n", tags_ident);
         os << "}\n\n";
         os << std::format("impl asn1cpp_wire::spec::object::AsMemberRef for {} {{\n", spec.type_name);
         os << "    fn as_member_ref(&self) -> asn1cpp_wire::spec::object::MemberRef<'_> {\n";

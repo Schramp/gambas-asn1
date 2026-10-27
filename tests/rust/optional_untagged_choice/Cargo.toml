@@ -1,0 +1,14 @@
+[package]
+name = "optional-untagged-choice-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust test for an OPTIONAL member of an untagged CHOICE type (fuzz_test.asn1 Bag.pick). Pulls generated .rs from ASN1CPP_RUST_GEN_DIR (set by tests/CMakeLists.txt's rust_optional_untagged_choice), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "optional_untagged_choice"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }
