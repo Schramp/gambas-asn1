@@ -905,7 +905,8 @@ void Generator::emit_enumerated(const ast::TypeDef& def, TypeOutputSession& sess
     auto spec = build_enumerated_spec(def, effective_type_name(def.name, current_module_));
     spec.tag = natural_tag_spec_for(def);
     spec.is_explicit = type_is_explicit(def);
-    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
+    if (spec.is_explicit || (spec.tag && spec.tag->cls != ast::TagClass::Universal))
+        spec.natural_tag = underlying_natural_tag_spec_for(def);
     backend_.emit_enumerated(spec, session);
 }
 
@@ -1033,7 +1034,8 @@ IntegerSpec Generator::build_integer_spec(const ast::TypeDef& def, const std::st
     spec.storage_kind = classify_integer_storage(def);
     spec.tag = natural_tag_spec_for(def);
     spec.is_explicit = type_is_explicit(def);
-    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
+    if (spec.is_explicit || (spec.tag && spec.tag->cls != ast::TagClass::Universal))
+        spec.natural_tag = underlying_natural_tag_spec_for(def);
     for (const auto& ev : def.enum_values)
         spec.named_values.push_back({ev.name, ev.number.value_or(0)});
 
@@ -2174,7 +2176,8 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
     spec.is_set = is_set;
     spec.tag = natural_tag_spec_for(def);
     spec.is_explicit = type_is_explicit(def);
-    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
+    if (spec.is_explicit || (spec.tag && spec.tag->cls != ast::TagClass::Universal))
+        spec.natural_tag = underlying_natural_tag_spec_for(def);
 
     // All sibling fields (root+extension) share one Rust struct/enum scope —
     // ASN.1 guarantees their raw names are distinct, but member_name()'s
@@ -3085,7 +3088,8 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     spec.builtin_type = builtin;
     spec.tag = natural_tag_spec_for(def);
     spec.is_explicit = type_is_explicit(def);
-    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
+    if (spec.is_explicit || (spec.tag && spec.tag->cls != ast::TagClass::Universal))
+        spec.natural_tag = underlying_natural_tag_spec_for(def);
 
     spec.alphabet = per_visible_alphabet(def);
     auto size_range = extract_size_range(def);
@@ -3200,7 +3204,8 @@ SeqOfSpec Generator::emit_seq_of_definition(const ast::TypeDef& def, TypeOutputS
     spec.is_set_of = def.is_set_of();
     spec.tag = natural_tag_spec_for(def);
     spec.is_explicit = type_is_explicit(def);
-    if (spec.is_explicit) spec.natural_tag = underlying_natural_tag_spec_for(def);
+    if (spec.is_explicit || (spec.tag && spec.tag->cls != ast::TagClass::Universal))
+        spec.natural_tag = underlying_natural_tag_spec_for(def);
 
     // SIZE constraint on collection length
     auto size_range = extract_size_range(def);

@@ -267,6 +267,14 @@ pub trait Asn1SeqOf {
     /// has direct access to `T` (`self.0: Vec<T>` where
     /// `T: AsMemberRef`) to read the const off.
     fn elem_xer_instruction(&self) -> XerInstruction;
+    /// How each element's TLV is framed, straight from
+    /// `AsMemberRef::BER_FRAMING` of the element type — like
+    /// `elem_xer_instruction`, a compile-time fact shared by every element
+    /// (a SEQUENCE OF / SET OF has no per-element member row to carry a
+    /// tag, X.690 §8.10.2). Defaults to `BerTagging::Delegate`.
+    fn elem_ber_framing(&self) -> BerTagging {
+        BerTagging::Delegate
+    }
     /// X.693 §12 element identifier (e.g. `xxx SEQUENCE OF id INTEGER`) —
     /// `Some` only for a named top-level SEQUENCE OF/SET OF type that
     /// declared one (`SeqOfSpec::elem_xer_name`, `emit_seq_of_definition`);
@@ -311,6 +319,13 @@ pub trait AsMemberRef {
     /// (`RustBackend::emit_builtin_alias_definition`'s own
     /// `spec.xer_encoding`) overrides it.
     const XER_INSTRUCTION: XerInstruction = XerInstruction::Default;
+    /// This type's own BER framing when it stands where no member row
+    /// supplies one (a SEQUENCE OF / SET OF element): `Implicit`/`Explicit`
+    /// for a primitive or ENUMERATED type assignment carrying its own
+    /// non-universal tag (X.680 §31.2, X.690 §8.14), `Delegate` (the
+    /// builtin's universal tag, or a composite's own spec tag) otherwise.
+    /// Codegen supplies it alongside `XER_INSTRUCTION`.
+    const BER_FRAMING: BerTagging = BerTagging::Delegate;
 }
 
 /// A generated type usable as a whole-document root — SEQUENCE/SET,

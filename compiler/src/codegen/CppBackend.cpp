@@ -203,15 +203,16 @@ void emit_type_descriptor(std::ostream& os,
                            bool use_class_scope,
                            // True when this type's own top-level [n] tag
                            // is EXPLICIT (X.690 §8.14.3; tag_expr is the
-                           // outer wrapper tag; natural_tag_expr — required
-                           // whenever this is true — is the real inner tag
-                           // BerCodec::encode/decode wraps/unwraps around).
-                           // Appended as trailing TypeDescriptor::
-                           // is_explicit/natural_tag field values; the
-                           // common (false) case emits nothing extra,
-                           // relying on those two fields' own default
-                           // member initializers, same as xer_encoding
-                           // already does for every call site here.
+                           // outer wrapper tag, natural_tag_expr the real
+                           // inner tag BerCodec::encode/decode wraps and
+                           // unwraps around). natural_tag_expr — the
+                           // builtin's universal tag — is non-empty whenever
+                           // tag_expr is not that universal tag, IMPLICIT or
+                           // EXPLICIT (X.680 §31.2). Both are appended as
+                           // trailing TypeDescriptor::is_explicit/natural_tag
+                           // field values; an untagged type emits nothing
+                           // extra and relies on the fields' default member
+                           // initializers, as xer_encoding does.
                            bool is_explicit,
                            const std::string& natural_tag_expr,
                            bool has_contained) {
@@ -235,9 +236,9 @@ void emit_type_descriptor(std::ostream& os,
     if (has_contained) {
         os << std::format("    asn1::XerEncoding::Default, {}, {}, nullptr, true /* is_explicit, natural_tag, contained, has_contained */\n",
                           is_explicit ? "true" : "false", natural_tag_expr.empty() ? "{}" : natural_tag_expr);
-    } else if (is_explicit) {
-        os << std::format("    asn1::XerEncoding::Default, true, {} /* is_explicit, natural_tag */\n",
-                          natural_tag_expr);
+    } else if (is_explicit || !natural_tag_expr.empty()) {
+        os << std::format("    asn1::XerEncoding::Default, {}, {} /* is_explicit, natural_tag */\n",
+                          is_explicit ? "true" : "false", natural_tag_expr);
     }
     os << "};\n\n";
 }
@@ -319,7 +320,7 @@ void CppBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::ost
         true, false, false, false, "asn1::TypeKind::Enumerated",
         "&asn1::per_enumerated_handler", "&asn1::ber_enumerated_handler",
         /*use_class_scope=*/true, spec.is_explicit,
-        spec.is_explicit ? format_tag_literal(*spec.natural_tag) : "");
+        spec.natural_tag ? format_tag_literal(*spec.natural_tag) : "");
 }
 
 void CppBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const {
@@ -472,9 +473,9 @@ void CppBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream& 
     os << std::format("    {} /* ber_handler */,\n", ber_h);
     os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */,\n", cpp_t);
     // Trailing EXPLICIT-wrap fields (X.690 §8.14.3) — see emit_type_descriptor's own doc.
-    if (spec.is_explicit) {
-        os << std::format("    asn1::XerEncoding::Default, true, {} /* is_explicit, natural_tag */\n",
-                          format_tag_literal(*spec.natural_tag));
+    if (spec.natural_tag) {
+        os << std::format("    asn1::XerEncoding::Default, {}, {} /* is_explicit, natural_tag */\n",
+                          spec.is_explicit ? "true" : "false", format_tag_literal(*spec.natural_tag));
     }
     os << "};\n";
 }
@@ -604,9 +605,9 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
     // whether or not a non-default xer_encoding also applies.
     std::string xer_lit = xer_encoding_literal(spec.xer_encoding);
     bool non_default_xer = spec.xer_encoding != ast::XerEncoding::Default;
-    if (spec.is_explicit) {
-        os << std::format(",\n    {}, true, {} /* xer_encoding, is_explicit, natural_tag */\n",
-                          xer_lit, format_tag_literal(*spec.natural_tag));
+    if (spec.natural_tag) {
+        os << std::format(",\n    {}, {}, {} /* xer_encoding, is_explicit, natural_tag */\n",
+                          xer_lit, spec.is_explicit ? "true" : "false", format_tag_literal(*spec.natural_tag));
     } else if (non_default_xer) {
         os << std::format(",\n    {} /* xer_encoding */\n", xer_lit);
     } else {
@@ -809,7 +810,7 @@ void CppBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os)
         false, false, false, true, "asn1::TypeKind::SeqOf",
         "&asn1::per_seqof_handler", "&asn1::ber_seqof_handler",
         /*use_class_scope=*/false, spec.is_explicit,
-        spec.is_explicit ? format_tag_literal(*spec.natural_tag) : "");
+        spec.natural_tag ? format_tag_literal(*spec.natural_tag) : "");
 }
 
 void CppBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const {
@@ -1023,7 +1024,7 @@ void CppBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostream
         false, true, false, false, "asn1::TypeKind::Sequence",
         "&asn1::per_sequence_handler", "&asn1::ber_sequence_handler",
         /*use_class_scope=*/true, spec.is_explicit,
-        spec.is_explicit ? format_tag_literal(*spec.natural_tag) : "",
+        spec.natural_tag ? format_tag_literal(*spec.natural_tag) : "",
         /*has_contained=*/!contained_idx.empty());
 
     // set_<member> definitions (ASN1CPP_VALIDATE_ON_SET hook)

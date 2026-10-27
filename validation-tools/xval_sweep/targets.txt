@@ -144,3 +144,6 @@ tests/asn1/containing_test.asn1      Pick       --container-config=tests/asn1/co
 # SEQUENCE with an OPTIONAL untagged CHOICE member: presence is read from
 # the CHOICE alternatives' tags (X.690 §8.13).
 tests/asn1/fuzz_test.asn1            Bag
+
+# Type assignments carrying their own tag over each builtin BER handler.
+tests/asn1/typedef_tag_test.asn1     Tagged

@@ -197,11 +197,15 @@ template<>
 struct BerTraits<UInteger> {
     static constexpr Tag tag() { return Tag::universal(UniversalTag::Integer, false); }
 
-    static void encode(BerWriter& w, const UInteger& u) {
+    /// @brief BER-encode the value as a primitive TLV with tag \p t.
+    /// @param t  Tag to write: the universal tag by default, or the tag of a
+    ///           type assignment (X.680 §31.2) such as `T ::= [APPLICATION 1] ...`.
+    /// @see X.690 §8.3.
+    static void encode(BerWriter& w, const UInteger& u, Tag t = tag()) {
         uint64_t v = u.value();
         if (v == 0) {
             uint8_t zero = 0x00;
-            w.write_primitive(tag(), std::span<const uint8_t>(&zero, 1));
+            w.write_primitive(t, std::span<const uint8_t>(&zero, 1));
             return;
         }
         // buf[0] = potential 0x00 pad; buf[1..8] = big-endian bytes of v
@@ -214,7 +218,7 @@ struct BerTraits<UInteger> {
             ++start;
         // If first significant byte has MSB set, include the 0x00 pad at buf[0]
         if (buf[start] & 0x80) --start;
-        w.write_primitive(tag(), std::span<const uint8_t>(buf + start, 9 - start));
+        w.write_primitive(t, std::span<const uint8_t>(buf + start, 9 - start));
     }
 
     static Expected<UInteger, DecodeError> decode(BerReader& r) {

@@ -1,0 +1,43 @@
+-- Type assignments that put their own tag on a builtin type (X.680 §31.2):
+-- a plain reference to such a type must encode with that tag, not the
+-- builtin's universal tag (X.690 §8.14). One type assignment per builtin
+-- BER handler.
+TypedefTagTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+  TBool ::= [APPLICATION 1] BOOLEAN
+  TOid  ::= [APPLICATION 2] OBJECT IDENTIFIER
+  TOct  ::= [APPLICATION 3] OCTET STRING
+  TBit  ::= [APPLICATION 4] BIT STRING
+  TReal ::= [APPLICATION 5] REAL
+  TRel  ::= [APPLICATION 6] RELATIVE-OID
+  TUInt ::= [APPLICATION 7] INTEGER (0..MAX)
+  TInt  ::= [APPLICATION 8] INTEGER
+  TStr  ::= [APPLICATION 9] IA5String
+  TNull ::= [APPLICATION 10] NULL
+  TEnum ::= [APPLICATION 11] ENUMERATED { red, green }
+  TSeq  ::= [APPLICATION 12] SEQUENCE { v INTEGER }
+  TExp  ::= [APPLICATION 13] EXPLICIT INTEGER
+
+  Tagged ::= SEQUENCE {
+    b TBool,
+    o TOid,
+    s TOct,
+    t TBit,
+    r TReal,
+    l TRel,
+    u TUInt,
+    i TInt,
+    x TStr,
+    z TNull,
+    e TEnum,
+    q TSeq,
+    w TExp,
+    c  Pick,
+    lst SEQUENCE (SIZE(1..3)) OF TOct,
+    lq  SEQUENCE (SIZE(1..3)) OF TSeq,
+    lw  SEQUENCE (SIZE(1..3)) OF TExp,
+    ob TBool OPTIONAL,
+    os TOct OPTIONAL
+  }
+
+  Pick ::= CHOICE { pb TBool, po TOct, pi TInt }
+END

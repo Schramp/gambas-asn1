@@ -46,10 +46,8 @@ inline int64_t validate(const TypeDescriptor& def, const Asn1Object* obj) {
     if (def.seq_of_spec)
         return def.seq_of_spec->validate(*static_cast<const SeqOfBase*>(obj));
 
-    if (def.tag.cls != TagClass::Universal) return 0;
-
     const auto& c = def.constraints;
-    switch (def.tag.number) {
+    switch (builtin_tag(def).number) {
     case UniversalTag::Integer:
         if (c.int_kind == Constraints::INT_U64)
             return static_cast<const UInteger*>(obj)->validate(c);

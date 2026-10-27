@@ -28,10 +28,14 @@ template<>
 struct BerTraits<Boolean> {
     static constexpr Tag tag() { return Tag::universal(UniversalTag::Boolean, false); }
 
-    static void encode(BerWriter& w, const Boolean& v) {
+    /// @brief BER-encode the value as a primitive TLV with tag \p t.
+    /// @param t  Tag to write: the universal tag by default, or the tag of a
+    ///           type assignment (X.680 §31.2) such as `T ::= [APPLICATION 1] ...`.
+    /// @see X.690 §8.2.
+    static void encode(BerWriter& w, const Boolean& v, Tag t = tag()) {
         // DER: FALSE = 0x00, TRUE = 0xFF
         uint8_t b = v.value() ? 0xFF : 0x00;
-        w.write_primitive(tag(), std::span<const uint8_t>(&b, 1));
+        w.write_primitive(t, std::span<const uint8_t>(&b, 1));
     }
 
     static Expected<Boolean, DecodeError> decode(BerReader& r) {

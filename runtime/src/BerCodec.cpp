@@ -155,15 +155,24 @@ struct ErrorBerHandler final : IBerTypeHandler {
 };
 
 struct BooleanBerHandler final : IBerTypeHandler {
+    /// @brief Write the value as a primitive TLV with \c def.tag: the
+    ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const Asn1Object* src) const override {
-        BerTraits<Boolean>::encode(w, *static_cast<const Boolean*>(src));
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        BerTraits<Boolean>::encode(w, *static_cast<const Boolean*>(src), def.tag);
     }
+    /// @brief Read one TLV, check it carries \c def.tag (the universal tag,
+    ///        or the tag of a type assignment, X.680 §31.2), decode its value.
+    /// @see X.690 §8.2.1 — the contents are a single octet.
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
-        auto v = BerTraits<Boolean>::decode(r);
-        if (!v) return decode_err(v.error());
-        *static_cast<Boolean*>(dest) = *v;
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
+        auto tlv = r.read_tlv();
+        if (!tlv) return decode_err(tlv.error());
+        if (tlv->tag != def.tag)
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
+        if (tlv->value.size() != 1)
+            return decode_err(DecodeError("BOOLEAN must be 1 byte"));
+        *static_cast<Boolean*>(dest) = Boolean(tlv->value[0] != 0x00);
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
@@ -205,9 +214,11 @@ private:
 };
 
 struct UIntegerBerHandler final : IBerTypeHandler {
+    /// @brief Write the value as a primitive TLV with \c def.tag: the
+    ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const Asn1Object* src) const override {
-        BerTraits<UInteger>::encode(w, *static_cast<const UInteger*>(src));
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        BerTraits<UInteger>::encode(w, *static_cast<const UInteger*>(src), def.tag);
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
@@ -251,13 +262,21 @@ struct NullBerHandler final : IBerTypeHandler {
 };
 
 struct RealBerHandler final : IBerTypeHandler {
+    /// @brief Write the value as a primitive TLV with \c def.tag: the
+    ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const Asn1Object* src) const override {
-        BerTraits<Real>::encode(w, *static_cast<const Real*>(src));
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        BerTraits<Real>::encode(w, *static_cast<const Real*>(src), def.tag);
     }
+    /// @brief Read one TLV, check it carries \c def.tag (the universal tag,
+    ///        or the tag of a type assignment, X.680 §31.2), decode its value.
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
-        auto v = BerTraits<Real>::decode(r);
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
+        auto tlv = r.read_tlv();
+        if (!tlv) return decode_err(tlv.error());
+        if (tlv->tag != def.tag)
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
+        auto v = BerTraits<Real>::decode_value(tlv->value);
         if (!v) return decode_err(v.error());
         *static_cast<Real*>(dest) = std::move(*v);
         return decode_ok();
@@ -273,13 +292,21 @@ struct RealBerHandler final : IBerTypeHandler {
 };
 
 struct BitStringBerHandler final : IBerTypeHandler {
+    /// @brief Write the value as a primitive TLV with \c def.tag: the
+    ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const Asn1Object* src) const override {
-        BerTraits<BitString>::encode(w, *static_cast<const BitString*>(src));
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        BerTraits<BitString>::encode(w, *static_cast<const BitString*>(src), def.tag);
     }
+    /// @brief Read one TLV, check it carries \c def.tag (the universal tag,
+    ///        or the tag of a type assignment, X.680 §31.2), decode its value.
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
-        auto v = BerTraits<BitString>::decode(r);
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
+        auto tlv = r.read_tlv();
+        if (!tlv) return decode_err(tlv.error());
+        if (tlv->tag != def.tag)
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
+        auto v = BerTraits<BitString>::decode_value(tlv->value);
         if (!v) return decode_err(v.error());
         *static_cast<BitString*>(dest) = std::move(*v);
         return decode_ok();
@@ -295,9 +322,11 @@ struct BitStringBerHandler final : IBerTypeHandler {
 };
 
 struct OctetStringBerHandler final : IBerTypeHandler {
+    /// @brief Write the value as a primitive TLV with \c def.tag: the
+    ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const Asn1Object* src) const override {
-        BerTraits<OctetString>::encode(w, *static_cast<const OctetString*>(src));
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        BerTraits<OctetString>::encode(w, *static_cast<const OctetString*>(src), def.tag);
     }
     DecodeResult decode(const BerCodec&, BerReader& r,
                         const TypeDescriptor&, Asn1Object* dest) const override {
@@ -344,13 +373,21 @@ struct ContainedBerHandler final : IBerTypeHandler {
 };
 
 struct OidBerHandler final : IBerTypeHandler {
+    /// @brief Write the value as a primitive TLV with \c def.tag: the
+    ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const Asn1Object* src) const override {
-        BerTraits<Oid>::encode(w, *static_cast<const Oid*>(src));
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        BerTraits<Oid>::encode(w, *static_cast<const Oid*>(src), def.tag);
     }
+    /// @brief Read one TLV, check it carries \c def.tag (the universal tag,
+    ///        or the tag of a type assignment, X.680 §31.2), decode its value.
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
-        auto v = BerTraits<Oid>::decode(r);
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
+        auto tlv = r.read_tlv();
+        if (!tlv) return decode_err(tlv.error());
+        if (tlv->tag != def.tag)
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
+        auto v = BerTraits<Oid>::decode_value(tlv->value);
         if (!v) return decode_err(v.error());
         *static_cast<Oid*>(dest) = std::move(*v);
         return decode_ok();
@@ -366,13 +403,21 @@ struct OidBerHandler final : IBerTypeHandler {
 };
 
 struct RelOidBerHandler final : IBerTypeHandler {
+    /// @brief Write the value as a primitive TLV with \c def.tag: the
+    ///        universal tag, or the tag of a type assignment (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
-                const TypeDescriptor&, const Asn1Object* src) const override {
-        BerTraits<RelativeOid>::encode(w, *static_cast<const RelativeOid*>(src));
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        BerTraits<RelativeOid>::encode(w, *static_cast<const RelativeOid*>(src), def.tag);
     }
+    /// @brief Read one TLV, check it carries \c def.tag (the universal tag,
+    ///        or the tag of a type assignment, X.680 §31.2), decode its value.
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
-        auto v = BerTraits<RelativeOid>::decode(r);
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
+        auto tlv = r.read_tlv();
+        if (!tlv) return decode_err(tlv.error());
+        if (tlv->tag != def.tag)
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
+        auto v = BerTraits<RelativeOid>::decode_value(tlv->value);
         if (!v) return decode_err(v.error());
         *static_cast<RelativeOid*>(dest) = std::move(*v);
         return decode_ok();
@@ -513,8 +558,7 @@ struct SeqOfBerHandler final : IBerTypeHandler {
         const auto& seq  = *static_cast<const SeqOfBase*>(src);
         std::size_t count = seq.count();
         const auto& edef = *spec.element;
-        bool is_set_of = (def.tag.cls == TagClass::Universal &&
-                          def.tag.number == UniversalTag::Set);
+        bool is_set_of = builtin_tag(def).number == UniversalTag::Set;
         if (debug_flags() & DBG_BER_WRITE)
             std::fprintf(stderr, "[BER-WRITE] %s %s %zu elements of %s\n",
                          def.name, is_set_of ? "SET_OF" : "SEQUENCE_OF",

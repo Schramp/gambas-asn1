@@ -129,6 +129,11 @@ public:
     // codegen throws on every SEQUENCE/CHOICE. Defined in RustBackend.cpp.
     std::string format_tag_literal(const TypeTagSpec& tag_spec) const override;
 
+    // `AsMemberRef::BER_FRAMING` override line for a type assignment that
+    // carries its own non-universal tag, or "" when the builtin's own tag
+    // applies. Defined in RustBackend.cpp.
+    std::string ber_framing_const(const TaggedTypeSpec& spec) const;
+
     // Same reasoning as format_tag_literal's own comment —
     // resolved_tag is populated unconditionally for every member, so this
     // must return real Rust syntax, not throw. Dead in practice today (no

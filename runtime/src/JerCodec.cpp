@@ -1267,13 +1267,12 @@ void JerCodec::encode(IEncodeStream& dst,
     validate_on_encode("JER", def, src);
     auto& s = static_cast<JerEncodeStream&>(dst);
     if (def.kind == TypeKind::Primitive)
-        // prim_dispatch_ is indexed by the type's NATURAL (universal) tag
-        // number — never def.tag itself, which is the wire tag and can be
-        // a different (context/application/private) class after an [n]
-        // override; an EXPLICIT override's outer tag number can coincide
-        // with a *different* builtin's universal tag number (see the
-        // matching comment in XerCodec::encode).
-        prim_dispatch_[def.is_explicit ? def.natural_tag.number : def.tag.number]->encode(*this, s, def, src);
+        // prim_dispatch_ is indexed by the builtin's universal tag number
+        // (builtin_tag) — never def.tag itself, the wire tag, which after
+        // the type assignment's own [n] can carry a different class and a
+        // number matching a *different* builtin (see the matching comment
+        // in XerCodec::encode).
+        prim_dispatch_[builtin_tag(def).number]->encode(*this, s, def, src);
     else
         comp_dispatch_[(int)def.kind]->encode(*this, s, def, src);
 }
@@ -1287,7 +1286,7 @@ DecodeResult JerCodec::decode(IDecodeStream& src,
     if (depth_guard.exceeded()) return decode_err(DecodeError(DecodeDepthGuard::message(def)));
     DecodeResult res = def.kind == TypeKind::Primitive
         // See the matching comment in encode() above.
-        ? prim_dispatch_[def.is_explicit ? def.natural_tag.number : def.tag.number]->decode(*this, s, def, dest)
+        ? prim_dispatch_[builtin_tag(def).number]->decode(*this, s, def, dest)
         : comp_dispatch_[(int)def.kind]->decode(*this, s, def, dest);
     if (res.has_value()) validate_on_decode("JER", def, dest);
     return res;

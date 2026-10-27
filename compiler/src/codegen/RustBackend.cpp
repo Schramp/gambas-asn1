@@ -379,6 +379,7 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << std::format("        asn1cpp_wire::spec::object::MemberRefMut::Enumerated(self, &{})\n", map_ident);
         os << "    }\n\n";
         os << std::format("    fn own_element_xer_name(&self) -> &'static str {{ {}.name }}\n", map_ident);
+        os << ber_framing_const(spec);
         os << "}\n\n";
     }
 }
@@ -507,6 +508,7 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
         os << std::format("        asn1cpp_wire::spec::object::MemberRefMut::Primitive(asn1cpp_wire::spec::primitive::PrimitiveRefMut::{}(&mut self.0))\n", variant);
         os << "    }\n\n";
         os << std::format("    fn own_element_xer_name(&self) -> &'static str {{ \"{}\" }}\n", spec.xer_name);
+        os << ber_framing_const(spec);
         os << "}\n\n";
     }
 }
@@ -570,6 +572,21 @@ std::string RustBackend::native_builtin_type(ast::BuiltinType bt) const {
     case BT::Any:              return "asn1cpp_wire::any::Any";
     default:                   return "Vec<u8>";  // Integer/Enumerated: unreachable here
     }
+}
+
+/// @brief Emits the `AsMemberRef::BER_FRAMING` override for a primitive or
+///        ENUMERATED type assignment whose own tag is not its builtin's
+///        universal tag (X.680 §31.2). A SEQUENCE OF / SET OF element has no
+///        member row to carry that tag, so the element type itself must
+///        say how its TLV is framed: IMPLICIT replaces the universal tag
+///        (X.690 §8.14.3), EXPLICIT wraps it (X.690 §8.14.2).
+/// @param spec The type assignment's tag decision.
+/// @return One `const BER_FRAMING` line, or "" when the default
+///         `BerTagging::Delegate` (the builtin's own tag) is right.
+std::string RustBackend::ber_framing_const(const TaggedTypeSpec& spec) const {
+    if (!spec.tag || (!spec.is_explicit && spec.tag->cls == ast::TagClass::Universal)) return "";
+    return std::format("    const BER_FRAMING: asn1cpp_wire::spec::choice::BerTagging = asn1cpp_wire::spec::choice::BerTagging::{}({});\n",
+                       spec.is_explicit ? "Explicit" : "Implicit", format_tag_literal(*spec.tag));
 }
 
 /// @brief Format a resolved `TagSpec` as an `asn1cpp_wire::ber::tag::Tag` struct
@@ -636,6 +653,11 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     } else if (spec.builtin_type == BT::Real) {
         // Always emitted so a member of this alias can reference it.
         emit_real_constraints(os, cname, spec.real_range);
+    } else {
+        // No constraint kind applies, but a SEQUENCE OF / SET OF of this
+        // alias names `{Alias}_CONSTRAINTS` as its element table.
+        os << "#[allow(non_upper_case_globals)]\n";
+        os << std::format("pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::UNCONSTRAINED;\n\n", cname);
     }
 
 
@@ -659,6 +681,7 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         } else if (spec.xer_encoding == ast::XerEncoding::Utf8) {
             os << "    const XER_INSTRUCTION: asn1cpp_wire::spec::object::XerInstruction = asn1cpp_wire::spec::object::XerInstruction::Utf8;\n";
         }
+        os << ber_framing_const(spec);
         os << "}\n\n";
     }
 }
@@ -1063,6 +1086,9 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << std::format(
         "    fn elem_xer_instruction(&self) -> asn1cpp_wire::spec::object::XerInstruction {{ <{} as asn1cpp_wire::spec::object::AsMemberRef>::XER_INSTRUCTION }}\n",
         spec.elem_type);
+    os << std::format(
+        "    fn elem_ber_framing(&self) -> asn1cpp_wire::spec::choice::BerTagging {{ <{} as asn1cpp_wire::spec::object::AsMemberRef>::BER_FRAMING }}\n",
+        spec.elem_type);
     if (spec.elem_xer_name) {
         os << std::format("    fn elem_xer_name(&self) -> ::std::option::Option<&'static str> {{ Some(\"{}\") }}\n", *spec.elem_xer_name);
     }
@@ -1466,6 +1492,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // own complete TLV, X.690 §8.14).
                     tag_text = format_tag_literal(*m.resolved_tag);
                     ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", tag_text);
+                } else if ((kind == AccessKind::Primitive || kind == AccessKind::Enumerated) && m.resolved_tag && !m.is_explicit
+                           && m.resolved_tag->cls != ast::TagClass::Universal) {
+                    // IMPLICIT counterpart of the branch above: the tag comes
+                    // from the referenced type assignment itself (X.680
+                    // §31.2, e.g. `TBool ::= [APPLICATION 1] BOOLEAN`), not
+                    // from this member. The unwrapped primitive only knows
+                    // its universal tag, so `Implicit` framing substitutes
+                    // the type assignment's tag (X.690 §8.14.2).
+                    tag_text = format_tag_literal(*m.resolved_tag);
+                    ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Implicit({})", tag_text);
                 } else if (kind == AccessKind::SeqOf && m.resolved_tag && !m.is_explicit) {
                     // IMPLICIT substitution (or no override at all — same
                     // tag either way, X.680 §25/§26): `m.resolved_tag`

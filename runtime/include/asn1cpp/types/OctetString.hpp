@@ -71,8 +71,12 @@ template<>
 struct BerTraits<OctetString> {
     static constexpr Tag tag() { return Tag::universal(UniversalTag::OctetString, false); }
 
-    static void encode(BerWriter& w, const OctetString& v) {
-        w.write_primitive(tag(), v.bytes());
+    /// @brief BER-encode the value as a primitive TLV with tag \p t.
+    /// @param t  Tag to write: the universal tag by default, or the tag of a
+    ///           type assignment (X.680 §31.2) such as `T ::= [APPLICATION 1] ...`.
+    /// @see X.690 §8.7.
+    static void encode(BerWriter& w, const OctetString& v, Tag t = tag()) {
+        w.write_primitive(t, v.bytes());
     }
 
     static Expected<OctetString, DecodeError> decode(BerReader& r) {
