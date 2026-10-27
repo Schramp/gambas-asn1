@@ -356,7 +356,8 @@ fn real_from_binary(negative: bool, n: &[u8], e2: i64) -> (f64, bool) {
     if e_msb > 1023 {
         return (inf, false);
     }
-    if e_msb < -1076 {
+    if e_msb < -1075 {
+        // Below half of 2^-1074: rounds to zero.
         return (zero, false);
     }
 
@@ -603,7 +604,29 @@ pub(crate) fn decode_real_value(value: &[u8], pos: usize) -> Result<Real, Decode
         e = ((e as u64) << 8 | b as u64) as i64;
     }
 
-    Ok(Real::binary(negative, n, e * log2_base + scaling))
+    let e2 = e * log2_base + scaling;
+    if n.len() <= 8 {
+        // Common case, a value a double holds exactly: at most 53 significant
+        // bits and a scale inside the double range (normal or subnormal).
+        let m = n.iter().fold(0u64, |m, &b| (m << 8) | b as u64);
+        let tz = m.trailing_zeros();
+        let m = m >> tz;
+        let width = 64 - m.leading_zeros() as i64;
+        let lsb = e2 + tz as i64;
+        let msb = lsb + width - 1;
+        if width <= 53 && lsb >= -1074 && msb <= 1023 {
+            let mut bits = if msb >= -1022 {
+                ((msb + 1023) as u64) << 52 | ((m << (53 - width)) & ((1u64 << 52) - 1))
+            } else {
+                m << (lsb + 1074) // subnormal: unit 2^-1074
+            };
+            if negative {
+                bits |= 1u64 << 63;
+            }
+            return Ok(Real::new(f64::from_bits(bits)));
+        }
+    }
+    Ok(Real::binary(negative, n, e2))
 }
 
 /// X.693 §17.9 textual form for XER. Deliberately NOT shared with
@@ -663,6 +686,34 @@ pub(crate) fn parse_xer_decimal(text: &str) -> Result<f64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Short mantissas take a direct IEEE path; it must agree with the general
+    /// normalizing Real::binary at every scale, including subnormal and
+    /// out-of-range ones.
+    #[test]
+    fn short_mantissa_path_matches_general_binary() {
+        let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut mantissas = vec![1u64, 3, 0xFF, (1 << 53) - 1, (1 << 53) + 1, (1 << 54) - 2, u64::MAX];
+        for _ in 0..64 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            mantissas.push(x >> (x % 60));
+        }
+        for &m in &mantissas {
+            for e in (-1200i64..1100).step_by(7).chain(-1140..-1060).chain(960..1030) {
+                for negative in [false, true] {
+                    let mb = m.to_be_bytes();
+                    let eb = (e as i16).to_be_bytes();
+                    let mut v = vec![0x81 | if negative { 0x40 } else { 0 }];
+                    v.extend_from_slice(&eb);
+                    v.extend_from_slice(&mb);
+                    let got = decode_real_value(&v, 0).unwrap();
+                    assert_eq!(got, Real::binary(negative, &mb, e), "m={m:#x} e={e} neg={negative}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn encodes_zero_as_empty_value() {
