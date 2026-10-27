@@ -227,6 +227,93 @@ String types — `UTF8String`, `PrintableString`, `IA5String`, `VisibleString`,
 `NumericString`, `BMPString`, `UniversalString`, and others — all map to
 `asn1::AsnString<tag>` and share a single string-handling runtime path.
 
+### REAL values
+
+REAL values in a schema may use `PLUS-INFINITY` and `MINUS-INFINITY` (X.680 §20.6) and
+`realnumber` notation with a fraction, an exponent, or both: `2.5`, `1e-5`, `1.5E3`
+(§11.9). Both may appear as value-range endpoints, as in
+`REAL (MINUS-INFINITY <..< PLUS-INFINITY)`. A bare `1.` is not accepted, so that `1..2`
+stays a range.
+
+A REAL value is mantissa × base^exponent with base 2 or 10 (X.680 §20.5). Base-2 and
+base-10 values are distinct values, even when they are numerically equal.
+`asn1::Real` (Rust: `asn1cpp_wire::real::Real`) holds a value in one of three storage
+classes:
+
+| Storage | Holds | Produced by |
+|---|---|---|
+| `Double` | IEEE 754 double, base 2 (default, no allocation) | `Real{d}` / `Real::new(d)`, `set(d)`, BER binary values a double holds exactly, every XER value, JER numbers |
+| `Binary` | base 2, arbitrary mantissa | BER binary values a double cannot hold: mantissas over 53 significant bits, exponents beyond the double range |
+| `Decimal` | base 10, arbitrary digit string | BER decimal form, JER `{"base10Value": n}`, `Real::decimal(neg, digits, exp)` |
+
+`value()` returns the double exactly for `Double` and the nearest double otherwise (±∞ or ±0
+beyond the double range). `storage()`, `base()` and `exact()` (sign, mantissa, exponent)
+expose the rest. `==` compares abstract values, so a `Decimal` never equals a `Double`;
+`numerically_equal()` compares `value()`. Encoding follows the storage class:
+
+- **BER/PER:** `Binary` uses the binary form normalized per X.690 §11.3.1. `Decimal` uses
+  NR3 per §11.3.2 (`1456.E-2`, with exponent `+0` when zero). Both are valid CER/DER.
+  `Double` keeps its usual binary form.
+- **JER:** `Decimal` is written as `{"base10Value": 1456E-2}` (X.697 §23.4). Other values
+  are a JSON number. When the type's JER-visible base constraint admits only 10, as in
+  `REAL (WITH COMPONENTS { ..., base (10) })`, a `Decimal` is a bare JSON number and a
+  JSON number decodes as `Decimal` (X.697 §23.1.4). The effective constraint follows
+  X.697 §23.1.3: intersections intersect, unions unite, `EXCEPT` and extensible
+  constraints are ignored. So `REAL (0 | WITH COMPONENTS { ..., base (10) })` counts as
+  base 10 only.
+- **XER:** `Decimal` is written as its exact digits (`1456E-2`). Other values are written as
+  fixed-point text. An XER value always decodes as `Double`, as in asn1c, so a `Decimal` is
+  exact through BER and JER but not back through XER.
+
+The Rust `Real` is a struct with private fields: build one with `Real::new(f64)` or
+`Real::from(f64)`, and read it with `value()` (it also derefs to `f64`).
+
+BER decode (X.690 §8.5) accepts every encoding the standard defines:
+
+- **Binary form (§8.5.7):**
+  - bases 2, 8 and 16 (§8.5.7.2) and the scaling factor F;
+  - all four exponent formats of §8.5.7.4, including format d (a length octet, then
+    that many exponent octets);
+  - unnormalized mantissas of any length (§8.5.7.5 NOTE 1).
+
+  A value a double holds exactly is a `Double`, and any other is a `Binary`, kept exactly.
+  `value()` rounds to the nearest double, ties to even, subnormals included. Exponents
+  wider than 56 bits are a decode error.
+- **Decimal form (§8.5.8):** ISO 6093 NR1, NR2 and NR3. Accepted: leading spaces, an
+  optional sign, `.` or `,` as the decimal mark, and `E`/`e` before an optional signed
+  exponent. NR2 requires a decimal mark, NR3 requires an exponent, and the mark is
+  optional in NR3. The digits are kept exactly as a `Decimal`, and `value()` is the
+  nearest double. Reserved NR codes, malformed text and exponents wider than 64 bits
+  are decode errors.
+
+A value-range constraint on a REAL type or member (X.680 §47.4) is checked by
+`asn1::validate()` (C++) and `asn1cpp_wire::constraints::validate_real` (Rust), the same
+fail-soft way as INTEGER ranges. Endpoints may be closed or open (`<`). `MIN`, `MAX` and
+the infinities count as unbounded ends, and serial constraints such as `(-10..10)(0..5)`
+intersect. NOT-A-NUMBER lies outside every range, so `(MINUS-INFINITY <..< PLUS-INFINITY)`
+admits finite values only. An extensible range (`(0..1, ...)`) is never a violation.
+`RandomFiller` draws only values inside the range. The range does not change any
+encoding. A range written with a value reference that is not an integer leaves the
+type unconstrained.
+
+A REAL member may have a DEFAULT: a realnumber, an integer literal, `PLUS-INFINITY` or
+`MINUS-INFINITY`. An absent member decodes as its default, and a member equal to its
+default is not encoded. REAL equality is value identity: minus zero and plus zero
+differ, and NOT-A-NUMBER equals itself, since X.690 §8.5.9 encodes each separately.
+So `-0` in a member that defaults to `0` is still encoded. This applies to
+`asn1::Real::operator==` and to Rust's `PartialEq` for `Real`.
+
+A value beyond the double range decodes losslessly as `Binary` or `Decimal`, with
+`value()` returning ±∞ or ±0. asn1c rejects such values instead (ERANGE). For every
+encoding, both runtimes give the same storage class, the same double bit for bit, and the
+same re-encoding. `tests/ber/test_real_ber.cpp` and the Rust `real.rs` tests share the
+vector tables.
+
+Malformed encodings are also decode errors:
+- format d with a length of 0, or a truncated exponent;
+- a special value (§8.5.9) with extra contents octets;
+- a reserved special-value octet.
+
 ### Structured Types
 
 **SEQUENCE** is a fixed-order list of named members, each with its own type. Members
@@ -673,7 +760,9 @@ the shortest such digit string, in plain decimal notation when the decimal
 exponent is in [-4, 15) (`-338203.95104146993`, `0.0001`, `100`) and as
 `d.dddE<exp>` otherwise (`1E-5`, `1.7976931348623157E308`). The special
 values are the strings `"NaN"`, `"INF"`, `"-INF"` and `"-0"` (X.697 §23).
-The decoder accepts any JSON number notation.
+The decoder accepts any JSON number notation. It also accepts the base-10 object form
+`{"base10Value": 14}` (X.697 §23.4), which it decodes exactly as a `Decimal`. Any other
+member, or a value that is not a JSON number, is a decode error.
 
 A BIT STRING whose SIZE is fixed (a single value, not extensible) is a bare
 hex string, `"2EFE20"` for `BIT STRING (SIZE (20))`; the length comes from

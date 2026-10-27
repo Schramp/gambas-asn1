@@ -164,6 +164,50 @@ int main() {
         auto r = jer_decode(asn_DEF_Real, "\"-0\"", out);
         check("REAL -0 decodes",  r.has_value() && out.value() == 0.0 && std::signbit(out.value()));
     }
+    // X.697 §23.4: a base-10 value as {"base10Value": number}.
+    {
+        struct B10 { const char* json; bool ok; double d; };
+        const B10 cases[] = {
+            {"{ \"base10Value\" : 14 }",   true,  14.0},   // X.697 §23.4 example
+            {"{\"base10Value\":14.56}",    true,  14.56},
+            {"{\"base10Value\":-1.5E3}",   true,  -1500.0},
+            {"{\"base10Value\":\"14\"}", false, 0},      // member value is a JSON number
+            {"{\"base2Value\":14}",        false, 0},
+            {"{\"base10Value\":14,\"x\":1}", false, 0},  // a single member
+            {"{}",                           false, 0},
+        };
+        for (const auto& c : cases) {
+            Real out{};
+            auto r = jer_decode(asn_DEF_Real, c.json, out);
+            std::string label = std::string("REAL decodes ") + c.json;
+            check(label.c_str(), c.ok ? (r.has_value() && out.value() == c.d &&
+                                          out.storage() == Real::Storage::Decimal)
+                                       : !r.has_value());
+        }
+    }
+    // A Decimal (base-10) value is exact through BER and JER; XER prints its digits.
+    {
+        Real pi = Real::decimal(false, "3141592653589793238462643383279", -30);
+        check("Decimal encodes as base10Value with its exact digits",
+              encodes_as(asn_DEF_Real, pi, "{\"base10Value\":3141592653589793238462643383279E-30}"));
+        Real back{};
+        check("Decimal base10Value round-trips exactly",
+              jer_decode(asn_DEF_Real, jer_encode(asn_DEF_Real, &pi), back).has_value() && back == pi);
+
+        const std::vector<uint8_t> nr2{0x02, '1', '4', '.', '5', '6'};
+        auto ber_in = BerTraits<Real>::decode_value(nr2);
+        Real via_jer{};
+        bool ok = ber_in && jer_decode(asn_DEF_Real, jer_encode(asn_DEF_Real, &*ber_in), via_jer).has_value();
+        std::vector<uint8_t> out;
+        { BerWriter w(out); BerTraits<Real>::encode(w, via_jer); }
+        const std::vector<uint8_t> want{0x09, 0x09, 0x03, '1', '4', '5', '6', '.', 'E', '-', '2'};
+        check("BER decimal -> JER -> BER keeps the base-10 value (DER NR3)", ok && out == want);
+
+        std::ostringstream xo;
+        XerEncodeStream xs{xo};
+        XerCodec::instance().encode(xs, asn_DEF_Real, &via_jer);
+        check("XER prints the Decimal's exact digits", xo.str().find(">1456E-2<") != std::string::npos);
+    }
 
     // =========================================================================
     std::printf("\n── OCTET STRING ────────────────────────────────────────────\n");

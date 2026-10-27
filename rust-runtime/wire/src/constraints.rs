@@ -26,8 +26,16 @@ pub const SIZE_CONSTRAINED: u32 = 8;
 /// BIT STRING defined with a NamedBitList (X.680 §22.7): trailing 0 bits
 /// carry no meaning and PER drops them (X.691 §15.2, §15.3).
 pub const NAMED_BITS: u32 = 16;
+/// REAL value range `real_lower..real_upper` (X.680 §47.4).
+pub const REAL_RANGE: u32 = 32;
+/// `real_lower` itself is excluded (`lo<..`).
+pub const REAL_LOWER_OPEN: u32 = 64;
+/// `real_upper` itself is excluded (`..<hi`).
+pub const REAL_UPPER_OPEN: u32 = 128;
+/// The JER-visible base constraint admits only base 10 (X.697 §23.1.4).
+pub const REAL_BASE_10: u32 = 256;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Constraints {
     pub flags: u32,
     pub range_bits: u32,
@@ -56,6 +64,11 @@ pub struct Constraints {
     /// Mirrors `SeqOfSpec`'s element descriptor on the C++ side. `None`
     /// for every non-collection type and for an unconstrained element.
     pub element: Option<&'static Constraints>,
+    /// REAL value range, read by `validate_real` when `REAL_RANGE` is set.
+    /// MIN / MAX / MINUS-INFINITY / PLUS-INFINITY endpoints are ±infinity.
+    /// Mirrors `Constraints::real_lower`/`real_upper` (`Constraints.hpp`).
+    pub real_lower: f64,
+    pub real_upper: f64,
 }
 
 pub const UNCONSTRAINED: Constraints = Constraints {
@@ -69,6 +82,7 @@ pub const UNCONSTRAINED: Constraints = Constraints {
     size_lower: 0,
     size_upper: 0,
     encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,
+    real_lower: 0.0, real_upper: 0.0,
 };
 
 impl Constraints {
@@ -77,6 +91,10 @@ impl Constraints {
     pub const EXTENSIBLE: u32 = EXTENSIBLE;
     pub const SIZE_CONSTRAINED: u32 = SIZE_CONSTRAINED;
     pub const NAMED_BITS: u32 = NAMED_BITS;
+    pub const REAL_RANGE: u32 = REAL_RANGE;
+    pub const REAL_LOWER_OPEN: u32 = REAL_LOWER_OPEN;
+    pub const REAL_UPPER_OPEN: u32 = REAL_UPPER_OPEN;
+    pub const REAL_BASE_10: u32 = REAL_BASE_10;
 
     pub fn is_constrained(&self) -> bool {
         self.flags & CONSTRAINED != 0
@@ -142,6 +160,36 @@ pub fn validate_u64(v: u64, c: &Constraints) -> i64 {
     }
     if c.flags & Constraints::SEMI_CONSTRAINED != 0 && v < c.lower_u64 {
         return clamp(c.lower_u64 - v, 1);
+    }
+    0
+}
+
+/// X.680 §47.4 REAL value-range check. Mirrors `Real::validate`
+/// (`runtime/include/asn1cpp/types/Real.hpp`) exactly: `0` inside the range,
+/// with no `REAL_RANGE` bit, or `EXTENSIBLE`; otherwise the distance to the
+/// nearest bound rounded away from zero to at least 1 and saturated at
+/// `i64::MAX`, positive below the lower bound, negative above the upper
+/// bound. NOT-A-NUMBER lies in no range and gives `1`.
+pub fn validate_real(v: f64, c: &Constraints) -> i64 {
+    if c.flags & REAL_RANGE == 0 || c.flags & EXTENSIBLE != 0 {
+        return 0;
+    }
+    if v.is_nan() {
+        return 1;
+    }
+    let distance = |d: f64| -> i64 {
+        if !(d < 9.2e18) {
+            return i64::MAX;
+        }
+        (d.ceil() as i64).max(1)
+    };
+    let lower_open = c.flags & REAL_LOWER_OPEN != 0;
+    let upper_open = c.flags & REAL_UPPER_OPEN != 0;
+    if v < c.real_lower || (lower_open && v == c.real_lower) {
+        return distance(c.real_lower - v);
+    }
+    if v > c.real_upper || (upper_open && v == c.real_upper) {
+        return -distance(v - c.real_upper);
     }
     0
 }
@@ -371,6 +419,32 @@ mod tests {
 
     /// X.680 §22.7: a NamedBitList value fits SIZE(8) whenever its
     /// significant bits do — '01'B and '0100000000'B both satisfy it.
+    #[test]
+    fn validate_real_closed_open_and_unbounded_ends() {
+        let closed = Constraints { flags: REAL_RANGE, real_lower: 0.0, real_upper: 100.0, ..Default::default() };
+        assert_eq!(validate_real(0.0, &closed), 0);
+        assert_eq!(validate_real(100.0, &closed), 0);
+        assert_eq!(validate_real(-0.5, &closed), 1);
+        assert_eq!(validate_real(-2.5, &closed), 3);
+        assert_eq!(validate_real(101.0, &closed), -1);
+        assert_eq!(validate_real(f64::NAN, &closed), 1);
+        assert_eq!(validate_real(f64::INFINITY, &closed), -i64::MAX);
+
+        let finite = Constraints {
+            flags: REAL_RANGE | REAL_LOWER_OPEN | REAL_UPPER_OPEN,
+            real_lower: f64::NEG_INFINITY,
+            real_upper: f64::INFINITY,
+            ..Default::default()
+        };
+        assert_eq!(validate_real(1e300, &finite), 0);
+        assert_eq!(validate_real(f64::INFINITY, &finite), -i64::MAX);
+        assert_eq!(validate_real(f64::NEG_INFINITY, &finite), i64::MAX);
+
+        let ext = Constraints { flags: REAL_RANGE | EXTENSIBLE, real_lower: 0.0, real_upper: 1.0, ..Default::default() };
+        assert_eq!(validate_real(5.0, &ext), 0);
+        assert_eq!(validate_real(5.0, &UNCONSTRAINED), 0);
+    }
+
     #[test]
     fn validate_bit_string_named_bits_checks_significant_bits_only() {
         use crate::bit_string::BitString;

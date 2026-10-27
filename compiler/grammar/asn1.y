@@ -303,7 +303,8 @@
 %type <ConstraintPtr>               FullSpecification PartialSpecification
 %type <ConstraintPtr>               TypeConstraints NamedConstraint
 %type <Value>                       SingleValue LowerEndValue UpperEndValue
-%type <std::monostate>              ContainedSubtype ConstraintRangeSpec AtNotationElement
+%type <std::monostate>              ContainedSubtype AtNotationElement
+%type <int>                         ConstraintRangeSpec
 %type <std::monostate>              optPresenceConstraint PresenceConstraint
 %type <std::string>                 ComponentIdList
 
@@ -1428,8 +1429,11 @@ BitStringValue:
 	| TOK_hstring { $$ = $1; }
 	;
 
+/* X.680 §20.6: RealValue ::= NumericRealValue | SpecialRealValue. */
 RealValue:
-	TOK_realnumber { $$ = $1; }
+	  TOK_realnumber     { $$ = $1; }
+	| TOK_PLUS_INFINITY  { $$ = std::numeric_limits<double>::infinity(); }
+	| TOK_MINUS_INFINITY { $$ = -std::numeric_limits<double>::infinity(); }
 	;
 
 SignedNumber:
@@ -1588,6 +1592,8 @@ ValueRange:
 	    if (auto* v = std::get_if<int64_t>(&$3))      { hi.kind = RangeEndpoint::Kind::Value; hi.value = *v; }
 	    else if (std::get_if<std::monostate>(&$3))     { hi.kind = RangeEndpoint::Kind::Max; }
 	    else                                           { hi.kind = RangeEndpoint::Kind::Value; hi.value = $3; }
+	    lo.open = ($2 & 1) != 0;
+	    hi.open = ($2 & 2) != 0;
 	    auto c = std::make_shared<ast::Constraint>();
 	    c->body = ast::ValueRange{lo, hi};
 	    $$ = c;
@@ -1607,10 +1613,10 @@ UpperEndValue:
 SingleValue: Value { $$ = $1; } ;
 
 ConstraintRangeSpec:
-	  TOK_TwoDots        { }
-	| TOK_TwoDots '<'    { }
-	| '<' TOK_TwoDots    { }
-	| '<' TOK_TwoDots '<' { }
+	  TOK_TwoDots        { $$ = 0; }
+	| TOK_TwoDots '<'    { $$ = 2; }
+	| '<' TOK_TwoDots    { $$ = 1; }
+	| '<' TOK_TwoDots '<' { $$ = 3; }
 	;
 
 ContainedSubtype:
@@ -1641,17 +1647,35 @@ FullSpecification:
 	;
 
 PartialSpecification:
-	'{' TOK_ThreeDots ',' TypeConstraints '}' { $$ = $4; }
+	'{' TOK_ThreeDots ',' TypeConstraints '}'
+	{
+	    std::get<ast::ComponentsConstraint>($4->body).partial = true;
+	    $$ = $4;
+	}
 	;
 
 TypeConstraints:
 	  NamedConstraint                     { $$ = $1; }
-	| TypeConstraints ',' NamedConstraint { $$ = $1; }
+	| TypeConstraints ',' NamedConstraint
+	{
+	    auto& into = std::get<ast::ComponentsConstraint>($1->body).components;
+	    auto& from = std::get<ast::ComponentsConstraint>($3->body).components;
+	    into.insert(into.end(), from.begin(), from.end());
+	    $$ = $1;
+	}
 	;
 
 NamedConstraint:
 	IdentifierAsValue optConstraint optPresenceConstraint
-	{ $$ = std::make_shared<ast::Constraint>(); }
+	{
+	    ast::ComponentsConstraint cc;
+	    const auto* ref = std::get_if<NamedValueRef>(&$1);
+	    bool has_value = $2 && !std::holds_alternative<std::monostate>($2->body);
+	    cc.components.push_back({ref ? ref->name : std::string{}, has_value ? $2 : nullptr});
+	    auto c = std::make_shared<ast::Constraint>();
+	    c->body = std::move(cc);
+	    $$ = c;
+	}
 	;
 
 optPresenceConstraint:

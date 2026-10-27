@@ -53,6 +53,10 @@ ASN1C_LACKS_PRODUCTION = {
     # X.682 §11.1: asn1c's asn1p_y.y has only `CONTAINING Type`, not the
     # `ENCODED BY Value` and `CONTAINING Type ENCODED BY Value` forms.
     "1009-contents-encoded-by-OK.asn1",
+    # X.680 §20.6/§11.9: asn1c's RealValue has no SpecialRealValue
+    # alternative, and its realnumber token cannot combine a fraction with
+    # an exponent.
+    "1010-real-value-notation-OK.asn1",
 }
 
 

@@ -1,0 +1,14 @@
+[package]
+name = "real-constraint-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the REAL value-range constraint test (real_constraint_test.asn1). Pulls generated .rs from ASN1CPP_RUST_GEN_DIR (set by tests/CMakeLists.txt's rust_real_constraint), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "real_constraint"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }

@@ -6,8 +6,25 @@
 
 use crate::ber::reader::DecodeError;
 use crate::jer::reader::Reader;
+use crate::constraints::{Constraints, REAL_BASE_10};
+use crate::real::{parse_decimal_number, Real};
 
-pub fn encode(d: f64, out: &mut String) {
+/// Encodes a JER REAL: a `Decimal` as its exact digits, a bare JSON number
+/// when the JER-visible base constraint admits only 10 (X.697 §23.1.4) and
+/// `{"base10Value": n}` otherwise (§23.4); any other value as a JSON number
+/// or special-value string (§23.2, §23.3). Mirrors `RealJerHandler::encode`.
+pub fn encode(v: &Real, c: &Constraints, out: &mut String) {
+    if let Some(text) = v.decimal_text() {
+        if c.flags & REAL_BASE_10 != 0 {
+            out.push_str(&text);
+        } else {
+            out.push_str("{\"base10Value\":");
+            out.push_str(&text);
+            out.push('}');
+        }
+        return;
+    }
+    let d = v.value();
     if d.is_nan() {
         out.push_str("\"NaN\"");
         return;
@@ -70,8 +87,26 @@ fn format_real(d: f64) -> String {
     out
 }
 
-pub fn decode(r: &mut Reader) -> Result<f64, DecodeError> {
+/// Decodes a JER REAL: a JSON number (X.697 §23.3), a special-value string
+/// (§23.2), or the object `{"base10Value": number}` (§23.4), which gives an
+/// exact `Decimal`. A number gives a `Double`, or a `Decimal` when the base
+/// constraint admits only 10 (§23.1.4). Mirrors `RealJerHandler::decode`
+/// (`runtime/src/JerCodec.cpp`).
+pub fn decode(r: &mut Reader, c: &Constraints) -> Result<Real, DecodeError> {
     r.skip_ws();
+    if r.peek_char() == b'{' {
+        r.expect_char(b'{')?;
+        let key = r.read_json_string()?;
+        if key != "base10Value" {
+            return Err(DecodeError::new(format!("JER: unexpected REAL object member: {key}"), r.pos()));
+        }
+        r.expect_char(b':')?;
+        let tok = r.read_json_token()?;
+        let v = parse_decimal_number(&tok)
+            .ok_or_else(|| DecodeError::new(format!("JER: invalid REAL base10Value: {tok}"), r.pos()))?;
+        r.expect_char(b'}')?;
+        return Ok(v);
+    }
     if r.peek_char() == b'"' {
         let s = r.read_json_string()?;
         return match s.as_str() {
@@ -82,16 +117,22 @@ pub fn decode(r: &mut Reader) -> Result<f64, DecodeError> {
             other => other
                 .parse::<f64>()
                 .map_err(|_| DecodeError::new(format!("JER: invalid REAL string: {other}"), r.pos())),
-        };
+        }
+        .map(Real::new);
     }
     let tok = r.read_json_token()?;
+    if c.flags & REAL_BASE_10 != 0 {
+        return parse_decimal_number(&tok).ok_or_else(|| DecodeError::new(format!("JER: invalid REAL: {tok}"), r.pos()));
+    }
     tok.parse::<f64>()
+        .map(Real::new)
         .map_err(|_| DecodeError::new(format!("JER: invalid REAL: {tok}"), r.pos()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constraints::UNCONSTRAINED;
 
     /// Shared with the C++ `test_jer_real_format` table: both runtimes
     /// must write exactly these strings.
@@ -116,18 +157,78 @@ mod tests {
     fn reals_encode_to_the_shortest_round_trip_text() {
         for &(d, want) in CASES {
             let mut out = String::new();
-            encode(d, &mut out);
+            encode(&Real::new(d), &UNCONSTRAINED, &mut out);
             assert_eq!(out, want, "encoding {d:?}");
             let mut r = Reader::new(&out);
-            assert_eq!(decode(&mut r).unwrap().to_bits(), d.to_bits(), "round trip of {want}");
+            assert_eq!(decode(&mut r, &UNCONSTRAINED).unwrap().to_bits(), d.to_bits(), "round trip of {want}");
         }
+    }
+
+    /// Shared with the C++ `test_jer_basic` base10Value cases.
+    #[test]
+    fn base10_value_object_decodes() {
+        let cases: &[(&str, Option<f64>)] = &[
+            ("{ \"base10Value\" : 14 }", Some(14.0)), // X.697 §23.4 example
+            ("{\"base10Value\":14.56}", Some(14.56)),
+            ("{\"base10Value\":-1.5E3}", Some(-1500.0)),
+            ("{\"base10Value\":\"14\"}", None),
+            ("{\"base2Value\":14}", None),
+            ("{\"base10Value\":14,\"x\":1}", None),
+            ("{}", None),
+        ];
+        for &(json, want) in cases {
+            let mut r = Reader::new(json);
+            let got = decode(&mut r, &UNCONSTRAINED).ok();
+            assert_eq!(got.as_ref().map(Real::value), want, "{json}");
+            if let Some(v) = got {
+                assert_eq!(v.storage(), crate::real::Storage::Decimal, "{json}");
+            }
+        }
+    }
+
+    /// Shared with the C++ `test_jer_basic` Decimal checks.
+    #[test]
+    fn decimal_is_exact_through_ber_and_jer() {
+        let pi = Real::decimal(false, "3141592653589793238462643383279", -30);
+        let mut out = String::new();
+        encode(&pi, &UNCONSTRAINED, &mut out);
+        assert_eq!(out, "{\"base10Value\":3141592653589793238462643383279E-30}");
+        assert_eq!(decode(&mut Reader::new(&out), &UNCONSTRAINED).unwrap(), pi);
+
+        let ber_in = crate::real::decode_real_value(b"\x0214.56", 0).unwrap();
+        let mut json = String::new();
+        encode(&ber_in, &UNCONSTRAINED, &mut json);
+        let via_jer = decode(&mut Reader::new(&json), &UNCONSTRAINED).unwrap();
+        let mut content = Vec::new();
+        crate::real::encode_real_content(&mut content, &via_jer);
+        assert_eq!(content, b"\x031456.E-2");
+
+        let mut xer = String::new();
+        crate::xer::real::encode(&via_jer, &mut xer);
+        assert_eq!(xer, "1456E-2");
+    }
+
+    /// Shared with the C++ `test_jer_basic` base-constraint checks.
+    #[test]
+    fn base_10_only_constraint_uses_a_bare_number() {
+        let c = Constraints { flags: REAL_BASE_10, ..UNCONSTRAINED };
+        let v = Real::decimal(false, "1456", -2);
+        let mut out = String::new();
+        encode(&v, &c, &mut out);
+        assert_eq!(out, "1456E-2");
+        let back = decode(&mut Reader::new("14.56"), &c).unwrap();
+        assert_eq!(back, v);
+        let mut base2 = String::new();
+        encode(&Real::new(14.5), &c, &mut base2);
+        assert_eq!(base2, "14.5", "a base-2 value is a JSON number either way (§23.1.2)");
+        assert_eq!(decode(&mut Reader::new("14.56"), &UNCONSTRAINED).unwrap().storage(), crate::real::Storage::Double);
     }
 
     #[test]
     fn special_values_keep_their_strings() {
         for (d, want) in [(f64::NAN, "\"NaN\""), (f64::INFINITY, "\"INF\""), (f64::NEG_INFINITY, "\"-INF\""), (-0.0, "\"-0\""), (0.0, "0")] {
             let mut out = String::new();
-            encode(d, &mut out);
+            encode(&Real::new(d), &UNCONSTRAINED, &mut out);
             assert_eq!(out, want);
         }
     }

@@ -481,10 +481,21 @@ struct IntegerJerHandler final : IJerTypeHandler {
 // std::signbit below) to encode as the special string "-0", not the
 // bare number 0.
 struct RealJerHandler final : IJerTypeHandler {
+    /// @brief Encode a JER REAL: a \c Decimal as its exact digits, a bare JSON
+    ///        number when the JER-visible base constraint admits only 10 and
+    ///        `{"base10Value": n}` otherwise; any other value as a JSON number
+    ///        or special string.
+    /// @see X.697 §23.1.4, §23.4.
     void encode(const JerCodec&, JerEncodeStream& s,
-                const TypeDescriptor&, const Asn1Object* src) const override {
-        double d = static_cast<const Real*>(src)->value();
+                const TypeDescriptor& def, const Asn1Object* src) const override {
+        const Real& r = *static_cast<const Real*>(src);
+        double d = r.value();
         auto& os = s.os();
+        if (r.storage() == Real::Storage::Decimal) {
+            if (def.constraints.flags & Constraints::REAL_BASE_10) os << r.decimal_text();
+            else os << "{\"base10Value\":" << r.decimal_text() << '}';
+            return;
+        }
         if (std::isnan(d))      { os << "\"NaN\""; return; }
         if (std::isinf(d))      { os << (d > 0 ? "\"INF\"" : "\"-INF\""); return; }
         if (d == 0.0) {
@@ -493,9 +504,30 @@ struct RealJerHandler final : IJerTypeHandler {
         }
         os << jer_detail::format_real(d);
     }
+    /// @brief Decode a JER REAL: a JSON number (X.697 §23.3), a special-value
+    ///        string (§23.2), or the object `{"base10Value": number}` (§23.4),
+    ///        which gives an exact \c Decimal value. A number gives a \c Double,
+    ///        or a \c Decimal when the base constraint admits only 10 (§23.1.4).
+    /// @return decode_ok, or an error for any other JSON value or member.
+    /// @see X.697 §23.
     DecodeResult decode(const JerCodec&, JerDecodeStream& s,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         jer_detail::skip_ws(s);
+        if (!s.at_end() && s.data()[0] == '{') {
+            s.advance(1);
+            std::string key;
+            if (auto r = jer_detail::read_json_string(s, key); !r) return r;
+            if (key != "base10Value")
+                return decode_err(DecodeError("JER: unexpected REAL object member: " + key));
+            if (auto r = jer_detail::expect_char(s, ':'); !r) return r;
+            std::string tok;
+            if (auto r = jer_detail::read_json_token(s, tok); !r) return r;
+            auto v = detail::parse_decimal_number(tok);
+            if (!v) return decode_err(DecodeError("JER: invalid REAL base10Value: " + tok));
+            if (auto r = jer_detail::expect_char(s, '}'); !r) return r;
+            *static_cast<Real*>(dest) = std::move(*v);
+            return decode_ok();
+        }
         if (!s.at_end() && s.data()[0] == '"') {
             // Quoted special value
             std::string str;
@@ -517,6 +549,12 @@ struct RealJerHandler final : IJerTypeHandler {
         }
         std::string tok;
         if (auto r = jer_detail::read_json_token(s, tok); !r) return r;
+        if (def.constraints.flags & Constraints::REAL_BASE_10) {
+            auto v = detail::parse_decimal_number(tok);
+            if (!v) return decode_err(DecodeError("JER: invalid REAL: " + tok));
+            *static_cast<Real*>(dest) = std::move(*v);
+            return decode_ok();
+        }
         char* endp;
         double d = std::strtod(tok.c_str(), &endp);
         if (endp != tok.c_str() + tok.size())

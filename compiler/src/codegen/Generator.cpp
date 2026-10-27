@@ -1166,6 +1166,23 @@ DefaultValueSpec Generator::default_value_spec_for(const ast::TypeDef& m) const 
 
     if (auto* b = std::get_if<bool>(&m.default_value))
         return { DefaultValueSpec::Kind::Bool, *b, 0, "", "" };
+    {
+        // REAL member (X.680 §20.6): a realnumber, PLUS-/MINUS-INFINITY, or
+        // an integer literal such as `DEFAULT 0` all name a REAL value.
+        const ast::TypeDef* base = resolve_underlying(m, resolver_);
+        bool is_real = base && std::holds_alternative<ast::BuiltinType>(base->body)
+            && std::get<ast::BuiltinType>(base->body) == ast::BuiltinType::Real;
+        std::optional<double> real;
+        if (auto* d = std::get_if<double>(&m.default_value)) real = *d;
+        else if (auto* i = std::get_if<int64_t>(&m.default_value); i && is_real) real = static_cast<double>(*i);
+        else if (auto* u = std::get_if<uint64_t>(&m.default_value); u && is_real) real = static_cast<double>(*u);
+        if (real && is_real) {
+            DefaultValueSpec spec;
+            spec.kind = DefaultValueSpec::Kind::Real;
+            spec.real_val = *real;
+            return spec;
+        }
+    }
     if (auto* i = std::get_if<int64_t>(&m.default_value)) {
         // A parameterized type's DEFAULT literal is written against the
         // formal parameter, not its eventual actual type (X.683) — e.g.
@@ -1388,6 +1405,105 @@ Generator::extract_integer_range(const ast::TypeDef& def) const {
     return IntRange{false, 0, 0, false, 0, false};
 }
 
+/// @brief Which of the bases 2 and 10 one constraint admits for a REAL's
+///        `base` component: bit 0 for 2, bit 1 for 10.
+/// @param c  A constraint on the REAL type.
+/// @return The set, or nullopt when the constraint is not JER-visible or says
+///         nothing about the base. Inner type constraints give their `base`
+///         component's values, intersections intersect, unions unite, and an
+///         extensible constraint is not JER-visible.
+/// @see X.697 §7.2.1 c) d), §23.1.3.
+static std::optional<unsigned> real_base_set(const ast::Constraint& c) {
+    if (c.extensible) return std::nullopt;
+    auto admits = [](const ast::Constraint& bc, int64_t v, auto& self) -> bool {
+        if (auto* val = std::get_if<ast::Value>(&bc.body)) {
+            auto* i = std::get_if<int64_t>(val);
+            return i && *i == v;
+        }
+        if (auto* vr = std::get_if<ast::ValueRange>(&bc.body)) {
+            auto bound = [](const ast::RangeEndpoint& e) { return std::get_if<int64_t>(&e.value); };
+            if (vr->lower.kind == ast::RangeEndpoint::Kind::Value) {
+                auto* lo = bound(vr->lower);
+                if (!lo || v < *lo || (vr->lower.open && v == *lo)) return false;
+            }
+            if (vr->upper.kind == ast::RangeEndpoint::Kind::Value) {
+                auto* hi = bound(vr->upper);
+                if (!hi || v > *hi || (vr->upper.open && v == *hi)) return false;
+            }
+            return true;
+        }
+        if (auto* ic = std::get_if<ast::IntersectionConstraint>(&bc.body)) {
+            for (const auto& op : ic->operands)
+                if (op && !self(*op, v, self)) return false;
+            return true;
+        }
+        if (auto* uc = std::get_if<ast::UnionConstraint>(&bc.body)) {
+            for (const auto& op : uc->operands)
+                if (op && self(*op, v, self)) return true;
+            return false;
+        }
+        return true;
+    };
+    if (auto* cc = std::get_if<ast::ComponentsConstraint>(&c.body)) {
+        for (const auto& comp : cc->components) {
+            if (comp.name != "base") continue;
+            if (!comp.constraint || comp.constraint->extensible) return std::nullopt;
+            return (admits(*comp.constraint, 2, admits) ? 1u : 0u) |
+                   (admits(*comp.constraint, 10, admits) ? 2u : 0u);
+        }
+        return std::nullopt;
+    }
+    auto combine = [&](const std::vector<ast::ConstraintPtr>& ops, bool intersect) -> std::optional<unsigned> {
+        std::optional<unsigned> acc;
+        for (const auto& op : ops) {
+            if (!op) continue;
+            auto s = real_base_set(*op);
+            if (!s) continue;
+            acc = acc ? (intersect ? (*acc & *s) : (*acc | *s)) : *s;
+        }
+        return acc;
+    };
+    if (auto* ic = std::get_if<ast::IntersectionConstraint>(&c.body)) return combine(ic->operands, true);
+    if (auto* uc = std::get_if<ast::UnionConstraint>(&c.body))         return combine(uc->operands, false);
+    return std::nullopt;
+}
+
+RealRangeSpec Generator::extract_real_range(const ast::TypeDef& def) const {
+    constexpr double inf = std::numeric_limits<double>::infinity();
+    auto endpoint = [&](const ast::RangeEndpoint& e, double unbounded) -> std::optional<double> {
+        if (e.kind != ast::RangeEndpoint::Kind::Value) return unbounded;
+        if (auto* d = std::get_if<double>(&e.value))   return *d;
+        if (auto* u = std::get_if<uint64_t>(&e.value)) return static_cast<double>(*u);
+        if (auto i = resolve_int_value(e.value))       return static_cast<double>(*i);
+        return std::nullopt;
+    };
+    RealRangeSpec r;
+    bool unresolved = false;
+    walk_type_constraints(def, [&](const ast::ConstraintBody& body) {
+        auto* vr = std::get_if<ast::ValueRange>(&body);
+        if (!vr) return;
+        auto lo = endpoint(vr->lower, -inf);
+        auto hi = endpoint(vr->upper, inf);
+        if (!lo || !hi) { unresolved = true; return; }
+        // Intersection: the larger lower and the smaller upper bound win; on a
+        // tie an open endpoint is the narrower one.
+        if (!r.present || *lo > r.lower)  { r.lower = *lo; r.lower_open = vr->lower.open; }
+        else if (*lo == r.lower)          r.lower_open = r.lower_open || vr->lower.open;
+        if (!r.present || *hi < r.upper)  { r.upper = *hi; r.upper_open = vr->upper.open; }
+        else if (*hi == r.upper)          r.upper_open = r.upper_open || vr->upper.open;
+        r.present = true;
+    });
+    if (unresolved) r = RealRangeSpec{};
+    r.extensible = r.present && is_constraint_extensible(def);
+    // X.697 §23.1.3: serial constraints intersect; none at all admits both bases.
+    std::optional<unsigned> bases;
+    for (const auto& cptr : def.constraints)
+        if (cptr)
+            if (auto b = real_base_set(*cptr)) bases = bases ? (*bases & *b) : *b;
+    r.base10_only = bases == 2u;
+    return r;
+}
+
 // ---------------------------------------------------------------------------
 // Inline-constrained member TypeDescriptor helpers
 // ---------------------------------------------------------------------------
@@ -1534,6 +1650,21 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
             }
             spec.xer_type_name = "INTEGER";
             spec.universal_tag = asn1::UniversalTag::Integer;
+            return spec;
+        }
+    }
+
+    // REAL value range
+    if (*bt == BT::Real) {
+        auto rr = extract_real_range(m);
+        if (rr.has_table()) {
+            MemberTypeDescriptorSpec spec;
+            spec.kind = MemberTypeDescriptorSpec::Kind::Real;
+            spec.parent_cname = parent_cname;
+            spec.mname = mname;
+            spec.real_range = rr;
+            spec.xer_type_name = "REAL";
+            spec.universal_tag = asn1::UniversalTag::Real;
             return spec;
         }
     }
@@ -2980,6 +3111,7 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     spec.extensible = string_per_visibility(def).size_extensible;
     spec.named_bits = has_named_bits(def);
     spec.xer_encoding = def.xer_encoding;
+    if (builtin == ast::BuiltinType::Real) spec.real_range = extract_real_range(def);
     return spec;
 }
 

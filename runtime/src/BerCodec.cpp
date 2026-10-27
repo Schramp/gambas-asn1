@@ -259,7 +259,7 @@ struct RealBerHandler final : IBerTypeHandler {
                         const TypeDescriptor&, Asn1Object* dest) const override {
         auto v = BerTraits<Real>::decode(r);
         if (!v) return decode_err(v.error());
-        *static_cast<Real*>(dest) = *v;
+        *static_cast<Real*>(dest) = std::move(*v);
         return decode_ok();
     }
     DecodeResult decode_value(const BerCodec&, BerReader& content,
@@ -267,7 +267,7 @@ struct RealBerHandler final : IBerTypeHandler {
         auto value = content.rest();
         auto v = BerTraits<Real>::decode_value(value);
         if (!v) return decode_err(v.error());
-        *static_cast<Real*>(dest) = *v;
+        *static_cast<Real*>(dest) = std::move(*v);
         return decode_ok();
     }
 };

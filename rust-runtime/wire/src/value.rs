@@ -76,7 +76,7 @@ mod per_blanket_tests {
         static ELEM: Constraints = Constraints {
             flags: Constraints::CONSTRAINED, range_bits: 4, lower_bound: 0, upper_bound: 15,
             lower_u64: 0, upper_u64: 0, size_range_bits: 0, size_lower: 0, size_upper: 0,
-            encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,
+            encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None, real_lower: 0.0, real_upper: 0.0,
         };
         let coll = Constraints {
             flags: Constraints::SIZE_CONSTRAINED, size_range_bits: 3, size_lower: 0, size_upper: 7,
@@ -410,10 +410,10 @@ mod tests {
     #[test]
     fn f64_ber_round_trips_through_the_trait() {
         let mut out = Vec::new();
-        crate::spec::primitive::test_codec::ber_encode(&Real(1.5), &mut out);
+        crate::spec::primitive::test_codec::ber_encode(&Real::new(1.5), &mut out);
 
         let mut r = Reader::new(&out);
-        let mut got = Real(0.0);
+        let mut got = Real::new(0.0);
         crate::spec::primitive::test_codec::ber_decode_into(&mut got, &mut r).unwrap();
         assert_eq!(got, 1.5);
     }
@@ -424,13 +424,13 @@ mod tests {
 
         let mut out = String::new();
         write_open_tag(&mut out, "x");
-        crate::spec::primitive::test_codec::xer_encode(&Real(1.5), &mut out, 0);
+        crate::spec::primitive::test_codec::xer_encode(&Real::new(1.5), &mut out, 0);
         write_close_tag(&mut out, "x");
         assert_eq!(out, "<x>1.5</x>");
 
         let mut r = XerReader::new(&out);
         r.consume_open_tag("x").unwrap();
-        let mut got = Real(0.0);
+        let mut got = Real::new(0.0);
         crate::spec::primitive::test_codec::xer_decode_into(&mut got, &mut r).unwrap();
         r.consume_close_tag("x").unwrap();
         assert_eq!(got, 1.5);
@@ -439,33 +439,33 @@ mod tests {
     #[test]
     fn f64_xer_zero_preserves_sign() {
         let mut out = String::new();
-        crate::spec::primitive::test_codec::xer_encode(&Real(0.0), &mut out, 0);
+        crate::spec::primitive::test_codec::xer_encode(&Real::new(0.0), &mut out, 0);
         assert_eq!(out, "0");
 
         // X.693 §17.9: -0.0 is distinct decimal text from +0.0, unlike
         // the special-value keywords (PLUS-INFINITY/NOT-A-NUMBER), which
         // have no sign-of-zero analogue to lose.
         let mut out2 = String::new();
-        crate::spec::primitive::test_codec::xer_encode(&Real(-0.0), &mut out2, 0);
+        crate::spec::primitive::test_codec::xer_encode(&Real::new(-0.0), &mut out2, 0);
         assert_eq!(out2, "-0");
     }
 
     #[test]
     fn f64_xer_special_values_round_trip() {
-        for v in [Real(f64::INFINITY), Real(f64::NEG_INFINITY)] {
+        for v in [Real::new(f64::INFINITY), Real::new(f64::NEG_INFINITY)] {
             let mut out = String::new();
             crate::spec::primitive::test_codec::xer_encode(&v, &mut out, 0);
             let mut r = XerReader::new(&out);
-            let mut got = Real(0.0);
+            let mut got = Real::new(0.0);
             crate::spec::primitive::test_codec::xer_decode_into(&mut got, &mut r).unwrap();
             assert_eq!(got, v);
         }
 
         let mut out = String::new();
-        crate::spec::primitive::test_codec::xer_encode(&Real(f64::NAN), &mut out, 0);
+        crate::spec::primitive::test_codec::xer_encode(&Real::new(f64::NAN), &mut out, 0);
         assert_eq!(out, "<NOT-A-NUMBER/>");
         let mut r = XerReader::new(&out);
-        let mut got = Real(0.0);
+        let mut got = Real::new(0.0);
         crate::spec::primitive::test_codec::xer_decode_into(&mut got, &mut r).unwrap();
         assert!(got.is_nan());
     }
@@ -473,14 +473,14 @@ mod tests {
     #[test]
     fn f64_xer_trims_trailing_zeros_but_keeps_one_digit() {
         let mut out = String::new();
-        crate::spec::primitive::test_codec::xer_encode(&Real(2.0), &mut out, 0);
+        crate::spec::primitive::test_codec::xer_encode(&Real::new(2.0), &mut out, 0);
         assert_eq!(out, "2.0");
     }
 
     #[test]
     fn f64_xer_invalid_text_is_error() {
         let mut r = XerReader::new("not-a-number");
-        let mut got = Real(0.0);
+        let mut got = Real::new(0.0);
         assert!(crate::spec::primitive::test_codec::xer_decode_into(&mut got, &mut r).is_err());
     }
 
@@ -676,7 +676,7 @@ mod tests {
             (0.0, "0"),
             (-0.0, "\"-0\""),
         ] {
-            let r = Real(v);
+            let r = Real::new(v);
             let mut out = String::new();
             crate::spec::primitive::test_codec::jer_encode(&r, &mut out);
             assert_eq!(out, text);
@@ -686,13 +686,13 @@ mod tests {
     #[test]
     fn real_jer_round_trips_finite_value() {
         use crate::real::Real;
-        let v = Real(1.5);
+        let v = Real::new(1.5);
         let mut out = String::new();
         crate::spec::primitive::test_codec::jer_encode(&v, &mut out);
         let mut r = crate::jer::reader::Reader::new(&out);
         let mut got = Real::default();
         crate::spec::primitive::test_codec::jer_decode_into(&mut got, &mut r).unwrap();
-        assert_eq!(got.0, v.0);
+        assert_eq!(got.value(), v.value());
     }
 
     #[test]

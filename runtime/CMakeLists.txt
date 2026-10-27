@@ -38,6 +38,7 @@ add_library(asn1cpp_runtime_objs OBJECT
     src/PerCodec.cpp
     src/RandomFiller.cpp
     src/BuiltinTypes.cpp
+    src/Real.cpp
     src/DeepCopy.cpp
     src/Contained.cpp
 )

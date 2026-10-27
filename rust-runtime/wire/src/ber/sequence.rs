@@ -352,7 +352,7 @@ mod tests {
         size_range_bits: 0,
         size_lower: 1,
         size_upper: 3,
-        encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,
+        encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None, real_lower: 0.0, real_upper: 0.0,
     };
 
     #[test]

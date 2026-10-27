@@ -3,6 +3,7 @@
 #include "asn1cpp/codec/Constraints.hpp"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 
 namespace asn1::codegen {
@@ -335,6 +336,21 @@ std::string cpp_int64_literal(int64_t v) {
     return std::to_string(v);
 }
 
+/// @brief Format a double as a C++ expression of type double that yields
+///        exactly that value: the shortest round-trip decimal, with `.0`
+///        added when it has no point or exponent (so -0 keeps its sign), or
+///        `std::numeric_limits<double>::infinity()` for ±infinity.
+/// @param d  Value to format; not NaN.
+/// @return The expression text.
+std::string cpp_double_literal(double d) {
+    if (std::isinf(d))
+        return d > 0 ? "std::numeric_limits<double>::infinity()"
+                     : "-std::numeric_limits<double>::infinity()";
+    std::string s = std::format("{}", d);
+    if (s.find_first_of(".e") == std::string::npos) s += ".0";
+    return s;
+}
+
 /// @brief Build the `asn1::Constraints` designated initializer for an
 ///        INTEGER's PER value range.
 /// @param flags       CONSTRAINED / SEMI_CONSTRAINED / EXTENSIBLE bits.
@@ -355,6 +371,21 @@ std::string make_integer_pc(int flags, int range_bits, int int_kind,
         flags, range_bits, int_kind,
         cpp_int64_literal(lower_s64), cpp_int64_literal(upper_s64),
         lower_u64, upper_u64);
+}
+
+/// @brief Format the Constraints initializer of a REAL value range.
+/// @param r  Backend-agnostic range and base constraint; `has_table()` true.
+/// @return Initializer text, e.g. `"{ .flags=32, .real_lower=0.0, .real_upper=100.0 }"`,
+///         read by asn1::Real::validate(), RandomFiller and the JER REAL handler.
+/// @see X.680 §47.4 (ValueRange, open endpoints); X.697 §23.1.4 (base 10 only).
+std::string make_real_constraints_init(const RealRangeSpec& r) {
+    int flags = (r.present ? asn1::Constraints::REAL_RANGE : 0)
+              | (r.base10_only ? asn1::Constraints::REAL_BASE_10 : 0)
+              | (r.lower_open ? asn1::Constraints::REAL_LOWER_OPEN : 0)
+              | (r.upper_open ? asn1::Constraints::REAL_UPPER_OPEN : 0)
+              | (r.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+    return std::format("{{ .flags={}, .real_lower={}, .real_upper={} }}",
+                       flags, cpp_double_literal(r.lower), cpp_double_literal(r.upper));
 }
 
 /// @brief Emit the header part of a named INTEGER type: the storage alias,
@@ -558,6 +589,8 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
                                                       spec.size_lower, spec.size_upper,
                                                       spec.alphabet, alpha_prefix, bbt)
            << " /* constraints */,\n";
+    } else if (spec.real_range.has_table()) {
+        os << "    " << make_real_constraints_init(spec.real_range) << " /* constraints */,\n";
     } else {
         os << "    {} /* constraints — unconstrained */,\n";
     }
@@ -605,6 +638,8 @@ static std::string format_default_value_literal(const std::string& mtype,
         return std::format("{}{{\"{}\"}}", mtype, escape_string_literal(spec.string_val));
     case Kind::EnumRef:
         return std::format("{}::{}", mtype, backend.escape(backend.type_name(spec.enum_name)));
+    case Kind::Real:
+        return std::format("{}{{{}}}", mtype, cpp_double_literal(spec.real_val));
     case Kind::None:
     default:
         return "";
@@ -661,6 +696,11 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
         per_h = is_u64 ? "&asn1::per_uinteger_handler" : "&asn1::per_integer_handler";
         ber_h = is_u64 ? "&asn1::ber_uinteger_handler" : "&asn1::ber_integer_handler";
         cpp_t = is_u64 ? "asn1::UInteger" : "asn1::Integer";
+    } else if (spec.kind == Kind::Real) {
+        pc = make_real_constraints_init(spec.real_range);
+        per_h = per_handler_for_builtin(ast::BuiltinType::Real);
+        ber_h = ber_handler_for_builtin(ast::BuiltinType::Real);
+        cpp_t = native_builtin_type(ast::BuiltinType::Real);
     } else {
         if (!spec.alpha_prefix.empty())
             emit_from_alphabet_arrays(os, spec.alpha_prefix, spec.alphabet);

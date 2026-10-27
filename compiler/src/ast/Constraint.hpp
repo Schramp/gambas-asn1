@@ -14,6 +14,7 @@ using ConstraintPtr = std::shared_ptr<Constraint>;
 struct RangeEndpoint {
     enum class Kind { Min, Max, Value } kind{Kind::Value};
     Value value;
+    bool open{false};  // X.680 §47.4.3: "<" excludes the endpoint value itself
 };
 
 struct ValueRange {
@@ -48,6 +49,18 @@ struct ExceptionConstraint {
     Value value;
 };
 
+/// X.680 §51.6 MultipleTypeConstraints (`WITH COMPONENTS { ... }`): the
+/// constraint each named component carries. `partial` is the `...,` form
+/// (§51.6.3). Presence constraints are not kept.
+struct NamedComponentConstraint {
+    std::string   name;
+    ConstraintPtr constraint;  // null when the component has no value constraint
+};
+struct ComponentsConstraint {
+    bool partial{false};
+    std::vector<NamedComponentConstraint> components;
+};
+
 struct TableConstraint {
     std::string object_set;
     std::vector<std::string> at_notation;
@@ -66,7 +79,8 @@ using ConstraintBody = std::variant<
     IntersectionConstraint,
     UnionConstraint,
     ExceptionConstraint,
-    TableConstraint
+    TableConstraint,
+    ComponentsConstraint
 >;
 
 struct Constraint {

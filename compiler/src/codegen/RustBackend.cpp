@@ -2,6 +2,7 @@
 #include "asn1cpp/codec/Constraints.hpp"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -164,6 +165,37 @@ static const char* rust_tag_for_builtin_or_alias(std::optional<ast::BuiltinType>
 static std::string primitive_variant(const std::string& rust_type) {
     auto pos = rust_type.rfind("::");
     return pos == std::string::npos ? rust_type : rust_type.substr(pos + 2);
+}
+
+/// @brief Format a double as an exact Rust `f64` literal: shortest
+///        round-trip digits, or `f64::INFINITY` / `f64::NEG_INFINITY`.
+/// @param d Finite or infinite value (never NaN).
+/// @return Literal text; always contains `.`/`e` or names a constant.
+static std::string rust_f64_literal(double d) {
+    if (std::isinf(d)) return d > 0 ? "f64::INFINITY" : "f64::NEG_INFINITY";
+    std::string f = std::format("{}", d);
+    if (f.find_first_of(".e") == std::string::npos) f += ".0";
+    return f;
+}
+
+/// @brief Emit a REAL's value range (X.680 §47.4) and JER base constraint
+///        (X.697 §23.1.4) as a `Constraints` static, read by
+///        `constraints::validate_real` and `jer::real`.
+/// @param os    Output stream.
+/// @param cname Static's identifier.
+/// @param r     Range and base constraint; flags 0 when neither applies.
+static void emit_real_constraints(std::ostream& os, const std::string& cname, const RealRangeSpec& r) {
+    int flags = (r.present ? asn1::Constraints::REAL_RANGE : 0)
+              | (r.base10_only ? asn1::Constraints::REAL_BASE_10 : 0)
+              | (r.lower_open ? asn1::Constraints::REAL_LOWER_OPEN : 0)
+              | (r.upper_open ? asn1::Constraints::REAL_UPPER_OPEN : 0)
+              | (r.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+    os << "#[allow(non_upper_case_globals)]\n";
+    os << std::format(
+        "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
+        "    flags: {}, real_lower: {}, real_upper: {}, ..asn1cpp_wire::constraints::UNCONSTRAINED\n"
+        "}};\n\n",
+        cname, flags, rust_f64_literal(r.lower), rust_f64_literal(r.upper));
 }
 
 static bool is_sizeable_string_kind(ast::BuiltinType bt) {
@@ -441,7 +473,7 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
         os << std::format(
             "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
             "    flags: {}, range_bits: {}, lower_bound: {}, upper_bound: {}, lower_u64: 0, upper_u64: 0, "
-            "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,\n"
+            "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None, real_lower: 0.0, real_upper: 0.0,\n"
             "}};\n\n",
             cname, flags, std::max(spec.range_bits, 0), spec.lower_s64, spec.upper_s64);
     } else {
@@ -449,7 +481,7 @@ void RustBackend::emit_integer_definition(const IntegerSpec& spec, std::ostream&
         os << std::format(
             "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
             "    flags: {}, range_bits: {}, lower_bound: 0, upper_bound: 0, lower_u64: {}u64, upper_u64: {}u64, "
-            "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,\n"
+            "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None, real_lower: 0.0, real_upper: 0.0,\n"
             "}};\n\n",
             cname, flags, std::max(spec.range_bits, 0), spec.lower_u64, spec.upper_u64);
     }
@@ -598,9 +630,12 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
         os << std::format(
             "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
             "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, "
-            "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,\n"
+            "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None, real_lower: 0.0, real_upper: 0.0,\n"
             "}};\n\n",
             cname, flags, spec.size_range_bits, spec.size_lower, size_upper);
+    } else if (spec.builtin_type == BT::Real) {
+        // Always emitted so a member of this alias can reference it.
+        emit_real_constraints(os, cname, spec.real_range);
     }
 
 
@@ -689,6 +724,16 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
         rust_type = type_name;
         literal = std::format("{}::{}", type_name, variant_name(*this, spec.enum_name));
         break;
+    case Kind::Real: {
+        // Inline member: type_name is the runtime's Real itself. Named alias
+        // (`Temp ::= REAL`): a newtype around it, `Temp(Real(..))`.
+        std::string f = rust_f64_literal(spec.real_val);
+        rust_type = type_name;
+        literal = type_name == "asn1cpp_wire::real::Real"
+            ? std::format("asn1cpp_wire::real::Real::new({})", f)
+            : std::format("{}(asn1cpp_wire::real::Real::new({}))", type_name, f);
+        break;
+    }
     case Kind::None:
     default:
         return;
@@ -787,7 +832,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
             os << std::format(
                 "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
                 "    flags: {}, range_bits: {}, lower_bound: {}, upper_bound: {}, lower_u64: 0, upper_u64: 0, "
-                "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,\n"
+                "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None, real_lower: 0.0, real_upper: 0.0,\n"
                 "}};\n\n",
                 cname, flags, std::max(spec.range_bits, 0), spec.lower_s64, spec.upper_s64);
         } else if (spec.storage_kind == IntStorageKind::U64) {
@@ -796,10 +841,14 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
             os << std::format(
                 "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
                 "    flags: {}, range_bits: {}, lower_bound: 0, upper_bound: 0, lower_u64: {}u64, upper_u64: {}u64, "
-                "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None,\n"
+                "size_range_bits: 0, size_lower: 0, size_upper: 0, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: None, real_lower: 0.0, real_upper: 0.0,\n"
                 "}};\n\n",
                 cname, flags, std::max(spec.range_bits, 0), spec.lower_u64, spec.upper_u64);
         }
+        return;
+    }
+    if (spec.kind == Kind::Real) {
+        emit_real_constraints(os, cname, spec.real_range);
         return;
     }
     // Always emitted (not gated on has_size_constraint) whenever this
@@ -877,7 +926,7 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
         "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, "
         "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: {}, "
-        "alphabet_bits: {}, alphabet: {}, alphabet_size: {}, element: None,\n"
+        "alphabet_bits: {}, alphabet: {}, alphabet_size: {}, element: None, real_lower: 0.0, real_upper: 0.0,\n"
         "}};\n\n",
         cname, flags, spec.size_range_bits, spec.size_lower, size_upper, encode_table_expr,
         alphabet_bits, alphabet_expr, spec.alphabet.size());
@@ -953,7 +1002,7 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     os << std::format(
         "pub static {}: asn1cpp_wire::constraints::Constraints = asn1cpp_wire::constraints::Constraints {{\n"
         "    flags: {}, range_bits: 0, lower_bound: 0, upper_bound: 0, lower_u64: 0, upper_u64: 0, "
-        "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: {},\n"
+        "size_range_bits: {}, size_lower: {}, size_upper: {}, encode_table: None, alphabet_bits: 0, alphabet: None, alphabet_size: 0, element: {}, real_lower: 0.0, real_upper: 0.0,\n"
         "}};\n\n",
         cname, flags, spec.range_bits, spec.size_lower, size_upper, element_expr);
 
@@ -1463,7 +1512,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 bool is_octet_or_bit_or_string = m.mbuiltin &&
                     (*m.mbuiltin == ast::BuiltinType::OctetString || *m.mbuiltin == ast::BuiltinType::BitString ||
                      is_sizeable_string_kind(*m.mbuiltin));
-                if (m.mbuiltin && own_table && (is_integer_narrow || is_octet_or_bit_or_string)) {
+                bool is_real = m.mbuiltin && *m.mbuiltin == ast::BuiltinType::Real;
+                if (m.mbuiltin && own_table && (is_integer_narrow || is_octet_or_bit_or_string || is_real)) {
                     constraints_ref = std::format("&{}_CONSTRAINTS",
                         to_screaming_snake_case(member_descriptor_base_name(spec.type_name, m.mname)));
                 } else if (!m.mbuiltin && m.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias &&
@@ -1481,11 +1531,12 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 } else if (!m.mbuiltin && m.ref_builtin_alias &&
                            (*m.ref_builtin_alias == ast::BuiltinType::OctetString ||
                             *m.ref_builtin_alias == ast::BuiltinType::BitString ||
+                            *m.ref_builtin_alias == ast::BuiltinType::Real ||
                             is_sizeable_string_kind(*m.ref_builtin_alias))) {
                     // Same rationale for a named OCTET STRING/BIT STRING/
-                    // sizeable-string alias (`emit_builtin_alias_definition`'s
+                    // sizeable-string/REAL alias (`emit_builtin_alias_definition`'s
                     // own `{Alias}_CONSTRAINTS`, only emitted for these
-                    // SIZE-able kinds) — `ref_constraints_owner`, not
+                    // kinds) — `ref_constraints_owner`, not
                     // `mtype`: a multi-hop *pure* alias chain (e.g. ETSI
                     // LI's own `LawfulInterceptionIdentifier ::= LIID`)
                     // generates every intermediate hop as a bare `pub
@@ -1519,6 +1570,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     const char* fn = m.storage_kind == IntStorageKind::S64 ? "validate_s64" : "validate_u64";
                     std::string int_deref = m.optional ? std::format("*{}", field_place()) : field_place();
                     validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::{}(*{}, {}))", fn, int_deref, constraints_ref);
+                } else if (m.mbuiltin && own_table && is_real) {
+                    validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_real({}.value(), {}))", field_place(), constraints_ref);
                 } else if (m.mbuiltin && own_table && *m.mbuiltin == ast::BuiltinType::OctetString) {
                     validate_expr = std::format("Some(|v| asn1cpp_wire::constraints::validate_size({}.len(), {}))", field_place(), constraints_ref);
                 } else if (m.mbuiltin && own_table && *m.mbuiltin == ast::BuiltinType::BitString) {
@@ -2046,6 +2099,7 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             } else if (!a.mbuiltin && a.ref_builtin_alias &&
                        (*a.ref_builtin_alias == ast::BuiltinType::OctetString ||
                         *a.ref_builtin_alias == ast::BuiltinType::BitString ||
+                        *a.ref_builtin_alias == ast::BuiltinType::Real ||
                         is_sizeable_string_kind(*a.ref_builtin_alias))) {
                 // `ref_constraints_owner`, not `mtype` — see the
                 // SEQUENCE-member case's identical fix (Backend.hpp's

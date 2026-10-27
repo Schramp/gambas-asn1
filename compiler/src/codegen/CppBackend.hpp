@@ -71,6 +71,9 @@ void emit_type_descriptor(std::ostream& os,
 ///         holds (C++ [lex.icon]) and narrows in a braced initializer.
 std::string cpp_int64_literal(int64_t v);
 
+/// @brief Format a double as an exact C++ double expression (CppBackend.cpp).
+std::string cpp_double_literal(double d);
+
 /// @brief Build a Constraints designated-initializer literal for an INTEGER
 ///        constraint. Pure C++ text formatting from already-resolved
 ///        parameters — shared between CppBackend::emit_integer_definition and

@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <vector>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <memory>
 #include <sstream>
@@ -278,6 +279,23 @@ struct IntegerSpec : TaggedTypeSpec {
     uint64_t lower_u64 = 0, upper_u64 = 0;   // unsigned view (exact when hi_is_large)
 };
 
+/// @brief Backend-agnostic REAL value-range constraint (X.680 §47.4): the
+///        intersection of every ValueRange on a REAL type, as plain doubles.
+///        MIN / MINUS-INFINITY map to -infinity, MAX / PLUS-INFINITY to
+///        +infinity. A backend formats it into its own Constraints table.
+/// @see Generator::extract_real_range.
+struct RealRangeSpec {
+    bool   present = false;     // false -> no value range; all fields below are meaningless
+    bool   extensible = false;
+    double lower = -std::numeric_limits<double>::infinity();
+    double upper = std::numeric_limits<double>::infinity();
+    bool   lower_open = false;  // "lo<.." excludes lower itself
+    bool   upper_open = false;  // "..<hi" excludes upper itself
+    bool   base10_only = false; // JER-visible base constraint admits only base 10 (X.697 §23.1.4)
+    /// @brief Whether a backend needs a Constraints table for this REAL.
+    bool has_table() const { return present || base10_only; }
+};
+
 /// @brief Backend-agnostic decision for a builtin-alias type (X.680 §19) —
 ///        every ASN.1 builtin type except INTEGER and ENUMERATED, which
 ///        have their own IntegerSpec/EnumeratedSpec. No C++/Rust/etc.
@@ -305,6 +323,7 @@ struct BuiltinAliasSpec : TaggedTypeSpec {
     bool     extensible = false;
     bool     named_bits = false;        // BIT STRING with a NamedBitList (X.680 §22.7, X.691 §15.3)
     ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // X.693 §21 OCTET STRING representation
+    RealRangeSpec real_range;           // REAL value range; present only for builtin_type Real
 };
 
 /// @brief Backend-agnostic DEFAULT value decision (X.680 §25.1) — which value
@@ -316,7 +335,7 @@ struct BuiltinAliasSpec : TaggedTypeSpec {
 ///       can't include Generator.hpp without a cycle.
 /// @see Generator::default_value_spec_for.
 struct DefaultValueSpec {
-    enum class Kind { None, Bool, Int, String, EnumRef } kind = Kind::None;
+    enum class Kind { None, Bool, Int, String, EnumRef, Real } kind = Kind::None;
     bool          bool_val = false;
     int64_t       int_val  = 0;
     std::string   string_val;  // Kind::String — raw (unescaped) value
@@ -328,6 +347,7 @@ struct DefaultValueSpec {
     // plain `type_name` string carries no such signal for a named alias
     // the way it does for an inline member's own native_int_type() text.
     IntStorageKind int_storage_kind = IntStorageKind::S64;
+    double        real_val = 0.0;  // Kind::Real — may be ±infinity or -0
 };
 
 /// @brief Escape a raw byte string for embedding in a quoted string literal.
@@ -363,10 +383,10 @@ inline std::string escape_string_literal(const std::string& raw) {
 ///        Rust/etc. syntax — all constraint fields are raw resolved data
 ///        (same convention as IntegerSpec/BuiltinAliasSpec); each backend
 ///        formats its own initializer/validator from them. `kind` selects
-///        which field group is meaningful (INTEGER value range vs SIZE-able
-///        primitive SIZE/FROM-alphabet constraints).
+///        which field group is meaningful (INTEGER value range, SIZE-able
+///        primitive SIZE/FROM-alphabet constraints, or REAL value range).
 struct MemberTypeDescriptorSpec {
-    enum class Kind { Integer, Sizeable } kind = Kind::Integer;
+    enum class Kind { Integer, Sizeable, Real } kind = Kind::Integer;
     // The enclosing type's generated name (parent_cname, e.g. "MySeq")
     // and this member's own generated name (mname, e.g. "myField") — raw
     // data, not a pre-formatted identifier. Each backend turns this pair
@@ -396,7 +416,10 @@ struct MemberTypeDescriptorSpec {
     bool     named_bits = false;          // BIT STRING with a NamedBitList (X.680 §22.7, X.691 §15.3)
     ast::XerEncoding xer_encoding = ast::XerEncoding::Default; // Kind::Integer never sets this
 
-    // Both kinds — target-agnostic BER/XER facts (X.690/X.693), not code.
+    // Kind::Real — the member's inline REAL value range.
+    RealRangeSpec real_range;
+
+    // Every kind — target-agnostic BER/XER facts (X.690/X.693), not code.
     std::string xer_type_name;    // e.g. "INTEGER", "OCTET_STRING"
     int         universal_tag = 0;    // asn1::UniversalTag::* value
 
