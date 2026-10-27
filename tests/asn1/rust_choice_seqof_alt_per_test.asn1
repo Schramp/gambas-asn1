@@ -2,7 +2,9 @@
 -- X.691 §20), the shape ETSI LI's Payload uses for iRIPayloadSequence etc.
 -- Covers an unconstrained alternative, a SIZE-constrained alternative
 -- (its PER SIZE bounds must come from the alternative's promoted type),
--- a SET OF alternative, and a plain alternative for contrast.
+-- a SET OF alternative, a SEQUENCE OF a constrained INTEGER (its element
+-- is promoted to a named type the CHOICE must reference), and a plain
+-- alternative for contrast.
 RustChoiceSeqOfAltPerTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 
 Item ::= SEQUENCE {
@@ -14,6 +16,7 @@ Payload ::= CHOICE {
     items     SEQUENCE OF Item,
     small     SEQUENCE SIZE (1..4) OF Item,
     flags     SET OF Item,
+    nums      SEQUENCE SIZE (1..4) OF INTEGER (0..7),
     single    INTEGER (0..1000)
 }
 
