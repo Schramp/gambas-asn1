@@ -407,7 +407,7 @@ pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Write
             for (bytes, nbits) in &parts[range] {
                 w.put_bit_string(bytes, *nbits);
             }
-        });
+        })?;
         return Ok(());
     }
     // The count helper may call `items` once per fragment (X.691 §11.9.3.8),
@@ -422,7 +422,7 @@ pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, pc: &Constraints, w: &mut Write
                 err = Some(e);
             }
         }
-    });
+    })?;
     err.map_or(Ok(()), Err)
 }
 

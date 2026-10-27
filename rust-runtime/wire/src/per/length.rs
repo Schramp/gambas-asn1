@@ -8,6 +8,7 @@
 //! length octets with content.
 
 use crate::constraints::Constraints;
+use crate::encode_error::EncodeError;
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 
@@ -172,10 +173,18 @@ fn size_count_is_constrained(pc: &Constraints) -> bool {
 /// @brief Writes a SIZE length determinant for `n` items, then the items
 ///        (X.691 §10.9): nothing for a fixed size, the offset from the
 ///        lower bound for a constrained size with ub < 64K, otherwise the
-///        general length with fragmentation.
+///        general length with fragmentation. The constrained form cannot
+///        represent a count outside the SIZE range (§10.9.4.1), so such a
+///        count is an error and nothing is written.
 /// @param items Writes the items with indices in the given range.
-pub fn encode_size_and_items(w: &mut Writer, pc: &Constraints, n: usize, mut items: impl FnMut(&mut Writer, std::ops::Range<usize>)) {
+pub fn encode_size_and_items(w: &mut Writer, pc: &Constraints, n: usize, mut items: impl FnMut(&mut Writer, std::ops::Range<usize>)) -> Result<(), EncodeError> {
     if size_count_is_constrained(pc) {
+        if !(pc.size_lower..=pc.size_upper).contains(&(n as i64)) {
+            return Err(EncodeError::new(format!(
+                "PER: length {n} outside the non-extensible SIZE ({}..{})",
+                pc.size_lower, pc.size_upper
+            )));
+        }
         if pc.size_range_bits > 0 {
             w.put_bits((n as i64 - pc.size_lower) as u64, pc.size_range_bits);
         }
@@ -183,6 +192,7 @@ pub fn encode_size_and_items(w: &mut Writer, pc: &Constraints, n: usize, mut ite
     } else {
         put_length_and_items(w, n, items);
     }
+    Ok(())
 }
 
 /// @brief Decode counterpart of [`encode_size_and_items`].
@@ -210,16 +220,16 @@ pub fn decode_size_and_items(
 ///        STRING (§16.6) and SEQUENCE OF / SET OF (§20.4), whose extensible
 ///        SIZE adds one bit first: 0 and the root form when `n` is within
 ///        the root, otherwise 1 and the general length (§10.9).
-pub fn encode_ext_size_and_items(w: &mut Writer, pc: &Constraints, n: usize, items: impl FnMut(&mut Writer, std::ops::Range<usize>)) {
+pub fn encode_ext_size_and_items(w: &mut Writer, pc: &Constraints, n: usize, items: impl FnMut(&mut Writer, std::ops::Range<usize>)) -> Result<(), EncodeError> {
     if pc.is_extensible() && pc.is_size_constrained() {
         let in_root = (pc.size_lower..=pc.size_upper).contains(&(n as i64));
         w.put_bits(!in_root as u64, 1);
         if !in_root {
             put_length_and_items(w, n, items);
-            return;
+            return Ok(());
         }
     }
-    encode_size_and_items(w, pc, n, items);
+    encode_size_and_items(w, pc, n, items)
 }
 
 /// @brief Decode counterpart of [`encode_ext_size_and_items`].
@@ -309,7 +319,7 @@ mod tests {
     fn fixed_size_writes_nothing() {
         let pc = sized(5, 5);
         let mut w = Writer::new();
-        encode_size_and_items(&mut w, &pc, 5, |_, _| {});
+        encode_size_and_items(&mut w, &pc, 5, |_, _| {}).unwrap();
         assert_eq!(w.bit_pos(), 0);
     }
 
@@ -318,7 +328,7 @@ mod tests {
         let pc = sized(1, 8); // range_bits = 3
         for len in 1..=8usize {
             let mut w = Writer::new();
-            encode_size_and_items(&mut w, &pc, len, |_, _| {});
+            encode_size_and_items(&mut w, &pc, len, |_, _| {}).unwrap();
             w.flush();
             let bytes = w.into_bytes();
             let mut r = Reader::new(&bytes);
@@ -330,7 +340,7 @@ mod tests {
     fn unconstrained_size_uses_length_determinant() {
         let pc = Constraints::default();
         let mut w = Writer::new();
-        encode_size_and_items(&mut w, &pc, 200, |_, _| {});
+        encode_size_and_items(&mut w, &pc, 200, |_, _| {}).unwrap();
         w.flush();
         let bytes = w.into_bytes();
         let mut r = Reader::new(&bytes);
@@ -343,7 +353,7 @@ mod tests {
     fn matches_cpp_ground_truth() {
         let pc = sized(1, 8);
         let mut w = Writer::new();
-        encode_size_and_items(&mut w, &pc, 5, |_, _| {});
+        encode_size_and_items(&mut w, &pc, 5, |_, _| {}).unwrap();
         w.flush();
         assert_eq!(w.into_bytes(), vec![0b100_00000]); // 3 bits: (5-1)=4=0b100
     }
@@ -396,13 +406,13 @@ mod tests {
             for _ in range {
                 w.put_bits(0, 8);
             }
-        });
+        }).unwrap();
         w.flush();
         assert_eq!(w.into_bytes()[0], 0xC1);
         // SIZE (16384..20000): ub < 64K, constrained 12-bit offset.
         let pc = sized(16384, 20000);
         let mut w = Writer::new();
-        encode_size_and_items(&mut w, &pc, 16385, |_, _| {});
+        encode_size_and_items(&mut w, &pc, 16385, |_, _| {}).unwrap();
         assert_eq!(w.bit_pos(), 12);
     }
 
@@ -412,16 +422,32 @@ mod tests {
         pc.flags |= crate::constraints::EXTENSIBLE;
         // In root (n = 2): ext bit 0, then the 2-bit offset 01.
         let mut w = Writer::new();
-        encode_ext_size_and_items(&mut w, &pc, 2, |_, _| {});
+        encode_ext_size_and_items(&mut w, &pc, 2, |_, _| {}).unwrap();
         w.flush();
         assert_eq!(w.into_bytes(), vec![0b0010_0000]);
         // Out of root (n = 6): ext bit 1, then the general length 6.
         let mut w = Writer::new();
-        encode_ext_size_and_items(&mut w, &pc, 6, |_, _| {});
+        encode_ext_size_and_items(&mut w, &pc, 6, |_, _| {}).unwrap();
         w.flush();
         let bytes = w.into_bytes();
         assert_eq!(bytes, vec![0b1000_0011, 0b0000_0000]);
         let mut r = Reader::new(&bytes);
         assert_eq!(decode_ext_size_and_items(&mut r, &pc, |_, _| Ok(())).unwrap(), 6);
     }
+
+    /// X.691 §10.9.4.1: a count outside a non-extensible SIZE has no PER
+    /// encoding; the encoder reports it and writes nothing.
+    #[test]
+    fn count_outside_non_extensible_size_is_an_error() {
+        let pc = sized(1, 4);
+        for n in [0usize, 5, 15] {
+            let mut w = Writer::new();
+            assert!(encode_size_and_items(&mut w, &pc, n, |_, _| {}).is_err());
+            assert_eq!(w.bit_pos(), 0);
+            assert!(encode_ext_size_and_items(&mut w, &pc, n, |_, _| {}).is_err());
+        }
+        let mut w = Writer::new();
+        assert!(encode_size_and_items(&mut w, &pc, 4, |_, _| {}).is_ok());
+    }
+
 }

@@ -13,12 +13,12 @@ use crate::per::length::{decode_ext_size_and_items, encode_ext_size_and_items};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 
-pub fn encode_octet_string(w: &mut Writer, pc: &Constraints, bytes: &[u8]) {
+pub fn encode_octet_string(w: &mut Writer, pc: &Constraints, bytes: &[u8]) -> Result<(), crate::encode_error::EncodeError> {
     encode_ext_size_and_items(w, pc, bytes.len(), |w, range| {
         for &b in &bytes[range] {
             w.put_bits(b as u64, 8);
         }
-    });
+    })
 }
 
 pub fn decode_octet_string(r: &mut Reader, pc: &Constraints) -> Result<Vec<u8>, DecodeError> {
@@ -39,7 +39,7 @@ mod tests {
 
     fn roundtrip(pc: &Constraints, bytes: &[u8]) -> Vec<u8> {
         let mut w = Writer::new();
-        encode_octet_string(&mut w, pc, bytes);
+        encode_octet_string(&mut w, pc, bytes).unwrap();
         w.flush();
         let out = w.into_bytes();
         let mut r = Reader::new(&out);
@@ -78,12 +78,12 @@ mod tests {
             ..Default::default()
         };
         let mut w = Writer::new();
-        encode_octet_string(&mut w, &pc, &[0xDE, 0xAD, 0xBE]);
+        encode_octet_string(&mut w, &pc, &[0xDE, 0xAD, 0xBE]).unwrap();
         w.flush();
         assert_eq!(w.into_bytes(), vec![0x3d, 0xea, 0xdb, 0xe0]);
 
         let mut w2 = Writer::new();
-        encode_octet_string(&mut w2, &pc, &[]);
+        encode_octet_string(&mut w2, &pc, &[]).unwrap();
         w2.flush();
         assert_eq!(w2.into_bytes(), vec![0x00]);
     }
@@ -98,7 +98,7 @@ mod tests {
             ..Default::default()
         };
         let mut w = Writer::new();
-        encode_octet_string(&mut w, &pc, &[9, 8, 7]);
+        encode_octet_string(&mut w, &pc, &[9, 8, 7]).unwrap();
         w.flush();
         // No length field: exactly 3 bytes, nothing more.
         assert_eq!(w.into_bytes(), vec![9, 8, 7]);

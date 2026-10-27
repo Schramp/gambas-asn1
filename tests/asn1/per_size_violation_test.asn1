@@ -1,0 +1,13 @@
+-- PER encode of a value whose length breaks a non-extensible SIZE
+-- constraint (X.691 §10.9.4.1): there is no encoding, so the encoder
+-- must fail instead of writing bytes that decode to something else.
+PerSizeViolationTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    Sized ::= OCTET STRING (SIZE(1..4))
+    Bits  ::= BIT STRING (SIZE(8..12))
+    Probe ::= SEQUENCE {
+        s    Sized,
+        b    Bits,
+        l    SEQUENCE (SIZE(2..3)) OF INTEGER (0..7),
+        tail INTEGER
+    }
+END

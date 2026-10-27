@@ -202,8 +202,7 @@ pub fn encode_string(w: &mut Writer, pc: &Constraints, tag_num: u32, bytes: &[u8
                 w.put_bits(c as u64, bits);
             }
         }
-    });
-    Ok(())
+    })
 }
 
 pub fn decode_string(r: &mut Reader, pc: &Constraints, tag_num: u32) -> Result<Vec<u8>, DecodeError> {
@@ -415,7 +414,7 @@ mod tests {
     fn from_alphabet_decode_rejects_out_of_range_index() {
         let pc = abc_alphabet();
         let mut w = Writer::new();
-        crate::per::length::encode_size_and_items(&mut w, &pc, 1, |_, _| {}); // 1 character
+        crate::per::length::encode_size_and_items(&mut w, &pc, 1, |_, _| {}).unwrap(); // 1 character
         w.put_bits(3, 2); // index 3 — one past the 3-entry alphabet
         w.flush();
         let bytes = w.into_bytes();
