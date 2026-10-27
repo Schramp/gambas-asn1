@@ -3,7 +3,9 @@
 //! [`crate::per::integer`]'s signed encode/decode, using the `lower_u64`/
 //! `upper_u64` bounds instead.
 //!
-//! The unconstrained/out-of-root escape path reuses the *signed*
+//! A semi-constrained value is the offset from `lower_u64` as a
+//! non-negative-binary-integer (X.691 §10.7.4), so the whole u64 range
+//! encodes. The unconstrained/out-of-root escape path reuses the *signed*
 //! `encode_unconstrained_int`/`decode_unconstrained_int` primitives on the
 //! `u64`'s raw bit pattern (`value as i64` / `result as u64`) rather than a
 //! separate unsigned variant — not a bug, this is what the C++ handler does
@@ -14,7 +16,7 @@
 //! round-trips through the signed primitive unchanged either way.
 
 use crate::constraints::Constraints;
-use crate::per::integer::{decode_unconstrained_int, encode_unconstrained_int};
+use crate::per::integer::{decode_semi_constrained_int, decode_unconstrained_int, encode_semi_constrained_int, encode_unconstrained_int};
 use crate::per::reader::{DecodeError, Reader};
 use crate::per::writer::Writer;
 
@@ -39,7 +41,7 @@ pub fn encode_uint(w: &mut Writer, pc: &Constraints, value: u64) {
                 return;
             }
         }
-        encode_unconstrained_int(w, (value - pc.lower_u64) as i64);
+        encode_semi_constrained_int(w, value.wrapping_sub(pc.lower_u64));
     } else {
         encode_unconstrained_int(w, value as i64);
     }
@@ -62,8 +64,10 @@ pub fn decode_uint(r: &mut Reader, pc: &Constraints) -> Result<u64, DecodeError>
                 return Ok(decode_unconstrained_int(r)? as u64);
             }
         }
-        let adjusted = decode_unconstrained_int(r)? as u64;
-        Ok(adjusted + pc.lower_u64)
+        let offset = decode_semi_constrained_int(r)?;
+        pc.lower_u64
+            .checked_add(offset)
+            .ok_or_else(|| DecodeError::new("PER: semi-constrained INTEGER exceeds its storage", r.bit_pos()))
     } else {
         Ok(decode_unconstrained_int(r)? as u64)
     }
@@ -133,6 +137,20 @@ mod tests {
         for v in [0u64, 1, 1000, u64::MAX] {
             assert_eq!(roundtrip(&pc, v), v);
         }
+    }
+
+    /// X.691 §10.7.4: the full u64 range is reachable, as an 8-octet
+    /// non-negative-binary-integer.
+    #[test]
+    fn semi_constrained_full_u64_range() {
+        let pc = semi_constrained(0, false);
+        for v in [244u64, 1 << 63, u64::MAX] {
+            assert_eq!(roundtrip(&pc, v), v);
+        }
+        let mut w = Writer::new();
+        encode_uint(&mut w, &pc, u64::MAX);
+        w.flush();
+        assert_eq!(w.into_bytes(), vec![0x08, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
     }
 
     #[test]

@@ -49,13 +49,13 @@ pub(crate) fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec
         MemberRef::Composite(inner) => match framing {
             BerTagging::Explicit(tag) => write_tagged(out, tag, |out| encode_seq_into(inner, out, opts)),
             BerTagging::Implicit(tag) => write_tagged(out, tag, |out| encode_seq_content(inner, out, opts)),
-            BerTagging::Delegate => encode_seq_into(inner, out, opts),
+            BerTagging::Delegate | BerTagging::DelegateChoice(_) => encode_seq_into(inner, out, opts),
             BerTagging::Unsupported(reason) => Err(unsupported_framing(reason)),
         },
         MemberRef::Choice(inner) => match framing {
             BerTagging::Explicit(tag) => write_explicit(out, tag, |out| encode_choice_dispatch(inner, out, opts)),
             BerTagging::Implicit(tag) => encode_choice_tagged(inner, tag, out, opts),
-            BerTagging::Delegate => encode_choice_into(inner, out, opts),
+            BerTagging::Delegate | BerTagging::DelegateChoice(_) => encode_choice_into(inner, out, opts),
             BerTagging::Unsupported(reason) => Err(unsupported_framing(reason)),
         },
         MemberRef::SeqOf(inner) => {
@@ -63,7 +63,7 @@ pub(crate) fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec
             match framing {
                 BerTagging::Explicit(tag) => write_tagged(out, tag, |out| write_tagged(out, natural, |out| encode_seqof_content(inner, out, opts))),
                 BerTagging::Implicit(tag) => write_tagged(out, tag, |out| encode_seqof_content(inner, out, opts)),
-                BerTagging::Delegate => write_tagged(out, natural, |out| encode_seqof_content(inner, out, opts)),
+                BerTagging::Delegate | BerTagging::DelegateChoice(_) => write_tagged(out, natural, |out| encode_seqof_content(inner, out, opts)),
                 BerTagging::Unsupported(reason) => Err(unsupported_framing(reason)),
             }
         }
@@ -72,7 +72,7 @@ pub(crate) fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec
             match framing {
                 BerTagging::Explicit(tag) => write_tagged(out, tag, |out| write_enumerated_tagged(out, ENUMERATED_TAG, v)),
                 BerTagging::Implicit(tag) => write_enumerated_tagged(out, tag, v),
-                BerTagging::Delegate => write_enumerated_tagged(out, ENUMERATED_TAG, v),
+                BerTagging::Delegate | BerTagging::DelegateChoice(_) => write_enumerated_tagged(out, ENUMERATED_TAG, v),
                 BerTagging::Unsupported(reason) => return Err(unsupported_framing(reason)),
             }
             Ok(())
@@ -119,7 +119,7 @@ fn decode_member_ref_level(m: MemberRefMut, framing: BerTagging, r: &mut Reader)
                 decode_choice_dispatch(inner, &mut inner_r)
             }
             BerTagging::Implicit(tag) => decode_choice_tagged_into(inner, r, tag),
-            BerTagging::Delegate => decode_choice_into(inner, r),
+            BerTagging::Delegate | BerTagging::DelegateChoice(_) => decode_choice_into(inner, r),
             BerTagging::Unsupported(reason) => Err(unsupported_framing_decode(reason, r)),
         },
         MemberRefMut::SeqOf(inner) => {
@@ -141,7 +141,7 @@ fn decode_member_ref_level(m: MemberRefMut, framing: BerTagging, r: &mut Reader)
                     }
                     decode_seqof_content(inner, r.sub(tlv.value))
                 }
-                BerTagging::Delegate => {
+                BerTagging::Delegate | BerTagging::DelegateChoice(_) => {
                     let tlv = r.read_tlv()?;
                     if tlv.tag.class != natural.class || tlv.tag.number != natural.number {
                         return Err(DecodeError::new(format!("expected tag {natural:?}, got {:?}", tlv.tag), r.pos()));
@@ -161,7 +161,7 @@ fn decode_member_ref_level(m: MemberRefMut, framing: BerTagging, r: &mut Reader)
                 read_enumerated_tagged_into(slot, &mut inner_r, ENUMERATED_TAG)
             }
             BerTagging::Implicit(tag) => read_enumerated_tagged_into(slot, r, tag),
-            BerTagging::Delegate => read_enumerated_tagged_into(slot, r, ENUMERATED_TAG),
+            BerTagging::Delegate | BerTagging::DelegateChoice(_) => read_enumerated_tagged_into(slot, r, ENUMERATED_TAG),
             BerTagging::Unsupported(reason) => Err(unsupported_framing_decode(reason, r)),
         },
     }
@@ -187,7 +187,7 @@ fn decode_composite_member(inner: &mut dyn Asn1Seq, ber: BerTagging, r: &mut Rea
             let mut content = r.sub(tlv.value);
             decode_seq_content_into(inner, &mut content)
         }
-        BerTagging::Delegate => {
+        BerTagging::Delegate | BerTagging::DelegateChoice(_) => {
             let natural = inner.spec().tag;
             let tlv = r.read_tlv()?;
             if tlv.tag.class != natural.class || tlv.tag.number != natural.number {
@@ -263,7 +263,7 @@ fn set_member_matches(obj: &dyn Asn1Seq, i: usize, t: Tag) -> bool {
             return c.spec().ber_tags.iter().any(|d| d.tag == t);
         }
     }
-    m.tag == t
+    m.ber.starts_with(m.tag, t)
 }
 
 /// @brief Copies a SET's component TLVs into member-table order, so the
@@ -311,7 +311,7 @@ fn decode_seq_members(obj: &mut dyn Asn1Seq, r: &mut Reader) -> Result<(), Decod
         };
         let mut has_value = true;
         if optional {
-            if r.peek_tag() == Some(tag) {
+            if r.peek_tag().is_some_and(|t| ber.starts_with(tag, t)) {
                 decode_member_ref(obj.get_member_mut(i), ber, r)?;
             } else {
                 obj.set_default(i);

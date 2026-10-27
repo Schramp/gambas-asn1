@@ -236,6 +236,24 @@ target_include_directories(test_real_constraint PRIVATE ${REAL_CONSTRAINT_GEN_DI
 target_link_libraries(test_real_constraint PRIVATE asn1cpp_runtime)
 add_test(NAME real_constraint COMMAND test_real_constraint)
 
+# ---- PER SIZE violation on encode (X.691 §10.9.4.1); Rust leg: rust/per_size_violation
+set(PER_SIZE_VIOL_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_per_size_violation_test)
+set(PER_SIZE_VIOL_SRCS Probe ProbeL ProbeLElem Sized Bits)
+list(TRANSFORM PER_SIZE_VIOL_SRCS PREPEND ${PER_SIZE_VIOL_GEN_DIR}/)
+list(TRANSFORM PER_SIZE_VIOL_SRCS APPEND .cpp)
+add_custom_command(
+    OUTPUT  ${PER_SIZE_VIOL_SRCS}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PER_SIZE_VIOL_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_size_violation_test.asn1
+            -o ${PER_SIZE_VIOL_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_size_violation_test.asn1
+    COMMENT "Generating C++ from per_size_violation_test.asn1"
+)
+add_executable(test_per_size_violation per/test_per_size_violation.cpp ${PER_SIZE_VIOL_SRCS})
+target_include_directories(test_per_size_violation PRIVATE ${PER_SIZE_VIOL_GEN_DIR})
+target_link_libraries(test_per_size_violation PRIVATE asn1cpp_runtime)
+add_test(NAME per_size_violation COMMAND test_per_size_violation)
+
 # ---- REAL JER base constraints (X.697 §23.1.4); Rust leg: rust/real_jer_base
 set(REAL_JER_BASE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_real_jer_base_test)
 add_custom_command(
@@ -2022,6 +2040,51 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_real_constraint PROPERTIES
         TIMEOUT 120 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_REAL_CONSTRAINT_GEN_DIR}")
+endif()
+
+# Rust leg of the PER SIZE-violation test — see tests/rust/per_size_violation/src/main.rs
+# (C++ leg: test_per_size_violation).
+set(RUST_PER_SIZE_VIOL_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_per_size_violation)
+add_custom_command(
+    OUTPUT  ${RUST_PER_SIZE_VIOL_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_PER_SIZE_VIOL_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_size_violation_test.asn1
+            -o ${RUST_PER_SIZE_VIOL_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_size_violation_test.asn1
+    COMMENT "Generating Rust from per_size_violation_test.asn1"
+)
+add_custom_target(gen_rust_per_size_violation ALL DEPENDS ${RUST_PER_SIZE_VIOL_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_per_size_violation
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/per_size_violation/Cargo.toml)
+    set_tests_properties(rust_per_size_violation PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_PER_SIZE_VIOL_GEN_DIR}")
+endif()
+
+# Rust OPTIONAL untagged-CHOICE member test — see tests/rust/optional_untagged_choice/src/main.rs.
+set(RUST_OPT_UNTAGGED_CHOICE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_optional_untagged_choice)
+add_custom_command(
+    OUTPUT  ${RUST_OPT_UNTAGGED_CHOICE_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_OPT_UNTAGGED_CHOICE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/fuzz_test.asn1
+            -o ${RUST_OPT_UNTAGGED_CHOICE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/fuzz_test.asn1
+    COMMENT "Generating Rust from fuzz_test.asn1"
+)
+add_custom_target(gen_rust_optional_untagged_choice ALL DEPENDS ${RUST_OPT_UNTAGGED_CHOICE_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_optional_untagged_choice
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/optional_untagged_choice/Cargo.toml)
+    set_tests_properties(rust_optional_untagged_choice PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_OPT_UNTAGGED_CHOICE_GEN_DIR}")
 endif()
 
 # Rust leg of the REAL JER base-constraint test — see tests/rust/real_jer_base/src/main.rs

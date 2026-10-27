@@ -502,6 +502,14 @@ bool RandomFiller::fill_choice(Asn1Object* obj, const ChoiceSpec& spec, int dept
 // SEQUENCE OF / SET OF
 // ---------------------------------------------------------------------------
 
+/// @brief Fills a SEQUENCE OF / SET OF with a random element count and
+///        random elements. The count stays inside the SIZE constraint
+///        (X.680 §51.5): its lower bound is kept even above max_seq_of or the
+///        depth backoff; the upper bound is capped at 64K.
+/// @param obj    The collection to fill.
+/// @param spec   Element descriptor and SIZE constraint.
+/// @param depth  Nesting depth, for the per-level backoff.
+/// @return False when a mandatory element (below the lower bound) could not be filled.
 bool RandomFiller::fill_seq_of(Asn1Object* obj, const SeqOfSpec& spec, int depth) {
     int lo = cfg_.min_seq_of;
     int hi = cfg_.max_seq_of;
@@ -514,7 +522,7 @@ bool RandomFiller::fill_seq_of(Asn1Object* obj, const SeqOfSpec& spec, int depth
         int64_t clo = sc.size_lower, chi = sc.size_upper;
         if (clo >= 0 && clo <= 65536) lo = std::max(lo, static_cast<int>(clo));
         if (chi >= lo && chi <= 65536) hi = std::min(hi, static_cast<int>(chi));
-        if (lo > hi) lo = hi;
+        if (lo > hi) hi = lo;  // the SIZE lower bound outranks max_seq_of
     }
 
     // Exponential backoff: halve effective max every 2 depth levels so that

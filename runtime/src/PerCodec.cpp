@@ -1,5 +1,7 @@
 #include <cassert>
 #include <algorithm>
+#include <bit>
+#include <limits>
 #include <cstdio>
 #include <cstring>
 #include <asn1cpp/codec/DecodeDepth.hpp>
@@ -103,11 +105,18 @@ static bool size_count_is_constrained(const Constraints& pc) {
 ///        (X.691 §10.9): nothing for a fixed size, the offset from the lower
 ///        bound for a constrained size with ub < 64K, otherwise the general
 ///        length with 16K fragmentation (per_detail::put_length_and_items).
+///        The constrained form cannot represent a count outside the SIZE
+///        range (§10.9.4.1), so such a count fails the encode and writes
+///        nothing.
 /// @param items Callable `(std::size_t from, std::size_t to)` writing items.
 template<typename WriteItems>
 static void encode_size_and_items(PerEncodeStream& stream, const Constraints& pc,
                                   std::size_t n, WriteItems&& items) {
     if (size_count_is_constrained(pc)) {
+        if (static_cast<int64_t>(n) < pc.size_lower || static_cast<int64_t>(n) > pc.size_upper) {
+            stream.set_encode_failed("length outside a non-extensible SIZE constraint");
+            return;
+        }
         if (pc.size_range_bits > 0)
             stream.put_bits(n - static_cast<std::size_t>(pc.size_lower), pc.size_range_bits, "SIZE");
         items(std::size_t{0}, n);
@@ -185,6 +194,37 @@ static void encode_unconstrained_int(PerEncodeStream& stream, int64_t value) {
     }
     stream.put_bits(static_cast<uint64_t>(len), 8);
     for (int i = 0; i < len; ++i) stream.put_bits(buf[i], 8);
+}
+
+/// @brief Writes a semi-constrained whole number: the offset n − lb as a
+///        non-negative-binary-integer in the minimum number of octets (one
+///        octet for 0), preceded by an 8-bit octet count.
+/// @param offset  n − lb.
+/// @see X.691 §10.7.4.
+static void encode_semi_constrained_int(PerEncodeStream& stream, uint64_t offset) {
+    int len = offset == 0 ? 1 : (std::bit_width(offset) + 7) / 8;
+    stream.put_bits(static_cast<uint64_t>(len), 8);
+    for (int i = len - 1; i >= 0; --i) stream.put_bits((offset >> (8 * i)) & 0xFF, 8);
+}
+
+/// @brief Reads a semi-constrained whole number written by
+///        encode_semi_constrained_int().
+/// @param offset  Receives n − lb.
+/// @return An error for a zero length or an offset beyond 64 bits.
+/// @see X.691 §10.7.4.
+static DecodeResult decode_semi_constrained_int(PerDecodeStream& stream, uint64_t* offset) {
+    auto len_bits = stream.get_bits(8);
+    if (!len_bits) return decode_err(len_bits.error());
+    if (*len_bits == 0) return decode_err(DecodeError("PER: INTEGER length out of range"));
+    uint64_t v = 0;
+    for (uint64_t i = 0; i < *len_bits; ++i) {
+        if (v >> 56) return decode_err(DecodeError("PER: semi-constrained INTEGER exceeds 64 bits"));
+        auto b = stream.get_bits(8);
+        if (!b) return decode_err(b.error());
+        v = (v << 8) | *b;
+    }
+    *offset = v;
+    return decode_ok();
 }
 
 // X.691 §10.8 — see encode_unconstrained_int above.
@@ -346,7 +386,7 @@ public:
                 stream.put_bits(in_root ? 0 : 1, 1, "INT.ext");
                 if (!in_root) { encode_unconstrained_int(stream, svalue); return; }
             }
-            encode_unconstrained_int(stream, svalue - pc.lower_bound);
+            encode_semi_constrained_int(stream, static_cast<uint64_t>(svalue) - static_cast<uint64_t>(pc.lower_bound));
         } else {
             encode_unconstrained_int(stream, svalue);
         }
@@ -384,10 +424,12 @@ public:
                     return r;
                 }
             }
-            int64_t adjusted = 0;
-            auto r = read_raw_s(adjusted);
-            if (!r) return r;
-            idest->set(adjusted + pc.lower_bound);
+            // n − lb ≤ INT64_MAX − lb; the unsigned difference is exact.
+            uint64_t offset = 0;
+            if (auto r = decode_semi_constrained_int(stream, &offset); !r) return r;
+            if (offset > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - static_cast<uint64_t>(pc.lower_bound))
+                return decode_err(DecodeError("PER: semi-constrained INTEGER exceeds its storage"));
+            idest->set(static_cast<int64_t>(static_cast<uint64_t>(pc.lower_bound) + offset));
             return decode_ok();
         } else {
             int64_t v = 0;
@@ -419,7 +461,7 @@ public:
                 stream.put_bits(in_root ? 0 : 1, 1, "INT.ext");
                 if (!in_root) { encode_unconstrained_int(stream, static_cast<int64_t>(uvalue)); return; }
             }
-            encode_unconstrained_int(stream, static_cast<int64_t>(uvalue - pc.lower_u64));
+            encode_semi_constrained_int(stream, uvalue - pc.lower_u64);
         } else {
             encode_unconstrained_int(stream, static_cast<int64_t>(uvalue));
         }
@@ -457,10 +499,11 @@ public:
                     return r;
                 }
             }
-            int64_t adjusted = 0;
-            auto r = read_raw_s(adjusted);
-            if (!r) return r;
-            udest->set(static_cast<uint64_t>(adjusted) + pc.lower_u64);
+            uint64_t offset = 0;
+            if (auto r = decode_semi_constrained_int(stream, &offset); !r) return r;
+            if (offset > std::numeric_limits<uint64_t>::max() - pc.lower_u64)
+                return decode_err(DecodeError("PER: semi-constrained INTEGER exceeds its storage"));
+            udest->set(pc.lower_u64 + offset);
             return decode_ok();
         } else {
             int64_t v = 0;
@@ -890,27 +933,13 @@ public:
             std::fprintf(stderr, "[PER-ENC] SOF %s count=%zu @%d\n",
                          def.name, count, PerCodec::stream_bit_pos(stream));
         const auto& sc = spec.size_constraints;
-        std::size_t enc_count = count;
-        if (size_count_is_constrained(sc) && !(sc.flags & Constraints::EXTENSIBLE) &&
-            sc.size_lower != sc.size_upper && enc_count < static_cast<std::size_t>(sc.size_lower)) {
-            // X.680 §47 SIZE lower bound violated by the actual element
-            // count — caller's data is invalid for this type, not a
-            // codec bug. PerCodec::encode's own validate_on_encode()
-            // call already reports this exact delta through
-            // ValidationReport (SeqOfSpec::validate uses the identical
-            // size_lower - count formula) before this handler ever
-            // runs — this clamp only needs to keep the encoded count
-            // in bounds so the wire stays well-formed, not report a
-            // second time. Missing elements then desync (caller's fault).
-            enc_count = static_cast<std::size_t>(sc.size_lower);
-        }
         const auto& edef = *spec.element;
         bool is_set_of = (def.tag.cls == TagClass::Universal &&
                           def.tag.number == UniversalTag::Set);
         std::vector<EncodedElement> sorted;
         if (is_set_of && count > 1) sorted = sorted_set_of_elements(codec, stream, edef, seq, count);
         IEncodeStream& es = stream;
-        encode_ext_size_and_items(stream, sc, enc_count, [&](std::size_t from, std::size_t to) {
+        encode_ext_size_and_items(stream, sc, count, [&](std::size_t from, std::size_t to) {
             for (std::size_t i = from; i < std::min(to, count); ++i) {
                 if (sorted.empty()) {
                     codec.encode(es, edef, seq.get_const(i));

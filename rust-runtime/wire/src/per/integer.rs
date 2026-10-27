@@ -1,5 +1,5 @@
 //! Signed INTEGER PER encode/decode (X.691 §10.5 constrained whole number,
-//! §10.6 semi-constrained, §10.8 unconstrained). Mirrors `IntegerPerHandler`
+//! §10.7 semi-constrained, §10.8 unconstrained). Mirrors `IntegerPerHandler`
 //! (`runtime/src/PerCodec.cpp`) exactly, including its extensible-marker
 //! handling (X.691 §10.5.7.4/§10.6, out-of-root-range escape to the
 //! unconstrained form).
@@ -58,6 +58,34 @@ pub fn decode_unconstrained_int(r: &mut Reader) -> Result<i64, DecodeError> {
     Ok(value)
 }
 
+/// X.691 §10.7.4 "Encoding of a semi-constrained whole number": the offset
+/// `n − lb` as a non-negative-binary-integer in the minimum number of
+/// octets (one octet for 0), preceded by an 8-bit octet count.
+pub fn encode_semi_constrained_int(w: &mut Writer, offset: u64) {
+    let len = (offset.max(1).ilog2() / 8 + 1) as usize;
+    w.put_bits(len as u64, 8);
+    for i in (0..len).rev() {
+        w.put_bits((offset >> (8 * i)) & 0xFF, 8);
+    }
+}
+
+/// X.691 §10.7.4 — see [`encode_semi_constrained_int`].
+/// @return The offset `n − lb`.
+pub fn decode_semi_constrained_int(r: &mut Reader) -> Result<u64, DecodeError> {
+    let len = r.get_bits(8)? as usize;
+    if len == 0 {
+        return Err(DecodeError::new("PER: INTEGER length out of range", r.bit_pos()));
+    }
+    let mut offset: u64 = 0;
+    for _ in 0..len {
+        if offset >> 56 != 0 {
+            return Err(DecodeError::new("PER: semi-constrained INTEGER exceeds 64 bits", r.bit_pos()));
+        }
+        offset = (offset << 8) | r.get_bits(8)?;
+    }
+    Ok(offset)
+}
+
 /// Full signed-INTEGER PER encode, matching `IntegerPerHandler::encode`'s
 /// four cases (constrained/semi-constrained/unconstrained, each with an
 /// optional extensible escape).
@@ -84,7 +112,7 @@ pub fn encode_int(w: &mut Writer, pc: &Constraints, value: i64) {
                 return;
             }
         }
-        encode_unconstrained_int(w, value - pc.lower_bound);
+        encode_semi_constrained_int(w, (value as u64).wrapping_sub(pc.lower_bound as u64));
     } else {
         encode_unconstrained_int(w, value);
     }
@@ -108,8 +136,10 @@ pub fn decode_int(r: &mut Reader, pc: &Constraints) -> Result<i64, DecodeError> 
                 return decode_unconstrained_int(r);
             }
         }
-        let adjusted = decode_unconstrained_int(r)?;
-        Ok(adjusted + pc.lower_bound)
+        let offset = decode_semi_constrained_int(r)?;
+        pc.lower_bound
+            .checked_add_unsigned(offset)
+            .ok_or_else(|| DecodeError::new("PER: semi-constrained INTEGER exceeds its storage", r.bit_pos()))
     } else {
         decode_unconstrained_int(r)
     }
@@ -184,6 +214,24 @@ mod tests {
         for v in [0i64, 1, 1000, i64::MAX] {
             assert_eq!(roundtrip(&pc, v), v);
         }
+    }
+
+    /// X.691 §10.7.4: `n − lb` as a non-negative-binary-integer, so an
+    /// offset whose top bit is set needs no extra sign octet.
+    #[test]
+    fn semi_constrained_offset_is_unsigned() {
+        let pc = semi_constrained(0, false);
+        assert_eq!(enc_bytes(&pc, 244), vec![0x01, 0xF4]);
+        assert_eq!(enc_bytes(&pc, 0), vec![0x01, 0x00]);
+        assert_eq!(enc_bytes(&pc, 0x8000), vec![0x02, 0x80, 0x00]);
+        let lb = semi_constrained(-5, false);
+        assert_eq!(enc_bytes(&lb, 250), vec![0x01, 0xFF]);
+        assert_eq!(roundtrip(&lb, 250), 250);
+        let mut r = Reader::new(&[0x01, 0xF4]);
+        assert_eq!(decode_int(&mut r, &pc).unwrap(), 244);
+        let full = semi_constrained(i64::MIN, false);
+        assert_eq!(enc_bytes(&full, i64::MAX), vec![0x08, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(roundtrip(&full, i64::MAX), i64::MAX);
     }
 
     #[test]

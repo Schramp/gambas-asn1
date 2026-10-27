@@ -82,6 +82,27 @@ static const TypeDescriptor DEF_Interval = {
     &asn1::per_integer_handler
 };
 
+// ---- Semi-constrained: INTEGER (0..MAX) and INTEGER (-5..MAX) ---------------
+// X.691 §10.7.4: n − lb as a non-negative-binary-integer, minimum octets.
+
+static const TypeDescriptor DEF_Semi0 = {
+    "Semi0",
+    Tag::universal(2, false),
+    nullptr, nullptr, nullptr, nullptr,
+    {.flags=Constraints::SEMI_CONSTRAINED, .lower_bound=0},
+    false, TypeKind::Primitive,
+    &asn1::per_integer_handler
+};
+
+static const TypeDescriptor DEF_SemiNeg = {
+    "SemiNeg",
+    Tag::universal(2, false),
+    nullptr, nullptr, nullptr, nullptr,
+    {.flags=Constraints::SEMI_CONSTRAINED, .lower_bound=-5},
+    false, TypeKind::Primitive,
+    &asn1::per_integer_handler
+};
+
 int main() {
     printf("\n── PER INTEGER — NarrowInterval (123456..123457, 1 bit) ────────\n");
 
@@ -103,6 +124,21 @@ int main() {
     check("1      round-trip", roundtrips(DEF_Interval, 1));
     check("42     round-trip", roundtrips(DEF_Interval, 42));
     check("123456 round-trip", roundtrips(DEF_Interval, 123456));
+
+    printf("\n── PER INTEGER — semi-constrained (X.691 §10.7.4) ──────────────\n");
+
+    check("(0..MAX) 244 encodes as 01 f4 (no sign octet)", encodes_as(DEF_Semi0, 244, {0x01, 0xf4}));
+    check("(0..MAX) 0 encodes as 01 00", encodes_as(DEF_Semi0, 0, {0x01, 0x00}));
+    check("(0..MAX) 32768 encodes as 02 80 00", encodes_as(DEF_Semi0, 32768, {0x02, 0x80, 0x00}));
+    check("(-5..MAX) 250 encodes as 01 ff", encodes_as(DEF_SemiNeg, 250, {0x01, 0xff}));
+    {
+        int64_t v = 0;
+        const std::vector<uint8_t> b{0x01, 0xf4};
+        check("(0..MAX) 01 f4 decodes as 244", per_decode(DEF_Semi0, b, v) && v == 244);
+    }
+    check("(0..MAX) 244 round-trip", roundtrips(DEF_Semi0, 244));
+    check("(0..MAX) INT64_MAX round-trip", roundtrips(DEF_Semi0, INT64_MAX));
+    check("(-5..MAX) 250 round-trip", roundtrips(DEF_SemiNeg, 250));
 
     printf("\n");
     if (failures) {

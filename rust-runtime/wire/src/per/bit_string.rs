@@ -20,7 +20,7 @@ use crate::per::writer::Writer;
 /// A NamedBitList type (`NAMED_BITS`) is sent with its trailing 0 bits
 /// removed, then padded with 0 bits up to the SIZE lower bound (X.691
 /// §15.2, §15.3).
-pub fn encode_bit_string(w: &mut Writer, pc: &Constraints, bytes: &[u8], bit_count: usize) {
+pub fn encode_bit_string(w: &mut Writer, pc: &Constraints, bytes: &[u8], bit_count: usize) -> Result<(), crate::encode_error::EncodeError> {
     let n = if pc.flags & crate::constraints::NAMED_BITS != 0 {
         significant_bits(bytes, bit_count).max(pc.size_lower.max(0) as usize)
     } else {
@@ -31,7 +31,7 @@ pub fn encode_bit_string(w: &mut Writer, pc: &Constraints, bytes: &[u8], bit_cou
             let bit = if i < bit_count { (bytes[i / 8] >> (7 - i % 8)) & 1 } else { 0 };
             w.put_bits(bit as u64, 1);
         }
-    });
+    })
 }
 
 /// Returns `(bytes, unused_bits)` — the last byte is left-justified (unused
@@ -63,7 +63,7 @@ mod tests {
 
     fn roundtrip(pc: &Constraints, bytes: &[u8], bit_count: usize) -> (Vec<u8>, u8) {
         let mut w = Writer::new();
-        encode_bit_string(&mut w, pc, bytes, bit_count);
+        encode_bit_string(&mut w, pc, bytes, bit_count).unwrap();
         w.flush();
         let out = w.into_bytes();
         let mut r = Reader::new(&out);
@@ -101,12 +101,12 @@ mod tests {
             ..Default::default()
         };
         let mut w = Writer::new();
-        encode_bit_string(&mut w, &pc, &[0xFF, 0xF0], 12);
+        encode_bit_string(&mut w, &pc, &[0xFF, 0xF0], 12).unwrap();
         w.flush();
         assert_eq!(w.into_bytes(), vec![0x67, 0xff, 0x80]);
 
         let mut w2 = Writer::new();
-        encode_bit_string(&mut w2, &pc, &[], 0);
+        encode_bit_string(&mut w2, &pc, &[], 0).unwrap();
         w2.flush();
         assert_eq!(w2.into_bytes(), vec![0x00]);
     }
@@ -125,7 +125,7 @@ mod tests {
 
     fn encode(pc: &Constraints, bytes: &[u8], bit_count: usize) -> Vec<u8> {
         let mut w = Writer::new();
-        encode_bit_string(&mut w, pc, bytes, bit_count);
+        encode_bit_string(&mut w, pc, bytes, bit_count).unwrap();
         w.flush();
         w.into_bytes()
     }

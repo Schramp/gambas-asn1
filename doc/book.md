@@ -685,18 +685,23 @@ Unaligned PER (UPER) packs values at bit boundaries with no byte alignment. Alig
 The payoff is density: a typical 3GPP RRC message that takes 50 bytes in BER takes 5–10
 bytes in UPER.
 
-**PER encode-time constraint validation.** `PerEncodeStream` rejects values that violate
-string constraints at encode time: a `FROM` alphabet constraint means every character must
-come from the declared set; a `SIZE(lower..upper)` constraint means the string length must
-fall within the declared range (including fixed-size `SIZE(n)` where lower equals upper).
-Violations set an internal flag rather than throwing:
+**PER encode-time constraint validation.** `PerEncodeStream` rejects values that PER
+cannot encode: a `FROM` alphabet constraint means every character of a string must come
+from the declared set; a non-extensible `SIZE(lower..upper)` constraint with an upper bound
+below 64K means the length of a string, OCTET STRING or BIT STRING, or the element count of
+a SEQUENCE OF / SET OF, must fall within the declared range (including fixed-size `SIZE(n)`
+where lower equals upper), since the constrained length of X.691 §10.9.4.1 cannot represent
+any other count. An extensible SIZE takes the extension form instead; with a larger upper
+bound the length is written in the general form and the violation is only reported by
+validation. Violations set an internal flag rather than throwing
+(Rust returns an `EncodeError`):
 
 ```cpp
 std::vector<uint8_t> buf;
 asn1::PerEncodeStream s{buf};
 asn1::PerCodec::instance().encode(s, MyType::asn_DEF, &val);
 if (s.encode_failed()) {
-    // value violates a PER string constraint (FROM alphabet or SIZE)
+    // value violates a PER constraint (FROM alphabet or SIZE)
 }
 ```
 
