@@ -18,10 +18,28 @@ pub enum BerTagging {
     /// The payload frames itself: an untagged CHOICE payload (X.680 §28) or
     /// a reference to an already-tagged type.
     Delegate,
+    /// `Delegate` for an OPTIONAL member whose type is an untagged CHOICE.
+    /// The function returns that CHOICE's dispatch tags
+    /// (`TypeTag::choice_ber_tags`): the member is present when the peeked
+    /// tag matches one of them (X.690 §8.13).
+    DelegateChoice(fn() -> &'static [BerDispatch]),
     /// No BER/XER support for this alternative yet; the codec reports an
     /// encode/decode error with the reason if actually reached. Other
     /// alternatives are unaffected.
     Unsupported(&'static str),
+}
+
+impl BerTagging {
+    /// Whether a member with this framing and table tag `tag` starts with
+    /// wire tag `t`: any of the CHOICE's alternative tags for
+    /// `DelegateChoice` (by class and number, as CHOICE dispatch matches),
+    /// otherwise `tag` itself.
+    pub fn starts_with(self, tag: Tag, t: Tag) -> bool {
+        match self {
+            BerTagging::DelegateChoice(tags) => tags().iter().any(|d| d.tag.matches_identifier(&t)),
+            _ => tag == t,
+        }
+    }
 }
 
 /// One BER dispatch entry: a wire tag that selects `alternatives[alt]`.

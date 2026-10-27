@@ -140,3 +140,7 @@ tests/asn1/unsupported_any_member_test.asn1   Frame  @expect-errors
 tests/asn1/containing_test.asn1      Holder     @asn1c-opaque-contents --container-config=tests/asn1/containing_test.container.json
 tests/asn1/containing_test.asn1      Envelope   @asn1c-opaque-contents --container-config=tests/asn1/containing_test.container.json
 tests/asn1/containing_test.asn1      Pick       --container-config=tests/asn1/containing_test.container.json  asn1c has no inline XER/JER form for contained values (X.680 §22.4, X.697 §25.4)
+
+# SEQUENCE with an OPTIONAL untagged CHOICE member: presence is read from
+# the CHOICE alternatives' tags (X.690 §8.13).
+tests/asn1/fuzz_test.asn1            Bag
