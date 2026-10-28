@@ -156,12 +156,12 @@ public:
 
         if (content_size < 128) {
             // 1-byte length: shift content left by 2
-            std::memmove(&buf_[content_start - 2], &buf_[content_start], content_size);
+            std::memmove(buf_.data() + content_start - 2, buf_.data() + content_start, content_size);
             buf_.resize(len_pos + 1 + content_size);
             buf_[len_pos] = static_cast<uint8_t>(content_size);
         } else if (content_size < 256) {
             // 2-byte length: shift content left by 1
-            std::memmove(&buf_[content_start - 1], &buf_[content_start], content_size);
+            std::memmove(buf_.data() + content_start - 1, buf_.data() + content_start, content_size);
             buf_.resize(len_pos + 2 + content_size);
             buf_[len_pos]     = 0x81;
             buf_[len_pos + 1] = static_cast<uint8_t>(content_size);
