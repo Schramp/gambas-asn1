@@ -122,8 +122,10 @@ struct TaggedTypeSpec {
     // IMPLICIT does. Always false for a type with no declared tag at all
     // (`tag` itself is nullopt) or one using IMPLICIT.
     bool is_explicit = false;
-    // The type's own natural tag, ignoring its `[n]` override — meaningful
-    // only when is_explicit is true; the tag the wrapped inner TLV uses.
+    // The builtin type's universal tag, ignoring the type assignment's own
+    // `[n]` (X.680 §31.2). Set whenever `tag` is not that universal tag:
+    // runtimes dispatch on it to pick the builtin's representation, and for
+    // an EXPLICIT tag it is also the tag the wrapped inner TLV uses.
     std::optional<TypeTagSpec> natural_tag;
 };
 

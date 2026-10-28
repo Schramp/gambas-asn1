@@ -167,9 +167,11 @@ struct BerTraits<Real> {
     ///        CER/DER form (detail::encode_real_exact), \c Double as the
     ///        base-2 binary form with an odd mantissa.
     /// @see X.690 §8.5, §11.3.
-    static void encode(BerWriter& w, const Real& v) {
+    /// @param t  Tag to write: the universal tag by default, or the tag of a
+    ///           type assignment (X.680 §31.2) such as `T ::= [APPLICATION 1] ...`.
+    static void encode(BerWriter& w, const Real& v, Tag t = tag()) {
         if (v.storage() != Real::Storage::Double) {
-            w.write_primitive(tag(), detail::encode_real_exact(v));
+            w.write_primitive(t, detail::encode_real_exact(v));
             return;
         }
         double d = v.value();
@@ -181,20 +183,20 @@ struct BerTraits<Real> {
             // sign of -0.0 on every encode.
             if (std::signbit(d)) {
                 uint8_t b = 0x43;
-                w.write_primitive(tag(), std::span<const uint8_t>(&b, 1));
+                w.write_primitive(t, std::span<const uint8_t>(&b, 1));
             } else {
-                w.write_primitive(tag(), {});
+                w.write_primitive(t, {});
             }
             return;
         }
         if (std::isinf(d)) {
             uint8_t b = d > 0 ? 0x40 : 0x41;  // PLUS-INFINITY / MINUS-INFINITY
-            w.write_primitive(tag(), std::span<const uint8_t>(&b, 1));
+            w.write_primitive(t, std::span<const uint8_t>(&b, 1));
             return;
         }
         if (std::isnan(d)) {
             uint8_t b = 0x42;  // NOT-A-NUMBER
-            w.write_primitive(tag(), std::span<const uint8_t>(&b, 1));
+            w.write_primitive(t, std::span<const uint8_t>(&b, 1));
             return;
         }
 
@@ -238,7 +240,7 @@ struct BerTraits<Real> {
         val.push_back(info);
         val.insert(val.end(), ebuf, ebuf + elen);
         val.insert(val.end(), mbuf, mbuf + mlen);
-        w.write_primitive(tag(), val);
+        w.write_primitive(t, val);
     }
 
     static Expected<Real, DecodeError> decode(BerReader& r) {

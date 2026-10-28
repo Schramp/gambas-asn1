@@ -133,7 +133,7 @@ bool RandomFiller::fill(Asn1Object* obj, const TypeDescriptor& def, int depth, b
 // constraints to coerce fill_primitive into a target length.
 static bool resize_in_place(Asn1Object* obj, const TypeDescriptor& def,
                             std::size_t len, std::mt19937& rng) {
-    if (def.tag.cls != TagClass::Universal) return false;
+    if (builtin_tag(def).number == 0) return false;  // no builtin type known
     auto rand_byte = [&]{
         return static_cast<uint8_t>(std::uniform_int_distribution<int>{0, 255}(rng));
     };
@@ -144,7 +144,7 @@ static bool resize_in_place(Asn1Object* obj, const TypeDescriptor& def,
             0, static_cast<int>(chars.size()) - 1}(rng)];
     };
 
-    switch (def.tag.number) {
+    switch (builtin_tag(def).number) {
     case UniversalTag::OctetString: {
         std::vector<uint8_t> v(len);
         for (auto& b : v) b = rand_byte();
@@ -168,7 +168,7 @@ static bool resize_in_place(Asn1Object* obj, const TypeDescriptor& def,
     // kind alike.
     case UniversalTag::UniversalString:
     case UniversalTag::BmpString: {
-        int unit_bytes = (def.tag.number == UniversalTag::BmpString) ? 2 : 4;
+        int unit_bytes = (builtin_tag(def).number == UniversalTag::BmpString) ? 2 : 4;
         static_cast<AsnStringBase*>(obj)->str().assign(
             gen_wide_chars(unit_bytes, static_cast<int>(len), rng));
         return true;
@@ -204,12 +204,12 @@ static bool resize_in_place(Asn1Object* obj, const TypeDescriptor& def,
 // to the strict in-spec path).
 static bool fill_primitive_loose(Asn1Object* obj, const TypeDescriptor& def,
                                  std::mt19937& rng) {
-    if (def.tag.cls != TagClass::Universal) return false;
+    if (builtin_tag(def).number == 0) return false;  // no builtin type known
     const auto& c = def.constraints;
     auto rand_byte = [&]{ return static_cast<uint8_t>(
         std::uniform_int_distribution<int>{0, 255}(rng)); };
 
-    switch (def.tag.number) {
+    switch (builtin_tag(def).number) {
     case UniversalTag::Integer: {
         int64_t lo, hi;
         if (c.flags & Constraints::CONSTRAINED) {
@@ -323,8 +323,7 @@ bool RandomFiller::try_fill_primitive(Asn1Object* obj, const TypeDescriptor& def
 
     constexpr int MAX_RETRIES = 16;
 
-    bool is_int = (def.tag.cls == TagClass::Universal &&
-                   def.tag.number == UniversalTag::Integer);
+    bool is_int = builtin_tag(def) == Tag::universal(UniversalTag::Integer);
 
     // Integer: distance-tightening loop. Each failure narrows a working
     // descriptor copy's lower/upper bound using validate()'s signed delta:
@@ -563,13 +562,13 @@ bool RandomFiller::fill_seq_of(Asn1Object* obj, const SeqOfSpec& spec, int depth
 void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
     namespace UT = UniversalTag;
 
-    // Non-universal tag: underlying C++ type is determined by the base type,
-    // not the tag. We don't have that information here, so leave the object
-    // zero-initialised (already valid — default-constructed upstream).
-    if (def.tag.cls != TagClass::Universal)
+    // The builtin type comes from builtin_tag(), not def.tag, which may be a
+    // type assignment's own tag (X.680 §31.2). A descriptor naming no
+    // builtin is left default-constructed (already a valid value).
+    if (builtin_tag(def).number == 0)
         return;
 
-    switch (def.tag.number) {
+    switch (builtin_tag(def).number) {
 
     case UT::Boolean: {
         static_cast<Boolean*>(obj)->set(coin(0.5));
@@ -771,7 +770,7 @@ void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
             std::string_view from_view(reinterpret_cast<const char*>(c.alphabet), c.alphabet_size);
             static_cast<AsnStringBase*>(obj)->str().assign(random_from_alphabet(from_view, len));
         } else {
-            int unit_bytes = (def.tag.number == UT::BmpString) ? 2 : 4;
+            int unit_bytes = (builtin_tag(def).number == UT::BmpString) ? 2 : 4;
             static_cast<AsnStringBase*>(obj)->str().assign(random_wide_chars(unit_bytes, len));
         }
         break;
@@ -806,7 +805,7 @@ void RandomFiller::fill_primitive(Asn1Object* obj, const TypeDescriptor& def) {
                 reinterpret_cast<const char*>(c.alphabet),
                 c.alphabet_size);
             alpha = from_view;
-        } else if (auto a = builtin_alphabet(def.tag.number); !a.empty()) {
+        } else if (auto a = builtin_alphabet(builtin_tag(def).number); !a.empty()) {
             alpha = a;
         } else {
             alpha = DEFAULT_STRING_ALPHABET;

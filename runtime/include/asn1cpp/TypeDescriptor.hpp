@@ -389,7 +389,10 @@ struct TypeDescriptor {
     /// for it the way IMPLICIT does. False for every type with no declared
     /// tag of its own, or one using IMPLICIT.
     bool is_explicit = false;
-    Tag  natural_tag = {};  ///< This type's own natural tag, ignoring `[n]`; meaningful only when is_explicit.
+    /// The builtin type's universal tag, ignoring the type assignment's own
+    /// `[n]` (X.680 §31.2). Set whenever \c tag is not that universal tag:
+    /// for an EXPLICIT tag it is also the inner TLV's tag. See builtin_tag().
+    Tag  natural_tag = {};
     /// Non-null for an OCTET STRING holding the encoding of another type
     /// (stored as \c Containing<T>): the inner type and how it is decoded.
     const ContainedSpec* contained = nullptr;
@@ -399,6 +402,17 @@ struct TypeDescriptor {
     /// first of encode; false costs nothing more than this one test.
     bool has_contained = false;
 };
+
+/// @brief The universal tag naming \p def's builtin type (X.680 §8.6): what
+///        codecs dispatch on to pick a primitive's representation, and what
+///        tells SET OF from SEQUENCE OF. This is \c def.tag for a type without a tag of
+///        its own, and \c def.natural_tag when its type assignment carries
+///        one (X.680 §31.2), IMPLICIT or EXPLICIT.
+/// @return A universal-class tag; \c Tag{} (universal 0, no builtin) for a
+///         descriptor whose tag is not universal and that carries no natural tag.
+inline Tag builtin_tag(const TypeDescriptor& def) {
+    return (def.is_explicit || def.tag.cls != TagClass::Universal) ? def.natural_tag : def.tag;
+}
 
 /// @name Built-in type descriptors
 /// Defined in \c runtime/src/BuiltinTypes.cpp (PER handler wired there).

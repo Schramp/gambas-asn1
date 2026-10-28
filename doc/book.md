@@ -380,6 +380,13 @@ containing the full `UTF8String` TLV. This costs 2–4 extra bytes but is requir
 the inner type is CHOICE, OPEN, or ANY — types whose own tag determines which
 alternative is present and must be preserved.
 
+A tag can also sit on a type assignment rather than on a member:
+`TBool ::= [APPLICATION 1] BOOLEAN`. Every reference to `TBool`, whether it is a
+SEQUENCE member, a CHOICE alternative or a SEQUENCE OF element, then encodes as
+`[APPLICATION 1]` (`41 01 FF`), not `[UNIVERSAL 1]` (`01 01 FF`). On decode, both
+runtimes accept only that tag (X.680 §31.2, X.690 §8.14). XER and JER are not affected:
+`TBool` is still written as a BOOLEAN.
+
 Tagging affects the schema as a design decision: once a type is deployed with a specific
 tag, changing the tagging mode is a wire-format break. The extension marker (`...`) and
 version brackets (`[[...]]`) in ASN.1 provide managed extensibility without breaking

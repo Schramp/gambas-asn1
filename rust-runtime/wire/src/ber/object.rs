@@ -462,11 +462,12 @@ fn decode_choice_dispatch(obj: &mut dyn Asn1Choice, r: &mut Reader) -> Result<()
 /// @return `Err` when an element cannot be encoded.
 /// @see X.690 §8.10, §8.12, §11.6.
 pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>, opts: Option<&ContainedOptions>) -> Result<(), EncodeError> {
+    let framing = obj.elem_ber_framing();
     if obj.natural_tag() == crate::spec::sequence::SET_TAG && obj.len() > 1 {
         let mut parts: Vec<Vec<u8>> = (0..obj.len())
             .map(|i| {
                 let mut buf = Vec::new();
-                encode_member_ref(obj.get(i), BerTagging::Delegate, &mut buf, opts)?;
+                encode_member_ref(obj.get(i), framing, &mut buf, opts)?;
                 Ok(buf)
             })
             .collect::<Result<_, EncodeError>>()?;
@@ -477,7 +478,7 @@ pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>, opts: Option
         return Ok(());
     }
     for i in 0..obj.len() {
-        encode_member_ref(obj.get(i), BerTagging::Delegate, out, opts)?;
+        encode_member_ref(obj.get(i), framing, out, opts)?;
     }
     Ok(())
 }
@@ -494,8 +495,9 @@ pub fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut Vec<u8>, opts: Option
 /// @see X.690 §8.10, §8.12.
 pub fn decode_seqof_content(obj: &mut dyn Asn1SeqOf, mut content: Reader) -> Result<(), DecodeError> {
     obj.reserve(crate::ber::sequence::count_top_level_tlvs(content.remaining()));
+    let framing = obj.elem_ber_framing();
     while !content.at_end() {
-        decode_member_ref(obj.push_default_mut(), BerTagging::Delegate, &mut content)?;
+        decode_member_ref(obj.push_default_mut(), framing, &mut content)?;
     }
     Ok(())
 }

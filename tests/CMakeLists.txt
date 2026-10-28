@@ -167,6 +167,58 @@ target_include_directories(test_toplevel_tag PRIVATE ${TOPLEVEL_TAG_GEN_DIR})
 target_link_libraries(test_toplevel_tag PRIVATE asn1cpp_runtime)
 add_test(NAME toplevel_tag COMMAND test_toplevel_tag)
 
+# ---- Type-assignment tag on a builtin type (X.680 §31.2) -------------------
+set(TYPEDEF_TAG_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_typedef_tag_test)
+add_custom_command(
+    OUTPUT  ${TYPEDEF_TAG_GEN_DIR}/TBool.hpp ${TYPEDEF_TAG_GEN_DIR}/TBool.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TOid.hpp ${TYPEDEF_TAG_GEN_DIR}/TOid.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TOct.hpp ${TYPEDEF_TAG_GEN_DIR}/TOct.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TBit.hpp ${TYPEDEF_TAG_GEN_DIR}/TBit.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TReal.hpp ${TYPEDEF_TAG_GEN_DIR}/TReal.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TRel.hpp ${TYPEDEF_TAG_GEN_DIR}/TRel.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TUInt.hpp ${TYPEDEF_TAG_GEN_DIR}/TUInt.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TInt.hpp ${TYPEDEF_TAG_GEN_DIR}/TInt.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TStr.hpp ${TYPEDEF_TAG_GEN_DIR}/TStr.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TNull.hpp ${TYPEDEF_TAG_GEN_DIR}/TNull.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TEnum.hpp ${TYPEDEF_TAG_GEN_DIR}/TEnum.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TSeq.hpp ${TYPEDEF_TAG_GEN_DIR}/TSeq.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TExp.hpp ${TYPEDEF_TAG_GEN_DIR}/TExp.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/Pick.hpp ${TYPEDEF_TAG_GEN_DIR}/Pick.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/Tagged.hpp ${TYPEDEF_TAG_GEN_DIR}/Tagged.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TaggedLst.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLst.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TaggedLq.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLq.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TaggedLw.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLw.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${TYPEDEF_TAG_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/typedef_tag_test.asn1
+                                   -o ${TYPEDEF_TAG_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/typedef_tag_test.asn1
+    COMMENT "Generating C++ from typedef_tag_test.asn1"
+)
+add_executable(test_typedef_tag
+    seq/test_typedef_tag.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TBool.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TOid.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TOct.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TBit.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TReal.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TRel.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TUInt.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TInt.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TStr.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TNull.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TEnum.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TSeq.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TExp.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/Pick.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/Tagged.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TaggedLst.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TaggedLq.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TaggedLw.cpp
+)
+target_include_directories(test_typedef_tag PRIVATE ${TYPEDEF_TAG_GEN_DIR})
+target_link_libraries(test_typedef_tag PRIVATE asn1cpp_runtime)
+add_test(NAME typedef_tag COMMAND test_typedef_tag)
+
 # ---- NULL member BER tests -------------------------------------------------
 set(NULL_TEST_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_null_test)
 add_custom_command(

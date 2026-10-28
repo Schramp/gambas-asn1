@@ -110,13 +110,17 @@ template<>
 struct BerTraits<BitString> {
     static constexpr Tag tag() { return Tag::universal(UniversalTag::BitString, false); }
 
-    static void encode(BerWriter& w, const BitString& v) {
+    /// @brief BER-encode the value as a primitive TLV with tag \p t.
+    /// @param t  Tag to write: the universal tag by default, or the tag of a
+    ///           type assignment (X.680 §31.2) such as `T ::= [APPLICATION 1] ...`.
+    /// @see X.690 §8.6.
+    static void encode(BerWriter& w, const BitString& v, Tag t = tag()) {
         // Value = unused_bits_byte + payload
         std::vector<uint8_t> val;
         val.reserve(1 + v.bytes().size());
         val.push_back(v.unused_bits());
         val.insert(val.end(), v.bytes().begin(), v.bytes().end());
-        w.write_primitive(tag(), val);
+        w.write_primitive(t, val);
     }
 
     static Expected<BitString, DecodeError> decode(BerReader& r) {

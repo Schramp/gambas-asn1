@@ -695,7 +695,7 @@ public:
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         const std::string& str = static_cast<const AsnStringBase*>(src)->str();
         const Constraints& pc = def.constraints;
-        auto [bits, bpc] = string_params(def.tag.number);
+        auto [bits, bpc] = string_params(builtin_tag(def).number);
         // alphabet_bits > 0 means FROM constraint — index != char value, must use encode_table.
         // Built-in types may also have encode_table (for validate) but alphabet_bits == 0;
         // they use the string_params() bit-width path instead.
@@ -753,14 +753,14 @@ public:
         // Validate type-intrinsic character sets (no FROM constraint needed).
         // X.691 §26.5.3: NumericString canonical set is space + '0'..'9'.
         if (!has_alpha && !(pc.flags & Constraints::EXTENSIBLE)) {
-            if (def.tag.number == UniversalTag::NumericString) {
+            if (builtin_tag(def).number == UniversalTag::NumericString) {
                 for (unsigned char c : str) {
                     if (c != ' ' && (c < '0' || c > '9')) {
                         stream.set_encode_failed("character not in NumericString natural alphabet");
                         return;
                     }
                 }
-            } else if (def.tag.number == UniversalTag::Ia5String) {
+            } else if (builtin_tag(def).number == UniversalTag::Ia5String) {
                 // X.691 §26.5.6: IA5String canonical set is 0x00..0x7F.
                 for (unsigned char c : str) {
                     if (c > 0x7F) {
@@ -825,7 +825,7 @@ public:
                 return decode(codec, stream, plain, dest);
             }
         }
-        auto [bits, bpc] = string_params(def.tag.number);
+        auto [bits, bpc] = string_params(builtin_tag(def).number);
         const bool has_alpha = pc.alphabet_bits > 0 && pc.alphabet != nullptr;
         std::string result;
         auto len_r = decode_size_and_items(stream, pc, [&](std::size_t m) -> DecodeResult {
@@ -934,8 +934,7 @@ public:
                          def.name, count, PerCodec::stream_bit_pos(stream));
         const auto& sc = spec.size_constraints;
         const auto& edef = *spec.element;
-        bool is_set_of = (def.tag.cls == TagClass::Universal &&
-                          def.tag.number == UniversalTag::Set);
+        bool is_set_of = builtin_tag(def).number == UniversalTag::Set;
         std::vector<EncodedElement> sorted;
         if (is_set_of && count > 1) sorted = sorted_set_of_elements(codec, stream, edef, seq, count);
         IEncodeStream& es = stream;

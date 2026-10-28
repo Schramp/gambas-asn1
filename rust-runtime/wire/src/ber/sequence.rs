@@ -100,6 +100,9 @@ impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1Seq
     fn elem_xer_instruction(&self) -> crate::spec::object::XerInstruction {
         <T as crate::spec::object::AsMemberRef>::XER_INSTRUCTION
     }
+    fn elem_ber_framing(&self) -> crate::spec::choice::BerTagging {
+        <T as crate::spec::object::AsMemberRef>::BER_FRAMING
+    }
 }
 
 /// Lets a `SeqOf<T>` itself be a SEQUENCE OF/SET OF element — closes the
@@ -164,6 +167,9 @@ impl<T: crate::spec::object::AsMemberRef + Default> crate::spec::object::Asn1Seq
     }
     fn elem_xer_instruction(&self) -> crate::spec::object::XerInstruction {
         <T as crate::spec::object::AsMemberRef>::XER_INSTRUCTION
+    }
+    fn elem_ber_framing(&self) -> crate::spec::choice::BerTagging {
+        <T as crate::spec::object::AsMemberRef>::BER_FRAMING
     }
 }
 

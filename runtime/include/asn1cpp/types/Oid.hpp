@@ -97,7 +97,11 @@ template<>
 struct BerTraits<Oid> {
     static constexpr Tag tag() { return Tag::universal(UniversalTag::Oid, false); }
 
-    static void encode(BerWriter& w, const Oid& v) {
+    /// @brief BER-encode the value as a primitive TLV with tag \p t.
+    /// @param t  Tag to write: the universal tag by default, or the tag of a
+    ///           type assignment (X.680 §31.2) such as `T ::= [APPLICATION 1] ...`.
+    /// @see X.690 §8.19.
+    static void encode(BerWriter& w, const Oid& v, Tag t = tag()) {
         // Write OID value bytes directly into w to avoid a heap-allocated temp vector.
         // Each arc encodes to at most 5 bytes; OIDs have at most ~128 arcs in practice.
         // Use an inline stack buffer: 128 arcs × 5 bytes = 640 bytes max.
@@ -117,7 +121,7 @@ struct BerTraits<Oid> {
         } else if (a.size() == 1) {
             push_arc(a[0] * 40);
         }
-        w.write_primitive(tag(), {stack_buf, len});
+        w.write_primitive(t, {stack_buf, len});
     }
 
     static Expected<Oid, DecodeError> decode(BerReader& r) {
@@ -164,7 +168,11 @@ template<>
 struct BerTraits<RelativeOid> {
     static constexpr Tag tag() { return Tag::universal(UniversalTag::RelativeOid, false); }
 
-    static void encode(BerWriter& w, const RelativeOid& v) {
+    /// @brief BER-encode the value as a primitive TLV with tag \p t.
+    /// @param t  Tag to write: the universal tag by default, or the tag of a
+    ///           type assignment (X.680 §31.2) such as `T ::= [APPLICATION 1] ...`.
+    /// @see X.690 §8.20.
+    static void encode(BerWriter& w, const RelativeOid& v, Tag t = tag()) {
         uint8_t stack_buf[640]; std::size_t len = 0;
         for (uint32_t arc : v.arcs()) {
             uint8_t tmp[5]; int n = 0;
@@ -172,7 +180,7 @@ struct BerTraits<RelativeOid> {
             for (int i = n - 1; i >= 0; --i)
                 stack_buf[len++] = tmp[i] | (i ? 0x80u : 0x00u);
         }
-        w.write_primitive(tag(), {stack_buf, len});
+        w.write_primitive(t, {stack_buf, len});
     }
 
     static Expected<RelativeOid, DecodeError> decode(BerReader& r) {
