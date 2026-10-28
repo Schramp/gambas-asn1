@@ -644,7 +644,23 @@ struct EnumeratedXerHandler final : IXerTypeHandler {
     }
 };
 
+/// @brief Whether a SEQUENCE OF / SET OF with element type \p edef is
+///        written as an "XMLValueList" (each value bare, no element tag)
+///        rather than an "XMLDelimitedItemList".
+/// @see X.680 §25.5 Table 5 — BOOLEAN, ENUMERATED and NULL; §25.6/§25.9 —
+///      tags and type references are looked through.
+static bool xer_value_list_element(const TypeDescriptor& edef) {
+    if (edef.enum_spec) return true;
+    Tag t = builtin_tag(edef);
+    return t.cls == TagClass::Universal
+        && (t.number == UniversalTag::Boolean || t.number == UniversalTag::Null);
+}
+
 struct SeqOfXerHandler final : IXerTypeHandler {
+    /// @brief Write a SEQUENCE OF / SET OF as \c <name> + its elements +
+    ///        \c </name>: an XMLDelimitedItemList (one element per line), or
+    ///        for BOOLEAN/ENUMERATED/NULL elements an XMLValueList.
+    /// @see X.680 §25.3-§25.11, X.693 §9.3.
     void encode(const XerCodec& codec, XerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         auto& os = s.os();
@@ -654,6 +670,8 @@ struct SeqOfXerHandler final : IXerTypeHandler {
         const TypeDescriptor& edef = *spec.element;
         if (count == 0) {
             os << '<' << def.name << "></" << def.name << ">\n";
+        } else if (xer_value_list_element(edef)) {
+            encode_value_list(s, def, edef, seq, count);
         } else {
             os << '<' << def.name << '>';
             for (std::size_t i = 0; i < count; ++i) {
@@ -663,27 +681,12 @@ struct SeqOfXerHandler final : IXerTypeHandler {
                     if (i == 0) os << '\n';
                     os << s.indent(1);
                 }
-                if (edef.enum_spec) {
-                    // X.693 §9.3: ENUMERATED in SEQOF/SETOF encodes as bare <value/> (no type wrapper)
-                    long v = static_cast<const EnumValue*>(eptr)->value();
-                    const EnumSpec& esp = *edef.enum_spec;
-                    const char* name = nullptr;
-                    int lo = 0, hi = esp.count - 1;
-                    while (lo <= hi) {
-                        int mid = (lo + hi) / 2;
-                        if (esp.entries[mid].value == v) { name = esp.entries[mid].name; break; }
-                        if (esp.entries[mid].value < v) lo = mid + 1; else hi = mid - 1;
-                    }
-                    if (name) os << '<' << name << "/>\n";
-                    else      os << v << '\n';
+                // X.693 §12: use declared element name when set, else edef.name
+                if (spec.element_xer_tag) {
+                    TypeDescriptor named = edef; named.name = spec.element_xer_tag;
+                    codec.encode(es, named, eptr);
                 } else {
-                    // X.693 §12: use declared element name when set, else edef.name
-                    if (spec.element_xer_tag) {
-                        TypeDescriptor named = edef; named.name = spec.element_xer_tag;
-                        codec.encode(es, named, eptr);
-                    } else {
-                        codec.encode(es, edef, eptr);
-                    }
+                    codec.encode(es, edef, eptr);
                 }
             }
             os << s.indent() << "</" << def.name << ">\n";
@@ -708,7 +711,14 @@ struct SeqOfXerHandler final : IXerTypeHandler {
                     std::string("XER SEQUENCE OF: unexpected end in <") + def.name + ">"));
             seq.resize(++count);
             Asn1Object* eptr = seq.get_mut(count - 1);
-            if (edef.enum_spec) {
+            if (builtin_tag(edef) == Tag::universal(UniversalTag::Boolean)
+                && (ti.name == "true" || ti.name == "false")) {
+                // X.680 §25.5: BOOLEAN in SEQOF/SETOF — bare <true/> / <false/>
+                auto vt = xer_detail::consume_tag(s);
+                if (!vt.self_closing)
+                    return decode_err(DecodeError("XER SEQOF BOOLEAN: expected <true/> or <false/>"));
+                *static_cast<Boolean*>(eptr) = Boolean{vt.name == "true"};
+            } else if (edef.enum_spec) {
                 // X.693 §9.3: ENUMERATED in SEQOF/SETOF — bare <value/> (no type wrapper)
                 auto vt = xer_detail::consume_tag(s);
                 if (vt.closing || vt.name.empty())
@@ -741,6 +751,48 @@ struct SeqOfXerHandler final : IXerTypeHandler {
             }
         }
         return decode_ok();
+    }
+private:
+    /// @brief Write an XMLValueList the way asn1c lays it out: SEQUENCE OF
+    ///        values inline after \c <name>, SET OF values and NULL values
+    ///        each on a new line, and the closing tag indented on the line
+    ///        of the last value. A NULL value is the empty element
+    ///        \c <Type/> of its type name (X.680 §25.4).
+    /// @param s      Stream positioned at this SEQUENCE OF's own level.
+    /// @param def    The SEQUENCE OF / SET OF descriptor.
+    /// @param edef   Element descriptor (BOOLEAN, ENUMERATED or NULL).
+    /// @param seq    The collection.
+    /// @param count  Element count (non-zero).
+    /// @see X.680 §25.3/§25.4 — XMLValueList, XMLValueOrEmpty.
+    static void encode_value_list(XerEncodeStream& s, const TypeDescriptor& def,
+                                  const TypeDescriptor& edef, const SeqOfBase& seq,
+                                  std::size_t count) {
+        auto& os = s.os();
+        bool is_null = builtin_tag(edef) == Tag::universal(UniversalTag::Null);
+        bool own_line = is_null || builtin_tag(def).number == UniversalTag::Set;
+        os << '<' << def.name << '>';
+        for (std::size_t i = 0; i < count; ++i) {
+            const Asn1Object* eptr = seq.get_const(i);
+            if (own_line) os << '\n' << s.indent(2);
+            if (is_null) {
+                os << '<' << edef.name << "/>";
+            } else if (edef.enum_spec) {
+                long v = static_cast<const EnumValue*>(eptr)->value();
+                const EnumSpec& esp = *edef.enum_spec;
+                const char* name = nullptr;
+                int lo = 0, hi = esp.count - 1;
+                while (lo <= hi) {
+                    int mid = (lo + hi) / 2;
+                    if (esp.entries[mid].value == v) { name = esp.entries[mid].name; break; }
+                    if (esp.entries[mid].value < v) lo = mid + 1; else hi = mid - 1;
+                }
+                if (name) os << '<' << name << "/>";
+                else      os << v;
+            } else {
+                os << (static_cast<const Boolean*>(eptr)->value() ? "<true/>" : "<false/>");
+            }
+        }
+        os << s.indent() << "</" << def.name << ">\n";
     }
 };
 

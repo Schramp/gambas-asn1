@@ -1630,6 +1630,22 @@ XER encode and decode are complete. Entity escaping (`&amp;`, `&lt;`, `&gt;`,
 `&apos;`, `&quot;`, numeric references) is implemented per X.693. BmpString and
 UniversalString transcode between UCS-2BE/UCS-4BE and UTF-8.
 
+A SEQUENCE OF / SET OF whose elements are BOOLEAN, ENUMERATED or NULL, also
+through a type reference or a tag, uses the XMLValueList form (X.680 §25.5
+Table 5): each value is written bare, with no element tag, and a NULL value is
+the empty element of its type name. The layout follows asn1c: SEQUENCE OF
+values stay on the opening tag's line, while SET OF values and NULL values each
+start a new line:
+
+```xml
+<ec><green/><green/>    </ec>
+<bt>
+        <false/>
+        <true/>    </bt>
+<na>
+        <ANull/>    </na>
+```
+
 The decoder defaults to strict BASIC-XER (X.693 §8). Pass `XerDecodeMode::Lenient`
 to `XerDecodeStream` to additionally accept non-standard asn1c extensions: BOOLEAN
 text content (`true`/`false`) and hex BIT STRING (`AABBCC…` pairs). See §6 for

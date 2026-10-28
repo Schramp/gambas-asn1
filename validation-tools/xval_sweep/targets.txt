@@ -147,3 +147,8 @@ tests/asn1/fuzz_test.asn1            Bag
 
 # Type assignments carrying their own tag over each builtin BER handler.
 tests/asn1/typedef_tag_test.asn1     Tagged
+# XER XMLValueList (X.680 §25.5): SEQUENCE OF / SET OF of BOOLEAN,
+# ENUMERATED and NULL, plain, through a type reference and tagged.
+tests/asn1/xer_value_list_test.asn1  VlRec
+tests/asn1/xer_value_list_test.asn1  VlTopBool
+tests/asn1/xer_value_list_test.asn1  VlTopNull

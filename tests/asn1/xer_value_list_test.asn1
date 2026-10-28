@@ -1,0 +1,33 @@
+-- SEQUENCE OF / SET OF whose elements are BOOLEAN, ENUMERATED or NULL use
+-- the XMLValueList form (X.680 §25.5 Table 5): each value bare, no element
+-- tag, also through a type reference or a tag (§25.6, §25.9).
+-- Used by tests/seq/test_xer_value_list.cpp and the xval sweep.
+XerValueListTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+Color ::= ENUMERATED { red, green }
+TEnum ::= [APPLICATION 11] ENUMERATED { red, green }
+ABool ::= BOOLEAN
+TBool ::= [APPLICATION 1] BOOLEAN
+ANull ::= NULL
+TNull ::= [APPLICATION 2] NULL
+
+VlRec ::= SEQUENCE {
+    ec SEQUENCE (SIZE(1..3)) OF Color,
+    et SEQUENCE (SIZE(1..3)) OF TEnum,
+    bb SEQUENCE (SIZE(1..3)) OF BOOLEAN,
+    ba SEQUENCE (SIZE(1..3)) OF ABool,
+    bt SET (SIZE(1..3)) OF TBool,
+    nb SEQUENCE (SIZE(1..3)) OF NULL,
+    na SEQUENCE (SIZE(1..3)) OF ANull,
+    nt SEQUENCE (SIZE(1..3)) OF TNull,
+    st SET (SIZE(1..3)) OF ANull,
+    ll SEQUENCE (SIZE(1..2)) OF SEQUENCE (SIZE(1..2)) OF BOOLEAN,
+    lc SEQUENCE (SIZE(1..2)) OF VlPick
+}
+
+VlPick ::= CHOICE { b BOOLEAN, i INTEGER }
+
+VlTopBool ::= SEQUENCE (SIZE(1..3)) OF BOOLEAN
+VlTopNull ::= SET (SIZE(1..3)) OF NULL
+
+END

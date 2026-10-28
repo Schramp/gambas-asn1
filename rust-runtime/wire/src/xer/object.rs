@@ -340,6 +340,9 @@ fn decode_choice_into(obj: &mut dyn Asn1Choice, r: &mut XerReader) -> Result<(),
 /// wrapper, matching their own standalone form) — same per-kind split
 /// `xer::seq_of`'s own doc documents for the old design.
 pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
+    if is_value_list(obj) {
+        return encode_value_list(obj, out, depth, opts);
+    }
     let name_override = obj.elem_xer_name();
     let mut any = false;
     for i in 0..obj.len() {
@@ -349,14 +352,6 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
         }
         any = true;
         match &el {
-            // NULL self-closes as `<NULL/>` as a SEQUENCE OF/SET OF
-            // element (X.693), ignoring any X.693 §12 element
-            // identifier.
-            MemberRef::Primitive(PrimitiveRef::Null(_)) => {
-                out.push('\n');
-                out.push_str(&indent(depth + 1));
-                out.push_str("<NULL/>");
-            }
             // `obj.elem_natural_xer_name(i)`, not `xer_element_name_of(*p)`:
             // `p`/`x` here are already unwrapped to the element's native
             // field (`AsMemberRef`'s own doc) — for an aliased element
@@ -398,6 +393,46 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
     Ok(())
 }
 
+/// Whether `obj`'s elements are written as an "XMLValueList" — each value
+/// bare, no element tag — rather than an "XMLDelimitedItemList": BOOLEAN,
+/// ENUMERATED and NULL elements, looking through tags and type references
+/// (X.680 §25.5 Table 5, §25.6, §25.9). Read off the first element, as the
+/// element kind is the same for all of them; an empty collection has no
+/// content either way.
+fn is_value_list(obj: &dyn Asn1SeqOf) -> bool {
+    obj.len() > 0
+        && matches!(obj.get(0),
+            MemberRef::Enumerated(..)
+            | MemberRef::Primitive(PrimitiveRef::Boolean(_))
+            | MemberRef::Primitive(PrimitiveRef::Null(_)))
+}
+
+/// Writes an XMLValueList the way asn1c (and C++ `SeqOfXerHandler`) lay it
+/// out: SEQUENCE OF values inline after the opening tag, SET OF values and
+/// NULL values each on a new line, and the closing tag's indent on the
+/// line of the last value. A NULL value is the empty element `<Type/>` of
+/// its type name (X.680 §25.4, "XMLValueOrEmpty").
+fn encode_value_list(obj: &dyn Asn1SeqOf, out: &mut String, depth: usize, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
+    let set_of = obj.natural_tag() == crate::spec::sequence::SET_TAG;
+    for i in 0..obj.len() {
+        let el = obj.get(i);
+        let is_null = matches!(el, MemberRef::Primitive(PrimitiveRef::Null(_)));
+        if is_null || set_of {
+            out.push('\n');
+            out.push_str(&indent(depth + 2));
+        }
+        if is_null {
+            out.push('<');
+            out.push_str(obj.elem_natural_xer_name(i));
+            out.push_str("/>");
+        } else {
+            encode_bare(el, out, depth + 1, opts)?;
+        }
+    }
+    out.push_str(&indent(depth));
+    Ok(())
+}
+
 /// X.693 §8.3.1 document-root wrapper for a *named* (top-level) SEQUENCE
 /// OF/SET OF type — `encode_pdu`'s SEQUENCE OF arm; an inline member's
 /// `SeqOf<T>`/`SetOf<T>` uses `encode_seqof_content` directly instead
@@ -410,7 +445,9 @@ fn encode_seqof_doc(obj: &dyn Asn1SeqOf, opts: Option<&crate::containing::Contai
     let mut out = String::new();
     write_open_tag(&mut out, obj.own_xer_name());
     encode_seqof_content(obj, &mut out, 0, opts)?;
-    out.push('\n');
+    if !is_value_list(obj) {
+        out.push('\n');
+    }
     write_close_tag(&mut out, obj.own_xer_name());
     out.push('\n');
     Ok(out)
@@ -433,25 +470,37 @@ pub(crate) fn decode_seqof_content_into(obj: &mut dyn Asn1SeqOf, r: &mut XerRead
         }
         let instruction = obj.elem_xer_instruction();
         let el = obj.push_default_mut();
+        let mut null_name = None;
         match el {
             MemberRefMut::Choice(_) | MemberRefMut::Enumerated(..) => decode_bare(el, r)?,
+            // X.680 §25.5: BOOLEAN in an XMLValueList — bare <true/>/<false/>.
+            MemberRefMut::Primitive(PrimitiveRefMut::Boolean(_))
+                if peeked.name == "true" || peeked.name == "false" => decode_bare(el, r)?,
+            // X.680 §25.4: NULL is the empty element of its type name.
             MemberRefMut::Primitive(PrimitiveRefMut::Null(_)) => {
                 let ti = r.consume_tag();
-                if ti.name != "NULL" || ti.closing {
-                    return Err(DecodeError::new("XER: expected <NULL>".to_string(), 0));
+                if ti.closing {
+                    return Err(DecodeError::new(format!("XER: unexpected </{}>", ti.name), 0));
                 }
                 if !ti.self_closing {
                     let close = r.consume_tag();
-                    if !close.closing || close.name != "NULL" {
-                        return Err(DecodeError::new("XER: expected </NULL>".to_string(), 0));
+                    if !close.closing || close.name != ti.name {
+                        return Err(DecodeError::new(format!("XER: expected </{}>", ti.name), 0));
                     }
                 }
+                null_name = Some(ti.name);
             }
             _ => {
                 let name = peeked.name.to_string();
                 r.consume_open_tag(&name)?;
                 decode_instructed(instruction, el, r)?;
                 r.consume_close_tag(&name)?;
+            }
+        }
+        if let Some(name) = null_name {
+            let expected = obj.elem_natural_xer_name(obj.len() - 1);
+            if name != expected {
+                return Err(DecodeError::new(format!("XER: expected <{expected}/>"), 0));
             }
         }
     }
