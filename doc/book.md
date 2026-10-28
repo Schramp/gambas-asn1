@@ -385,7 +385,13 @@ A tag can also sit on a type assignment rather than on a member:
 SEQUENCE member, a CHOICE alternative or a SEQUENCE OF element, then encodes as
 `[APPLICATION 1]` (`41 01 FF`), not `[UNIVERSAL 1]` (`01 01 FF`). On decode, both
 runtimes accept only that tag (X.680 §31.2, X.690 §8.14). XER and JER are not affected:
-`TBool` is still written as a BOOLEAN.
+`TBool` is still written as a BOOLEAN. The same holds for a CONTAINING type assignment
+such as `TCont ::= [APPLICATION 5] OCTET STRING (CONTAINING Inner)`.
+
+BER decode checks the identifier octets of every TLV against the expected tag
+(X.690 §8.1.2): the PDU's own tag, each member's tag, and each SEQUENCE OF element's
+tag. A TLV with any other tag is a decode error, also for SEQUENCE, SEQUENCE OF and
+OCTET STRING values; it is never read as a value of the wrong type.
 
 Tagging affects the schema as a design decision: once a type is deployed with a specific
 tag, changing the tagging mode is a wire-format break. The extension marker (`...`) and

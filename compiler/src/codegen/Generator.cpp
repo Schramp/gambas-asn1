@@ -1587,6 +1587,18 @@ std::string Generator::emit_member_type_descriptor(
             spec->universal_tag = asn1::UniversalTag::OctetString;
         }
         fill_contained_descriptor(*spec, m, *f);
+        // A reference to a tagged type assignment carries that assignment's
+        // tag on the wire (X.680 §31.2), like the assignment's own asn_DEF.
+        if (const auto* tr = std::get_if<ast::TypeRef>(&m.body))
+            if (auto base = resolver_.resolve_ref(*tr)) {
+                auto tag = natural_tag_spec_for(*base);
+                bool is_explicit = type_is_explicit(*base);
+                if (tag && (is_explicit || tag->cls != ast::TagClass::Universal)) {
+                    spec->contained_tag = tag;
+                    spec->contained_is_explicit = is_explicit;
+                    spec->contained_natural_tag = underlying_natural_tag_spec_for(*base);
+                }
+            }
     }
     if (!spec) return type_descriptor_ref_for(m);
     backend_.emit_member_type_descriptor(*spec, session);

@@ -147,3 +147,6 @@ tests/asn1/fuzz_test.asn1            Bag
 
 # Type assignments carrying their own tag over each builtin BER handler.
 tests/asn1/typedef_tag_test.asn1     Tagged
+# Tagged CONTAINING type assignments (X.680 §31.2) as members and CHOICE
+# alternatives, next to untagged SEQUENCE / SEQUENCE OF / OCTET STRING members.
+tests/asn1/wrong_tag_test.asn1       WtSeq      @asn1c-opaque-contents
