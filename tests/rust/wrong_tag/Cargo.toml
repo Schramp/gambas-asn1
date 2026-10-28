@@ -1,0 +1,14 @@
+[package]
+name = "wrong-tag-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the wrong-tag test (wrong_tag_test.asn1). Pulls generated .rs from ASN1CPP_RUST_GEN_DIR (set by tests/CMakeLists.txt's rust_wrong_tag), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "wrong_tag"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }

@@ -190,6 +190,8 @@ add_custom_command(
             ${TYPEDEF_TAG_GEN_DIR}/TaggedLw.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLw.cpp
             ${TYPEDEF_TAG_GEN_DIR}/TaggedLe.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLe.cpp
             ${TYPEDEF_TAG_GEN_DIR}/TaggedLb.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLb.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TaggedLn.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLn.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TaggedLo.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLo.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${TYPEDEF_TAG_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/typedef_tag_test.asn1
                                    -o ${TYPEDEF_TAG_GEN_DIR}
@@ -218,6 +220,8 @@ add_executable(test_typedef_tag
     ${TYPEDEF_TAG_GEN_DIR}/TaggedLw.cpp
     ${TYPEDEF_TAG_GEN_DIR}/TaggedLe.cpp
     ${TYPEDEF_TAG_GEN_DIR}/TaggedLb.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TaggedLn.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TaggedLo.cpp
 )
 target_include_directories(test_typedef_tag PRIVATE ${TYPEDEF_TAG_GEN_DIR})
 target_link_libraries(test_typedef_tag PRIVATE asn1cpp_runtime)
@@ -2120,6 +2124,32 @@ if(WITH_BER_RUNTIME_TEST)
         TIMEOUT 120 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_REAL_DEFAULT_GEN_DIR}")
 endif()
+
+# Rust legs of the type-assignment tag, wrong-tag and XMLValueList tests —
+# see tests/rust/<name>/src/main.rs (C++ legs: test_typedef_tag,
+# test_wrong_tag, test_xer_value_list).
+foreach(leg typedef_tag wrong_tag xer_value_list)
+    set(gen_dir ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_${leg})
+    add_custom_command(
+        OUTPUT  ${gen_dir}/lib.rs
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${gen_dir}
+        COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1
+                -o ${gen_dir}
+        DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1
+        COMMENT "Generating Rust from ${leg}_test.asn1"
+    )
+    add_custom_target(gen_rust_${leg} ALL DEPENDS ${gen_dir}/lib.rs)
+
+    if(WITH_BER_RUNTIME_TEST)
+        add_test(NAME rust_${leg}
+            COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                    ${CMAKE_CURRENT_SOURCE_DIR}/rust/${leg}/Cargo.toml)
+        set_tests_properties(rust_${leg} PROPERTIES
+            TIMEOUT 120 LABELS "rust"
+            ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${gen_dir}")
+    endif()
+endforeach()
 
 # Rust leg of the REAL constraint test — see tests/rust/real_constraint/src/main.rs
 # (C++ leg: test_real_constraint).
