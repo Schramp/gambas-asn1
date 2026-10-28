@@ -223,6 +223,21 @@ target_include_directories(test_typedef_tag PRIVATE ${TYPEDEF_TAG_GEN_DIR})
 target_link_libraries(test_typedef_tag PRIVATE asn1cpp_runtime)
 add_test(NAME typedef_tag COMMAND test_typedef_tag)
 
+# ---- Lengths of 2^24 bytes and more (X.690 §8.1.3.5) -----------------------
+set(LONG_LENGTH_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_long_length_test)
+add_custom_command(
+    OUTPUT  ${LONG_LENGTH_GEN_DIR}/LongLen.hpp ${LONG_LENGTH_GEN_DIR}/LongLen.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${LONG_LENGTH_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/long_length_test.asn1
+            -o ${LONG_LENGTH_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/long_length_test.asn1
+    COMMENT "Generating C++ from long_length_test.asn1"
+)
+add_executable(test_long_length seq/test_long_length.cpp ${LONG_LENGTH_GEN_DIR}/LongLen.cpp)
+target_include_directories(test_long_length PRIVATE ${LONG_LENGTH_GEN_DIR})
+target_link_libraries(test_long_length PRIVATE asn1cpp_runtime)
+add_test(NAME long_length COMMAND test_long_length)
+
 # ---- XER XMLValueList: SEQUENCE OF BOOLEAN/ENUMERATED/NULL (X.680 §25.5) ---
 set(XER_VALUE_LIST_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_value_list_test)
 set(XER_VALUE_LIST_TYPES Color TEnum ABool TBool ANull TNull VlPick VlRec
