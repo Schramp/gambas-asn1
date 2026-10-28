@@ -670,6 +670,13 @@ void CppBackend::emit_default_setter(const DefaultValueSpec& spec, const std::st
         cname2, parent_name, member_name, type_name, literal);
 }
 
+/// @brief Write a member's own `asn_TYP_{parent}_{member}` TypeDescriptor:
+///        an inline-constrained INTEGER/REAL/SIZE-able builtin, or a
+///        contained OCTET STRING (X.682 §11) with the contained handlers.
+///        A contained field reached through a tagged type assignment gets
+///        that assignment's tag, mode and natural tag (X.680 §31.2).
+/// @param spec     Backend-agnostic descriptor decision from Generator.
+/// @param session  Output session the descriptor is written to.
 void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
     std::ostream& os = session.buffer(definition_extension());
     using Kind = MemberTypeDescriptorSpec::Kind;
@@ -768,14 +775,20 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
             spec.contained_when_index, when(), f.when ? f.when->value : 0,
             f.on_error == sema::ContainedOnError::Fail ? "true" : "false", text(f.xer), text(f.jer),
             sema::builtin_decoder_index(f.decoder));
+        std::string tag_lit = spec.contained_tag
+            ? format_tag_literal(*spec.contained_tag)
+            : std::format("asn1::Tag::universal({}, false)", spec.universal_tag);
+        std::string natural_lit = spec.contained_natural_tag
+            ? format_tag_literal(*spec.contained_natural_tag) : "{}";
         os << std::format(
             "static const asn1::TypeDescriptor {} = "
-            "{{ \"{}\", asn1::Tag::universal({}, false), "
+            "{{ \"{}\", {}, "
             "nullptr, nullptr, nullptr, nullptr, {}, false, asn1::TypeKind::Primitive, "
             "&asn1::per_contained_handler, &asn1::ber_contained_handler, "
-            "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}), {}, false, {{}}, &{}_contained }};\n",
-            base, spec.xer_type_name, spec.universal_tag, pc, spec.contained_storage,
-            xer_encoding_literal(spec.xer_encoding), base);
+            "asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}), {}, {}, {}, &{}_contained }};\n",
+            base, spec.xer_type_name, tag_lit, pc, spec.contained_storage,
+            xer_encoding_literal(spec.xer_encoding), spec.contained_is_explicit ? "true" : "false",
+            natural_lit, base);
         return;
     }
 

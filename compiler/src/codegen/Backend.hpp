@@ -436,6 +436,13 @@ struct MemberTypeDescriptorSpec {
     std::string contained_storage;
     int         contained_when_index = -1;
     WhenStorage contained_when_storage = WhenStorage::None;
+    // Contained field whose type is a type assignment with its own tag
+    // (X.680 §31.2, e.g. `T ::= [APPLICATION 5] OCTET STRING (CONTAINING X)`):
+    // that tag, its tagging mode, and the universal tag it replaces or
+    // wraps. Absent when the field carries the universal OCTET STRING tag.
+    std::optional<TypeTagSpec> contained_tag;
+    bool                       contained_is_explicit = false;
+    std::optional<TypeTagSpec> contained_natural_tag;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE OF / SET OF type

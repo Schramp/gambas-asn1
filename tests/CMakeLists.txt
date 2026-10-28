@@ -247,6 +247,28 @@ target_include_directories(test_xer_value_list PRIVATE ${XER_VALUE_LIST_GEN_DIR}
 target_link_libraries(test_xer_value_list PRIVATE asn1cpp_runtime)
 add_test(NAME xer_value_list COMMAND test_xer_value_list)
 
+# ---- Wrong tag on a value decoded through its own type (X.690 §8.1.2) ------
+set(WRONG_TAG_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_wrong_tag_test)
+set(WRONG_TAG_TYPES Inner TCont TContE WtPick WtSeq WtSeqL WtListSeq WtListOct WtListList WtListListAnon)
+set(WRONG_TAG_SRCS "")
+set(WRONG_TAG_OUT "")
+foreach(t ${WRONG_TAG_TYPES})
+    list(APPEND WRONG_TAG_SRCS ${WRONG_TAG_GEN_DIR}/${t}.cpp)
+    list(APPEND WRONG_TAG_OUT ${WRONG_TAG_GEN_DIR}/${t}.cpp ${WRONG_TAG_GEN_DIR}/${t}.hpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${WRONG_TAG_OUT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${WRONG_TAG_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/wrong_tag_test.asn1
+            -o ${WRONG_TAG_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/wrong_tag_test.asn1
+    COMMENT "Generating C++ from wrong_tag_test.asn1"
+)
+add_executable(test_wrong_tag seq/test_wrong_tag.cpp ${WRONG_TAG_SRCS})
+target_include_directories(test_wrong_tag PRIVATE ${WRONG_TAG_GEN_DIR})
+target_link_libraries(test_wrong_tag PRIVATE asn1cpp_runtime)
+add_test(NAME wrong_tag COMMAND test_wrong_tag)
+
 # ---- NULL member BER tests -------------------------------------------------
 set(NULL_TEST_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_null_test)
 add_custom_command(

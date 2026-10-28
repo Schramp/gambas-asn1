@@ -152,3 +152,6 @@ tests/asn1/typedef_tag_test.asn1     Tagged
 tests/asn1/xer_value_list_test.asn1  VlRec
 tests/asn1/xer_value_list_test.asn1  VlTopBool
 tests/asn1/xer_value_list_test.asn1  VlTopNull
+# Tagged CONTAINING type assignments (X.680 §31.2) as members and CHOICE
+# alternatives, next to untagged SEQUENCE / SEQUENCE OF / OCTET STRING members.
+tests/asn1/wrong_tag_test.asn1       WtSeq      @asn1c-opaque-contents
