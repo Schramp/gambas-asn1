@@ -2,6 +2,7 @@
 // (the compiler will generate these structs from ASN.1 files;
 //  here we write them manually to test the runtime library).
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
@@ -173,6 +174,35 @@ int main() {
     });
     check("Nested SEQUENCE outer tag=0x30", outer_buf[0] == 0x30);
     check("Nested SEQUENCE inner tag=0x30", outer_buf[2] == 0x30);
+
+    // write_constructed back-fills the shortest definite length (X.690
+    // §8.1.3.3–§8.1.3.5) at every length-form boundary, and the content
+    // survives the shift; BerReader reads it back.
+    printf("\n── Constructed length forms ────────────────────────────────────\n");
+    struct LenCase { std::size_t n; std::vector<uint8_t> len; };
+    const LenCase cases[] = {
+        {0, {0x00}}, {127, {0x7F}}, {128, {0x81, 0x80}}, {255, {0x81, 0xFF}},
+        {256, {0x82, 0x01, 0x00}}, {65535, {0x82, 0xFF, 0xFF}},
+        {65536, {0x83, 0x01, 0x00, 0x00}}, {(1u << 24) - 1, {0x83, 0xFF, 0xFF, 0xFF}},
+        {1u << 24, {0x84, 0x01, 0x00, 0x00, 0x00}},
+    };
+    for (const auto& c : cases) {
+        std::vector<uint8_t> content(c.n);
+        for (std::size_t i = 0; i < c.n; ++i) content[i] = static_cast<uint8_t>(i * 7 + 1);
+        std::vector<uint8_t> buf;
+        BerWriter cw(buf);
+        cw.write_constructed(Tag::universal(UniversalTag::Sequence, true),
+                             [&](BerWriter& iw) { iw.append(content); });
+        bool header = buf.size() == 1 + c.len.size() + c.n && buf[0] == 0x30 &&
+                      std::equal(c.len.begin(), c.len.end(), buf.begin() + 1);
+        BerReader cr{std::span<const uint8_t>(buf)};
+        auto tlv = cr.read_tlv();
+        bool body = tlv && cr.at_end() && std::equal(tlv->value.begin(), tlv->value.end(),
+                                                     content.begin(), content.end());
+        char name[96];
+        std::snprintf(name, sizeof name, "content %zu bytes: length octets + content intact", c.n);
+        check(name, header && body);
+    }
 
     printf("\n");
     if (failures) { printf("  %d test(s) FAILED\n", failures); return 1; }
