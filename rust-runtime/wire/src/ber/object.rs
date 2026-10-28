@@ -754,6 +754,77 @@ mod tests {
         assert_eq!(out, v);
     }
 
+    /// `Big ::= SEQUENCE { n INTEGER, o OCTET STRING }` — carries content
+    /// past 2^24 bytes, the first length that needs 4 length octets.
+    #[derive(Debug, Default, Clone, PartialEq)]
+    struct Big {
+        n: Integer,
+        o: crate::octet_string::OctetString,
+    }
+
+    static BIG_MEMBERS: [MemberMeta; 2] = [
+        MemberMeta { name: "n", tag: INTEGER_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
+        MemberMeta { name: "o", tag: crate::octet_string::OCTET_STRING_TAG, optional: false, ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
+    ];
+
+    static BIG_SPEC: SequenceSpec = SequenceSpec {
+        name: "Big",
+        tag: SEQUENCE_TAG,
+        members: &BIG_MEMBERS,
+        ext_at: -1,
+        roms_count: 0,
+        is_set: false,
+        ext_units: &[],
+        group_member_optional: &[],
+        contained_members: &[],
+    };
+
+    impl Asn1Seq for Big {
+        fn spec(&self) -> &'static SequenceSpec {
+            &BIG_SPEC
+        }
+        fn get_member(&self, i: usize) -> MemberRef<'_> {
+            match i {
+                0 => MemberRef::Primitive(crate::spec::primitive::PrimitiveRef::Integer(&self.n)),
+                1 => MemberRef::Primitive(crate::spec::primitive::PrimitiveRef::OctetString(&self.o)),
+                _ => unreachable!(),
+            }
+        }
+        fn get_member_mut(&mut self, i: usize) -> MemberRefMut<'_> {
+            match i {
+                0 => MemberRefMut::Primitive(crate::spec::primitive::PrimitiveRefMut::Integer(&mut self.n)),
+                1 => MemberRefMut::Primitive(crate::spec::primitive::PrimitiveRefMut::OctetString(&mut self.o)),
+                _ => unreachable!(),
+            }
+        }
+        fn set_default(&mut self, _i: usize) {}
+        fn is_default_equal(&self, _i: usize) -> bool {
+            false
+        }
+        fn validate(&self, _i: usize) -> i64 {
+            0
+        }
+    }
+
+    /// A SEQUENCE holding an OCTET STRING of 2^24 + 1 bytes: both the
+    /// OCTET STRING and the SEQUENCE need 4 length octets (X.690 §8.1.3.5),
+    /// and the value decodes back unchanged.
+    #[test]
+    fn round_trips_content_over_16_mib() {
+        let n = (1usize << 24) + 1;
+        let v = Big { n: Integer(7), o: crate::octet_string::OctetString((0..n).map(|i| (i * 13) as u8).collect()) };
+        let bytes = encode_seq(&v).unwrap();
+        // SEQUENCE, length 3 + 6 + n = 0x0100000A
+        assert_eq!(&bytes[..6], &[0x30, 0x84, 0x01, 0x00, 0x00, 0x0A]);
+        // INTEGER 7, then OCTET STRING with length 0x01000001
+        assert_eq!(&bytes[6..15], &[0x02, 0x01, 0x07, 0x04, 0x84, 0x01, 0x00, 0x00, 0x01]);
+        assert_eq!(bytes.len(), 15 + n);
+        let mut r = Reader::new(&bytes);
+        let mut out = Big::default();
+        decode_seq_into(&mut out, &mut r).unwrap();
+        assert!(out == v);
+    }
+
     #[test]
     fn per_round_trips_nested_sequence() {
         let v = Outer { y: Integer(7), inner: Inner { x: Integer(5) }, maybe: Some(Integer(3)) };

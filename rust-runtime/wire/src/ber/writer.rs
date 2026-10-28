@@ -55,8 +55,9 @@ pub fn write_constructed(out: &mut Vec<u8>, t: Tag, content: &[u8]) {
 
 /// Write a TLV under `t` whose content length isn't known ahead of time:
 /// reserve 3 length-placeholder bytes, call `fill` to write content
-/// directly into `out`, then back-fill the real length and shift the
-/// content down to close the gap (mirrors `BerWriter::write_constructed`'s
+/// directly into `out`, then back-fill the real length in its shortest
+/// definite form (X.690 §8.1.3.3–§8.1.3.5) and shift the content to fit
+/// the length octets (mirrors `BerWriter::write_constructed`'s
 /// memmove-based collapse — same technique, used for every tag here since
 /// Rust's single `ber_encode_tagged` funnel handles leaf and constructed
 /// TLVs alike, unlike C++'s separate `write_primitive`/`write_constructed`).
@@ -71,6 +72,7 @@ pub fn write_tagged<R>(out: &mut Vec<u8>, t: Tag, fill: impl FnOnce(&mut Vec<u8>
 
     let result = fill(out);
 
+    debug_assert!(out.len() >= content_start, "write_tagged: fill must only append");
     let content_size = out.len() - content_start;
     if content_size < 128 {
         out.copy_within(content_start..content_start + content_size, len_pos + 1);
@@ -87,13 +89,14 @@ pub fn write_tagged<R>(out: &mut Vec<u8>, t: Tag, fill: impl FnOnce(&mut Vec<u8>
         out[len_pos + 1] = ((content_size >> 8) & 0xFF) as u8;
         out[len_pos + 2] = (content_size & 0xFF) as u8;
     } else {
-        // >65535 bytes (up to 16 MiB): 4-byte length (0x83 + 3 bytes) —
-        // extend the reserved gap by inserting one byte before content.
-        out.insert(content_start, 0);
-        out[len_pos] = 0x83;
-        out[len_pos + 1] = ((content_size >> 16) & 0xFF) as u8;
-        out[len_pos + 2] = ((content_size >> 8) & 0xFF) as u8;
-        out[len_pos + 3] = (content_size & 0xFF) as u8;
+        // >65535 bytes: long form 0x80|n followed by n ≥ 3 length octets —
+        // insert the n - 2 octets the 3 reserved bytes lack before content.
+        let n = (usize::BITS - content_size.leading_zeros()).div_ceil(8) as usize;
+        out.splice(content_start..content_start, std::iter::repeat_n(0u8, n - 2));
+        out[len_pos] = 0x80 | n as u8;
+        for i in 0..n {
+            out[len_pos + 1 + i] = (content_size >> (8 * (n - 1 - i))) as u8;
+        }
     }
     result
 }
@@ -113,6 +116,29 @@ pub fn write_explicit<R>(out: &mut Vec<u8>, tag: Tag, inner_encode: impl FnOnce(
 
 #[cfg(test)]
 mod tests {
+    /// `write_tagged` back-fills the shortest definite length (X.690
+    /// §8.1.3.3–§8.1.3.5) at every length-form boundary, with the content
+    /// unchanged after the shift.
+    #[test]
+    fn write_tagged_length_forms() {
+        use super::write_tagged;
+        use crate::ber::tag::Tag;
+        let cases: [(usize, &[u8]); 9] = [
+            (0, &[0x00]), (127, &[0x7F]), (128, &[0x81, 0x80]), (255, &[0x81, 0xFF]),
+            (256, &[0x82, 0x01, 0x00]), (65535, &[0x82, 0xFF, 0xFF]),
+            (65536, &[0x83, 0x01, 0x00, 0x00]), ((1 << 24) - 1, &[0x83, 0xFF, 0xFF, 0xFF]),
+            (1 << 24, &[0x84, 0x01, 0x00, 0x00, 0x00]),
+        ];
+        for (n, len) in cases {
+            let content: Vec<u8> = (0..n).map(|i| (i * 7 + 1) as u8).collect();
+            let mut out = Vec::new();
+            write_tagged(&mut out, Tag::universal(16, true), |o| o.extend_from_slice(&content));
+            assert_eq!(out[0], 0x30, "{n} bytes: tag");
+            assert_eq!(&out[1..1 + len.len()], len, "{n} bytes: length octets");
+            assert!(out[1 + len.len()..] == content[..], "{n} bytes: content");
+        }
+    }
+
     use super::*;
     use crate::ber::tag::universal;
 
