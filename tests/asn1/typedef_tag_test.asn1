@@ -35,6 +35,8 @@ TypedefTagTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
     lst SEQUENCE (SIZE(1..3)) OF TOct,
     lq  SEQUENCE (SIZE(1..3)) OF TSeq,
     lw  SEQUENCE (SIZE(1..3)) OF TExp,
+    le  SEQUENCE (SIZE(1..3)) OF TEnum,
+    lb  SET (SIZE(1..3)) OF TBool,
     ob TBool OPTIONAL,
     os TOct OPTIONAL
   }

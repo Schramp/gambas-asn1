@@ -188,6 +188,8 @@ add_custom_command(
             ${TYPEDEF_TAG_GEN_DIR}/TaggedLst.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLst.cpp
             ${TYPEDEF_TAG_GEN_DIR}/TaggedLq.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLq.cpp
             ${TYPEDEF_TAG_GEN_DIR}/TaggedLw.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLw.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TaggedLe.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLe.cpp
+            ${TYPEDEF_TAG_GEN_DIR}/TaggedLb.hpp ${TYPEDEF_TAG_GEN_DIR}/TaggedLb.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${TYPEDEF_TAG_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/typedef_tag_test.asn1
                                    -o ${TYPEDEF_TAG_GEN_DIR}
@@ -214,10 +216,36 @@ add_executable(test_typedef_tag
     ${TYPEDEF_TAG_GEN_DIR}/TaggedLst.cpp
     ${TYPEDEF_TAG_GEN_DIR}/TaggedLq.cpp
     ${TYPEDEF_TAG_GEN_DIR}/TaggedLw.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TaggedLe.cpp
+    ${TYPEDEF_TAG_GEN_DIR}/TaggedLb.cpp
 )
 target_include_directories(test_typedef_tag PRIVATE ${TYPEDEF_TAG_GEN_DIR})
 target_link_libraries(test_typedef_tag PRIVATE asn1cpp_runtime)
 add_test(NAME typedef_tag COMMAND test_typedef_tag)
+
+# ---- XER XMLValueList: SEQUENCE OF BOOLEAN/ENUMERATED/NULL (X.680 §25.5) ---
+set(XER_VALUE_LIST_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_value_list_test)
+set(XER_VALUE_LIST_TYPES Color TEnum ABool TBool ANull TNull VlPick VlRec
+    VlRecEc VlRecEt VlRecBb VlRecBa VlRecBt VlRecNb VlRecNa VlRecNt VlRecSt
+    VlRecLl VlRecLlAnon VlRecLc VlTopBool VlTopNull)
+set(XER_VALUE_LIST_SRCS "")
+set(XER_VALUE_LIST_OUT "")
+foreach(t ${XER_VALUE_LIST_TYPES})
+    list(APPEND XER_VALUE_LIST_SRCS ${XER_VALUE_LIST_GEN_DIR}/${t}.cpp)
+    list(APPEND XER_VALUE_LIST_OUT ${XER_VALUE_LIST_GEN_DIR}/${t}.cpp ${XER_VALUE_LIST_GEN_DIR}/${t}.hpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${XER_VALUE_LIST_OUT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${XER_VALUE_LIST_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/xer_value_list_test.asn1
+            -o ${XER_VALUE_LIST_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/xer_value_list_test.asn1
+    COMMENT "Generating C++ from xer_value_list_test.asn1"
+)
+add_executable(test_xer_value_list seq/test_xer_value_list.cpp ${XER_VALUE_LIST_SRCS})
+target_include_directories(test_xer_value_list PRIVATE ${XER_VALUE_LIST_GEN_DIR})
+target_link_libraries(test_xer_value_list PRIVATE asn1cpp_runtime)
+add_test(NAME xer_value_list COMMAND test_xer_value_list)
 
 # ---- Wrong tag on a value decoded through its own type (X.690 §8.1.2) ------
 set(WRONG_TAG_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_wrong_tag_test)
