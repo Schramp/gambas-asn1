@@ -1,4 +1,5 @@
 #pragma once
+#include <cassert>
 #include <vector>
 #include <span>
 #include <cstdint>
@@ -129,8 +130,10 @@ public:
 
     /// @brief Write a constructed TLV: tag + length (back-filled) + content.
     /// Reserves 3 bytes for the length, calls \p fn to emit content into this writer,
-    /// then back-fills the actual length.  For content ≤ 65535 bytes a \c memmove
-    /// closes the pre-reserved gap without heap allocation.
+    /// then back-fills the actual length in its shortest definite form
+    /// (X.690 §8.1.3.3–§8.1.3.5).  For content ≤ 65535 bytes a \c memmove
+    /// closes the pre-reserved gap without heap allocation; longer content
+    /// gets the extra length octets inserted before it.
     ///
     /// Usage:
     /// @code
@@ -141,6 +144,8 @@ public:
     ///
     /// @param t   Tag for the constructed TLV.
     /// @param fn  Callable \c void(BerWriter&) that writes the content elements.
+    ///            It may only append to the buffer, never shrink it below the
+    ///            point where the content starts.
     template<std::invocable<BerWriter&> Fn>
     void write_constructed(Tag t, Fn&& fn) {
         write_tag(t);
@@ -152,11 +157,14 @@ public:
 
         fn(*this);
 
+        assert(buf_.size() >= content_start && "write_constructed: content callback must only append");
         const std::size_t content_size = buf_.size() - content_start;
 
         if (content_size < 128) {
-            // 1-byte length: shift content left by 2
-            std::memmove(&buf_[content_start - 2], &buf_[content_start], content_size);
+            // 1-byte length: shift content left by 2 (none to shift when
+            // empty: content_start is then one past the end).
+            if (content_size > 0)
+                std::memmove(&buf_[content_start - 2], &buf_[content_start], content_size);
             buf_.resize(len_pos + 1 + content_size);
             buf_[len_pos] = static_cast<uint8_t>(content_size);
         } else if (content_size < 256) {
@@ -171,13 +179,14 @@ public:
             buf_[len_pos + 1] = static_cast<uint8_t>(content_size >> 8);
             buf_[len_pos + 2] = static_cast<uint8_t>(content_size);
         } else {
-            // >65535 bytes (up to 16MB): 4-byte length (0x83 + 3 bytes).
-            // Insert one extra byte before content to extend the reserved 3→4 bytes.
-            buf_.insert(buf_.begin() + (std::ptrdiff_t)content_start, 0x00);
-            buf_[len_pos]     = 0x83;
-            buf_[len_pos + 1] = static_cast<uint8_t>(content_size >> 16);
-            buf_[len_pos + 2] = static_cast<uint8_t>(content_size >> 8);
-            buf_[len_pos + 3] = static_cast<uint8_t>(content_size);
+            // >65535 bytes: long form 0x80|n followed by n ≥ 3 length octets.
+            // Insert the n - 2 octets the 3 reserved bytes lack before the content.
+            std::size_t n = 0;
+            for (std::size_t v = content_size; v; v >>= 8) ++n;
+            buf_.insert(buf_.begin() + (std::ptrdiff_t)content_start, n - 2, 0x00);
+            buf_[len_pos] = static_cast<uint8_t>(0x80 | n);
+            for (std::size_t i = 0; i < n; ++i)
+                buf_[len_pos + 1 + i] = static_cast<uint8_t>(content_size >> (8 * (n - 1 - i)));
         }
     }
 

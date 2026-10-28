@@ -98,6 +98,13 @@ endif()
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+# libstdc++ bounds checks (operator[], front/back, …) in Debug builds, as
+# distribution toolchains such as GCC 15 on Ubuntu 26.04 enable by default.
+# Assertions only; no ABI change.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_compile_definitions(_GLIBCXX_ASSERTIONS)
+endif()
+
 # ---------------------------------------------------------------------------
 # Validation hooks (compile-time toggleable)
 #   ASN1CPP_VALIDATE         — enable per-primitive validate() calls in codec
