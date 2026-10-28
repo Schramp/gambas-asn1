@@ -1,0 +1,28 @@
+-- BER decode must reject a TLV whose tag is not the type's own tag
+-- (X.690 §8.1.2) for values decoded through the type itself: the PDU,
+-- an untagged member, and a SEQUENCE OF element.
+-- Used by tests/seq/test_wrong_tag.cpp.
+WrongTagTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+Inner ::= SEQUENCE { x INTEGER }
+
+TCont ::= [APPLICATION 5] OCTET STRING (CONTAINING Inner)
+TContE ::= [APPLICATION 6] EXPLICIT OCTET STRING (CONTAINING Inner)
+
+WtSeq ::= SEQUENCE {
+    a Inner,
+    o OCTET STRING,
+    l SEQUENCE OF INTEGER,
+    c OCTET STRING (CONTAINING Inner),
+    t TCont,
+    e TContE,
+    p WtPick
+}
+
+WtPick ::= CHOICE { t TCont, e TContE, n INTEGER }
+
+WtListSeq ::= SEQUENCE OF Inner
+WtListOct ::= SEQUENCE OF OCTET STRING
+WtListList ::= SEQUENCE OF SEQUENCE OF INTEGER
+
+END

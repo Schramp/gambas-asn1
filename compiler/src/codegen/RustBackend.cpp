@@ -1463,7 +1463,8 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 } else if (m.resolved_tag && m.resolved_tag->tag_is_override && !m.is_explicit) {
                     tag_text = format_tag_literal(*m.resolved_tag);
                     ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Implicit({})", tag_text);
-                } else if (kind == AccessKind::Primitive && m.resolved_tag && m.is_explicit) {
+                } else if ((kind == AccessKind::Primitive || kind == AccessKind::Contained)
+                           && m.resolved_tag && m.is_explicit) {
                     // `is_explicit` true but `tag_is_override` false: not a
                     // tag on *this* member, but one inherited from a named
                     // alias target that itself re-tags an already-tagged
@@ -1492,14 +1493,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     // own complete TLV, X.690 §8.14).
                     tag_text = format_tag_literal(*m.resolved_tag);
                     ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", tag_text);
-                } else if ((kind == AccessKind::Primitive || kind == AccessKind::Enumerated) && m.resolved_tag && !m.is_explicit
+                } else if ((kind == AccessKind::Primitive || kind == AccessKind::Enumerated
+                            || kind == AccessKind::Contained) && m.resolved_tag && !m.is_explicit
                            && m.resolved_tag->cls != ast::TagClass::Universal) {
                     // IMPLICIT counterpart of the branch above: the tag comes
                     // from the referenced type assignment itself (X.680
                     // §31.2, e.g. `TBool ::= [APPLICATION 1] BOOLEAN`), not
-                    // from this member. The unwrapped primitive only knows
-                    // its universal tag, so `Implicit` framing substitutes
-                    // the type assignment's tag (X.690 §8.14.2).
+                    // from this member. The unwrapped primitive (or the
+                    // OCTET STRING of a contained field) only knows its
+                    // universal tag, so `Implicit` framing substitutes the
+                    // type assignment's tag (X.690 §8.14.2).
                     tag_text = format_tag_literal(*m.resolved_tag);
                     ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Implicit({})", tag_text);
                 } else if (kind == AccessKind::SeqOf && m.resolved_tag && !m.is_explicit) {
@@ -2123,6 +2126,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 ber = "asn1cpp_wire::spec::choice::BerTagging::Unsupported(\"alternative not yet supported\")";
             } else if (a.resolved_tag && a.is_explicit && a.resolved_tag->tag_is_override) {
                 // EXPLICIT (X.690 §8.14.3): an outer TLV around the payload.
+                ber = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", format_tag_literal(*a.resolved_tag));
+            } else if (a.resolved_tag && a.is_explicit && a.contained) {
+                // A bare reference to an EXPLICIT-tagged CONTAINING type
+                // assignment: the contained field is written as a plain
+                // OCTET STRING, so the type assignment's wrapper is added
+                // here (X.680 §31.2, X.690 §8.14.3).
                 ber = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", format_tag_literal(*a.resolved_tag));
             } else if (a.resolved_tag && a.is_explicit) {
                 // A bare reference to an EXPLICIT-tagged type: it wraps

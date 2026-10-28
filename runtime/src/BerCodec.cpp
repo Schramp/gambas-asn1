@@ -328,10 +328,15 @@ struct OctetStringBerHandler final : IBerTypeHandler {
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         BerTraits<OctetString>::encode(w, *static_cast<const OctetString*>(src), def.tag);
     }
+    /// @brief Read one TLV, check it carries \c def.tag (the universal tag,
+    ///        or the tag of a type assignment, X.680 §31.2), take its value.
+    /// @see X.690 §8.7 — OCTET STRING contents.
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
+        if (tlv->tag != def.tag)
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
         static_cast<OctetString*>(dest)->set(tlv->value);
         return decode_ok();
     }
@@ -349,6 +354,9 @@ struct OctetStringBerHandler final : IBerTypeHandler {
 ///        value once all its members are known (\c decode_contained_members).
 ///        A modified inner value is re-encoded on write.
 struct ContainedBerHandler final : IBerTypeHandler {
+    /// @brief Write the contained bytes as a primitive TLV with \c def.tag:
+    ///        the universal OCTET STRING tag, or the tag of a type assignment
+    ///        (X.680 §31.2).
     void encode(const BerCodec&, BerWriter& w,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
         std::vector<uint8_t> scratch;
@@ -356,12 +364,17 @@ struct ContainedBerHandler final : IBerTypeHandler {
         auto bytes = contained_wire_bytes(def, *static_cast<const ContainedBase*>(src),
                                           ContainedEncoding::Ber, w.contained(), scratch, err);
         if (!err.empty()) w.set_encode_failed(err.c_str());
-        w.write_primitive(BerTraits<OctetString>::tag(), bytes);
+        w.write_primitive(def.tag, bytes);
     }
+    /// @brief Read one TLV, check it carries \c def.tag, keep its value as
+    ///        the raw contained bytes.
+    /// @see X.690 §8.7 — OCTET STRING contents.
     DecodeResult decode(const BerCodec&, BerReader& r,
-                        const TypeDescriptor&, Asn1Object* dest) const override {
+                        const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
+        if (tlv->tag != def.tag)
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
         static_cast<ContainedBase*>(dest)->set_raw_from_wire(tlv->value, ContainedEncoding::Ber);
         return decode_ok();
     }
@@ -597,10 +610,15 @@ struct SeqOfBerHandler final : IBerTypeHandler {
             }
         });
     }
+    /// @brief Read one TLV, check it carries \c def.tag (SEQUENCE/SET, or
+    ///        the tag of a type assignment), decode its elements.
+    /// @see X.690 §8.10/§8.12 — SEQUENCE OF / SET OF.
     DecodeResult decode(const BerCodec& codec, BerReader& r,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
+        if (tlv->tag != def.tag)
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
         return decode_body(codec, r.sub(tlv->value), def, dest);
     }
     DecodeResult decode_value(const BerCodec& codec, BerReader& content,
@@ -688,10 +706,15 @@ struct SequenceBerHandler final : IBerTypeHandler {
             }
         });
     }
+    /// @brief Read one TLV, check it carries \c def.tag (SEQUENCE/SET, or
+    ///        the tag of a type assignment), decode its members.
+    /// @see X.690 §8.9/§8.11 — SEQUENCE / SET.
     DecodeResult decode(const BerCodec& codec, BerReader& r,
                         const TypeDescriptor& def, Asn1Object* dest) const override {
         auto tlv = r.read_tlv();
         if (!tlv) return decode_err(tlv.error());
+        if (tlv->tag != def.tag)
+            return decode_err(DecodeError(std::string("wrong tag for ") + def.name));
         return decode_body(codec, r.sub(tlv->value), def, dest);
     }
     DecodeResult decode_value(const BerCodec& codec, BerReader& content,
