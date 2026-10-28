@@ -155,3 +155,7 @@ tests/asn1/xer_value_list_test.asn1  VlTopNull
 # Tagged CONTAINING type assignments (X.680 §31.2) as members and CHOICE
 # alternatives, next to untagged SEQUENCE / SEQUENCE OF / OCTET STRING members.
 tests/asn1/wrong_tag_test.asn1       WtSeq      @asn1c-opaque-contents
+# SEQUENCE OF / SET OF of an inline ENUMERATED (X.680 §20), as a member and
+# as a type assignment.
+tests/asn1/inline_seqof_enum_test.asn1  IsRec
+tests/asn1/inline_seqof_enum_test.asn1  IsTop

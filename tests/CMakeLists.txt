@@ -266,6 +266,29 @@ target_include_directories(test_xer_value_list PRIVATE ${XER_VALUE_LIST_GEN_DIR}
 target_link_libraries(test_xer_value_list PRIVATE asn1cpp_runtime)
 add_test(NAME xer_value_list COMMAND test_xer_value_list)
 
+# ---- SEQUENCE OF / SET OF inline ENUMERATED (X.680 §20); Rust leg: rust/inline_seqof_enum
+set(INLINE_SEQOF_ENUM_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_inline_seqof_enum_test)
+set(INLINE_SEQOF_ENUM_TYPES IsRec IsRecEb IsRecEbEnum IsRecEs IsRecEsEnum IsRecEn IsRecEnItem
+    IsRecEc IsRecEcX IsTop IsTopEnum)
+set(INLINE_SEQOF_ENUM_SRCS "")
+set(INLINE_SEQOF_ENUM_OUT "")
+foreach(t ${INLINE_SEQOF_ENUM_TYPES})
+    list(APPEND INLINE_SEQOF_ENUM_SRCS ${INLINE_SEQOF_ENUM_GEN_DIR}/${t}.cpp)
+    list(APPEND INLINE_SEQOF_ENUM_OUT ${INLINE_SEQOF_ENUM_GEN_DIR}/${t}.cpp ${INLINE_SEQOF_ENUM_GEN_DIR}/${t}.hpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${INLINE_SEQOF_ENUM_OUT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${INLINE_SEQOF_ENUM_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/inline_seqof_enum_test.asn1
+            -o ${INLINE_SEQOF_ENUM_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/inline_seqof_enum_test.asn1
+    COMMENT "Generating C++ from inline_seqof_enum_test.asn1"
+)
+add_executable(test_inline_seqof_enum seq/test_inline_seqof_enum.cpp ${INLINE_SEQOF_ENUM_SRCS})
+target_include_directories(test_inline_seqof_enum PRIVATE ${INLINE_SEQOF_ENUM_GEN_DIR})
+target_link_libraries(test_inline_seqof_enum PRIVATE asn1cpp_runtime)
+add_test(NAME inline_seqof_enum COMMAND test_inline_seqof_enum)
+
 # ---- Wrong tag on a value decoded through its own type (X.690 §8.1.2) ------
 set(WRONG_TAG_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_wrong_tag_test)
 set(WRONG_TAG_TYPES Inner TCont TContE WtPick WtSeq WtSeqL WtListSeq WtListOct WtListList WtListListAnon)
@@ -2140,10 +2163,11 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_REAL_DEFAULT_GEN_DIR}")
 endif()
 
-# Rust legs of the type-assignment tag, wrong-tag and XMLValueList tests —
-# see tests/rust/<name>/src/main.rs (C++ legs: test_typedef_tag,
-# test_wrong_tag, test_xer_value_list).
-foreach(leg typedef_tag wrong_tag xer_value_list)
+# Rust legs of the type-assignment tag, wrong-tag, XMLValueList and inline
+# SEQUENCE OF ENUMERATED tests — see tests/rust/<name>/src/main.rs (C++
+# legs: test_typedef_tag, test_wrong_tag, test_xer_value_list,
+# test_inline_seqof_enum).
+foreach(leg typedef_tag wrong_tag xer_value_list inline_seqof_enum)
     set(gen_dir ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_${leg})
     add_custom_command(
         OUTPUT  ${gen_dir}/lib.rs

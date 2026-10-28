@@ -66,6 +66,17 @@ static std::string filename_for(const std::string& cname) {
     return cname.substr(0, 220) + suffix;
 }
 
+/// @brief Whether a type is an ENUMERATED written inline with its own
+///        enumeration (`ENUMERATED { a, b }`), which codegen promotes to a
+///        named type.
+/// @param def  Type to inspect.
+/// @return true for a builtin ENUMERATED with enumeration items.
+/// @see X.680 §20 — enumerated type.
+static bool is_inline_enumerated(const ast::TypeDef& def) {
+    auto* bt = std::get_if<ast::BuiltinType>(&def.body);
+    return bt && *bt == ast::BuiltinType::Enumerated && !def.enum_values.empty();
+}
+
 bool Generator::is_promotable_seqof_int_elem(const ast::TypeDef& elem) const {
     auto* bt = std::get_if<ast::BuiltinType>(&elem.body);
     return bt && *bt == ast::BuiltinType::Integer &&
@@ -79,6 +90,11 @@ std::string Generator::member_synth_name(const ast::TypeDef& m, const std::strin
     return backend_.synthetic_name(parent_cname, default_name);
 }
 
+/// @brief Target-language type of a member or element field, shared by both
+///        backends. Inline types resolve to the name generate_inline_types
+///        promoted them under, so the field and the emitted type agree.
+/// @param def  Member, alternative or collection element type.
+/// @return Native type text for the field (backend-formatted).
 std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
     using BT = ast::BuiltinType;
     if (const auto* f = contained_for(def))
@@ -115,6 +131,13 @@ std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
         if (!def.name.empty() && is_promotable_seqof_int_elem(elem))
             return backend_.wrap_collection_type(
                                backend_.synthetic_name(member_synth_name(def, current_type_, def.name), "Elem"));
+        // Inline ENUMERATED element, promoted by generate_inline_types under
+        // synthetic_name(<collection's own name>, "Enum") — the enum's own
+        // scope is the collection type, not current_type_.
+        if (!def.name.empty() && is_inline_enumerated(elem))
+            return backend_.wrap_collection_type(
+                               backend_.synthetic_name(member_synth_name(def, current_type_, def.name),
+                                                       elem.name.empty() ? "Enum" : elem.name));
         return backend_.wrap_collection_type(native_member_type_for(elem));
     }
     if (def.is_set_of()) {
@@ -126,6 +149,10 @@ std::string Generator::native_member_type_for(const ast::TypeDef& def) const {
         if (!def.name.empty() && is_promotable_seqof_int_elem(elem))
             return backend_.wrap_collection_type(
                                backend_.synthetic_name(member_synth_name(def, current_type_, def.name), "Elem"));
+        if (!def.name.empty() && is_inline_enumerated(elem))
+            return backend_.wrap_collection_type(
+                               backend_.synthetic_name(member_synth_name(def, current_type_, def.name),
+                                                       elem.name.empty() ? "Enum" : elem.name));
         return backend_.wrap_collection_type(native_member_type_for(elem));
     }
     if (def.is_sequence() || def.is_choice() || def.is_set())
@@ -985,6 +1012,16 @@ ElemShape Generator::build_elem_shape(const ast::TypeDef& elem, const std::strin
             ? member_synth_name(*wrapping_member, current_type_, wrapping_member_name)
             : backend_.synthetic_name(current_type_, wrapping_member_name);
         shape.leaf_native_type = backend_.synthetic_name(seqof_name2, "Elem");
+        return shape;
+    }
+    if (!wrapping_member_name.empty() && is_inline_enumerated(elem)) {
+        // Inline ENUMERATED element, promoted by generate_inline_types to a
+        // named type in the collection's scope — a named-type leaf, same as
+        // the two cases above.
+        std::string seqof_name3 = wrapping_member
+            ? member_synth_name(*wrapping_member, current_type_, wrapping_member_name)
+            : backend_.synthetic_name(current_type_, wrapping_member_name);
+        shape.leaf_native_type = backend_.synthetic_name(seqof_name3, elem.name.empty() ? "Enum" : elem.name);
         return shape;
     }
     // native_member_type_for(elem) on a non-collection elem never wraps
@@ -2021,6 +2058,10 @@ std::vector<std::string> Generator::emit_sequence_declaration(const ast::TypeDef
                         // missing-import shape as the
                         // composite-anonymous-element case just above.
                         emit_inc(backend_.synthetic_name(synth, "Elem"));
+                    } else if (is_inline_enumerated(*seqof_elem)) {
+                        // Inline ENUMERATED element, promoted to a named
+                        // type in the collection's scope.
+                        emit_inc(backend_.synthetic_name(synth, seqof_elem->name.empty() ? "Enum" : seqof_elem->name));
                     }
                 }
             } else {
