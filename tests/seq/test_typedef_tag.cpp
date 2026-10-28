@@ -78,8 +78,8 @@ int main() {
             tags.push_back(t->tag);
             values.push_back(t->value);
         }
-        // b o s t r l u i x z e q w → APPLICATION 1..13, then c, lst, lq, lw, le, lb.
-        bool ok = tags.size() >= 19;
+        // b o s t r l u i x z e q w → APPLICATION 1..13, then c, lst, lq, lw, le, lb, ln, lo.
+        bool ok = tags.size() >= 21;
         for (uint32_t n = 1; ok && n <= 13; ++n) ok = is_app(tags[n - 1], n);
         ok = ok && (is_app(tags[13], 1) || is_app(tags[13], 3) || is_app(tags[13], 8));
         auto elems_are = [](std::span<const uint8_t> content, uint32_t n) {
@@ -91,7 +91,8 @@ int main() {
             return true;
         };
         ok = ok && elems_are(values[14], 3) && elems_are(values[15], 12) && elems_are(values[16], 13)
-                && elems_are(values[17], 11) && elems_are(values[18], 1);
+                && elems_are(values[17], 11) && elems_are(values[18], 1)
+                && elems_are(values[19], 10) && elems_are(values[20], 2);
         // TExp is EXPLICIT: [APPLICATION 13] wraps a universal INTEGER TLV.
         if (ok) {
             BerReader wr{values[12]};
