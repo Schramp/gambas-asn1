@@ -1172,8 +1172,9 @@ find_program(CLANGXX_EXECUTABLE NAMES clang++)
 if(CLANGXX_EXECUTABLE)
     add_test(NAME int64_min_literal_clang
              COMMAND ${CLANGXX_EXECUTABLE} -std=c++20 -fsyntax-only
+                     -Werror=ambiguous-reversed-operator
                      -I${CMAKE_SOURCE_DIR}/runtime/include -I${INT64MIN_GEN_DIR}
-                     ${INT64MIN_GEN_SRCS})
+                     ${INT64MIN_GEN_SRCS} ${CMAKE_CURRENT_SOURCE_DIR}/per/test_int64_min_literal.cpp)
     set_tests_properties(int64_min_literal_clang PROPERTIES TIMEOUT 120)
 endif()
 

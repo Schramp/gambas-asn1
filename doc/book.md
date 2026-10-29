@@ -215,7 +215,7 @@ reading any schema.
 | `BOOLEAN` | True or false | `asn1::Boolean` |
 | `NULL` | Carries no value; used as a marker | `asn1::Null` |
 | `REAL` | IEEE 754 double or special values ±∞, NaN | `asn1::Real` |
-| `ENUMERATED` | Named integer values | generated `enum class` |
+| `ENUMERATED` | Named integer values | generated `asn1::EnumValue` subclass |
 | `BIT STRING` | Sequence of bits with an optional named-bits table | `asn1::BitString` |
 | `OCTET STRING` | Raw byte sequence | `asn1::OctetString` |
 | `OBJECT IDENTIFIER` | Globally unique dotted-arc identifier | `asn1::Oid` |
@@ -226,6 +226,16 @@ reading any schema.
 String types — `UTF8String`, `PrintableString`, `IA5String`, `VisibleString`,
 `NumericString`, `BMPString`, `UniversalString`, and others — all map to
 `asn1::AsnString<tag>` and share a single string-handling runtime path.
+
+### ENUMERATED values
+
+A generated ENUMERATED type `E` derives from `asn1::EnumValue` and holds its items
+as a plain inner `enum E::Enm`, so `E::item` names a value. `present()` returns the
+`Enm` value and `value()` the number. Two values compare with `==` and `!=`, and a
+value compares with an item in either operand order (`v == E::item`,
+`E::item != v`). These are plain C++20 comparisons: there is one `operator==`
+per shape and `!=` and the reversed order are rewritten from it, so clang's
+`-Wambiguous-reversed-operator` stays silent.
 
 ### REAL values
 
