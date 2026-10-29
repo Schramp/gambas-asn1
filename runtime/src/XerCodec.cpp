@@ -1203,7 +1203,10 @@ void XerCodec::encode(IEncodeStream& dst,
         prim_dispatch_[builtin_tag(def).number]->encode(*this, s, def, src);
     else
         comp_dispatch_[(int)def.kind]->encode(*this, s, def, src);
-    if (wrap) s.os() << '\n' << "</" << def.name << ">\n";
+    // The alternative's element already ends with a newline (ChoiceXerHandler
+    // writes each alternative as a complete line), so the closing tag
+    // follows directly, as in asn1c's output.
+    if (wrap) s.os() << "</" << def.name << ">\n";
 }
 
 DecodeResult XerCodec::decode(IDecodeStream& src,

@@ -163,3 +163,4 @@ tests/asn1/inline_seqof_enum_test.asn1  IsNest
 tests/asn1/inline_seqof_enum_test.asn1  IsTopNest
 tests/asn1/inline_seqof_deep_test.asn1  IsDeep
 tests/asn1/enum_item_names_test.asn1  EinRec
+tests/asn1/xer_layout_test.asn1  XlRoot

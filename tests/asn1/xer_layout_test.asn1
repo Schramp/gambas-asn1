@@ -1,0 +1,18 @@
+-- XER text layout (X.693 §8 BASIC-XER): whitespace between elements is not
+-- significant, but the C++ and Rust encoders must write the same text as
+-- asn1c byte for byte. A CHOICE as the document root is wrapped in its own
+-- type name (X.693 §8.3.1); the closing tag follows the alternative's line.
+XerLayoutTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+XlRoot ::= CHOICE {
+    num     INTEGER,
+    rec     SEQUENCE { a INTEGER, b BOOLEAN },
+    sub     XlSub,
+    list    SEQUENCE OF INTEGER,
+    color   ENUMERATED { red, green },
+    text    UTF8String
+}
+
+XlSub ::= CHOICE { x INTEGER, y BOOLEAN }
+
+END
