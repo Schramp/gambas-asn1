@@ -360,9 +360,13 @@ void RustBackend::emit_enumerated_definition(const EnumeratedSpec& spec, std::os
         os << "    fn enum_get(&self) -> i64 {\n";
         os << "        *self as i64\n";
         os << "    }\n\n";
+        // A binding of the enum's own type shares the namespace rustc
+        // checks against its variants (E0170), so it is named `__inner`:
+        // no ASN.1 identifier contains two consecutive hyphens (X.680
+        // §11.3), so no item transliterates to it.
         os << "    fn enum_set(&mut self, v: i64) -> bool {\n";
         os << "        match <Self as std::convert::TryFrom<i64>>::try_from(v) {\n";
-        os << "            Ok(x) => { *self = x; true }\n";
+        os << "            Ok(__inner) => { *self = __inner; true }\n";
         os << "            Err(_) => false,\n";
         os << "        }\n";
         os << "    }\n";

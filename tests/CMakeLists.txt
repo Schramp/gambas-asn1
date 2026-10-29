@@ -2175,7 +2175,7 @@ endif()
 # legs: test_typedef_tag, test_wrong_tag, test_xer_value_list,
 # test_inline_seqof_enum).
 set(inline_seqof_enum_EXTRA_SCHEMAS ${CMAKE_CURRENT_SOURCE_DIR}/asn1/inline_seqof_deep_test.asn1)
-foreach(leg typedef_tag wrong_tag xer_value_list inline_seqof_enum)
+foreach(leg typedef_tag wrong_tag xer_value_list inline_seqof_enum enum_item_names)
     set(gen_dir ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_${leg})
     add_custom_command(
         OUTPUT  ${gen_dir}/lib.rs
