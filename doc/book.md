@@ -1687,6 +1687,17 @@ asn1c's output:
 </Pick>
 ```
 
+A SEQUENCE OF / SET OF CHOICE writes each element as the chosen alternative's
+element, with an empty line between elements, as asn1c does:
+
+```xml
+<items>
+        <num>3</num>
+
+        <flag><true/></flag>
+</items>
+```
+
 The decoder defaults to strict BASIC-XER (X.693 §8). Pass `XerDecodeMode::Lenient`
 to `XerDecodeStream` to additionally accept non-standard asn1c extensions: BOOLEAN
 text content (`true`/`false`) and hex BIT STRING (`AABBCC…` pairs). See §6 for

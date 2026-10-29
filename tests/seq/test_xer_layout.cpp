@@ -5,7 +5,8 @@
 //
 // A CHOICE as the document root is wrapped in its type name (X.693 §8.3.1),
 // and its closing tag follows the alternative's line directly, for every
-// kind of alternative.
+// kind of alternative. A SEQUENCE OF CHOICE writes each element as the
+// chosen alternative's own element (X.680 §25.5 Table 5), in asn1c's layout.
 #include <cstdio>
 #include <span>
 #include <sstream>
@@ -13,6 +14,7 @@
 #include <vector>
 #include <asn1cpp/asn1cpp.hpp>
 #include "XlRoot.hpp"
+#include "XlSeq.hpp"
 
 using namespace asn1;
 
@@ -76,6 +78,18 @@ int main() {
         check(c.label, same(text, c.xer));
         XlRoot back;
         check("  XER round-trip", unxer(text, XlRoot::asn_DEF, back) && xer(XlRoot::asn_DEF, back) == text);
+    }
+
+    printf("\n── XER layout: SEQUENCE OF CHOICE ──────────────────────────────\n");
+    {
+        const std::vector<uint8_t> der = {0x30, 0x17, 0xa0, 0x12, 0xa0, 0x03, 0x80, 0x01, 0x01, 0xa1, 0x03, 0x80, 0x01, 0x02, 0x82, 0x01, 0x03, 0xa3, 0x03, 0x02, 0x01, 0x04, 0x81, 0x01, 0x09};
+        const std::string want = "<XlSeq>\n    <items>\n            <rec>\n                <a>1</a>\n            </rec>\n\n            <sub>\n                <x>2</x>\n            </sub>\n\n            <num>3</num>\n\n            <list>\n                <INTEGER>4</INTEGER>\n            </list>\n    </items>\n    <tail>9</tail>\n</XlSeq>\n";
+        XlSeq v;
+        check("SEQUENCE OF CHOICE: BER decode", decode(der, XlSeq::asn_DEF, v));
+        std::string text = xer(XlSeq::asn_DEF, v);
+        check("SEQUENCE OF CHOICE, constructed and primitive alternatives", same(text, want));
+        XlSeq back;
+        check("  XER round-trip", unxer(text, XlSeq::asn_DEF, back) && xer(XlSeq::asn_DEF, back) == text);
     }
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "OK", failures, failures == 1 ? "" : "s");

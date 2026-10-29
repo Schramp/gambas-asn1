@@ -297,7 +297,7 @@ add_test(NAME inline_seqof_enum COMMAND test_inline_seqof_enum)
 
 # ---- XER text layout vs asn1c (X.693 §8); Rust leg: rust/xer_layout ------------
 set(XER_LAYOUT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_layout_test)
-set(XER_LAYOUT_TYPES XlRoot XlRootRec XlRootList XlRootColor XlSub)
+set(XER_LAYOUT_TYPES XlRoot XlRootRec XlRootList XlRootColor XlSub XlSeq XlSeqItems XlItem XlItemRec XlItemList)
 set(XER_LAYOUT_SRCS "")
 set(XER_LAYOUT_OUT "")
 foreach(t ${XER_LAYOUT_TYPES})

@@ -350,6 +350,7 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
         if matches!(el, MemberRef::Absent) {
             continue;
         }
+        let first = !any;
         any = true;
         match &el {
             // `obj.elem_natural_xer_name(i)`, not `xer_element_name_of(*p)`:
@@ -373,7 +374,17 @@ pub(crate) fn encode_seqof_content(obj: &dyn Asn1SeqOf, out: &mut String, depth:
                 let name = name_override.unwrap_or(inner.spec().name);
                 encode_wrapped(name, XerInstruction::Default, el, out, depth + 1, opts)?
             }
-            MemberRef::Choice(_) | MemberRef::Enumerated(..) => {
+            // A CHOICE element is the chosen alternative's own element,
+            // which `encode_choice_content` starts on a new line. Between
+            // two elements asn1c (and C++ `SeqOfXerHandler`) leave an empty
+            // line, before the first one none.
+            MemberRef::Choice(_) => {
+                if !first {
+                    out.push('\n');
+                }
+                encode_bare(el, out, depth + 1, opts)?;
+            }
+            MemberRef::Enumerated(..) => {
                 out.push('\n');
                 out.push_str(&indent(depth + 1));
                 encode_bare(el, out, depth + 1, opts)?;

@@ -15,4 +15,18 @@ XlRoot ::= CHOICE {
 
 XlSub ::= CHOICE { x INTEGER, y BOOLEAN }
 
+-- SEQUENCE OF CHOICE whose alternatives are constructed: each element is the
+-- chosen alternative's own element (X.680 §25.5 Table 5, XMLValueList).
+XlSeq ::= SEQUENCE {
+    items   SEQUENCE OF XlItem,
+    tail    INTEGER
+}
+
+XlItem ::= CHOICE {
+    rec     SEQUENCE { a INTEGER },
+    sub     XlSub,
+    num     INTEGER,
+    list    SEQUENCE OF INTEGER
+}
+
 END
