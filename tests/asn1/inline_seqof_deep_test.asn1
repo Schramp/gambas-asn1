@@ -1,0 +1,16 @@
+-- Inline element types two anonymous SEQUENCE OF / SET OF levels down
+-- (X.680 §25, §27): each level is a collection type of its own and the
+-- element is named in the innermost level's scope. Kept apart from
+-- inline_seqof_enum_test.asn1 because asn1c's own generated C for three
+-- nested constructed levels does not compile (incomplete struct type),
+-- which would drop the asn1c cross-check of every type in that file.
+-- Used by tests/seq/test_inline_seqof_enum.cpp and tests/rust/inline_seqof_enum.
+InlineSeqOfDeepTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+IsDeep ::= SEQUENCE {
+    cc SEQUENCE OF SEQUENCE OF SEQUENCE { v INTEGER },
+    l3 SEQUENCE OF SEQUENCE OF SET OF ENUMERATED { c, d },
+    ch CHOICE { l SEQUENCE OF SEQUENCE OF ENUMERATED { g, h }, i INTEGER }
+}
+
+END

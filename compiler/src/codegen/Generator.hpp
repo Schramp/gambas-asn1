@@ -418,6 +418,12 @@ private:
     ///                       (m.name, or a fixed placeholder for anonymous members).
     std::string member_synth_name(const ast::TypeDef& m, const std::string& parent_cname,
                                    const std::string& default_name) const;
+    // SEQUENCE OF / SET OF element naming by nesting depth — see the
+    // definitions in Generator.cpp.
+    std::string promoted_element_name(const ast::TypeDef& elem, const std::string& scope) const;
+    const ast::TypeDef& innermost_element(const ast::TypeDef& elem, std::string& scope) const;
+    std::string collection_element_type(const ast::TypeDef& elem, const std::string& scope) const;
+    std::string collection_leaf_import(const ast::TypeDef& elem, const std::string& scope) const;
     /// @brief Returns "asn1::Tag{...}" literal for a tag override, empty string if absent.
     /// @param tag         The member's (possibly absent) tag override.
     /// @param constructed True if the encoding form is constructed, not primitive.
@@ -611,8 +617,7 @@ private:
 
     // Recursive shape of a SEQUENCE OF/SET OF element — see ElemShape's
     // own doc (Backend.hpp) for why this can't be a flat field.
-    ElemShape build_elem_shape(const ast::TypeDef& elem, const std::string& wrapping_member_name,
-                                const ast::TypeDef* wrapping_member = nullptr) const;
+    ElemShape build_elem_shape(const ast::TypeDef& elem, const std::string& scope, bool direct) const;
 
     // Shared helpers used by both SEQUENCE/SET and CHOICE codegen.
     struct MemberCount { int count; int ext_at; };

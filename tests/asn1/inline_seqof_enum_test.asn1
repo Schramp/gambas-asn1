@@ -1,0 +1,27 @@
+-- SEQUENCE OF / SET OF whose element is an ENUMERATED written inline
+-- (X.680 §20, §25, §27): codegen promotes the element to a named type in
+-- the collection's scope, and the member field must use that name. Each
+-- anonymous nested SEQUENCE OF / SET OF level is a collection type of its
+-- own, so an element below it is named in that innermost level's scope.
+-- Used by tests/seq/test_inline_seqof_enum.cpp and tests/rust/inline_seqof_enum.
+InlineSeqOfEnumTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+IsRec ::= SEQUENCE {
+    eb SEQUENCE OF ENUMERATED { a, b },
+    es SET OF ENUMERATED { m, n },
+    en [0] SEQUENCE OF item ENUMERATED { g, h },
+    ec CHOICE { x ENUMERATED { p, q }, y INTEGER }
+}
+
+IsTop ::= SEQUENCE OF ENUMERATED { u, v }
+
+IsNest ::= SEQUENCE {
+    ll SEQUENCE OF SEQUENCE OF ENUMERATED { a, b },
+    nn SEQUENCE OF row SEQUENCE OF cell ENUMERATED { e, f },
+    ni SEQUENCE OF item SEQUENCE { w BOOLEAN },
+    in SEQUENCE { k SET OF ENUMERATED { m, n } }
+}
+
+IsTopNest ::= SEQUENCE OF SET OF ENUMERATED { s, t }
+
+END

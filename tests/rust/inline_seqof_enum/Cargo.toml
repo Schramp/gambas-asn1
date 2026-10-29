@@ -1,0 +1,14 @@
+[package]
+name = "inline-seqof-enum-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the inline SEQUENCE OF ENUMERATED test (inline_seqof_enum_test.asn1). Pulls generated .rs from ASN1CPP_RUST_GEN_DIR (set by tests/CMakeLists.txt's rust_inline_seqof_enum), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "inline_seqof_enum"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }
