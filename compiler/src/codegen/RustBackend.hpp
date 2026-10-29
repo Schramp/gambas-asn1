@@ -8,9 +8,17 @@
 
 namespace asn1::codegen {
 
-// Escape an identifier that collides with a Rust 2021 keyword or any name in
-// `extra`, using a raw identifier (`r#...`) — matches the convention rustc
-// itself uses for keyword-colliding names from external sources.
+/// @brief Escape an identifier that collides with a Rust 2021 keyword or any
+///        name in `extra`, so a generated name stays the ASN.1 name whenever
+///        Rust allows it.
+/// @param n     Transliterated ASN.1 name.
+/// @param extra Additional reserved names to escape against.
+/// @return `n` unchanged, else the raw identifier `r#n` (the convention
+///         rustc itself uses for keyword-colliding names from external
+///         sources). `self`, `Self`, `super` and `crate` cannot be raw
+///         identifiers, so they get a trailing underscore instead: no
+///         transliterated ASN.1 name ends in `_`, since a typereference or
+///         identifier never ends in a hyphen (X.680 §11.2, §11.3).
 inline std::string rust_escape(std::string n,
                                 std::initializer_list<std::string_view> extra = {}) {
     static const std::unordered_set<std::string> kw = {
@@ -27,6 +35,7 @@ inline std::string rust_escape(std::string n,
         return false;
     };
     if (!is_reserved(n)) return n;
+    if (n == "self" || n == "Self" || n == "super" || n == "crate") return n + "_";
     return "r#" + n;
 }
 

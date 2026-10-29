@@ -1,0 +1,18 @@
+-- ENUMERATED items whose identifiers equal names a code generator might use
+-- for its own locals or parameters (x, v, f, i, s, value, self). The
+-- generated code must compile with the items spelled as written
+-- (X.680 §20.1), whatever the target language picks for its own bindings.
+EnumItemNamesTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+EinEnum ::= ENUMERATED { x, v, f, i, s, value, self }
+
+EinRec ::= SEQUENCE {
+    req     EinEnum,
+    opt     EinEnum OPTIONAL,
+    dflt    EinEnum DEFAULT x,
+    inl     ENUMERATED { x, v } OPTIONAL,
+    list    SEQUENCE OF EinEnum,
+    alt     CHOICE { e EinEnum, n INTEGER }
+}
+
+END

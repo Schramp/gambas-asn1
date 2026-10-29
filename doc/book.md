@@ -200,6 +200,15 @@ suite for schema 62.
 This produces one `.hpp` + `.cpp` pair per ASN.1 type defined in the schema. Link the
 generated `.cpp` files against `libasn1cpp_runtime.a` from `build/runtime/`.
 
+Generated names keep the ASN.1 spelling, with each hyphen turned into an underscore,
+and are never recased: recasing could fold two distinct ASN.1 names into one. A
+name that is a keyword of the target language is escaped. C++ appends `_`. Rust
+uses a raw identifier (`r#type`), except for `self`, `Self`, `super` and `crate`,
+which cannot be raw identifiers and get `_` appended instead (`self_`). No
+ASN.1 name ends in a hyphen (X.680 §11.2, §11.3), so an escaped name never
+clashes with another one. The codecs always use the ASN.1 name itself: an
+ENUMERATED item `self` is `<self/>` in XER, whatever the Rust variant is called.
+
 ---
 
 ## 5. Types and Sequences in ASN.1
