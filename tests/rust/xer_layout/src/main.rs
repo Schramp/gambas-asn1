@@ -1,7 +1,8 @@
 // Rust leg of the XER layout test (xer_layout_test.asn1); mirrors
 // tests/seq/test_xer_layout.cpp. Each case decodes a DER record produced by
 // asn1c's converter-example and compares the XER text, whitespace included,
-// with asn1c's own XER for that record.
+// with asn1c's own XER for that record: a root CHOICE for every kind of
+// alternative, and a SEQUENCE OF CHOICE (X.680 §25.5 Table 5).
 #![allow(non_snake_case)]
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));
@@ -56,6 +57,18 @@ fn main() {
         let text = xer::object::encode_pdu(&v).unwrap_or_default();
         check(label, same(&text, want), &mut f);
         check("  XER round-trip", xer::object::decode_pdu::<XlRoot::XlRoot>(&text).is_ok_and(|b| b == v), &mut f);
+    }
+
+    println!("=== XER layout: SEQUENCE OF CHOICE ===");
+    let der: &[u8] = &[0x30, 0x17, 0xa0, 0x12, 0xa0, 0x03, 0x80, 0x01, 0x01, 0xa1, 0x03, 0x80, 0x01, 0x02, 0x82, 0x01, 0x03, 0xa3, 0x03, 0x02, 0x01, 0x04, 0x81, 0x01, 0x09];
+    let want = "<XlSeq>\n    <items>\n            <rec>\n                <a>1</a>\n            </rec>\n\n            <sub>\n                <x>2</x>\n            </sub>\n\n            <num>3</num>\n\n            <list>\n                <INTEGER>4</INTEGER>\n            </list>\n    </items>\n    <tail>9</tail>\n</XlSeq>\n";
+    match ber::object::decode_pdu::<XlSeq::XlSeq>(der) {
+        Ok(v) => {
+            let text = xer::object::encode_pdu(&v).unwrap_or_default();
+            check("SEQUENCE OF CHOICE, constructed and primitive alternatives", same(&text, want), &mut f);
+            check("  XER round-trip", xer::object::decode_pdu::<XlSeq::XlSeq>(&text).is_ok_and(|b| b == v), &mut f);
+        }
+        Err(_) => check("SEQUENCE OF CHOICE: BER decode", false, &mut f),
     }
 
     println!("\n{} ({f} failure{})", if f > 0 { "FAILED" } else { "OK" }, if f == 1 { "" } else { "s" });
