@@ -1652,6 +1652,12 @@ start a new line:
         <ANull/>    </na>
 ```
 
+Other elements are each enclosed in a tag. When the SEQUENCE OF / SET OF names
+its element (`rows SEQUENCE OF row SEQUENCE OF INTEGER`, `SEQUENCE OF item
+SEQUENCE { … }`), that identifier is the tag (`<row>`, `<item>`, X.680 §25.10);
+otherwise it is the element's type reference or the built-in type's XML name
+(`<SEQUENCE>`, `<SEQUENCE_OF>`, `<INTEGER>`, §25.11).
+
 The decoder defaults to strict BASIC-XER (X.693 §8). Pass `XerDecodeMode::Lenient`
 to `XerDecodeStream` to additionally accept non-standard asn1c extensions: BOOLEAN
 text content (`true`/`false`) and hex BIT STRING (`AABBCC…` pairs). See §6 for
