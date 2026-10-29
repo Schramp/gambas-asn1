@@ -347,7 +347,7 @@ static void test_xer_jer() {
     Pick pgd;
     check("BER decode for the golden Pick", unber(ber(Pick::asn_DEF, pg), pgd));
     check("golden XER inline", xer(pgd) == "<Pick>\n    <inner>\n        <Inner>\n            <id>9</id>\n"
-                                            "            <name>x</name>\n        </Inner>\n    </inner>\n\n</Pick>\n");
+                                            "            <name>x</name>\n        </Inner>\n    </inner>\n</Pick>\n");
     check("golden JER inline_raw", jer(pgd) == R"({"inner":{"containing":{"id":9,"name":"x"},"raw":"3006800109810178"}})");
     Pick pjd;
     check("JER inline_raw decodes, raw authoritative",

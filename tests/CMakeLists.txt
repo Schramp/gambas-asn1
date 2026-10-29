@@ -295,6 +295,28 @@ target_include_directories(test_inline_seqof_enum PRIVATE ${INLINE_SEQOF_ENUM_GE
 target_link_libraries(test_inline_seqof_enum PRIVATE asn1cpp_runtime)
 add_test(NAME inline_seqof_enum COMMAND test_inline_seqof_enum)
 
+# ---- XER text layout vs asn1c (X.693 §8); Rust leg: rust/xer_layout ------------
+set(XER_LAYOUT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_xer_layout_test)
+set(XER_LAYOUT_TYPES XlRoot XlRootRec XlRootList XlRootColor XlSub)
+set(XER_LAYOUT_SRCS "")
+set(XER_LAYOUT_OUT "")
+foreach(t ${XER_LAYOUT_TYPES})
+    list(APPEND XER_LAYOUT_SRCS ${XER_LAYOUT_GEN_DIR}/${t}.cpp)
+    list(APPEND XER_LAYOUT_OUT ${XER_LAYOUT_GEN_DIR}/${t}.cpp ${XER_LAYOUT_GEN_DIR}/${t}.hpp)
+endforeach()
+add_custom_command(
+    OUTPUT  ${XER_LAYOUT_OUT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${XER_LAYOUT_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/xer_layout_test.asn1
+            -o ${XER_LAYOUT_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/xer_layout_test.asn1
+    COMMENT "Generating C++ from xer_layout_test.asn1"
+)
+add_executable(test_xer_layout seq/test_xer_layout.cpp ${XER_LAYOUT_SRCS})
+target_include_directories(test_xer_layout PRIVATE ${XER_LAYOUT_GEN_DIR})
+target_link_libraries(test_xer_layout PRIVATE asn1cpp_runtime)
+add_test(NAME xer_layout COMMAND test_xer_layout)
+
 # ---- Wrong tag on a value decoded through its own type (X.690 §8.1.2) ------
 set(WRONG_TAG_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_wrong_tag_test)
 set(WRONG_TAG_TYPES Inner TCont TContE WtPick WtSeq WtSeqL WtListSeq WtListOct WtListList WtListListAnon)
@@ -2175,7 +2197,7 @@ endif()
 # legs: test_typedef_tag, test_wrong_tag, test_xer_value_list,
 # test_inline_seqof_enum).
 set(inline_seqof_enum_EXTRA_SCHEMAS ${CMAKE_CURRENT_SOURCE_DIR}/asn1/inline_seqof_deep_test.asn1)
-foreach(leg typedef_tag wrong_tag xer_value_list inline_seqof_enum enum_item_names)
+foreach(leg typedef_tag wrong_tag xer_value_list inline_seqof_enum enum_item_names xer_layout)
     set(gen_dir ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_${leg})
     add_custom_command(
         OUTPUT  ${gen_dir}/lib.rs
