@@ -11,8 +11,13 @@ protected:
 public:
     long value() const { return value_; }
     void set(long v)   { value_ = v; }
-    bool operator==(const EnumValue& o) const { return value_ == o.value_; }
-    bool operator!=(const EnumValue& o) const { return value_ != o.value_; }
+    /// @brief Compare two ENUMERATED values by their numeric value.
+    /// @return true when both hold the same value.
+    /// A hidden friend rather than a member: with a member, C++20's reversed
+    /// candidate for `Derived == Derived` needs the same derived-to-base
+    /// conversions as the normal one, which clang reports as ambiguous.
+    /// operator!= is rewritten from this one (C++20 [over.match.oper]).
+    friend bool operator==(const EnumValue& a, const EnumValue& b) { return a.value_ == b.value_; }
 };
 
 } // namespace asn1

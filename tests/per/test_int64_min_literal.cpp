@@ -3,7 +3,10 @@
 // -2^63 after code generation, and a record holding them round-trips in PER
 // and BER. The ctest int64_min_literal_clang also compiles the generated
 // files with clang, which rejects a bare -9223372036854775808 in a braced
-// initializer.
+// initializer, and compiles this test with -Werror=ambiguous-reversed-operator:
+// comparing two ENUMERATED values, or a value with an enumerator in either
+// operand order, has a single best candidate under C++20's rewritten
+// comparisons ([over.match.oper]).
 #include <cstdio>
 #include <cstdint>
 #include <limits>
@@ -40,7 +43,7 @@ static MinRec make_rec() {
 }
 
 static bool same(const MinRec& a, const MinRec& b) {
-    return a.range.value() == b.range.value() && a.kind.present() == b.kind.present()
+    return a.range.value() == b.range.value() && a.kind == b.kind
         && a.named.value() == b.named.value();
 }
 
@@ -51,6 +54,12 @@ int main() {
     check("named number lowest", Named_lowest == kMin);
     check("ENUMERATED lowest", static_cast<int64_t>(MinEnum::lowest) == kMin);
     check("ENUMERATED value map", MinEnum::asn_MAP_value2enum[0].value == kMin);
+
+    const MinEnum lo = MinEnum::lowest, hi = MinEnum::zero;
+    check("ENUMERATED value == value", lo == MinEnum(MinEnum::lowest) && !(lo == hi));
+    check("ENUMERATED value != value", lo != hi && !(lo != lo));
+    check("ENUMERATED value == enumerator", lo == MinEnum::lowest && lo != MinEnum::zero);
+    check("ENUMERATED enumerator == value", MinEnum::lowest == lo && MinEnum::zero != lo);
 
     MinRec v = make_rec();
     std::vector<uint8_t> per;
