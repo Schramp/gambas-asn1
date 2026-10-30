@@ -704,22 +704,21 @@ std::vector<std::string> Generator::collect_extra_includes_for(const ast::TypeRe
     return out;
 }
 
-// Collect flattened BER dispatch tags for one CHOICE alternative (X.690 §8.13,
-// X.680 §24.6). If the alternative has its own BER tag, add one entry.
-// If it resolves to an untagged CHOICE (empty natural tag), recurse into its
-// alternatives so the outer CHOICE can dispatch by the inner type's tags.
+/// @brief Collect the flattened BER dispatch tags of one CHOICE alternative
+///        into its ChoiceSpec::ber_tags table.
+/// @param alt      The alternative's member def.
+/// @param alt_idx  Index of the alternative the collected tags select.
+/// @param out      Dispatch entries, appended to.
+/// @param visited  Type names already entered (cycle guard).
+/// @note A tagged alternative contributes its natural_tag_spec_for() tag,
+///       the same tag its member row carries: constructed when the tag is
+///       EXPLICIT (X.690 §8.14.2) or the type is. An alternative of an
+///       untagged CHOICE type is flattened into the inner CHOICE's tags.
+/// @see X.690 §8.13, X.680 §29.7 — CHOICE alternatives have distinct tags.
 void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
                                       std::vector<BerTagEntry>& out,
                                       std::set<std::string>& visited)
 {
-    // Explicit outer tag: use it directly.
-    if (alt.tag.present()) {
-        bool constr = alt.is_sequence() || alt.is_choice() ||
-                      alt.is_seq_of()  || alt.is_set_of() || alt.is_set();
-        if (auto spec = tag_spec_for(alt.tag, constr))
-            out.push_back({spec->cls, spec->number, backend_.format_tag_literal(*spec), alt_idx});
-        return;
-    }
     if (auto spec = natural_tag_spec_for(alt)) {
         out.push_back({spec->cls, spec->number, backend_.format_tag_literal(*spec), alt_idx});
         return;
@@ -735,9 +734,7 @@ void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
     }
     // If the resolved type has its own explicit tag, use it (tagged CHOICE is not untagged).
     if (inner->tag.present()) {
-        bool constr = inner->is_sequence() || inner->is_choice() ||
-                      inner->is_seq_of()   || inner->is_set_of() || inner->is_set();
-        if (auto spec = tag_spec_for(inner->tag, constr))
+        if (auto spec = natural_tag_spec_for(*inner))
             out.push_back({spec->cls, spec->number, backend_.format_tag_literal(*spec), alt_idx});
         return;
     }

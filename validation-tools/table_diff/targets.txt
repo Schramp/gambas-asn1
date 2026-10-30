@@ -16,3 +16,4 @@ tests/asn1/containing_test.asn1       Holder  --container-config=tests/asn1/cont
 tests/asn1/xer_layout_test.asn1       XlRoot
 tests/asn1/per_named_bits_test.asn1  NamedBitsRec
 tests/asn1/per_fragment_test.asn1    Big
+tests/asn1/fuzz_test.asn1            Bag
