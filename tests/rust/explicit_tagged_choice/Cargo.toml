@@ -1,0 +1,14 @@
+[package]
+name = "explicit-tagged-choice-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the EXPLICIT-tagged CHOICE test (explicit_tagged_choice_test.asn1): an EXPLICIT tag around a tagged CHOICE keeps the CHOICE's own tag. Pulls generated .rs from ASN1CPP_RUST_EXPTAGCH_GEN_DIR (set by tests/CMakeLists.txt's rust_explicit_tagged_choice), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "explicit_tagged_choice"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }
