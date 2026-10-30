@@ -1923,10 +1923,28 @@ ANY (`Asn1Any`) holds the complete encoding of whatever value was on the
 wire and replays it unchanged; an EXPLICIT tag wraps it, as for any other
 type.
 
+A CHOICE type is a class holding the selected alternative's index and
+value. Each alternative has a getter named after it (its value, or `null`
+when another alternative is selected) and a setter of the same name that
+selects it:
+
+```java
+Plain p = new Plain();
+p.num(new Asn1Integer(5));        // selects num
+BerObject.encode(p);               // 02 01 05
+p.flag();                          // null
+```
+
+`select(i)` selects alternative `i` (in the table's canonical order) with
+a default value. An extensible CHOICE keeps an alternative it does not
+know as raw bytes (`unknownExtension()`, `activeIndex()` -1) and writes it
+back unchanged. A tagged CHOICE type is always EXPLICIT (X.680 §31.2.7).
+SEQUENCE/SET and SEQUENCE OF/SET OF alternatives are not emitted yet.
+
 So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage),
 ENUMERATED, OCTET STRING, BIT STRING, character string, OBJECT IDENTIFIER,
-RELATIVE-OID, UTCTime, GeneralizedTime, REAL and ANY type assignments,
-and INTEGER in both signed and unsigned 64-bit storage. The Java
+RELATIVE-OID, UTCTime, GeneralizedTime, REAL, ANY and CHOICE type
+assignments, and INTEGER in both signed and unsigned 64-bit storage. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.
 

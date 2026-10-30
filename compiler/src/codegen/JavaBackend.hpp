@@ -91,6 +91,11 @@ public:
     void emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSession& session) const override;
     void emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const override;
     void emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const override;
+    void emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const override;
+    void emit_type_reference(const std::string& type_name, const std::string& filename,
+                             TypeOutputSession& session) const override;
+    std::string native_int_type(IntStorageKind kind) const override;
+    std::string native_builtin_type(ast::BuiltinType bt) const override;
     void emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const override;
     void emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const override;
 

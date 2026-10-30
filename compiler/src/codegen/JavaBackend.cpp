@@ -79,7 +79,7 @@ static bool has_own_framing(const TaggedTypeSpec& spec) {
 
 std::string JavaBackend::ber_framing_field(const TaggedTypeSpec& spec) const {
     if (!has_own_framing(spec)) return "";
-    return std::format("    private static final {0}.spec.BerTagging BER_FRAMING = new {0}.spec.BerTagging.{1}({2});\n",
+    return std::format("    public static final {0}.spec.BerTagging BER_FRAMING = new {0}.spec.BerTagging.{1}({2});\n",
                        kWire, spec.is_explicit ? "Explicit" : "Implicit", format_tag_literal(*spec.tag));
 }
 
@@ -284,6 +284,216 @@ void JavaBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession&
     os << "    public int hashCode() {\n        return value.hashCode();\n    }\n";
     os << ber_framing_method(spec);
     os << "}\n";
+}
+
+/// @brief The runtime class holding an INTEGER member or alternative:
+///        `Asn1Integer` for signed, `Asn1UInteger` for unsigned 64-bit
+///        storage, fully qualified.
+/// @param kind Storage chosen by Generator's constraint analysis.
+/// @throws std::logic_error for storage wider than 64 bits.
+std::string JavaBackend::native_int_type(IntStorageKind kind) const {
+    if (kind == IntStorageKind::S64) return std::format("{}.types.Asn1Integer", kWire);
+    if (kind == IntStorageKind::U64) return std::format("{}.types.Asn1UInteger", kWire);
+    throw std::logic_error("native_int_type: INTEGER storage beyond 64 bits is not implemented for this backend");
+}
+
+/// @brief The runtime wrapper class holding a builtin member or
+///        alternative, fully qualified (see `java_builtin_class`).
+/// @param bt The member's builtin type.
+/// @throws std::logic_error for a builtin this backend does not hold yet.
+std::string JavaBackend::native_builtin_type(ast::BuiltinType bt) const {
+    std::string cls = java_builtin_class(bt);
+    if (cls.empty()) throw std::logic_error("native_builtin_type: builtin not implemented for this backend");
+    return cls;
+}
+
+/// @brief Emit a CHOICE type assignment (X.680 §28) as a class holding the
+///        selected alternative's index and value, and the `SPEC` table:
+///        one `AltMeta` row per alternative in Generator's canonical
+///        order, the `berTags` dispatch sorted by (class, number) (an
+///        untagged CHOICE alternative contributes its own alternatives'
+///        tags, X.690 §8.13), the type's own tag (always EXPLICIT, X.680
+///        §31.2.7), `extAt` and `rangeBits` (X.691 §23.6). Each
+///        alternative gets a getter (its value, or null when another is
+///        selected) and a setter that selects it, both named after the
+///        alternative.
+/// @param spec    Resolved alternatives, tags and dispatch table.
+/// @param session Per-type output session; writes the `.java` buffer.
+/// @throws std::logic_error for an alternative shape this backend does
+///         not emit yet (SEQUENCE/SET, SEQUENCE OF/SET OF, contained value).
+void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const {
+    const std::string& t = spec.type_name;
+    for (const auto& a : spec.alternatives) {
+        const char* gap = a.contained ? "a contained value"
+                        : (!a.mbuiltin && (a.ref_is_sequence_or_set || a.ref_is_seq_of)) ? "a SEQUENCE/SET or SEQUENCE OF/SET OF"
+                        : nullptr;
+        if (gap)
+            throw std::logic_error(std::format("emit_choice: alternative '{}' of {} is {}, not implemented for this backend",
+                                               a.asn1_name, spec.asn1_name.empty() ? t : spec.asn1_name, gap));
+    }
+
+    // Row framing (X.690 §8.14), as in the other backends: a tag of the
+    // alternative's own wraps (EXPLICIT) or replaces (IMPLICIT) the
+    // value's; a reference to a CHOICE, tagged or not, frames itself; a
+    // reference to an EXPLICIT-tagged builtin or ENUMERATED type
+    // assignment points at that type's framing (X.680 §31.2); otherwise
+    // the resolved tag is the value's own.
+    auto framing = [&](const ChoiceAlternativeSpec& a) {
+        bool is_choice_ref = !a.mbuiltin && a.ref_kind == TaggedMemberSpec::RefTargetKind::Other
+                          && !a.ref_builtin_alias && !a.ref_is_sequence_or_set && !a.ref_is_seq_of;
+        const auto& rt = a.resolved_tag;
+        if (rt && rt->tag_is_override)
+            return std::format("new {}.spec.BerTagging.{}({})", kWire, a.is_explicit ? "Explicit" : "Implicit",
+                               format_tag_literal(*rt));
+        if (is_choice_ref || !rt) return std::format("{}.spec.BerTagging.DELEGATE", kWire);
+        if (a.is_explicit) return std::format("new {0}.spec.BerTagging.OfType({1}.BER_FRAMING)", kWire, a.mtype);
+        return std::format("new {}.spec.BerTagging.Implicit({})", kWire, format_tag_literal(*rt));
+    };
+    // A builtin alternative is unconstrained here: an inline constraint
+    // reaches the backend through emit_member_type_descriptor instead.
+    auto constraints = [&](const ChoiceAlternativeSpec& a) {
+        if (!a.mbuiltin && (a.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias || a.ref_builtin_alias))
+            return std::format("{}.CONSTRAINTS", a.ref_constraints_owner.empty() ? a.mtype : a.ref_constraints_owner);
+        return std::format("{}.spec.Constraints.UNCONSTRAINED", kWire);
+    };
+
+    struct Row { int rank; int64_t number; std::string tag; int alt; };
+    std::vector<Row> dispatch;
+    if (!spec.ber_tags.empty()) {
+        for (const auto& e : spec.ber_tags) dispatch.push_back({ber_tag_class_rank(e.cls), e.number, e.tag_literal, e.alt_index});
+    } else {
+        // AUTOMATIC tags: Generator builds no table when every alternative
+        // has its own distinct tag, so it is built from the rows.
+        for (size_t i = 0; i < spec.alternatives.size(); ++i)
+            if (const auto& rt = spec.alternatives[i].resolved_tag)
+                dispatch.push_back({ber_tag_class_rank(rt->cls), rt->number, format_tag_literal(*rt), static_cast<int>(i)});
+    }
+    std::sort(dispatch.begin(), dispatch.end(), [](const Row& a, const Row& b) {
+        return std::pair(a.rank, a.number) < std::pair(b.rank, b.number);
+    });
+
+    std::vector<std::string> reserved = {t, "SPEC", "FACTORIES", "spec", "activeIndex", "getActive", "select",
+        "setUnknownExtension", "unknownExtension", "asMemberRef", "ownElementXerName", "xerInstruction", "berFraming",
+        "pduConstraints", "equals", "hashCode", "toString", "getClass", "notify", "notifyAll", "wait", "clone", "finalize"};
+    auto accessor = [&](const ChoiceAlternativeSpec& a) {
+        std::string n = member_name(a.asn1_name);
+        while (std::find(reserved.begin(), reserved.end(), n) != reserved.end()) n += "_";
+        return n;
+    };
+    bool extensible = spec.ext_at >= 0;
+
+    auto& os = session.buffer(declaration_extension());
+    if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
+    os << std::format("public final class {0} implements {1}.spec.Asn1Choice, {1}.spec.Asn1Pdu {{\n", t, kWire);
+    os << std::format("    public static final {0}.spec.ChoiceSpec SPEC = new {0}.spec.ChoiceSpec(\"{1}\", java.util.List.of(\n",
+                      kWire, spec.xer_name);
+    for (size_t i = 0; i < spec.alternatives.size(); ++i) {
+        const auto& a = spec.alternatives[i];
+        os << std::format("            new {}.spec.AltMeta(\"{}\", {}, {}, null){}\n", kWire, a.asn1_name, framing(a),
+                          constraints(a), i + 1 < spec.alternatives.size() ? "," : "),");
+    }
+    os << "            java.util.List.of(";
+    for (size_t i = 0; i < dispatch.size(); ++i)
+        os << std::format("{}\n                    new {}.spec.BerDispatch({}, {})", i ? "," : "", kWire, dispatch[i].tag, dispatch[i].alt);
+    os << "),\n";
+    os << std::format("            {}, {}, {}, false);\n\n", spec.tag ? format_tag_literal(*spec.tag) : "null",
+                      spec.ext_at, spec.range_bits);
+    os << std::format("    private static final java.util.List<java.util.function.Supplier<{}.spec.AsMemberRef>> FACTORIES = java.util.List.of(\n", kWire);
+    for (size_t i = 0; i < spec.alternatives.size(); ++i)
+        os << std::format("            {}::new{}\n", spec.alternatives[i].mtype, i + 1 < spec.alternatives.size() ? "," : ");");
+    os << "\n";
+    os << "    private int index = 0;\n";
+    os << std::format("    private {}.spec.AsMemberRef value = FACTORIES.get(0).get();\n", kWire);
+    if (extensible) os << std::format("    private {}.spec.Asn1Choice.UnknownExtension unknown;\n", kWire);
+    os << "\n";
+
+    for (size_t i = 0; i < spec.alternatives.size(); ++i) {
+        const auto& a = spec.alternatives[i];
+        std::string n = accessor(a);
+        os << std::format("    /** ASN.1: {{@code {}}}; null when another alternative is selected. */\n", a.asn1_name);
+        os << std::format("    public {} {}() {{\n", a.mtype, n);
+        os << std::format("        return index == {} ? ({}) value : null;\n", i, a.mtype);
+        os << "    }\n\n";
+        os << std::format("    /** Selects {{@code {}}} with value {{@code v}}. */\n", a.asn1_name);
+        os << std::format("    public void {}({} v) {{\n", n, a.mtype);
+        os << std::format("        index = {};\n", i);
+        os << "        value = java.util.Objects.requireNonNull(v);\n";
+        if (extensible) os << "        unknown = null;\n";
+        os << "    }\n\n";
+    }
+
+    os << "    @java.lang.Override\n";
+    os << std::format("    public {}.spec.ChoiceSpec spec() {{\n        return SPEC;\n    }}\n\n", kWire);
+    os << "    @java.lang.Override\n";
+    os << "    public int activeIndex() {\n        return index;\n    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << std::format("    public {0}.spec.MemberRef getActive() {{\n", kWire);
+    os << std::format("        return index < 0 ? new {}.spec.MemberRef.Unsupported(\"CHOICE {}: no alternative selected\") : value.asMemberRef();\n",
+                      kWire, spec.xer_name);
+    os << "    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << std::format("    public {0}.spec.MemberRef select(int i) {{\n", kWire);
+    os << "        index = i;\n";
+    os << "        value = FACTORIES.get(i).get();\n";
+    if (extensible) os << "        unknown = null;\n";
+    os << "        return value.asMemberRef();\n";
+    os << "    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << std::format("    public void setUnknownExtension({}.spec.Asn1Choice.UnknownExtension ext) {{\n", kWire);
+    if (extensible) {
+        os << "        index = -1;\n";
+        os << "        value = null;\n";
+        os << "        unknown = java.util.Objects.requireNonNull(ext);\n";
+    } else {
+        os << std::format("        throw new java.lang.IllegalStateException(\"CHOICE {} is not extensible\");\n", spec.xer_name);
+    }
+    os << "    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << std::format("    public {}.spec.Asn1Choice.UnknownExtension unknownExtension() {{\n", kWire);
+    os << std::format("        return {};\n", extensible ? "unknown" : "null");
+    os << "    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << std::format("    public {0}.spec.MemberRef asMemberRef() {{\n", kWire);
+    os << std::format("        return new {}.spec.MemberRef.Choice(this);\n", kWire);
+    os << "    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << "    public java.lang.String ownElementXerName() {\n";
+    os << std::format("        return \"{}\";\n", spec.xer_name);
+    os << "    }\n\n";
+    // Equality is by the selected alternative's value, seen through its
+    // MemberRef so a builtin alias compares by the builtin it holds.
+    os << "    @java.lang.Override\n";
+    os << "    public boolean equals(java.lang.Object o) {\n";
+    os << std::format("        if (!(o instanceof {} other) || other.index != index) {{\n", t);
+    os << "            return false;\n";
+    os << "        }\n";
+    if (extensible) {
+        os << "        if (index < 0) {\n";
+        os << "            return unknown == null ? other.unknown == null\n";
+        os << "                    : other.unknown != null && unknown.tag().equals(other.unknown.tag())\n";
+        os << "                            && java.util.Arrays.equals(unknown.bytes(), other.unknown.bytes());\n";
+        os << "        }\n";
+    }
+    os << "        return value.asMemberRef().equals(other.value.asMemberRef());\n";
+    os << "    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << "    public int hashCode() {\n";
+    os << "        return index < 0 ? -1 : 31 * index + value.asMemberRef().hashCode();\n";
+    os << "    }\n";
+    os << "}\n";
+}
+
+/// @brief Emit a reference to another generated type: nothing, since every
+///        generated class of a run shares one package (JLS §7.4) and is
+///        visible by its simple name.
+/// @param type_name Unused.
+/// @param filename  Unused.
+/// @param session   Unused.
+void JavaBackend::emit_type_reference(const std::string& type_name, const std::string& filename,
+                                      TypeOutputSession& session) const {
+    (void)type_name;
+    (void)filename;
+    (void)session;
 }
 
 /// @brief Emit a generated compilation unit's header: a comment naming

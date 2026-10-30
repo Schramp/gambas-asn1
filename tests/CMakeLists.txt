@@ -1956,8 +1956,10 @@ set(java_leg_builtin_alias_ber_PDUS
     Oid ImplicitOid ExplicitOid RelOid ImplicitRelOid ExplicitRelOid
     Utc ImplicitUtc GenTime ExplicitGenTime Real ImplicitReal ExplicitReal
     Counter Big ImplicitCounter Anything ExplicitAny)
+set(java_leg_choice_ber_PDUS
+    Plain Tagged Inner Nested Own HoldsOwn Typed Ext ExtRoot Auto Pick)
 set(java_leg_outputs)
-foreach(leg builtin_alias_ber)
+foreach(leg builtin_alias_ber choice_ber)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})
