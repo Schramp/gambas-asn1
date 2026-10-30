@@ -46,11 +46,10 @@ Usage:
                    matches NAME (substring match); default: all targets.
   --limit N        cap the target list to the first N (after --target
                    filtering) — a quick sanity slice before a full run.
-  --shard K/N      keep only targets at index i with i mod N == K (after
-                   --target/--limit), so N runners can split one sweep.
-                   Round-robin rather than contiguous: neighbouring
-                   targets.txt entries tend to share a schema, so this
-                   spreads the costly schemas across the shards.
+  --shard K/N      keep only the build groups (targets sharing a schema,
+                   built once) at index i with i mod N == K, after
+                   --target/--limit, so N runners can split one sweep
+                   without building any schema twice.
   --asn1c-dir DIR  directory containing the asn1c binary (overrides
                    ASN1C_BIN_DIR env var / PATH / /usr/local/bin search).
   --no-asn1c       skip the asn1c leg even if asn1c is found (--corpus=targets only).
@@ -938,6 +937,26 @@ def materialize(template_path, dest_path, subs):
     write_if_changed(dest_path, render(template_path, subs))
 
 
+def pdu_flags(pdu_types):
+    """One -pdu=<TYPE> per PDU type of a build group, for the compiler."""
+    return " ".join(f"-pdu={t}" for t in pdu_types)
+
+
+def render_rust_bin(template_path, entries):
+    """A Rust tool template for several PDU types: its `TYPES` list names
+    them all and its one `"__PDU_TYPE__" => {...}` match arm is repeated
+    once per type. `entries` holds (pdu_type, ident, module) triples."""
+    with open(template_path) as f:
+        text = f.read()
+    text = text.replace('&["__PDU_TYPE__"]', "&[" + ", ".join(f'"{t}"' for t, _, _ in entries) + "]")
+    start = text.index('        "__PDU_TYPE__" => {\n')
+    end = text.index("\n        }\n", start) + len("\n        }\n")
+    arm = text[start:end]
+    arms = "".join(arm.replace("__PDU_TYPE__", t).replace("__PDU_IDENT__", i).replace("__PDU_MODULE__", m)
+                   for t, i, m in entries)
+    return (text[:start] + arms + text[end:]).replace("__PDU_TYPE__", "|".join(t for t, _, _ in entries))
+
+
 def copy_verbatim(src, dst):
     with open(src, "rb") as f:
         write_if_changed(dst, f.read())
@@ -1045,11 +1064,13 @@ def cpp_tool_paths(cpp_dir):
     }
 
 
-def build_cpp(target_dir, asn1_files_abs, pdu_type, jobs=4, reuse=False, asncpp_flags=()):
+def build_cpp(target_dir, asn1_files_abs, pdu_types, jobs=4, reuse=False, asncpp_flags=()):
+    """Builds the C++ tools once for every PDU type of a build group: one
+    codegen, one library, and tools whose `--type` registry holds them all."""
     cpp_dir = os.path.join(target_dir, "cpp")
     tools = cpp_tool_paths(cpp_dir)
     key_path = os.path.join(cpp_dir, ".reuse-key")
-    key = reuse_key(asn1_files_abs, pdu_type, " ".join(asncpp_flags), file_sig(ASNCPP_BIN),
+    key = reuse_key(asn1_files_abs, " ".join(pdu_types), " ".join(asncpp_flags), file_sig(ASNCPP_BIN),
                     file_sig(os.path.join(ASN1CPP_ROOT, "build/runtime/libasn1cpp_runtime.a")),
                     file_sig(os.path.join(TEMPLATE_CPP, "Makefile.tmpl")))
     if reuse and all(os.path.isfile(t) for t in tools.values()) and key_matches(key_path, key):
@@ -1065,7 +1086,7 @@ def build_cpp(target_dir, asn1_files_abs, pdu_type, jobs=4, reuse=False, asncpp_
                 os.path.join(cpp_dir, "Makefile"),
                 {"__ASN1CPP_ROOT__": ASN1CPP_ROOT,
                  "__ASN1_FILES__": " ".join(asn1_files_abs),
-                 "__PDU_TYPE__": pdu_type,
+                 "__PDU_FLAGS__": pdu_flags(pdu_types),
                  "__ASNCPP_FLAGS__": " ".join(asncpp_flags)})
 
     # Codegen first — src/types.cpp (materialized below) needs the real
@@ -1073,23 +1094,29 @@ def build_cpp(target_dir, asn1_files_abs, pdu_type, jobs=4, reuse=False, asncpp_
     # runs (see discover_ident's own doc).
     if not run_make(cpp_dir, "gen", label="C++ codegen"):
         return None
-    idents = discover_ident(os.path.join(cpp_dir, "gen"), ".cpp", pdu_type)
-    if len(idents) != 1:
-        print(f"  expected exactly one C++ identifier for {pdu_type!r}, found {idents}")
-        return None
-    ident = idents[0]
-
-    descriptor_ref = discover_cpp_descriptor_ref(os.path.join(cpp_dir, "gen"), ident)
+    includes, entries = [], []
+    for pdu_type in pdu_types:
+        idents = discover_ident(os.path.join(cpp_dir, "gen"), ".cpp", pdu_type)
+        if len(idents) != 1:
+            print(f"  expected exactly one C++ identifier for {pdu_type!r}, found {idents}")
+            return None
+        ident = idents[0]
+        descriptor_ref = discover_cpp_descriptor_ref(os.path.join(cpp_dir, "gen"), ident)
+        includes.append(f'#include "{ident}.hpp"')
+        entries.append(f'            randgen::make_entry<{ident}>("{pdu_type}", {descriptor_ref}),')
     materialize(os.path.join(TEMPLATE_CPP, "src", "types.cpp.tmpl"),
                 os.path.join(cpp_dir, "src", "types.cpp"),
-                {"__PDU_IDENT__": ident, "__PDU_TYPE__": pdu_type, "__PDU_DESCRIPTOR__": descriptor_ref})
+                {"__PDU_INCLUDES__": "\n".join(includes), "__PDU_ENTRIES__": "\n".join(entries)})
     if not run_make(cpp_dir, "build", f"-j{jobs}", label="C++ build"):
         return None
     write_if_changed(key_path, key)
     return tools
 
 
-def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None, asncpp_flags=()):
+def build_rust(target_dir, asn1_files_abs, pdu_types, slot=None, jobs=None, asncpp_flags=()):
+    """Builds the Rust tools once for every PDU type of a build group.
+    Returns the tool paths plus "per_types", the PDU types the PER tools
+    were built for."""
     rust_dir = os.path.join(target_dir, "rust")
     copy_verbatim(os.path.join(TEMPLATE_RUST, "build.rs"),
                   os.path.join(rust_dir, "build.rs"))
@@ -1099,19 +1126,49 @@ def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None, asncp
                 os.path.join(rust_dir, "Makefile"),
                 {"__ASNCPP__": ASNCPP_BIN,
                  "__ASN1_FILES__": " ".join(asn1_files_abs),
-                 "__PDU_TYPE__": pdu_type,
+                 "__PDU_FLAGS__": pdu_flags(pdu_types),
                  "__ASNCPP_FLAGS__": " ".join(asncpp_flags)})
     if not run_make(rust_dir, "gen", label="Rust codegen"):
         return None
+    lib_rs_path = os.path.join(rust_dir, "gen", "lib.rs")
+    with open(lib_rs_path) as f:
+        lib_rs = f.read()
+    entries, per_entries = [], []
+    for pdu_type in pdu_types:
+        found = rust_pdu_entry(rust_dir, lib_rs, lib_rs_path, pdu_type)
+        if found is None:
+            return None
+        entries.append(found[:3])
+        if found[3]:
+            per_entries.append(found[:3])
+    for stem in ("ber_to_xer", "xer_to_ber", "ber_to_jer", "jer_to_ber"):
+        write_if_changed(os.path.join(rust_dir, "src", "bin", f"{stem}.rs"),
+                         render_rust_bin(os.path.join(TEMPLATE_RUST, "src", "bin", f"{stem}.rs.tmpl"), entries))
+    per_covered = bool(per_entries)
+    # Remove any stale ber_to_per.rs/per_to_ber.rs from a prior run of this
+    # same target directory before deciding whether to write them again:
+    # cargo auto-discovers every src/bin/*.rs file as its own binary
+    # target regardless of Cargo.toml's explicit [[bin]] list, so a
+    # leftover file for a type that is no longer covered would still get
+    # compiled and fail.
+    for stale in ("ber_to_per.rs", "per_to_ber.rs"):
+        stale_path = os.path.join(rust_dir, "src", "bin", stale)
+        if os.path.isfile(stale_path):
+            os.remove(stale_path)
+    for stem in ("ber_to_per", "per_to_ber") if per_covered else ():
+        write_if_changed(os.path.join(rust_dir, "src", "bin", f"{stem}.rs"),
+                         render_rust_bin(os.path.join(TEMPLATE_RUST, "src", "bin", f"{stem}.rs.tmpl"), per_entries))
+    return finish_rust_build(rust_dir, per_covered, {t for t, _, _ in per_entries}, slot, jobs)
+
+
+def rust_pdu_entry(rust_dir, lib_rs, lib_rs_path, pdu_type):
+    """(pdu_type, ident, module, per_covered) of one PDU type in the
+    generated Rust crate, or None when it cannot be found."""
     idents = discover_ident(os.path.join(rust_dir, "gen"), ".rs", pdu_type)
     if len(idents) != 1:
         print(f"  expected exactly one Rust identifier for {pdu_type!r}, found {idents}")
         return None
     ident = idents[0]
-
-    lib_rs_path = os.path.join(rust_dir, "gen", "lib.rs")
-    with open(lib_rs_path) as f:
-        lib_rs = f.read()
     # Module name may be a raw identifier (`r#type`) when the PDU name
     # collides with a Rust keyword (RustBackend's rust_escape()).
     m = re.search(rf'#\[path = "{re.escape(ident)}\.rs"\]\s*pub mod (r#\w+|\w+);', lib_rs)
@@ -1119,23 +1176,6 @@ def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None, asncp
         print(f"  could not find module for {ident}.rs in {lib_rs_path}")
         return None
     module = m.group(1)
-
-    materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "ber_to_xer.rs.tmpl"),
-                os.path.join(rust_dir, "src", "bin", "ber_to_xer.rs"),
-                {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
-    materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "xer_to_ber.rs.tmpl"),
-                os.path.join(rust_dir, "src", "bin", "xer_to_ber.rs"),
-                {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
-    # JER: unconditional, same as the XER pair above — every SEQUENCE/
-    # CHOICE top-level type gets encode_jer()/decode_jer() wrappers
-    # unconditionally from codegen (RustBackend.cpp, gambas-asn1#663),
-    # no per-member coverage gate the way PER's per_covered check needs.
-    materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "ber_to_jer.rs.tmpl"),
-                os.path.join(rust_dir, "src", "bin", "ber_to_jer.rs"),
-                {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
-    materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "jer_to_ber.rs.tmpl"),
-                os.path.join(rust_dir, "src", "bin", "jer_to_ber.rs"),
-                {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
 
     # PER coverage is decided at runtime, per value: there is no
     # codegen-time gate, and every generated top-level type implements
@@ -1148,26 +1188,11 @@ def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None, asncp
     if os.path.isfile(gen_file):
         with open(gen_file, errors="replace") as f:
             per_covered = f"impl asn1cpp_wire::spec::object::Asn1Pdu for {ident} " in f.read()
-    # Remove any stale ber_to_per.rs/per_to_ber.rs from a prior run of this
-    # same target directory before deciding whether to re-materialize them
-    # — cargo auto-discovers every src/bin/*.rs file as its own binary
-    # target regardless of Cargo.toml's explicit [[bin]] list (which is
-    # itself freshly rewritten every run via materialize() above), so a
-    # leftover file from a target that *used* to be PER-covered (or a
-    # stale build predating this leg entirely) would otherwise still get
-    # compiled and fail on a type that's no longer covered.
-    for stale in ("ber_to_per.rs", "per_to_ber.rs"):
-        stale_path = os.path.join(rust_dir, "src", "bin", stale)
-        if os.path.isfile(stale_path):
-            os.remove(stale_path)
-    if per_covered:
-        materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "ber_to_per.rs.tmpl"),
-                    os.path.join(rust_dir, "src", "bin", "ber_to_per.rs"),
-                    {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
-        materialize(os.path.join(TEMPLATE_RUST, "src", "bin", "per_to_ber.rs.tmpl"),
-                    os.path.join(rust_dir, "src", "bin", "per_to_ber.rs"),
-                    {"__PDU_TYPE__": pdu_type, "__PDU_IDENT__": ident, "__PDU_MODULE__": module})
+    return pdu_type, ident, module, per_covered
 
+
+def finish_rust_build(rust_dir, per_covered, per_types, slot, jobs):
+    """Writes Cargo.toml and builds the Rust tools of a build group."""
     # Written once, complete, and only if changed — an identical Cargo.toml
     # keeps its mtime so cargo's fingerprint stays valid.
     cargo_toml = render(os.path.join(TEMPLATE_RUST, "Cargo.toml.tmpl"),
@@ -1200,10 +1225,11 @@ def build_rust(target_dir, asn1_files_abs, pdu_type, slot=None, jobs=None, asncp
     if per_covered:
         result["b2p"] = os.path.join(bin_dir, "ber-to-per")
         result["p2b"] = os.path.join(bin_dir, "per-to-ber")
+    result["per_types"] = per_types
     return result
 
 
-def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, reuse=False, jobs=4):
+def build_asn1c(target_dir, asn1_files_abs, pdu_types, asn1c_bin, reuse=False, jobs=4):
     """Build asn1c's own converter-example tool for this target — ground
     truth leg (#440). Returns None (not a hard error) whenever asn1c
     itself can't handle this target's schema/construct — codegen or build
@@ -1218,7 +1244,7 @@ def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, reuse=False, jo
     os.makedirs(c_dir, exist_ok=True)
     tool = os.path.join(c_dir, "converter-example")
     key_path = os.path.join(c_dir, ".reuse-key")
-    key = reuse_key(asn1_files_abs, pdu_type, file_sig(asn1c_bin))
+    key = reuse_key(asn1_files_abs, " ".join(pdu_types), file_sig(asn1c_bin))
     if reuse and os.path.isfile(tool) and key_matches(key_path, key):
         print("  asn1c leg: reused")
         return {"tool": tool}
@@ -1226,7 +1252,7 @@ def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, reuse=False, jo
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch)
     r = run(asn1c_bin, "-fcompound-names", "-fno-include-deps",
-            "-fallow-newer-modules", f"-pdu={pdu_type}", "-D", scratch,
+            "-fallow-newer-modules", *(f"-pdu={t}" for t in pdu_types), "-D", scratch,
             *asn1_files_abs)
     if r.returncode != 0:
         print(f"  asn1c leg: codegen failed, skipping — {r.stderr.decode(errors='replace')[-500:]}")
@@ -1257,15 +1283,18 @@ def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, reuse=False, jo
     return {"tool": tool}
 
 
-def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c_reason=None,
-               slot=None, cpp_jobs=4, cargo_jobs=None, reuse=(), extra_files=(),
-               asncpp_flags=(), expect_errors=False, fuzz=None, asn1c_opaque_contents=False,
-               info=None):
+def group_key(t):
+    """Targets with the same schema, extra files and compiler flags share
+    one build (`build_group`)."""
+    return (t[0], tuple(t[3]), tuple(t[4]))
+
+
+def schema_files(schema_rel, extra_files=()):
+    """(asn1 files, testbuild slug base) of a target's schema: a directory
+    means every .asn/.asn1 file under it (a multi-module schema such as
+    ETSI LI), sorted, the same set the example Makefiles compile."""
     schema_abs = os.path.join(ASN1CPP_ROOT, schema_rel)
     if os.path.isdir(schema_abs):
-        # A multi-module schema (e.g. ETSI LI): every .asn/.asn1 file in
-        # the directory tree, sorted, the same set the example Makefiles
-        # compile.
         asn1_files_abs = sorted(
             os.path.join(root, f)
             for root, _, files in os.walk(schema_abs)
@@ -1274,24 +1303,54 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
     else:
         asn1_files_abs = [schema_abs]
         slug_base = os.path.splitext(os.path.basename(schema_rel))[0]
-    slug = slug_base + "_" + pdu_type
-    target_dir = os.path.join(TESTBUILD, slug)
-    asn1_files_abs += [os.path.join(ASN1CPP_ROOT, f) for f in extra_files]
+    return asn1_files_abs + [os.path.join(ASN1CPP_ROOT, f) for f in extra_files], slug_base
 
+
+def build_group(schema_rel, pdu_types, extra_files, asncpp_flags, asn1c_bin, slot=None,
+                cpp_jobs=4, cargo_jobs=None, reuse=()):
+    """Builds the C++, Rust and (with `asn1c_bin`) asn1c tools once for a
+    build group: the targets that share a schema, extra files and compiler
+    flags. Compiling the schema dominates a target's cost, so its PDU types
+    share one build and each target only runs its own checks. Returns
+    {"dir", "cpp", "rust", "asn1c"}, or None when the C++ or Rust build
+    fails."""
+    asn1_files_abs, slug_base = schema_files(schema_rel, extra_files)
+    target_dir = os.path.join(TESTBUILD, slug_base + "_" + "_".join(pdu_types))
+    if len(pdu_types) > 1:
+        print(f"  one build for {len(pdu_types)} PDU types: {', '.join(pdu_types)}")
+    cpp_tools = build_cpp(target_dir, asn1_files_abs, pdu_types, cpp_jobs, "cpp" in reuse, asncpp_flags)
+    if cpp_tools is None:
+        return None
+    rust_tools = build_rust(target_dir, asn1_files_abs, pdu_types, slot, cargo_jobs, asncpp_flags)
+    if rust_tools is None:
+        return None
+    asn1c_tools = (build_asn1c(target_dir, asn1_files_abs, pdu_types, asn1c_bin, "asn1c" in reuse, cpp_jobs)
+                   if asn1c_bin else None)
+    return {"dir": target_dir, "cpp": cpp_tools, "rust": rust_tools, "asn1c": asn1c_tools}
+
+
+def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_reason=None,
+               extra_files=(), expect_errors=False, fuzz=None, asn1c_opaque_contents=False,
+               info=None):
+    """Runs one target's checks against its build group's tools
+    (`build_group`); `built` is None when that build failed."""
     extra_note = f" (+ {', '.join(extra_files)})" if extra_files else ""
     print(f"\n=== {schema_rel} :: {pdu_type}{extra_note} ===")
     _tool_failures.items = []
     if skip_asn1c_reason:
         print(f"  asn1c leg: skipped ({skip_asn1c_reason})")
-
-    cpp_tools = build_cpp(target_dir, asn1_files_abs, pdu_type, cpp_jobs, "cpp" in reuse, asncpp_flags)
-    if cpp_tools is None:
+    if built is None:
+        print("  build failed (see the first target of this build group)")
         return False
-    rust_tools = build_rust(target_dir, asn1_files_abs, pdu_type, slot, cargo_jobs, asncpp_flags)
-    if rust_tools is None:
-        return False
-    asn1c_tools = (build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, "asn1c" in reuse, cpp_jobs)
-                   if asn1c_bin and not skip_asn1c_reason and not expect_errors and fuzz is None else None)
+    cpp_tools = built["cpp"]
+    rust_tools = dict(built["rust"])
+    if pdu_type not in rust_tools["per_types"]:
+        rust_tools.pop("b2p", None)
+        rust_tools.pop("p2b", None)
+    asn1c_tools = (built["asn1c"]
+                   if not skip_asn1c_reason and not expect_errors and fuzz is None else None)
+    target_dir = os.path.join(built["dir"], "pdu_" + pdu_type)
+    os.makedirs(target_dir, exist_ok=True)
 
     ber_path = os.path.join(target_dir, "records.ber")
     gen_cmd = [cpp_tools["randgen"], "--type", pdu_type,
@@ -1616,7 +1675,7 @@ def main():
                           "useful for a quick sanity pass over a small slice of a large "
                           "--corpus=asn1c-compiler run before committing to the full sweep")
     ap.add_argument("--shard", default=None, metavar="K/N",
-                     help="keep only targets at index i with i mod N == K (0 <= K < N)")
+                     help="keep only build groups at index i with i mod N == K (0 <= K < N)")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--asn1c-dir", default=None,
                      help="directory containing the asn1c binary (overrides ASN1C_BIN_DIR/PATH search)")
@@ -1726,7 +1785,10 @@ def main():
         except ValueError:
             print(f"--shard: expected K/N with 0 <= K < N, got {opts.shard!r}")
             sys.exit(1)
-        targets = targets[k::n]
+        # Whole build groups go to one shard, so a schema is never built twice.
+        keys = list(dict.fromkeys(group_key(t) for t in targets))
+        mine = set(keys[k::n])
+        targets = [t for t in targets if group_key(t) in mine]
         print(f"shard {k}/{n}: {len(targets)} target(s)")
         if not targets:
             sys.exit(0)
@@ -1739,22 +1801,30 @@ def main():
         print(f"--reuse: unknown leg(s) {sorted(unknown)}; valid: asn1c, cpp")
         sys.exit(1)
 
-    jobs = max(1, min(opts.jobs, len(targets)))
+    jobs = max(1, min(opts.jobs, len({group_key(t) for t in targets})))
     cpus = os.cpu_count() or 4
     cpp_jobs = max(2, cpus // jobs)
     cargo_jobs = max(2, cpus // jobs)
 
-    # Deterministic slot assignment (greedy by rough build weight, RRC being
-    # the outlier), so a target lands in the same cargo target dir run after
-    # run and its incremental state survives.
-    def weight(t):
-        return 8 if "rrc" in t[0].lower() else 1
+    # Build groups: targets sharing a schema, extra files and flags are
+    # built once (build_group) and run back to back on one slot.
+    groups = {}
+    for i, t in enumerate(targets):
+        groups.setdefault(group_key(t), []).append(i)
+    group_list = list(groups.values())
+
+    # Deterministic slot assignment (greedy by rough build weight, RRC and
+    # ETSI LI being the outliers), so a group lands in the same cargo target
+    # dir run after run and its incremental state survives.
+    def weight(members):
+        schema = targets[members[0]][0].lower()
+        return 8 if "rrc" in schema or "etsi" in schema else 1
     slots = [[] for _ in range(jobs)]
     load = [0] * jobs
-    for i, t in sorted(enumerate(targets), key=lambda it: -weight(it[1])):
+    for g in sorted(range(len(group_list)), key=lambda g: -weight(group_list[g])):
         k = load.index(min(load))
-        slots[k].append(i)
-        load[k] += weight(t)
+        slots[k].append(g)
+        load[k] += weight(group_list[g])
     for lst in slots:
         lst.sort()
 
@@ -1765,26 +1835,44 @@ def main():
     done = [threading.Event() for _ in targets]
     oks = [False] * len(targets)
 
-    def worker(slot, indices):
-        for i in indices:
-            schema_rel, pdu_type, skip_asn1c_reason, extra_files, asncpp_flags, options = targets[i]
+    def wants_asn1c(t):
+        return not t[2] and "@expect-errors" not in t[5] and not opts.fuzz
+
+    def worker(slot, group_ids):
+        for g in group_ids:
+            members = group_list[g]
+            schema_rel, _, _, extra_files, asncpp_flags, _ = targets[members[0]]
+            built = None
             tl_out.tl.buf = []
             try:
-                oks[i] = run_target(schema_rel, pdu_type, opts.count, opts.seed, opts.verbose,
-                                    asn1c_bin, skip_asn1c_reason, slot=slot,
-                                    cpp_jobs=cpp_jobs, cargo_jobs=cargo_jobs, reuse=reuse,
-                                    extra_files=extra_files,
-                                    asncpp_flags=asncpp_flags,
-                                    expect_errors="@expect-errors" in options,
-                                    asn1c_opaque_contents="@asn1c-opaque-contents" in options,
-                                    info=asn1c_verdict(options),
-                                    fuzz=opts if opts.fuzz else None)
-            except Exception as e:  # keep the sweep going; report as a failed target
+                built = build_group(schema_rel, [targets[i][1] for i in members], extra_files, asncpp_flags,
+                                    asn1c_bin if any(wants_asn1c(targets[i]) for i in members) else None,
+                                    slot=slot, cpp_jobs=cpp_jobs, cargo_jobs=cargo_jobs, reuse=reuse)
+            except Exception as e:  # keep the sweep going; the group's targets fail
                 print(f"  EXCEPTION: {e!r}")
-                oks[i] = False
-            outputs[i] = "".join(tl_out.tl.buf)
-            tl_out.tl.buf = None
-            done[i].set()
+            build_log = "".join(tl_out.tl.buf)
+            for n, i in enumerate(members):
+                _, pdu_type, skip_asn1c_reason, extra_files, _, options = targets[i]
+                tl_out.tl.buf = []
+                try:
+                    oks[i] = run_target(schema_rel, pdu_type, opts.count, opts.seed, opts.verbose,
+                                        built, skip_asn1c_reason,
+                                        extra_files=extra_files,
+                                        expect_errors="@expect-errors" in options,
+                                        asn1c_opaque_contents="@asn1c-opaque-contents" in options,
+                                        info=asn1c_verdict(options),
+                                        fuzz=opts if opts.fuzz else None)
+                except Exception as e:  # keep the sweep going; report as a failed target
+                    print(f"  EXCEPTION: {e!r}")
+                    oks[i] = False
+                block = "".join(tl_out.tl.buf)
+                if n == 0 and build_log:
+                    # The group's build output goes under its first target's header.
+                    head_end = block.find("\n", block.find("===")) + 1
+                    block = block[:head_end] + build_log + block[head_end:]
+                outputs[i] = block
+                tl_out.tl.buf = None
+                done[i].set()
 
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         for slot, indices in enumerate(slots):
