@@ -1,6 +1,7 @@
 package io.github.schramp.gambasasn1.wire.spec;
 
 import io.github.schramp.gambasasn1.wire.ber.Tag;
+import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;

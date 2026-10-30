@@ -1,0 +1,104 @@
+package io.github.schramp.gambasasn1.wire.ber;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import io.github.schramp.gambasasn1.wire.io.DecodeException;
+import io.github.schramp.gambasasn1.wire.spec.BerTagging;
+import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
+import io.github.schramp.gambasasn1.wire.types.Asn1Null;
+import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
+import org.junit.jupiter.api.Test;
+
+/** BOOLEAN and NULL contents (X.690 §8.2, §8.8) and the framing around them (X.690 §8.14). */
+class BerPrimitiveTest {
+    private static final BerTagging IMPLICIT_CTX5 = new BerTagging.Implicit(Tag.context(5, false));
+    private static final BerTagging EXPLICIT_APP3 = new BerTagging.Explicit(new Tag(TagClass.APPLICATION, 3, true));
+
+    private static byte[] bytes(int... b) {
+        byte[] out = new byte[b.length];
+        for (int i = 0; i < b.length; i++) {
+            out[i] = (byte) b[i];
+        }
+        return out;
+    }
+
+    private static byte[] encode(Asn1Primitive p, BerTagging framing) {
+        var out = new io.github.schramp.gambasasn1.wire.io.ByteSink();
+        BerPrimitive.encode(p, framing, out);
+        return out.toByteArray();
+    }
+
+    @Test
+    void booleanIsDerOnEncode() {
+        assertArrayEquals(bytes(0x01, 0x01, 0xFF), encode(new Asn1Boolean(true), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x01, 0x01, 0x00), encode(new Asn1Boolean(false), BerTagging.DELEGATE));
+    }
+
+    @Test
+    void booleanAcceptsAnyNonZeroOctetAsTrue() {
+        Asn1Boolean b = new Asn1Boolean();
+        BerPrimitive.decode(b, BerTagging.DELEGATE, new BerReader(bytes(0x01, 0x01, 0x2A)));
+        assertEquals(true, b.get());
+        BerPrimitive.decode(b, BerTagging.DELEGATE, new BerReader(bytes(0x01, 0x01, 0x00)));
+        assertEquals(false, b.get());
+    }
+
+    @Test
+    void booleanContentsMustBeOneOctet() {
+        assertThrows(DecodeException.class,
+                () -> BerPrimitive.decode(new Asn1Boolean(), BerTagging.DELEGATE, new BerReader(bytes(0x01, 0x00))));
+        assertThrows(DecodeException.class,
+                () -> BerPrimitive.decode(new Asn1Boolean(), BerTagging.DELEGATE, new BerReader(bytes(0x01, 0x02, 0xFF, 0x00))));
+    }
+
+    @Test
+    void nullHasNoContents() {
+        assertArrayEquals(bytes(0x05, 0x00), encode(new Asn1Null(), BerTagging.DELEGATE));
+        BerPrimitive.decode(new Asn1Null(), BerTagging.DELEGATE, new BerReader(bytes(0x05, 0x00)));
+        assertThrows(DecodeException.class,
+                () -> BerPrimitive.decode(new Asn1Null(), BerTagging.DELEGATE, new BerReader(bytes(0x05, 0x01, 0x00))));
+    }
+
+    @Test
+    void wrongTagIsRejected() {
+        assertThrows(DecodeException.class,
+                () -> BerPrimitive.decode(new Asn1Boolean(), BerTagging.DELEGATE, new BerReader(bytes(0x02, 0x01, 0x00))));
+        assertThrows(DecodeException.class,
+                () -> BerPrimitive.decode(new Asn1Null(), IMPLICIT_CTX5, new BerReader(bytes(0x05, 0x00))));
+    }
+
+    @Test
+    void implicitReplacesTheNaturalTag() {
+        byte[] wire = encode(new Asn1Boolean(true), IMPLICIT_CTX5);
+        assertArrayEquals(bytes(0x85, 0x01, 0xFF), wire);
+        Asn1Boolean b = new Asn1Boolean();
+        BerPrimitive.decode(b, IMPLICIT_CTX5, new BerReader(wire));
+        assertEquals(true, b.get());
+    }
+
+    @Test
+    void explicitWrapsTheNaturalEncoding() {
+        byte[] wire = encode(new Asn1Null(), EXPLICIT_APP3);
+        assertArrayEquals(bytes(0x63, 0x02, 0x05, 0x00), wire);
+        BerPrimitive.decode(new Asn1Null(), EXPLICIT_APP3, new BerReader(wire));
+        assertThrows(DecodeException.class,
+                () -> BerPrimitive.decode(new Asn1Null(), EXPLICIT_APP3, new BerReader(bytes(0x05, 0x00))));
+    }
+
+    @Test
+    void ofTypeUsesTheTypesFraming() {
+        assertArrayEquals(bytes(0x85, 0x01, 0x00), encode(new Asn1Boolean(false), new BerTagging.OfType(IMPLICIT_CTX5)));
+    }
+
+    @Test
+    void decodeLeavesTheReaderAfterTheValue() {
+        BerReader r = new BerReader(bytes(0x05, 0x00, 0x01, 0x01, 0xFF));
+        BerPrimitive.decode(new Asn1Null(), BerTagging.DELEGATE, r);
+        Asn1Boolean b = new Asn1Boolean();
+        BerPrimitive.decode(b, BerTagging.DELEGATE, r);
+        assertEquals(true, b.get());
+        assertEquals(true, r.atEnd());
+    }
+}

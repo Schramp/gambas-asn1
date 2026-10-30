@@ -17,13 +17,16 @@ compared backend covers today, kept small so a run takes minutes. As a
 backend's coverage grows, move schemas from ../xval_sweep/targets.txt into
 it. --full runs the whole xval list (including the large real-world
 schemas). The PDU column is ignored: every generated type is dumped.
+A run that includes java defaults to java_targets.txt instead: the
+schemas the Java backend emits so far, with -pdu roots that leave out the
+types it cannot emit yet.
 
 A schema whose inputs (schema files, flags, compiler, runtime sources) are
 unchanged since the last run reuses that run's dump; --rebuild forces a
 fresh build.
 
 Usage:
-    table_diff.py [--lang cpp,rust] [--full] [--target SUBSTR] [-j N] [-v] [--not-carried] [--rebuild]
+    table_diff.py [--lang cpp,rust|cpp,java|cpp,rust,java] [--full] [--target SUBSTR] [-j N] [-v] [--not-carried] [--rebuild]
 
 Exit code: 0 = no mismatch, 1 = mismatch or build failure.
 """
@@ -47,6 +50,9 @@ RUNTIME_LIB = os.path.join(ROOT, "build", "runtime", "libasn1cpp_runtime.a")
 WIRE_CRATE = os.path.join(ROOT, "rust-runtime", "wire")
 TESTBUILD = os.path.join(HERE, "testbuild")
 TARGETS = os.path.join(HERE, "targets.txt")
+JAVA_TARGETS = os.path.join(HERE, "java_targets.txt")
+JAVA_RUNTIME = os.path.join(ROOT, "java-runtime")
+JAVA_CLASSES = os.path.join(JAVA_RUNTIME, "build", "classes", "java", "main")
 FULL_TARGETS = os.path.join(ROOT, "validation-tools", "xval_sweep", "targets.txt")
 CPP_JOBS = os.cpu_count() or 4  # per schema; main() divides it by -j
 KNOWN = os.path.join(HERE, "known_diffs.txt")
@@ -164,12 +170,47 @@ def dump_rust(work, files, flags, slot):
     return run([os.path.join(env["CARGO_TARGET_DIR"], "debug", "dump")])
 
 
-DUMPERS = {"cpp": dump_cpp, "rust": dump_rust}
+# ---------------------------------------------------------------------------
+# Java leg: every generated compilation unit is one type; a Dump class calls
+# TableDump.dump on each, compiled against java-runtime's classes.
+
+JAVA_DUMPS_PER_METHOD = 500  # keeps each method under the JVM's 64 KiB code limit
+
+
+def dump_java(work, files, flags, slot):
+    gen = os.path.join(work, "gen")
+    generate(files, [*flags, "--package=gen"], "java", gen)
+    types = sorted(os.path.splitext(n)[0] for n in os.listdir(gen) if n.endswith(".java"))
+    chunks = [types[i:i + JAVA_DUMPS_PER_METHOD] for i in range(0, len(types), JAVA_DUMPS_PER_METHOD)]
+    src = os.path.join(work, "Dump.java")
+    with open(src, "w") as f:
+        f.write("import io.github.schramp.gambasasn1.wire.spec.TableDump;\n\npublic final class Dump {\n")
+        for k, chunk in enumerate(chunks):
+            f.write(f"    static void part{k}() {{\n")
+            f.writelines(f'        System.out.println("{t}\\t" + TableDump.dump(gen.{t}::new, "{t}"));\n' for t in chunk)
+            f.write("    }\n")
+        f.write("    public static void main(String[] args) {\n")
+        f.writelines(f"        part{k}();\n" for k in range(len(chunks)))
+        f.write("    }\n}\n")
+    classes = os.path.join(work, "classes")
+    shutil.rmtree(classes, ignore_errors=True)
+    run(["javac", "-nowarn", "-d", classes, "-cp", JAVA_CLASSES,
+         *sorted(glob.glob(os.path.join(gen, "*.java"))), src])
+    return run(["java", "-cp", os.pathsep.join([classes, JAVA_CLASSES]), "Dump"])
+
+
+def build_java_runtime():
+    """Compile java-runtime once, before the schemas build in parallel."""
+    run([os.path.join(JAVA_RUNTIME, "gradlew"), "-q", "-p", JAVA_RUNTIME, "classes"])
+
+
+DUMPERS = {"cpp": dump_cpp, "rust": dump_rust, "java": dump_java}
 
 # What a language's dump depends on besides the schema and the compiler.
 RUNTIME_INPUTS = {
     "cpp": [os.path.join(ROOT, "runtime"), RUNTIME_LIB],
     "rust": [os.path.join(WIRE_CRATE, "src"), os.path.join(WIRE_CRATE, "Cargo.toml")],
+    "java": [os.path.join(JAVA_RUNTIME, "src", "main")],
 }
 
 
@@ -322,7 +363,8 @@ def main():
     ap.add_argument("-v", "--verbose", action="store_true", help="print every differing field")
     ap.add_argument("--not-carried", action="store_true", help="list fields a runtime does not carry")
     ap.add_argument("--full", action="store_true", help="run every schema in xval_sweep/targets.txt")
-    ap.add_argument("--targets-file", help="target list (default: targets.txt here; --full: xval_sweep/targets.txt)")
+    ap.add_argument("--targets-file", help="target list (default: targets.txt here, java_targets.txt with java; "
+                    "--full: xval_sweep/targets.txt)")
     ap.add_argument("--rebuild", action="store_true", help="rebuild every dump, even when its inputs are unchanged")
     ap.add_argument("--known", default=KNOWN, help="known-divergence list (default: known_diffs.txt)")
     args = ap.parse_args()
@@ -338,7 +380,9 @@ def main():
         ap.error(f"--lang needs two or more of {sorted(DUMPERS)}")
 
     seen, jobs = set(), []
-    targets_file = args.targets_file or (FULL_TARGETS if args.full else TARGETS)
+    targets_file = args.targets_file or (FULL_TARGETS if args.full else JAVA_TARGETS if "java" in langs else TARGETS)
+    if "java" in langs:
+        build_java_runtime()
     for schema, _pdu, _reason, _extra, flags, options in parse_targets(targets_file):
         if "@expect-errors" in options or schema in seen:
             continue

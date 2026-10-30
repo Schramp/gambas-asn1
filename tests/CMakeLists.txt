@@ -1888,7 +1888,45 @@ if(WITH_JAVA_RUNTIME_TEST)
     add_test(NAME java_runtime_test
         COMMAND ${CMAKE_SOURCE_DIR}/java-runtime/gradlew -p ${CMAKE_SOURCE_DIR}/java-runtime
                 test --console=plain --quiet)
-    set_tests_properties(java_runtime_test PROPERTIES TIMEOUT 600 LABELS "java")
+    set_tests_properties(java_runtime_test PROPERTIES TIMEOUT 600 LABELS "java"
+        RESOURCE_LOCK java_runtime_build)
+endif()
+
+# Java legs of the codec tests — see tests/java/src/test/java/legs/. Each
+# leg's schema is generated into package gen.<leg> under one source root;
+# one Gradle run compiles and tests them all against java-runtime/. The
+# -pdu roots leave out the predefined EXTERNAL/TYPE-IDENTIFIER types, whose
+# constructs the Java backend does not emit yet.
+set(JAVA_LEGS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_java)
+set(java_leg_builtin_alias_ber_PDUS
+    Flag ImplicitFlag ExplicitFlag Hyphen-Flag Nothing ImplicitNothing ExplicitNothing)
+set(java_leg_outputs)
+foreach(leg builtin_alias_ber)
+    set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
+    set(pdu_flags)
+    foreach(pdu ${java_leg_${leg}_PDUS})
+        list(APPEND pdu_flags -pdu=${pdu})
+    endforeach()
+    add_custom_command(
+        OUTPUT  ${gen_dir}/.stamp
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${gen_dir}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${gen_dir}
+        COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.${leg} ${pdu_flags}
+                ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1 -o ${gen_dir}
+        COMMAND ${CMAKE_COMMAND} -E touch ${gen_dir}/.stamp
+        DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1
+        COMMENT "Generating Java from ${leg}_test.asn1"
+    )
+    list(APPEND java_leg_outputs ${gen_dir}/.stamp)
+endforeach()
+add_custom_target(gen_java_legs ALL DEPENDS ${java_leg_outputs})
+
+if(WITH_JAVA_RUNTIME_TEST)
+    add_test(NAME java_legs
+        COMMAND ${CMAKE_SOURCE_DIR}/java-runtime/gradlew -p ${CMAKE_CURRENT_SOURCE_DIR}/java
+                test --console=plain --quiet -Pasn1cppJavaGenDir=${JAVA_LEGS_GEN_DIR})
+    set_tests_properties(java_legs PROPERTIES TIMEOUT 600 LABELS "java"
+        RESOURCE_LOCK java_runtime_build)
 endif()
 
 # ---- codegen -> asn1cpp-ber roundtrip (gambas-asn1#219) --------------------
@@ -2590,6 +2628,17 @@ if(WITH_BER_RUNTIME_TEST)
                 --lang cpp,rust -j 2)
     set_tests_properties(table_diff_cpp_rust PROPERTIES
         TIMEOUT 900 LABELS "rust")
+endif()
+
+# The same diff for the Java runtime, on the schemas the Java backend emits
+# so far (validation-tools/table_diff/java_targets.txt).
+if(WITH_JAVA_RUNTIME_TEST)
+    add_test(NAME table_diff_cpp_java
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/validation-tools/table_diff/table_diff.py
+                --lang cpp,java -j 2)
+    set_tests_properties(table_diff_cpp_java PROPERTIES
+        TIMEOUT 900 LABELS "java" RESOURCE_LOCK java_runtime_build)
 endif()
 
 # ---- Smoke matrix: 17 types × 4 flag combos (issue #27) --------------------

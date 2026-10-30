@@ -286,7 +286,7 @@ Each step has four parts:
 
 From cheapest to most thorough. All of it runs under `ctest`.
 
-1. **Runtime unit tests** in the language's own test framework, using vectors shared with the C++ and second-backend tests. Reference bytes come from asn1c-generated encoders, never from hand-crafted bytes.
+1. **Runtime unit tests** in the language's own test framework, using vectors shared with the C++ and second-backend tests. Reference bytes come from asn1c-generated encoders, never from hand-crafted bytes. `tests/vectors/make_ber_vectors.py SCHEMA VALUES.xer OUT.vectors` makes such vectors: asn1c encodes each listed XER value to DER, and the committed `.vectors` file (`Type<TAB>XER<TAB>hex` per line) needs no asn1c to use.
 2. **Naming test:** `test_backend_naming` covers each backend's naming primitives (keywords, hyphens, collisions).
 3. **Generated-code test legs:** `tests/<lang>/<case>`, one per C++ test (`tests/<codec>/test_<case>.cpp`). They use the same schema under `tests/asn1/` and the same vectors, and print the same PASS/FAIL lines. The build compiles the generated code with warnings as errors.
 4. **Table diff:** `validation-tools/table_diff/table_diff.py` dumps every generated type's tables in each runtime (Appendix A) and diffs them against C++.
@@ -299,7 +299,7 @@ A divergence between asn1c and the compiler is presumed to be a compiler bug. A 
 
 ## Appendix A — canonical table dump
 
-Every runtime provides a dumper that serialises its own static tables (C++ `asn1::dump_tables`, `runtime/include/asn1cpp/TableDump.hpp`; Rust `asn1cpp_wire::spec::dump::dump_tables`). `validation-tools/table_diff/table_diff.py` builds a harness per language that dumps every generated type, then compares the dumps field by field, C++ being the reference. The dumper reads tables only; it never encodes or decodes.
+Every runtime provides a dumper that serialises its own static tables (C++ `asn1::dump_tables`, `runtime/include/asn1cpp/TableDump.hpp`; Rust `asn1cpp_wire::spec::dump::dump_tables`; Java `TableDump.dump`, `java-runtime/.../spec/TableDump.java`). `validation-tools/table_diff/table_diff.py` builds a harness per language that dumps every generated type, then compares the dumps field by field, C++ being the reference. The dumper reads tables only; it never encodes or decodes.
 
 The dump is JSON Lines: one object per type, one line each.
 
@@ -335,8 +335,9 @@ Value sets and normalisation:
 
 A field a runtime's tables do not carry is left out of its dump and reported as "not carried" (`--not-carried` lists them), never as a mismatch. An already-filed divergence is listed in `validation-tools/table_diff/known_diffs.txt` (`<lang> <field-path glob> <issue>`) and reported as known.
 
-Usage: `table_diff.py [--lang cpp,rust] [--full] [--target SUBSTR] [--targets-file F] [-j N] [-v] [--not-carried] [--rebuild]`.
+Usage: `table_diff.py [--lang cpp,rust|cpp,java|cpp,rust,java] [--full] [--target SUBSTR] [--targets-file F] [-j N] [-v] [--not-carried] [--rebuild]`.
 
 - The default target list, `validation-tools/table_diff/targets.txt`, holds the schemas every compared backend covers today, so a run takes minutes; ctest `table_diff_cpp_rust` runs it. While a backend is being built, keep this list at the few schemas it already covers and move schemas into it from `validation-tools/xval_sweep/targets.txt` as coverage grows. `--full` runs that whole list, including the large real-world schemas.
+- A run that includes a backend still being built uses that backend's own list instead (Java: `java_targets.txt`, ctest `table_diff_cpp_java`), whose `-pdu` roots leave out the types it cannot emit yet.
 - A dump is reused when its inputs (schema files, flags, compiler binary, runtime sources) are unchanged; `--rebuild` forces fresh builds.
 - The C++ harness is a unity build (one translation unit per core), since each generated file is a few lines of tables behind the same runtime headers.

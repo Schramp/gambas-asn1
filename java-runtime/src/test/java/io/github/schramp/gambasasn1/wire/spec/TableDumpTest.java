@@ -3,6 +3,7 @@ package io.github.schramp.gambasasn1.wire.spec;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.schramp.gambasasn1.wire.ber.Tag;
+import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
 import io.github.schramp.gambasasn1.wire.ber.UniversalTag;
 import java.util.ArrayList;
 import java.util.List;

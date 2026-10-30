@@ -1,5 +1,7 @@
 package io.github.schramp.gambasasn1.wire.spec;
 
+import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
+
 /**
  * A value seen by its reflective shape. Every codec walker is one closed
  * switch over these cases. Generated types only say which case they are;

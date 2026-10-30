@@ -1,0 +1,10 @@
+# Type<TAB>XER value. make_ber_vectors.py turns each line into asn1c's DER.
+Flag	<Flag><true/></Flag>
+Flag	<Flag><false/></Flag>
+ImplicitFlag	<ImplicitFlag><true/></ImplicitFlag>
+ImplicitFlag	<ImplicitFlag><false/></ImplicitFlag>
+ExplicitFlag	<ExplicitFlag><true/></ExplicitFlag>
+Hyphen-Flag	<Hyphen-Flag><false/></Hyphen-Flag>
+Nothing	<Nothing/>
+ImplicitNothing	<ImplicitNothing/>
+ExplicitNothing	<ExplicitNothing/>
