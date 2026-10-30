@@ -5,6 +5,7 @@
 //   EnumeratedXerHandler::encode + ::decode  (was zero-coverage)
 //   AnyBerHandler::encode + ::decode          (was zero-coverage)
 //   AnyXerHandler::encode + ::decode          (was zero-coverage)
+//   an ANY type assignment's descriptor (is_any, TypeKind::Any) and RandomFiller on it
 #include <cstdio>
 #include <algorithm>
 #include <sstream>
@@ -15,6 +16,9 @@
 #include "Direction.hpp"
 #include "HasDirection.hpp"
 #include "HasAny.hpp"
+#include "Opaque.hpp"
+#include <random>
+#include <asn1cpp/codec/RandomFiller.hpp>
 
 using namespace asn1;
 
@@ -178,6 +182,20 @@ int main() {
         HasAny got{};
         check("HasAny XER round-trip OCTET STRING-valued ANY",
               xer_dec_any(xml, got) && std::ranges::equal(got.value.bytes(), std::span<const uint8_t>(any_bytes)));
+    }
+
+    {
+        // Opaque ::= ANY — same descriptor shape as the runtime's asn_DEF_Any.
+        check("Opaque descriptor is_any", asn_DEF_Opaque.is_any);
+        check("Opaque descriptor kind Any", asn_DEF_Opaque.kind == TypeKind::Any);
+        std::mt19937 rng{42};
+        RandomFiller filler{rng};
+        Opaque v;
+        check("Opaque RandomFiller fills", filler.fill(&v, asn_DEF_Opaque, 0, true));
+        // An ANY value is a complete TLV; RandomFiller puts a small INTEGER in it.
+        auto b = v.bytes();
+        check("Opaque RandomFiller value is a TLV",
+              b.size() >= 3 && b[0] == 0x02 && b[1] == b.size() - 2);
     }
 
     printf("\n");

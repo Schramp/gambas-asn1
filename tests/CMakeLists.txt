@@ -954,6 +954,7 @@ add_custom_command(
     OUTPUT  ${XER_CODEC_GEN_DIR}/Direction.hpp    ${XER_CODEC_GEN_DIR}/Direction.cpp
             ${XER_CODEC_GEN_DIR}/HasDirection.hpp ${XER_CODEC_GEN_DIR}/HasDirection.cpp
             ${XER_CODEC_GEN_DIR}/HasAny.hpp       ${XER_CODEC_GEN_DIR}/HasAny.cpp
+            ${XER_CODEC_GEN_DIR}/Opaque.hpp       ${XER_CODEC_GEN_DIR}/Opaque.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${XER_CODEC_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/xer_codec_test.asn1
                                    -o ${XER_CODEC_GEN_DIR}
@@ -965,6 +966,7 @@ add_executable(test_xer_codec
     ${XER_CODEC_GEN_DIR}/Direction.cpp
     ${XER_CODEC_GEN_DIR}/HasDirection.cpp
     ${XER_CODEC_GEN_DIR}/HasAny.cpp
+    ${XER_CODEC_GEN_DIR}/Opaque.cpp
 )
 target_include_directories(test_xer_codec PRIVATE ${XER_CODEC_GEN_DIR})
 target_link_libraries(test_xer_codec PRIVATE asn1cpp_runtime)
