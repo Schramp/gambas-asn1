@@ -2,7 +2,9 @@ name: asn1cpp build & test
 
 on:
   push:
-    branches: [main]
+    # Feature branches too: a PR can only restore caches saved on its own
+    # ref, its base branch or main, so the epic branch must save them.
+    branches: [main, 'feature/**']
     paths-ignore:
       - '**.md'
   pull_request:
@@ -67,12 +69,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
-          cache-dependency-path: |
-            java-runtime/*.gradle.kts
-            java-runtime/gradle/libs.versions.toml
-            java-runtime/gradle/wrapper/gradle-wrapper.properties
-            tests/java/*.gradle.kts
+
+      # Gradle wrapper distribution + dependency cache. PRs restore from
+      # their base branch but never save: each PR ref would otherwise store
+      # its own copy of the same distribution.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
