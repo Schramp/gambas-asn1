@@ -71,6 +71,7 @@ Each language renders the same rows in its own syntax. The canonical content is 
 - `name`: the ASN.1 identifier, verbatim.
 - `tag`: the effective tag on the wire.
 - `tagging`: IMPLICIT (replace the natural tag), EXPLICIT (wrap the inner TLV), or none (natural tag, or an untagged CHOICE that dispatches on its alternatives' tags).
+  Tagging belongs to whoever wrote the tag. A member with its own `[n]` carries that framing in its row. A member that just references a type with its own tag (`TExp ::= [APPLICATION 13] EXPLICIT INTEGER`, then `w TExp`) gets *none*. Its row restates the type's tag, so OPTIONAL presence can be peeked, and the type's own descriptor does the framing (X.680 §31.2). That is also how a top-level PDU of that type frames itself. If your runtime unwraps an alias to its bare builtin before the walker sees it, the row must still point at the type's framing, for example through a reference to it. Never copy the type's EXPLICIT into the row.
 - `optional`: true for OPTIONAL, DEFAULT and every extension member.
 - `has_default`, plus a way to set the default and to test "equals default" (§6).
 - A reference to the member type's descriptor (C++), or an accessor that yields a typed reference (§5).
