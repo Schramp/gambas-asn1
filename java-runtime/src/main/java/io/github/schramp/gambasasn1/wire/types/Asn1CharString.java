@@ -14,7 +14,7 @@ import java.util.Objects;
 public abstract sealed class Asn1CharString implements Asn1Primitive
         permits Asn1Utf8String, Asn1NumericString, Asn1PrintableString, Asn1T61String, Asn1VideotexString,
         Asn1Ia5String, Asn1GraphicString, Asn1VisibleString, Asn1GeneralString, Asn1ObjectDescriptor,
-        Asn1BmpString, Asn1UniversalString {
+        Asn1BmpString, Asn1UniversalString, Asn1UtcTime, Asn1GeneralizedTime {
     private static final byte[] EMPTY = new byte[0];
     private byte[] octets = EMPTY;
 

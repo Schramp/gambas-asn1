@@ -1899,9 +1899,13 @@ OBJECT IDENTIFIER and RELATIVE-OID hold an `Asn1ObjectIdentifier` or an
 0..2³²−1 like the C++ and Rust runtimes and asn1c (`set` rejects values
 outside that range, and BER decode rejects a wider subidentifier).
 
+UTCTime and GeneralizedTime (`Asn1UtcTime`, `Asn1GeneralizedTime`) are
+character string wrappers holding the time text as sent, as in the C++ and
+Rust runtimes; the text is not parsed or checked against the time format.
+
 So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage),
-ENUMERATED, OCTET STRING, BIT STRING, character string, OBJECT IDENTIFIER and
-RELATIVE-OID type assignments. The Java
+ENUMERATED, OCTET STRING, BIT STRING, character string, OBJECT IDENTIFIER,
+RELATIVE-OID, UTCTime and GeneralizedTime type assignments. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.
 
