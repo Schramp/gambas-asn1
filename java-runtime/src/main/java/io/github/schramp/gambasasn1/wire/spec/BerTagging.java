@@ -52,12 +52,14 @@ public sealed interface BerTagging {
 
     /**
      * Whether a member with this framing and table tag {@code tag} starts
-     * with wire tag {@code t}. Used to detect an OPTIONAL member.
+     * with wire tag {@code t}, by class and number: the constructed bit is
+     * the encoding's form, not part of its identity (X.690 §8.1.2.5). Used
+     * to detect an OPTIONAL member.
      */
     default boolean startsWith(Tag tag, Tag t) {
         if (this instanceof DelegateChoice d) {
             return d.tags().get().stream().anyMatch(e -> e.tag().matchesIdentifier(t));
         }
-        return tag.equals(t);
+        return tag != null && tag.matchesIdentifier(t);
     }
 }
