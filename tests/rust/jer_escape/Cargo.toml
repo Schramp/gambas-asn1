@@ -1,0 +1,14 @@
+[package]
+name = "jer-escape-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+description = "Rust leg of the JER string-escape test (jer_escape_test.asn1). Pulls generated .rs from ASN1CPP_RUST_GEN_DIR (set by tests/CMakeLists.txt's rust_jer_escape), so it isn't meant to be built with a bare `cargo build`."
+
+[[bin]]
+name = "jer_escape"
+path = "src/main.rs"
+
+[dependencies]
+asn1cpp-wire = { path = "../../../rust-runtime/wire" }

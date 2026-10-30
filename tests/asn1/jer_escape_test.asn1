@@ -1,0 +1,11 @@
+-- JSON string escapes in JER input (RFC 8259 §7, X.697 §23.4 NOTE): every
+-- JER string, member names included, may carry \uXXXX (with UTF-16
+-- surrogate pairs), \b, \f, \n, \r, \t, \", \\ and \/.
+JerEscapeTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+JeRec ::= SEQUENCE {
+    text UTF8String,
+    alt  CHOICE { name UTF8String, n INTEGER }
+}
+
+END

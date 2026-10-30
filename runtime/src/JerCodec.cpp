@@ -189,7 +189,59 @@ static void skip_ws(JerDecodeStream& s) {
         s.advance(1);
 }
 
-// Read a JSON string (cursor must be at opening "). Fills out with unescaped content.
+/**
+ * @brief Read four hex digits of a JSON \\u escape (RFC 8259 §7).
+ * @param s  stream positioned just after the "\\u".
+ * @param cu receives the UTF-16 code unit.
+ * @return false if fewer than four hex digits follow.
+ */
+static bool read_hex4(JerDecodeStream& s, uint32_t& cu) {
+    cu = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (s.at_end()) return false;
+        char c = s.data()[0];
+        uint32_t d;
+        if (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+        else return false;
+        cu = cu << 4 | d;
+        s.advance(1);
+    }
+    return true;
+}
+
+/// @brief Append Unicode code point @p cp to @p out as UTF-8.
+static void append_utf8(std::string& out, uint32_t cp) {
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | cp >> 6);
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += static_cast<char>(0xE0 | cp >> 12);
+        out += static_cast<char>(0x80 | (cp >> 6 & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | cp >> 18);
+        out += static_cast<char>(0x80 | (cp >> 12 & 0x3F));
+        out += static_cast<char>(0x80 | (cp >> 6 & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+}
+
+/**
+ * @brief Read one JSON string token and unescape it (RFC 8259 §7).
+ *
+ * Every JER string goes through here: string values, hex/base64 payloads
+ * and member names (X.697 §23.4 NOTE allows escapes in all of them). A
+ * \\u escape is a UTF-16 code unit; a surrogate pair combines into one
+ * code point, and the result is written as UTF-8. A lone surrogate, a
+ * short \\u sequence or an unknown escape character is a decode error.
+ * @param s   stream positioned at (or before, with whitespace) the opening quote.
+ * @param out receives the unescaped UTF-8 content.
+ * @return decode_ok() on the closing quote, an error otherwise.
+ */
 static DecodeResult read_json_string(JerDecodeStream& s, std::string& out) {
     skip_ws(s);
     if (s.at_end() || s.data()[0] != '"')
@@ -205,10 +257,33 @@ static DecodeResult read_json_string(JerDecodeStream& s, std::string& out) {
             case '"': out += '"'; break;
             case '\\': out += '\\'; break;
             case '/': out += '/'; break;
+            case 'b': out += '\b'; break;
+            case 'f': out += '\f'; break;
             case 'n': out += '\n'; break;
             case 'r': out += '\r'; break;
             case 't': out += '\t'; break;
-            default:  out += c; break;
+            case 'u': {
+                uint32_t cu;
+                if (!read_hex4(s, cu))
+                    return decode_err(DecodeError("JER: malformed \\u escape"));
+                if (cu >= 0xDC00 && cu <= 0xDFFF)
+                    return decode_err(DecodeError("JER: lone low surrogate in \\u escape"));
+                if (cu >= 0xD800 && cu <= 0xDBFF) {
+                    uint32_t lo;
+                    if (s.size() < 2 || s.data()[0] != '\\' || s.data()[1] != 'u')
+                        return decode_err(DecodeError("JER: lone high surrogate in \\u escape"));
+                    s.advance(2);
+                    if (!read_hex4(s, lo))
+                        return decode_err(DecodeError("JER: malformed \\u escape"));
+                    if (lo < 0xDC00 || lo > 0xDFFF)
+                        return decode_err(DecodeError("JER: lone high surrogate in \\u escape"));
+                    cu = 0x10000 + ((cu - 0xD800) << 10) + (lo - 0xDC00);
+                }
+                append_utf8(out, cu);
+                break;
+            }
+            default:
+                return decode_err(DecodeError("JER: invalid escape in string"));
             }
             esc = false;
         } else if (c == '\\') {
