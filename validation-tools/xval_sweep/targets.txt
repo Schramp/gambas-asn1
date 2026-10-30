@@ -26,16 +26,13 @@
 # STRINGs following the outer encoding (X.682 §11.4): written as PER their
 # bytes are re-encoded as PER, which asn1c (contents kept as opaque bytes)
 # does not do, so the asn1c PER comparison is informational.
-# '@asn1c-no-per-fragment' — values of 16K or more, whose PER length is
-# fragmented (X.691 §11.9.3.8); asn1c does not round-trip its own
-# fragmented encoding.
 # '@real-reencode' — REAL values that asn1c re-encodes in another valid
 # form (binary vs decimal), so its own round trips differ from the input.
 # A mismatch on an informational asn1c leg never fails the target. Its
-# status names the cause: ASN1CINCOMPLETE (the first two options above:
-# asn1c does not implement what the standard asks), SEMANTICIDENTICAL
-# (@real-reencode: same value, other encoding), or INFORMATIONAL (no
-# documented cause yet).
+# status names the cause: ASN1CINCOMPLETE (asn1c fails to round-trip its
+# own encoding of the target, or @asn1c-opaque-contents), SEMANTICIDENTICAL
+# (@real-reencode: same value, other encoding; takes precedence), or
+# INFORMATIONAL (no known cause).
 #
 # Optional 3rd+ column: a known, already-filed asn1c divergence for this
 # specific target (#440's asn1c leg) — C++/Rust legs still run and gate
@@ -125,7 +122,7 @@ tests/asn1/rust_choice_seqof_alt_per_test.asn1   Envelope
 tests/asn1/rust_bool_alias_per_test.asn1   Attributes
 tests/asn1/per_ext_controls_test.asn1   Rec
 tests/asn1/per_setof_order_test.asn1   Rec
-tests/asn1/per_fragment_test.asn1   Big  @asn1c-no-per-fragment
+tests/asn1/per_fragment_test.asn1   Big
 tests/asn1/per_ext_size_test.asn1   Rec
 tests/asn1/per_ext_from_test.asn1   Rec  skip-asn1c: asn1c writes 8-bit chars for an extensible FROM (Schramp/asn1c#1); C++/Rust follow X.691 9.3.9/9.3.10
 tests/asn1/per_set_order_test.asn1   Rec
