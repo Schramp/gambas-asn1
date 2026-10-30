@@ -1,0 +1,56 @@
+-- Java BER leg for SEQUENCE: root members only (no DEFAULT, no
+-- extensions, no SEQUENCE OF members), mandatory and OPTIONAL, with
+-- every member framing: natural tag, IMPLICIT and EXPLICIT [n], a
+-- reference to a tagged type assignment, to an ENUMERATED, to a
+-- tagged and an untagged CHOICE, and to another SEQUENCE.
+SequenceBerTest DEFINITIONS ::= BEGIN
+
+Color  ::= ENUMERATED { red, green, blue }
+MyByte ::= INTEGER (0..255)
+TBool  ::= [APPLICATION 1] BOOLEAN
+TExp   ::= [APPLICATION 13] EXPLICIT INTEGER
+Pick   ::= CHOICE { i INTEGER, s IA5String }
+Own    ::= [5] CHOICE { x INTEGER, y BOOLEAN }
+
+Point ::= SEQUENCE { x INTEGER, y INTEGER }
+
+Plain ::= SEQUENCE {
+    num   INTEGER,
+    flag  BOOLEAN,
+    text  UTF8String,
+    data  OCTET STRING,
+    nul   NULL
+}
+
+Opt ::= SEQUENCE {
+    a  INTEGER OPTIONAL,
+    b  BOOLEAN,
+    c  OCTET STRING OPTIONAL
+}
+
+Tagged ::= SEQUENCE {
+    imp  [0] IMPLICIT INTEGER,
+    exp  [1] EXPLICIT BOOLEAN,
+    opt  [2] IMPLICIT OCTET STRING OPTIONAL,
+    optx [3] EXPLICIT INTEGER OPTIONAL
+}
+
+Refs ::= SEQUENCE {
+    color  Color,
+    byte   MyByte,
+    tbool  TBool,
+    texp   TExp,
+    point  Point,
+    pick   Pick,
+    own    Own,
+    tpick  [4] Pick,
+    opick  Pick OPTIONAL,
+    opoint [6] Point OPTIONAL
+}
+
+Outer ::= SEQUENCE {
+    inner  Plain,
+    tail   INTEGER
+}
+
+END

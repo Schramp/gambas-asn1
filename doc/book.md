@@ -1941,9 +1941,25 @@ know as raw bytes (`unknownExtension()`, `activeIndex()` -1) and writes it
 back unchanged. A tagged CHOICE type is always EXPLICIT (X.680 §31.2.7).
 SEQUENCE/SET and SEQUENCE OF/SET OF alternatives are not emitted yet.
 
+A SEQUENCE becomes a class with one field per member. An OPTIONAL member's
+getter returns null when it is absent, and setting it to null makes it absent;
+a mandatory member always holds a value. Generated equality compares member by
+member. On decode, an OPTIONAL member is present when the next tag is the one
+its row starts with: for an untagged CHOICE member, one of the CHOICE's
+alternative tags. So far only root members are emitted. The compiler rejects a
+SEQUENCE with a member of the following kinds, or a SET, with
+`emit_sequence: ... not implemented for this backend`:
+
+- DEFAULT values;
+- extension markers;
+- SEQUENCE OF / SET OF members;
+- inline member constraints;
+- recursive member types;
+- contained values.
+
 So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage),
 ENUMERATED, OCTET STRING, BIT STRING, character string, OBJECT IDENTIFIER,
-RELATIVE-OID, UTCTime, GeneralizedTime, REAL, ANY and CHOICE type
+RELATIVE-OID, UTCTime, GeneralizedTime, REAL, ANY, CHOICE and SEQUENCE type
 assignments, and INTEGER in both signed and unsigned 64-bit storage. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.

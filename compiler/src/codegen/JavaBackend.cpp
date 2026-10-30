@@ -483,6 +483,159 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
     os << "}\n";
 }
 
+/// @brief Emit one SEQUENCE type as a Java class: its `SequenceSpec`
+///        table, one field per member (an OPTIONAL member is null when
+///        absent), accessors, and the `Asn1Seq` reflection the BER walker
+///        (`BerObject`) reads. The class holds no codec code.
+/// @param spec    Resolved, backend-agnostic decision (see SequenceSpec).
+/// @param session Per-type output session.
+/// @see X.680 §25 (SEQUENCE), X.690 §8.9 (its BER encoding).
+void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const {
+    const std::string& t = spec.type_name;
+    const std::string asn1 = spec.asn1_name.empty() ? t : spec.asn1_name;
+    auto unsupported = [&](const std::string& what) {
+        throw std::logic_error(std::format("emit_sequence: {} {}, not implemented for this backend", asn1, what));
+    };
+    if (spec.is_set) unsupported("is a SET");
+    if (spec.ext_at >= 0) unsupported("is extensible");
+    for (const auto& m : spec.members) {
+        const char* gap = m.contained ? "a contained value"
+                        : m.has_default ? "a DEFAULT value"
+                        : m.seq_of_kind != SeqOfKind::None || (!m.mbuiltin && m.ref_is_seq_of) ? "a SEQUENCE OF/SET OF"
+                        : m.member_type_in_cycle ? "a recursive type"
+                        : !m.tdref.empty() ? "an inline constraint"
+                        : nullptr;
+        if (gap) unsupported(std::format("member '{}' is {}", m.asn1_name, gap));
+    }
+
+    // Row framing (X.690 §8.14), as in emit_choice. `tag` is the tag the
+    // member starts with on the wire, which decides whether an OPTIONAL
+    // member is present; an untagged CHOICE has none (X.680 §31.2.7) and
+    // an OPTIONAL one is present when the next tag is one of its
+    // alternatives' (DelegateChoice).
+    struct Framing { std::string tag, ber; };
+    auto framing = [&](const SequenceMemberSpec& m) -> Framing {
+        bool is_choice_ref = !m.mbuiltin && m.ref_kind == TaggedMemberSpec::RefTargetKind::Other
+                          && !m.ref_builtin_alias && !m.ref_is_sequence_or_set && !m.ref_is_seq_of;
+        const auto& rt = m.resolved_tag;
+        if (!rt) {
+            if (m.optional)
+                return {"null", std::format("new {}.spec.BerTagging.DelegateChoice(() -> {}.SPEC.berTags())", kWire, m.mtype)};
+            return {"null", std::format("{}.spec.BerTagging.DELEGATE", kWire)};
+        }
+        std::string tag = format_tag_literal(*rt);
+        if (rt->tag_is_override)
+            return {tag, std::format("new {}.spec.BerTagging.{}({})", kWire, m.is_explicit ? "Explicit" : "Implicit", tag)};
+        if (is_choice_ref || m.ref_is_sequence_or_set) return {tag, std::format("{}.spec.BerTagging.DELEGATE", kWire)};
+        if (m.is_explicit) return {tag, std::format("new {0}.spec.BerTagging.OfType({1}.BER_FRAMING)", kWire, m.mtype)};
+        return {tag, std::format("new {}.spec.BerTagging.Implicit({})", kWire, tag)};
+    };
+    auto constraints = [&](const SequenceMemberSpec& m) {
+        if (!m.mbuiltin && (m.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias || m.ref_builtin_alias))
+            return std::format("{}.CONSTRAINTS", m.ref_constraints_owner.empty() ? m.mtype : m.ref_constraints_owner);
+        return std::format("{}.spec.Constraints.UNCONSTRAINED", kWire);
+    };
+
+    std::vector<std::string> reserved = {t, "SPEC", "spec", "getMember", "presentMember", "setDefault",
+        "isDefaultEqual", "validate", "asMemberRef", "ownElementXerName", "xerInstruction", "berFraming",
+        "pduConstraints", "equals", "hashCode", "toString", "getClass", "notify", "notifyAll", "wait", "clone", "finalize"};
+    auto accessor = [&](const SequenceMemberSpec& m) {
+        std::string n = member_name(m.asn1_name);
+        while (std::find(reserved.begin(), reserved.end(), n) != reserved.end()) n += "_";
+        return n;
+    };
+    std::vector<std::string> names;
+    for (const auto& m : spec.members) names.push_back(accessor(m));
+
+    auto& os = session.buffer(declaration_extension());
+    if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
+    os << std::format("public final class {0} implements {1}.spec.Asn1Seq, {1}.spec.Asn1Pdu {{\n", t, kWire);
+    os << std::format("    public static final {0}.spec.SequenceSpec SPEC = new {0}.spec.SequenceSpec(\"{1}\", {2}, java.util.List.of(",
+                      kWire, spec.xer_name,
+                      spec.tag ? format_tag_literal(*spec.tag) : std::format("{}.ber.Tag.universal(16, true)", kWire));
+    for (size_t i = 0; i < spec.members.size(); ++i) {
+        const auto& m = spec.members[i];
+        auto f = framing(m);
+        os << std::format("{}\n            new {}.spec.MemberMeta(\"{}\", {}, {}, {}, {}, {}.spec.XerInstruction.DEFAULT, null)",
+                          i ? "," : "", kWire, m.asn1_name, f.tag, m.optional ? "true" : "false", f.ber, constraints(m), kWire);
+    }
+    os << std::format("),\n            {}, {}, false, java.util.List.of(), java.util.List.of(), java.util.List.of());\n\n",
+                      spec.ext_at, spec.roms_count);
+
+    for (size_t i = 0; i < spec.members.size(); ++i) {
+        const auto& m = spec.members[i];
+        if (m.optional) os << std::format("    private {} {};\n", m.mtype, names[i]);
+        else os << std::format("    private {0} {1} = new {0}();\n", m.mtype, names[i]);
+    }
+    os << "\n";
+
+    for (size_t i = 0; i < spec.members.size(); ++i) {
+        const auto& m = spec.members[i];
+        const std::string& n = names[i];
+        os << std::format("    /** ASN.1: {{@code {}}}{}. */\n", m.asn1_name, m.optional ? "; null when absent" : "");
+        os << std::format("    public {} {}() {{\n        return {};\n    }}\n\n", m.mtype, n, n);
+        os << std::format("    /** Sets {{@code {}}}{}. */\n", m.asn1_name, m.optional ? "; null makes it absent" : "");
+        os << std::format("    public void {}({} v) {{\n", n, m.mtype);
+        os << std::format("        {} = {};\n    }}\n\n", n, m.optional ? "v" : "java.util.Objects.requireNonNull(v)");
+    }
+
+    os << "    @java.lang.Override\n";
+    os << std::format("    public {}.spec.SequenceSpec spec() {{\n        return SPEC;\n    }}\n\n", kWire);
+    os << "    @java.lang.Override\n";
+    os << std::format("    public {}.spec.MemberRef getMember(int i) {{\n", kWire);
+    os << "        return switch (i) {\n";
+    for (size_t i = 0; i < spec.members.size(); ++i) {
+        const auto& n = names[i];
+        if (spec.members[i].optional)
+            os << std::format("            case {} -> {} == null ? {}.spec.MemberRef.ABSENT : {}.asMemberRef();\n", i, n, kWire, n);
+        else
+            os << std::format("            case {} -> {}.asMemberRef();\n", i, n);
+    }
+    os << "            default -> throw new java.lang.IndexOutOfBoundsException(i);\n        };\n    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << std::format("    public {}.spec.MemberRef presentMember(int i) {{\n", kWire);
+    os << "        return switch (i) {\n";
+    for (size_t i = 0; i < spec.members.size(); ++i) {
+        const auto& m = spec.members[i];
+        const auto& n = names[i];
+        if (m.optional)
+            os << std::format("            case {0} -> {{\n                if ({1} == null) {{\n                    {1} = new {2}();\n"
+                              "                }}\n                yield {1}.asMemberRef();\n            }}\n", i, n, m.mtype);
+        else
+            os << std::format("            case {} -> {}.asMemberRef();\n", i, n);
+    }
+    os << "            default -> throw new java.lang.IndexOutOfBoundsException(i);\n        };\n    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << "    public void setDefault(int i) {\n";
+    os << "        switch (i) {\n";
+    for (size_t i = 0; i < spec.members.size(); ++i) {
+        const auto& m = spec.members[i];
+        os << std::format("            case {} -> {} = {};\n", i, names[i], m.optional ? "null" : std::format("new {}()", m.mtype));
+    }
+    os << "            default -> throw new java.lang.IndexOutOfBoundsException(i);\n        }\n    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << "    public boolean isDefaultEqual(int i) {\n        return false;\n    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << "    public long validate(int i) {\n        return 0;\n    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << std::format("    public {0}.spec.MemberRef asMemberRef() {{\n        return new {0}.spec.MemberRef.Composite(this);\n    }}\n\n", kWire);
+    os << "    @java.lang.Override\n";
+    os << std::format("    public java.lang.String ownElementXerName() {{\n        return \"{}\";\n    }}\n\n", spec.xer_name);
+    // Equality is member by member, seen through each member's MemberRef
+    // so a builtin alias compares by the builtin it holds.
+    os << "    @java.lang.Override\n";
+    os << "    public boolean equals(java.lang.Object o) {\n";
+    os << std::format("        if (!(o instanceof {} other)) {{\n            return false;\n        }}\n", t);
+    os << "        for (int i = 0; i < SPEC.members().size(); i++) {\n";
+    os << "            if (!getMember(i).equals(other.getMember(i))) {\n                return false;\n            }\n";
+    os << "        }\n        return true;\n    }\n\n";
+    os << "    @java.lang.Override\n";
+    os << "    public int hashCode() {\n        int h = 1;\n";
+    os << "        for (int i = 0; i < SPEC.members().size(); i++) {\n            h = 31 * h + getMember(i).hashCode();\n        }\n";
+    os << "        return h;\n    }\n";
+    os << "}\n";
+}
+
 /// @brief Emit a reference to another generated type: nothing, since every
 ///        generated class of a run shares one package (JLS §7.4) and is
 ///        visible by its simple name.

@@ -92,6 +92,20 @@ public:
     void emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const override;
     void emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const override;
     void emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const override;
+    void emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const override;
+
+    /// @brief Nothing: Java resolves every class of the package by name,
+    ///        whatever the order they are declared in (JLS §6.3).
+    void emit_forward_declaration(const std::string&, TypeOutputSession&) const override {}
+
+    /// @brief Nothing: an OPTIONAL member is a nullable reference, which
+    ///        needs no special copy or move members.
+    void emit_special_members(const std::string&, TypeOutputSession&) const override {}
+
+    /// @brief Nothing: an OPTIONAL member is a nullable reference, which
+    ///        needs no storage-ops helper.
+    void emit_optional_member_ops(const std::string&, const std::string&, const std::string&,
+                                  TypeOutputSession&) const override {}
     void emit_type_reference(const std::string& type_name, const std::string& filename,
                              TypeOutputSession& session) const override;
     std::string native_int_type(IntStorageKind kind) const override;

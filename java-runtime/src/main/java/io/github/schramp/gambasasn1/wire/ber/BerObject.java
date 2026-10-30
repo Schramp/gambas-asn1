@@ -6,11 +6,14 @@ import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.AltMeta;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
 import io.github.schramp.gambasasn1.wire.spec.BerDispatch;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
 import io.github.schramp.gambasasn1.wire.spec.ChoiceSpec;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
+import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
+import io.github.schramp.gambasasn1.wire.spec.SequenceSpec;
 import java.util.List;
 
 /**
@@ -64,6 +67,14 @@ public final class BerObject {
                     default -> BerWriter.writePrimitive(out, ENUMERATED_TAG, content);
                 }
             }
+            case MemberRef.Composite(Asn1Seq s) -> {
+                switch (framing.resolve()) {
+                    case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeSequence(s, inner));
+                    case BerTagging.Implicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeSequenceContent(s, inner));
+                    case BerTagging.Unsupported(String reason) -> throw new EncodeException(reason);
+                    default -> encodeSequence(s, out);
+                }
+            }
             case MemberRef.Choice(Asn1Choice c) -> {
                 switch (framing.resolve()) {
                     case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeChoice(c, inner));
@@ -96,6 +107,18 @@ public final class BerObject {
                     }
                     case BerTagging.Unsupported(String reason) -> throw new DecodeException(reason, r.position());
                     default -> decodeEnumerated(slot, ENUMERATED_TAG, r);
+                }
+            }
+            case MemberRef.Composite(Asn1Seq s) -> {
+                switch (framing.resolve()) {
+                    case BerTagging.Explicit(Tag tag) -> {
+                        BerReader inner = enter(r, tag);
+                        decodeSequence(s, inner);
+                        expectEnd(inner, tag);
+                    }
+                    case BerTagging.Implicit(Tag tag) -> decodeSequenceContent(s, enter(r, tag), tag);
+                    case BerTagging.Unsupported(String reason) -> throw new DecodeException(reason, r.position());
+                    default -> decodeSequence(s, r);
                 }
             }
             case MemberRef.Choice(Asn1Choice c) -> {
@@ -131,6 +154,54 @@ public final class BerObject {
         long v = BerPrimitive.decodeInteger(tlv.value(), start);
         if (!slot.enumSet(v)) {
             throw new DecodeException("invalid ENUMERATED value: " + v, start);
+        }
+    }
+
+    /** A SEQUENCE value under its type's own tag (X.690 §8.9). */
+    private static void encodeSequence(Asn1Seq s, ByteSink out) {
+        BerWriter.writeTagged(out, s.spec().tag(), inner -> encodeSequenceContent(s, inner));
+    }
+
+    /**
+     * A SEQUENCE's contents: each present member in table order under its
+     * row's framing; an absent OPTIONAL member writes nothing (X.690 §8.9.2).
+     */
+    private static void encodeSequenceContent(Asn1Seq s, ByteSink out) {
+        List<MemberMeta> rows = s.spec().members();
+        for (int i = 0; i < rows.size(); i++) {
+            encodeMemberRef(s.getMember(i), rows.get(i).ber(), out);
+        }
+    }
+
+    /** Decode counterpart of {@link #encodeSequence}. */
+    private static void decodeSequence(Asn1Seq s, BerReader r) {
+        Tag tag = s.spec().tag();
+        decodeSequenceContent(s, enter(r, tag), tag);
+    }
+
+    /**
+     * Decodes a SEQUENCE's contents member by member. An OPTIONAL member is
+     * present when the next tag is the one its row starts with; otherwise
+     * it is set absent. Octets left after the last member are an error.
+     */
+    private static void decodeSequenceContent(Asn1Seq s, BerReader r, Tag tag) {
+        SequenceSpec spec = s.spec();
+        List<MemberMeta> rows = spec.members();
+        for (int i = 0; i < rows.size(); i++) {
+            MemberMeta row = rows.get(i);
+            if (row.optional()) {
+                Tag next = r.peekTag();
+                if (next == null || !row.ber().startsWith(row.tag(), next)) {
+                    s.setDefault(i);
+                    continue;
+                }
+            } else if (r.atEnd()) {
+                throw new DecodeException("SEQUENCE " + spec.name() + ": mandatory member '" + row.name() + "' missing", r.position());
+            }
+            decodeMemberRef(s.presentMember(i), row.ber(), r);
+        }
+        if (!r.atEnd()) {
+            throw new DecodeException("SEQUENCE " + spec.name() + ": unexpected octets after its last member", r.position());
         }
     }
 
