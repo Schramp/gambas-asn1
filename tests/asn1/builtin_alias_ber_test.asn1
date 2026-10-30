@@ -1,4 +1,5 @@
--- Builtin, INTEGER and ENUMERATED type assignments, each with its own tagging: the natural tag,
+-- Builtin (BOOLEAN, NULL, OCTET STRING, BIT STRING), INTEGER and ENUMERATED
+-- type assignments, each with its own tagging: the natural tag,
 -- IMPLICIT and EXPLICIT (X.680 §31.2, X.690 §8.14). BER vectors in
 -- tests/vectors/builtin_alias_ber_test.vectors are asn1c DER output.
 
@@ -24,5 +25,17 @@ BuiltinAliasBerTest DEFINITIONS ::= BEGIN
     NegColor         ::= ENUMERATED { low(-3), mid(0), high(300) }
     ImplicitColor    ::= [PRIVATE 2] IMPLICIT ENUMERATED { x, y }
     ExplicitColor    ::= [APPLICATION 1] EXPLICIT ENUMERATED { x, y }
+
+    Octets           ::= OCTET STRING
+    SizedOctets      ::= OCTET STRING (SIZE (2..4))
+    FixedOctets      ::= OCTET STRING (SIZE (3))
+    ImplicitOctets   ::= [7] IMPLICIT OCTET STRING
+    ExplicitOctets   ::= [APPLICATION 8] EXPLICIT OCTET STRING
+
+    Bits             ::= BIT STRING
+    SizedBits        ::= BIT STRING (SIZE (8, ...))
+    NamedBits        ::= BIT STRING { a(0), b(3), c(9) }
+    ImplicitBits     ::= [PRIVATE 9] IMPLICIT BIT STRING
+    ExplicitBits     ::= [10] BIT STRING
 
 END

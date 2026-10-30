@@ -1881,8 +1881,14 @@ c.set(Color.Value.blue);
 byte[] der = BerObject.encode(c);   // 0A 01 05
 ```
 
-So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage) and
-ENUMERATED type assignments. The Java
+OCTET STRING and BIT STRING type assignments hold an `Asn1OctetString`
+(`byte[]`) or an `Asn1BitString` (packed `byte[]` plus the unused-bit
+count of the last octet), with their SIZE constraint in `CONSTRAINTS`.
+Like the C++ and Rust runtimes, BER decode accepts only the primitive form
+of these strings (gambas-asn1#929).
+
+So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage),
+ENUMERATED, OCTET STRING and BIT STRING type assignments. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.
 

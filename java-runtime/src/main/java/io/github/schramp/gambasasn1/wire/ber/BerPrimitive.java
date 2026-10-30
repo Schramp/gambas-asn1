@@ -5,9 +5,11 @@ import io.github.schramp.gambasasn1.wire.io.ByteSource;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
+import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
 import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
+import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
 
 /**
@@ -19,6 +21,8 @@ public final class BerPrimitive {
     private static final Tag BOOLEAN_TAG = Tag.universal(UniversalTag.BOOLEAN, false);
     private static final Tag NULL_TAG = Tag.universal(UniversalTag.NULL, false);
     private static final Tag INTEGER_TAG = Tag.universal(UniversalTag.INTEGER, false);
+    private static final Tag OCTET_STRING_TAG = Tag.universal(UniversalTag.OCTET_STRING, false);
+    private static final Tag BIT_STRING_TAG = Tag.universal(UniversalTag.BIT_STRING, false);
 
     /** X.690 §11.1: DER encodes TRUE as all ones. */
     private static final int DER_TRUE = 0xFF;
@@ -63,6 +67,8 @@ public final class BerPrimitive {
             case Asn1Boolean b -> BOOLEAN_TAG;
             case Asn1Null n -> NULL_TAG;
             case Asn1Integer i -> INTEGER_TAG;
+            case Asn1OctetString o -> OCTET_STRING_TAG;
+            case Asn1BitString b -> BIT_STRING_TAG;
             default -> throw new EncodeException("no BER form for " + p.xerElementName());
         };
     }
@@ -72,6 +78,12 @@ public final class BerPrimitive {
             case Asn1Boolean b -> BerWriter.writePrimitive(out, tag, new byte[] {(byte) (b.get() ? DER_TRUE : 0)});
             case Asn1Null n -> BerWriter.writePrimitive(out, tag, new byte[0]);
             case Asn1Integer i -> BerWriter.writePrimitive(out, tag, encodeInteger(i.get()));
+            case Asn1OctetString o -> BerWriter.writePrimitive(out, tag, o.get());
+            // X.690 §8.6.2: the initial octet counts the unused bits of the last octet.
+            case Asn1BitString b -> BerWriter.writeTagged(out, tag, c -> {
+                c.write(b.unusedBits());
+                c.write(b.bytes());
+            });
             default -> throw new EncodeException("no BER form for " + p.xerElementName());
         }
     }
@@ -98,6 +110,17 @@ public final class BerPrimitive {
                 }
             }
             case Asn1Integer i -> i.set(decodeInteger(v, start));
+            case Asn1OctetString o -> o.set(v.remainingBytes());
+            case Asn1BitString b -> {
+                if (v.atEnd()) {
+                    throw new DecodeException("BIT STRING: contents need the unused-bits octet", start);
+                }
+                int unused = v.read("BIT STRING");
+                if (unused > 7 || (unused != 0 && v.atEnd())) {
+                    throw new DecodeException("BIT STRING: " + unused + " unused bits with " + v.remaining() + " octets", start);
+                }
+                b.set(v.remainingBytes(), unused);
+            }
             default -> throw new DecodeException("no BER form for " + p.xerElementName(), start);
         }
     }

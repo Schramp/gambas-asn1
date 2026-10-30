@@ -2,6 +2,7 @@
 #include "asn1cpp/codec/Constraints.hpp"
 #include <algorithm>
 #include <format>
+#include <limits>
 #include <stdexcept>
 
 namespace asn1::codegen {
@@ -21,6 +22,8 @@ static std::string java_builtin_class(ast::BuiltinType bt) {
     switch (bt) {
     case BT::Boolean: return std::format("{}.types.Asn1Boolean", kWire);
     case BT::Null:    return std::format("{}.types.Asn1Null", kWire);
+    case BT::OctetString: return std::format("{}.types.Asn1OctetString", kWire);
+    case BT::BitString:   return std::format("{}.types.Asn1BitString", kWire);
     default:          return "";
     }
 }
@@ -70,6 +73,30 @@ static std::string java_int_constraints(int flags, int range_bits, int64_t lower
                        kWire, flags, range_bits, java_long(lower), java_long(upper));
 }
 
+/// @brief A runtime `Constraints` constructor call for a SIZE constraint
+///        (X.680 §51.5): flags (SIZE_CONSTRAINED, EXTENSIBLE, NAMED_BITS),
+///        PER length width (X.691 §11.9) and bounds. An unbounded upper
+///        SIZE is stored as `Long.MAX_VALUE`, as in the other runtimes.
+static std::string java_size_constraints(const BuiltinAliasSpec& spec) {
+    int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
+              | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
+              | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
+    int64_t upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
+    return std::format("new {}.spec.Constraints({}, 0, 0L, 0L, 0L, 0L, {}, {}, {}, null, 0, null, 0, null, 0.0, 0.0)",
+                       kWire, flags, spec.size_range_bits, java_long(spec.size_lower), java_long(upper));
+}
+
+/// @brief The `xerInstruction()` override for a type with an X.693 §21
+///        BASE64 or UTF8 ENCODING-CONTROL instruction, or "" without one.
+static std::string java_xer_instruction(ast::XerEncoding enc) {
+    const char* name = enc == ast::XerEncoding::Base64 ? "BASE64" : enc == ast::XerEncoding::Utf8 ? "UTF8" : nullptr;
+    if (!name) return "";
+    return std::format("\n    @java.lang.Override\n"
+                       "    public {0}.spec.XerInstruction xerInstruction() {{\n"
+                       "        return {0}.spec.XerInstruction.{1};\n"
+                       "    }}\n", kWire, name);
+}
+
 /// @brief Emit the members every value-holding generated class shares:
 ///        the `AsMemberRef` answers for a builtin wrapped in `value`.
 /// @param os       The `.java` buffer.
@@ -107,9 +134,12 @@ void JavaBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSes
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
     os << std::format("public final class {} implements {}.spec.AsMemberRef {{\n", spec.type_name, kWire);
-    os << std::format("    public static final {0}.spec.Constraints CONSTRAINTS = {0}.spec.Constraints.UNCONSTRAINED;\n", kWire);
+    using BT = ast::BuiltinType;
+    bool sizeable = spec.builtin_type == BT::OctetString || spec.builtin_type == BT::BitString;
+    os << std::format("    public static final {0}.spec.Constraints CONSTRAINTS = {1};\n", kWire,
+                      sizeable ? java_size_constraints(spec) : std::format("{}.spec.Constraints.UNCONSTRAINED", kWire));
     os << ber_framing_field(spec) << "\n";
-    emit_primitive_holder(os, cls, spec.xer_name, ber_framing_method(spec));
+    emit_primitive_holder(os, cls, spec.xer_name, java_xer_instruction(spec.xer_encoding) + ber_framing_method(spec));
 }
 
 /// @brief Emit an INTEGER type assignment (X.680 §19) as a class holding

@@ -1901,7 +1901,9 @@ set(JAVA_LEGS_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_java)
 set(java_leg_builtin_alias_ber_PDUS
     Flag ImplicitFlag ExplicitFlag Hyphen-Flag Nothing ImplicitNothing ExplicitNothing
     Num Byte Named ImplicitNum ExplicitNum
-    Color ExtColor NegColor ImplicitColor ExplicitColor)
+    Color ExtColor NegColor ImplicitColor ExplicitColor
+    Octets SizedOctets FixedOctets ImplicitOctets ExplicitOctets
+    Bits SizedBits NamedBits ImplicitBits ExplicitBits)
 set(java_leg_outputs)
 foreach(leg builtin_alias_ber)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})

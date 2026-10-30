@@ -673,6 +673,26 @@ int main() {
               !JavaBackend::valid_package("a.") && !JavaBackend::valid_package("com.class.x") &&
               !JavaBackend::valid_package("1abc") && !JavaBackend::valid_package("a-b"));
 
+        {
+            BuiltinAliasSpec spec;
+            spec.type_name = "B64";
+            spec.xer_name = "B64";
+            spec.builtin_type = asn1::ast::BuiltinType::OctetString;
+            spec.xer_encoding = asn1::ast::XerEncoding::Base64;
+            spec.has_size_constraint = spec.size_bounded = true;
+            spec.size_lower = 1;
+            spec.size_upper = 16;
+            spec.size_range_bits = 4;
+            spec.tag = TypeTagSpec{asn1::ast::TagClass::Universal, 4, false};
+            TypeOutputSession s4;
+            j.emit_builtin_alias(spec, s4);
+            std::string b64 = buf_str(s4, "java");
+            check("Java OCTET STRING alias carries its X.693 BASE64 instruction and SIZE table",
+                  b64.find("XerInstruction.BASE64") != std::string::npos &&
+                  b64.find("Constraints(8, 0, 0L, 0L, 0L, 0L, 4, 1L, 16L,") != std::string::npos &&
+                  b64.find("BER_FRAMING") == std::string::npos, b64);
+        }
+
         bool threw = false;
         try {
             SequenceSpec spec;
