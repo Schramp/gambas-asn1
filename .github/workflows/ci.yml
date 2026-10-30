@@ -76,7 +76,7 @@ jobs:
       # The only build outputs xval_sweep reads; the xval job below runs
       # the sweep against these instead of rebuilding.
       - name: Upload xval inputs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: xval-inputs
           retention-days: 1
@@ -113,7 +113,7 @@ jobs:
 
       - name: Upload documentation artifact
         if: github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: doxygen-html
           path: build/docs/html/
@@ -197,7 +197,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Download xval inputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: xval-inputs
           path: build
