@@ -19,3 +19,4 @@ tests/asn1/per_fragment_test.asn1    Big
 tests/asn1/fuzz_test.asn1            Bag
 tests/asn1/typedef_tag_test.asn1     Tagged
 tests/asn1/wrong_tag_test.asn1       WtSeq      @asn1c-opaque-contents
+tests/asn1/cross_module_ref_test.asn1  PortOp

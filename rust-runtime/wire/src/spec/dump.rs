@@ -10,7 +10,7 @@
 use crate::ber::tag::{Tag, TagClass};
 use crate::constraints::Constraints;
 use crate::spec::choice::BerTagging;
-use crate::spec::object::{AsMemberRef, MemberRef, XerInstruction};
+use crate::spec::object::{AsMemberRef, MemberRef, MemberRefMut, XerInstruction};
 
 fn jstr(s: &str) -> String {
     let mut out = String::from("\"");
@@ -115,6 +115,22 @@ fn primitive_kind(m: MemberRef) -> &'static str {
     }
 }
 
+/// For each of a CHOICE's `count` alternatives, whether its payload is
+/// itself an untagged CHOICE (X.680 §31.2.7). A value holds one
+/// alternative at a time, so each is selected in turn on a scratch value.
+fn untagged_choice_alternatives<T: AsMemberRef + Default>(count: usize) -> Vec<bool> {
+    let mut w = T::default();
+    (0..count)
+        .map(|i| match w.as_member_ref_mut() {
+            MemberRefMut::Choice(c) => {
+                c.select_mut(i);
+                matches!(c.get_active(), MemberRef::Choice(x) if x.spec().own_tag.is_none())
+            }
+            _ => false,
+        })
+        .collect()
+}
+
 /// Dump one type's descriptor tables as one line of canonical JSON.
 /// `name` is the ASN.1 type name, used for the shapes whose tables carry
 /// none of their own (contained and unsupported values).
@@ -159,14 +175,16 @@ pub fn dump_tables<T: AsMemberRef + Default>(name: &str) -> String {
         }
         MemberRef::Choice(c) => {
             let sp = c.spec();
+            let untagged = untagged_choice_alternatives::<T>(sp.alternatives.len());
             let rows: Vec<String> = sp
                 .alternatives
                 .iter()
-                .map(|a| {
+                .zip(untagged)
+                .map(|(a, untagged)| {
                     format!(
                         "{{\"name\":{},{},\"optional\":false,\"constraints\":{},\"contained\":{}}}",
                         jstr(a.name),
-                        jtagging(a.ber, None, false),
+                        jtagging(a.ber, None, untagged),
                         jconstraints(a.constraints),
                         a.contained.is_some()
                     )
