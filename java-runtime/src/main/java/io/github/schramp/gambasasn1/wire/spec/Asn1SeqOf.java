@@ -17,6 +17,8 @@ public interface Asn1SeqOf {
 
     /** Appends a default element and returns it. */
     MemberRef addDefault();
+    /** Removes every element, before a decode fills the collection. */
+    void clear();
 
     /** Element {@code index}'s own XER element name (see {@link AsMemberRef#ownElementXerName}). */
     String elemNaturalXerName(int index);

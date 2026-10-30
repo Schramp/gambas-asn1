@@ -28,7 +28,8 @@ public final class TableDump {
      * @param name    the ASN.1 type name, for shapes whose tables carry none
      */
     public static String dump(Supplier<? extends AsMemberRef> factory, String name) {
-        MemberRef m = factory.get().asMemberRef();
+        AsMemberRef value = factory.get();
+        MemberRef m = value.asMemberRef();
         StringBuilder out = new StringBuilder();
         switch (m) {
             case MemberRef.Composite(Asn1Seq s) -> {
@@ -68,9 +69,15 @@ public final class TableDump {
                         .append("],\"ber_tags\":[").append(String.join(",", tags)).append("]");
             }
             case MemberRef.SeqOf(Asn1SeqOf q) -> {
-                Tag tag = q.naturalTag();
+                // The type's own tag (X.680 §31.2) when its assignment has one.
+                Tag natural = q.naturalTag();
+                Tag tag = switch (value.berFraming()) {
+                    case BerTagging.Implicit(Tag t) -> t;
+                    case BerTagging.Explicit(Tag t) -> t;
+                    default -> natural;
+                };
                 out.append("{\"name\":").append(jstr(q.ownXerName())).append(",\"kind\":\"")
-                        .append(tag.number() == 17 ? "SET_OF" : "SEQUENCE_OF").append("\",\"tag\":").append(jtag(tag))
+                        .append(natural.number() == 17 ? "SET_OF" : "SEQUENCE_OF").append("\",\"tag\":").append(jtag(tag))
                         .append(",\"element_xer_tag\":").append(q.elemXerName() == null ? "null" : jstr(q.elemXerName()));
             }
             case MemberRef.Enumerated(EnumSlot ignored, EnumSpec e) -> {

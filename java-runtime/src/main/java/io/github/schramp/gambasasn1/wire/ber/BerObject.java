@@ -1,12 +1,14 @@
 package io.github.schramp.gambasasn1.wire.ber;
 
 import io.github.schramp.gambasasn1.wire.io.ByteSink;
+import io.github.schramp.gambasasn1.wire.io.ByteSource;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.AltMeta;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
+import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
 import io.github.schramp.gambasasn1.wire.spec.BerDispatch;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
 import io.github.schramp.gambasasn1.wire.spec.ChoiceSpec;
@@ -14,6 +16,8 @@ import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.spec.SequenceSpec;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -75,6 +79,16 @@ public final class BerObject {
                     default -> encodeSequence(s, out);
                 }
             }
+            case MemberRef.SeqOf(Asn1SeqOf q) -> {
+                Tag natural = q.naturalTag();
+                switch (framing.resolve()) {
+                    case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag,
+                            inner -> BerWriter.writeTagged(inner, natural, content -> encodeSeqOfContent(q, content)));
+                    case BerTagging.Implicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeSeqOfContent(q, inner));
+                    case BerTagging.Unsupported(String reason) -> throw new EncodeException(reason);
+                    default -> BerWriter.writeTagged(out, natural, inner -> encodeSeqOfContent(q, inner));
+                }
+            }
             case MemberRef.Choice(Asn1Choice c) -> {
                 switch (framing.resolve()) {
                     case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeChoice(c, inner));
@@ -119,6 +133,19 @@ public final class BerObject {
                     case BerTagging.Implicit(Tag tag) -> decodeSequenceContent(s, enter(r, tag), tag);
                     case BerTagging.Unsupported(String reason) -> throw new DecodeException(reason, r.position());
                     default -> decodeSequence(s, r);
+                }
+            }
+            case MemberRef.SeqOf(Asn1SeqOf q) -> {
+                Tag natural = q.naturalTag();
+                switch (framing.resolve()) {
+                    case BerTagging.Explicit(Tag tag) -> {
+                        BerReader inner = enter(r, tag);
+                        decodeSeqOfContent(q, enter(inner, natural));
+                        expectEnd(inner, tag);
+                    }
+                    case BerTagging.Implicit(Tag tag) -> decodeSeqOfContent(q, enter(r, tag));
+                    case BerTagging.Unsupported(String reason) -> throw new DecodeException(reason, r.position());
+                    default -> decodeSeqOfContent(q, enter(r, natural));
                 }
             }
             case MemberRef.Choice(Asn1Choice c) -> {
@@ -186,6 +213,9 @@ public final class BerObject {
      */
     private static void decodeSequenceContent(Asn1Seq s, BerReader r, Tag tag) {
         SequenceSpec spec = s.spec();
+        if (spec.isSet()) {
+            r = setInTableOrder(s, r);
+        }
         List<MemberMeta> rows = spec.members();
         for (int i = 0; i < rows.size(); i++) {
             MemberMeta row = rows.get(i);
@@ -202,6 +232,93 @@ public final class BerObject {
         }
         if (!r.atEnd()) {
             throw new DecodeException("SEQUENCE " + spec.name() + ": unexpected octets after its last member", r.position());
+        }
+    }
+
+    /**
+     * A SET's component TLVs copied into member-table order, so the
+     * sequential member walk can decode them: BER allows SET components in
+     * any order (X.690 §8.11.2), and the table holds them in canonical tag
+     * order (X.680 §8.6). A TLV no member matches goes last, where the walk
+     * reports it.
+     */
+    private static BerReader setInTableOrder(Asn1Seq s, BerReader r) {
+        List<MemberMeta> rows = s.spec().members();
+        byte[][] slot = new byte[rows.size()][];
+        List<byte[]> unmatched = new ArrayList<>();
+        ByteSource src = r.source();
+        while (!r.atEnd()) {
+            int start = src.position();
+            Tag t = r.readTlv().tag();
+            byte[] raw = src.bytesSince(start);
+            int i = 0;
+            while (i < rows.size() && (slot[i] != null || !setMemberMatches(s, i, t))) {
+                i++;
+            }
+            if (i < rows.size()) {
+                slot[i] = raw;
+            } else {
+                unmatched.add(raw);
+            }
+        }
+        ByteSink out = new ByteSink();
+        for (byte[] raw : slot) {
+            if (raw != null) {
+                out.write(raw);
+            }
+        }
+        unmatched.forEach(out::write);
+        return new BerReader(out.toByteArray());
+    }
+
+    /**
+     * Whether SET member {@code i} starts with wire tag {@code t}: an
+     * untagged CHOICE member by one of its alternatives' tags, any other
+     * member by its row's tag.
+     */
+    private static boolean setMemberMatches(Asn1Seq s, int i, Tag t) {
+        MemberMeta row = s.spec().members().get(i);
+        if (row.ber() instanceof BerTagging.Delegate && s.getMember(i) instanceof MemberRef.Choice(Asn1Choice c)
+                && c.spec().ownTag() == null) {
+            return dispatch(c.spec().berTags(), t) >= 0;
+        }
+        return row.ber().startsWith(row.tag(), t);
+    }
+
+    /**
+     * A SEQUENCE OF's contents: each element under the element type's own
+     * framing (X.690 §8.10). A SET OF's elements go in DER order, by their
+     * encodings as unsigned octet strings (X.690 §11.6).
+     */
+    private static void encodeSeqOfContent(Asn1SeqOf q, ByteSink out) {
+        BerTagging framing = q.elemBerFraming();
+        if (q.naturalTag().number() == UniversalTag.SET && q.size() > 1) {
+            List<byte[]> parts = new ArrayList<>(q.size());
+            for (int i = 0; i < q.size(); i++) {
+                ByteSink part = new ByteSink();
+                encodeMemberRef(q.get(i), framing, part);
+                parts.add(part.toByteArray());
+            }
+            parts.sort(Arrays::compareUnsigned);
+            for (byte[] p : parts) {
+                out.write(p);
+            }
+            return;
+        }
+        for (int i = 0; i < q.size(); i++) {
+            encodeMemberRef(q.get(i), framing, out);
+        }
+    }
+
+    /**
+     * Decodes a SEQUENCE OF's contents: the collection is emptied, then one
+     * element is appended and decoded per TLV until the contents end.
+     */
+    private static void decodeSeqOfContent(Asn1SeqOf q, BerReader r) {
+        BerTagging framing = q.elemBerFraming();
+        q.clear();
+        while (!r.atEnd()) {
+            decodeMemberRef(q.addDefault(), framing, r);
         }
     }
 

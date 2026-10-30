@@ -1946,21 +1946,37 @@ getter returns null when it is absent, and setting it to null makes it absent;
 a mandatory member always holds a value. Generated equality compares member by
 member. On decode, an OPTIONAL member is present when the next tag is the one
 its row starts with: for an untagged CHOICE member, one of the CHOICE's
-alternative tags. So far only root members are emitted. The compiler rejects a
-SEQUENCE with a member of the following kinds, or a SET, with
+alternative tags. A SET is the same class shape with its members in canonical
+tag order (X.680 §8.6): decode accepts its components in any order (X.690
+§8.11.2), and encode writes them in that order. So far only root members are
+emitted. The compiler rejects a SEQUENCE or SET with a member of the following
+kinds with
 `emit_sequence: ... not implemented for this backend`:
 
 - DEFAULT values;
 - extension markers;
-- SEQUENCE OF / SET OF members;
-- inline member constraints;
 - recursive member types;
 - contained values.
 
+A member, alternative or collection element with an inline constraint
+(`INTEGER (0..255)`, `IA5String (SIZE (1..8))`) gets its own constraint table:
+a package-private class `<Type>_<member>` beside the type's class, holding
+`CONSTRAINTS`, which its row's `constraints()` returns. INTEGER value ranges
+and SIZE constraints are carried; a REAL range and a FROM alphabet are not
+yet. A collection member's SIZE is its collection type's `CONSTRAINTS`.
+
+A SEQUENCE OF is a `SeqOf<T>` and a SET OF a `SetOf<T>` (runtime package
+`spec`). `items()` is the element list, which can be changed in place, and
+`add(v)` appends an element. A named SEQUENCE OF / SET OF type is a class that
+extends one of these. An inline collection member uses them directly; a
+nested one is a collection of collections. Decoding replaces the elements a
+collection held. A SET OF keeps the order its elements were added or decoded
+in; BER encode writes them in DER order (X.690 §11.6), as asn1c does.
+
 So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage),
 ENUMERATED, OCTET STRING, BIT STRING, character string, OBJECT IDENTIFIER,
-RELATIVE-OID, UTCTime, GeneralizedTime, REAL, ANY, CHOICE and SEQUENCE type
-assignments, and INTEGER in both signed and unsigned 64-bit storage. The Java
+RELATIVE-OID, UTCTime, GeneralizedTime, REAL, ANY, CHOICE, SEQUENCE and
+SEQUENCE OF / SET OF type assignments, and INTEGER in both signed and unsigned 64-bit storage. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.
 
