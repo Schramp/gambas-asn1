@@ -15,6 +15,8 @@ import gen.builtin_alias_ber.ExplicitFlag;
 import gen.builtin_alias_ber.ExplicitNothing;
 import gen.builtin_alias_ber.ExplicitNum;
 import gen.builtin_alias_ber.ExplicitOctets;
+import gen.builtin_alias_ber.ExplicitOid;
+import gen.builtin_alias_ber.ExplicitRelOid;
 import gen.builtin_alias_ber.ExplicitUtf8;
 import gen.builtin_alias_ber.ExtColor;
 import gen.builtin_alias_ber.FixedOctets;
@@ -30,6 +32,8 @@ import gen.builtin_alias_ber.ImplicitIa5;
 import gen.builtin_alias_ber.ImplicitNothing;
 import gen.builtin_alias_ber.ImplicitNum;
 import gen.builtin_alias_ber.ImplicitOctets;
+import gen.builtin_alias_ber.ImplicitOid;
+import gen.builtin_alias_ber.ImplicitRelOid;
 import gen.builtin_alias_ber.Named;
 import gen.builtin_alias_ber.NamedBits;
 import gen.builtin_alias_ber.NegColor;
@@ -37,7 +41,9 @@ import gen.builtin_alias_ber.Nothing;
 import gen.builtin_alias_ber.Num;
 import gen.builtin_alias_ber.Numeric;
 import gen.builtin_alias_ber.Octets;
+import gen.builtin_alias_ber.Oid;
 import gen.builtin_alias_ber.Printable;
+import gen.builtin_alias_ber.RelOid;
 import gen.builtin_alias_ber.SizedBits;
 import gen.builtin_alias_ber.SizedOctets;
 import gen.builtin_alias_ber.T61;
@@ -52,6 +58,7 @@ import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.EnumEntry;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
+import io.github.schramp.gambasasn1.wire.types.Asn1Arcs;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
 import io.github.schramp.gambasasn1.wire.types.Asn1CharString;
@@ -118,7 +125,13 @@ class BuiltinAliasBerTest {
             Map.entry("Bmp", Bmp::new),
             Map.entry("Universal", Universal::new),
             Map.entry("ImplicitIa5", ImplicitIa5::new),
-            Map.entry("ExplicitUtf8", ExplicitUtf8::new));
+            Map.entry("ExplicitUtf8", ExplicitUtf8::new),
+            Map.entry("Oid", Oid::new),
+            Map.entry("ImplicitOid", ImplicitOid::new),
+            Map.entry("ExplicitOid", ExplicitOid::new),
+            Map.entry("RelOid", RelOid::new),
+            Map.entry("ImplicitRelOid", ImplicitRelOid::new),
+            Map.entry("ExplicitRelOid", ExplicitRelOid::new));
 
     static Stream<Vectors.Vector> vectors() {
         return Vectors.load("builtin_alias_ber_test.vectors").stream();
@@ -127,7 +140,8 @@ class BuiltinAliasBerTest {
     /**
      * Sets {@code v} to the value a vector's XER names (X.693): BOOLEAN's
      * {@code <true/>}, an INTEGER's number, an ENUMERATED item's empty element,
-     * OCTET STRING hex digits, BIT STRING binary digits, character string text.
+     * OCTET STRING hex digits, BIT STRING binary digits, character string text,
+     * OBJECT IDENTIFIER and RELATIVE-OID dotted arcs.
      */
     private static void setFromXer(AsMemberRef v, String xer) {
         if (xer.endsWith("/>") && xer.indexOf('>') == xer.length() - 1) {
@@ -143,6 +157,8 @@ class BuiltinAliasBerTest {
                     || c instanceof Asn1GraphicString || c instanceof Asn1GeneralString ->
                 c.setOctets(HexFormat.of().parseHex(inner));
             case MemberRef.Primitive(Asn1CharString c) -> c.set(inner);
+            case MemberRef.Primitive(Asn1Arcs a) ->
+                a.set(java.util.Arrays.stream(inner.split("\\.")).mapToLong(Long::parseLong).toArray());
             case MemberRef.Primitive(Asn1BitString b) -> {
                 byte[] packed = new byte[(inner.length() + 7) / 8];
                 for (int k = 0; k < inner.length(); k++) {

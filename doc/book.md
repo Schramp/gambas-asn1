@@ -1894,8 +1894,14 @@ decode and re-encode unchanged, as in the C++ runtime; `get()`/`set(String)`
 convert through the kind's encoding (UTF-8, UTF-16BE for BMPString,
 UTF-32BE for UniversalString, one octet per character otherwise).
 
+OBJECT IDENTIFIER and RELATIVE-OID hold an `Asn1ObjectIdentifier` or an
+`Asn1RelativeOid` (base class `Asn1Arcs`): the arcs as a `long[]`, each in
+0..2³²−1 like the C++ and Rust runtimes and asn1c (`set` rejects values
+outside that range, and BER decode rejects a wider subidentifier).
+
 So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage),
-ENUMERATED, OCTET STRING, BIT STRING and character string type assignments. The Java
+ENUMERATED, OCTET STRING, BIT STRING, character string, OBJECT IDENTIFIER and
+RELATIVE-OID type assignments. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.
 

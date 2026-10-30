@@ -1905,7 +1905,8 @@ set(java_leg_builtin_alias_ber_PDUS
     Octets SizedOctets FixedOctets ImplicitOctets ExplicitOctets
     Bits SizedBits NamedBits ImplicitBits ExplicitBits
     Utf8 Numeric Printable Teletex T61 Videotex Ia5 Graphic
-    Visible General Descriptor Bmp Universal ImplicitIa5 ExplicitUtf8)
+    Visible General Descriptor Bmp Universal ImplicitIa5 ExplicitUtf8
+    Oid ImplicitOid ExplicitOid RelOid ImplicitRelOid ExplicitRelOid)
 set(java_leg_outputs)
 foreach(leg builtin_alias_ber)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
