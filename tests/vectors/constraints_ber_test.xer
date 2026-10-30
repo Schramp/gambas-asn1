@@ -1,0 +1,7 @@
+# Type<TAB>XER value. make_ber_vectors.py turns each line into asn1c's DER.
+# asn1c cannot encode an INTEGER above INT64_MAX, so `big` stays below it here.
+Limits	<Limits><byte>255</byte><neg>-5</neg><from>10</from><big>9223372036854775807</big><fixed>01020304</fixed><name>abc</name><bits>1010</bits><small><INTEGER>9</INTEGER></small><sized><BOOLEAN><true/></BOOLEAN></sized></Limits>
+Limits	<Limits><byte>0</byte><neg>5</neg><from>1000</from><big>0</big><fixed>00000000</fixed><name>abcdefgh</name><bits></bits><opt>xy</opt><small></small><sized><BOOLEAN><false/></BOOLEAN><BOOLEAN><true/></BOOLEAN><BOOLEAN><false/></BOOLEAN></sized></Limits>
+Pick	<Pick><num>10</num></Pick>
+Pick	<Pick><txt>abcd</txt></Pick>
+Digits	<Digits><INTEGER>0</INTEGER><INTEGER>9</INTEGER></Digits>
