@@ -139,6 +139,10 @@ struct BerTraits<BitString> {
         if (unused > 7)
             return make_unexpected<BitString, DecodeError>(
                 DecodeError(std::format("BIT STRING unused bits out of range: {}", unused)));
+        // X.690 §8.6.2.3: an empty bitstring has a zero initial octet.
+        if (unused != 0 && value.size() == 1)
+            return make_unexpected<BitString, DecodeError>(
+                DecodeError(std::format("BIT STRING: {} unused bits with no contents octets", unused)));
         auto payload = value.subspan(1);
         return BitString{std::vector<uint8_t>(payload.begin(), payload.end()), unused};
     }
