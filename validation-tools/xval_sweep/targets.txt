@@ -91,6 +91,7 @@ examples/sample.source.ETSI-LI-PS-PDU/asn1-files   EncryptedPayload   -fallow-ne
 tests/asn1/roundtrip_test.asn1        Container  @real-reencode
 tests/asn1/explicit_tag_test.asn1     Mixed
 tests/asn1/choice_test.asn1           Alt4
+tests/asn1/per_choice_order_test.asn1 Nested
 tests/asn1/self_ref_choice_test.asn1  RecChoice
 
 # Regression target for a once-real asn1c divergence (CHOICE

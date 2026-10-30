@@ -1,0 +1,9 @@
+-- PER CHOICE index order with an untagged CHOICE alternative: it is
+-- ordered as the smallest tag in its extension root (X.691 §22.3), so
+-- `inner` (UNIVERSAL 2 via Inner.i) is index 0, before `o` and `wrapped`.
+PerChoiceOrderTest DEFINITIONS ::= BEGIN
+
+Inner  ::= CHOICE { i INTEGER, s IA5String }
+Nested ::= CHOICE { o OCTET STRING, wrapped [3] Inner, inner Inner }
+
+END

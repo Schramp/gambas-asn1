@@ -2,7 +2,7 @@
 # Makefile.tmpl. Keywords substituted by the driver:
 #   __ASNCPP__         path to the asn1cpp compiler binary
 #   __ASN1_FILES__     space-separated .asn1 source file(s) for this target
-#   __PDU_TYPE__       PDU type name (-pdu=<TYPE>)
+#   __PDU_FLAGS__      one -pdu=<TYPE> per PDU type of the build group
 #
 # Two-step build, matching etsitools/asn1cpp/randgen-rust/Makefile's own
 # "ensure gen fresh, then cargo build" order — but `gen` is this Makefile's
@@ -19,7 +19,7 @@
 
 ASNCPP     := __ASNCPP__
 ASN1_FILES := __ASN1_FILES__
-PDU_TYPE   := __PDU_TYPE__
+PDU_FLAGS  := __PDU_FLAGS__
 
 .PHONY: all gen build clean
 
@@ -32,7 +32,7 @@ gen: gen/.stamp
 gen/.stamp: $(ASN1_FILES) $(ASNCPP) Makefile
 	@rm -rf gen.new
 	@mkdir -p gen.new gen
-	$(ASNCPP) $(ASN1_FILES) -pdu=$(PDU_TYPE) __ASNCPP_FLAGS__ --target=rust -o gen.new
+	$(ASNCPP) $(ASN1_FILES) $(PDU_FLAGS) __ASNCPP_FLAGS__ --target=rust -o gen.new
 	@rsync -rc --delete --exclude=.stamp gen.new/ gen/
 	@rm -rf gen.new
 	@touch $@
