@@ -115,18 +115,23 @@ fn primitive_kind(m: MemberRef) -> &'static str {
     }
 }
 
-/// For each of a CHOICE's `count` alternatives, whether its payload is
-/// itself an untagged CHOICE (X.680 §31.2.7). A value holds one
-/// alternative at a time, so each is selected in turn on a scratch value.
-fn untagged_choice_alternatives<T: AsMemberRef + Default>(count: usize) -> Vec<bool> {
+/// For each of a CHOICE's `count` alternatives whose payload is itself a
+/// CHOICE, that CHOICE's own tag: `Some(None)` for an untagged CHOICE
+/// (X.680 §31.2.7), `Some(Some(tag))` for a tagged one; `None` otherwise.
+/// A value holds one alternative at a time, so each is selected in turn on
+/// a scratch value.
+fn choice_alternatives<T: AsMemberRef + Default>(count: usize) -> Vec<Option<Option<Tag>>> {
     let mut w = T::default();
     (0..count)
         .map(|i| match w.as_member_ref_mut() {
             MemberRefMut::Choice(c) => {
                 c.select_mut(i);
-                matches!(c.get_active(), MemberRef::Choice(x) if x.spec().own_tag.is_none())
+                match c.get_active() {
+                    MemberRef::Choice(x) => Some(x.spec().own_tag),
+                    _ => None,
+                }
             }
-            _ => false,
+            _ => None,
         })
         .collect()
 }
@@ -175,16 +180,16 @@ pub fn dump_tables<T: AsMemberRef + Default>(name: &str) -> String {
         }
         MemberRef::Choice(c) => {
             let sp = c.spec();
-            let untagged = untagged_choice_alternatives::<T>(sp.alternatives.len());
+            let inner = choice_alternatives::<T>(sp.alternatives.len());
             let rows: Vec<String> = sp
                 .alternatives
                 .iter()
-                .zip(untagged)
-                .map(|(a, untagged)| {
+                .zip(inner)
+                .map(|(a, inner)| {
                     format!(
                         "{{\"name\":{},{},\"optional\":false,\"constraints\":{},\"contained\":{}}}",
                         jstr(a.name),
-                        jtagging(a.ber, None, untagged),
+                        jtagging(a.ber, inner.flatten(), inner == Some(None)),
                         jconstraints(a.constraints),
                         a.contained.is_some()
                     )

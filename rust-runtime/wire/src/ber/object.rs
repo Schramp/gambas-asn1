@@ -54,7 +54,9 @@ pub(crate) fn encode_member_ref(m: MemberRef, framing: BerTagging, out: &mut Vec
             BerTagging::Unsupported(reason) => Err(unsupported_framing(reason)),
         },
         MemberRef::Choice(inner) => match framing {
-            BerTagging::Explicit(tag) => write_explicit(out, tag, |out| encode_choice_dispatch(inner, out, opts)),
+            // An EXPLICIT tag wraps the CHOICE's whole encoding, own tag
+            // included (X.680 §30.6).
+            BerTagging::Explicit(tag) => write_explicit(out, tag, |out| encode_choice_into(inner, out, opts)),
             BerTagging::Implicit(tag) => encode_choice_tagged(inner, tag, out, opts),
             BerTagging::Delegate | BerTagging::DelegateChoice(_) | BerTagging::OfType(_) => encode_choice_into(inner, out, opts),
             BerTagging::Unsupported(reason) => Err(unsupported_framing(reason)),
@@ -118,7 +120,7 @@ fn decode_member_ref_level(m: MemberRefMut, framing: BerTagging, r: &mut Reader)
                     return Err(DecodeError::new(format!("expected tag {tag:?}, got {:?}", tlv.tag), r.pos()));
                 }
                 let mut inner_r = r.sub(tlv.value);
-                decode_choice_dispatch(inner, &mut inner_r)
+                decode_choice_into(inner, &mut inner_r)
             }
             BerTagging::Implicit(tag) => decode_choice_tagged_into(inner, r, tag),
             BerTagging::Delegate | BerTagging::DelegateChoice(_) | BerTagging::OfType(_) => decode_choice_into(inner, r),
