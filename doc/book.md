@@ -1834,6 +1834,13 @@ Contributions are welcome. The project follows these conventions:
 - No comments that say what the code does. Comments explain *why* when the reason
   is non-obvious.
 
+### Adding a Target Language
+
+A new codegen backend plus runtime follows [`doc/backend-guide.md`](backend-guide.md):
+the Backend contract, the shared descriptor-table model every backend renders,
+the runtime shape, language-mapping decisions, naming rules, the construct order,
+and the validation ladder (including the cross-language table dump format).
+
 ### Commits
 
 - One logical change per commit.
