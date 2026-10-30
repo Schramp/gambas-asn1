@@ -89,3 +89,10 @@ Real	<Real><NOT-A-NUMBER/></Real>
 Real	<Real>-0</Real>
 ImplicitReal	<ImplicitReal>0.5</ImplicitReal>
 ExplicitReal	<ExplicitReal>-1024</ExplicitReal>
+Counter	<Counter>0</Counter>
+Counter	<Counter>128</Counter>
+Counter	<Counter>9223372036854775807</Counter>
+Big	<Big>4294967296</Big>
+ImplicitCounter	<ImplicitCounter>255</ImplicitCounter>
+Anything	<Anything>020105</Anything>
+Anything	<Anything>0C03616263</Anything>

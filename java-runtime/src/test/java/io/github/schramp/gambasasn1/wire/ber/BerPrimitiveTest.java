@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
+import io.github.schramp.gambasasn1.wire.types.Asn1Any;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.types.Asn1BmpString;
 import io.github.schramp.gambasasn1.wire.types.Asn1GeneralizedTime;
@@ -16,6 +17,7 @@ import io.github.schramp.gambasasn1.wire.types.Asn1Null;
 import io.github.schramp.gambasasn1.wire.types.Asn1ObjectIdentifier;
 import io.github.schramp.gambasasn1.wire.types.Asn1RelativeOid;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
+import io.github.schramp.gambasasn1.wire.types.Asn1UInteger;
 import io.github.schramp.gambasasn1.wire.types.Asn1UniversalString;
 import io.github.schramp.gambasasn1.wire.types.Asn1UtcTime;
 import io.github.schramp.gambasasn1.wire.types.Asn1Utf8String;
@@ -272,5 +274,46 @@ class BerPrimitiveTest {
         assertThrows(DecodeException.class,
                 () -> BerPrimitive.decode(new Asn1UtcTime(), BerTagging.DELEGATE, new BerReader(encode(g, BerTagging.DELEGATE))));
         assertEquals(false, new Asn1UtcTime("x").equals(new Asn1GeneralizedTime("x")));
+    }
+
+    @Test
+    void unsignedIntegerUsesNineOctetsAboveInt64Max() {
+        // X.690 §8.3: two's complement in the fewest octets, so a set top bit needs a leading 00.
+        // The C++ runtime's UInteger encodes these values identically; asn1c cannot encode them.
+        assertArrayEquals(bytes(0x02, 0x01, 0x00), encode(new Asn1UInteger(0), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x02, 0x02, 0x00, 0x80), encode(new Asn1UInteger(128), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x02, 0x09, 0x00, 0x80, 0, 0, 0, 0, 0, 0, 0), encode(new Asn1UInteger(Long.MIN_VALUE), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x02, 0x09, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF), encode(new Asn1UInteger(-1L), BerTagging.DELEGATE));
+        Asn1UInteger u = new Asn1UInteger();
+        BerPrimitive.decode(u, BerTagging.DELEGATE, new BerReader(bytes(0x02, 0x09, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF)));
+        assertEquals("18446744073709551615", u.toString());
+        BerPrimitive.decode(u, BerTagging.DELEGATE, new BerReader(bytes(0x02, 0x02, 0x00, 0x7F)));
+        assertEquals(127L, u.get());
+    }
+
+    @Test
+    void unsignedIntegerRejectsNegativeAndWideValues() {
+        assertThrows(DecodeException.class,
+                () -> BerPrimitive.decode(new Asn1UInteger(), BerTagging.DELEGATE, new BerReader(bytes(0x02, 0x01, 0x80))));
+        assertThrows(DecodeException.class, () -> BerPrimitive.decode(new Asn1UInteger(), BerTagging.DELEGATE,
+                new BerReader(bytes(0x02, 0x09, 0x01, 0, 0, 0, 0, 0, 0, 0, 0))));
+        assertThrows(DecodeException.class,
+                () -> BerPrimitive.decode(new Asn1UInteger(), BerTagging.DELEGATE, new BerReader(bytes(0x02, 0x00))));
+    }
+
+    @Test
+    void anyReplaysItsCapturedEncoding() {
+        Asn1Any a = new Asn1Any();
+        BerPrimitive.decode(a, BerTagging.DELEGATE, new BerReader(bytes(0x02, 0x01, 0x05, 0x05, 0x00)));
+        assertArrayEquals(bytes(0x02, 0x01, 0x05, 0x05, 0x00), a.get());
+        assertArrayEquals(a.get(), encode(a, BerTagging.DELEGATE));
+        // X.690 §8.14: an EXPLICIT tag wraps the captured encoding.
+        BerTagging explicit21 = new BerTagging.Explicit(Tag.context(21, true));
+        assertArrayEquals(bytes(0xB5, 0x03, 0x01, 0x01, 0xFF), encode(new Asn1Any(bytes(0x01, 0x01, 0xFF)), explicit21));
+        BerPrimitive.decode(a, explicit21, new BerReader(bytes(0xB5, 0x03, 0x01, 0x01, 0xFF)));
+        assertArrayEquals(bytes(0x01, 0x01, 0xFF), a.get());
+        assertThrows(DecodeException.class, () -> BerPrimitive.decode(new Asn1Any(), explicit21, new BerReader(bytes(0x01, 0x01, 0xFF))));
+        assertThrows(io.github.schramp.gambasasn1.wire.io.EncodeException.class,
+                () -> encode(new Asn1Any(bytes(0x05, 0x00)), IMPLICIT_CTX5));
     }
 }

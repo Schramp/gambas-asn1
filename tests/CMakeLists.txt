@@ -1954,7 +1954,8 @@ set(java_leg_builtin_alias_ber_PDUS
     Utf8 Numeric Printable Teletex T61 Videotex Ia5 Graphic
     Visible General Descriptor Bmp Universal ImplicitIa5 ExplicitUtf8
     Oid ImplicitOid ExplicitOid RelOid ImplicitRelOid ExplicitRelOid
-    Utc ImplicitUtc GenTime ExplicitGenTime Real ImplicitReal ExplicitReal)
+    Utc ImplicitUtc GenTime ExplicitGenTime Real ImplicitReal ExplicitReal
+    Counter Big ImplicitCounter Anything ExplicitAny)
 set(java_leg_outputs)
 foreach(leg builtin_alias_ber)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})

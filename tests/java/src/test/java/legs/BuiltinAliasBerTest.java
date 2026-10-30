@@ -4,11 +4,15 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import gen.builtin_alias_ber.Anything;
+import gen.builtin_alias_ber.Big;
 import gen.builtin_alias_ber.Bits;
 import gen.builtin_alias_ber.Bmp;
 import gen.builtin_alias_ber.Byte;
 import gen.builtin_alias_ber.Color;
+import gen.builtin_alias_ber.Counter;
 import gen.builtin_alias_ber.Descriptor;
+import gen.builtin_alias_ber.ExplicitAny;
 import gen.builtin_alias_ber.ExplicitBits;
 import gen.builtin_alias_ber.ExplicitColor;
 import gen.builtin_alias_ber.ExplicitFlag;
@@ -30,6 +34,7 @@ import gen.builtin_alias_ber.Hyphen_Flag;
 import gen.builtin_alias_ber.Ia5;
 import gen.builtin_alias_ber.ImplicitBits;
 import gen.builtin_alias_ber.ImplicitColor;
+import gen.builtin_alias_ber.ImplicitCounter;
 import gen.builtin_alias_ber.ImplicitFlag;
 import gen.builtin_alias_ber.ImplicitIa5;
 import gen.builtin_alias_ber.ImplicitNothing;
@@ -65,6 +70,7 @@ import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.EnumEntry;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
+import io.github.schramp.gambasasn1.wire.types.Asn1Any;
 import io.github.schramp.gambasasn1.wire.types.Asn1Arcs;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
@@ -75,6 +81,7 @@ import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Real;
 import io.github.schramp.gambasasn1.wire.types.Asn1T61String;
+import io.github.schramp.gambasasn1.wire.types.Asn1UInteger;
 import io.github.schramp.gambasasn1.wire.types.Asn1VideotexString;
 import java.util.HexFormat;
 import java.util.List;
@@ -146,7 +153,11 @@ class BuiltinAliasBerTest {
             Map.entry("ExplicitGenTime", ExplicitGenTime::new),
             Map.entry("Real", Real::new),
             Map.entry("ImplicitReal", ImplicitReal::new),
-            Map.entry("ExplicitReal", ExplicitReal::new));
+            Map.entry("ExplicitReal", ExplicitReal::new),
+            Map.entry("Counter", Counter::new),
+            Map.entry("Big", Big::new),
+            Map.entry("ImplicitCounter", ImplicitCounter::new),
+            Map.entry("Anything", Anything::new));
 
     static Stream<Vectors.Vector> vectors() {
         return Vectors.load("builtin_alias_ber_test.vectors").stream();
@@ -156,7 +167,8 @@ class BuiltinAliasBerTest {
      * Sets {@code v} to the value a vector's XER names (X.693): BOOLEAN's
      * {@code <true/>}, an INTEGER's number, an ENUMERATED item's empty element,
      * OCTET STRING hex digits, BIT STRING binary digits, character string text,
-     * OBJECT IDENTIFIER and RELATIVE-OID dotted arcs, a REAL number or special-value element.
+     * OBJECT IDENTIFIER and RELATIVE-OID dotted arcs, a REAL number or special-value element,
+     * ANY as the hex digits of its encoding.
      */
     private static void setFromXer(AsMemberRef v, String xer) {
         if (xer.endsWith("/>") && xer.indexOf('>') == xer.length() - 1) {
@@ -166,6 +178,8 @@ class BuiltinAliasBerTest {
         switch (v.asMemberRef()) {
             case MemberRef.Primitive(Asn1Boolean b) -> b.set(inner.equals("<true/>"));
             case MemberRef.Primitive(Asn1Integer i) -> i.set(Long.parseLong(inner));
+            case MemberRef.Primitive(Asn1UInteger u) -> u.set(Long.parseUnsignedLong(inner));
+            case MemberRef.Primitive(Asn1Any any) -> any.set(HexFormat.of().parseHex(inner));
             case MemberRef.Primitive(Asn1OctetString o) -> o.set(HexFormat.of().parseHex(inner));
             // asn1c writes these kinds' XER as hex digits, like an OCTET STRING.
             case MemberRef.Primitive(Asn1CharString c) when c instanceof Asn1T61String || c instanceof Asn1VideotexString
@@ -223,6 +237,22 @@ class BuiltinAliasBerTest {
     void everyTypeHasAVector() {
         List<String> covered = vectors().map(Vectors.Vector::type).distinct().sorted().toList();
         assertEquals(TYPES.keySet().stream().sorted().toList(), covered);
+    }
+
+    /**
+     * {@code [21] EXPLICIT ANY}: asn1c drops the EXPLICIT tag of a tagged ANY
+     * type assignment, so this type has no asn1c vector. X.690 §8.14 wraps
+     * the captured encoding, as the C++ runtime does.
+     */
+    @Test
+    void explicitAnyWrapsTheCapturedEncoding() {
+        ExplicitAny v = new ExplicitAny();
+        v.value.set(HexFormat.of().parseHex("0101FF"));
+        byte[] der = HexFormat.of().parseHex("B5030101FF");
+        assertArrayEquals(der, BerObject.encode(v));
+        ExplicitAny back = new ExplicitAny();
+        BerObject.decode(back, der);
+        assertEquals(v.asMemberRef(), back.asMemberRef());
     }
 
     @Test
