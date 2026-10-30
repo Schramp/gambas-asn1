@@ -1841,6 +1841,17 @@ the Backend contract, the shared descriptor-table model every backend renders,
 the runtime shape, language-mapping decisions, naming rules, the construct order,
 and the validation ladder (including the cross-language table dump format).
 
+The Java runtime (`java-runtime/`, in progress) is a Gradle build with the
+wrapper committed and a Java 21 toolchain:
+
+```bash
+./java-runtime/gradlew -p java-runtime test
+```
+
+`cmake` finds a JDK 21 or newer and turns on `WITH_JAVA_RUNTIME_TEST`, so the
+same run is the ctest `java_runtime_test`. The first run downloads Gradle and
+the test dependencies.
+
 ### Commits
 
 - One logical change per commit.

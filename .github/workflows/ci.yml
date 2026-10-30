@@ -57,6 +57,22 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # JDK 21 for java-runtime: cmake's configure step detects it and turns
+      # on WITH_JAVA_RUNTIME_TEST, so ctest runs the Gradle build.
+      - name: Install JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+          cache-dependency-path: |
+            java-runtime/*.gradle.kts
+            java-runtime/gradle/libs.versions.toml
+            java-runtime/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
       - name: Configure
         run: |
           SMOKE=${{ github.ref == 'refs/heads/main' && 'ON' || 'OFF' }}
