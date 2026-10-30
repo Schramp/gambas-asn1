@@ -483,6 +483,30 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
     os << "}\n";
 }
 
+/// @brief The Java type of a SEQUENCE OF / SET OF member, level by level
+///        from its ElemShape: `SeqOf` or `SetOf` (X.680 §25, §27) around
+///        the element type.
+/// @param kind  The collection kind at this level.
+/// @param elem  The element's shape.
+static std::string java_collection_type(SeqOfKind kind, const ElemShape& elem) {
+    std::string inner = elem.kind == SeqOfKind::None ? elem.leaf_native_type
+                                                     : java_collection_type(elem.kind, *elem.nested);
+    return std::format("{}.spec.{}<{}>", kWire, kind == SeqOfKind::SetOf ? "SetOf" : "SeqOf", inner);
+}
+
+/// @brief A new, empty collection of a SEQUENCE OF / SET OF member, with
+///        the factory of its elements (nested collections included).
+static std::string java_collection_new(SeqOfKind kind, const ElemShape& elem) {
+    std::string factory = elem.kind == SeqOfKind::None ? elem.leaf_native_type + "::new"
+                                                       : "() -> " + java_collection_new(elem.kind, *elem.nested);
+    return std::format("new {}.spec.{}<>({})", kWire, kind == SeqOfKind::SetOf ? "SetOf" : "SeqOf", factory);
+}
+
+/// @brief Whether some level of an element shape carries an inline constraint.
+static bool shape_has_own_constraint(const ElemShape& e) {
+    return e.kind == SeqOfKind::None ? e.has_own_descriptor : shape_has_own_constraint(*e.nested);
+}
+
 /// @brief Emit one SEQUENCE type as a Java class: its `SequenceSpec`
 ///        table, one field per member (an OPTIONAL member is null when
 ///        absent), accessors, and the `Asn1Seq` reflection the BER walker
@@ -501,8 +525,8 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     for (const auto& m : spec.members) {
         const char* gap = m.contained ? "a contained value"
                         : m.has_default ? "a DEFAULT value"
-                        : m.seq_of_kind != SeqOfKind::None || (!m.mbuiltin && m.ref_is_seq_of) ? "a SEQUENCE OF/SET OF"
                         : m.member_type_in_cycle ? "a recursive type"
+                        : m.seq_of_kind != SeqOfKind::None && shape_has_own_constraint(m.elem_shape) ? "a SEQUENCE OF with a constrained element"
                         : !m.tdref.empty() ? "an inline constraint"
                         : nullptr;
         if (gap) unsupported(std::format("member '{}' is {}", m.asn1_name, gap));
@@ -527,6 +551,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         if (rt->tag_is_override)
             return {tag, std::format("new {}.spec.BerTagging.{}({})", kWire, m.is_explicit ? "Explicit" : "Implicit", tag)};
         if (is_choice_ref || m.ref_is_sequence_or_set) return {tag, std::format("{}.spec.BerTagging.DELEGATE", kWire)};
+        if (m.seq_of_kind != SeqOfKind::None) return {tag, std::format("new {}.spec.BerTagging.Implicit({})", kWire, tag)};
         if (m.is_explicit) return {tag, std::format("new {0}.spec.BerTagging.OfType({1}.BER_FRAMING)", kWire, m.mtype)};
         return {tag, std::format("new {}.spec.BerTagging.Implicit({})", kWire, tag)};
     };
@@ -544,8 +569,13 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         while (std::find(reserved.begin(), reserved.end(), n) != reserved.end()) n += "_";
         return n;
     };
-    std::vector<std::string> names;
-    for (const auto& m : spec.members) names.push_back(accessor(m));
+    std::vector<std::string> names, types, news;
+    for (const auto& m : spec.members) {
+        names.push_back(accessor(m));
+        bool coll = m.seq_of_kind != SeqOfKind::None;
+        types.push_back(coll ? java_collection_type(m.seq_of_kind, m.elem_shape) : m.mtype);
+        news.push_back(coll ? java_collection_new(m.seq_of_kind, m.elem_shape) : std::format("new {}()", m.mtype));
+    }
 
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
@@ -564,8 +594,8 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
 
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];
-        if (m.optional) os << std::format("    private {} {};\n", m.mtype, names[i]);
-        else os << std::format("    private {0} {1} = new {0}();\n", m.mtype, names[i]);
+        if (m.optional) os << std::format("    private {} {};\n", types[i], names[i]);
+        else os << std::format("    private {} {} = {};\n", types[i], names[i], news[i]);
     }
     os << "\n";
 
@@ -573,9 +603,9 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         const auto& m = spec.members[i];
         const std::string& n = names[i];
         os << std::format("    /** ASN.1: {{@code {}}}{}. */\n", m.asn1_name, m.optional ? "; null when absent" : "");
-        os << std::format("    public {} {}() {{\n        return {};\n    }}\n\n", m.mtype, n, n);
+        os << std::format("    public {} {}() {{\n        return {};\n    }}\n\n", types[i], n, n);
         os << std::format("    /** Sets {{@code {}}}{}. */\n", m.asn1_name, m.optional ? "; null makes it absent" : "");
-        os << std::format("    public void {}({} v) {{\n", n, m.mtype);
+        os << std::format("    public void {}({} v) {{\n", n, types[i]);
         os << std::format("        {} = {};\n    }}\n\n", n, m.optional ? "v" : "java.util.Objects.requireNonNull(v)");
     }
 
@@ -599,8 +629,8 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         const auto& m = spec.members[i];
         const auto& n = names[i];
         if (m.optional)
-            os << std::format("            case {0} -> {{\n                if ({1} == null) {{\n                    {1} = new {2}();\n"
-                              "                }}\n                yield {1}.asMemberRef();\n            }}\n", i, n, m.mtype);
+            os << std::format("            case {0} -> {{\n                if ({1} == null) {{\n                    {1} = {2};\n"
+                              "                }}\n                yield {1}.asMemberRef();\n            }}\n", i, n, news[i]);
         else
             os << std::format("            case {} -> {}.asMemberRef();\n", i, n);
     }
@@ -610,7 +640,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     os << "        switch (i) {\n";
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];
-        os << std::format("            case {} -> {} = {};\n", i, names[i], m.optional ? "null" : std::format("new {}()", m.mtype));
+        os << std::format("            case {} -> {} = {};\n", i, names[i], m.optional ? "null" : news[i]);
     }
     os << "            default -> throw new java.lang.IndexOutOfBoundsException(i);\n        }\n    }\n\n";
     os << "    @java.lang.Override\n";
@@ -633,6 +663,44 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     os << "    public int hashCode() {\n        int h = 1;\n";
     os << "        for (int i = 0; i < SPEC.members().size(); i++) {\n            h = 31 * h + getMember(i).hashCode();\n        }\n";
     os << "        return h;\n    }\n";
+    os << "}\n";
+}
+
+/// @brief Emit one named SEQUENCE OF / SET OF type as a Java class that
+///        extends the runtime's `SeqOf` / `SetOf` collection: its own XER
+///        names (X.693 §12), its SIZE constraint (X.680 §51.5) and its
+///        BER framing when the type assignment has a tag of its own
+///        (X.680 §31.2). The class holds no codec code.
+/// @param spec    Resolved, backend-agnostic decision (see SeqOfSpec).
+/// @param session Per-type output session.
+void JavaBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const {
+    const std::string& t = spec.type_name;
+    std::string base = std::format("{}.spec.{}<{}>", kWire, spec.is_set_of ? "SetOf" : "SeqOf", spec.elem_type);
+    std::string constraints = std::format("{}.spec.Constraints.UNCONSTRAINED", kWire);
+    if (spec.has_size_constraint) {
+        int flags = (spec.size_upper ? asn1::Constraints::SIZE_CONSTRAINED : 0)
+                  | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+        constraints = std::format("new {}.spec.Constraints({}, 0, 0L, 0L, 0L, 0L, {}, {}, {}, null, 0, null, 0, null, 0.0, 0.0)",
+                                  kWire, flags, spec.range_bits, java_long(spec.size_lower),
+                                  java_long(spec.size_upper.value_or(std::numeric_limits<int64_t>::max())));
+    }
+
+    auto& os = session.buffer(declaration_extension());
+    if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
+    os << std::format("public final class {} extends {} implements {}.spec.Asn1Pdu {{\n", t, base, kWire);
+    os << std::format("    public static final {}.spec.Constraints CONSTRAINTS = {};\n", kWire, constraints);
+    os << ber_framing_field(spec);
+    os << "\n";
+    os << std::format("    public {}() {{\n        super({}::new);\n    }}\n\n", t, spec.elem_type);
+    os << "    @java.lang.Override\n";
+    os << std::format("    public java.lang.String ownXerName() {{\n        return \"{}\";\n    }}\n\n", spec.xer_name);
+    if (spec.elem_xer_name) {
+        os << "    @java.lang.Override\n";
+        os << std::format("    public java.lang.String elemXerName() {{\n        return \"{}\";\n    }}\n\n", *spec.elem_xer_name);
+    }
+    os << "    @java.lang.Override\n";
+    os << std::format("    public {0}.spec.Constraints pduConstraints() {{\n        return CONSTRAINTS;\n    }}\n", kWire);
+    os << ber_framing_method(spec);
     os << "}\n";
 }
 

@@ -107,6 +107,11 @@ class TableDumpTest {
             return get(elems.size() - 1);
         }
 
+        @Override
+        public void clear() {
+            elems.clear();
+        }
+
         @Override public String elemNaturalXerName(int index) { return "EinEnum"; }
         @Override public XerInstruction elemXerInstruction() { return XerInstruction.DEFAULT; }
     }

@@ -93,6 +93,14 @@ public:
     void emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const override;
     void emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const override;
     void emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const override;
+    void emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const override;
+
+    /// @brief The runtime's SEQUENCE OF collection around `elem_type`. A
+    ///        member's real collection classes, SET OF included, come from
+    ///        its ElemShape (see java_collection_type).
+    std::string wrap_collection_type(const std::string& elem_type) const override {
+        return std::format("io.github.schramp.gambasasn1.wire.spec.SeqOf<{}>", elem_type);
+    }
 
     /// @brief Nothing: Java resolves every class of the package by name,
     ///        whatever the order they are declared in (JLS §6.3).
