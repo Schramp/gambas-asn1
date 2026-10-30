@@ -483,8 +483,9 @@ private:
     ///                        instead of canonical tag order.
     /// @param apply_auto_tags True when the enclosing module uses AUTOMATIC TAGS.
     /// @param auto_n          Declaration-order position used as tag number when auto-tagging.
-    /// @return (class, number) pair; an alternative with no tag at all
-    ///         (e.g. a nested untagged CHOICE) sorts last via (INT_MAX, INT_MAX).
+    /// @return (class, number) pair; an untagged CHOICE alternative takes
+    ///         the smallest tag of its extension root (X.691 §22.3, via
+    ///         set_component_tag_key).
     std::pair<int,int> canonical_tag_key(const ast::Tag& tag, const ast::TypeDef& natural_tag_src,
                                           bool apply_auto_tags, int auto_n) const;
     /// @brief Sort key of one SET component for the canonical order of
