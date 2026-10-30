@@ -29,10 +29,11 @@
 # '@real-reencode' — REAL values that asn1c re-encodes in another valid
 # form (binary vs decimal), so its own round trips differ from the input.
 # A mismatch on an informational asn1c leg never fails the target. Its
-# status names the cause: ASN1CINCOMPLETE (asn1c fails to round-trip its
-# own encoding of the target, or @asn1c-opaque-contents), SEMANTICIDENTICAL
+# status names the cause: ASN1CINCOMPLETE (a PER leg where asn1c fails to
+# decode its own PER back, or @asn1c-opaque-contents), SEMANTICIDENTICAL
 # (@real-reencode: same value, other encoding; takes precedence), or
-# INFORMATIONAL (no known cause).
+# INFORMATIONAL (no known cause). asn1c's XER/JER-to-DER round trips are
+# a hard FAIL unless one of these options explains them.
 #
 # Optional 3rd+ column: a known, already-filed asn1c divergence for this
 # specific target (#440's asn1c leg) — C++/Rust legs still run and gate
@@ -150,7 +151,7 @@ tests/asn1/containing_test.asn1      Pick       --container-config=tests/asn1/co
 
 # SEQUENCE with an OPTIONAL untagged CHOICE member: presence is read from
 # the CHOICE alternatives' tags (X.690 §8.13).
-tests/asn1/fuzz_test.asn1            Bag
+tests/asn1/fuzz_test.asn1            Bag  @real-reencode
 
 # Type assignments carrying their own tag over each builtin BER handler.
 tests/asn1/typedef_tag_test.asn1     Tagged  @real-reencode

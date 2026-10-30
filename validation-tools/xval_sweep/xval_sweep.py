@@ -538,10 +538,11 @@ def split_per_records(data: bytes) -> list[bytes]:
 # Status printed for a mismatch on an informational asn1c leg. None of
 # them fails the target.
 # - ASN1CINCOMPLETE: asn1c does not implement what the standard asks.
-#   Implied whenever asn1c fails to round-trip its own encoding of the
-#   target (its XER/JER round trip, or its own PER decoded back); stated
-#   by a target option where its own round trip passes but its output
-#   still differs from the standard's.
+#   Implied for the PER legs whenever asn1c fails to decode its own PER
+#   of the target back; stated by a target option where that round trip
+#   passes but its output still differs from the standard's. BER is
+#   never implied: asn1c's XER/JER-to-DER round trips gate unless a
+#   target option explains them.
 # - SEMANTICIDENTICAL: both sides carry the same value, asn1c re-encodes
 #   it in another valid form. Only a target option can say this.
 # - INFORMATIONAL: a mismatch with no known cause.
@@ -1520,13 +1521,18 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
         tally(run_comparison("asn1c.B2X vs cpp.B2X", xer_asn1c, xer_cpp, verbose))
         tally(run_comparison("asn1c.B2X vs rust.B2X", xer_asn1c, xer_rust, verbose))
 
-        # asn1c's own round-trip stability is informational only, not
-        # gating: a type with REAL fields can legitimately re-encode to a
-        # different (still valid) DER byte sequence for the same value —
-        # this tests asn1c's own canonicalization behavior, not our
-        # codecs, so it's printed but never fails the target.
+        def asn1c_ber_check(label, ber_asn1c):
+            if info:
+                compare_ber(f"{label} [informational]", ber_orig, ber_asn1c, verbose, info=info)
+            else:
+                tally(compare_ber(label, ber_orig, ber_asn1c, verbose))
+
+        # asn1c's own XER round trip ends in its DER encoder. It gates: a BER
+        # difference is a hard failure unless a target option explains it
+        # (@real-reencode: a type with REAL fields can re-encode to a
+        # different, still valid DER byte sequence for the same value).
         ber_asn1c2, _ = asn1c_x2b(asn1c_tools["tool"], pdu_type, xer_asn1c)
-        compare_ber("orig vs asn1c.X2B(asn1c.XER) [informational]", ber_orig, ber_asn1c2, verbose, info=info or "ASN1CINCOMPLETE")
+        asn1c_ber_check("orig vs asn1c.X2B(asn1c.XER)", ber_asn1c2)
 
         # JER: asn1c does have JER support (ASN_DISABLE_JER_SUPPORT is off
         # by default, A1C_GEN_JER in asn1c.c's default flags) — confirmed
@@ -1550,11 +1556,10 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
         jer_asn1c_check("asn1c.B2J vs cpp.B2J", jer_asn1c, jer_cpp, split_a=split_asn1c_jer_records)
         jer_asn1c_check("asn1c.B2J vs rust.B2J", jer_asn1c, jer_rust, split_a=split_asn1c_jer_records)
 
-        # asn1c's own JER round trip ends in its DER encoder, which re-encodes
-        # some REAL values in a different but valid form (same reason as
-        # orig vs asn1c.X2B above), so it stays informational.
+        # asn1c's own JER round trip ends in its DER encoder: gated the same
+        # way as orig vs asn1c.X2B above.
         ber_asn1c_jer2, _ = asn1c_j2b(asn1c_tools["tool"], pdu_type, jer_asn1c)
-        compare_ber("orig vs asn1c.J2B(asn1c.JER) [informational]", ber_orig, ber_asn1c_jer2, verbose, info=info or "ASN1CINCOMPLETE")
+        asn1c_ber_check("orig vs asn1c.J2B(asn1c.JER)", ber_asn1c_jer2)
     elif not skip_asn1c_reason:
         print("  asn1c leg: skipped (not found or unsupported for this target)")
 
