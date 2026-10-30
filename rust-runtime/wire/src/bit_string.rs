@@ -86,6 +86,10 @@ pub(crate) fn decode_bit_string_content(content: &[u8]) -> Result<BitString, Dec
     if unused > 7 {
         return Err(DecodeError::new(format!("BIT STRING unused bits out of range: {unused}"), 0));
     }
+    // X.690 §8.6.2.3: an empty bitstring has a zero initial octet.
+    if unused != 0 && content.len() == 1 {
+        return Err(DecodeError::new(format!("BIT STRING: {unused} unused bits with no contents octets"), 0));
+    }
     Ok(BitString { bytes: content[1..].to_vec(), unused_bits: unused })
 }
 
@@ -144,6 +148,13 @@ mod tests {
     #[test]
     fn wrong_tag_is_error() {
         let data = [0x02, 0x01, 0x00]; // INTEGER tag, not BIT STRING
+        let mut r = Reader::new(&data);
+        assert!(read_bit_string(&mut r).is_err());
+    }
+
+    #[test]
+    fn empty_bit_string_with_unused_bits_is_error() {
+        let data = [0x03, 0x01, 0x07]; // X.690 §8.6.2.3: must be 0x00
         let mut r = Reader::new(&data);
         assert!(read_bit_string(&mut r).is_err());
     }

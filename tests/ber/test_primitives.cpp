@@ -118,6 +118,15 @@ int main() {
 
     check("BIT STRING round-trip", roundtrip(bs1));
     check("BIT STRING 0 unused round-trip", roundtrip(BitString{{0xFF}, 0}));
+    {
+        // X.690 §8.6.2.3: an empty bitstring has a zero initial octet.
+        const uint8_t empty_ok[] = {0x00};
+        const uint8_t empty_bad[] = {0x07};
+        check("BIT STRING empty with 0 unused decodes",
+              BerTraits<BitString>::decode_value(empty_ok).has_value());
+        check("BIT STRING empty with 7 unused is rejected",
+              !BerTraits<BitString>::decode_value(empty_bad).has_value());
+    }
 
     // =========================================================================
     printf("\n── OBJECT IDENTIFIER ───────────────────────────────────────────\n");

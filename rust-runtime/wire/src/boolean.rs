@@ -61,13 +61,16 @@ pub(crate) fn encode_boolean_content(value: bool) -> [u8; 1] {
     [if value { DER_TRUE } else { DER_FALSE }]
 }
 
-/// BER-lenient: any nonzero byte is `TRUE` (X.690 §8.2.2's DER strictness
-/// applies to encoding only).
+/// @brief Decode BOOLEAN contents octets.
+/// @param content The contents octets; X.690 §8.2.1 requires exactly one.
+/// @return Any non-zero octet is `TRUE` (X.690 §8.2.2's DER strictness
+///         applies to encoding only); `Err` for any other length.
 pub(crate) fn decode_boolean_content(content: &[u8]) -> Result<bool, DecodeError> {
-    if content.is_empty() {
-        return Err(DecodeError::new("BOOLEAN: empty value".to_string(), 0));
+    match content {
+        [b] => Ok(*b != 0),
+        [] => Err(DecodeError::new("BOOLEAN: empty value".to_string(), 0)),
+        _ => Err(DecodeError::new(format!("BOOLEAN must be 1 byte, got {}", content.len()), 0)),
     }
-    Ok(content[0] != 0)
 }
 
 pub fn write_boolean_tagged(out: &mut Vec<u8>, tag: Tag, value: bool) {
@@ -115,6 +118,13 @@ mod tests {
     #[test]
     fn wrong_tag_is_error() {
         let data = [0x02, 0x01, 0x00]; // INTEGER tag, not BOOLEAN
+        let mut r = Reader::new(&data);
+        assert!(read_boolean(&mut r).is_err());
+    }
+
+    #[test]
+    fn multi_octet_value_is_error() {
+        let data = [0x01, 0x02, 0xFF, 0x00];
         let mut r = Reader::new(&data);
         assert!(read_boolean(&mut r).is_err());
     }
