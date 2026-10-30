@@ -7,3 +7,4 @@ tests/asn1/builtin_alias_ber_test.asn1  Flag  -pdu=Flag -pdu=ImplicitFlag -pdu=E
 tests/asn1/choice_ber_test.asn1  Plain  -pdu=Plain -pdu=Tagged -pdu=Inner -pdu=Nested -pdu=Own -pdu=HoldsOwn -pdu=Typed -pdu=Ext -pdu=ExtRoot -pdu=Auto -pdu=Pick
 tests/asn1/sequence_ber_test.asn1  Point  -pdu=Point -pdu=Plain -pdu=Opt -pdu=Tagged -pdu=Refs -pdu=Outer
 tests/asn1/seqof_ber_test.asn1  Ints  -pdu=Ints -pdu=IntSet -pdu=Points -pdu=Colors -pdu=Names -pdu=TaggedInts -pdu=Holder
+tests/asn1/constraints_ber_test.asn1  Limits  -pdu=Limits -pdu=Pick -pdu=Digits

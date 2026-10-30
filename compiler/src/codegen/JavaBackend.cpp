@@ -111,7 +111,8 @@ static std::string java_int_constraints(int flags, int range_bits, int64_t lower
 ///        (X.680 §51.5): flags (SIZE_CONSTRAINED, EXTENSIBLE, NAMED_BITS),
 ///        PER length width (X.691 §11.9) and bounds. An unbounded upper
 ///        SIZE is stored as `Long.MAX_VALUE`, as in the other runtimes.
-static std::string java_size_constraints(const BuiltinAliasSpec& spec) {
+template <class S>
+static std::string java_size_constraints(const S& spec) {
     int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
               | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
               | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
@@ -349,9 +350,10 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         if (a.is_explicit) return std::format("new {0}.spec.BerTagging.OfType({1}.BER_FRAMING)", kWire, a.mtype);
         return std::format("new {}.spec.BerTagging.Implicit({})", kWire, format_tag_literal(*rt));
     };
-    // A builtin alternative is unconstrained here: an inline constraint
-    // reaches the backend through emit_member_type_descriptor instead.
+    // An inline constraint is the alternative's own table, emitted by
+    // emit_member_type_descriptor; a reference uses its type's table.
     auto constraints = [&](const ChoiceAlternativeSpec& a) {
+        if (!a.tdref.empty()) return a.tdref + ".CONSTRAINTS";
         if (!a.mbuiltin && (a.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias || a.ref_builtin_alias))
             return std::format("{}.CONSTRAINTS", a.ref_constraints_owner.empty() ? a.mtype : a.ref_constraints_owner);
         return std::format("{}.spec.Constraints.UNCONSTRAINED", kWire);
@@ -502,11 +504,6 @@ static std::string java_collection_new(SeqOfKind kind, const ElemShape& elem) {
     return std::format("new {}.spec.{}<>({})", kWire, kind == SeqOfKind::SetOf ? "SetOf" : "SeqOf", factory);
 }
 
-/// @brief Whether some level of an element shape carries an inline constraint.
-static bool shape_has_own_constraint(const ElemShape& e) {
-    return e.kind == SeqOfKind::None ? e.has_own_descriptor : shape_has_own_constraint(*e.nested);
-}
-
 /// @brief Emit one SEQUENCE type as a Java class: its `SequenceSpec`
 ///        table, one field per member (an OPTIONAL member is null when
 ///        absent), accessors, and the `Asn1Seq` reflection the BER walker
@@ -526,8 +523,6 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         const char* gap = m.contained ? "a contained value"
                         : m.has_default ? "a DEFAULT value"
                         : m.member_type_in_cycle ? "a recursive type"
-                        : m.seq_of_kind != SeqOfKind::None && shape_has_own_constraint(m.elem_shape) ? "a SEQUENCE OF with a constrained element"
-                        : !m.tdref.empty() ? "an inline constraint"
                         : nullptr;
         if (gap) unsupported(std::format("member '{}' is {}", m.asn1_name, gap));
     }
@@ -555,7 +550,14 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         if (m.is_explicit) return {tag, std::format("new {0}.spec.BerTagging.OfType({1}.BER_FRAMING)", kWire, m.mtype)};
         return {tag, std::format("new {}.spec.BerTagging.Implicit({})", kWire, tag)};
     };
+    // A collection's SIZE (X.680 §51.5) lives on its named type: the
+    // referenced one, or the synthetic type an inline collection member
+    // is promoted to.
     auto constraints = [&](const SequenceMemberSpec& m) {
+        if (!m.tdref.empty()) return m.tdref + ".CONSTRAINTS";
+        if (m.seq_of_kind != SeqOfKind::None)
+            return std::format("{}.CONSTRAINTS", escape(synthetic_name(spec.type_name, m.asn1_name)));
+        if (!m.mbuiltin && m.ref_is_seq_of) return std::format("{}.CONSTRAINTS", m.mtype);
         if (!m.mbuiltin && (m.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias || m.ref_builtin_alias))
             return std::format("{}.CONSTRAINTS", m.ref_constraints_owner.empty() ? m.mtype : m.ref_constraints_owner);
         return std::format("{}.spec.Constraints.UNCONSTRAINED", kWire);
@@ -664,6 +666,43 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     os << "        for (int i = 0; i < SPEC.members().size(); i++) {\n            h = 31 * h + getMember(i).hashCode();\n        }\n";
     os << "        return h;\n    }\n";
     os << "}\n";
+}
+
+/// @brief Emit the constraint table of one member, alternative or element
+///        with an inline constraint (X.680 §51): a package-private class
+///        beside the type's public one, named by member_descriptor_base_name
+///        and holding `CONSTRAINTS`, which the member's row references.
+///        INTEGER value ranges and SIZE constraints are carried; a REAL
+///        range and a FROM alphabet are not yet.
+/// @param spec    The member's resolved constraint (see MemberTypeDescriptorSpec).
+/// @param session Per-type output session.
+/// @throws std::logic_error for a contained value or INTEGER storage beyond 64 bits.
+void JavaBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
+    using Kind = MemberTypeDescriptorSpec::Kind;
+    std::string name = member_descriptor_base_name(spec.parent_cname, spec.mname);
+    if (spec.contained)
+        throw std::logic_error(std::format("emit_member_type_descriptor: {} holds a contained value, not implemented for this backend", name));
+    std::string constraints = std::format("{}.spec.Constraints.UNCONSTRAINED", kWire);
+    if (spec.kind == Kind::Integer) {
+        bool u64 = spec.storage_kind == IntStorageKind::U64;
+        if (spec.storage_kind != IntStorageKind::S64 && !u64)
+            throw std::logic_error(std::format("emit_member_type_descriptor: {} storage beyond 64 bits is not implemented for this backend", name));
+        // An upper bound above INT64_MAX in signed storage is checked as
+        // semi-constrained, as in the other runtimes.
+        bool semi = spec.semi_constrained || (!u64 && spec.hi_is_large);
+        int flags = (semi ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED)
+                  | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+        uint64_t upper_u64 = spec.semi_constrained ? std::numeric_limits<uint64_t>::max() : spec.upper_u64;
+        constraints = java_int_constraints(flags, std::max(spec.range_bits, 0), u64 ? 0 : spec.lower_s64,
+                                           u64 ? 0 : spec.upper_s64, u64 ? spec.lower_u64 : 0, u64 ? upper_u64 : 0);
+    } else if (spec.kind == Kind::Sizeable) {
+        constraints = java_size_constraints(spec);
+    }
+    auto& os = session.buffer(declaration_extension());
+    os << std::format("/** Inline constraint of {{@code {}.{}}} (X.680 §51). */\n", spec.parent_cname, spec.mname);
+    os << std::format("final class {} {{\n", name);
+    os << std::format("    static final {}.spec.Constraints CONSTRAINTS = {};\n\n", kWire, constraints);
+    os << std::format("    private {}() {{\n    }}\n}}\n\n", name);
 }
 
 /// @brief Emit one named SEQUENCE OF / SET OF type as a Java class that

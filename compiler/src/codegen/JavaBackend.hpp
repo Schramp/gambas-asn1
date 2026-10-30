@@ -94,6 +94,15 @@ public:
     void emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const override;
     void emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const override;
     void emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const override;
+    void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const override;
+
+    /// @brief A member's own constraint table is the class
+    ///        emit_member_type_descriptor emits, named by its base name;
+    ///        every other reference is empty (Java rows name a type's
+    ///        `CONSTRAINTS` directly).
+    std::string format_type_descriptor_ref(const TypeDescriptorRefSpec& spec) const override {
+        return spec.kind == TypeDescriptorRefKind::MemberOwnTable ? spec.name : std::string{};
+    }
 
     /// @brief The runtime's SEQUENCE OF collection around `elem_type`. A
     ///        member's real collection classes, SET OF included, come from

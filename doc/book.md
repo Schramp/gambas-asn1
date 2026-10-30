@@ -1952,9 +1952,15 @@ SEQUENCE with a member of the following kinds, or a SET, with
 
 - DEFAULT values;
 - extension markers;
-- inline member constraints, a constrained SEQUENCE OF element included;
 - recursive member types;
 - contained values.
+
+A member, alternative or collection element with an inline constraint
+(`INTEGER (0..255)`, `IA5String (SIZE (1..8))`) gets its own constraint table:
+a package-private class `<Type>_<member>` beside the type's class, holding
+`CONSTRAINTS`, which its row's `constraints()` returns. INTEGER value ranges
+and SIZE constraints are carried; a REAL range and a FROM alphabet are not
+yet. A collection member's SIZE is its collection type's `CONSTRAINTS`.
 
 A SEQUENCE OF is a `SeqOf<T>` and a SET OF a `SetOf<T>` (runtime package
 `spec`). `items()` is the element list, which can be changed in place, and
