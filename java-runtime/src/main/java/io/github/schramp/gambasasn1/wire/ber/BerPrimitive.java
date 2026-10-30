@@ -6,6 +6,7 @@ import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
+import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
 import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
 
@@ -17,6 +18,7 @@ import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
 public final class BerPrimitive {
     private static final Tag BOOLEAN_TAG = Tag.universal(UniversalTag.BOOLEAN, false);
     private static final Tag NULL_TAG = Tag.universal(UniversalTag.NULL, false);
+    private static final Tag INTEGER_TAG = Tag.universal(UniversalTag.INTEGER, false);
 
     /** X.690 §11.1: DER encodes TRUE as all ones. */
     private static final int DER_TRUE = 0xFF;
@@ -60,6 +62,7 @@ public final class BerPrimitive {
         return switch (p) {
             case Asn1Boolean b -> BOOLEAN_TAG;
             case Asn1Null n -> NULL_TAG;
+            case Asn1Integer i -> INTEGER_TAG;
             default -> throw new EncodeException("no BER form for " + p.xerElementName());
         };
     }
@@ -68,6 +71,7 @@ public final class BerPrimitive {
         switch (p) {
             case Asn1Boolean b -> BerWriter.writePrimitive(out, tag, new byte[] {(byte) (b.get() ? DER_TRUE : 0)});
             case Asn1Null n -> BerWriter.writePrimitive(out, tag, new byte[0]);
+            case Asn1Integer i -> BerWriter.writePrimitive(out, tag, encodeInteger(i.get()));
             default -> throw new EncodeException("no BER form for " + p.xerElementName());
         }
     }
@@ -93,7 +97,49 @@ public final class BerPrimitive {
                     throw new DecodeException("NULL: contents must be empty, got " + v.remaining() + " octets", start);
                 }
             }
+            case Asn1Integer i -> i.set(decodeInteger(v, start));
             default -> throw new DecodeException("no BER form for " + p.xerElementName(), start);
         }
+    }
+
+    /**
+     * INTEGER contents (X.690 §8.3): two's complement, big-endian, in the
+     * fewest octets (§8.3.2). Also the contents of ENUMERATED (§8.4).
+     */
+    public static byte[] encodeInteger(long n) {
+        int len = 8;
+        while (len > 1) {
+            long top9 = n >> (8 * len - 9);
+            if (top9 != 0 && top9 != -1) {
+                break;
+            }
+            len--;
+        }
+        byte[] out = new byte[len];
+        for (int i = 0; i < len; i++) {
+            out[i] = (byte) (n >> (8 * (len - 1 - i)));
+        }
+        return out;
+    }
+
+    /**
+     * Decode counterpart of {@link #encodeInteger}: one to eight contents
+     * octets, sign-extended.
+     *
+     * @param pos the TLV's position, for the error
+     */
+    public static long decodeInteger(ByteSource v, int pos) {
+        int len = v.remaining();
+        if (len == 0) {
+            throw new DecodeException("INTEGER: empty contents", pos);
+        }
+        if (len > 8) {
+            throw new DecodeException("INTEGER: " + len + " octets do not fit 64-bit storage", pos);
+        }
+        long n = (byte) v.read("INTEGER");
+        for (int i = 1; i < len; i++) {
+            n = (n << 8) | v.read("INTEGER");
+        }
+        return n;
     }
 }

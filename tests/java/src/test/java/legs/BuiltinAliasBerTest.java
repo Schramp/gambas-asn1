@@ -4,18 +4,31 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import gen.builtin_alias_ber.Byte;
+import gen.builtin_alias_ber.Color;
+import gen.builtin_alias_ber.ExplicitColor;
 import gen.builtin_alias_ber.ExplicitFlag;
 import gen.builtin_alias_ber.ExplicitNothing;
+import gen.builtin_alias_ber.ExplicitNum;
+import gen.builtin_alias_ber.ExtColor;
 import gen.builtin_alias_ber.Flag;
 import gen.builtin_alias_ber.Hyphen_Flag;
+import gen.builtin_alias_ber.ImplicitColor;
 import gen.builtin_alias_ber.ImplicitFlag;
 import gen.builtin_alias_ber.ImplicitNothing;
+import gen.builtin_alias_ber.ImplicitNum;
+import gen.builtin_alias_ber.Named;
+import gen.builtin_alias_ber.NegColor;
 import gen.builtin_alias_ber.Nothing;
+import gen.builtin_alias_ber.Num;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
+import io.github.schramp.gambasasn1.wire.spec.EnumEntry;
+import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
+import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -26,27 +39,53 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Java leg of builtin_alias_ber_test.asn1: every generated type assignment
- * encodes asn1c's DER byte for byte and decodes it back, under its natural
- * tag, IMPLICIT and EXPLICIT (X.690 §8.14).
+ * (BOOLEAN, NULL, INTEGER, ENUMERATED) encodes asn1c's DER byte for byte and
+ * decodes it back, under its natural tag, IMPLICIT and EXPLICIT (X.690 §8.14).
  */
 class BuiltinAliasBerTest {
-    private static final Map<String, Supplier<AsMemberRef>> TYPES = Map.of(
-            "Flag", Flag::new,
-            "ImplicitFlag", ImplicitFlag::new,
-            "ExplicitFlag", ExplicitFlag::new,
-            "Hyphen-Flag", Hyphen_Flag::new,
-            "Nothing", Nothing::new,
-            "ImplicitNothing", ImplicitNothing::new,
-            "ExplicitNothing", ExplicitNothing::new);
+    private static final Map<String, Supplier<AsMemberRef>> TYPES = Map.ofEntries(
+            Map.entry("Flag", Flag::new),
+            Map.entry("ImplicitFlag", ImplicitFlag::new),
+            Map.entry("ExplicitFlag", ExplicitFlag::new),
+            Map.entry("Hyphen-Flag", Hyphen_Flag::new),
+            Map.entry("Nothing", Nothing::new),
+            Map.entry("ImplicitNothing", ImplicitNothing::new),
+            Map.entry("ExplicitNothing", ExplicitNothing::new),
+            Map.entry("Num", Num::new),
+            Map.entry("Byte", Byte::new),
+            Map.entry("Named", Named::new),
+            Map.entry("ImplicitNum", ImplicitNum::new),
+            Map.entry("ExplicitNum", ExplicitNum::new),
+            Map.entry("Color", Color::new),
+            Map.entry("ExtColor", ExtColor::new),
+            Map.entry("NegColor", NegColor::new),
+            Map.entry("ImplicitColor", ImplicitColor::new),
+            Map.entry("ExplicitColor", ExplicitColor::new));
 
     static Stream<Vectors.Vector> vectors() {
         return Vectors.load("builtin_alias_ber_test.vectors").stream();
     }
 
-    /** The value a vector's XER names: BOOLEAN's {@code <true/>} or {@code <false/>}. */
+    /**
+     * Sets {@code v} to the value a vector's XER names (X.693): BOOLEAN's
+     * {@code <true/>}, an INTEGER's number, an ENUMERATED item's empty element.
+     */
     private static void setFromXer(AsMemberRef v, String xer) {
-        if (v.asMemberRef() instanceof MemberRef.Primitive(Asn1Boolean b)) {
-            b.set(xer.contains("<true/>"));
+        if (xer.endsWith("/>") && xer.indexOf('>') == xer.length() - 1) {
+            return;  // an empty element: NULL
+        }
+        String inner = xer.substring(xer.indexOf('>') + 1, xer.lastIndexOf('<'));
+        switch (v.asMemberRef()) {
+            case MemberRef.Primitive(Asn1Boolean b) -> b.set(inner.equals("<true/>"));
+            case MemberRef.Primitive(Asn1Integer i) -> i.set(Long.parseLong(inner));
+            case MemberRef.Enumerated(EnumSlot slot, var spec) -> {
+                String item = inner.substring(1, inner.length() - 2);
+                long code = spec.entries().stream().filter(e -> e.name().equals(item)).mapToLong(EnumEntry::value)
+                        .findFirst().orElseThrow();
+                assertEquals(true, slot.enumSet(code));
+            }
+            default -> {
+            }
         }
     }
 
@@ -82,10 +121,29 @@ class BuiltinAliasBerTest {
     }
 
     @Test
+    void namedNumbersAndItems() {
+        assertEquals(-1L, Named.minus_one);
+        Color c = new Color();
+        assertEquals(Color.Value.red, c.get());
+        c.set(Color.Value.blue);
+        assertEquals(5L, c.enumGet());
+        assertEquals(false, c.enumSet(2));
+        assertEquals(Color.Value.blue, c.get());
+    }
+
+    @Test
+    void unknownEnumeratedValueIsRejected() {
+        assertThrows(DecodeException.class, () -> BerObject.decode(new Color(), new byte[] {0x0A, 0x01, 0x02}));
+        assertThrows(DecodeException.class, () -> BerObject.decode(new ExtColor(), new byte[] {0x0A, 0x01, 0x05}));
+    }
+
+    @Test
     void anotherTypesTagIsRejected() {
         byte[] flag = BerObject.encode(new Flag());
         assertThrows(DecodeException.class, () -> BerObject.decode(new ImplicitFlag(), flag));
         assertThrows(DecodeException.class, () -> BerObject.decode(new ExplicitFlag(), flag));
         assertThrows(DecodeException.class, () -> BerObject.decode(new ImplicitNothing(), BerObject.encode(new Nothing())));
+        assertThrows(DecodeException.class, () -> BerObject.decode(new Color(), BerObject.encode(new Num())));
+        assertThrows(DecodeException.class, () -> BerObject.decode(new ExplicitColor(), BerObject.encode(new Color())));
     }
 }

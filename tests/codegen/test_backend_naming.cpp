@@ -675,10 +675,10 @@ int main() {
 
         bool threw = false;
         try {
-            EnumeratedSpec spec;
-            spec.type_name = "E";
+            SequenceSpec spec;
+            spec.type_name = "S";
             TypeOutputSession s3;
-            j.emit_enumerated(spec, s3);
+            j.emit_sequence(spec, s3);
         } catch (const std::logic_error&) { threw = true; }
         check("Java construct emitters not implemented yet throw", threw);
     }
