@@ -38,6 +38,8 @@ static std::string java_builtin_class(ast::BuiltinType bt) {
     case BT::UniversalString:  return std::format("{}.types.Asn1UniversalString", kWire);
     case BT::ObjectIdentifier: return std::format("{}.types.Asn1ObjectIdentifier", kWire);
     case BT::RelativeOid:      return std::format("{}.types.Asn1RelativeOid", kWire);
+    case BT::UtcTime:          return std::format("{}.types.Asn1UtcTime", kWire);
+    case BT::GeneralizedTime:  return std::format("{}.types.Asn1GeneralizedTime", kWire);
     default:          return "";
     }
 }

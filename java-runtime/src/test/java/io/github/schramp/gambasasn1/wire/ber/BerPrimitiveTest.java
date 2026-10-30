@@ -8,6 +8,7 @@ import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.types.Asn1BmpString;
+import io.github.schramp.gambasasn1.wire.types.Asn1GeneralizedTime;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
 import io.github.schramp.gambasasn1.wire.types.Asn1Ia5String;
 import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
@@ -16,6 +17,7 @@ import io.github.schramp.gambasasn1.wire.types.Asn1ObjectIdentifier;
 import io.github.schramp.gambasasn1.wire.types.Asn1RelativeOid;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import io.github.schramp.gambasasn1.wire.types.Asn1UniversalString;
+import io.github.schramp.gambasasn1.wire.types.Asn1UtcTime;
 import io.github.schramp.gambasasn1.wire.types.Asn1Utf8String;
 import io.github.schramp.gambasasn1.wire.types.Asn1VisibleString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
@@ -258,5 +260,17 @@ class BerPrimitiveTest {
         BerPrimitive.decode(r, BerTagging.DELEGATE, new BerReader(bytes(0x0D, 0x05, 0x8F, 0xFF, 0xFF, 0xFF, 0x7F)));
         assertArrayEquals(new long[] {Asn1RelativeOid.MAX_ARC}, r.get());
         assertEquals(false, new Asn1RelativeOid(1).equals(new Asn1ObjectIdentifier(1)));
+    }
+
+    @Test
+    void timeTypesAreTheirTextUnderTheirOwnTag() {
+        byte[] utc = encode(new Asn1UtcTime("240115143000Z"), BerTagging.DELEGATE);
+        assertArrayEquals(bytes(0x17, 0x0D), java.util.Arrays.copyOf(utc, 2));
+        Asn1GeneralizedTime g = new Asn1GeneralizedTime();
+        BerPrimitive.decode(g, BerTagging.DELEGATE, new BerReader(encode(new Asn1GeneralizedTime("20240115143000.5+0200"), BerTagging.DELEGATE)));
+        assertEquals("20240115143000.5+0200", g.get());
+        assertThrows(DecodeException.class,
+                () -> BerPrimitive.decode(new Asn1UtcTime(), BerTagging.DELEGATE, new BerReader(encode(g, BerTagging.DELEGATE))));
+        assertEquals(false, new Asn1UtcTime("x").equals(new Asn1GeneralizedTime("x")));
     }
 }

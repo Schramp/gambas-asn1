@@ -12,6 +12,7 @@ import gen.builtin_alias_ber.Descriptor;
 import gen.builtin_alias_ber.ExplicitBits;
 import gen.builtin_alias_ber.ExplicitColor;
 import gen.builtin_alias_ber.ExplicitFlag;
+import gen.builtin_alias_ber.ExplicitGenTime;
 import gen.builtin_alias_ber.ExplicitNothing;
 import gen.builtin_alias_ber.ExplicitNum;
 import gen.builtin_alias_ber.ExplicitOctets;
@@ -21,6 +22,7 @@ import gen.builtin_alias_ber.ExplicitUtf8;
 import gen.builtin_alias_ber.ExtColor;
 import gen.builtin_alias_ber.FixedOctets;
 import gen.builtin_alias_ber.Flag;
+import gen.builtin_alias_ber.GenTime;
 import gen.builtin_alias_ber.General;
 import gen.builtin_alias_ber.Graphic;
 import gen.builtin_alias_ber.Hyphen_Flag;
@@ -34,6 +36,7 @@ import gen.builtin_alias_ber.ImplicitNum;
 import gen.builtin_alias_ber.ImplicitOctets;
 import gen.builtin_alias_ber.ImplicitOid;
 import gen.builtin_alias_ber.ImplicitRelOid;
+import gen.builtin_alias_ber.ImplicitUtc;
 import gen.builtin_alias_ber.Named;
 import gen.builtin_alias_ber.NamedBits;
 import gen.builtin_alias_ber.NegColor;
@@ -49,6 +52,7 @@ import gen.builtin_alias_ber.SizedOctets;
 import gen.builtin_alias_ber.T61;
 import gen.builtin_alias_ber.Teletex;
 import gen.builtin_alias_ber.Universal;
+import gen.builtin_alias_ber.Utc;
 import gen.builtin_alias_ber.Utf8;
 import gen.builtin_alias_ber.Videotex;
 import gen.builtin_alias_ber.Visible;
@@ -131,7 +135,11 @@ class BuiltinAliasBerTest {
             Map.entry("ExplicitOid", ExplicitOid::new),
             Map.entry("RelOid", RelOid::new),
             Map.entry("ImplicitRelOid", ImplicitRelOid::new),
-            Map.entry("ExplicitRelOid", ExplicitRelOid::new));
+            Map.entry("ExplicitRelOid", ExplicitRelOid::new),
+            Map.entry("Utc", Utc::new),
+            Map.entry("ImplicitUtc", ImplicitUtc::new),
+            Map.entry("GenTime", GenTime::new),
+            Map.entry("ExplicitGenTime", ExplicitGenTime::new));
 
     static Stream<Vectors.Vector> vectors() {
         return Vectors.load("builtin_alias_ber_test.vectors").stream();
