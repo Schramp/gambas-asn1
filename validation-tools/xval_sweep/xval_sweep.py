@@ -535,7 +535,31 @@ def split_per_records(data: bytes) -> list[bytes]:
     return records
 
 
-def compare_per(label: str, per_a: bytes, per_b: bytes, verbose: bool) -> tuple[int, int]:
+# Status printed for a mismatch on an informational asn1c leg. None of
+# them fails the target.
+# - ASN1CINCOMPLETE: asn1c does not implement what the standard asks.
+#   Implied for the PER legs whenever asn1c fails to decode its own PER
+#   of the target back; stated by a target option where that round trip
+#   passes but its output still differs from the standard's. BER is
+#   never implied: asn1c's XER/JER-to-DER round trips gate unless a
+#   target option explains them.
+# - SEMANTICIDENTICAL: both sides carry the same value, asn1c re-encodes
+#   it in another valid form. Only a target option can say this.
+# - INFORMATIONAL: a mismatch with no known cause.
+# A target option takes precedence over the implied status.
+ASN1C_VERDICTS = {
+    "@asn1c-opaque-contents": "ASN1CINCOMPLETE",   # X.682 §11.4 re-encoding under PER
+    "@real-reencode": "SEMANTICIDENTICAL",         # REAL binary vs decimal form
+}
+
+
+def asn1c_verdict(options) -> str | None:
+    """Status a target option states for its informational asn1c-leg
+    mismatches (see ASN1C_VERDICTS), or None."""
+    return next((ASN1C_VERDICTS[o] for o in sorted(options) if o in ASN1C_VERDICTS), None)
+
+
+def compare_per(label: str, per_a: bytes, per_b: bytes, verbose: bool, info: str | None = None) -> tuple[int, int]:
     recs_a = split_per_records(per_a)
     recs_b = split_per_records(per_b)
     n = min(len(recs_a), len(recs_b))
@@ -558,7 +582,7 @@ def compare_per(label: str, per_a: bytes, per_b: bytes, verbose: bool) -> tuple[
     if short:
         print(f"  [{label}] record count differs: {len(recs_a)} vs {len(recs_b)}")
     mismatches += short
-    status = "OK" if mismatches == 0 else "FAIL"
+    status = "OK" if mismatches == 0 else (info or "FAIL")
     print(f"  [{label}] {matches}/{n + short} match, {mismatches} mismatch  [{status}]")
     return matches, mismatches
 
@@ -791,7 +815,7 @@ def run_comparison_jer(label: str, jer_a: str, jer_b: str, verbose: bool) -> tup
     return matches, mismatches
 
 
-def compare_ber(label: str, ber_a: bytes, ber_b: bytes, verbose: bool) -> tuple[int, int]:
+def compare_ber(label: str, ber_a: bytes, ber_b: bytes, verbose: bool, info: str | None = None) -> tuple[int, int]:
     recs_a = split_ber_records(ber_a)
     recs_b = split_ber_records(ber_b)
     n = min(len(recs_a), len(recs_b))
@@ -814,7 +838,7 @@ def compare_ber(label: str, ber_a: bytes, ber_b: bytes, verbose: bool) -> tuple[
     if short:
         print(f"  [{label}] record count differs: {len(recs_a)} vs {len(recs_b)}")
     mismatches += short
-    status = "OK" if mismatches == 0 else "FAIL"
+    status = "OK" if mismatches == 0 else (info or "FAIL")
     print(f"  [{label}] {matches}/{n + short} match, {mismatches} mismatch  [{status}]")
     return matches, mismatches
 
@@ -844,7 +868,10 @@ def parse_targets(path):
     '@asn1c-opaque-contents' marks a schema with contents-constrained
     OCTET STRINGs (X.682 §11) that follow the outer encoding: asn1c keeps
     their bytes as they are, while X.682 §11.4 has them re-encoded under
-    PER, so the asn1c PER comparison is informational for it."""
+    PER, so the asn1c PER comparison is informational for it.
+    '@real-reencode' marks a schema with REAL values that asn1c re-encodes
+    in another valid form. See ASN1C_VERDICTS for how each one labels an
+    informational mismatch."""
     targets = []
     with open(path) as f:
         for lineno, line in enumerate(f, 1):
@@ -863,7 +890,7 @@ def parse_targets(path):
             rest = parts[2:]
             n_opts = next((i for i, t in enumerate(rest) if not t.startswith("@")), len(rest))
             options = set(rest[:n_opts])
-            unknown = options - {"@expect-errors", "@asn1c-opaque-contents"}
+            unknown = options - {"@expect-errors", *ASN1C_VERDICTS}
             if unknown:
                 print(f"{path}:{lineno}: unknown target option(s) {sorted(unknown)}")
                 sys.exit(1)
@@ -1227,7 +1254,8 @@ def build_asn1c(target_dir, asn1_files_abs, pdu_type, asn1c_bin, reuse=False, jo
 
 def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c_reason=None,
                slot=None, cpp_jobs=4, cargo_jobs=None, reuse=(), extra_files=(),
-               asncpp_flags=(), expect_errors=False, fuzz=None, asn1c_opaque_contents=False):
+               asncpp_flags=(), expect_errors=False, fuzz=None, asn1c_opaque_contents=False,
+               info=None):
     schema_abs = os.path.join(ASN1CPP_ROOT, schema_rel)
     if os.path.isdir(schema_abs):
         # A multi-module schema (e.g. ETSI LI): every .asn/.asn1 file in
@@ -1436,8 +1464,6 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
                 p2b_err = p2b_err or e
             if p2b_err:
                 print(f"  asn1c p2b stderr: {p2b_err}")
-            compare_ber("orig vs asn1c.P2B(cpp.PER) [informational]", ber_orig, b"".join(der_from_cpp), verbose)
-            compare_ber("orig vs asn1c.P2B(rust.PER) [informational]", ber_orig, b"".join(der_from_rust), verbose)
 
             # asn1c's own PER encoding of the original value, one record at
             # a time (asn1c_b2p's own doc on why) -- same informational
@@ -1460,7 +1486,11 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
                 der_records.append(der_rec)
             ber_asn1c_per2 = b"".join(der_records)
             self_m, self_mm = compare_ber("orig vs asn1c.P2B(asn1c.PER) [informational]",
-                                          ber_orig, ber_asn1c_per2, verbose)
+                                          ber_orig, ber_asn1c_per2, verbose,
+                                          info=info or "ASN1CINCOMPLETE")
+            per_info = info or ("ASN1CINCOMPLETE" if self_mm else "INFORMATIONAL")
+            compare_ber("orig vs asn1c.P2B(cpp.PER) [informational]", ber_orig, b"".join(der_from_cpp), verbose, info=per_info)
+            compare_ber("orig vs asn1c.P2B(rust.PER) [informational]", ber_orig, b"".join(der_from_rust), verbose, info=per_info)
 
             # asn1c is the PER ground truth wherever it round-trips its own
             # encoding of every record: then any difference from cpp/rust is
@@ -1472,8 +1502,8 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
                 tally(compare_per("asn1c.PER vs cpp.PER", per_asn1c, per_cpp, verbose))
                 tally(compare_per("asn1c.PER vs rust.PER", per_asn1c, per_rust, verbose))
             else:
-                compare_per("asn1c.PER vs cpp.PER [informational]", per_asn1c, per_cpp, verbose)
-                compare_per("asn1c.PER vs rust.PER [informational]", per_asn1c, per_rust, verbose)
+                compare_per("asn1c.PER vs cpp.PER [informational]", per_asn1c, per_cpp, verbose, info=per_info)
+                compare_per("asn1c.PER vs rust.PER [informational]", per_asn1c, per_rust, verbose, info=per_info)
         elif not skip_asn1c_reason:
             print("  asn1c PER leg: skipped (not found or unsupported for this target)")
     else:
@@ -1491,13 +1521,18 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
         tally(run_comparison("asn1c.B2X vs cpp.B2X", xer_asn1c, xer_cpp, verbose))
         tally(run_comparison("asn1c.B2X vs rust.B2X", xer_asn1c, xer_rust, verbose))
 
-        # asn1c's own round-trip stability is informational only, not
-        # gating: a type with REAL fields can legitimately re-encode to a
-        # different (still valid) DER byte sequence for the same value —
-        # this tests asn1c's own canonicalization behavior, not our
-        # codecs, so it's printed but never fails the target.
+        def asn1c_ber_check(label, ber_asn1c):
+            if info:
+                compare_ber(f"{label} [informational]", ber_orig, ber_asn1c, verbose, info=info)
+            else:
+                tally(compare_ber(label, ber_orig, ber_asn1c, verbose))
+
+        # asn1c's own XER round trip ends in its DER encoder. It gates: a BER
+        # difference is a hard failure unless a target option explains it
+        # (@real-reencode: a type with REAL fields can re-encode to a
+        # different, still valid DER byte sequence for the same value).
         ber_asn1c2, _ = asn1c_x2b(asn1c_tools["tool"], pdu_type, xer_asn1c)
-        compare_ber("orig vs asn1c.X2B(asn1c.XER) [informational]", ber_orig, ber_asn1c2, verbose)
+        asn1c_ber_check("orig vs asn1c.X2B(asn1c.XER)", ber_asn1c2)
 
         # JER: asn1c does have JER support (ASN_DISABLE_JER_SUPPORT is off
         # by default, A1C_GEN_JER in asn1c.c's default flags) — confirmed
@@ -1521,11 +1556,10 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, asn1c_bin, skip_asn1c
         jer_asn1c_check("asn1c.B2J vs cpp.B2J", jer_asn1c, jer_cpp, split_a=split_asn1c_jer_records)
         jer_asn1c_check("asn1c.B2J vs rust.B2J", jer_asn1c, jer_rust, split_a=split_asn1c_jer_records)
 
-        # asn1c's own JER round trip ends in its DER encoder, which re-encodes
-        # some REAL values in a different but valid form (same reason as
-        # orig vs asn1c.X2B above), so it stays informational.
+        # asn1c's own JER round trip ends in its DER encoder: gated the same
+        # way as orig vs asn1c.X2B above.
         ber_asn1c_jer2, _ = asn1c_j2b(asn1c_tools["tool"], pdu_type, jer_asn1c)
-        compare_ber("orig vs asn1c.J2B(asn1c.JER) [informational]", ber_orig, ber_asn1c_jer2, verbose)
+        asn1c_ber_check("orig vs asn1c.J2B(asn1c.JER)", ber_asn1c_jer2)
     elif not skip_asn1c_reason:
         print("  asn1c leg: skipped (not found or unsupported for this target)")
 
@@ -1724,6 +1758,7 @@ def main():
                                     asncpp_flags=asncpp_flags,
                                     expect_errors="@expect-errors" in options,
                                     asn1c_opaque_contents="@asn1c-opaque-contents" in options,
+                                    info=asn1c_verdict(options),
                                     fuzz=opts if opts.fuzz else None)
             except Exception as e:  # keep the sweep going; report as a failed target
                 print(f"  EXCEPTION: {e!r}")

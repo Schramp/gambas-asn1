@@ -26,6 +26,14 @@
 # STRINGs following the outer encoding (X.682 §11.4): written as PER their
 # bytes are re-encoded as PER, which asn1c (contents kept as opaque bytes)
 # does not do, so the asn1c PER comparison is informational.
+# '@real-reencode' — REAL values that asn1c re-encodes in another valid
+# form (binary vs decimal), so its own round trips differ from the input.
+# A mismatch on an informational asn1c leg never fails the target. Its
+# status names the cause: ASN1CINCOMPLETE (a PER leg where asn1c fails to
+# decode its own PER back, or @asn1c-opaque-contents), SEMANTICIDENTICAL
+# (@real-reencode: same value, other encoding; takes precedence), or
+# INFORMATIONAL (no known cause). asn1c's XER/JER-to-DER round trips are
+# a hard FAIL unless one of these options explains them.
 #
 # Optional 3rd+ column: a known, already-filed asn1c divergence for this
 # specific target (#440's asn1c leg) — C++/Rust legs still run and gate
@@ -80,7 +88,7 @@ examples/sample.source.RRC/asn1-files/rrc-7.1.0.asn1    UL-CCCH-Message
 examples/sample.source.ETSI-LI-PS-PDU/asn1-files   PS-PDU             -fallow-newer-modules --container-config=examples/sample.source.ETSI-LI-PS-PDU/container_fields.json
 examples/sample.source.ETSI-LI-PS-PDU/asn1-files   EncryptedPayload   -fallow-newer-modules --container-config=examples/sample.source.ETSI-LI-PS-PDU/container_fields.json
 
-tests/asn1/roundtrip_test.asn1        Container
+tests/asn1/roundtrip_test.asn1        Container  @real-reencode
 tests/asn1/explicit_tag_test.asn1     Mixed
 tests/asn1/choice_test.asn1           Alt4
 tests/asn1/self_ref_choice_test.asn1  RecChoice
@@ -143,10 +151,10 @@ tests/asn1/containing_test.asn1      Pick       --container-config=tests/asn1/co
 
 # SEQUENCE with an OPTIONAL untagged CHOICE member: presence is read from
 # the CHOICE alternatives' tags (X.690 §8.13).
-tests/asn1/fuzz_test.asn1            Bag
+tests/asn1/fuzz_test.asn1            Bag  @real-reencode
 
 # Type assignments carrying their own tag over each builtin BER handler.
-tests/asn1/typedef_tag_test.asn1     Tagged
+tests/asn1/typedef_tag_test.asn1     Tagged  @real-reencode
 # XER XMLValueList (X.680 §25.5): SEQUENCE OF / SET OF of BOOLEAN,
 # ENUMERATED and NULL, plain, through a type reference and tagged.
 tests/asn1/xer_value_list_test.asn1  VlRec
