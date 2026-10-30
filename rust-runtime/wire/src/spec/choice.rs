@@ -18,6 +18,13 @@ pub enum BerTagging {
     /// The payload frames itself: an untagged CHOICE payload (X.680 §28) or
     /// a reference to an already-tagged type.
     Delegate,
+    /// The referenced type's own framing (`AsMemberRef::BER_FRAMING`): a
+    /// member with no tag of its own whose type assignment carries one
+    /// (X.680 §31.2, `T ::= [APPLICATION 6] EXPLICIT OCTET STRING`). The
+    /// framing belongs to the type; the row only points at it, the way a
+    /// C++ member row points at its type's descriptor. The BER walker
+    /// resolves it ([`BerTagging::resolve`]) before dispatching.
+    OfType(&'static BerTagging),
     /// `Delegate` for an OPTIONAL member whose type is an untagged CHOICE.
     /// The function returns that CHOICE's dispatch tags
     /// (`TypeTag::choice_ber_tags`): the member is present when the peeked
@@ -30,6 +37,15 @@ pub enum BerTagging {
 }
 
 impl BerTagging {
+    /// The framing the BER walker applies: `OfType` replaced by the
+    /// referenced type's own framing, every other variant unchanged.
+    pub fn resolve(self) -> BerTagging {
+        match self {
+            BerTagging::OfType(f) => f.resolve(),
+            other => other,
+        }
+    }
+
     /// Whether a member with this framing and table tag `tag` starts with
     /// wire tag `t`: any of the CHOICE's alternative tags for
     /// `DelegateChoice` (by class and number, as CHOICE dispatch matches),

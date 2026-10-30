@@ -310,10 +310,10 @@ fn ber_decode_explicit_(p: PrimitiveRefMut, tag: Tag, r: &mut BerReader) -> Resu
 /// the enum variant.
 /// @return `Err` for a row codegen marked `BerTagging::Unsupported`.
 pub fn ber_encode_primitive(p: PrimitiveRef, framing: BerTagging, out: &mut Vec<u8>) -> Result<(), EncodeError> {
-    match framing {
+    match framing.resolve() {
         BerTagging::Implicit(tag) => ber_encode_tagged_(p, tag, out),
         BerTagging::Explicit(tag) => ber_encode_explicit_(p, tag, out),
-        BerTagging::Delegate | BerTagging::DelegateChoice(_) => ber_encode_plain(p, out),
+        BerTagging::Delegate | BerTagging::DelegateChoice(_) | BerTagging::OfType(_) => ber_encode_plain(p, out),
         BerTagging::Unsupported(reason) => return Err(EncodeError::new(format!("primitive not supported: {reason}"))),
     }
     Ok(())
@@ -323,10 +323,10 @@ pub fn ber_encode_primitive(p: PrimitiveRef, framing: BerTagging, out: &mut Vec<
 /// @return `Err` on malformed BER, a tag mismatch, or a row codegen
 ///         marked `BerTagging::Unsupported`.
 pub fn ber_decode_primitive(p: PrimitiveRefMut, framing: BerTagging, r: &mut BerReader) -> Result<(), BerDecodeError> {
-    match framing {
+    match framing.resolve() {
         BerTagging::Implicit(tag) => ber_decode_tagged_(p, tag, r),
         BerTagging::Explicit(tag) => ber_decode_explicit_(p, tag, r),
-        BerTagging::Delegate | BerTagging::DelegateChoice(_) => ber_decode_plain(p, r),
+        BerTagging::Delegate | BerTagging::DelegateChoice(_) | BerTagging::OfType(_) => ber_decode_plain(p, r),
         BerTagging::Unsupported(reason) => Err(BerDecodeError::new(format!("primitive not supported: {reason}"), r.pos())),
     }
 }

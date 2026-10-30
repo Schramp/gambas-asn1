@@ -17,3 +17,5 @@ tests/asn1/xer_layout_test.asn1       XlRoot
 tests/asn1/per_named_bits_test.asn1  NamedBitsRec
 tests/asn1/per_fragment_test.asn1    Big
 tests/asn1/fuzz_test.asn1            Bag
+tests/asn1/typedef_tag_test.asn1     Tagged
+tests/asn1/wrong_tag_test.asn1       WtSeq      @asn1c-opaque-contents

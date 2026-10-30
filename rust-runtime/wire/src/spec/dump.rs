@@ -74,7 +74,8 @@ fn jconstraints(c: &Constraints) -> String {
 }
 
 /// The member's tag and framing: IMPLICIT and EXPLICIT carry the tag, a
-/// delegating row frames nothing itself (NONE), and an untagged CHOICE has
+/// delegating row or one pointing at its type's framing (`OfType`) frames
+/// nothing itself (NONE), and an untagged CHOICE has
 /// no tag at all (UNTAGGED_CHOICE, X.680 §31.2.7). `untagged_choice` says
 /// whether a `Delegate` row's value is such a CHOICE.
 fn jtagging(ber: BerTagging, tag: Option<Tag>, untagged_choice: bool) -> String {
@@ -84,6 +85,10 @@ fn jtagging(ber: BerTagging, tag: Option<Tag>, untagged_choice: bool) -> String 
         BerTagging::DelegateChoice(_) => ("UNTAGGED_CHOICE", None),
         BerTagging::Delegate if untagged_choice => ("UNTAGGED_CHOICE", None),
         BerTagging::Delegate => ("NONE", tag),
+        BerTagging::OfType(f) => match f.resolve() {
+            BerTagging::Implicit(t) | BerTagging::Explicit(t) => ("NONE", Some(tag.unwrap_or(t))),
+            _ => ("NONE", tag),
+        },
         BerTagging::Unsupported(_) => ("UNSUPPORTED", tag),
     };
     let t = t.map_or("null".to_string(), |t| jtag(&t));

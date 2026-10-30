@@ -593,6 +593,17 @@ std::string RustBackend::ber_framing_const(const TaggedTypeSpec& spec) const {
                        spec.is_explicit ? "Explicit" : "Implicit", format_tag_literal(*spec.tag));
 }
 
+/// @brief `BerTagging::OfType` row framing that points at a referenced type
+///        assignment's own `AsMemberRef::BER_FRAMING`.
+/// @param type_path Rust path of the referenced type (a pure `pub type`
+///        alias hop resolves to the same impl).
+/// @return The framing expression for a member or alternative row.
+/// @see X.680 §31.2 — the tag of a tagged type assignment belongs to the type.
+static std::string of_type_framing(const std::string& type_path) {
+    return std::format("asn1cpp_wire::spec::choice::BerTagging::OfType("
+                       "&<{} as asn1cpp_wire::spec::object::AsMemberRef>::BER_FRAMING)", type_path);
+}
+
 /// @brief Format a resolved `TagSpec` as an `asn1cpp_wire::ber::tag::Tag` struct
 ///        literal. Mirrors `CppBackend::format_tag_literal`
 ///        — same input (backend-agnostic `TagSpec`), Rust struct-literal
@@ -1460,34 +1471,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Implicit({})", tag_text);
                 } else if ((kind == AccessKind::Primitive || kind == AccessKind::Contained)
                            && m.resolved_tag && m.is_explicit) {
-                    // `is_explicit` true but `tag_is_override` false: not a
-                    // tag on *this* member, but one inherited from a named
-                    // alias target that itself re-tags an already-tagged
-                    // type one hop further down (X.680 §31.2 — e.g. `Label2
-                    // ::= [1] Label; Label ::= [9] EXPLICIT UTF8String`).
-                    // `Delegate` framing is how Composite/Choice/SeqOf
-                    // handle this correctly — their decode/encode path asks
-                    // the referenced value's own `spec()`/`natural_tag()` at
-                    // runtime, which still reflects whatever retagging that
-                    // concrete type carries. A `Primitive` row has no such
-                    // runtime hook: `AsMemberRef::as_member_ref` (every
-                    // builtin-alias/INTEGER-alias `impl`) unwraps straight to the alias's own
-                    // *native* field (`&self.0`), which is why it can live
-                    // in `PrimitiveRef`'s closed, trait-object-free set at
-                    // all — but that unwrap also discards the alias's own
-                    // substituted tag, leaving only the wrapped type's bare
-                    // universal tag. `Delegate` framing's hardcoded
-                    // "primitive's own fixed natural tag" assumption (see
-                    // `ber_decode_plain`/`ber_encode_plain`, spec/
-                    // primitive.rs) is then simply wrong for this member.
-                    // `m.resolved_tag` already carries the alias's own
-                    // resolved outer tag (`natural_tag_spec_for`'s TypeRef
-                    // branch, Generator.cpp) — `Explicit` framing on the
-                    // *unwrapped* primitive reproduces the alias's own
-                    // wire shape (outer tag wrapping the native type's
-                    // own complete TLV, X.690 §8.14).
+                    // The EXPLICIT tag belongs to the referenced type
+                    // assignment, not to this member (X.680 §31.2, e.g.
+                    // `TExp ::= [APPLICATION 13] EXPLICIT INTEGER`). The row
+                    // points at that type's own framing; the walker needs
+                    // the pointer because `as_member_ref` unwraps the alias
+                    // to its bare primitive, which only knows its universal
+                    // tag. `m.resolved_tag` is the type's outer tag, which
+                    // OPTIONAL presence detection peeks for.
                     tag_text = format_tag_literal(*m.resolved_tag);
-                    ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", tag_text);
+                    ber_framing_expr = of_type_framing(kind == AccessKind::Contained ? std::format("crate::{0}::{0}", m.ref_constraints_owner) : m.mtype);
                 } else if ((kind == AccessKind::Primitive || kind == AccessKind::Enumerated
                             || kind == AccessKind::Contained) && m.resolved_tag && !m.is_explicit
                            && m.resolved_tag->cls != ast::TagClass::Universal) {
@@ -2122,12 +2115,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             } else if (a.resolved_tag && a.is_explicit && a.resolved_tag->tag_is_override) {
                 // EXPLICIT (X.690 §8.14.3): an outer TLV around the payload.
                 ber = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", format_tag_literal(*a.resolved_tag));
-            } else if (a.resolved_tag && a.is_explicit && a.contained) {
-                // A bare reference to an EXPLICIT-tagged CONTAINING type
-                // assignment: the contained field is written as a plain
-                // OCTET STRING, so the type assignment's wrapper is added
-                // here (X.680 §31.2, X.690 §8.14.3).
-                ber = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", format_tag_literal(*a.resolved_tag));
+            } else if (a.resolved_tag && a.is_explicit && (kind == AltKind::Primitive || kind == AltKind::Contained)) {
+                // A bare reference to an EXPLICIT-tagged type assignment
+                // whose payload unwraps to a bare primitive (or the plain
+                // OCTET STRING of a contained field): the row points at
+                // the type's own framing (X.680 §31.2, X.690 §8.14.2).
+                ber = of_type_framing(kind == AltKind::Contained ? std::format("crate::{0}::{0}", a.ref_constraints_owner) : a.mtype);
             } else if (a.resolved_tag && a.is_explicit) {
                 // A bare reference to an EXPLICIT-tagged type: it wraps
                 // itself, a second wrap here would double it (X.680 §30).
