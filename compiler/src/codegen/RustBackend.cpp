@@ -593,6 +593,17 @@ std::string RustBackend::ber_framing_const(const TaggedTypeSpec& spec) const {
                        spec.is_explicit ? "Explicit" : "Implicit", format_tag_literal(*spec.tag));
 }
 
+/// @brief `BerTagging::OfType` row framing that points at a referenced type
+///        assignment's own `AsMemberRef::BER_FRAMING`.
+/// @param type_path Rust path of the referenced type (a pure `pub type`
+///        alias hop resolves to the same impl).
+/// @return The framing expression for a member or alternative row.
+/// @see X.680 §31.2 — the tag of a tagged type assignment belongs to the type.
+static std::string of_type_framing(const std::string& type_path) {
+    return std::format("asn1cpp_wire::spec::choice::BerTagging::OfType("
+                       "&<{} as asn1cpp_wire::spec::object::AsMemberRef>::BER_FRAMING)", type_path);
+}
+
 /// @brief Format a resolved `TagSpec` as an `asn1cpp_wire::ber::tag::Tag` struct
 ///        literal. Mirrors `CppBackend::format_tag_literal`
 ///        — same input (backend-agnostic `TagSpec`), Rust struct-literal
@@ -643,9 +654,9 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     // No recase — see emit_enumerated_definition's matching note.
     std::string cname = tname + "_CONSTRAINTS";
     if (sizeable) {
-        int flags = (spec.has_size_constraint
-            ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
-            : 0) | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
+        int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
+            | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
+            | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
         int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
         os << "#[allow(non_upper_case_globals)]\n";
         os << std::format(
@@ -769,6 +780,12 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
     os << std::format("pub fn {}() -> {} {{\n    {}\n}}\n\n", fname, rust_type, literal);
 }
 
+/// @brief Name of a contained field's `ContainedSpec` static, from the
+///        field's descriptor base name (TaggedMemberSpec::contained_base).
+static std::string contained_spec_ident(const std::string& base) {
+    return to_screaming_snake_case(base) + "_CONTAINED";
+}
+
 /// @brief Emit a Rust bounds-check function for an inline-constrained
 ///        SEQUENCE/CHOICE member — INTEGER value range or SIZE-able-
 ///        primitive SIZE constraint.
@@ -781,12 +798,6 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
 ///       member_descriptor_base_name() — its own naming convention,
 ///       independent of whatever text CppBackend's own implementation
 ///       of that method produces.
-/// @brief Name of a contained field's `ContainedSpec` static, from the
-///        field's descriptor base name (TaggedMemberSpec::contained_base).
-static std::string contained_spec_ident(const std::string& base) {
-    return to_screaming_snake_case(base) + "_CONTAINED";
-}
-
 void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
     std::ostream& os = session.buffer(definition_extension());
     using Kind = MemberTypeDescriptorSpec::Kind;
@@ -892,18 +903,13 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // flags=0 makes it a no-op" pattern (Validate.hpp) — no second gate
     // needed, and `validate_size` already treats a missing
     // SIZE_CONSTRAINED bit as always-valid.
-    // `size_bounded == false` (SIZE(n..MAX)) still gets SIZE_CONSTRAINED
-    // set (unlike C++'s own Constraints, which only sets it for a finite
-    // upper bound and so skips validation entirely for a semi-constrained
-    // SIZE — see OctetString::validate/BitString::validate's own `if
-    // (!(c.flags & SIZE_CONSTRAINED)) return 0;` gate) — the lower bound
-    // is still real and worth checking; `size_upper` becomes `i64::MAX`
-    // (via `INT64_MAX`) as a sentinel so `validate_size`'s upper check
-    // never fires for a realistic element/byte/character count. A
-    // deliberate improvement over C++, not a parity gap.
-    int flags = (spec.has_size_constraint
-        ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
-        : 0) | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
+    // SIZE_CONSTRAINED means "size_lower..size_upper is a finite range"
+    // (Constraints.hpp), the same bit C++ emits: a semi-constrained
+    // SIZE(n..MAX) leaves it clear and PER encodes its length as an
+    // unconstrained length determinant (X.691 §11.9.4.2).
+    int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
+        | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
+        | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
     int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
     // X.680 §51.4 PermittedAlphabet — `spec.alphabet` is
     // the resolved, sorted, deduplicated permitted-character set
@@ -980,17 +986,13 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // containing SEQUENCE's member-row loop (`emit_sequence_definition`)
     // can always find `{TYPE}_CONSTRAINTS` by the same deterministic name
     // it already derives for the field type, no extra signal needed. A
-    // semi-constrained SIZE (`size_upper` absent) still gets
-    // SIZE_CONSTRAINED set with `size_upper` as a sentinel `i64::MAX` —
-    // `validate_size` (constraints.rs) then still checks the lower bound,
-    // a deliberate improvement over C++'s own
-    // Constraints (which skips validation entirely for a semi-constrained
-    // SIZE — see OctetString::validate's own `SIZE_CONSTRAINED` gate).
+    // semi-constrained SIZE (`size_upper` absent) leaves SIZE_CONSTRAINED
+    // clear: the bit means a finite range (X.691 §20.6 constrained
+    // count), as in the C++ table.
     // No recase — see emit_enumerated_definition's matching note.
     std::string cname = std::format("{}_CONSTRAINTS", spec.type_name);
-    int flags = spec.has_size_constraint
-        ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
-        : 0;
+    int flags = (spec.size_upper ? asn1::Constraints::SIZE_CONSTRAINED : 0)
+        | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
     int64_t size_upper = spec.size_upper.value_or(std::numeric_limits<int64_t>::max());
     // `pub`, unlike the member-inline Constraints tables above — a
     // synthetic promoted type's own table is referenced cross-module by
@@ -1469,34 +1471,16 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Implicit({})", tag_text);
                 } else if ((kind == AccessKind::Primitive || kind == AccessKind::Contained)
                            && m.resolved_tag && m.is_explicit) {
-                    // `is_explicit` true but `tag_is_override` false: not a
-                    // tag on *this* member, but one inherited from a named
-                    // alias target that itself re-tags an already-tagged
-                    // type one hop further down (X.680 §31.2 — e.g. `Label2
-                    // ::= [1] Label; Label ::= [9] EXPLICIT UTF8String`).
-                    // `Delegate` framing is how Composite/Choice/SeqOf
-                    // handle this correctly — their decode/encode path asks
-                    // the referenced value's own `spec()`/`natural_tag()` at
-                    // runtime, which still reflects whatever retagging that
-                    // concrete type carries. A `Primitive` row has no such
-                    // runtime hook: `AsMemberRef::as_member_ref` (every
-                    // builtin-alias/INTEGER-alias `impl`) unwraps straight to the alias's own
-                    // *native* field (`&self.0`), which is why it can live
-                    // in `PrimitiveRef`'s closed, trait-object-free set at
-                    // all — but that unwrap also discards the alias's own
-                    // substituted tag, leaving only the wrapped type's bare
-                    // universal tag. `Delegate` framing's hardcoded
-                    // "primitive's own fixed natural tag" assumption (see
-                    // `ber_decode_plain`/`ber_encode_plain`, spec/
-                    // primitive.rs) is then simply wrong for this member.
-                    // `m.resolved_tag` already carries the alias's own
-                    // resolved outer tag (`natural_tag_spec_for`'s TypeRef
-                    // branch, Generator.cpp) — `Explicit` framing on the
-                    // *unwrapped* primitive reproduces the alias's own
-                    // wire shape (outer tag wrapping the native type's
-                    // own complete TLV, X.690 §8.14).
+                    // The EXPLICIT tag belongs to the referenced type
+                    // assignment, not to this member (X.680 §31.2, e.g.
+                    // `TExp ::= [APPLICATION 13] EXPLICIT INTEGER`). The row
+                    // points at that type's own framing; the walker needs
+                    // the pointer because `as_member_ref` unwraps the alias
+                    // to its bare primitive, which only knows its universal
+                    // tag. `m.resolved_tag` is the type's outer tag, which
+                    // OPTIONAL presence detection peeks for.
                     tag_text = format_tag_literal(*m.resolved_tag);
-                    ber_framing_expr = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", tag_text);
+                    ber_framing_expr = of_type_framing(kind == AccessKind::Contained ? std::format("crate::{0}::{0}", m.ref_constraints_owner) : m.mtype);
                 } else if ((kind == AccessKind::Primitive || kind == AccessKind::Enumerated
                             || kind == AccessKind::Contained) && m.resolved_tag && !m.is_explicit
                            && m.resolved_tag->cls != ast::TagClass::Universal) {
@@ -2131,12 +2115,12 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
             } else if (a.resolved_tag && a.is_explicit && a.resolved_tag->tag_is_override) {
                 // EXPLICIT (X.690 §8.14.3): an outer TLV around the payload.
                 ber = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", format_tag_literal(*a.resolved_tag));
-            } else if (a.resolved_tag && a.is_explicit && a.contained) {
-                // A bare reference to an EXPLICIT-tagged CONTAINING type
-                // assignment: the contained field is written as a plain
-                // OCTET STRING, so the type assignment's wrapper is added
-                // here (X.680 §31.2, X.690 §8.14.3).
-                ber = std::format("asn1cpp_wire::spec::choice::BerTagging::Explicit({})", format_tag_literal(*a.resolved_tag));
+            } else if (a.resolved_tag && a.is_explicit && (kind == AltKind::Primitive || kind == AltKind::Contained)) {
+                // A bare reference to an EXPLICIT-tagged type assignment
+                // whose payload unwraps to a bare primitive (or the plain
+                // OCTET STRING of a contained field): the row points at
+                // the type's own framing (X.680 §31.2, X.690 §8.14.2).
+                ber = of_type_framing(kind == AltKind::Contained ? std::format("crate::{0}::{0}", a.ref_constraints_owner) : a.mtype);
             } else if (a.resolved_tag && a.is_explicit) {
                 // A bare reference to an EXPLICIT-tagged type: it wraps
                 // itself, a second wrap here would double it (X.680 §30).

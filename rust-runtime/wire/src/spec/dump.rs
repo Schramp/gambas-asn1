@@ -10,7 +10,7 @@
 use crate::ber::tag::{Tag, TagClass};
 use crate::constraints::Constraints;
 use crate::spec::choice::BerTagging;
-use crate::spec::object::{AsMemberRef, MemberRef, XerInstruction};
+use crate::spec::object::{AsMemberRef, MemberRef, MemberRefMut, XerInstruction};
 
 fn jstr(s: &str) -> String {
     let mut out = String::from("\"");
@@ -74,7 +74,8 @@ fn jconstraints(c: &Constraints) -> String {
 }
 
 /// The member's tag and framing: IMPLICIT and EXPLICIT carry the tag, a
-/// delegating row frames nothing itself (NONE), and an untagged CHOICE has
+/// delegating row or one pointing at its type's framing (`OfType`) frames
+/// nothing itself (NONE), and an untagged CHOICE has
 /// no tag at all (UNTAGGED_CHOICE, X.680 §31.2.7). `untagged_choice` says
 /// whether a `Delegate` row's value is such a CHOICE.
 fn jtagging(ber: BerTagging, tag: Option<Tag>, untagged_choice: bool) -> String {
@@ -84,6 +85,10 @@ fn jtagging(ber: BerTagging, tag: Option<Tag>, untagged_choice: bool) -> String 
         BerTagging::DelegateChoice(_) => ("UNTAGGED_CHOICE", None),
         BerTagging::Delegate if untagged_choice => ("UNTAGGED_CHOICE", None),
         BerTagging::Delegate => ("NONE", tag),
+        BerTagging::OfType(f) => match f.resolve() {
+            BerTagging::Implicit(t) | BerTagging::Explicit(t) => ("NONE", Some(tag.unwrap_or(t))),
+            _ => ("NONE", tag),
+        },
         BerTagging::Unsupported(_) => ("UNSUPPORTED", tag),
     };
     let t = t.map_or("null".to_string(), |t| jtag(&t));
@@ -108,6 +113,22 @@ fn primitive_kind(m: MemberRef) -> &'static str {
         "Value" => "ANY",
         n => n,
     }
+}
+
+/// For each of a CHOICE's `count` alternatives, whether its payload is
+/// itself an untagged CHOICE (X.680 §31.2.7). A value holds one
+/// alternative at a time, so each is selected in turn on a scratch value.
+fn untagged_choice_alternatives<T: AsMemberRef + Default>(count: usize) -> Vec<bool> {
+    let mut w = T::default();
+    (0..count)
+        .map(|i| match w.as_member_ref_mut() {
+            MemberRefMut::Choice(c) => {
+                c.select_mut(i);
+                matches!(c.get_active(), MemberRef::Choice(x) if x.spec().own_tag.is_none())
+            }
+            _ => false,
+        })
+        .collect()
 }
 
 /// Dump one type's descriptor tables as one line of canonical JSON.
@@ -154,14 +175,16 @@ pub fn dump_tables<T: AsMemberRef + Default>(name: &str) -> String {
         }
         MemberRef::Choice(c) => {
             let sp = c.spec();
+            let untagged = untagged_choice_alternatives::<T>(sp.alternatives.len());
             let rows: Vec<String> = sp
                 .alternatives
                 .iter()
-                .map(|a| {
+                .zip(untagged)
+                .map(|(a, untagged)| {
                     format!(
                         "{{\"name\":{},{},\"optional\":false,\"constraints\":{},\"contained\":{}}}",
                         jstr(a.name),
-                        jtagging(a.ber, None, false),
+                        jtagging(a.ber, None, untagged),
                         jconstraints(a.constraints),
                         a.contained.is_some()
                     )

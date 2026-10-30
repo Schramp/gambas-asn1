@@ -704,22 +704,21 @@ std::vector<std::string> Generator::collect_extra_includes_for(const ast::TypeRe
     return out;
 }
 
-// Collect flattened BER dispatch tags for one CHOICE alternative (X.690 §8.13,
-// X.680 §24.6). If the alternative has its own BER tag, add one entry.
-// If it resolves to an untagged CHOICE (empty natural tag), recurse into its
-// alternatives so the outer CHOICE can dispatch by the inner type's tags.
+/// @brief Collect the flattened BER dispatch tags of one CHOICE alternative
+///        into its ChoiceSpec::ber_tags table.
+/// @param alt      The alternative's member def.
+/// @param alt_idx  Index of the alternative the collected tags select.
+/// @param out      Dispatch entries, appended to.
+/// @param visited  Type names already entered (cycle guard).
+/// @note A tagged alternative contributes its natural_tag_spec_for() tag,
+///       the same tag its member row carries: constructed when the tag is
+///       EXPLICIT (X.690 §8.14.2) or the type is. An alternative of an
+///       untagged CHOICE type is flattened into the inner CHOICE's tags.
+/// @see X.690 §8.13, X.680 §29.7 — CHOICE alternatives have distinct tags.
 void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
                                       std::vector<BerTagEntry>& out,
                                       std::set<std::string>& visited)
 {
-    // Explicit outer tag: use it directly.
-    if (alt.tag.present()) {
-        bool constr = alt.is_sequence() || alt.is_choice() ||
-                      alt.is_seq_of()  || alt.is_set_of() || alt.is_set();
-        if (auto spec = tag_spec_for(alt.tag, constr))
-            out.push_back({spec->cls, spec->number, backend_.format_tag_literal(*spec), alt_idx});
-        return;
-    }
     if (auto spec = natural_tag_spec_for(alt)) {
         out.push_back({spec->cls, spec->number, backend_.format_tag_literal(*spec), alt_idx});
         return;
@@ -735,9 +734,7 @@ void Generator::collect_ber_tags_for(const ast::TypeDef& alt, int alt_idx,
     }
     // If the resolved type has its own explicit tag, use it (tagged CHOICE is not untagged).
     if (inner->tag.present()) {
-        bool constr = inner->is_sequence() || inner->is_choice() ||
-                      inner->is_seq_of()   || inner->is_set_of() || inner->is_set();
-        if (auto spec = tag_spec_for(inner->tag, constr))
+        if (auto spec = natural_tag_spec_for(*inner))
             out.push_back({spec->cls, spec->number, backend_.format_tag_literal(*spec), alt_idx});
         return;
     }
@@ -1903,9 +1900,17 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
 // `ChoiceAlternativeSpec::ref_kind`/`ref_storage_kind` (Backend.hpp) can
 // be deleted — every caller currently branching on the result would
 // always take the "covered" path.
+/// @brief Classify a member's TypeRef target by shape (INTEGER alias,
+///        ENUMERATED, builtin alias, other) for the backends' member-row
+///        and PER decisions.
+/// @param tr The reference, resolved in the module being generated, so a
+///        name defined differently in several modules takes the shape of
+///        the one in scope.
+/// @return Target kind and INTEGER storage width.
+/// @see X.680 §13 — an unqualified reference names the type in scope.
 Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRef& tr) const {
     using BT = ast::BuiltinType;
-    auto resolved = resolver_.resolve_ref(tr);
+    auto resolved = resolver_.resolve_ref(tr, current_module_);
     if (!resolved) {
         // A synthetic-promoted target (generate_inline_types) was never
         // registered with the Resolver — resolve_ref failing here is the
