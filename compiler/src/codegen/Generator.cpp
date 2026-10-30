@@ -2438,7 +2438,9 @@ std::pair<int,int> Generator::canonical_tag_key(const ast::Tag& tag, const ast::
     // precomputed copy) and `natural_tag_src.tag` have diverged.
     if (auto nat = natural_tag_spec_for(natural_tag_src))
         return { static_cast<int>(nat->cls), static_cast<int>(nat->number) };
-    return { INT_MAX, INT_MAX }; // no natural tag either (e.g. a nested untagged CHOICE) — sort last.
+    // No tag of its own: an untagged CHOICE orders as the smallest tag in its
+    // extension root, nested untagged CHOICEs included (X.691 §22.3).
+    return set_component_tag_key(natural_tag_src, 0);
 }
 
 std::pair<int,int> Generator::set_component_tag_key(const ast::TypeDef& m, int depth) const {
