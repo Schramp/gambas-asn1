@@ -68,6 +68,11 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure -j$(nproc)
 
+      # C++ vs Rust behavioural consistency across every targets.txt entry.
+      # asn1c is not built in CI, so the ground-truth leg stays a local check.
+      - name: Cross-validate C++ vs Rust (xval_sweep)
+        run: python3 validation-tools/xval_sweep/xval_sweep.py --no-asn1c -j 2
+
       - name: Build ETSI LI example
         if: github.ref == 'refs/heads/main'
         run: make -C examples/sample.source.ETSI-LI-PS-PDU -j$(nproc)
