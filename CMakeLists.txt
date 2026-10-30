@@ -96,6 +96,22 @@ else()
     message(STATUS "rust-runtime/per cargo test: OFF (cargo not found)")
 endif()
 
+# ---------------------------------------------------------------------------
+# Optional: java-runtime Gradle test
+#   Standalone Gradle build (wrapper committed, Java 21 toolchain); like the
+#   Rust crate it is not a CMake target, only wired into ctest. Needs a
+#   JDK 21 or newer; the wrapper fetches Gradle itself on first use.
+# ---------------------------------------------------------------------------
+find_package(Java 21 COMPONENTS Development QUIET)
+cmake_dependent_option(WITH_JAVA_RUNTIME_TEST
+    "Run java-runtime's Gradle test via ctest"
+    ON "Java_FOUND" OFF)
+if(WITH_JAVA_RUNTIME_TEST)
+    message(STATUS "java-runtime gradle test: ON  (${Java_JAVAC_EXECUTABLE} ${Java_VERSION_STRING})")
+else()
+    message(STATUS "java-runtime gradle test: OFF (no JDK 21+ found)")
+endif()
+
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 # libstdc++ bounds checks (operator[], front/back, …) in Debug builds, as

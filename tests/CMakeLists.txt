@@ -1883,6 +1883,13 @@ if(WITH_BER_RUNTIME_TEST OR WITH_PER_RUNTIME_TEST)
     set_tests_properties(wire_runtime_cargo_test PROPERTIES TIMEOUT 120 LABELS "rust")
 endif()
 
+if(WITH_JAVA_RUNTIME_TEST)
+    add_test(NAME java_runtime_test
+        COMMAND ${CMAKE_SOURCE_DIR}/java-runtime/gradlew -p ${CMAKE_SOURCE_DIR}/java-runtime
+                test --console=plain --quiet)
+    set_tests_properties(java_runtime_test PROPERTIES TIMEOUT 600 LABELS "java")
+endif()
+
 # ---- codegen -> asn1cpp-ber roundtrip (gambas-asn1#219) --------------------
 #   Real asn1cpp --target=rust output (Point, from simple_seq.asn1) compiled
 #   and roundtrip-tested against the real asn1cpp-ber crate — not a hand-
