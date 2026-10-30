@@ -1842,7 +1842,8 @@ set_tests_properties(jer_bundle_roundtrip PROPERTIES
 add_executable(test_backend_naming
     codegen/test_backend_naming.cpp
     ${CMAKE_SOURCE_DIR}/compiler/src/codegen/CppBackend.cpp
-    ${CMAKE_SOURCE_DIR}/compiler/src/codegen/RustBackend.cpp)
+    ${CMAKE_SOURCE_DIR}/compiler/src/codegen/RustBackend.cpp
+    ${CMAKE_SOURCE_DIR}/compiler/src/codegen/JavaBackend.cpp)
 target_include_directories(test_backend_naming PRIVATE
     ${CMAKE_SOURCE_DIR}/compiler/src
     ${CMAKE_SOURCE_DIR}/runtime/include)

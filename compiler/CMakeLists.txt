@@ -35,6 +35,7 @@ add_executable(asn1cpp
     src/codegen/Generator.cpp
     src/codegen/CppBackend.cpp
     src/codegen/RustBackend.cpp
+    src/codegen/JavaBackend.cpp
     src/config/Json.cpp
     src/sema/ContainedFields.cpp
     src/main.cpp

@@ -1144,7 +1144,8 @@ one `.hpp` + `.cpp` pair per type in the output directory.
 | `-fbless-SIZE` | **(Non-standard)** Accept `SIZE()` constraints on `INTEGER` and `ENUMERATED`. X.680 §47.5.2 forbids this; the constraint is silently ignored during code generation. Matches asn1c's `-fbless-SIZE` extension for byte-width hints in legacy schemas. |
 | `--integer-type=<kind>` | Override default integer storage kind. `int64` (default) — signed 64-bit; `uint64` — unsigned 64-bit; `int128` and `arbitrary` are reserved (emit a warning and fall back to `int64`). Storage is otherwise auto-selected from constraint range. |
 | `-pdu=<TypeName>` | Limit generation to `<TypeName>` and all types reachable from it (transitive BFS through TypeRef edges). May be specified multiple times. `-pdu=all` generates all types (same as omitting the flag). Note: types embedded as `OCTET STRING` bytes (two-level nested BER, e.g. `EncryptedPayload` inside `PS-PDU`) are not TypeRef dependencies and must be listed as separate `-pdu=` roots, unless the field is a [contained field](#contained-values): its inner type is reachable (C++ backend). |
-| `--target=<lang>` | Output language: `cpp` (default) or `rust` (**WIP**, gambas-asn1#214). |
+| `--target=<lang>` | Output language: `cpp` (default), `rust` (**WIP**, gambas-asn1#214) or `java` (**WIP**: one `.java` file per type; constructs not emitted yet stop generation with `error: emit_<construct>: not implemented for this backend`). |
+| `--package=<name>` | `--target=java` only: the Java package every generated class declares (e.g. `com.example.asn1`). Default: the unnamed package. Files are written flat into `-o <dir>`; point `-o` at the matching source directory. `-fprefix` is rejected with `--target=java`. |
 | `--container-config=<file>` | JSON sidecar naming OCTET STRING fields that hold the encoding of another type, and how to decode them. See [Contained values](#contained-values). |
 | `--list-contained` | Print every contained field (contents constraints and sidecar entries, merged) with its settings, then exit without generating code. |
 
@@ -1851,6 +1852,11 @@ wrapper committed and a Java 21 toolchain:
 `cmake` finds a JDK 21 or newer and turns on `WITH_JAVA_RUNTIME_TEST`, so the
 same run is the ctest `java_runtime_test`. The first run downloads Gradle and
 the test dependencies.
+
+The Java backend (`--target=java`) keeps ASN.1 names as the other backends
+do (hyphen to underscore, no recasing). A name that is a Java keyword,
+literal (`true`, `false`, `null`) or contextual keyword (`record`, `var`,
+`yield`, ...) gets a trailing underscore: `class` becomes `class_`.
 
 ### Commits
 

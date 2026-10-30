@@ -10,6 +10,7 @@
 #include "codegen/Backend.hpp"
 #include "codegen/CppBackend.hpp"
 #include "codegen/RustBackend.hpp"
+#include "codegen/JavaBackend.hpp"
 #include "sema/Resolver.hpp"
 
 using namespace asn1::codegen;
@@ -623,6 +624,63 @@ int main() {
         asn1::codegen::Generator gen("/tmp/rust_backend_stub_unused", resolver, rust);
         check("Generator constructs with an injected non-default Backend", true);
         (void)gen;
+    }
+
+    // JavaBackend: the same no-recase transliteration as the other two
+    // backends; only keyword escaping is Java's own (trailing underscore,
+    // contextual keywords included).
+    {
+        JavaBackend java("com.example.asn1");
+        const Backend& j = java;
+        check("Java type_name matches C++ (minimal transliteration)",
+              j.type_name("My-Type") == "My_Type", j.type_name("My-Type"));
+        check("Java member_name matches C++ (first letter lowered, hyphen -> underscore)",
+              j.member_name("Network-Identifier") == "network_Identifier",
+              j.member_name("Network-Identifier"));
+        check("Java value_name preserves case",
+              j.value_name("someValue") == "someValue", j.value_name("someValue"));
+        check("Java escape: reserved keyword 'class' -> 'class_'",
+              j.escape("class") == "class_", j.escape("class"));
+        check("Java escape: literal 'null' and contextual 'record' / 'var' / 'yield' escaped",
+              j.escape("null") == "null_" && j.escape("record") == "record_" &&
+              j.escape("var") == "var_" && j.escape("yield") == "yield_",
+              j.escape("null") + " " + j.escape("record") + " " + j.escape("var") + " " + j.escape("yield"));
+        check("Java escape: Rust/C++-only keywords left alone ('match', 'type', 'struct')",
+              j.escape("match") == "match" && j.escape("type") == "type" && j.escape("struct") == "struct",
+              j.escape("match") + " " + j.escape("type") + " " + j.escape("struct"));
+        check("Java member_name escapes against extra names",
+              j.member_name("encode", {"encode"}) == "encode_", j.member_name("encode", {"encode"}));
+        check("Java synthetic_name matches C++",
+              j.synthetic_name("Parent", "member") == "ParentMember", j.synthetic_name("Parent", "member"));
+        check("Java writes one .java compilation unit per type",
+              j.declaration_extension() == "java" && j.definition_extension() == "java");
+
+        TypeOutputSession s;
+        j.emit_declaration_preamble("My-Module { 1 2 3 }", s);
+        std::string out = buf_str(s, "java");
+        check("Java preamble declares the --package",
+              out.find("// Module: My-Module { 1 2 3 }") != std::string::npos &&
+              out.find("package com.example.asn1;") != std::string::npos, out);
+        TypeOutputSession s2;
+        JavaBackend unnamed;
+        unnamed.emit_declaration_preamble("M", s2);
+        check("Java preamble without --package has no package declaration",
+              buf_str(s2, "java").find("package") == std::string::npos, buf_str(s2, "java"));
+
+        check("Java package validation",
+              JavaBackend::valid_package("com.example.asn1") && JavaBackend::valid_package("a") &&
+              !JavaBackend::valid_package("") && !JavaBackend::valid_package("a..b") &&
+              !JavaBackend::valid_package("a.") && !JavaBackend::valid_package("com.class.x") &&
+              !JavaBackend::valid_package("1abc") && !JavaBackend::valid_package("a-b"));
+
+        bool threw = false;
+        try {
+            EnumeratedSpec spec;
+            spec.type_name = "E";
+            TypeOutputSession s3;
+            j.emit_enumerated(spec, s3);
+        } catch (const std::logic_error&) { threw = true; }
+        check("Java construct emitters not implemented yet throw", threw);
     }
 
     printf("\n%s\n", failures == 0 ? "All checks passed." : "Some checks FAILED.");
