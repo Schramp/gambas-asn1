@@ -7,11 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
+import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
 import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
 import org.junit.jupiter.api.Test;
 
-/** BOOLEAN and NULL contents (X.690 §8.2, §8.8) and the framing around them (X.690 §8.14). */
+/** BOOLEAN, INTEGER and NULL contents (X.690 §8.2, §8.3, §8.8) and the framing around them (X.690 §8.14). */
 class BerPrimitiveTest {
     private static final BerTagging IMPLICIT_CTX5 = new BerTagging.Implicit(Tag.context(5, false));
     private static final BerTagging EXPLICIT_APP3 = new BerTagging.Explicit(new Tag(TagClass.APPLICATION, 3, true));
@@ -100,5 +101,35 @@ class BerPrimitiveTest {
         BerPrimitive.decode(b, BerTagging.DELEGATE, r);
         assertEquals(true, b.get());
         assertEquals(true, r.atEnd());
+    }
+
+    @Test
+    void integerUsesTheFewestOctets() {
+        assertArrayEquals(bytes(0x02, 0x01, 0x00), encode(new Asn1Integer(0), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x02, 0x01, 0x7F), encode(new Asn1Integer(127), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x02, 0x02, 0x00, 0x80), encode(new Asn1Integer(128), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x02, 0x01, 0x80), encode(new Asn1Integer(-128), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x02, 0x02, 0xFF, 0x7F), encode(new Asn1Integer(-129), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x02, 0x08, 0x80, 0, 0, 0, 0, 0, 0, 0), encode(new Asn1Integer(Long.MIN_VALUE), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x02, 0x08, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF),
+                encode(new Asn1Integer(Long.MAX_VALUE), BerTagging.DELEGATE));
+    }
+
+    @Test
+    void integerRoundTrips() {
+        for (long n : new long[] {0, 1, -1, 127, 128, -128, -129, 255, 256, 65535, -65536, Integer.MAX_VALUE,
+                Integer.MIN_VALUE, Long.MAX_VALUE, Long.MIN_VALUE}) {
+            Asn1Integer back = new Asn1Integer();
+            BerPrimitive.decode(back, BerTagging.DELEGATE, new BerReader(encode(new Asn1Integer(n), BerTagging.DELEGATE)));
+            assertEquals(n, back.get());
+        }
+    }
+
+    @Test
+    void integerContentsMustFit64Bits() {
+        assertThrows(DecodeException.class,
+                () -> BerPrimitive.decode(new Asn1Integer(), BerTagging.DELEGATE, new BerReader(bytes(0x02, 0x00))));
+        assertThrows(DecodeException.class, () -> BerPrimitive.decode(new Asn1Integer(), BerTagging.DELEGATE,
+                new BerReader(bytes(0x02, 0x09, 0x01, 0, 0, 0, 0, 0, 0, 0, 0))));
     }
 }

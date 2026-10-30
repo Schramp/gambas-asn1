@@ -1869,7 +1869,20 @@ byte[] der = BerObject.encode(f);   // 01 01 FF
 BerObject.decode(f, der);
 ```
 
-So far the Java backend emits BOOLEAN and NULL type assignments. The Java
+An INTEGER type assignment holds an `Asn1Integer` (signed 64-bit `long`)
+and gets one `long` constant per named number (`Named.minus_one`). An
+ENUMERATED type assignment is a class whose nested enum `Value` lists the
+items in declaration order; `get()`/`set(Value)` read and change the item,
+and decoding a value that is not one of the items is an error:
+
+```java
+Color c = new Color();
+c.set(Color.Value.blue);
+byte[] der = BerObject.encode(c);   // 0A 01 05
+```
+
+So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage) and
+ENUMERATED type assignments. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.
 

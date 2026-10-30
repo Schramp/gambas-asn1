@@ -89,6 +89,8 @@ public:
     std::string format_tag_literal(const TypeTagSpec& tag_spec) const override;
 
     void emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSession& session) const override;
+    void emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const override;
+    void emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession& session) const override;
     void emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const override;
     void emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const override;
 
@@ -103,6 +105,15 @@ public:
 
 private:
     std::string package_;
+
+    /// @brief The `BER_FRAMING` constant of a type assignment whose own
+    ///        tag is not its builtin's universal tag (X.680 §31.2).
+    /// @return The field declaration, or "" when the builtin's own tag applies.
+    std::string ber_framing_field(const TaggedTypeSpec& spec) const;
+
+    /// @brief The `berFraming()` override returning `BER_FRAMING`, or "" when
+    ///        `ber_framing_field` emitted none.
+    std::string ber_framing_method(const TaggedTypeSpec& spec) const;
 };
 
 } // namespace asn1::codegen
