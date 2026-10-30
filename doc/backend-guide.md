@@ -298,45 +298,44 @@ A divergence between asn1c and the compiler is presumed to be a compiler bug. A 
 
 ## Appendix A — canonical table dump
 
-Every runtime provides a dumper that serialises its own static tables to this JSON. The table diff compares the dumps field by field, with C++ as the reference. A field a runtime does not carry is listed in that runtime's capability set and reported as "not carried", not as a mismatch.
+Every runtime provides a dumper that serialises its own static tables (C++ `asn1::dump_tables`, `runtime/include/asn1cpp/TableDump.hpp`; Rust `asn1cpp_wire::spec::dump::dump_tables`). `validation-tools/table_diff/table_diff.py` builds a harness per language that dumps every generated type, then compares the dumps field by field, C++ being the reference. The dumper reads tables only; it never encodes or decodes.
+
+The dump is JSON Lines: one object per type, one line each.
 
 ```json
-{
-  "format": "asn1-tables/1",
-  "types": [
-    {
-      "name": "JeRec",
-      "kind": "SEQUENCE",
-      "tag": { "class": "UNIVERSAL", "number": 16, "constructed": true },
-      "constraints": { "flags": 0, "range_bits": 0, "int_kind": 0, "lower": 0, "upper": 0,
-                       "lower_u64": 0, "upper_u64": 0, "size_range_bits": 0,
-                       "size_lower": 0, "size_upper": 0, "alphabet_bits": 0, "alphabet": "" },
-      "ext_at": -1,
-      "roms_count": 0,
-      "members": [
-        { "name": "text", "tag": { "class": "CONTEXT", "number": 0, "constructed": false },
-          "tagging": "IMPLICIT", "optional": false, "has_default": false,
-          "constraints": { "flags": 0, "...": "..." }, "xer_instruction": "DEFAULT", "contained": false }
-      ]
-    }
-  ]
-}
+{"name":"JeRec","kind":"SEQUENCE","tag":{"class":"UNIVERSAL","number":16,"constructed":true},
+ "constraints":{"flags":0,"range_bits":0,"lower":0,"upper":0,"lower_u64":0,"upper_u64":0,
+                "size_range_bits":0,"size_lower":0,"size_upper":null,"alphabet_bits":0,"alphabet":""},
+ "ext_at":-1,"roms_count":0,
+ "members":[{"name":"text","tag":{"class":"CONTEXT","number":0,"constructed":false},"tagging":"IMPLICIT",
+             "optional":false,"has_default":false,"constraints":{...},"xer_instruction":"DEFAULT","contained":false}],
+ "ext_units":[],"contained_members":[]}
 ```
 
-Fields per `kind`:
+Fields per `kind`, beyond `name`, `kind`, `tag` and `constraints`:
 
-| kind | fields beyond `name`, `kind`, `tag`, `constraints` |
-|------|-----------------------------------------------------|
+| kind | fields |
+|------|--------|
 | `SEQUENCE`, `SET` | `ext_at`, `roms_count`, `members`, `ext_units` [{`end`, `group`}], `contained_members` |
 | `CHOICE` | `ext_at`, `range_bits`, `alternatives` (member rows), `ber_tags` [{`tag`, `alt`}] sorted by (class, number) |
-| `SEQUENCE_OF`, `SET_OF` | `element_xer_tag`, `element` (the element's kind and constraints) |
+| `SEQUENCE_OF`, `SET_OF` | `size`, `element_xer_tag`, `element` {`kind`, `constraints`} |
 | `ENUMERATED` | `extensible`, `root_count`, `entries` [{`value`, `name`}] sorted by value, `per_value_order` |
-| builtin kinds (`BOOLEAN`, `INTEGER`, `UTF8String`, …) | none beyond the common fields |
+| builtin kinds (`BOOLEAN`, `INTEGER`, `OCTET_STRING`, `UTF8String`, …, `ANY`) | none |
 
-The value sets:
-- `tag.class`: `UNIVERSAL`, `APPLICATION`, `CONTEXT`, `PRIVATE`.
-- `tagging`: `IMPLICIT`, `EXPLICIT`, `NONE` (natural tag), `UNTAGGED_CHOICE` (dispatch on the alternatives' tags).
+Value sets and normalisation:
+
+- `kind` of a builtin is its X.693 element name (`OCTET_STRING`, `OBJECT_IDENTIFIER`, `UTF8String`, …); the open type is `ANY`.
+- `tag.class`: `UNIVERSAL`, `APPLICATION`, `CONTEXT`, `PRIVATE`. A CHOICE with no tag of its own has `"tag": null`.
+- `tagging`: `IMPLICIT` (the tag replaces the natural tag), `EXPLICIT` (outer TLV), `NONE` (the row restates the referenced type's own tag and frames nothing), `UNTAGGED_CHOICE` (the member is an untagged CHOICE; `"tag": null`), `UNSUPPORTED` (the runtime has no representation for the row yet). `NONE` and `IMPLICIT` with the same tag frame the row identically and compare equal.
 - `xer_instruction`: `DEFAULT`, `BASE64`, `UTF8`.
-- Integers print as decimal JSON numbers. A `u64` bound prints as a string when it is above 2^53.
-- `alphabet` prints as hex.
-- Types are sorted by `name`. Members keep table order.
+- `size_upper` is `null` unless the SIZE constraint is a finite range (`SIZE_CONSTRAINED` flag); the bound has no meaning otherwise.
+- Integers are plain decimal JSON numbers, any width. `alphabet` is hex.
+- The type name is the ASN.1 name; where a runtime's tables carry no name (builtin type assignments, SEQUENCE OF) the harness passes the generated identifier, and the diff matches names with `-` and `_` treated alike.
+
+A field a runtime's tables do not carry is left out of its dump and reported as "not carried" (`--not-carried` lists them), never as a mismatch. An already-filed divergence is listed in `validation-tools/table_diff/known_diffs.txt` (`<lang> <field-path glob> <issue>`) and reported as known.
+
+Usage: `table_diff.py [--lang cpp,rust] [--full] [--target SUBSTR] [--targets-file F] [-j N] [-v] [--not-carried] [--rebuild]`.
+
+- The default target list, `validation-tools/table_diff/targets.txt`, holds the schemas every compared backend covers today, so a run takes minutes; ctest `table_diff_cpp_rust` runs it. While a backend is being built, keep this list at the few schemas it already covers and move schemas into it from `validation-tools/xval_sweep/targets.txt` as coverage grows. `--full` runs that whole list, including the large real-world schemas.
+- A dump is reused when its inputs (schema files, flags, compiler binary, runtime sources) are unchanged; `--rebuild` forces fresh builds.
+- The C++ harness is a unity build (one translation unit per core), since each generated file is a few lines of tables behind the same runtime headers.

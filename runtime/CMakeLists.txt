@@ -41,6 +41,7 @@ add_library(asn1cpp_runtime_objs OBJECT
     src/Real.cpp
     src/DeepCopy.cpp
     src/Contained.cpp
+    src/TableDump.cpp
 )
 target_link_libraries(asn1cpp_runtime_objs PUBLIC asn1cpp_runtime_iface)
 

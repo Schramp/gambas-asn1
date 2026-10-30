@@ -3,6 +3,7 @@
 //! accessors only; wire framing and stream I/O live in the codec modules.
 
 pub mod choice;
+pub mod dump;
 pub mod enumerated;
 pub mod object;
 pub mod primitive;
