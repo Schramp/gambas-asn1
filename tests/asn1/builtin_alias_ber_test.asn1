@@ -1,0 +1,16 @@
+-- Builtin type assignments, each with its own tagging: the natural tag,
+-- IMPLICIT and EXPLICIT (X.680 §31.2, X.690 §8.14). BER vectors in
+-- tests/vectors/builtin_alias_ber_test.vectors are asn1c DER output.
+
+BuiltinAliasBerTest DEFINITIONS ::= BEGIN
+
+    Flag             ::= BOOLEAN
+    ImplicitFlag     ::= [5] IMPLICIT BOOLEAN
+    ExplicitFlag     ::= [APPLICATION 3] EXPLICIT BOOLEAN
+    Hyphen-Flag      ::= BOOLEAN
+
+    Nothing          ::= NULL
+    ImplicitNothing  ::= [PRIVATE 7] IMPLICIT NULL
+    ExplicitNothing  ::= [2] NULL
+
+END

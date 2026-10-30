@@ -1858,6 +1858,21 @@ do (hyphen to underscore, no recasing). A name that is a Java keyword,
 literal (`true`, `false`, `null`) or contextual keyword (`record`, `var`,
 `yield`, ...) gets a trailing underscore: `class` becomes `class_`.
 
+A builtin type assignment (`Flag ::= BOOLEAN`) becomes a class holding the
+runtime's builtin wrapper in its `value` field; `BerObject.encode`/`decode`
+encode any generated value with its type's own tagging:
+
+```java
+Flag f = new Flag();
+f.value.set(true);
+byte[] der = BerObject.encode(f);   // 01 01 FF
+BerObject.decode(f, der);
+```
+
+So far the Java backend emits BOOLEAN and NULL type assignments. The Java
+legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
+generated code against asn1c's DER in `tests/vectors/`.
+
 ### Commits
 
 - One logical change per commit.

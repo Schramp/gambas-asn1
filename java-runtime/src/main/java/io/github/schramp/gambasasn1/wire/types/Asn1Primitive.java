@@ -1,4 +1,7 @@
-package io.github.schramp.gambasasn1.wire.spec;
+package io.github.schramp.gambasasn1.wire.types;
+
+import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
+import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 
 /** A builtin leaf value (BOOLEAN, INTEGER, OCTET STRING, ...). */
 public interface Asn1Primitive extends AsMemberRef {

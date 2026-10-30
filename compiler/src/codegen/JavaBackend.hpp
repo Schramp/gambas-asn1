@@ -86,6 +86,9 @@ public:
         return parent_cname + "_" + mname;
     }
 
+    std::string format_tag_literal(const TypeTagSpec& tag_spec) const override;
+
+    void emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSession& session) const override;
     void emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const override;
     void emit_definition_preamble(const std::string& declaration_filename, TypeOutputSession& session) const override;
 
