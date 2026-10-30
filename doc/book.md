@@ -1887,8 +1887,15 @@ count of the last octet), with their SIZE constraint in `CONSTRAINTS`.
 Like the C++ and Rust runtimes, BER decode accepts only the primitive form
 of these strings (gambas-asn1#929).
 
+Each restricted character string kind has its own wrapper (`Asn1Utf8String`,
+`Asn1Ia5String`, `Asn1BmpString`, ...; base class `Asn1CharString`). The
+value is stored as its contents octets, so octets a peer sends survive a
+decode and re-encode unchanged, as in the C++ runtime; `get()`/`set(String)`
+convert through the kind's encoding (UTF-8, UTF-16BE for BMPString,
+UTF-32BE for UniversalString, one octet per character otherwise).
+
 So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage),
-ENUMERATED, OCTET STRING and BIT STRING type assignments. The Java
+ENUMERATED, OCTET STRING, BIT STRING and character string type assignments. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.
 

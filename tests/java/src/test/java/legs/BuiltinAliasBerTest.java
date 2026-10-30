@@ -5,21 +5,28 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import gen.builtin_alias_ber.Bits;
+import gen.builtin_alias_ber.Bmp;
 import gen.builtin_alias_ber.Byte;
 import gen.builtin_alias_ber.Color;
+import gen.builtin_alias_ber.Descriptor;
 import gen.builtin_alias_ber.ExplicitBits;
 import gen.builtin_alias_ber.ExplicitColor;
 import gen.builtin_alias_ber.ExplicitFlag;
 import gen.builtin_alias_ber.ExplicitNothing;
 import gen.builtin_alias_ber.ExplicitNum;
 import gen.builtin_alias_ber.ExplicitOctets;
+import gen.builtin_alias_ber.ExplicitUtf8;
 import gen.builtin_alias_ber.ExtColor;
 import gen.builtin_alias_ber.FixedOctets;
 import gen.builtin_alias_ber.Flag;
+import gen.builtin_alias_ber.General;
+import gen.builtin_alias_ber.Graphic;
 import gen.builtin_alias_ber.Hyphen_Flag;
+import gen.builtin_alias_ber.Ia5;
 import gen.builtin_alias_ber.ImplicitBits;
 import gen.builtin_alias_ber.ImplicitColor;
 import gen.builtin_alias_ber.ImplicitFlag;
+import gen.builtin_alias_ber.ImplicitIa5;
 import gen.builtin_alias_ber.ImplicitNothing;
 import gen.builtin_alias_ber.ImplicitNum;
 import gen.builtin_alias_ber.ImplicitOctets;
@@ -28,9 +35,17 @@ import gen.builtin_alias_ber.NamedBits;
 import gen.builtin_alias_ber.NegColor;
 import gen.builtin_alias_ber.Nothing;
 import gen.builtin_alias_ber.Num;
+import gen.builtin_alias_ber.Numeric;
 import gen.builtin_alias_ber.Octets;
+import gen.builtin_alias_ber.Printable;
 import gen.builtin_alias_ber.SizedBits;
 import gen.builtin_alias_ber.SizedOctets;
+import gen.builtin_alias_ber.T61;
+import gen.builtin_alias_ber.Teletex;
+import gen.builtin_alias_ber.Universal;
+import gen.builtin_alias_ber.Utf8;
+import gen.builtin_alias_ber.Videotex;
+import gen.builtin_alias_ber.Visible;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
@@ -39,8 +54,13 @@ import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
+import io.github.schramp.gambasasn1.wire.types.Asn1CharString;
+import io.github.schramp.gambasasn1.wire.types.Asn1GeneralString;
+import io.github.schramp.gambasasn1.wire.types.Asn1GraphicString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
+import io.github.schramp.gambasasn1.wire.types.Asn1T61String;
+import io.github.schramp.gambasasn1.wire.types.Asn1VideotexString;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -52,7 +72,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Java leg of builtin_alias_ber_test.asn1: every generated type assignment
- * (BOOLEAN, NULL, INTEGER, ENUMERATED, OCTET STRING, BIT STRING) encodes asn1c's DER byte for byte and
+ * (BOOLEAN, NULL, INTEGER, ENUMERATED, OCTET STRING, BIT STRING, character strings) encodes asn1c's DER byte for byte and
  * decodes it back, under its natural tag, IMPLICIT and EXPLICIT (X.690 §8.14).
  */
 class BuiltinAliasBerTest {
@@ -83,7 +103,22 @@ class BuiltinAliasBerTest {
             Map.entry("SizedBits", SizedBits::new),
             Map.entry("NamedBits", NamedBits::new),
             Map.entry("ImplicitBits", ImplicitBits::new),
-            Map.entry("ExplicitBits", ExplicitBits::new));
+            Map.entry("ExplicitBits", ExplicitBits::new),
+            Map.entry("Utf8", Utf8::new),
+            Map.entry("Numeric", Numeric::new),
+            Map.entry("Printable", Printable::new),
+            Map.entry("Teletex", Teletex::new),
+            Map.entry("T61", T61::new),
+            Map.entry("Videotex", Videotex::new),
+            Map.entry("Ia5", Ia5::new),
+            Map.entry("Graphic", Graphic::new),
+            Map.entry("Visible", Visible::new),
+            Map.entry("General", General::new),
+            Map.entry("Descriptor", Descriptor::new),
+            Map.entry("Bmp", Bmp::new),
+            Map.entry("Universal", Universal::new),
+            Map.entry("ImplicitIa5", ImplicitIa5::new),
+            Map.entry("ExplicitUtf8", ExplicitUtf8::new));
 
     static Stream<Vectors.Vector> vectors() {
         return Vectors.load("builtin_alias_ber_test.vectors").stream();
@@ -92,7 +127,7 @@ class BuiltinAliasBerTest {
     /**
      * Sets {@code v} to the value a vector's XER names (X.693): BOOLEAN's
      * {@code <true/>}, an INTEGER's number, an ENUMERATED item's empty element,
-     * OCTET STRING hex digits, BIT STRING binary digits.
+     * OCTET STRING hex digits, BIT STRING binary digits, character string text.
      */
     private static void setFromXer(AsMemberRef v, String xer) {
         if (xer.endsWith("/>") && xer.indexOf('>') == xer.length() - 1) {
@@ -103,6 +138,11 @@ class BuiltinAliasBerTest {
             case MemberRef.Primitive(Asn1Boolean b) -> b.set(inner.equals("<true/>"));
             case MemberRef.Primitive(Asn1Integer i) -> i.set(Long.parseLong(inner));
             case MemberRef.Primitive(Asn1OctetString o) -> o.set(HexFormat.of().parseHex(inner));
+            // asn1c writes these kinds' XER as hex digits, like an OCTET STRING.
+            case MemberRef.Primitive(Asn1CharString c) when c instanceof Asn1T61String || c instanceof Asn1VideotexString
+                    || c instanceof Asn1GraphicString || c instanceof Asn1GeneralString ->
+                c.setOctets(HexFormat.of().parseHex(inner));
+            case MemberRef.Primitive(Asn1CharString c) -> c.set(inner);
             case MemberRef.Primitive(Asn1BitString b) -> {
                 byte[] packed = new byte[(inner.length() + 7) / 8];
                 for (int k = 0; k < inner.length(); k++) {
@@ -172,6 +212,14 @@ class BuiltinAliasBerTest {
         assertEquals(Long.MAX_VALUE, Octets.CONSTRAINTS.sizeUpper());
         assertEquals(true, (NamedBits.CONSTRAINTS.flags() & io.github.schramp.gambasasn1.wire.spec.Constraints.NAMED_BITS) != 0);
         assertEquals(true, (SizedBits.CONSTRAINTS.flags() & io.github.schramp.gambasasn1.wire.spec.Constraints.EXTENSIBLE) != 0);
+    }
+
+    @Test
+    void charStringsAreText() {
+        Bmp b = new Bmp();
+        b.value.set("B\u00e9\u20ac");
+        assertArrayEquals(HexFormat.of().parseHex("1E06004200E920AC"), BerObject.encode(b));
+        assertEquals(8L, Printable.CONSTRAINTS.sizeUpper());
     }
 
     @Test

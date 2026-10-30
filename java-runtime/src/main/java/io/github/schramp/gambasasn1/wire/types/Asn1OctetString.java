@@ -4,7 +4,7 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Objects;
 
-/** OCTET STRING (X.680 §22): a mutable holder of the octets. */
+/** OCTET STRING (X.680 §23): a mutable holder of the octets. */
 public final class Asn1OctetString implements Asn1Primitive {
     private static final byte[] EMPTY = new byte[0];
     private byte[] value = EMPTY;

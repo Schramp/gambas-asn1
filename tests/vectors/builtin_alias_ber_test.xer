@@ -42,3 +42,19 @@ NamedBits	<NamedBits>1001</NamedBits>
 NamedBits	<NamedBits>0000000001</NamedBits>
 ImplicitBits	<ImplicitBits>0110</ImplicitBits>
 ExplicitBits	<ExplicitBits>111</ExplicitBits>
+Utf8	<Utf8></Utf8>
+Utf8	<Utf8>héllo €</Utf8>
+Numeric	<Numeric>0123 456</Numeric>
+Printable	<Printable>Abc-12'?</Printable>
+Teletex	<Teletex>74656C65</Teletex>
+T61	<T61>743631</T61>
+Videotex	<Videotex>766964</Videotex>
+Ia5	<Ia5>a@b.c</Ia5>
+Graphic	<Graphic>6772617068</Graphic>
+Visible	<Visible>see me</Visible>
+General	<General>67656E</General>
+Descriptor	<Descriptor>an object</Descriptor>
+Bmp	<Bmp>Bé€</Bmp>
+Universal	<Universal>U€</Universal>
+ImplicitIa5	<ImplicitIa5>imp</ImplicitIa5>
+ExplicitUtf8	<ExplicitUtf8>exp</ExplicitUtf8>

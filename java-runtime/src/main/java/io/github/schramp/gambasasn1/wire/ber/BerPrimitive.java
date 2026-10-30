@@ -7,6 +7,7 @@ import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
+import io.github.schramp.gambasasn1.wire.types.Asn1CharString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
@@ -69,6 +70,7 @@ public final class BerPrimitive {
             case Asn1Integer i -> INTEGER_TAG;
             case Asn1OctetString o -> OCTET_STRING_TAG;
             case Asn1BitString b -> BIT_STRING_TAG;
+            case Asn1CharString c -> Tag.universal(c.universalTagNumber(), false);
             default -> throw new EncodeException("no BER form for " + p.xerElementName());
         };
     }
@@ -79,6 +81,7 @@ public final class BerPrimitive {
             case Asn1Null n -> BerWriter.writePrimitive(out, tag, new byte[0]);
             case Asn1Integer i -> BerWriter.writePrimitive(out, tag, encodeInteger(i.get()));
             case Asn1OctetString o -> BerWriter.writePrimitive(out, tag, o.get());
+            case Asn1CharString c -> BerWriter.writePrimitive(out, tag, c.octets());
             // X.690 §8.6.2: the initial octet counts the unused bits of the last octet.
             case Asn1BitString b -> BerWriter.writeTagged(out, tag, c -> {
                 c.write(b.unusedBits());
@@ -111,6 +114,7 @@ public final class BerPrimitive {
             }
             case Asn1Integer i -> i.set(decodeInteger(v, start));
             case Asn1OctetString o -> o.set(v.remainingBytes());
+            case Asn1CharString c -> c.setOctets(v.remainingBytes());
             case Asn1BitString b -> {
                 if (v.atEnd()) {
                     throw new DecodeException("BIT STRING: contents need the unused-bits octet", start);
