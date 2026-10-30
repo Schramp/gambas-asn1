@@ -1946,8 +1946,11 @@ getter returns null when it is absent, and setting it to null makes it absent;
 a mandatory member always holds a value. Generated equality compares member by
 member. On decode, an OPTIONAL member is present when the next tag is the one
 its row starts with: for an untagged CHOICE member, one of the CHOICE's
-alternative tags. So far only root members are emitted. The compiler rejects a
-SEQUENCE with a member of the following kinds, or a SET, with
+alternative tags. A SET is the same class shape with its members in canonical
+tag order (X.680 §8.6): decode accepts its components in any order (X.690
+§8.11.2), and encode writes them in that order. So far only root members are
+emitted. The compiler rejects a SEQUENCE or SET with a member of the following
+kinds with
 `emit_sequence: ... not implemented for this backend`:
 
 - DEFAULT values;

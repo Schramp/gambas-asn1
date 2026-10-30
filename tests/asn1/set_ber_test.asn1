@@ -1,0 +1,23 @@
+-- Java BER leg for SET (X.680 §27): components declared out of tag order.
+-- BER decode accepts them in any order (X.690 §8.11.2); encode writes the
+-- canonical tag order (X.680 §8.6), as DER requires (X.690 §10.3).
+SetBerTest DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+Pick ::= CHOICE { i [5] INTEGER, s [6] IA5String }
+
+Rec ::= SET {
+    third  [3] INTEGER,
+    first  [1] BOOLEAN,
+    zeroth [0] INTEGER,
+    second [2] OCTET STRING OPTIONAL
+}
+
+Mixed ::= SET {
+    name  IA5String,
+    num   INTEGER,
+    flag  BOOLEAN OPTIONAL,
+    pick  Pick,
+    data  OCTET STRING
+}
+
+END

@@ -504,20 +504,20 @@ static std::string java_collection_new(SeqOfKind kind, const ElemShape& elem) {
     return std::format("new {}.spec.{}<>({})", kWire, kind == SeqOfKind::SetOf ? "SetOf" : "SeqOf", factory);
 }
 
-/// @brief Emit one SEQUENCE type as a Java class: its `SequenceSpec`
+/// @brief Emit one SEQUENCE or SET type as a Java class: its `SequenceSpec`
 ///        table, one field per member (an OPTIONAL member is null when
 ///        absent), accessors, and the `Asn1Seq` reflection the BER walker
 ///        (`BerObject`) reads. The class holds no codec code.
 /// @param spec    Resolved, backend-agnostic decision (see SequenceSpec).
 /// @param session Per-type output session.
-/// @see X.680 §25 (SEQUENCE), X.690 §8.9 (its BER encoding).
+/// @see X.680 §25 (SEQUENCE), §27 (SET; members in canonical tag order,
+///      X.680 §8.6), X.690 §8.9 / §8.11 (their BER encoding).
 void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const {
     const std::string& t = spec.type_name;
     const std::string asn1 = spec.asn1_name.empty() ? t : spec.asn1_name;
     auto unsupported = [&](const std::string& what) {
         throw std::logic_error(std::format("emit_sequence: {} {}, not implemented for this backend", asn1, what));
     };
-    if (spec.is_set) unsupported("is a SET");
     if (spec.ext_at >= 0) unsupported("is extensible");
     for (const auto& m : spec.members) {
         const char* gap = m.contained ? "a contained value"
@@ -584,15 +584,16 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     os << std::format("public final class {0} implements {1}.spec.Asn1Seq, {1}.spec.Asn1Pdu {{\n", t, kWire);
     os << std::format("    public static final {0}.spec.SequenceSpec SPEC = new {0}.spec.SequenceSpec(\"{1}\", {2}, java.util.List.of(",
                       kWire, spec.xer_name,
-                      spec.tag ? format_tag_literal(*spec.tag) : std::format("{}.ber.Tag.universal(16, true)", kWire));
+                      spec.tag ? format_tag_literal(*spec.tag)
+                               : std::format("{}.ber.Tag.universal({}, true)", kWire, spec.is_set ? 17 : 16));
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];
         auto f = framing(m);
         os << std::format("{}\n            new {}.spec.MemberMeta(\"{}\", {}, {}, {}, {}, {}.spec.XerInstruction.DEFAULT, null)",
                           i ? "," : "", kWire, m.asn1_name, f.tag, m.optional ? "true" : "false", f.ber, constraints(m), kWire);
     }
-    os << std::format("),\n            {}, {}, false, java.util.List.of(), java.util.List.of(), java.util.List.of());\n\n",
-                      spec.ext_at, spec.roms_count);
+    os << std::format("),\n            {}, {}, {}, java.util.List.of(), java.util.List.of(), java.util.List.of());\n\n",
+                      spec.ext_at, spec.roms_count, spec.is_set ? "true" : "false");
 
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];
