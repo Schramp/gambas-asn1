@@ -5,6 +5,4 @@
 # entry once its issue is fixed.
 rust  EXTERNALEncoding.alternatives[0].*  #759 open type (single-ASN1-type [0] ABSTRACT-SYNTAX.&Type) is Unsupported in Rust
 rust  *.ber_tags[*].tag.constructed: true vs false  #909 Rust BerDispatch drops the constructed bit of EXPLICIT alternatives
-rust  *.constraints.flags: 0 vs 8  #906 Rust sets SIZE_CONSTRAINED for SIZE (n..MAX)
-rust  *.constraints.size_upper: null vs 9223372036854775807  #906 same
 rust  *.tagging: "NONE" vs "EXPLICIT"  #908 framing of a referenced EXPLICIT-tagged type: C++ on the type, Rust on the member

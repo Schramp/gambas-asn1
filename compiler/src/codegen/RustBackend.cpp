@@ -643,9 +643,9 @@ void RustBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, st
     // No recase — see emit_enumerated_definition's matching note.
     std::string cname = tname + "_CONSTRAINTS";
     if (sizeable) {
-        int flags = (spec.has_size_constraint
-            ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
-            : 0) | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
+        int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
+            | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
+            | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
         int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
         os << "#[allow(non_upper_case_globals)]\n";
         os << std::format(
@@ -769,6 +769,12 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
     os << std::format("pub fn {}() -> {} {{\n    {}\n}}\n\n", fname, rust_type, literal);
 }
 
+/// @brief Name of a contained field's `ContainedSpec` static, from the
+///        field's descriptor base name (TaggedMemberSpec::contained_base).
+static std::string contained_spec_ident(const std::string& base) {
+    return to_screaming_snake_case(base) + "_CONTAINED";
+}
+
 /// @brief Emit a Rust bounds-check function for an inline-constrained
 ///        SEQUENCE/CHOICE member — INTEGER value range or SIZE-able-
 ///        primitive SIZE constraint.
@@ -781,12 +787,6 @@ void RustBackend::emit_default_setter(const DefaultValueSpec& spec, const std::s
 ///       member_descriptor_base_name() — its own naming convention,
 ///       independent of whatever text CppBackend's own implementation
 ///       of that method produces.
-/// @brief Name of a contained field's `ContainedSpec` static, from the
-///        field's descriptor base name (TaggedMemberSpec::contained_base).
-static std::string contained_spec_ident(const std::string& base) {
-    return to_screaming_snake_case(base) + "_CONTAINED";
-}
-
 void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
     std::ostream& os = session.buffer(definition_extension());
     using Kind = MemberTypeDescriptorSpec::Kind;
@@ -892,18 +892,13 @@ void RustBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     // flags=0 makes it a no-op" pattern (Validate.hpp) — no second gate
     // needed, and `validate_size` already treats a missing
     // SIZE_CONSTRAINED bit as always-valid.
-    // `size_bounded == false` (SIZE(n..MAX)) still gets SIZE_CONSTRAINED
-    // set (unlike C++'s own Constraints, which only sets it for a finite
-    // upper bound and so skips validation entirely for a semi-constrained
-    // SIZE — see OctetString::validate/BitString::validate's own `if
-    // (!(c.flags & SIZE_CONSTRAINED)) return 0;` gate) — the lower bound
-    // is still real and worth checking; `size_upper` becomes `i64::MAX`
-    // (via `INT64_MAX`) as a sentinel so `validate_size`'s upper check
-    // never fires for a realistic element/byte/character count. A
-    // deliberate improvement over C++, not a parity gap.
-    int flags = (spec.has_size_constraint
-        ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
-        : 0) | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
+    // SIZE_CONSTRAINED means "size_lower..size_upper is a finite range"
+    // (Constraints.hpp), the same bit C++ emits: a semi-constrained
+    // SIZE(n..MAX) leaves it clear and PER encodes its length as an
+    // unconstrained length determinant (X.691 §11.9.4.2).
+    int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
+        | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
+        | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
     int64_t size_upper = spec.size_bounded ? spec.size_upper : std::numeric_limits<int64_t>::max();
     // X.680 §51.4 PermittedAlphabet — `spec.alphabet` is
     // the resolved, sorted, deduplicated permitted-character set
@@ -980,17 +975,13 @@ void RustBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os
     // containing SEQUENCE's member-row loop (`emit_sequence_definition`)
     // can always find `{TYPE}_CONSTRAINTS` by the same deterministic name
     // it already derives for the field type, no extra signal needed. A
-    // semi-constrained SIZE (`size_upper` absent) still gets
-    // SIZE_CONSTRAINED set with `size_upper` as a sentinel `i64::MAX` —
-    // `validate_size` (constraints.rs) then still checks the lower bound,
-    // a deliberate improvement over C++'s own
-    // Constraints (which skips validation entirely for a semi-constrained
-    // SIZE — see OctetString::validate's own `SIZE_CONSTRAINED` gate).
+    // semi-constrained SIZE (`size_upper` absent) leaves SIZE_CONSTRAINED
+    // clear: the bit means a finite range (X.691 §20.6 constrained
+    // count), as in the C++ table.
     // No recase — see emit_enumerated_definition's matching note.
     std::string cname = std::format("{}_CONSTRAINTS", spec.type_name);
-    int flags = spec.has_size_constraint
-        ? (asn1::Constraints::SIZE_CONSTRAINED | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0))
-        : 0;
+    int flags = (spec.size_upper ? asn1::Constraints::SIZE_CONSTRAINED : 0)
+        | (spec.has_size_constraint && spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
     int64_t size_upper = spec.size_upper.value_or(std::numeric_limits<int64_t>::max());
     // `pub`, unlike the member-inline Constraints tables above — a
     // synthetic promoted type's own table is referenced cross-module by
