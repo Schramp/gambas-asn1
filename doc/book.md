@@ -1952,15 +1952,22 @@ SEQUENCE with a member of the following kinds, or a SET, with
 
 - DEFAULT values;
 - extension markers;
-- SEQUENCE OF / SET OF members;
-- inline member constraints;
+- inline member constraints, a constrained SEQUENCE OF element included;
 - recursive member types;
 - contained values.
 
+A SEQUENCE OF is a `SeqOf<T>` and a SET OF a `SetOf<T>` (runtime package
+`spec`). `items()` is the element list, which can be changed in place, and
+`add(v)` appends an element. A named SEQUENCE OF / SET OF type is a class that
+extends one of these. An inline collection member uses them directly; a
+nested one is a collection of collections. Decoding replaces the elements a
+collection held. A SET OF keeps the order its elements were added or decoded
+in; BER encode writes them in DER order (X.690 §11.6), as asn1c does.
+
 So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage),
 ENUMERATED, OCTET STRING, BIT STRING, character string, OBJECT IDENTIFIER,
-RELATIVE-OID, UTCTime, GeneralizedTime, REAL, ANY, CHOICE and SEQUENCE type
-assignments, and INTEGER in both signed and unsigned 64-bit storage. The Java
+RELATIVE-OID, UTCTime, GeneralizedTime, REAL, ANY, CHOICE, SEQUENCE and
+SEQUENCE OF / SET OF type assignments, and INTEGER in both signed and unsigned 64-bit storage. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.
 

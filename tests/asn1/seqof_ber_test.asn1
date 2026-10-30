@@ -1,0 +1,28 @@
+-- Java BER leg for SEQUENCE OF / SET OF: named collection types (of a
+-- builtin, a SEQUENCE, an ENUMERATED, with an element identifier, with
+-- a tag of its own) and inline collection members of a SEQUENCE,
+-- nested included. A SET OF encodes its elements in DER order
+-- (X.690 §11.6).
+SeqOfBerTest DEFINITIONS ::= BEGIN
+
+Point  ::= SEQUENCE { x INTEGER, y INTEGER }
+Color  ::= ENUMERATED { red, green, blue }
+
+Ints       ::= SEQUENCE OF INTEGER
+IntSet     ::= SET OF INTEGER
+Points     ::= SEQUENCE OF Point
+Colors     ::= SEQUENCE OF Color
+Names      ::= SEQUENCE OF name UTF8String
+TaggedInts ::= [APPLICATION 3] IMPLICIT SEQUENCE OF INTEGER
+
+Holder ::= SEQUENCE {
+    ints   SEQUENCE OF INTEGER,
+    set    SET OF OCTET STRING,
+    pts    [0] IMPLICIT SEQUENCE OF Point,
+    opt    [1] EXPLICIT SEQUENCE OF BOOLEAN OPTIONAL,
+    named  Ints,
+    tagged TaggedInts,
+    nested SEQUENCE OF SEQUENCE OF INTEGER
+}
+
+END

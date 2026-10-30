@@ -1960,8 +1960,10 @@ set(java_leg_choice_ber_PDUS
     Plain Tagged Inner Nested Own HoldsOwn Typed Ext ExtRoot Auto Pick)
 set(java_leg_sequence_ber_PDUS
     Point Plain Opt Tagged Refs Outer)
+set(java_leg_seqof_ber_PDUS
+    Ints IntSet Points Colors Names TaggedInts Holder)
 set(java_leg_outputs)
-foreach(leg builtin_alias_ber choice_ber sequence_ber)
+foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})

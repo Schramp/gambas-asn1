@@ -7,6 +7,7 @@ import io.github.schramp.gambasasn1.wire.spec.AltMeta;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
+import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
 import io.github.schramp.gambasasn1.wire.spec.BerDispatch;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
 import io.github.schramp.gambasasn1.wire.spec.ChoiceSpec;
@@ -14,6 +15,8 @@ import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.spec.SequenceSpec;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -75,6 +78,16 @@ public final class BerObject {
                     default -> encodeSequence(s, out);
                 }
             }
+            case MemberRef.SeqOf(Asn1SeqOf q) -> {
+                Tag natural = q.naturalTag();
+                switch (framing.resolve()) {
+                    case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag,
+                            inner -> BerWriter.writeTagged(inner, natural, content -> encodeSeqOfContent(q, content)));
+                    case BerTagging.Implicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeSeqOfContent(q, inner));
+                    case BerTagging.Unsupported(String reason) -> throw new EncodeException(reason);
+                    default -> BerWriter.writeTagged(out, natural, inner -> encodeSeqOfContent(q, inner));
+                }
+            }
             case MemberRef.Choice(Asn1Choice c) -> {
                 switch (framing.resolve()) {
                     case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeChoice(c, inner));
@@ -119,6 +132,19 @@ public final class BerObject {
                     case BerTagging.Implicit(Tag tag) -> decodeSequenceContent(s, enter(r, tag), tag);
                     case BerTagging.Unsupported(String reason) -> throw new DecodeException(reason, r.position());
                     default -> decodeSequence(s, r);
+                }
+            }
+            case MemberRef.SeqOf(Asn1SeqOf q) -> {
+                Tag natural = q.naturalTag();
+                switch (framing.resolve()) {
+                    case BerTagging.Explicit(Tag tag) -> {
+                        BerReader inner = enter(r, tag);
+                        decodeSeqOfContent(q, enter(inner, natural));
+                        expectEnd(inner, tag);
+                    }
+                    case BerTagging.Implicit(Tag tag) -> decodeSeqOfContent(q, enter(r, tag));
+                    case BerTagging.Unsupported(String reason) -> throw new DecodeException(reason, r.position());
+                    default -> decodeSeqOfContent(q, enter(r, natural));
                 }
             }
             case MemberRef.Choice(Asn1Choice c) -> {
@@ -202,6 +228,43 @@ public final class BerObject {
         }
         if (!r.atEnd()) {
             throw new DecodeException("SEQUENCE " + spec.name() + ": unexpected octets after its last member", r.position());
+        }
+    }
+
+    /**
+     * A SEQUENCE OF's contents: each element under the element type's own
+     * framing (X.690 §8.10). A SET OF's elements go in DER order, by their
+     * encodings as unsigned octet strings (X.690 §11.6).
+     */
+    private static void encodeSeqOfContent(Asn1SeqOf q, ByteSink out) {
+        BerTagging framing = q.elemBerFraming();
+        if (q.naturalTag().number() == UniversalTag.SET && q.size() > 1) {
+            List<byte[]> parts = new ArrayList<>(q.size());
+            for (int i = 0; i < q.size(); i++) {
+                ByteSink part = new ByteSink();
+                encodeMemberRef(q.get(i), framing, part);
+                parts.add(part.toByteArray());
+            }
+            parts.sort(Arrays::compareUnsigned);
+            for (byte[] p : parts) {
+                out.write(p);
+            }
+            return;
+        }
+        for (int i = 0; i < q.size(); i++) {
+            encodeMemberRef(q.get(i), framing, out);
+        }
+    }
+
+    /**
+     * Decodes a SEQUENCE OF's contents: the collection is emptied, then one
+     * element is appended and decoded per TLV until the contents end.
+     */
+    private static void decodeSeqOfContent(Asn1SeqOf q, BerReader r) {
+        BerTagging framing = q.elemBerFraming();
+        q.clear();
+        while (!r.atEnd()) {
+            decodeMemberRef(q.addDefault(), framing, r);
         }
     }
 
