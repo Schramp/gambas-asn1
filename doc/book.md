@@ -1677,6 +1677,27 @@ SEQUENCE { … }`), that identifier is the tag (`<row>`, `<item>`, X.680 §25.10
 otherwise it is the element's type reference or the built-in type's XML name
 (`<SEQUENCE>`, `<SEQUENCE_OF>`, `<INTEGER>`, §25.11).
 
+A CHOICE value encoded as the document root is wrapped in its type name
+(X.693 §8.3.1). The closing tag follows the alternative's line directly, as in
+asn1c's output:
+
+```xml
+<Pick>
+    <num>5</num>
+</Pick>
+```
+
+A SEQUENCE OF / SET OF CHOICE writes each element as the chosen alternative's
+element, with an empty line between elements, as asn1c does:
+
+```xml
+<items>
+        <num>3</num>
+
+        <flag><true/></flag>
+</items>
+```
+
 The decoder defaults to strict BASIC-XER (X.693 §8). Pass `XerDecodeMode::Lenient`
 to `XerDecodeStream` to additionally accept non-standard asn1c extensions: BOOLEAN
 text content (`true`/`false`) and hex BIT STRING (`AABBCC…` pairs). See §6 for
