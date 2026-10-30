@@ -558,6 +558,14 @@ static const char* ber_handler_for_builtin(ast::BuiltinType bt) {
     return lut[static_cast<int>(bt)];
 }
 
+/// @brief Emit the TypeDescriptor of a builtin type assignment (\c T ::= OCTET STRING
+///        (SIZE (1..8)), \c T ::= IA5String (FROM ("a".."z")), …), with its
+///        Constraints table. A SIZE or FROM constraint on a string or BIT
+///        STRING type is a length/alphabet constraint, not a value range
+///        (X.680 §51.5, §51.7), so it sets SIZE_CONSTRAINED and the alphabet
+///        fields, never the value-range CONSTRAINED bit.
+/// @param spec  backend-agnostic decisions for the type assignment.
+/// @param os    the definition (.cpp) stream.
 void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std::ostream& os) const {
     const std::string& cname = spec.type_name;
 
@@ -580,8 +588,7 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
     os << "    nullptr, nullptr, nullptr, nullptr,\n";
 
     if (needs_per) {
-        int flags = (spec.has_size_constraint || !spec.alphabet.empty() ? asn1::Constraints::CONSTRAINED : 0)
-                  | (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
+        int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
                   | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
                   | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0);
         std::optional<ast::BuiltinType> bbt = spec.alphabet.empty()

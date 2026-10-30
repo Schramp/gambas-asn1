@@ -14,3 +14,4 @@ tests/asn1/inline_seqof_enum_test.asn1  IsRec
 tests/asn1/enum_item_names_test.asn1  EinRec
 tests/asn1/containing_test.asn1       Holder  --container-config=tests/asn1/containing_test.container.json
 tests/asn1/xer_layout_test.asn1       XlRoot
+tests/asn1/per_named_bits_test.asn1  NamedBitsRec
