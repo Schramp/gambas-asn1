@@ -81,7 +81,7 @@ def generate(files, flags, lang, out):
 
 CPP_MEMBER_DEF = re.compile(r"^\s*static const asn1::TypeDescriptor asn_DEF;", re.M)
 CPP_FREE_DEF = re.compile(r"^extern const asn1::TypeDescriptor (asn_DEF_\w+);", re.M)
-CPP_CLASS = re.compile(r"^(?:class|struct) (\w+)\b", re.M)
+CPP_CLASS = re.compile(r"^(?:class|struct) (\w+)\b(?![^\n]*;\s*$)", re.M)  # definitions, not forward declarations
 
 
 def dump_cpp(work, files, flags):
@@ -249,7 +249,9 @@ def load_known(path):
     known = []
     if os.path.exists(path):
         for line in open(path):
-            parts = line.split(None, 2)
+            # The glob may contain ": a vs b" (spaces); a tab or two spaces
+            # end it.
+            parts = [x for x in re.split(r"\t|\s{2,}", line.strip(), maxsplit=2) if x]
             if parts and not parts[0].startswith("#") and len(parts) >= 2:
                 glob_ = "".join({"[": "[[]", "]": "[]]"}.get(c, c) for c in parts[1])
                 known.append((parts[0], parts[1], glob_, parts[2].strip() if len(parts) > 2 else ""))
@@ -257,9 +259,11 @@ def load_known(path):
 
 
 def known_reason(known, lang, diff):
+    """A glob without ': ' matches the field path; one with ': ' matches the
+    whole "path: ref vs other" line, so an entry can name the values too."""
     field = diff.split(":", 1)[0]
     for k_lang, raw, glob_, reason in known:
-        if k_lang == lang and fnmatch.fnmatchcase(field, glob_):
+        if k_lang == lang and fnmatch.fnmatchcase(diff if ": " in raw else field, glob_):
             return f"{raw} ({reason})" if reason else raw
     return None
 
