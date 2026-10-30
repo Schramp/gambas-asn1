@@ -1,7 +1,7 @@
 -- XER codec coverage: ENUMERATED (non-extensible) and ANY member.
 -- Tests: tests/seq/test_xer_codec.cpp
 -- Exercises: EnumeratedXerHandler encode+decode, AnyBerHandler encode+decode,
---            AnyXerHandler encode+decode.
+--            AnyXerHandler encode+decode, an ANY type assignment's descriptor.
 
 XerCodecTest DEFINITIONS ::= BEGIN
 
@@ -15,5 +15,7 @@ XerCodecTest DEFINITIONS ::= BEGIN
         id     INTEGER (0..255),
         value  ANY
     }
+
+    Opaque ::= ANY
 
 END
