@@ -74,7 +74,9 @@ impl<'a> Reader<'a> {
     }
 
     /// Read a JSON string (cursor must be at the opening `"`). Returns the
-    /// unescaped content as an owned `String` — invalid UTF-8 inside an
+    /// unescaped content as an owned `String`: the full RFC 8259 §7 escape
+    /// set, which X.697 §23.4 NOTE allows in every JER string, member names
+    /// included. An unknown or malformed escape is a decode error. Invalid UTF-8 inside an
     /// escape-free run is rejected by `str::from_utf8` at the final
     /// assembly step (JER text is always real UTF-8 JSON, unlike BER
     /// payload bytes, so this is a real error, not a lossy-by-design path).
@@ -96,10 +98,17 @@ impl<'a> Reader<'a> {
                     b'"' => out.push(b'"'),
                     b'\\' => out.push(b'\\'),
                     b'/' => out.push(b'/'),
+                    b'b' => out.push(0x08),
+                    b'f' => out.push(0x0C),
                     b'n' => out.push(b'\n'),
                     b'r' => out.push(b'\r'),
                     b't' => out.push(b'\t'),
-                    other => out.push(other),
+                    b'u' => {
+                        let ch = self.read_unicode_escape()?;
+                        let mut buf = [0u8; 4];
+                        out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+                    }
+                    _ => return Err(DecodeError::new("JER: invalid escape in string".to_string(), self.pos)),
                 }
                 esc = false;
             } else if b == b'\\' {
@@ -111,6 +120,46 @@ impl<'a> Reader<'a> {
                 out.push(b);
             }
         }
+    }
+
+    /// Read the code unit(s) of a JSON `\\u` escape (RFC 8259 §7), cursor
+    /// just after the `\\u`. A high surrogate must be followed by a
+    /// `\\u`-escaped low surrogate; the pair combines into one code point.
+    /// A lone surrogate or fewer than four hex digits is a decode error.
+    fn read_unicode_escape(&mut self) -> Result<char, DecodeError> {
+        let hi = self.read_hex4()?;
+        let cp = match hi {
+            0xDC00..=0xDFFF => {
+                return Err(DecodeError::new("JER: lone low surrogate in \\u escape".to_string(), self.pos));
+            }
+            0xD800..=0xDBFF => {
+                if self.peek_byte() != Some(b'\\') || self.data.get(self.pos + 1) != Some(&b'u') {
+                    return Err(DecodeError::new("JER: lone high surrogate in \\u escape".to_string(), self.pos));
+                }
+                self.advance(2);
+                let lo = self.read_hex4()?;
+                if !(0xDC00..=0xDFFF).contains(&lo) {
+                    return Err(DecodeError::new("JER: lone high surrogate in \\u escape".to_string(), self.pos));
+                }
+                0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00)
+            }
+            _ => hi,
+        };
+        char::from_u32(cp).ok_or_else(|| DecodeError::new("JER: malformed \\u escape".to_string(), self.pos))
+    }
+
+    /// Read four hex digits as one UTF-16 code unit.
+    fn read_hex4(&mut self) -> Result<u32, DecodeError> {
+        let mut cu = 0u32;
+        for _ in 0..4 {
+            let d = self
+                .peek_byte()
+                .and_then(|b| (b as char).to_digit(16))
+                .ok_or_else(|| DecodeError::new("JER: malformed \\u escape".to_string(), self.pos))?;
+            cu = cu << 4 | d;
+            self.advance(1);
+        }
+        Ok(cu)
     }
 
     /// Read a JSON non-string value (number, boolean, null) as a raw token

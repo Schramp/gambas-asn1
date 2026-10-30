@@ -443,6 +443,23 @@ target_include_directories(test_real_jer_base PRIVATE ${REAL_JER_BASE_GEN_DIR})
 target_link_libraries(test_real_jer_base PRIVATE asn1cpp_runtime)
 add_test(NAME real_jer_base COMMAND test_real_jer_base)
 
+# ---- JER string escapes (RFC 8259 §7, X.697 §23.4 NOTE); Rust leg: rust/jer_escape
+set(JER_ESCAPE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_jer_escape_test)
+add_custom_command(
+    OUTPUT  ${JER_ESCAPE_GEN_DIR}/JeRec.cpp ${JER_ESCAPE_GEN_DIR}/JeRecAlt.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${JER_ESCAPE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/jer_escape_test.asn1
+            -o ${JER_ESCAPE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/jer_escape_test.asn1
+    COMMENT "Generating C++ from jer_escape_test.asn1"
+)
+add_executable(test_jer_escape jer/test_jer_escape.cpp
+               ${JER_ESCAPE_GEN_DIR}/JeRec.cpp ${JER_ESCAPE_GEN_DIR}/JeRecAlt.cpp)
+target_include_directories(test_jer_escape PRIVATE ${JER_ESCAPE_GEN_DIR})
+target_link_libraries(test_jer_escape PRIVATE asn1cpp_runtime)
+add_test(NAME jer_escape COMMAND test_jer_escape)
+set_tests_properties(jer_escape PROPERTIES LABELS "jer")
+
 # ---- Contained values in generated code (X.682 §11 + --container-config) ---
 set(CONTAINING_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_containing_test)
 set(CONTAINING_TYPES Inner Kind Wrapped Holder Pick Envelope)
@@ -2309,6 +2326,29 @@ if(WITH_BER_RUNTIME_TEST)
     set_tests_properties(rust_real_jer_base PROPERTIES
         TIMEOUT 120 LABELS "rust"
         ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_REAL_JER_BASE_GEN_DIR}")
+endif()
+
+# Rust leg of the JER string-escape test — see tests/rust/jer_escape/src/main.rs
+# (C++ leg: test_jer_escape).
+set(RUST_JER_ESCAPE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_jer_escape)
+add_custom_command(
+    OUTPUT  ${RUST_JER_ESCAPE_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_JER_ESCAPE_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+            ${CMAKE_CURRENT_SOURCE_DIR}/asn1/jer_escape_test.asn1
+            -o ${RUST_JER_ESCAPE_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/jer_escape_test.asn1
+    COMMENT "Generating Rust from jer_escape_test.asn1"
+)
+add_custom_target(gen_rust_jer_escape ALL DEPENDS ${RUST_JER_ESCAPE_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_jer_escape
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/jer_escape/Cargo.toml)
+    set_tests_properties(rust_jer_escape PROPERTIES
+        TIMEOUT 120 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_GEN_DIR=${RUST_JER_ESCAPE_GEN_DIR}")
 endif()
 
 # Rust leg of the contained-values test — see tests/rust/containing/src/main.rs

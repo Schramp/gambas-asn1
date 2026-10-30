@@ -807,6 +807,14 @@ the type. Every other BIT STRING is an object, `{"value":"2EFE20","length":20}`.
 A value whose length breaks its fixed SIZE keeps the object form, so the
 length is not lost.
 
+The decoder accepts every JSON string escape (RFC 8259 §7) in every JER string,
+member and alternative names included (X.697 §23.4 NOTE): `\"`, `\\`, `\/`,
+`\b`, `\f`, `\n`, `\r`, `\t` and `\uXXXX`. A `\u` escape is a UTF-16 code unit;
+a surrogate pair (`😀`) combines into one code point, stored as
+UTF-8. A lone surrogate, a `\u` with fewer than four hex digits, or any other
+character after a backslash is a decode error. The encoder escapes `"`, `\`
+and control characters below U+0020 (as `\u00XX`).
+
 ### Encoding Rule Comparison
 
 | Property | BER/DER | UPER | XER |
