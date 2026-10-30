@@ -1,0 +1,16 @@
+-- A type name defined in two modules with different shapes: each
+-- reference must take the shape of the type its own module sees
+-- (X.680 §13 — an unqualified reference names the type in scope).
+CrossModInt DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    PortNumber ::= INTEGER (0..65535)
+    IntHolder  ::= SEQUENCE { port PortNumber }
+END
+
+CrossModChoice DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+    PortNumber ::= CHOICE { tcp INTEGER (0..65535), udp INTEGER (0..65535) }
+    PortOp     ::= SEQUENCE {
+        clientPort PortNumber OPTIONAL,
+        serverPort PortNumber
+    }
+    PortPick   ::= CHOICE { port PortNumber, none NULL }
+END

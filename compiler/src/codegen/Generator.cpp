@@ -1900,9 +1900,17 @@ Generator::classify_member_setter(const ast::TypeDef& m) {
 // `ChoiceAlternativeSpec::ref_kind`/`ref_storage_kind` (Backend.hpp) can
 // be deleted — every caller currently branching on the result would
 // always take the "covered" path.
+/// @brief Classify a member's TypeRef target by shape (INTEGER alias,
+///        ENUMERATED, builtin alias, other) for the backends' member-row
+///        and PER decisions.
+/// @param tr The reference, resolved in the module being generated, so a
+///        name defined differently in several modules takes the shape of
+///        the one in scope.
+/// @return Target kind and INTEGER storage width.
+/// @see X.680 §13 — an unqualified reference names the type in scope.
 Generator::TypeRefPerClass Generator::classify_typeref_for_per(const ast::TypeRef& tr) const {
     using BT = ast::BuiltinType;
-    auto resolved = resolver_.resolve_ref(tr);
+    auto resolved = resolver_.resolve_ref(tr, current_module_);
     if (!resolved) {
         // A synthetic-promoted target (generate_inline_types) was never
         // registered with the Resolver — resolve_ref failing here is the
