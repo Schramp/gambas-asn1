@@ -42,3 +42,19 @@ NamedBits	<NamedBits>1001</NamedBits>	03020490
 NamedBits	<NamedBits>0000000001</NamedBits>	0303060040
 ImplicitBits	<ImplicitBits>0110</ImplicitBits>	C9020460
 ExplicitBits	<ExplicitBits>111</ExplicitBits>	AA04030205E0
+Utf8	<Utf8></Utf8>	0C00
+Utf8	<Utf8>héllo €</Utf8>	0C0A68C3A96C6C6F20E282AC
+Numeric	<Numeric>0123 456</Numeric>	12083031323320343536
+Printable	<Printable>Abc-12'?</Printable>	13084162632D3132273F
+Teletex	<Teletex>74656C65</Teletex>	140474656C65
+T61	<T61>743631</T61>	1403743631
+Videotex	<Videotex>766964</Videotex>	1503766964
+Ia5	<Ia5>a@b.c</Ia5>	16056140622E63
+Graphic	<Graphic>6772617068</Graphic>	19056772617068
+Visible	<Visible>see me</Visible>	1A06736565206D65
+General	<General>67656E</General>	1B0367656E
+Descriptor	<Descriptor>an object</Descriptor>	0709616E206F626A656374
+Bmp	<Bmp>Bé€</Bmp>	1E06004200E920AC
+Universal	<Universal>U€</Universal>	1C0800000055000020AC
+ImplicitIa5	<ImplicitIa5>imp</ImplicitIa5>	8B03696D70
+ExplicitUtf8	<ExplicitUtf8>exp</ExplicitUtf8>	6C050C03657870

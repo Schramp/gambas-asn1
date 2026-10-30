@@ -24,7 +24,33 @@ static std::string java_builtin_class(ast::BuiltinType bt) {
     case BT::Null:    return std::format("{}.types.Asn1Null", kWire);
     case BT::OctetString: return std::format("{}.types.Asn1OctetString", kWire);
     case BT::BitString:   return std::format("{}.types.Asn1BitString", kWire);
+    case BT::Utf8String:       return std::format("{}.types.Asn1Utf8String", kWire);
+    case BT::NumericString:    return std::format("{}.types.Asn1NumericString", kWire);
+    case BT::PrintableString:  return std::format("{}.types.Asn1PrintableString", kWire);
+    case BT::T61String:        return std::format("{}.types.Asn1T61String", kWire);
+    case BT::VideotexString:   return std::format("{}.types.Asn1VideotexString", kWire);
+    case BT::Ia5String:        return std::format("{}.types.Asn1Ia5String", kWire);
+    case BT::GraphicString:    return std::format("{}.types.Asn1GraphicString", kWire);
+    case BT::VisibleString:    return std::format("{}.types.Asn1VisibleString", kWire);
+    case BT::GeneralString:    return std::format("{}.types.Asn1GeneralString", kWire);
+    case BT::ObjectDescriptor: return std::format("{}.types.Asn1ObjectDescriptor", kWire);
+    case BT::BmpString:        return std::format("{}.types.Asn1BmpString", kWire);
+    case BT::UniversalString:  return std::format("{}.types.Asn1UniversalString", kWire);
     default:          return "";
+    }
+}
+
+/// @brief Whether `bt` is a restricted character string kind (X.680 §41),
+///        held by an `Asn1CharString` subclass.
+static bool java_char_string(ast::BuiltinType bt) {
+    using BT = ast::BuiltinType;
+    switch (bt) {
+    case BT::Utf8String: case BT::NumericString: case BT::PrintableString: case BT::T61String:
+    case BT::VideotexString: case BT::Ia5String: case BT::GraphicString: case BT::VisibleString:
+    case BT::GeneralString: case BT::ObjectDescriptor: case BT::BmpString: case BT::UniversalString:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -135,7 +161,10 @@ void JavaBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSes
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
     os << std::format("public final class {} implements {}.spec.AsMemberRef {{\n", spec.type_name, kWire);
     using BT = ast::BuiltinType;
-    bool sizeable = spec.builtin_type == BT::OctetString || spec.builtin_type == BT::BitString;
+    // SIZE applies to the string kinds (X.680 §51.5): OCTET STRING, BIT
+    // STRING and every restricted character string.
+    bool sizeable = spec.builtin_type == BT::OctetString || spec.builtin_type == BT::BitString
+                 || java_char_string(spec.builtin_type);
     os << std::format("    public static final {0}.spec.Constraints CONSTRAINTS = {1};\n", kWire,
                       sizeable ? java_size_constraints(spec) : std::format("{}.spec.Constraints.UNCONSTRAINED", kWire));
     os << ber_framing_field(spec) << "\n";

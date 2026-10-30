@@ -7,10 +7,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
+import io.github.schramp.gambasasn1.wire.types.Asn1BmpString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
+import io.github.schramp.gambasasn1.wire.types.Asn1Ia5String;
 import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
+import io.github.schramp.gambasasn1.wire.types.Asn1UniversalString;
+import io.github.schramp.gambasasn1.wire.types.Asn1Utf8String;
+import io.github.schramp.gambasasn1.wire.types.Asn1VisibleString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
 import org.junit.jupiter.api.Test;
 
@@ -181,5 +186,28 @@ class BerPrimitiveTest {
     void constructedStringFormIsRejected() {
         assertThrows(DecodeException.class, () -> BerPrimitive.decode(new Asn1OctetString(), BerTagging.DELEGATE,
                 new BerReader(bytes(0x24, 0x04, 0x04, 0x02, 0x01, 0x02))));
+    }
+
+    @Test
+    void charStringsUseTheirOwnUniversalTag() {
+        assertArrayEquals(bytes(0x16, 0x02, 'h', 'i'), encode(new Asn1Ia5String("hi"), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x1A, 0x01, 'x'), encode(new Asn1VisibleString("x"), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x0C, 0x02, 0xC3, 0xA9), encode(new Asn1Utf8String("\u00e9"), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x1E, 0x02, 0x00, 'A'), encode(new Asn1BmpString("A"), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x1C, 0x04, 0x00, 0x01, 0xF6, 0x00), encode(new Asn1UniversalString("\uD83D\uDE00"), BerTagging.DELEGATE));
+        assertThrows(DecodeException.class,
+                () -> BerPrimitive.decode(new Asn1VisibleString(), BerTagging.DELEGATE, new BerReader(bytes(0x16, 0x01, 'x'))));
+    }
+
+    @Test
+    void charStringOctetsSurviveARoundTrip() {
+        // Not UTF-8: kept as sent, as the C++ runtime does.
+        Asn1Utf8String s = new Asn1Utf8String();
+        BerPrimitive.decode(s, BerTagging.DELEGATE, new BerReader(bytes(0x0C, 0x02, 0xFF, 0xFE)));
+        assertArrayEquals(bytes(0x0C, 0x02, 0xFF, 0xFE), encode(s, BerTagging.DELEGATE));
+        Asn1BmpString b = new Asn1BmpString();
+        BerPrimitive.decode(b, BerTagging.DELEGATE, new BerReader(bytes(0x1E, 0x04, 0x00, 'h', 0x00, 'i')));
+        assertEquals("hi", b.get());
+        assertEquals(false, new Asn1Ia5String("a").equals(new Asn1VisibleString("a")));
     }
 }
