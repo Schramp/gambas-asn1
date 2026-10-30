@@ -1,0 +1,45 @@
+-- CHOICE under BER (X.690 §8.13): untagged, IMPLICIT and EXPLICIT
+-- alternatives, AUTOMATIC tags, an untagged CHOICE as an alternative
+-- (reached through its own alternatives' tags), a tagged CHOICE type
+-- (always EXPLICIT, X.680 §31.2.7), alternative types with their own
+-- tags, and extensible CHOICEs. Values: tests/vectors/choice_ber_test.xer.
+
+ChoiceBerTest DEFINITIONS ::= BEGIN
+
+    Plain ::= CHOICE { num INTEGER, flag BOOLEAN, text UTF8String }
+
+    Tagged ::= CHOICE {
+        a [0] IMPLICIT INTEGER,
+        b [1] EXPLICIT BOOLEAN,
+        c [APPLICATION 2] OCTET STRING
+    }
+
+    Inner ::= CHOICE { i INTEGER, s IA5String }
+
+    Nested ::= CHOICE { inner Inner, o OCTET STRING, wrapped [3] Inner }
+
+    Own ::= [5] CHOICE { x INTEGER, y BOOLEAN }
+
+    HoldsOwn ::= CHOICE { own Own, tagged [4] Own, n NULL }
+
+    Color ::= ENUMERATED { red, green }
+
+    MyByte ::= INTEGER (0..255)
+
+    MyStr ::= [APPLICATION 7] IMPLICIT VisibleString
+
+    Typed ::= CHOICE { color Color, byte MyByte, str MyStr }
+
+    Ext ::= CHOICE { a INTEGER, ..., b BOOLEAN }
+
+    ExtRoot ::= CHOICE { a INTEGER, ... }
+
+END
+
+ChoiceBerAuto DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+    Auto ::= CHOICE { num INTEGER, flag BOOLEAN, pick Pick }
+
+    Pick ::= CHOICE { a INTEGER, b BOOLEAN }
+
+END

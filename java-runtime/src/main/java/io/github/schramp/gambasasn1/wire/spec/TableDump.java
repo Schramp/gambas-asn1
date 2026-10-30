@@ -53,7 +53,9 @@ public final class TableDump {
                 List<String> rows = new ArrayList<>();
                 for (int i = 0; i < sp.alternatives().size(); i++) {
                     AltMeta a = sp.alternatives().get(i);
-                    rows.add("{\"name\":" + jstr(a.name()) + "," + jtagging(a.ber(), null, untaggedChoiceAlternative(factory, i))
+                    MemberRef alt = choiceAlternative(factory, i);
+                    Tag ownTag = alt instanceof MemberRef.Choice(Asn1Choice x) ? x.spec().ownTag() : null;
+                    rows.add("{\"name\":" + jstr(a.name()) + "," + jtagging(a.ber(), ownTag, isUntaggedChoice(alt))
                             + ",\"optional\":false,\"constraints\":" + jconstraints(a.constraints())
                             + ",\"contained\":" + (a.contained() != null) + "}");
                 }
@@ -193,7 +195,12 @@ public final class TableDump {
      * CHOICE. A value holds one alternative at a time, so it is selected on
      * a fresh value.
      */
-    private static boolean untaggedChoiceAlternative(Supplier<? extends AsMemberRef> factory, int index) {
-        return factory.get().asMemberRef() instanceof MemberRef.Choice(Asn1Choice c) && isUntaggedChoice(c.select(index));
+    /**
+     * Alternative {@code index} of a fresh value of a CHOICE type. A
+     * {@code Delegate} row of a tagged CHOICE starts with that CHOICE's own
+     * tag, which its row does not carry.
+     */
+    private static MemberRef choiceAlternative(Supplier<? extends AsMemberRef> factory, int index) {
+        return factory.get().asMemberRef() instanceof MemberRef.Choice(Asn1Choice c) ? c.select(index) : MemberRef.ABSENT;
     }
 }
