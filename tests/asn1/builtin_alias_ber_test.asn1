@@ -1,5 +1,5 @@
 -- Builtin (BOOLEAN, NULL, OCTET STRING, BIT STRING, character strings, OBJECT IDENTIFIER,
--- RELATIVE-OID, UTCTime, GeneralizedTime),
+-- RELATIVE-OID, UTCTime, GeneralizedTime, REAL),
 -- INTEGER and ENUMERATED type assignments, each with its own tagging: the natural tag,
 -- IMPLICIT and EXPLICIT (X.680 §31.2, X.690 §8.14). BER vectors in
 -- tests/vectors/builtin_alias_ber_test.vectors are asn1c DER output.
@@ -66,5 +66,9 @@ BuiltinAliasBerTest DEFINITIONS ::= BEGIN
     ImplicitUtc      ::= [17] IMPLICIT UTCTime
     GenTime          ::= GeneralizedTime
     ExplicitGenTime  ::= [APPLICATION 18] EXPLICIT GeneralizedTime
+
+    Real             ::= REAL
+    ImplicitReal     ::= [19] IMPLICIT REAL
+    ExplicitReal     ::= [APPLICATION 20] EXPLICIT REAL
 
 END

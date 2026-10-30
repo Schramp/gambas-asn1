@@ -1903,9 +1903,19 @@ UTCTime and GeneralizedTime (`Asn1UtcTime`, `Asn1GeneralizedTime`) are
 character string wrappers holding the time text as sent, as in the C++ and
 Rust runtimes; the text is not parsed or checked against the time format.
 
+REAL (`Asn1Real`) has the same three storage classes as the C++ and Rust
+runtimes: `DOUBLE` (an IEEE 754 double), `BINARY` (a base-2 value a double
+cannot hold exactly) and `DECIMAL` (base 10, from the BER decimal form).
+`value()` is the nearest double; `exact()` gives the mantissa and exponent
+of the other two. Equality follows the abstract value, so a base-2 and a
+base-10 value are never equal (X.680 §21.5 NOTE 1) and
+`numericallyEqual()` compares the doubles. BER decode accepts every form of
+X.690 §8.5; encode writes a `DOUBLE` in the binary form with the fewest
+octets and the other two in their DER form (X.690 §11.3).
+
 So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage),
 ENUMERATED, OCTET STRING, BIT STRING, character string, OBJECT IDENTIFIER,
-RELATIVE-OID, UTCTime and GeneralizedTime type assignments. The Java
+RELATIVE-OID, UTCTime, GeneralizedTime and REAL type assignments. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.
 

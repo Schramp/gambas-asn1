@@ -40,6 +40,7 @@ static std::string java_builtin_class(ast::BuiltinType bt) {
     case BT::RelativeOid:      return std::format("{}.types.Asn1RelativeOid", kWire);
     case BT::UtcTime:          return std::format("{}.types.Asn1UtcTime", kWire);
     case BT::GeneralizedTime:  return std::format("{}.types.Asn1GeneralizedTime", kWire);
+    case BT::Real:             return std::format("{}.types.Asn1Real", kWire);
     default:          return "";
     }
 }

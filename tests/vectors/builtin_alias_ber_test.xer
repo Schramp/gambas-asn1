@@ -76,3 +76,16 @@ ImplicitUtc	<ImplicitUtc>0001010000Z</ImplicitUtc>
 GenTime	<GenTime>20240115143000Z</GenTime>
 GenTime	<GenTime>20240115143000.123Z</GenTime>
 ExplicitGenTime	<ExplicitGenTime>19991231235959Z</ExplicitGenTime>
+Real	<Real>0</Real>
+Real	<Real>1</Real>
+Real	<Real>-1.5</Real>
+Real	<Real>0.1</Real>
+Real	<Real>3.141592653589793</Real>
+Real	<Real>1E300</Real>
+Real	<Real>-2.5E-300</Real>
+Real	<Real><PLUS-INFINITY/></Real>
+Real	<Real><MINUS-INFINITY/></Real>
+Real	<Real><NOT-A-NUMBER/></Real>
+Real	<Real>-0</Real>
+ImplicitReal	<ImplicitReal>0.5</ImplicitReal>
+ExplicitReal	<ExplicitReal>-1024</ExplicitReal>

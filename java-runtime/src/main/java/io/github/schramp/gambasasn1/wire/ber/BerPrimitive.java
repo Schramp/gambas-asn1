@@ -14,6 +14,7 @@ import io.github.schramp.gambasasn1.wire.types.Asn1Null;
 import io.github.schramp.gambasasn1.wire.types.Asn1ObjectIdentifier;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
+import io.github.schramp.gambasasn1.wire.types.Asn1Real;
 import io.github.schramp.gambasasn1.wire.types.Asn1RelativeOid;
 import java.util.Arrays;
 
@@ -30,6 +31,7 @@ public final class BerPrimitive {
     private static final Tag BIT_STRING_TAG = Tag.universal(UniversalTag.BIT_STRING, false);
     private static final Tag OBJECT_IDENTIFIER_TAG = Tag.universal(UniversalTag.OBJECT_IDENTIFIER, false);
     private static final Tag RELATIVE_OID_TAG = Tag.universal(UniversalTag.RELATIVE_OID, false);
+    private static final Tag REAL_TAG = Tag.universal(UniversalTag.REAL, false);
 
     /** X.690 §11.1: DER encodes TRUE as all ones. */
     private static final int DER_TRUE = 0xFF;
@@ -79,6 +81,7 @@ public final class BerPrimitive {
             case Asn1CharString c -> Tag.universal(c.universalTagNumber(), false);
             case Asn1ObjectIdentifier o -> OBJECT_IDENTIFIER_TAG;
             case Asn1RelativeOid r -> RELATIVE_OID_TAG;
+            case Asn1Real r -> REAL_TAG;
             default -> throw new EncodeException("no BER form for " + p.xerElementName());
         };
     }
@@ -92,6 +95,7 @@ public final class BerPrimitive {
             case Asn1CharString c -> BerWriter.writePrimitive(out, tag, c.octets());
             case Asn1ObjectIdentifier o -> BerWriter.writePrimitive(out, tag, encodeObjectIdentifier(o.get()));
             case Asn1RelativeOid r -> BerWriter.writePrimitive(out, tag, encodeSubidentifiers(r.get(), 0, new byte[r.get().length * 10], 0));
+            case Asn1Real r -> BerWriter.writePrimitive(out, tag, BerReal.encode(r));
             // X.690 §8.6.2: the initial octet counts the unused bits of the last octet.
             case Asn1BitString b -> BerWriter.writeTagged(out, tag, c -> {
                 c.write(b.unusedBits());
@@ -127,6 +131,7 @@ public final class BerPrimitive {
             case Asn1CharString c -> c.setOctets(v.remainingBytes());
             case Asn1ObjectIdentifier o -> o.set(decodeObjectIdentifier(v.remainingBytes(), start));
             case Asn1RelativeOid rel -> rel.set(decodeSubidentifiers(v.remainingBytes(), 0, new long[0], start));
+            case Asn1Real real -> real.set(BerReal.decode(v.remainingBytes(), start));
             case Asn1BitString b -> {
                 if (v.atEnd()) {
                     throw new DecodeException("BIT STRING: contents need the unused-bits octet", start);
