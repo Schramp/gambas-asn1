@@ -641,17 +641,26 @@ target_link_libraries(test_seq3 PRIVATE asn1cpp_runtime)
 add_test(NAME seq3 COMMAND test_seq3)
 
 # ---- Rec5: SEQUENCE with OPTIONAL members -----------------------------------
+# Schemas whose generated sources feed more than one executable use a stamp
+# OUTPUT plus BYPRODUCTS and a gen_* custom target: each consumer then depends
+# on that one target instead of carrying its own copy of the codegen rule, so
+# a parallel build never runs two compiler instances into the same directory.
+# The stamp (not the generated files) is the OUTPUT because the compiler keeps
+# the mtime of unchanged files, which would otherwise leave them stale forever.
 set(SEQ_OPT_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_seq_opt_test)
 add_custom_command(
-    OUTPUT  ${SEQ_OPT_GEN_DIR}/Rec5.hpp   ${SEQ_OPT_GEN_DIR}/Rec5.cpp
-            ${SEQ_OPT_GEN_DIR}/MyByte.hpp ${SEQ_OPT_GEN_DIR}/MyByte.cpp
-            ${SEQ_OPT_GEN_DIR}/MyStr.hpp  ${SEQ_OPT_GEN_DIR}/MyStr.cpp
+    OUTPUT  ${SEQ_OPT_GEN_DIR}/.stamp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SEQ_OPT_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/seq_opt_test.asn1
                                    -o ${SEQ_OPT_GEN_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${SEQ_OPT_GEN_DIR}/.stamp
+    BYPRODUCTS ${SEQ_OPT_GEN_DIR}/Rec5.hpp   ${SEQ_OPT_GEN_DIR}/Rec5.cpp
+               ${SEQ_OPT_GEN_DIR}/MyByte.hpp ${SEQ_OPT_GEN_DIR}/MyByte.cpp
+               ${SEQ_OPT_GEN_DIR}/MyStr.hpp  ${SEQ_OPT_GEN_DIR}/MyStr.cpp
     DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/seq_opt_test.asn1
     COMMENT "Generating C++ from seq_opt_test.asn1"
 )
+add_custom_target(gen_seq_opt_test DEPENDS ${SEQ_OPT_GEN_DIR}/.stamp)
 add_executable(test_seq_opt
     seq/test_seq_opt.cpp
     ${SEQ_OPT_GEN_DIR}/Rec5.cpp
@@ -660,21 +669,25 @@ add_executable(test_seq_opt
 )
 target_include_directories(test_seq_opt PRIVATE ${SEQ_OPT_GEN_DIR})
 target_link_libraries(test_seq_opt PRIVATE asn1cpp_runtime)
+add_dependencies(test_seq_opt gen_seq_opt_test)
 add_test(NAME seq_opt COMMAND test_seq_opt)
 
 # ---- SEQUENCE OF types ------------------------------------------------------
 set(SEQ_OF_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_seq_of_test)
 add_custom_command(
-    OUTPUT  ${SEQ_OF_GEN_DIR}/ByteList.hpp ${SEQ_OF_GEN_DIR}/ByteList.cpp
-            ${SEQ_OF_GEN_DIR}/StrList.hpp  ${SEQ_OF_GEN_DIR}/StrList.cpp
-            ${SEQ_OF_GEN_DIR}/MyByte.hpp   ${SEQ_OF_GEN_DIR}/MyByte.cpp
-            ${SEQ_OF_GEN_DIR}/MyStr.hpp    ${SEQ_OF_GEN_DIR}/MyStr.cpp
+    OUTPUT  ${SEQ_OF_GEN_DIR}/.stamp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SEQ_OF_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/seq_of_test.asn1
                                    -o ${SEQ_OF_GEN_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${SEQ_OF_GEN_DIR}/.stamp
+    BYPRODUCTS ${SEQ_OF_GEN_DIR}/ByteList.hpp ${SEQ_OF_GEN_DIR}/ByteList.cpp
+               ${SEQ_OF_GEN_DIR}/StrList.hpp  ${SEQ_OF_GEN_DIR}/StrList.cpp
+               ${SEQ_OF_GEN_DIR}/MyByte.hpp   ${SEQ_OF_GEN_DIR}/MyByte.cpp
+               ${SEQ_OF_GEN_DIR}/MyStr.hpp    ${SEQ_OF_GEN_DIR}/MyStr.cpp
     DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/seq_of_test.asn1
     COMMENT "Generating C++ from seq_of_test.asn1"
 )
+add_custom_target(gen_seq_of_test DEPENDS ${SEQ_OF_GEN_DIR}/.stamp)
 add_executable(test_seq_of
     seq/test_seq_of.cpp
     ${SEQ_OF_GEN_DIR}/ByteList.cpp
@@ -684,6 +697,7 @@ add_executable(test_seq_of
 )
 target_include_directories(test_seq_of PRIVATE ${SEQ_OF_GEN_DIR})
 target_link_libraries(test_seq_of PRIVATE asn1cpp_runtime)
+add_dependencies(test_seq_of gen_seq_of_test)
 add_test(NAME seq_of COMMAND test_seq_of)
 
 # ---- Anonymous nested SEQUENCE OF/SET OF (gambas-asn1#427) ------------------
@@ -711,18 +725,21 @@ add_test(NAME nested_seq_of COMMAND test_nested_seq_of)
 # ---- CHOICE types -----------------------------------------------------------
 set(CHOICE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_test)
 add_custom_command(
-    OUTPUT  ${CHOICE_GEN_DIR}/HasAlt2.hpp ${CHOICE_GEN_DIR}/HasAlt2.cpp
-            ${CHOICE_GEN_DIR}/HasAlt4.hpp ${CHOICE_GEN_DIR}/HasAlt4.cpp
-            ${CHOICE_GEN_DIR}/Alt2.hpp    ${CHOICE_GEN_DIR}/Alt2.cpp
-            ${CHOICE_GEN_DIR}/Alt4.hpp    ${CHOICE_GEN_DIR}/Alt4.cpp
-            ${CHOICE_GEN_DIR}/MyByte.hpp  ${CHOICE_GEN_DIR}/MyByte.cpp
-            ${CHOICE_GEN_DIR}/MyStr.hpp   ${CHOICE_GEN_DIR}/MyStr.cpp
+    OUTPUT  ${CHOICE_GEN_DIR}/.stamp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CHOICE_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_test.asn1
                                    -o ${CHOICE_GEN_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${CHOICE_GEN_DIR}/.stamp
+    BYPRODUCTS ${CHOICE_GEN_DIR}/HasAlt2.hpp ${CHOICE_GEN_DIR}/HasAlt2.cpp
+               ${CHOICE_GEN_DIR}/HasAlt4.hpp ${CHOICE_GEN_DIR}/HasAlt4.cpp
+               ${CHOICE_GEN_DIR}/Alt2.hpp    ${CHOICE_GEN_DIR}/Alt2.cpp
+               ${CHOICE_GEN_DIR}/Alt4.hpp    ${CHOICE_GEN_DIR}/Alt4.cpp
+               ${CHOICE_GEN_DIR}/MyByte.hpp  ${CHOICE_GEN_DIR}/MyByte.cpp
+               ${CHOICE_GEN_DIR}/MyStr.hpp   ${CHOICE_GEN_DIR}/MyStr.cpp
     DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/choice_test.asn1
     COMMENT "Generating C++ from choice_test.asn1"
 )
+add_custom_target(gen_choice_test DEPENDS ${CHOICE_GEN_DIR}/.stamp)
 add_executable(test_choice
     seq/test_choice.cpp
     ${CHOICE_GEN_DIR}/HasAlt2.cpp
@@ -734,6 +751,7 @@ add_executable(test_choice
 )
 target_include_directories(test_choice PRIVATE ${CHOICE_GEN_DIR})
 target_link_libraries(test_choice PRIVATE asn1cpp_runtime)
+add_dependencies(test_choice gen_choice_test)
 add_test(NAME choice COMMAND test_choice)
 
 # ---- Deep-copy (SEQUENCE-with-optionals + CHOICE) ---------------------------
@@ -749,6 +767,8 @@ add_executable(test_deep_copy
 # SEQ_OPT_GEN_DIR listed second so its headers are found after CHOICE_GEN_DIR.
 target_include_directories(test_deep_copy PRIVATE ${CHOICE_GEN_DIR} ${SEQ_OPT_GEN_DIR})
 target_link_libraries(test_deep_copy PRIVATE asn1cpp_runtime)
+add_dependencies(test_deep_copy gen_choice_test)
+add_dependencies(test_deep_copy gen_seq_opt_test)
 add_test(NAME deep_copy COMMAND test_deep_copy)
 
 # ---- Constrained INTEGER types ----------------------------------------------
@@ -884,13 +904,16 @@ if(ASN1CPP_VALIDATE AND ASN1CPP_VALIDATE_ON_ENCODE)
             ${VALIDATE_GEN_DIR}/${t}.cpp)
     endforeach()
     add_custom_command(
-        OUTPUT  ${_validate_outputs}
+        OUTPUT  ${VALIDATE_GEN_DIR}/.stamp
         COMMAND ${CMAKE_COMMAND} -E make_directory ${VALIDATE_GEN_DIR}
         COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/validate_test.asn1
                                        -o ${VALIDATE_GEN_DIR}
+        COMMAND ${CMAKE_COMMAND} -E touch ${VALIDATE_GEN_DIR}/.stamp
+        BYPRODUCTS ${_validate_outputs}
         DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/validate_test.asn1
         COMMENT "Generating C++ from validate_test.asn1"
     )
+    add_custom_target(gen_validate_test DEPENDS ${VALIDATE_GEN_DIR}/.stamp)
     set(_validate_cpps)
     foreach(t IN LISTS VALIDATE_TYPES)
         list(APPEND _validate_cpps ${VALIDATE_GEN_DIR}/${t}.cpp)
@@ -901,6 +924,7 @@ if(ASN1CPP_VALIDATE AND ASN1CPP_VALIDATE_ON_ENCODE)
     )
     target_include_directories(test_validate PRIVATE ${VALIDATE_GEN_DIR})
     target_link_libraries(test_validate PRIVATE asn1cpp_runtime)
+    add_dependencies(test_validate gen_validate_test)
     add_test(NAME validate_hooks COMMAND test_validate)
 
     add_executable(test_jer_validate
@@ -909,6 +933,7 @@ if(ASN1CPP_VALIDATE AND ASN1CPP_VALIDATE_ON_ENCODE)
     )
     target_include_directories(test_jer_validate PRIVATE ${VALIDATE_GEN_DIR})
     target_link_libraries(test_jer_validate PRIVATE asn1cpp_runtime)
+    add_dependencies(test_jer_validate gen_validate_test)
     add_test(NAME jer_validate COMMAND test_jer_validate)
     set_tests_properties(jer_validate PROPERTIES LABELS "jer")
 
@@ -918,6 +943,7 @@ if(ASN1CPP_VALIDATE AND ASN1CPP_VALIDATE_ON_ENCODE)
     )
     target_include_directories(test_xer_validate PRIVATE ${VALIDATE_GEN_DIR})
     target_link_libraries(test_xer_validate PRIVATE asn1cpp_runtime)
+    add_dependencies(test_xer_validate gen_validate_test)
     add_test(NAME xer_validate COMMAND test_xer_validate)
     set_tests_properties(xer_validate PROPERTIES LABELS "xer")
 endif()
@@ -928,6 +954,7 @@ add_custom_command(
     OUTPUT  ${XER_CODEC_GEN_DIR}/Direction.hpp    ${XER_CODEC_GEN_DIR}/Direction.cpp
             ${XER_CODEC_GEN_DIR}/HasDirection.hpp ${XER_CODEC_GEN_DIR}/HasDirection.cpp
             ${XER_CODEC_GEN_DIR}/HasAny.hpp       ${XER_CODEC_GEN_DIR}/HasAny.cpp
+            ${XER_CODEC_GEN_DIR}/Opaque.hpp       ${XER_CODEC_GEN_DIR}/Opaque.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${XER_CODEC_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/xer_codec_test.asn1
                                    -o ${XER_CODEC_GEN_DIR}
@@ -939,6 +966,7 @@ add_executable(test_xer_codec
     ${XER_CODEC_GEN_DIR}/Direction.cpp
     ${XER_CODEC_GEN_DIR}/HasDirection.cpp
     ${XER_CODEC_GEN_DIR}/HasAny.cpp
+    ${XER_CODEC_GEN_DIR}/Opaque.cpp
 )
 target_include_directories(test_xer_codec PRIVATE ${XER_CODEC_GEN_DIR})
 target_link_libraries(test_xer_codec PRIVATE asn1cpp_runtime)
@@ -956,14 +984,17 @@ foreach(t IN LISTS BER_VEC_62_TYPES)
     list(APPEND _bv62_outputs ${BER_VEC_62_GEN_DIR}/${t}.hpp ${BER_VEC_62_GEN_DIR}/${t}.cpp)
 endforeach()
 add_custom_command(
-    OUTPUT  ${_bv62_outputs}
+    OUTPUT  ${BER_VEC_62_GEN_DIR}/.stamp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${BER_VEC_62_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp>
             ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/62-any-OK.asn1
             -o ${BER_VEC_62_GEN_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${BER_VEC_62_GEN_DIR}/.stamp
+    BYPRODUCTS ${_bv62_outputs}
     DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/62-any-OK.asn1
     COMMENT "Generating C++ from 62-any-OK.asn1"
 )
+add_custom_target(gen_ber_vectors_62 DEPENDS ${BER_VEC_62_GEN_DIR}/.stamp)
 set(_bv62_cpps)
 foreach(t IN LISTS BER_VEC_62_TYPES)
     list(APPEND _bv62_cpps ${BER_VEC_62_GEN_DIR}/${t}.cpp)
@@ -974,6 +1005,7 @@ add_executable(test_ber_vectors_62
 )
 target_include_directories(test_ber_vectors_62 PRIVATE ${BER_VEC_62_GEN_DIR})
 target_link_libraries(test_ber_vectors_62 PRIVATE asn1cpp_runtime)
+add_dependencies(test_ber_vectors_62 gen_ber_vectors_62)
 add_test(NAME ber_vectors_62 COMMAND test_ber_vectors_62
     ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-62)
 set_tests_properties(ber_vectors_62 PROPERTIES TIMEOUT 30)
@@ -997,14 +1029,17 @@ foreach(t IN LISTS XER_VEC_70_TYPES)
     list(APPEND _xv70_outputs ${XER_VEC_70_GEN_DIR}/${t}.hpp ${XER_VEC_70_GEN_DIR}/${t}.cpp)
 endforeach()
 add_custom_command(
-    OUTPUT  ${_xv70_outputs}
+    OUTPUT  ${XER_VEC_70_GEN_DIR}/.stamp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${XER_VEC_70_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp>
             ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/70-xer-test-OK.asn1
             -o ${XER_VEC_70_GEN_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${XER_VEC_70_GEN_DIR}/.stamp
+    BYPRODUCTS ${_xv70_outputs}
     DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests-asn1c-compiler/70-xer-test-OK.asn1
     COMMENT "Generating C++ from 70-xer-test-OK.asn1"
 )
+add_custom_target(gen_xer_vectors_70 DEPENDS ${XER_VEC_70_GEN_DIR}/.stamp)
 set(_xv70_cpps)
 foreach(t IN LISTS XER_VEC_70_TYPES)
     list(APPEND _xv70_cpps ${XER_VEC_70_GEN_DIR}/${t}.cpp)
@@ -1015,6 +1050,7 @@ add_executable(test_xer_vectors_70
 )
 target_include_directories(test_xer_vectors_70 PRIVATE ${XER_VEC_70_GEN_DIR})
 target_link_libraries(test_xer_vectors_70 PRIVATE asn1cpp_runtime)
+add_dependencies(test_xer_vectors_70 gen_xer_vectors_70)
 add_test(NAME xer_vectors_70 COMMAND test_xer_vectors_70
     ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-70)
 set_tests_properties(xer_vectors_70 PROPERTIES TIMEOUT 30)
@@ -1242,18 +1278,22 @@ set_tests_properties(per_named_bits PROPERTIES TIMEOUT 30)
 # ---- CHOICE extension alternative unknown to the receiver (X.691 §23.8) ------
 set(CUE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_choice_unknown_ext_test)
 add_custom_command(
-    OUTPUT  ${CUE_GEN_DIR}/MsgV1.hpp ${CUE_GEN_DIR}/MsgV1.cpp ${CUE_GEN_DIR}/MsgV2.hpp ${CUE_GEN_DIR}/MsgV2.cpp
+    OUTPUT  ${CUE_GEN_DIR}/.stamp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CUE_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp>
             ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_choice_unknown_ext_test.asn1
             -o ${CUE_GEN_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${CUE_GEN_DIR}/.stamp
+    BYPRODUCTS ${CUE_GEN_DIR}/MsgV1.hpp ${CUE_GEN_DIR}/MsgV1.cpp ${CUE_GEN_DIR}/MsgV2.hpp ${CUE_GEN_DIR}/MsgV2.cpp
     DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/per_choice_unknown_ext_test.asn1
     COMMENT "Generating C++ from per_choice_unknown_ext_test.asn1"
 )
+add_custom_target(gen_choice_unknown_ext_test DEPENDS ${CUE_GEN_DIR}/.stamp)
 add_executable(test_choice_unknown_ext seq/test_choice_unknown_ext.cpp
                ${CUE_GEN_DIR}/MsgV1.cpp ${CUE_GEN_DIR}/MsgV2.cpp)
 target_include_directories(test_choice_unknown_ext PRIVATE ${CUE_GEN_DIR})
 target_link_libraries(test_choice_unknown_ext PRIVATE asn1cpp_runtime)
+add_dependencies(test_choice_unknown_ext gen_choice_unknown_ext_test)
 add_test(NAME choice_unknown_ext COMMAND test_choice_unknown_ext)
 set_tests_properties(choice_unknown_ext PROPERTIES TIMEOUT 30)
 
@@ -1261,6 +1301,7 @@ set_tests_properties(choice_unknown_ext PROPERTIES TIMEOUT 30)
 add_executable(test_encode_failure seq/test_encode_failure.cpp ${CUE_GEN_DIR}/MsgV1.cpp)
 target_include_directories(test_encode_failure PRIVATE ${CUE_GEN_DIR})
 target_link_libraries(test_encode_failure PRIVATE asn1cpp_runtime)
+add_dependencies(test_encode_failure gen_choice_unknown_ext_test)
 add_test(NAME encode_failure COMMAND test_encode_failure)
 set_tests_properties(encode_failure PROPERTIES TIMEOUT 30)
 
@@ -1711,6 +1752,7 @@ set(FUZZ_BER_SOURCES
 add_executable(fuzz_ber_corpus_replay ${FUZZ_BER_SOURCES})
 target_include_directories(fuzz_ber_corpus_replay PRIVATE ${BER_VEC_62_GEN_DIR})
 target_link_libraries(fuzz_ber_corpus_replay PRIVATE asn1cpp_runtime)
+add_dependencies(fuzz_ber_corpus_replay gen_ber_vectors_62)
 add_test(NAME fuzz_ber_corpus_replay COMMAND fuzz_ber_corpus_replay
     ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-62)
 set_tests_properties(fuzz_ber_corpus_replay PROPERTIES TIMEOUT 30)
@@ -1720,6 +1762,7 @@ if(LIBFUZZER_AVAILABLE)
     add_executable(fuzz_ber_decode ${FUZZ_BER_SOURCES})
     target_include_directories(fuzz_ber_decode PRIVATE ${BER_VEC_62_GEN_DIR})
     target_link_libraries(fuzz_ber_decode PRIVATE asn1cpp_runtime)
+    add_dependencies(fuzz_ber_decode gen_ber_vectors_62)
     target_compile_definitions(fuzz_ber_decode PRIVATE FUZZ_DRIVER)
     target_compile_options(fuzz_ber_decode PRIVATE -fsanitize=fuzzer,address)
     target_link_options(fuzz_ber_decode PRIVATE -fsanitize=fuzzer,address)
@@ -1734,6 +1777,7 @@ set(FUZZ_XER_SOURCES
 add_executable(fuzz_xer_corpus_replay ${FUZZ_XER_SOURCES})
 target_include_directories(fuzz_xer_corpus_replay PRIVATE ${XER_VEC_70_GEN_DIR})
 target_link_libraries(fuzz_xer_corpus_replay PRIVATE asn1cpp_runtime)
+add_dependencies(fuzz_xer_corpus_replay gen_xer_vectors_70)
 add_test(NAME fuzz_xer_corpus_replay COMMAND fuzz_xer_corpus_replay
     ${CMAKE_CURRENT_SOURCE_DIR}/tests-c-compiler/data-70)
 set_tests_properties(fuzz_xer_corpus_replay PROPERTIES TIMEOUT 30)
@@ -1742,6 +1786,7 @@ if(LIBFUZZER_AVAILABLE)
     add_executable(fuzz_xer_decode ${FUZZ_XER_SOURCES})
     target_include_directories(fuzz_xer_decode PRIVATE ${XER_VEC_70_GEN_DIR})
     target_link_libraries(fuzz_xer_decode PRIVATE asn1cpp_runtime)
+    add_dependencies(fuzz_xer_decode gen_xer_vectors_70)
     target_compile_definitions(fuzz_xer_decode PRIVATE FUZZ_DRIVER)
     target_compile_options(fuzz_xer_decode PRIVATE -fsanitize=fuzzer,address)
     target_link_options(fuzz_xer_decode PRIVATE -fsanitize=fuzzer,address)
@@ -1801,6 +1846,7 @@ add_executable(test_jer_composite
 )
 target_include_directories(test_jer_composite PRIVATE ${CHOICE_GEN_DIR})
 target_link_libraries(test_jer_composite PRIVATE asn1cpp_runtime)
+add_dependencies(test_jer_composite gen_choice_test)
 add_test(NAME jer_composite COMMAND test_jer_composite)
 set_tests_properties(jer_composite PROPERTIES TIMEOUT 30 LABELS "jer")
 
@@ -1814,6 +1860,7 @@ add_executable(test_jer_seqof
 )
 target_include_directories(test_jer_seqof PRIVATE ${SEQ_OF_GEN_DIR})
 target_link_libraries(test_jer_seqof PRIVATE asn1cpp_runtime)
+add_dependencies(test_jer_seqof gen_seq_of_test)
 add_test(NAME jer_seqof COMMAND test_jer_seqof)
 set_tests_properties(jer_seqof PROPERTIES TIMEOUT 30 LABELS "jer")
 

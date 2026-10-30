@@ -563,7 +563,10 @@ static const char* ber_handler_for_builtin(ast::BuiltinType bt) {
 ///        Constraints table. A SIZE or FROM constraint on a string or BIT
 ///        STRING type is a length/alphabet constraint, not a value range
 ///        (X.680 §51.5, §51.7), so it sets SIZE_CONSTRAINED and the alphabet
-///        fields, never the value-range CONSTRAINED bit.
+///        fields, never the value-range CONSTRAINED bit. An ANY type
+///        assignment carries is_any and TypeKind::Any, as the runtime's own
+///        asn_DEF_Any does: its value is a complete encoding (X.690 §8.14
+///        for a tagged one), which RandomFiller and TableDump key on.
 /// @param spec  backend-agnostic decisions for the type assignment.
 /// @param os    the definition (.cpp) stream.
 void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std::ostream& os) const {
@@ -603,7 +606,9 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
         os << "    {} /* constraints — unconstrained */,\n";
     }
     std::string cpp_t = native_builtin_type(spec.builtin_type);
-    os << std::format("    false, asn1::TypeKind::Primitive,\n");
+    os << (spec.builtin_type == ast::BuiltinType::Any
+               ? "    true, asn1::TypeKind::Any,\n"
+               : "    false, asn1::TypeKind::Primitive,\n");
     os << std::format("    {} /* per_handler */,\n", per_h);
     os << std::format("    {} /* ber_handler */,\n", ber_h);
     os << std::format("    asn1::TypeLifecycleOps(asn1::TypeTag<{}>{{}}) /* lifecycle */", cpp_t);

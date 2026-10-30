@@ -1,8 +1,6 @@
 #pragma once
 
-// Maximum OID arcs decoded into a stack buffer before falling back to heap.
-// X.680 sets no formal limit; real-world OIDs are typically < 20 arcs.
-#define ASN1CPP_OID_STACK_ARCS 64
+#include <optional>
 #include <vector>
 #include <string>
 #include <span>
@@ -66,30 +64,84 @@ public:
 };
 
 namespace detail {
-// Encode a single OID arc in base-128 (BER OID component encoding)
-inline void encode_arc(std::vector<uint8_t>& out, uint32_t arc) {
-    uint8_t tmp[5];
+/// @brief Largest arc value either OID type holds (\c uint32_t storage, the
+///        same range asn1c's \c asn_oid_arc_t accepts).
+inline constexpr uint64_t kMaxOidArc = 0xFFFFFFFFu;
+
+/// @brief Write one subidentifier, base-128, most significant group first,
+///        bit 8 set on every octet but the last.
+/// @param out  Output position; advanced past the octets written (at most 10).
+/// @param v    Subidentifier value; 64 bits wide so the combined first
+///             subidentifier of an OID (X*40+Y) never wraps.
+/// @return The new output position.
+/// @see X.690 §8.19.2 — subidentifier encoding.
+inline uint8_t* encode_subid(uint8_t* out, uint64_t v) {
+    uint8_t tmp[10];
     int n = 0;
     do {
-        tmp[n++] = arc & 0x7F;
-        arc >>= 7;
-    } while (arc);
+        tmp[n++] = v & 0x7F;
+        v >>= 7;
+    } while (v);
     for (int i = n - 1; i >= 0; --i)
-        out.push_back(tmp[i] | (i ? 0x80 : 0x00));
+        *out++ = tmp[i] | (i ? 0x80 : 0x00);
+    return out;
 }
 
-// Decode one base-128 arc from bytes, advancing idx
-inline Expected<uint32_t, DecodeError>
-decode_arc(std::span<const uint8_t> bytes, std::size_t& idx) {
-    uint32_t v = 0;
-    for (int i = 0; i < 5; ++i) {
-        if (ASN1CPP_UNLIKELY(idx >= bytes.size()))
-            return make_unexpected<uint32_t, DecodeError>(DecodeError("truncated OID arc"));
-        uint8_t b = bytes[idx++];
-        v = (v << 7) | (b & 0x7F);
-        if (ASN1CPP_LIKELY(!(b & 0x80))) return v;  // last byte of arc (most arcs fit in 1-2 bytes)
+/// @brief Contents octets of an OID or RELATIVE-OID, built on the stack when
+///        they fit (5 octets per 32-bit arc) and on the heap otherwise.
+class SubidBuffer {
+    uint8_t stack_[640];
+    std::vector<uint8_t> heap_;
+    uint8_t* begin_;
+    uint8_t* end_;
+public:
+    /// @param subids  Number of subidentifiers that will be written.
+    explicit SubidBuffer(std::size_t subids) {
+        if (subids * 5 > sizeof(stack_)) heap_.resize(subids * 5);
+        begin_ = end_ = heap_.empty() ? stack_ : heap_.data();
     }
-    return make_unexpected<uint32_t, DecodeError>(DecodeError("OID arc overflow"));
+    /// @brief Append one subidentifier (see encode_subid()).
+    void push(uint64_t v) { end_ = encode_subid(end_, v); }
+    std::span<const uint8_t> span() const { return {begin_, end_}; }
+};
+
+/// @brief Read one subidentifier, advancing \p idx past it.
+/// @param bytes  Contents octets of an OBJECT IDENTIFIER or RELATIVE-OID.
+/// @param idx    Read position, updated on success.
+/// @param max    Largest value the caller can store; a larger one is an error.
+/// @return The subidentifier, or a DecodeError when it is truncated or exceeds \p max.
+/// @see X.690 §8.19.2 — subidentifier encoding.
+inline Expected<uint64_t, DecodeError>
+decode_subid(std::span<const uint8_t> bytes, std::size_t& idx, uint64_t max) {
+    uint64_t v = 0;
+    while (true) {
+        if (ASN1CPP_UNLIKELY(idx >= bytes.size()))
+            return make_unexpected<uint64_t, DecodeError>(DecodeError("truncated OID arc"));
+        uint8_t b = bytes[idx++];
+        if (ASN1CPP_UNLIKELY(v > (max >> 7)))
+            return make_unexpected<uint64_t, DecodeError>(DecodeError("OID arc overflow"));
+        v = (v << 7) | (b & 0x7F);
+        if (ASN1CPP_LIKELY(!(b & 0x80))) {  // last octet; most arcs fit in 1-2 octets
+            if (ASN1CPP_UNLIKELY(v > max))
+                return make_unexpected<uint64_t, DecodeError>(DecodeError("OID arc overflow"));
+            return v;
+        }
+    }
+}
+
+/// @brief Decode a run of subidentifiers, each one an arc, onto \p arcs.
+/// @param bytes  Contents octets.
+/// @param idx    Position of the first subidentifier to read.
+/// @param arcs   Arc list to append to.
+/// @return Empty on success, else the error of the first malformed subidentifier.
+inline std::optional<DecodeError>
+decode_arcs(std::span<const uint8_t> bytes, std::size_t idx, std::vector<uint32_t>& arcs) {
+    while (ASN1CPP_LIKELY(idx < bytes.size())) {
+        auto arc = decode_subid(bytes, idx, kMaxOidArc);
+        if (ASN1CPP_UNLIKELY(!arc)) return arc.error();
+        arcs.push_back(static_cast<uint32_t>(*arc));
+    }
+    return std::nullopt;
 }
 } // namespace detail
 
@@ -100,28 +152,17 @@ struct BerTraits<Oid> {
     /// @brief BER-encode the value as a primitive TLV with tag \p t.
     /// @param t  Tag to write: the universal tag by default, or the tag of a
     ///           type assignment (X.680 §31.2) such as `T ::= [APPLICATION 1] ...`.
-    /// @see X.690 §8.19.
+    /// @see X.690 §8.19 — the first two arcs share one subidentifier, X*40+Y (§8.19.4).
     static void encode(BerWriter& w, const Oid& v, Tag t = tag()) {
-        // Write OID value bytes directly into w to avoid a heap-allocated temp vector.
-        // Each arc encodes to at most 5 bytes; OIDs have at most ~128 arcs in practice.
-        // Use an inline stack buffer: 128 arcs × 5 bytes = 640 bytes max.
-        // write_primitive needs a span, so accumulate into fixed stack storage.
         const auto& a = v.arcs();
-        uint8_t stack_buf[640];
-        std::size_t len = 0;
-        auto push_arc = [&](uint32_t arc) {
-            uint8_t tmp[5]; int n = 0;
-            do { tmp[n++] = arc & 0x7F; arc >>= 7; } while (arc);
-            for (int i = n - 1; i >= 0; --i)
-                stack_buf[len++] = tmp[i] | (i ? 0x80u : 0x00u);
-        };
+        detail::SubidBuffer buf(a.size());
         if (a.size() >= 2) {
-            push_arc(a[0] * 40 + a[1]);
-            for (std::size_t i = 2; i < a.size(); ++i) push_arc(a[i]);
+            buf.push(uint64_t{a[0]} * 40 + a[1]);
+            for (std::size_t i = 2; i < a.size(); ++i) buf.push(a[i]);
         } else if (a.size() == 1) {
-            push_arc(a[0] * 40);
+            buf.push(uint64_t{a[0]} * 40);
         }
-        w.write_primitive(t, {stack_buf, len});
+        w.write_primitive(t, buf.span());
     }
 
     static Expected<Oid, DecodeError> decode(BerReader& r) {
@@ -133,34 +174,25 @@ struct BerTraits<Oid> {
         return decode_value(tlv->value);
     }
 
+    /// @brief Decode OBJECT IDENTIFIER contents octets into arcs.
+    /// @param bytes  Contents octets (no tag or length).
+    /// @return The OID, or a DecodeError for a truncated or out-of-range arc.
+    /// @see X.690 §8.19.4 — the first subidentifier is X*40+Y; X is 0 or 1 when
+    ///      it is below 80, otherwise X is 2 and Y is the remainder.
     static Expected<Oid, DecodeError> decode_value(std::span<const uint8_t> bytes) {
         if (bytes.empty()) return Oid{};
-        // Fast path: decode into a stack buffer to avoid heap allocation.
-        // Falls back to vector if arc count exceeds ASN1CPP_OID_STACK_ARCS.
-        uint32_t stack_arcs[ASN1CPP_OID_STACK_ARCS]; std::size_t n = 0;
         std::size_t i = 0;
-        auto first = detail::decode_arc(bytes, i);
+        auto first = detail::decode_subid(bytes, i, detail::kMaxOidArc + 80);
         if (!first) return make_unexpected<Oid, DecodeError>(first.error());
-        uint32_t f = *first;
-        stack_arcs[n++] = f / 40;
-        stack_arcs[n++] = f % 40;
-        while (ASN1CPP_LIKELY(i < bytes.size())) {
-            auto arc = detail::decode_arc(bytes, i);
-            if (ASN1CPP_UNLIKELY(!arc)) return make_unexpected<Oid, DecodeError>(arc.error());
-            if (ASN1CPP_UNLIKELY(n >= ASN1CPP_OID_STACK_ARCS)) {
-                // Overflow: finish decoding into a heap vector.
-                std::vector<uint32_t> arcs(stack_arcs, stack_arcs + n);
-                arcs.push_back(*arc);
-                while (i < bytes.size()) {
-                    auto a2 = detail::decode_arc(bytes, i);
-                    if (ASN1CPP_UNLIKELY(!a2)) return make_unexpected<Oid, DecodeError>(a2.error());
-                    arcs.push_back(*a2);
-                }
-                return Oid{std::move(arcs)};
-            }
-            stack_arcs[n++] = *arc;
-        }
-        return Oid{std::vector<uint32_t>(stack_arcs, stack_arcs + n)};
+        uint64_t f = *first;
+        uint64_t x = f < 80 ? f / 40 : 2;
+        std::vector<uint32_t> arcs;
+        arcs.reserve(bytes.size() + 1);
+        arcs.push_back(static_cast<uint32_t>(x));
+        arcs.push_back(static_cast<uint32_t>(f - x * 40));
+        if (auto err = detail::decode_arcs(bytes, i, arcs))
+            return make_unexpected<Oid, DecodeError>(std::move(*err));
+        return Oid{std::move(arcs)};
     }
 };
 
@@ -173,14 +205,9 @@ struct BerTraits<RelativeOid> {
     ///           type assignment (X.680 §31.2) such as `T ::= [APPLICATION 1] ...`.
     /// @see X.690 §8.20.
     static void encode(BerWriter& w, const RelativeOid& v, Tag t = tag()) {
-        uint8_t stack_buf[640]; std::size_t len = 0;
-        for (uint32_t arc : v.arcs()) {
-            uint8_t tmp[5]; int n = 0;
-            do { tmp[n++] = arc & 0x7F; arc >>= 7; } while (arc);
-            for (int i = n - 1; i >= 0; --i)
-                stack_buf[len++] = tmp[i] | (i ? 0x80u : 0x00u);
-        }
-        w.write_primitive(t, {stack_buf, len});
+        detail::SubidBuffer buf(v.arcs().size());
+        for (uint32_t arc : v.arcs()) buf.push(arc);
+        w.write_primitive(t, buf.span());
     }
 
     static Expected<RelativeOid, DecodeError> decode(BerReader& r) {
@@ -192,25 +219,16 @@ struct BerTraits<RelativeOid> {
         return decode_value(tlv->value);
     }
 
+    /// @brief Decode RELATIVE-OID contents octets: one arc per subidentifier.
+    /// @param value  Contents octets (no tag or length).
+    /// @return The RELATIVE-OID, or a DecodeError for a truncated or out-of-range arc.
+    /// @see X.690 §8.20.2.
     static Expected<RelativeOid, DecodeError> decode_value(std::span<const uint8_t> value) {
-        uint32_t stack_arcs[ASN1CPP_OID_STACK_ARCS]; std::size_t n = 0;
-        std::size_t i = 0;
-        while (ASN1CPP_LIKELY(i < value.size())) {
-            auto arc = detail::decode_arc(value, i);
-            if (ASN1CPP_UNLIKELY(!arc)) return make_unexpected<RelativeOid, DecodeError>(arc.error());
-            if (ASN1CPP_UNLIKELY(n >= ASN1CPP_OID_STACK_ARCS)) {
-                std::vector<uint32_t> arcs(stack_arcs, stack_arcs + n);
-                arcs.push_back(*arc);
-                while (i < value.size()) {
-                    auto a2 = detail::decode_arc(value, i);
-                    if (ASN1CPP_UNLIKELY(!a2)) return make_unexpected<RelativeOid, DecodeError>(a2.error());
-                    arcs.push_back(*a2);
-                }
-                return RelativeOid{std::move(arcs)};
-            }
-            stack_arcs[n++] = *arc;
-        }
-        return RelativeOid{std::vector<uint32_t>(stack_arcs, stack_arcs + n)};
+        std::vector<uint32_t> arcs;
+        arcs.reserve(value.size());
+        if (auto err = detail::decode_arcs(value, 0, arcs))
+            return make_unexpected<RelativeOid, DecodeError>(std::move(*err));
+        return RelativeOid{std::move(arcs)};
     }
 };
 

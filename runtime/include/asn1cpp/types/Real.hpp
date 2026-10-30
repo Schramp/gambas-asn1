@@ -207,8 +207,11 @@ struct BerTraits<Real> {
         uint8_t info = 0x80;               // binary encoding, base-2, scaling-factor 0
         if (bits >> 63) info |= 0x40;      // negative
 
-        int32_t e = static_cast<int32_t>((bits >> 52) & 0x7FF) - 1023 - 52;
-        uint64_t M = (bits & 0x000FFFFFFFFFFFFFULL) | (1ULL << 52);  // implicit leading 1
+        // A normal double carries an implicit leading 1 and exponent
+        // biased - 1075; a subnormal (biased 0) has none and a fixed 2^-1074 unit.
+        const int32_t biased = static_cast<int32_t>((bits >> 52) & 0x7FF);
+        int32_t e = biased ? biased - 1023 - 52 : -1074;
+        uint64_t M = (bits & 0x000FFFFFFFFFFFFFULL) | (biased ? (1ULL << 52) : 0);
 
         // Remove trailing zero bits for minimal encoding
         while (M && (M & 1) == 0) { M >>= 1; ++e; }

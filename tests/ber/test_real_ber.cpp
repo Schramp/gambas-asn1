@@ -205,6 +205,25 @@ int main() {
         check("short-mantissa path matches Real::binary at every scale", all);
     }
 
+    printf("\n=== BER REAL encode of subnormal doubles (X.690 §8.5.7) ===\n");
+    {
+        double tiny;
+        uint64_t one = 1;
+        std::memcpy(&tiny, &one, 8);
+        auto enc = encode<BER>(Real{tiny});
+        check("2^-1074 encodes as 09 04 81 FB CE 01",
+              enc == std::vector<uint8_t>{0x09, 0x04, 0x81, 0xFB, 0xCE, 0x01});
+        for (uint64_t b : {uint64_t{1}, uint64_t{3}, uint64_t{0x000123456789ABCD},
+                           uint64_t{0x000FFFFFFFFFFFFF}, uint64_t{0x8000000000000001}}) {
+            double d;
+            std::memcpy(&d, &b, 8);
+            auto dec = decode<BER, Real>(encode<BER>(Real{d}));
+            char label[64];
+            std::snprintf(label, sizeof label, "subnormal %#llx round-trips", static_cast<unsigned long long>(b));
+            check(label, dec && bits_of(dec->value()) == b);
+        }
+    }
+
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "OK", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
 }

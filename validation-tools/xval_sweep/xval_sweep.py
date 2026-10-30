@@ -38,7 +38,7 @@ second-guesses `make`/`cargo`'s own up-to-date check either; a bare rerun
 of this script is always safe and cheap when nothing changed.
 
 Usage:
-  python3 xval_sweep.py [--count N] [--seed S] [--target NAME] [--limit N] [--verbose]
+  python3 xval_sweep.py [--count N] [--seed S] [--target NAME] [--limit N] [--shard K/N] [--verbose]
                         [--asn1c-dir DIR] [--no-asn1c] [-j N] [--reuse asn1c,cpp]
                         [--corpus {targets,asn1c-compiler}] [--with-asn1c]
 
@@ -46,6 +46,11 @@ Usage:
                    matches NAME (substring match); default: all targets.
   --limit N        cap the target list to the first N (after --target
                    filtering) — a quick sanity slice before a full run.
+  --shard K/N      keep only targets at index i with i mod N == K (after
+                   --target/--limit), so N runners can split one sweep.
+                   Round-robin rather than contiguous: neighbouring
+                   targets.txt entries tend to share a schema, so this
+                   spreads the costly schemas across the shards.
   --asn1c-dir DIR  directory containing the asn1c binary (overrides
                    ASN1C_BIN_DIR env var / PATH / /usr/local/bin search).
   --no-asn1c       skip the asn1c leg even if asn1c is found (--corpus=targets only).
@@ -1610,6 +1615,8 @@ def main():
                      help="cap the target list to the first N (after --target filtering) — "
                           "useful for a quick sanity pass over a small slice of a large "
                           "--corpus=asn1c-compiler run before committing to the full sweep")
+    ap.add_argument("--shard", default=None, metavar="K/N",
+                     help="keep only targets at index i with i mod N == K (0 <= K < N)")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--asn1c-dir", default=None,
                      help="directory containing the asn1c binary (overrides ASN1C_BIN_DIR/PATH search)")
@@ -1711,6 +1718,18 @@ def main():
             sys.exit(1)
     if opts.limit is not None:
         targets = targets[:opts.limit]
+    if opts.shard:
+        try:
+            k, n = (int(x) for x in opts.shard.split("/"))
+            if not 0 <= k < n:
+                raise ValueError
+        except ValueError:
+            print(f"--shard: expected K/N with 0 <= K < N, got {opts.shard!r}")
+            sys.exit(1)
+        targets = targets[k::n]
+        print(f"shard {k}/{n}: {len(targets)} target(s)")
+        if not targets:
+            sys.exit(0)
 
     os.makedirs(TESTBUILD, exist_ok=True)
 
