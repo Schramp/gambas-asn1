@@ -5,13 +5,17 @@ import io.github.schramp.gambasasn1.wire.io.ByteSource;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
+import io.github.schramp.gambasasn1.wire.types.Asn1Arcs;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
 import io.github.schramp.gambasasn1.wire.types.Asn1CharString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
+import io.github.schramp.gambasasn1.wire.types.Asn1ObjectIdentifier;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
+import io.github.schramp.gambasasn1.wire.types.Asn1RelativeOid;
+import java.util.Arrays;
 
 /**
  * BER for builtin leaf values: one switch over the builtin wrappers for the
@@ -24,6 +28,8 @@ public final class BerPrimitive {
     private static final Tag INTEGER_TAG = Tag.universal(UniversalTag.INTEGER, false);
     private static final Tag OCTET_STRING_TAG = Tag.universal(UniversalTag.OCTET_STRING, false);
     private static final Tag BIT_STRING_TAG = Tag.universal(UniversalTag.BIT_STRING, false);
+    private static final Tag OBJECT_IDENTIFIER_TAG = Tag.universal(UniversalTag.OBJECT_IDENTIFIER, false);
+    private static final Tag RELATIVE_OID_TAG = Tag.universal(UniversalTag.RELATIVE_OID, false);
 
     /** X.690 §11.1: DER encodes TRUE as all ones. */
     private static final int DER_TRUE = 0xFF;
@@ -71,6 +77,8 @@ public final class BerPrimitive {
             case Asn1OctetString o -> OCTET_STRING_TAG;
             case Asn1BitString b -> BIT_STRING_TAG;
             case Asn1CharString c -> Tag.universal(c.universalTagNumber(), false);
+            case Asn1ObjectIdentifier o -> OBJECT_IDENTIFIER_TAG;
+            case Asn1RelativeOid r -> RELATIVE_OID_TAG;
             default -> throw new EncodeException("no BER form for " + p.xerElementName());
         };
     }
@@ -82,6 +90,8 @@ public final class BerPrimitive {
             case Asn1Integer i -> BerWriter.writePrimitive(out, tag, encodeInteger(i.get()));
             case Asn1OctetString o -> BerWriter.writePrimitive(out, tag, o.get());
             case Asn1CharString c -> BerWriter.writePrimitive(out, tag, c.octets());
+            case Asn1ObjectIdentifier o -> BerWriter.writePrimitive(out, tag, encodeObjectIdentifier(o.get()));
+            case Asn1RelativeOid r -> BerWriter.writePrimitive(out, tag, encodeSubidentifiers(r.get(), 0, new byte[r.get().length * 10], 0));
             // X.690 §8.6.2: the initial octet counts the unused bits of the last octet.
             case Asn1BitString b -> BerWriter.writeTagged(out, tag, c -> {
                 c.write(b.unusedBits());
@@ -115,6 +125,8 @@ public final class BerPrimitive {
             case Asn1Integer i -> i.set(decodeInteger(v, start));
             case Asn1OctetString o -> o.set(v.remainingBytes());
             case Asn1CharString c -> c.setOctets(v.remainingBytes());
+            case Asn1ObjectIdentifier o -> o.set(decodeObjectIdentifier(v.remainingBytes(), start));
+            case Asn1RelativeOid rel -> rel.set(decodeSubidentifiers(v.remainingBytes(), 0, new long[0], start));
             case Asn1BitString b -> {
                 if (v.atEnd()) {
                     throw new DecodeException("BIT STRING: contents need the unused-bits octet", start);
@@ -168,5 +180,101 @@ public final class BerPrimitive {
             n = (n << 8) | v.read("INTEGER");
         }
         return n;
+    }
+
+    /**
+     * OBJECT IDENTIFIER contents (X.690 §8.19): the first two arcs share one
+     * subidentifier, {@code X*40+Y} (§8.19.4), the rest are one each.
+     */
+    public static byte[] encodeObjectIdentifier(long[] arcs) {
+        if (arcs.length == 0) {
+            return new byte[0];
+        }
+        byte[] out = new byte[arcs.length * 10];
+        int n = writeSubidentifier(out, 0, arcs[0] * 40 + (arcs.length > 1 ? arcs[1] : 0));
+        return encodeSubidentifiers(arcs, Math.min(2, arcs.length), out, n);
+    }
+
+    /**
+     * Decode counterpart of {@link #encodeObjectIdentifier}. A first
+     * subidentifier below 80 gives X = 0 or 1; from 80 up X is 2 and Y is
+     * the remainder (X.690 §8.19.4).
+     *
+     * @param pos the TLV's position, for the error
+     */
+    public static long[] decodeObjectIdentifier(byte[] v, int pos) {
+        if (v.length == 0) {
+            return new long[0];
+        }
+        long[] firstOut = new long[1];
+        int i = readSubidentifier(v, 0, Asn1Arcs.MAX_ARC + 80, firstOut, pos);
+        long first = firstOut[0];
+        long x = first < 80 ? first / 40 : 2;
+        return decodeSubidentifiers(v, i, new long[] {x, first - x * 40}, pos);
+    }
+
+    /**
+     * Writes {@code arcs[from..]} one subidentifier each (X.690 §8.19.2,
+     * §8.20.2) into {@code out} after {@code n} octets already written.
+     */
+    private static byte[] encodeSubidentifiers(long[] arcs, int from, byte[] out, int n) {
+        for (int i = from; i < arcs.length; i++) {
+            n = writeSubidentifier(out, n, arcs[i]);
+        }
+        return Arrays.copyOf(out, n);
+    }
+
+    /**
+     * Reads subidentifiers from {@code v[i..]}, one arc each, after the
+     * arcs in {@code head}.
+     */
+    private static long[] decodeSubidentifiers(byte[] v, int i, long[] head, int pos) {
+        long[] arcs = Arrays.copyOf(head, head.length + v.length);
+        int n = head.length;
+        long[] arc = new long[1];
+        while (i < v.length) {
+            i = readSubidentifier(v, i, Asn1Arcs.MAX_ARC, arc, pos);
+            arcs[n++] = arc[0];
+        }
+        return Arrays.copyOf(arcs, n);
+    }
+
+    /** Base 128, most significant group first, bit 8 set on all but the last octet (X.690 §8.19.2). */
+    private static int writeSubidentifier(byte[] out, int n, long value) {
+        int groups = 1;
+        while (groups < 10 && (value >>> (7 * groups)) != 0) {
+            groups++;
+        }
+        for (int g = groups - 1; g >= 0; g--) {
+            out[n++] = (byte) (((value >>> (7 * g)) & 0x7F) | (g > 0 ? 0x80 : 0));
+        }
+        return n;
+    }
+
+    /**
+     * Reads one subidentifier at {@code v[i]} into {@code out[0]}.
+     *
+     * @return the index after it
+     * @throws DecodeException if it is truncated or exceeds {@code max}
+     */
+    private static int readSubidentifier(byte[] v, int i, long max, long[] out, int pos) {
+        long value = 0;
+        while (true) {
+            if (i >= v.length) {
+                throw new DecodeException("truncated subidentifier", pos);
+            }
+            int b = v[i++] & 0xFF;
+            if (value > (max >>> 7)) {
+                throw new DecodeException("subidentifier exceeds arc limit " + Asn1Arcs.MAX_ARC, pos);
+            }
+            value = (value << 7) | (b & 0x7F);
+            if ((b & 0x80) == 0) {
+                if (value > max) {
+                    throw new DecodeException("subidentifier exceeds arc limit " + Asn1Arcs.MAX_ARC, pos);
+                }
+                out[0] = value;
+                return i;
+            }
+        }
     }
 }

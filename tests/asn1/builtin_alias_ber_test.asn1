@@ -1,4 +1,5 @@
--- Builtin (BOOLEAN, NULL, OCTET STRING, BIT STRING, character strings),
+-- Builtin (BOOLEAN, NULL, OCTET STRING, BIT STRING, character strings, OBJECT IDENTIFIER,
+-- RELATIVE-OID),
 -- INTEGER and ENUMERATED type assignments, each with its own tagging: the natural tag,
 -- IMPLICIT and EXPLICIT (X.680 §31.2, X.690 §8.14). BER vectors in
 -- tests/vectors/builtin_alias_ber_test.vectors are asn1c DER output.
@@ -53,5 +54,12 @@ BuiltinAliasBerTest DEFINITIONS ::= BEGIN
     Universal        ::= UniversalString
     ImplicitIa5      ::= [11] IMPLICIT IA5String
     ExplicitUtf8     ::= [APPLICATION 12] EXPLICIT UTF8String
+
+    Oid              ::= OBJECT IDENTIFIER
+    ImplicitOid      ::= [13] IMPLICIT OBJECT IDENTIFIER
+    ExplicitOid      ::= [APPLICATION 14] EXPLICIT OBJECT IDENTIFIER
+    RelOid           ::= RELATIVE-OID
+    ImplicitRelOid   ::= [PRIVATE 15] IMPLICIT RELATIVE-OID
+    ExplicitRelOid   ::= [16] RELATIVE-OID
 
 END

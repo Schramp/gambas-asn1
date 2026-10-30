@@ -12,6 +12,8 @@ import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
 import io.github.schramp.gambasasn1.wire.types.Asn1Ia5String;
 import io.github.schramp.gambasasn1.wire.types.Asn1Integer;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
+import io.github.schramp.gambasasn1.wire.types.Asn1ObjectIdentifier;
+import io.github.schramp.gambasasn1.wire.types.Asn1RelativeOid;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import io.github.schramp.gambasasn1.wire.types.Asn1UniversalString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Utf8String;
@@ -19,7 +21,7 @@ import io.github.schramp.gambasasn1.wire.types.Asn1VisibleString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
 import org.junit.jupiter.api.Test;
 
-/** BOOLEAN, INTEGER, BIT STRING, OCTET STRING and NULL contents (X.690 §8.2, §8.3, §8.6, §8.7, §8.8) and the framing around them (X.690 §8.14). */
+/** BOOLEAN, INTEGER, BIT STRING, OCTET STRING, NULL, OBJECT IDENTIFIER and RELATIVE-OID contents (X.690 §8.2, §8.3, §8.6, §8.7, §8.8, §8.19, §8.20) and the framing around them (X.690 §8.14). */
 class BerPrimitiveTest {
     private static final BerTagging IMPLICIT_CTX5 = new BerTagging.Implicit(Tag.context(5, false));
     private static final BerTagging EXPLICIT_APP3 = new BerTagging.Explicit(new Tag(TagClass.APPLICATION, 3, true));
@@ -209,5 +211,52 @@ class BerPrimitiveTest {
         BerPrimitive.decode(b, BerTagging.DELEGATE, new BerReader(bytes(0x1E, 0x04, 0x00, 'h', 0x00, 'i')));
         assertEquals("hi", b.get());
         assertEquals(false, new Asn1Ia5String("a").equals(new Asn1VisibleString("a")));
+    }
+
+    @Test
+    void objectIdentifierCombinesTheFirstTwoArcs() {
+        assertArrayEquals(bytes(0x06, 0x03, 0x55, 0x04, 0x03), encode(new Asn1ObjectIdentifier(2, 5, 4, 3), BerTagging.DELEGATE));
+        // X.690 §8.19.5 example: {2 999 3}, first subidentifier 1079.
+        assertArrayEquals(bytes(0x06, 0x03, 0x88, 0x37, 0x03), encode(new Asn1ObjectIdentifier(2, 999, 3), BerTagging.DELEGATE));
+        Asn1ObjectIdentifier o = new Asn1ObjectIdentifier();
+        BerPrimitive.decode(o, BerTagging.DELEGATE, new BerReader(bytes(0x06, 0x03, 0x88, 0x37, 0x03)));
+        assertEquals(new Asn1ObjectIdentifier(2, 999, 3), o);
+        assertEquals("2.999.3", o.toString());
+    }
+
+    @Test
+    void objectIdentifierFirstSubidentifierBoundaries() {
+        for (long[] arcs : new long[][] {{0, 39}, {1, 0}, {1, 39}, {2, 0}, {2, Asn1ObjectIdentifier.MAX_ARC}}) {
+            byte[] wire = encode(new Asn1ObjectIdentifier(arcs), BerTagging.DELEGATE);
+            Asn1ObjectIdentifier o = new Asn1ObjectIdentifier();
+            BerPrimitive.decode(o, BerTagging.DELEGATE, new BerReader(wire));
+            assertArrayEquals(arcs, o.get());
+        }
+        Asn1ObjectIdentifier empty = new Asn1ObjectIdentifier();
+        BerPrimitive.decode(empty, BerTagging.DELEGATE, new BerReader(bytes(0x06, 0x00)));
+        assertEquals(0, empty.get().length);
+    }
+
+    @Test
+    void arcsAreBoundedTo32Bits() {
+        // 1.2.(2^32)
+        assertThrows(DecodeException.class, () -> BerPrimitive.decode(new Asn1ObjectIdentifier(), BerTagging.DELEGATE,
+                new BerReader(bytes(0x06, 0x06, 0x2A, 0x90, 0x80, 0x80, 0x80, 0x00))));
+        assertThrows(DecodeException.class, () -> BerPrimitive.decode(new Asn1RelativeOid(), BerTagging.DELEGATE,
+                new BerReader(bytes(0x0D, 0x05, 0x90, 0x80, 0x80, 0x80, 0x00))));
+        assertThrows(DecodeException.class, () -> BerPrimitive.decode(new Asn1RelativeOid(), BerTagging.DELEGATE,
+                new BerReader(bytes(0x0D, 0x01, 0x86))));
+        assertThrows(IllegalArgumentException.class, () -> new Asn1RelativeOid(1L << 32));
+        assertThrows(IllegalArgumentException.class, () -> new Asn1RelativeOid(-1));
+    }
+
+    @Test
+    void relativeOidHasOneSubidentifierPerArc() {
+        assertArrayEquals(bytes(0x0D, 0x04, 0xC2, 0x7B, 0x03, 0x02), encode(new Asn1RelativeOid(8571, 3, 2), BerTagging.DELEGATE));
+        assertArrayEquals(bytes(0x8D, 0x02, 0x01, 0x02), encode(new Asn1RelativeOid(1, 2), new BerTagging.Implicit(Tag.context(13, false))));
+        Asn1RelativeOid r = new Asn1RelativeOid();
+        BerPrimitive.decode(r, BerTagging.DELEGATE, new BerReader(bytes(0x0D, 0x05, 0x8F, 0xFF, 0xFF, 0xFF, 0x7F)));
+        assertArrayEquals(new long[] {Asn1RelativeOid.MAX_ARC}, r.get());
+        assertEquals(false, new Asn1RelativeOid(1).equals(new Asn1ObjectIdentifier(1)));
     }
 }

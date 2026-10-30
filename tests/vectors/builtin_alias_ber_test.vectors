@@ -58,3 +58,15 @@ Bmp	<Bmp>Bé€</Bmp>	1E06004200E920AC
 Universal	<Universal>U€</Universal>	1C0800000055000020AC
 ImplicitIa5	<ImplicitIa5>imp</ImplicitIa5>	8B03696D70
 ExplicitUtf8	<ExplicitUtf8>exp</ExplicitUtf8>	6C050C03657870
+Oid	<Oid>2.5.4.3</Oid>	0603550403
+Oid	<Oid>1.2.840.113549.1.1.11</Oid>	06092A864886F70D01010B
+Oid	<Oid>2.999.3</Oid>	0603883703
+Oid	<Oid>0.39</Oid>	060127
+Oid	<Oid>1.3.6.1.4.1.4294967295</Oid>	060A2B060104018FFFFFFF7F
+ImplicitOid	<ImplicitOid>0.4.0.2.2</ImplicitOid>	8D0404000202
+ExplicitOid	<ExplicitOid>2.100</ExplicitOid>	6E0406028134
+RelOid	<RelOid>8571.3.2</RelOid>	0D04C27B0302
+RelOid	<RelOid>0</RelOid>	0D0100
+RelOid	<RelOid>4294967295.128.16384</RelOid>	0D0A8FFFFFFF7F8100818000
+ImplicitRelOid	<ImplicitRelOid>1.2</ImplicitRelOid>	CF020102
+ExplicitRelOid	<ExplicitRelOid>99</ExplicitRelOid>	B0030D0163
