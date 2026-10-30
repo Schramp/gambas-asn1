@@ -8,10 +8,13 @@ on:
   pull_request:
     paths-ignore:
       - '**.md'
+  # Manual run on any branch: the same full xval as a push to main.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Every main commit keeps its full run; a newer PR push supersedes the old one.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build-and-test:
@@ -70,8 +73,16 @@ jobs:
 
       # C++ vs Rust behavioural consistency across every targets.txt entry.
       # asn1c is not built in CI, so the ground-truth leg stays a local check.
-      - name: Cross-validate C++ vs Rust (xval_sweep)
-        run: python3 validation-tools/xval_sweep/xval_sweep.py --no-asn1c -j 2
+      # The only build outputs xval_sweep reads; the xval job below runs
+      # the sweep against these instead of rebuilding.
+      - name: Upload xval inputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: xval-inputs
+          retention-days: 1
+          path: |
+            build/compiler/asn1cpp
+            build/runtime/libasn1cpp_runtime.a
 
       - name: Build ETSI LI example
         if: github.ref == 'refs/heads/main'
@@ -102,8 +113,111 @@ jobs:
 
       - name: Upload documentation artifact
         if: github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: doxygen-html
           path: build/docs/html/
           retention-days: 30
+
+  # asn1c, the cross-validation ground truth, from Schramp/asn1c's default
+  # branch (etsi_main), installed under ~/.asn1c and cached per commit: a
+  # rebuild happens only when that branch moves. Runs on every event so a
+  # PR also proves the build; only the full xval run below uses it.
+  asn1c:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    outputs:
+      sha: ${{ steps.rev.outputs.sha }}
+      full: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Resolve asn1c etsi_main
+        id: rev
+        run: echo "sha=$(git ls-remote https://github.com/Schramp/asn1c refs/heads/etsi_main | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache asn1c
+        id: cache-asn1c
+        uses: actions/cache@v5
+        with:
+          path: ~/.asn1c
+          key: asn1c-${{ steps.rev.outputs.sha }}-ubuntu-latest
+
+      - name: Check out asn1c
+        if: steps.cache-asn1c.outputs.cache-hit != 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: Schramp/asn1c
+          ref: ${{ steps.rev.outputs.sha }}
+          path: asn1c-src
+
+      - name: Build and install asn1c
+        if: steps.cache-asn1c.outputs.cache-hit != 'true'
+        working-directory: asn1c-src
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y autoconf automake libtool bison flex
+          autoreconf -ivf
+          ./configure --prefix="$HOME/.asn1c" --disable-test-fuzzer
+          make -j$(nproc)
+          make install
+
+      # Generating code also proves the installed skeletons are found.
+      - name: Smoke-test asn1c
+        run: |
+          ~/.asn1c/bin/asn1c -v
+          mkdir -p smoke/out
+          printf 'Smoke DEFINITIONS ::= BEGIN\n  T ::= SEQUENCE { a INTEGER }\nEND\n' > smoke/smoke.asn1
+          ~/.asn1c/bin/asn1c -D smoke/out smoke/smoke.asn1
+          test -f smoke/out/converter-example.mk
+
+  # Cross-validation, once build-and-test is green; mergeability is
+  # build-and-test's, an xval failure is a finding to act on. A pull
+  # request runs C++ vs Rust split round-robin over 4 runners; main (or a
+  # manual run) runs every target in one job with the asn1c leg on.
+  xval:
+    needs: [build-and-test, asn1c]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.asn1c.outputs.full == 'true' && '["full"]' || '["0","1","2","3"]') }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y g++ python3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Download xval inputs
+        uses: actions/download-artifact@v8
+        with:
+          name: xval-inputs
+          path: build
+
+      - name: Restore asn1c
+        if: matrix.shard == 'full'
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.asn1c
+          key: asn1c-${{ needs.asn1c.outputs.sha }}-ubuntu-latest
+          fail-on-cache-miss: true
+
+      - name: Cross-validate C++ vs Rust vs asn1c (xval_sweep, all targets)
+        if: matrix.shard == 'full'
+        run: |
+          chmod +x build/compiler/asn1cpp
+          python3 validation-tools/xval_sweep/xval_sweep.py --asn1c-dir ~/.asn1c/bin -j 2
+
+      - name: Cross-validate C++ vs Rust (xval_sweep shard ${{ matrix.shard }}/4)
+        if: matrix.shard != 'full'
+        run: |
+          chmod +x build/compiler/asn1cpp
+          python3 validation-tools/xval_sweep/xval_sweep.py --no-asn1c -j 2 --shard ${{ matrix.shard }}/4
