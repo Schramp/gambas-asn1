@@ -2,12 +2,9 @@
 //! `OidXerHandler`'s content model (`runtime/include/asn1cpp/codec/
 //! XerCodec.hpp`'s `format_arcs`/`parse_arcs`): dotted-decimal arcs,
 //! e.g. `2.5.4.3`. Deliberately not shared with `xer::relative_oid`'s
-//! near-identical formatter (same arc-joining text, different types,
-//! same accepted duplication the BER leg already has between
-//! `oid::encode_arc`/`decode_arc` and `relative_oid::encode_arc`/
-//! `decode_arc` — RELATIVE-OID gets its own type, not a shared generic
-//! one, by this crate's existing "distinct type per ASN.1 kind"
-//! convention).
+//! near-identical formatter (same arc-joining text, different types —
+//! RELATIVE-OID gets its own type, not a shared generic one, by this
+//! crate's "distinct type per ASN.1 kind" convention).
 
 use crate::ber::reader::DecodeError;
 use crate::oid::ObjectIdentifier;

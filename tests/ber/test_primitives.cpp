@@ -143,6 +143,30 @@ int main() {
     Oid oid2{{1, 2, 840, 113549, 1, 1, 11}};
     check("OID 1.2.840.113549.1.1.11 round-trip", roundtrip(oid2));
 
+    // X.690 §8.19.5 example: {2 999 3}, first subidentifier 1079 = 88 37.
+    Oid oid3{{2, 999, 3}};
+    check("OID 2.999.3 encodes as 06 03 88 37 03 (X.690 §8.19.5)",
+          encodes_as(oid3, {0x06, 0x03, 0x88, 0x37, 0x03}));
+    {
+        std::vector<uint8_t> der{0x06, 0x03, 0x88, 0x37, 0x03};
+        auto d = decode<BER, Oid>(der);
+        check("OID 06 03 88 37 03 decodes as 2.999.3", d && *d == oid3);
+    }
+    // Arc 2 with the largest second arc: first subidentifier UINT32_MAX + 80.
+    check("OID 2.4294967295 round-trip", roundtrip(Oid{{2, 0xFFFFFFFFu}}));
+    check("OID 1.39 round-trip", roundtrip(Oid{{1, 39}}));
+    {
+        // 2^32 as a non-first arc: 90 80 80 80 00 — outside uint32_t storage.
+        std::vector<uint8_t> der{0x06, 0x06, 0x2A, 0x90, 0x80, 0x80, 0x80, 0x00};
+        check("OID arc 2^32 is a decode error", !decode<BER, Oid>(der));
+    }
+    {
+        // 300 arcs × 5 octets each exceeds any fixed stack buffer.
+        std::vector<uint32_t> arcs{1, 2};
+        arcs.resize(300, 0xFFFFFFFFu);
+        check("OID with 300 five-octet arcs round-trip", roundtrip(Oid{arcs}));
+    }
+
     // =========================================================================
     printf("\n── STRING TYPES ────────────────────────────────────────────────\n");
     // =========================================================================
@@ -268,6 +292,11 @@ int main() {
         check("RELATIVE-OID {16384} round-trip", roundtrip(r3));
     }
     check("RELATIVE-OID empty round-trip", roundtrip(RelativeOid{}));
+    check("RELATIVE-OID {4294967295} round-trip", roundtrip(RelativeOid({0xFFFFFFFFu})));
+    {
+        std::vector<uint8_t> der{0x0D, 0x05, 0x90, 0x80, 0x80, 0x80, 0x00};
+        check("RELATIVE-OID arc 2^32 is a decode error", !decode<BER, RelativeOid>(der));
+    }
 
     // =========================================================================
     printf("\n── Long-form length encoding ────────────────────────────────────\n");
