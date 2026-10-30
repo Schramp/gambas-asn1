@@ -227,8 +227,8 @@ reading any schema.
 | `ENUMERATED` | Named integer values | generated `asn1::EnumValue` subclass |
 | `BIT STRING` | Sequence of bits with an optional named-bits table | `asn1::BitString` |
 | `OCTET STRING` | Raw byte sequence | `asn1::OctetString` |
-| `OBJECT IDENTIFIER` | Globally unique dotted-arc identifier | `asn1::Oid` |
-| `RELATIVE-OID` | OID relative to a known base arc | `asn1::RelativeOid` |
+| `OBJECT IDENTIFIER` | Globally unique dotted-arc identifier; arcs 0..2³²−1 (as asn1c) | `asn1::Oid` |
+| `RELATIVE-OID` | OID relative to a known base arc; arcs 0..2³²−1 | `asn1::RelativeOid` |
 | `UTCTime` | Date/time in YYMMDDHHmmssZ format | `asn1::UtcTime` |
 | `GeneralizedTime` | Date/time in YYYYMMDDHHMMSS.fff format | `asn1::GeneralizedTime` |
 
@@ -1245,9 +1245,10 @@ buffer, writes the nested content, then patches the length in place. No temporar
 `vector` is allocated per nesting level. For a PS-PDU with 20 nesting levels, this
 eliminates 20 heap allocations per record.
 
-**Stack buffers for small variable-length data.** OID arc encoding and decoding use
-fixed-size stack buffers (20 bytes for encoding, 16 elements for decoding) instead of
-heap vectors. Realistic OIDs fit entirely on the stack.
+**Stack buffers for small variable-length data.** OID and RELATIVE-OID encoding builds
+the contents octets in a 640-byte stack buffer (128 arcs at the 5-octet maximum), with
+a heap buffer only for longer values. Decoding sizes the arc vector once from the
+contents length.
 
 **Table-driven dispatch, not virtual functions.** The runtime dispatches on
 `TypeDescriptor` tables, not virtual function tables. A SEQUENCE encode pass iterates

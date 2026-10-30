@@ -27,11 +27,14 @@ pub const OBJECT_IDENTIFIER_TAG: Tag = Tag::universal(universal::OBJECT_IDENTIFI
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ObjectIdentifier(pub Vec<u64>);
 
-/// Base-128 encode one arc (X.690 §8.19.2) — up to 10 groups, enough for a
-/// full `u64` arc (`native_builtin_type`'s choice; `asn1::Oid` itself uses
-/// `uint32_t` arcs and needs only 5).
-fn encode_arc(out: &mut Vec<u8>, mut arc: u64) {
-    let mut tmp = [0u8; 10];
+/// Largest arc value accepted on decode: the `uint32_t` range of `asn1::Oid`
+/// and asn1c's `asn_oid_arc_t`, so every runtime accepts the same values.
+pub(crate) const MAX_ARC: u64 = u32::MAX as u64;
+
+/// Base-128 encode one subidentifier (X.690 §8.19.2). 128 bits wide so the
+/// combined first subidentifier `X*40+Y` (§8.19.4) never wraps.
+pub(crate) fn encode_arc(out: &mut Vec<u8>, mut arc: u128) {
+    let mut tmp = [0u8; 19];
     let mut n = 0;
     loop {
         tmp[n] = (arc & 0x7F) as u8;
@@ -46,21 +49,24 @@ fn encode_arc(out: &mut Vec<u8>, mut arc: u64) {
     }
 }
 
-/// Decode one base-128 arc from `bytes`, advancing `idx` past it.
-fn decode_arc(bytes: &[u8], idx: &mut usize) -> Result<u64, DecodeError> {
+/// Decode one base-128 subidentifier from `bytes`, advancing `idx` past it;
+/// a value above `max` is an error (X.690 §8.19.2).
+pub(crate) fn decode_arc(bytes: &[u8], idx: &mut usize, max: u64) -> Result<u64, DecodeError> {
     let mut v: u64 = 0;
-    for _ in 0..10 {
+    loop {
         if *idx >= bytes.len() {
             return Err(DecodeError::new("truncated OID arc", 0));
         }
         let b = bytes[*idx];
         *idx += 1;
+        if v > max >> 7 {
+            return Err(DecodeError::new("OID arc overflow", 0));
+        }
         v = (v << 7) | (b & 0x7F) as u64;
         if b & 0x80 == 0 {
-            return Ok(v);
+            return if v > max { Err(DecodeError::new("OID arc overflow", 0)) } else { Ok(v) };
         }
     }
-    Err(DecodeError::new("OID arc overflow", 0))
 }
 
 pub fn write_object_identifier(out: &mut Vec<u8>, value: &ObjectIdentifier) {
@@ -76,24 +82,27 @@ pub fn read_object_identifier(r: &mut Reader) -> Result<ObjectIdentifier, Decode
 pub(crate) fn encode_object_identifier_content(out: &mut Vec<u8>, value: &ObjectIdentifier) {
     let arcs = &value.0;
     if arcs.len() >= 2 {
-        encode_arc(out, arcs[0] * 40 + arcs[1]);
+        encode_arc(out, arcs[0] as u128 * 40 + arcs[1] as u128);
         for &a in &arcs[2..] {
-            encode_arc(out, a);
+            encode_arc(out, a as u128);
         }
     } else if arcs.len() == 1 {
-        encode_arc(out, arcs[0] * 40);
+        encode_arc(out, arcs[0] as u128 * 40);
     }
 }
 
+/// Content octets decode (X.690 §8.19): the first subidentifier is `X*40+Y`,
+/// with X = 0 or 1 below 80 and X = 2 (Y unbounded) from 80 up (§8.19.4).
 pub(crate) fn decode_object_identifier_content(content: &[u8]) -> Result<ObjectIdentifier, DecodeError> {
     if content.is_empty() {
         return Ok(ObjectIdentifier::default());
     }
     let mut idx = 0usize;
-    let first = decode_arc(content, &mut idx)?;
-    let mut arcs = vec![first / 40, first % 40];
+    let first = decode_arc(content, &mut idx, MAX_ARC + 80)?;
+    let x = if first < 80 { first / 40 } else { 2 };
+    let mut arcs = vec![x, first - x * 40];
     while idx < content.len() {
-        arcs.push(decode_arc(content, &mut idx)?);
+        arcs.push(decode_arc(content, &mut idx, MAX_ARC)?);
     }
     Ok(ObjectIdentifier(arcs))
 }
@@ -170,6 +179,34 @@ mod tests {
     #[test]
     fn wrong_tag_is_error() {
         let data = [0x02, 0x01, 0x00]; // INTEGER tag, not OID
+        let mut r = Reader::new(&data);
+        assert!(read_object_identifier(&mut r).is_err());
+    }
+
+    #[test]
+    fn x690_example_2_999_3() {
+        // X.690 §8.19.5: first subidentifier 1079 = 88 37.
+        let v = ObjectIdentifier(vec![2, 999, 3]);
+        let mut buf = Vec::new();
+        write_object_identifier(&mut buf, &v);
+        assert_eq!(buf, vec![0x06, 0x03, 0x88, 0x37, 0x03]);
+        let mut r = Reader::new(&buf);
+        assert_eq!(read_object_identifier(&mut r).unwrap(), v);
+    }
+
+    #[test]
+    fn arc_2_with_largest_second_arc_round_trips() {
+        let v = ObjectIdentifier(vec![2, MAX_ARC]);
+        let mut buf = Vec::new();
+        write_object_identifier(&mut buf, &v);
+        let mut r = Reader::new(&buf);
+        assert_eq!(read_object_identifier(&mut r).unwrap(), v);
+    }
+
+    #[test]
+    fn arc_above_u32_is_error() {
+        // 1.2.(2^32): 90 80 80 80 00 is one arc past the shared uint32 range.
+        let data = [0x06, 0x06, 0x2A, 0x90, 0x80, 0x80, 0x80, 0x00];
         let mut r = Reader::new(&data);
         assert!(read_object_identifier(&mut r).is_err());
     }
