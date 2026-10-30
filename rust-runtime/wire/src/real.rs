@@ -286,8 +286,11 @@ fn encode_double_content(out: &mut Vec<u8>, value: f64) {
         info |= 0x40; // negative
     }
 
-    let mut e: i32 = (((bits >> 52) & 0x7FF) as i32) - 1023 - 52;
-    let mut m: u64 = (bits & 0x000F_FFFF_FFFF_FFFF) | (1u64 << 52); // implicit leading 1
+    // A normal double carries an implicit leading 1 and exponent biased - 1075;
+    // a subnormal (biased 0) has none and a fixed 2^-1074 unit.
+    let biased = ((bits >> 52) & 0x7FF) as i32;
+    let mut e: i32 = if biased != 0 { biased - 1023 - 52 } else { -1074 };
+    let mut m: u64 = (bits & 0x000F_FFFF_FFFF_FFFF) | if biased != 0 { 1u64 << 52 } else { 0 };
 
     // Remove trailing zero bits for minimal encoding.
     while m != 0 && (m & 1) == 0 {
@@ -774,6 +777,21 @@ mod tests {
             write_real(&mut buf, &Real::new(v));
             let mut r = Reader::new(&buf);
             assert_eq!(read_real(&mut r).unwrap(), v, "round-trip failed for {v}");
+        }
+    }
+
+    #[test]
+    fn round_trips_subnormal_values() {
+        // X.690 §8.5.7: M x 2^E exactly; 2^-1074 is mantissa 1, exponent -1074.
+        let mut buf = Vec::new();
+        write_real(&mut buf, &Real::new(f64::from_bits(1)));
+        assert_eq!(buf, vec![0x09, 0x04, 0x81, 0xFB, 0xCE, 0x01]);
+        for bits in [1u64, 3, 0x0001_2345_6789_ABCD, 0x000F_FFFF_FFFF_FFFF, 0x8000_0000_0000_0001] {
+            let v = f64::from_bits(bits);
+            let mut buf = Vec::new();
+            write_real(&mut buf, &Real::new(v));
+            let mut r = Reader::new(&buf);
+            assert_eq!(read_real(&mut r).unwrap().value().to_bits(), bits, "{v:e}");
         }
     }
 
