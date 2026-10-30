@@ -1,0 +1,16 @@
+# table_diff default targets (same format as ../xval_sweep/targets.txt): the
+# schemas every compared backend covers today. Kept small so the default run
+# and ctest table_diff_cpp_rust take minutes; it covers every table shape
+# (tagging, CHOICE dispatch, SET order, extension groups, ENUMERATED,
+# contained values). As a backend's coverage grows, move schemas here from
+# ../xval_sweep/targets.txt; `table_diff.py --full` runs that whole list.
+tests/asn1/explicit_tag_test.asn1     Mixed
+tests/asn1/choice_test.asn1           Alt4
+tests/asn1/self_ref_choice_test.asn1  RecChoice
+tests/asn1/per_set_order_test.asn1    Rec
+tests/asn1/per_choice_unknown_ext_test.asn1   MsgV2
+tests/asn1/per_ext_group_test.asn1    Rec
+tests/asn1/inline_seqof_enum_test.asn1  IsRec
+tests/asn1/enum_item_names_test.asn1  EinRec
+tests/asn1/containing_test.asn1       Holder  --container-config=tests/asn1/containing_test.container.json
+tests/asn1/xer_layout_test.asn1       XlRoot

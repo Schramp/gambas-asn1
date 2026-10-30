@@ -34,5 +34,6 @@
 #include "types/Strings.hpp"
 #include "types/Time.hpp"
 #include "TypeDescriptor.hpp"
+#include "TableDump.hpp"
 #include "codec/RandomFiller.hpp"
 #include "codec/Validation.hpp"
