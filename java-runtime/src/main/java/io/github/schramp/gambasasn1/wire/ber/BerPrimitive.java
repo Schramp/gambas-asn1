@@ -5,6 +5,7 @@ import io.github.schramp.gambasasn1.wire.io.ByteSource;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
+import io.github.schramp.gambasasn1.wire.types.Asn1Any;
 import io.github.schramp.gambasasn1.wire.types.Asn1Arcs;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
@@ -16,6 +17,7 @@ import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import io.github.schramp.gambasasn1.wire.types.Asn1Primitive;
 import io.github.schramp.gambasasn1.wire.types.Asn1Real;
 import io.github.schramp.gambasasn1.wire.types.Asn1RelativeOid;
+import io.github.schramp.gambasasn1.wire.types.Asn1UInteger;
 import java.util.Arrays;
 
 /**
@@ -45,6 +47,10 @@ public final class BerPrimitive {
      * every other framing writes the natural encoding.
      */
     public static void encode(Asn1Primitive p, BerTagging framing, ByteSink out) {
+        if (p instanceof Asn1Any any) {
+            encodeAny(any, framing, out);
+            return;
+        }
         switch (framing.resolve()) {
             case BerTagging.Implicit(Tag tag) -> encodeTagged(p, tag, out);
             case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeTagged(p, naturalTag(p), inner));
@@ -55,6 +61,10 @@ public final class BerPrimitive {
 
     /** Decode counterpart of {@link #encode}: reads one TLV into {@code p}. */
     public static void decode(Asn1Primitive p, BerTagging framing, BerReader r) {
+        if (p instanceof Asn1Any any) {
+            decodeAny(any, framing, r);
+            return;
+        }
         switch (framing.resolve()) {
             case BerTagging.Implicit(Tag tag) -> decodeTagged(p, tag, r);
             case BerTagging.Explicit(Tag tag) -> {
@@ -76,6 +86,7 @@ public final class BerPrimitive {
             case Asn1Boolean b -> BOOLEAN_TAG;
             case Asn1Null n -> NULL_TAG;
             case Asn1Integer i -> INTEGER_TAG;
+            case Asn1UInteger u -> INTEGER_TAG;
             case Asn1OctetString o -> OCTET_STRING_TAG;
             case Asn1BitString b -> BIT_STRING_TAG;
             case Asn1CharString c -> Tag.universal(c.universalTagNumber(), false);
@@ -91,6 +102,7 @@ public final class BerPrimitive {
             case Asn1Boolean b -> BerWriter.writePrimitive(out, tag, new byte[] {(byte) (b.get() ? DER_TRUE : 0)});
             case Asn1Null n -> BerWriter.writePrimitive(out, tag, new byte[0]);
             case Asn1Integer i -> BerWriter.writePrimitive(out, tag, encodeInteger(i.get()));
+            case Asn1UInteger u -> BerWriter.writePrimitive(out, tag, encodeUnsigned(u.get()));
             case Asn1OctetString o -> BerWriter.writePrimitive(out, tag, o.get());
             case Asn1CharString c -> BerWriter.writePrimitive(out, tag, c.octets());
             case Asn1ObjectIdentifier o -> BerWriter.writePrimitive(out, tag, encodeObjectIdentifier(o.get()));
@@ -127,6 +139,7 @@ public final class BerPrimitive {
                 }
             }
             case Asn1Integer i -> i.set(decodeInteger(v, start));
+            case Asn1UInteger u -> u.set(decodeUnsigned(v, start));
             case Asn1OctetString o -> o.set(v.remainingBytes());
             case Asn1CharString c -> c.setOctets(v.remainingBytes());
             case Asn1ObjectIdentifier o -> o.set(decodeObjectIdentifier(v.remainingBytes(), start));
@@ -281,5 +294,89 @@ public final class BerPrimitive {
                 return i;
             }
         }
+    }
+
+    /**
+     * ANY replays its captured encoding: as is, or inside an EXPLICIT tag.
+     * An IMPLICIT tag is not allowed on an untagged open type (X.680
+     * tagged types, §30.8 of the 2002 edition), so it is
+     * an error.
+     */
+    private static void encodeAny(Asn1Any any, BerTagging framing, ByteSink out) {
+        switch (framing.resolve()) {
+            case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> inner.write(any.get()));
+            case BerTagging.Implicit(Tag tag) -> throw new EncodeException("ANY cannot be IMPLICIT tagged");
+            case BerTagging.Unsupported(String reason) -> throw new EncodeException("ANY not supported: " + reason);
+            default -> out.write(any.get());
+        }
+    }
+
+    /**
+     * Decode counterpart of {@link #encodeAny}: captures every remaining
+     * octet of the reader, or of the EXPLICIT tag's contents, verbatim.
+     */
+    private static void decodeAny(Asn1Any any, BerTagging framing, BerReader r) {
+        switch (framing.resolve()) {
+            case BerTagging.Explicit(Tag tag) -> {
+                int start = r.position();
+                Tlv outer = r.readTlv();
+                if (!outer.tag().equals(tag)) {
+                    throw new DecodeException("expected EXPLICIT tag " + tag + ", got " + outer.tag(), start);
+                }
+                any.set(outer.value().remainingBytes());
+            }
+            case BerTagging.Implicit(Tag tag) -> throw new DecodeException("ANY cannot be IMPLICIT tagged", r.position());
+            case BerTagging.Unsupported(String reason) -> throw new DecodeException("ANY not supported: " + reason, r.position());
+            default -> {
+                ByteSource src = r.source();
+                any.set(src.remainingBytes());
+                src.skip(src.remaining(), "ANY");
+            }
+        }
+    }
+
+    /**
+     * INTEGER contents (X.690 §8.3) of a value read as unsigned: the fewest
+     * octets, with a leading 00 when the top bit is set.
+     */
+    public static byte[] encodeUnsigned(long n) {
+        if (n >= 0) {
+            return encodeInteger(n);
+        }
+        byte[] out = new byte[9];
+        for (int i = 0; i < 8; i++) {
+            out[1 + i] = (byte) (n >>> (8 * (7 - i)));
+        }
+        return out;
+    }
+
+    /**
+     * Decode counterpart of {@link #encodeUnsigned}: up to eight octets of a
+     * non-negative value, or nine whose first is 00. A negative value is an
+     * error.
+     *
+     * @param pos the TLV's position, for the error
+     */
+    public static long decodeUnsigned(ByteSource v, int pos) {
+        int len = v.remaining();
+        if (len == 0) {
+            throw new DecodeException("INTEGER: empty contents", pos);
+        }
+        boolean padded = len == 9 && v.peek() == 0;
+        if (padded) {
+            v.read("INTEGER");
+            len--;
+        }
+        if (len > 8) {
+            throw new DecodeException("INTEGER: " + len + " octets do not fit unsigned 64-bit storage", pos);
+        }
+        if (!padded && (v.peek() & 0x80) != 0) {
+            throw new DecodeException("INTEGER: negative value in unsigned storage", pos);
+        }
+        long n = 0;
+        for (int i = 0; i < len; i++) {
+            n = (n << 8) | v.read("INTEGER");
+        }
+        return n;
     }
 }

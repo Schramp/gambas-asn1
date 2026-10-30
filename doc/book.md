@@ -1914,9 +1914,19 @@ base-10 value are never equal (X.680 §21.5 NOTE 1) and
 X.690 §8.5; encode writes a `DOUBLE` in the binary form with the fewest
 octets and the other two in their DER form (X.690 §11.3).
 
+An INTEGER whose range needs unsigned 64-bit storage (`INTEGER (0..MAX)`, or
+an upper bound above 2⁶³−1) holds an `Asn1UInteger`: a `long` read as
+unsigned (`Long.toUnsignedString`, `Long.compareUnsigned`), encoded with a
+leading 00 octet when its top bit is set. A negative value is a decode error.
+
+ANY (`Asn1Any`) holds the complete encoding of whatever value was on the
+wire and replays it unchanged; an EXPLICIT tag wraps it, as for any other
+type.
+
 So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage),
 ENUMERATED, OCTET STRING, BIT STRING, character string, OBJECT IDENTIFIER,
-RELATIVE-OID, UTCTime, GeneralizedTime and REAL type assignments. The Java
+RELATIVE-OID, UTCTime, GeneralizedTime, REAL and ANY type assignments,
+and INTEGER in both signed and unsigned 64-bit storage. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.
 

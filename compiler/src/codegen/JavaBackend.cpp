@@ -41,6 +41,7 @@ static std::string java_builtin_class(ast::BuiltinType bt) {
     case BT::UtcTime:          return std::format("{}.types.Asn1UtcTime", kWire);
     case BT::GeneralizedTime:  return std::format("{}.types.Asn1GeneralizedTime", kWire);
     case BT::Real:             return std::format("{}.types.Asn1Real", kWire);
+    case BT::Any:              return std::format("{}.types.Asn1Any", kWire);
     default:          return "";
     }
 }
@@ -99,9 +100,11 @@ static std::string java_long(int64_t v) {
 /// @brief A runtime `Constraints` constructor call for an INTEGER value
 ///        range (X.680 §51.5): flags, PER range width (X.691 §10.5) and
 ///        signed bounds; the remaining fields are unused by INTEGER.
-static std::string java_int_constraints(int flags, int range_bits, int64_t lower, int64_t upper) {
-    return std::format("new {}.spec.Constraints({}, {}, {}, {}, 0L, 0L, 0, 0L, 0L, null, 0, null, 0, null, 0.0, 0.0)",
-                       kWire, flags, range_bits, java_long(lower), java_long(upper));
+static std::string java_int_constraints(int flags, int range_bits, int64_t lower, int64_t upper,
+                                       uint64_t lower_u64 = 0, uint64_t upper_u64 = 0) {
+    return std::format("new {}.spec.Constraints({}, {}, {}, {}, {}, {}, 0, 0L, 0L, null, 0, null, 0, null, 0.0, 0.0)",
+                       kWire, flags, range_bits, java_long(lower), java_long(upper),
+                       java_long(static_cast<int64_t>(lower_u64)), java_long(static_cast<int64_t>(upper_u64)));
 }
 
 /// @brief A runtime `Constraints` constructor call for a SIZE constraint
@@ -177,23 +180,28 @@ void JavaBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSes
 }
 
 /// @brief Emit an INTEGER type assignment (X.680 §19) as a class holding
-///        the runtime's `Asn1Integer`, with its value-range `CONSTRAINTS`
-///        table and one `long` constant per named number (X.680 §19.1).
+///        the runtime's `Asn1Integer` (signed 64-bit storage) or
+///        `Asn1UInteger` (unsigned 64-bit storage), with its value-range
+///        `CONSTRAINTS` table and one `long` constant per named number
+///        (X.680 §19.1). Unsigned storage also fills the table's unsigned
+///        bounds, upper `UINT64_MAX` when semi-constrained.
 /// @param spec    Resolved storage, named numbers, range and tag.
 /// @param session Per-type output session; writes the `.java` buffer.
-/// @throws std::logic_error for storage wider than signed 64 bits.
+/// @throws std::logic_error for storage wider than 64 bits.
 void JavaBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& session) const {
-    if (spec.storage_kind != IntStorageKind::S64)
-        throw std::logic_error(std::format("emit_integer: {} storage beyond signed 64 bits is not implemented for this backend",
+    bool u64 = spec.storage_kind == IntStorageKind::U64;
+    if (spec.storage_kind != IntStorageKind::S64 && !u64)
+        throw std::logic_error(std::format("emit_integer: {} storage beyond 64 bits is not implemented for this backend",
                                            spec.asn1_name.empty() ? spec.type_name : spec.asn1_name));
-    bool semi = spec.semi_constrained || spec.hi_is_large;
-    int flags = (spec.has_constraint ? (semi ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED) : 0)
+    int flags = (spec.has_constraint ? (spec.semi_constrained ? asn1::Constraints::SEMI_CONSTRAINED : asn1::Constraints::CONSTRAINED) : 0)
               | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+    uint64_t upper_u64 = spec.semi_constrained ? std::numeric_limits<uint64_t>::max() : spec.upper_u64;
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
     os << std::format("public final class {} implements {}.spec.AsMemberRef {{\n", spec.type_name, kWire);
     os << std::format("    public static final {}.spec.Constraints CONSTRAINTS = {};\n", kWire,
-                      java_int_constraints(flags, std::max(spec.range_bits, 0), spec.lower_s64, spec.upper_s64));
+                      java_int_constraints(flags, std::max(spec.range_bits, 0), spec.lower_s64, spec.upper_s64,
+                                           u64 ? spec.lower_u64 : 0, u64 ? upper_u64 : 0));
     os << ber_framing_field(spec);
     for (const auto& nv : spec.named_values) {
         os << std::format("    /** ASN.1: {{@code {}}} */\n", nv.asn1_name);
@@ -201,7 +209,8 @@ void JavaBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
                           escape(value_name(nv.asn1_name), {"value", "CONSTRAINTS", "BER_FRAMING"}), java_long(nv.value));
     }
     os << "\n";
-    emit_primitive_holder(os, std::format("{}.types.Asn1Integer", kWire), spec.xer_name, ber_framing_method(spec));
+    emit_primitive_holder(os, std::format("{}.types.{}", kWire, u64 ? "Asn1UInteger" : "Asn1Integer"), spec.xer_name,
+                          ber_framing_method(spec));
 }
 
 /// @brief Emit an ENUMERATED type assignment (X.680 §20) as a class whose
