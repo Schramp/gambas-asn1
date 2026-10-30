@@ -2490,6 +2490,28 @@ if(WITH_BER_RUNTIME_TEST)
         ENVIRONMENT "ASN1CPP_RUST_SETORD_GEN_DIR=${RUST_SETORD_GEN_DIR}")
 endif()
 
+# Rust leg of the EXPLICIT-tagged CHOICE test — see tests/rust/explicit_tagged_choice/src/main.rs.
+set(RUST_EXPTAGCH_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_explicit_tagged_choice)
+add_custom_command(
+    OUTPUT  ${RUST_EXPTAGCH_GEN_DIR}/lib.rs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RUST_EXPTAGCH_GEN_DIR}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=rust
+                                   ${CMAKE_CURRENT_SOURCE_DIR}/asn1/explicit_tagged_choice_test.asn1
+                                   -o ${RUST_EXPTAGCH_GEN_DIR}
+    DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/explicit_tagged_choice_test.asn1
+    COMMENT "Generating Rust from explicit_tagged_choice_test.asn1"
+)
+add_custom_target(gen_rust_explicit_tagged_choice ALL DEPENDS ${RUST_EXPTAGCH_GEN_DIR}/lib.rs)
+
+if(WITH_BER_RUNTIME_TEST)
+    add_test(NAME rust_explicit_tagged_choice
+        COMMAND ${CARGO_EXECUTABLE} run --quiet --manifest-path
+                ${CMAKE_CURRENT_SOURCE_DIR}/rust/explicit_tagged_choice/Cargo.toml)
+    set_tests_properties(rust_explicit_tagged_choice PROPERTIES
+        TIMEOUT 60 LABELS "rust"
+        ENVIRONMENT "ASN1CPP_RUST_EXPTAGCH_GEN_DIR=${RUST_EXPTAGCH_GEN_DIR}")
+endif()
+
 # Rust leg of per_int64_bounds_test.asn1 (tests/rust/per_int64_bounds).
 set(RUST_INT64B_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_rust_per_int64_bounds)
 add_custom_command(
