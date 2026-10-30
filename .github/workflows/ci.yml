@@ -70,8 +70,16 @@ jobs:
 
       # C++ vs Rust behavioural consistency across every targets.txt entry.
       # asn1c is not built in CI, so the ground-truth leg stays a local check.
-      - name: Cross-validate C++ vs Rust (xval_sweep)
-        run: python3 validation-tools/xval_sweep/xval_sweep.py --no-asn1c -j 2
+      # The only build outputs xval_sweep reads; the xval job below runs
+      # the sweep against these instead of rebuilding.
+      - name: Upload xval inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: xval-inputs
+          retention-days: 1
+          path: |
+            build/compiler/asn1cpp
+            build/runtime/libasn1cpp_runtime.a
 
       - name: Build ETSI LI example
         if: github.ref == 'refs/heads/main'
@@ -107,3 +115,38 @@ jobs:
           name: doxygen-html
           path: build/docs/html/
           retention-days: 30
+
+  # C++ vs Rust cross-validation, split round-robin over 4 runners. Runs
+  # only once build-and-test is green; mergeability is build-and-test's,
+  # an xval failure is a finding to act on.
+  xval:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y g++ python3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Download xval inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: xval-inputs
+          path: build
+
+      - name: Cross-validate C++ vs Rust (xval_sweep shard ${{ matrix.shard }}/4)
+        run: |
+          chmod +x build/compiler/asn1cpp
+          python3 validation-tools/xval_sweep/xval_sweep.py --no-asn1c -j 2 --shard ${{ matrix.shard }}/4
