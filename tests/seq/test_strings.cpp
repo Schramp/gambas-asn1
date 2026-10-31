@@ -174,9 +174,9 @@ int main() {
         std::ostringstream oss;
         XerEncodeStream s{oss};
         XerCodec::instance().encode(s, HasT61String::asn_DEF, &v);
-        // "hi" = 0x68 0x69
+        // "hi" = 0x68 0x69, unspaced as asn1c writes it
         check("T61String XER output is hex-encoded",
-              oss.str().find("68 69") != std::string::npos);
+              oss.str().find("<value>6869</value>") != std::string::npos);
     }
 
     // XER: wide-char strings (BmpString = UCS-2BE, UniversalString = UCS-4BE)

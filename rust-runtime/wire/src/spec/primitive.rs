@@ -344,8 +344,10 @@ fn not_supported(codec: &str, kind: &str) -> EncodeError {
 
 /// XER encode — no BER tag concept, so no framing parameter (X.693
 /// element names are fixed per type, same for every tagging the BER side
-/// might apply to this same member). `ArbitraryInteger`/`Any` have no
-/// XER leg here, so encoding one fails the record.
+/// might apply to this same member). T61String, VideotexString,
+/// GraphicString, GeneralString and ANY are unspaced uppercase hex, the
+/// form asn1c writes for them. `ArbitraryInteger` has no XER leg here, so
+/// encoding one fails the record.
 pub fn xer_encode_primitive(p: PrimitiveRef, out: &mut String, depth: usize) -> Result<(), EncodeError> {
     match p {
         PrimitiveRef::Boolean(x) => crate::xer::boolean::encode(x.0, out),
@@ -359,18 +361,18 @@ pub fn xer_encode_primitive(p: PrimitiveRef, out: &mut String, depth: usize) -> 
         PrimitiveRef::BitString(x) => crate::xer::bit_string::encode(x, out, depth),
         PrimitiveRef::ObjectIdentifier(x) => crate::xer::oid::encode(x, out),
         PrimitiveRef::RelativeOid(x) => crate::xer::relative_oid::encode(x, out),
-        PrimitiveRef::Any(_) => return Err(not_supported("XER", "ANY")),
+        PrimitiveRef::Any(x) => crate::xer::octet_string::encode(&x.0, out),
         PrimitiveRef::Utf8String(x) => crate::xer::writer::escape(&x.0, out),
         PrimitiveRef::NumericString(x) => crate::xer::writer::escape(&x.0, out),
         PrimitiveRef::PrintableString(x) => crate::xer::writer::escape(&x.0, out),
-        PrimitiveRef::T61String(x) => crate::xer::writer::escape(&x.0, out),
+        PrimitiveRef::T61String(x) => crate::xer::octet_string::encode(x.0.as_bytes(), out),
         PrimitiveRef::Ia5String(x) => crate::xer::writer::escape(&x.0, out),
         PrimitiveRef::VisibleString(x) => crate::xer::writer::escape(&x.0, out),
-        PrimitiveRef::GeneralString(x) => crate::xer::writer::escape(&x.0, out),
-        PrimitiveRef::GraphicString(x) => crate::xer::writer::escape(&x.0, out),
+        PrimitiveRef::GeneralString(x) => crate::xer::octet_string::encode(x.0.as_bytes(), out),
+        PrimitiveRef::GraphicString(x) => crate::xer::octet_string::encode(x.0.as_bytes(), out),
         PrimitiveRef::UniversalString(x) => crate::strings::encode_wide_string_xer(&x.0, 4, out),
         PrimitiveRef::BmpString(x) => crate::strings::encode_wide_string_xer(&x.0, 2, out),
-        PrimitiveRef::VideotexString(x) => crate::xer::writer::escape(&x.0, out),
+        PrimitiveRef::VideotexString(x) => crate::xer::octet_string::encode(x.0.as_bytes(), out),
         PrimitiveRef::ObjectDescriptor(x) => crate::xer::writer::escape(&x.0, out),
         PrimitiveRef::UtcTime(x) => crate::xer::writer::escape(&x.0, out),
         PrimitiveRef::GeneralizedTime(x) => crate::xer::writer::escape(&x.0, out),
@@ -378,6 +380,8 @@ pub fn xer_encode_primitive(p: PrimitiveRef, out: &mut String, depth: usize) -> 
     Ok(())
 }
 
+/// XER decode counterpart of [`xer_encode_primitive`]; the hex kinds
+/// accept whitespace between the pairs, as asn1c does.
 pub fn xer_decode_primitive(p: PrimitiveRefMut, r: &mut XerReader) -> Result<(), BerDecodeError> {
     match p {
         PrimitiveRefMut::Boolean(x) => { x.0 = crate::xer::boolean::decode(r)?; Ok(()) }
@@ -391,18 +395,18 @@ pub fn xer_decode_primitive(p: PrimitiveRefMut, r: &mut XerReader) -> Result<(),
         PrimitiveRefMut::BitString(x) => crate::xer::bit_string::decode_into(x, r),
         PrimitiveRefMut::ObjectIdentifier(x) => crate::xer::oid::decode_into(x, r),
         PrimitiveRefMut::RelativeOid(x) => crate::xer::relative_oid::decode_into(x, r),
-        PrimitiveRefMut::Any(_) => Err(BerDecodeError::new(not_supported("XER", "ANY").message, 0)),
+        PrimitiveRefMut::Any(x) => { x.0 = crate::xer::octet_string::decode(r)?; Ok(()) }
         PrimitiveRefMut::Utf8String(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
         PrimitiveRefMut::NumericString(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
         PrimitiveRefMut::PrintableString(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
-        PrimitiveRefMut::T61String(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
+        PrimitiveRefMut::T61String(x) => { x.0 = String::from_utf8_lossy(&crate::xer::octet_string::decode(r)?).into_owned(); Ok(()) }
         PrimitiveRefMut::Ia5String(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
         PrimitiveRefMut::VisibleString(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
-        PrimitiveRefMut::GeneralString(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
-        PrimitiveRefMut::GraphicString(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
+        PrimitiveRefMut::GeneralString(x) => { x.0 = String::from_utf8_lossy(&crate::xer::octet_string::decode(r)?).into_owned(); Ok(()) }
+        PrimitiveRefMut::GraphicString(x) => { x.0 = String::from_utf8_lossy(&crate::xer::octet_string::decode(r)?).into_owned(); Ok(()) }
         PrimitiveRefMut::UniversalString(x) => { let text = r.read_text_content(); x.0 = crate::strings::decode_wide_string_xer(&crate::xer::reader::unescape(text), 4); Ok(()) }
         PrimitiveRefMut::BmpString(x) => { let text = r.read_text_content(); x.0 = crate::strings::decode_wide_string_xer(&crate::xer::reader::unescape(text), 2); Ok(()) }
-        PrimitiveRefMut::VideotexString(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
+        PrimitiveRefMut::VideotexString(x) => { x.0 = String::from_utf8_lossy(&crate::xer::octet_string::decode(r)?).into_owned(); Ok(()) }
         PrimitiveRefMut::ObjectDescriptor(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
         PrimitiveRefMut::UtcTime(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
         PrimitiveRefMut::GeneralizedTime(x) => { let text = r.read_text_content(); x.0 = crate::xer::reader::unescape(text); Ok(()) }
@@ -730,11 +734,23 @@ mod tests {
     }
 
     #[test]
-    fn xer_any_is_an_error_not_a_panic() {
-        let e = xer_encode_primitive(PrimitiveRef::Any(&Any(vec![0x05, 0x00])), &mut String::new(), 0).unwrap_err();
-        assert_eq!(e.message, "XER encoding not supported for ANY");
+    fn xer_any_is_unspaced_hex_of_its_encoding() {
+        let mut out = String::new();
+        xer_encode_primitive(PrimitiveRef::Any(&Any(vec![0x02, 0x01, 0x05])), &mut out, 0).unwrap();
+        assert_eq!(out, "020105");
         let mut v = Any::default();
-        assert!(xer_decode_primitive(PrimitiveRefMut::Any(&mut v), &mut XerReader::new("0500")).is_err());
+        xer_decode_primitive(PrimitiveRefMut::Any(&mut v), &mut XerReader::new("020105")).unwrap();
+        assert_eq!(v.0, vec![0x02, 0x01, 0x05]);
+    }
+
+    #[test]
+    fn xer_t61_videotex_graphic_general_are_unspaced_hex() {
+        let mut out = String::new();
+        xer_encode_primitive(PrimitiveRef::T61String(&crate::strings::T61String("tele".into())), &mut out, 0).unwrap();
+        assert_eq!(out, "74656C65");
+        let mut v = crate::strings::GeneralString::default();
+        xer_decode_primitive(PrimitiveRefMut::GeneralString(&mut v), &mut XerReader::new("67656E")).unwrap();
+        assert_eq!(v.0, "gen");
     }
 
     #[test]
