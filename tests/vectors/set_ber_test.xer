@@ -1,0 +1,5 @@
+# Type<TAB>XER value. make_ber_vectors.py turns each line into asn1c's DER.
+Rec	<Rec><third>2</third><first><false/></first><zeroth>199</zeroth></Rec>
+Rec	<Rec><third>-1</third><first><true/></first><zeroth>0</zeroth><second>0A</second></Rec>
+Mixed	<Mixed><name>ab</name><num>5</num><pick><i>7</i></pick><data>FF</data></Mixed>
+Mixed	<Mixed><name></name><num>-1</num><flag><true/></flag><pick><s>x</s></pick><data></data></Mixed>

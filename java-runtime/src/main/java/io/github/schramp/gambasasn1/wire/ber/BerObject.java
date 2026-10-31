@@ -1,6 +1,7 @@
 package io.github.schramp.gambasasn1.wire.ber;
 
 import io.github.schramp.gambasasn1.wire.io.ByteSink;
+import io.github.schramp.gambasasn1.wire.io.ByteSource;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.AltMeta;
@@ -212,6 +213,9 @@ public final class BerObject {
      */
     private static void decodeSequenceContent(Asn1Seq s, BerReader r, Tag tag) {
         SequenceSpec spec = s.spec();
+        if (spec.isSet()) {
+            r = setInTableOrder(s, r);
+        }
         List<MemberMeta> rows = spec.members();
         for (int i = 0; i < rows.size(); i++) {
             MemberMeta row = rows.get(i);
@@ -229,6 +233,56 @@ public final class BerObject {
         if (!r.atEnd()) {
             throw new DecodeException("SEQUENCE " + spec.name() + ": unexpected octets after its last member", r.position());
         }
+    }
+
+    /**
+     * A SET's component TLVs copied into member-table order, so the
+     * sequential member walk can decode them: BER allows SET components in
+     * any order (X.690 §8.11.2), and the table holds them in canonical tag
+     * order (X.680 §8.6). A TLV no member matches goes last, where the walk
+     * reports it.
+     */
+    private static BerReader setInTableOrder(Asn1Seq s, BerReader r) {
+        List<MemberMeta> rows = s.spec().members();
+        byte[][] slot = new byte[rows.size()][];
+        List<byte[]> unmatched = new ArrayList<>();
+        ByteSource src = r.source();
+        while (!r.atEnd()) {
+            int start = src.position();
+            Tag t = r.readTlv().tag();
+            byte[] raw = src.bytesSince(start);
+            int i = 0;
+            while (i < rows.size() && (slot[i] != null || !setMemberMatches(s, i, t))) {
+                i++;
+            }
+            if (i < rows.size()) {
+                slot[i] = raw;
+            } else {
+                unmatched.add(raw);
+            }
+        }
+        ByteSink out = new ByteSink();
+        for (byte[] raw : slot) {
+            if (raw != null) {
+                out.write(raw);
+            }
+        }
+        unmatched.forEach(out::write);
+        return new BerReader(out.toByteArray());
+    }
+
+    /**
+     * Whether SET member {@code i} starts with wire tag {@code t}: an
+     * untagged CHOICE member by one of its alternatives' tags, any other
+     * member by its row's tag.
+     */
+    private static boolean setMemberMatches(Asn1Seq s, int i, Tag t) {
+        MemberMeta row = s.spec().members().get(i);
+        if (row.ber() instanceof BerTagging.Delegate && s.getMember(i) instanceof MemberRef.Choice(Asn1Choice c)
+                && c.spec().ownTag() == null) {
+            return dispatch(c.spec().berTags(), t) >= 0;
+        }
+        return row.ber().startsWith(row.tag(), t);
     }
 
     /**

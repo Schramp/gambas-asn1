@@ -1964,8 +1964,10 @@ set(java_leg_seqof_ber_PDUS
     Ints IntSet Points Colors Names TaggedInts Holder)
 set(java_leg_constraints_ber_PDUS
     Limits Pick Digits)
+set(java_leg_set_ber_PDUS
+    Rec Mixed)
 set(java_leg_outputs)
-foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber)
+foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})
