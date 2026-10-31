@@ -13,3 +13,4 @@ tests/asn1/tagging_ber_test.asn1  ExpRec  -pdu=ExpRec -pdu=ImpRec -pdu=AutoRec -
 tests/asn1/default_ber_test.asn1  Rec  -pdu=Rec -pdu=Unordered
 tests/asn1/ext_ber_test.asn1  V1  -pdu=V1 -pdu=V2 -pdu=Outer1 -pdu=Outer2 -pdu=S1 -pdu=S2
 tests/asn1/recursion_ber_test.asn1  List  -pdu=List -pdu=Tree -pdu=A -pdu=B
+tests/asn1/containing_test.asn1  Holder  --container-config=tests/asn1/containing_test.container.json -pdu=Inner -pdu=Holder -pdu=Pick -pdu=Envelope

@@ -99,6 +99,12 @@ public:
                              const std::string& parent_name, const std::string& member_name,
                              TypeOutputSession& session) const override;
 
+    /// @brief Yes: a contained field (X.682 §11) is a `Containing<T>`.
+    bool supports_contained_values() const override { return true; }
+    std::string contained_storage_type(const std::string& inner) const override {
+        return std::format("io.github.schramp.gambasasn1.wire.spec.Containing<{}>", inner);
+    }
+
     /// @brief A member's own constraint table is the class
     ///        emit_member_type_descriptor emits, named by its base name;
     ///        every other reference is empty (Java rows name a type's

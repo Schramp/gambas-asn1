@@ -520,6 +520,8 @@ struct TaggedMemberSpec {
     // member_descriptor_base_name() of the field's own descriptor, which
     // also names its contained spec (set only with `contained`).
     std::string contained_base;
+    // The inner type's native type (set only with `contained`).
+    std::string contained_inner;
 
     // Set only for a TypeRef member/alternative (mbuiltin unset above) whose
     // resolved target is itself ENUMERATED or a named INTEGER type —

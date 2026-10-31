@@ -1976,8 +1976,13 @@ set(java_leg_recursion_ber_PDUS
     List Tree A B)
 set(java_leg_recursion_choice_ber_PDUS
     Expr)
+set(java_leg_containing_PDUS
+    Inner Holder Pick Envelope)
+set(java_leg_containing_FLAGS
+    --container-config=${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json)
+set(java_leg_containing_DEPS ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json)
 set(java_leg_outputs)
-foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber)
+foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber containing)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})
@@ -1987,10 +1992,10 @@ foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber 
         OUTPUT  ${gen_dir}/.stamp
         COMMAND ${CMAKE_COMMAND} -E rm -rf ${gen_dir}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${gen_dir}
-        COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.${leg} ${pdu_flags}
+        COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.${leg} ${pdu_flags} ${java_leg_${leg}_FLAGS}
                 ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1 -o ${gen_dir}
         COMMAND ${CMAKE_COMMAND} -E touch ${gen_dir}/.stamp
-        DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1
+        DEPENDS asn1cpp ${CMAKE_CURRENT_SOURCE_DIR}/asn1/${leg}_test.asn1 ${java_leg_${leg}_DEPS}
         COMMENT "Generating Java from ${leg}_test.asn1"
     )
     list(APPEND java_leg_outputs ${gen_dir}/.stamp)

@@ -695,13 +695,12 @@ int main() {
 
         bool threw = false;
         try {
-            asn1::sema::ContainedField cf;
             SequenceSpec spec{};
             spec.type_name = "S";
             spec.ext_at = -1;
             spec.members.emplace_back();
             spec.members.back().asn1_name = "v";
-            spec.members.back().contained = &cf;
+            spec.members.back().has_default = true;
             TypeOutputSession s3;
             j.emit_sequence(spec, s3);
         } catch (const std::logic_error&) { threw = true; }

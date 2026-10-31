@@ -341,16 +341,9 @@ static std::string java_collection_new(SeqOfKind kind, const ElemShape& elem) {
 /// @param spec    Resolved alternatives, tags and dispatch table.
 /// @param session Per-type output session; writes the `.java` buffer.
 /// @throws std::logic_error for an alternative shape this backend does
-///         not emit yet (SEQUENCE/SET, SEQUENCE OF/SET OF, contained value).
+///         not emit yet.
 void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const {
     const std::string& t = spec.type_name;
-    for (const auto& a : spec.alternatives) {
-        const char* gap = a.contained ? "a contained value" : nullptr;
-        if (gap)
-            throw std::logic_error(std::format("emit_choice: alternative '{}' of {} is {}, not implemented for this backend",
-                                               a.asn1_name, spec.asn1_name.empty() ? t : spec.asn1_name, gap));
-    }
-
     // Row framing (X.690 §8.14), as in the other backends: a tag of the
     // alternative's own wraps (EXPLICIT) or replaces (IMPLICIT) the
     // value's; a reference to a CHOICE, tagged or not, frames itself; a
@@ -373,6 +366,7 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
     // emit_member_type_descriptor; a reference uses its type's table.
     auto constraints = [&](const ChoiceAlternativeSpec& a) {
         if (!a.tdref.empty()) return a.tdref + ".CONSTRAINTS";
+        if (a.contained) return a.contained_base + ".CONSTRAINTS";
         if (a.seq_of_kind != SeqOfKind::None)
             return std::format("{}.CONSTRAINTS", escape(synthetic_name(spec.type_name, a.asn1_name)));
         if (!a.mbuiltin && a.ref_is_seq_of) return std::format("{}.CONSTRAINTS", a.mtype);
@@ -411,6 +405,8 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         return a.seq_of_kind != SeqOfKind::None ? java_collection_type(a.seq_of_kind, a.elem_shape) : a.mtype;
     };
     auto alt_factory = [&](const ChoiceAlternativeSpec& a) {
+        if (a.contained)
+            return std::format("() -> new {}({}::new, {}.CONTAINED)", a.mtype, a.contained_inner, a.contained_base);
         return a.seq_of_kind != SeqOfKind::None ? "() -> " + java_collection_new(a.seq_of_kind, a.elem_shape)
                                                 : a.mtype + "::new";
     };
@@ -422,15 +418,18 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
                       kWire, spec.xer_name);
     for (size_t i = 0; i < spec.alternatives.size(); ++i) {
         const auto& a = spec.alternatives[i];
-        os << std::format("            new {}.spec.AltMeta(\"{}\", {}, {}, null){}\n", kWire, a.asn1_name, framing(a),
-                          constraints(a), i + 1 < spec.alternatives.size() ? "," : "),");
+        os << std::format("            new {}.spec.AltMeta(\"{}\", {}, {}, {}){}\n", kWire, a.asn1_name, framing(a),
+                          constraints(a), a.contained ? a.contained_base + ".CONTAINED" : "null",
+                          i + 1 < spec.alternatives.size() ? "," : "),");
     }
     os << "            java.util.List.of(";
     for (size_t i = 0; i < dispatch.size(); ++i)
         os << std::format("{}\n                    new {}.spec.BerDispatch({}, {})", i ? "," : "", kWire, dispatch[i].tag, dispatch[i].alt);
     os << "),\n";
-    os << std::format("            {}, {}, {}, false);\n\n", spec.tag ? format_tag_literal(*spec.tag) : "null",
-                      spec.ext_at, spec.range_bits);
+    bool has_contained = std::any_of(spec.alternatives.begin(), spec.alternatives.end(),
+                                     [](const ChoiceAlternativeSpec& a) { return a.contained != nullptr; });
+    os << std::format("            {}, {}, {}, {});\n\n", spec.tag ? format_tag_literal(*spec.tag) : "null",
+                      spec.ext_at, spec.range_bits, has_contained ? "true" : "false");
     os << std::format("    private static final java.util.List<java.util.function.Supplier<{}.spec.AsMemberRef>> FACTORIES = java.util.List.of(\n", kWire);
     for (size_t i = 0; i < spec.alternatives.size(); ++i)
         os << std::format("            {}{}\n", alt_factory(spec.alternatives[i]), i + 1 < spec.alternatives.size() ? "," : ");");
@@ -444,9 +443,9 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         const auto& a = spec.alternatives[i];
         std::string n = accessor(a);
         os << std::format("    /** ASN.1: {{@code {}}}; null when another alternative is selected. */\n", a.asn1_name);
-        // An inline collection's type is generic, so the cast from the
+        // An inline collection or contained value has a generic type, so the cast from the
         // stored Object is unchecked (JLS §5.1.6.1); select() keeps it sound.
-        if (a.seq_of_kind != SeqOfKind::None) os << "    @java.lang.SuppressWarnings(\"unchecked\")\n";
+        if (a.seq_of_kind != SeqOfKind::None || a.contained) os << "    @java.lang.SuppressWarnings(\"unchecked\")\n";
         os << std::format("    public {} {}() {{\n", alt_type(a), n);
         os << std::format("        return index == {} ? ({}) value : null;\n", i, alt_type(a));
         os << "    }\n\n";
@@ -538,12 +537,9 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     auto unsupported = [&](const std::string& what) {
         throw std::logic_error(std::format("emit_sequence: {} {}, not implemented for this backend", asn1, what));
     };
-    for (const auto& m : spec.members) {
-        const char* gap = m.contained ? "a contained value"
-                        : m.has_default && !m.has_default_setter ? "a DEFAULT value of this kind"
-                        : nullptr;
-        if (gap) unsupported(std::format("member '{}' is {}", m.asn1_name, gap));
-    }
+    for (const auto& m : spec.members)
+        if (m.has_default && !m.has_default_setter)
+            unsupported(std::format("member '{}' is a DEFAULT value of this kind", m.asn1_name));
 
     // Row framing (X.690 §8.14), as in emit_choice. `tag` is the tag the
     // member starts with on the wire, which decides whether an OPTIONAL
@@ -573,6 +569,11 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     // is promoted to.
     auto constraints = [&](const SequenceMemberSpec& m) {
         if (!m.tdref.empty()) return m.tdref + ".CONSTRAINTS";
+        if (m.contained) {
+            if (!m.mbuiltin && m.ref_builtin_alias && !m.ref_constraints_owner.empty())
+                return m.ref_constraints_owner + ".CONSTRAINTS";
+            return m.contained_base + ".CONSTRAINTS";
+        }
         if (m.seq_of_kind != SeqOfKind::None)
             return std::format("{}.CONSTRAINTS", escape(synthetic_name(spec.type_name, m.asn1_name)));
         if (!m.mbuiltin && m.ref_is_seq_of) return std::format("{}.CONSTRAINTS", m.mtype);
@@ -595,6 +596,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         bool coll = m.seq_of_kind != SeqOfKind::None;
         types.push_back(coll ? java_collection_type(m.seq_of_kind, m.elem_shape) : m.mtype);
         news.push_back(coll ? java_collection_new(m.seq_of_kind, m.elem_shape)
+                            : m.contained ? std::format("new {}({}::new, {}.CONTAINED)", m.mtype, m.contained_inner, m.contained_base)
                             : m.has_default_setter ? std::format("{}.make()", default_class(member_descriptor_base_name(t, m.mname)))
                             : std::format("new {}()", m.mtype));
     }
@@ -609,8 +611,9 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];
         auto f = framing(m);
-        os << std::format("{}\n            new {}.spec.MemberMeta(\"{}\", {}, {}, {}, {}, {}.spec.XerInstruction.DEFAULT, null)",
-                          i ? "," : "", kWire, m.asn1_name, f.tag, m.optional ? "true" : "false", f.ber, constraints(m), kWire);
+        os << std::format("{}\n            new {}.spec.MemberMeta(\"{}\", {}, {}, {}, {}, {}.spec.XerInstruction.DEFAULT, {})",
+                          i ? "," : "", kWire, m.asn1_name, f.tag, m.optional ? "true" : "false", f.ber, constraints(m), kWire,
+                          m.contained ? m.contained_base + ".CONTAINED" : "null");
     }
     // PER extension additions (X.691 §18.9); BER reads neither list.
     std::string units, group_optional;
@@ -619,8 +622,12 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
                              spec.ext_unit_is_group[u] ? "true" : "false");
     for (size_t i = 0; i < spec.member_group_optional.size(); ++i)
         group_optional += std::format("{}{}", i ? ", " : "", spec.member_group_optional[i] ? "true" : "false");
-    os << std::format("),\n            {}, {}, {}, java.util.List.of({}), java.util.List.of({}), java.util.List.of());\n\n",
-                      spec.ext_at, spec.roms_count, spec.is_set ? "true" : "false", units, group_optional);
+    // Contained members are decoded after the others, so a `when` condition sees its sibling.
+    std::string contained;
+    for (size_t i = 0; i < spec.members.size(); ++i)
+        if (spec.members[i].contained) contained += std::format("{}{}", contained.empty() ? "" : ", ", i);
+    os << std::format("),\n            {}, {}, {}, java.util.List.of({}), java.util.List.of({}), java.util.List.of({}));\n\n",
+                      spec.ext_at, spec.roms_count, spec.is_set ? "true" : "false", units, group_optional, contained);
 
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];
@@ -715,12 +722,12 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
 ///        range and a FROM alphabet are not yet.
 /// @param spec    The member's resolved constraint (see MemberTypeDescriptorSpec).
 /// @param session Per-type output session.
-/// @throws std::logic_error for a contained value or INTEGER storage beyond 64 bits.
+///        A contained field (X.682 §11) also gets `CONTAINED`, its
+///        ContainedSpec row, which its `Containing<T>` value carries.
+/// @throws std::logic_error for INTEGER storage beyond 64 bits.
 void JavaBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const {
     using Kind = MemberTypeDescriptorSpec::Kind;
     std::string name = member_descriptor_base_name(spec.parent_cname, spec.mname);
-    if (spec.contained)
-        throw std::logic_error(std::format("emit_member_type_descriptor: {} holds a contained value, not implemented for this backend", name));
     std::string constraints = std::format("{}.spec.Constraints.UNCONSTRAINED", kWire);
     if (spec.kind == Kind::Integer) {
         bool u64 = spec.storage_kind == IntStorageKind::U64;
@@ -738,9 +745,38 @@ void JavaBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
         constraints = java_size_constraints(spec);
     }
     auto& os = session.buffer(declaration_extension());
-    os << std::format("/** Inline constraint of {{@code {}.{}}} (X.680 §51). */\n", spec.parent_cname, spec.mname);
+    if (spec.contained)
+        os << std::format("/** Contained value of {{@code {}.{}}} (X.682 §11). */\n", spec.parent_cname, spec.mname);
+    else
+        os << std::format("/** Inline constraint of {{@code {}.{}}} (X.680 §51). */\n", spec.parent_cname, spec.mname);
     os << std::format("final class {} {{\n", name);
     os << std::format("    static final {}.spec.Constraints CONSTRAINTS = {};\n\n", kWire, constraints);
+    if (const auto* f = spec.contained) {
+        auto enc = [](sema::ContentsEncoding e) {
+            switch (e) {
+            case sema::ContentsEncoding::Ber:          return "BER";
+            case sema::ContentsEncoding::Cer:          return "CER";
+            case sema::ContentsEncoding::Der:          return "DER";
+            case sema::ContentsEncoding::PerAligned:   return "PER_ALIGNED";
+            case sema::ContentsEncoding::PerUnaligned: return "PER_UNALIGNED";
+            default:                                   return "OUTER";
+            }
+        };
+        auto text = [](sema::ContainedText x) {
+            switch (x) {
+            case sema::ContainedText::Inline:    return "INLINE";
+            case sema::ContainedText::InlineRaw: return "INLINE_RAW";
+            default:                             return "HEX";
+            }
+        };
+        os << std::format("    static final {0}.spec.ContainedSpec CONTAINED = new {0}.spec.ContainedSpec("
+                          "{0}.spec.ContainedEncoding.{1}, {2}, \"{3}\", {4}, {5}L, {6}, {0}.spec.ContainedText.{7}, "
+                          "{0}.spec.ContainedText.{8}, {9});\n\n",
+                          kWire, enc(f->encoding), f->decode == sema::ContainedDecode::Eager ? "true" : "false",
+                          escape_string_literal(f->decoder), spec.contained_when_index, f->when ? f->when->value : 0,
+                          f->on_error == sema::ContainedOnError::Fail ? "true" : "false", text(f->xer), text(f->jer),
+                          sema::builtin_decoder_index(f->decoder));
+    }
     os << std::format("    private {}() {{\n    }}\n}}\n\n", name);
 }
 

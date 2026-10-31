@@ -2335,7 +2335,10 @@ SequenceSpec Generator::emit_sequence_definition(const ast::TypeDef& def, TypeOu
         row.is_explicit = tag_result.is_explicit;
         row.resolved_tag = tag_result.resolved_tag;
         row.contained = contained_for(m);
-        if (row.contained) row.contained_base = backend_.member_descriptor_base_name(cname, row.mname);
+        if (row.contained) {
+            row.contained_base = backend_.member_descriptor_base_name(cname, row.mname);
+            row.contained_inner = contained_inner_native(*row.contained);
+        }
         row.tdref = emit_member_type_descriptor(m, cname, row.mname, session);
         row.has_default_setter = emit_default_setter(m, cname, row.mname, session);
         row.has_default = (m.marker == ast::Marker::Default);
@@ -2782,6 +2785,7 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.ref_constraints_owner = r.ref_constraints_owner;
             alt.contained = r.contained;
             alt.contained_base = r.contained_base;
+            if (r.contained) alt.contained_inner = contained_inner_native(*r.contained);
             alt.seq_of_kind = r.seq_of_kind;
             alt.elem_shape = r.elem_shape;
             spec.alternatives.push_back(std::move(alt));
