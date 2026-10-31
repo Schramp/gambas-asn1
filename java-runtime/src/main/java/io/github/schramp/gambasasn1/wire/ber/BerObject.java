@@ -101,8 +101,27 @@ public final class BerObject {
         }
     }
 
-    /** Decode counterpart of {@link #encodeMemberRef}. */
+    /**
+     * Decode counterpart of {@link #encodeMemberRef}. A SEQUENCE/SET, CHOICE
+     * or SEQUENCE OF/SET OF value enters one nesting level of {@code r}, so
+     * a recursive type (X.680 §3.6.55) cannot recurse past
+     * {@link io.github.schramp.gambasasn1.wire.io.Nesting#MAX_DECODE_DEPTH}.
+     */
     public static void decodeMemberRef(MemberRef m, BerTagging framing, BerReader r) {
+        if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
+            decodeMemberRefLevel(m, framing, r);
+            return;
+        }
+        r.enterLevel();
+        try {
+            decodeMemberRefLevel(m, framing, r);
+        } finally {
+            r.leaveLevel();
+        }
+    }
+
+    /** The per-kind decode {@link #decodeMemberRef} dispatches to once it has counted the level. */
+    private static void decodeMemberRefLevel(MemberRef m, BerTagging framing, BerReader r) {
         switch (m) {
             case MemberRef.Absent a -> {
             }
@@ -117,7 +136,7 @@ public final class BerObject {
                         if (!outer.tag().equals(tag)) {
                             throw new DecodeException("expected EXPLICIT tag " + tag + ", got " + outer.tag(), start);
                         }
-                        decodeEnumerated(slot, ENUMERATED_TAG, new BerReader(outer.value()));
+                        decodeEnumerated(slot, ENUMERATED_TAG, r.nested(outer.value()));
                     }
                     case BerTagging.Unsupported(String reason) -> throw new DecodeException(reason, r.position());
                     default -> decodeEnumerated(slot, ENUMERATED_TAG, r);
@@ -280,7 +299,7 @@ public final class BerObject {
             }
         }
         unmatched.forEach(out::write);
-        return new BerReader(out.toByteArray());
+        return r.nested(out.toByteArray());
     }
 
     /**
@@ -428,7 +447,7 @@ public final class BerObject {
         if (!tlv.tag().matchesIdentifier(tag)) {
             throw new DecodeException("expected tag " + tag + ", got " + tlv.tag(), start);
         }
-        return new BerReader(tlv.value());
+        return r.nested(tlv.value());
     }
 
     /** A tag's contents hold exactly one encoding (X.690 §8.14.2). */

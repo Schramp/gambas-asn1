@@ -1972,8 +1972,12 @@ set(java_leg_default_ber_PDUS
     Rec Unordered)
 set(java_leg_ext_ber_PDUS
     V1 V2 Outer1 Outer2 S1 S2)
+set(java_leg_recursion_ber_PDUS
+    List Tree A B)
+set(java_leg_recursion_choice_ber_PDUS
+    Expr)
 set(java_leg_outputs)
-foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber)
+foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})

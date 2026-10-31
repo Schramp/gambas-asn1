@@ -2,16 +2,50 @@ package io.github.schramp.gambasasn1.wire.ber;
 
 import io.github.schramp.gambasasn1.wire.io.ByteSource;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
+import io.github.schramp.gambasasn1.wire.io.Nesting;
 
 /**
  * BER input: reads one TLV at a time from a {@link ByteSource}. Every
- * malformed input ends in a {@link DecodeException}.
+ * malformed input ends in a {@link DecodeException}. The reader also
+ * carries the constructed nesting depth of the decode using it
+ * ({@link Nesting}).
  */
 public final class BerReader {
     private final ByteSource src;
+    private int depth;
 
     public BerReader(ByteSource src) {
         this.src = src;
+    }
+
+    /** A reader over a nested value's bytes, at this reader's depth. */
+    public BerReader nested(ByteSource contents) {
+        BerReader r = new BerReader(contents);
+        r.depth = depth;
+        return r;
+    }
+
+    /** {@link #nested(ByteSource)} over a copy of the given bytes. */
+    public BerReader nested(byte[] contents) {
+        return nested(new ByteSource(contents));
+    }
+
+    /**
+     * Enters one constructed nesting level.
+     *
+     * @throws DecodeException when the decode is already
+     *         {@link Nesting#MAX_DECODE_DEPTH} levels deep
+     */
+    public void enterLevel() {
+        if (depth >= Nesting.MAX_DECODE_DEPTH) {
+            throw new DecodeException(Nesting.tooDeep(), position());
+        }
+        depth++;
+    }
+
+    /** Leaves the level the matching {@link #enterLevel()} entered. */
+    public void leaveLevel() {
+        depth--;
     }
 
     public BerReader(byte[] data) {
