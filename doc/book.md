@@ -2011,6 +2011,15 @@ byte (`orig vs java.BER(orig)`). It needs a JDK 21 `javac`/`java` on `PATH`
 is skipped with the compiler's message; the summary counts the targets the
 leg ran on and skipped. CI runs the sweep with `--java`.
 
+A type assignment that only references another type (`A ::= B`) becomes
+`public class A extends B {}`: Java has no type alias, so the subclass keeps
+the ASN.1 name and shares B's tables, as the C++ alias does. Generated
+classes are therefore not `final`.
+
+The full ETSI LI PS-PDU module set generates and compiles in Java (`-Xlint:all
+-Werror`); `java_legs` compiles it as package `gen.etsi`, and the cpp/java
+table diff covers it.
+
 ### Commits
 
 - One logical change per commit.

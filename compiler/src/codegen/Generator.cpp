@@ -54,16 +54,9 @@ static void write_if_changed(const fs::path& path, const std::string& content) {
 
 // ---------------------------------------------------------------------------
 
-// Linux NAME_MAX is 255; .hpp/.cpp extensions take 4 bytes. When cname exceeds
-// 240 chars, truncate to 220 and append a deterministic FNV-1a 32-bit hash so
-// the filename fits on any POSIX filesystem.
+// See bounded_file_stem (Generator.hpp).
 static std::string filename_for(const std::string& cname) {
-    if (cname.size() <= 240) return cname;
-    uint32_t h = 2166136261u;
-    for (unsigned char c : cname) { h ^= c; h *= 16777619u; }
-    char suffix[10];
-    snprintf(suffix, sizeof(suffix), "_%08x", h);
-    return cname.substr(0, 220) + suffix;
+    return bounded_file_stem(cname);
 }
 
 /// @brief Whether a type is an ENUMERATED written inline with its own

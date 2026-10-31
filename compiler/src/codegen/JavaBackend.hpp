@@ -56,8 +56,11 @@ public:
     ///                declares (`--package`); empty for the unnamed package.
     explicit JavaBackend(std::string package = {}) : package_(std::move(package)) {}
 
+    /// @brief A public class must live in the file of its own name (JLS
+    ///        §7.6), so an overlong name is shortened as its file is
+    ///        (bounded_file_stem); every reference goes through here.
     std::string type_name(std::string_view asn1_name) const override {
-        return java_escape(to_cpp_name(asn1_name));
+        return bounded_file_stem(java_escape(to_cpp_name(asn1_name)));
     }
 
     std::string member_name(std::string_view asn1_name,
@@ -78,7 +81,7 @@ public:
 
     std::string synthetic_name(const std::string& parent,
                                 const std::string& member_name) const override {
-        return make_synthetic_name(parent, member_name);
+        return bounded_file_stem(make_synthetic_name(parent, member_name));
     }
 
     std::string member_descriptor_base_name(const std::string& parent_cname,
@@ -134,6 +137,8 @@ public:
                                   TypeOutputSession&) const override {}
     void emit_type_reference(const std::string& type_name, const std::string& filename,
                              TypeOutputSession& session) const override;
+    void emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
+                                        TypeOutputSession& session) const override;
     std::string native_int_type(IntStorageKind kind) const override;
     std::string native_builtin_type(ast::BuiltinType bt) const override;
     void emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const override;
