@@ -1,5 +1,6 @@
 package io.github.schramp.gambasasn1.wire.ber;
 
+import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.io.ByteSource;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.Nesting;
@@ -8,21 +9,34 @@ import io.github.schramp.gambasasn1.wire.io.Nesting;
  * BER input: reads one TLV at a time from a {@link ByteSource}. Every
  * malformed input ends in a {@link DecodeException}. The reader also
  * carries the constructed nesting depth of the decode using it
- * ({@link Nesting}).
+ * ({@link Nesting}) and its contained-value settings.
  */
 public final class BerReader {
     private final ByteSource src;
     private int depth;
+    private ContainedOptions contained;
 
     public BerReader(ByteSource src) {
         this.src = src;
     }
 
-    /** A reader over a nested value's bytes, at this reader's depth. */
+    /** A reader over a nested value's bytes, at this reader's depth and with its contained-value settings. */
     public BerReader nested(ByteSource contents) {
         BerReader r = new BerReader(contents);
         r.depth = depth;
+        r.contained = contained;
         return r;
+    }
+
+    /** Contained-value settings of this decode; null means the defaults. */
+    public ContainedOptions contained() {
+        return contained;
+    }
+
+    /** Sets the contained-value settings; returns this reader. */
+    public BerReader withContained(ContainedOptions options) {
+        contained = options;
+        return this;
     }
 
     /** {@link #nested(ByteSource)} over a copy of the given bytes. */

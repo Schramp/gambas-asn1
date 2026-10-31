@@ -1962,12 +1962,24 @@ special: a member is a reference, and a recursion ends at an OPTIONAL member,
 a CHOICE or a SEQUENCE OF. Decoding counts each SEQUENCE/SET, CHOICE and
 SEQUENCE OF/SET OF level and fails past 256 levels (`Nesting.MAX_DECODE_DEPTH`
 in the runtime package `io`), the limit the C++ and Rust runtimes use. The
-compiler rejects a SEQUENCE or SET with a member of the following
-kinds with
-`emit_sequence: ... not implemented for this backend`:
+compiler rejects a SEQUENCE or SET with a DEFAULT value other than a BOOLEAN,
+INTEGER (up to 64 bits), character string, ENUMERATED or REAL one with
+`emit_sequence: ... not implemented for this backend`.
 
-- DEFAULT values other than BOOLEAN, INTEGER (up to 64 bits), character string, ENUMERATED and REAL ones;
-- contained values.
+A contained value (an OCTET STRING with `CONTAINING`, X.682 §11, or a
+`--container-config` field) is a `Containing<T>` (runtime package `spec`),
+the same model as the C++ `asn1::Containing<T>`. `bytes()` are the raw octets,
+which stay authoritative: a value decoded and not changed re-encodes byte for
+byte. Decode fills `value()` and `status()` (`DECODED`, `SKIPPED` when a
+`when` condition does not hold or contained decoding is off, `FAILED` with the
+reason in `error()`; `on_error: fail` makes it a decode error instead). `set(v)`
+or a change through `edit()` makes encode write the inner value's encoding.
+The contained members are decoded after the others, so a `when` condition sees
+the sibling member it names. Contained settings for one call go in
+`BerObject.decode(v, der, new ContainedOptions(registry, off))`; a
+`ContainedDecoders` registry adds custom decoders by name beside the built-in
+`plain`, `zero_padding`, `pkcs7` and `none`. An OPTIONAL contained member is
+made with its row: `new Containing<>(Inner::new, Outer.SPEC.members().get(i).contained())`.
 
 A member, alternative or collection element with an inline constraint
 (`INTEGER (0..255)`, `IA5String (SIZE (1..8))`) gets its own constraint table:
@@ -1987,7 +1999,8 @@ in; BER encode writes them in DER order (X.690 §11.6), as asn1c does.
 So far the Java backend emits BOOLEAN, NULL, INTEGER (64-bit storage),
 ENUMERATED, OCTET STRING, BIT STRING, character string, OBJECT IDENTIFIER,
 RELATIVE-OID, UTCTime, GeneralizedTime, REAL, ANY, CHOICE, SEQUENCE and
-SEQUENCE OF / SET OF type assignments, and INTEGER in both signed and unsigned 64-bit storage. The Java
+SEQUENCE OF / SET OF type assignments, INTEGER in both signed and unsigned
+64-bit storage, and contained values under BER. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.
 

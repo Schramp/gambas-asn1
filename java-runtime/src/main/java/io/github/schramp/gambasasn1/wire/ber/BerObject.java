@@ -1,5 +1,7 @@
 package io.github.schramp.gambasasn1.wire.ber;
 
+import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
+import io.github.schramp.gambasasn1.wire.containing.ContainedValues;
 import io.github.schramp.gambasasn1.wire.io.ByteSink;
 import io.github.schramp.gambasasn1.wire.io.ByteSource;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
@@ -7,15 +9,19 @@ import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.AltMeta;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Contained;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
 import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
 import io.github.schramp.gambasasn1.wire.spec.BerDispatch;
 import io.github.schramp.gambasasn1.wire.spec.BerTagging;
 import io.github.schramp.gambasasn1.wire.spec.ChoiceSpec;
+import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
+import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
 import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import io.github.schramp.gambasasn1.wire.spec.SequenceSpec;
+import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -33,8 +39,13 @@ public final class BerObject {
 
     /** Encodes {@code v} with its type's own framing. */
     public static byte[] encode(AsMemberRef v) {
+        return encode(v, null);
+    }
+
+    /** {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults. */
+    public static byte[] encode(AsMemberRef v, ContainedOptions opts) {
         ByteSink out = new ByteSink();
-        encodeMemberRef(v.asMemberRef(), v.berFraming(), out);
+        encodeMemberRef(v.asMemberRef(), v.berFraming(), out, opts);
         return out.toByteArray();
     }
 
@@ -44,6 +55,11 @@ public final class BerObject {
      */
     public static void decode(AsMemberRef v, byte[] data) {
         decode(v, new BerReader(data));
+    }
+
+    /** {@link #decode(AsMemberRef, byte[])} with contained-value settings; null for the defaults. */
+    public static void decode(AsMemberRef v, byte[] data, ContainedOptions opts) {
+        decode(v, new BerReader(data).withContained(opts));
     }
 
     /**
@@ -56,6 +72,15 @@ public final class BerObject {
 
     /** Encodes one member, alternative or element under its row's framing (X.690 §8.14). */
     public static void encodeMemberRef(MemberRef m, BerTagging framing, ByteSink out) {
+        encodeMemberRef(m, framing, out, null);
+    }
+
+    /**
+     * {@link #encodeMemberRef(MemberRef, BerTagging, ByteSink)} with the
+     * contained-value settings {@code opts} (null for the defaults), used when
+     * a modified contained value is re-encoded.
+     */
+    public static void encodeMemberRef(MemberRef m, BerTagging framing, ByteSink out, ContainedOptions opts) {
         switch (m) {
             case MemberRef.Absent a -> {
             }
@@ -73,30 +98,32 @@ public final class BerObject {
             }
             case MemberRef.Composite(Asn1Seq s) -> {
                 switch (framing.resolve()) {
-                    case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeSequence(s, inner));
-                    case BerTagging.Implicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeSequenceContent(s, inner));
+                    case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeSequence(s, inner, opts));
+                    case BerTagging.Implicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeSequenceContent(s, inner, opts));
                     case BerTagging.Unsupported(String reason) -> throw new EncodeException(reason);
-                    default -> encodeSequence(s, out);
+                    default -> encodeSequence(s, out, opts);
                 }
             }
             case MemberRef.SeqOf(Asn1SeqOf q) -> {
                 Tag natural = q.naturalTag();
                 switch (framing.resolve()) {
                     case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag,
-                            inner -> BerWriter.writeTagged(inner, natural, content -> encodeSeqOfContent(q, content)));
-                    case BerTagging.Implicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeSeqOfContent(q, inner));
+                            inner -> BerWriter.writeTagged(inner, natural, content -> encodeSeqOfContent(q, content, opts)));
+                    case BerTagging.Implicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeSeqOfContent(q, inner, opts));
                     case BerTagging.Unsupported(String reason) -> throw new EncodeException(reason);
-                    default -> BerWriter.writeTagged(out, natural, inner -> encodeSeqOfContent(q, inner));
+                    default -> BerWriter.writeTagged(out, natural, inner -> encodeSeqOfContent(q, inner, opts));
                 }
             }
             case MemberRef.Choice(Asn1Choice c) -> {
                 switch (framing.resolve()) {
-                    case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeChoice(c, inner));
-                    case BerTagging.Implicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeChoiceAlternative(c, inner));
+                    case BerTagging.Explicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeChoice(c, inner, opts));
+                    case BerTagging.Implicit(Tag tag) -> BerWriter.writeTagged(out, tag, inner -> encodeChoiceAlternative(c, inner, opts));
                     case BerTagging.Unsupported(String reason) -> throw new EncodeException(reason);
-                    default -> encodeChoice(c, out);
+                    default -> encodeChoice(c, out, opts);
                 }
             }
+            case MemberRef.Contained(Asn1Contained f, ContainedSpec cs) ->
+                BerPrimitive.encode(new Asn1OctetString(ContainedValues.wireOctets(f, cs, ContainedEncoding.BER, opts)), framing, out);
             default -> throw new EncodeException("BER encode of " + m.getClass().getSimpleName() + " is not supported yet");
         }
     }
@@ -183,6 +210,12 @@ public final class BerObject {
                     default -> decodeChoice(c, r);
                 }
             }
+            case MemberRef.Contained(Asn1Contained f, ContainedSpec cs) -> {
+                // The inner value is decoded once the enclosing value is complete.
+                Asn1OctetString raw = new Asn1OctetString();
+                BerPrimitive.decode(raw, framing, r);
+                f.setRawFromWire(raw.get(), ContainedEncoding.BER);
+            }
             default -> throw new DecodeException("BER decode of " + m.getClass().getSimpleName() + " is not supported yet", r.position());
         }
     }
@@ -204,8 +237,8 @@ public final class BerObject {
     }
 
     /** A SEQUENCE value under its type's own tag (X.690 §8.9). */
-    private static void encodeSequence(Asn1Seq s, ByteSink out) {
-        BerWriter.writeTagged(out, s.spec().tag(), inner -> encodeSequenceContent(s, inner));
+    private static void encodeSequence(Asn1Seq s, ByteSink out, ContainedOptions opts) {
+        BerWriter.writeTagged(out, s.spec().tag(), inner -> encodeSequenceContent(s, inner, opts));
     }
 
     /**
@@ -213,13 +246,13 @@ public final class BerObject {
      * row's framing. An absent OPTIONAL member writes nothing (X.690 §8.9.2),
      * and neither does a member equal to its DEFAULT (X.690 §11.5).
      */
-    private static void encodeSequenceContent(Asn1Seq s, ByteSink out) {
+    private static void encodeSequenceContent(Asn1Seq s, ByteSink out, ContainedOptions opts) {
         List<MemberMeta> rows = s.spec().members();
         for (int i = 0; i < rows.size(); i++) {
             if (rows.get(i).optional() && s.isDefaultEqual(i)) {
                 continue;
             }
-            encodeMemberRef(s.getMember(i), rows.get(i).ber(), out);
+            encodeMemberRef(s.getMember(i), rows.get(i).ber(), out, opts);
         }
     }
 
@@ -232,7 +265,8 @@ public final class BerObject {
     /**
      * Decodes a SEQUENCE's contents member by member. An OPTIONAL member is
      * present when the next tag is the one its row starts with; otherwise
-     * it is set absent. Extension members are OPTIONAL rows, and BER
+     * it is set absent. Contained values (X.682 §11.4) are decoded once
+     * every member is in place. Extension members are OPTIONAL rows, and BER
      * frames them like root members (X.690 §8.1.1.4). TLVs left after the
      * last member are unknown extension additions of an extensible type,
      * which are delimited and skipped (X.680 §7.1, §7.2); in a type without
@@ -256,6 +290,9 @@ public final class BerObject {
                 throw new DecodeException("SEQUENCE " + spec.name() + ": mandatory member '" + row.name() + "' missing", r.position());
             }
             decodeMemberRef(s.presentMember(i), row.ber(), r);
+        }
+        if (!spec.containedMembers().isEmpty()) {
+            ContainedValues.decodeMembers(s, ContainedEncoding.BER, r);
         }
         if (spec.extAt() >= 0) {
             while (!r.atEnd()) {
@@ -321,13 +358,13 @@ public final class BerObject {
      * framing (X.690 §8.10). A SET OF's elements go in DER order, by their
      * encodings as unsigned octet strings (X.690 §11.6).
      */
-    private static void encodeSeqOfContent(Asn1SeqOf q, ByteSink out) {
+    private static void encodeSeqOfContent(Asn1SeqOf q, ByteSink out, ContainedOptions opts) {
         BerTagging framing = q.elemBerFraming();
         if (q.naturalTag().number() == UniversalTag.SET && q.size() > 1) {
             List<byte[]> parts = new ArrayList<>(q.size());
             for (int i = 0; i < q.size(); i++) {
                 ByteSink part = new ByteSink();
-                encodeMemberRef(q.get(i), framing, part);
+                encodeMemberRef(q.get(i), framing, part, opts);
                 parts.add(part.toByteArray());
             }
             parts.sort(Arrays::compareUnsigned);
@@ -337,7 +374,7 @@ public final class BerObject {
             return;
         }
         for (int i = 0; i < q.size(); i++) {
-            encodeMemberRef(q.get(i), framing, out);
+            encodeMemberRef(q.get(i), framing, out, opts);
         }
     }
 
@@ -357,12 +394,12 @@ public final class BerObject {
      * A CHOICE value: its own tag, when the type has one, wraps the selected
      * alternative (X.680 §31.2.7: a tagged CHOICE is always EXPLICIT).
      */
-    private static void encodeChoice(Asn1Choice c, ByteSink out) {
+    private static void encodeChoice(Asn1Choice c, ByteSink out, ContainedOptions opts) {
         Tag own = c.spec().ownTag();
         if (own != null) {
-            BerWriter.writeTagged(out, own, inner -> encodeChoiceAlternative(c, inner));
+            BerWriter.writeTagged(out, own, inner -> encodeChoiceAlternative(c, inner, opts));
         } else {
-            encodeChoiceAlternative(c, out);
+            encodeChoiceAlternative(c, out, opts);
         }
     }
 
@@ -370,10 +407,10 @@ public final class BerObject {
      * The selected alternative under its row's framing (X.690 §8.13), or an
      * unknown extension alternative replayed as it was read (X.680 §6).
      */
-    private static void encodeChoiceAlternative(Asn1Choice c, ByteSink out) {
+    private static void encodeChoiceAlternative(Asn1Choice c, ByteSink out, ContainedOptions opts) {
         int i = c.activeIndex();
         if (i >= 0) {
-            encodeMemberRef(c.getActive(), c.spec().alternatives().get(i).ber(), out);
+            encodeMemberRef(c.getActive(), c.spec().alternatives().get(i).ber(), out, opts);
             return;
         }
         Asn1Choice.UnknownExtension ext = c.unknownExtension();
@@ -412,6 +449,9 @@ public final class BerObject {
         if (alt >= 0) {
             AltMeta row = spec.alternatives().get(alt);
             decodeMemberRef(c.select(alt), row.ber(), r);
+            if (spec.hasContained()) {
+                ContainedValues.decodeAlternative(c, ContainedEncoding.BER, r);
+            }
             return;
         }
         if (spec.extAt() < 0) {
