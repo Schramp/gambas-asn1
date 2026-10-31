@@ -9,12 +9,12 @@ import java.util.List;
 
 /**
  * A tests/vectors/*.vectors file: asn1c's DER for each listed XER value and,
- * where the file has it, asn1c's own XER output for that DER.
+ * where the file has them, asn1c's own XER and JER output for that DER.
  */
 record Vectors(List<Vector> rows) {
 
-    /** {@code asn1cXer} is null for a file made before that column existed. */
-    record Vector(String type, String xer, byte[] der, String asn1cXer) {
+    /** {@code asn1cXer} and {@code asn1cJer} are null for a file made before that column existed. */
+    record Vector(String type, String xer, byte[] der, String asn1cXer, String asn1cJer) {
         @Override
         public String toString() {
             return type + " " + xer;
@@ -26,8 +26,9 @@ record Vectors(List<Vector> rows) {
         try {
             return Files.readAllLines(p).stream()
                     .filter(l -> !l.isEmpty() && !l.startsWith("#"))
-                    .map(l -> l.split("\t", 4))
-                    .map(f -> new Vector(f[0], f[1], HexFormat.of().parseHex(f[2]), f.length > 3 ? unescape(f[3]) : null))
+                    .map(l -> l.split("\t", 5))
+                    .map(f -> new Vector(f[0], f[1], HexFormat.of().parseHex(f[2]),
+                            f.length > 3 ? unescape(f[3]) : null, f.length > 4 ? unescape(f[4]) : null))
                     .toList();
         } catch (IOException e) {
             throw new UncheckedIOException(e);

@@ -50,4 +50,22 @@ public abstract sealed class Asn1Arcs implements Asn1Primitive permits Asn1Objec
     public String toString() {
         return Arrays.stream(arcs).mapToObj(Long::toString).collect(Collectors.joining("."));
     }
+
+    /** Dotted arcs; stops at the first part that is not an arc, as the C++ runtime does. */
+    public static long[] parseDotted(String text) {
+        String[] parts = text.split("\\.", -1);
+        long[] out = new long[parts.length];
+        int n = 0;
+        for (String part : parts) {
+            if (part.isEmpty() || !part.chars().allMatch(Character::isDigit) || part.length() > 10) {
+                break;
+            }
+            long v = Long.parseLong(part);
+            if (v > Asn1Arcs.MAX_ARC) {
+                break;
+            }
+            out[n++] = v;
+        }
+        return Arrays.copyOf(out, n);
+    }
 }

@@ -2076,8 +2076,31 @@ false, ContainedText.INLINE_RAW, null))` writes every contained field that
 way, in place of each row's `xer` form, and `XerObject.decode(v, xer, opts)`
 takes the same settings. `XerObject.decodeLenient` also accepts asn1c's text BOOLEAN
 (`true`) and a hex BIT STRING. The vectors in `tests/vectors/` carry asn1c's own XER
-output for each DER value as their last column, which the Java XER legs
-compare with.
+and JER output for each DER value as their last two columns, which the Java XER
+legs compare with byte for byte and the Java JER legs as JSON values (asn1c
+indents its JER).
+
+JER (`JerObject` in runtime package `jer`) writes builtin and ENUMERATED values
+as one compact JSON value in the C++ and Rust runtimes' text, and reads them
+back; SEQUENCE, CHOICE and SEQUENCE OF values follow. A value outside a PDU
+takes its type's constraints as an argument, which pick the BIT STRING and REAL
+forms:
+
+```java
+byte[] jer = JerObject.encode(bits, Bits.CONSTRAINTS);   // {"value":"B380","length":9}
+JerObject.decode(bits, jer, Bits.CONSTRAINTS);
+```
+
+Strings are their octets with `"`, `\` and the C0 controls escaped (RFC 8259
+§7), BMPString and UniversalString included; the decoder takes every JSON
+escape. OCTET STRING, ANY and the hex string kinds are uppercase hex strings,
+OBJECT IDENTIFIER and RELATIVE-OID dotted strings, ENUMERATED its identifier.
+A BIT STRING of a fixed, non-extensible SIZE is a bare hex string, any other
+`{"value":…,"length":…}`. A REAL is the shortest number that converts back to
+the same double (plain for decimal exponents -4 to 14, `d.dddE<exp>` beyond),
+`"NaN"`, `"INF"`, `"-INF"` or `"-0"`; a base-10 REAL is its exact digits, bare
+under a base-10-only constraint and in `{"base10Value":…}` otherwise
+(X.697 §23).
 
 ### Commits
 

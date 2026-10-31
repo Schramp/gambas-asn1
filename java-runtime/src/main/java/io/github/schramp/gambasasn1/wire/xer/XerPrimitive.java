@@ -53,15 +53,15 @@ public final class XerPrimitive {
             case Asn1Real r -> encodeReal(r, w);
             case Asn1OctetString o -> w.hex(o.get());
             case Asn1BitString b -> encodeBits(b, w, depth);
-            case Asn1Arcs a -> w.ascii(arcs(a.get()));
+            case Asn1Arcs a -> w.ascii(a.toString());
             case Asn1Any a -> w.hex(a.get());
             // Not plain text: asn1c writes these as hex, as for an OCTET STRING.
             case Asn1T61String s -> w.hex(s.octets());
             case Asn1VideotexString s -> w.hex(s.octets());
             case Asn1GraphicString s -> w.hex(s.octets());
             case Asn1GeneralString s -> w.hex(s.octets());
-            case Asn1BmpString s -> w.escaped(wideToUtf8(s.octets(), 2));
-            case Asn1UniversalString s -> w.escaped(wideToUtf8(s.octets(), 4));
+            case Asn1BmpString s -> w.escaped(Asn1CharString.wideToUtf8(s.octets(), 2));
+            case Asn1UniversalString s -> w.escaped(Asn1CharString.wideToUtf8(s.octets(), 4));
             case Asn1CharString s -> w.escaped(s.octets());
             default -> throw new IllegalStateException("no XER form for " + p.getClass().getName());
         }
@@ -78,14 +78,14 @@ public final class XerPrimitive {
             case Asn1Real real -> real.set(decodeReal(r));
             case Asn1OctetString o -> o.set(hexPairs(r.readText()));
             case Asn1BitString b -> decodeBits(b, r);
-            case Asn1Arcs a -> a.set(parseArcs(r.readTrimmedText()));
+            case Asn1Arcs a -> a.set(Asn1Arcs.parseDotted(r.readTrimmedText()));
             case Asn1Any a -> a.set(hexPairs(r.readText()));
             case Asn1T61String s -> s.setOctets(hexPairs(r.readText()));
             case Asn1VideotexString s -> s.setOctets(hexPairs(r.readText()));
             case Asn1GraphicString s -> s.setOctets(hexPairs(r.readText()));
             case Asn1GeneralString s -> s.setOctets(hexPairs(r.readText()));
-            case Asn1BmpString s -> s.setOctets(utf8ToWide(r.readText(), 2));
-            case Asn1UniversalString s -> s.setOctets(utf8ToWide(r.readText(), 4));
+            case Asn1BmpString s -> s.setOctets(Asn1CharString.utf8ToWide(r.readText(), 2));
+            case Asn1UniversalString s -> s.setOctets(Asn1CharString.utf8ToWide(r.readText(), 4));
             case Asn1CharString s -> s.setOctets(r.readText());
             default -> throw new DecodeException("XER: no XER form for " + p.getClass().getName(), at);
         }
@@ -332,59 +332,6 @@ public final class XerPrimitive {
             out.write(hi << 4 | lo);
             i += 2;
         }
-        return out.toByteArray();
-    }
-
-    private static String arcs(long[] arcs) {
-        StringBuilder s = new StringBuilder();
-        for (int i = 0; i < arcs.length; i++) {
-            if (i > 0) {
-                s.append('.');
-            }
-            s.append(arcs[i]);
-        }
-        return s.toString();
-    }
-
-    /** Dotted arcs; stops at the first part that is not an arc, as the C++ runtime does. */
-    private static long[] parseArcs(String text) {
-        String[] parts = text.split("\\.", -1);
-        long[] out = new long[parts.length];
-        int n = 0;
-        for (String part : parts) {
-            if (part.isEmpty() || !part.chars().allMatch(Character::isDigit) || part.length() > 10) {
-                break;
-            }
-            long v = Long.parseLong(part);
-            if (v > Asn1Arcs.MAX_ARC) {
-                break;
-            }
-            out[n++] = v;
-        }
-        return java.util.Arrays.copyOf(out, n);
-    }
-
-    /** BMPString / UniversalString octets (big-endian, {@code width} per character) as UTF-8. */
-    private static byte[] wideToUtf8(byte[] octets, int width) {
-        StringBuilder s = new StringBuilder();
-        for (int i = 0; i + width <= octets.length; i += width) {
-            int cp = 0;
-            for (int k = 0; k < width; k++) {
-                cp = cp << 8 | (octets[i + k] & 0xFF);
-            }
-            s.appendCodePoint(Character.isValidCodePoint(cp) ? cp : 0xFFFD);
-        }
-        return s.toString().getBytes(StandardCharsets.UTF_8);
-    }
-
-    /** The reverse of {@link #wideToUtf8}: each character as {@code width} big-endian octets. */
-    private static byte[] utf8ToWide(byte[] utf8, int width) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        new String(utf8, StandardCharsets.UTF_8).codePoints().forEach(cp -> {
-            for (int k = width - 1; k >= 0; k--) {
-                out.write(cp >> (8 * k));
-            }
-        });
         return out.toByteArray();
     }
 }
