@@ -3,7 +3,14 @@ package io.github.schramp.gambasasn1.wire.xer;
 import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
+import io.github.schramp.gambasasn1.wire.ber.BerReader;
 import io.github.schramp.gambasasn1.wire.ber.UniversalTag;
+import io.github.schramp.gambasasn1.wire.containing.ContainedValues;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Contained;
+import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
+import io.github.schramp.gambasasn1.wire.spec.ContainedResult;
+import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
+import io.github.schramp.gambasasn1.wire.spec.ContainedText;
 import io.github.schramp.gambasasn1.wire.spec.AltMeta;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
@@ -18,6 +25,7 @@ import io.github.schramp.gambasasn1.wire.spec.XerInstruction;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
 import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
@@ -93,7 +101,7 @@ public final class XerObject {
                 w.indent(depth).close(name).ascii("\n");
             }
             case MemberRef.SeqOf(Asn1SeqOf q) -> encodeSeqOf(name, q, w, depth);
-            default -> throw new EncodeException("XER encode of " + m.getClass().getSimpleName() + " is not supported yet");
+            case MemberRef.Contained(Asn1Contained f, ContainedSpec cs) -> encodeContained(name, f, cs, w, depth);
         }
     }
 
@@ -249,11 +257,17 @@ public final class XerObject {
                 if (!empty) {
                     r.consumeCloseTag(name);
                 }
+                if (!s.spec().containedMembers().isEmpty()) {
+                    ContainedValues.decodeMembers(s, ContainedEncoding.BER, berAnchor(r));
+                }
             }
             case MemberRef.Choice(Asn1Choice c) -> {
                 r.consumeOpenTag(name);
                 decodeChoiceContent(c, r);
                 r.consumeCloseTag(name);
+                if (c.spec().hasContained()) {
+                    ContainedValues.decodeAlternative(c, ContainedEncoding.BER, berAnchor(r));
+                }
             }
             case MemberRef.SeqOf(Asn1SeqOf q) -> {
                 q.clear();
@@ -262,6 +276,7 @@ public final class XerObject {
                     r.consumeCloseTag(name);
                 }
             }
+            case MemberRef.Contained(Asn1Contained f, ContainedSpec cs) -> decodeContained(name, f, cs, r);
             default -> throw new DecodeException("XER decode of " + m.getClass().getSimpleName() + " is not supported yet", at);
         }
     }
@@ -330,6 +345,71 @@ public final class XerObject {
                 default -> decodeElement(override != null ? override : elementName(q, q.size() - 1, el), el, q.elemXerInstruction(), r);
             }
         }
+    }
+
+    /**
+     * A contained value (X.682 §11): its bytes as hex, or the inner value's
+     * own element in place of the hex (X.680 §22.4), or that followed by
+     * the bytes in an XML comment ({@code INLINE_RAW}, an extension), in the
+     * layout of the C++ runtime. The bytes are in BER, the outer encoding
+     * an XER value of the field stands for.
+     */
+    private static void encodeContained(String name, Asn1Contained f, ContainedSpec cs, XerWriter w, int depth) {
+        byte[] wire = ContainedValues.wireOctets(f, cs, ContainedEncoding.BER, null);
+        AsMemberRef inner = f.value();
+        if (cs.xer() == ContainedText.HEX || inner == null) {
+            w.open(name).hex(wire).close(name).ascii("\n");
+            return;
+        }
+        w.open(name).ascii("\n").indent(depth + 1);
+        encodeElement(inner.ownElementXerName(), inner.asMemberRef(), inner.xerInstruction(), w, depth + 1);
+        if (cs.xer() == ContainedText.INLINE_RAW) {
+            w.indent(depth + 1).ascii("<!-- raw: ").hex(wire).ascii(" -->\n");
+        }
+        w.indent(depth).close(name).ascii("\n");
+    }
+
+    /**
+     * Decode counterpart of {@link #encodeContained}; accepts every form.
+     * An inline value without a raw comment gets its bytes from encoding it.
+     */
+    private static void decodeContained(String name, Asn1Contained f, ContainedSpec cs, XerReader r) {
+        r.consumeOpenTag(name);
+        XerReader.TagInfo peek = r.peekTag();
+        if (peek.name().isEmpty() || peek.closing() || peek.name().startsWith("!")) {
+            f.setRawFromWire(XerPrimitive.hexPairs(r.readText()), ContainedEncoding.BER);
+            r.consumeCloseTag(name);
+            return;
+        }
+        AsMemberRef inner = f.newInner();
+        decodeElement(inner.ownElementXerName(), inner.asMemberRef(), inner.xerInstruction(), r);
+        String comment = r.takeComment();
+        ContainedEncoding enc = cs.encoding() == ContainedEncoding.OUTER ? ContainedEncoding.BER : cs.encoding();
+        byte[] raw;
+        if (comment != null && comment.startsWith("raw:")) {
+            raw = XerPrimitive.hexPairs(comment.substring(4).getBytes(StandardCharsets.US_ASCII));
+        } else {
+            try {
+                raw = ContainedValues.encodeInner(inner, cs, enc, r.contained());
+            } catch (EncodeException ex) {
+                throw new DecodeException(name + ": " + ex.getMessage(), r.position());
+            }
+        }
+        f.setRawFromWire(raw, enc);
+        f.install(ContainedResult.ok(), inner);
+        r.consumeCloseTag(name);
+    }
+
+    /**
+     * A BER reader standing for this XER decode in the contained-value
+     * decoders: no bytes of its own, the same nesting depth and settings.
+     */
+    private static BerReader berAnchor(XerReader r) {
+        BerReader b = new BerReader(new byte[0]).withContained(r.contained());
+        for (int i = 0; i < r.depth(); i++) {
+            b.enterLevel();
+        }
+        return b;
     }
 
     /** The item's identifier as an empty element; a value outside the table as its number. */

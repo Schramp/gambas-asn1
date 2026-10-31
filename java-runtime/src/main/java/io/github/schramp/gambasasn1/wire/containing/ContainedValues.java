@@ -70,6 +70,22 @@ public final class ContainedValues {
         }
     }
 
+    /**
+     * The encoding of a contained field's inner value under {@code encoding},
+     * by the field's decoder: the bytes a value given in XER or JER text
+     * stands for.
+     *
+     * @throws EncodeException when the decoder has no encode side or the value does not encode
+     */
+    public static byte[] encodeInner(AsMemberRef inner, ContainedSpec spec, ContainedEncoding encoding, ContainedOptions opts) {
+        ContainedDecoders reg = ContainedOptions.registry(opts);
+        ContainedDecoders.Entry e = reg.resolve(spec);
+        if (e == null || e.encode() == null) {
+            throw new EncodeException("decoder '" + spec.decoder() + "' cannot encode");
+        }
+        return e.encode().encode(new ContainedEncodeArgs(inner, spec, encoding, reg, opts));
+    }
+
     /** A {@code when} sibling's number: ENUMERATED value, INTEGER, BOOLEAN as 0/1; null otherwise. */
     private static Long siblingValue(MemberRef m) {
         return switch (m) {
