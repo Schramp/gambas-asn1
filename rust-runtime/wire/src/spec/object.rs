@@ -104,6 +104,9 @@ pub struct AltMeta {
     pub name: &'static str,
     pub ber: BerTagging,
     pub constraints: &'static crate::constraints::Constraints,
+    /// X.693 §21 BASE64/UTF8 override of an OCTET STRING alternative,
+    /// read off the row as for `MemberMeta::xer_instruction`.
+    pub xer_instruction: XerInstruction,
     /// Set for a contained alternative (see `MemberMeta::contained`).
     pub contained: Option<&'static crate::containing::ContainedSpec>,
 }
