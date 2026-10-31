@@ -1,5 +1,6 @@
 package io.github.schramp.gambasasn1.wire.xer;
 
+import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 
@@ -13,6 +14,18 @@ public final class XerWriter {
     private static final byte[] HEX = "0123456789ABCDEF".getBytes(StandardCharsets.US_ASCII);
 
     private final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    private ContainedOptions contained;
+
+    /** Contained-value settings of this encode; null for the defaults. */
+    public ContainedOptions contained() {
+        return contained;
+    }
+
+    /** Sets the contained-value settings of this encode. */
+    public XerWriter withContained(ContainedOptions options) {
+        contained = options;
+        return this;
+    }
 
     /** Appends ASCII markup or numbers. */
     public XerWriter ascii(String s) {

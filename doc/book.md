@@ -2065,7 +2065,11 @@ the hex of its bytes, or, when its row's `xer` form is `inline`, as the inner
 value's own element in place of the hex (X.680 §22.4); `inline_raw` adds the
 bytes in a `<!-- raw: … -->` comment. Decode accepts all three. An inline
 value without the comment gets its bytes by encoding it with the field's
-decoder, and the contained members are then decoded as after a BER decode. `XerObject.decodeLenient` also accepts asn1c's text BOOLEAN
+decoder, and the contained members are then decoded as after a BER decode. The
+form can be set for one call: `XerObject.encode(v, new ContainedOptions(null,
+false, ContainedText.INLINE_RAW, null))` writes every contained field that
+way, in place of each row's `xer` form, and `XerObject.decode(v, xer, opts)`
+takes the same settings. `XerObject.decodeLenient` also accepts asn1c's text BOOLEAN
 (`true`) and a hex BIT STRING. The vectors in `tests/vectors/` carry asn1c's own XER
 output for each DER value as their last column, which the Java XER legs
 compare with.

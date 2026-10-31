@@ -1987,9 +1987,11 @@ set(java_leg_xer_alt_instruction_PDUS
     Holder)
 set(java_leg_rust_seqof_base64_elem_PDUS
     Entries)
+set(java_leg_xer_value_list_PDUS
+    VlRec VlTopBool VlTopNull)
 set(java_leg_outputs)
 foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber containing
-        xer_encoding_instr xer_alt_instruction rust_seqof_base64_elem)
+        xer_encoding_instr xer_alt_instruction rust_seqof_base64_elem xer_value_list)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})
