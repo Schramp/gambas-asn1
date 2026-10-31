@@ -2003,6 +2003,13 @@ SEQUENCE OF / SET OF type assignments, INTEGER in both signed and unsigned
 64-bit storage, and contained values under BER. The Java
 legs of the codec tests (`tests/java/`, ctest `java_legs`) check the
 generated code against asn1c's DER in `tests/vectors/`.
+`validation-tools/xval_sweep/xval_sweep.py --java` adds a Java leg to the
+cross-validation sweep: for every target, the C++ randgen records are
+BER-decoded and re-encoded by the Java runtime and must come back byte for
+byte (`orig vs java.BER(orig)`). It needs a JDK 21 `javac`/`java` on `PATH`
+(no Gradle). A target with a construct the Java backend does not emit yet
+is skipped with the compiler's message; the summary counts the targets the
+leg ran on and skipped. CI runs the sweep with `--java`.
 
 ### Commits
 
