@@ -1939,12 +1939,15 @@ p.flag();                          // null
 a default value. An extensible CHOICE keeps an alternative it does not
 know as raw bytes (`unknownExtension()`, `activeIndex()` -1) and writes it
 back unchanged. A tagged CHOICE type is always EXPLICIT (X.680 §31.2.7).
-SEQUENCE/SET and SEQUENCE OF/SET OF alternatives are not emitted yet.
 
 A SEQUENCE becomes a class with one field per member. An OPTIONAL member's
 getter returns null when it is absent, and setting it to null makes it absent;
-a mandatory member always holds a value. Generated equality compares member by
-member. On decode, an OPTIONAL member is present when the next tag is the one
+a mandatory member always holds a value. A member with a DEFAULT value (X.680
+§25.6) starts out holding it, and setting it to null puts the default back; a
+package-private class `<Type>_<member>_DEFAULT` beside the type's class makes
+it. Decode fills a DEFAULT member that is absent with its default, and encode
+leaves out a member equal to it (X.690 §11.5). Generated equality compares
+member by member. On decode, an OPTIONAL member is present when the next tag is the one
 its row starts with: for an untagged CHOICE member, one of the CHOICE's
 alternative tags. A SET is the same class shape with its members in canonical
 tag order (X.680 §8.6): decode accepts its components in any order (X.690
@@ -1953,7 +1956,7 @@ emitted. The compiler rejects a SEQUENCE or SET with a member of the following
 kinds with
 `emit_sequence: ... not implemented for this backend`:
 
-- DEFAULT values;
+- DEFAULT values other than BOOLEAN, INTEGER (up to 64 bits), character string, ENUMERATED and REAL ones;
 - extension markers;
 - recursive member types;
 - contained values.

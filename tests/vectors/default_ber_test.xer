@@ -1,0 +1,7 @@
+# Type<TAB>XER value. make_ber_vectors.py turns each line into asn1c's DER.
+# asn1c writes a REAL equal to its DEFAULT, which DER leaves out (X.690 §11.5), so no row sets ratio to 0.5.
+Rec	<Rec><id>1</id></Rec>
+Rec	<Rec><id>2</id><flag><true/></flag><num>5</num><big>300</big><name>anon</name><color><green/></color><count>7</count></Rec>
+Rec	<Rec><id>3</id><flag><false/></flag><num>0</num><big>9223372036854775807</big><name>x</name><color><blue/></color><count>-1</count><ratio>2</ratio></Rec>
+Unordered	<Unordered><c>z</c></Unordered>
+Unordered	<Unordered><a>2</a><b><true/></b><c></c></Unordered>
