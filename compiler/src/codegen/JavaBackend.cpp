@@ -169,7 +169,7 @@ void JavaBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSes
                                            spec.asn1_name.empty() ? spec.type_name : spec.asn1_name));
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
-    os << std::format("public final class {} implements {}.spec.AsMemberRef {{\n", spec.type_name, kWire);
+    os << std::format("public class {} implements {}.spec.AsMemberRef {{\n", spec.type_name, kWire);
     using BT = ast::BuiltinType;
     // SIZE applies to the string kinds (X.680 §51.5): OCTET STRING, BIT
     // STRING and every restricted character string.
@@ -200,7 +200,7 @@ void JavaBackend::emit_integer(const IntegerSpec& spec, TypeOutputSession& sessi
     uint64_t upper_u64 = spec.semi_constrained ? std::numeric_limits<uint64_t>::max() : spec.upper_u64;
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
-    os << std::format("public final class {} implements {}.spec.AsMemberRef {{\n", spec.type_name, kWire);
+    os << std::format("public class {} implements {}.spec.AsMemberRef {{\n", spec.type_name, kWire);
     os << std::format("    public static final {}.spec.Constraints CONSTRAINTS = {};\n", kWire,
                       java_int_constraints(flags, std::max(spec.range_bits, 0), spec.lower_s64, spec.upper_s64,
                                            u64 ? spec.lower_u64 : 0, u64 ? upper_u64 : 0));
@@ -233,7 +233,7 @@ void JavaBackend::emit_enumerated(const EnumeratedSpec& spec, TypeOutputSession&
 
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
-    os << std::format("public final class {} implements {}.spec.AsMemberRef, {}.spec.EnumSlot {{\n", t, kWire, kWire);
+    os << std::format("public class {} implements {}.spec.AsMemberRef, {}.spec.EnumSlot {{\n", t, kWire, kWire);
     os << std::format("    public static final {0}.spec.EnumSpec ENUM_SPEC = new {0}.spec.EnumSpec(\"{1}\", java.util.List.of(\n",
                       kWire, spec.xer_name);
     for (size_t i = 0; i < spec.sorted_values.size(); ++i) {
@@ -413,7 +413,7 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
 
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
-    os << std::format("public final class {0} implements {1}.spec.Asn1Choice, {1}.spec.Asn1Pdu {{\n", t, kWire);
+    os << std::format("public class {0} implements {1}.spec.Asn1Choice, {1}.spec.Asn1Pdu {{\n", t, kWire);
     os << std::format("    public static final {0}.spec.ChoiceSpec SPEC = new {0}.spec.ChoiceSpec(\"{1}\", java.util.List.of(\n",
                       kWire, spec.xer_name);
     for (size_t i = 0; i < spec.alternatives.size(); ++i) {
@@ -603,7 +603,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
 
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
-    os << std::format("public final class {0} implements {1}.spec.Asn1Seq, {1}.spec.Asn1Pdu {{\n", t, kWire);
+    os << std::format("public class {0} implements {1}.spec.Asn1Seq, {1}.spec.Asn1Pdu {{\n", t, kWire);
     os << std::format("    public static final {0}.spec.SequenceSpec SPEC = new {0}.spec.SequenceSpec(\"{1}\", {2}, java.util.List.of(",
                       kWire, spec.xer_name,
                       spec.tag ? format_tag_literal(*spec.tag)
@@ -858,7 +858,7 @@ void JavaBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session)
 
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
-    os << std::format("public final class {} extends {} implements {}.spec.Asn1Pdu {{\n", t, base, kWire);
+    os << std::format("public class {} extends {} implements {}.spec.Asn1Pdu {{\n", t, base, kWire);
     os << std::format("    public static final {}.spec.Constraints CONSTRAINTS = {};\n", kWire, constraints);
     os << ber_framing_field(spec);
     os << "\n";
@@ -873,6 +873,21 @@ void JavaBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session)
     os << std::format("    public {0}.spec.Constraints pduConstraints() {{\n        return CONSTRAINTS;\n    }}\n", kWire);
     os << ber_framing_method(spec);
     os << "}\n";
+}
+
+/// @brief Emit a type assignment that only references another type
+///        (`A ::= B`, X.680 §16.1) as `public class A extends B {}`. Java has
+///        no type alias, so a subclass keeps the ASN.1 name while every
+///        table (`SPEC`, `CONSTRAINTS`, framing) is B's, as with the C++
+///        alias; generated classes are not final for this reason.
+/// @param type_name   The alias's class name.
+/// @param target_type The referenced type's class name.
+/// @param session     Per-type output session; writes the `.java` buffer.
+void JavaBackend::emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
+                                                 TypeOutputSession& session) const {
+    auto& os = session.buffer(declaration_extension());
+    os << std::format("/** ASN.1: {{@code {} ::= {}}} */\n", type_name, target_type);
+    os << std::format("public class {} extends {} {{\n}}\n", type_name, target_type);
 }
 
 /// @brief Emit a reference to another generated type: nothing, since every

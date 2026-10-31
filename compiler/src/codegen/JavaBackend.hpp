@@ -134,6 +134,8 @@ public:
                                   TypeOutputSession&) const override {}
     void emit_type_reference(const std::string& type_name, const std::string& filename,
                              TypeOutputSession& session) const override;
+    void emit_typeref_alias_declaration(const std::string& type_name, const std::string& target_type,
+                                        TypeOutputSession& session) const override;
     std::string native_int_type(IntStorageKind kind) const override;
     std::string native_builtin_type(ast::BuiltinType bt) const override;
     void emit_declaration_preamble(const std::string& module_comment, TypeOutputSession& session) const override;

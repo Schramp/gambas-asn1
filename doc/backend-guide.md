@@ -176,6 +176,8 @@ Make each decision once, document it in the backend's header, and test it.
 | Collections | reified generics | a typed list per SEQUENCE OF |
 | | type erasure | a typed list for the API, but the walker reaches elements through the SeqOf accessor, never through runtime element-type tests |
 | Decode target | — | decode **in place** into a default-constructed value. Grow collections in place and decode into the new slot; don't build a temporary and copy it in (`d167b3e`). |
+| Type alias (`A ::= B`) | type aliases | `A` names `B`'s type, and every table is `B`'s |
+| | no type aliases, but subclassing | an empty subclass of `B` named `A`; generated classes must not be sealed or final |
 | Default construction | — | every type needs a default value. For ENUMERATED and CHOICE, make the default explicit (`e8d1d72`). |
 
 Performance work comes after correctness, and it is driven by measurement:
