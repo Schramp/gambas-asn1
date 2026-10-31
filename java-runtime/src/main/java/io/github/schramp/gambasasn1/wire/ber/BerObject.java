@@ -213,7 +213,11 @@ public final class BerObject {
     /**
      * Decodes a SEQUENCE's contents member by member. An OPTIONAL member is
      * present when the next tag is the one its row starts with; otherwise
-     * it is set absent. Octets left after the last member are an error.
+     * it is set absent. Extension members are OPTIONAL rows, and BER
+     * frames them like root members (X.690 §8.1.1.4). TLVs left after the
+     * last member are unknown extension additions of an extensible type,
+     * which are delimited and skipped (X.680 §7.1, §7.2); in a type without
+     * an extension marker they are an error.
      */
     private static void decodeSequenceContent(Asn1Seq s, BerReader r, Tag tag) {
         SequenceSpec spec = s.spec();
@@ -234,7 +238,11 @@ public final class BerObject {
             }
             decodeMemberRef(s.presentMember(i), row.ber(), r);
         }
-        if (!r.atEnd()) {
+        if (spec.extAt() >= 0) {
+            while (!r.atEnd()) {
+                r.readTlv();
+            }
+        } else if (!r.atEnd()) {
             throw new DecodeException("SEQUENCE " + spec.name() + ": unexpected octets after its last member", r.position());
         }
     }

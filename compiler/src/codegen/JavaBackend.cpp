@@ -535,7 +535,6 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     auto unsupported = [&](const std::string& what) {
         throw std::logic_error(std::format("emit_sequence: {} {}, not implemented for this backend", asn1, what));
     };
-    if (spec.ext_at >= 0) unsupported("is extensible");
     for (const auto& m : spec.members) {
         const char* gap = m.contained ? "a contained value"
                         : m.has_default && !m.has_default_setter ? "a DEFAULT value of this kind"
@@ -611,8 +610,15 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         os << std::format("{}\n            new {}.spec.MemberMeta(\"{}\", {}, {}, {}, {}, {}.spec.XerInstruction.DEFAULT, null)",
                           i ? "," : "", kWire, m.asn1_name, f.tag, m.optional ? "true" : "false", f.ber, constraints(m), kWire);
     }
-    os << std::format("),\n            {}, {}, {}, java.util.List.of(), java.util.List.of(), java.util.List.of());\n\n",
-                      spec.ext_at, spec.roms_count, spec.is_set ? "true" : "false");
+    // PER extension additions (X.691 §18.9); BER reads neither list.
+    std::string units, group_optional;
+    for (size_t u = 0; u < spec.ext_unit_ends.size(); ++u)
+        units += std::format("{}new {}.spec.ExtUnit({}, {})", u ? ", " : "", kWire, spec.ext_unit_ends[u],
+                             spec.ext_unit_is_group[u] ? "true" : "false");
+    for (size_t i = 0; i < spec.member_group_optional.size(); ++i)
+        group_optional += std::format("{}{}", i ? ", " : "", spec.member_group_optional[i] ? "true" : "false");
+    os << std::format("),\n            {}, {}, {}, java.util.List.of({}), java.util.List.of({}), java.util.List.of());\n\n",
+                      spec.ext_at, spec.roms_count, spec.is_set ? "true" : "false", units, group_optional);
 
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];

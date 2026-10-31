@@ -1951,13 +1951,17 @@ member by member. On decode, an OPTIONAL member is present when the next tag is 
 its row starts with: for an untagged CHOICE member, one of the CHOICE's
 alternative tags. A SET is the same class shape with its members in canonical
 tag order (X.680 §8.6): decode accepts its components in any order (X.690
-§8.11.2), and encode writes them in that order. So far only root members are
-emitted. The compiler rejects a SEQUENCE or SET with a member of the following
+§8.11.2), and encode writes them in that order. Extension additions, including
+the members of an extension addition group, are OPTIONAL members encoded like
+root ones, since BER ignores the extension marker (X.690 §8.1.1.4). Decoding
+an extensible SEQUENCE or SET skips the TLVs left after its last known member:
+the extension additions of a later version of the type (X.680 §7.1). They
+are not kept, so re-encoding leaves them out. In a type without an extension
+marker, such TLVs are an error. The compiler rejects a SEQUENCE or SET with a member of the following
 kinds with
 `emit_sequence: ... not implemented for this backend`:
 
 - DEFAULT values other than BOOLEAN, INTEGER (up to 64 bits), character string, ENUMERATED and REAL ones;
-- extension markers;
 - recursive member types;
 - contained values.
 
