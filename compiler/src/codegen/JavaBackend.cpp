@@ -308,6 +308,25 @@ std::string JavaBackend::native_builtin_type(ast::BuiltinType bt) const {
     return cls;
 }
 
+/// @brief The Java type of a SEQUENCE OF / SET OF member, level by level
+///        from its ElemShape: `SeqOf` or `SetOf` (X.680 §25, §27) around
+///        the element type.
+/// @param kind  The collection kind at this level.
+/// @param elem  The element's shape.
+static std::string java_collection_type(SeqOfKind kind, const ElemShape& elem) {
+    std::string inner = elem.kind == SeqOfKind::None ? elem.leaf_native_type
+                                                     : java_collection_type(elem.kind, *elem.nested);
+    return std::format("{}.spec.{}<{}>", kWire, kind == SeqOfKind::SetOf ? "SetOf" : "SeqOf", inner);
+}
+
+/// @brief A new, empty collection of a SEQUENCE OF / SET OF member, with
+///        the factory of its elements (nested collections included).
+static std::string java_collection_new(SeqOfKind kind, const ElemShape& elem) {
+    std::string factory = elem.kind == SeqOfKind::None ? elem.leaf_native_type + "::new"
+                                                       : "() -> " + java_collection_new(elem.kind, *elem.nested);
+    return std::format("new {}.spec.{}<>({})", kWire, kind == SeqOfKind::SetOf ? "SetOf" : "SeqOf", factory);
+}
+
 /// @brief Emit a CHOICE type assignment (X.680 §28) as a class holding the
 ///        selected alternative's index and value, and the `SPEC` table:
 ///        one `AltMeta` row per alternative in Generator's canonical
@@ -325,9 +344,7 @@ std::string JavaBackend::native_builtin_type(ast::BuiltinType bt) const {
 void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session) const {
     const std::string& t = spec.type_name;
     for (const auto& a : spec.alternatives) {
-        const char* gap = a.contained ? "a contained value"
-                        : (!a.mbuiltin && (a.ref_is_sequence_or_set || a.ref_is_seq_of)) ? "a SEQUENCE/SET or SEQUENCE OF/SET OF"
-                        : nullptr;
+        const char* gap = a.contained ? "a contained value" : nullptr;
         if (gap)
             throw std::logic_error(std::format("emit_choice: alternative '{}' of {} is {}, not implemented for this backend",
                                                a.asn1_name, spec.asn1_name.empty() ? t : spec.asn1_name, gap));
@@ -346,7 +363,8 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         if (rt && rt->tag_is_override)
             return std::format("new {}.spec.BerTagging.{}({})", kWire, a.is_explicit ? "Explicit" : "Implicit",
                                format_tag_literal(*rt));
-        if (is_choice_ref || !rt) return std::format("{}.spec.BerTagging.DELEGATE", kWire);
+        if (is_choice_ref || !rt || (!a.mbuiltin && a.ref_is_sequence_or_set)) return std::format("{}.spec.BerTagging.DELEGATE", kWire);
+        if (a.seq_of_kind != SeqOfKind::None) return std::format("new {}.spec.BerTagging.Implicit({})", kWire, format_tag_literal(*rt));
         if (a.is_explicit) return std::format("new {0}.spec.BerTagging.OfType({1}.BER_FRAMING)", kWire, a.mtype);
         return std::format("new {}.spec.BerTagging.Implicit({})", kWire, format_tag_literal(*rt));
     };
@@ -354,6 +372,9 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
     // emit_member_type_descriptor; a reference uses its type's table.
     auto constraints = [&](const ChoiceAlternativeSpec& a) {
         if (!a.tdref.empty()) return a.tdref + ".CONSTRAINTS";
+        if (a.seq_of_kind != SeqOfKind::None)
+            return std::format("{}.CONSTRAINTS", escape(synthetic_name(spec.type_name, a.asn1_name)));
+        if (!a.mbuiltin && a.ref_is_seq_of) return std::format("{}.CONSTRAINTS", a.mtype);
         if (!a.mbuiltin && (a.ref_kind == TaggedMemberSpec::RefTargetKind::IntegerAlias || a.ref_builtin_alias))
             return std::format("{}.CONSTRAINTS", a.ref_constraints_owner.empty() ? a.mtype : a.ref_constraints_owner);
         return std::format("{}.spec.Constraints.UNCONSTRAINED", kWire);
@@ -383,6 +404,15 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         return n;
     };
     bool extensible = spec.ext_at >= 0;
+    // An inline collection alternative's SeqOf/SetOf type and factory
+    // come from its ElemShape, as for a SEQUENCE member.
+    auto alt_type = [&](const ChoiceAlternativeSpec& a) {
+        return a.seq_of_kind != SeqOfKind::None ? java_collection_type(a.seq_of_kind, a.elem_shape) : a.mtype;
+    };
+    auto alt_factory = [&](const ChoiceAlternativeSpec& a) {
+        return a.seq_of_kind != SeqOfKind::None ? "() -> " + java_collection_new(a.seq_of_kind, a.elem_shape)
+                                                : a.mtype + "::new";
+    };
 
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);
@@ -402,7 +432,7 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
                       spec.ext_at, spec.range_bits);
     os << std::format("    private static final java.util.List<java.util.function.Supplier<{}.spec.AsMemberRef>> FACTORIES = java.util.List.of(\n", kWire);
     for (size_t i = 0; i < spec.alternatives.size(); ++i)
-        os << std::format("            {}::new{}\n", spec.alternatives[i].mtype, i + 1 < spec.alternatives.size() ? "," : ");");
+        os << std::format("            {}{}\n", alt_factory(spec.alternatives[i]), i + 1 < spec.alternatives.size() ? "," : ");");
     os << "\n";
     os << "    private int index = 0;\n";
     os << std::format("    private {}.spec.AsMemberRef value = FACTORIES.get(0).get();\n", kWire);
@@ -413,11 +443,11 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         const auto& a = spec.alternatives[i];
         std::string n = accessor(a);
         os << std::format("    /** ASN.1: {{@code {}}}; null when another alternative is selected. */\n", a.asn1_name);
-        os << std::format("    public {} {}() {{\n", a.mtype, n);
-        os << std::format("        return index == {} ? ({}) value : null;\n", i, a.mtype);
+        os << std::format("    public {} {}() {{\n", alt_type(a), n);
+        os << std::format("        return index == {} ? ({}) value : null;\n", i, alt_type(a));
         os << "    }\n\n";
         os << std::format("    /** Selects {{@code {}}} with value {{@code v}}. */\n", a.asn1_name);
-        os << std::format("    public void {}({} v) {{\n", n, a.mtype);
+        os << std::format("    public void {}({} v) {{\n", n, alt_type(a));
         os << std::format("        index = {};\n", i);
         os << "        value = java.util.Objects.requireNonNull(v);\n";
         if (extensible) os << "        unknown = null;\n";
@@ -483,25 +513,6 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
     os << "        return index < 0 ? -1 : 31 * index + value.asMemberRef().hashCode();\n";
     os << "    }\n";
     os << "}\n";
-}
-
-/// @brief The Java type of a SEQUENCE OF / SET OF member, level by level
-///        from its ElemShape: `SeqOf` or `SetOf` (X.680 §25, §27) around
-///        the element type.
-/// @param kind  The collection kind at this level.
-/// @param elem  The element's shape.
-static std::string java_collection_type(SeqOfKind kind, const ElemShape& elem) {
-    std::string inner = elem.kind == SeqOfKind::None ? elem.leaf_native_type
-                                                     : java_collection_type(elem.kind, *elem.nested);
-    return std::format("{}.spec.{}<{}>", kWire, kind == SeqOfKind::SetOf ? "SetOf" : "SeqOf", inner);
-}
-
-/// @brief A new, empty collection of a SEQUENCE OF / SET OF member, with
-///        the factory of its elements (nested collections included).
-static std::string java_collection_new(SeqOfKind kind, const ElemShape& elem) {
-    std::string factory = elem.kind == SeqOfKind::None ? elem.leaf_native_type + "::new"
-                                                       : "() -> " + java_collection_new(elem.kind, *elem.nested);
-    return std::format("new {}.spec.{}<>({})", kWire, kind == SeqOfKind::SetOf ? "SetOf" : "SeqOf", factory);
 }
 
 /// @brief Emit one SEQUENCE or SET type as a Java class: its `SequenceSpec`
@@ -606,10 +617,10 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         const auto& m = spec.members[i];
         const std::string& n = names[i];
         os << std::format("    /** ASN.1: {{@code {}}}{}. */\n", m.asn1_name, m.optional ? "; null when absent" : "");
-        os << std::format("    public {} {}() {{\n        return {};\n    }}\n\n", types[i], n, n);
+        os << std::format("    public {} {}() {{\n        return this.{};\n    }}\n\n", types[i], n, n);
         os << std::format("    /** Sets {{@code {}}}{}. */\n", m.asn1_name, m.optional ? "; null makes it absent" : "");
         os << std::format("    public void {}({} v) {{\n", n, types[i]);
-        os << std::format("        {} = {};\n    }}\n\n", n, m.optional ? "v" : "java.util.Objects.requireNonNull(v)");
+        os << std::format("        this.{} = {};\n    }}\n\n", n, m.optional ? "v" : "java.util.Objects.requireNonNull(v)");
     }
 
     os << "    @java.lang.Override\n";
@@ -620,9 +631,9 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& n = names[i];
         if (spec.members[i].optional)
-            os << std::format("            case {} -> {} == null ? {}.spec.MemberRef.ABSENT : {}.asMemberRef();\n", i, n, kWire, n);
+            os << std::format("            case {} -> this.{} == null ? {}.spec.MemberRef.ABSENT : this.{}.asMemberRef();\n", i, n, kWire, n);
         else
-            os << std::format("            case {} -> {}.asMemberRef();\n", i, n);
+            os << std::format("            case {} -> this.{}.asMemberRef();\n", i, n);
     }
     os << "            default -> throw new java.lang.IndexOutOfBoundsException(i);\n        };\n    }\n\n";
     os << "    @java.lang.Override\n";
@@ -632,10 +643,10 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         const auto& m = spec.members[i];
         const auto& n = names[i];
         if (m.optional)
-            os << std::format("            case {0} -> {{\n                if ({1} == null) {{\n                    {1} = {2};\n"
-                              "                }}\n                yield {1}.asMemberRef();\n            }}\n", i, n, news[i]);
+            os << std::format("            case {0} -> {{\n                if (this.{1} == null) {{\n                    this.{1} = {2};\n"
+                              "                }}\n                yield this.{1}.asMemberRef();\n            }}\n", i, n, news[i]);
         else
-            os << std::format("            case {} -> {}.asMemberRef();\n", i, n);
+            os << std::format("            case {} -> this.{}.asMemberRef();\n", i, n);
     }
     os << "            default -> throw new java.lang.IndexOutOfBoundsException(i);\n        };\n    }\n\n";
     os << "    @java.lang.Override\n";
@@ -643,7 +654,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     os << "        switch (i) {\n";
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];
-        os << std::format("            case {} -> {} = {};\n", i, names[i], m.optional ? "null" : news[i]);
+        os << std::format("            case {} -> this.{} = {};\n", i, names[i], m.optional ? "null" : news[i]);
     }
     os << "            default -> throw new java.lang.IndexOutOfBoundsException(i);\n        }\n    }\n\n";
     os << "    @java.lang.Override\n";

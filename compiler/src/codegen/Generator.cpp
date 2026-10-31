@@ -2639,6 +2639,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             std::string ref_constraints_owner;
             const sema::ContainedField* contained = nullptr;
             std::string contained_base;
+            SeqOfKind seq_of_kind = SeqOfKind::None;
+            ElemShape elem_shape;
         };
         std::vector<AltRow> rows;
 
@@ -2746,6 +2748,17 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
                              alt_ref_builtin_alias, alt_ref_constraints_owner,
                              contained_for(*m),
                              contained_for(*m) ? backend_.member_descriptor_base_name(cname, mname) : std::string{} });
+            // An inline collection alternative: its kind and element shape,
+            // as a SEQUENCE member's row carries them.
+            if (m->is_seq_of()) {
+                rows.back().seq_of_kind = SeqOfKind::SeqOf;
+                rows.back().elem_shape = build_elem_shape(*std::get<ast::SequenceOfType>(m->body).element,
+                                                          member_synth_name(*m, current_type_, m->name), true);
+            } else if (m->is_set_of()) {
+                rows.back().seq_of_kind = SeqOfKind::SetOf;
+                rows.back().elem_shape = build_elem_shape(*std::get<ast::SetOfType>(m->body).element,
+                                                          member_synth_name(*m, current_type_, m->name), true);
+            }
             ++auto_tag_num;
           }
         }
@@ -2769,6 +2782,8 @@ ChoiceSpec Generator::emit_choice_definition(const ast::TypeDef& def, TypeOutput
             alt.ref_constraints_owner = r.ref_constraints_owner;
             alt.contained = r.contained;
             alt.contained_base = r.contained_base;
+            alt.seq_of_kind = r.seq_of_kind;
+            alt.elem_shape = r.elem_shape;
             spec.alternatives.push_back(std::move(alt));
         }
 
