@@ -780,6 +780,12 @@ struct ChoiceAlternativeSpec : TaggedMemberSpec {
 
     std::string asn1_name;
     std::string tdref;
+    // The alternative's type reaches this CHOICE again (X.680 §3.6.55):
+    // the CHOICE itself, or a SEQUENCE/SET/CHOICE that refers back to it.
+    // Its value cannot be held inline in the CHOICE's own storage, where
+    // that type is still incomplete; CppBackend stores it behind a
+    // std::unique_ptr (BoxedChoiceOps).
+    bool boxed = false;
     // resolved_tag (inherited from TaggedMemberSpec) is
     // populated by Generator::emit_choice_definition, same as
     // SequenceMemberSpec::resolved_tag — nullopt means the alternative's own

@@ -361,7 +361,7 @@ private:
     ///        not a second alternative list). emit_choice_declaration is
     ///        #include emission only.
     void emit_choice(const ast::TypeDef& def, TypeOutputSession& session);
-    void emit_choice_declaration(const ast::TypeDef& def, std::ostream& os);
+    std::vector<std::string> emit_choice_declaration(const ast::TypeDef& def, std::ostream& os);
     ChoiceSpec emit_choice_definition(const ast::TypeDef& def, TypeOutputSession& session);
 
     std::string native_member_type_for(const ast::TypeDef& def) const;
@@ -649,6 +649,12 @@ private:
     bool type_reaches(const ast::TypeDef& from, const std::string& target,
                        std::set<std::string>& visited) const;
     bool member_type_in_cycle(const ast::TypeDef& m, const std::string& enclosing_name) const;
+    /// @brief Whether CHOICE alternative `m` is a class type (SEQUENCE/SET/
+    ///        CHOICE, named or inline) whose structure reaches the CHOICE
+    ///        `choice_name` again (X.680 §3.6.55): its storage cannot need
+    ///        the alternative's type complete inside the CHOICE's own class
+    ///        (ChoiceAlternativeSpec::boxed).
+    bool choice_alternative_in_cycle(const ast::TypeDef& m, const std::string& choice_name) const;
 
     // Cycle detection for a bare top-level TypeRef alias's own #include-vs-
     // forward-declare decision (emit_type_body) — see
