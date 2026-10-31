@@ -175,12 +175,16 @@ def dump_rust(work, files, flags, slot):
 # TableDump.dump on each, compiled against java-runtime's classes.
 
 JAVA_DUMPS_PER_METHOD = 500  # keeps each method under the JVM's 64 KiB code limit
+# A typeref alias (`A ::= B`) is an empty subclass with B's tables, so it
+# has no tables of its own to dump, as a C++ `using` or a Rust `pub type`.
+JAVA_ALIAS = re.compile(r"^public class \w+ extends \w+ \{\n\}", re.M)
 
 
 def dump_java(work, files, flags, slot):
     gen = os.path.join(work, "gen")
     generate(files, [*flags, "--package=gen"], "java", gen)
-    types = sorted(os.path.splitext(n)[0] for n in os.listdir(gen) if n.endswith(".java"))
+    types = sorted(os.path.splitext(n)[0] for n in os.listdir(gen)
+                   if n.endswith(".java") and not JAVA_ALIAS.search(open(os.path.join(gen, n)).read()))
     chunks = [types[i:i + JAVA_DUMPS_PER_METHOD] for i in range(0, len(types), JAVA_DUMPS_PER_METHOD)]
     src = os.path.join(work, "Dump.java")
     with open(src, "w") as f:
