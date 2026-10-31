@@ -50,8 +50,9 @@ Usage:
                    built once) at index i with i mod N == K, after
                    --target/--limit, so N runners can split one sweep
                    without building any schema twice.
-  --java           add the Java leg (BER round trip through the Java
-                   runtime, compiled with plain javac); targets the Java
+  --java           add the Java leg (BER round trip and the XER matrix
+                   through the Java runtime, compiled with plain javac;
+                   asn1c.B2X vs java.B2X when asn1c runs); targets the Java
                    backend cannot emit yet are skipped with a note.
   --asn1c-dir DIR  directory containing the asn1c binary (overrides
                    ASN1C_BIN_DIR env var / PATH / /usr/local/bin search).
@@ -1354,6 +1355,34 @@ def java_roundtrip(java_tools, pdu_type, ber_path, out_path):
     return data, r.stderr.strip()
 
 
+def java_b2x(java_tools, pdu_type, ber_path, out_path):
+    """Java leg: BER file -> XER text, one document per record. Returns
+    (xer_text, stderr)."""
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip", "--b2x",
+                        java_tools["classes"][pdu_type], ber_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    text = ""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            text = f.read().decode(errors=_TEXT_ERRORS)
+    return text, r.stderr.strip()
+
+
+def java_x2b(java_tools, pdu_type, xer_text, in_path, out_path):
+    """Java leg: XER text -> BER bytes, one record per document. Returns
+    (ber_bytes, stderr)."""
+    with open(in_path, "wb") as f:
+        f.write(xer_text.encode(errors=_TEXT_ERRORS))
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip", "--x2b",
+                        java_tools["classes"][pdu_type], in_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    data = b""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            data = f.read()
+    return data, r.stderr.strip()
+
+
 def build_asn1c(target_dir, asn1_files_abs, pdu_types, asn1c_bin, reuse=False, jobs=4):
     """Build asn1c's own converter-example tool for this target — ground
     truth leg (#440). Returns None (not a hard error) whenever asn1c
@@ -1551,9 +1580,11 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
 
     tally(run_comparison("cpp.B2X vs rust.B2X", xer_cpp, xer_rust, verbose))
 
-    # Java leg (--java): BER only so far, so the check is the round trip
-    # of the C++ records through the Java runtime.
+    # Java leg (--java): the BER round trip of the C++ records, then the
+    # same XER matrix as the Rust rows: Java's XER against C++'s, its own
+    # round trip, and both cross combinations.
     java_tools = built.get("java")
+    xer_java = None
     if java_tools is not None:
         label = f"{schema_rel} :: {pdu_type}"
         if "skipped" in java_tools:
@@ -1568,6 +1599,28 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
             if err_java:
                 print(f"  java stderr: {err_java}")
             tally(compare_ber("orig vs java.BER(orig)", ber_orig, ber_java, verbose))
+
+            xer_java, err_java_xer = java_b2x(java_tools, pdu_type, ber_path,
+                                              os.path.join(target_dir, "java.xer"))
+            if err_java_xer:
+                print(f"  java b2x stderr: {err_java_xer}")
+            xer_java = dedent_xer(xer_java)
+            tally(run_comparison("cpp.B2X vs java.B2X", xer_cpp, xer_java, verbose))
+
+            def java_x2b_check(label, xer_text, tool=None):
+                if tool is None:
+                    ber, err = java_x2b(java_tools, pdu_type, xer_text,
+                                        os.path.join(target_dir, "java.x2b.in.xer"),
+                                        os.path.join(target_dir, "java.x2b.ber"))
+                    if err:
+                        print(f"  java x2b stderr: {err}")
+                else:
+                    ber, _ = x2b(tool, pdu_type, xer_text)
+                tally(compare_ber(label, ber_orig, ber, verbose))
+
+            java_x2b_check("orig vs java.X2B(java.XER)", xer_java)
+            java_x2b_check("orig vs java.X2B(cpp.XER)", xer_cpp)
+            java_x2b_check("orig vs cpp.X2B(java.XER)", xer_java, cpp_tools["x2b"])
             java_ran.append(label)
 
     ber_cpp2, _ = x2b(cpp_tools["x2b"], pdu_type, xer_cpp)
@@ -1741,6 +1794,8 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
         # pass/fail like every other check.
         tally(run_comparison("asn1c.B2X vs cpp.B2X", xer_asn1c, xer_cpp, verbose))
         tally(run_comparison("asn1c.B2X vs rust.B2X", xer_asn1c, xer_rust, verbose))
+        if xer_java is not None:
+            tally(run_comparison("asn1c.B2X vs java.B2X", xer_asn1c, xer_java, verbose))
 
         def asn1c_ber_check(label, ber_asn1c):
             if info:
@@ -1864,7 +1919,7 @@ def main():
                      help="comma list of legs to reuse without rebuilding when their "
                           "inputs are unchanged: asn1c, cpp (keyed on schema + tool/runtime signature)")
     ap.add_argument("--java", action="store_true",
-                     help="add the Java leg: BER round trip of every target the Java "
+                     help="add the Java leg: BER round trip and XER matrix of every target the Java "
                           "backend emits (needs a JDK 21 javac/java on PATH); a target "
                           "with a construct the backend does not emit yet is skipped "
                           "with a note")
