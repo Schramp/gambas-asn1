@@ -1302,6 +1302,16 @@ public:
     ///       it's settled.
     virtual bool needs_seqof_wrapper_reference() const { return true; }
 
+    /// @brief Does this backend store an OPTIONAL/DEFAULT or extension
+    ///        SEQUENCE/SET member of class type behind a pointer? Then such
+    ///        a member already ends a type cycle (X.680 §3.6.55), and
+    ///        Generator::choice_alternative_in_cycle stops its by-value
+    ///        walk there instead of boxing a CHOICE alternative on top.
+    ///        CppBackend: yes (`std::unique_ptr` members). Default no, a
+    ///        backend whose optional storage is inline (Rust's `Option<T>`)
+    ///        or whose members are all references.
+    virtual bool optional_member_is_indirect() const { return false; }
+
     /// @brief Does this backend store contained fields (X.682 §11 /
     ///        --container-config) as a value holding the raw bytes and the
     ///        decoded inner value? False: such a field stays a plain OCTET

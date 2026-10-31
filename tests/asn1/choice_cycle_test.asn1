@@ -1,15 +1,21 @@
 -- CHOICE alternatives whose type reaches the CHOICE again (X.680 §3.6.55):
 -- directly (neg), through a SEQUENCE (Sum) and through an inline SEQUENCE
--- OF (list). The CHOICE's header must not need those types complete.
+-- OF (list). The CHOICE's header must not need those types complete. A
+-- cycle that already passes an OPTIONAL member (Wrap.e) needs no further
+-- indirection: `wrap` stays inline in C++, whose OPTIONAL members are
+-- pointers.
 ChoiceCycleTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 
 Expr ::= CHOICE {
     num   INTEGER,
     neg   Expr,
     sum   Sum,
-    list  SEQUENCE OF Expr
+    list  SEQUENCE OF Expr,
+    wrap  Wrap
 }
 
 Sum ::= SEQUENCE { l Expr, r Expr }
+
+Wrap ::= SEQUENCE { e Expr OPTIONAL, n INTEGER }
 
 END

@@ -585,15 +585,72 @@ bool Generator::member_type_in_cycle(const ast::TypeDef& m, const std::string& e
     return type_reaches(*member_def, enclosing_name, visited);
 }
 
+/// @brief The class type a member is held as, and the name a cycle walk
+///        knows it by: its type reference, or for an inline SEQUENCE/SET/
+///        CHOICE the type it is promoted to (generate_inline_types).
+/// @return {nullptr, ""} when the member is not class-typed.
+std::pair<const ast::TypeDef*, std::string> Generator::class_member_target(const ast::TypeDef& m) const {
+    if (m.is_sequence() || m.is_choice() || m.is_set()) {
+        auto promoted = promoted_member_name_.find(&m);
+        return {&m, promoted != promoted_member_name_.end()
+                        ? promoted->second
+                        : std::format("$anon:{}", static_cast<const void*>(&m))};
+    }
+    if (auto* tr = std::get_if<ast::TypeRef>(&m.body)) {
+        auto direct = resolver_.lookup_direct(tr->type_name, current_module_);
+        if (direct && (direct->is_sequence() || direct->is_choice() || direct->is_set()))
+            return {direct.get(), tr->type_name};
+    }
+    return {nullptr, {}};
+}
+
+/// @brief See Generator.hpp. Each member that the walk follows sits inside
+///        its parent's storage, so a path of them back to `target` makes
+///        `target`'s size depend on itself.
+/// @param from    Class type whose members are followed.
+/// @param target  ASN.1 type name looked for.
+/// @param visited Names already followed (cycle guard).
+/// @return True when a by-value path from `from` reaches `target`.
+/// @see X.680 §3.6.55 — recursive definitions.
+bool Generator::reaches_by_value(const ast::TypeDef& from, const std::string& target,
+                                 std::set<std::string>& visited) const {
+    const bool record = from.is_sequence() || from.is_set();
+    const bool optional_indirect = backend_.optional_member_is_indirect();
+    int markers = 0;
+    for (const auto& m : from.members) {
+        if (!m) continue;
+        if (m->is_extension_marker) { ++markers; continue; }
+        // Between the two markers: an extension addition, stored like an
+        // OPTIONAL member.
+        if (record && optional_indirect && (m->is_optional() || markers % 2 == 1)) continue;
+        if (m->is_seq_of() || m->is_set_of()) continue;
+        auto [member_def, key] = class_member_target(*m);
+        if (!member_def) continue;
+        if (!record && member_def == &from) continue;  // a CHOICE's own type: boxed
+        if (key == target) return true;
+        if (!visited.insert(key).second) continue;
+        if (reaches_by_value(*member_def, target, visited)) return true;
+    }
+    return false;
+}
+
 /// @brief See Generator.hpp. A self-referential alternative (`neg Expr`
 ///        inside Expr) is the direct case; `sum Sum` with
-///        `Sum ::= SEQUENCE { l Expr }` the indirect one.
+///        `Sum ::= SEQUENCE { l Expr }` the indirect one. A path through a
+///        member already behind a pointer or in a SEQUENCE OF leaves the
+///        alternative inline: `w Wrap` with
+///        `Wrap ::= SEQUENCE { e Expr OPTIONAL }` is not boxed when the
+///        backend stores OPTIONAL members indirectly.
 /// @param m           CHOICE alternative.
 /// @param choice_name The CHOICE's ASN.1 type name.
 /// @return True when the alternative must not be stored by value.
 /// @see X.680 §3.6.55 — recursive definitions.
 bool Generator::choice_alternative_in_cycle(const ast::TypeDef& m, const std::string& choice_name) const {
-    return is_class_type(m) && member_type_in_cycle(m, choice_name);
+    auto [member_def, key] = class_member_target(m);
+    if (!member_def) return false;
+    if (key == choice_name) return true;
+    std::set<std::string> visited{key};
+    return reaches_by_value(*member_def, choice_name, visited);
 }
 
 // Like type_reaches, but also follows SEQUENCE OF/SET OF element types
