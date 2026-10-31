@@ -97,9 +97,12 @@ public final class ContainedValues {
         };
     }
 
-    /** Decodes one contained field and stores the outcome in it. */
+    /** Decodes one contained field and stores the outcome in it; a field decoded from its inline XER/JER form is kept. */
     private static ContainedResult runOne(Asn1Contained field, ContainedSpec spec, Object outer,
             ContainedEncoding outerEncoding, BerReader parent, String whenFail) {
+        if (field.status() == ContainedStatus.DECODED && field.value() != null) {
+            return ContainedResult.ok();
+        }
         ContainedOptions opts = parent.contained();
         ContainedResult r;
         AsMemberRef inner = null;
