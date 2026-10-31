@@ -191,11 +191,15 @@ public final class BerObject {
 
     /**
      * A SEQUENCE's contents: each present member in table order under its
-     * row's framing; an absent OPTIONAL member writes nothing (X.690 §8.9.2).
+     * row's framing. An absent OPTIONAL member writes nothing (X.690 §8.9.2),
+     * and neither does a member equal to its DEFAULT (X.690 §11.5).
      */
     private static void encodeSequenceContent(Asn1Seq s, ByteSink out) {
         List<MemberMeta> rows = s.spec().members();
         for (int i = 0; i < rows.size(); i++) {
+            if (rows.get(i).optional() && s.isDefaultEqual(i)) {
+                continue;
+            }
             encodeMemberRef(s.getMember(i), rows.get(i).ber(), out);
         }
     }

@@ -1,6 +1,7 @@
 #include "JavaBackend.hpp"
 #include "asn1cpp/codec/Constraints.hpp"
 #include <algorithm>
+#include <cstring>
 #include <format>
 #include <limits>
 #include <stdexcept>
@@ -515,6 +516,11 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
     os << "}\n";
 }
 
+/// @brief The name of the class holding a member's DEFAULT value.
+static std::string default_class(const std::string& base) {
+    return base + "_DEFAULT";
+}
+
 /// @brief Emit one SEQUENCE or SET type as a Java class: its `SequenceSpec`
 ///        table, one field per member (an OPTIONAL member is null when
 ///        absent), accessors, and the `Asn1Seq` reflection the BER walker
@@ -532,7 +538,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     if (spec.ext_at >= 0) unsupported("is extensible");
     for (const auto& m : spec.members) {
         const char* gap = m.contained ? "a contained value"
-                        : m.has_default ? "a DEFAULT value"
+                        : m.has_default && !m.has_default_setter ? "a DEFAULT value of this kind"
                         : m.member_type_in_cycle ? "a recursive type"
                         : nullptr;
         if (gap) unsupported(std::format("member '{}' is {}", m.asn1_name, gap));
@@ -587,7 +593,9 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         names.push_back(accessor(m));
         bool coll = m.seq_of_kind != SeqOfKind::None;
         types.push_back(coll ? java_collection_type(m.seq_of_kind, m.elem_shape) : m.mtype);
-        news.push_back(coll ? java_collection_new(m.seq_of_kind, m.elem_shape) : std::format("new {}()", m.mtype));
+        news.push_back(coll ? java_collection_new(m.seq_of_kind, m.elem_shape)
+                            : m.has_default_setter ? std::format("{}.make()", default_class(member_descriptor_base_name(t, m.mname)))
+                            : std::format("new {}()", m.mtype));
     }
 
     auto& os = session.buffer(declaration_extension());
@@ -608,7 +616,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
 
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];
-        if (m.optional) os << std::format("    private {} {};\n", types[i], names[i]);
+        if (m.optional && !m.has_default_setter) os << std::format("    private {} {};\n", types[i], names[i]);
         else os << std::format("    private {} {} = {};\n", types[i], names[i], news[i]);
     }
     os << "\n";
@@ -616,11 +624,15 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];
         const std::string& n = names[i];
-        os << std::format("    /** ASN.1: {{@code {}}}{}. */\n", m.asn1_name, m.optional ? "; null when absent" : "");
+        os << std::format("    /** ASN.1: {{@code {}}}{}. */\n", m.asn1_name,
+                          m.has_default_setter ? "; its DEFAULT unless set" : m.optional ? "; null when absent" : "");
         os << std::format("    public {} {}() {{\n        return this.{};\n    }}\n\n", types[i], n, n);
-        os << std::format("    /** Sets {{@code {}}}{}. */\n", m.asn1_name, m.optional ? "; null makes it absent" : "");
+        os << std::format("    /** Sets {{@code {}}}{}. */\n", m.asn1_name,
+                          m.has_default_setter ? "; null means its DEFAULT" : m.optional ? "; null makes it absent" : "");
         os << std::format("    public void {}({} v) {{\n", n, types[i]);
-        os << std::format("        this.{} = {};\n    }}\n\n", n, m.optional ? "v" : "java.util.Objects.requireNonNull(v)");
+        os << std::format("        this.{} = {};\n    }}\n\n", n,
+                          m.has_default_setter ? std::format("v == null ? {} : v", news[i])
+                          : m.optional ? "v" : "java.util.Objects.requireNonNull(v)");
     }
 
     os << "    @java.lang.Override\n";
@@ -654,11 +666,18 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     os << "        switch (i) {\n";
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];
-        os << std::format("            case {} -> this.{} = {};\n", i, names[i], m.optional ? "null" : news[i]);
+        os << std::format("            case {} -> this.{} = {};\n", i, names[i], m.optional && !m.has_default_setter ? "null" : news[i]);
     }
     os << "            default -> throw new java.lang.IndexOutOfBoundsException(i);\n        }\n    }\n\n";
     os << "    @java.lang.Override\n";
-    os << "    public boolean isDefaultEqual(int i) {\n        return false;\n    }\n\n";
+    os << "    public boolean isDefaultEqual(int i) {\n        return switch (i) {\n";
+    for (size_t i = 0; i < spec.members.size(); ++i) {
+        const auto& m = spec.members[i];
+        if (!m.has_default_setter) continue;
+        os << std::format("            case {0} -> this.{1}.asMemberRef().equals({2}.make().asMemberRef());\n",
+                          i, names[i], default_class(member_descriptor_base_name(t, m.mname)));
+    }
+    os << "            default -> false;\n        };\n    }\n\n";
     os << "    @java.lang.Override\n";
     os << "    public long validate(int i) {\n        return 0;\n    }\n\n";
     os << "    @java.lang.Override\n";
@@ -715,6 +734,63 @@ void JavaBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
     os << std::format("final class {} {{\n", name);
     os << std::format("    static final {}.spec.Constraints CONSTRAINTS = {};\n\n", kWire, constraints);
     os << std::format("    private {}() {{\n    }}\n}}\n\n", name);
+}
+
+/// @brief Emit a member's DEFAULT value (X.680 §25.6) as a package-private
+///        class beside the type's public one, named
+///        `<member_descriptor_base_name>_DEFAULT`, whose `make()` returns a
+///        new value equal to the default. The value is set through the
+///        member's MemberRef, so a builtin and a builtin alias are filled
+///        the same way. The SEQUENCE starts the member at this value,
+///        refills it when decode finds the member absent, and compares with
+///        it to leave it out of DER (X.690 §11.5).
+/// @param spec        The DEFAULT value.
+/// @param type_name   The member's Java type.
+/// @param parent_name The enclosing type's name.
+/// @param member_name The member's name.
+/// @param session     Per-type output session.
+void JavaBackend::emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
+                                      const std::string& parent_name, const std::string& member_name,
+                                      TypeOutputSession& session) const {
+    using Kind = DefaultValueSpec::Kind;
+    auto prim = [&](const std::string& cls) {
+        return std::format("(({}.types.{}) (({}.spec.MemberRef.Primitive) v.asMemberRef()).value())", kWire, cls, kWire);
+    };
+    std::string set;
+    switch (spec.kind) {
+    case Kind::Bool:
+        set = std::format("{}.set({})", prim("Asn1Boolean"), spec.bool_val ? "true" : "false");
+        break;
+    case Kind::Int:
+        if (spec.int_storage_kind != IntStorageKind::S64 && spec.int_storage_kind != IntStorageKind::U64)
+            throw std::logic_error(std::format("emit_default_setter: {}.{} storage beyond 64 bits is not implemented for this backend",
+                                               parent_name, member_name));
+        set = std::format("{}.set({})", prim(spec.int_storage_kind == IntStorageKind::U64 ? "Asn1UInteger" : "Asn1Integer"),
+                          java_long(spec.int_val));
+        break;
+    case Kind::String:
+        set = std::format("{}.set(\"{}\")", prim("Asn1CharString"), escape_string_literal(spec.string_val));
+        break;
+    case Kind::EnumRef:
+        set = std::format("v.set({}.{}.{})", type_name, escape("Value", {type_name}), escape(value_name(spec.enum_name)));
+        break;
+    case Kind::Real: {
+        // The exact bits, so infinities and -0 (X.680 §21) need no literal form.
+        uint64_t bits;
+        std::memcpy(&bits, &spec.real_val, sizeof bits);
+        set = std::format("{}.set(java.lang.Double.longBitsToDouble(0x{:016x}L))", prim("Asn1Real"), bits);
+        break;
+    }
+    case Kind::None:
+        return;
+    }
+    std::string cls = default_class(member_descriptor_base_name(parent_name, member_name));
+    auto& os = session.buffer(declaration_extension());
+    os << std::format("/** DEFAULT of {{@code {}.{}}} (X.680 §25.6). */\n", parent_name, member_name);
+    os << std::format("final class {} {{\n", cls);
+    os << std::format("    static {} make() {{\n        {} v = new {}();\n        {};\n        return v;\n    }}\n\n",
+                      type_name, type_name, type_name, set);
+    os << std::format("    private {}() {{\n    }}\n}}\n\n", cls);
 }
 
 /// @brief Emit one named SEQUENCE OF / SET OF type as a Java class that

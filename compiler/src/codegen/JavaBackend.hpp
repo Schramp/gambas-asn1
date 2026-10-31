@@ -95,6 +95,9 @@ public:
     void emit_sequence(const SequenceSpec& spec, TypeOutputSession& session) const override;
     void emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session) const override;
     void emit_member_type_descriptor(const MemberTypeDescriptorSpec& spec, TypeOutputSession& session) const override;
+    void emit_default_setter(const DefaultValueSpec& spec, const std::string& type_name,
+                             const std::string& parent_name, const std::string& member_name,
+                             TypeOutputSession& session) const override;
 
     /// @brief A member's own constraint table is the class
     ///        emit_member_type_descriptor emits, named by its base name;
