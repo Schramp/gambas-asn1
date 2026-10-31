@@ -38,7 +38,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * OPTIONAL members its XER holds and re-encodes byte for byte.
  */
 class SequenceBerTest {
-    private static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
+    static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
             Map.entry("Point", Point::new),
             Map.entry("Plain", Plain::new),
             Map.entry("Opt", Opt::new),

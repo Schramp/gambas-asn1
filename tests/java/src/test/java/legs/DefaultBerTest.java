@@ -24,7 +24,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * leaves out a member equal to it (X.690 §11.5).
  */
 class DefaultBerTest {
-    private static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
+    static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
             Map.entry("Rec", Rec::new),
             Map.entry("Unordered", Unordered::new));
 

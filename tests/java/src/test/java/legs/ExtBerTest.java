@@ -27,7 +27,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * a nested type followed by a later member (X.680 §7.3).
  */
 class ExtBerTest {
-    private static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
+    static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
             Map.entry("V1", V1::new),
             Map.entry("V2", V2::new),
             Map.entry("Outer1", Outer1::new),

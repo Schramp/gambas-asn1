@@ -33,7 +33,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * writes them in canonical tag order (X.680 §8.6, X.690 §10.3).
  */
 class SetBerTest {
-    private static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
+    static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
             Map.entry("Rec", Rec::new),
             Map.entry("Mixed", Mixed::new));
 

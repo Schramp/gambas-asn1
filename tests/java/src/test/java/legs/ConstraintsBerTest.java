@@ -25,7 +25,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * unaffected by it.
  */
 class ConstraintsBerTest {
-    private static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
+    static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
             Map.entry("Limits", Limits::new),
             Map.entry("Pick", Pick::new),
             Map.entry("Digits", Digits::new));

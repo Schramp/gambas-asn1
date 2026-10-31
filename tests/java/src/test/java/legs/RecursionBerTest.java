@@ -27,7 +27,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * SEQUENCE OF level counts one.
  */
 class RecursionBerTest {
-    private static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
+    static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
             Map.entry("List", List::new),
             Map.entry("Tree", Tree::new),
             Map.entry("A", A::new),
