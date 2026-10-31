@@ -1,5 +1,5 @@
 // Rust leg of the JER string-escape test (jer_escape_test.asn1, RFC 8259
-// §7, X.697 §23.4 NOTE, X.697 §22); mirrors tests/jer/test_jer_escape.cpp.
+// §7, X.697 §23.4 NOTE, X.697 §38.1); mirrors tests/jer/test_jer_escape.cpp.
 #![allow(non_snake_case)]
 
 include!(concat!(env!("OUT_DIR"), "/lib_paths.rs"));

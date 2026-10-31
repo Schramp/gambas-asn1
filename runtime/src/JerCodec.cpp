@@ -806,7 +806,7 @@ struct StringJerHandler final : IJerTypeHandler {
 /// @brief JER of BMPString (stride 2) and UniversalString (stride 4): a
 ///        JSON string of the characters, stored as big-endian UCS-2 / UCS-4
 ///        code units.
-/// @see X.697 §22 (character string types), X.680 §41.3.
+/// @see X.697 §38.1 (restricted character strings as JSON strings), X.680 (07/2002) §37.15.
 template<int stride>
 struct WideStringJerHandler final : IJerTypeHandler {
     /// @brief Writes the characters as one JSON-escaped UTF-8 string.

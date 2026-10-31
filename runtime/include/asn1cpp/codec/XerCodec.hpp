@@ -388,7 +388,7 @@ inline DecodeResult decode_time_string(XerDecodeStream& s, const TypeDescriptor&
 ///        form XER and JER both write for them.
 /// @param sv  The stored contents octets; a trailing partial unit is ignored.
 /// @return The unescaped UTF-8 text.
-/// @see X.680 §41.3 (BMPString, UniversalString), X.693 §8.2.6, X.697 §22.
+/// @see X.680 (07/2002) §37.15 (BMPString, a subtype of UniversalString), X.697 §38.1.
 template<int stride>
 inline std::string wide_to_utf8(std::string_view sv) {
     static_assert(stride == 2 || stride == 4);

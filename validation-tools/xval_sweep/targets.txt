@@ -175,5 +175,5 @@ tests/asn1/enum_item_names_test.asn1  EinRec
 tests/asn1/xer_layout_test.asn1  XlRoot
 tests/asn1/xer_alt_instruction_test.asn1   Holder
 # BMPString / UniversalString members: their XER and JER are the characters
-# (X.693 §8.2.6, X.697 §22), escaped for XML or JSON respectively.
+# (X.697 §38.1 for JER), escaped for XML or JSON respectively.
 tests/asn1/jer_escape_test.asn1   JeWide
