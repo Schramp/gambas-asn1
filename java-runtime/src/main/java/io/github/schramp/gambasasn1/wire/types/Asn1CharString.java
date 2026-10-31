@@ -1,6 +1,8 @@
 package io.github.schramp.gambasasn1.wire.types;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Objects;
 
@@ -57,5 +59,29 @@ public abstract sealed class Asn1CharString implements Asn1Primitive
     @Override
     public String toString() {
         return get();
+    }
+
+    /** BMPString / UniversalString octets (big-endian, {@code width} per character) as UTF-8. */
+    public static byte[] wideToUtf8(byte[] octets, int width) {
+        StringBuilder s = new StringBuilder();
+        for (int i = 0; i + width <= octets.length; i += width) {
+            int cp = 0;
+            for (int k = 0; k < width; k++) {
+                cp = cp << 8 | (octets[i + k] & 0xFF);
+            }
+            s.appendCodePoint(Character.isValidCodePoint(cp) ? cp : 0xFFFD);
+        }
+        return s.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** The reverse of {@link #wideToUtf8}: each character as {@code width} big-endian octets. */
+    public static byte[] utf8ToWide(byte[] utf8, int width) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        new String(utf8, StandardCharsets.UTF_8).codePoints().forEach(cp -> {
+            for (int k = width - 1; k >= 0; k--) {
+                out.write(cp >> (8 * k));
+            }
+        });
+        return out.toByteArray();
     }
 }
