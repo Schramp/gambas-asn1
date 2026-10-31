@@ -750,6 +750,10 @@ SEQUENCE becomes a parent element whose child elements are the member values; CH
 becomes a single child element named after the chosen alternative; OCTET STRING becomes
 uppercase hex pairs; BIT STRING becomes a binary string of `0` and `1` characters
 (xmlbstring per X.680 §21); BOOLEAN becomes an empty element (`<true/>` or `<false/>`).
+T61String, VideotexString, GraphicString and GeneralString, whose character sets
+are not plain text, and ANY / open-type values (their whole TLV) are written as
+unspaced uppercase hex, as asn1c writes them (`<Teletex>74656C65</Teletex>`);
+decode also accepts whitespace between the pairs.
 
 **Non-standard extensions — lenient decode mode**
 
