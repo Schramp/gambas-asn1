@@ -359,7 +359,9 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
                                format_tag_literal(*rt));
         if (is_choice_ref || !rt || (!a.mbuiltin && a.ref_is_sequence_or_set)) return std::format("{}.spec.BerTagging.DELEGATE", kWire);
         if (a.seq_of_kind != SeqOfKind::None) return std::format("new {}.spec.BerTagging.Implicit({})", kWire, format_tag_literal(*rt));
-        if (a.is_explicit) return std::format("new {0}.spec.BerTagging.OfType({1}.BER_FRAMING)", kWire, a.mtype);
+        if (a.is_explicit)
+            return std::format("new {0}.spec.BerTagging.OfType({1}.BER_FRAMING)", kWire,
+                               a.contained ? a.contained_base : a.mtype);
         return std::format("new {}.spec.BerTagging.Implicit({})", kWire, format_tag_literal(*rt));
     };
     // An inline constraint is the alternative's own table, emitted by
@@ -561,7 +563,9 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
             return {tag, std::format("new {}.spec.BerTagging.{}({})", kWire, m.is_explicit ? "Explicit" : "Implicit", tag)};
         if (is_choice_ref || m.ref_is_sequence_or_set) return {tag, std::format("{}.spec.BerTagging.DELEGATE", kWire)};
         if (m.seq_of_kind != SeqOfKind::None) return {tag, std::format("new {}.spec.BerTagging.Implicit({})", kWire, tag)};
-        if (m.is_explicit) return {tag, std::format("new {0}.spec.BerTagging.OfType({1}.BER_FRAMING)", kWire, m.mtype)};
+        if (m.is_explicit)
+            return {tag, std::format("new {0}.spec.BerTagging.OfType({1}.BER_FRAMING)", kWire,
+                                     m.contained ? m.contained_base : m.mtype)};
         return {tag, std::format("new {}.spec.BerTagging.Implicit({})", kWire, tag)};
     };
     // A collection's SIZE (X.680 §51.5) lives on its named type: the
@@ -653,8 +657,14 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     os << "    @java.lang.Override\n";
     os << std::format("    public {}.spec.SequenceSpec spec() {{\n        return SPEC;\n    }}\n\n", kWire);
     os << "    @java.lang.Override\n";
+    // A switch expression needs at least one arm with a result (JLS
+    // §15.28.1), which an empty SEQUENCE (`SEQUENCE {}`) has none of.
+    const char* open_switch = spec.members.empty() ? "" : "        return switch (i) {\n";
+    const char* close_switch = spec.members.empty()
+        ? "        throw new java.lang.IndexOutOfBoundsException(i);\n    }\n\n"
+        : "            default -> throw new java.lang.IndexOutOfBoundsException(i);\n        };\n    }\n\n";
     os << std::format("    public {}.spec.MemberRef getMember(int i) {{\n", kWire);
-    os << "        return switch (i) {\n";
+    os << open_switch;
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& n = names[i];
         if (spec.members[i].optional)
@@ -662,10 +672,10 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         else
             os << std::format("            case {} -> this.{}.asMemberRef();\n", i, n);
     }
-    os << "            default -> throw new java.lang.IndexOutOfBoundsException(i);\n        };\n    }\n\n";
+    os << close_switch;
     os << "    @java.lang.Override\n";
     os << std::format("    public {}.spec.MemberRef presentMember(int i) {{\n", kWire);
-    os << "        return switch (i) {\n";
+    os << open_switch;
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];
         const auto& n = names[i];
@@ -675,7 +685,7 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
         else
             os << std::format("            case {} -> this.{}.asMemberRef();\n", i, n);
     }
-    os << "            default -> throw new java.lang.IndexOutOfBoundsException(i);\n        };\n    }\n\n";
+    os << close_switch;
     os << "    @java.lang.Override\n";
     os << "    public void setDefault(int i) {\n";
     os << "        switch (i) {\n";
@@ -776,6 +786,13 @@ void JavaBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
                           escape_string_literal(f->decoder), spec.contained_when_index, f->when ? f->when->value : 0,
                           f->on_error == sema::ContainedOnError::Fail ? "true" : "false", text(f->xer), text(f->jer),
                           sema::builtin_decoder_index(f->decoder));
+        // A field whose type is a tagged type assignment carries that
+        // assignment's framing (X.680 §31.2); its row refers to it here,
+        // since the field's own class is the generic Containing<T>.
+        if (spec.contained_tag)
+            os << std::format("    static final {0}.spec.BerTagging BER_FRAMING = new {0}.spec.BerTagging.{1}({2});\n\n",
+                              kWire, spec.contained_is_explicit ? "Explicit" : "Implicit",
+                              format_tag_literal(*spec.contained_tag));
     }
     os << std::format("    private {}() {{\n    }}\n}}\n\n", name);
 }
