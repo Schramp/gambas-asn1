@@ -133,6 +133,18 @@ static std::string java_xer_instruction(ast::XerEncoding enc) {
                        "    }}\n", kWire, name);
 }
 
+/// @brief The `XerInstruction` constant of a SEQUENCE/SET member row: the
+///        X.693 §21 BASE64/UTF8 instruction on the member's own OCTET
+///        STRING, or on the named OCTET STRING type it references.
+static std::string java_member_xer_instruction(const SequenceMemberSpec& m) {
+    ast::XerEncoding enc = ast::XerEncoding::Default;
+    if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::OctetString) enc = m.xer_encoding;
+    else if (!m.mbuiltin && m.ref_builtin_alias && *m.ref_builtin_alias == ast::BuiltinType::OctetString)
+        enc = m.ref_xer_encoding;
+    const char* name = enc == ast::XerEncoding::Base64 ? "BASE64" : enc == ast::XerEncoding::Utf8 ? "UTF8" : "DEFAULT";
+    return std::format("{}.spec.XerInstruction.{}", kWire, name);
+}
+
 /// @brief Emit the members every value-holding generated class shares:
 ///        the `AsMemberRef` answers for a builtin wrapped in `value`.
 /// @param os       The `.java` buffer.
@@ -615,9 +627,9 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     for (size_t i = 0; i < spec.members.size(); ++i) {
         const auto& m = spec.members[i];
         auto f = framing(m);
-        os << std::format("{}\n            new {}.spec.MemberMeta(\"{}\", {}, {}, {}, {}, {}.spec.XerInstruction.DEFAULT, {})",
-                          i ? "," : "", kWire, m.asn1_name, f.tag, m.optional ? "true" : "false", f.ber, constraints(m), kWire,
-                          m.contained ? m.contained_base + ".CONTAINED" : "null");
+        os << std::format("{}\n            new {}.spec.MemberMeta(\"{}\", {}, {}, {}, {}, {}, {})",
+                          i ? "," : "", kWire, m.asn1_name, f.tag, m.optional ? "true" : "false", f.ber, constraints(m),
+                          java_member_xer_instruction(m), m.contained ? m.contained_base + ".CONTAINED" : "null");
     }
     // PER extension additions (X.691 §18.9); BER reads neither list.
     std::string units, group_optional;
