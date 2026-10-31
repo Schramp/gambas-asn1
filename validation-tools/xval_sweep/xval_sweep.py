@@ -50,9 +50,10 @@ Usage:
                    built once) at index i with i mod N == K, after
                    --target/--limit, so N runners can split one sweep
                    without building any schema twice.
-  --java           add the Java leg (BER round trip and the XER matrix
-                   through the Java runtime, compiled with plain javac;
-                   asn1c.B2X vs java.B2X when asn1c runs); targets the Java
+  --java           add the Java leg (BER round trip and the XER and JER
+                   matrices through the Java runtime, compiled with plain
+                   javac; asn1c.B2X vs java.B2X and asn1c.B2J vs java.B2J
+                   when asn1c runs); targets the Java
                    backend cannot emit yet are skipped with a note.
   --asn1c-dir DIR  directory containing the asn1c binary (overrides
                    ASN1C_BIN_DIR env var / PATH / /usr/local/bin search).
@@ -1383,6 +1384,34 @@ def java_x2b(java_tools, pdu_type, xer_text, in_path, out_path):
     return data, r.stderr.strip()
 
 
+def java_b2j(java_tools, pdu_type, ber_path, out_path):
+    """Java leg: BER file -> JER text, one compact record per line. Returns
+    (jer_text, stderr)."""
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip", "--b2j",
+                        java_tools["classes"][pdu_type], ber_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    text = ""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            text = f.read().decode(errors=_TEXT_ERRORS)
+    return text, r.stderr.strip()
+
+
+def java_j2b(java_tools, pdu_type, jer_text, in_path, out_path):
+    """Java leg: JER text -> BER bytes, one record per line. Returns
+    (ber_bytes, stderr)."""
+    with open(in_path, "wb") as f:
+        f.write(jer_text.encode(errors=_TEXT_ERRORS))
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip", "--j2b",
+                        java_tools["classes"][pdu_type], in_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    data = b""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            data = f.read()
+    return data, r.stderr.strip()
+
+
 def build_asn1c(target_dir, asn1_files_abs, pdu_types, asn1c_bin, reuse=False, jobs=4):
     """Build asn1c's own converter-example tool for this target — ground
     truth leg (#440). Returns None (not a hard error) whenever asn1c
@@ -1669,6 +1698,29 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
     ber_jer_cross2, _ = j2b(cpp_tools["j2b"], pdu_type, jer_rust)
     jer_rt_check("orig vs cpp.J2B(rust.JER)", ber_orig, ber_jer_cross2)
 
+    # Java JER: byte-exact against the C++ text, plus the same round-trip
+    # and cross matrix as the Java XER leg.
+    jer_java = None
+    if java_tools and "skipped" not in java_tools and "failed" not in java_tools:
+        jer_java, err_java_jer = java_b2j(java_tools, pdu_type, ber_path,
+                                          os.path.join(target_dir, "java.jer"))
+        if err_java_jer:
+            print(f"  java b2j stderr: {err_java_jer}")
+        tally(run_comparison_jer("cpp.B2J vs java.B2J", jer_cpp, jer_java, verbose))
+
+        def java_j2b_check(label, jer_text):
+            ber, err = java_j2b(java_tools, pdu_type, jer_text,
+                                os.path.join(target_dir, "java.j2b.in.jer"),
+                                os.path.join(target_dir, "java.j2b.ber"))
+            if err:
+                print(f"  java j2b stderr: {err}")
+            jer_rt_check(label, ber_orig, ber)
+
+        java_j2b_check("orig vs java.J2B(java.JER)", jer_java)
+        java_j2b_check("orig vs java.J2B(cpp.JER)", jer_cpp)
+        ber_jer_cross3, _ = j2b(cpp_tools["j2b"], pdu_type, jer_java)
+        jer_rt_check("orig vs cpp.J2B(java.JER)", ber_orig, ber_jer_cross3)
+
     # PER leg — only when the Rust side actually generated the type
     # (build_rust's own per_covered detection; "b2p"/"p2b" keys are absent
     # from rust_tools otherwise). C++ always supports PER
@@ -1831,6 +1883,8 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
 
         jer_asn1c_check("asn1c.B2J vs cpp.B2J", jer_asn1c, jer_cpp, split_a=split_asn1c_jer_records)
         jer_asn1c_check("asn1c.B2J vs rust.B2J", jer_asn1c, jer_rust, split_a=split_asn1c_jer_records)
+        if jer_java is not None:
+            jer_asn1c_check("asn1c.B2J vs java.B2J", jer_asn1c, jer_java, split_a=split_asn1c_jer_records)
 
         # asn1c's own JER round trip ends in its DER encoder: gated the same
         # way as orig vs asn1c.X2B above.
