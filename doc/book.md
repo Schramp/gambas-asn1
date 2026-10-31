@@ -2029,6 +2029,26 @@ null-pointer error, `OutOfMemoryError`, `StackOverflowError`) is a crash and
 fails the target. CI runs a bounded smoke pass (`--fuzz-seeds 3 --mutations
 20`) after each pull-request shard.
 
+XER (`XerObject` in runtime package `xer`) writes a builtin or ENUMERATED type
+assignment as a BASIC-XER document byte for byte as asn1c does, and reads it
+back; SEQUENCE, CHOICE and SEQUENCE OF are not done yet:
+
+```java
+byte[] xer = XerObject.encode(f);   // <Flag><true/></Flag>\n
+XerObject.decode(f, xer);
+```
+
+The text is handled as octets: a character string's octets are written as
+they are, with only `<`, `&` and `>` escaped, and BMPString and
+UniversalString as UTF-8. OCTET STRING, ANY and the TeletexString,
+VideotexString, GraphicString and GeneralString kinds are unspaced hex, BIT
+STRING is `0`/`1` digits 64 to a line, and a REAL is a C `%.15f` with the
+trailing zeros dropped (a base-10 REAL as its exact digits).
+`XerObject.decodeLenient` also accepts asn1c's text BOOLEAN (`true`) and a
+hex BIT STRING. The vectors in `tests/vectors/` carry asn1c's own XER
+output for each DER value as their last column, which the Java XER legs
+compare with.
+
 ### Commits
 
 - One logical change per commit.

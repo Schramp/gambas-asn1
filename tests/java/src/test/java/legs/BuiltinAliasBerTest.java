@@ -98,7 +98,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * decodes it back, under its natural tag, IMPLICIT and EXPLICIT (X.690 §8.14).
  */
 class BuiltinAliasBerTest {
-    private static final Map<String, Supplier<AsMemberRef>> TYPES = Map.ofEntries(
+    static final Map<String, Supplier<AsMemberRef>> TYPES = Map.ofEntries(
             Map.entry("Flag", Flag::new),
             Map.entry("ImplicitFlag", ImplicitFlag::new),
             Map.entry("ExplicitFlag", ExplicitFlag::new),
