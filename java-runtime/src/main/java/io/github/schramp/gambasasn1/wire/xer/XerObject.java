@@ -14,8 +14,10 @@ import io.github.schramp.gambasasn1.wire.spec.EnumSlot;
 import io.github.schramp.gambasasn1.wire.spec.EnumSpec;
 import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
+import io.github.schramp.gambasasn1.wire.spec.XerInstruction;
 import io.github.schramp.gambasasn1.wire.types.Asn1Boolean;
 import io.github.schramp.gambasasn1.wire.types.Asn1Null;
+import io.github.schramp.gambasasn1.wire.types.Asn1OctetString;
 import java.util.List;
 
 /**
@@ -37,7 +39,7 @@ public final class XerObject {
     /** {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults. */
     public static byte[] encode(AsMemberRef v, ContainedOptions opts) {
         XerWriter w = new XerWriter();
-        encodeElement(v.ownElementXerName(), v.asMemberRef(), w, 0);
+        encodeElement(v.ownElementXerName(), v.asMemberRef(), v.xerInstruction(), w, 0);
         return w.toByteArray();
     }
 
@@ -57,7 +59,7 @@ public final class XerObject {
     /** Decodes one document from {@code r} into {@code v}. */
     public static void decode(AsMemberRef v, XerReader r) {
         r.skipWhitespace();
-        decodeElement(v.ownElementXerName(), v.asMemberRef(), r);
+        decodeElement(v.ownElementXerName(), v.asMemberRef(), v.xerInstruction(), r);
     }
 
     /**
@@ -65,14 +67,18 @@ public final class XerObject {
      * caller writes the indent before it. A constructed value's inner lines
      * are indented from {@code depth} (X.693 §8.3, in asn1c's layout).
      */
-    static void encodeElement(String name, MemberRef m, XerWriter w, int depth) {
+    static void encodeElement(String name, MemberRef m, XerInstruction ins, XerWriter w, int depth) {
         switch (m) {
             case MemberRef.Absent a -> {
             }
             case MemberRef.Unsupported(String reason) -> throw new EncodeException(reason);
             case MemberRef.Primitive(var p) -> {
                 w.open(name);
-                XerPrimitive.encode(p, w, depth);
+                if (p instanceof Asn1OctetString o) {
+                    XerPrimitive.encodeOctets(o.get(), ins, w);
+                } else {
+                    XerPrimitive.encode(p, w, depth);
+                }
                 w.close(name).ascii("\n");
             }
             case MemberRef.Enumerated(EnumSlot slot, EnumSpec spec) -> {
@@ -106,7 +112,7 @@ public final class XerObject {
                 any = true;
             }
             w.indent(depth + 1);
-            encodeElement(members.get(i).name(), m, w, depth + 1);
+            encodeElement(members.get(i).name(), m, members.get(i).xerInstruction(), w, depth + 1);
         }
         if (any) {
             w.indent(depth);
@@ -125,7 +131,8 @@ public final class XerObject {
             throw new EncodeException("CHOICE " + c.spec().name() + ": no alternative selected");
         }
         w.ascii("\n").indent(depth + 1);
-        encodeElement(c.spec().alternatives().get(i).name(), c.getActive(), w, depth + 1);
+        AltMeta alt = c.spec().alternatives().get(i);
+        encodeElement(alt.name(), c.getActive(), alt.xerInstruction(), w, depth + 1);
     }
 
     /**
@@ -156,7 +163,7 @@ public final class XerObject {
                     w.ascii("\n");
                 }
                 w.indent(depth + 1);
-                encodeElement(override != null ? override : elementName(q, i, el), el, w, depth + 1);
+                encodeElement(override != null ? override : elementName(q, i, el), el, q.elemXerInstruction(), w, depth + 1);
             }
         }
         w.indent(depth).close(name).ascii("\n");
@@ -199,29 +206,34 @@ public final class XerObject {
     }
 
     /** Decode counterpart of {@link #encodeElement}: consumes element {@code name}. */
-    static void decodeElement(String name, MemberRef m, XerReader r) {
+    static void decodeElement(String name, MemberRef m, XerInstruction ins, XerReader r) {
         if (!(m instanceof MemberRef.Composite || m instanceof MemberRef.Choice || m instanceof MemberRef.SeqOf)) {
-            decodeElementLevel(name, m, r);
+            decodeElementLevel(name, m, ins, r);
             return;
         }
         r.enterLevel();
         try {
-            decodeElementLevel(name, m, r);
+            decodeElementLevel(name, m, ins, r);
         } finally {
             r.leaveLevel();
         }
     }
 
-    private static void decodeElementLevel(String name, MemberRef m, XerReader r) {
+    private static void decodeElementLevel(String name, MemberRef m, XerInstruction ins, XerReader r) {
         int at = r.position();
         switch (m) {
             case MemberRef.Unsupported(String reason) -> throw new DecodeException(reason, at);
             case MemberRef.Primitive(var p) -> {
-                if (r.consumeOpenOrEmptyTag(name)) {
-                    XerPrimitive.decode(p, new XerReader(new byte[0], r.lenient()));
+                boolean empty = r.consumeOpenOrEmptyTag(name);
+                XerReader content = empty ? new XerReader(new byte[0], r.lenient()) : r;
+                if (p instanceof Asn1OctetString o) {
+                    o.set(XerPrimitive.decodeOctets(ins, content));
+                } else {
+                    XerPrimitive.decode(p, content);
+                }
+                if (empty) {
                     return;
                 }
-                XerPrimitive.decode(p, r);
                 r.skipWhitespace();
                 r.consumeCloseTag(name);
             }
@@ -272,7 +284,7 @@ public final class XerObject {
             } else if (empty) {
                 throw new DecodeException("XER " + s.spec().name() + ": missing member " + meta.name(), r.position());
             }
-            decodeElement(meta.name(), s.presentMember(i), r);
+            decodeElement(meta.name(), s.presentMember(i), meta.xerInstruction(), r);
         }
     }
 
@@ -282,7 +294,7 @@ public final class XerObject {
         List<AltMeta> alts = c.spec().alternatives();
         for (int i = 0; i < alts.size(); i++) {
             if (alts.get(i).name().equals(peek.name()) && !peek.closing()) {
-                decodeElement(peek.name(), c.select(i), r);
+                decodeElement(peek.name(), c.select(i), alts.get(i).xerInstruction(), r);
                 return;
             }
         }
@@ -315,7 +327,7 @@ public final class XerObject {
                         r.leaveLevel();
                     }
                 }
-                default -> decodeElement(override != null ? override : elementName(q, q.size() - 1, el), el, r);
+                default -> decodeElement(override != null ? override : elementName(q, q.size() - 1, el), el, q.elemXerInstruction(), r);
             }
         }
     }

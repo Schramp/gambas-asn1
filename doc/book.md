@@ -2052,8 +2052,12 @@ A SEQUENCE or SET member, CHOICE alternative or SEQUENCE OF element is an
 element of its own, one level (four spaces) deeper; a SEQUENCE OF BOOLEAN,
 ENUMERATED or NULL lists bare values (X.680 §25.5). An OPTIONAL or DEFAULT
 member is present on decode when the next element names it, and otherwise
-gets its DEFAULT. Contained values and ENCODING-CONTROL instructions are not
-done yet. `XerObject.decodeLenient` also accepts asn1c's text BOOLEAN
+gets its DEFAULT. An OCTET STRING under an X.693 §21 BASE64 or UTF8
+instruction (inline, on a named type, or in an ENCODING-CONTROL block) is
+written as Base64 or as UTF-8 text with the C0 controls as empty elements
+(`<dc3/>`), wherever it is used: SEQUENCE member, CHOICE alternative,
+SEQUENCE OF element or the document itself. Contained values are not done
+yet. `XerObject.decodeLenient` also accepts asn1c's text BOOLEAN
 (`true`) and a hex BIT STRING. The vectors in `tests/vectors/` carry asn1c's own XER
 output for each DER value as their last column, which the Java XER legs
 compare with.

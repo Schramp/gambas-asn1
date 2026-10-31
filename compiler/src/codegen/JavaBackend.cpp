@@ -133,10 +133,10 @@ static std::string java_xer_instruction(ast::XerEncoding enc) {
                        "    }}\n", kWire, name);
 }
 
-/// @brief The `XerInstruction` constant of a SEQUENCE/SET member row: the
-///        X.693 §21 BASE64/UTF8 instruction on the member's own OCTET
-///        STRING, or on the named OCTET STRING type it references.
-static std::string java_member_xer_instruction(const SequenceMemberSpec& m) {
+/// @brief The `XerInstruction` constant of a SEQUENCE/SET member or CHOICE
+///        alternative row: the X.693 §21 BASE64/UTF8 instruction on its own
+///        OCTET STRING, or on the named OCTET STRING type it references.
+static std::string java_member_xer_instruction(const TaggedMemberSpec& m) {
     ast::XerEncoding enc = ast::XerEncoding::Default;
     if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::OctetString) enc = m.xer_encoding;
     else if (!m.mbuiltin && m.ref_builtin_alias && *m.ref_builtin_alias == ast::BuiltinType::OctetString)
@@ -432,8 +432,8 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
                       kWire, spec.xer_name);
     for (size_t i = 0; i < spec.alternatives.size(); ++i) {
         const auto& a = spec.alternatives[i];
-        os << std::format("            new {}.spec.AltMeta(\"{}\", {}, {}, {}){}\n", kWire, a.asn1_name, framing(a),
-                          constraints(a), a.contained ? a.contained_base + ".CONTAINED" : "null",
+        os << std::format("            new {}.spec.AltMeta(\"{}\", {}, {}, {}, {}){}\n", kWire, a.asn1_name, framing(a),
+                          constraints(a), java_member_xer_instruction(a), a.contained ? a.contained_base + ".CONTAINED" : "null",
                           i + 1 < spec.alternatives.size() ? "," : "),");
     }
     os << "            java.util.List.of(";
