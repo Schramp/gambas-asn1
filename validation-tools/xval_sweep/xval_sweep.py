@@ -338,16 +338,38 @@ def mutate(data: bytes, rng: random.Random) -> bytes:
     return bytes(b)
 
 
-def fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_clean, opts) -> bool:
+def java_fuzz(java_tools, pdu_type, inputs):
+    """--fuzz Java leg: one JVM decodes every input file (BerRoundtrip
+    --fuzz). Returns crash descriptions: an exception other than the
+    runtime's DecodeException/EncodeException, or the JVM itself failing.
+    The heap is capped so an allocation sized from a corrupted length
+    shows up as OutOfMemoryError instead of swapping."""
+    try:
+        r = subprocess.run(["java", "-Xmx256m", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip",
+                            "--fuzz", java_tools["classes"][pdu_type], *inputs],
+                           capture_output=True, text=True, timeout=FUZZ_TIMEOUT * max(1, len(inputs)))
+    except subprocess.TimeoutExpired:
+        return [f"java: hang (> {FUZZ_TIMEOUT}s per input)"]
+    crashes = [l[len("CRASH "):] for l in r.stdout.splitlines() if l.startswith("CRASH ")]
+    if r.returncode not in (0, 3) or (r.returncode == 3 and not crashes):
+        lines = r.stderr.strip().splitlines()
+        crashes.append(f"java: exit {r.returncode}: {lines[-1] if lines else ''}")
+    return crashes
+
+
+def fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_clean, opts, java_tools=None) -> bool:
     """--fuzz: feed malformed input to every decoder of both runtimes and
     fail the target only on a crash (see crash_of).
     BER: `--fuzz-seeds` randgen runs with BerCorruptor applied
     (--corrupt-percent/--corrupt-mode), a few records each — a decode error
     stops a tool at the first broken record. PER/XER/JER: `--mutations`
     seeded mutations of one valid record each (C++ encoder output), one
-    tool run per mutation (PER keeps its 4-byte record frame)."""
+    tool run per mutation (PER keeps its 4-byte record frame). With a Java
+    leg, its BER decoder gets the corrupted BER files plus `--mutations`
+    mutated BER records, all in one JVM run (java_fuzz)."""
     crashes = []
     runs = 0
+    java_inputs = []
 
     def probe(key, data, what):
         nonlocal runs
@@ -378,6 +400,10 @@ def fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_clean, opts) ->
             data = f.read()
         for key in ("b2x", "b2j", "b2p"):
             probe(key, data, f"corrupted BER, seed {seed}")
+        if java_tools:
+            java_inputs.append(os.path.join(target_dir, f"fuzz_java_{k}.ber"))
+            with open(java_inputs[-1], "wb") as f:
+                f.write(data)
 
     rng = random.Random(opts.seed)
     clean_records = split_ber_records(ber_clean)[:max(1, opts.mutations // 4)]
@@ -396,6 +422,16 @@ def fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_clean, opts) ->
             if fmt == "PER":
                 data = len(data).to_bytes(4, "big") + data
             probe(dec_key, data, f"mutated {fmt} #{m}")
+
+    if java_tools:
+        jrng = random.Random(opts.seed)
+        records = split_ber_records(ber_clean) or [ber_clean]
+        for m in range(opts.mutations):
+            java_inputs.append(os.path.join(target_dir, f"fuzz_java_m{m}.ber"))
+            with open(java_inputs[-1], "wb") as f:
+                f.write(mutate(jrng.choice(records), jrng))
+        runs += len(java_inputs)
+        crashes += [f"java BER: {c}" for c in java_fuzz(java_tools, pdu_type, java_inputs)]
 
     for c in crashes:
         print(f"  CRASH: {c}")
@@ -1460,7 +1496,16 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
     if expect_errors:
         return check_expected_errors(cpp_tools, rust_tools, pdu_type, ber_path)
     if fuzz is not None:
-        return fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_orig, fuzz)
+        java_fuzz_tools = built.get("java")
+        if java_fuzz_tools is not None:
+            label = f"{schema_rel} :: {pdu_type}"
+            if "classes" in java_fuzz_tools:
+                java_ran.append(label)
+            else:
+                print(f"  java leg: skipped ({java_fuzz_tools.get('skipped', 'build failed')})")
+                java_skipped.append(label)
+                java_fuzz_tools = None
+        return fuzz_target(cpp_tools, rust_tools, pdu_type, target_dir, ber_orig, fuzz, java_fuzz_tools)
 
     xer_cpp, err_cpp = b2x_file(cpp_tools["b2x"], pdu_type, ber_path)
     if err_cpp:

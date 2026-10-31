@@ -245,3 +245,11 @@ jobs:
         run: |
           chmod +x build/compiler/asn1cpp
           python3 validation-tools/xval_sweep/xval_sweep.py --java --no-asn1c -j 2 --shard ${{ matrix.shard }}/4
+
+      # Fuzz smoke run over the builds above: malformed BER/PER/XER/JER into
+      # every C++, Rust and Java decoder; only a crash fails (xval_sweep --fuzz).
+      - name: Fuzz smoke (xval_sweep --fuzz, shard ${{ matrix.shard }}/4)
+        if: matrix.shard != 'full'
+        run: |
+          python3 validation-tools/xval_sweep/xval_sweep.py --java --fuzz --reuse cpp -j 2 \
+            --fuzz-seeds 3 --mutations 20 --shard ${{ matrix.shard }}/4

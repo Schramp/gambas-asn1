@@ -2011,6 +2011,14 @@ byte (`orig vs java.BER(orig)`). It needs a JDK 21 `javac`/`java` on `PATH`
 is skipped with the compiler's message; the summary counts the targets the
 leg ran on and skipped. CI runs the sweep with `--java`.
 
+With `--fuzz --java`, the Java BER decoder gets the same corrupted BER files
+as the C++ and Rust tools, plus `--mutations` byte-mutated BER records, in
+one JVM run per target (heap capped at 256 MB). A `DecodeException` or
+`EncodeException` is the expected outcome; any other throwable (an index or
+null-pointer error, `OutOfMemoryError`, `StackOverflowError`) is a crash and
+fails the target. CI runs a bounded smoke pass (`--fuzz-seeds 3 --mutations
+20`) after each pull-request shard.
+
 ### Commits
 
 - One logical change per commit.
