@@ -2000,6 +2000,25 @@ foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber 
     )
     list(APPEND java_leg_outputs ${gen_dir}/.stamp)
 endforeach()
+# Real-schema build probe: the ETSI LI PS-PDU module set, generated whole
+# (no -pdu filtering beyond the two message roots) into gen.etsi, so the
+# java_legs Gradle run compiles it under -Xlint:all -Werror.
+set(JAVA_ETSI_DIR ${CMAKE_SOURCE_DIR}/examples/sample.source.ETSI-LI-PS-PDU)
+file(GLOB_RECURSE java_etsi_asn1 ${JAVA_ETSI_DIR}/asn1-files/*.asn ${JAVA_ETSI_DIR}/asn1-files/*.asn1)
+list(SORT java_etsi_asn1)
+set(java_etsi_gen ${JAVA_LEGS_GEN_DIR}/gen/etsi)
+add_custom_command(
+    OUTPUT  ${java_etsi_gen}/.stamp
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${java_etsi_gen}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${java_etsi_gen}
+    COMMAND $<TARGET_FILE:asn1cpp> --target=java --package=gen.etsi -pdu=PS-PDU -pdu=EncryptedPayload
+            -fallow-newer-modules --container-config=${JAVA_ETSI_DIR}/container_fields.json
+            ${java_etsi_asn1} -o ${java_etsi_gen}
+    COMMAND ${CMAKE_COMMAND} -E touch ${java_etsi_gen}/.stamp
+    DEPENDS asn1cpp ${java_etsi_asn1} ${JAVA_ETSI_DIR}/container_fields.json
+    COMMENT "Generating Java from the ETSI LI PS-PDU schemas"
+)
+list(APPEND java_leg_outputs ${java_etsi_gen}/.stamp)
 add_custom_target(gen_java_legs ALL DEPENDS ${java_leg_outputs})
 
 if(WITH_JAVA_RUNTIME_TEST)
