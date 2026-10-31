@@ -17,3 +17,6 @@ tests/asn1/containing_test.asn1  Holder  --container-config=tests/asn1/containin
 examples/sample.source.ETSI-LI-PS-PDU/asn1-files  PS-PDU  -fallow-newer-modules --container-config=examples/sample.source.ETSI-LI-PS-PDU/container_fields.json -pdu=PS-PDU -pdu=EncryptedPayload
 tests/asn1/xer_encoding_instr_test.asn1  InlineTest  -pdu=InlineTest -pdu=Base64Payload -pdu=PayloadWrapper -pdu=LegacyBase64 -pdu=StandardBase64 -pdu=NoInstruction -pdu=Utf8Field
 tests/asn1/rust_seqof_base64_elem_test.asn1  Entries  -pdu=Entries
+tests/asn1/real_jer_base_test.asn1  Bases  -pdu=Bases -pdu=Base10 -pdu=Base2
+tests/asn1/real_constraint_test.asn1  Ranges  -pdu=Pct -pdu=Finite -pdu=Ranges
+tests/asn1/real_default_test.asn1  Defaults  -pdu=Temp -pdu=Defaults

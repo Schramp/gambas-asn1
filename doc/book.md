@@ -2078,7 +2078,8 @@ indents its JER).
 
 JER (`JerObject` in runtime package `jer`) writes builtin and ENUMERATED values
 as one compact JSON value in the C++ and Rust runtimes' text, and reads them
-back; SEQUENCE, CHOICE and SEQUENCE OF values follow. A value outside a PDU
+back, and walks SEQUENCE/SET, CHOICE and SEQUENCE OF/SET OF values through
+the same tables as BER and XER. A value outside a PDU
 takes its type's constraints as an argument, which pick the BIT STRING and REAL
 forms:
 
@@ -2097,6 +2098,16 @@ the same double (plain for decimal exponents -4 to 14, `d.dddE<exp>` beyond),
 `"NaN"`, `"INF"`, `"-INF"` or `"-0"`; a base-10 REAL is its exact digits, bare
 under a base-10-only constraint and in `{"base10Value":…}` otherwise
 (X.697 §23).
+
+A SEQUENCE or SET is an object of its present members, named by identifier
+(X.697 §27.3); members of an extension addition group sit flat in it. The
+decoder takes members in any order, skips a key it has no member for, and
+fills a missing OPTIONAL or DEFAULT member as absent or its DEFAULT. A CHOICE
+is a one-member object named by its alternative (§31.3), a SEQUENCE OF or
+SET OF an array (§28, §30). asn1c differs in two layouts: it nests
+extension-group members in an `extN` object and leaves out some absent
+DEFAULT members. The generated Java tables carry REAL constraints (range,
+open bounds, base-10-only) like the C++ and Rust tables.
 
 ### Commits
 

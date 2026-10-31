@@ -1,6 +1,7 @@
 #include "JavaBackend.hpp"
 #include "asn1cpp/codec/Constraints.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <format>
 #include <limits>
@@ -108,6 +109,30 @@ static std::string java_int_constraints(int flags, int range_bits, int64_t lower
                        java_long(static_cast<int64_t>(lower_u64)), java_long(static_cast<int64_t>(upper_u64)));
 }
 
+/// @brief A `double` literal: shortest round-trip digits, or the infinity
+///        constants of `java.lang.Double`.
+/// @param d Finite or infinite value (never NaN).
+static std::string java_double(double d) {
+    if (std::isinf(d)) return d > 0 ? "java.lang.Double.POSITIVE_INFINITY" : "java.lang.Double.NEGATIVE_INFINITY";
+    std::string f = std::format("{}", d);
+    if (f.find_first_of(".e") == std::string::npos) f += ".0";
+    return f;
+}
+
+/// @brief A runtime `Constraints` constructor call for a REAL: its value
+///        range (X.680 §47.4) and whether its JER-visible base constraint
+///        admits only base 10 (X.697 §23.1.4); the other fields are unused
+///        by REAL.
+static std::string java_real_constraints(const RealRangeSpec& r) {
+    int flags = (r.present ? asn1::Constraints::REAL_RANGE : 0)
+              | (r.base10_only ? asn1::Constraints::REAL_BASE_10 : 0)
+              | (r.lower_open ? asn1::Constraints::REAL_LOWER_OPEN : 0)
+              | (r.upper_open ? asn1::Constraints::REAL_UPPER_OPEN : 0)
+              | (r.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+    return std::format("new {}.spec.Constraints({}, 0, 0L, 0L, 0L, 0L, 0, 0L, 0L, null, 0, null, 0, null, {}, {})",
+                       kWire, flags, java_double(r.lower), java_double(r.upper));
+}
+
 /// @brief A runtime `Constraints` constructor call for a SIZE constraint
 ///        (X.680 §51.5): flags (SIZE_CONSTRAINED, EXTENSIBLE, NAMED_BITS),
 ///        PER length width (X.691 §11.9) and bounds. An unbounded upper
@@ -170,7 +195,9 @@ static void emit_primitive_holder(std::ostream& os, const std::string& cls, cons
 ///        as a class holding the runtime's builtin wrapper. Its tables are
 ///        the `AsMemberRef` answers: the wrapped builtin for every codec
 ///        walker, the alias's own XER name, and its own BER framing when
-///        its tag is not the builtin's universal tag (X.680 §31.2).
+///        its tag is not the builtin's universal tag (X.680 §31.2). Its
+///        `CONSTRAINTS` holds the SIZE of a string kind or the value range
+///        and JER base constraint of a REAL.
 /// @param spec    Resolved, backend-agnostic decision (see BuiltinAliasSpec).
 /// @param session Per-type output session; writes the `.java` buffer.
 /// @throws std::logic_error for a builtin this backend does not emit yet.
@@ -187,8 +214,10 @@ void JavaBackend::emit_builtin_alias(const BuiltinAliasSpec& spec, TypeOutputSes
     // STRING and every restricted character string.
     bool sizeable = spec.builtin_type == BT::OctetString || spec.builtin_type == BT::BitString
                  || java_char_string(spec.builtin_type);
-    os << std::format("    public static final {0}.spec.Constraints CONSTRAINTS = {1};\n", kWire,
-                      sizeable ? java_size_constraints(spec) : std::format("{}.spec.Constraints.UNCONSTRAINED", kWire));
+    std::string constraints = std::format("{}.spec.Constraints.UNCONSTRAINED", kWire);
+    if (sizeable) constraints = java_size_constraints(spec);
+    else if (spec.builtin_type == BT::Real) constraints = java_real_constraints(spec.real_range);
+    os << std::format("    public static final {0}.spec.Constraints CONSTRAINTS = {1};\n", kWire, constraints);
     os << ber_framing_field(spec) << "\n";
     emit_primitive_holder(os, cls, spec.xer_name, java_xer_instruction(spec.xer_encoding) + ber_framing_method(spec));
 }
@@ -740,8 +769,8 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
 ///        with an inline constraint (X.680 §51): a package-private class
 ///        beside the type's public one, named by member_descriptor_base_name
 ///        and holding `CONSTRAINTS`, which the member's row references.
-///        INTEGER value ranges and SIZE constraints are carried; a REAL
-///        range and a FROM alphabet are not yet.
+///        INTEGER value ranges, SIZE constraints and REAL value ranges and
+///        base constraints are carried; a FROM alphabet is not yet.
 /// @param spec    The member's resolved constraint (see MemberTypeDescriptorSpec).
 /// @param session Per-type output session.
 ///        A contained field (X.682 §11) also gets `CONTAINED`, its
@@ -765,6 +794,8 @@ void JavaBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& sp
                                            u64 ? 0 : spec.upper_s64, u64 ? spec.lower_u64 : 0, u64 ? upper_u64 : 0);
     } else if (spec.kind == Kind::Sizeable) {
         constraints = java_size_constraints(spec);
+    } else if (spec.kind == Kind::Real) {
+        constraints = java_real_constraints(spec.real_range);
     }
     auto& os = session.buffer(declaration_extension());
     if (spec.contained)
