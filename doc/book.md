@@ -2024,7 +2024,12 @@ table diff covers it.
 `validation-tools/xval_sweep/xval_sweep.py --java` adds a Java leg to the
 cross-validation sweep: for every target, the C++ randgen records are
 BER-decoded and re-encoded by the Java runtime and must come back byte for
-byte (`orig vs java.BER(orig)`). It needs a JDK 21 `javac`/`java` on `PATH`
+byte (`orig vs java.BER(orig)`). The XER rows mirror the Rust ones: Java's
+BASIC-XER of those records must equal C++'s (`cpp.B2X vs java.B2X`) and,
+when the asn1c leg runs, asn1c's (`asn1c.B2X vs java.B2X`); Java's XER must
+decode back to the original BER in Java and in C++, and C++'s XER in Java
+(`orig vs java.X2B(java.XER)`, `orig vs cpp.X2B(java.XER)`,
+`orig vs java.X2B(cpp.XER)`). All of them gate. It needs a JDK 21 `javac`/`java` on `PATH`
 (no Gradle). A target with a construct the Java backend does not emit yet
 is skipped with the compiler's message; the summary counts the targets the
 leg ran on and skipped. CI runs the sweep with `--java`.
