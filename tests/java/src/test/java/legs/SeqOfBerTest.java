@@ -36,7 +36,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * byte for byte, a SET OF in DER order (X.690 §11.6).
  */
 class SeqOfBerTest {
-    private static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
+    static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
             Map.entry("Ints", Ints::new),
             Map.entry("IntSet", IntSet::new),
             Map.entry("Points", Points::new),

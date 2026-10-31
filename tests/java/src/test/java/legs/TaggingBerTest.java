@@ -25,7 +25,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * re-encode byte for byte.
  */
 class TaggingBerTest {
-    private static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
+    static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
             Map.entry("ExpRec", ExpRec::new),
             Map.entry("ImpRec", ImpRec::new),
             Map.entry("AutoRec", AutoRec::new),

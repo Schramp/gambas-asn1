@@ -44,7 +44,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * its XER names and re-encodes byte for byte.
  */
 class ChoiceBerTest {
-    private static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
+    static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
             Map.entry("Plain", Plain::new),
             Map.entry("Tagged", Tagged::new),
             Map.entry("Inner", Inner::new),

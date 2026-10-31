@@ -2013,9 +2013,9 @@ The full ETSI LI PS-PDU module set generates and compiles in Java (`-Xlint:all
 -Werror`); `java_legs` compiles it as package `gen.etsi`, and the cpp/java
 table diff covers it.
 
-XER (`XerObject` in runtime package `xer`) writes a builtin or ENUMERATED type
-assignment as a BASIC-XER document byte for byte as asn1c does, and reads it
-back; SEQUENCE, CHOICE and SEQUENCE OF are not done yet:
+XER (`XerObject` in runtime package `xer`) writes any generated value as a
+BASIC-XER document in the C++ runtime's layout, which is asn1c's, and reads it
+back:
 
 ```java
 byte[] xer = XerObject.encode(f);   // <Flag><true/></Flag>\n
@@ -2028,8 +2028,13 @@ UniversalString as UTF-8. OCTET STRING, ANY and the TeletexString,
 VideotexString, GraphicString and GeneralString kinds are unspaced hex, BIT
 STRING is `0`/`1` digits 64 to a line, and a REAL is a C `%.15f` with the
 trailing zeros dropped (a base-10 REAL as its exact digits).
-`XerObject.decodeLenient` also accepts asn1c's text BOOLEAN (`true`) and a
-hex BIT STRING. The vectors in `tests/vectors/` carry asn1c's own XER
+A SEQUENCE or SET member, CHOICE alternative or SEQUENCE OF element is an
+element of its own, one level (four spaces) deeper; a SEQUENCE OF BOOLEAN,
+ENUMERATED or NULL lists bare values (X.680 §25.5). An OPTIONAL or DEFAULT
+member is present on decode when the next element names it, and otherwise
+gets its DEFAULT. Contained values and ENCODING-CONTROL instructions are not
+done yet. `XerObject.decodeLenient` also accepts asn1c's text BOOLEAN
+(`true`) and a hex BIT STRING. The vectors in `tests/vectors/` carry asn1c's own XER
 output for each DER value as their last column, which the Java XER legs
 compare with.
 
