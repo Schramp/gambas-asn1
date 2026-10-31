@@ -776,7 +776,11 @@ The default is `XerDecodeMode::Strict`, which rejects both non-standard forms.
 **OCTET STRING / Base64** is a separate mechanism: Base64 encoding is a compile-time
 annotation (`XerEncoding::Base64` on the `TypeDescriptor`, set via the `BASE64`
 encoding instruction in the schema). It is always active for annotated types and is
-independent of `XerDecodeMode`.
+independent of `XerDecodeMode`. The instruction applies wherever the annotated type
+is used: as a SEQUENCE/SET member, a CHOICE alternative or a SEQUENCE OF element, and
+whether it is declared on the member's own `OCTET STRING` or on a named type the member
+references. The same holds for the `utf8` instruction. The C++ and Rust runtimes write
+the same text.
 
 XER can be used wherever XML interoperability is required. Some ETSI standards mandate
 XER for management interfaces; NETCONF (RFC 6241) uses YANG but many legacy network

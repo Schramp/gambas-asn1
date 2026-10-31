@@ -856,8 +856,8 @@ mod tests {
     }
 
     static CHOICE_ALTS: [crate::spec::object::AltMeta; 2] = [
-        crate::spec::object::AltMeta { name: "num", ber: BerTagging::Implicit(INTEGER_TAG), constraints: &UNCONSTRAINED, contained: None },
-        crate::spec::object::AltMeta { name: "nested", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, contained: None },
+        crate::spec::object::AltMeta { name: "num", ber: BerTagging::Implicit(INTEGER_TAG), constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
+        crate::spec::object::AltMeta { name: "nested", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
     ];
     static CHOICE_BER_TAGS: [crate::spec::choice::BerDispatch; 2] = [
         crate::spec::choice::BerDispatch { tag: INTEGER_TAG, alt: 0 },
@@ -1028,7 +1028,7 @@ mod tests {
     }
 
     static EXT_ALTS: [crate::spec::object::AltMeta; 1] =
-        [crate::spec::object::AltMeta { name: "num", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, contained: None }];
+        [crate::spec::object::AltMeta { name: "num", ber: BerTagging::Delegate, constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None }];
     static EXT_BER_TAGS: [crate::spec::choice::BerDispatch; 1] = [crate::spec::choice::BerDispatch { tag: INTEGER_TAG, alt: 0 }];
     static EXT_SPEC: crate::spec::object::ChoiceSpec = crate::spec::object::ChoiceSpec {
         name: "Ext",
@@ -1098,8 +1098,8 @@ mod tests {
         }
     }
     static REC_ALTS: [crate::spec::object::AltMeta; 2] = [
-        crate::spec::object::AltMeta { name: "a", ber: BerTagging::Implicit(Tag::context(0, false)), constraints: &UNCONSTRAINED, contained: None },
-        crate::spec::object::AltMeta { name: "c", ber: BerTagging::Explicit(Tag::context(2, true)), constraints: &UNCONSTRAINED, contained: None },
+        crate::spec::object::AltMeta { name: "a", ber: BerTagging::Implicit(Tag::context(0, false)), constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
+        crate::spec::object::AltMeta { name: "c", ber: BerTagging::Explicit(Tag::context(2, true)), constraints: &UNCONSTRAINED, xer_instruction: crate::spec::object::XerInstruction::Default, contained: None },
     ];
     static REC_BER_TAGS: [crate::spec::choice::BerDispatch; 2] = [
         crate::spec::choice::BerDispatch { tag: Tag::context(0, false), alt: 0 },

@@ -12,6 +12,25 @@
 
 namespace asn1::codegen {
 
+/// @brief The `XerInstruction` of a SEQUENCE/SET member or CHOICE
+///        alternative row: the X.693 §21 BASE64/UTF8 instruction on its
+///        own OCTET STRING, or on the named OCTET STRING type it references.
+///        Table data, not a distinct `MemberRef` shape: either way the
+///        value unwraps to a plain `OctetString`, so the XER walker reads
+///        the instruction off the row (`MemberMeta`/`AltMeta`).
+/// @param m  The member or alternative.
+/// @return The Rust path of the `XerInstruction` variant.
+static const char* rust_xer_instruction(const TaggedMemberSpec& m) {
+    ast::XerEncoding enc = ast::XerEncoding::Default;
+    if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::OctetString) enc = m.xer_encoding;
+    else if (!m.mbuiltin && m.ref_builtin_alias && *m.ref_builtin_alias == ast::BuiltinType::OctetString) enc = m.ref_xer_encoding;
+    switch (enc) {
+    case ast::XerEncoding::Base64: return "asn1cpp_wire::spec::object::XerInstruction::Base64";
+    case ast::XerEncoding::Utf8:   return "asn1cpp_wire::spec::object::XerInstruction::Utf8";
+    default:                       return "asn1cpp_wire::spec::object::XerInstruction::Default";
+    }
+}
+
 // Rust ENUMERATED emission — real Rust enum codegen, not a placeholder. No
 // encode/decode runtime wiring yet (the native BER runtime is separate,
 // still to come); this only needs to compile as Rust for a representative
@@ -1429,26 +1448,6 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 if (m.ref_builtin_alias) return AccessKind::Primitive;
                 return AccessKind::Choice;
             };
-            // X.693 §21 ENCODING-CONTROL override (BASE64/UTF8) — table
-            // data (`MemberMeta::xer_instruction`), not a
-            // distinct `AccessKind`/`MemberRef` shape: whether the
-            // instruction landed on the member's own inline OCTET STRING
-            // or on a named alias it merely references (`AsMemberRef` for
-            // either unwraps to the same plain `OctetString`,
-            // `AccessKind::Primitive` either way), the XER walker
-            // (`xer::object::encode_seq_content`) reads this straight off
-            // the row instead of needing a separate `MemberRef` variant.
-            auto xer_instruction = [](const SequenceMemberSpec& m) -> const char* {
-                ast::XerEncoding enc = ast::XerEncoding::Default;
-                if (m.mbuiltin && *m.mbuiltin == ast::BuiltinType::OctetString) enc = m.xer_encoding;
-                else if (!m.mbuiltin && m.ref_builtin_alias && *m.ref_builtin_alias == ast::BuiltinType::OctetString) enc = m.ref_xer_encoding;
-                switch (enc) {
-                case ast::XerEncoding::Base64: return "asn1cpp_wire::spec::object::XerInstruction::Base64";
-                case ast::XerEncoding::Utf8:   return "asn1cpp_wire::spec::object::XerInstruction::Utf8";
-                default:                       return "asn1cpp_wire::spec::object::XerInstruction::Default";
-                }
-            };
-
             for (const auto& m : spec.members) {
                 bool covered = sequence_member_covered(m);
                 AccessKind kind = covered ? classify(m) : AccessKind::Unsupported;
@@ -1764,7 +1763,7 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                 meta_lines.push_back(std::format(
                     "    asn1cpp_wire::spec::object::MemberMeta {{ name: \"{}\", tag: {}, optional: {}, ber: {}, constraints: {}, xer_instruction: {}, contained: {} }},",
                     m.asn1_name, tag_text, m.optional ? "true" : "false", ber_framing_expr, constraints_ref,
-                    covered ? xer_instruction(m) : "asn1cpp_wire::spec::object::XerInstruction::Default",
+                    covered ? rust_xer_instruction(m) : "asn1cpp_wire::spec::object::XerInstruction::Default",
                     m.contained ? std::format("Some(&{})", contained_spec_ident(m.contained_base)) : "None"));
                 getter_lines.push_back(std::format("    {},", get_expr));
                 getter_mut_lines.push_back(std::format("    {},", get_mut_expr));
@@ -2166,8 +2165,8 @@ void RustBackend::emit_choice_definition(const ChoiceSpec& spec, std::ostream& o
                 alt_constraints = std::format("&crate::{}::{}_CONSTRAINTS", escape(synth), synth);
             }
             meta_lines.push_back(std::format(
-                "    asn1cpp_wire::spec::object::AltMeta {{ name: \"{}\", ber: {}, constraints: {}, contained: {} }},",
-                a.asn1_name, ber, alt_constraints,
+                "    asn1cpp_wire::spec::object::AltMeta {{ name: \"{}\", ber: {}, constraints: {}, xer_instruction: {}, contained: {} }},",
+                a.asn1_name, ber, alt_constraints, rust_xer_instruction(a),
                 a.contained ? std::format("Some(&{})", contained_spec_ident(a.contained_base)) : "None"));
 
             std::string get_op, get_mut_op;

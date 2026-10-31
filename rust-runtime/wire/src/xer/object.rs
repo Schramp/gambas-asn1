@@ -59,11 +59,7 @@ fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &m
     out.push('\n');
     out.push_str(&indent(depth));
     write_open_tag(out, name);
-    match (instruction, &m) {
-        (XerInstruction::Base64, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => out.push_str(&crate::xer::octet_string::base64_encode(&x.0)),
-        (XerInstruction::Utf8, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => crate::xer::octet_string::utf8_encode(&x.0, out),
-        _ => encode_bare(m, out, depth, opts)?,
-    }
+    encode_instructed(instruction, m, out, depth, opts)?;
     if is_choice {
         // A CHOICE's content ends after its alternative's own closing
         // tag, so the member's closing tag goes on its own indented line
@@ -73,6 +69,18 @@ fn encode_wrapped(name: &str, instruction: XerInstruction, m: MemberRef, out: &m
         out.push_str(&indent(depth));
     }
     write_close_tag(out, name);
+    Ok(())
+}
+
+/// @brief A value's content under its row's X.693 §21 instruction: an OCTET
+///        STRING as Base64 or UTF-8 text when the row says so, every other
+///        value as `encode_bare` writes it.
+fn encode_instructed(instruction: XerInstruction, m: MemberRef, out: &mut String, depth: usize, opts: Option<&crate::containing::ContainedOptions>) -> Result<(), EncodeError> {
+    match (instruction, &m) {
+        (XerInstruction::Base64, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => out.push_str(&crate::xer::octet_string::base64_encode(&x.0)),
+        (XerInstruction::Utf8, MemberRef::Primitive(PrimitiveRef::OctetString(x))) => crate::xer::octet_string::utf8_encode(&x.0, out),
+        _ => encode_bare(m, out, depth, opts)?,
+    }
     Ok(())
 }
 
@@ -258,7 +266,7 @@ pub fn encode_choice_content(obj: &dyn Asn1Choice, out: &mut String, depth: usiz
     // place for the close tag to follow directly.
     let is_nested_choice = matches!(active, MemberRef::Choice(_));
     let mut inner = String::new();
-    encode_bare(active, &mut inner, depth + 1, opts)?;
+    encode_instructed(alt.xer_instruction, active, &mut inner, depth + 1, opts)?;
     if is_nested_choice {
         inner.push('\n');
         inner.push_str(&indent(depth + 1));
@@ -302,7 +310,7 @@ pub fn decode_choice_content_into(obj: &mut dyn Asn1Choice, r: &mut XerReader) -
             if open.name != alt.name || open.closing {
                 return Err(DecodeError::new(format!("XER: expected <{}>", alt.name), 0));
             }
-            decode_bare(obj.select_mut(i), r)?;
+            decode_instructed(alt.xer_instruction, obj.select_mut(i), r)?;
             if !open.self_closing {
                 r.consume_close_tag(alt.name)?;
             }
