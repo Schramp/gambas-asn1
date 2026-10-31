@@ -1,0 +1,9 @@
+# Type<TAB>XER value. make_ber_vectors.py turns each line into asn1c's DER.
+InlineTest	<InlineTest><hexfield>DEADBEEF</hexfield><b64field>3q2+7w==</b64field></InlineTest>
+InlineTest	<InlineTest><hexfield></hexfield><b64field></b64field></InlineTest>
+Base64Payload	<Base64Payload>3q2+7w==</Base64Payload>
+PayloadWrapper	<PayloadWrapper><data>AAECAwQ=</data></PayloadWrapper>
+LegacyBase64	<LegacyBase64>3q2+7w==</LegacyBase64>
+StandardBase64	<StandardBase64>3q2+</StandardBase64>
+NoInstruction	<NoInstruction>DEADBEEF</NoInstruction>
+Utf8Field	<Utf8Field>Hi &amp; &lt;b&gt; h&#233;<dc3/>!</Utf8Field>

@@ -36,8 +36,8 @@ class TableDumpTest {
     /** choice_test.asn1: {@code Alt2 ::= CHOICE { num MyByte, flag BOOLEAN }}. */
     static final class Alt2 implements AsMemberRef, Asn1Choice {
         static final ChoiceSpec SPEC = new ChoiceSpec("Alt2",
-                List.of(new AltMeta("flag", new BerTagging.Implicit(Tag.universal(UniversalTag.BOOLEAN, false)), Constraints.UNCONSTRAINED, null),
-                        new AltMeta("num", new BerTagging.Implicit(Tag.universal(UniversalTag.INTEGER, false)), BYTE_RANGE, null)),
+                List.of(new AltMeta("flag", new BerTagging.Implicit(Tag.universal(UniversalTag.BOOLEAN, false)), Constraints.UNCONSTRAINED, XerInstruction.DEFAULT, null),
+                        new AltMeta("num", new BerTagging.Implicit(Tag.universal(UniversalTag.INTEGER, false)), BYTE_RANGE, XerInstruction.DEFAULT, null)),
                 List.of(new BerDispatch(Tag.universal(UniversalTag.INTEGER, false), 1),
                         new BerDispatch(Tag.universal(UniversalTag.BOOLEAN, false), 0)),
                 null, -1, 1, false);

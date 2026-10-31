@@ -30,7 +30,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * authoritative, and a changed inner value re-encodes.
  */
 class ContainingTest {
-    private static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
+    static final Map<String, Supplier<Asn1Pdu>> TYPES = Map.ofEntries(
             Map.entry("Inner", Inner::new),
             Map.entry("Holder", Holder::new),
             Map.entry("Pick", Pick::new),

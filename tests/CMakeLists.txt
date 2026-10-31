@@ -1981,8 +1981,15 @@ set(java_leg_containing_PDUS
 set(java_leg_containing_FLAGS
     --container-config=${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json)
 set(java_leg_containing_DEPS ${CMAKE_CURRENT_SOURCE_DIR}/asn1/containing_test.container.json)
+set(java_leg_xer_encoding_instr_PDUS
+    InlineTest Base64Payload PayloadWrapper LegacyBase64 StandardBase64 NoInstruction Utf8Field)
+set(java_leg_xer_alt_instruction_PDUS
+    Holder)
+set(java_leg_rust_seqof_base64_elem_PDUS
+    Entries)
 set(java_leg_outputs)
-foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber containing)
+foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber recursion_ber recursion_choice_ber containing
+        xer_encoding_instr xer_alt_instruction rust_seqof_base64_elem)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})

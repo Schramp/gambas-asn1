@@ -79,6 +79,11 @@ public final class XerReader {
         depth--;
     }
 
+    /** The constructed levels this decode is inside. */
+    int depth() {
+        return depth;
+    }
+
     private static boolean isWs(byte c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r';
     }

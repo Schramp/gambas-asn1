@@ -1,6 +1,7 @@
 package io.github.schramp.gambasasn1.wire.xer;
 
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
+import io.github.schramp.gambasasn1.wire.spec.XerInstruction;
 import io.github.schramp.gambasasn1.wire.types.Asn1Any;
 import io.github.schramp.gambasasn1.wire.types.Asn1Arcs;
 import io.github.schramp.gambasasn1.wire.types.Asn1BitString;
@@ -228,6 +229,85 @@ public final class XerPrimitive {
             }
         }
         b.set(bytes, bytes.length * 8 - n);
+    }
+
+    /** X.680 §11.15.5 Table 3: the names of the C0 control characters an xmlcstring writes as empty elements. */
+    private static final String[] CONTROL_NAMES = {
+        "nul", "soh", "stx", "etx", "eot", "enq", "ack", "bel", "bs", null, null, "vt", "ff", null, "so", "si",
+        "dle", "dc1", "dc2", "dc3", "dc4", "nak", "syn", "etb", "can", "em", "sub", "esc", "is4", "is3", "is2", "is1"};
+
+    private static final String BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    /**
+     * An OCTET STRING under an X.693 §21 instruction: Base64 with {@code =}
+     * padding, or the octets as UTF-8 text with {@code <}, {@code >} and
+     * {@code &} escaped and the C0 controls other than tab, line feed and
+     * carriage return as their empty elements.
+     */
+    public static void encodeOctets(byte[] octets, XerInstruction ins, XerWriter w) {
+        switch (ins) {
+            case BASE64 -> {
+                StringBuilder s = new StringBuilder((octets.length + 2) / 3 * 4);
+                for (int i = 0; i < octets.length; i += 3) {
+                    int n = Math.min(3, octets.length - i);
+                    int v = (octets[i] & 0xFF) << 16 | (n > 1 ? (octets[i + 1] & 0xFF) << 8 : 0) | (n > 2 ? octets[i + 2] & 0xFF : 0);
+                    s.append(BASE64.charAt(v >> 18 & 63)).append(BASE64.charAt(v >> 12 & 63));
+                    s.append(n > 1 ? BASE64.charAt(v >> 6 & 63) : '=').append(n > 2 ? BASE64.charAt(v & 63) : '=');
+                }
+                w.ascii(s.toString());
+            }
+            case UTF8 -> {
+                int start = 0;
+                for (int i = 0; i < octets.length; i++) {
+                    int c = octets[i] & 0xFF;
+                    if (c < 32 && CONTROL_NAMES[c] != null) {
+                        w.escaped(java.util.Arrays.copyOfRange(octets, start, i)).empty(CONTROL_NAMES[c]);
+                        start = i + 1;
+                    }
+                }
+                w.escaped(java.util.Arrays.copyOfRange(octets, start, octets.length));
+            }
+            case DEFAULT -> w.hex(octets);
+        }
+    }
+
+    /** Decode counterpart of {@link #encodeOctets}; Base64 skips anything outside its alphabet. */
+    public static byte[] decodeOctets(XerInstruction ins, XerReader r) {
+        return switch (ins) {
+            case BASE64 -> {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                int buf = 0;
+                int bits = 0;
+                for (byte c : r.readText()) {
+                    int v = BASE64.indexOf(c);
+                    if (c == '=' || v < 0) {
+                        continue;
+                    }
+                    buf = buf << 6 | v;
+                    bits += 6;
+                    if (bits >= 8) {
+                        bits -= 8;
+                        out.write(buf >> bits & 0xFF);
+                    }
+                }
+                yield out.toByteArray();
+            }
+            case UTF8 -> {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                while (true) {
+                    out.writeBytes(r.readText());
+                    XerReader.TagInfo peek = r.peekTag();
+                    int code = peek.selfClosing() && !peek.closing() ? java.util.Arrays.asList(CONTROL_NAMES).indexOf(peek.name()) : -1;
+                    if (code < 0) {
+                        break;
+                    }
+                    r.consumeTag();
+                    out.write(code);
+                }
+                yield out.toByteArray();
+            }
+            case DEFAULT -> hexPairs(r.readText());
+        };
     }
 
     /**

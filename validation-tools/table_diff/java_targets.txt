@@ -15,3 +15,5 @@ tests/asn1/ext_ber_test.asn1  V1  -pdu=V1 -pdu=V2 -pdu=Outer1 -pdu=Outer2 -pdu=S
 tests/asn1/recursion_ber_test.asn1  List  -pdu=List -pdu=Tree -pdu=A -pdu=B
 tests/asn1/containing_test.asn1  Holder  --container-config=tests/asn1/containing_test.container.json -pdu=Inner -pdu=Holder -pdu=Pick -pdu=Envelope
 examples/sample.source.ETSI-LI-PS-PDU/asn1-files  PS-PDU  -fallow-newer-modules --container-config=examples/sample.source.ETSI-LI-PS-PDU/container_fields.json -pdu=PS-PDU -pdu=EncryptedPayload
+tests/asn1/xer_encoding_instr_test.asn1  InlineTest  -pdu=InlineTest -pdu=Base64Payload -pdu=PayloadWrapper -pdu=LegacyBase64 -pdu=StandardBase64 -pdu=NoInstruction -pdu=Utf8Field
+tests/asn1/rust_seqof_base64_elem_test.asn1  Entries  -pdu=Entries
