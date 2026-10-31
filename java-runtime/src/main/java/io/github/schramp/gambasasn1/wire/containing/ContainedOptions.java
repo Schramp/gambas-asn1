@@ -23,6 +23,11 @@ public record ContainedOptions(ContainedDecoders decoders, boolean off, Containe
         return xer != null ? xer : row;
     }
 
+    /** The JER form of a field whose row says {@code row}. */
+    public ContainedText jerForm(ContainedText row) {
+        return jer != null ? jer : row;
+    }
+
     /** The registry in use. */
     public ContainedDecoders registry() {
         return decoders != null ? decoders : ContainedDecoders.defaults();

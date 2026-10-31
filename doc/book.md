@@ -2109,6 +2109,14 @@ extension-group members in an `extN` object and leaves out some absent
 DEFAULT members. The generated Java tables carry REAL constraints (range,
 open bounds, base-10-only) like the C++ and Rust tables.
 
+A contained field (X.682 §11) is in its row's `jer` form, in the C++ runtime's
+layout: its bytes as a hex string, `{"containing":<inner value>}` (X.697
+§25.4), or that object with `"raw":"<hex>"` after it. `JerObject.encode(v,
+opts)` and `JerObject.decode(v, jer, opts)` take a `ContainedOptions` whose
+`jer` form replaces every row's. The decoder takes every form; `raw`, when
+given, is kept as the field's bytes, otherwise the inner value is encoded to
+get them.
+
 ### Commits
 
 - One logical change per commit.

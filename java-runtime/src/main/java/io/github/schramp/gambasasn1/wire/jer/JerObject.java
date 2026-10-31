@@ -1,14 +1,22 @@
 package io.github.schramp.gambasasn1.wire.jer;
 
+import io.github.schramp.gambasasn1.wire.ber.BerReader;
+import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
+import io.github.schramp.gambasasn1.wire.containing.ContainedValues;
 import io.github.schramp.gambasasn1.wire.io.DecodeException;
 import io.github.schramp.gambasasn1.wire.io.EncodeException;
 import io.github.schramp.gambasasn1.wire.spec.AltMeta;
 import io.github.schramp.gambasasn1.wire.spec.AsMemberRef;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Choice;
+import io.github.schramp.gambasasn1.wire.spec.Asn1Contained;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Seq;
 import io.github.schramp.gambasasn1.wire.spec.Asn1SeqOf;
 import io.github.schramp.gambasasn1.wire.spec.Constraints;
+import io.github.schramp.gambasasn1.wire.spec.ContainedEncoding;
+import io.github.schramp.gambasasn1.wire.spec.ContainedResult;
+import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
+import io.github.schramp.gambasasn1.wire.spec.ContainedText;
 import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
 import java.util.List;
@@ -29,7 +37,17 @@ public final class JerObject {
 
     /** {@link #encode(AsMemberRef)} under the constraints {@code c} of {@code v}'s type. */
     public static byte[] encode(AsMemberRef v, Constraints c) {
-        JerWriter w = new JerWriter();
+        return encode(v, c, null);
+    }
+
+    /** {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults. */
+    public static byte[] encode(AsMemberRef v, ContainedOptions opts) {
+        return encode(v, rootConstraints(v), opts);
+    }
+
+    /** {@link #encode(AsMemberRef, Constraints)} with contained-value settings; null for the defaults. */
+    public static byte[] encode(AsMemberRef v, Constraints c, ContainedOptions opts) {
+        JerWriter w = new JerWriter().withContained(opts);
         encodeValue(v.asMemberRef(), c, w);
         return w.toByteArray();
     }
@@ -41,7 +59,17 @@ public final class JerObject {
 
     /** {@link #decode(AsMemberRef, byte[])} under the constraints {@code c} of {@code v}'s type. */
     public static void decode(AsMemberRef v, byte[] data, Constraints c) {
-        JerReader r = new JerReader(data);
+        decode(v, data, c, null);
+    }
+
+    /** {@link #decode(AsMemberRef, byte[])} with contained-value settings; null for the defaults. */
+    public static void decode(AsMemberRef v, byte[] data, ContainedOptions opts) {
+        decode(v, data, rootConstraints(v), opts);
+    }
+
+    /** {@link #decode(AsMemberRef, byte[], Constraints)} with contained-value settings; null for the defaults. */
+    public static void decode(AsMemberRef v, byte[] data, Constraints c, ContainedOptions opts) {
+        JerReader r = new JerReader(data).withContained(opts);
         decodeValue(v.asMemberRef(), c, r);
         if (!r.atEnd()) {
             throw new DecodeException("JER: trailing data after the value", r.position());
@@ -68,7 +96,7 @@ public final class JerObject {
             case MemberRef.Composite(Asn1Seq s) -> encodeSequence(s, w);
             case MemberRef.Choice(Asn1Choice ch) -> encodeChoice(ch, w);
             case MemberRef.SeqOf(Asn1SeqOf q) -> encodeSeqOf(q, c, w);
-            case MemberRef.Contained cv -> throw new EncodeException("JER: contained values are not encoded yet");
+            case MemberRef.Contained(Asn1Contained f, ContainedSpec cs) -> encodeContained(f, cs, w);
         }
     }
 
@@ -99,7 +127,7 @@ public final class JerObject {
             case MemberRef.Composite(Asn1Seq s) -> decodeSequence(s, r);
             case MemberRef.Choice(Asn1Choice ch) -> decodeChoice(ch, r);
             case MemberRef.SeqOf(Asn1SeqOf q) -> decodeSeqOf(q, c, r);
-            case MemberRef.Contained cv -> throw new DecodeException("JER: contained values are not decoded yet", r.position());
+            case MemberRef.Contained(Asn1Contained f, ContainedSpec cs) -> decodeContained(f, cs, r);
         }
     }
 
@@ -164,6 +192,9 @@ public final class JerObject {
             }
             s.setDefault(i);
         }
+        if (!s.spec().containedMembers().isEmpty()) {
+            ContainedValues.decodeMembers(s, ContainedEncoding.BER, berAnchor(r));
+        }
     }
 
     private static int indexOf(List<MemberMeta> members, String key) {
@@ -199,6 +230,9 @@ public final class JerObject {
             if (alts.get(i).name().equals(key)) {
                 decodeValue(ch.select(i), alts.get(i).constraints(), r);
                 r.expect('}');
+                if (ch.spec().hasContained()) {
+                    ContainedValues.decodeAlternative(ch, ContainedEncoding.BER, berAnchor(r));
+                }
                 return;
             }
         }
@@ -237,5 +271,92 @@ public final class JerObject {
             }
             decodeValue(q.addDefault(), elem, r);
         }
+    }
+
+    /**
+     * A contained value (X.682 §11): its bytes as a hex string, or
+     * {@code {"containing":<inner value>}} (X.697 §25.4), or that object with
+     * {@code "raw":"<hex>"} after it ({@code INLINE_RAW}, an extension), in
+     * the layout of the C++ runtime. The bytes are in BER, the outer
+     * encoding a JER value of the field stands for.
+     */
+    private static void encodeContained(Asn1Contained f, ContainedSpec cs, JerWriter w) {
+        byte[] wire = ContainedValues.wireOctets(f, cs, ContainedEncoding.BER, w.contained());
+        AsMemberRef inner = f.value();
+        ContainedText form = w.contained() != null ? w.contained().jerForm(cs.jer()) : cs.jer();
+        if (form == ContainedText.HEX || inner == null) {
+            w.hexString(wire);
+            return;
+        }
+        w.ascii("{\"containing\":");
+        encodeValue(inner.asMemberRef(), rootConstraints(inner), w);
+        if (form == ContainedText.INLINE_RAW) {
+            w.ascii(",\"raw\":").hexString(wire);
+        }
+        w.ascii("}");
+    }
+
+    /**
+     * Decode counterpart of {@link #encodeContained}; accepts every form.
+     * A hex string is decoded by the enclosing SEQUENCE or CHOICE, as in
+     * BER; an inline value without {@code raw} gets its bytes from encoding it.
+     */
+    private static void decodeContained(Asn1Contained f, ContainedSpec cs, JerReader r) {
+        if (r.peek() != '{') {
+            f.setRawFromWire(JerPrimitive.hexPairs(r.readString()), ContainedEncoding.BER);
+            return;
+        }
+        r.expect('{');
+        AsMemberRef inner = null;
+        byte[] raw = null;
+        while (true) {
+            int c = r.peek();
+            if (c == '}') {
+                r.expect('}');
+                break;
+            }
+            if (c == ',') {
+                r.expect(',');
+                continue;
+            }
+            if (c == 0) {
+                throw new DecodeException("JER: unexpected end in contained value", r.position());
+            }
+            String key = r.readStringText();
+            r.expect(':');
+            switch (key) {
+                case "containing" -> {
+                    inner = f.newInner();
+                    decodeValue(inner.asMemberRef(), rootConstraints(inner), r);
+                }
+                case "raw" -> raw = JerPrimitive.hexPairs(r.readString());
+                default -> r.skipValue();
+            }
+        }
+        if (inner == null) {
+            throw new DecodeException("JER: object without \"containing\"", r.position());
+        }
+        ContainedEncoding enc = cs.encoding() == ContainedEncoding.OUTER ? ContainedEncoding.BER : cs.encoding();
+        if (raw == null) {
+            try {
+                raw = ContainedValues.encodeInner(inner, cs, enc, r.contained());
+            } catch (EncodeException ex) {
+                throw new DecodeException(ex.getMessage(), r.position());
+            }
+        }
+        f.setRawFromWire(raw, enc);
+        f.install(ContainedResult.ok(), inner);
+    }
+
+    /**
+     * A BER reader standing for this JER decode in the contained-value
+     * decoders: no bytes of its own, the same nesting depth and settings.
+     */
+    private static BerReader berAnchor(JerReader r) {
+        BerReader b = new BerReader(new byte[0]).withContained(r.contained());
+        for (int i = 0; i < r.depth(); i++) {
+            b.enterLevel();
+        }
+        return b;
     }
 }
