@@ -614,6 +614,11 @@ struct TaggedMemberSpec {
     // calculation `type_descriptor_ref_spec_for`'s TypeRef branch already
     // does for the analogous C++-side problem).
     std::string ref_constraints_owner;
+    // Inline SEQUENCE OF/SET OF member or alternative (see
+    // SequenceMemberSpec's collection doc below): the collection kind, and
+    // the element's shape level by level. None for every other body.
+    SeqOfKind   seq_of_kind = SeqOfKind::None;
+    ElemShape   elem_shape;
 };
 
 /// @brief Backend-agnostic decision for one SEQUENCE/SET member. `ops`/
@@ -714,8 +719,6 @@ struct SequenceMemberSpec : TaggedMemberSpec {
     // tag 17, not SEQUENCE's 16) is the *wire tag* at whichever nesting
     // level is using its natural (non-override) tag — a backend's own
     // emission decision, not table data.
-    SeqOfKind   seq_of_kind = SeqOfKind::None;
-    ElemShape   elem_shape;
     bool        optional = false;
     bool        has_default = false;
     // `ops`/`offset_expr` are not carried as pre-formatted C++ expression

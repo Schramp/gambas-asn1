@@ -1,0 +1,56 @@
+-- Java BER leg for the tagging matrix (X.680 §31.2, §25.3): the same
+-- constructs under EXPLICIT, IMPLICIT and AUTOMATIC module tagging, with
+-- members of every kind (builtin, ENUMERATED, SEQUENCE, SET, SEQUENCE OF,
+-- tagged and untagged CHOICE) tagged by the module's default, by an
+-- explicit IMPLICIT / EXPLICIT keyword, and not at all.
+TaggingExp DEFINITIONS EXPLICIT TAGS ::= BEGIN
+Color ::= ENUMERATED { red, green }
+Pt    ::= SEQUENCE { x INTEGER, y INTEGER }
+Pick  ::= CHOICE { i INTEGER, b BOOLEAN }
+Own   ::= [7] CHOICE { i INTEGER, b BOOLEAN }
+ExpRec ::= SEQUENCE {
+    a  [0] INTEGER,
+    b  [1] IMPLICIT BOOLEAN,
+    c  [2] Color,
+    d  [3] Pt,
+    e  [4] IMPLICIT Pt,
+    f  [5] SEQUENCE OF INTEGER,
+    g  [6] IMPLICIT SET OF INTEGER,
+    h  [8] Pick,
+    i  [9] Own,
+    j  [10] IMPLICIT Own,
+    k  [11] SET { s INTEGER } OPTIONAL
+}
+END
+
+TaggingImp DEFINITIONS IMPLICIT TAGS ::= BEGIN
+IMPORTS Color, Pt, Pick, Own FROM TaggingExp;
+ImpRec ::= SEQUENCE {
+    a  [0] INTEGER,
+    b  [1] EXPLICIT BOOLEAN,
+    c  [2] Color,
+    d  [3] Pt,
+    e  [4] EXPLICIT Pt,
+    f  [5] SEQUENCE OF INTEGER,
+    h  [8] Pick,
+    i  [9] Own,
+    k  [11] SET { s INTEGER } OPTIONAL
+}
+END
+
+TaggingAuto DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+IMPORTS Color, Pt, Pick, Own FROM TaggingExp;
+AutoRec ::= SEQUENCE {
+    a  INTEGER,
+    b  BOOLEAN OPTIONAL,
+    c  Color,
+    d  Pt,
+    f  SEQUENCE OF INTEGER,
+    h  Pick,
+    i  Own,
+    k  SET { s INTEGER, t BOOLEAN },
+    z  [20] INTEGER
+}
+AutoSet ::= SET { q INTEGER, p BOOLEAN, r Pick }
+AutoChoice ::= CHOICE { n INTEGER, m Pt, l Pick }
+END

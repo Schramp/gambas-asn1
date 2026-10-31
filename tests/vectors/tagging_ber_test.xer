@@ -1,0 +1,11 @@
+# Type<TAB>XER value. make_ber_vectors.py turns each line into asn1c's DER.
+ExpRec	<ExpRec><a>1</a><b><true/></b><c><green/></c><d><x>1</x><y>2</y></d><e><x>3</x><y>4</y></e><f><INTEGER>5</INTEGER></f><g><INTEGER>7</INTEGER><INTEGER>6</INTEGER></g><h><b><false/></b></h><i><i>8</i></i><j><b><true/></b></j><k><s>9</s></k></ExpRec>
+ExpRec	<ExpRec><a>-1</a><b><false/></b><c><red/></c><d><x>0</x><y>0</y></d><e><x>0</x><y>0</y></e><f></f><g></g><h><i>2</i></h><i><b><false/></b></i><j><i>3</i></j></ExpRec>
+ImpRec	<ImpRec><a>1</a><b><true/></b><c><green/></c><d><x>1</x><y>2</y></d><e><x>3</x><y>4</y></e><f><INTEGER>5</INTEGER></f><h><b><false/></b></h><i><i>8</i></i><k><s>9</s></k></ImpRec>
+ImpRec	<ImpRec><a>0</a><b><false/></b><c><red/></c><d><x>0</x><y>0</y></d><e><x>0</x><y>0</y></e><f></f><h><i>2</i></h><i><b><true/></b></i></ImpRec>
+AutoRec	<AutoRec><a>1</a><b><true/></b><c><green/></c><d><x>1</x><y>2</y></d><f><INTEGER>5</INTEGER></f><h><b><false/></b></h><i><i>8</i></i><k><s>9</s><t><true/></t></k><z>4</z></AutoRec>
+AutoRec	<AutoRec><a>0</a><c><red/></c><d><x>0</x><y>0</y></d><f></f><h><i>2</i></h><i><b><true/></b></i><k><s>0</s><t><false/></t></k><z>-4</z></AutoRec>
+AutoSet	<AutoSet><q>1</q><p><true/></p><r><i>2</i></r></AutoSet>
+AutoChoice	<AutoChoice><n>5</n></AutoChoice>
+AutoChoice	<AutoChoice><m><x>1</x><y>2</y></m></AutoChoice>
+AutoChoice	<AutoChoice><l><b><true/></b></l></AutoChoice>
