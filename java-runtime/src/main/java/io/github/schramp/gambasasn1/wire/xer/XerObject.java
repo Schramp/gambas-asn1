@@ -46,7 +46,7 @@ public final class XerObject {
 
     /** {@link #encode(AsMemberRef)} with contained-value settings; null for the defaults. */
     public static byte[] encode(AsMemberRef v, ContainedOptions opts) {
-        XerWriter w = new XerWriter();
+        XerWriter w = new XerWriter().withContained(opts);
         encodeElement(v.ownElementXerName(), v.asMemberRef(), v.xerInstruction(), w, 0);
         return w.toByteArray();
     }
@@ -54,6 +54,11 @@ public final class XerObject {
     /** Decodes a BASIC-XER document into {@code v}. */
     public static void decode(AsMemberRef v, byte[] data) {
         decode(v, new XerReader(data));
+    }
+
+    /** {@link #decode(AsMemberRef, byte[])} with contained-value settings; null for the defaults. */
+    public static void decode(AsMemberRef v, byte[] data, ContainedOptions opts) {
+        decode(v, new XerReader(data).withContained(opts));
     }
 
     /**
@@ -355,15 +360,16 @@ public final class XerObject {
      * an XER value of the field stands for.
      */
     private static void encodeContained(String name, Asn1Contained f, ContainedSpec cs, XerWriter w, int depth) {
-        byte[] wire = ContainedValues.wireOctets(f, cs, ContainedEncoding.BER, null);
+        byte[] wire = ContainedValues.wireOctets(f, cs, ContainedEncoding.BER, w.contained());
         AsMemberRef inner = f.value();
-        if (cs.xer() == ContainedText.HEX || inner == null) {
+        ContainedText form = w.contained() != null ? w.contained().xerForm(cs.xer()) : cs.xer();
+        if (form == ContainedText.HEX || inner == null) {
             w.open(name).hex(wire).close(name).ascii("\n");
             return;
         }
         w.open(name).ascii("\n").indent(depth + 1);
         encodeElement(inner.ownElementXerName(), inner.asMemberRef(), inner.xerInstruction(), w, depth + 1);
-        if (cs.xer() == ContainedText.INLINE_RAW) {
+        if (form == ContainedText.INLINE_RAW) {
             w.indent(depth + 1).ascii("<!-- raw: ").hex(wire).ascii(" -->\n");
         }
         w.indent(depth).close(name).ascii("\n");

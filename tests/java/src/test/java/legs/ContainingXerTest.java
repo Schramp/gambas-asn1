@@ -2,11 +2,14 @@ package legs;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gen.containing.Pick;
 import io.github.schramp.gambasasn1.wire.ber.BerObject;
+import io.github.schramp.gambasasn1.wire.containing.ContainedOptions;
 import io.github.schramp.gambasasn1.wire.spec.Asn1Pdu;
 import io.github.schramp.gambasasn1.wire.spec.ContainedStatus;
+import io.github.schramp.gambasasn1.wire.spec.ContainedText;
 import io.github.schramp.gambasasn1.wire.xer.XerObject;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
@@ -65,6 +68,28 @@ class ContainingXerTest {
         assertEquals(ContainedStatus.DECODED, p.inner().status());
         assertEquals(5, p.inner().value().id().get());
         assertArrayEquals(PICK_INNER, BerObject.encode(p));
+    }
+
+    /**
+     * A per-call XER form replaces every row's: a field whose row says hex
+     * is written inline, with the raw bytes, and reads back to the same
+     * bytes.
+     */
+    @Test
+    void optionsOverrideTheRowsXerForm() {
+        Vectors.Vector vec = ContainingTest.vectors().filter(v -> v.type().equals("Holder")).findFirst().orElseThrow();
+        Asn1Pdu h = ContainingTest.TYPES.get("Holder").get();
+        BerObject.decode(h, vec.der());
+        ContainedOptions raw = new ContainedOptions(null, false, ContainedText.INLINE_RAW, null);
+        String text = new String(XerObject.encode(h, raw), StandardCharsets.UTF_8);
+        assertTrue(text.contains("<viaConstraint>\n        <Inner>\n"), text);
+        assertTrue(text.contains("        <!-- raw: 3003800105 -->\n    </viaConstraint>\n"), text);
+        Asn1Pdu back = ContainingTest.TYPES.get("Holder").get();
+        XerObject.decode(back, text.getBytes(StandardCharsets.UTF_8), raw);
+        assertArrayEquals(vec.der(), BerObject.encode(back));
+        String hex = new String(XerObject.encode(h, new ContainedOptions(null, false, ContainedText.HEX, null)),
+                StandardCharsets.UTF_8);
+        assertEquals(vec.asn1cXer(), hex);
     }
 
     /** A raw comment after the inline value gives the bytes as they were. */
