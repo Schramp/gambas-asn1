@@ -2013,6 +2013,22 @@ The full ETSI LI PS-PDU module set generates and compiles in Java (`-Xlint:all
 -Werror`); `java_legs` compiles it as package `gen.etsi`, and the cpp/java
 table diff covers it.
 
+`validation-tools/xval_sweep/xval_sweep.py --java` adds a Java leg to the
+cross-validation sweep: for every target, the C++ randgen records are
+BER-decoded and re-encoded by the Java runtime and must come back byte for
+byte (`orig vs java.BER(orig)`). It needs a JDK 21 `javac`/`java` on `PATH`
+(no Gradle). A target with a construct the Java backend does not emit yet
+is skipped with the compiler's message; the summary counts the targets the
+leg ran on and skipped. CI runs the sweep with `--java`.
+
+With `--fuzz --java`, the Java BER decoder gets the same corrupted BER files
+as the C++ and Rust tools, plus `--mutations` byte-mutated BER records, in
+one JVM run per target (heap capped at 256 MB). A `DecodeException` or
+`EncodeException` is the expected outcome; any other throwable (an index or
+null-pointer error, `OutOfMemoryError`, `StackOverflowError`) is a crash and
+fails the target. CI runs a bounded smoke pass (`--fuzz-seeds 3 --mutations
+20`) after each pull-request shard.
+
 XER (`XerObject` in runtime package `xer`) writes any generated value as a
 BASIC-XER document in the C++ runtime's layout, which is asn1c's, and reads it
 back:
