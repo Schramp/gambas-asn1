@@ -444,6 +444,9 @@ void JavaBackend::emit_choice(const ChoiceSpec& spec, TypeOutputSession& session
         const auto& a = spec.alternatives[i];
         std::string n = accessor(a);
         os << std::format("    /** ASN.1: {{@code {}}}; null when another alternative is selected. */\n", a.asn1_name);
+        // An inline collection's type is generic, so the cast from the
+        // stored Object is unchecked (JLS §5.1.6.1); select() keeps it sound.
+        if (a.seq_of_kind != SeqOfKind::None) os << "    @java.lang.SuppressWarnings(\"unchecked\")\n";
         os << std::format("    public {} {}() {{\n", alt_type(a), n);
         os << std::format("        return index == {} ? ({}) value : null;\n", i, alt_type(a));
         os << "    }\n\n";
@@ -538,7 +541,6 @@ void JavaBackend::emit_sequence(const SequenceSpec& spec, TypeOutputSession& ses
     for (const auto& m : spec.members) {
         const char* gap = m.contained ? "a contained value"
                         : m.has_default && !m.has_default_setter ? "a DEFAULT value of this kind"
-                        : m.member_type_in_cycle ? "a recursive type"
                         : nullptr;
         if (gap) unsupported(std::format("member '{}' is {}", m.asn1_name, gap));
     }

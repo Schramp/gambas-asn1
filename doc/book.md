@@ -1957,12 +1957,16 @@ root ones, since BER ignores the extension marker (X.690 §8.1.1.4). Decoding
 an extensible SEQUENCE or SET skips the TLVs left after its last known member:
 the extension additions of a later version of the type (X.680 §7.1). They
 are not kept, so re-encoding leaves them out. In a type without an extension
-marker, such TLVs are an error. The compiler rejects a SEQUENCE or SET with a member of the following
+marker, such TLVs are an error. A recursive type (X.680 §3.6.55) needs nothing
+special: a member is a reference, and a recursion ends at an OPTIONAL member,
+a CHOICE or a SEQUENCE OF. Decoding counts each SEQUENCE/SET, CHOICE and
+SEQUENCE OF/SET OF level and fails past 256 levels (`Nesting.MAX_DECODE_DEPTH`
+in the runtime package `io`), the limit the C++ and Rust runtimes use. The
+compiler rejects a SEQUENCE or SET with a member of the following
 kinds with
 `emit_sequence: ... not implemented for this backend`:
 
 - DEFAULT values other than BOOLEAN, INTEGER (up to 64 bits), character string, ENUMERATED and REAL ones;
-- recursive member types;
 - contained values.
 
 A member, alternative or collection element with an inline constraint

@@ -12,3 +12,4 @@ tests/asn1/set_ber_test.asn1  Rec  -pdu=Rec -pdu=Mixed
 tests/asn1/tagging_ber_test.asn1  ExpRec  -pdu=ExpRec -pdu=ImpRec -pdu=AutoRec -pdu=AutoSet -pdu=AutoChoice
 tests/asn1/default_ber_test.asn1  Rec  -pdu=Rec -pdu=Unordered
 tests/asn1/ext_ber_test.asn1  V1  -pdu=V1 -pdu=V2 -pdu=Outer1 -pdu=Outer2 -pdu=S1 -pdu=S2
+tests/asn1/recursion_ber_test.asn1  List  -pdu=List -pdu=Tree -pdu=A -pdu=B

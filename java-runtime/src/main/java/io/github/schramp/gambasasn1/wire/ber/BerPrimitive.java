@@ -73,7 +73,7 @@ public final class BerPrimitive {
                 if (!outer.tag().equals(tag)) {
                     throw new DecodeException("expected EXPLICIT tag " + tag + ", got " + outer.tag(), start);
                 }
-                decodeTagged(p, naturalTag(p), new BerReader(outer.value()));
+                decodeTagged(p, naturalTag(p), r.nested(outer.value()));
             }
             case BerTagging.Unsupported(String reason) -> throw new DecodeException("primitive not supported: " + reason, r.position());
             default -> decodeTagged(p, naturalTag(p), r);
