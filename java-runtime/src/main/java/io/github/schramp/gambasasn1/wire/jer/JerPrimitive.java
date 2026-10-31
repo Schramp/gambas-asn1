@@ -31,7 +31,7 @@ import java.util.Arrays;
 import java.util.regex.Pattern;
 
 /**
- * JER values of the builtin leaf types (X.697 §8-§23), in the text the C++
+ * JER values of the builtin leaf types (X.697 §20-§26, §32, §33, §38), in the text the C++
  * and Rust runtimes write: one switch over the builtin wrappers. A value's
  * own constraints pick the BIT STRING and REAL forms.
  */
@@ -103,7 +103,7 @@ public final class JerPrimitive {
         }
     }
 
-    /** An ENUMERATED value as its identifier; a value without one as its number (X.697 §20). */
+    /** An ENUMERATED value as its identifier; a value without one as its number (X.697 §22). */
     public static void encodeEnumerated(EnumSlot slot, EnumSpec spec, JerWriter w) {
         long v = slot.enumGet();
         for (EnumEntry e : spec.entries()) {
@@ -322,7 +322,7 @@ public final class JerPrimitive {
         }
     }
 
-    /** The bit count of a fixed, non-extensible SIZE, which X.697 §16.3 writes as a bare hex string; -1 otherwise. */
+    /** The bit count of a fixed, non-extensible SIZE, which X.697 §24.2 writes as a bare hex string; -1 otherwise. */
     private static long fixedSize(Constraints c) {
         if ((c.flags() & Constraints.SIZE_CONSTRAINED) == 0 || (c.flags() & Constraints.EXTENSIBLE) != 0) {
             return -1;

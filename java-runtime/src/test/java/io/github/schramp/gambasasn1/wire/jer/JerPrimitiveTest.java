@@ -42,7 +42,7 @@ class JerPrimitiveTest {
         assertEquals(s.get(), decode(new Asn1Utf8String(), NONE, encode(s, NONE)).get());
     }
 
-    /** BMPString and UniversalString are their characters, JSON-escaped, never XML text (X.697 §22). */
+    /** BMPString and UniversalString are their characters, JSON-escaped, never XML text (X.697 §38.1). */
     @Test
     void wideStringsAreTheirCharacters() {
         Asn1BmpString b = new Asn1BmpString();
@@ -111,7 +111,7 @@ class JerPrimitiveTest {
         assertEquals(d, decode(new Asn1Real(), base10, "-1.25"));
     }
 
-    /** X.697 §16.3: a fixed, non-extensible SIZE gives a bare hex string; anything else the object form. */
+    /** X.697 §24.2, §24.3: a fixed, non-extensible SIZE gives a bare hex string; anything else the object form. */
     @Test
     void bitStringFormDependsOnAFixedSize() {
         Asn1BitString b = new Asn1BitString(new byte[] {(byte) 0xA5, (byte) 0xF0}, 4);
