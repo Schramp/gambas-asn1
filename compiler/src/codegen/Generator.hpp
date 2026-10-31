@@ -655,6 +655,16 @@ private:
     ///        the alternative's type complete inside the CHOICE's own class
     ///        (ChoiceAlternativeSpec::boxed).
     bool choice_alternative_in_cycle(const ast::TypeDef& m, const std::string& choice_name) const;
+    /// @brief Whether `target` is reachable from `from` through members
+    ///        held by value: mandatory SEQUENCE/SET members (all of them
+    ///        when Backend::optional_member_is_indirect is false) and CHOICE
+    ///        alternatives, never a SEQUENCE OF/SET OF (a vector) or a
+    ///        CHOICE alternative of that CHOICE's own type (boxed).
+    bool reaches_by_value(const ast::TypeDef& from, const std::string& target,
+                          std::set<std::string>& visited) const;
+    /// @brief The class type member `m` is held as and its cycle-walk name
+    ///        (type reference, or promoted inline type's name).
+    std::pair<const ast::TypeDef*, std::string> class_member_target(const ast::TypeDef& m) const;
 
     // Cycle detection for a bare top-level TypeRef alias's own #include-vs-
     // forward-declare decision (emit_type_body) — see
