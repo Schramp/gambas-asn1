@@ -1,0 +1,31 @@
+-- Java BER leg for extensibility (X.680 §25.1, §27): an extension marker
+-- does not change the BER encoding (X.690 §8.1.1.4), and a decoder skips
+-- extension additions it does not know (X.680 §7.1, §7.2). V1 and V2 are
+-- extension-related: V2 adds to V1's extensions, so V2's DER decodes as V1.
+ExtBerTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+V1 ::= SEQUENCE {
+    id    INTEGER,
+    note  IA5String OPTIONAL,
+    ...,
+    flag  BOOLEAN
+}
+
+V2 ::= SEQUENCE {
+    id    INTEGER,
+    note  IA5String OPTIONAL,
+    ...,
+    flag  BOOLEAN,
+    [[ level INTEGER, name IA5String OPTIONAL ]],
+    extra OCTET STRING OPTIONAL
+}
+
+-- An extensible type nested before a later member: unknown additions
+-- inside it must not hide the member after it (X.680 §7.3).
+Outer1 ::= SEQUENCE { inner V1, tail INTEGER }
+Outer2 ::= SEQUENCE { inner V2, tail INTEGER }
+
+S1 ::= SET { a INTEGER, ... }
+S2 ::= SET { a INTEGER, ..., b BOOLEAN OPTIONAL, c IA5String OPTIONAL }
+
+END

@@ -1970,8 +1970,10 @@ set(java_leg_tagging_ber_PDUS
     ExpRec ImpRec AutoRec AutoSet AutoChoice)
 set(java_leg_default_ber_PDUS
     Rec Unordered)
+set(java_leg_ext_ber_PDUS
+    V1 V2 Outer1 Outer2 S1 S2)
 set(java_leg_outputs)
-foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber)
+foreach(leg builtin_alias_ber choice_ber sequence_ber seqof_ber constraints_ber set_ber tagging_ber default_ber ext_ber)
     set(gen_dir ${JAVA_LEGS_GEN_DIR}/gen/${leg})
     set(pdu_flags)
     foreach(pdu ${java_leg_${leg}_PDUS})
