@@ -383,9 +383,14 @@ inline DecodeResult decode_time_string(XerDecodeStream& s, const TypeDescriptor&
     });
 }
 
+/// @brief UTF-8 text of a BMPString (stride 2, UCS-2) or UniversalString
+///        (stride 4, UCS-4) stored as big-endian code units, the character
+///        form XER and JER both write for them.
+/// @param sv  The stored contents octets; a trailing partial unit is ignored.
+/// @return The unescaped UTF-8 text.
+/// @see X.680 §41.3 (BMPString, UniversalString), X.693 §8.2.6, X.697 §22.
 template<int stride>
-inline void encode_wide_string(XerEncodeStream& s, const TypeDescriptor& def,
-                               std::string_view sv) {
+inline std::string wide_to_utf8(std::string_view sv) {
     static_assert(stride == 2 || stride == 4);
     std::ostringstream utf8;
     for (std::size_t i = 0; i + stride <= sv.size(); i += stride) {
@@ -396,8 +401,14 @@ inline void encode_wide_string(XerEncodeStream& s, const TypeDescriptor& def,
             cp = ((uint8_t)sv[i] << 24) | ((uint8_t)sv[i+1] << 16) | ((uint8_t)sv[i+2] << 8) | (uint8_t)sv[i+3];
         utf8_encode_cp(utf8, cp);
     }
+    return utf8.str();
+}
+
+template<int stride>
+inline void encode_wide_string(XerEncodeStream& s, const TypeDescriptor& def,
+                               std::string_view sv) {
     s.os() << '<' << def.name << '>'
-           << xer_escape(utf8.str())
+           << xer_escape(wide_to_utf8<stride>(sv))
            << "</" << def.name << ">\n";
 }
 
