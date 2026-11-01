@@ -826,6 +826,13 @@ UniversalString is the JSON string of its characters (X.697 §38.1), escaped the
 same way, so `a<b&c>` stays `"a<b&c>"`; asn1c's own JER leaves `"`, `\` and
 control characters in these strings unescaped.
 
+An OPTIONAL or DEFAULT SEQUENCE/SET member whose value is `null` decodes as
+absent (X.697 §27.3.4), as if its key were left out: `{"a":1,"b":null}`
+leaves `b` absent, and a DEFAULT member takes its default. A member whose own
+type is NULL or an open type keeps `null` as its value, so it is present. A
+`null` for a mandatory member is a decode error. The encoder leaves absent
+members out and never writes `null` for them.
+
 ### Encoding Rule Comparison
 
 | Property | BER/DER | UPER | XER |
