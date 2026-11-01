@@ -1,0 +1,19 @@
+-- JER `null` for an absent OPTIONAL or DEFAULT member (X.697 §27.3.4): a
+-- decoder takes the member as absent, unless its type is itself NULL or an
+-- open type, whose JER value can be `null`.
+JerNullAbsentTest DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+JnRec ::= SEQUENCE {
+    a INTEGER,
+    b INTEGER OPTIONAL,
+    c BOOLEAN DEFAULT TRUE,
+    o OCTET STRING OPTIONAL,
+    s JnInner OPTIONAL,
+    n NULL OPTIONAL
+}
+
+JnInner ::= SEQUENCE {
+    x INTEGER
+}
+
+END

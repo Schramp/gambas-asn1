@@ -72,6 +72,19 @@ public final class JerReader {
         return pos < buf.length ? buf[pos] & 0xFF : 0;
     }
 
+    /** Whether the next value is the JSON literal {@code null} (RFC 8259 §3); not consumed. */
+    public boolean peekNull() {
+        skipWhitespace();
+        if (buf.length - pos < 4 || buf[pos] != 'n' || buf[pos + 1] != 'u' || buf[pos + 2] != 'l' || buf[pos + 3] != 'l') {
+            return false;
+        }
+        if (pos + 4 == buf.length) {
+            return true;
+        }
+        byte c = buf[pos + 4];
+        return c == ',' || c == '}' || c == ']' || c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    }
+
     /** Consumes {@code c} after optional whitespace. */
     public void expect(char c) {
         if (peek() != c) {

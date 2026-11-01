@@ -19,6 +19,8 @@ import io.github.schramp.gambasasn1.wire.spec.ContainedSpec;
 import io.github.schramp.gambasasn1.wire.spec.ContainedText;
 import io.github.schramp.gambasasn1.wire.spec.MemberMeta;
 import io.github.schramp.gambasasn1.wire.spec.MemberRef;
+import io.github.schramp.gambasasn1.wire.types.Asn1Any;
+import io.github.schramp.gambasasn1.wire.types.Asn1Null;
 import java.util.List;
 
 /**
@@ -154,7 +156,10 @@ public final class JerObject {
     /**
      * Members in any order; a key no member has is skipped (an extension
      * this table does not know). An OPTIONAL or DEFAULT member left out is
-     * set to absent or its DEFAULT; any other is an error.
+     * set to absent or its DEFAULT; any other is an error. An OPTIONAL or
+     * DEFAULT member given as {@code null} counts as left out (X.697
+     * §27.3.4), unless its type is NULL or an open type, whose value
+     * {@code null} can be.
      */
     private static void decodeSequence(Asn1Seq s, JerReader r) {
         List<MemberMeta> members = s.spec().members();
@@ -180,7 +185,13 @@ public final class JerObject {
                 r.skipValue();
                 continue;
             }
-            decodeValue(s.presentMember(i), members.get(i).constraints(), r);
+            MemberRef m = s.presentMember(i);
+            if (members.get(i).optional() && r.peekNull() && !mayBeNull(m)) {
+                r.readToken();
+                seen[i] = false;
+                continue;
+            }
+            decodeValue(m, members.get(i).constraints(), r);
             seen[i] = true;
         }
         for (int i = 0; i < members.size(); i++) {
@@ -195,6 +206,11 @@ public final class JerObject {
         if (!s.spec().containedMembers().isEmpty()) {
             ContainedValues.decodeMembers(s, ContainedEncoding.BER, berAnchor(r));
         }
+    }
+
+    /** Whether {@code m}'s own JER value can be {@code null}: NULL (X.697 §26) or an open type. */
+    private static boolean mayBeNull(MemberRef m) {
+        return m instanceof MemberRef.Primitive(var p) && (p instanceof Asn1Null || p instanceof Asn1Any);
     }
 
     private static int indexOf(List<MemberMeta> members, String key) {
