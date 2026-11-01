@@ -1631,6 +1631,11 @@ void RustBackend::emit_sequence_definition(const SequenceSpec& spec, std::ostrea
                     std::string fname = escape(std::format("{}_{}_default", to_snake_case(spec.type_name), m.mname));
                     set_default_expr = std::format("Some(|v| v.{} = Some({}()))", m.mname, fname);
                     is_default_equal_expr = std::format("Some(|v| v.{} == Some({}()))", m.mname, fname);
+                } else if (m.optional && covered) {
+                    // An OPTIONAL member's value when the encoding leaves
+                    // it out is "absent" (X.680 §25.6): a decoder that
+                    // already reached the member resets it.
+                    set_default_expr = std::format("Some(|v| v.{} = None)", m.mname);
                 }
 
                 std::string get_expr, get_mut_expr;

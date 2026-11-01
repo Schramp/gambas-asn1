@@ -461,6 +461,18 @@ static char peek_char(JerDecodeStream& s) {
     return s.at_end() ? '\0' : s.data()[0];
 }
 
+/// @brief True when the next value is the JSON literal `null` (RFC 8259
+///        §3), without consuming it.
+/// @param s Decode stream, positioned before a value.
+static bool peek_null(JerDecodeStream& s) {
+    skip_ws(s);
+    std::string_view rest = s.remaining();
+    if (rest.substr(0, 4) != "null") return false;
+    if (rest.size() == 4) return true;
+    char c = rest[4];
+    return c == ',' || c == '}' || c == ']' || is_ws(static_cast<unsigned char>(c));
+}
+
 } // namespace jer_detail
 
 // ---------------------------------------------------------------------------
@@ -1071,6 +1083,14 @@ struct ContainedJer {
     }
 };
 
+/// @brief True for a type whose own JER value can be `null`: NULL
+///        (X.697 §26) and an open type, which carries any value.
+/// @param def The member's type descriptor.
+static bool jer_value_may_be_null(const TypeDescriptor& def) {
+    return def.kind == TypeKind::Any
+        || (def.kind == TypeKind::Primitive && builtin_tag(def).number == 5);
+}
+
 struct SequenceJerHandler final : IJerTypeHandler {
     void encode(const JerCodec& codec, JerEncodeStream& s,
                 const TypeDescriptor& def, const Asn1Object* src) const override {
@@ -1131,6 +1151,14 @@ struct SequenceJerHandler final : IJerTypeHandler {
             const auto& mbr = spec.members[found];
             if (!mbr.type_descriptor) {
                 if (auto r = jer_detail::skip_json_value(s); !r) return r;
+                continue;
+            }
+            // X.697 §27.3.4: an absent OPTIONAL or DEFAULT member may be
+            // sent as `null`, unless its type can itself be `null`.
+            if (mbr.optional && jer_detail::peek_null(s) && !jer_value_may_be_null(*mbr.type_descriptor)) {
+                s.advance(4);
+                mbr.optional_ops.set_present(dest, false);
+                seen[found] = false;
                 continue;
             }
             if (mbr.optional)
