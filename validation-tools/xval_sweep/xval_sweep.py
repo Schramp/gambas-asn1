@@ -50,10 +50,10 @@ Usage:
                    built once) at index i with i mod N == K, after
                    --target/--limit, so N runners can split one sweep
                    without building any schema twice.
-  --java           add the Java leg (BER round trip and the XER and JER
-                   matrices through the Java runtime, compiled with plain
-                   javac; asn1c.B2X vs java.B2X and asn1c.B2J vs java.B2J
-                   when asn1c runs); targets the Java
+  --java           add the Java leg (BER round trip and the XER, JER and
+                   PER matrices through the Java runtime, compiled with plain
+                   javac; asn1c.B2X vs java.B2X, asn1c.B2J vs java.B2J and
+                   asn1c.PER vs java.PER when asn1c runs); targets the Java
                    backend cannot emit yet are skipped with a note.
   --asn1c-dir DIR  directory containing the asn1c binary (overrides
                    ASN1C_BIN_DIR env var / PATH / /usr/local/bin search).
@@ -1412,6 +1412,34 @@ def java_j2b(java_tools, pdu_type, jer_text, in_path, out_path):
     return data, r.stderr.strip()
 
 
+def java_b2p(java_tools, pdu_type, ber_path, out_path):
+    """Java leg: BER file -> length-prefixed PER byte stream, ber-to-per's
+    framing. Returns (per_bytes, stderr)."""
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip", "--b2p",
+                        java_tools["classes"][pdu_type], ber_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    data = b""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            data = f.read()
+    return data, r.stderr.strip()
+
+
+def java_p2b(java_tools, pdu_type, per_bytes, in_path, out_path):
+    """Java leg: length-prefixed PER byte stream -> BER bytes. Returns
+    (ber_bytes, stderr)."""
+    with open(in_path, "wb") as f:
+        f.write(per_bytes)
+    r = subprocess.run(["java", "-cp", java_tools["classpath"], "xvalharness.BerRoundtrip", "--p2b",
+                        java_tools["classes"][pdu_type], in_path, out_path],
+                       capture_output=True, text=True, timeout=300)
+    data = b""
+    if os.path.isfile(out_path):
+        with open(out_path, "rb") as f:
+            data = f.read()
+    return data, r.stderr.strip()
+
+
 def build_asn1c(target_dir, asn1_files_abs, pdu_types, asn1c_bin, reuse=False, jobs=4):
     """Build asn1c's own converter-example tool for this target — ground
     truth leg (#440). Returns None (not a hard error) whenever asn1c
@@ -1754,6 +1782,29 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
         ber_per_cross2, _ = p2b(cpp_tools["p2b"], pdu_type, per_rust)
         tally(compare_ber("orig vs cpp.P2B(rust.PER)", ber_orig, ber_per_cross2, verbose))
 
+        # Java PER: byte-exact against the C++ encoding, plus the same
+        # round-trip and cross matrix as the Java XER/JER legs.
+        per_java = None
+        if java_tools and "skipped" not in java_tools and "failed" not in java_tools:
+            per_java, err_java_per = java_b2p(java_tools, pdu_type, ber_path,
+                                              os.path.join(target_dir, "java.per"))
+            if err_java_per:
+                print(f"  java b2p stderr: {err_java_per}")
+            tally(compare_per("cpp.PER vs java.PER", per_cpp, per_java, verbose))
+
+            def java_p2b_check(label, per_bytes):
+                ber, err = java_p2b(java_tools, pdu_type, per_bytes,
+                                    os.path.join(target_dir, "java.p2b.in.per"),
+                                    os.path.join(target_dir, "java.p2b.ber"))
+                if err:
+                    print(f"  java p2b stderr: {err}")
+                tally(compare_ber(label, ber_orig, ber, verbose))
+
+            java_p2b_check("orig vs java.P2B(java.PER)", per_java)
+            java_p2b_check("orig vs java.P2B(cpp.PER)", per_cpp)
+            ber_per_cross3, _ = p2b(cpp_tools["p2b"], pdu_type, per_java)
+            tally(compare_ber("orig vs cpp.P2B(java.PER)", ber_orig, ber_per_cross3, verbose))
+
         if asn1c_tools:
             # Both directions below are informational only, same rationale as
             # the existing asn1c.X2B(asn1c.XER) check further down: *any*
@@ -1827,9 +1878,13 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
             if self_m > 0 and self_mm == 0 and not asn1c_opaque_contents:
                 tally(compare_per("asn1c.PER vs cpp.PER", per_asn1c, per_cpp, verbose))
                 tally(compare_per("asn1c.PER vs rust.PER", per_asn1c, per_rust, verbose))
+                if per_java is not None:
+                    tally(compare_per("asn1c.PER vs java.PER", per_asn1c, per_java, verbose))
             else:
                 compare_per("asn1c.PER vs cpp.PER [informational]", per_asn1c, per_cpp, verbose, info=per_info)
                 compare_per("asn1c.PER vs rust.PER [informational]", per_asn1c, per_rust, verbose, info=per_info)
+                if per_java is not None:
+                    compare_per("asn1c.PER vs java.PER [informational]", per_asn1c, per_java, verbose, info=per_info)
         elif not skip_asn1c_reason:
             print("  asn1c PER leg: skipped (not found or unsupported for this target)")
     else:
@@ -1973,7 +2028,7 @@ def main():
                      help="comma list of legs to reuse without rebuilding when their "
                           "inputs are unchanged: asn1c, cpp (keyed on schema + tool/runtime signature)")
     ap.add_argument("--java", action="store_true",
-                     help="add the Java leg: BER round trip and XER matrix of every target the Java "
+                     help="add the Java leg: BER round trip and XER, JER and PER matrices of every target the Java "
                           "backend emits (needs a JDK 21 javac/java on PATH); a target "
                           "with a construct the backend does not emit yet is skipped "
                           "with a note")
