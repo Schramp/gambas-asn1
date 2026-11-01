@@ -1046,6 +1046,44 @@ static DecodeResult decode_group_open_type(const PerCodec& codec, PerDecodeStrea
                                            const SequenceSpec& spec, int begin, int end,
                                            Asn1Object* dest);
 
+/// @brief Presence bits of a SEQUENCE/SET preamble or extension bitmap,
+///        read from the wire one word at a time and kept in words, the
+///        first wire bit in a word's most significant bit: one word in
+///        place, more on the heap.
+/// @see X.691 §19.2 (root bitmap, roms_count bits), §19.7 (extension
+///      bitmap, a count from the wire).
+class PresenceBits {
+public:
+    /// @brief Reads @p n presence bits.
+    /// @return An error when the stream ends first.
+    DecodeResult read(PerDecodeStream& stream, int n) {
+        n_ = n;
+        int words = (n + kWordBits - 1) / kWordBits;
+        if (words > 1) heap_.assign(static_cast<std::size_t>(words), 0);
+        Word* w = words > 1 ? heap_.data() : &inline_;
+        for (int k = 0; k < words; ++k) {
+            int take = std::min(kWordBits, n - k * kWordBits);
+            auto bits = stream.get_bits(take);
+            if (!bits) return decode_err(bits.error());
+            w[k] = *bits << (kWordBits - take);
+        }
+        return decode_ok();
+    }
+    /// @brief Bit @p i, false past the bits read.
+    bool operator[](int i) const {
+        if (i < 0 || i >= n_) return false;
+        const Word* w = n_ > kWordBits ? heap_.data() : &inline_;
+        return (w[i / kWordBits] >> (kWordBits - 1 - i % kWordBits)) & 1;
+    }
+
+private:
+    using Word = uint64_t;
+    static constexpr int kWordBits = std::numeric_limits<Word>::digits;
+    Word inline_ = 0;
+    std::vector<Word> heap_;
+    int n_ = 0;
+};
+
 class SequencePerHandler final : public IPerTypeHandler {
 public:
     void encode(const PerCodec& codec, PerEncodeStream& stream,
@@ -1174,13 +1212,8 @@ public:
         // Precomputed at codegen time (Generator::emit_sequence_definition) —
         // the width of the root-level presence bitmap never depends on the
         // wire, only on the schema, so it's read here, not recounted.
-        int roms = spec.roms_count;
-        bool bitmap[64] = {};
-        for (int i = 0; i < roms && i < 64; ++i) {
-            auto bit = stream.get_bits(1);
-            if (!bit) return decode_err(bit.error());
-            bitmap[i] = (*bit != 0);
-        }
+        PresenceBits bitmap;
+        if (auto r = bitmap.read(stream, spec.roms_count); !r) return r;
         int opt_idx = 0;
         IDecodeStream& ds = stream;
         for (int i = 0; i < root_end; ++i) {
@@ -1207,12 +1240,8 @@ public:
                 auto n_ext_r = get_nslength(stream);
                 if (!n_ext_r) return decode_err(n_ext_r.error());
                 int n_ext = static_cast<int>(*n_ext_r);
-                bool ext_bitmap[64] = {};
-                for (int i = 0; i < n_ext && i < 64; ++i) {
-                    auto b = stream.get_bits(1);
-                    if (!b) return decode_err(b.error());
-                    ext_bitmap[i] = (*b != 0);
-                }
+                PresenceBits ext_bitmap;
+                if (auto r = ext_bitmap.read(stream, n_ext); !r) return r;
                 const ExtUnits units{spec, root_end};
                 for (int i = 0; i < n_ext; ++i) {
                     if (i >= units.count()) {
