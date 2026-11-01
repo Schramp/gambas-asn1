@@ -2,12 +2,16 @@
 // X.697 §23.4 NOTE); mirrors tests/rust/jer_escape/src/main.rs. Each vector
 // is a JER document whose `text` value carries escapes; it must decode to
 // the given UTF-8 bytes, or fail when the escape is malformed. Member names
-// and CHOICE alternative names may be escaped too.
+// and CHOICE alternative names may be escaped too. JeWide holds asn1c-encoded
+// BMPString/UniversalString values whose JER must be their characters,
+// JSON-escaped (RFC 8259 §7), never XML text.
 #include <cstdio>
 #include <sstream>
 #include <string>
 #include <asn1cpp/asn1cpp.hpp>
 #include "JeRec.hpp"
+#include "JeWide.hpp"
+#include <vector>
 
 using namespace asn1;
 
@@ -72,6 +76,30 @@ int main() {
     c.alt.set_present(JeRecAlt::PR::n);
     JeRec back;
     check("control characters survive a JER round-trip", unjer(jer(c), back) && back.text.str() == c.text.str());
+
+    // asn1c -ixer -oder of b = a<b&c>"\ U+0001 TAB e-acute, u = x<y U+1F600.
+    const std::vector<uint8_t> der = {
+        0x30, 0x2A, 0x80, 0x16, 0x00, 0x61, 0x00, 0x3C, 0x00, 0x62, 0x00, 0x26, 0x00, 0x63,
+        0x00, 0x3E, 0x00, 0x22, 0x00, 0x5C, 0x00, 0x01, 0x00, 0x09, 0x00, 0xE9, 0x81, 0x10,
+        0x00, 0x00, 0x00, 0x78, 0x00, 0x00, 0x00, 0x3C, 0x00, 0x00, 0x00, 0x79, 0x00, 0x01,
+        0xF6, 0x00};
+    const std::string want = "{\"b\":\"a<b&c>\\\"\\\\\\u0001\\u0009\xC3\xA9\",\"u\":\"x<y\xF0\x9F\x98\x80\"}";
+    JeWide w;
+    BerReader br{std::span<const uint8_t>(der)};
+    BerDecodeStream bds{br};
+    check("JeWide BER decodes", BerCodec::instance().decode(bds, JeWide::asn_DEF, &w).has_value());
+    std::ostringstream wo;
+    JerEncodeStream ws{wo};
+    JerCodec::instance().encode(ws, JeWide::asn_DEF, &w);
+    check("BMPString/UniversalString JER is the JSON-escaped characters", wo.str() == want);
+    JeWide wb;
+    JerDecodeStream wds{want};
+    bool wok = JerCodec::instance().decode(wds, JeWide::asn_DEF, &wb).has_value();
+    std::vector<uint8_t> out;
+    BerWriter bw{out};
+    BerEncodeStream bes{bw};
+    if (wok) BerCodec::instance().encode(bes, JeWide::asn_DEF, &wb);
+    check("BMPString/UniversalString JER decodes back to the asn1c DER", wok && out == der);
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "OK", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

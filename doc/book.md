@@ -821,7 +821,10 @@ member and alternative names included (X.697 §23.4 NOTE): `\"`, `\\`, `\/`,
 a surrogate pair (`😀`) combines into one code point, stored as
 UTF-8. A lone surrogate, a `\u` with fewer than four hex digits, or any other
 character after a backslash is a decode error. The encoder escapes `"`, `\`
-and control characters below U+0020 (as `\u00XX`).
+and control characters below U+0020 (as `\u00XX`). A BMPString or
+UniversalString is the JSON string of its characters (X.697 §38.1), escaped the
+same way, so `a<b&c>` stays `"a<b&c>"`; asn1c's own JER leaves `"`, `\` and
+control characters in these strings unescaped.
 
 ### Encoding Rule Comparison
 

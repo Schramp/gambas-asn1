@@ -446,7 +446,7 @@ add_test(NAME real_jer_base COMMAND test_real_jer_base)
 # ---- JER string escapes (RFC 8259 §7, X.697 §23.4 NOTE); Rust leg: rust/jer_escape
 set(JER_ESCAPE_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen_jer_escape_test)
 add_custom_command(
-    OUTPUT  ${JER_ESCAPE_GEN_DIR}/JeRec.cpp ${JER_ESCAPE_GEN_DIR}/JeRecAlt.cpp
+    OUTPUT  ${JER_ESCAPE_GEN_DIR}/JeRec.cpp ${JER_ESCAPE_GEN_DIR}/JeRecAlt.cpp ${JER_ESCAPE_GEN_DIR}/JeWide.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${JER_ESCAPE_GEN_DIR}
     COMMAND $<TARGET_FILE:asn1cpp> ${CMAKE_CURRENT_SOURCE_DIR}/asn1/jer_escape_test.asn1
             -o ${JER_ESCAPE_GEN_DIR}
@@ -454,7 +454,7 @@ add_custom_command(
     COMMENT "Generating C++ from jer_escape_test.asn1"
 )
 add_executable(test_jer_escape jer/test_jer_escape.cpp
-               ${JER_ESCAPE_GEN_DIR}/JeRec.cpp ${JER_ESCAPE_GEN_DIR}/JeRecAlt.cpp)
+               ${JER_ESCAPE_GEN_DIR}/JeRec.cpp ${JER_ESCAPE_GEN_DIR}/JeRecAlt.cpp ${JER_ESCAPE_GEN_DIR}/JeWide.cpp)
 target_include_directories(test_jer_escape PRIVATE ${JER_ESCAPE_GEN_DIR})
 target_link_libraries(test_jer_escape PRIVATE asn1cpp_runtime)
 add_test(NAME jer_escape COMMAND test_jer_escape)
