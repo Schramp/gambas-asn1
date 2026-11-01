@@ -1306,29 +1306,58 @@ def find_erlang():
     return (erlc, escript) if erlc and escript else None
 
 
+# Text erlc can't parse and the BER/PER legs don't need: comments (they
+# can sit between a module's name and DEFINITIONS, hiding the header from
+# _MODULE_HEADER_RE) and encoding instructions, which affect only the
+# codec they name (X.680 §13.1 EncodingReferenceDefault, §31.3 encoding
+# prefix, §54 encoding control sections).
+_ERL_STRIP_RES = [
+    (re.compile(r"/\*.*?\*/", re.S), " "),
+    (re.compile(r"--.*$", re.M), ""),
+    (re.compile(r"\b(?:XER|JER|PER|BER|OER)\s+INSTRUCTIONS\b"), ""),
+    (re.compile(r"\[\s*(?:XER|JER|PER|BER|OER)\s*:[^\]]*\]"), ""),
+    (re.compile(r"\bENCODING-CONTROL\b.*(?=\bEND\b)", re.S), ""),
+]
+
+_ERL_BARE_PREFIX_RE = re.compile(
+    r"(?<!\[)\[(?!\[)\s*(?!(?:APPLICATION|UNIVERSAL|PRIVATE)\b)[A-Z][A-Z0-9-]*\b[^\]]*\](?!\])")
+
+
 def split_modules(asn1_files_abs):
-    """{module name: module text} for every module in the schema files.
-    erlc compiles one module per file and requires the file to be named
-    after the module, so a file defining several modules is cut at each
-    module header. Returns None when a module name repeats."""
+    """{module name: module text} for every module in the schema files,
+    with _ERL_STRIP_RES applied. erlc compiles one module per file and
+    requires the file to be named after the module, so a file defining
+    several modules is cut at each module header. Returns None when a
+    module name repeats."""
     modules = {}
     for path in asn1_files_abs:
         text = open(path, errors="replace").read()
+        for rx, sub in _ERL_STRIP_RES[:2]:
+            text = rx.sub(sub, text)
         heads = list(_MODULE_HEADER_RE.finditer(text))
         for i, m in enumerate(heads):
             if m.group(1) in modules:
                 return None
             end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
-            modules[m.group(1)] = text[m.start():end]
+            body = text[m.start():end]
+            if _ERL_STRIP_RES[2][0].search(body):
+                # With an encoding reference default a prefix needs no
+                # "XER:" (X.680 §31.3): any bracket starting with an
+                # upper-case word that is not a tag class.
+                body = _ERL_BARE_PREFIX_RE.sub("", body)
+            for rx, sub in _ERL_STRIP_RES[2:]:
+                body = rx.sub(sub, body)
+            modules[m.group(1)] = body
     return modules
 
 
 def build_erlang(target_dir, asn1_files_abs, erl_bins):
     """Compile the schema with Erlang/OTP's asn1 compiler once per
     ERL_CODECS entry — a third, independently written ground-truth
-    implementation next to asn1c. Returns {codec: beam dir}, or None (not
-    a hard error) when erlc rejects the schema: that target's Erlang leg
-    is skipped, the other legs never depend on it.
+    implementation next to asn1c. Returns {"escript", codec: beam dir} with
+    the codecs erlc built at least one module for, or None (not a hard
+    error) when it built none: the rows needing a missing codec are
+    skipped, the other legs never depend on this one.
 
     erlc resolves IMPORTS from the .asn1db files of modules compiled
     before, so modules are compiled in rounds until none is left or a
@@ -1343,8 +1372,11 @@ def build_erlang(target_dir, asn1_files_abs, erl_bins):
         d = os.path.join(target_dir, "erl", codec)
         key_path = os.path.join(d, ".reuse-key")
         key = reuse_key(asn1_files_abs, " ".join(flags), file_sig(erlc))
-        out[codec] = d
+        note_path = os.path.join(d, ".erlc-failed")
         if key_matches(key_path, key):
+            if os.path.isfile(note_path):
+                print(open(note_path).read().rstrip())
+            out[codec] = d
             continue
         shutil.rmtree(d, ignore_errors=True)
         os.makedirs(d)
@@ -1360,11 +1392,21 @@ def build_erlang(target_dir, asn1_files_abs, erl_bins):
                     failed.append(name)
                     err = (r.stdout + r.stderr).decode(errors="replace")
             if len(failed) == len(pending):
-                print(f"  Erlang leg: erlc {codec} failed, skipping — {err.strip()[-500:]}")
-                return None
+                break
             pending = failed
+        if pending:
+            # A module erlc rejects (e.g. one importing a name no module
+            # defines) only matters to a PDU type that needs it; the
+            # harness reports a type it can't find.
+            first = next((l for l in err.splitlines() if l.strip()), "")
+            note = f"  Erlang leg: erlc {codec} failed on {', '.join(pending)} — {first[:300]}"
+            print(note)
+            if len(pending) == len(modules):
+                continue
+            write_if_changed(note_path, note + "\n")
         write_if_changed(key_path, key)
-    return out
+        out[codec] = d
+    return out if len(out) > 1 else None
 
 
 def erl_run(erl, mode, codec, pdu_type, data, work_dir):
@@ -1762,21 +1804,27 @@ def run_target(schema_rel, pdu_type, count, seed, verbose, built, skip_asn1c_rea
                                  info=erl_info or "INFORMATIONAL")
 
         orig_recs = split_ber_records(ber_orig)
-        der_erl, err = erl_transcode(erl_tools, "ber", "ber", pdu_type, orig_recs, target_dir)
-        if err:
-            print(f"  erl b2d stderr: {err}")
-        erl_check("orig vs erl.B2D(orig)", orig_recs, der_erl)
-        if "b2p" in rust_tools:
-            per_erl, err = erl_transcode(erl_tools, "ber", "uper", pdu_type, orig_recs, target_dir)
+        if "ber" in erl_tools:
+            der_erl, err = erl_transcode(erl_tools, "ber", "ber", pdu_type, orig_recs, target_dir)
             if err:
-                print(f"  erl b2p stderr: {err}")
-            erl_check("erl.PER vs cpp.PER", per_erl, split_per_records(per_cpp))
-            erl_check("erl.PER vs rust.PER", per_erl, split_per_records(per_rust))
-            der_erl_per, err = erl_transcode(erl_tools, "uper", "ber", pdu_type,
-                                             split_per_records(per_cpp), target_dir)
+                print(f"  erl b2d stderr: {err}")
+            erl_check("orig vs erl.B2D(orig)", orig_recs, der_erl)
+        if "b2p" in rust_tools and "uper" in erl_tools:
+            cpp_per_recs = split_per_records(per_cpp)
+            per_erl_per, err = erl_transcode(erl_tools, "uper", "uper", pdu_type, cpp_per_recs, target_dir)
             if err:
-                print(f"  erl p2b stderr: {err}")
-            erl_check("orig vs erl.P2B(cpp.PER)", orig_recs, der_erl_per)
+                print(f"  erl p2p stderr: {err}")
+            erl_check("cpp.PER vs erl.P2P(cpp.PER)", cpp_per_recs, per_erl_per)
+            if "ber" in erl_tools:
+                per_erl, err = erl_transcode(erl_tools, "ber", "uper", pdu_type, orig_recs, target_dir)
+                if err:
+                    print(f"  erl b2p stderr: {err}")
+                erl_check("erl.PER vs cpp.PER", per_erl, cpp_per_recs)
+                erl_check("erl.PER vs rust.PER", per_erl, split_per_records(per_rust))
+                der_erl_per, err = erl_transcode(erl_tools, "uper", "ber", pdu_type, cpp_per_recs, target_dir)
+                if err:
+                    print(f"  erl p2b stderr: {err}")
+                erl_check("orig vs erl.P2B(cpp.PER)", orig_recs, der_erl_per)
 
     tool_failures = _tool_failures.items
     _tool_failures.items = None

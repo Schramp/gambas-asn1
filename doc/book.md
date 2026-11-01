@@ -1327,10 +1327,13 @@ type in `targets.txt`. It adds independent ground-truth legs when the tools are 
   - `erl.PER vs cpp.PER` and `erl.PER vs rust.PER`: Erlang's UPER for the same
     values.
   - `orig vs erl.P2B(cpp.PER)`: Erlang decodes our UPER.
+  - `cpp.PER vs erl.P2P(cpp.PER)`: Erlang decodes our UPER and re-encodes it.
 
   Every Erlang row is informational: a mismatch is printed for comparison but never
-  fails the target. A schema `erlc` rejects skips only this leg. Erlang has no XER,
-  and its JER is not compared.
+  fails the target. Before compiling, comments and XER/JER encoding instructions are
+  removed from the schema copy, since BER and PER ignore them. When `erlc` rejects the
+  schema for one codec, only the rows that need that codec are skipped. Erlang has no
+  XER, and its JER is not compared.
 
 ### Fully Table-Based: Minimal Generated Code
 
