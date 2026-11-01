@@ -915,6 +915,15 @@ void JavaBackend::emit_seq_of(const SeqOfSpec& spec, TypeOutputSession& session)
                                   kWire, flags, spec.range_bits, java_long(spec.size_lower),
                                   java_long(spec.size_upper.value_or(std::numeric_limits<int64_t>::max())));
     }
+    // Each element is encoded under its own constraints (X.691 §20.3): an
+    // inline element constraint's table, or the referenced type's own.
+    std::string element;
+    if (!spec.elem_ref.empty())
+        element = spec.elem_ref + ".CONSTRAINTS";
+    else if (spec.elem_tdref.kind == TypeDescriptorRefKind::FreeStanding)
+        element = spec.elem_tdref.name + ".CONSTRAINTS";
+    if (!element.empty())
+        constraints = std::format("{0}.spec.Constraints.withElement({1}, {2})", kWire, constraints, element);
 
     auto& os = session.buffer(declaration_extension());
     if (!spec.asn1_name.empty()) os << std::format("/** ASN.1: {{@code {}}} */\n", spec.asn1_name);

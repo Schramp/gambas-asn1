@@ -48,4 +48,11 @@ public record Constraints(
 
     public static final Constraints UNCONSTRAINED =
             new Constraints(0, 0, 0, 0, 0, 0, 0, 0, 0, null, 0, null, 0, null, 0.0, 0.0);
+
+    /** {@code c} with {@code element} as a SEQUENCE OF / SET OF element's own constraints. */
+    public static Constraints withElement(Constraints c, Constraints element) {
+        return new Constraints(c.flags, c.rangeBits, c.lowerBound, c.upperBound, c.lowerU64, c.upperU64,
+                c.sizeRangeBits, c.sizeLower, c.sizeUpper, c.encodeTable, c.alphabetBits, c.alphabet,
+                c.alphabetSize, element, c.realLower, c.realUpper);
+    }
 }

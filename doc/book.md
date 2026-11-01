@@ -2186,6 +2186,12 @@ field (X.691 §23); the table lists the alternatives in the canonical order of
 their tags (§23.3). An extension alternative the table does not know is kept
 as an unknown extension (its open-type contents under a context tag numbered
 by its extension index), which PER cannot encode again.
+A SEQUENCE OF or SET OF is its count under the SIZE, with the extension bit
+of an extensible SIZE, then its elements, each under the element's
+constraints: an inline element constraint or the referenced type's own
+(X.691 §20). A SET OF is written with its components sorted as X.691 §22.1
+orders them, as asn1c and the C++ and Rust runtimes do; the decoder takes
+them in any order.
 
 ```java
 byte[] uper = PerObject.encode(flag);   // 80 for TRUE
