@@ -2137,6 +2137,10 @@ the value. Tags take no part (X.691 §10.6.3). A type whose PER field is not
 written yet fails the call with an `EncodeException` or `DecodeException`. A
 PER `DecodeException` gives the octet as its position and the bit offset in
 its message (`… (bit 13)`).
+`PerLength` holds the length determinants (X.691 §11.9: constrained SIZE
+counts, general lengths with 16K fragmentation, normally small lengths) and
+the length-prefixed whole numbers (semi-constrained, unconstrained, normally
+small), which the type fields build on.
 
 ```java
 byte[] uper = PerObject.encode(flag);   // 80 for TRUE
