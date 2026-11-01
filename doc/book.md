@@ -2082,10 +2082,11 @@ form can be set for one call: `XerObject.encode(v, new ContainedOptions(null,
 false, ContainedText.INLINE_RAW, null))` writes every contained field that
 way, in place of each row's `xer` form, and `XerObject.decode(v, xer, opts)`
 takes the same settings. `XerObject.decodeLenient` also accepts asn1c's text BOOLEAN
-(`true`) and a hex BIT STRING. The vectors in `tests/vectors/` carry asn1c's own XER
-and JER output for each DER value as their last two columns, which the Java XER
-legs compare with byte for byte and the Java JER legs as JSON values (asn1c
-indents its JER).
+(`true`) and a hex BIT STRING. The vectors in `tests/vectors/` carry asn1c's own XER,
+JER and unaligned PER output for each DER value after the DER column. The Java
+XER legs compare the XER byte for byte, the Java JER legs the JER as JSON values
+(asn1c indents its JER); the PER column is hex, or `-` where asn1c cannot encode
+the type in PER (SET, 64-bit constrained ranges).
 
 JER (`JerObject` in runtime package `jer`) writes builtin and ENUMERATED values
 as one compact JSON value in the C++ and Rust runtimes' text, and reads them
