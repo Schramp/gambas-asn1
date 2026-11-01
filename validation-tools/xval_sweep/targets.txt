@@ -91,6 +91,10 @@ examples/sample.source.RRC/asn1-files/rrc-7.1.0.asn1    UL-CCCH-Message
 
 # ETSI LI (multi-module directory schema; -fallow-newer-modules picks the
 # newest of the duplicated module versions, as the example's Makefile does).
+# ETSI LI is specified for BER only (TS 102 232-1). Its PER leg is a C++ vs
+# Rust self-consistency check on a large real schema, not a standard
+# encoding; @asn1c-nkm-visible keeps the asn1c PER rows informational (its
+# UTF8String SIZE members) and needs no --per-nkm-size=visible twin.
 examples/sample.source.ETSI-LI-PS-PDU/asn1-files   PS-PDU             @asn1c-nkm-visible -fallow-newer-modules --container-config=examples/sample.source.ETSI-LI-PS-PDU/container_fields.json
 examples/sample.source.ETSI-LI-PS-PDU/asn1-files   EncryptedPayload   @asn1c-nkm-visible -fallow-newer-modules --container-config=examples/sample.source.ETSI-LI-PS-PDU/container_fields.json
 
