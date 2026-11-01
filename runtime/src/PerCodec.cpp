@@ -718,16 +718,22 @@ public:
         const Constraints& pc = def.constraints;
         if (pc.flags & Constraints::PER_SIZE_INVISIBLE) {
             // X.691 §30.6: no PER-visible constraint on a non-known-multiplier
-            // string — encode as the unconstrained type. The SIZE still bounds
-            // the values of the type, and a conforming sender does not send a
-            // value outside a non-extensible SIZE (X.691 §10.3, note), so such
-            // a value is rejected rather than written with the general length.
+            // string — encode as the unconstrained type. Its SIZE and FROM
+            // still bound the values of the type, and a conforming sender does
+            // not send a value that violates them (X.691 §10.3, note), so such
+            // a value is rejected rather than written in the general form.
             if ((pc.flags & Constraints::SIZE_CONSTRAINED) && !(pc.flags & Constraints::EXTENSIBLE) &&
                 (str.size() < static_cast<std::size_t>(pc.size_lower) ||
                  str.size() > static_cast<std::size_t>(pc.size_upper))) {
                 stream.set_encode_failed("string length violates SIZE constraint");
                 return;
             }
+            if (pc.alphabet_bits > 0 && pc.encode_table)
+                for (unsigned char c : str)
+                    if (pc.encode_table[c] == 0xFFFFu) {
+                        stream.set_encode_failed("character not in FROM alphabet");
+                        return;
+                    }
             TypeDescriptor plain = def;
             plain.constraints = Constraints{};
             encode(codec, stream, plain, src);

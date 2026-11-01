@@ -1782,10 +1782,10 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
     if (utag) {
         auto sr       = extract_size_range(m);
         auto alphabet = per_visible_alphabet(m);
-        // A FROM on a non-known-multiplier string is never PER-visible
-        // (X.691 §30.1, §30.6) — drop the alphabet.
+        // UTF8String is not a known-multiplier character string (X.691 §26.6):
+        // FROM constraints on it are not enforced in PER encoding — drop alphabet.
+        if (*bt == BT::Utf8String) alphabet.clear();
         const bool nkm = sema::is_non_known_multiplier(*bt);
-        if (nkm) alphabet.clear();
         if (sr || !alphabet.empty() || needs_xer || named_bits) {
             MemberTypeDescriptorSpec spec;
             spec.kind = MemberTypeDescriptorSpec::Kind::Sizeable;
@@ -1815,7 +1815,8 @@ std::optional<MemberTypeDescriptorSpec> Generator::build_member_type_descriptor_
             // type extensible for PER (X.691 §9.3.15 note 1); an extensible
             // FROM is not PER-visible at all (§9.3.9, per_visible_alphabet).
             spec.extensible = string_per_visibility(m).size_extensible;
-            spec.per_size_invisible = nkm && sr && nkm_size_mode_for(m) == sema::NkmSizeMode::Strict;
+            spec.per_size_invisible = nkm && (sr || !alphabet.empty())
+                && nkm_size_mode_for(m) == sema::NkmSizeMode::Strict;
             if (!alphabet.empty()) {
                 spec.alpha_prefix = std::format("asn_FROM_{}_{}", parent_cname, mname);
                 spec.alphabet = alphabet;
@@ -3174,9 +3175,8 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     if (spec.is_explicit || (spec.tag && spec.tag->cls != ast::TagClass::Universal))
         spec.natural_tag = underlying_natural_tag_spec_for(def);
 
-    // A FROM on a non-known-multiplier string is never PER-visible (X.691 §30.6).
     const bool nkm = sema::is_non_known_multiplier(builtin);
-    if (!nkm) spec.alphabet = per_visible_alphabet(def);
+    spec.alphabet = per_visible_alphabet(def);
     auto size_range = extract_size_range(def);
     spec.has_size_constraint = size_range.has_value();
     spec.size_bounded = size_range.has_value()
@@ -3198,7 +3198,7 @@ BuiltinAliasSpec Generator::build_builtin_alias_spec(const ast::TypeDef& def,
     // X.691 §9.3.15 note 1: only a PER-visible constraint's extension
     // marker counts (string_per_visibility).
     spec.extensible = string_per_visibility(def).size_extensible;
-    spec.per_size_invisible = nkm && size_range
+    spec.per_size_invisible = nkm && (size_range || !spec.alphabet.empty())
         && nkm_size_mode_for(current_module_, def.name) == sema::NkmSizeMode::Strict;
     spec.named_bits = has_named_bits(def);
     spec.xer_encoding = def.xer_encoding;

@@ -110,13 +110,20 @@ fn has_alphabet(pc: &Constraints) -> bool {
 /// Encodes a restricted character string (X.691 §30) against its table
 /// constraints: SIZE and FROM when PER-visible, the type's own character
 /// width otherwise. A `PER_SIZE_INVISIBLE` table (non-known-multiplier
-/// type, X.691 §30.6) encodes as the unconstrained type; its SIZE still
-/// bounds the values of the type, so a value outside a non-extensible SIZE
-/// is rejected (a conforming sender does not send it, X.691 §10.3 note).
+/// type, X.691 §30.6) encodes as the unconstrained type; its SIZE and FROM
+/// still bound the values of the type, so a value outside a non-extensible
+/// SIZE or the FROM alphabet is rejected (a conforming sender does not send
+/// it, X.691 §10.3 note).
 pub fn encode_string(w: &mut Writer, pc: &Constraints, tag_num: u32, bytes: &[u8]) -> Result<(), EncodeError> {
     if pc.flags & crate::constraints::PER_SIZE_INVISIBLE != 0 {
         if crate::constraints::validate_size(bytes.len(), pc) != 0 {
             return Err(EncodeError::new("string length violates SIZE constraint"));
+        }
+        if has_alphabet(pc) {
+            let table = pc.encode_table.expect("has_alphabet already checked encode_table.is_some()");
+            if bytes.iter().any(|&b| table[b as usize] == 0xFFFF) {
+                return Err(EncodeError::new("character not in FROM alphabet"));
+            }
         }
         return encode_string(w, &crate::constraints::UNCONSTRAINED, tag_num, bytes);
     }
