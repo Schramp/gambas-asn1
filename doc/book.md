@@ -711,6 +711,18 @@ For the same reason the `SIZE` check on such a type only looks at the bits up to
 1 bit. A `BIT STRING` without named bits is sent at its own length. BER keeps the value
 as given (X.690 §8.6.2.4 allows either).
 
+**Length determinants and the 64K edge.** A length or element count with a `SIZE`
+whose upper bound is below 64K (65536) is written as the constrained whole number
+n − lb in just enough bits for the range (X.691 §11.9.4.1): `OCTET STRING (SIZE (0..65535))`
+sends 10 as the 16 bits `000a`. With an upper bound of 64K or more, or with no upper bound
+at all (`SIZE (lb..MAX)`), the length is n itself in the general form (X.691 §11.9.4.2,
+§11.9.3.5–§11.9.3.8): one octet up to 127, two octets below 16K, and from 16K on the value
+is sent in fragments of 16K, 32K, 48K or 64K octets, each preceded by its own length octet.
+So `SIZE (10..MAX)` sends 10 as `0a`, not as 0, and `SIZE (0..65536)` sends 65535 octets as
+a 48K fragment (`c3`) followed by a 16383-octet tail (`bfff`). The lower bound of
+`SIZE (lb..MAX)` does not shape the encoding, but it is still a constraint: validation
+rejects a shorter value (X.680 §51.5) and `RandomFiller` never generates one.
+
 #### SIZE on non-known-multiplier strings (`--per-nkm-size`)
 
 **Summary.** By default, gambas-asn1 ignores a `SIZE` constraint on `UTF8String` and the
@@ -1109,7 +1121,8 @@ Output:
 ### Constraint Validation
 
 In Debug builds, constraint validation runs automatically on encode and decode.
-Violations increment a counter and (optionally) record a path:
+Every `SIZE` form is checked, including one with only a lower bound (`SIZE (4..MAX)`
+rejects a 3-octet value). Violations increment a counter and (optionally) record a path:
 
 ```cpp
 #include <asn1cpp/Validate.hpp>
@@ -1421,11 +1434,36 @@ A failure names the seed, record index, and check that failed — narrowing the 
 a specific type within seconds.
 
 `RandomFiller` is deterministic (seed-controlled) and schema-aware: it fills required
-members, randomly includes optional members, and respects SIZE and value constraints.
+members, randomly includes optional members, and respects SIZE (including a lower bound
+alone, `SIZE (lb..MAX)`) and value constraints. The xval_sweep `randgen` checks this
+itself: when a record generated without `--invalid-percent` breaks a constraint, it exits
+with status 2 (rerun with `ASN1CPP_DEBUG=0x40` to see which value), so a filler gap fails
+the sweep instead of showing up as a decoder disagreement.
 A [contained field](#contained-values) gets a random inner value, encoded through the
 field's decoder (`pkcs7` pads; `zero_padding` adds 0–15 zero octets), so the nested
 decode is exercised too. Corrupted-record variants (`BerCorruptor`) test that the decoder never crashes or
 asserts on malformed input.
+
+Inside the repository, `validation-tools/xval_sweep/xval_sweep.py` runs the same kind
+of matrix (C++ vs Rust, BER/XER/JER/PER, every round trip) over each schema and PDU
+type in `targets.txt`. It adds independent ground-truth legs when the tools are found:
+
+- **asn1c**, when `asn1c` is on `PATH`, in `ASN1C_BIN_DIR` or in `/usr/local/bin`
+  (`--asn1c-dir DIR` to point elsewhere, `--no-asn1c` to skip it).
+- **Erlang/OTP asn1**, when `erlc` and `escript` are on `PATH` (`--no-erlang` to skip
+  it). The schema is compiled once with `-bber +der` and once with `-buper`, and
+  `erl_harness.escript` adds these rows per target:
+  - `orig vs erl.B2D(orig)`: Erlang decodes the records and re-encodes them as DER.
+  - `erl.PER vs cpp.PER` and `erl.PER vs rust.PER`: Erlang's UPER for the same
+    values.
+  - `orig vs erl.P2B(cpp.PER)`: Erlang decodes our UPER.
+  - `cpp.PER vs erl.P2P(cpp.PER)`: Erlang decodes our UPER and re-encodes it.
+
+  Every Erlang row is informational: a mismatch is printed for comparison but never
+  fails the target. Before compiling, comments and XER/JER encoding instructions are
+  removed from the schema copy, since BER and PER ignore them. When `erlc` rejects the
+  schema for one codec, only the rows that need that codec are skipped. Erlang has no
+  XER, and its JER is not compared.
 
 ### Fully Table-Based: Minimal Generated Code
 

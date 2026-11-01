@@ -19,6 +19,10 @@ struct Constraints {
     // PER-visible (X.691 §10.3.18, §30.6): PER encodes the length as
     // unconstrained and adds no extension bit. validate() still applies SIZE.
     static constexpr int PER_SIZE_INVISIBLE = 512;
+    // SIZE(lb..MAX): size_lower is a lower bound, there is no upper bound
+    // (X.680 §51.5). Only validate() and RandomFiller read it; PER encodes such
+    // a length as unconstrained (X.691 §11.9.4.2), so SIZE_CONSTRAINED stays clear.
+    static constexpr int SIZE_LOWER_BOUND = 1024;
 
     // INTEGER storage kind — chosen at codegen time from constraint analysis.
     // BerCodec / RandomFiller / validate() read this to cast void* correctly.

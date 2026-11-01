@@ -594,7 +594,9 @@ void CppBackend::emit_builtin_alias_definition(const BuiltinAliasSpec& spec, std
         int flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
                   | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
                   | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0)
-                  | (spec.per_size_invisible ? asn1::Constraints::PER_SIZE_INVISIBLE : 0);
+                  | (spec.per_size_invisible ? asn1::Constraints::PER_SIZE_INVISIBLE : 0)
+                  | (spec.has_size_constraint && !spec.size_bounded && spec.size_lower > 0
+                     ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
         std::optional<ast::BuiltinType> bbt = spec.alphabet.empty()
             ? std::optional{spec.builtin_type} : std::nullopt;
         os << "    " << make_string_constraints_init(flags, spec.size_range_bits,
@@ -728,7 +730,9 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
         int all_flags = (spec.size_bounded ? asn1::Constraints::SIZE_CONSTRAINED : 0)
                        | (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0)
                        | (spec.named_bits ? asn1::Constraints::NAMED_BITS : 0)
-                       | (spec.per_size_invisible ? asn1::Constraints::PER_SIZE_INVISIBLE : 0);
+                       | (spec.per_size_invisible ? asn1::Constraints::PER_SIZE_INVISIBLE : 0)
+                       | (spec.has_size_constraint && !spec.size_bounded && spec.size_lower > 0
+                          ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
         std::optional<ast::BuiltinType> bbt = spec.alphabet.empty()
             ? std::optional{spec.builtin_type} : std::nullopt;
         bool use_default = !spec.has_size_constraint && spec.alphabet.empty() && !spec.named_bits
@@ -815,6 +819,14 @@ void CppBackend::emit_member_type_descriptor(const MemberTypeDescriptorSpec& spe
         per_h, ber_h, cpp_t, xer_tail);
 }
 
+/// @brief Emit the SeqOfSpec and TypeDescriptor tables of a SEQUENCE OF /
+///        SET OF type: element descriptor plus the count's SIZE constraint,
+///        flagged SIZE_CONSTRAINED for a bounded range or SIZE_LOWER_BOUND
+///        for SIZE(lb..MAX), read by SeqOfSpec::validate, RandomFiller and
+///        the PER length determinant.
+/// @param spec  backend-agnostic decisions for the type.
+/// @param os    the definition (.cpp) stream.
+/// @see X.680 §25/§26, §51.5; X.691 §19/§20.
 void CppBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os) const {
     os << std::format("const asn1::SeqOfSpec asn_SPC_{} = {{\n", spec.type_name);
     os << std::format("    {},\n", spec.elem_ref);
@@ -822,7 +834,9 @@ void CppBackend::emit_seq_of_definition(const SeqOfSpec& spec, std::ostream& os)
     // §51.8.3) must reach this Constraints table, or SeqOfSpec::validate
     // (TypeDescriptor.hpp) enforces the bound as if non-extensible.
     int flags = (spec.size_upper ? asn1::Constraints::SIZE_CONSTRAINED : 0) |
-                (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0);
+                (spec.extensible ? asn1::Constraints::EXTENSIBLE : 0) |
+                (spec.has_size_constraint && !spec.size_upper && spec.size_lower > 0
+                     ? asn1::Constraints::SIZE_LOWER_BOUND : 0);
     os << std::format("    {{ .flags={}, .size_range_bits={}, .size_lower={}, .size_upper={} }},\n",
                       flags, spec.range_bits, spec.size_lower, spec.size_upper.value_or(0));
     if (spec.elem_xer_name)
