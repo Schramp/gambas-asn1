@@ -738,8 +738,8 @@ encoding.
 
 | `--per-nkm-size=` | PER encoding of a SIZE on these types | Who does this |
 |---|---|---|
-| `strict` (**default**) | Not PER-visible: unconstrained length, no extension bit. A `FROM` is not PER-visible either. | X.691 §30.6. Erlang/OTP `asn1` (no option to change it), Python asn1tools, Wireshark's PER dissector (`dissect_per_UTF8String`). |
-| `visible` | Encoded as if PER-visible: constrained length (X.691 §11.9.4.1), extension bit when the SIZE has `...`, characters as octets. A `FROM` is still ignored. | asn1c since it made the SIZE PER-visible (mouse07410/asn1c#491, #494). Peers built on it, such as Open5GS NGAP. gambas-asn1 before this option existed. **Not X.691-conformant.** |
+| `strict` (**default**) | Not PER-visible: unconstrained length, no extension bit, octets as they are. A `FROM` does not shape the encoding either. | X.691 §30.6. Erlang/OTP `asn1` (no option to change it), Python asn1tools, Wireshark's PER dissector (`dissect_per_UTF8String`). |
+| `visible` | Encoded as if PER-visible: constrained length (X.691 §11.9.4.1), extension bit when the SIZE has `...`. A `FROM` is handled as before this option existed (alphabet-indexed characters, except on UTF8String). | asn1c since it made the SIZE PER-visible (mouse07410/asn1c#491, #494). Peers built on it, such as Open5GS NGAP. gambas-asn1 before this option existed. **Not X.691-conformant.** |
 
 Example, `T ::= SEQUENCE { s UTF8String (SIZE(0..32)) }` with `s = "ab"`, UPER:
 
@@ -762,7 +762,7 @@ members exist, but ETSI LI is BER, where SIZE never changes the encoding.
 six types, when they carry a SIZE. Not affected:
 
 - BER, DER, XER and JER: identical in both modes.
-- Which values are valid. "Not PER-visible" means only that the constraint does not shape
+- Which values are valid (SIZE and FROM alike). "Not PER-visible" means only that the constraint does not shape
   the encoding (X.691 §3.7.22). The SIZE still restricts the values of the type, and X.691
   §10.3 (note) is explicit that this "does not ... imply that values violating such
   constraints are allowed to be transmitted by a conforming sender". So in both modes
